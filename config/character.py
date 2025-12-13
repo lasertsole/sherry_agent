@@ -1,0 +1,2 @@
+USER_NAME = "远野汉娜"
+ASSISTANT_NAME = "橘雪莉"

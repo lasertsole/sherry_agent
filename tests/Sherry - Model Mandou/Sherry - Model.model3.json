@@ -1,0 +1,24 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "Sherry - Model.moc3",
+		"Textures": [
+			"Sherry - Model.4096/texture_00.png",
+			"Sherry - Model.4096/texture_01.png"
+		],
+		"Physics": "Sherry - Model.physics3.json",
+		"DisplayInfo": "Sherry - Model.cdi3.json"
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": []
+		},
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": []
+		}
+	]
+}

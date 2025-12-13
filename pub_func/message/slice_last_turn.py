@@ -1,0 +1,68 @@
+import json
+from typing import List, TypedDict
+from pub_func.message.estimate_msg_tokens import estimate_msg_tokens
+from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage
+
+
+class SliceLastTurn(TypedDict):
+    messages: List[BaseMessage]
+    tokens: int
+    dropped: int
+
+
+TOKEN_MAX = 6000
+def _truncate_msg(msg: BaseMessage)-> BaseMessage:
+    if not isinstance(msg, ToolMessage):
+        return msg
+
+    content = getattr(msg, "content", "")
+    if not isinstance(content, str):
+        text:str = json.dumps(content) if content is not None else ""
+    else:
+        text:str = content
+
+    if len(text) <= TOKEN_MAX:
+        return msg
+
+    head_len = int(TOKEN_MAX * 0.6)
+    tail_len = int(TOKEN_MAX * 0.3)
+
+    truncated_text = (
+        f"{text[:head_len]}\n"
+        f"...[truncated {len(text) - head_len - tail_len} chars]...\n"
+        f"{text[-tail_len:]}"
+    )
+
+    return msg.model_copy(deep=True, update={"content": truncated_text})
+
+# ─── 取最后一轮完整用户对话 ─────────────────────────────────
+def slice_last_turn(messages: List[BaseMessage]) -> SliceLastTurn:
+    """
+        从最后一个 role=user 到消息末尾，完整保留。
+        tool_use/tool_result 天然配对不会切断。
+        超长 tool_result 截断（保头尾砍中间）。
+    """
+    if len(messages)==0:
+        return { "messages": [], "tokens": 0, "dropped": 0 }
+
+    last_user_idx = -1
+
+    for i, msg in enumerate(reversed(messages)):
+        if isinstance(msg, HumanMessage):
+            last_user_idx = len(messages) - 1 - i
+            break
+
+    if last_user_idx < 0:
+        last_user_idx = 0
+
+    kept: List[BaseMessage] = messages[last_user_idx:]
+    dropped = last_user_idx
+
+
+    kept = [_truncate_msg(msg) for msg in kept]
+
+    tokens = 0
+    for msg in kept:
+        tokens += estimate_msg_tokens(msg)
+
+    return { "messages": kept, "tokens": tokens, "dropped": dropped }

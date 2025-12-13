@@ -1,0 +1,25 @@
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    object-fit: contain;
+}
+
+html{
+    overflow: hidden;
+}
+
+a{
+    text-decoration: none;
+    color: inherit;
+}
+
+ul{
+    list-style: none;
+}
+
+:root{
+    --layout-samll-width: 600px;
+    --layout-big-width: 800px;
+    font-size: 16px;
+}
