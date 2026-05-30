@@ -1,7 +1,9 @@
-﻿import os
+﻿import io
+import os
 import sys
 import textwrap
 from pathlib import Path
+import langextract as lx
 from config import ENV_PATH
 from dotenv import load_dotenv
 from langextract import factory
@@ -11,8 +13,6 @@ from ..type import ExtractRelationResult
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
-import langextract as lx
-import io
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -342,15 +342,3 @@ def extract(input_text: str)-> list[ExtractRelationResult]:
     except Exception as e:
         print(f"❌ Extraction failed: {e}")
         return []
-
-
-if __name__ == "__main__":
-    extract(input_text= textwrap.dedent("""\
-        张明和陈雪是大学同学，两人一起创办了星云科技。张明担任CEO，陈雪是首席架构师。
-
-        2024年3月，张明在年度技术峰会上正式发布了新一代AI芯片"天枢"，该芯片由陈雪带领团队历时两年研发完成，采用3nm制程工艺，算力达到每秒1000万亿次。
-
-        张明的父亲张建国是退休教师，一直以儿子为傲，但总担心他工作太累。张明虽然忙，但每周都会给父亲打电话，父子感情很好。
-
-        与此同时，海洲集团以45亿元收购了启元生物60%的股份。启元生物创始人刘泽将继续担任CEO。海洲集团还与云帆科技达成战略合作，双方将共同开发AI制药平台。""")
-    )

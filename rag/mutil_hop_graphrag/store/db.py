@@ -48,6 +48,7 @@ def build_nodes_tb(db: sqlite3.Connection) -> None:
             node_id INTEGER PRIMARY KEY,
             text TEXT NOT NULL UNIQUE,
             embedding_json TEXT NOT NULL,
+            metadata_json TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
@@ -60,6 +61,7 @@ def build_edges_tb(db: sqlite3.Connection) -> None:
             source_id INTEGER NOT NULL,
             target_id INTEGER NOT NULL,
             bridge_relation TEXT NOT NULL,
+            metadata_json TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (source_id) REFERENCES nodes(node_id),
             FOREIGN KEY (target_id) REFERENCES nodes(node_id)
