@@ -288,7 +288,7 @@ config = factory.ModelConfig(
     }
 )
 
-def extract(input_text: str)-> list[ExtractRelationResult]:
+def text_extract(input_text: str)-> list[ExtractRelationResult]:
     try:
         result = lx.extract(
             text_or_documents=input_text,
