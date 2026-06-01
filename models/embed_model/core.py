@@ -11,8 +11,8 @@ if model_cache_folder.exists():
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-    actual_model_path = model_cache_folder
 
+    actual_model_path = model_cache_folder
     hf_snapshot_dir = model_cache_folder / "models--BAAI--bge-m3" / "snapshots"
 
     if hf_snapshot_dir.exists():
@@ -23,7 +23,15 @@ if model_cache_folder.exists():
 
     model = SentenceTransformer(actual_model_path.as_posix())
 else:
+    os.environ["HF_HUB_OFFLINE"] = "0"
+    os.environ["TRANSFORMERS_OFFLINE"] = "0"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "0"
+
     model = SentenceTransformer("BAAI/bge-m3", cache_folder=model_cache_folder.as_posix())
+
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
 
 class CustomEmbedding(Embeddings):

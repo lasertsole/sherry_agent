@@ -21,7 +21,15 @@ if model_cache_folder.exists():
 
     model = CrossEncoder(model_name_or_path=actual_model_path.as_posix())
 else:
+    os.environ["HF_HUB_OFFLINE"] = "0"
+    os.environ["TRANSFORMERS_OFFLINE"] = "0"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "0"
+
     model = CrossEncoder("BAAI/bge-reranker-v2-m3", cache_folder=model_cache_folder.as_posix())
+
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
 class RerankerModel:
     """重排序模型封装"""
