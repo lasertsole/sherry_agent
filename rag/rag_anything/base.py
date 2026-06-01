@@ -3,7 +3,6 @@ import sys
 import asyncio
 import numpy as np
 from logging import getLogger
-from pathlib import Path
 
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:

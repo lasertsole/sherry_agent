@@ -2,9 +2,12 @@ import os
 import sys
 from pathlib import Path
 from logging import getLogger
+from config import MODELS_DIR
+from loguru import logger as _logger
 from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
+from rag.rag_anything.ensure_mineru_models import ensure_mineru_models
 
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
@@ -16,6 +19,11 @@ from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
 
 logger = getLogger(__name__)
 
+
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["TRANSFORMERS_OFFLINE"] = "0"
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "0"
+os.environ["MINERU_TOOLS_CONFIG_JSON"] = (MODELS_DIR / "extract_model/mineru_config.json").resolve().as_posix()
 
 async def _vision_model_func(
     prompt: str,
@@ -145,6 +153,26 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
     global _rag_anything
 
     if _rag_anything is None:
+        # Auto-download and configure models
+        # Bypass system proxy to avoid SSL errors with hf-mirror.com
+        for proxy_var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+            os.environ.pop(proxy_var, None)
+
+        try:
+            ensure_mineru_models(source="huggingface")
+        except Exception as e:
+            _logger.warning(f"Download from huggingface failed: {e}")
+            _logger.info("Retrying with modelscope ...")
+            ensure_mineru_models(source="modelscope")
+
+        # Switch to local model mode
+        os.environ["MINERU_MODEL_SOURCE"] = "local"
+
+        # Ensure .venv\Scripts is on PATH so subprocess can find "mineru" CLI
+        _venv_scripts = os.path.join(os.path.dirname(sys.executable))
+        if _venv_scripts not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = _venv_scripts + os.pathsep + os.environ.get("PATH", "")
+
         lightrag = await get_lightrag()
 
         config = RAGAnythingConfig(

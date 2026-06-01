@@ -11,6 +11,7 @@ CONTEXT_ENGINE_PATH = ROOT_DIR / "context_engine"
 
 SRC_DIR = ROOT_DIR / "src"
 
+MODELS_DIR = ROOT_DIR / "models"
 SESSIONS_DIR = ROOT_DIR / "sessions"
 SKILLS_DIR = ROOT_DIR / "skills"
 WORKSPACE_DIR = ROOT_DIR / "workspace"

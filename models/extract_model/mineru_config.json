@@ -1,0 +1,7 @@
+{
+  "models-dir": {
+    "pipeline": "C:\\app\\code\\project\\EMA_AI_agent\\models\\extract_model\\pipeline",
+    "vlm": "C:\\app\\code\\project\\EMA_AI_agent\\models\\extract_model\\vlm"
+  },
+  "config_version": "1.3.1"
+}
