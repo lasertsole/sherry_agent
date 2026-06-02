@@ -35,7 +35,7 @@ The Agent's character, **橘雪莉 (Sherry)**, is a detective girl with a dual p
 
 ### 3. 🌐 Multi-Channel Access
 - **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
-- **Next-Generation Client** ([client_future](client_future/)): A Nuxt.js + Tauri desktop/mobile client, currently in development
+- **Next-Generation Client** ([client_future](client_future/)): A Tauri 2 + Nuxt 4 desktop/mobile SPA client, currently in development
 - **QQ Bot**: Integrated with `qq-botpy` for direct interaction in QQ groups or private chats
 - **Message Bus**: Internal async message queue ([MessageBus](bus/queue.py)) decouples input/output channels
 
@@ -59,7 +59,7 @@ Built on **Python 3.12**, with the following core technologies:
 | **Database** | SQLite (FTS5 full-text search), LanceDB |
 | **Graph Algorithms** | igraph + Leiden Algorithm (community detection), PageRank |
 | **Web Server** | Robyn (high-performance async server) |
-| **Frontend UI** | Streamlit, Nuxt.js + Tauri (next-gen client) |
+| **Frontend UI** | Streamlit, Tauri 2 + Nuxt 4 (next-gen client) |
 | **LLM Support** | DeepSeek, OpenAI, Ollama (local models) |
 | **Task Scheduling** | croniter, asyncio |
 | **Async Messaging** | asyncio.Queue (MessageBus) |
@@ -81,10 +81,47 @@ EMA_AI_agent/
 │
 ├── channels/               # Channel adapters (QQ, WebSocket)
 ├── client/                 # Streamlit frontend entry
-├── client_future/          # Next-gen client (Nuxt.js + Tauri)
-│   ├── app/                # Vue 3 frontend
-│   ├── src-tauri/          # Tauri desktop shell
-│   └── nuxt.config.ts      # Nuxt.js configuration
+├── client_future/          # Next-gen client (Tauri 2 + Nuxt 4)
+│   ├── app/                # Nuxt 4 SPA source
+│   │   ├── app.vue                  # Root component entry
+│   │   ├── common.scss              # Global SCSS mixin library
+│   │   ├── assets/
+│   │   │   ├── css/
+│   │   │   │   ├── main.css         # Global CSS reset + CSS variables
+│   │   │   │   ├── main.scss        # (reserved)
+│   │   │   │   └── tailwind.scss    # Tailwind directives
+│   │   │   └── ts/
+│   │   │       └── tailwind.config.ts # Tailwind custom tokens
+│   │   ├── components/
+│   │   │   ├── dom/                 # DOM-based UI components
+│   │   │   │   └── drawer.vue       # Drawer panel component
+│   │   │   ├── icon/                # (reserved) Icon components
+│   │   │   └── svg/                 # SVG graphic components
+│   │   │       ├── staff.vue        # Single musical staff
+│   │   │       └── staffPaper.vue   # Multi-staff sheet
+│   │   ├── composables/             # Vue 3 composable logic
+│   │   │   ├── mitt.ts              # mitt event bus instance
+│   │   │   └── staffConfig.ts       # Staff configuration singleton
+│   │   ├── declare/                 # (reserved) Type declarations
+│   │   │   └── declarations.d.ts
+│   │   ├── layouts/
+│   │   │   └── default.vue          # Default layout entry
+│   │   ├── pages/
+│   │   │   └── index.vue            # Main page
+│   │   ├── nuxt.config.ts           # Nuxt 4 configuration
+│   │   ├── package.json             # Dependency manifest
+│   │   └── tsconfig.json            # TypeScript configuration
+│   ├── src-tauri/                   # Tauri 2 native shell
+│   │   ├── capabilities/
+│   │   │   └── default.json         # Permission config
+│   │   ├── src/
+│   │   │   ├── lib.rs               # Tauri app entry
+│   │   │   └── main.rs              # Windows subsystem entry
+│   │   ├── Cargo.toml               # Rust dependencies
+│   │   ├── tauri.conf.json          # Tauri 2 config
+│   │   └── build.rs                 # Tauri build script
+│   ├── README.md                    # This file (English)
+│   └── README.zh.md                 # Chinese version
 │
 ├── config/                 # Centralized configuration
 │   ├── path.py             # File path configuration
@@ -187,7 +224,7 @@ Each major subsystem has its own detailed README:
 | **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](subagent/README.md) · [ZH](subagent/README.zh.md) |
 | **Cron Service** | Scheduled/periodic agent task execution | [EN](cron/README.md) · [ZH](cron/README.zh.md) |
 | **Heartbeat Service** | Periodic wake-up task check | [EN](heartbeat/README.md) · [ZH](heartbeat/README.zh.md) |
-| **Next-gen Client** | Nuxt.js + Tauri desktop/mobile client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
+| **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
 
 ---
 

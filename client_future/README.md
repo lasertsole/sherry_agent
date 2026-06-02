@@ -7,7 +7,6 @@
 The current `client/` is a conversational Web UI built with Python 3.10 + Streamlit. While functionally complete, it is constrained by Streamlit's script-re-run rendering model, which limits interactivity smoothness, state management, and cross-platform desktop capabilities. `client_future` rebuilds the frontend from the ground up with **Tauri 2 + Nuxt 4**, aiming to deliver:
 
 - **Smoother interactions** — Vue 3 reactive partial updates instead of full-page re-runs
-- **Richer visualizations** — D3.js-driven SVG rendering for musical score sheets, knowledge graphs, etc.
 - **Offline-first** — Dexie.js (IndexedDB) for caching conversation history locally
 - **Native desktop capabilities** — Tauri 2 provides system tray, file system access, keyboard shortcuts, and other features impossible in Streamlit
 - **Component-driven architecture** — Vue 3 Composition API + Pinia for scalable team collaboration
@@ -20,6 +19,9 @@ The current `client/` is a conversational Web UI built with Python 3.10 + Stream
 
 ```
 client_future/
+├── .gitignore                    # Git ignore rules
+├── .vscode/                      # VS Code workspace settings
+│   └── settings.json
 ├── app/                          # Nuxt 4 SPA source
 │   ├── app.vue                   # Root component entry
 │   ├── common.scss               # Global SCSS mixin library (layout, shapes, scrollbar, etc.)
@@ -28,6 +30,7 @@ client_future/
 │   │   │   ├── main.css          # Global CSS reset + CSS variables
 │   │   │   ├── main.scss         # (reserved)
 │   │   │   └── tailwind.scss     # Tailwind directives (@tailwind base/components/utilities)
+│   │   ├── images/               # (reserved) Static images
 │   │   └── ts/
 │   │       └── tailwind.config.ts # Tailwind custom tokens (width, height, z-index utilities)
 │   ├── components/
@@ -44,22 +47,29 @@ client_future/
 │   │   └── declarations.d.ts
 │   ├── layouts/
 │   │   └── default.vue           # Default layout — Nuxt 4 layout entry
-│   ├── pages/
-│   │   └── index.vue             # Main page — composes LazySvgStaffPaper + DomDrawer
-│   ├── nuxt.config.ts            # Nuxt 4 configuration (SSR=off, Vite, Tailwind CSS module)
-│   ├── package.json              # Dependency manifest
-│   └── tsconfig.json             # TypeScript configuration
+│   └── pages/
+│       └── index.vue             # Main page — composes LazySvgStaffPaper + DomDrawer
+├── eslint.config.mjs             # ESLint flat config
+├── nodemodules/                  # pnpm dependencies (gitignored)
+├── nuxt.config.ts                # Nuxt 4 configuration (SSR=off, Vite, Tailwind CSS module)
+├── package.json                  # Dependency manifest (pnpm workspace root)
+├── pnpm-lock.yaml                # pnpm lockfile
+├── pnpm-workspace.yaml           # pnpm workspace definition
+├── prettier.config.mjs           # Prettier code formatter config
+├── public/                       # Nuxt public static assets
+├── README.md                     # This file (English)
+├── README.zh.md                  # Chinese version
 ├── src-tauri/                    # Tauri 2 native shell
 │   ├── capabilities/
 │   │   └── default.json          # Permission config (currently core:default only)
+│   ├── icons/                    # App icons
 │   ├── src/
 │   │   ├── lib.rs                # Tauri app entry — Builder setup + tauri_plugin_log (debug mode)
 │   │   └── main.rs               # Windows subsystem entry + calls lib::run()
 │   ├── Cargo.toml                # Rust dependencies (tauri 2, serde, serde_json, log, tauri-plugin-log)
 │   ├── tauri.conf.json           # Tauri 2 config — app name "anon", build commands, dev URL localhost:3000, window config, CSP
 │   └── build.rs                  # Tauri build script
-├── README.md                     # This file (English)
-└── README.ch.md                  # Chinese version
+└── tsconfig.json                 # TypeScript configuration
 ```
 
 ---

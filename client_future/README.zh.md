@@ -7,7 +7,6 @@
 当前 `client/` 是 Python 3.10 + Streamlit 构建的会话式 Web UI，功能完整但受限于 Streamlit 的回滚式渲染模型，在交互流畅度、状态管理和跨平台桌面体验上存在天花板。`client_future` 以 **Tauri 2 + Nuxt 4** 重新构建，目标是：
 
 - **更流畅的交互** — 不再每次操作全页回滚，Vue 3 响应式驱动局部更新
-- **更丰富的可视化** — D3.js 驱动乐谱/知识图谱等 SVG 渲染
 - **离线优先** — Dexie.js（IndexedDB）存储会话历史，减少网络依赖
 - **原生桌面能力** — Tauri 2 提供系统托盘、文件系统、快捷键等 Streamlit 无法实现的功能
 - **组件化架构** — Vue 3 组合式 API + Pinia 状态管理，便于团队协作扩展
@@ -20,6 +19,9 @@
 
 ```
 client_future/
+├── .gitignore                    # Git 忽略规则
+├── .vscode/                      # VS Code 工作区设置
+│   └── settings.json
 ├── app/                          # Nuxt 4 SPA 源码
 │   ├── app.vue                   # 根组件入口
 │   ├── common.scss               # 全局 SCSS mixins 库（布局、形状、滚动条等）
@@ -28,6 +30,7 @@ client_future/
 │   │   │   ├── main.css          # 全局 CSS 重置 + CSS 变量
 │   │   │   ├── main.scss         # (预留)
 │   │   │   └── tailwind.scss     # Tailwind 指令注入（@tailwind base/components/utilities）
+│   │   ├── images/               # (预留) 静态图片资源
 │   │   └── ts/
 │   │       └── tailwind.config.ts # Tailwind 自定义 token（宽度、高度、z-index 工具类）
 │   ├── components/
@@ -44,22 +47,29 @@ client_future/
 │   │   └── declarations.d.ts
 │   ├── layouts/
 │   │   └── default.vue           # 默认布局 — Nuxt 4 layout 入口
-│   ├── pages/
-│   │   └── index.vue             # 主页 — 组合 LazySvgStaffPaper + DomDrawer
-│   ├── nuxt.config.ts            # Nuxt 4 配置（SSR=off, Vite, Tailwind CSS module）
-│   ├── package.json              # 依赖清单
-│   └── tsconfig.json             # TypeScript 配置
+│   └── pages/
+│       └── index.vue             # 主页 — 组合 LazySvgStaffPaper + DomDrawer
+├── eslint.config.mjs             # ESLint 扁平化配置
+├── node_modules/                 # pnpm 依赖（已 gitignore）
+├── nuxt.config.ts                # Nuxt 4 配置（SSR=off, Vite, Tailwind CSS module）
+├── package.json                  # 依赖清单（pnpm workspace 根）
+├── pnpm-lock.yaml                # pnpm 锁定文件
+├── pnpm-workspace.yaml           # pnpm 工作区定义
+├── prettier.config.mjs           # Prettier 代码格式化配置
+├── public/                       # Nuxt 公共静态资源
+├── README.md                     # 本文（英文版）
+├── README.zh.md                  # 本文（中文版）
 ├── src-tauri/                    # Tauri 2 原生壳
 │   ├── capabilities/
 │   │   └── default.json          # 权限配置（当前仅 core:default）
+│   ├── icons/                    # 应用图标
 │   ├── src/
 │   │   ├── lib.rs                # Tauri 应用入口 — Builder setup + tauri_plugin_log（debug 模式）
 │   │   └── main.rs               # Windows 子系统入口 + 调用 lib::run()
 │   ├── Cargo.toml                # Rust 依赖（tauri 2, serde, serde_json, log, tauri-plugin-log）
 │   ├── tauri.conf.json           # Tauri 2 配置 — 应用名 "anon"、构建命令、开发 URL localhost:3000、窗口配置、CSP
 │   └── build.rs                  # Tauri 构建脚本
-├── README.md                     # 本文（英文版）
-└── README.ch.md                  # 本文（中文版）
+└── tsconfig.json                 # TypeScript 配置
 ```
 
 ---
