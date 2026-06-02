@@ -2,8 +2,8 @@ import os
 import sys
 from pathlib import Path
 from logging import getLogger
-from config import MODELS_DIR
 from loguru import logger as _logger
+from config import SRC_DIR, MODELS_DIR
 from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
@@ -178,6 +178,7 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         config = RAGAnythingConfig(
             parser=parser,
             parse_method=parse_method,
+            working_dir=str(SRC_DIR / "rag" / "rag_anything_db"),
         )
         _rag_anything = RAGAnything(
             lightrag=lightrag,
