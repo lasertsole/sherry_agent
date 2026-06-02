@@ -10,33 +10,42 @@
 
 ## ✨ Introduction
 
-EMA AI Agent is a highly anthropomorphic AI agent system with long-term memory and complex reasoning capabilities. It's more than just a chatbot — it's a virtual companion with an independent **Persona**, **Skills**, and a dynamic **Skill Memory Graph**.
+EMA AI Agent is a highly anthropomorphic AI agent system with long-term memory and complex reasoning capabilities. It's more than just a chatbot — it's a virtual companion with an independent **Persona**, a dynamic **Skill Memory Graph**, and proactive behavior through scheduled tasks and background subagents.
 
-
+The Agent's character, **橘雪莉 (Sherry)**, is a detective girl with a dual personality contrast (gentle/cold) that shifts based on intimacy level. The entire system is designed to support immersive, persistent role-playing with memory that accumulates across sessions.
 
 ---
 
 ## 🚀 Key Features
 
 ### 1. 🧠 Deep Memory System (Context Engine)
-- **Skill Memory Graph**: Automatically extracts knowledge points from conversations to build a dynamic knowledge graph.
-- **Community Detection & Summarization**: Periodically partitions the graph and generates summaries for efficient long-term memory retrieval.
-- **Persistent Storage**: Stores conversation history and memory nodes in SQLite, supporting cross-session memory inheritance.
+- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/mes_memory/README.md)) + long-term knowledge graph ([Skill Memory](context_engine/skill_memory/README.md))
+- **Skill Memory Graph**: Automatically extracts knowledge points from conversations to build a dynamic knowledge graph
+- **Community Detection & Summarization**: Periodically partitions the graph and generates summaries for efficient long-term memory retrieval
+- **Query Rewriting**: Disambiguates pronouns and references using conversation history before retrieval
+- **Persistent Storage**: Stores conversation history and memory nodes in SQLite + FTS5, supporting cross-session memory inheritance
+- **Async Non-blocking Extraction**: Skill Memory extraction runs in the background; MesMemory writes are synchronous and immediate
+- ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
 
 ### 2. 🛠️ Dynamic Skill System
-- **SKILL.md Standard**: Skills defined in standardized Markdown format — the Agent can autonomously read and learn new abilities.
-- **Tool Calling**: Built-in Web search, file I/O, code execution (Python Repl), terminal commands, and more.
-- **Subagents**: Supports running complex time-consuming tasks in parallel in the background, with async results via a message bus.
+- **SKILL.md Standard**: Skills defined in standardized Markdown format — the Agent can autonomously read and learn new abilities
+- **Tool Calling**: Built-in Web search, file I/O, code execution (Python Repl), terminal commands, message search, and more
+- **Subagents**: Supports running complex time-consuming tasks in parallel in the background, with async results via a message bus
+- ▶️ _See the [Subagent System README](subagent/README.md) for lifecycle, Commander architecture, and API docs_
 
 ### 3. 🌐 Multi-Channel Access
-- **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice).
-- **QQ Bot**: Integrated with `qq-botpy` for direct interaction in QQ groups or private chats.
-- **Message Bus**: Internal async message queue (MessageBus) decouples input/output channels.
+- **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
+- **Next-Generation Client** ([client_future](client_future/)): A Nuxt.js + Tauri desktop/mobile client, currently in development
+- **QQ Bot**: Integrated with `qq-botpy` for direct interaction in QQ groups or private chats
+- **Message Bus**: Internal async message queue ([MessageBus](bus/queue.py)) decouples input/output channels
 
 ### 4. 🔊 Multimodal Interaction
-- **TTS Voice Synthesis**: Integrated with GPT-SoVITS for real-time voice replies that faithfully reproduce the character's voice.
-- **Visual Understanding**: Supports Vision-Language (VL) models for recognizing and analyzing user-uploaded images.
+- **TTS Voice Synthesis**: Foreign integrated with GPT-SoVITS for real-time voice replies that faithfully reproduce the character's voice
+- **Visual Understanding**: Supports Vision-Language (VL) models for recognizing and analyzing user-uploaded images
 
+### 5. ⏰ Scheduled & Proactive Behavior
+- **Cron Service** ([cron/](cron/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
+- **Heartbeat Service** ([heartbeat/](heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
 ---
 
 ## 🏗️ Tech Stack
@@ -46,11 +55,14 @@ Built on **Python 3.12**, with the following core technologies:
 | Module | Technology |
 | :----- | :--------- |
 | **Agent Framework** | LangChain 1.2, LangGraph |
-| **Vector & Retrieval** | FAISS, LightRAG, Sentence Transformers |
+| **Vector & Retrieval** | FAISS, LightRAG, Sentence Transformers, BGE/BAAI Embedding series |
 | **Database** | SQLite (FTS5 full-text search), LanceDB |
+| **Graph Algorithms** | igraph + Leiden Algorithm (community detection), PageRank |
 | **Web Server** | Robyn (high-performance async server) |
-| **Frontend UI** | Streamlit, Nuxt.js + Tauri (client) |
+| **Frontend UI** | Streamlit, Nuxt.js + Tauri (next-gen client) |
 | **LLM Support** | DeepSeek, OpenAI, Ollama (local models) |
+| **Task Scheduling** | croniter, asyncio |
+| **Async Messaging** | asyncio.Queue (MessageBus) |
 
 ---
 
@@ -58,17 +70,124 @@ Built on **Python 3.12**, with the following core technologies:
 
 ```text
 EMA_AI_agent/
-├── agent/              # Agent core logic & middleware (e.g. Summarization)
-├── context_engine/     # Memory engine (MesMemory & Skill Memory Graph)
-├── skills/             # Skill library (SKILL.md definition files)
-├── tools/              # Tools (Web Search, Python Repl, Agentic RAG, etc.)
-├── channels/           # Channel adapters (QQ, WebSocket)
-├── client/             # Streamlit frontend entry
-├── server/             # Robyn backend service & API routes
-├── workspace/          # Character profile files (IDENTITY.md, SOUL.md, USER.md)
-├── models/             # Model wrappers (Chat, Reasoner, VL, TTS)
-└── pub_func/           # Common utility functions
+├── agent/                  # Agent core logic & middleware
+│   ├── core.py             # Main agent loop (LangGraph compiled graph)
+│   ├── middlewares/        # SummarizationMiddleware, memory injection
+│   └── checkpointer/       # Session state checkpointing
+│
+├── bus/                    # Message bus (async queue)
+│   ├── queue.py            # MessageBus — inbound/outbound queues
+│   └── events.py           # InboundMessage, OutboundMessage data models
+│
+├── channels/               # Channel adapters (QQ, WebSocket)
+├── client/                 # Streamlit frontend entry
+├── client_future/          # Next-gen client (Nuxt.js + Tauri)
+│   ├── app/                # Vue 3 frontend
+│   ├── src-tauri/          # Tauri desktop shell
+│   └── nuxt.config.ts      # Nuxt.js configuration
+│
+├── config/                 # Centralized configuration
+│   ├── path.py             # File path configuration
+│   ├── schema.py           # Configuration schema models
+│   ├── character.py        # Character profile configuration
+│   └── num.py              # Numeric/tuning parameters
+│
+├── context_engine/         # Memory engine — see README for full docs
+│   ├── pre_builder.py      # Unified pre-build API (query rewrite + memory assembly)
+│   ├── mes_memory/         # Short-term session message memory (SQLite + FTS5)
+│   │   ├── core.py         # Business logic: retrieval, search, nudge extraction
+│   │   └── store/          # Data layer: SQLite CRUD, migrations
+│   └── skill_memory/       # Long-term knowledge graph
+│       ├── core.py         # Orchestrator: assemble, ingest, after_turn
+│       ├── extractor/      # LLM-based node/edge extraction from dialogue
+│       ├── recaller/       # Dual-path recall (precise + generalized)
+│       ├── graph/          # Community detection (Leiden), PageRank, dedup
+│       └── store/          # SQLite + vectors + FTS5 storage
+│
+├── cron/                   # Scheduled task service — see README
+│   ├── core.py             # CronService: timer loop, job execution
+│   ├── types.py            # CronSchedule, CronPayload, CronJob models
+│   └── jobs.json           # Persistent job store
+│
+├── heartbeat/              # Periodic task check service — see README
+│   ├── core.py             # HeartbeatService: loop, LLM decision, execution
+│   └── evaluate.py         # Notification gate: decide if results are worth delivering
+│
+├── models/                 # Model wrappers
+│   ├── chat/               # Chat model (LangChain BaseChatModel)
+│   ├── reasoner/           # Reasoner model (chain-of-thought)
+│   ├── vl/                 # Vision-Language model
+│   └── tts/                # TTS voice synthesis (GPT-SoVITS)
+│
+├── pub_func/               # Common utility functions
+├── rag/                    # Retrieval-Augmented Generation modules
+│   ├── agentic_rag/        # Agentic RAG with tool-calling orchestration
+│   ├── mutil_hop_graphrag/ # Multi-hop reasoning over graph knowledge
+│   └── rag_anything/       # General-purpose RAG adapter
+│
+├── runtime/                # Runtime utilities
+│   ├── count_register.py   # Usage/statistics counters
+│   └── relation_register.py# Relationship/intimacy tracking
+│
+├── server/                 # Robyn backend service & API routes
+├── sessions/               # Session runtime data (per-session)
+├── skills/                 # Skill library (SKILL.md definition files)
+├── src/                    # Runtime data directories
+│   ├── avatar/             # Character avatar images
+│   ├── checkpoints/        # Session checkpoints
+│   ├── gallery/            # Image gallery
+│   ├── rag/                # RAG index data
+│   ├── sessions/           # Session stores
+│   ├── store/              # Data stores
+│   └── temp/               # Temporary files
+│
+├── subagent/               # Subagent system — see README
+│   ├── core.py             # SubagentManager (singleton orchestrator)
+│   ├── commander/          # LangGraph-based Commander agent
+│   │   ├── core.py         # build_commander() — graph construction
+│   │   ├── tools/          # TodoWriter, Worker (parallel dispatch)
+│   │   └── middlewares/    # TodoInjector, TodoCleaner, SummarizationMiddleware
+│   ├── templates/          # Result announcement templates (Jinja2-style)
+│   └── type.py             # SubAgentOutput data model
+│
+├── tests/                  # Test suite
+├── tools/                  # Agent-accessible tools
+│   ├── web_search.py       # Web search tool
+│   ├── python_repl.py      # Python code execution
+│   ├── terminal.py         # Terminal command execution
+│   ├── read_file.py        # File reading
+│   ├── write_file.py       # File writing
+│   ├── subagent.py         # Subagent spawn tool (SubagentTool)
+│   ├── cron.py             # Cron management tool
+│   ├── memory.py           # Memory inspection tool
+│   └── message_search.py   # Conversation search tool
+│
+├── type/                   # Shared data models
+│   ├── __init__.py         # MultiModalMessage, Chat, FileType, etc.
+│   └── ...                 # Pydantic v2 models
+│
+├── workspace/              # Character profile files (IDENTITY.md, SOUL.md, USER.md)
+├── output/                 # Output directory (generated files)
+├── start.sh                # One-click startup script
+├── requirements.txt        # Python dependencies
+└── .env                    # Environment variables (API keys, model paths)
 ```
+
+---
+
+## 📚 Submodule Documentation
+
+Each major subsystem has its own detailed README:
+
+| Submodule | Description | Documentation |
+|-----------|-------------|---------------|
+| **Context Engine** | Dual memory system (MesMemory + Skill Memory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
+| **MesMemory** | Short-term session message memory | [EN](context_engine/mes_memory/README.md) · [ZH](context_engine/mes_memory/README.zh.md) |
+| **Skill Memory** | Long-term knowledge graph memory | [EN](context_engine/skill_memory/README.md) · [ZH](context_engine/skill_memory/README.zh.md) |
+| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](subagent/README.md) · [ZH](subagent/README.zh.md) |
+| **Cron Service** | Scheduled/periodic agent task execution | [EN](cron/README.md) · [ZH](cron/README.zh.md) |
+| **Heartbeat Service** | Periodic wake-up task check | [EN](heartbeat/README.md) · [ZH](heartbeat/README.zh.md) |
+| **Next-gen Client** | Nuxt.js + Tauri desktop/mobile client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
 
 ---
 
@@ -125,15 +244,17 @@ streamlit run client/core.py  # Start frontend
 
 The Agent's behavior is driven by Markdown files under `workspace/`:
 
-*   **IDENTITY.md**: Defines name, age, interests, relationships, etc.
-*   **SOUL.md**: Defines personality contrasts, speech style (e.g. "~です"), and behavioral logic.
-*   **AGENTS.md**: Defines tool usage priorities, safety boundaries, and ethical guidelines.
+- **IDENTITY.md**: Defines name, age, interests, relationships, etc.
+- **SOUL.md**: Defines personality contrasts, speech style (e.g. "~です"), and behavioral logic.
+- **AGENTS.md**: Defines tool usage priorities, safety boundaries, and ethical guidelines.
+- **USER.md**: Stores user-specific interaction preferences and known facts.
 
 ---
 
 ## 🤝 Contributing
 
 Issues and Pull Requests are welcome! To add a new skill:
+
 1. Create a folder under `skills/`.
 2. Write a `SKILL.md` describing the skill's usage and steps.
 3. Restart the Agent — it will auto-discover and load the new skill.

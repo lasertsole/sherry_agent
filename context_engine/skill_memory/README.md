@@ -1,5 +1,7 @@
 # Skill Memory — Intelligent Knowledge Graph Memory System
 
+[**中文文档**](README.zh.md) | **English**
+
 > **Skill Memory** is the core memory engine of the EMA AI Agent. It automatically extracts, organizes, and retrieves structured knowledge from conversations, building a dynamically evolving skill knowledge graph.
 
 ---
@@ -7,8 +9,10 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [Comparison with Hermes](#comparison-with-hermes)
 - [Architecture](#architecture)
 - [Workflow](#workflow)
+- [Core Mechanisms](#core-mechanisms)
 - [Key Components](#key-components)
 - [Data Model](#data-model)
 - [Recall Mechanism](#recall-mechanism)
@@ -41,6 +45,44 @@ Skill Memory is a **graph-based knowledge memory system** designed to overcome t
 3. **Personalized PageRank** — Dynamic node ranking based on query context
 4. **Hybrid Retrieval** — Vector similarity + FTS5 full-text search + graph traversal
 5. **Asynchronous Background Processing** — Incremental updates without blocking the main conversation flow
+
+---
+
+## Comparison with Hermes
+
+Skill Memory and Hermes (Function Calling approach) both aim to teach AI to reuse experience, but their design philosophies are fundamentally different.
+
+### Core Differences
+
+| Dimension | Hermes (Traditional) | Skill Memory (This System) |
+|-----------|---------------------|---------------------------|
+| **Storage** | Skill text generated per conversation, carried in context | Structured graph nodes + edges, on-demand recall |
+| **Retrieval** | None — everything carried in context | Dual-path recall (vector + graph + community) |
+| **Deduplication** | None — same skill generated repeatedly | Graph auto-merges similar nodes |
+| **Token Cost** | Linear growth with conversations, O(n) | Only recalls relevant nodes, O(k), k ≪ n |
+| **Routing** | None — skills in context but no invocation mapping | Routing table (edge `instruction` field) stores invocation methods |
+| **Knowledge Evolution** | None — historical skills don't update | validated_count accumulation → auto-promote to SKILL |
+| **Long-tail Management** | Context explosion | Graph refinement (community detection, dedup, merging) |
+
+### Token Comparison: Real-World Scenario
+
+Assuming 100 conversation turns, each producing 2 skill nodes:
+
+| Metric | Hermes | Skill Memory |
+|--------|--------|-------------|
+| Total skills | 200 (all in context) | 200 (in graph, only 6-10 recalled) |
+| Context Token | ~50K+ | ~1.5K-3K |
+| Redundancy | High (same skill regenerated) | Low (auto-merged) |
+| Knowledge Forgetting Risk | High (context window overflow) | Low (persistent storage) |
+
+### Core Advantages
+
+Skill Memory is not a "better Hermes" but a completely different paradigm:
+
+1. **Graph as Routing** — Relationships between nodes (USED_SKILL/SOLVED_BY/PATCHES) naturally form a routing table; the LLM knows how to invoke through the `instruction` field
+2. **Experience→Skill Auto-Promotion** — EVENT nodes matched 3+ times are automatically promoted to SKILL without manual intervention
+3. **Graph Refinement** — Community detection automatically clusters related domain nodes; PageRank ranking surfaces high-frequency nodes naturally
+4. **No Token Bloat** — Only the most relevant nodes for the current query are recalled, no growth with conversation history
 
 ---
 
@@ -205,6 +247,238 @@ await rectification_and_standardization(session_id="session_001")
 3. **State Cleanup**
    - Clear session runtime state
    - Release memory cache
+
+---
+
+## Core Mechanisms
+
+Skill Memory's core innovation lies in three automated mechanisms: experience-to-skill promotion, graph-based routing tables, and automatic merging of similar nodes.
+
+---
+
+### Experience → Skill Auto-Promotion
+
+**Core idea:** When the same experience (EVENT) is validated multiple times, it is automatically promoted to a reusable skill (SKILL).
+
+#### Promotion Flow
+
+```
+EVENT first appears → validated_count = 1
+     ↓
+EVENT matched again → validated_count += 1
+     ↓          (+1 each time it's recalled and confirmed)
+validated_count >= threshold (default 3)
+     ↓
+LLM finalize review:
+  - Determines if the experience has general value
+  - Checks if a better SKILL already exists
+  - Decides whether to promote
+     ↓
+Pass → Node type changes from EVENT to SKILL
+     → SOLVED_BY edge created (EVENT_old → SKILL_new)
+     → instruction field records specific operation steps
+```
+
+**Key Variables:**
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `validated_count` | Number of times this node was validated/matched | +1 per repeat occurrence |
+| `promotion_threshold` | Threshold to trigger LLM final review | 3 |
+| `finalize` | LLM call that performs final review | Triggered in `rectification_and_standardization` |
+
+**Code Logic (extractor/core.py):**
+
+```python
+# On node extraction, if name already exists, accumulate validated_count
+def upsert_node(db, c, session_id) -> UpsertResult:
+    name = normalize_name(c['name'])
+    ex = find_by_name(db, name)
+    
+    if ex:
+        # Already exists: increment validation count
+        count = ex.validated_count + 1
+        # Merge source sessions
+        sessions = list(set(ex.source_sessions + [session_id]))
+        UPDATE gm_nodes SET validated_count=?, source_sessions=? WHERE id=?
+    else:
+        # New node, validated_count defaults to 1
+        INSERT INTO gm_nodes VALUES (...)
+```
+
+```python
+# At session end, finalize EVENT nodes with validated_count >= threshold
+async def finalize(session_nodes, graph_summary) -> FinalizeResult:
+    promoted_skills = []
+    new_edges = []
+    invalidations = []
+    
+    for node in session_nodes:
+        if node.type == "EVENT" and node.validated_count >= promotion_threshold:
+            # LLM review: is this experience worth promoting to SKILL?
+            decision = await llm.ainvoke(
+                FINALIZE_PROMPT.format(node=node, summary=graph_summary)
+            )
+            if decision.promote:
+                promoted_skills.append(node)
+                new_edges.append({
+                    "from": node.id,
+                    "to": decision.skill_id,
+                    "type": "SOLVED_BY",
+                    "instruction": decision.instruction
+                })
+    
+    return FinalizeResult(
+        promoted_skills=promoted_skills,
+        new_edges=new_edges,
+        invalidations=invalidations
+    )
+```
+
+**Design Points:**
+- Threshold-triggered LLM final review, not automatic promotion — ensures quality
+- validated_count accumulates on every node match (not just on extraction)
+- Original EVENT node is retained after promotion (marked old, not deleted) — preserves history
+- `source_sessions` records every session ID where it appeared, enabling traceability
+
+---
+
+### Skill Routing Table
+
+**Core idea:** A SKILL node's incoming edges (SOLVED_BY / USED_SKILL) naturally form a routing table, eliminating the need for a separate router model.
+
+#### Routing Table Structure
+
+Routing information is stored in the edge's **`instruction` field**. Each SOLVED_BY or USED_SKILL edge records how to invoke the skill:
+
+```python
+# Routing table example (graph query)
+def build_routing_table(db, skill_name) -> list[dict]:
+    """Query all routing entries for a given SKILL node"""
+    cursor.execute("""
+        SELECT e.type, e.instruction, e.condition,
+               n_from.name AS from_name, n_from.type AS from_type
+        FROM gm_edges e
+        JOIN gm_nodes n_from ON e.from_id = n_from.id
+        WHERE e.to_id = (SELECT id FROM gm_nodes WHERE name = ?)
+        AND e.type IN ('SOLVED_BY', 'USED_SKILL')
+    """, (skill_name,))
+    return cursor.fetchall()
+```
+
+**Routing Information Format (instruction field examples):**
+
+| Source Node | Edge Type | instruction (Invocation Method) | condition (Trigger) |
+|------------|-----------|-------------------------------|---------------------|
+| EVENT:importerror-libgl1 | SOLVED_BY | `apt-get install libgl1-mesa-glx` | ImportError: libGL.so.1 encountered |
+| TASK:deploy-bilibili-mcp | USED_SKILL | Step 3: Create Python 3.10 env with conda | When deploying Python projects |
+| SKILL:pip-install | REQUIRES | Prerequisite: verify pip is installed | — |
+
+#### How is the Routing Table Built?
+
+No additional steps required. When each edge is created, the `instruction` field already contains invocation information:
+
+```python
+# Extractor writes routing info when creating SOLVED_BY edges
+{
+    "from": "n-event-001",           # EVENT node
+    "to": "n-skill-001",             # SKILL node
+    "type": "SOLVED_BY",
+    "instruction": "conda install -c conda-forge libgl1-mesa-glx",  # Invocation method
+    "condition": "ImportError: libGL.so.1"                          # Trigger condition
+}
+```
+
+#### Using the Routing Table During Recall
+
+```python
+# Edges attached to recall results naturally form the routing table
+result = await recaller.recall(query="Docker deployment error")
+for edge in result.edges:
+    if edge.type in ("SOLVED_BY", "USED_SKILL"):
+        # instruction can be directly used as an LLM tool invocation directive
+        print(f"{edge.from_id} → {edge.to_id}: {edge.instruction}")
+```
+
+**Design Points:**
+- Routing table is a **byproduct of the graph** — no separate construction or maintenance needed
+- The `instruction` field is **structured text** — directly consumable by the LLM
+- Multi-hop routing — multi-step chains can be constructed via REQUIRES edges
+
+---
+
+### Automatic Node Merging
+
+**Core idea:** When the semantic similarity of two nodes exceeds a threshold, they are automatically merged into one node, retaining the more complete information.
+
+#### Trigger Timing
+
+1. **On each extraction:** Newly extracted nodes are compared with existing nodes by name and vector
+2. **At session end:** Batch check all newly created nodes in this session
+3. **During graph maintenance:** Periodic global deduplication scan
+
+#### Merge Flow
+
+```
+Node A (name="docker-deploy-error")  ↔  Node B (name="docker-deployment-error")
+     ↓
+1. Vector similarity computation (cosine similarity)
+2. Edge connectivity check (are they already connected?)
+     ↓
+Similarity >= dedup_threshold (default 0.90)
+     ↓
+Merge:
+  - Keep the node with longer name or higher validated_count
+  - validated_count = A.count + B.count
+  - content = longer content
+  - source_sessions = union(A.sessions, B.sessions)
+  - Migrate all B's edges to A
+  - Delete B (merged node)
+```
+
+**Code Logic:**
+
+```python
+def merge_nodes(db, keep_id, merge_id):
+    keep = get_node(db, keep_id)
+    merge = get_node(db, merge_id)
+    
+    # 1. Merge attributes (keep longer content, accumulate validation count)
+    sessions = list(set(keep.source_sessions + merge.source_sessions))
+    count = keep.validated_count + merge.validated_count
+    content = keep.content if len(keep.content) >= len(merge.content) else merge.content
+    
+    UPDATE gm_nodes 
+    SET content=?, validated_count=?, source_sessions=? 
+    WHERE id=?
+    
+    # 2. Migrate edge relationships
+    UPDATE gm_edges SET from_id=? WHERE from_id=?
+    UPDATE gm_edges SET to_id=? WHERE to_id=?
+    
+    # 3. Delete self-loops and duplicate edges
+    DELETE FROM gm_edges WHERE from_id = to_id
+    DELETE FROM gm_edges 
+    WHERE id NOT IN (SELECT MIN(id) GROUP BY from_id, to_id, type)
+    
+    # 4. Delete merged node
+    delete_node(db, merge_id)
+```
+
+**Merge Condition Strategy:**
+
+| Strategy | Condition | Priority |
+|----------|-----------|----------|
+| Normalized names identical | `normalize_name(a) == normalize_name(b)` | Highest (100% merge) |
+| Vector similarity ≥ threshold | `cosine(a.embed, b.embed) >= 0.90` | High |
+| Same community + high similarity | Same community_id + similarity ≥ 0.85 | Medium |
+| Vector similarity only (no community link) | Similarity ≥ 0.95 | Medium |
+
+**Design Points:**
+- Merging is **reversible** (merged nodes are marked deleted rather than physically deleted, allowing rollback)
+- **Duplicate edge check** during migration (if two edges share from/to/type, only one is kept)
+- validated_count accumulates on merge — frequently occurring knowledge naturally gains higher weight
+- Name normalization rules: lowercase, hyphens replace spaces, strip punctuation
 
 ---
 

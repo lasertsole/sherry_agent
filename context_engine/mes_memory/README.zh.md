@@ -1,5 +1,7 @@
 # MesMemory — 会话消息记忆系统
 
+[**English**](README.md) | **中文文档**
+
 > **MesMemory** 是 EMA AI Agent 的短期对话记忆引擎，负责消息的持久化存储、历史检索、全文搜索以及用户偏好提取。
 
 ---
@@ -19,7 +21,7 @@
 
 ### 设计定位
 
-MesMemory 与 [Skill Memory](../skill_memory/README.ch.md) 互为补充：
+MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 
 | Skill Memory | MesMemory |
 |-------------|-----------|

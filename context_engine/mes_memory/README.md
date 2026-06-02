@@ -1,5 +1,7 @@
 # MesMemory — Session Message Memory System
 
+[**中文文档**](README.zh.md) | **English**
+
 > **MesMemory** is the short-term conversation memory engine for the EMA AI Agent, responsible for message persistence, history retrieval, full-text search, and user preference extraction.
 
 ---
