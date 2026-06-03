@@ -36,13 +36,9 @@ client_future/
 │   ├── components/
 │   │   ├── dom/                  # 基于 DOM 的 UI 组件
 │   │   │   └── drawer.vue        # 抽屉面板组件
-│   │   ├── icon/                 # (预留) 图标组件
-│   │   └── svg/                  # SVG 图形组件
-│   │       ├── staff.vue         # 单行五线谱（5 条线，由 lineGap/lineBold 参数控制）
-│   │       └── staffPaper.vue    # 多行五线谱纸（基于 StaffConfig 计算行数/间距）
+│   │   └── icon/                 # (预留) 图标组件
 │   ├── composables/              # Vue 3 组合式逻辑
-│   │   ├── mitt.ts               # mitt 事件总线实例
-│   │   └── staffConfig.ts        # 五线谱配置单例（StaffConfig）— 响应式 ref 管理 paddingY/staffNum/heightPercent/gapPerStaff
+│   │   └── mitt.ts               # mitt 事件总线实例
 │   ├── declare/                  # (预留) 类型声明
 │   │   └── declarations.d.ts
 │   ├── layouts/
@@ -82,7 +78,7 @@ client_future/
 | **前端框架** | [Nuxt 4](https://nuxt.com/) + [Vue 3](https://vuejs.org/) | SPA 模式（`ssr: false`），组合式 API + `<script setup lang="ts">` |
 | **状态管理** | [Pinia](https://pinia.vuejs.org/) + [pinia-plugin-persistedstate](https://prazdevs.github.io/pinia-plugin-persistedstate/) | 全局状态 + 持久化 |
 | **样式** | [Tailwind CSS](https://tailwindcss.com/)（通过 `@nuxtjs/tailwindcss`）+ SCSS | 原子化 CSS + 自定义 Mixin 库 |
-| **数据可视化** | [D3.js v7](https://d3js.org/) | SVG 乐谱渲染、知识图谱等 |
+| **数据可视化** | [D3.js v7](https://d3js.org/) | 知识图谱等 |
 | **离线存储** | [Dexie.js](https://dexie.org/) | IndexedDB 封装，缓存会话历史 |
 | **事件总线** | [mitt](https://github.com/developit/mitt) | 组件间轻量通信 |
 | **工具库** | [lodash-es](https://lodash.com/) | 深拷贝、去重等常用工具函数 |
@@ -125,14 +121,9 @@ client_future/
 app.vue (根)
   └─ NuxtLayout (default.vue)
        └─ NuxtPage (index.vue)
-            ├─ LazySvgStaffPaper  (SVG 五线谱纸)
-            │    └─ SvgStaff × N  (单行五线谱)
-            └─ DomDrawer          (抽屉面板)
 ```
 
-- **SVG 层** (`components/svg/`) — 五线谱/乐谱/知识图谱的向量渲染。`staff.vue` 渲染单行五线谱（5 条线），`staffPaper.vue` 根据 `StaffConfig` 单例计算页内行数和间距，组合多行。
 - **DOM 层** (`components/dom/`) — 传统 HTML 组件（抽屉、按钮、面板等）。
-- **Composables** — `staffConfig.ts` 采用**单例模式**保持全局一致的五线谱参数（paddingY, staffNum, heightPercent, gapPerStaff），通过 `ref` 实现响应式联动。`mitt.ts` 导出全局 `emitter` 实例。
 
 ### 数据流
 
@@ -148,26 +139,6 @@ app.vue (根)
 ---
 
 ## 核心模块说明
-
-### StaffConfig 单例 (`composables/staffConfig.ts`)
-
-五线谱渲染的参数管理中心。采用**单例模式**确保全局使用同一配置实例，所有参数通过 `ref()` 响应式暴露，任何组件修改参数后所有依赖方自动更新。
-
-核心参数：
-- `paddingY` — 页面上边距
-- `staffNum` — 每页五线谱行数
-- `heightPercent` — 单行高度百分比
-- `gapPerStaff` — 行间间距
-- `baisPerStaff` — 每行偏移量（用于滚动/分页）
-
-### SvgStaff / SvgStaffPaper (`components/svg/`)
-
-- **SvgStaff** — 渲染 5 条线的单行五线谱。`lineGap = heightPercent / 5`，`lineBold = heightPercent / 50`，以 `translate(x, y)` 定位。
-- **SvgStaffPaper** — 组合 `SvgStaff` 多行显示。通过 `staffNumOfcurrentPage` 控制行数，`baisPerStaff` 控制行间距。`viewBox="0 0 100 100"` 实现响应式缩放。
-
-### DomDrawer (`components/dom/drawer.vue`)
-
-抽屉面板组件，用于侧边栏/浮层面板等 UI 模式。
 
 ### SCSS 工具库 (`common.scss`)
 

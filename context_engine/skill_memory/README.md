@@ -475,7 +475,6 @@ def merge_nodes(db, keep_id, merge_id):
 | Vector similarity only (no community link) | Similarity ≥ 0.95 | Medium |
 
 **Design Points:**
-- Merging is **reversible** (merged nodes are marked deleted rather than physically deleted, allowing rollback)
 - **Duplicate edge check** during migration (if two edges share from/to/type, only one is kept)
 - validated_count accumulates on merge — frequently occurring knowledge naturally gains higher weight
 - Name normalization rules: lowercase, hyphens replace spaces, strip punctuation
