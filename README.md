@@ -92,16 +92,8 @@ EMA_AI_agent/
 │   │   │   │   └── tailwind.scss    # Tailwind directives
 │   │   │   └── ts/
 │   │   │       └── tailwind.config.ts # Tailwind custom tokens
-│   │   ├── components/
-│   │   │   ├── dom/                 # DOM-based UI components
-│   │   │   │   └── drawer.vue       # Drawer panel component
-│   │   │   ├── icon/                # (reserved) Icon components
-│   │   │   └── svg/                 # SVG graphic components
-│   │   │       ├── staff.vue        # Single musical staff
-│   │   │       └── staffPaper.vue   # Multi-staff sheet
 │   │   ├── composables/             # Vue 3 composable logic
-│   │   │   ├── mitt.ts              # mitt event bus instance
-│   │   │   └── staffConfig.ts       # Staff configuration singleton
+│   │   │   └── mitt.ts              # mitt event bus instance
 │   │   ├── declare/                 # (reserved) Type declarations
 │   │   │   └── declarations.d.ts
 │   │   ├── layouts/
@@ -297,6 +289,8 @@ Issues and Pull Requests are welcome! To add a new skill:
 3. Restart the Agent — it will auto-discover and load the new skill.
 
 ---
+
+Contact Information: QQ 3132225629
 
 ## 📄 License
 

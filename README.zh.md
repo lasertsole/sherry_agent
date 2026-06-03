@@ -92,16 +92,8 @@ EMA_AI_agent/
 │   │   │   │   └── tailwind.scss    # Tailwind 指令
 │   │   │   └── ts/
 │   │   │       └── tailwind.config.ts # Tailwind 自定义令牌
-│   │   ├── components/
-│   │   │   ├── dom/                 # 基于 DOM 的 UI 组件
-│   │   │   │   └── drawer.vue       # 抽屉面板组件
-│   │   │   ├── icon/                # (保留) 图标组件
-│   │   │   └── svg/                 # SVG 图形组件
-│   │   │       ├── staff.vue        # 单行五线谱
-│   │   │       └── staffPaper.vue   # 多行五线谱
 │   │   ├── composables/             # Vue 3 组合式逻辑
-│   │   │   ├── mitt.ts              # mitt 事件总线实例
-│   │   │   └── staffConfig.ts       # 乐谱配置单例
+│   │   │   └── mitt.ts              # mitt 事件总线实例
 │   │   ├── declare/                 # (保留) 类型声明
 │   │   │   └── declarations.d.ts
 │   │   ├── layouts/
@@ -296,6 +288,8 @@ Agent 的行为逻辑由 `workspace/` 下的 Markdown 文件驱动：
 3. 重启 Agent，它将自动发现并加载新技能。
 
 ---
+
+联系方式: QQ 3132225629
 
 ## 📄 许可证
 
