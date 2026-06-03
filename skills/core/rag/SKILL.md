@@ -17,9 +17,8 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from config import SRC_DIR
-
+from rag import get_rag_anything
 from raganything import RAGAnything
-from rag.rag_anything import get_rag_anything
 
 async def main(input_folder_path: str, classify_folder: str) -> None:
     rag: RAGAnything = await get_rag_anything()
@@ -51,8 +50,8 @@ project_root: Path = current_file.parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+from rag import get_rag_anything
 from raganything import RAGAnything
-from rag.rag_anything import get_rag_anything
 
 async def main(query: str) -> None:
     try:

@@ -225,17 +225,19 @@ def search_messages(
                 if t.upper() not in ("AND", "OR", "NOT")
             ] or [raw_query]
             token_clauses = []
-            like_params: list = []
+            like_params: list = [session_id]  # for m.session_id = ?
             for tok in non_op_tokens:
                 esc = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 token_clauses.append(
                     "(m.content LIKE ? ESCAPE '\\' OR m.tool_name LIKE ? ESCAPE '\\' OR m.tool_calls LIKE ? ESCAPE '\\')"
                 )
-                like_params += [session_id, f"%{esc}%", f"%{esc}%", f"%{esc}%"]
+                like_params += [f"%{esc}%", f"%{esc}%", f"%{esc}%"]
             like_where = ["m.session_id = ?", f"({' OR '.join(token_clauses)})"]
             if role_filter:
                 like_where.append(f"m.role IN ({','.join('?' for _ in role_filter)})")
                 like_params.extend(role_filter)
+            # instr() for snippet uses first search token
+            like_params.append(non_op_tokens[0])
             like_sql = f"""
                 SELECT 
                 m.id,
@@ -253,8 +255,6 @@ def search_messages(
                 LIMIT ? OFFSET ?
             """
             like_params.extend([limit, offset])
-            # instr() for snippet uses first search token
-            like_params = [non_op_tokens[0]] + like_params
             with _lock:
                 like_cursor = _db.execute(like_sql, like_params)
                 matches = [dict(row) for row in like_cursor.fetchall()]
