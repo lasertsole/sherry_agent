@@ -15,12 +15,14 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
         return {}
     return yaml.safe_load(parts[1]) or {}
 
-def scan_skills() -> list[dict[str, Any]]:
+def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     from .skills_snapshot import read_skills_snapshot
 
-    skills_snapshot: list[dict[str, str]] | None = read_skills_snapshot()
-    if skills_snapshot:
-        return skills_snapshot
+    if use_cache:
+        skills_snapshot: list[dict[str, str]] | None = read_skills_snapshot()
+
+        if skills_snapshot:
+            return skills_snapshot
 
     skills: list[dict[str, Any]] = []
     seen_paths = set()  # 用于去重

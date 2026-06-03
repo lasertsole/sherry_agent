@@ -7,14 +7,13 @@ from config import SRC_DIR, MODELS_DIR
 from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
-from rag.rag_anything.ensure_mineru_models import ensure_mineru_models
+from rag import ensure_mineru_models, get_lightrag
 
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from models import vl_model
-from rag.rag_anything.base import get_lightrag
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
 
 logger = getLogger(__name__)

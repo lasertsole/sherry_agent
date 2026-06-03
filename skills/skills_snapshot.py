@@ -5,7 +5,7 @@ from config import SKILLS_DIR
 def build_skills_snapshot() -> None:
     from .loader import scan_skills
 
-    skills: list[dict[str, str]] = scan_skills()
+    skills: list[dict[str, str]] = scan_skills(use_cache=False)
     skills_json :str = json.dumps(skills, ensure_ascii=False, indent=4)
     with open(os.path.join(SKILLS_DIR, 'skills_snapshot.json'), 'w', encoding='utf-8') as f:
         f.write(skills_json)
