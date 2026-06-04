@@ -13,12 +13,12 @@ class ToolLoopPrevention(AgentMiddleware):
     conversation turn.  Counter resets at the start of each new turn via
     ``abefore_agent``.
 
-    Threshold (default: 7) — once a tool's call count exceeds this in one
+    Threshold (default: 20) — once a tool's call count exceeds this in one
     turn, subsequent calls to that tool are silently skipped and a warning
     ``ToolMessage`` is returned instead.
     """
 
-    def __init__(self, session_id: str, threshold: int = 7, **kwargs):
+    def __init__(self, session_id: str, threshold: int = 20, **kwargs):
         super().__init__(**kwargs)
 
         self._session_id: str = session_id

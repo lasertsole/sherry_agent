@@ -12,7 +12,7 @@
 - **存储与检索**：`SQLite (FTS5)`（关系型与全文检索）+ `LanceDB / FAISS`（向量检索）+ `LightRAG`（知识图谱检索）。
 - **图算法**：`igraph` + `Leiden 算法`（用于记忆图谱的社区划分与多级摘要）。
 - **网络与前端**：`Robyn`（高性能 Python 异步 Web 服务器）+ `Streamlit` / `Tauri 2 + Nuxt 4`（跨平台桌面与移动端）。
-- **运行时环境**：`Python 3.12`，全面采用 `asyncio` 异步生态。
+- **运行时环境**：`Python 3.13`，全面采用 `asyncio` 异步生态。
 
 ### 🎯 实现功能（它能做什么）
 
@@ -46,7 +46,7 @@
 
 ### 🏁 阶段一：基础热身（跑通与验证）
 
-- **环境配置**：搭建 **Python 3.12** 环境，安装依赖，配置本地模型（Ollama）或云端 API（DeepSeek / OpenAI）。
+- **环境配置**：搭建 **Python 3.13** 环境，安装依赖，配置本地模型（Ollama）或云端 API（DeepSeek / OpenAI）。
 - **冒烟测试**：运行 `Streamlit` UI，发几条消息，检查 `SQLite` 中是否正确生成了 `MesMemory` 记录，查看后台 `Skill Memory` 的异步提取日志是否报错。
 
 ### 🚀 阶段二：核心开发/优化（具体任务）

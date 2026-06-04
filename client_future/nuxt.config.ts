@@ -27,7 +27,6 @@ export default defineNuxtConfig({
   // 导入第三方模块
   modules: [
     '@nuxtjs/tailwindcss',
-    '@primevue/nuxt-module'
   ],
 
   tailwindcss: {

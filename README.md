@@ -1,6 +1,6 @@
 # 🍊 EMA AI Agent - 橘雪莉 (Sherry)
 
-![Python](https://img.shields.io/badge/Python-3.12-blue)
+![Python](https://img.shields.io/badge/Python-3.13-blue)
 ![LangChain](https://img.shields.io/badge/LangChain-1.2-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 
@@ -50,7 +50,7 @@ The Agent's character, **橘雪莉 (Sherry)**, is a detective girl with a dual p
 
 ## 🏗️ Tech Stack
 
-Built on **Python 3.12**, with the following core technologies:
+Built on **Python 3.13**, with the following core technologies:
 
 | Module | Technology |
 | :----- | :--------- |
@@ -198,7 +198,6 @@ EMA_AI_agent/
 ├── workspace/              # Character profile files (IDENTITY.md, SOUL.md, USER.md)
 ├── output/                 # Output directory (generated files)
 ├── start.sh                # One-click startup script
-├── requirements.txt        # Python dependencies
 └── .env                    # Environment variables (API keys, model paths)
 ```
 
@@ -223,14 +222,14 @@ Each major subsystem has its own detailed README:
 ## ⚡ Quick Start
 
 ### 1. Prerequisites
-Make sure **Python 3.12+** is installed.
+Make sure **Python 3.13+** is installed.
 
 ```bash
 git clone https://github.com/your-repo/EMA_AI_agent.git
 cd EMA_AI_agent
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 2. Model Download

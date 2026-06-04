@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
 

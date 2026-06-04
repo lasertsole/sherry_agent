@@ -628,7 +628,7 @@ await after_turn(session_id, [user_message, ai_message])
 
 | 组件 | 技术 |
 |------|------|
-| **语言** | Python 3.12+ |
+| **语言** | Python 3.13+ |
 | **数据库** | SQLite 3 + WAL 模式 |
 | **全文搜索** | FTS5（unicode61 + trigram 分词器） |
 | **向量存储** | SQLite 中的 JSON 字段 |

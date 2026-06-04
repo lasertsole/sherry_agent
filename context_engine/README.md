@@ -628,7 +628,7 @@ Yes. MesMemory is fully independent. Call `retrieve_history_by_last_n_prompt()` 
 
 | Component | Technology |
 |-----------|-----------|
-| **Language** | Python 3.12+ |
+| **Language** | Python 3.13+ |
 | **Database** | SQLite 3 + WAL mode |
 | **Full-Text Search** | FTS5 (unicode61 + trigram tokenizers) |
 | **Vector Storage** | JSON field in SQLite |
