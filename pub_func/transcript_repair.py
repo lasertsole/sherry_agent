@@ -3,7 +3,7 @@ Transcript Repair
 
 Tool use/result pairing repair for assembled context.
 
-裁剪消息后修复 tool_use/toolResult 配对，防止 OpenClaw 报 "Message ordering conflict"
+裁剪消息后修复 tool_use/toolResult 配对，防止 agent 报 "Message ordering conflict"
 """
 
 import time
@@ -148,7 +148,7 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
     """
     修复工具调用和结果的配对关系
 
-    裁剪消息后修复 tool_use/toolResult 配对，防止 OpenClaw 报 "Message ordering conflict"
+    裁剪消息后修复 tool_use/toolResult 配对，防止 agent 报 "Message ordering conflict"
 
     Args:
         messages: 消息列表

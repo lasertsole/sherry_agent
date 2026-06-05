@@ -100,6 +100,7 @@ class Worker(BaseTool):
                         + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
                 from tools import build_core_tools
+                from agent.middlewares.tool_call_normalize import ToolCallNormalize
 
                 agent: CompiledStateGraph = create_agent(
                     system_prompt=system_prompt,
@@ -111,6 +112,8 @@ class Worker(BaseTool):
                             trigger=("messages", 20),
                             keep=("messages", 10),
                         ),
+                        # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
+                        ToolCallNormalize(self._session_id),
                     ],
                     response_format=SubAgentOutput
                 )

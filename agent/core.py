@@ -8,7 +8,7 @@ from context_engine import add_session_if_not_exists
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from models import chat_model, reasoner_model, vl_model
-from .middlewares import ContextEngineHook, Summarization, ToolLoopPrevention
+from .middlewares import ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize
 
 # 服务器启动时重构技能快照，用于保证本次服务器运行中skills提示词稳定，从而保证模型 前缀缓存 稳定
 build_skills_snapshot()
@@ -59,6 +59,8 @@ def built_agent(
 
             ),
             ToolLoopPrevention(session_id=session_id),
+            # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
+            ToolCallNormalize(session_id=session_id),
         ],
         response_format = response_format
     )
