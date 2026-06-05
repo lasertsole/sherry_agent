@@ -48,7 +48,7 @@ export default defineNuxtConfig({
   i18n: {
     strategy: 'prefix_except_default',
     defaultLocale: 'zh',
-    langDir: new URL('./app/locales/', import.meta.url).pathname,
+    langDir: new URL('./app/i18n/locales/', import.meta.url).pathname,
     locales: [
       { code: 'zh', name: '简体中文', file: 'zh.json' },
       { code: 'en', name: 'English', file: 'en.json' }

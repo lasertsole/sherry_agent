@@ -1,6 +1,6 @@
 <template>
     <div class="root">
-        {{ $t('welcome') }}
+        <ChatInputBox></ChatInputBox>
     </div>
 </template>
 
@@ -14,5 +14,6 @@
 
     .root{
         @include common.fullViewWindow;
+        position: relative;
     }
 </style>
