@@ -3,6 +3,7 @@ import sys
 import asyncio
 import numpy as np
 from logging import getLogger
+from rag.lightrag_snkv import register_with_lightrag
 
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
@@ -86,6 +87,9 @@ async def get_lightrag() -> LightRAG:
             ),
             rerank_model_func=_rerank_func,
         )
+
+        register_with_lightrag(_lightRAG)
+
         await _lightRAG.initialize_storages()
 
     return _lightRAG

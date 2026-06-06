@@ -2,13 +2,12 @@ import os
 import sys
 from pathlib import Path
 from logging import getLogger
-from rag import ensure_mineru_models
 from loguru import logger as _logger
 from config import SRC_DIR, MODELS_DIR
 from typing import Any, Dict, List, Optional, Union
-from rag.lightrag_snkv import register_with_lightrag
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
+from rag.ensure_mineru_models import ensure_mineru_models
 
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
@@ -187,7 +186,5 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
             vision_model_func=_vision_model_func,
             config=config,
         )
-
-        register_with_lightrag(_rag_anything)
 
     return _rag_anything
