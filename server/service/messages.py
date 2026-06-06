@@ -59,7 +59,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
     try:
         yield SSEMessage(f"{ASSISTANT_NAME}:")
-        
+
         if is_stream:
             # 用已组装好上下文的agent直接输出
             generator = await _get_generator(session_id, multi_modal_message)
@@ -119,9 +119,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         yield SSEMessage(f"请求失败: {e.response.text}")
     except requests.exceptions.Timeout as e:
         yield SSEMessage(f"请求超时: {e.args[0]}")
-
     except Exception as e:
-        raise Exception(e)
+        raise e
 
     finally:
         # 重置工具信息

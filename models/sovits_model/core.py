@@ -7,22 +7,22 @@ from requests import Response
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-current_dir = Path(__file__).parent.resolve()
+_current_dir = Path(__file__).parent.resolve()
 
 #参考语音地址
-refer_audio_path = current_dir / 'src/refer_audio.ogg'
-refer_audio_path = refer_audio_path.resolve().as_posix()
+_refer_audio_path = _current_dir / 'src/refer_audio.ogg'
+_refer_audio_path = _refer_audio_path.resolve().as_posix()
 
 #参考文本地址
-refer_text_path = current_dir / "src/refer_text.txt"
-refer_text_path = refer_text_path.resolve().as_posix()
+_refer_text_path = _current_dir / "src/refer_text.txt"
+_refer_text_path = _refer_text_path.resolve().as_posix()
 
 #辅助语言地址列表
-aux_ref_audio_folder_path = current_dir / "src/aux_ref_audio"
-aux_ref_audio_path_list = [(aux_ref_audio_folder_path / f.name).as_posix() for f in aux_ref_audio_folder_path.iterdir() if f.is_file()]
+_aux_ref_audio_folder_path = _current_dir / "src/aux_ref_audio"
+aux_ref_audio_path_list = [(_aux_ref_audio_folder_path / f.name).as_posix() for f in _aux_ref_audio_folder_path.iterdir() if f.is_file()]
 
-with open(refer_text_path, "r", encoding="utf-8") as f:
-    refer_text = f.read()
+with open(_refer_text_path, "r", encoding="utf-8") as f:
+    _refer_text = f.read()
 
 """
 ### 推理请求参数
@@ -55,10 +55,10 @@ with open(refer_text_path, "r", encoding="utf-8") as f:
 class TTS_Request(BaseModel):
     text: str = None
     text_lang: str = None
-    ref_audio_path: str = refer_audio_path
+    ref_audio_path: str = _refer_audio_path
     aux_ref_audio_paths: list = aux_ref_audio_path_list
     prompt_lang: str = 'ja'
-    prompt_text: str = refer_text
+    prompt_text: str = _refer_text
     top_k: int = 5
     top_p: float = 1
     temperature: float = 1
@@ -77,41 +77,41 @@ class TTS_Request(BaseModel):
     overlap_length: int = 2
     min_chunk_length: int = 16
 
-base_url = "http://127.0.0.1:9880"
-control_url = base_url + "/control"
-tts_url = base_url + "/tts"
-change_GPT_url = base_url + "/set_gpt_weights"
-change_sovits_url = base_url + "/set_sovits_weights"
-change_refer_audio_url = base_url + "/set_refer_audio"
+_base_url = "http://127.0.0.1:9880"
+_control_url = _base_url + "/control"
+_tts_url = _base_url + "/tts"
+_change_GPT_url = _base_url + "/set_gpt_weights"
+_change_sovits_url = _base_url + "/set_sovits_weights"
+_change_refer_audio_url = _base_url + "/set_refer_audio"
 
 # 加载环境变量
 load_dotenv(ENV_PATH, override=True)
 
 # 获取gpt-sovits项目所在文件夹
-gpt_sovits_dir = os.getenv("GPT_SOVITS_DIR")
-gpt_sovits_dir = Path(gpt_sovits_dir)
+_gpt_sovits_dir = os.getenv("GPT_SOVITS_DIR")
+_gpt_sovits_dir = Path(_gpt_sovits_dir)
 
 # 获取gpt-sovits api路径
-api_path = gpt_sovits_dir / "api_v2.py"
-api_path = api_path.as_posix()
+_api_path = _gpt_sovits_dir / "api_v2.py"
+_api_path = _api_path.as_posix()
 
 # 获取gpt-sovits解释器路径
-interpreter_path = gpt_sovits_dir / 'runtime/python.exe'
-interpreter_path = interpreter_path.as_posix()
+_interpreter_path = _gpt_sovits_dir / 'runtime/python.exe'
+_interpreter_path = _interpreter_path.as_posix()
 
 # 获取gpt-sovits 配置路径
-config_path = Path(__file__).parent.resolve() / "config/tts_infer.yaml"
-config_path = config_path.as_posix()
+_config_path = Path(__file__).parent.resolve() / "config/tts_infer.yaml"
+_config_path = _config_path.as_posix()
 
 # 模型gpt权重路径
-gpt_weight_path = os.getenv("GPT_WEIGHT_PATH")
-gpt_weight_path = gpt_sovits_dir / gpt_weight_path
-gpt_weight_path = gpt_weight_path.as_posix()
+_gpt_weight_path = os.getenv("GPT_WEIGHT_PATH")
+_gpt_weight_path = _gpt_sovits_dir / _gpt_weight_path
+_gpt_weight_path = _gpt_weight_path.as_posix()
 
 # 模型sovits权重路径
-sovits_weight_path = os.getenv("SOVITS_WEIGHT_PATH")
-sovits_weight_path = gpt_sovits_dir / sovits_weight_path
-sovits_weight_path = sovits_weight_path.as_posix()
+_sovits_weight_path = os.getenv("SOVITS_WEIGHT_PATH")
+_sovits_weight_path = _gpt_sovits_dir / _sovits_weight_path
+_sovits_weight_path = _sovits_weight_path.as_posix()
 
 """以下是api"""
 initialed = False
@@ -120,16 +120,16 @@ def fetch_TTS_sound(request: TTS_Request)-> Response | None:
     global initialed
     try:
         if initialed:
-            res = requests.post(tts_url, json=request.model_dump(), verify=True)
+            res = requests.post(_tts_url, json=request.model_dump(), verify=True)
             return res
         else:
-            res = change_GPT_model(gpt_weight_path)
+            res = change_GPT_model(_gpt_weight_path)
             res.raise_for_status()
 
-            res = change_sovits_model(sovits_weight_path)
+            res = change_sovits_model(_sovits_weight_path)
             res.raise_for_status()
 
-            res = requests.post(tts_url, json=request.model_dump(), verify=True)
+            res = requests.post(_tts_url, json=request.model_dump(), verify=True)
             res.raise_for_status()
             initialed = True
             return res
@@ -152,7 +152,7 @@ def control_model(command: str = None)-> Response | None:
         "command": command
     }
 
-    res = requests.get(control_url, params=payload, verify=True)
+    res = requests.get(_control_url, params=payload, verify=True)
     return res
 
 
@@ -164,7 +164,7 @@ def change_GPT_model(weights_path: str = None)-> Response | None:
     payload = {
         "weights_path": weights_path
     }
-    res = requests.get(change_GPT_url, params=payload, verify=True)
+    res = requests.get(_change_GPT_url, params=payload, verify=True)
     return res
 
 
@@ -176,7 +176,7 @@ def change_sovits_model(weights_path: str = None)-> Response | None:
     payload = {
         "weights_path": weights_path
     }
-    res = requests.get(change_sovits_url, params=payload, verify=True)
+    res = requests.get(_change_sovits_url, params=payload, verify=True)
     return res
 
 
@@ -189,5 +189,5 @@ def change_refer_audio(refer_audio_path: str = None)-> Response | None:
         refer_audio_path: refer_audio_path
     }
 
-    res = requests.get(change_refer_audio_url, params=payload, verify=True)
+    res = requests.get(_change_refer_audio_url, params=payload, verify=True)
     return res

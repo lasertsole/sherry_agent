@@ -14,6 +14,7 @@ load_dotenv(ENV_PATH, override = True)
 api_key = os.getenv("SIMPLE_CHAT_API_KEY")
 api_name = os.getenv("SIMPLE_CHAT_API_NAME")
 model_provider = os.getenv("SIMPLE_CHAT_MODEL_PROVIDER")
+api_base = os.getenv("SIMPLE_CHAT_API_BASE")
 max_tokens = os.getenv("SIMPLE_CHAT_MAX_TOKEN")
 if max_tokens:
     max_tokens = min(int(max_tokens), 65536)
@@ -22,6 +23,7 @@ model_config:dict[str, Any] = {
     "model_provider": model_provider,
     "model": api_name,
     "api_key": api_key,
+    "api_base": api_base,
     "temperature": 0,
     "max_retries": 2,
     "profile": {"max_input_tokens": max_tokens}  # 设置模型上下文窗口大小
