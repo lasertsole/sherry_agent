@@ -206,8 +206,6 @@ Auto-generated images in `output/` after each stage:
 
 `extract_thinking_result()` converts the complex dict output into an **ultra-minimal string** (core conclusions + confidence only), suitable as AI model thinking output.
 
-See [OPTIMIZATION_COMPARISON.md](./OPTIMIZATION_COMPARISON.md) for benchmark comparison, and [USAGE_THINKING_RESULT.md](./USAGE_THINKING_RESULT.md) for the usage guide.
-
 ---
 
 ## Related Docs
@@ -215,7 +213,6 @@ See [OPTIMIZATION_COMPARISON.md](./OPTIMIZATION_COMPARISON.md) for benchmark com
 | Document | Description |
 |----------|-------------|
 | [AGOT_STAGES.md](./AGOT_STAGES.md) | Detailed 8-stage algorithm documentation |
-| [USAGE_THINKING_RESULT.md](./USAGE_THINKING_RESULT.md) | Thinking result extraction guide |
 | [OPTIMIZATION_COMPARISON.md](./OPTIMIZATION_COMPARISON.md) | Output compaction benchmarks |
 
 ## source

@@ -6,11 +6,9 @@ AGoT Processor - Independent implementation of ASR-GoT algorithm
 import json
 import logging
 import hashlib
-import os
-from typing import Dict, Any, Optional
-
-from .utils.visualization import visualize_graph, visualize_layers
+from typing import Dict, Any
 from .checkpoint_manager import CheckpointManager
+from .utils.visualization import visualize_graph, visualize_layers
 
 logger = logging.getLogger("agot-processor")
 

@@ -206,8 +206,6 @@ result = processor.process_query(
 
 `extract_thinking_result()` 方法将复杂的字典输出转换为**超精简字符串**（仅保留核心结论 + 置信度），适合直接作为 AI 模型的思维结果使用。
 
-优化对比请参阅 [OPTIMIZATION_COMPARISON.md](./OPTIMIZATION_COMPARISON.md)，使用指南请参阅 [USAGE_THINKING_RESULT.md](./USAGE_THINKING_RESULT.md)。
-
 ---
 
 ## 相关文档
@@ -215,7 +213,6 @@ result = processor.process_query(
 | 文档 | 说明 |
 |------|------|
 | [AGOT_STAGES.md](./AGOT_STAGES.md) | 8 阶段算法详细文档（英文） |
-| [USAGE_THINKING_RESULT.md](./USAGE_THINKING_RESULT.md) | 思维结果提取使用指南 |
 | [OPTIMIZATION_COMPARISON.md](./OPTIMIZATION_COMPARISON.md) | 结果精简优化对比说明 |
 
 

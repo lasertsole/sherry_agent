@@ -86,3 +86,4 @@ def full_algorithm():
 if __name__ == "__main__":
     print("\n")
     result = full_algorithm()
+    print(result)

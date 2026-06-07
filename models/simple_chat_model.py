@@ -23,7 +23,7 @@ model_config:dict[str, Any] = {
     "model_provider": model_provider,
     "model": api_name,
     "api_key": api_key,
-    "api_base": api_base,
+    "base_url": api_base,
     "temperature": 0,
     "max_retries": 2,
     "profile": {"max_input_tokens": max_tokens}  # 设置模型上下文窗口大小

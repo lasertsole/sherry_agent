@@ -7,10 +7,10 @@ from skills import get_skills_text
 from ...type import SubAgentOutput
 from logging import Logger, getLogger
 from pydantic import BaseModel, Field
-from workspace import CORE_FILE_NAMES
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 from config import SRC_DIR, WORKSPACE_DIR
+from workspace import CORE_SYSTEM_FILE_NAMES
 from context_engine import assemble, after_turn
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.messages import HumanMessage, BaseMessage
@@ -66,7 +66,7 @@ class Worker(BaseTool):
         file_paths: list[str] = []
 
         # 确保一定有核心文件
-        for core_file in CORE_FILE_NAMES:
+        for core_file in CORE_SYSTEM_FILE_NAMES:
             path = WORKSPACE_DIR / core_file
             if not path.exists():
                 continue
