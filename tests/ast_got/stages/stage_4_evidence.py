@@ -1,7 +1,7 @@
 import json
 import random
-import logging
 import datetime
+from loguru import logger
 from typing import Dict, Any, List
 from models import simple_chat_model
 from langchain.agents import create_agent
@@ -13,8 +13,6 @@ from tests.ast_got.models.hyperedge import Hyperedge
 from tools import build_web_search_tool, build_python_repl_tool
 from tests.ast_got.utils.math_utils import bayesian_update, calculate_info_gain
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger("agot-stage4")
 
 class EdgeTypeOutput(BaseModel):
     type: str = Field(description="Relationship type: 'supportive', 'contradictory', 'correlative', 'causal', or 'temporal'")

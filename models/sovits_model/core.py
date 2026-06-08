@@ -2,6 +2,7 @@ import os
 import requests
 from pathlib import Path
 from typing import Union
+from loguru import logger
 from config import ENV_PATH
 from requests import Response
 from dotenv import load_dotenv
@@ -135,6 +136,7 @@ def fetch_TTS_sound(request: TTS_Request)-> Response | None:
             return res
 
     except Exception as e:
+        logger.error(f"Error in fetch_TTS_sound: {e}")
         return None
 
 

@@ -1,5 +1,6 @@
 import os
 import shutil
+from loguru import logger
 from datetime import datetime
 from typing import Any, Literal
 from config import SESSIONS_DIR
@@ -49,6 +50,6 @@ def todo_cleaner_builder(session_id: str, task_id: str, mode: Literal["delete", 
                 print(f"[Todo Cleaner] 📂 Archived: {todo_file} -> {target_path}")
 
         except Exception as e:
-            print(f"[Todo Cleaner] ❌ Failed to process todo file: {e}")
+            logger.warning(f"[Todo Cleaner] ❌ Failed to process todo file: {e}")
 
     return todo_cleaner

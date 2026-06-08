@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import threading
 from typing import Optional
 
@@ -7,7 +6,6 @@ _tool_loop = None          # persistent loop for the main (CLI) thread
 _worker_thread_local = threading.local()
 _tool_loop_lock = threading.Lock()
 
-logger = logging.getLogger(__name__)
 
 def _get_worker_loop():
     """Return a persistent event loop for the current worker thread.

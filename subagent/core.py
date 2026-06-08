@@ -1,9 +1,9 @@
 import uuid
 import asyncio
 from pathlib import Path
+from loguru import logger
 from models import chat_model
 from .type import SubAgentOutput
-from logging import Logger, getLogger
 from .commander import build_commander
 from skills.loader import get_skills_text
 from config import SRC_DIR, WORKSPACE_DIR
@@ -15,8 +15,6 @@ from workspace.prompt_builder import build_system_prompt
 from pub_func import render_template_file, build_agent_config
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-
-logger: Logger = getLogger(__name__)
 _current_dir = Path(__file__).parent
 _template_dir = (_current_dir / "templates").resolve()
 

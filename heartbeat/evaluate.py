@@ -1,7 +1,5 @@
-import logging
+from loguru import logger
 from models import simple_chat_model
-
-logger = logging.getLogger(__name__)
 
 _EVALUATE_SYSTEM_PROMPT = (
     "You are a notification gate for a background agent. "

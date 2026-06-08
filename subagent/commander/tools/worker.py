@@ -1,11 +1,11 @@
 import asyncio
 from typing import Any
 from pathlib import Path
+from loguru import logger
 from models import chat_model
 from config import SESSIONS_DIR
 from skills import get_skills_text
 from ...type import SubAgentOutput
-from logging import Logger, getLogger
 from pydantic import BaseModel, Field
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
@@ -17,7 +17,6 @@ from langchain_core.messages import HumanMessage, BaseMessage
 from langchain.agents.middleware import SummarizationMiddleware
 from pub_func import render_template_file, slice_last_turn, sanitize_tool_use_result_pairing, build_agent_config
 
-logger: Logger = getLogger(__name__)
 
 class WorkerTask(BaseModel):
     label: str = Field(description="任务标签")

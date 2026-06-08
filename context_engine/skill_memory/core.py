@@ -1,8 +1,7 @@
 import json
 import math
 import asyncio
-import logging
-import sqlite3
+from loguru import logger
 from config import SRC_DIR
 from .recaller import Recaller
 from .extractor import Extractor
@@ -20,7 +19,6 @@ from .graph import (invalidate_graph_cache, detect_communities, summarize_commun
 from .store import (get_db, delete_node, save_message, get_unextracted, get_by_session, upsert_node, find_by_id, find_by_name,
                    upsert_edge, delete_extracted, UpsertResult)
 
-logger = logging.getLogger(__name__)
 
 class SliceLastTurn(TypedDict):
     messages: List[BaseMessage]
@@ -330,8 +328,8 @@ async def after_turn(
                     f"{summaries} summaries"
                 )
 
-        except Exception as err:
-            logger.error(f"[skill_memory] periodic maintenance failed: {err}")
+        except Exception as e:
+            logger.error(f"[skill_memory] periodic maintenance failed: {e}")
 
 async def dispose() -> None:
     """释放所有内存"""
@@ -423,8 +421,8 @@ async def rectification_and_standardization(session_id: str) -> None:
             f"top_pr={', '.join(top_pr_names)}"
         )
 
-    except Exception as err:
-        logger.error(f"[skill_memory] session_end error: {err}")
+    except Exception as e:
+        logger.error(f"[skill_memory] session_end error: {e}")
     finally:
         # 清理 Session 状态
         msg_seq.pop(session_id, None)

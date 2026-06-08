@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from pathlib import Path
+from loguru import logger
 from config import HEARTBEAT_PATH
 from models import simple_chat_model
 from .evaluate import evaluate_response
 from typing import Any, Callable, Coroutine
 
-logger = logging.getLogger(__name__)
 
 _HEARTBEAT_TOOL = [
     {

@@ -1,4 +1,5 @@
 import requests
+from loguru import logger
 from robyn import SSEMessage
 from config import ASSISTANT_NAME
 from type import MultiModalMessage
@@ -117,11 +118,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
     except requests.exceptions.HTTPError as e:
         yield SSEMessage(f"请求失败: {e.response.text}")
+        logger.exception(e)
     except requests.exceptions.Timeout as e:
         yield SSEMessage(f"请求超时: {e.args[0]}")
+        logger.exception(e)
     except Exception as e:
+        logger.exception(e)
         raise e
-
     finally:
         # 重置工具信息
         _current_tool_name = ""

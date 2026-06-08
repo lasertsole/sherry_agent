@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 import pkgutil
 import importlib
+from loguru import logger
 from typing import TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from channels.base import BaseChannel

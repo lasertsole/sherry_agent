@@ -1,6 +1,6 @@
 import random
-import logging
 import datetime
+from loguru import logger
 from typing import Dict, Any, List
 from models import simple_chat_model
 from pydantic import BaseModel, Field
@@ -11,8 +11,6 @@ from langchain_core.runnables import RunnableSerializable
 from langchain_core.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate, ChatPromptTemplate
 
 from tests.ast_got.utils.metadata_utils import generate_id, check_falsifiability
-
-logger = logging.getLogger("agot-stage3")
 
 class HypothesisItem(BaseModel):
     """单个科学假设"""

@@ -2,8 +2,8 @@
 import re
 import json
 import asyncio
-import logging
 import sqlite3
+from loguru import logger
 import concurrent.futures
 from models import chat_model
 from pub_func import run_async
@@ -195,19 +195,19 @@ async def _summarize(
             if content:
                 return content
             # Reasoning-only / empty — let the retry loop handle it
-            logging.warning("Session search LLM returned empty content (attempt %d/%d)", attempt + 1, max_retries)
+            logger.warning("Session search LLM returned empty content (attempt %d/%d)", attempt + 1, max_retries)
             if attempt < max_retries - 1:
                 await asyncio.sleep(1 * (attempt + 1))
                 continue
             return content
         except RuntimeError:
-            logging.warning("No auxiliary model available for session summarization")
+            logger.warning("No auxiliary model available for session summarization")
             return None
         except Exception as e:
             if attempt < max_retries - 1:
                 await asyncio.sleep(1 * (attempt + 1))
             else:
-                logging.warning(
+                logger.warning(
                     "Session summarization failed after %d attempts: %s",
                     max_retries,
                     e,
@@ -285,7 +285,7 @@ def session_search(
                 conversation_text = _truncate_around_matches(conversation_text, query)
                 tasks.append((session_id, match_info, conversation_text))
             except Exception as e:
-                logging.warning(
+                logger.warning(
                     "Failed to prepare session %s: %s",
                     session_id,
                     e,
@@ -318,7 +318,7 @@ def session_search(
 
             results = run_async(_summarize_all())
         except concurrent.futures.TimeoutError:
-            logging.warning(
+            logger.warning(
                 "Session summarization timed out after 60 seconds",
                 exc_info=True,
             )
@@ -330,7 +330,7 @@ def session_search(
         summaries:List[str] = []
         for (session_id, match_info, conversation_text), result in zip(tasks, results):
             if isinstance(result, Exception):
-                logging.warning(
+                logger.warning(
                     "Failed to summarize session %s: %s",
                     session_id, result, exc_info=True,
                 )
@@ -358,7 +358,7 @@ def session_search(
         }, ensure_ascii=False)
 
     except Exception as e:
-        logging.error("Session search failed: %s", e, exc_info=True)
+        logger.error("Session search failed: %s", e, exc_info=True)
         return _tool_error(f"Search failed: {str(e)}", success=False)
 
 

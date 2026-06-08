@@ -4,6 +4,7 @@ import time
 import random
 import string
 import sqlite3
+from loguru import logger
 from ..type import GmNode, GmEdge
 from pub_func import contains_cjk
 from typing import Any, Optional, List, TypedDict, Set
@@ -188,6 +189,7 @@ def update_pageranks(db: sqlite3.Connection, scores: dict) -> None:
         db.commit()
     except Exception as e:
         db.rollback()
+        logger.exception(f"Error updating PageRank scores: {e}")
         raise e
 
 

@@ -1,8 +1,7 @@
-from logging import getLogger
+from loguru import logger
 from typing import Callable, Any
 from pydantic import BaseModel, Field
 
-logger = getLogger(__name__)
 
 class Trigger(BaseModel):
     threshold: int = 1

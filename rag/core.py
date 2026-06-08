@@ -1,8 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from logging import getLogger
-from loguru import logger as _logger
+from loguru import logger
 from config import SRC_DIR, MODELS_DIR
 from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
@@ -15,8 +14,6 @@ if _project_root not in sys.path:
 
 from models import vl_model
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
-
-logger = getLogger(__name__)
 
 
 os.environ["HF_HUB_OFFLINE"] = "0"
@@ -160,8 +157,8 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         try:
             ensure_mineru_models(source="huggingface")
         except Exception as e:
-            _logger.warning(f"Download from huggingface failed: {e}")
-            _logger.info("Retrying with modelscope ...")
+            logger.warning(f"Download from huggingface failed: {e}")
+            logger.info("Retrying with modelscope ...")
             ensure_mineru_models(source="modelscope")
 
         # Switch to local model mode
