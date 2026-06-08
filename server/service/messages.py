@@ -1,3 +1,4 @@
+import time
 import requests
 from loguru import logger
 from robyn import SSEMessage
@@ -19,6 +20,7 @@ def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> List[B
 
 """以下是组装自带上下文的agent逻辑"""
 async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True):
+    start_time = time.time()
     checkpointer: BaseCheckpointSaver = await build_async_sqlite_checkpointer()
 
     # 创建agent
@@ -39,7 +41,14 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 
             content_list.append({"type": "image_url", "image_url": {"url": image_url}})
             # 切换模型
+            logger.info(f"Switching to VL model for image processing: session_id={session_id}")
             agent = built_agent(system_prompt=build_system_prompt(), session_id = session_id, model_type = ModelType.VL_MODEL, enable_tool = False)
+
+    elapsed = time.time() - start_time
+    logger.info(
+        f"Agent generator prepared: session_id={session_id}, duration={elapsed:.2f}s, "
+        f"is_stream={is_stream}, has_images={len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0}"
+    )
 
     if is_stream:
         return agent.astream(input={"messages": [HumanMessage(content = content_list)]}, config=build_agent_config(session_id), stream_mode="messages")
@@ -54,6 +63,12 @@ _current_tool_id: str = ""
 async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[str, None]:
     global _current_tool_name
     global _current_tool_id
+    
+    start_time = time.time()
+    logger.info(
+        f"Agent execution started: session_id={session_id}, is_stream={is_stream}, "
+        f"input_text_length={len(multi_modal_message.text) if multi_modal_message.text else 0}"
+    )
 
     # 创建已经组装好上下文的agent
     ai_text:str = ""
@@ -116,13 +131,34 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             ai_text += res
             yield SSEMessage(res)
 
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Agent execution completed: session_id={session_id}, duration={elapsed:.2f}s, "
+            f"output_length={len(ai_text)}"
+        )
+
     except requests.exceptions.HTTPError as e:
+        elapsed = time.time() - start_time
         yield SSEMessage(f"请求失败: {e.response.text}")
+        logger.error(
+            f"Agent execution HTTP error: session_id={session_id}, duration={elapsed:.2f}s, "
+            f"error={e.response.text}"
+        )
         logger.exception(e)
     except requests.exceptions.Timeout as e:
+        elapsed = time.time() - start_time
         yield SSEMessage(f"请求超时: {e.args[0]}")
+        logger.error(
+            f"Agent execution timeout: session_id={session_id}, duration={elapsed:.2f}s, "
+            f"error={e.args[0]}"
+        )
         logger.exception(e)
     except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(
+            f"Agent execution failed: session_id={session_id}, duration={elapsed:.2f}s, "
+            f"error={str(e)}"
+        )
         logger.exception(e)
         raise e
     finally:
@@ -135,10 +171,14 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
 """以下是会话结束逻辑"""
 async def session_end(session_id: str):
+    logger.info(f"Session ending: session_id={session_id}")
     await rectification_and_standardization(session_id = session_id)
+    logger.info(f"Session ended: session_id={session_id}")
 """以上是会话结束逻辑"""
 
 """以下是清除会话历史记录"""
 async def clear_session(session_id: str):
+    logger.info(f"Clearing session history: session_id={session_id}")
     await clear_session_DAO(session_id = session_id)
+    logger.info(f"Session history cleared: session_id={session_id}")
 """以上是清除会话历史记录"""
