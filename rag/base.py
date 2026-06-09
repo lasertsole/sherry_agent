@@ -40,7 +40,6 @@ async def _local_llm_func(
     response = await simple_chat_model.ainvoke(messages)
     return response.content
 
-
 async def _local_embedding_func(texts: list[str]) -> np.ndarray:
     """将本地 embed_model 适配为 LightRAG 需要的格式"""
     embeddings = embed_model.embed_documents(texts)
@@ -63,7 +62,6 @@ async def _rerank_func(
         }
         for r in results
     ]
-
 
 _lightRAG: LightRAG | None = None
 

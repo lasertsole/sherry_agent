@@ -42,7 +42,7 @@ def _get_tool_loop():
             _tool_loop = asyncio.new_event_loop()
         return _tool_loop
 
-def run_async(coro):
+def run_async(coro, timeout: float = 300):
     """Run an async coroutine from a sync context.
 
     If the current thread already has a running event loop (e.g., inside
@@ -61,6 +61,11 @@ def run_async(coro):
 
     This is the single source of truth for sync->async bridging in tool
     handlers. Each handler is self-protecting via this function.
+
+    Args:
+        coro: The async coroutine to execute.
+        timeout: Optional timeout in seconds. If the coroutine does not
+            complete within the given time, a TimeoutError is raised.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -84,7 +89,8 @@ def run_async(coro):
             loop_ready.set()
             try:
                 asyncio.set_event_loop(worker_loop)
-                return worker_loop.run_until_complete(coro)
+                _coro = asyncio.wait_for(coro, timeout=timeout)
+                return worker_loop.run_until_complete(_coro)
             finally:
                 try:
                     # Cancel anything still pending (e.g. task cancelled
@@ -103,7 +109,7 @@ def run_async(coro):
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         future = pool.submit(_run_in_worker)
         try:
-            return future.result(timeout=300)
+            return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
             # Cancel the coroutine inside its own loop so the worker thread
             # can wind down instead of running forever.
@@ -128,7 +134,11 @@ def run_async(coro):
     # lifetime — preventing "Event loop is closed" on GC cleanup.
     if threading.current_thread() is not threading.main_thread():
         worker_loop = _get_worker_loop()
+        if timeout is not None:
+            coro = asyncio.wait_for(coro, timeout=timeout)
         return worker_loop.run_until_complete(coro)
 
     tool_loop = _get_tool_loop()
+    if timeout is not None:
+        coro = asyncio.wait_for(coro, timeout=timeout)
     return tool_loop.run_until_complete(coro)

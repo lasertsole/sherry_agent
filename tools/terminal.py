@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import locale
+import subprocess
 from langchain_community.tools import ShellTool
-from typing import Union, List
+from typing import Union, List, Any
 from config import ROOT_DIR
 
 
@@ -16,7 +18,9 @@ class SafeShellTool(ShellTool):
         description: str = "Run shell commands in a sandboxed workspace."
     """
     def __init__(self, root_dir):
-        super().__init__(root_dir = root_dir)
+        super().__init__(root_dir=root_dir)
+        # Detect system encoding (Windows typically uses GBK/codepage 936)
+        self._encoding = locale.getpreferredencoding() or "utf-8"
 
     def _run(self, commands: Union[str, List[str]], **kwargs) -> str:
         for bad in BLACKLIST:
@@ -25,8 +29,32 @@ class SafeShellTool(ShellTool):
 
         try:
             return super()._run(commands, **kwargs)
-        except UnicodeDecodeError as e:
-            return f"Encoding error: {str(e)}. Try using English-only commands or files."
+        except UnicodeDecodeError:
+            # Fallback: retry with system encoding (GBK on Chinese Windows)
+            return self._run_with_encoding(commands, encoding=self._encoding)
+
+    def _run_with_encoding(self, commands: Union[str, List[str]], encoding: str) -> str:
+        """Run command with explicit encoding for stdout/stderr."""
+        if isinstance(commands, list):
+            cmd_str = " && ".join(commands)
+        else:
+            cmd_str = commands
+
+        try:
+            proc = subprocess.Popen(
+                cmd_str,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=str(ROOT_DIR),
+            )
+            stdout_bytes, _ = proc.communicate()
+            output = stdout_bytes.decode(encoding, errors="replace")
+            if proc.returncode != 0:
+                return f"Exit code {proc.returncode}\n{output}"
+            return output
+        except Exception as e:
+            return f"Error: {e}"
 
 
 def build_terminal_tool(session_id: str | None = None) -> SafeShellTool:
