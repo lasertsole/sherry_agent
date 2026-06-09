@@ -2,13 +2,10 @@ import io
 import re
 import time
 import base64
-import logging
 import requests
 from PIL import Image
+from loguru import logger
 from typing import Optional, Tuple
-
-# 配置日志
-logger = logging.getLogger(__name__)
 
 
 def detect_image_format(image_data: bytes) -> Optional[str]:

@@ -6,14 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-import logging
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-from tests import AGoTProcessor
+from tests.ast_got.agot_processor import AGoTProcessor
 
 
 def full_algorithm():
@@ -86,3 +79,4 @@ def full_algorithm():
 if __name__ == "__main__":
     print("\n")
     result = full_algorithm()
+    print(result)

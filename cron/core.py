@@ -4,8 +4,8 @@ import json
 import time
 import uuid
 import asyncio
-import logging
 from pathlib import Path
+from loguru import logger
 from datetime import datetime
 from models import chat_model
 from channels import channel_manager
@@ -17,7 +17,6 @@ from typing import Any, Callable, Coroutine, Literal
 from workspace.prompt_builder import build_system_prompt
 from .types import CronJob, CronJobState, CronPayload, CronRunRecord, CronSchedule, CronStore
 
-logger = logging.getLogger(__name__)
 current_dir: Path = Path(__file__).parent
 cron_store_path: Path = current_dir / "jobs.json"
 
@@ -65,7 +64,9 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
 
             ZoneInfo(schedule.tz)
         except Exception:
-            raise ValueError(f"unknown timezone '{schedule.tz}'") from None
+            err_text = f"unknown timezone '{schedule.tz}'"
+            logger.error(err_text)
+            raise ValueError(err_text) from None
 
 
 class CronService:

@@ -1,10 +1,10 @@
 """Workspace package."""
-CORE_FILE_NAMES = [
+CORE_SYSTEM_FILE_NAMES = [
     "AGENTS.md",
 ]
 
-ALL_FILE_NAMES = [
-    *CORE_FILE_NAMES,
+ALL_SYSTEM_FILE_NAMES = [
+    *CORE_SYSTEM_FILE_NAMES,
     "SOUL.md",
     "IDENTITY.md",
     "USER.md",

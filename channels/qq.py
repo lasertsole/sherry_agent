@@ -1,7 +1,7 @@
 """QQ channel implementation using botpy SDK."""
 
 import asyncio
-import logging
+from loguru import logger
 from pydantic import Field
 from collections import deque
 from config.schema import Base
@@ -10,8 +10,6 @@ from channels.base import BaseChannel
 from bus.events import OutboundMessage
 from typing import TYPE_CHECKING, Any, Literal
 
-
-logger = logging.getLogger(__name__)
 
 try:
     import botpy
@@ -189,5 +187,5 @@ class QQChannel(BaseChannel):
                 media=media_urls if media_urls else None,
                 metadata={"message_id": data.id},
             )
-        except Exception:
-            logger.exception("Error handling QQ message")
+        except Exception as e:
+            logger.exception(e)

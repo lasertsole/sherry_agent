@@ -1,5 +1,6 @@
 <template>
     <div class="root">
+        <ChatInputBox></ChatInputBox>
     </div>
 </template>
 
@@ -13,5 +14,6 @@
 
     .root{
         @include common.fullViewWindow;
+        position: relative;
     }
 </style>

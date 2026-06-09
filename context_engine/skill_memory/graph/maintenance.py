@@ -14,6 +14,7 @@ skill_memory — 图谱维护
 
 import os
 import time
+from loguru import logger
 from ..type import GmConfig
 from sqlite3 import Connection
 from .dedup import dedup, DedupResult
@@ -80,7 +81,7 @@ async def run_maintenance(
             await summarize_communities(db, community_result['communities'], llm, embed)
         except Exception as err:
             if os.environ.get('GM_DEBUG'):
-                print(f'  [DEBUG] maintenance: community summarization failed: {err}')
+                logger.error(f'  [DEBUG] maintenance: community summarization failed: {err}')
 
     return {
         'dedup': dedup_result,

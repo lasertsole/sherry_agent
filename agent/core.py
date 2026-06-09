@@ -1,4 +1,6 @@
 from enum import Enum
+import time
+from loguru import logger
 from pydantic import BaseModel
 from skills import build_skills_snapshot
 from langgraph.types import Checkpointer
@@ -8,7 +10,7 @@ from context_engine import add_session_if_not_exists
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from models import chat_model, reasoner_model, vl_model
-from .middlewares import ContextEngineHook, Summarization, ToolLoopPrevention
+from .middlewares import ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize
 
 # 服务器启动时重构技能快照，用于保证本次服务器运行中skills提示词稳定，从而保证模型 前缀缓存 稳定
 build_skills_snapshot()
@@ -31,20 +33,32 @@ def built_agent(
     checkpointer: Checkpointer | None = None,
     response_format: BaseModel | None = None
 )-> CompiledStateGraph:
+    start_time = time.time()
+    
     # 若无会话记录 则创建 session记录
     add_session_if_not_exists(session_id)
+    
+    logger.info(
+        f"Building agent: session_id={session_id}, model={model_type.name}, "
+        f"temperature={temperature}, enable_tool={enable_tool}"
+    )
 
     model = model_type.value.bind(temperature=temperature)
 
     if checkpointer is None:
         checkpointer = InMemorySaver()
 
+    # 构建工具列表
+    tools = build_all_tools(session_id) if enable_tool else None
+    tool_count = len(tools) if tools else 0
+    logger.debug(f"Tools built: session_id={session_id}, tool_count={tool_count}")
+
     #生成agent对象
     agent = create_agent(
         model = model,
         checkpointer = checkpointer,
         system_prompt = system_prompt,
-        tools = build_all_tools(session_id) if enable_tool else None,
+        tools = tools,
         middleware = [
             ContextEngineHook(session_id=session_id),
             Summarization(
@@ -59,8 +73,16 @@ def built_agent(
 
             ),
             ToolLoopPrevention(session_id=session_id),
+            # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
+            ToolCallNormalize(session_id=session_id),
         ],
         response_format = response_format
+    )
+    
+    elapsed = time.time() - start_time
+    logger.info(
+        f"Agent built successfully: session_id={session_id}, duration={elapsed:.2f}s, "
+        f"middleware_count=4"
     )
 
     return agent

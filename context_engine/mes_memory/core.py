@@ -3,8 +3,8 @@ import json
 import sqlite3
 import textwrap
 import threading
+from loguru import logger
 from itertools import groupby
-from logging import getLogger
 from typing import List, Dict, Any
 from models import simple_chat_model
 from langchain.agents import create_agent
@@ -14,7 +14,6 @@ from langgraph.graph.state import CompiledStateGraph
 from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
 from .store import get_db, get_messages_by_lastest_n_turns, update_session, add_messages
 
-logger = getLogger(__name__)
 
 _db: sqlite3.Connection = get_db()
 _lock = threading.Lock()

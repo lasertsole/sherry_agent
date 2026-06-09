@@ -3,7 +3,7 @@ Transcript Repair
 
 Tool use/result pairing repair for assembled context.
 
-裁剪消息后修复 tool_use/toolResult 配对，防止 OpenClaw 报 "Message ordering conflict"
+裁剪消息后修复 tool_use/toolResult 配对，防止 agent 报 "Message ordering conflict"
 """
 
 import time
@@ -148,7 +148,7 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
     """
     修复工具调用和结果的配对关系
 
-    裁剪消息后修复 tool_use/toolResult 配对，防止 OpenClaw 报 "Message ordering conflict"
+    裁剪消息后修复 tool_use/toolResult 配对，防止 agent 报 "Message ordering conflict"
 
     Args:
         messages: 消息列表
@@ -180,10 +180,14 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
         msg = messages[i]
 
         if not isinstance(msg, AIMessage):
-            if not (isinstance(msg, ToolMessage) and msg.content):
-                out.append(msg)
+            # 保留有内容的 ToolMessage，丢弃空内容的 ToolMessage
+            if isinstance(msg, ToolMessage):
+                if msg.content:
+                    out.append(msg)
+                else:
+                    changed = True
             else:
-                changed = True
+                out.append(msg)
 
             i += 1
             continue
@@ -261,6 +265,23 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
         for rem in remainder:
             out.append(rem)
 
-        i = j - 1
+        i = j
 
-    return out if changed else messages
+    # 最终清理：移除孤立的 ToolMessage（没有对应 AIMessage.tool_calls 的）
+    cleaned: List[BaseMessage] = []
+    active_tool_call_ids: Set[str] = set()
+
+    for msg in out:
+        if isinstance(msg, AIMessage):
+            calls = extract_tool_calls_from_assistant(msg)
+            active_tool_call_ids = {c['id'] for c in calls}
+
+        if isinstance(msg, ToolMessage):
+            result_id = extract_tool_result_id(msg)
+            if result_id and result_id not in active_tool_call_ids:
+                changed = True
+                continue
+
+        cleaned.append(msg)
+
+    return cleaned if changed else messages

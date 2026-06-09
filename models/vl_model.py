@@ -24,7 +24,7 @@ model_config:dict[str, Any] = {
     "temperature": 0.8,
     "max_retries": 2
 }
-VL_API_BASE = "https://api.modelarts-maas.com/v1/chat/completions"
+
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
 vl_model = init_chat_model(**model_config) #生成模型对象
 vl_model = vl_model.configurable_fields(

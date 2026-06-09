@@ -12,6 +12,7 @@ import re
 import sqlite3
 import leidenalg
 import igraph as ig
+from loguru import logger
 from sqlite3 import Connection
 from langchain_core.messages import AIMessage
 from langchain_core.embeddings import Embeddings
@@ -206,12 +207,12 @@ async def summarize_communities(
                 embed_text = f"{cleaned}\n{', '.join([m['description'] for m in members])}"
                 embedding: List[float] = await embed.aembed_query(embed_text)
             except Exception:
-                print(f"  [DEBUG] community embedding failed for {community_id}")
+                logger.error(f"[DEBUG] community embedding failed for {community_id}")
 
             upsert_community_summary(db, community_id, cleaned, len(member_ids), embedding)
             generated += 1
 
-        except Exception as err:
-            print(f"  [WARN] community summary failed for {community_id}: {err}")
+        except Exception as e:
+            logger.error(f"[WARN] community summary failed for {community_id}: {e}")
 
     return generated

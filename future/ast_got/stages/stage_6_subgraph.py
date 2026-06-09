@@ -1,16 +1,12 @@
-import logging
 import textwrap
-
-import networkx as nx
-from typing import Dict, Any, List, Set, Tuple
+from loguru import logger
+from typing import Dict, Any, List, Tuple
 
 from models import simple_chat_model
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 
 from future.ast_got.models.graph import AGoTGraph
-
-logger = logging.getLogger("agot-stage6")
 
 
 class SubgraphLabel(BaseModel):

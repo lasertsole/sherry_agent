@@ -1,23 +1,22 @@
 import asyncio
 from typing import Any
 from pathlib import Path
+from loguru import logger
 from models import chat_model
 from config import SESSIONS_DIR
 from skills import get_skills_text
 from ...type import SubAgentOutput
-from logging import Logger, getLogger
 from pydantic import BaseModel, Field
-from workspace import CORE_FILE_NAMES
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 from config import SRC_DIR, WORKSPACE_DIR
+from workspace import CORE_SYSTEM_FILE_NAMES
 from context_engine import assemble, after_turn
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.messages import HumanMessage, BaseMessage
 from langchain.agents.middleware import SummarizationMiddleware
 from pub_func import render_template_file, slice_last_turn, sanitize_tool_use_result_pairing, build_agent_config
 
-logger: Logger = getLogger(__name__)
 
 class WorkerTask(BaseModel):
     label: str = Field(description="任务标签")
@@ -66,7 +65,7 @@ class Worker(BaseTool):
         file_paths: list[str] = []
 
         # 确保一定有核心文件
-        for core_file in CORE_FILE_NAMES:
+        for core_file in CORE_SYSTEM_FILE_NAMES:
             path = WORKSPACE_DIR / core_file
             if not path.exists():
                 continue
@@ -100,6 +99,7 @@ class Worker(BaseTool):
                         + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
                 from tools import build_core_tools
+                from agent.middlewares.tool_call_normalize import ToolCallNormalize
 
                 agent: CompiledStateGraph = create_agent(
                     system_prompt=system_prompt,
@@ -111,6 +111,8 @@ class Worker(BaseTool):
                             trigger=("messages", 20),
                             keep=("messages", 10),
                         ),
+                        # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
+                        ToolCallNormalize(self._session_id),
                     ],
                     response_format=SubAgentOutput
                 )

@@ -1,8 +1,7 @@
 import asyncio
-import logging
+from loguru import logger
 from typing import Coroutine
 from threading import Thread, Lock
-_logger = logging.getLogger(__name__)
 
 class AsyncTaskQueue:
     """Async task queue for background operations."""
@@ -40,7 +39,7 @@ class AsyncTaskQueue:
             try:
                 await core
             except Exception as e:
-                _logger.error(f"Task failed: {e}", exc_info=True)
+                logger.error(f"Task failed: {e}", exc_info=True)
             finally:
                 self._queue.task_done()
 

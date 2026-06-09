@@ -167,6 +167,8 @@ def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
     todo_writer_tool: BaseTool = build_todo_writer_tool(session_id, task_id)
     worker_tool: BaseTool = build_worker_tool(session_id, task_id)
 
+    # lazy import to avoid circular dependency: subagent -> agent -> tools -> subagent
+    from agent.middlewares.tool_call_normalize import ToolCallNormalize
 
     agent: CompiledStateGraph = create_agent(
         system_prompt=_system_prompt,
@@ -180,7 +182,9 @@ def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
                 keep=("messages", 8),
             ),
             todo_injector_builder(session_id, task_id),
-            todo_cleaner_builder(session_id, task_id)
+            todo_cleaner_builder(session_id, task_id),
+            # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
+            ToolCallNormalize(session_id),
         ],
         response_format=SubAgentOutput
     )

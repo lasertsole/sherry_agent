@@ -9,17 +9,15 @@ AGoT Checkpoint Manager - 支持 8 个 Stage 的断点续跑
 - 全部 Stage 执行完成后自动清除存档
 """
 
-import json
 import os
-import logging
-import networkx as nx
+import json
 import shutil
+import networkx as nx
+from loguru import logger
 from typing import Dict, Any, Optional
+from tests.ast_got.models.graph import AGoTGraph
+from tests.ast_got.models.hyperedge import Hyperedge
 
-from future.ast_got.models.graph import AGoTGraph
-from future.ast_got.models.hyperedge import Hyperedge
-
-logger = logging.getLogger("agot-checkpoint")
 
 # 存档根目录（与 test 文件同目录）
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), ".checkpoints")

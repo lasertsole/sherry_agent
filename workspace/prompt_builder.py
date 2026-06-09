@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 from skills import get_skills_text
 from config import WORKSPACE_DIR, SRC_DIR
-from workspace import CORE_FILE_NAMES, ALL_FILE_NAMES
+from workspace import CORE_SYSTEM_FILE_NAMES, ALL_SYSTEM_FILE_NAMES
 
 MAX_FILE_CHARS: int = 20_000
 
@@ -34,7 +34,7 @@ def build_system_prompt(selected_file_names: Optional[List[str]] = None, selecte
         file_paths = [_read_text(WORKSPACE_DIR / f) for f in selected_file_names]
 
         # 确保一定有核心文件
-        for core_file in CORE_FILE_NAMES:
+        for core_file in CORE_SYSTEM_FILE_NAMES:
             if core_file not in selected_file_names:
                 file_paths.append(_read_text(WORKSPACE_DIR / core_file))
 
@@ -42,7 +42,7 @@ def build_system_prompt(selected_file_names: Optional[List[str]] = None, selecte
         from tools import memory_store
 
         file_paths = [
-            *[_read_text(WORKSPACE_DIR / f) for f in ALL_FILE_NAMES],
+            *[_read_text(WORKSPACE_DIR / f) for f in ALL_SYSTEM_FILE_NAMES],
             memory_store.format_for_system_prompt("memory"),
             memory_store.format_for_system_prompt("user")
         ]

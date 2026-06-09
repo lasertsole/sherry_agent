@@ -1,6 +1,6 @@
-import logging
 import datetime
 import textwrap
+from loguru import logger
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 from tests import Node
@@ -8,8 +8,6 @@ from future.ast_got.models.edge import Edge
 from future.ast_got.models.graph import AGoTGraph
 from langchain_core.runnables import RunnableSerializable
 from langchain_core.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate, ChatPromptTemplate
-
-logger = logging.getLogger("agot-stage2")
 
 
 class DimensionItem(BaseModel):
@@ -22,6 +20,33 @@ class DimensionPlan(BaseModel):
     dimensions: List[DimensionItem] = Field(description="针对该问题定制的分析维度列表")
 
 class DecompositionStage:
+    def _generate_dimensions(self, query: str, disciplinary_tags: list[str]) -> DimensionPlan:
+        """调用模型为问题生成定制化的分析维度"""
+        system_template = textwrap.dedent("""\
+            你是任务分解专家。请分析用户提出的问题，从多学科视角拆解出合适的分析维度。
+
+            Requirements:
+            1. 维度应与问题本身强相关，覆盖不同分析角度
+            2. 每个维度给出清晰的 label 和 description
+            3. 通常生成 4-8 个维度，根据问题复杂度灵活调整
+            4. 参考提供的学科标签，但不要被限制住
+            5. 避免过于宽泛或与问题无关的通用维度
+        """)
+
+        system_prompt = SystemMessagePromptTemplate.from_template(system_template)
+        human_prompt = HumanMessagePromptTemplate.from_template(
+            "User Query: {query}\nRelated Disciplines: {disciplines}"
+        )
+
+        chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
+        invoker: RunnableSerializable = chat_prompt | simple_chat_model.with_structured_output(DimensionPlan)
+
+        result: DimensionPlan = invoker.invoke({
+            "query": query,
+            "disciplines": ", ".join(disciplinary_tags),
+        })
+        return result
+
     def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("Executing Decomposition Stage")
 
@@ -40,36 +65,45 @@ class DecompositionStage:
         parameters: dict = context.get("parameters", {})
 
 
-        dimensions: list[dict[str, str]] = context.get("dimensions", [
-            {
-                "label": "Scope",
-                "description": "Define the boundaries of the research question"
-            },
-            {
-                "label": "Objectives",
-                "description": "Specific goals to be achieved"
-            },
-            {
-                "label": "Constraints",
-                "description": "Limitations and boundaries of the analysis"
-            },
-            {
-                "label": "Data Needs",
-                "description": "Information required to address the question"
-            },
-            {
-                "label": "Use Cases",
-                "description": "Practical applications of findings"
-            },
-            {
-                "label": "Potential Biases",  # As per P1.17
-                "description": "Sources of cognitive or methodological bias"
-            },
-            {
-                "label": "Knowledge Gaps",  # As per P1.15
-                "description": "Areas of uncertainty or missing information"
-            }
-        ])
+        # 优先用 AI 生成分析维度，失败时回退到默认值
+        dimensions: list[dict[str, str]] = context.get("dimensions", None)
+        if dimensions is None:
+            try:
+                ai_dimensions = self._generate_dimensions(query, disciplinary_tags)
+                dimensions = [{"label": d.label, "description": d.description} for d in ai_dimensions.dimensions]
+                logger.info(f"AI generated {len(dimensions)} dimensions")
+            except Exception as e:
+                logger.warning(f"AI dimension generation failed, using defaults: {e}")
+                dimensions = [
+                    {
+                        "label": "Scope",
+                        "description": "Define the boundaries of the research question"
+                    },
+                    {
+                        "label": "Objectives",
+                        "description": "Specific goals to be achieved"
+                    },
+                    {
+                        "label": "Constraints",
+                        "description": "Limitations and boundaries of the analysis"
+                    },
+                    {
+                        "label": "Data Needs",
+                        "description": "Information required to address the question"
+                    },
+                    {
+                        "label": "Use Cases",
+                        "description": "Practical applications of findings"
+                    },
+                    {
+                        "label": "Potential Biases",  # As per P1.17
+                        "description": "Sources of cognitive or methodological bias"
+                    },
+                    {
+                        "label": "Knowledge Gaps",  # As per P1.15
+                        "description": "Areas of uncertainty or missing information"
+                    }
+                ]
 
         dimension_nodes = []
         for i, dim in enumerate(dimensions):

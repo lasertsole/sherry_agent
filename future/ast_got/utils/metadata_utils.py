@@ -1,10 +1,9 @@
 import hashlib
-import logging
 import numpy as np
+from loguru import logger
 from models.embed_model import embed_model
 from typing import Dict, Any, List, Optional
 
-logger = logging.getLogger("agot-metadata")
 
 def generate_id(prefix: str, content: str) -> str:
     hash_object = hashlib.md5(content.encode())

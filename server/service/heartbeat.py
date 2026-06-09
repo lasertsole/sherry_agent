@@ -1,6 +1,7 @@
 import json
 from typing import Any
 from pathlib import Path
+from loguru import logger
 from config import ROOT_DIR
 from models import chat_model
 from bus import OutboundMessage
@@ -37,6 +38,7 @@ async def process_heartbeat_task(task: str) -> str:
 
         return res_messages[-1].content
     except Exception as e:
+        logger.exception(e)
         return f"发生错误{e}"
 
 async def process_heartbeat_notify(agent_res: str) -> None:

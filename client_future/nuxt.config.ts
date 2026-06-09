@@ -2,6 +2,14 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
 
+  app: {
+    head: {
+      meta: [
+        { name: 'viewport', content: 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no' }
+      ]
+    }
+  },
+
   // 不使用开发工具
   devtools: { enabled: false },
   // Enable SSG
@@ -25,9 +33,7 @@ export default defineNuxtConfig({
   },
 
   // 导入第三方模块
-  modules: [
-    '@nuxtjs/tailwindcss',
-  ],
+  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n'],
 
   tailwindcss: {
     cssPath: ['~/assets/css/tailwind.scss', { injectPosition: "first" }],
@@ -39,6 +45,26 @@ export default defineNuxtConfig({
     viewer: true,
   },
 
+  i18n: {
+    strategy: 'prefix_except_default',
+    defaultLocale: 'zh',
+    langDir: new URL('./app/i18n/locales/', import.meta.url).pathname,
+    locales: [
+      { code: 'zh', name: '简体中文', file: 'zh.json' },
+      { code: 'en', name: 'English', file: 'en.json' }
+    ]
+  },
+
   ignore: ['**/src-tauri/**'],
   css:['~/assets/css/main.css', '~/assets/css/main.scss'],
+
+  routeRules: {
+    // 默认重定向至home页
+    '/': {
+      redirect: {
+        to: '/home',
+        statusCode: 301
+      },
+    }
+  }
 })

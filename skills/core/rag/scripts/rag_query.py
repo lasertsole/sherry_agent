@@ -13,6 +13,10 @@ import sys
 import asyncio
 from pathlib import Path
 
+# 设置标准输出编码为utf-8，避免Windows GBK编码问题
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 # 动态添加项目根目录到 sys.path
 current_file = Path(__file__).resolve()
 # skills/core/rag/scripts/rag_query.py -> parents[4] = 项目根目录
@@ -29,10 +33,10 @@ async def main(query: str) -> None:
     try:
         rag: RAGAnything = await get_rag_anything()
         res = await rag.aquery(query)
-        print(f"🔍 查询: {query}")
-        print(f"📝 回答: {res}")
+        print(f"[查询] {query}")
+        print(f"[回答] {res}")
     except Exception as e:
-        print(f"❌ 查询出错: {e}")
+        print(f"[错误] 查询出错: {e}")
 
 
 if __name__ == "__main__":

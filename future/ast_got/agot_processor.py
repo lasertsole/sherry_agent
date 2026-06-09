@@ -4,15 +4,11 @@ AGoT Processor - Independent implementation of ASR-GoT algorithm
 完成后自动清除存档，避免污染下次从头执行
 """
 import json
-import logging
 import hashlib
-import os
-from typing import Dict, Any, Optional
-
-from .utils.visualization import visualize_graph, visualize_layers
+from loguru import logger
+from typing import Dict, Any
 from .checkpoint_manager import CheckpointManager
-
-logger = logging.getLogger("agot-processor")
+from .utils.visualization import visualize_graph, visualize_layers
 
 
 class AGoTProcessor:

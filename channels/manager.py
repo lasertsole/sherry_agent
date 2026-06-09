@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import asyncio
-import logging
+from loguru import logger
 from pathlib import Path
 from config import ROOT_DIR
 from .base import BaseChannel
@@ -11,8 +11,6 @@ from bus.queue import MessageBus
 from asyncio import AbstractEventLoop
 from bus import InboundMessage, OutboundMessage
 from typing import Any, Optional, Callable, Awaitable
-
-logger = logging.getLogger(__name__)
 
 class ChannelManager:
     """
@@ -121,7 +119,7 @@ class ChannelManager:
         try:
             await channel.start()
         except Exception as e:
-            logger.error(f"Failed to start channel {name}: {e}")
+            logger.exception(f"Failed to start channel {name}: {e}")
 
     def start_service(self) -> None:
         """Start all channels and the outbound dispatcher."""

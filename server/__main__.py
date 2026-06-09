@@ -1,6 +1,10 @@
 import os
+from logs import init_logger
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
+
+# 初始化日志
+init_logger()
 
 # 加载 .env 并初始化 LangSmith（必须在任何 LangChain 导入之前）
 load_dotenv(ENV_PATH, override=True)

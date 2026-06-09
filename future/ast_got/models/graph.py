@@ -1,13 +1,10 @@
-import logging
-import networkx as nx
-from typing import Dict, Any, List, Optional, Set
 import datetime
-
-from tests import Node
-from future.ast_got.models.edge import Edge
-from future.ast_got.models.hyperedge import Hyperedge
-
-logger = logging.getLogger("agot-graph")
+import networkx as nx
+from loguru import logger
+from typing import Dict, Any, List
+from tests.ast_got.models.node import Node
+from tests.ast_got.models.edge import Edge
+from tests.ast_got.models.hyperedge import Hyperedge
 
 
 class AGoTGraph:

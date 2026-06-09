@@ -49,7 +49,7 @@ class Edge(BaseModel):
     to_node: str = Field(description="边的 to 节点名称")
     type: str = Field(description="边的类型")
     instruction: str = Field(description="边的执行步骤")
-    condition: Optional[str] = Field(description="边的条件")
+    condition: Optional[str] = Field(default=None, description="边的条件")
 
 
 class ExtractionResult(BaseModel):
