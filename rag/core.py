@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 from loguru import logger
 from config import SRC_DIR, MODELS_DIR
@@ -147,8 +148,12 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         parse_method: Parser method ("auto", etc.)
     """
     global _rag_anything
+    
+    start_time = time.time()
 
     if _rag_anything is None:
+        logger.info(f"Initializing RAGAnything: parser={parser}, parse_method={parse_method}")
+        
         # Auto-download and configure models
         # Bypass system proxy to avoid SSL errors with hf-mirror.com
         for proxy_var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
@@ -156,10 +161,12 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
 
         try:
             ensure_mineru_models(source="huggingface")
+            logger.debug("Mineru models downloaded from HuggingFace")
         except Exception as e:
             logger.warning(f"Download from huggingface failed: {e}")
             logger.info("Retrying with modelscope ...")
             ensure_mineru_models(source="modelscope")
+            logger.debug("Mineru models downloaded from ModelScope")
 
         # Switch to local model mode
         os.environ["MINERU_MODEL_SOURCE"] = "local"
@@ -172,6 +179,7 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         from rag import get_lightrag
 
         lightrag = await get_lightrag()
+        logger.debug("LightRAG initialized")
 
         config = RAGAnythingConfig(
             parser=parser,
@@ -183,5 +191,13 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
             vision_model_func=_vision_model_func,
             config=config,
         )
+        
+        elapsed = time.time() - start_time
+        logger.info(
+            f"RAGAnything initialized successfully: duration={elapsed:.2f}s, "
+            f"parser={parser}, working_dir={config.working_dir}"
+        )
+    else:
+        logger.debug("RAGAnything instance already initialized, returning cached instance")
 
     return _rag_anything
