@@ -57,4 +57,14 @@ export default defineNuxtConfig({
 
   ignore: ['**/src-tauri/**'],
   css:['~/assets/css/main.css', '~/assets/css/main.scss'],
+
+  routeRules: {
+    // 默认重定向至home页
+    '/': {
+      redirect: {
+        to: '/home',
+        statusCode: 301
+      },
+    }
+  }
 })
