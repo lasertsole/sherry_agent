@@ -26,7 +26,9 @@ Design:
 import os
 import re
 import json
+import time
 import tempfile
+from loguru import logger
 from pathlib import Path
 from config import MEMORY_DIR
 from pub_func import atomic_replace
@@ -480,30 +482,53 @@ def memory_tool(
 
     Returns JSON string with results.
     """
+    start_time = time.time()
+    content_preview = content[:50] if content else ""
+    old_text_preview = old_text[:50] if old_text else ""
+    
+    logger.debug(
+        f"Memory tool called: action={action}, target={target}, "
+        f"content_preview='{content_preview}', old_text_preview='{old_text_preview}'"
+    )
+    
     if target not in ("memory", "user"):
+        logger.warning(f"Invalid memory target: {target}")
         return _tool_error(f"Invalid target '{target}'. Use 'memory' or 'user'.", success=False)
 
-    if action == "add":
-        if not content:
-            return _tool_error("Content is required for 'add' action.", success=False)
-        result = memory_store.add(target, content)
+    try:
+        if action == "add":
+            if not content:
+                return _tool_error("Content is required for 'add' action.", success=False)
+            result = memory_store.add(target, content)
 
-    elif action == "replace":
-        if not old_text:
-            return _tool_error("old_text is required for 'replace' action.", success=False)
-        if not content:
-            return _tool_error("content is required for 'replace' action.", success=False)
-        result = memory_store.replace(target, old_text, content)
+        elif action == "replace":
+            if not old_text:
+                return _tool_error("old_text is required for 'replace' action.", success=False)
+            if not content:
+                return _tool_error("content is required for 'replace' action.", success=False)
+            result = memory_store.replace(target, old_text, content)
 
-    elif action == "remove":
-        if not old_text:
-            return _tool_error("old_text is required for 'remove' action.", success=False)
-        result = memory_store.remove(target, old_text)
+        elif action == "remove":
+            if not old_text:
+                return _tool_error("old_text is required for 'remove' action.", success=False)
+            result = memory_store.remove(target, old_text)
 
-    else:
-        return _tool_error(f"Unknown action '{action}'. Use: add, replace, remove", success=False)
+        else:
+            return _tool_error(f"Unknown action '{action}'. Use: add, replace, remove", success=False)
 
-    return json.dumps(result, ensure_ascii=False)
+        elapsed = time.time() - start_time
+        logger.debug(
+            f"Memory tool completed: action={action}, target={target}, duration={elapsed:.3f}s"
+        )
+        
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(
+            f"Memory tool failed: action={action}, target={target}, "
+            f"duration={elapsed:.3f}s, error={str(e)}"
+        )
+        raise
 
 
 def check_memory_requirements() -> bool:
