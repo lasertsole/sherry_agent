@@ -1,0 +1,1 @@
+from .core import SubagentManager, subagent_manager
