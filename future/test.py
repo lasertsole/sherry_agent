@@ -13,7 +13,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-from tests.ast_got.agot_processor import AGoTProcessor
+from tests import AGoTProcessor
 
 
 def full_algorithm():

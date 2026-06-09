@@ -180,6 +180,7 @@ EMA_AI_agent/
 │   └── type.py             # SubAgentOutput 数据模型
 │
 ├── tests/                  # 测试套件
+├── future/                 # 未来可能上线的新功能
 ├── tools/                  # Agent 可访问的工具
 │   ├── web_search.py       # 网页搜索工具
 │   ├── python_repl.py      # Python 代码执行
@@ -200,6 +201,7 @@ EMA_AI_agent/
 ├── start.sh                # 一键启动脚本
 ├── requirements.txt        # Python 依赖
 └── .env                    # 环境变量 (API Key, 模型路径)
+
 ```
 
 ---

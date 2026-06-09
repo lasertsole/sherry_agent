@@ -5,13 +5,13 @@ import datetime
 from typing import Dict, Any, List
 from models import simple_chat_model
 from langchain.agents import create_agent
-from tests.ast_got.models.node import Node
-from tests.ast_got.models.edge import Edge
+from tests import Node
+from future.ast_got.models.edge import Edge
 from langchain_core.messages import HumanMessage
-from tests.ast_got.models.graph import AGoTGraph
-from tests.ast_got.models.hyperedge import Hyperedge
+from future.ast_got.models.graph import AGoTGraph
+from future.ast_got.models.hyperedge import Hyperedge
 from tools import build_web_search_tool, build_python_repl_tool
-from tests.ast_got.utils.math_utils import bayesian_update, calculate_info_gain
+from tests import bayesian_update, calculate_info_gain
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("agot-stage4")

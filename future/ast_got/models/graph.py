@@ -3,9 +3,9 @@ import networkx as nx
 from typing import Dict, Any, List, Optional, Set
 import datetime
 
-from tests.ast_got.models.node import Node
-from tests.ast_got.models.edge import Edge
-from tests.ast_got.models.hyperedge import Hyperedge
+from tests import Node
+from future.ast_got.models.edge import Edge
+from future.ast_got.models.hyperedge import Hyperedge
 
 logger = logging.getLogger("agot-graph")
 

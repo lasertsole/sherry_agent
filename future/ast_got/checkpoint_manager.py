@@ -16,8 +16,8 @@ import networkx as nx
 import shutil
 from typing import Dict, Any, Optional
 
-from tests.ast_got.models.graph import AGoTGraph
-from tests.ast_got.models.hyperedge import Hyperedge
+from future.ast_got.models.graph import AGoTGraph
+from future.ast_got.models.hyperedge import Hyperedge
 
 logger = logging.getLogger("agot-checkpoint")
 

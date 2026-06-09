@@ -180,6 +180,7 @@ EMA_AI_agent/
 │   └── type.py             # SubAgentOutput data model
 │
 ├── tests/                  # Test suite
+├── future/                 # New functions that may be released in the future.
 ├── tools/                  # Agent-accessible tools
 │   ├── web_search.py       # Web search tool
 │   ├── python_repl.py      # Python code execution

@@ -8,7 +8,7 @@ from models import simple_chat_model
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 
-from tests.ast_got.models.graph import AGoTGraph
+from future.ast_got.models.graph import AGoTGraph
 
 logger = logging.getLogger("agot-stage6")
 

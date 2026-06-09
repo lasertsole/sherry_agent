@@ -1,10 +1,10 @@
-from tests.ast_got.utils.math_utils import (
+from tests import (
     bayesian_update,
     calculate_entropy,
     calculate_kl_divergence,
     calculate_info_gain
 )
-from tests.ast_got.utils.metadata_utils import (
+from tests import (
     generate_id,
     calculate_semantic_overlap,
     check_falsifiability,
