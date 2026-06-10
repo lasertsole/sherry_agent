@@ -1,4 +1,4 @@
----
+from openai import base_url---
 name: text_to_image
 description: 当用户需要根据文字描述生成图片时，使用 python_repl工具生成图片。
 ---
@@ -35,8 +35,17 @@ def generate_image(prompt: str) -> str:
         保存的图片路径
     """
     try:
-        url = "https://api.modelarts-maas.com/v1/images/generations"  # API地址
-        api_key = os.getenv("VL_API_KEY")
+        url = os.getenv("TTI_API_BASE")  # API地址
+        api_name = os.getenv("TTI_API_NAME")
+        api_key = os.getenv("TTI_API_KEY")
+        
+        if not url:
+            print("错误: 未找到TTI_API_BASE环境变量")
+            return ""
+        
+        if not api_name:
+            print("错误: 未找到TTI_API_NAME环境变量")
+            return ""
         
         if not api_key:
             print("错误: 未找到VL_API_KEY环境变量")
@@ -48,7 +57,7 @@ def generate_image(prompt: str) -> str:
             'Authorization': f'Bearer {api_key}'
         }
         data = {
-            "model": "qwen-image",  # model参数
+            "model": api_name,  # model参数
             "prompt": prompt,  # 支持中英文
             "size": "1024x1024",
             "response_format": "b64_json",  # 返回格式，可取值为[url, b64_json], 暂仅支持 b64_json，
