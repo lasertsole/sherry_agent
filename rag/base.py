@@ -65,7 +65,7 @@ _lightRAG: LightRAG | None = None
 
 async def get_lightrag() -> LightRAG:
     """获取 LightRAG 单例实例"""
-    working_dir: str = (SRC_DIR / "rag" / "lightrag_db").resolve().as_posix()
+    working_dir: str = (SRC_DIR / "rag" / "store").resolve().as_posix()
 
     global _lightRAG
 
