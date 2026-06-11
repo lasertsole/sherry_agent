@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 from loguru import logger
 from config import SRC_DIR, MODELS_DIR
@@ -21,30 +22,47 @@ os.environ["TRANSFORMERS_OFFLINE"] = "0"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "0"
 os.environ["MINERU_TOOLS_CONFIG_JSON"] = (MODELS_DIR / "extract_model/mineru_config.json").resolve().as_posix()
 
+
 async def _vision_model_func(
     prompt: str,
     system_prompt: str | None = None,
+    history_messages: list = [],
     image_data: bytes | str | None = None,
+    messages: list[dict[str, Any]] = [],
     **kwargs,
 ) -> str:
-    user_content: list[dict] = [{"type": "text", "text": prompt}]
-    if image_data is not None:
-        b64 = image_data
-        if isinstance(b64, bytes):
-            b64 = b64.decode("utf-8")
-        user_content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{b64}"},
-        })
-    messages: list[BaseMessage] = []
-    if system_prompt:
-        messages.append(SystemMessage(content=system_prompt))
+    # 如果提供了messages格式（用于多模态VLM增强查询），直接使用
+    if messages:
+        result = vl_model.invoke(messages)
+        return result.content
+    # 传统单图片格式
+    elif image_data:
+        messages = [
+            {"role": "system", "content": system_prompt}
+            if system_prompt
+            else None,
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_data}"
+                        },
+                    },
+                ],
+            }
+            if image_data
+            else {"role": "user", "content": prompt},
+        ]
+        result = vl_model.invoke(messages)
+        return result.content
+    else:
+        from rag import get_lightrag
 
-    human_message: HumanMessage = HumanMessage(content=user_content)
-    messages.append(human_message)
-    result = vl_model.invoke(messages)
-
-    return result.content
+        lightrag = await get_lightrag()
+        return lightrag.llm_model_func(prompt, system_prompt, history_messages, **kwargs)
 
 
 class FallbackTxtParser(Parser):
@@ -147,8 +165,12 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         parse_method: Parser method ("auto", etc.)
     """
     global _rag_anything
+    
+    start_time = time.time()
 
     if _rag_anything is None:
+        logger.info(f"Initializing RAGAnything: parser={parser}, parse_method={parse_method}")
+        
         # Auto-download and configure models
         # Bypass system proxy to avoid SSL errors with hf-mirror.com
         for proxy_var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
@@ -156,10 +178,12 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
 
         try:
             ensure_mineru_models(source="huggingface")
+            logger.debug("Mineru models downloaded from HuggingFace")
         except Exception as e:
             logger.warning(f"Download from huggingface failed: {e}")
             logger.info("Retrying with modelscope ...")
             ensure_mineru_models(source="modelscope")
+            logger.debug("Mineru models downloaded from ModelScope")
 
         # Switch to local model mode
         os.environ["MINERU_MODEL_SOURCE"] = "local"
@@ -172,6 +196,7 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         from rag import get_lightrag
 
         lightrag = await get_lightrag()
+        logger.debug("LightRAG initialized")
 
         config = RAGAnythingConfig(
             parser=parser,
@@ -183,5 +208,13 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
             vision_model_func=_vision_model_func,
             config=config,
         )
+        
+        elapsed = time.time() - start_time
+        logger.info(
+            f"RAGAnything initialized successfully: duration={elapsed:.2f}s, "
+            f"parser={parser}, working_dir={config.working_dir}"
+        )
+    else:
+        logger.debug("RAGAnything instance already initialized, returning cached instance")
 
     return _rag_anything

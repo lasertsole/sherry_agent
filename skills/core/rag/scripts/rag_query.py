@@ -8,9 +8,7 @@ rag_query.py — 向 rag-anything 知识图谱提出查询问题
     python rag_query.py "橘雪莉和远野汉娜是什么关系？"
 """
 
-import os
 import sys
-import asyncio
 from pathlib import Path
 
 # 设置标准输出编码为utf-8，避免Windows GBK编码问题
@@ -28,22 +26,12 @@ from rag import get_rag_anything
 from raganything import RAGAnything
 
 
-async def main(query: str) -> None:
+async def query(question: str) -> None:
     """向 rag-anything 知识图谱提问"""
     try:
         rag: RAGAnything = await get_rag_anything()
-        res = await rag.aquery(query)
-        print(f"[查询] {query}")
+        res = await rag.aquery(question)
+        print(f"[查询] {question}")
         print(f"[回答] {res}")
     except Exception as e:
         print(f"[错误] 查询出错: {e}")
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("用法: python rag_query.py \"<query_string>\"")
-        print("示例: python rag_query.py \"橘雪莉和远野汉娜是什么关系？\"")
-        sys.exit(1)
-
-    _query: str = sys.argv[1]
-    asyncio.run(main(_query))

@@ -1,6 +1,8 @@
 """Spawn tool for creating background subagents."""
 
 import asyncio
+import time
+from loguru import logger
 from typing import Any, Type
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -21,6 +23,13 @@ class SubagentTool(BaseTool):
         self._manager: SubagentManager = subagent_manager
 
     async def _arun(self, task: str, label: str | None = None, **kwargs: Any):
+        start_time = time.time()
+        task_preview = task[:100] if task else ""
+        logger.info(
+            f"Subagent tool called: session_id={self._session_id}, "
+            f"label={label}, task_preview='{task_preview}'"
+        )
+        
         if self._session_id is None:
             raise ValueError("Session ID is required")
 
@@ -28,21 +37,36 @@ class SubagentTool(BaseTool):
         event_loop = self._manager.get_event_loop()
 
         if not event_loop.is_running():
+            logger.error("Subagent event loop is not running")
             raise RuntimeError(
                 "Subagent event loop is not running. "
                 "Please ensure subagent service has been started."
             )
 
-        future = asyncio.run_coroutine_threadsafe(
-            self._manager.spawn(
-                task=task,
-                label=label,
-                session_id=self._session_id,
-            ),
-            event_loop
-        )
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._manager.spawn(
+                    task=task,
+                    label=label,
+                    session_id=self._session_id,
+                ),
+                event_loop
+            )
 
-        return await asyncio.wrap_future(future)
+            result = await asyncio.wrap_future(future)
+            elapsed = time.time() - start_time
+            logger.info(
+                f"Subagent tool completed: session_id={self._session_id}, "
+                f"label={label}, duration={elapsed:.2f}s"
+            )
+            return result
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(
+                f"Subagent tool failed: session_id={self._session_id}, "
+                f"label={label}, duration={elapsed:.2f}s, error={str(e)}"
+            )
+            raise
 
     def _run(self, task: str, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""

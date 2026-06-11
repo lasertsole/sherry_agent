@@ -1,6 +1,7 @@
 """QQ channel implementation using botpy SDK."""
 
 import asyncio
+import time
 from loguru import logger
 from pydantic import Field
 from collections import deque
@@ -38,12 +39,15 @@ def _make_bot_class(channel: "QQChannel") -> "type[botpy.Client]":
             logger.info(f"QQ bot ready: {self.robot.name}")
 
         async def on_c2c_message_create(self, message: "C2CMessage"):
+            logger.debug(f"QQ C2C message received: message_id={message.id}")
             await channel._on_message(message, is_group=False)
 
         async def on_group_at_message_create(self, message: "GroupMessage"):
+            logger.debug(f"QQ Group message received: message_id={message.id}")
             await channel._on_message(message, is_group=True)
 
         async def on_direct_message_create(self, message):
+            logger.debug(f"QQ Direct message received: message_id={message.id}")
             await channel._on_message(message, is_group=False)
 
     return _Bot
@@ -122,6 +126,12 @@ class QQChannel(BaseChannel):
             logger.warning("QQ client not initialized")
             return
 
+        start_time = time.time()
+        logger.debug(
+            f"Sending QQ message: chat_id={msg.chat_id}, "
+            f"content_length={len(getattr(msg, 'content', ''))}"
+        )
+
         try:
             msg_id = msg.metadata.get("message_id")
             self._msg_seq += 1
@@ -147,17 +157,28 @@ class QQChannel(BaseChannel):
                     openid=msg.chat_id,
                     **payload,
                 )
+            
+            elapsed = time.time() - start_time
+            logger.debug(
+                f"QQ message sent successfully: chat_id={msg.chat_id}, "
+                f"duration={elapsed:.2f}s"
+            )
         except Exception as e:
-            logger.error(f"Error sending QQ message: {e}")
+            elapsed = time.time() - start_time
+            logger.error(
+                f"Error sending QQ message: chat_id={msg.chat_id}, "
+                f"duration={elapsed:.2f}s, error={e}"
+            )
 
     async def _on_message(self, data: "C2CMessage | GroupMessage", is_group: bool = False) -> None:
         """Handle incoming message from QQ."""
         try:
             # Dedup by message ID
             if data.id in self._processed_ids:
+                logger.debug(f"Duplicate QQ message ignored: message_id={data.id}")
                 return
             self._processed_ids.append(data.id)
-
+    
             content = (data.content or "").strip()
             # 提取图片URL
             media_urls = []
@@ -169,8 +190,9 @@ class QQChannel(BaseChannel):
 
             # 如果既没有文本内容也没有图片，则忽略
             if not content and not media_urls:
+                logger.debug(f"QQ message ignored: no content or media, message_id={data.id}")
                 return
-
+    
             if is_group:
                 chat_id = data.group_openid
                 user_id = data.author.member_openid
@@ -179,7 +201,14 @@ class QQChannel(BaseChannel):
                 chat_id = str(getattr(data.author, 'id', None) or getattr(data.author, 'user_openid', 'unknown'))
                 user_id = chat_id
                 self._chat_type_cache[chat_id] = "c2c"
-
+    
+            content_preview = content[:50] if content else ""
+            logger.info(
+                f"QQ message received: chat_id={chat_id}, user_id={user_id}, "
+                f"is_group={is_group}, content_preview='{content_preview}', "
+                f"media_count={len(media_urls)}"
+            )
+    
             await self._handle_message(
                 sender_id=user_id,
                 chat_id=chat_id,
@@ -187,5 +216,6 @@ class QQChannel(BaseChannel):
                 media=media_urls if media_urls else None,
                 metadata={"message_id": data.id},
             )
+            logger.debug(f"QQ message processed: message_id={data.id}")
         except Exception as e:
             logger.exception(e)

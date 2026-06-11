@@ -31,8 +31,13 @@ class ChannelManager:
     _outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]] | None = None
 
     async def _inbound_consume_loop(self):
+        logger.info("Inbound message consumer loop started")
         while True:
             msg: InboundMessage = await self._bus.consume_inbound()
+            logger.debug(
+                f"Processing inbound message: channel={msg.channel}, "
+                f"chat_id={msg.chat_id}"
+            )
 
             if self._inbound_consumer is not None:
                 for channel_name, c in self._config.items():
@@ -43,8 +48,13 @@ class ChannelManager:
                         logger.warning(f"Channel {channel_name} not found")
 
     async def _outbound_consume_loop(self):
+        logger.info("Outbound message consumer loop started")
         while True:
             msg: OutboundMessage = await self._bus.consume_outbound()
+            logger.debug(
+                f"Processing outbound message: channel={msg.channel}, "
+                f"content_length={len(getattr(msg, 'content', ''))}"
+            )
 
             if self._outbound_consumer is not None:
                 for name, func in self._config.items():
@@ -128,6 +138,8 @@ class ChannelManager:
                 logger.warning("No channels enabled")
                 return
 
+            logger.info(f"Starting channel manager service: channel_count={len(self._channels)}")
+            
             # Start outbound dispatcher
             self._dispatch_task = self._event_loop.create_task(self._dispatch_outbound())
 
@@ -153,6 +165,7 @@ class ChannelManager:
         # Stop dispatcher
         if self._dispatch_task:
             self._dispatch_task.cancel()
+            logger.debug("Dispatcher task cancelled")
 
         # Stop all channels
         tasks = []
@@ -163,10 +176,12 @@ class ChannelManager:
                 logger.error(f"Error stopping {name}: {e}")
 
         await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"All channels stopped: channel_count={len(self._channels)}")
 
         # Stop event loop
         self._event_loop.stop()
         self._event_loop = None
+        logger.info("Channel manager service stopped")
 
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""

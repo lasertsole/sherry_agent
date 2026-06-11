@@ -138,11 +138,21 @@ def search_messages(
     limit: int = 20,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
+    import time
+    start_time = time.time()
+    
+    logger.debug(
+        f"Searching messages: session_id={session_id}, query='{query[:50]}', "
+        f"limit={limit}, offset={offset}"
+    )
+    
     if not query or not query.strip():
+        logger.debug("Search query is empty")
         return []
 
     query = _sanitize_fts5_query(query)
     if not query:
+        logger.debug("Search query sanitized to empty")
         return []
 
     # CJK queries bypass the unicode61 FTS5 table.  The default tokenizer
@@ -294,6 +304,12 @@ def search_messages(
                 return []
             else:
                 matches = [dict(row) for row in cursor.fetchall()]
+
+    elapsed = time.time() - start_time
+    logger.debug(
+        f"Message search completed: session_id={session_id}, "
+        f"match_count={len(matches)}, duration={elapsed:.3f}s"
+    )
 
     # Add surrounding context (1 message before + after each match).
     # Done outside the lock so we don't hold it across N sequential queries.
