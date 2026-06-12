@@ -1,13 +1,18 @@
 <template>
   <div
-    :class="['item_card', { active: isActive }]"
+    :class="[
+      'p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white',
+      'dark:bg-[#2a2a36]/[0.6] dark:border-[#555] hover:bg-[#e4efff] dark:hover:bg-[#c1d6e5]',
+      { 'text-white bg-[#e4efff] dark:bg-[#c1d6e5]': props.isActive }
+    ]"
     @click="emits('chooseSession', props.HistoryRecord.id)">
     <!-- 标题 -->
-    <h1 class="session_title">{{ props.HistoryRecord?.title }}</h1>
+    <h1 class="truncate">{{ props.HistoryRecord?.title }}</h1>
     <!-- 创建时间 & 操作 -->
-    <div class="create_time">
+    <div class="flex justify-between mt-3 text-xs">
       <span>创建时间：{{ props.HistoryRecord?.createTime }}</span>
-      <div>
+      <span class="md:hidden">设置</span>
+      <div class="hidden md:block">
         <span>删除</span> |
         <span>修改</span>
       </div>
@@ -31,34 +36,3 @@ const emits = defineEmits<{
   chooseSession: [id: string];
 }>();
 </script>
-
-<style scoped lang="scss">
-@use '@/common.scss' as common;
-
-.item_card {
-  padding: 12px;
-  background-color: rgba($color: #2a2a36, $alpha: 0.6);
-  border: 1px solid #555;
-  border-radius: 10px;
-  cursor: pointer;
-  color: #ccc;
-
-  &:hover,
-  &.active {
-    border-color: #777;
-    box-shadow: 0 0 10px rgba($color: #777, $alpha: 0.5);
-    color: #fff;
-  }
-
-  .create_time {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    margin-top: 12px;
-  }
-
-  .session_title {
-    @include common.wordEllipsis;
-  }
-}
-</style>
