@@ -41,10 +41,10 @@ export const headerTools: Tool[] = [
     event: 'userCenter'
   },
   {
-    toolName: '退出登录',
+    toolName: '主题模式',
     icon: '',
-    title: '退出登录',
-    event: 'logout'
+    title: '主题模式',
+    event: 'changeTheme'
   }
 ];
 
