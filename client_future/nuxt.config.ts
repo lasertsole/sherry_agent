@@ -33,11 +33,11 @@ export default defineNuxtConfig({
   },
 
   // 导入第三方模块
-  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n'],
+  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n', '@nuxtjs/color-mode'],
 
   tailwindcss: {
     cssPath: ['~/assets/css/tailwind.scss', { injectPosition: "first" }],
-    configPath: '~/assets/ts/tailwind.config',
+    configPath: '~/tailwind.config.js',
     exposeConfig: {
       level: 2
     },
