@@ -12,9 +12,9 @@ from pathlib import Path
 
 # 动态添加项目根目录到 sys.path
 current_file = Path(__file__).resolve()
-project_root: Path = current_file.parents[2]
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
+current_folder: Path = current_file.parent
+if current_folder.as_posix() not in sys.path:
+    sys.path.insert(0, current_folder.as_posix())
 
 from skills.core.rag.scripts import folder_index, file_index
 
