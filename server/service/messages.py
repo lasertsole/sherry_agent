@@ -3,17 +3,16 @@ import requests
 from loguru import logger
 from robyn import SSEMessage
 from config import ASSISTANT_NAME
-from pub_func.message import slice_last_n_turn
 from type import MultiModalMessage
-from pub_func import build_agent_config, slice_last_n_turn
 from typing import AsyncGenerator, Any, List
 from langchain.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
 from ..DAO import clear_session as clear_session_DAO
 from workspace.prompt_builder import build_system_prompt
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from pub_func import build_agent_config, slice_last_n_turn
 from context_engine import rectification_and_standardization
-from agent import built_agent, ModelType, build_async_sqlite_checkpointer
+from agent import built_agent, build_async_sqlite_checkpointer
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk, messages_to_dict
 
 def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> List[BaseMessage]:
@@ -43,8 +42,7 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
             content_list.append({"type": "image_url", "image_url": {"url": image_url}})
             # 切换模型
             logger.info(f"Switching to VL model for image processing: session_id={session_id}")
-            agent = built_agent(system_prompt=build_system_prompt(), session_id = session_id, model_type = ModelType.VL_MODEL, enable_tool = False)
-
+            
     elapsed = time.time() - start_time
     logger.info(
         f"Agent generator prepared: session_id={session_id}, duration={elapsed:.2f}s, "

@@ -1,5 +1,5 @@
-from enum import Enum
 import time
+from enum import Enum
 from loguru import logger
 from pydantic import BaseModel
 from skills import build_skills_snapshot
@@ -10,7 +10,7 @@ from context_engine import add_session_if_not_exists
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from models import chat_model, reasoner_model, vl_model
-from .middlewares import ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize
+from .middlewares import ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize, MultimodalProcessor
 
 # 服务器启动时重构技能快照，用于保证本次服务器运行中skills提示词稳定，从而保证模型 前缀缓存 稳定
 build_skills_snapshot()
@@ -18,16 +18,9 @@ build_skills_snapshot()
 # 加载memory文件夹下的md文件，并在保证本次服务器运行触发压缩前保持不变
 memory_store.load_from_disk()
 
-class ModelType(Enum):
-    """字符串枚举，可以直接与字符串比较"""
-    CHAT_MODEL = chat_model
-    REASONER_MODEL = reasoner_model
-    VL_MODEL = vl_model
-
 def built_agent(
     session_id: str,
     system_prompt: str | None = None,
-    model_type:ModelType = ModelType.CHAT_MODEL,
     temperature: float = 0.8,
     enable_tool: bool = True,
     checkpointer: Checkpointer | None = None,
@@ -39,11 +32,11 @@ def built_agent(
     add_session_if_not_exists(session_id)
     
     logger.info(
-        f"Building agent: session_id={session_id}, model={model_type.name}, "
+        f"Building agent: session_id={session_id}"
         f"temperature={temperature}, enable_tool={enable_tool}"
     )
 
-    model = model_type.value.bind(temperature=temperature)
+    model = chat_model.bind(temperature=temperature)
 
     if checkpointer is None:
         checkpointer = InMemorySaver()
@@ -60,6 +53,7 @@ def built_agent(
         system_prompt = system_prompt,
         tools = tools,
         middleware = [
+            MultimodalProcessor(session_id=session_id),
             ContextEngineHook(session_id=session_id),
             Summarization(
                 model=chat_model,
