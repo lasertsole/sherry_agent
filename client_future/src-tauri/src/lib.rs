@@ -1,16 +1,15 @@
+mod utils;
+
+use utils::logger::setup_logger;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
-    .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
-      Ok(())
-    })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    // Initialize tracing before Tauri starts (early init pattern).
+    // This makes structured logging available during app bootstrap.
+    let tracing_builder = setup_logger();
+
+    tauri::Builder::default()
+        .plugin(tracing_builder.build())
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }
