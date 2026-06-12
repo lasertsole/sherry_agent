@@ -1,7 +1,11 @@
 import os
+import nest_asyncio
 from logs import init_logger
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
+
+# 解决同一事件在不同事件循环的报错
+nest_asyncio.apply()
 
 # 初始化日志
 init_logger()

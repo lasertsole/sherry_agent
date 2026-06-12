@@ -20,11 +20,6 @@ from .store import (get_db, delete_node, save_message, get_unextracted, get_by_s
                    upsert_edge, delete_extracted, UpsertResult)
 
 
-class SliceLastTurn(TypedDict):
-    messages: List[BaseMessage]
-    tokens: int
-    dropped: int
-
 class RecallResult(TypedDict):
     nodes: List[Any]
     edges: List[Any]

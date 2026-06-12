@@ -4,7 +4,7 @@ from pub_func.message.estimate_msg_tokens import estimate_msg_tokens
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage
 
 
-class SliceLastTurn(TypedDict):
+class SliceLastNTurn(TypedDict):
     messages: List[BaseMessage]
     tokens: int
     dropped: int
@@ -36,28 +36,34 @@ def _truncate_msg(msg: BaseMessage)-> BaseMessage:
     return msg.model_copy(deep=True, update={"content": truncated_text})
 
 # ─── 取最后一轮完整用户对话 ─────────────────────────────────
-def slice_last_turn(messages: List[BaseMessage]) -> SliceLastTurn:
+def slice_last_turn(messages: List[BaseMessage]) -> SliceLastNTurn:
     """
         从最后一个 role=user 到消息末尾，完整保留。
         tool_use/tool_result 天然配对不会切断。
         超长 tool_result 截断（保头尾砍中间）。
     """
-    if len(messages)==0:
+    return slice_last_n_turn(messages, 1)
+
+def slice_last_n_turn(messages: List[BaseMessage], n: int)-> SliceLastNTurn:
+    if messages is None or len(messages)==0:
         return { "messages": [], "tokens": 0, "dropped": 0 }
 
+    turn_count = 0
     last_user_idx = -1
 
     for i, msg in enumerate(reversed(messages)):
+        if turn_count >= n:
+            break
+
         if isinstance(msg, HumanMessage):
             last_user_idx = len(messages) - 1 - i
-            break
+            turn_count+=1
 
     if last_user_idx < 0:
         last_user_idx = 0
 
     kept: List[BaseMessage] = messages[last_user_idx:]
     dropped = last_user_idx
-
 
     kept = [_truncate_msg(msg) for msg in kept]
 

@@ -1,12 +1,12 @@
 [package]
-name = "app"
+name = "ema-ai-agent"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "A deep role-playing AI Agent built on LangGraph and multimodal technology. Features long-term memory, dynamic skill system, and multi-channel access."
+authors = ["EMA AI Agent Team"]
+license = "MIT"
+repository = "https://github.com/lasertsole/EMA_AI_agent"
 edition = "2021"
-rust-version = "1.71"
+rust-version = "1.94"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,6 +20,6 @@ tauri-build = { version = "2.0.0-rc.13", features = [] }
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-log = "0.4"
 tauri = { version = "2.0.0-rc.17", features = [] }
-tauri-plugin-log = "2.0.0-rc"
+tracing = "0.1.44"
+tauri-plugin-tracing = "0.3.4"

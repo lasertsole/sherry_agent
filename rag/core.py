@@ -1,8 +1,10 @@
 import os
 import sys
 import time
+import nest_asyncio
 from pathlib import Path
 from loguru import logger
+from models import vl_model
 from config import SRC_DIR, MODELS_DIR
 from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
@@ -13,9 +15,9 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from models import vl_model
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
 
+# 解决同一事件在不同事件循环的报错
+nest_asyncio.apply()
 
 os.environ["HF_HUB_OFFLINE"] = "0"
 os.environ["TRANSFORMERS_OFFLINE"] = "0"
@@ -199,14 +201,15 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         logger.debug("LightRAG initialized")
 
         config = RAGAnythingConfig(
-            parser=parser,
-            parse_method=parse_method,
-            working_dir=str(SRC_DIR / "rag" / "rag_anything_db"),
+            parser = parser,
+            parse_method = parse_method,
+            # # 必须和 LightRAG 一致
+            # working_dir = str(SRC_DIR / "rag" / "lightrag_db"),
         )
         _rag_anything = RAGAnything(
-            lightrag=lightrag,
-            vision_model_func=_vision_model_func,
-            config=config,
+            lightrag = lightrag,
+            vision_model_func = _vision_model_func,
+            config = config,
         )
         
         elapsed = time.time() - start_time

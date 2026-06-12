@@ -3,8 +3,9 @@ import requests
 from loguru import logger
 from robyn import SSEMessage
 from config import ASSISTANT_NAME
+from pub_func.message import slice_last_n_turn
 from type import MultiModalMessage
-from pub_func import build_agent_config
+from pub_func import build_agent_config, slice_last_n_turn
 from typing import AsyncGenerator, Any, List
 from langchain.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
@@ -13,7 +14,7 @@ from workspace.prompt_builder import build_system_prompt
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from context_engine import rectification_and_standardization
 from agent import built_agent, ModelType, build_async_sqlite_checkpointer
-from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
+from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk, messages_to_dict
 
 def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> List[BaseMessage]:
     return agent.get_state(config=build_agent_config(session_id)).values.get("messages", [])
@@ -165,9 +166,20 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         # 重置工具信息
         _current_tool_name = ""
         _current_tool_id = ""
-
-
 """以上是返回信息逻辑"""
+
+"""以下是获取历史聊天记录"""
+async def get_history_turn_message_dicts(session_id: str, last_turn_count: int = 10) -> List[dict[str, Any]]:
+    if last_turn_count <= 0:
+        return []
+
+    checkpointer = await build_async_sqlite_checkpointer()
+    res = await checkpointer.aget_tuple(build_agent_config(session_id))
+    history_messages: List[BaseMessage] = getattr(res, "checkpoint", {}).get("channel_values", {}).get("messages", [])
+    slice_last_n_turn_messages = slice_last_n_turn(history_messages, last_turn_count).get("messages")
+
+    return messages_to_dict(slice_last_n_turn_messages)
+"""以上是获取历史聊天记录"""
 
 """以下是会话结束逻辑"""
 async def session_end(session_id: str):

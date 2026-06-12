@@ -23,6 +23,7 @@ dependencies = [
     "live2d-py>=0.7.0.4",
     "loguru>=0.7.3",
     "matplotlib>=3.10.9",
+    "nest-asyncio>=1.6.0",
     "pillow>=12.2.0",
     "pyqt6>=6.11.0",
     "qq-botpy>=1.2.1",

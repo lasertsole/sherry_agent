@@ -7,7 +7,8 @@ from runtime import relation_register
 from typing import Any, Dict, Callable
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
 from ..service import (async_generate, session_end, clear_session, read_system_prompt_file, write_system_prompt_file,
-                       update_system_prompt_file, read_character, write_character, update_character)
+                       update_system_prompt_file, read_character, write_character, update_character,
+                       get_history_turn_message_dicts)
 from robyn import Robyn, SSEMessage, SSEResponse, WebSocketDisconnect, WebSocketAdapter
 
 # 创建app
@@ -177,6 +178,7 @@ async def read_system_prompt_handler(request):
     读取系统提示文件
     """
     logger.debug("Reading system prompt")
+
     return read_system_prompt_file()
 
 @app.put("/system_prompt")
@@ -191,6 +193,7 @@ async def write_system_prompt_file_handler(request):
     logger.info(f"Writing system prompt: file_count={file_count}, files={list(file_to_content.keys())}")
     result = write_system_prompt_file(file_to_content)
     logger.info(f"System prompt written: file_count={file_count}")
+
     return result
 
 
@@ -206,6 +209,7 @@ async def update_system_prompt_file_handler(request):
     logger.info(f"Updating system prompt: file_count={file_count}, files={list(file_to_content.keys())}")
     result = update_system_prompt_file(file_to_content)
     logger.info(f"System prompt updated: file_count={file_count}")
+
     return result
 
 
@@ -229,6 +233,7 @@ async def write_character_handler(request):
     logger.info(f"Writing character configuration: character_count={character_count}, keys={list(character_data.keys())}")
     result = write_character(character_data)
     logger.info(f"Character configuration written: character_count={character_count}")
+
     return result
 
 @app.patch("/character")
@@ -243,4 +248,18 @@ async def update_character_handler(request):
     logger.info(f"Updating character configuration: character_count={character_count}, keys={list(character_data.keys())}")
     result = update_character(character_data)
     logger.info(f"Character configuration updated: character_count={character_count}")
+
     return result
+
+@app.get("/n_turns_history_messages")
+async def get_history_turn_message_dicts_handler(request):
+    """
+    读取历史消息
+    """
+    request_json = request.json()
+
+    session_id: str | None = request_json.get("session_id", None)
+    last_turn_count: int | None = request_json.get("last_turn_count", None)
+    logger.debug(f"Reading history messages: session_id={session_id}")
+
+    return get_history_turn_message_dicts(session_id = session_id, last_turn_count = last_turn_count)
