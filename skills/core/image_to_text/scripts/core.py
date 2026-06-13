@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage
 load_dotenv(project_root / ".env", override=True)
 
 
-def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible."):
+def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible.")-> None:
     """Recognize image content (supports local file path or URL)
 
     Args:
@@ -63,16 +63,16 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
             if not path.exists():
                 logger.info(f"File does not exist: {image_path}")
                 return None
-        except Exception:
-            logger.error(f"Invalid file path: {image_path}")
+        except Exception as e:
+            logger.error(f"Invalid file path: {image_path}, {e}")
             return None
 
     # ----- Phase 2: Verify image integrity -----
     try:
         with Image.open(path) as img:
             img.verify()
-    except Exception:
-        logger.error(f"Not a valid image file: {image_path}")
+    except Exception as e:
+        logger.error(f"Not a valid image file: {image_path}, {e}")
         if is_url(image_path):
             tmp_path.unlink(missing_ok=True)
         return None
@@ -101,10 +101,8 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
         res = ITT_model.invoke([HumanMessage(content=content_list)])
 
         logger.info(f"Image recognition completed, content:\n{res.content}")
-        return res.content
     except Exception as e:
         logger.error(f"[Error] Vision model call failed: {e}")
-        return None
     finally:
         # Clean up temp file if it was downloaded from a URL
         if is_url(image_path):

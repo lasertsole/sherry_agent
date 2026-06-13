@@ -155,23 +155,3 @@ def extract_frames(
         ))
 
     return results
-
-
-# ============================================================
-# Usage example
-# ============================================================
-if __name__ == "__main__":
-    from pprint import pprint
-
-    VIDEO = r"C:\app\code\project\EMA_AI_agent\tests\demo_video.mp4"
-
-    results = extract_frames(
-        VIDEO,
-        r"C:\app\code\project\EMA_AI_agent\tests",
-        threshold=0.08,
-        interval_sec=1.0,
-        prefix="frame",
-    )
-    print(f"Total frames extracted: {len(results)}")
-    for r in results[:3]:
-        pprint(r)
