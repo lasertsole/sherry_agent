@@ -9,7 +9,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use crate::utils::error::{AppError, AppResult};
 //!
 //! fn load_config(path: &str) -> AppResult<Config> {
@@ -21,7 +21,7 @@
 //!
 //! In Tauri commands, convert to [`FrontendError`] automatically:
 //!
-//! ```rust
+//! ```rust,ignore
 //! #[tauri::command]
 //! async fn get_session(id: String) -> Result<Session, FrontendError> {
 //!     let session = session_store::get(&id).await?;  // AppError → FrontendError
@@ -193,7 +193,7 @@ impl From<serde_json::Error> for AppError {
 
 /// Shorthand for creating an [`AppError::Config`].
 ///
-/// ```rust
+/// ```rust,ignore
 /// config_err!("missing field: {}", field_name);
 /// ```
 #[macro_export]

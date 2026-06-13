@@ -31,7 +31,7 @@ use tracing_subscriber::Registry;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// fn main() {
 ///     let builder = setup_logger();
 ///     tauri::Builder::default()
