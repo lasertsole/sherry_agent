@@ -10,6 +10,7 @@ Example:
 
 import sys
 from pathlib import Path
+from loguru import logger
 
 # Dynamically add project root to sys.path
 current_file = Path(__file__).resolve()
@@ -34,7 +35,7 @@ async def folder_index(input_folder_path: str, classify_folder: str) -> None:
         recursive=True,
         max_workers=4,
     )
-    print(f"✅ Indexing complete! Folder '{input_folder_path}' added to knowledge graph category '{classify_folder}'")
+    logger.info(f"✅ Indexing complete! Folder '{input_folder_path}' added to knowledge graph category '{classify_folder}'")
 
 
 async def file_index(input_file_path: str, classify_folder: str) -> None:
@@ -47,4 +48,4 @@ async def file_index(input_file_path: str, classify_folder: str) -> None:
         recursive=True,
         max_workers=4,
     )
-    print(f"✅ Indexing complete! File '{input_file_path}' added to knowledge graph category '{classify_folder}'")
+    logger.info(f"✅ Indexing complete! File '{input_file_path}' added to knowledge graph category '{classify_folder}'")

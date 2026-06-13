@@ -10,6 +10,7 @@ Example:
 
 import sys
 from pathlib import Path
+from loguru import logger
 
 # Note: In Python REPL environment, sys.stdout is a StringIO object without reconfigure()
 # Use try/except to handle both environments
@@ -35,7 +36,7 @@ async def query(question: str) -> None:
     try:
         rag: RAGAnything = await get_rag_anything()
         res = await rag.aquery(question)
-        print(f"[Query] {question}")
-        print(f"[Answer] {res}")
+        logger.info(f"[Query] {question}")
+        logger.info(f"[Answer] {res}")
     except Exception as e:
-        print(f"[Error] Query failed: {e}")
+        logger.error(f"[Error] Query failed: {e}")

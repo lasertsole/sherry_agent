@@ -907,7 +907,6 @@ dependencies = [
     { name = "raganything", extra = ["all"] },
     { name = "robyn" },
     { name = "sentence-transformers" },
-    { name = "snkv" },
     { name = "streamlit" },
     { name = "torchaudio" },
     { name = "torchvision" },
@@ -949,7 +948,6 @@ requires-dist = [
     { name = "raganything", extras = ["all"], specifier = ">=1.3.1" },
     { name = "robyn", specifier = ">=0.84.0" },
     { name = "sentence-transformers", specifier = ">=5.5.1" },
-    { name = "snkv", specifier = ">=0.7.3" },
     { name = "streamlit", specifier = ">=1.58.0" },
     { name = "torchaudio", specifier = ">=2.11.0" },
     { name = "torchvision", specifier = ">=0.27.0" },
@@ -4876,19 +4874,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372, upload-time = "2024-02-25T23:20:04.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
-]
-
-[[package]]
-name = "snkv"
-version = "0.8.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a6/e3/bb2b0872087b8aef62b2afe6ca5abf38f848bed5be75ad99eb75b26f7c16/snkv-0.8.1.tar.gz", hash = "sha256:f9d38ce93b56df7dba8e53dae2a74e68112e0455aeb8bc5b7928d0df3c583bb8", size = 105926, upload-time = "2026-06-09T14:40:40.325Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/80/15c5a497ccdc868b6a66b50740396a0f675b9af6221e7cd3883cbd71b7f5/snkv-0.8.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:574b56d07804880eb27a521603fa756bb8f23a442055b885852553cd2a84ffd7", size = 286301, upload-time = "2026-06-09T14:40:14.311Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/a9/00849812f9834188206e7813b3c4da487fab1fb28854017b38d8151224b5/snkv-0.8.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:265666d90708b5233be92b24f6cfe384c73911167c047684c6f506f065166ff9", size = 276493, upload-time = "2026-06-09T14:40:15.762Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/b2/c7dbdc238af4752aa650f17f0048135f0204c4cdb9d886e3ddee374a5feb/snkv-0.8.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6402cfdd4bb784343e321512909be7e7a0ea97b0f35285dce304a3d501ca75cf", size = 849704, upload-time = "2026-06-09T14:40:17.322Z" },
-    { url = "https://files.pythonhosted.org/packages/83/56/bde09d4ae5477119ee731a40beebb8ef4bf93e839efedfb0531a5884fc1b/snkv-0.8.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0e5ff78f0efe57d3f743cad7758566958f3fbe6e0b78d9a556882d48b7203a7e", size = 871654, upload-time = "2026-06-09T14:40:19.3Z" },
-    { url = "https://files.pythonhosted.org/packages/d8/41/95445fd8f9e7360439f103f3d457446160183eb6aa899ffe703bdaf571d6/snkv-0.8.1-cp313-cp313-win_amd64.whl", hash = "sha256:526acc00c726fa276117f529214e6c94bc8119e0b4d4f81f2f8de0a082dd97bd", size = 216211, upload-time = "2026-06-09T14:40:20.795Z" },
 ]
 
 [[package]]

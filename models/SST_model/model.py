@@ -1,4 +1,3 @@
-
 import time
 import torch
 from torch import nn
@@ -6,12 +5,12 @@ from typing import Optional
 import torch.nn.functional as F
 from funasr.register import tables
 from funasr.models.ctc.ctc import CTC
+from utils.ctc_alignment import ctc_forced_align
 from funasr.metrics.compute_acc import th_accuracy
 from funasr.utils.datadir_writer import DatadirWriter
 from funasr.train_utils.device_funcs import force_gatherable
 from funasr.losses.label_smoothing_loss import LabelSmoothingLoss
 from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
-from utils.ctc_alignment import ctc_forced_align
 
 class SinusoidalPositionEncoder(torch.nn.Module):
     """ """

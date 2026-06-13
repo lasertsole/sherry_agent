@@ -11,26 +11,30 @@ import base64
 import tempfile
 import requests
 from PIL import Image
+from loguru import logger
 from models import vl_model
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
 from pub_func.validator import is_url
+from langchain_core.messages import HumanMessage
 
 # Load environment variables
 load_dotenv(project_root / ".env", override=True)
 
 
-def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible.")-> None:
+def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible."):
     """Recognize image content (supports local file path or URL)
 
     Args:
         image_path: Local image path or image URL
         user_text: Instruction for the image description, defaults to "Please describe the image content in as much detail as possible."
+
+    Returns:
+        The recognized text content from the image.
     """
     # ----- Phase 1: Get image data -----
     if is_url(image_path):
         # URL → download to temp file
-        print(f"Downloading image from URL: {image_path}")
+        logger.info(f"Downloading image from URL: {image_path}")
         try:
             resp = requests.get(image_path, stream=True, timeout=60)
             resp.raise_for_status()
@@ -48,19 +52,19 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
                 tmp.write(resp.content)
                 tmp_path = Path(tmp.name)
 
-            print(f"Image downloaded to temp file: {tmp_path}")
+            logger.info(f"Image downloaded to temp file: {tmp_path}")
             path = tmp_path
         except Exception as e:
-            print(f"[Error] Failed to download image: {e}")
+            logger.error(f"[Error] Failed to download image: {e}")
             return None
     else:
         path = Path(image_path)
         try:
             if not path.exists():
-                print(f"File does not exist: {image_path}")
+                logger.info(f"File does not exist: {image_path}")
                 return None
         except Exception:
-            print(f"Invalid file path: {image_path}")
+            logger.error(f"Invalid file path: {image_path}")
             return None
 
     # ----- Phase 2: Verify image integrity -----
@@ -68,7 +72,7 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
         with Image.open(path) as img:
             img.verify()
     except Exception:
-        print(f"Not a valid image file: {image_path}")
+        logger.error(f"Not a valid image file: {image_path}")
         if is_url(image_path):
             tmp_path.unlink(missing_ok=True)
         return None
@@ -81,7 +85,7 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
         with open(path, "rb") as image_file:
             encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
     except Exception as e:
-        print(f"[Error] Image conversion failed: {e}")
+        logger.error(f"[Error] Image conversion failed: {e}")
         if is_url(image_path):
             tmp_path.unlink(missing_ok=True)
         return None
@@ -96,10 +100,11 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
 
         res = vl_model.invoke([HumanMessage(content=content_list)])
 
-        print("Image recognition completed, content:\n", res.content)
-        return None
+        logger.info(f"Image recognition completed, content:\n{res.content}")
+        return res.content
     except Exception as e:
-        print(f"[Error] Vision model call failed: {e}")
+        logger.error(f"[Error] Vision model call failed: {e}")
+        return None
     finally:
         # Clean up temp file if it was downloaded from a URL
         if is_url(image_path):

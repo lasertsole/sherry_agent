@@ -15,6 +15,24 @@ class MultimodalProcessor(AgentMiddleware):
         super().__init__()
         self._session_id: str = session_id
 
+    @staticmethod
+    def _strip_image_url_from_content(content: Any) -> str:
+        """Extract text from a multimodal content list, stripping image_url items.
+
+        Returns the concatenated text content. Handles str, dict, and list formats.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, dict):
+            return content.get("text", "")
+        if isinstance(content, list):
+            texts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    texts.append(item.get("text", ""))
+            return "\n".join(texts)
+        return ""
+
     async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         state_mes_list: list[BaseMessage] = state["messages"]
         last_mes: BaseMessage = state_mes_list[-1]
@@ -40,10 +58,11 @@ class MultimodalProcessor(AgentMiddleware):
                 elif item.get("type") == "image_url":
                     url: str = item.get("image_url", {}).get("url", "")
 
-                    # 判断是否是url
-                    if is_url(url):
-                        temp_path = url
-                    else:    # 判断是否已经有data URI前缀
+                    # 判断是否是url（排除data: scheme，它属于base64内嵌图片）
+                    if is_url(url) and not url.startswith('data:'):
+                        image_path_list.append(url)
+                        continue
+                    else:
                         if url.startswith('data:image/'):
                             # 已有前缀，直接使用
                             base64_data: str = url.split(",")[1]
@@ -60,8 +79,7 @@ class MultimodalProcessor(AgentMiddleware):
                         temp_path = temp_path.resolve()
                         image.save(temp_path, "PNG")
                         logger.info("图片缓存成功！")
-
-                    image_path_list.append(temp_path.as_posix())
+                        image_path_list.append(temp_path.as_posix())
 
         if text_dict is None:
             text_dict = {"type": "text", "text": ""}
@@ -69,6 +87,15 @@ class MultimodalProcessor(AgentMiddleware):
         if len(image_path_list) > 0:
             text_dict["text"] += f"[System: The user uploaded {len(image_path_list)} image(s). Location: {",".join(image_path_list)}. If you need to view the image(s), use the image_to_text skill.]"
             last_mes.content = [text_dict]
+
+        # 清理历史消息中的 image_url 内容块（DeepSeek 等模型不支持 image_url 格式）
+        for mes in state_mes_list[:-1]:
+            if not isinstance(mes, HumanMessage):
+                continue
+            mes_content = getattr(mes, "content", None)
+            if isinstance(mes_content, list):
+                text_only = self._strip_image_url_from_content(mes_content)
+                mes.content = text_only if text_only else mes_content
 
     async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         # 清理缓存图片文件：文件名不是纯数字时间戳 → 直接删；超过7天的 → 删

@@ -1,11 +1,9 @@
 ---
 name: speech_to_text
-description: When the user needs to transcribe speech into text, use the python_repl tool to generate text.
+description: When the user needs to transcribe speech (such as .mp3, .wav, .ogg) into text, use the python_repl tool to generate text.
 ---
 
 ```python
-import sys
-from pathlib import Path
 from skills.core.speech_to_text.scripts import stt
 
 if __name__ == '__main__':

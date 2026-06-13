@@ -1,3 +1,4 @@
+from loguru import  logger
 from funasr import AutoModel
 from config import MODELS_DIR
 from funasr.utils.postprocess_utils import rich_transcription_postprocess
@@ -26,6 +27,6 @@ def stt(audio_path: str)-> None:
             merge_length_s=15,
         )
         text = rich_transcription_postprocess(res[0]["text"])
-        print("Audio recognition completed, content:\n", text)
+        logger.info(f"Audio recognition completed, content:\n{text}")
     except Exception as e:
-        print(f"[Error] Call failed: {e}")
+        logger.error(f"[Error] Call failed: {e}")

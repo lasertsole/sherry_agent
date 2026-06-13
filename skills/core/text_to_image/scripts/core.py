@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from loguru import logger
 
 # Dynamically add project root to sys.path
 current_file = Path(__file__).resolve()
@@ -18,7 +19,7 @@ from pub_func import generate_tsid
 # Load environment variables
 load_dotenv(project_root / ".env", override=True)
 
-def generate_image(prompt: str) -> str:
+def generate_image(prompt: str) -> None:
     """
     Generate an image from a text description.
 
@@ -34,16 +35,13 @@ def generate_image(prompt: str) -> str:
         api_key = os.getenv("TTI_API_KEY")
 
         if not url:
-            print("Error: TTI_API_BASE environment variable not set")
-            return ""
+            logger.info("Error: TTI_API_BASE environment variable not set")
 
         if not api_name:
-            print("Error: TTI_API_NAME environment variable not set")
-            return ""
+            logger.info("Error: TTI_API_NAME environment variable not set")
 
         if not api_key:
-            print("Error: VL_API_KEY environment variable not set")
-            return ""
+            logger.info("Error: VL_API_KEY environment variable not set")
 
         # Send request.
         headers = {
@@ -58,8 +56,8 @@ def generate_image(prompt: str) -> str:
             "seed": 1
         }
 
-        print(f"Calling API to generate image...")
-        print(f"Using prompt: {prompt}")
+        logger.info(f"Calling API to generate image...")
+        logger.info(f"Using prompt: {prompt}")
         response = requests.post(url, headers=headers, data=json.dumps(data), verify=False)
 
         save_path = Path(SRC_DIR) / "temp" / f"{generate_tsid()}.png"
@@ -81,9 +79,9 @@ def generate_image(prompt: str) -> str:
                     parts = b64_data.split(',', 1)
                     if len(parts) == 2:
                         b64_data = parts[1]
-                        print(f"Extracted pure base64 data, length: {len(b64_data)}")
+                        logger.info(f"Extracted pure base64 data, length: {len(b64_data)}")
                     else:
-                        print(f"Warning: Unable to parse Data URL format: {b64_data[:50]}...")
+                        logger.warning(f"Warning: Unable to parse Data URL format: {b64_data[:50]}...")
 
                 # Decode base64
                 try:
@@ -93,23 +91,21 @@ def generate_image(prompt: str) -> str:
                     with open(save_path, "wb") as f:
                         f.write(image_data)
 
-                    print(f"Image saved successfully at: {save_path}")
-                    print(f"File size: {save_path.stat().st_size} bytes")
-                    return str(save_path)
+                    logger.info(f"Image saved successfully at: {save_path}")
+                    logger.info(f"File size: {save_path.stat().st_size} bytes")
+                    logger.info(f"Generated: {save_path}")
 
                 except Exception as decode_error:
-                    print(f"Base64 decode failed: {decode_error}")
-                    print(f"Base64 data length: {len(b64_data)}")
+                    logger.error(f"Base64 decode failed: {decode_error}")
+                    logger.error(f"Base64 data length: {len(b64_data)}")
 
             else:
-                print(f"Unexpected API response format: {response_data}")
+                logger.error(f"Unexpected API response format: {response_data}")
         else:
-            print(f"Request failed, status code: {status_code}")
-            print(f"Response body: {response.text}")
+            logger.error(f"Request failed, status code: {status_code}")
+            logger.error(f"Response body: {response.text}")
 
     except Exception as e:
-        print(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         import traceback
         traceback.print_exc()
-
-    return ""
