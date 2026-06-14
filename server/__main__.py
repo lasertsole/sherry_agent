@@ -4,26 +4,24 @@ from logs import init_logger
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
 
-# 解决同一事件在不同事件循环的报错
+# Fix nested event loop conflicts
 nest_asyncio.apply()
 
-# 初始化日志
+# Initialize logging
 init_logger()
 
-# 加载 .env 并初始化 LangSmith（必须在任何 LangChain 导入之前）
+# Load .env and init LangSmith (must be before any LangChain imports)
 load_dotenv(ENV_PATH, override=True)
 if os.getenv("LANGSMITH_TRACING_V2") == "true" and os.getenv("LANGSMITH_API_KEY"):
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
     os.environ["LANGSMITH_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
     os.environ["LANGSMITH_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "EMA_AI_agent")
-    print("🔍 LangSmith 跟踪已启用 -> project:", os.environ["LANGSMITH_PROJECT"])
+    print("🔍 LangSmith tracing enabled -> project:", os.environ["LANGSMITH_PROJECT"])
 else:
-    print("ℹ️  LangSmith 未配置（设置 LANGSMITH_TRACING_V2=true 和 LANGSMITH_API_KEY 以启用）")
+    print("ℹ️  LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY to enable)")
 
 
 if __name__ == "__main__":
-    print(f"🚀 服务器启动中... 地址：http://{API_HOST}:{API_PORT}")
-
-    # 导入以注册所有路由和处理器
+    # Import triggers to register all routes and handlers
     from .trigger import app
     app.start(host=API_HOST, port=API_PORT)

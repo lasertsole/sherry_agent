@@ -3,7 +3,7 @@ name: video_text_to_text
 description: When the user needs to transcribe video (such as .mp4, .mkv, .avi) into text, use the python_repl tool to generate text.
 ---
 
-## 如果支持视频格式输入，则使用本段代码
+## Use this if the backend supports video input natively
 ```python
 from skills.core.video_text_to_text.scripts import vtt
 
@@ -13,7 +13,7 @@ if __name__ == '__main__':
     vtt(video_path, query)
 ```
 
-## 如果不支持视频格式输入 但支持图片输入，则使用本段fallback代码
+## Use the fallback when video input is unsupported but image input is accepted
 ```python
 from skills.core.video_text_to_text.scripts import vtt_fackback
 

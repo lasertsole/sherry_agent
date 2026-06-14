@@ -7,10 +7,10 @@ def _session_folder(session_id: str) -> str:
     return (Path(SESSIONS_DIR) / session_id).as_posix()
 
 async def clear_session(session_id: str) -> None:
-    """删除整个会话文件夹"""
+    """Delete the entire session folder"""
     path = Path(_session_folder(session_id))
     if path.exists() and path.is_dir():
         shutil.rmtree(path)
 
-    # 清空sqlite checkpointer中特定session_id的聊天记录
+    # Clear chat history for this session_id from the sqlite checkpointer
     await delete_thread_history(session_id=session_id)
