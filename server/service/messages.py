@@ -5,6 +5,7 @@ from loguru import logger
 from robyn import SSEMessage
 from config import ASSISTANT_NAME
 from type import MultiModalMessage
+from runtime import state_register
 from typing import AsyncGenerator, Any, List
 from langchain.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
@@ -103,14 +104,7 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 """End agent assembly logic"""
 
 """Response generation logic — yields SSE messages"""
-_current_session_id_to_tool_params: dict[str, dict[str, str] | None] = {}
 async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[str, None]:
-    if _current_session_id_to_tool_params.get(session_id, None) is None:
-        _current_session_id_to_tool_params[session_id] = {
-            "current_tool_name": "",
-            "current_tool_id": "",
-        }
-
     start_time = time.time()
     logger.info(
         f"Agent execution started: session_id={session_id}, is_stream={is_stream}, "
@@ -138,30 +132,30 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                     # Tool call output logic
                     tool_calls: List[ToolCall] | List[ToolCallChunk] = msg_chunk.tool_calls if msg_chunk.tool_calls and len(
                         msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
-                    if len(tool_calls) > 0 or _current_session_id_to_tool_params[session_id]["current_tool_id"].strip():
+                    if len(tool_calls) > 0 or state_register.get_state(session_id, "current_tool_id", "").strip():
                         repeat_flag: bool = True  # Prevent duplicate tool call output
                         if len(tool_calls) > 0:
                             tool_call = tool_calls[0]
 
                             if tool_call["name"]:
-                                if tool_call["name"].strip() or tool_call["name"].strip() != _current_session_id_to_tool_params[session_id]["current_tool_name"]:
-                                    _current_session_id_to_tool_params[session_id]["current_tool_name"] = tool_call['name']
+                                if tool_call["name"].strip() or tool_call["name"].strip() != state_register.get_state(session_id, "current_tool_name"):
+                                    state_register.set_state(session_id, "current_tool_name", tool_call['name'])
 
                             if tool_call["id"]:
-                                if tool_call["id"].strip() or tool_call["id"].strip() != _current_session_id_to_tool_params[session_id]["current_tool_id"]:
-                                    _current_session_id_to_tool_params[session_id]["current_tool_id"] = tool_call['id']
+                                if tool_call["id"].strip() or tool_call["id"].strip() != state_register.get_state(session_id, "current_tool_id"):
+                                    state_register.set_state(session_id,"current_tool_id", tool_call['id'])
                                     repeat_flag = False
 
                         if not repeat_flag:
-                            res: str = f"\n\n**Calling tool {_current_session_id_to_tool_params[session_id]["current_tool_name"]}...**"
+                            res: str = f"\n\n**Calling tool {state_register.get_state(session_id, "current_tool_name", "")}...**"
                             ai_text += res
                             yield SSEMessage(res)
 
-                    if _current_session_id_to_tool_params[session_id]["current_tool_id"] and msg_chunk.content is not None and msg_chunk.content:
-                        res: str = f"\n\n**Tool {_current_session_id_to_tool_params[session_id]["current_tool_name"]} completed.**\n\n"
+                    if state_register.get_state(session_id, "current_tool_id", None) is not None and msg_chunk.content is not None and msg_chunk.content:
+                        res: str = f"\n\n**Tool {state_register.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
                         ai_text += res
                         yield SSEMessage(res)
-                        _current_session_id_to_tool_params[session_id]["current_tool_id"] = ""
+                        state_register.set_state(session_id, "current_tool_id", "")
                     # End tool call output logic
 
                     # Conversation output logic
@@ -210,8 +204,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         raise e
     finally:
         # Reset tool tracking state
-        _current_session_id_to_tool_params[session_id]["current_tool_name"] = ""
-        _current_session_id_to_tool_params[session_id]["current_tool_id"] = ""
+        state_register.set_state(session_id, "current_tool_name", "")
+        state_register.set_state(session_id, "current_tool_id", "")
 """End response generation logic"""
 
 """History retrieval logic"""
@@ -231,7 +225,7 @@ async def get_history_turn_message_dicts(session_id: str, last_turn_count: int =
 async def session_end(session_id: str):
     logger.info(f"Session ending: session_id={session_id}")
     await rectification_and_standardization(session_id = session_id)
-    _current_session_id_to_tool_params[session_id] = None
+    state_register.clear_session(session_id)
     logger.info(f"Session ended: session_id={session_id}")
 """End session end logic"""
 
@@ -239,6 +233,6 @@ async def session_end(session_id: str):
 async def clear_session(session_id: str):
     logger.info(f"Clearing session history: session_id={session_id}")
     await clear_session_DAO(session_id = session_id)
-    _current_session_id_to_tool_params[session_id] = None
+    state_register.clear_session(session_id)
     logger.info(f"Session history cleared: session_id={session_id}")
 """End clear session history logic"""

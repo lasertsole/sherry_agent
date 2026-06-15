@@ -5,7 +5,8 @@ from runtime import Register
 
 
 class StateRegister(Register):
-    _states: dict[str, dict[str, Any]] = {}
+    def __init__(self):
+        self._states = {}
 
     def set_state(self, session_id: str, key: str, value: Any) -> bool:
         if session_id not in self._states:
