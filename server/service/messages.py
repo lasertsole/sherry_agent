@@ -1,3 +1,4 @@
+import asyncio
 import time
 import base64
 import requests
@@ -114,6 +115,9 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     # Create the agent with assembled context
     ai_text:str = ""
 
+    # Control answering
+    state_register.set_state(session_id, "answering", True)
+
     try:
         yield SSEMessage(f"{ASSISTANT_NAME}:")
 
@@ -121,6 +125,9 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             # Stream directly from the context-assembled agent
             generator = await _get_generator(session_id, multi_modal_message)
             async for chunk in generator:
+                if not state_register.get_state(session_id, "answering", False):
+                    raise asyncio.CancelledError
+
                 msg_chunk: BaseMessage = chunk[0]
                 metadata: dict[str, Any] = chunk[1]
 
@@ -206,6 +213,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         # Reset tool tracking state
         state_register.set_state(session_id, "current_tool_name", "")
         state_register.set_state(session_id, "current_tool_id", "")
+        state_register.set_state(session_id, "answering", False)
 """End response generation logic"""
 
 """History retrieval logic"""

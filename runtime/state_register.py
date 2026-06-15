@@ -1,6 +1,5 @@
 from typing import Any
 from loguru import logger
-
 from runtime import Register
 
 
@@ -58,8 +57,5 @@ class StateRegister(Register):
 
         self._states[session_id].update(states)
         return True
-
-    def session_end(self, session_id: str):
-        self.clear_session(session_id)
 
 state_register = StateRegister()

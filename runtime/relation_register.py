@@ -85,7 +85,7 @@ class RelationManager(Register):
     def get_channel_chat_id_by_session_id(self, session_id: str)->tuple[str, str] | None:
         return self.session_id_to_channel_chat_id.get(session_id, None)
 
-    def session_end(self, session_id: str):
+    def clear_session(self, session_id: str):
         self.unregister_websocket_by_session_id(session_id)
         self.unregister_websocket_by_websocket_id(session_id)
 

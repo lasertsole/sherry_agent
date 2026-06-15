@@ -76,7 +76,7 @@ class CountRegister(Register):
 
         return True
     
-    def session_end(self, session_id: str):
+    def clear_session(self, session_id: str):
         del self.session_id_to_counter[session_id]
         del self.session_id_to_trigger[session_id]
 
