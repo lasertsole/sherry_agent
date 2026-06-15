@@ -1,0 +1,9 @@
+# VitePress build output
+.vitepress/dist
+.vitepress/cache
+
+# Dependencies
+node_modules
+
+# Lock files (managed by parent workspace)
+pnpm-lock.yaml

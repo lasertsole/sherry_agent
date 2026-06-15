@@ -4,11 +4,20 @@
 //! are new Tauri-native utilities for the desktop client.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // ── Response types ──────────────────────────────────────────
 
-/// Application metadata returned by the system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Application metadata returned by [`system_info`].
+///
+/// | Field | Type | Description |
+/// |-------|------|-------------|
+/// | `name` | `string` | Application name from `Cargo.toml` |
+/// | `version` | `string` | Semantic version (e.g., `"0.1.0"`) |
+/// | `tauri_version` | `string` | Tauri runtime version |
+/// | `debug` | `boolean` | `true` in debug builds |
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../app/types/backend/")]
 pub struct AppInfo {
     /// Application name (from Cargo.toml).
     pub name: String,
@@ -20,9 +29,16 @@ pub struct AppInfo {
     pub debug: bool,
 }
 
-/// Health-check response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Health-check response from [`system_health`].
+///
+/// | Field | Type | Description |
+/// |-------|------|-------------|
+/// | `healthy` | `boolean` | `true` if all subsystems are operational |
+/// | `message` | `string` | Human-readable status description |
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../app/types/backend/")]
 pub struct HealthStatus {
+    /// Whether all core subsystems are operational.
     pub healthy: bool,
     /// Human-readable status description.
     pub message: String,
@@ -31,6 +47,27 @@ pub struct HealthStatus {
 // ── Commands ────────────────────────────────────────────────
 
 /// Return application metadata.
+///
+/// Synchronous command that returns the app name, version, Tauri
+/// runtime version, and whether the build is debug or release.
+///
+/// # Arguments
+///
+/// None.
+///
+/// # Returns
+///
+/// [`AppInfo`] — Application metadata. This command never fails.
+///
+/// # Frontend Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+///
+/// const info = await invoke<AppInfo>('system_info');
+/// console.log(`App: ${info.name} v${info.version}`);
+/// console.log(`Debug: ${info.debug}`);
+/// ```
 #[tauri::command]
 pub fn system_info() -> AppInfo {
     AppInfo {
@@ -42,6 +79,30 @@ pub fn system_info() -> AppInfo {
 }
 
 /// Quick health check — verifies core subsystems are reachable.
+///
+/// Checks the availability of critical subsystems such as the
+/// database connection, LLM model endpoint, and file system access.
+///
+/// # Arguments
+///
+/// None.
+///
+/// # Returns
+///
+/// [`HealthStatus`] — Always returns a status (never errors).
+/// - `healthy: true` when all subsystems are operational.
+/// - `healthy: false` with a descriptive `message` when something is wrong.
+///
+/// # Frontend Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+///
+/// const health = await invoke<HealthStatus>('system_health');
+/// if (!health.healthy) {
+///   showError(`System degraded: ${health.message}`);
+/// }
+/// ```
 #[tauri::command]
 pub async fn system_health() -> HealthStatus {
     // TODO: check database connectivity, model availability, etc.
@@ -51,7 +112,7 @@ pub async fn system_health() -> HealthStatus {
     }
 }
 
-// ── Tests (written FIRST to define the contract) ────────────
+// ── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -92,5 +153,27 @@ mod tests {
         };
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"healthy\":false"));
+    }
+
+    #[test]
+    fn app_info_round_trip() {
+        let original = system_info();
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: AppInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, original.name);
+        assert_eq!(deserialized.version, original.version);
+        assert_eq!(deserialized.debug, original.debug);
+    }
+
+    #[test]
+    fn health_status_round_trip() {
+        let original = HealthStatus {
+            healthy: false,
+            message: "model endpoint timeout".into(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: HealthStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.healthy, original.healthy);
+        assert_eq!(deserialized.message, original.message);
     }
 }

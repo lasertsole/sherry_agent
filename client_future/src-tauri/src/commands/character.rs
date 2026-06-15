@@ -1,35 +1,80 @@
 //! Character IPC commands — read, write, update character configuration.
 //!
 //! Maps to Python backend:
-//! - `GET    /character` → `character_read`
-//! - `PUT    /character` → `character_write`
-//! - `PATCH  /character` → `character_update`
+//! - `GET    /character` → [`character_read`]
+//! - `PUT    /character` → [`character_write`]
+//! - `PATCH  /character` → [`character_update`]
 
 use crate::utils::error::FrontendError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use ts_rs::TS;
 
 // ── Request / Response types ────────────────────────────────
 
 /// Character data: each key is a section name, value is a map of
 /// field → content pairs.
+///
+/// ```typescript
+/// type CharacterData = Record<string, Record<string, string>>;
+/// // Example: { "identity": { "name": "Sherry", "personality": "cheerful" } }
+/// ```
 pub type CharacterData = HashMap<String, HashMap<String, String>>;
 
 /// Payload for writing or updating character configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// | Field | Type | Description |
+/// |-------|------|-------------|
+/// | `character_data` | `CharacterData` | Nested map of section → field → value |
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../app/types/backend/")]
 pub struct CharacterPayload {
+    /// The character configuration data.
     pub character_data: CharacterData,
 }
 
 /// Response after reading character configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// | Field | Type | Description |
+/// |-------|------|-------------|
+/// | `character_data` | `CharacterData` | Nested map of section → field → value |
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../app/types/backend/")]
 pub struct CharacterResponse {
+    /// The character configuration data.
     pub character_data: CharacterData,
 }
 
 // ── Commands ────────────────────────────────────────────────
 
 /// Read the current character configuration.
+///
+/// Returns all character sections and their field values
+/// (e.g., identity, personality, appearance).
+///
+/// # Arguments
+///
+/// None.
+///
+/// # Returns
+///
+/// `Result<CharacterResponse, FrontendError>` — The full character config.
+///
+/// # Errors
+///
+/// | Error Code | Description | Retryable |
+/// |------------|-------------|-----------|
+/// | `IO_ERROR` | Failed to read character file from disk | Yes |
+/// | `CONFIG_ERROR` | Character file is malformed | No |
+///
+/// # Frontend Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+///
+/// const response = await invoke<CharacterResponse>('character_read');
+/// console.log(response.character_data.identity?.name);
+/// ```
 #[tauri::command]
 pub async fn character_read() -> Result<CharacterResponse, FrontendError> {
     tracing::info!("character_read called");
@@ -38,6 +83,38 @@ pub async fn character_read() -> Result<CharacterResponse, FrontendError> {
 }
 
 /// Overwrite character configuration (full replacement).
+///
+/// Replaces the entire character configuration with the provided data.
+///
+/// # Arguments
+///
+/// * `payload` — A [`CharacterPayload`] with the new character data.
+///
+/// # Returns
+///
+/// `Result<(), FrontendError>` — Unit on success.
+///
+/// # Errors
+///
+/// | Error Code | Description | Retryable |
+/// |------------|-------------|-----------|
+/// | `IO_ERROR` | Failed to write character file to disk | Yes |
+/// | `CONFIG_ERROR` | Invalid character data structure | No |
+///
+/// # Frontend Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+///
+/// await invoke('character_write', {
+///   payload: {
+///     character_data: {
+///       identity: { name: 'Sherry', personality: 'cheerful' },
+///       appearance: { hair: 'blonde', eyes: 'blue' },
+///     },
+///   },
+/// });
+/// ```
 #[tauri::command]
 pub async fn character_write(
     payload: CharacterPayload,
@@ -51,6 +128,38 @@ pub async fn character_write(
 }
 
 /// Partially update character configuration (merge).
+///
+/// Merges the provided fields into the existing character config.
+/// Only the specified sections/fields are updated.
+///
+/// # Arguments
+///
+/// * `payload` — A [`CharacterPayload`] with partial updates.
+///
+/// # Returns
+///
+/// `Result<(), FrontendError>` — Unit on success.
+///
+/// # Errors
+///
+/// | Error Code | Description | Retryable |
+/// |------------|-------------|-----------|
+/// | `IO_ERROR` | Failed to update character file on disk | Yes |
+/// | `CONFIG_ERROR` | Invalid merge operation | No |
+///
+/// # Frontend Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+///
+/// await invoke('character_update', {
+///   payload: {
+///     character_data: {
+///       identity: { personality: 'energetic' },
+///     },
+///   },
+/// });
+/// ```
 #[tauri::command]
 pub async fn character_update(
     payload: CharacterPayload,
@@ -63,7 +172,7 @@ pub async fn character_update(
     todo!("character_update not yet implemented")
 }
 
-// ── Tests (written FIRST to define the contract) ────────────
+// ── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -116,5 +225,30 @@ mod tests {
         let json = r#"{"character_data":{}}"#;
         let payload: CharacterPayload = serde_json::from_str(json).unwrap();
         assert!(payload.character_data.is_empty());
+    }
+
+    #[test]
+    fn character_payload_round_trip() {
+        let original = CharacterPayload {
+            character_data: sample_character_data(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: CharacterPayload = serde_json::from_str(&json).unwrap();
+        let identity = deserialized.character_data.get("identity").unwrap();
+        assert_eq!(identity.get("name").unwrap(), "Sherry");
+        assert_eq!(identity.get("personality").unwrap(), "cheerful");
+    }
+
+    #[test]
+    fn character_response_round_trip() {
+        let original = CharacterResponse {
+            character_data: sample_character_data(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: CharacterResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.character_data.len(),
+            original.character_data.len()
+        );
     }
 }

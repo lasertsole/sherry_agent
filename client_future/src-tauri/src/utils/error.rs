@@ -29,8 +29,9 @@
 //! }
 //! ```
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use ts_rs::TS;
 
 // ────────────────────────────────────────────────────────────
 // Top-level application error
@@ -143,7 +144,8 @@ impl AppError {
 ///   "message": "connection refused: http://localhost:11434"
 /// }
 /// ```
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../app/types/backend/")]
 pub struct FrontendError {
     /// Stable error code (e.g. `"MODEL_ERROR"`).
     pub code: String,
@@ -249,4 +251,155 @@ macro_rules! db_err {
     ($($arg:tt)*) => {
         $crate::utils::error::AppError::Database(format!($($arg)*))
     };
+}
+
+// ── Tests ───────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- Error code tests --
+
+    #[test]
+    fn error_codes_are_stable() {
+        assert_eq!(AppError::Config("x".into()).code(), "CONFIG_ERROR");
+        assert_eq!(AppError::Database("x".into()).code(), "DATABASE_ERROR");
+        assert_eq!(AppError::Model("x".into()).code(), "MODEL_ERROR");
+        assert_eq!(AppError::Agent("x".into()).code(), "AGENT_ERROR");
+        assert_eq!(AppError::Rag("x".into()).code(), "RAG_ERROR");
+        assert_eq!(AppError::Channel("x".into()).code(), "CHANNEL_ERROR");
+        assert_eq!(AppError::Session("x".into()).code(), "SESSION_ERROR");
+        assert_eq!(AppError::Tool("x".into()).code(), "TOOL_ERROR");
+        assert_eq!(AppError::Skill("x".into()).code(), "SKILL_ERROR");
+        assert_eq!(
+            AppError::Other(anyhow::anyhow!("x")).code(),
+            "UNKNOWN_ERROR"
+        );
+    }
+
+    #[test]
+    fn io_error_code_is_correct() {
+        let err = AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
+        assert_eq!(err.code(), "IO_ERROR");
+    }
+
+    // -- Retryable tests --
+
+    #[test]
+    fn retryable_errors() {
+        assert!(AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "x"
+        ))
+        .is_retryable());
+        assert!(AppError::Channel("timeout".into()).is_retryable());
+        assert!(AppError::Model("connection refused".into()).is_retryable());
+        assert!(AppError::Database("locked".into()).is_retryable());
+    }
+
+    #[test]
+    fn non_retryable_errors() {
+        assert!(!AppError::Config("bad config".into()).is_retryable());
+        assert!(!AppError::Agent("tool loop".into()).is_retryable());
+        assert!(!AppError::Session("not found".into()).is_retryable());
+        assert!(!AppError::Tool("syntax error".into()).is_retryable());
+        assert!(!AppError::Skill("not found".into()).is_retryable());
+        assert!(!AppError::Rag("parse error".into()).is_retryable());
+    }
+
+    // -- Display tests --
+
+    #[test]
+    fn error_display_messages() {
+        let err = AppError::Config("missing key".into());
+        assert_eq!(err.to_string(), "config error: missing key");
+
+        let err = AppError::Model("timeout".into());
+        assert_eq!(err.to_string(), "model error: timeout");
+    }
+
+    // -- FrontendError conversion tests --
+
+    #[test]
+    fn app_error_converts_to_frontend_error() {
+        let app_err = AppError::Model("connection refused".into());
+        let fe_err: FrontendError = app_err.into();
+        assert_eq!(fe_err.code, "MODEL_ERROR");
+        assert_eq!(fe_err.message, "model error: connection refused");
+    }
+
+    #[test]
+    fn frontend_error_serializes_to_json() {
+        let fe_err = FrontendError {
+            code: "TOOL_ERROR".into(),
+            message: "tool error: python REPL crashed".into(),
+        };
+        let json = serde_json::to_string(&fe_err).unwrap();
+        assert!(json.contains("\"code\":\"TOOL_ERROR\""));
+        assert!(json.contains("python REPL crashed"));
+    }
+
+    #[test]
+    fn frontend_error_display() {
+        let fe_err = FrontendError {
+            code: "AGENT_ERROR".into(),
+            message: "agent error: tool loop detected".into(),
+        };
+        assert_eq!(
+            fe_err.to_string(),
+            "[AGENT_ERROR] agent error: tool loop detected"
+        );
+    }
+
+    #[test]
+    fn frontend_error_round_trip() {
+        let original = FrontendError {
+            code: "SESSION_ERROR".into(),
+            message: "session error: not found".into(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: FrontendError = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.code, original.code);
+        assert_eq!(deserialized.message, original.message);
+    }
+
+    // -- serde_json conversion test --
+
+    #[test]
+    fn serde_json_error_converts_to_config() {
+        let json_err: serde_json::Error =
+            serde_json::from_str::<String>("not json").unwrap_err();
+        let app_err: AppError = json_err.into();
+        assert_eq!(app_err.code(), "CONFIG_ERROR");
+    }
+
+    // -- Macro tests --
+
+    #[test]
+    fn error_macros_create_correct_variants() {
+        let err = config_err!("missing: {}", "key");
+        assert!(matches!(err, AppError::Config(msg) if msg == "missing: key"));
+
+        let err = model_err!("timeout after {}s", 30);
+        assert!(matches!(err, AppError::Model(msg) if msg == "timeout after 30s"));
+
+        let err = tool_err!("crashed");
+        assert!(matches!(err, AppError::Tool(msg) if msg == "crashed"));
+
+        let err = channel_err!("disconnected");
+        assert!(matches!(err, AppError::Channel(msg) if msg == "disconnected"));
+
+        let err = session_err!("expired");
+        assert!(matches!(err, AppError::Session(msg) if msg == "expired"));
+
+        let err = agent_err!("loop");
+        assert!(matches!(err, AppError::Agent(msg) if msg == "loop"));
+
+        let err = db_err!("locked");
+        assert!(matches!(err, AppError::Database(msg) if msg == "locked"));
+    }
 }
