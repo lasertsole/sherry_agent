@@ -4,7 +4,7 @@ from loguru import logger
 from type import MultiModalMessage
 from runtime import state_register
 from robyn import SSEMessage, SSEResponse
-from server.service import async_generate, clear_session
+from server.service import async_generate, clear_session, get_history_turn_message_dicts
 
 
 @logger.catch
@@ -89,3 +89,26 @@ async def clear_session_handler(request):
     logger.info(f"Clearing session: session_id={session_id}")
     await clear_session(session_id=session_id)
     logger.info(f"Session cleared: session_id={session_id}")
+
+@app.get("/n_turns_history_messages")
+async def get_history_turn_message_dicts_handler(request):
+    """
+    Read history messages
+    """
+    query_params = request.query_params
+
+    session_id: str | None = query_params.get("session_id", None)
+    last_turn_count_str: str | None = query_params.get("last_turn_count", None)
+    logger.debug(f"Reading history messages: session_id={session_id}")
+
+    if not session_id:
+        raise ValueError("session_id is required")
+
+    if not last_turn_count_str:
+        raise ValueError("last_turn_count is required")
+
+    last_turn_count = int(last_turn_count_str)
+    if last_turn_count <= 0:
+        raise ValueError("last_turn_count must be positive")
+
+    return await get_history_turn_message_dicts(session_id=session_id, last_turn_count=last_turn_count)

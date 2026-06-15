@@ -1,7 +1,7 @@
 from .core import app
 from loguru import logger
 from server.service import (read_system_prompt_file, write_system_prompt_file, update_system_prompt_file, read_character,
-                            write_character, update_character, get_history_turn_message_dicts)
+                            write_character, update_character)
 
 @app.get("/system_prompt")
 async def read_system_prompt_handler(request):
@@ -86,17 +86,3 @@ async def update_character_handler(request):
     logger.info(f"Character configuration updated: character_count={character_count}")
 
     return result
-
-
-@app.get("/n_turns_history_messages")
-async def get_history_turn_message_dicts_handler(request):
-    """
-    Read history messages
-    """
-    request_json = request.json()
-
-    session_id: str | None = request_json.get("session_id", None)
-    last_turn_count: int | None = request_json.get("last_turn_count", None)
-    logger.debug(f"Reading history messages: session_id={session_id}")
-
-    return get_history_turn_message_dicts(session_id=session_id, last_turn_count=last_turn_count)

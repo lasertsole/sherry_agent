@@ -175,4 +175,6 @@ const handleToggleSession = (id: string) => {
   currentSessionId.value = id;
   isSidebarOpen.value = false;
 };
+
+get_history_turn_message("main", 10)
 </script>

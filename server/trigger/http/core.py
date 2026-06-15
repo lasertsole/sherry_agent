@@ -1,7 +1,7 @@
 import json
-from robyn import Robyn
+from robyn import Robyn, ALLOW_CORS
 from loguru import logger
-from robyn.responses import Response
+from robyn import Request, Response
 from server.service import session_end
 from typing import Any, Dict, Callable
 from robyn import WebSocketDisconnect, WebSocketAdapter
@@ -11,6 +11,8 @@ from runtime import relation_register, clear_all_register_sessions
 # Create the app
 app = Robyn(__file__)
 
+# Enable CORS for all origins (development)
+ALLOW_CORS(app, origins=["*"])
 
 @app.exception
 def handle_exception(error: Exception):

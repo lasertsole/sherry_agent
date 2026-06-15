@@ -185,22 +185,12 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             f"output_length={len(ai_text)}"
         )
 
-    except requests.exceptions.HTTPError as e:
+    except asyncio.CancelledError:
         elapsed = time.time() - start_time
-        yield SSEMessage(f"Request failed: {e.response.text}")
-        logger.error(
-            f"Agent execution HTTP error: session_id={session_id}, duration={elapsed:.2f}s, "
-            f"error={e.response.text}"
+        yield SSEMessage("Request cancelled")
+        logger.info(
+            f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s"
         )
-        logger.exception(e)
-    except requests.exceptions.Timeout as e:
-        elapsed = time.time() - start_time
-        yield SSEMessage(f"Request timeout: {e.args[0]}")
-        logger.error(
-            f"Agent execution timeout: session_id={session_id}, duration={elapsed:.2f}s, "
-            f"error={e.args[0]}"
-        )
-        logger.exception(e)
     except Exception as e:
         elapsed = time.time() - start_time
         logger.error(
@@ -233,7 +223,6 @@ async def get_history_turn_message_dicts(session_id: str, last_turn_count: int =
 async def session_end(session_id: str):
     logger.info(f"Session ending: session_id={session_id}")
     await rectification_and_standardization(session_id = session_id)
-    state_register.clear_session(session_id)
     logger.info(f"Session ended: session_id={session_id}")
 """End session end logic"""
 
@@ -241,6 +230,5 @@ async def session_end(session_id: str):
 async def clear_session(session_id: str):
     logger.info(f"Clearing session history: session_id={session_id}")
     await clear_session_DAO(session_id = session_id)
-    state_register.clear_session(session_id)
     logger.info(f"Session history cleared: session_id={session_id}")
 """End clear session history logic"""
