@@ -115,7 +115,7 @@ const isToolsMenuOpen = ref(false);
 const colorMode = useColorMode();
 
 /** 历史会话 */
-const historyList = ref<SessionRecord[]>();
+const historyList = ref<SessionRecord[]>([]);
 
 /** 当前会话 */
 const currentSessionId = ref<string>();
