@@ -14,7 +14,7 @@
       :class="[
         'flex flex-col px-4 fixed md:relative h-full md:h-auto md:translate-x-0',
         'transition-transform duration-300 z-50 md:z-auto w-[280px] md:w-[280px] lg:w-[360px]',
-        'border-r border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#2a2a36]',
+        'border-r border-solid border-gray-light bg-[#fff] dark:border-gray-dark dark:bg-[#2a2a36]',
         isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
       ]">
       <!-- LOGO区域 -->
@@ -29,14 +29,22 @@
         <HistoryItem
           v-for="(item, index) in historyList"
           :key="item.id"
-          :-history-record="item"
+          :history-record="item"
           :is-active="currentSessionId === item.id"
-          @choose-session="handleToggleSession" />
+          @choose-session="handleToggleSession"
+          v-model:selectedList="selectedSessionIds" />
       </div>
-      <!-- TODO 批量删除按钮，待接组件库 -->
       <div class="h-17 flex items-center justify-between">
-        <div class="flex items-center justify-center gap-1"><input type="checkbox" />全选</div>
-        <div>批量删除会话</div>
+        <div class="flex items-center justify-center gap-1">
+          <Checkbox
+            v-model="isCheckAllSession"
+            :indeterminate="isIndeterminate"
+            binary />
+          <span>全选</span>
+        </div>
+        <Button
+          icon="pi pi-trash"
+          label="批量删除对话" />
       </div>
     </div>
 
@@ -46,29 +54,25 @@
       <div
         class="flex justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
         <!-- 移动端菜单切换按钮 -->
-        <button
-          class="md:hidden aspect-square h-full flex items-center justify-center text-theme-main rounded-lg bg-[#2a2a36]"
-          @click="isSidebarOpen = !isSidebarOpen">
-          <span v-if="!isSidebarOpen">☰</span>
-          <span v-else>✕</span>
-        </button>
+        <Button
+          icon="pi pi-bars"
+          class="md:hidden"
+          @click="isSidebarOpen = !isSidebarOpen" />
         <!-- 移动端展示 -->
         <div class="md:hidden h-full flex items-center text-xl">🍊橘雪莉</div>
         <!-- 顶部工具栏 -->
-        <button
-          class="sm:hidden aspect-square h-full flex items-center justify-center text-theme-main rounded-lg bg-[#2a2a36]"
-          @click="isToolsMenuOpen = !isToolsMenuOpen">
-          <span>设置</span>
-        </button>
+        <Button
+          icon="pi pi-cog"
+          class="sm:hidden"
+          @click="isToolsMenuOpen = !isToolsMenuOpen" />
         <div class="hidden sm:flex justify-end items-center flex-1 gap-3">
-          <div
-            class="cursor-pointer h-9 px-2 leading-9 rounded-lg bg-gray-light dark:bg-gray-dark"
+          <Button
+            :icon="tool.icon"
             v-for="tool in headerTools"
             :key="tool.event"
             :title="tool.title"
-            @click="handleOperate('headerBar', tool.event)">
-            {{ tool.toolName }}
-          </div>
+            @click="handleOperate('headerBar', tool.event)"
+            :label="tool.toolName" />
         </div>
       </div>
       <!-- 聊天主体 -->
@@ -97,6 +101,7 @@
 // components
 import HistoryItem from './components/HistoryItem.vue';
 // function
+import { computed } from 'vue';
 import type { SessionRecord } from './type.ts';
 import { tools, headerTools } from './config';
 
@@ -110,13 +115,7 @@ const isToolsMenuOpen = ref(false);
 const colorMode = useColorMode();
 
 /** 历史会话 */
-const historyList = ref<SessionRecord[]>([
-  {
-    title: '这是历史吼吼吼吼吼吼吼吼吼吼吼吼吼吼吼吼水水水水水水水水水水',
-    id: '1',
-    createTime: '2026-06-12 11:04'
-  }
-]);
+const historyList = ref<SessionRecord[]>();
 
 /** 当前会话 */
 const currentSessionId = ref<string>();
@@ -175,6 +174,30 @@ const handleToggleSession = (id: string) => {
   currentSessionId.value = id;
   isSidebarOpen.value = false;
 };
+
+/** 全选状态 */
+const isCheckAllSession = ref<boolean>(false);
+/** 选择的会话 */
+const selectedSessionIds = ref<string[]>([]);
+/** 会话选择状态 */
+const isIndeterminate = computed(() => {
+  if (selectedSessionIds.value.length > 0 && selectedSessionIds.value.length < historyList.value.length) {
+    return true;
+  } else {
+    return false;
+  }
+});
+/** 监听选择 */
+watch(
+  () => selectedSessionIds.value,
+  newVal => {
+    if (newVal.length === historyList.value.length) {
+      isCheckAllSession.value = true;
+    } else {
+      isCheckAllSession.value = false;
+    }
+  }
+);
 
 get_history_turn_message("main", 10)
 </script>
