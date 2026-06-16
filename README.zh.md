@@ -171,17 +171,18 @@ EMA_AI_agent/
 ├── skills/                 # 技能库（SKILL.md 定义文件）
 │   ├── loader.py           # 技能自动发现与注册
 │   ├── skills_snapshot.py  # 构建技能提示快照
-│   └── core/               # 内置技能实现
-│       ├── web_search/     # 网页搜索与抓取
-│       ├── python_repl/    # Python 代码执行
-│       ├── terminal/       # 终端命令执行
-│       ├── image_to_text/  # 图像理解
-│       ├── speech_to_text/ # 语音识别
-│       ├── text_to_image/  # 图像生成
-│       ├── video_text_to_text/ # 视频理解
-│       ├── rag/            # RAG 知识检索
-│       ├── clawhub/        # GitHub 仓库克隆
-│       └── skill_creator/  # 自动生成新技能
+│   └── builtin/            # 内置技能实现
+│       ├── core/           # 核心内置技能
+│       │   ├── web_search/     # 网页搜索与抓取
+│       │   ├── python_repl/    # Python 代码执行
+│       │   ├── terminal/       # 终端命令执行
+│       │   ├── image_to_text/  # 图像理解
+│       │   ├── speech_to_text/ # 语音识别
+│       │   ├── video_text_to_text/ # 视频理解
+│       │   ├── rag/            # RAG 知识检索
+│       │   ├── clawhub/        # GitHub 仓库克隆
+│       │   └── skill_creator/  # 自动生成新技能
+│       └── text_to_image/  # 图像生成
 ├── src/                    # 运行时数据目录
 │   ├── avatar/             # 角色头像图片
 │   ├── checkpoints/        # 会话检查点

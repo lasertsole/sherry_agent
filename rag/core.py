@@ -5,7 +5,7 @@ import nest_asyncio
 from pathlib import Path
 from loguru import logger
 from models import ITT_model
-from config import MODELS_DIR
+from config import MODELS_DIR, SRC_DIR
 from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
@@ -200,9 +200,12 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         lightrag = await get_lightrag()
         logger.debug("LightRAG initialized")
 
+        working_dir: str = (SRC_DIR / "rag" / "store").resolve().as_posix()
         config = RAGAnythingConfig(
             parser = parser,
-            parse_method = parse_method
+            parse_method = parse_method,
+            working_dir = working_dir,
+            parser_output_dir = str(SRC_DIR / "rag/output"),
         )
         _rag_anything = RAGAnything(
             lightrag = lightrag,
