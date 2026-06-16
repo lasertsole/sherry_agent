@@ -184,9 +184,6 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             f"Agent execution completed: session_id={session_id}, duration={elapsed:.2f}s, "
             f"output_length={len(ai_text)}"
         )
-
-        # increase count for skill memory maintenance
-        count_register.increase(session_id, "skill_memory_maintenance")
     except asyncio.CancelledError:
         elapsed = time.time() - start_time
         yield SSEMessage("Request cancelled")
@@ -206,6 +203,12 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         state_register.set_state(session_id, "current_tool_name", "")
         state_register.set_state(session_id, "current_tool_id", "")
         state_register.set_state(session_id, "answering", False)
+
+        try:
+            # increase count for skill memory maintenance
+            count_register.increase(session_id, "skill_memory_maintenance")
+        except BaseException as e:
+            logger.error(f"Failed to increase count for skill memory maintenance: session_id={session_id}, error={str(e)}")
 
 """End response generation logic"""
 

@@ -108,7 +108,7 @@ async def handle_connect(websocket: WebSocketAdapter):
     relation_register.register_websocket(session_id=session_id, websocket=websocket)
 
     # Register skill memory maintenance(threshold = 20)
-    count_register.register(session_id, "skill_memory_maintenance", rectification_and_standardization, threshold=20,
+    count_register.register(session_id, "skill_memory_maintenance", rectification_and_standardization, threshold=1,
                             args={"session_id": session_id})
 
 @ws_handler.on_close
