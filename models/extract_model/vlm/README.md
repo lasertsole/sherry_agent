@@ -112,14 +112,9 @@ Current SOTA models (regardless of architecture) consistently fail on the same s
 # 1. Quick Start
 For convenience, we provide `mineru-vl-utils`, a Python package that simplifies the process of sending requests and handling responses from MinerU2.5-Pro Vision-Language Model. Here we give some examples to use MinerU2.5-Pro. For more information and usages, please refer to [mineru-vl-utils](https://github.com/opendatalab/mineru-vl-utils/tree/main).
 
-📌 We strongly recommend using vllm for inference, as the `vllm-async-engine` can achieve a concurrent inference speed of **2.12 fps** on one A100.
-
 ## 1.1. Install packages
 ```bash
-# For `transformers` backend
 pip install "mineru-vl-utils[transformers]"
-# For `vllm-engine` and `vllm-async-engine` backend
-pip install "mineru-vl-utils[vllm]"
 ```
 
 ## 1.2. `transformers` Example
@@ -146,28 +141,7 @@ client = MinerUClient(
 print(client.two_step_extract(Image.open("/path/to/page.png")))
 ```
 
-## 1.3. `vllm-engine` Example (Recommended!)
-
-```python
-from vllm import LLM
-from PIL import Image
-from mineru_vl_utils import MinerUClient
-from mineru_vl_utils import MinerULogitsProcessor  # if vllm>=0.10.1
-
-llm = LLM(
-    model="opendatalab/MinerU2.5-Pro-2604-1.2B",
-    logits_processors=[MinerULogitsProcessor]  # if vllm>=0.10.1
-)
-
-client = MinerUClient(
-    backend="vllm-engine", vllm_llm=llm,
-    image_analysis=False # default False, set True to enable image/chart analysis
-)
-
-print(client.two_step_extract(Image.open("/path/to/page.png")))
-```
-
-## 1.4. JSON result to Markdown (enable truncated paragraph merging)
+## 1.3. JSON result to Markdown (enable truncated paragraph merging)
 
 ```python
 from mineru_vl_utils.post_process import json2md

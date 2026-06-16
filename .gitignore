@@ -2,3 +2,8 @@ src/sessions/
 .venv
 __pycache__
 .env
+models/
+logs/output
+*.db
+*.db-shm
+*.db-wal

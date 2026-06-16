@@ -192,10 +192,17 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
             i += 1
             continue
 
-        # 错误状态直接保留
+        # 错误状态直接保留（但清空 invalid_tool_calls 以防被序列化为 OpenAI tool_calls）
+        raw_invalid_tool_calls = getattr(msg, "invalid_tool_calls", None)
+        has_invalid = isinstance(raw_invalid_tool_calls, list) and len(raw_invalid_tool_calls) > 0
         invalid_tool_calls: List[ToolCallLike] = extract_invalid_tool_calls_from_assistant(msg)
 
-        if getattr(msg, 'status', "") == "error" or len(invalid_tool_calls) > 0:
+        if getattr(msg, 'status', "") == "error" or has_invalid:
+            if has_invalid:
+                # LangChain 会将 invalid_tool_calls 序列化为 tool_calls 发送给 API，
+                # 如果后面没有对应 ToolMessage 会触发 400 错误。历史 invalid 调用直接清除。
+                msg = msg.model_copy(update={"invalid_tool_calls": []})
+                changed = True
             out.append(msg)
             i += 1
             continue

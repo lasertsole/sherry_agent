@@ -16,7 +16,7 @@ from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
 
 async def process_heartbeat_task(task: str) -> str:
     try:
-        # 获取graph-memory系统提示词
+        # Get graph-memory system prompt
         assemble_result: dict[str, str] = await assemble(user_text=task, messages=[])
         graph_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
 
@@ -39,7 +39,7 @@ async def process_heartbeat_task(task: str) -> str:
         return res_messages[-1].content
     except Exception as e:
         logger.exception(e)
-        return f"发生错误{e}"
+        return f"Error occurred: {e}"
 
 async def process_heartbeat_notify(agent_res: str) -> None:
     channels_json: Path = Path(ROOT_DIR) / "channels.json"

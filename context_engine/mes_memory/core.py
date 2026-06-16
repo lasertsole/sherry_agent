@@ -44,7 +44,7 @@ def retrieve_history_by_last_n_prompt(session_id: str, n: int = 5) -> str:
             elif mes.get("role") == "human":
                 query = mes.get("content")
 
-                # 获取用户输入
+                # Get user input
                 if query is None:
                     user_text = ""
                 elif isinstance(query, list):
@@ -61,9 +61,9 @@ def retrieve_history_by_last_n_prompt(session_id: str, n: int = 5) -> str:
         res_list.append(f"<turn>\n{USER_NAME}: {user_text}\n\n{ASSISTANT_NAME}: {ai_text}\n</turn>")
 
     return (
-        f"===== 以下是 前{n}轮对话内容 (从旧到新，时间戳timestamp格式为 YYYYMMDDHHmmss) =====\n\n"
+        f"===== The following is the content of the last {n} turns (from oldest to newest, timestamp format: YYYYMMDDHHmmss) =====\n\n"
         f"{'\n\n'.join([item for item in res_list])}"
-        f"\n\n===== 以上是 前{n}轮对话内容 ====="""
+        f"\n\n===== The above is the content of the last {n} turns =====\n\n"
     )
 
 def _sanitize_fts5_query(query: str) -> str:

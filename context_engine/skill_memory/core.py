@@ -24,7 +24,7 @@ class RecallResult(TypedDict):
     nodes: List[Any]
     edges: List[Any]
 
-# ── 初始化核心模块 ──────────────────────────────────────
+# ── Initialize Core Modules ────────────────────────────────
 DEFAULT_CONFIG: GmConfig = GmConfig(
     db_path=f"{SRC_DIR}/store/skill_memory/skill_memory.db",
     compact_turn_count = 6,
@@ -42,11 +42,11 @@ db = get_db()
 recaller = Recaller(db, DEFAULT_CONFIG)
 extractor = Extractor()
 
-# ── Session运行时状态 ──────────────────────────────────
+# ── Session Runtime State ────────────────────────────────
 msg_seq: Dict[str, int] = {}
-turn_counter: Dict[str, int] = {} # 社区维护计数器
+turn_counter: Dict[str, int] = {} # community maintenance counter
 
-# ─── 取最后一轮完整用户对话 ─────────────────────────────────
+# ─── Get Last Complete User Turn ──────────────────────────
 def estimate_msg_tokens(msg: BaseMessage) -> int:
     content = msg.content
 
@@ -82,20 +82,20 @@ def _truncate_msg(msg: BaseMessage)-> BaseMessage:
 
     return msg.model_copy(deep=True, update={"content": truncated_text})
 
-# ─── 规范化消息 content，确保 OpenClaw 对 content.filter() 不崩 ──
+# ─── Normalize message content so OpenClaw's content.filter() doesn't crash ──
 def normalize_message_content(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """标准化消息内容格式
+    """Normalize message content format
 
-    - 如果 content 是数组 → 修复畸形的 text block
-    - 如果 content 是字符串 → 包装成标准 content block 数组
-    - 如果 content 是 None/undefined → 空 text block
+    - If content is a list → fix malformed text blocks
+    - If content is a string → wrap into standard content block list
+    - If content is None/undefined → empty text block
     """
     result = []
 
     for msg in messages:
         c = getattr(msg, "content", None)
 
-        # 如果 content 是数组 → 修复畸形 block
+        # If content is a list → fix malformed block
         if isinstance(c, list):
             fixed = []
             changed = False
@@ -103,7 +103,7 @@ def normalize_message_content(messages: list[BaseMessage]) -> list[BaseMessage]:
             for block in c:
                 if block and isinstance(block, dict) and block.get("type") == "text":
                     if "text" not in block:
-                        # 缺少 text 属性，补充空字符串
+                        # Missing text attribute, fill with empty string
                         fixed_block = {**block, "text": ""}
                         fixed.append(fixed_block)
                         changed = True
@@ -111,7 +111,7 @@ def normalize_message_content(messages: list[BaseMessage]) -> list[BaseMessage]:
 
                 fixed.append(block)
 
-            # 如果有修改，返回新对象
+            # If modified, return new object
             if changed:
                 if isinstance(msg, dict):
                     new_msg = {**msg, "content": fixed}
@@ -122,7 +122,7 @@ def normalize_message_content(messages: list[BaseMessage]) -> list[BaseMessage]:
                 result.append(msg)
             continue
 
-        # 如果 content 是字符串 → 包装成标准 content block 数组
+        # If content is a string → wrap into standard content block list
         if isinstance(c, str):
             if isinstance(msg, dict):
                 new_msg = {**msg, "content": [{"type": "text", "text": c}]}
@@ -131,7 +131,7 @@ def normalize_message_content(messages: list[BaseMessage]) -> list[BaseMessage]:
             result.append(new_msg)
             continue
 
-        # 如果 content 是 None/null → 空 text block
+        # If content is None/null → empty text block
         if c is None:
             if isinstance(msg, dict):
                 new_msg = {**msg, "content": [{"type": "text", "text": ""}]}
@@ -140,20 +140,20 @@ def normalize_message_content(messages: list[BaseMessage]) -> list[BaseMessage]:
             result.append(new_msg)
             continue
 
-        # 其他情况原样返回
+        # Otherwise return as-is
         result.append(msg)
 
     return result
 
 
 def ingest_message(session_id: str, message: BaseMessage)-> None:
-    """ 存一条消息到 gm_messages（同步，零 LLM）"""
+    """ Save a message to gm_messages (sync, zero LLM)"""
     global msg_seq
 
     seq = msg_seq.get(session_id)
 
     if seq is None:
-        # 首次入库：从数据库读取当前最大 turn_index，避免重启后 turn_index 重叠
+        # First save: read current max turn_index from DB to avoid overlap after restart
         cursor = db.cursor()
         cursor.execute(
             "SELECT MAX(turn_index) as maxTurn FROM gm_messages WHERE session_id=?",
@@ -168,16 +168,16 @@ def ingest_message(session_id: str, message: BaseMessage)-> None:
     role = getattr(message, 'type', 'unknown') or 'unknown'
     content: str | List[dict[str, Any]] = getattr(message, 'content', '')
 
-    if role == "human": # 抽取出str
+    if role == "human": # extract string content
         content:str = extract_text_from_content(content)
 
     save_message(db, session_id, seq, role, content)
 
 
 async def run_turn_extract(session_id: str) -> None:
-    """每轮结束后直接提取当前轮的消息"""
+    """Extract current turn's messages directly after each turn"""
 
-    # 获取未提取的消息（包含刚入库的）
+    # Fetch unextracted messages (including the one just saved)
     msgs = get_unextracted(db, session_id, 50)
     if not msgs:
         return
@@ -200,7 +200,7 @@ async def run_turn_extract(session_id: str) -> None:
         node = upsert_result["node"]
         name_to_id[node.name] = node.id
 
-        # 异步生成 embedding，不阻塞主流程
+        # Async embedding generation, non-blocking
         async_task_queue.add_task(recaller.sync_embed(node))
 
     for ec in getattr(result, "edges", []):
@@ -233,7 +233,7 @@ async def run_turn_extract(session_id: str) -> None:
     if getattr(result, "nodes", None) or getattr(result, "edges", None):
         invalidate_graph_cache()
 
-# 组装系统prompt
+# Assemble system prompt
 async def assemble(
         user_text: str,
         messages: list[BaseMessage] | None = None,
@@ -255,11 +255,11 @@ async def assemble(
             "estimated_tokens": 0
         }
 
-    # ── 1. 最后一轮完整对话 ─────────────────────────
+    # ── 1. Last Complete Turn ──────────────────────────
     last_turn = slice_last_turn(messages)
     repaired = sanitize_tool_use_result_pairing(last_turn["messages"])
 
-    # ── 2. 图谱 + 溯源 ─────────────────────────────
+    # ── 2. Graph + Traceability ───────────────────────
     assemble_result = assemble_context(
         db,
         recalled_nodes= rec["nodes"],
@@ -269,7 +269,7 @@ async def assemble(
     system_prompt = assemble_result["system_prompt"]
     gm_tokens = assemble_result["tokens"]
 
-    # ── 3. 组装 systemPrompt ────────────────────────
+    # ── 3. Assemble systemPrompt ─────────────────────
     system_prompt_addition: str | None = None
     parts = [system_prompt, xml]
     filtered_parts = [p for p in parts if p]
@@ -288,17 +288,17 @@ async def after_turn(
         session_id: str,
         last_turn_messages: list[BaseMessage],
 ) -> None:
-    """每轮对话后的处理钩子"""
+    """Post-turn processing hook"""
     for message in last_turn_messages:
         ingest_message(session_id, message)
 
-    # ★ 每轮直接提取（后台任务）
+    # ★ Extract every turn (background task)
     async def run_extract():
         await run_turn_extract(session_id)
 
     asyncio.create_task(run_extract())
 
-    # ★ 社区维护：每 N 轮触发一次（纯计算，<5ms）
+    # ★ Community maintenance: triggered every N turns (pure computation, <5ms)
     turns:int = turn_counter.get(session_id, 0) + 1
     maintain_interval:int = getattr(DEFAULT_CONFIG, 'compact_turn_count', 6)
 
@@ -309,7 +309,7 @@ async def after_turn(
             invalidate_graph_cache()
             comm: CommunityResult = detect_communities(db)
 
-            # 每次社区检测后立即生成摘要（需要 LLM），确保泛化召回可用
+            # Generate summaries immediately after each community detection (needs LLM), ensuring generalized recall is available
             if comm["communities"] and len(comm["communities"]) > 0:
                 embed: Embeddings = getattr(recaller, 'embed', None)
                 summaries = await summarize_communities(
@@ -327,25 +327,25 @@ async def after_turn(
             logger.error(f"[skill_memory] periodic maintenance failed: {e}")
 
 async def dispose() -> None:
-    """释放所有内存"""
+    """Release all memory"""
     msg_seq.clear()
 
 
 async def rectification_and_standardization(session_id: str) -> None:
-    """Session 结束时的清理和知识固化操作"""
+    """Session end cleanup and knowledge consolidation"""
     try:
-        # 获取该 sessions 的所有节点
+        # Fetch all nodes in this session
         nodes: List[GmNode] = get_by_session(db, session_id)
 
         if nodes:
-            # 获取全局 Top 20 节点作为图谱摘要
+            # Get global Top 20 nodes as graph summary
             cursor = db.cursor()
             cursor.execute(
                 "SELECT name, type, validated_count, pagerank FROM gm_nodes ORDER BY pagerank DESC LIMIT 20"
             )
             top_nodes: List[dict[str, Any]] = [dict(r) for r in cursor.fetchall()]
 
-            # 构建摘要字符串
+            # Build summary string
             summary_parts: List[str] = []
             for n in top_nodes:
                 name = n['name']
@@ -357,13 +357,13 @@ async def rectification_and_standardization(session_id: str) -> None:
                 )
             summary: str = ", ".join(summary_parts)
 
-            # 调用整理器进行最终审查
+            # Call finalizer for end-of-session review
             fin = await extractor.finalize(
                 session_nodes=nodes,
                 graph_summary=summary
             )
 
-            # 处理升级的技能
+            # Handle promoted skills
             for nc in fin.promoted_skills:
                 if nc.name and nc.content:
                     upsert_node(
@@ -377,7 +377,7 @@ async def rectification_and_standardization(session_id: str) -> None:
                         session_id
                     )
 
-            # 处理新边
+            # Handle new edges
             for ec in fin.new_edges:
                 from_node = find_by_name(db, ec.from_node)
                 to_node = find_by_name(db, ec.to_node)
@@ -394,15 +394,15 @@ async def rectification_and_standardization(session_id: str) -> None:
                         }
                     )
 
-            # 标记失效节点
+            # Mark invalid nodes
             for node_id in fin.invalidations:
                 delete_node(db, node_id)
 
-        # 执行图谱维护
+        # Execute graph maintenance
         embed: Embeddings | None = getattr(recaller, "embed", None)
         result: MaintenanceResult = await run_maintenance(db, DEFAULT_CONFIG, DEFAULT_CONFIG.llm, embed)
 
-        # 记录维护日志
+        # Record maintenance log
         top_pr_names = [
             f"{n['name']}({n['score']})"
             for n in result["pagerank"]["top_k"][:3]
@@ -419,6 +419,6 @@ async def rectification_and_standardization(session_id: str) -> None:
     except Exception as e:
         logger.error(f"[skill_memory] session_end error: {e}")
     finally:
-        # 清理 Session 状态
+        # Clean up session state
         msg_seq.pop(session_id, None)
         turn_counter.pop(session_id, None)

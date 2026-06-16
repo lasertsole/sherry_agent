@@ -1,7 +1,7 @@
 # 🍊 EMA AI Agent - 橘雪莉 (Sherry)
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue)
-![LangChain](https://img.shields.io/badge/LangChain-1.2-green)
+![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 
 [**中文文档**](README.zh.md) | **English**
@@ -41,7 +41,7 @@ The Agent's character, **橘雪莉 (Sherry)**, is a detective girl with a dual p
 
 ### 4. 🔊 Multimodal Interaction
 - **TTS Voice Synthesis**: Foreign integrated with GPT-SoVITS for real-time voice replies that faithfully reproduce the character's voice
-- **Visual Understanding**: Supports Vision-Language (VL) models for recognizing and analyzing user-uploaded images
+- **Visual Understanding**: Supports Image-to-Text (VL) models for recognizing and analyzing user-uploaded images
 
 ### 5. ⏰ Scheduled & Proactive Behavior
 - **Cron Service** ([cron/](cron/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
@@ -54,13 +54,13 @@ Built on **Python 3.13**, with the following core technologies:
 
 | Module | Technology |
 | :----- | :--------- |
-| **Agent Framework** | LangChain 1.2, LangGraph |
+| **Agent Framework** | LangChain 1.3+, langchain-classic, LangGraph |
 | **Vector & Retrieval** | FAISS, LightRAG, Sentence Transformers, BGE/BAAI Embedding series |
 | **Database** | SQLite (FTS5 full-text search), LanceDB |
 | **Graph Algorithms** | igraph + Leiden Algorithm (community detection), PageRank |
-| **Web Server** | Robyn (high-performance async server) |
+| **Web Server** | Robyn + FastAPI (dual async server) |
 | **Frontend UI** | Streamlit, Tauri 2 + Nuxt 4 (next-gen client) |
-| **LLM Support** | DeepSeek, OpenAI, Ollama (local models) |
+| **LLM Support** | DeepSeek, OpenAI, Ollama (local models), langchain-deepseek |
 | **Task Scheduling** | croniter, asyncio |
 | **Async Messaging** | asyncio.Queue (MessageBus) |
 
@@ -72,7 +72,9 @@ Built on **Python 3.13**, with the following core technologies:
 EMA_AI_agent/
 ├── agent/                  # Agent core logic & middleware
 │   ├── core.py             # Main agent loop (LangGraph compiled graph)
-│   ├── middlewares/        # SummarizationMiddleware, memory injection
+│   ├── middlewares/        # 6 middlewares: ContextEngineHook, Summarization,
+│   │                       #   ToolLoopPrevention, ToolCallNormalize,
+│   │                       #   ToolTimeout, MultimodalProcessor
 │   └── checkpointer/       # Session state checkpointing
 │
 ├── bus/                    # Message bus (async queue)
@@ -143,10 +145,16 @@ EMA_AI_agent/
 │   └── evaluate.py         # Notification gate: decide if results are worth delivering
 │
 ├── models/                 # Model wrappers
-│   ├── chat/               # Chat model (LangChain BaseChatModel)
-│   ├── reasoner/           # Reasoner model (chain-of-thought)
-│   ├── vl/                 # Vision-Language model
-│   └── tts/                # TTS voice synthesis (GPT-SoVITS)
+│   ├── chat_model.py       # Chat model (LangChain BaseChatModel)
+│   ├── simple_chat_model.py # Lightweight chat model
+│   ├── reasoner_model.py   # Reasoner model (chain-of-thought)
+│   ├── VTTT_model.py       # Video-Text-to-Text model
+│   ├── ITT_model.py        # Image-to-Text model
+│   ├── SST_model/          # Speech-to-Text model
+│   ├── embed_model/        # Text embedding model
+│   ├── reranker_model/     # Cross-encoder reranker
+│   ├── extract_model/      # Entity extraction model
+│   └── sovits_model/       # TTS voice synthesis (GPT-SoVITS)
 │
 ├── pub_func/               # Common utility functions
 ├── rag/                    # Retrieval-Augmented Generation modules
@@ -161,6 +169,19 @@ EMA_AI_agent/
 ├── server/                 # Robyn backend service & API routes
 ├── sessions/               # Session runtime data (per-session)
 ├── skills/                 # Skill library (SKILL.md definition files)
+│   ├── loader.py           # Skill autodiscovery & registration
+│   ├── skills_snapshot.py  # Builds skill prompt snapshot
+│   └── core/               # Built-in skill implementations
+│       ├── web_search/     # Web search & scrape
+│       ├── python_repl/    # Python code execution
+│       ├── terminal/       # Terminal command execution
+│       ├── image_to_text/  # Image understanding
+│       ├── speech_to_text/ # Speech recognition
+│       ├── text_to_image/  # Image generation
+│       ├── video_text_to_text/ # Video understanding
+│       ├── rag/            # RAG-based knowledge retrieval
+│       ├── clawhub/        # GitHub repository cloner
+│       └── skill_creator/  # Auto-generate new skills
 ├── src/                    # Runtime data directories
 │   ├── avatar/             # Character avatar images
 │   ├── checkpoints/        # Session checkpoints

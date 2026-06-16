@@ -40,7 +40,7 @@ class ToolLoopPrevention(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        tool_name: str = request.tool_call["name"]
+        tool_name: str = request.tool_call.get("name", "unknown")
         count: int = self._turn_tool_counts.get(tool_name, 0) + 1
         self._turn_tool_counts[tool_name] = count
 

@@ -2,11 +2,12 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
 
-  app: {
-    head: {
+  app:{
+    head:{
+      title: process.env.VITE_APP_NAME,
       meta: [
-        { name: 'viewport', content: 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no' }
-      ]
+          { name: 'viewport', content: 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no' }
+      ],
     }
   },
 

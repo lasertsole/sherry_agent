@@ -3,7 +3,7 @@ from config import WORKSPACE_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
 
 def read_system_prompt_file()-> dict[str, str]:
-    """读取系统提示文件"""
+    """Read system prompt files"""
     file_to_content: dict[str, str] = {}
 
     for file_name in ALL_SYSTEM_FILE_NAMES:
@@ -15,7 +15,7 @@ def read_system_prompt_file()-> dict[str, str]:
     return file_to_content
 
 def write_system_prompt_file(file_to_content: dict[str, str])->None:
-    """写入系统提示文件"""
+    """Write system prompt files"""
     for file_name, content in file_to_content.items():
         if file_name not in ALL_SYSTEM_FILE_NAMES:
             raise ValueError(f"Invalid file name: {file_name}")
@@ -31,7 +31,7 @@ def write_system_prompt_file(file_to_content: dict[str, str])->None:
             file.write(content)
 
 def update_system_prompt_file(file_to_content: dict[str, str])->None:
-    """更新系统提示文件（按需更新，只覆盖传入的文件，未传入的文件保持不变）"""
+    """Update system prompt files (only overwrite provided files, leave others unchanged)"""
     existing = read_system_prompt_file()
 
     for file_name, content in file_to_content.items():
@@ -50,13 +50,13 @@ def update_system_prompt_file(file_to_content: dict[str, str])->None:
 
 
 def read_character()-> dict[str, dict[str, str]]:
-    """读取角色信息"""
+    """Read character configuration"""
     file_path = WORKSPACE_DIR / "character.json"
     character_data:dict[str, dict[str, str]] = json.loads(file_path.read_text())
     return character_data
 
 def write_character(character_data: dict[str, dict[str, str]])->None:
-    """写入角色信息"""
+    """Write character configuration"""
     user_dict: dict[str, str] | None = character_data.get("user", None)
     assistant_dict: dict[str, str] | None = character_data.get("assistant", None)
 
@@ -72,7 +72,7 @@ def write_character(character_data: dict[str, dict[str, str]])->None:
     file_path.write_text(json.dumps(character_data, indent=4, ensure_ascii=False))
 
 def update_character(character_data: dict[str, dict[str, str]])->None:
-    """更新角色信息（按需更新，只覆盖传入的字段，未传入的字段保持不变）"""
+    """Update character configuration (only overwrite provided fields, leave others unchanged)"""
     existing = read_character()
 
     for role_key in ("user", "assistant"):

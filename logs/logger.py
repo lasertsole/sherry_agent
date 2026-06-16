@@ -1,12 +1,28 @@
 import os
 import sys
+import time
+from pathlib import Path
 from loguru import logger
 from config import ROOT_DIR
 
-def init_logger(log_dir=ROOT_DIR / "logs/output"):
+
+def _clean_expired_logs(log_dir: Path, timeout_days: int = 7):
+    """Delete log files older than `days` in the log directory."""
+    cutoff = time.time() - timeout_days * 86400
+    if not log_dir.is_dir():
+        return
+    for p in log_dir.iterdir():
+        if p.is_file() and p.suffix in (".log", ".zip") and p.stat().st_mtime < cutoff:
+            p.unlink(missing_ok=True)
+
+
+def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
     """初始化全局日志配置"""
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
+
+    # 0. 删除过期日志
+    _clean_expired_logs(Path(log_dir), timeout_days)
 
     # 1. 清除 Loguru 默认配置
     logger.remove()

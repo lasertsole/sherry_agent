@@ -1,5 +1,5 @@
 """
-skill_memory — 知识图谱提取引擎
+skill_memory — Knowledge Graph Extraction Engine
 """
 
 import json

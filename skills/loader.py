@@ -27,24 +27,23 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     skills: list[dict[str, Any]] = []
     seen_paths = set()  # 用于去重
 
-    for pattern in ["**/SKILL.md", "**/core/SKILL.md"]:
-        for skill_file in SKILLS_DIR.glob(pattern):
-            if skill_file in seen_paths:
-                continue
-            seen_paths.add(skill_file)
+    for skill_file in SKILLS_DIR.glob("**/SKILL.md"):
+        if skill_file in seen_paths:
+            continue
+        seen_paths.add(skill_file)
 
-            content = skill_file.read_text(encoding="utf-8")
-            meta = _parse_frontmatter(content)
-            name = str(meta.get("name", skill_file.parent.name))
-            desc = str(meta.get("description", ""))
-            rel = skill_file.relative_to(ROOT_DIR)
-            skills.append(
-                {
-                    "name": name,
-                    "description": desc,
-                    "location": f"./{rel.as_posix()}",
-                }
-            )
+        content = skill_file.read_text(encoding="utf-8")
+        meta = _parse_frontmatter(content)
+        name = str(meta.get("name", skill_file.parent.name))
+        desc = str(meta.get("description", ""))
+        rel = skill_file.relative_to(ROOT_DIR)
+        skills.append(
+            {
+                "name": name,
+                "description": desc,
+                "location": f"./{rel.as_posix()}",
+            }
+        )
 
     skills.sort(key=lambda x: x["name"])
     return skills

@@ -1,5 +1,6 @@
 from .sovits_model import *
-from .vl_model import vl_model
+from .ITT_model import ITT_model
+from .VTTT_model import VTTT_model
 from .chat_model import chat_model
 from .embed_model import embed_model
 from .reranker_model import reranker_model

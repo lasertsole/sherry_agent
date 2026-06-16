@@ -3,11 +3,11 @@ from pydantic import BaseModel
 from typing import Any, List, Optional, Literal
 
 """
-    skill_memory 类型定义
-    节点：TASK / SKILL / EVENT
-    边：USED_SKILL / SOLVED_BY / REQUIRES / PATCHES / CONFLICTS_WITH
+    skill_memory type definitions
+    Nodes: TASK / SKILL / EVENT
+    Edges: USED_SKILL / SOLVED_BY / REQUIRES / PATCHES / CONFLICTS_WITH
 """
-# ─── 节点 ─────────────────────────────────────────────────────
+# ─── Nodes ────────────────────────────────────────────────────
 class NodeType(Enum):
     TASK = "TASK"
     SKILL = "SKILL"
@@ -28,7 +28,7 @@ class GmNode(Node):
     created_at: int
     updated_at: int
 
-# ─── 边 ───────────────────────────────────────────────────────
+# ─── Edges ────────────────────────────────────────────────────
 
 class EdgeType(Enum):
     USED_SKILL = "USED_SKILL"
@@ -49,7 +49,7 @@ class GmEdge(Edge):
     session_id: str
     created_at: int
 
-# ─── 信号 ─────────────────────────────────────────────────────
+# ─── Signals ──────────────────────────────────────────────────
 class SignalType(Enum):
     TOOL_ERROR = "tool_error"
     TOOL_SUCCESS = "tool_success"
@@ -63,7 +63,7 @@ class Signal(BaseModel):
     turn_index: int
     data: dict[str, Any]
 
-# ─── 提取结果 ─────────────────────────────────────────────────
+# ─── Extraction Results ──────────────────────────────────────
 class ExtractionResult(BaseModel):
     nodes: List[Node]
     edges: List[Edge]
@@ -76,13 +76,13 @@ class FinalizeResult(BaseModel):
     new_edges: List[Edge]
     invalidations: List[str]
 
-# ─── 召回结果 ─────────────────────────────────────────────────
+# ─── Recall Results ──────────────────────────────────────────
 class RecallResult(BaseModel):
     nodes: List[GmNode]
     edges: List[GmEdge]
     token_estimate: int
 
-# ─── 插件配置 ─────────────────────────────────────────────────
+# ─── Plugin Config ───────────────────────────────────────────
 class GmConfig(BaseModel):
     db_path: str
     compact_turn_count: int

@@ -5,10 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "mineru-vl-utils[transformers]>=1.0.5",
     "aiosqlite>=0.22.1",
     "croniter>=6.2.2",
     "dotenv>=0.9.9",
+    "editdistance>=0.8.1",
     "fastapi>=0.136.3",
+    "funasr>=1.3.9",
     "langchain>=1.3.4",
     "langchain-classic>=1.0.7",
     "langchain-community>=0.4.2",
@@ -23,15 +26,17 @@ dependencies = [
     "live2d-py>=0.7.0.4",
     "loguru>=0.7.3",
     "matplotlib>=3.10.9",
+    "moviepy>=2.1.2",
+    "opencv-python-headless>=4.11.0",
     "nest-asyncio>=1.6.0",
-    "pillow>=12.2.0",
+    "pillow>=9.2.0",
     "pyqt6>=6.11.0",
     "qq-botpy>=1.2.1",
     "raganything[all]>=1.3.1",
     "robyn>=0.84.0",
     "sentence-transformers>=5.5.1",
-    "snkv>=0.7.3",
     "streamlit>=1.58.0",
+    "torchaudio>=2.11.0",
     "torchvision>=0.27.0",
     "websocket-client>=1.9.0",
     "websockets>=15.0.1",
@@ -41,3 +46,6 @@ dependencies = [
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.uv.sources]
+editdistance = { path = "models/SST_model/editdistance-0.8.1-py3-none-any.whl" }

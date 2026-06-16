@@ -6,14 +6,14 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 def build_mixed_query(query: str, turns_of_history: str = "") -> str:
     """
-    基于对话历史改写用户查询
+    Rewrite the user query based on conversation history
 
     Args:
-        query: 用户当前问题
-        turns_of_history: 历史对话上下文（可选）
+        query: User's current question
+        turns_of_history: Conversation history context (optional)
 
     Returns:
-        str: 改写后的查询文本
+        str: Rewritten query text
     """
 
     if query is None or not query.strip():
@@ -84,7 +84,7 @@ def build_mixed_query(query: str, turns_of_history: str = "") -> str:
     response = simple_chat_model.invoke(messages)
     mixed_query = response.content.strip() if response.content else query
 
-    # 确保不为空
+    # Ensure result is not empty
     if not mixed_query:
         mixed_query = query
 

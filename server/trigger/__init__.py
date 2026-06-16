@@ -1,5 +1,7 @@
 from .http import app
-from .channels import channel_thread
-from .subagent import subagent_thread
+
+# Let top-level code run (imports needed for side-effect registration)
+import server.trigger.channels
+import server.trigger.subagent
 
 __all__ = ["app"]

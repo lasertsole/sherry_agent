@@ -1,6 +1,6 @@
-from enum import Enum
 import time
 from loguru import logger
+from models import chat_model
 from pydantic import BaseModel
 from skills import build_skills_snapshot
 from langgraph.types import Checkpointer
@@ -9,25 +9,20 @@ from tools import build_all_tools, memory_store
 from context_engine import add_session_if_not_exists
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
-from models import chat_model, reasoner_model, vl_model
-from .middlewares import ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize
+from .middlewares import (ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize, MultimodalProcessor,
+                          ToolTimeout)
 
-# 服务器启动时重构技能快照，用于保证本次服务器运行中skills提示词稳定，从而保证模型 前缀缓存 稳定
+# Rebuild skill snapshot at server start to keep skills prompt stable
+# throughout this server run, ensuring reliable model prefix caching.
 build_skills_snapshot()
 
-# 加载memory文件夹下的md文件，并在保证本次服务器运行触发压缩前保持不变
+# Load memory markdown files from disk; keep them unchanged until
+# compression is triggered during this server run.
 memory_store.load_from_disk()
-
-class ModelType(Enum):
-    """字符串枚举，可以直接与字符串比较"""
-    CHAT_MODEL = chat_model
-    REASONER_MODEL = reasoner_model
-    VL_MODEL = vl_model
 
 def built_agent(
     session_id: str,
     system_prompt: str | None = None,
-    model_type:ModelType = ModelType.CHAT_MODEL,
     temperature: float = 0.8,
     enable_tool: bool = True,
     checkpointer: Checkpointer | None = None,
@@ -35,31 +30,32 @@ def built_agent(
 )-> CompiledStateGraph:
     start_time = time.time()
     
-    # 若无会话记录 则创建 session记录
+    # Create a session record if one does not already exist
     add_session_if_not_exists(session_id)
     
     logger.info(
-        f"Building agent: session_id={session_id}, model={model_type.name}, "
+        f"Building agent: session_id={session_id}"
         f"temperature={temperature}, enable_tool={enable_tool}"
     )
 
-    model = model_type.value.bind(temperature=temperature)
+    model = chat_model.bind(temperature=temperature)
 
     if checkpointer is None:
         checkpointer = InMemorySaver()
 
-    # 构建工具列表
+    # Build tool list
     tools = build_all_tools(session_id) if enable_tool else None
     tool_count = len(tools) if tools else 0
     logger.debug(f"Tools built: session_id={session_id}, tool_count={tool_count}")
 
-    #生成agent对象
+    # Build the agent
     agent = create_agent(
         model = model,
         checkpointer = checkpointer,
         system_prompt = system_prompt,
         tools = tools,
         middleware = [
+            MultimodalProcessor(session_id=session_id),
             ContextEngineHook(session_id=session_id),
             Summarization(
                 model=chat_model,
@@ -73,8 +69,8 @@ def built_agent(
 
             ),
             ToolLoopPrevention(session_id=session_id),
-            # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
             ToolCallNormalize(session_id=session_id),
+            ToolTimeout(session_id=session_id)
         ],
         response_format = response_format
     )

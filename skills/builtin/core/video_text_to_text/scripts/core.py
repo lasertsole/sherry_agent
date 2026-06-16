@@ -1,0 +1,131 @@
+import sys
+import cv2
+import base64
+from pathlib import Path
+
+from loguru import logger
+from langchain_core.messages import HumanMessage
+
+# Dynamically add project root to sys.path
+current_file = Path(__file__).resolve()
+project_root: Path = current_file.parents[4]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+from config import SRC_DIR
+from models import VTTT_model
+
+MIN_DURATION_SEC = 5.0
+MAX_DURATION_SEC = 60.0
+
+
+def _validate_video_duration(video_path: str) -> float:
+    """Check video duration is within [MIN_DURATION_SEC, MAX_DURATION_SEC].
+
+    Returns:
+        Duration in seconds.
+
+    Raises:
+        ValueError: duration out of bounds or cannot be read.
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video file: {video_path}")
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    if fps <= 0 or total_frames <= 0:
+        raise ValueError(f"Cannot determine video duration: {video_path}")
+    duration = total_frames / fps
+    if duration < MIN_DURATION_SEC:
+        raise ValueError(
+            f"Video too short ({duration:.1f}s). Minimum: {MIN_DURATION_SEC}s"
+        )
+    if duration > MAX_DURATION_SEC:
+        raise ValueError(
+            f"Video too long ({duration:.1f}s). Maximum: {MAX_DURATION_SEC}s"
+        )
+    return duration
+
+
+def _image_to_data_url(path: str) -> str:
+    """Read a local image file and return a data:image/...;base64, URL."""
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    ext = Path(path).suffix.lstrip(".").lower()
+    mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
+    return f"data:image/{mime};base64,{b64}"
+
+
+def vtt(video_path: str, query: str = "")-> None:
+    # --- Duration check ---
+    try:
+        _validate_video_duration(video_path)
+    except ValueError as e:
+        logger.error(f"[Error] {e}")
+        return None
+
+    # Primary path: send the raw video as base64 (works with some backends)
+    try:
+        with open(video_path, "rb") as f:
+            video_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+        data_url = f"data:video/mp4;base64,{video_b64}"
+
+        if query.strip() == "":
+            query = "what happen in the video?"
+
+        msg = HumanMessage(content=[
+            {"type": "text", "text": query},
+            {"type": "video_url", "video_url": {"url": data_url}},
+        ])
+        res = VTTT_model.invoke([msg])
+        logger.info(f"Video recognition completed, content:\n{res.content}")
+        return None
+    except Exception as e:
+        logger.warning(f"[warn] Primary video path failed: {e}, Video format may not be supported,"
+                       f" try extracting video frames as input for the VLM model.")
+        return  None
+
+
+def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> None:
+    # --- Duration check ---
+    try:
+        _validate_video_duration(video_path)
+    except ValueError as e:
+        logger.error(f"[Error] {e}")
+        return None
+
+    # Fallback: extract frames locally and send as base64 images
+    try:
+        from skills.builtin.core.video_text_to_text.scripts import extract_frames
+
+        frames = extract_frames(
+            video_path,
+            (SRC_DIR / "mutil_temp").as_posix(),
+            threshold=0.3,
+            interval_sec=interval_sec,
+            prefix="frame",
+        )
+        logger.info(f"Total frames extracted: {len(frames)}")
+
+        if len(frames) == 0:
+            logger.error("No frames extracted from video.")
+            return None
+
+        image_dict: list[dict[str, str]] = [
+            {"type": "image_url", "image_url": {"url": _image_to_data_url(r.image_path), "detail": "low"}}
+            for r in frames
+        ]
+
+        if query.strip() == "":
+            query = "what happen in the video?"
+        msg = HumanMessage(content=[
+            {"type": "text", "text": query},
+            *image_dict,
+        ])
+        res = VTTT_model.invoke([msg])
+        logger.info(f"Video recognition completed, content:\n{res.content}")
+        return None
+    except Exception as e:
+        logger.error(f"[Error] Vision model call failed: {e}")
+        return None

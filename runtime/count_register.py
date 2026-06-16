@@ -1,4 +1,5 @@
 from loguru import logger
+from .core import Register
 from typing import Callable, Any
 from pydantic import BaseModel, Field
 
@@ -9,51 +10,57 @@ class Trigger(BaseModel):
     args: list[Any] = Field(default_factory=list)
     reset_when_trigger: bool = True
 
-class CountRegister:
+class CountRegister(Register):
     """
     统计注册类
     """
-    _counter: dict[str, int] = {}
-    _trigger: dict[str, Trigger] = {}
+    def __init__(self):
+        if self._initialized:
+            return
 
-    def register(self, name: str, callback: Callable, threshold: int = 1)-> bool:
+        self.session_id_to_counter: dict[str, dict[str, int]] = {}
+        self.session_id_to_trigger: dict[str, dict[str, Trigger]] = {}
+
+        self._initialized = True
+
+    def register(self, session_id: str, name: str, callback: Callable, threshold: int = 1)-> bool:
         """
         注册统计函数
         """
-        if name in self._counter:
+        if name in self.session_id_to_counter:
             logger.error(f"{name} is already registered")
             return False
 
-        self._counter[name] = 0
-        self._trigger[name] = Trigger(threshold = threshold, callback = callback)
+        self.session_id_to_counter.setdefault(session_id, {})[name] = 0
+        self.session_id_to_trigger.setdefault(session_id, {})[name] = Trigger(threshold = threshold, callback = callback)
 
         return True
 
-    def unregister(self, name: str)-> bool:
+    def unregister(self, session_id: str, name: str)-> bool:
         """
         取消注册
         """
-        if name not in self._counter:
+        if name not in self.session_id_to_counter:
             logger.error(f"{name} is not registered")
             return False
 
-        del self._counter[name]
-        del self._trigger[name]
+        del self.session_id_to_counter.setdefault(session_id, {})[name]
+        del self.session_id_to_trigger.setdefault(session_id, {})[name]
 
         return True
 
 
-    def increase(self, name: str)-> bool:
+    def increase(self, session_id: str, name: str)-> bool:
         """
         增加统计值
         """
-        if name not in self._counter:
+        if name not in self.session_id_to_counter:
             logger.error(f"{name} is not registered")
             return False
 
-        now_counter:int = self._counter[name] + 1
+        now_counter:int = self.session_id_to_counter.setdefault(session_id, {})[name] + 1
 
-        trigger: Trigger = self._trigger[name]
+        trigger: Trigger = self.session_id_to_trigger.setdefault(session_id, {})[name]
         threshold: int = trigger.threshold
 
         if now_counter >= threshold:
@@ -65,6 +72,12 @@ class CountRegister:
             if trigger.reset_when_trigger:
                 now_counter = 0
 
-        self._counter[name] = now_counter
+        self.session_id_to_counter.setdefault(session_id, {})[name] = now_counter
 
         return True
+    
+    def clear_session(self, session_id: str):
+        del self.session_id_to_counter[session_id]
+        del self.session_id_to_trigger[session_id]
+
+count_register = CountRegister()

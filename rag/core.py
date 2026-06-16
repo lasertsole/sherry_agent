@@ -4,8 +4,8 @@ import time
 import nest_asyncio
 from pathlib import Path
 from loguru import logger
-from models import vl_model
-from config import SRC_DIR, MODELS_DIR
+from models import ITT_model
+from config import MODELS_DIR
 from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
@@ -35,7 +35,7 @@ async def _vision_model_func(
 ) -> str:
     # 如果提供了messages格式（用于多模态VLM增强查询），直接使用
     if messages:
-        result = vl_model.invoke(messages)
+        result = ITT_model.invoke(messages)
         return result.content
     # 传统单图片格式
     elif image_data:
@@ -58,7 +58,7 @@ async def _vision_model_func(
             if image_data
             else {"role": "user", "content": prompt},
         ]
-        result = vl_model.invoke(messages)
+        result = ITT_model.invoke(messages)
         return result.content
     else:
         from rag import get_lightrag
@@ -202,9 +202,7 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
 
         config = RAGAnythingConfig(
             parser = parser,
-            parse_method = parse_method,
-            # # 必须和 LightRAG 一致
-            # working_dir = str(SRC_DIR / "rag" / "lightrag_db"),
+            parse_method = parse_method
         )
         _rag_anything = RAGAnything(
             lightrag = lightrag,

@@ -1,5 +1,4 @@
 from typing import Any
-
 from langgraph.runtime import Runtime
 from langchain_core.messages import RemoveMessage
 from pub_func import sanitize_tool_use_result_pairing
@@ -12,15 +11,7 @@ class ToolCallNormalize(AgentMiddleware):
         super().__init__()
         self._session_id: str = session_id
 
-    async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        return {
-            "messages": [
-                RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *sanitize_tool_use_result_pairing(state["messages"])
-            ]
-        }
-
-    async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+    async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         return {
             "messages": [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES),

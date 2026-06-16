@@ -1,11 +1,12 @@
+import asyncio
 import time
+import base64
 import requests
 from loguru import logger
 from robyn import SSEMessage
 from config import ASSISTANT_NAME
-from pub_func.message import slice_last_n_turn
 from type import MultiModalMessage
-from pub_func import build_agent_config, slice_last_n_turn
+from runtime import state_register
 from typing import AsyncGenerator, Any, List
 from langchain.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
@@ -13,38 +14,83 @@ from ..DAO import clear_session as clear_session_DAO
 from workspace.prompt_builder import build_system_prompt
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from context_engine import rectification_and_standardization
-from agent import built_agent, ModelType, build_async_sqlite_checkpointer
+from agent import built_agent, build_async_sqlite_checkpointer
+from pub_func import build_agent_config, slice_last_n_turn, is_url
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk, messages_to_dict
 
 def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> List[BaseMessage]:
     return agent.get_state(config=build_agent_config(session_id)).values.get("messages", [])
 
-"""以下是组装自带上下文的agent逻辑"""
+def _get_content_list(multi_modal_message: MultiModalMessage)-> List[dict[str, str]]:
+    user_text: str = multi_modal_message.text
+    content_list: List[dict[str, Any]] = [{"type": "text", "text": user_text}]
+
+    ##** Image handling logic **##
+    if multi_modal_message.image_path_list:
+        for image_path in multi_modal_message.image_path_list:
+            if is_url(image_path):
+                content_list.append({"type": "image_url", "image_url": {"url": image_path}})
+            else:
+                logger.warning(f"Image path is not a URL: {image_path}")
+
+    if multi_modal_message.image_base64_list:
+        for image_base64 in multi_modal_message.image_base64_list:
+            # Check if it already has a data URI prefix
+            if image_base64.startswith('data:image/'):
+                # Already has the prefix, use as-is
+                image_url = image_base64
+            else:
+                # No prefix, add one
+                image_url = f"data:image/png;base64,{image_base64}"
+
+            content_list.append({"type": "image_url", "image_url": {"url": image_url}})
+
+    if multi_modal_message.image_bytes_list:
+        for image_bytes in multi_modal_message.image_bytes_list:
+            base64_str = base64.b64encode(image_bytes).decode('utf-8')
+            image_url = f"data:image/png;base64,{base64_str}"
+            content_list.append({"type": "image_url", "image_url": {"url": image_url}})
+    ##** End image handling logic **##
+
+    ##** Audio handling logic **##
+    if multi_modal_message.audio_path_list:
+        for audio_path in multi_modal_message.audio_path_list:
+            if is_url(audio_path):
+                content_list.append({"type": "audio_url", "audio_url": {"url": audio_path}})
+            else:
+                logger.warning(f"Image path is not a URL: {audio_path}")
+
+    if multi_modal_message.audio_bytes_list:
+        for audio_bytes in multi_modal_message.audio_bytes_list:
+            content_list.append({"type": "audio_bytes", "audio_bytes": {"bytes": audio_bytes}})
+    ##** End audio handling logic **##
+
+    ##** Video handling logic **##
+    if multi_modal_message.video_path_list:
+        for video_path in multi_modal_message.video_path_list:
+            if is_url(video_path):
+                content_list.append({"type": "video_url", "video_url": {"url": video_path}})
+            else:
+                logger.warning(f"Image path is not a URL: {video_path}")
+
+    if multi_modal_message.video_bytes_list:
+        for video_bytes in multi_modal_message.video_bytes_list:
+            content_list.append({"type": "video_bytes", "video_bytes": {"bytes": video_bytes}})
+    ##** End video handling logic **##
+
+    return content_list
+
+"""Agent assembly logic — builds agent with context"""
 async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True):
     start_time = time.time()
     checkpointer: BaseCheckpointSaver = await build_async_sqlite_checkpointer()
 
-    # 创建agent
+    # Create the agent
     agent: CompiledStateGraph = built_agent(session_id = session_id, system_prompt=build_system_prompt(), checkpointer=checkpointer)
 
-    user_text:str = multi_modal_message.text
-
-    content_list:List[dict[str, str]] = [{"type": "text", "text": user_text}]
-    if multi_modal_message.image_base64_list:
-        for image_base64 in multi_modal_message.image_base64_list:
-            # 判断是否已经有data URI前缀
-            if image_base64.startswith('data:image/'):
-                # 已有前缀，直接使用
-                image_url = image_base64
-            else:
-                # 没有前缀，添加前缀
-                image_url = f"data:image/png;base64,{image_base64}"
-
-            content_list.append({"type": "image_url", "image_url": {"url": image_url}})
-            # 切换模型
-            logger.info(f"Switching to VL model for image processing: session_id={session_id}")
-            agent = built_agent(system_prompt=build_system_prompt(), session_id = session_id, model_type = ModelType.VL_MODEL, enable_tool = False)
-
+    # Prepare the content_list
+    content_list:List[dict[str, str]] = _get_content_list(multi_modal_message)
+            
     elapsed = time.time() - start_time
     logger.info(
         f"Agent generator prepared: session_id={session_id}, duration={elapsed:.2f}s, "
@@ -56,74 +102,75 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
     else:
         return agent.ainvoke(input={"messages": [HumanMessage(content = content_list)]}, config=build_agent_config(session_id))
 
-"""以上是组装自带上下文的agent逻辑"""
+"""End agent assembly logic"""
 
-"""以下是返回信息逻辑"""
-_current_tool_name: str = ""
-_current_tool_id: str = ""
+"""Response generation logic — yields SSE messages"""
 async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[str, None]:
-    global _current_tool_name
-    global _current_tool_id
-    
     start_time = time.time()
     logger.info(
         f"Agent execution started: session_id={session_id}, is_stream={is_stream}, "
         f"input_text_length={len(multi_modal_message.text) if multi_modal_message.text else 0}"
     )
 
-    # 创建已经组装好上下文的agent
+    # Create the agent with assembled context
     ai_text:str = ""
+
+    # Control answering
+    state_register.set_state(session_id, "answering", True)
 
     try:
         yield SSEMessage(f"{ASSISTANT_NAME}:")
 
         if is_stream:
-            # 用已组装好上下文的agent直接输出
+            # Stream directly from the context-assembled agent
             generator = await _get_generator(session_id, multi_modal_message)
             async for chunk in generator:
+                if not state_register.get_state(session_id, "answering", False):
+                    raise asyncio.CancelledError
+
                 msg_chunk: BaseMessage = chunk[0]
                 metadata: dict[str, Any] = chunk[1]
 
-                # 过滤走生命周期中其他模型的输出
+                # Filter out outputs from non-model nodes in the lifecycle
                 if metadata.get("langgraph_node", None) != "model":
                     continue
 
                 if isinstance(msg_chunk, AIMessageChunk):
-                    # 以下是输出工具信息
+                    # Tool call output logic
                     tool_calls: List[ToolCall] | List[ToolCallChunk] = msg_chunk.tool_calls if msg_chunk.tool_calls and len(
                         msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
-                    if len(tool_calls) > 0 or _current_tool_id.strip():
-                        repeat_flag: bool = True  # 防止重复输出工具信息
+                    if len(tool_calls) > 0 or state_register.get_state(session_id, "current_tool_id", "").strip():
+                        repeat_flag: bool = True  # Prevent duplicate tool call output
                         if len(tool_calls) > 0:
                             tool_call = tool_calls[0]
 
                             if tool_call["name"]:
-                                if tool_call["name"].strip() or tool_call["name"].strip() != _current_tool_name:
-                                    _current_tool_name = tool_call['name']
+                                if tool_call["name"].strip() or tool_call["name"].strip() != state_register.get_state(session_id, "current_tool_name"):
+                                    state_register.set_state(session_id, "current_tool_name", tool_call['name'])
 
                             if tool_call["id"]:
-                                if tool_call["id"].strip() or tool_call["id"].strip() != _current_tool_id:
-                                    _current_tool_id = tool_call['id']
+                                if tool_call["id"].strip() or tool_call["id"].strip() != state_register.get_state(session_id, "current_tool_id"):
+                                    state_register.set_state(session_id,"current_tool_id", tool_call['id'])
                                     repeat_flag = False
 
                         if not repeat_flag:
-                            res: str = f"\n\n**调用工具 {_current_tool_name} 中**"
+                            res: str = f"\n\n**Calling tool {state_register.get_state(session_id, "current_tool_name", "")}...**"
                             ai_text += res
                             yield SSEMessage(res)
 
-                    if _current_tool_id and msg_chunk.content is not None and msg_chunk.content:
-                        res: str = f"\n\n**调用工具 {_current_tool_name} 结束。**\n\n"
+                    if state_register.get_state(session_id, "current_tool_id", None) is not None and msg_chunk.content is not None and msg_chunk.content:
+                        res: str = f"\n\n**Tool {state_register.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
                         ai_text += res
                         yield SSEMessage(res)
-                        _current_tool_id = ""
-                    # 以上是输出工具信息
+                        state_register.set_state(session_id, "current_tool_id", "")
+                    # End tool call output logic
 
-                    # 以下是对话信息
+                    # Conversation output logic
                     if len(msg_chunk.content) > 0:
                         res: str = msg_chunk.content
                         ai_text += res
                         yield SSEMessage(res)
-                    # 以上是对话信息
+                    # End conversation output logic
 
         else:
             generator = await _get_generator(session_id, multi_modal_message, is_stream = False)
@@ -138,22 +185,12 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             f"output_length={len(ai_text)}"
         )
 
-    except requests.exceptions.HTTPError as e:
+    except asyncio.CancelledError:
         elapsed = time.time() - start_time
-        yield SSEMessage(f"请求失败: {e.response.text}")
-        logger.error(
-            f"Agent execution HTTP error: session_id={session_id}, duration={elapsed:.2f}s, "
-            f"error={e.response.text}"
+        yield SSEMessage("Request cancelled")
+        logger.info(
+            f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s"
         )
-        logger.exception(e)
-    except requests.exceptions.Timeout as e:
-        elapsed = time.time() - start_time
-        yield SSEMessage(f"请求超时: {e.args[0]}")
-        logger.error(
-            f"Agent execution timeout: session_id={session_id}, duration={elapsed:.2f}s, "
-            f"error={e.args[0]}"
-        )
-        logger.exception(e)
     except Exception as e:
         elapsed = time.time() - start_time
         logger.error(
@@ -163,12 +200,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         logger.exception(e)
         raise e
     finally:
-        # 重置工具信息
-        _current_tool_name = ""
-        _current_tool_id = ""
-"""以上是返回信息逻辑"""
+        # Reset tool tracking state
+        state_register.set_state(session_id, "current_tool_name", "")
+        state_register.set_state(session_id, "current_tool_id", "")
+        state_register.set_state(session_id, "answering", False)
+"""End response generation logic"""
 
-"""以下是获取历史聊天记录"""
+"""History retrieval logic"""
 async def get_history_turn_message_dicts(session_id: str, last_turn_count: int = 10) -> List[dict[str, Any]]:
     if last_turn_count <= 0:
         return []
@@ -176,21 +214,32 @@ async def get_history_turn_message_dicts(session_id: str, last_turn_count: int =
     checkpointer = await build_async_sqlite_checkpointer()
     res = await checkpointer.aget_tuple(build_agent_config(session_id))
     history_messages: List[BaseMessage] = getattr(res, "checkpoint", {}).get("channel_values", {}).get("messages", [])
-    slice_last_n_turn_messages = slice_last_n_turn(history_messages, last_turn_count).get("messages")
+
+    filter_messages = []
+    for m in history_messages:
+        additional_kwargs: dict[str, str] = getattr(m, "additional_kwargs", {})
+
+        # Filter out HumanMessage containing summarized content
+        if additional_kwargs.get("lc_source", None) == "summarization":
+            continue
+
+        filter_messages.append(m)
+
+    slice_last_n_turn_messages = slice_last_n_turn(filter_messages, last_turn_count).get("messages")
 
     return messages_to_dict(slice_last_n_turn_messages)
-"""以上是获取历史聊天记录"""
+"""End history retrieval logic"""
 
-"""以下是会话结束逻辑"""
+"""Session end logic"""
 async def session_end(session_id: str):
     logger.info(f"Session ending: session_id={session_id}")
     await rectification_and_standardization(session_id = session_id)
     logger.info(f"Session ended: session_id={session_id}")
-"""以上是会话结束逻辑"""
+"""End session end logic"""
 
-"""以下是清除会话历史记录"""
+"""Clear session history logic"""
 async def clear_session(session_id: str):
     logger.info(f"Clearing session history: session_id={session_id}")
     await clear_session_DAO(session_id = session_id)
     logger.info(f"Session history cleared: session_id={session_id}")
-"""以上是清除会话历史记录"""
+"""End clear session history logic"""
