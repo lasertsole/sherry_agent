@@ -1,4 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import Aura from '@primeuix/themes/aura';
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
 
@@ -34,7 +36,7 @@ export default defineNuxtConfig({
   },
 
   // 导入第三方模块
-  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n', '@nuxtjs/color-mode'],
+  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n', '@nuxtjs/color-mode', '@primevue/nuxt-module'],
 
   tailwindcss: {
     cssPath: ['~/assets/css/tailwind.scss', { injectPosition: "first" }],
@@ -44,6 +46,14 @@ export default defineNuxtConfig({
     },
     config: {},
     viewer: true,
+  },
+
+  primevue: {
+    options: {
+      theme: {
+        preset: Aura
+      }
+    }
   },
 
   i18n: {
