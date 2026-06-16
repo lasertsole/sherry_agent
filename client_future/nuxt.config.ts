@@ -1,4 +1,26 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import Aura from '@primeuix/themes/aura';
+import { definePreset } from '@primeuix/themes';
+
+// 自定义黑色主题预设
+const NoirPreset = definePreset(Aura, {
+  semantic: {
+    primary: {
+      50: '{slate.50}',
+      100: '{slate.100}',
+      200: '{slate.200}',
+      300: '{slate.300}',
+      400: '{slate.400}',
+      500: '{slate.500}',
+      600: '{slate.600}',
+      700: '{slate.700}',
+      800: '{slate.800}',
+      900: '{slate.900}',
+      950: '{slate.950}'
+    }
+  }
+});
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
 
@@ -34,7 +56,7 @@ export default defineNuxtConfig({
   },
 
   // 导入第三方模块
-  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n', '@nuxtjs/color-mode'],
+  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n', '@nuxtjs/color-mode', '@primevue/nuxt-module'],
 
   tailwindcss: {
     cssPath: ['~/assets/css/tailwind.scss', { injectPosition: "first" }],
@@ -44,6 +66,18 @@ export default defineNuxtConfig({
     },
     config: {},
     viewer: true,
+  },
+
+  primevue: {
+    options: {
+      theme: {
+        preset: NoirPreset,
+        options: {
+          // 配置暗黑模式的触发类名
+          darkModeSelector: '.dark'
+        }
+      }
+    }
   },
 
   i18n: {
