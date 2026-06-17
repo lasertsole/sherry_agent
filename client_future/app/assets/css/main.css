@@ -41,3 +41,52 @@ ul {
     --theme-text: #ffffff; /* 类似 text-white */
   }
 }
+
+/* ==========================================================================
+   全局现代极简滚动条优化 (支持白天/暗黑模式自动适配)
+   ========================================================================== */
+
+/* 1. 针对 Webkit 内核浏览器 (Chrome, Safari, Edge, 各种手机浏览器) */
+::-webkit-scrollbar {
+  width: 8px; /* 垂直滚动条宽度：保持较细的 8px，精致不突兀 */
+  height: 8px; /* 水平滚动条高度 */
+}
+
+/* 滚动条轨道 (背景) */
+::-webkit-scrollbar-track {
+  background: transparent; /* 默认轨道透明，完美融入任何背景色 */
+}
+
+/* 滚动条滑块 (滑块本身) */
+::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.3); /* 默认使用柔和的灰色 (类似 tailwind gray-400 的 30% 透明度) */
+  border-radius: 9999px; /* 胶囊圆角，极致丝滑 */
+  border: 2px solid transparent; /* 配合 background-clip 实现边缘留白呼吸感 */
+  background-clip: padding-box;
+}
+
+/* 鼠标悬停在滑块上时：颜色加深，方便用户拖拽 */
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.6);
+}
+
+/* 当系统处于暗黑模式 (.dark) 下时的滚动条滑块外观更新 */
+.dark ::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.2); /* 暗黑模式下降低默认亮度，防止刺眼 */
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.45);
+}
+
+/* 2. 针对 Firefox 火狐浏览器的现代标准标准实现 */
+@supports (scrollbar-width: thin) {
+  html {
+    scrollbar-width: thin; /* 变细 */
+    /* 分别配置：滑块颜色 轨道颜色 */
+    scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
+  }
+
+  .dark html {
+    scrollbar-color: rgba(156, 163, 175, 0.2) transparent;
+  }
+}
