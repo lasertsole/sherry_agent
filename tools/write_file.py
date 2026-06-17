@@ -27,18 +27,18 @@ class FormattedWriteFileTool(WriteFileTool):
         **kwargs: Any,
     ) -> str:
         is_py = Path(file_path).suffix == ".py"
-        if is_py and not append:
-            # New write: format the content upfront
-            text = _format_py_code(text)
-            return super()._run(file_path=file_path, text=text, append=False, **kwargs)
-
-        if is_py and append:
-            # Append first, then format the entire file
-            result = super()._run(file_path=file_path, text=text, append=True, **kwargs)
-            full_text = Path(file_path).read_text(encoding="utf-8")
-            formatted = _format_py_code(full_text)
-            super()._run(file_path=file_path, text=formatted, append=False, **kwargs)
-            return result
+        if is_py:
+            if append:
+                # Append first, then format the entire file
+                result = super()._run(file_path=file_path, text=text, append=True, **kwargs)
+                full_text = Path(file_path).read_text(encoding="utf-8")
+                formatted = _format_py_code(full_text)
+                super()._run(file_path=file_path, text=formatted, append=False, **kwargs)
+                return result
+            else:
+                # New write: format the content upfront
+                text = _format_py_code(text)
+                return super()._run(file_path=file_path, text=text, append=False, **kwargs)
 
         return super()._run(file_path=file_path, text=text, append=append, **kwargs)
 

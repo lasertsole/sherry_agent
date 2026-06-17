@@ -1,4 +1,4 @@
-# 🍊 EMA AI Agent - 橘雪莉 (Sherry)
+# 🍊 EMA AI Agent - 橘雪莉
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue)
 ![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
@@ -12,7 +12,7 @@
 
 EMA AI Agent 是一个高度拟人化、具备长期记忆与复杂推理能力的 AI 代理系统。它不仅仅是一个聊天机器人，更是一个拥有独立人格（Persona）、动态记忆图谱（Skill Memory Graph）和主动行为能力的虚拟伙伴。
 
-该 Agent 的角色**橘雪莉 (Sherry)** 是一位侦探少女，具有人格反差（温柔/冷淡双模式），会根据用户亲密度切换状态。整个系统旨在支持沉浸式的、记忆跨会话持续积累的角色扮演体验。
+该 Agent 的角色**橘雪莉** 是一位侦探少女，具有人格反差（温柔/冷淡双模式），会根据用户亲密度切换状态。整个系统旨在支持沉浸式的、记忆跨会话持续积累的角色扮演体验。
 
 ---
 

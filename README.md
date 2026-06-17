@@ -1,4 +1,4 @@
-# 🍊 EMA AI Agent - 橘雪莉 (Sherry)
+# 🍊 EMA AI Agent - Sherry
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue)
 ![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
@@ -12,7 +12,7 @@
 
 EMA AI Agent is a highly anthropomorphic AI agent system with long-term memory and complex reasoning capabilities. It's more than just a chatbot — it's a virtual companion with an independent **Persona**, a dynamic **Skill Memory Graph**, and proactive behavior through scheduled tasks and background subagents.
 
-The Agent's character, **橘雪莉 (Sherry)**, is a detective girl with a dual personality contrast (gentle/cold) that shifts based on intimacy level. The entire system is designed to support immersive, persistent role-playing with memory that accumulates across sessions.
+The Agent's character, **Sherry**, is a detective girl with a dual personality contrast (gentle/cold) that shifts based on intimacy level. The entire system is designed to support immersive, persistent role-playing with memory that accumulates across sessions.
 
 ---
 
