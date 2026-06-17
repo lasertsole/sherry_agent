@@ -1,6 +1,6 @@
 # System 命令
 
-Tauri 原生的工具命令，用于获取应用元数据和健康检查。
+Tauri 原生工具命令。`system_info` 为纯 Rust；`system_health` 会 ping Python 后端。
 
 ## `system_info`
 
@@ -42,7 +42,9 @@ console.log(`Tauri: ${info.tauri_version}`);
 
 ## `system_health`
 
-快速健康检查 — 验证核心子系统是否可达。
+快速健康检查 — 向 Python 后端发送 ping (`GET /system_prompt`) 以验证连接。
+
+Python 后端响应时返回 `healthy: true`，不可达时返回 `healthy: false` 及描述信息。
 
 ### 调用签名
 

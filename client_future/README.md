@@ -12,6 +12,58 @@ The current `client/` is a conversational Web UI built with Python 3.10 + Stream
 - **Component-driven architecture** — Vue 3 Composition API + Pinia for scalable team collaboration
 
 > **Development status**: Early stage; some components are placeholders or demonstrations.
+---
+
+## Architecture
+
+### Hybrid Architecture
+
+```
++--------------------------------------------------------------------+
+|                    Tauri 2 Desktop App (client_future/)              |
+|                                                                    |
+|  +-------------------+       invoke()       +--------------------+ |
+|  |  Nuxt 4 Frontend  | ===================> |  Rust Backend      | |
+|  |  (app/)           |                      |  (src-tauri/src/)  | |
+|  |                   | <=================== |                    | |
+|  |  bridge.ts        |   Tauri Events       |  commands/         | |
+|  |  (dual-mode)      |   (streaming)        |  services/         | |
+|  +-------------------+                      |  utils/            | |
+|                                             +---------+----------+ |
+|                                                       |            |
++-------------------------------------------------------|------------+
+                                                        |
+                                          reqwest HTTP (localhost:8080)
+                                          SSE stream / JSON REST
+                                                        |
++-------------------------------------------------------|------------+
+|                    Python Backend (server/)             |            |
+|                                                        v           |
+|  Robyn HTTP + SSE + WebSocket                                      |
+|  Agent Core (LangGraph) | RAG | TTS (SoVITS) | Multi-channel     |
++--------------------------------------------------------------------+
+```
+
+**Rust implementation**: The Rust layer implements the following functionality:
+1. Receives Tauri IPC calls from the frontend
+2. Forwards them as HTTP requests to the Python backend (`http://127.0.0.1:8080`)
+3. Converts SSE streams from Python into Tauri Events for real-time frontend updates
+
+### Data Flow
+
+```
+User interaction (Vue component)
+    -> bridge.ts (auto-detect Tauri vs browser mode)
+        |
+        |--> [Tauri mode] invoke() -> Rust IPC command
+        |        -> PythonBridge (reqwest HTTP) -> Python backend
+        |        -> SSE stream -> Tauri Events -> frontend listener
+        |
+        |--> [Browser mode] fetch() -> Python backend (direct SSE)
+        |
+    -> Pinia Store (state update)
+    -> Reactive UI update
+```
 
 ---
 
@@ -199,6 +251,12 @@ pnpm build
 
 # Tauri desktop build
 pnpm tauri build
+
+# Rust compilation check
+cd src-tauri && cargo check
+
+# Rust tests 
+cd src-tauri && cargo test
 ```
 
 ### Adding New Pages / Components
@@ -207,6 +265,35 @@ pnpm tauri build
 2. Create components under `app/components/` — auto-available globally
 3. Create composable logic under `app/composables/`
 4. Add custom tokens to `app/assets/ts/tailwind.config.ts`
+
+### Starting the Python Backend
+
+```bash
+# From the project root (EMA_AI_agent/)
+python -m server
+```
+
+The backend starts on `http://127.0.0.1:8080` by default (configurable via `.env`).
+
+### Adding New IPC Commands
+
+1. Define request/response types in `src-tauri/src/commands/<module>.rs` with `#[derive(TS)]`
+2. Implement the `#[tauri::command]` function using `PythonBridge` methods
+3. Register the command in `lib.rs` under `.invoke_handler(tauri::generate_handler![...])`
+4. Run `cargo test` to regenerate TypeScript types in `app/types/backend/`
+5. Add the corresponding wrapper in `app/composables/bridge.ts`
+
+---
+
+## API Documentation
+
+Full API documentation is available in the `docs/` directory (VitePress):
+
+- [Getting Started](docs/guide/getting-started.md)
+- [Agent Commands](docs/commands/agent.md)
+- [Streaming Events](docs/events/streaming.md)
+- [Error Handling](docs/guide/error-handling.md)
+- [Type Reference](docs/types/reference.md)
 
 ---
 

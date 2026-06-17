@@ -38,6 +38,16 @@ export type ChatChunk = {
 };
 ```
 
+### StopRequest
+
+停止正在进行的 Agent 生成的请求。
+
+```typescript
+export type StopRequest = {
+  session_id: string;
+};
+```
+
 ---
 
 ## Session 类型
