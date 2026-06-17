@@ -1,10 +1,10 @@
 import time
-from .core import app
 from loguru import logger
 from type import MultiModalMessage
 from runtime import state_register
+from server.trigger.core import app
 from robyn import SSEMessage, SSEResponse
-from server.service import async_generate, clear_session, get_history_turn_message_dicts
+from server.service import async_generate, clear_session, get_history_by_page as _get_history_by_page
 
 
 @logger.catch
@@ -90,25 +90,29 @@ async def clear_session_handler(request):
     await clear_session(session_id=session_id)
     logger.info(f"Session cleared: session_id={session_id}")
 
-@app.get("/n_turns_history_messages")
-async def get_history_turn_message_dicts_handler(request):
+@app.get("/get_history_by_page")
+async def get_history_by_page(request):
     """
     Read history messages
     """
     query_params = request.query_params
 
     session_id: str | None = query_params.get("session_id", None)
-    last_turn_count_str: str | None = query_params.get("last_turn_count", None)
+    min_turn_num: int | None = query_params.get("min_turn_num", None)
+    turn_page_size: int | None = query_params.get("turn_page_size", None)
+    turn_page_num: int | None = query_params.get("turn_page_num", None)
     logger.debug(f"Reading history messages: session_id={session_id}")
 
     if not session_id:
         raise ValueError("session_id is required")
 
-    if not last_turn_count_str:
+    if not min_turn_num:
         raise ValueError("last_turn_count is required")
 
-    last_turn_count = int(last_turn_count_str)
-    if last_turn_count <= 0:
-        raise ValueError("last_turn_count must be positive")
+    if not turn_page_size:
+        raise ValueError("turn_page_size is required")
 
-    return await get_history_turn_message_dicts(session_id=session_id, last_turn_count=last_turn_count)
+    if not turn_page_num:
+        raise ValueError("turn_page_num is required")
+
+    return _get_history_by_page(session_id, min_turn_num, turn_page_size, turn_page_num)

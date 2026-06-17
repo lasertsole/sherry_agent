@@ -16,20 +16,20 @@ class ContextEngineHook(AgentMiddleware):
         self._turn_prompt: str = ""
 
     async def _build_turn_prompt(self, query_text: str) -> None:
-        # 获取最近几条对话
+        # Retrieve recent conversation turns
         recent_messages_addition: str = retrieve_history_by_last_n_prompt(session_id=self._session_id)
 
-        # 用最近几条对话 和 query， 生成信息特征更丰富的 用户问题 - transformer_query_text 以及匹配到的技能
+        # Build an enriched query with more informative features using recent history and the original query
         transformer_query_text: str = build_mixed_query(turns_of_history=recent_messages_addition, query=query_text)
 
-        # 获取graph-memory系统提示词
+        # Retrieve graph-memory system prompt augmentation
         assemble_result: dict[str, str] = await assemble(user_text=transformer_query_text)
         skill_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
 
-        # 构建结构化的用户消息，将原始问题和RAG上下文分开
+        # Build structured user message separating the original query from RAG context
         structured_content: str = textwrap.dedent(f"""\
             {skill_system_prompt_addition}\n\n
-            Using the reference materials above (note: they may contain inaccuracies, so use them critically), answer the user's actual question below.\n\n
+            Using the reference materials above (note: they may contain inaccuracies, so use them critically), answer the user's question naturally, as if this knowledge is already yours. Do NOT mention, quote, or refer to any "reference materials", "context", "memory", or the fact that you were given additional information. Respond in the same tone and style you always use — the user should never sense that external context was injected.\n\n
         """)
 
         self._turn_prompt = structured_content
@@ -37,7 +37,7 @@ class ContextEngineHook(AgentMiddleware):
     async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         state_mes_list: list[BaseMessage] = state["messages"]
 
-        # 过滤掉系统提示信息
+        # Filter out system prompt messages
         for i in range(len(state_mes_list) - 1, -1, -1):
             if isinstance(state_mes_list[i], SystemMessage):
                 del state_mes_list[i]
@@ -80,20 +80,20 @@ class ContextEngineHook(AgentMiddleware):
             query_text = query
             await self._build_turn_prompt(query_text=query_text)
 
-            # 将 提示词 和 用户输入 拼接
+            # Prepend the turn prompt to the user input
             last_mes.content = self._turn_prompt + query_text
 
             return None
 
     async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        # 获取 格式化后的最后一轮对话的 消息列表
+        # Get the formatted message list of the last conversation turn
         all_messages: list[BaseMessage] = state["messages"]
         last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
         format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
         last_human_message: HumanMessage = format_last_turn_messages[0]
         query: str | dict[str, Any] | list[dict[str, Any]] = last_human_message.content
 
-        # 获取用户输入
+        # Extract user input from the message
         if query is None:
             user_text = ""
         elif isinstance(query, list):
@@ -107,7 +107,7 @@ class ContextEngineHook(AgentMiddleware):
         else:
             user_text = query
 
-        # 提示词占用大量上下文窗口，需要还原成原用户输入的内容 防止窗口快速占满
+        # Strip the turn prompt prefix to restore the original user input, preventing rapid context window bloat
         user_text = user_text.removeprefix(self._turn_prompt)
         last_human_message.content = user_text
 
@@ -117,10 +117,10 @@ class ContextEngineHook(AgentMiddleware):
             if isinstance(m, AIMessage):
                 ai_text += m.content
 
-        # 启动上下文引擎的 后处理
+        # Launch context engine post-processing asynchronously
         after_turn_task: Task = asyncio.create_task(after_turn(session_id = self._session_id, last_turn_messages = format_last_turn_messages))
 
-        # 将用户消息持久化
+        # Persist user messages to MesMemory
         add_history_task: Task = asyncio.create_task(add_messages(session_id = self._session_id, messages=format_last_turn_messages))
 
         await asyncio.gather(after_turn_task, add_history_task)

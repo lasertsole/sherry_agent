@@ -1,4 +1,4 @@
-from .core import app
+from server.trigger.core import app
 from loguru import logger
 from server.service import (read_system_prompt_file, write_system_prompt_file, update_system_prompt_file, read_character,
                             write_character, update_character)

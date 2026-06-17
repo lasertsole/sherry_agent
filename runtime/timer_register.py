@@ -33,7 +33,7 @@ class TimerRegister(Register):
 
         self._initialized = True
 
-    def register(self, session_id: str, name: str, callback: Callable, minutes: int = 1, args: dict[str, Any] | None = None) -> bool:
+    def register(self, session_id: str, name: str, callback: Callable, args: dict[str, Any] | None = None, minutes: int = 15, execute_now: bool = False) -> bool:
         """
         Register a countdown timer
 
@@ -43,6 +43,7 @@ class TimerRegister(Register):
             callback: callback function to trigger
             minutes: countdown minutes, 1-60
             args: keyword arguments to pass to callback
+            execute_now: if True, trigger callback immediately upon registration
 
         Returns:
             whether registration succeeded
@@ -61,6 +62,16 @@ class TimerRegister(Register):
         task_name = f"timer_{session_id}_{name}"
         timer.task_name = task_name
         self.session_id_to_timers[session_id][name] = timer
+
+        # Execute immediately if requested
+        if execute_now:
+            try:
+                result = callback(**args)
+                if inspect.iscoroutine(result):
+                    self._executor.run_coroutine(result)
+                logger.info(f"[timer_register] execute_now: timer '{name}' triggered immediately for session {session_id}")
+            except Exception:
+                logger.exception(f"[timer_register] execute_now: callback '{name}' failed for session {session_id}")
 
         # Start the timer coroutine on the background thread's event loop
         self._executor.create_task(
@@ -90,24 +101,27 @@ class TimerRegister(Register):
 
     async def _run_timer(self, session_id: str, name: str, minutes: int, callback: Callable, args: dict[str, Any]):
         """
-        Background countdown task (runs in background thread event loop)
+        Repeating countdown task (runs in background thread event loop).
+        Loops forever until cancelled or unregistered.
         """
-        try:
-            await asyncio.sleep(minutes * 60)
+        while True:
             try:
-                result = callback(**args)
-                if inspect.iscoroutine(result):
-                    self._executor.run_coroutine(result)
-                logger.info(f"[timer_register] timer '{name}' triggered after {minutes}min for session {session_id}")
-            except Exception:
-                logger.exception(f"[timer_register] callback '{name}' failed for session {session_id}")
-        except asyncio.CancelledError:
-            logger.info(f"[timer_register] timer '{name}' cancelled for session {session_id}")
-        finally:
-            # Clean up registration on trigger or cancel
-            timers = self.session_id_to_timers.get(session_id)
-            if timers and name in timers:
-                del timers[name]
+                await asyncio.sleep(minutes * 60)
+                try:
+                    result = callback(**args)
+                    if inspect.iscoroutine(result):
+                        self._executor.run_coroutine(result)
+                    logger.info(f"[timer_register] timer '{name}' triggered after {minutes}min for session {session_id}")
+                except Exception:
+                    logger.exception(f"[timer_register] callback '{name}' failed for session {session_id}")
+            except asyncio.CancelledError:
+                logger.info(f"[timer_register] timer '{name}' cancelled for session {session_id}")
+                break
+
+        # Clean up registration on cancel
+        timers = self.session_id_to_timers.get(session_id)
+        if timers and name in timers:
+            del timers[name]
 
     def reset_timer(self, session_id: str, name: str) -> bool:
         """

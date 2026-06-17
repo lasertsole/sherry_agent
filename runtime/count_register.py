@@ -10,7 +10,6 @@ class Trigger(BaseModel):
     threshold: int = 1
     callback: Callable
     args: dict[str, Any] = Field(default_factory=dict)
-    reset_when_trigger: bool = True
 
 class CountRegister(Register):
     """
@@ -26,9 +25,20 @@ class CountRegister(Register):
 
         self._initialized = True
 
-    def register(self, session_id: str, name: str, callback: Callable, threshold: int = 1, args: dict[str, Any] = None)-> bool:
+    def register(self, session_id: str, name: str, callback: Callable, threshold: int = 1, args: dict[str, Any] = None, execute_now: bool = False)-> bool:
         """
         Register a counter with callback
+
+        Args:
+            session_id: session ID
+            name: counter name
+            callback: callback function to trigger on threshold
+            threshold: count threshold to trigger callback
+            args: keyword arguments to pass to callback
+            execute_now: if True, immediately increase count and check threshold upon registration
+
+        Returns:
+            whether registration succeeded
         """
         if args is None:
             args = {}
@@ -39,6 +49,16 @@ class CountRegister(Register):
 
         self.session_id_to_counter.setdefault(session_id, {})[name] = 0
         self.session_id_to_trigger.setdefault(session_id, {})[name] = Trigger(threshold = threshold, callback = callback, args = args)
+
+        # Execute immediately if requested
+        if execute_now:
+            try:
+                result = callback(**args)
+                if inspect.iscoroutine(result):
+                    self._callback_executor.run_coroutine(result)
+                logger.info(f"[count_register] execute_now: callback '{name}' triggered immediately for session {session_id}")
+            except Exception:
+                logger.exception(f"[count_register] execute_now: callback '{name}' failed for session {session_id}")
 
         return True
 
@@ -80,8 +100,7 @@ class CountRegister(Register):
             except Exception:
                 logger.exception(f"Callback '{name}' failed for session {session_id}")
 
-            if trigger.reset_when_trigger:
-                now_counter = 0
+            now_counter = 0
 
         self.session_id_to_counter.setdefault(session_id, {})[name] = now_counter
 

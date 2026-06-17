@@ -7,7 +7,7 @@ from typing import Any, Dict, Callable
 from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
 from context_engine import rectification_and_standardization
-from runtime import relation_register, clear_all_register_sessions, count_register
+from runtime import relation_register, clear_all_register_sessions, count_register, state_register, timer_register
 
 # Create the app
 app = Robyn(__file__)
@@ -107,9 +107,18 @@ async def handle_connect(websocket: WebSocketAdapter):
 
     relation_register.register_websocket(session_id=session_id, websocket=websocket)
 
-    # Register skill memory maintenance(threshold = 20)
-    count_register.register(session_id, "skill_memory_maintenance", rectification_and_standardization, threshold=20,
-                            args={"session_id": session_id})
+    state_register.set_state(session_id, "should_skill_memory_maintenance", False)
+
+    async def skill_memory_maintenance(session_id: str)->None:
+        if state_register.get_state(session_id, "skill_memory_maintenance", False) == True:
+            state_register.set_state(session_id, "skill_memory_maintenance", False)
+            await rectification_and_standardization(session_id)
+
+    # Register skill memory maintenance(threshold = 20, minutes = 15)
+    count_register.register(session_id, "skill_memory_maintenance", skill_memory_maintenance, args={"session_id": session_id},
+                            threshold=20)
+    timer_register.register(session_id, "skill_memory_maintenance", skill_memory_maintenance, args={"session_id": session_id},
+                            minutes = 10)
 
 @ws_handler.on_close
 async def handle_disconnect(websocket: WebSocketAdapter):

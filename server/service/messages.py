@@ -9,14 +9,14 @@ from type import MultiModalMessage
 from runtime import state_register
 from typing import AsyncGenerator, Any, List
 from langchain.messages import AIMessageChunk
+from pub_func import build_agent_config, is_url
 from langgraph.graph.state import CompiledStateGraph
 from ..DAO import clear_session as clear_session_DAO
 from workspace.prompt_builder import build_system_prompt
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from context_engine import rectification_and_standardization
 from agent import built_agent, build_async_sqlite_checkpointer
-from pub_func import build_agent_config, slice_last_n_turn, is_url
-from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk, messages_to_dict
+from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
+from context_engine import rectification_and_standardization, get_history_by_page as _get_history_by_page
 
 def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> List[BaseMessage]:
     return agent.get_state(config=build_agent_config(session_id)).values.get("messages", [])
@@ -158,7 +158,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                             ai_text += res
                             yield SSEMessage(res)
 
-                    if state_register.get_state(session_id, "current_tool_id", None) is not None and msg_chunk.content is not None and msg_chunk.content:
+                    if state_register.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
                         res: str = f"\n\n**Tool {state_register.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
                         ai_text += res
                         yield SSEMessage(res)
@@ -203,6 +203,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         state_register.set_state(session_id, "current_tool_name", "")
         state_register.set_state(session_id, "current_tool_id", "")
         state_register.set_state(session_id, "answering", False)
+        state_register.set_state(session_id, "skill_memory_maintenance", True)
 
         try:
             # increase count for skill memory maintenance
@@ -213,27 +214,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 """End response generation logic"""
 
 """History retrieval logic"""
-async def get_history_turn_message_dicts(session_id: str, last_turn_count: int = 10) -> List[dict[str, Any]]:
-    if last_turn_count <= 0:
-        return []
-
-    checkpointer = await build_async_sqlite_checkpointer()
-    res = await checkpointer.aget_tuple(build_agent_config(session_id))
-    history_messages: List[BaseMessage] = getattr(res, "checkpoint", {}).get("channel_values", {}).get("messages", [])
-
-    filter_messages = []
-    for m in history_messages:
-        additional_kwargs: dict[str, str] = getattr(m, "additional_kwargs", {})
-
-        # Filter out HumanMessage containing summarized content
-        if additional_kwargs.get("lc_source", None) == "summarization":
-            continue
-
-        filter_messages.append(m)
-
-    slice_last_n_turn_messages = slice_last_n_turn(filter_messages, last_turn_count).get("messages")
-
-    return messages_to_dict(slice_last_n_turn_messages)
+def get_history_by_page(session_id: str, min_turn_num: int, turn_page_size: int, turn_page_num: int) -> List[dict[str, Any]]:
+    return _get_history_by_page(session_id, min_turn_num, turn_page_size, turn_page_num)
 """End history retrieval logic"""
 
 """Session end logic"""

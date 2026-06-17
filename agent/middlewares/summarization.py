@@ -18,26 +18,26 @@ class Summarization(SummarizationMiddleware):
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
-        # 复制一份消息列表，避免对原消息列表的修改
+        # Clone the message list to avoid mutating the original
         copy_state: AgentState[Any] = state.copy()
         state_mes_list_copy: list[BaseMessage] = state["messages"].copy()
         copy_state["messages"] = state_mes_list_copy
         
-        # 保留系统提示信息
+        # Preserve the system message
         remain_system_mes: SystemMessage | None = None
 
         for i, m in enumerate(state_mes_list_copy):
             if isinstance(m, SystemMessage):
                 remain_system_mes = m
 
-                # 移除掉原消息列表内的系统提示信息，避免系统提示信息影响到后面信息的压缩内容,降低有效压缩信息密度
+                # Strip the system message from the list to avoid polluting summary density
                 del state_mes_list_copy[i]
                 break
 
         if remain_system_mes is None:
             return None
 
-        # 保留最后一条用户信息
+        # Preserve the last user message
         remain_human_mes: HumanMessage | None = None
 
         for i in range(len(state_mes_list_copy) - 1, -1, -1):
@@ -45,12 +45,12 @@ class Summarization(SummarizationMiddleware):
                 remain_human_mes = state_mes_list_copy[i]
                 break
 
-        # 压缩信息
+        # Perform message compression via parent summarizer
         res: dict[str, Any] = await super().abefore_model(copy_state, runtime)
         if res is None:
             return None
 
-        # 获取压缩后的信息列表
+        # Get the compressed message list
         reduce_messages: list[BaseMessage] = res["messages"]
 
         # 插回系统提示信息
