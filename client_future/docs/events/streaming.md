@@ -2,6 +2,17 @@
 
 The agent uses Tauri's event system to stream responses to the frontend in real time.
 
+## How It Works
+
+In the hybrid architecture, streaming works as follows:
+1. Frontend calls `invoke('agent_chat', ...)` via Tauri IPC
+2. Rust backend sends `POST /sessions/agent/sse` to the Python backend
+3. Python backend returns an SSE stream
+4. Rust parses each SSE `data:` line and emits a Tauri Event (`agent:stream:chunk`)
+5. Frontend listens for Tauri Events and updates the UI in real time
+
+The `bridge.ts` composable handles this transparently in both Tauri and browser modes.
+
 ## Event Lifecycle
 
 ```

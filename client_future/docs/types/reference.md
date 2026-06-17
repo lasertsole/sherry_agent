@@ -38,6 +38,16 @@ export type ChatChunk = {
 };
 ```
 
+### StopRequest
+
+Request to stop an ongoing agent generation.
+
+```typescript
+export type StopRequest = {
+  session_id: string;
+};
+```
+
 ---
 
 ## Session Types

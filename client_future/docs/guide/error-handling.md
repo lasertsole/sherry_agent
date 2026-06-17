@@ -25,6 +25,7 @@ interface FrontendError {
 | `SESSION_ERROR` | Session management failure | No | Invalid/expired session ID |
 | `TOOL_ERROR` | Tool execution failure | No | Python REPL crash, terminal error |
 | `SKILL_ERROR` | Skill loading or registration failure | No | Invalid skill definition |
+| `BACKEND_ERROR` | Python backend HTTP bridge failure | **Yes** | Connection refused, timeout, bad response from Python |
 | `UNKNOWN_ERROR` | Unexpected error | No | Catch-all for unclassified errors |
 
 ## Error Handling Pattern
@@ -58,7 +59,7 @@ async function callWithRetry<T>(
 }
 
 function isRetryable(code: string): boolean {
-  return ['IO_ERROR', 'CHANNEL_ERROR', 'MODEL_ERROR', 'DATABASE_ERROR']
+  return ['IO_ERROR', 'CHANNEL_ERROR', 'MODEL_ERROR', 'DATABASE_ERROR', 'BACKEND_ERROR']
     .includes(code);
 }
 ```
@@ -79,6 +80,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   SESSION_ERROR:   'Session expired. Please start a new conversation.',
   TOOL_ERROR:      'A tool failed to execute.',
   SKILL_ERROR:     'Failed to load a skill.',
+  BACKEND_ERROR:   'Backend service is unreachable. Please ensure the Python server is running.',
   UNKNOWN_ERROR:   'An unexpected error occurred.',
 };
 ```
