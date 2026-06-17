@@ -3,7 +3,7 @@
     <!-- 移动端菜单遮罩层 -->
     <div
       v-if="isSidebarOpen"
-      class="fixed inset-0 bg-black/50 z-40 md:hidden"
+      class="fixed inset-0 bg-[#ddd] opacity-30 z-40 md:hidden"
       @click="isSidebarOpen = false"></div>
 
     <!-- 左侧-历史记录区域 -->
