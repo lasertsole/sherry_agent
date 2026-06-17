@@ -1,12 +1,13 @@
 import json
-from robyn import Robyn, ALLOW_CORS
 from loguru import logger
-from robyn import Request, Response
+from robyn import Response
+from robyn import Robyn, ALLOW_CORS
 from server.service import session_end
 from typing import Any, Dict, Callable
 from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
-from runtime import relation_register, clear_all_register_sessions
+from context_engine import rectification_and_standardization
+from runtime import relation_register, clear_all_register_sessions, count_register
 
 # Create the app
 app = Robyn(__file__)
@@ -106,6 +107,9 @@ async def handle_connect(websocket: WebSocketAdapter):
 
     relation_register.register_websocket(session_id=session_id, websocket=websocket)
 
+    # Register skill memory maintenance(threshold = 20)
+    count_register.register(session_id, "skill_memory_maintenance", rectification_and_standardization, threshold=20,
+                            args={"session_id": session_id})
 
 @ws_handler.on_close
 async def handle_disconnect(websocket: WebSocketAdapter):

@@ -171,17 +171,18 @@ EMA_AI_agent/
 ├── skills/                 # Skill library (SKILL.md definition files)
 │   ├── loader.py           # Skill autodiscovery & registration
 │   ├── skills_snapshot.py  # Builds skill prompt snapshot
-│   └── core/               # Built-in skill implementations
-│       ├── web_search/     # Web search & scrape
-│       ├── python_repl/    # Python code execution
-│       ├── terminal/       # Terminal command execution
-│       ├── image_to_text/  # Image understanding
-│       ├── speech_to_text/ # Speech recognition
-│       ├── text_to_image/  # Image generation
-│       ├── video_text_to_text/ # Video understanding
-│       ├── rag/            # RAG-based knowledge retrieval
-│       ├── clawhub/        # GitHub repository cloner
-│       └── skill_creator/  # Auto-generate new skills
+│   └── builtin/            # Built-in skill implementations
+│       ├── core/           # Core built-in skills
+│       │   ├── web_search/     # Web search & scrape
+│       │   ├── python_repl/    # Python code execution
+│       │   ├── terminal/       # Terminal command execution
+│       │   ├── image_to_text/  # Image understanding
+│       │   ├── speech_to_text/ # Speech recognition
+│       │   ├── video_text_to_text/ # Video understanding
+│       │   ├── rag/            # RAG-based knowledge retrieval
+│       │   ├── clawhub/        # GitHub repository cloner
+│       │   └── skill_creator/  # Auto-generate new skills
+│       └── text_to_image/  # Image generation
 ├── src/                    # Runtime data directories
 │   ├── avatar/             # Character avatar images
 │   ├── checkpoints/        # Session checkpoints

@@ -1,61 +1,61 @@
-# 🚀 EMA_AI_agent 项目系统性技术拆解
+[中文版](introduce.zh.md)
 
-这是一个兼具**学术前沿（如 GraphRAG、社区检测）**与**工程落地（多渠道接入、异步消息总线）**的重量级 AI Agent 项目。
+# 🚀 EMA AI Agent — Technical Deep Dive
 
----
-
-## 🏗️ 1. 项目核心画像
-
-### 🛠️ 技术框架（核心技术栈）
-
-- **AI 核心**：`LangChain 1.2` + `LangGraph`（用于构建多状态、可循环的复杂 Agent 状态机）。
-- **存储与检索**：`SQLite (FTS5)`（关系型与全文检索）+ `LanceDB / FAISS`（向量检索）+ `LightRAG`（知识图谱检索）。
-- **图算法**：`igraph` + `Leiden 算法`（用于记忆图谱的社区划分与多级摘要）。
-- **网络与前端**：`Robyn`（高性能 Python 异步 Web 服务器）+ `Streamlit` / `Tauri 2 + Nuxt 4`（跨平台桌面与移动端）。
-- **运行时环境**：`Python 3.13`，全面采用 `asyncio` 异步生态。
-
-### 🎯 实现功能（它能做什么）
-
-- **长程记忆与进化**：不仅能记住几轮对话，还能自动把聊天内容提炼成“知识点”织成图谱，定期进行“社区检测”来自己总结摘要，消除模糊代词。
-- **主动与定时任务**：拥有“心跳机制”，空闲时会自己看 `HEARTBEAT.md` 里的待办事项并主动执行，支持 Cron 定时任务。
-- **自主技能学习**：只要喂给它符合 `SKILL.md` 规范的说明书，它就能自己学会并调用新工具（如搜索、执行代码、执行终端命令等）。
-- **多端泛化交互**：不仅能网页聊天、看图、发语音（集成 GPT-SoVITS），还能直接作为 QQ 机器人运行。
-
-### 📈 现阶段成果
-
-- **后端大脑完备**：双记忆引擎、异步消息总线（MessageBus）、Robyn 服务器及定时任务均已跑通或具备核心实现。
-- **多模态与渠道多开**：Streamlit 网页端、QQ 机器人、语音/视觉能力已接入。
-- **[迭代中] 下一代客户端**：基于 Tauri 2 + Nuxt 4 的现代客户端（`client_future`）正在开发中。
+This is a heavyweight AI Agent project that combines **cutting-edge research (GraphRAG, community detection)** with **production-grade engineering (multi-channel access, asynchronous message bus)**.
 
 ---
 
-## 💡 2. 参与这个项目，你能学到什么？
+## 🏗️ 1. Project Overview
 
-这是一个极佳的“从玩具到工业级”的 Agent 进阶项目。深入进去，你将掌握：
+### 🛠️ Tech Stack
 
-1. **工业级 Agent 架构设计**：告别简单的单向 Prompt 工程，学会用 `LangGraph` 控制 Agent 的决策流、条件分支与状态回溯。
-2. **前沿 GraphRAG（图增强检索）**：掌握如何结合向量、传统全文检索（FTS5）和图算法（Leiden / PageRank），解决大模型长文本下的“中间迷失”与记忆遗忘问题。
-3. **高并发异步编程**：深度实战 Python `asyncio`，理解如何用 `asyncio.Queue` 实现非阻塞的后台记忆提取和消息总线解耦。
-4. **多端融合与多模态**：学习如何让一个 AI 大脑同时适配 Web、桌面端（Tauri）和即时通讯工具（QQ），并处理音频/图像流。
+- **AI Core**: `LangChain 1.2` + `LangGraph` — multi-state, cyclic agent state machines.
+- **Storage & Retrieval**: `SQLite (FTS5)` for relational data and full-text search, `LanceDB / FAISS` for vector search, `LightRAG` for knowledge graph retrieval.
+- **Graph Algorithms**: `igraph` + `Leiden algorithm` — community detection and multi-level summarization of memory graphs.
+- **Network & Frontend**: `Robyn` (high-performance async Python web server) + `Streamlit` / `Tauri 2 + Nuxt 4` (cross-platform desktop and mobile).
+- **Runtime**: `Python 3.13`, fully async with `asyncio`.
+
+### 🎯 Capabilities
+
+- **Long-term Evolving Memory**: Automatically distills conversation content into knowledge points, weaves them into a graph, and periodically runs community detection to self-summarize and resolve ambiguous pronouns.
+- **Proactive & Scheduled Tasks**: A heartbeat mechanism lets the agent read `HEARTBEAT.md` todos during idle time and execute them autonomously, with Cron scheduling support.
+- **Self-Learning Skills**: Feed it a `SKILL.md` spec sheet, and it learns to invoke new tools (search, code execution, terminal commands, etc.).
+- **Multi-Channel Interaction**: Chat via web UI, send images, speak (GPT-SoVITS integration), or run as a QQ bot.
+
+### 📈 Current Status
+
+- **Backend Core Complete**: Dual memory engine, async message bus, Robyn server, and scheduled tasks are all operational or have core implementations.
+- **Multi-Modal & Multi-Channel**: Streamlit web UI, QQ bot, voice/vision capabilities are connected.
+- **[In Progress] Next-Gen Client**: A modern Tauri 2 + Nuxt 4 client (`client_future`) is under active development.
 
 ---
 
-## 🛠️ 3. 接下来，你需要做什么？（开发任务路线图）
+## 💡 2. What You'll Learn
 
-根据当前的架构和开发阶段，你可以从以下几个方向切入开展工作：
+1. **Production-Grade Agent Architecture**: Go beyond simple prompt engineering — master LangGraph for decision flow, conditional branching, and state rollback.
+2. **GraphRAG (Graph-Enhanced Retrieval)**: Combine vector search, full-text search (FTS5), and graph algorithms (Leiden / PageRank) to solve the "lost in the middle" problem and memory decay in long-context LLMs.
+3. **High-Concurrency Async Programming**: Deep hands-on with Python `asyncio` — learn how `asyncio.Queue` enables non-blocking background memory extraction and decoupled message buses.
+4. **Multi-Platform Fusion**: Build one AI brain that adapts to Web, desktop (Tauri), and instant messaging (QQ), while handling audio and image streams.
 
-### 🏁 阶段一：基础热身（跑通与验证）
+---
 
-- **环境配置**：搭建 **Python 3.13** 环境，安装依赖，配置本地模型（Ollama）或云端 API（DeepSeek / OpenAI）。
-- **冒烟测试**：运行 `Streamlit` UI，发几条消息，检查 `SQLite` 中是否正确生成了 `MesMemory` 记录，查看后台 `Skill Memory` 的异步提取日志是否报错。
+## 🛠️ 3. Development Roadmap
 
-### 🚀 阶段二：核心开发/优化（具体任务）
+### 🏁 Phase 1: Setup & Validation
 
-- **任务 1：参与 `client_future` 前端开发**
-  - **行动**：如果你懂 Vue / Nuxt 或跨平台开发（Tauri / Rust），可以直接进入 `client_future/` 目录，协助完善基于 Tauri 2 的新一代桌面客户端，对接后端 `Robyn` 的 API。
-- **任务 2：记忆图谱（Skill Memory）调优**
-  - **行动**：检查图谱提取的 Prompt 准确度。由于图谱基于 `igraph + Leiden`，可以编写测试脚本验证：当对话累积到一定量时，触发的“社区检测与摘要”功能是否能输出高质量的项目总结。
-- **任务 3：编写自定义技能（SKILL.md）**
-  - **行动**：尝试为 Agent 扩充新技能。按照规范编写一个 `SKILL.md`，比如“自动分析本地 Git 仓库代码并生成周报的技能”，测试 Agent 能否自主读取并成功调用它。
-- **任务 4：心跳与定时任务机制测试**
-  - **行动**：在 `HEARTBEAT.md` 中手动写入一些长耗时任务（如：每隔 1 小时总结今日对话并输出为 Markdown 报告），测试心跳服务和 Subagents（子代理）的后台并行与异步通信是否稳定。
+- **Environment**: Set up **Python 3.13**, install dependencies, configure local models (Ollama) or cloud APIs (DeepSeek / OpenAI).
+- **Smoke Test**: Run the `Streamlit` UI, send a few messages, verify `MesMemory` records in `SQLite`, and check the background `Skill Memory` extraction logs for errors.
+
+### 🚀 Phase 2: Core Development & Optimization
+
+- **Task 1: `client_future` Frontend**
+  - If you know Vue / Nuxt or cross-platform development (Tauri / Rust), dive into `client_future/` to build the next-gen desktop client and connect it to the Robyn backend API.
+- **Task 2: Memory Graph (Skill Memory) Tuning**
+  - Audit the prompt accuracy of graph extraction. With `igraph + Leiden`, write test scripts to verify that community detection and summarization produce high-quality project summaries as conversations accumulate.
+- **Task 3: Custom Skills (`SKILL.md`)**
+  - Write a new `SKILL.md` (e.g., "Auto-analyze local Git repos and generate weekly reports") and test whether the agent can autonomously read and invoke it.
+- **Task 4: Heartbeat & Cron Mechanism**
+  - Manually write long-running tasks into `HEARTBEAT.md` (e.g., "Summarize today's conversations every hour and output a Markdown report"), then verify that the heartbeat service and subagents handle background parallel execution and async communication reliably.
+
+---

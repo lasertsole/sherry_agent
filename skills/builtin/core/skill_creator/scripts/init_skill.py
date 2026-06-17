@@ -6,8 +6,8 @@ Usage:
     init_skill.py <skill-name> --path <path> [--resources scripts,references,assets] [--examples]
 
 Examples:
-    init_skill.py my-new-skill --path skills/public
-    init_skill.py my-new-skill --path skills/public --resources scripts,references
+    init_skill.py my-new-skill --path {{ROOT_DIR}}/skills
+    init_skill.py my-new-skill --path {{ROOT_DIR}}/skills --resources scripts,references
     init_skill.py my-api-helper --path skills/private --resources scripts --examples
     init_skill.py custom-skill --path /custom/location
 """
@@ -191,6 +191,17 @@ Note: This is a text placeholder. Actual assets can be any file type.
 """
 
 
+
+def _resolve_path(path_str: str) -> Path:
+    """Replace {{ROOT_DIR}} placeholder with the actual project root path."""
+    try:
+        from config import ROOT_DIR
+        resolved = path_str.replace("{{ROOT_DIR}}", str(ROOT_DIR))
+    except ImportError:
+        resolved = path_str
+    return Path(resolved).resolve()
+
+
 def normalize_skill_name(skill_name):
     """Normalize a skill name to lowercase hyphen-case."""
     normalized = skill_name.strip().lower()
@@ -266,7 +277,8 @@ def init_skill(skill_name, path, resources, include_examples):
         Path to created skill directory, or None if error
     """
     # Determine skill directory path
-    skill_dir = Path(path).resolve() / skill_name
+    resolved_path = _resolve_path(path)
+    skill_dir = resolved_path / skill_name
 
     # Check if directory already exists
     if skill_dir.exists():

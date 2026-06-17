@@ -26,22 +26,30 @@ npx --yes clawhub@latest search "web scraping" --limit 5
 
 ## Install
 
-```bash
-npx --yes clawhub@latest install <slug> --workdir ~
+Use the Python helper to resolve the project root path automatically:
+
+```python
+from skills.builtin.core.clawhub.scripts import run_clawhub_command
+
+result = run_clawhub_command(["install", "<slug>", "--workdir", "{{ROOT_DIR}}"])
 ```
 
-Replace `<slug>` with the skill name from search results. This places the skill into `~/skills/`, where sherry loads workspace skills from. Always include `--workdir`.
+Replace `<slug>` with the skill name from search results. This places the skill into `{{ROOT_DIR}}/skills/`, where sherry loads workspace skills from.
 
 ## Update
 
-```bash
-npx --yes clawhub@latest update --all --workdir ~
+```python
+from skills.builtin.core.clawhub.scripts import run_clawhub_command
+
+result = run_clawhub_command(["update", "--all", "--workdir", "{{ROOT_DIR}}"])
 ```
 
 ## List installed
 
-```bash
-npx --yes clawhub@latest list --workdir ~
+```python
+from skills.builtin.core.clawhub.scripts import run_clawhub_command
+
+result = run_clawhub_command(["list", "--workdir", "{{ROOT_DIR}}"])
 ```
 
 ## Notes
@@ -49,5 +57,5 @@ npx --yes clawhub@latest list --workdir ~
 - Requires Node.js (`npx` comes with it).
 - No API key needed for search and install.
 - Login (`npx --yes clawhub@latest login`) is only required for publishing.
-- `--workdir ~` is critical — without it, skills install to the current directory instead of the sherry workspace.
+- `{{ROOT_DIR}}` is automatically replaced with the actual project root path by the Python helper.
 - After install, remind the user to start a new session to load the skill.

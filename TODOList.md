@@ -106,7 +106,7 @@ Replace the Streamlit frontend under `client/` with the Tauri 2 + Nuxt 4 fronten
 
 ## 2. Add Platform Integrations
 
-Add more platform adapters under `channel/`, such as WeChat Bot and Feishu (Lark).
+Add more platform adapters under `channel/`, such as WeChat Bot, Feishu (Lark), X (Twitter), and Telegram.
 
 ---
 

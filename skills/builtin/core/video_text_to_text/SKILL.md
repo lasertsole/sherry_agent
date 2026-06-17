@@ -6,7 +6,7 @@ description: When the user needs to transcribe video (such as .mp4, .mkv, .avi) 
 ## Use this if the backend supports video input natively
 
 ```python
-from skills.builtin.core import vtt
+from skills.builtin.core.video_text_to_text.scripts import vtt
 
 if __name__ == '__main__':
     video_path: str = "{placeholder}"  # <- replace with the absolute path of the input video file
@@ -17,7 +17,7 @@ if __name__ == '__main__':
 ## Use the fallback when video input is unsupported but image input is accepted
 
 ```python
-from skills.builtin.core import vtt_fackback
+from skills.builtin.core.video_text_to_text.scripts  import vtt_fackback
 
 if __name__ == '__main__':
     video_path: str = "{placeholder}"  # <- replace with the absolute path of the input video file

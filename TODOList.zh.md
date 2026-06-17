@@ -106,7 +106,7 @@
 
 ## 2. 增加对接平台
 
-在 channel 中增加对接平台,如 微信bot、飞书
+在 channel 中增加对接平台,如 微信bot、飞书、X (Twitter)、Telegram
 
 ---
 

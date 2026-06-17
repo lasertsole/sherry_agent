@@ -272,4 +272,7 @@ class Extractor:
         Returns:
             包含升级技能、新边和失效节点的结果
         """
-        return chat_model.with_structured_output(FinalizeResult, method='json_mode').invoke([SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))])
+        return chat_model.with_structured_output(FinalizeResult, method='json_mode').invoke(
+            [SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))],
+            max_tokens=16384
+        )
