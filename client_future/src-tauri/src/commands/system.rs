@@ -1,8 +1,9 @@
 //! System IPC commands — health check, version info, app metadata.
 //!
-//! These commands have no direct Python backend equivalent; they
-//! are new Tauri-native utilities for the desktop client.
+//! `system_info` is Tauri-native (no Python backend needed).
+//! `system_health` pings the Python backend to verify connectivity.
 
+use crate::services::python_bridge::PythonBridge;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -104,12 +105,24 @@ pub fn system_info() -> AppInfo {
 /// }
 /// ```
 #[tauri::command]
-pub async fn system_health() -> HealthStatus {
-    // TODO: check database connectivity, model availability, etc.
-    HealthStatus {
-        healthy: true,
-        message: "all systems operational".to_string(),
-    }
+pub async fn system_health(
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<HealthStatus, ()> {
+    // Ping the Python backend by requesting a lightweight endpoint.
+    let status = match bridge
+        .get_json::<serde_json::Value>("/system_prompt", &[])
+        .await
+    {
+        Ok(_) => HealthStatus {
+            healthy: true,
+            message: "Python backend reachable".to_string(),
+        },
+        Err(e) => HealthStatus {
+            healthy: false,
+            message: format!("Python backend unreachable: {e}"),
+        },
+    };
+    Ok(status)
 }
 
 // ── Tests ───────────────────────────────────────────────────
