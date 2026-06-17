@@ -1,7 +1,10 @@
 mod commands;
+mod services;
 mod utils;
 
 use commands::{agent, character, session, system, system_prompt};
+use services::python_bridge::PythonBridge;
+use utils::config::AppConfig;
 use utils::logger::setup_logger;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -10,11 +13,21 @@ pub fn run() {
     // This makes structured logging available during app bootstrap.
     let tracing_builder = setup_logger();
 
+    // Load configuration and build the Python backend bridge.
+    let config = AppConfig::from_env();
+    let bridge = PythonBridge::new(
+        config.python_backend_url.clone(),
+        config.python_backend_timeout_secs,
+    );
+
     tauri::Builder::default()
         .plugin(tracing_builder.build())
+        .manage(config)
+        .manage(bridge)
         .invoke_handler(tauri::generate_handler![
             // Agent
             agent::agent_chat,
+            agent::agent_stop,
             // Session
             session::session_clear,
             session::session_history,

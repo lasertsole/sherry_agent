@@ -70,6 +70,10 @@ pub enum AppError {
     Rag(String),
 
     // ── Communication ─────────────────────────────────────────
+    /// Python backend HTTP bridge failure (connection refused, timeout, bad response).
+    #[error("backend error: {0}")]
+    Backend(String),
+
     /// Channel error (QQ bot, WebSocket, message bus).
     #[error("channel error: {0}")]
     Channel(String),
@@ -113,6 +117,7 @@ impl AppError {
             Self::Model(_) => "MODEL_ERROR",
             Self::Agent(_) => "AGENT_ERROR",
             Self::Rag(_) => "RAG_ERROR",
+            Self::Backend(_) => "BACKEND_ERROR",
             Self::Channel(_) => "CHANNEL_ERROR",
             Self::Session(_) => "SESSION_ERROR",
             Self::Tool(_) => "TOOL_ERROR",
@@ -125,7 +130,7 @@ impl AppError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::Io(_) | Self::Channel(_) | Self::Model(_) | Self::Database(_)
+            Self::Io(_) | Self::Channel(_) | Self::Model(_) | Self::Database(_) | Self::Backend(_)
         )
     }
 }
@@ -186,6 +191,18 @@ impl From<FrontendError> for tauri::Error {
 impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {
         Self::Config(err.to_string())
+    }
+}
+
+impl From<reqwest::Error> for AppError {
+    fn from(err: reqwest::Error) -> Self {
+        if err.is_connect() {
+            Self::Backend(format!("connection failed: {err}"))
+        } else if err.is_timeout() {
+            Self::Backend(format!("request timeout: {err}"))
+        } else {
+            Self::Backend(err.to_string())
+        }
     }
 }
 
@@ -253,6 +270,14 @@ macro_rules! db_err {
     };
 }
 
+/// Shorthand for creating an [`AppError::Backend`].
+#[macro_export]
+macro_rules! backend_err {
+    ($($arg:tt)*) => {
+        $crate::utils::error::AppError::Backend(format!($($arg)*))
+    };
+}
+
 // ── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -272,6 +297,7 @@ mod tests {
         assert_eq!(AppError::Session("x".into()).code(), "SESSION_ERROR");
         assert_eq!(AppError::Tool("x".into()).code(), "TOOL_ERROR");
         assert_eq!(AppError::Skill("x".into()).code(), "SKILL_ERROR");
+        assert_eq!(AppError::Backend("x".into()).code(), "BACKEND_ERROR");
         assert_eq!(
             AppError::Other(anyhow::anyhow!("x")).code(),
             "UNKNOWN_ERROR"
@@ -299,6 +325,7 @@ mod tests {
         assert!(AppError::Channel("timeout".into()).is_retryable());
         assert!(AppError::Model("connection refused".into()).is_retryable());
         assert!(AppError::Database("locked".into()).is_retryable());
+        assert!(AppError::Backend("timeout".into()).is_retryable());
     }
 
     #[test]
@@ -320,6 +347,9 @@ mod tests {
 
         let err = AppError::Model("timeout".into());
         assert_eq!(err.to_string(), "model error: timeout");
+
+        let err = AppError::Backend("connection refused".into());
+        assert_eq!(err.to_string(), "backend error: connection refused");
     }
 
     // -- FrontendError conversion tests --
@@ -330,6 +360,11 @@ mod tests {
         let fe_err: FrontendError = app_err.into();
         assert_eq!(fe_err.code, "MODEL_ERROR");
         assert_eq!(fe_err.message, "model error: connection refused");
+
+        let app_err = AppError::Backend("timeout".into());
+        let fe_err: FrontendError = app_err.into();
+        assert_eq!(fe_err.code, "BACKEND_ERROR");
+        assert_eq!(fe_err.message, "backend error: timeout");
     }
 
     #[test]
@@ -401,5 +436,8 @@ mod tests {
 
         let err = db_err!("locked");
         assert!(matches!(err, AppError::Database(msg) if msg == "locked"));
+
+        let err = backend_err!("timeout after {}s", 30);
+        assert!(matches!(err, AppError::Backend(msg) if msg == "timeout after 30s"));
     }
 }
