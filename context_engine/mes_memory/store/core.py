@@ -7,6 +7,15 @@ from datetime import datetime
 from langchain_core.messages import BaseMessage
 
 _db:sqlite3.Connection = get_db()
+
+def get_max_turn_num(session_id: str) -> int:
+    """Get max turn_num in session"""
+    max_turn_num_row = _db.execute(
+        "SELECT MAX(turn_num) FROM messages WHERE session_id = ?",
+        (session_id,)
+    ).fetchone()
+    return max_turn_num_row[0] if max_turn_num_row and max_turn_num_row[0] is not None else 0
+
 def add_session_if_not_exists(session_id: str) -> None:
     _db.execute("""
     INSERT OR IGNORE INTO sessions (session_id) VALUES (?)
@@ -40,11 +49,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     if messages is None or len(messages)==0:
         return
 
-    turn_num_row = _db.execute("""
-    select MAX(turn_num) from messages where session_id = ?
-    """, (session_id, )).fetchone()
-
-    current_turn: int = turn_num_row[0] or 0
+    current_turn: int = get_max_turn_num(session_id)
     current_turn+=1
 
     base_timestamp: str = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -136,55 +141,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
 
     _db.commit()
 
-def get_messages_by_lastest_n_turns(session_id: str, last_n: int = 5)-> list[dict]:
-    with _db:
-        # 先获取最大的turn_num
-        max_turn_num_row = _db.execute(
-            "SELECT MAX(turn_num) FROM messages WHERE session_id = ?",
-            (session_id,)
-        ).fetchone()
-
-        max_turn_num = max_turn_num_row[0] if max_turn_num_row and max_turn_num_row[0] is not None else 0
-
-        # 如果最大turn_num为0，则返回空
-        if max_turn_num == 0:
-            return []
-
-        # 然后查询小于阈值的记录
-        threshold = max_turn_num - last_n + 1
-        # 确保 threshold 至少为 1（turn_num 从 1 开始）
-        if threshold < 1:
-            threshold = 1
-
-        rows = _db.execute(f"""
-            SELECT * FROM messages 
-            WHERE session_id = ? AND turn_num >= ?
-            ORDER BY turn_num DESC, id ASC
-        """, (session_id, threshold)).fetchall()
-        
-        if rows is None or len(rows) == 0:
-            return []
-        
-        result:list[dict] = []
-        for row in rows:
-            row = dict(row)
-            if isinstance(row["content"], str):
-                row["content"] = json.loads(row["content"])
-            if isinstance(row["tool_calls"], str):
-                row["tool_calls"] = json.loads(row["tool_calls"])
-            result.append(row)
-        return result
-
-
 def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scope: int = 5) -> list[dict]:
     with _db:
-        # 先获取最大的turn_num
-        max_turn_row = _db.execute(
-            "SELECT MAX(turn_num) FROM messages WHERE session_id = ?",
-            (session_id,)
-        ).fetchone()
-
-        max_turn_num: int = max_turn_row[0] if max_turn_row and max_turn_row[0] is not None else 0
+        max_turn_num: int = get_max_turn_num(session_id)
         min_turn_num: int = 1
 
         # 如果最大turn_num为0，则返回空
@@ -213,3 +172,50 @@ def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scop
             result.append(row)
 
         return result
+
+def get_history_by_page(session_id: str, min_turn_num: int = 5, turn_page_size: int = 10, turn_page_num: int = 0) -> list[dict]:
+    if min_turn_num < 1:
+        raise ValueError("min_turn_num must be >= 1")
+
+    if turn_page_size < 1:
+        raise ValueError("turn_page_size must be >= 1")
+
+    if turn_page_num < 0:
+        raise ValueError("turn_page_num must be >= 0")
+
+    with _db:
+        max_turn_num: int = get_max_turn_num(session_id)
+
+        if max_turn_num == 0:
+            return []
+
+        target_start_turn_num: int = max_turn_num - (turn_page_num + 1) * turn_page_size
+
+        if target_start_turn_num < min_turn_num:
+            target_start_turn_num = min_turn_num
+
+        target_end_turn_num: int = target_start_turn_num + turn_page_size
+
+        rows = _db.execute("""
+            select * from messages
+            where session_id = ? and turn_num >= ? and turn_num <= ?
+            ORDER BY turn_num DESC, id ASC
+        """, (session_id, target_start_turn_num, target_end_turn_num)).fetchall()
+
+        if rows is None or len(rows) == 0:
+            return []
+
+        result: list[dict] = []
+        for row in rows:
+            row = dict(row)
+            if isinstance(row["content"], str):
+                row["content"] = json.loads(row["content"])
+            if isinstance(row["tool_calls"], str):
+                row["tool_calls"] = json.loads(row["tool_calls"])
+            result.append(row)
+
+        return result
+
+
+def get_messages_by_lastest_n_turns(session_id: str, last_n: int = 5) -> list[dict]:
+    return get_history_by_page(session_id, min_turn_num=1, turn_page_size=last_n, turn_page_num=0)
