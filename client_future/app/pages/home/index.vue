@@ -52,27 +52,42 @@
     <div class="flex flex-col flex-1 h-full bg-white dark:bg-[#131619]">
       <!-- 顶部工具栏 -->
       <div
-        class="flex justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
+        class="flex md:justify-end justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
         <!-- 移动端菜单切换按钮 -->
         <Button
           icon="pi pi-bars"
           class="md:hidden"
+          variant="text"
           @click="isSidebarOpen = !isSidebarOpen" />
         <!-- 移动端展示 -->
         <div class="md:hidden h-full flex items-center text-xl">🍊橘雪莉</div>
         <!-- 顶部工具栏 -->
-        <Button
-          icon="pi pi-cog"
-          class="sm:hidden"
-          @click="isToolsMenuOpen = !isToolsMenuOpen" />
-        <div class="hidden sm:flex justify-end items-center flex-1 gap-3">
+        <div class="flex items-center gap-3">
+          <ModeSwitch />
           <Button
-            :icon="tool.icon"
-            v-for="tool in headerTools"
-            :key="tool.event"
-            :title="tool.title"
-            @click="handleOperate('headerBar', tool.event)"
-            :label="tool.toolName" />
+            icon="pi pi-cog"
+            class="md:hidden"
+            @click="openHeaderMenu"
+            variant="text"
+            type="button"
+            aria-haspopup="true"
+            aria-controls="header_tools" />
+          <Menu
+            class="md:hidden"
+            ref="headerToolsMenuRef"
+            id="header_tools"
+            :model="headerTools"
+            :popup="true"></Menu>
+          <div class="hidden md:flex justify-end items-center flex-1 gap-3">
+            <Button
+              :icon="tool.icon"
+              v-for="tool in headerTools"
+              :key="tool.event"
+              :title="tool.title"
+              @click="handleOperate('headerBar', tool.event)"
+              :label="tool.toolName"
+              variant="text" />
+          </div>
         </div>
       </div>
       <!-- 聊天主体 -->
@@ -81,14 +96,26 @@
       <div class="flex flex-col h-40">
         <!-- 聊天工具 -->
         <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
-          <div
-            class="cursor-pointer px-2 rounded bg-gray-light dark:bg-gray-dark"
-            v-for="tool in tools"
-            :key="tool.event"
-            :title="tool.title"
-            @click="handleOperate('toolBar', tool.event)">
-            {{ tool.toolName }}
-          </div>
+          <template class="hidden sm:block">
+            <Button
+              v-for="tool in tools"
+              :key="tool.event"
+              :icon="tool.icon"
+              :label="tool.toolName"
+              @click="handleOperate('toolBar', tool.event)"
+              size="small"
+              variant="text" />
+          </template>
+          <template class="block sm:hidden">
+            <Button
+              v-for="tool in tools"
+              :key="tool.event"
+              :icon="tool.icon"
+              :aria-label="tool.toolName"
+              @click="handleOperate('toolBar', tool.event)"
+              size="small"
+              variant="text" />
+          </template>
         </div>
         <!-- 输入框 -->
         <div class="flex-1"></div>
@@ -100,22 +127,24 @@
 <script lang="ts" setup>
 // components
 import HistoryItem from './components/HistoryItem.vue';
+import ModeSwitch from './components/ModeSwitch.vue';
 // function
 import { computed } from 'vue';
 import type { SessionRecord } from './type.ts';
 import { tools, headerTools } from './config';
+import { Menu } from 'primevue';
 
 /** 侧边栏展开状态（移动端） */
 const isSidebarOpen = ref(false);
 
-/** 工具栏展开状态（移动端） */
-const isToolsMenuOpen = ref(false);
-
-/** 颜色主题 */
-const colorMode = useColorMode();
-
 /** 历史会话 */
-const historyList = ref<SessionRecord[]>([]);
+const historyList = ref<SessionRecord[]>([
+  {
+    id: '1',
+    title: '示例会话',
+    createTime: '2026-06-17 10:42'
+  }
+]);
 
 /** 当前会话 */
 const currentSessionId = ref<string>();
@@ -157,18 +186,6 @@ const handleOperate = (type: string, event: string) => {
 /** 新增会话 */
 const handleCreateSession = () => {};
 
-/** 主题切换 */
-const handleToggleTheme = () => {
-  console.log(colorMode.preference);
-  if (colorMode.preference === 'dark') {
-    colorMode.preference = 'light';
-  } else if (colorMode.preference === 'light') {
-    colorMode.preference = 'dark';
-  } else {
-    colorMode.preference = 'dark';
-  }
-};
-
 /** 会话切换 */
 const handleToggleSession = (id: string) => {
   currentSessionId.value = id;
@@ -199,5 +216,10 @@ watch(
   }
 );
 
-get_history_turn_message("main", 10)
+const headerToolsMenuRef = ref<InstanceType<typeof Menu>>();
+const openHeaderMenu = (event: Event) => {
+  headerToolsMenuRef.value?.toggle(event);
+};
+
+get_history_turn_message('main', 10);
 </script>
