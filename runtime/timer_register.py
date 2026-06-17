@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class Timer(BaseModel):
-    """定时器配置"""
+    """Timer configuration"""
     minutes: int = Field(ge=1, le=60)           # 倒计时分钟(1-60)
     callback: Callable                           # 触发回调
     args: dict[str, Any] = Field(default_factory=dict)
@@ -17,12 +17,12 @@ class Timer(BaseModel):
 
 class TimerRegister(Register):
     """
-    倒计时注册类
-    单位: 分钟, 范围: 1-60
-    到达时间后触发回调, 触发后自动销毁
+    Countdown register class
+    Unit: minutes, range: 1-60
+    Triggers callback when time is up, auto-destroys after trigger
 
-    所有定时器在独立的后台线程 event loop 中运行, 避免主 event loop
-    阻塞时定时器无法调度。
+    All timers run in a separate background thread event loop to avoid
+    timer scheduling issues when main event loop is blocked.
     """
     def __init__(self):
         if self._initialized:
@@ -35,17 +35,17 @@ class TimerRegister(Register):
 
     def register(self, session_id: str, name: str, callback: Callable, minutes: int = 1, args: dict[str, Any] | None = None) -> bool:
         """
-        注册倒计时
+        Register a countdown timer
 
         Args:
-            session_id: 会话ID
-            name: 定时器名称
-            callback: 到时触发的回调函数
-            minutes: 倒计时分钟数, 1-60
-            args: 传递给回调的关键字参数
+            session_id: session ID
+            name: timer name
+            callback: callback function to trigger
+            minutes: countdown minutes, 1-60
+            args: keyword arguments to pass to callback
 
         Returns:
-            是否注册成功
+            whether registration succeeded
         """
         if not (1 <= minutes <= 60):
             logger.error(f"[timer_register] minutes must be between 1 and 60, got {minutes}")
@@ -73,7 +73,7 @@ class TimerRegister(Register):
 
     def unregister(self, session_id: str, name: str) -> bool:
         """
-        取消倒计时
+        Cancel a countdown timer
         """
         timers = self.session_id_to_timers.get(session_id)
         if not timers or name not in timers:
@@ -90,7 +90,7 @@ class TimerRegister(Register):
 
     async def _run_timer(self, session_id: str, name: str, minutes: int, callback: Callable, args: dict[str, Any]):
         """
-        后台倒计时任务 (运行在后台线程的事件循环中)
+        Background countdown task (runs in background thread event loop)
         """
         try:
             await asyncio.sleep(minutes * 60)
@@ -104,14 +104,53 @@ class TimerRegister(Register):
         except asyncio.CancelledError:
             logger.info(f"[timer_register] timer '{name}' cancelled for session {session_id}")
         finally:
-            # 无论触发还是取消, 清理注册
+            # Clean up registration on trigger or cancel
             timers = self.session_id_to_timers.get(session_id)
             if timers and name in timers:
                 del timers[name]
 
+    def reset_timer(self, session_id: str, name: str) -> bool:
+        """
+        Reset timer by cancelling current and re-registering
+
+        Args:
+            session_id: session ID
+            name: timer name
+
+        Returns:
+            whether reset succeeded
+        """
+        timers = self.session_id_to_timers.get(session_id)
+        if not timers or name not in timers:
+            logger.warning(f"[timer_register] {name} is not registered in session {session_id}")
+            return False
+
+        old_timer = timers[name]
+        minutes = old_timer.minutes
+        callback = old_timer.callback
+        args = old_timer.args
+
+        if old_timer.task_name:
+            self._executor.cancel_task(old_timer.task_name)
+
+        del timers[name]
+
+        new_timer = Timer(minutes=minutes, callback=callback, args=args)
+        task_name = f"timer_{session_id}_{name}"
+        new_timer.task_name = task_name
+        timers[name] = new_timer
+
+        self._executor.create_task(
+            self._run_timer(session_id, name, minutes, callback, args),
+            name=task_name,
+        )
+
+        logger.info(f"[timer_register] reset timer '{name}' for session {session_id}, {minutes}min")
+        return True
+
     def clear_session(self, session_id: str):
         """
-        清理会话内所有倒计时
+        Clear all timers for a session
         """
         timers = self.session_id_to_timers.pop(session_id, {})
         for name, timer in timers.items():

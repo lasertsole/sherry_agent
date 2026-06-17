@@ -1,10 +1,10 @@
 import inspect
 from loguru import logger
 from .core import Register
-from ._callback_executor import CallbackExecutor as _CallbackExecutor
-
 from typing import Callable, Any
 from pydantic import BaseModel, Field
+from ._callback_executor import CallbackExecutor as _CallbackExecutor
+
 
 class Trigger(BaseModel):
     threshold: int = 1
@@ -14,7 +14,7 @@ class Trigger(BaseModel):
 
 class CountRegister(Register):
     """
-    统计注册类
+    Count register for tracking and triggering callbacks
     """
     def __init__(self):
         if self._initialized:
@@ -28,7 +28,7 @@ class CountRegister(Register):
 
     def register(self, session_id: str, name: str, callback: Callable, threshold: int = 1, args: dict[str, Any] = None)-> bool:
         """
-        注册统计函数
+        Register a counter with callback
         """
         if args is None:
             args = {}
@@ -44,7 +44,7 @@ class CountRegister(Register):
 
     def unregister(self, session_id: str, name: str)-> bool:
         """
-        取消注册
+        Unregister a counter
         """
         if name not in self.session_id_to_counter.setdefault(session_id, {}):
             logger.error(f"{name} is not registered for session {session_id}")
@@ -58,7 +58,7 @@ class CountRegister(Register):
 
     def increase(self, session_id: str, name: str)-> bool:
         """
-        增加统计值
+        Increase counter value
         """
         if name not in self.session_id_to_counter.setdefault(session_id, {}):
             logger.error(f"{name} is not registered")
@@ -86,7 +86,18 @@ class CountRegister(Register):
         self.session_id_to_counter.setdefault(session_id, {})[name] = now_counter
 
         return True
-    
+
+    def reset_count(self, session_id: str, name: str) -> bool:
+        """
+        Reset counter to zero
+        """
+        if name not in self.session_id_to_counter.get(session_id, {}):
+            logger.error(f"{name} is not registered for session {session_id}")
+            return False
+
+        self.session_id_to_counter[session_id][name] = 0
+        return True
+
     def clear_session(self, session_id: str):
         del self.session_id_to_counter[session_id]
         del self.session_id_to_trigger[session_id]
