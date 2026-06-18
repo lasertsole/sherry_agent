@@ -5,8 +5,8 @@ AGoT Processor - Independent implementation of ASR-GoT algorithm
 """
 import json
 import hashlib
+from typing import Any
 from loguru import logger
-from typing import Dict, Any
 from .checkpoint_manager import CheckpointManager
 from .utils.visualization import visualize_graph, visualize_layers
 
@@ -44,8 +44,8 @@ class AGoTProcessor:
 
         logger.info("AGoT Processor initialized with 8 stages")
 
-    def process_query(self, query: str, context: Dict[str, Any] = None,
-                      parameters: Dict[str, Any] = None) -> Dict[str, Any]:
+    def process_query(self, query: str, context: dict[str, Any] = None,
+                      parameters: dict[str, Any] = None) -> dict[str, Any]:
         """
         Process a query through the full 8-stage AGoT pipeline.
         支持断点续跑：检测存档 -> 跳过已完成 Stage -> 每步存档 -> 完成后清理
@@ -137,7 +137,7 @@ class AGoTProcessor:
         logger.info(f"All 8 stages completed for session {session_id[:8]}...")
         return final_result
 
-    def extract_thinking_result(self, final_result: Dict[str, Any]) -> str:
+    def extract_thinking_result(self, final_result: dict[str, Any]) -> str:
         """
         Extract a clean, human-readable thinking result string from the AGoT output.
         
@@ -185,14 +185,14 @@ class AGoTProcessor:
         raw = f"{query}:{json.dumps(parameters, sort_keys=True, default=str)}"
         return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
-    def get_graph_state(self, session_id: str) -> Dict[str, Any]:
+    def get_graph_state(self, session_id: str) -> dict[str, Any]:
         """获取指定 Session 的图当前状态"""
         if session_id not in self.session_graphs:
             raise ValueError(f"Session {session_id} not found")
         graph = self.session_graphs[session_id]
         return graph.to_dict()
 
-    def incorporate_feedback(self, session_id: str, feedback: Dict[str, Any]) -> None:
+    def incorporate_feedback(self, session_id: str, feedback: dict[str, Any]) -> None:
         """
         Incorporate user feedback to refine the graph.
         """

@@ -5,7 +5,7 @@ import time
 from loguru import logger
 from typing import Any, Type
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validate_call
 from subagent import SubagentManager, subagent_manager
 
 class SubagentInput(BaseModel):
@@ -22,6 +22,7 @@ class SubagentTool(BaseTool):
         self._session_id: str | None = session_id
         self._manager: SubagentManager = subagent_manager
 
+    @validate_call(validate_return = True)
     async def _arun(self, task: str, label: str | None = None, **kwargs: Any):
         start_time = time.time()
         task_preview = task[:100] if task else ""
@@ -68,6 +69,7 @@ class SubagentTool(BaseTool):
             )
             raise
 
+    @validate_call
     def _run(self, task: str, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
         raise RuntimeError(

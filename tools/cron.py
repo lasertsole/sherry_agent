@@ -1,9 +1,9 @@
 from datetime import datetime
 from langchain.tools import BaseTool
-from cron.core import CronService, cron_service
 from typing import Any, Type, Literal
-from pydantic import BaseModel, Field, PrivateAttr
+from cron.core import CronService, cron_service
 from cron.types import CronSchedule, CronJob, CronJobState
+from pydantic import BaseModel, Field, PrivateAttr, validate_call
 
 
 class CronInput(BaseModel):
@@ -42,6 +42,7 @@ class CronTool(BaseTool):
         import asyncio
         return asyncio.run(self._arun(**kwargs))
 
+    @validate_call
     async def _arun(
         self,
         action: str,

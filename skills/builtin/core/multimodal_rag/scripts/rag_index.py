@@ -11,10 +11,9 @@ Example:
 import sys
 from pathlib import Path
 from loguru import logger
+from pydantic import validate_call
 
-# Dynamically add project root to sys.path
 current_file = Path(__file__).resolve()
-# skills/core/rag_anything/scripts/rag_index.py -> parents[4] = project root
 project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -23,7 +22,7 @@ from config import SRC_DIR
 from raganything import RAGAnything
 from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_rag_anything
 
-
+@validate_call
 async def folder_index(input_folder_path: str, classify_folder: str) -> None:
     """Index files in the specified folder into the rag_anything-anything knowledge graph"""
     rag: RAGAnything = await get_rag_anything()
@@ -37,7 +36,7 @@ async def folder_index(input_folder_path: str, classify_folder: str) -> None:
     )
     logger.info(f"✅ Indexing complete! Folder '{input_folder_path}' added to knowledge graph category '{classify_folder}'")
 
-
+@validate_call
 async def file_index(input_file_path: str, classify_folder: str) -> None:
     rag: RAGAnything = await get_rag_anything()
 
@@ -45,7 +44,5 @@ async def file_index(input_file_path: str, classify_folder: str) -> None:
         file_path=input_file_path,
         output_dir=SRC_DIR / "rag_anything" / "rag_anything" / classify_folder / "output",
         parse_method="auto",
-        recursive=True,
-        max_workers=4,
     )
     logger.info(f"✅ Indexing complete! File '{input_file_path}' added to knowledge graph category '{classify_folder}'")

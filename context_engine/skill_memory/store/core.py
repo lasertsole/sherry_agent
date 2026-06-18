@@ -7,7 +7,7 @@ import sqlite3
 from loguru import logger
 from ..type import GmNode, GmEdge
 from pub_func import contains_cjk
-from typing import Any, Optional, List, TypedDict, Set
+from typing import Any, TypedDict
 
 # ─── 工具 ─────────────────────────────────────────────────────
 def get_timestamp() -> int:
@@ -56,7 +56,7 @@ def normalize_name(name: str) -> str:
     return name.strip('-')
 
 # ─── 节点 CRUD ───────────────────────────────────────────────
-def find_by_name(db: sqlite3.Connection, name: str) -> Optional[GmNode]:
+def find_by_name(db: sqlite3.Connection, name: str) -> GmNode | None:
     cursor = db.cursor()
 
     r = cursor.execute(
@@ -66,20 +66,20 @@ def find_by_name(db: sqlite3.Connection, name: str) -> Optional[GmNode]:
 
     return to_node(r) if r else None
 
-def find_by_id(db: sqlite3.Connection, id: str) -> Optional[GmNode]:
+def find_by_id(db: sqlite3.Connection, id: str) -> GmNode | None:
     r = db.execute("SELECT * FROM gm_nodes WHERE id = ?", (id,)).fetchone()
     return to_node(r) if r else None
 
-def all_active_nodes(db: sqlite3.Connection) -> List[GmNode]:
+def all_active_nodes(db: sqlite3.Connection) -> list[GmNode]:
     rows = db.execute("SELECT * FROM gm_nodes").fetchall()
     return [to_node(row) for row in rows]
 
-def all_edges(db: sqlite3.Connection) -> List[GmEdge]:
+def all_edges(db: sqlite3.Connection) -> list[GmEdge]:
     rows = db.execute("SELECT * FROM gm_edges").fetchall()
     return [to_edge(row) for row in rows]
 
 class UpsertResult(TypedDict):
-    node: Optional[GmNode]
+    node: GmNode | None
     isNew: bool
 
 
@@ -89,8 +89,8 @@ def upsert_node(db: sqlite3.Connection, c: dict, session_id: str) -> UpsertResul
     now = get_timestamp()
 
     if ex:
-        old_sessions: List[str] = getattr(ex, 'source_sessions', [])
-        sessions_set: Set[str] = set(old_sessions)
+        old_sessions: list[str] = getattr(ex, 'source_sessions', [])
+        sessions_set: set[str] = set(old_sessions)
         sessions_set.add(session_id)
         sessions_json:str = json.dumps(list(sessions_set))
 
@@ -609,7 +609,7 @@ def save_vector(
     """, (node_id, content_hash, json.dumps(vec)))
     db.commit()
 
-def get_vector_hash(db: sqlite3.Connection, node_id: str) -> Optional[str]:
+def get_vector_hash(db: sqlite3.Connection, node_id: str) -> str | None:
     """获取向量的内容哈希"""
 
     row = db.execute(
@@ -781,7 +781,7 @@ def upsert_community_summary(
 def get_community_summary(
         db: sqlite3.Connection,
         summary_id: str
-) -> Optional[CommunitySummary]:
+) -> CommunitySummary | None:
     """获取社区摘要"""
     row = db.execute(
         "SELECT * FROM gm_communities WHERE id=?",

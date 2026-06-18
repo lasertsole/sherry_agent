@@ -2,9 +2,9 @@ import asyncio
 import inspect
 from loguru import logger
 from .core import Register
-from ._callback_executor import CallbackExecutor
-from typing import Callable, Any, Optional
+from typing import Callable, Any
 from pydantic import BaseModel, Field
+from ._callback_executor import CallbackExecutor
 
 
 class Timer(BaseModel):
@@ -12,7 +12,7 @@ class Timer(BaseModel):
     minutes: int = Field(ge=1, le=60)           # 倒计时分钟(1-60)
     callback: Callable                           # 触发回调
     args: dict[str, Any] = Field(default_factory=dict)
-    task_name: Optional[str] = None              # 后台 task name, 用于查找/取消
+    task_name: str | None = None              # 后台 task name, 用于查找/取消
 
 
 class TimerRegister(Register):

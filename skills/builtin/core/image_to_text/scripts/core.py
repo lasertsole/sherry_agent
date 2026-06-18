@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from pydantic import validate_call
 
 # Dynamically add project root to sys.path
 current_file = Path(__file__).resolve()
@@ -20,7 +21,7 @@ from langchain_core.messages import HumanMessage
 # Load environment variables
 load_dotenv(project_root / ".env", override=True)
 
-
+@validate_call
 def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible.")-> None:
     """Recognize image content (supports local file path or URL)
 

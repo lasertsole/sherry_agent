@@ -1,7 +1,6 @@
 import datetime
+from typing import Any
 from loguru import logger
-from typing import Dict, Any, List
-
 from models import simple_chat_model
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
@@ -34,7 +33,7 @@ class GapsAnalysis(BaseModel):
 
 
 class CompositionStage:
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Composition Stage")
 
         subgraphs = context.get("subgraphs", [])
@@ -117,7 +116,7 @@ class CompositionStage:
         }
 
     def _generate_executive_summary(self, graph: AGoTGraph,
-                                  subgraphs: List[Dict[str, Any]],
+                                  subgraphs: list[dict[str, Any]],
                                   query: str) -> str:
         """生成执行摘要：优先 AI，失败时回退到模板"""
         ai_result = self._ai_executive_summary(graph, subgraphs, query)
@@ -153,8 +152,8 @@ class CompositionStage:
         return summary
 
     def _generate_section_from_subgraph(self, graph: AGoTGraph,
-                                      subgraph_data: Dict[str, Any],
-                                      citations: List[Dict[str, Any]]) -> str:
+                                      subgraph_data: dict[str, Any],
+                                      citations: list[dict[str, Any]]) -> str:
         """生成子图分析段落：优先 AI，失败时回退到模板"""
         ai_result = self._ai_section_analysis(graph, subgraph_data, citations)
         if ai_result is not None:
@@ -288,7 +287,7 @@ class CompositionStage:
     # ============================================================
 
     def _ai_executive_summary(self, graph: AGoTGraph,
-                              subgraphs: List[Dict[str, Any]],
+                              subgraphs: list[dict[str, Any]],
                               query: str) -> str:
         """[AI] 生成执行摘要"""
         try:
@@ -330,8 +329,8 @@ Write a concise 3-5 sentence executive summary covering:
         return None
 
     def _ai_section_analysis(self, graph: AGoTGraph,
-                             subgraph_data: Dict[str, Any],
-                             citations: List[Dict[str, Any]]) -> str:
+                             subgraph_data: dict[str, Any],
+                             citations: list[dict[str, Any]]) -> str:
         """[AI] 分析单个子图并生成段落"""
         try:
             nodes = subgraph_data.get("nodes", [])
@@ -520,7 +519,7 @@ Generate a 3-6 sentence analysis that:
             logger.warning(f"AI gap analysis failed: {e}")
         return None
 
-    def _format_citations_vancouver(self, citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _format_citations_vancouver(self, citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """纯格式化逻辑——无需 AI"""
         formatted = []
 

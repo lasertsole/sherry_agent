@@ -20,8 +20,8 @@ skill_memory — 向量余弦去重
 
 import math
 from ..type import GmConfig
+from typing import TypedDict
 from sqlite3 import Connection
-from typing import TypedDict, List
 from ..store.core import find_by_id, get_all_vectors, merge_nodes
 
 
@@ -36,11 +36,11 @@ class DuplicatePair(TypedDict):
 
 class DedupResult(TypedDict):
     """去重结果"""
-    pairs: List[DuplicatePair]
+    pairs: list[DuplicatePair]
     merged: int
 
 
-def cosine_similarity(a: List[float], b: List[float]) -> float:
+def cosine_similarity(a: list[float], b: list[float]) -> float:
     """
     计算两个向量的余弦相似度
 
@@ -64,7 +64,7 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
     return dot / (math.sqrt(norm_a) * math.sqrt(norm_b) + 1e-9)
 
 
-def detect_duplicates(db: Connection, cfg: GmConfig) -> List[DuplicatePair]:
+def detect_duplicates(db: Connection, cfg: GmConfig) -> list[DuplicatePair]:
     """
     检测重复节点对
 
@@ -84,7 +84,7 @@ def detect_duplicates(db: Connection, cfg: GmConfig) -> List[DuplicatePair]:
         return []
 
     threshold = getattr(cfg, 'dedup_threshold', 0.90)
-    pairs: List[DuplicatePair] = []
+    pairs: list[DuplicatePair] = []
 
     for i in range(len(vectors_data)):
         for j in range(i + 1, len(vectors_data)):

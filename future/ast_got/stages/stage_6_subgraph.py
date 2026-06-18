@@ -1,7 +1,6 @@
 import textwrap
+from typing import Any
 from loguru import logger
-from typing import Dict, Any, List, Tuple
-
 from models import simple_chat_model
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
@@ -16,7 +15,7 @@ class SubgraphLabel(BaseModel):
 
 
 class SubgraphStage:
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Subgraph Extraction Stage")
 
         parameters = context.get("parameters", {})
@@ -197,8 +196,8 @@ class SubgraphStage:
         }
 
     def _build_subgraph_entry(self, graph: AGoTGraph, base_name: str, base_desc: str,
-                               nodes: List[str], edges: List[Tuple], metrics: Dict,
-                               query: str) -> Dict[str, Any]:
+                               nodes: list[str], edges: list[tuple], metrics: dict,
+                               query: str) -> dict[str, Any]:
         """构建子图条目，并用 AI 生成更语义化的名称/描述（失败时回退到硬编码默认值）"""
         entry = {
             "name": base_name,
@@ -213,7 +212,7 @@ class SubgraphStage:
             entry["description"] = label.description
         return entry
 
-    def _ai_label_subgraph(self, graph: AGoTGraph, subgraph_data: Dict[str, Any],
+    def _ai_label_subgraph(self, graph: AGoTGraph, subgraph_data: dict[str, Any],
                            query: str):
         """[AI] 为子图生成语义化名称和描述
 

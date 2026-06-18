@@ -2,11 +2,11 @@ import os
 import sys
 import time
 import nest_asyncio
+from typing import Any
 from pathlib import Path
 from loguru import logger
 from models import ITT_model
 from config import MODELS_DIR, SRC_DIR
-from typing import Any, Dict, List, Optional, Union
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
 from skills.builtin.core.multimodal_rag.scripts.rag_anything.ensure_mineru_models import ensure_mineru_models
@@ -78,11 +78,11 @@ class FallbackTxtParser(Parser):
 
     def parse_text_file(
         self,
-        text_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        text_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         _ = output_dir, lang, kwargs
         text_path = Path(text_path)
         if not text_path.exists():
@@ -92,11 +92,11 @@ class FallbackTxtParser(Parser):
 
     def parse_image(
         self,
-        image_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        image_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         _ = output_dir, lang, kwargs
         image_path = Path(image_path)
         if not image_path.exists():
@@ -112,12 +112,12 @@ class FallbackTxtParser(Parser):
 
     def parse_pdf(
         self,
-        pdf_path: Union[str, Path],
-        output_dir: Optional[str] = None,
+        pdf_path: str | Path,
+        output_dir: str | None = None,
         method: str = "auto",
-        lang: Optional[str] = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         _ = output_dir, method, lang, kwargs
         pdf_path = Path(pdf_path)
         if not pdf_path.exists():
@@ -126,12 +126,12 @@ class FallbackTxtParser(Parser):
 
     def parse_document(
         self,
-        file_path: Union[str, Path],
+        file_path: str | Path,
         method: str = "auto",
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         _ = method
         file_path = Path(file_path)
         if not file_path.exists():

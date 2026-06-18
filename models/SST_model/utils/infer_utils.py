@@ -1,13 +1,12 @@
 # -*- encoding: utf-8 -*-
-
-import functools
-import logging
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, NamedTuple, Set, Tuple, Union
-
 import re
-import numpy as np
 import yaml
+import logging
+import functools
+import numpy as np
+from pathlib import Path
+from typing import Any, Iterable, NamedTuple
+
 
 try:
     from onnxruntime import (
@@ -79,7 +78,7 @@ def make_pad_mask(lengths, xs=None, length_dim=-1, maxlen=None):
 class TokenIDConverter:
     def __init__(
         self,
-        token_list: Union[List, str],
+        token_list: list | str,
     ):
 
         self.token_list = token_list
@@ -90,12 +89,12 @@ class TokenIDConverter:
     def get_num_vocabulary_size(self) -> int:
         return len(self.token_list)
 
-    def ids2tokens(self, integers: Union[np.ndarray, Iterable[int]]) -> List[str]:
+    def ids2tokens(self, integers: np.ndarray | Iterable[int]) -> list[str]:
         if isinstance(integers, np.ndarray) and integers.ndim != 1:
             raise TokenIDConverterError(f"Must be 1 dim ndarray, but got {integers.ndim}")
         return [self.token_list[i] for i in integers]
 
-    def tokens2ids(self, tokens: Iterable[str]) -> List[int]:
+    def tokens2ids(self, tokens: Iterable[str]) -> list[int]:
 
         return [self.token2id.get(i, self.unk_id) for i in tokens]
 
@@ -103,7 +102,7 @@ class TokenIDConverter:
 class CharTokenizer:
     def __init__(
         self,
-        symbol_value: Union[Path, str, Iterable[str]] = None,
+        symbol_value: Path | str | Iterable[str] = None,
         space_symbol: str = "<space>",
         remove_non_linguistic_symbols: bool = False,
     ):
@@ -113,7 +112,7 @@ class CharTokenizer:
         self.remove_non_linguistic_symbols = remove_non_linguistic_symbols
 
     @staticmethod
-    def load_symbols(value: Union[Path, str, Iterable[str]] = None) -> Set:
+    def load_symbols(value: Path | str | Iterable[str] | None = None) -> set:
         if value is None:
             return set()
 
@@ -128,7 +127,7 @@ class CharTokenizer:
         with file_path.open("r", encoding="utf-8") as f:
             return set(line.rstrip() for line in f)
 
-    def text2tokens(self, line: Union[str, list]) -> List[str]:
+    def text2tokens(self, line: str | list) -> list[str]:
         tokens = []
         while len(line) != 0:
             for w in self.non_linguistic_symbols:
@@ -162,9 +161,9 @@ class Hypothesis(NamedTuple):
     """Hypothesis data type."""
 
     yseq: np.ndarray
-    score: Union[float, np.ndarray] = 0
-    scores: Dict[str, Union[float, np.ndarray]] = dict()
-    states: Dict[str, Any] = dict()
+    score: float | np.ndarray = 0
+    scores: dict[str, float | np.ndarray] = dict()
+    states: dict[str, Any] = dict()
 
     def asdict(self) -> dict:
         """Convert data to JSON-friendly dict."""
@@ -221,7 +220,7 @@ class OrtInferSession:
                 RuntimeWarning,
             )
 
-    def __call__(self, input_content: List[Union[np.ndarray, np.ndarray]]) -> np.ndarray:
+    def __call__(self, input_content: list[np.ndarray | np.ndarray]) -> np.ndarray:
         input_dict = dict(zip(self.get_input_names(), input_content))
         try:
             return self.session.run(self.get_output_names(), input_dict)
@@ -353,7 +352,7 @@ def code_mix_split_words_jieba(seg_dict_file: str):
     return _fn
 
 
-def read_yaml(yaml_path: Union[str, Path]) -> Dict:
+def read_yaml(yaml_path: str | Path) -> dict:
     if not Path(yaml_path).exists():
         raise FileExistsError(f"The {yaml_path} does not exist.")
 

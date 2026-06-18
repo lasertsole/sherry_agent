@@ -3,11 +3,7 @@
 import pkgutil
 import importlib
 from loguru import logger
-from typing import TYPE_CHECKING
-
-
-if TYPE_CHECKING:
-    from channels.base import BaseChannel
+from channels.base import BaseChannel
 
 _INTERNAL = frozenset({"base", "manager", "registry"})
 

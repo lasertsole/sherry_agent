@@ -2,6 +2,7 @@
 from typing import Any
 from pathlib import Path
 from config import ROOT_DIR
+from pydantic import validate_call
 from langchain_community.tools.file_management import WriteFileTool
 
 
@@ -18,6 +19,7 @@ def _format_py_code(text: str) -> str:
 class FormattedWriteFileTool(WriteFileTool):
     """WriteFileTool that auto-formats .py files with autopep8."""
 
+    @validate_call
     def _run(
         self,
         file_path: str,

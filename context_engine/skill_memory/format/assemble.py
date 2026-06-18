@@ -3,12 +3,13 @@ skill_memory — Assemble Context
 """
 
 import math
+from typing import TypedDict
 from datetime import datetime
 from sqlite3 import Connection
 from pub_func import escape_xml
 from ..type import GmNode, GmEdge, NodeType
 from ..store.core import get_community_summary
-from typing import TypedDict, List, Dict, Set, Optional
+
 
 CHARS_PER_TOKEN = 3
 
@@ -19,12 +20,12 @@ class SelectedNode(TypedDict):
 
 class AssembleResult(TypedDict):
     """组装结果"""
-    xml: Optional[str]
+    xml: str | None
     system_prompt: str
     tokens: int
 
 
-def build_system_prompt_addition(selected_nodes: List[SelectedNode], edge_count: int) -> str:
+def build_system_prompt_addition(selected_nodes: list[SelectedNode], edge_count: int) -> str:
     """
     构建知识图谱的 system prompt 引导文字
 
@@ -98,8 +99,8 @@ def build_system_prompt_addition(selected_nodes: List[SelectedNode], edge_count:
 
 def assemble_context(
     db: Connection,
-    recalled_nodes: List[GmNode],
-    recalled_edges: List[GmEdge]
+    recalled_nodes: list[GmNode],
+    recalled_edges: list[GmEdge]
 ) -> AssembleResult:
     """
     组装知识图谱为 XML context
@@ -114,13 +115,13 @@ def assemble_context(
     """
 
     # recall 返回多少节点就放多少，不截断
-    node_map: Dict[str, GmNode] = {}
+    node_map: dict[str, GmNode] = {}
 
     for n in recalled_nodes:
         node_map[n.id] = n
 
     # 排序：本 sessions > SKILL 优先 > validated_count > 全局 pagerank 基线
-    type_pri: Dict[NodeType, int] = {NodeType.SKILL: 3, NodeType.TASK: 2, NodeType.EVENT: 1}
+    type_pri: dict[NodeType, int] = {NodeType.SKILL: 3, NodeType.TASK: 2, NodeType.EVENT: 1}
 
     # recall 返回的已经是 PPR 排序过的，全量放入
     selected = sorted(
@@ -141,12 +142,12 @@ def assemble_context(
         }
 
     # ID 到名称的映射
-    id_to_name: Dict[str, str] = {n.id: n.name for n in selected}
-    selected_ids: Set[str] = {n.id for n in selected}
+    id_to_name: dict[str, str] = {n.id: n.name for n in selected}
+    selected_ids: set[str] = {n.id for n in selected}
 
     # 过滤边（只保留两端节点都在 selected 中的边）
-    seen_edges: Set[str] = set()
-    edges: List[GmEdge] = [
+    seen_edges: set[str] = set()
+    edges: list[GmEdge] = [
         e for e in recalled_edges
         if e.from_id in selected_ids
            and e.to_id in selected_ids
@@ -155,8 +156,8 @@ def assemble_context(
     ]
 
     # 按社区分组节点
-    by_community: Dict[str, List[GmNode]] = {}
-    no_community: List[GmNode] = []
+    by_community: dict[str, list[GmNode]] = {}
+    no_community: list[GmNode] = []
 
     for n in selected:
         if n.community_id:
@@ -168,7 +169,7 @@ def assemble_context(
             no_community.append(n)
 
     # 生成节点 XML（按社区分组）
-    xml_parts: List[str] = []
+    xml_parts: list[str] = []
 
     for cid, members in by_community.items():
         summary = get_community_summary(db, cid)

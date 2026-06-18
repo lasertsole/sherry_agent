@@ -1,7 +1,6 @@
 import time
 import torch
 from torch import nn
-from typing import Optional
 import torch.nn.functional as F
 from funasr.register import tables
 from funasr.models.ctc.ctc import CTC
@@ -451,7 +450,7 @@ class SenseVoiceEncoderSmall(nn.Module):
         positional_dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         stochastic_depth_rate: float = 0.0,
-        input_layer: Optional[str] = "conv2d",
+        input_layer: str | None = "conv2d",
         pos_enc_class=SinusoidalPositionEncoder,
         normalize_before: bool = True,
         concat_after: bool = False,

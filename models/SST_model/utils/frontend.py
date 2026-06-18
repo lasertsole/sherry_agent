@@ -1,9 +1,7 @@
 # -*- encoding: utf-8 -*-
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, NamedTuple, Set, Tuple, Union
 import copy
-
 import numpy as np
+from pathlib import Path
 import kaldi_native_fbank as knf
 
 root_dir = Path(__file__).resolve().parent
@@ -50,7 +48,7 @@ class WavFrontend:
         self.fbank_beg_idx = 0
         self.reset_status()
 
-    def fbank(self, waveform: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def fbank(self, waveform: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         waveform = waveform * (1 << 15)
         self.fbank_fn = knf.OnlineFbank(self.opts)
         self.fbank_fn.accept_waveform(self.opts.frame_opts.samp_freq, waveform.tolist())
@@ -62,7 +60,7 @@ class WavFrontend:
         feat_len = np.array(mat.shape[0]).astype(np.int32)
         return feat, feat_len
 
-    def fbank_online(self, waveform: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def fbank_online(self, waveform: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         waveform = waveform * (1 << 15)
         # self.fbank_fn = knf.OnlineFbank(self.opts)
         self.fbank_fn.accept_waveform(self.opts.frame_opts.samp_freq, waveform.tolist())
@@ -79,7 +77,7 @@ class WavFrontend:
         self.fbank_fn = knf.OnlineFbank(self.opts)
         self.fbank_beg_idx = 0
 
-    def lfr_cmvn(self, feat: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def lfr_cmvn(self, feat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if self.lfr_m != 1 or self.lfr_n != 1:
             feat = self.apply_lfr(feat, self.lfr_m, self.lfr_n)
 
@@ -171,7 +169,7 @@ class WavFrontendOnline(WavFrontend):
     # inputs has catted the cache
     def apply_lfr(
         inputs: np.ndarray, lfr_m: int, lfr_n: int, is_final: bool = False
-    ) -> Tuple[np.ndarray, np.ndarray, int]:
+    ) -> tuple[np.ndarray, np.ndarray, int]:
         """
         Apply lfr with data
         """
@@ -210,7 +208,7 @@ class WavFrontendOnline(WavFrontend):
 
     def fbank(
         self, input: np.ndarray, input_lengths: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         self.fbank_fn = knf.OnlineFbank(self.opts)
         batch_size = input.shape[0]
         if self.input_cache is None:
@@ -259,12 +257,12 @@ class WavFrontendOnline(WavFrontend):
         self.fbanks_lens = copy.deepcopy(feats_lens)
         return waveforms, feats_pad, feats_lens
 
-    def get_fbank(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_fbank(self) -> tuple[np.ndarray, np.ndarray]:
         return self.fbanks, self.fbanks_lens
 
     def lfr_cmvn(
         self, input: np.ndarray, input_lengths: np.ndarray, is_final: bool = False
-    ) -> Tuple[np.ndarray, np.ndarray, List[int]]:
+    ) -> tuple[np.ndarray, np.ndarray, list[int]]:
         batch_size = input.shape[0]
         feats = []
         feats_lens = []
@@ -290,7 +288,7 @@ class WavFrontendOnline(WavFrontend):
 
     def extract_fbank(
         self, input: np.ndarray, input_lengths: np.ndarray, is_final: bool = False
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         batch_size = input.shape[0]
         assert (
             batch_size == 1

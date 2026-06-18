@@ -8,7 +8,6 @@ import os
 import time
 import numpy as np
 from pathlib import Path
-from typing import Optional
 from dataclasses import dataclass
 from skimage.metrics import structural_similarity as ssim
 
@@ -46,7 +45,7 @@ def extract_frames(
     prefix: str = "frame",
     img_format: str = "jpg",
     start_sec: float = 0.0,
-    end_sec: Optional[float] = None,
+    end_sec: float | None = None,
 ) -> list[FrameResult]:
     """
     Extract frames at fixed time intervals, then deduplicate by visual similarity.

@@ -1,9 +1,9 @@
 import datetime
 import textwrap
-from loguru import logger
-from typing import Dict, Any, List
-from pydantic import BaseModel, Field
+from typing import Any
 from tests import Node
+from loguru import logger
+from pydantic import BaseModel, Field
 from future.ast_got.models.edge import Edge
 from future.ast_got.models.graph import AGoTGraph
 from langchain_core.runnables import RunnableSerializable
@@ -17,7 +17,7 @@ class DimensionItem(BaseModel):
 
 class DimensionPlan(BaseModel):
     """维度拆解计划"""
-    dimensions: List[DimensionItem] = Field(description="针对该问题定制的分析维度列表")
+    dimensions: list[DimensionItem] = Field(description="针对该问题定制的分析维度列表")
 
 class DecompositionStage:
     def _generate_dimensions(self, query: str, disciplinary_tags: list[str]) -> DimensionPlan:
@@ -47,7 +47,7 @@ class DecompositionStage:
         })
         return result
 
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Decomposition Stage")
 
         root_node_id = context.get("root_node_id")

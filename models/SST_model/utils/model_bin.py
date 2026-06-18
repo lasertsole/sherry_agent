@@ -3,13 +3,11 @@
 # Copyright FunASR (https://github.com/FunAudioLLM/SenseVoice). All Rights Reserved.
 #  MIT License  (https://opensource.org/licenses/MIT)
 
-import os.path
-from pathlib import Path
-from typing import List, Union, Tuple
 import torch
 import librosa
+import os.path
 import numpy as np
-
+from pathlib import Path
 from utils.infer_utils import (
     CharTokenizer,
     Hypothesis,
@@ -34,9 +32,9 @@ class SenseVoiceSmallONNX:
 
     def __init__(
         self,
-        model_dir: Union[str, Path] = None,
+        model_dir: str | Path = None,
         batch_size: int = 1,
-        device_id: Union[str, int] = "-1",
+        device_id: str | int = "-1",
         plot_timestamp_to: str = "",
         quantize: bool = False,
         intra_op_num_threads: int = 4,
@@ -66,11 +64,11 @@ class SenseVoiceSmallONNX:
         self.blank_id = 0
 
     def __call__(self, 
-                 wav_content: Union[str, np.ndarray, List[str]], 
-                 language: List, 
-                 textnorm: List,
+                 wav_content: str | np.ndarray | list[str], 
+                 language: list, 
+                 textnorm: list,
                  tokenizer=None,
-                 **kwargs) -> List:
+                 **kwargs) -> list:
         waveform_list = self.load_data(wav_content, self.frontend.opts.frame_opts.samp_freq)
         waveform_nums = len(waveform_list)
         asr_res = []
@@ -98,7 +96,7 @@ class SenseVoiceSmallONNX:
                 asr_res.append(token_int)
         return asr_res
 
-    def load_data(self, wav_content: Union[str, np.ndarray, List[str]], fs: int = None) -> List:
+    def load_data(self, wav_content: str | np.ndarray | list[str], fs: int = None) -> list:
         def load_wav(path: str) -> np.ndarray:
             waveform, _ = librosa.load(path, sr=fs)
             return waveform
@@ -114,7 +112,7 @@ class SenseVoiceSmallONNX:
 
         raise TypeError(f"The type of {wav_content} is not in [str, np.ndarray, list]")
 
-    def extract_feat(self, waveform_list: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+    def extract_feat(self, waveform_list: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
         feats, feats_len = [], []
         for waveform in waveform_list:
             speech, _ = self.frontend.fbank(waveform)
@@ -127,7 +125,7 @@ class SenseVoiceSmallONNX:
         return feats, feats_len
 
     @staticmethod
-    def pad_feats(feats: List[np.ndarray], max_feat_len: int) -> np.ndarray:
+    def pad_feats(feats: list[np.ndarray], max_feat_len: int) -> np.ndarray:
         def pad_feat(feat: np.ndarray, cur_len: int) -> np.ndarray:
             pad_width = ((0, max_feat_len - cur_len), (0, 0))
             return np.pad(feat, pad_width, "constant", constant_values=0)
@@ -140,6 +138,6 @@ class SenseVoiceSmallONNX:
               feats: np.ndarray, 
               feats_len: np.ndarray,
               language: np.ndarray,
-              textnorm: np.ndarray,) -> Tuple[np.ndarray, np.ndarray]:
+              textnorm: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
         outputs = self.ort_infer([feats, feats_len, language, textnorm])
         return outputs

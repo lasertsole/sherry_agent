@@ -17,7 +17,7 @@ from sqlite3 import Connection
 from langchain_core.messages import AIMessage
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
-from typing import Callable, Awaitable, Optional, TypedDict, List, Any
+from typing import Callable, Awaitable, TypedDict, Any
 from ..store.core import update_communities, upsert_community_summary, prune_community_summaries
 
 
@@ -173,7 +173,7 @@ async def summarize_communities(
             LIMIT 10
         """, (*member_ids,))
 
-        members: List[Any] = [dict(c) for c in cursor.fetchall()]
+        members: list[Any] = [dict(c) for c in cursor.fetchall()]
 
         if not members:
             continue
@@ -202,10 +202,10 @@ async def summarize_communities(
                 continue
 
             # 生成社区 embedding（用描述 + 成员名拼接）
-            embedding: Optional[list[float]] = None
+            embedding: list[float] | None = None
             try:
                 embed_text = f"{cleaned}\n{', '.join([m['description'] for m in members])}"
-                embedding: List[float] = await embed.aembed_query(embed_text)
+                embedding: list[float] = await embed.aembed_query(embed_text)
             except Exception:
                 logger.error(f"[DEBUG] community embedding failed for {community_id}")
 

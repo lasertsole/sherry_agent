@@ -1,7 +1,7 @@
 import datetime
 import networkx as nx
+from typing import Any
 from loguru import logger
-from typing import Dict, Any, List
 from tests.ast_got.models.node import Node
 from tests.ast_got.models.edge import Edge
 from tests.ast_got.models.hyperedge import Hyperedge
@@ -116,7 +116,7 @@ class AGoTGraph:
         logger.info(f"Created Interdisciplinary Bridge Node {ibn_id}")
         return ibn_id
 
-    def update_node_confidence(self, node_id: str, new_confidence: List[float]) -> None:
+    def update_node_confidence(self, node_id: str, new_confidence: list[float]) -> None:
         if node_id not in self.graph:
             raise ValueError(f"Node {node_id} not found in graph")
 
@@ -137,7 +137,7 @@ class AGoTGraph:
 
         raise ValueError(f"Edge {edge_id} not found in graph")
 
-    def calculate_topology_metrics(self) -> Dict[str, Dict[str, float]]:
+    def calculate_topology_metrics(self) -> dict[str, dict[str, float]]:
         topology_metrics = {}
 
         degree_centrality = nx.degree_centrality(self.graph)
@@ -158,7 +158,7 @@ class AGoTGraph:
         logger.info(f"Calculated topology metrics for {len(topology_metrics)} nodes")
         return topology_metrics
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         nodes = []
         for node_id, data in self.graph.nodes(data=True):
             nodes.append({

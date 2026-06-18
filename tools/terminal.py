@@ -19,6 +19,7 @@ class SafeShellTool(ShellTool):
         # Detect system encoding (Windows typically uses GBK/codepage 936)
         self._encoding = locale.getpreferredencoding() or "utf-8"
 
+
     def _run(self, commands: str | list[str], **kwargs) -> str:
         for bad in BLACKLIST:
             if bad in commands:

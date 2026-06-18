@@ -14,6 +14,7 @@ skill_memory — 跨对话召回
 """
 import math
 import hashlib
+from typing import TypedDict
 from ..graph import PPRResult
 from sqlite3 import Connection
 from models import reranker_model
@@ -21,7 +22,6 @@ from ..type import GmConfig, GmNode, GmEdge
 from langchain_core.embeddings import Embeddings
 from ..graph.community import get_community_peers
 from ..graph.pagerank import personalized_page_rank
-from typing import TypedDict, List, Dict, Set, Optional
 from ..store.core import (
     search_nodes, vector_search_with_score,
     graph_walk, community_representatives,
@@ -32,8 +32,8 @@ from ..store.core import (
 
 class RecallResult(TypedDict):
     """召回结果"""
-    nodes: List[GmNode]
-    edges: List[GmEdge]
+    nodes: list[GmNode]
+    edges: list[GmEdge]
     token_estimate: int
 
 
@@ -64,7 +64,7 @@ class Recaller:
         """
         self.db = db
         self.cfg = cfg
-        self.embed: Optional[Embeddings] = cfg.embedding
+        self.embed: Embeddings | None = cfg.embedding
 
     async def recall(self, query: str) -> RecallResult:
         """
@@ -105,34 +105,34 @@ class Recaller:
                 scored = vector_search_with_score(
                     self.db, vec, math.ceil(limit / 2)
                 )
-                seeds: List[GmNode] = [s['node'] for s in scored]
+                seeds: list[GmNode] = [s['node'] for s in scored]
                 # 向量结果不足时补 FTS5
                 if len(seeds) < 2:
                     fts_results = search_nodes(self.db, query, limit)
-                    seen_ids: Set[str] = {n.id for n in seeds}
+                    seen_ids: set[str] = {n.id for n in seeds}
                     seeds.extend([n for n in fts_results if n.id not in seen_ids])
 
             except Exception:
-                seeds: List[GmNode]  = search_nodes(self.db, query, limit)
+                seeds: list[GmNode]  = search_nodes(self.db, query, limit)
         else:
-            seeds: List[GmNode]  = search_nodes(self.db, query, limit)
+            seeds: list[GmNode]  = search_nodes(self.db, query, limit)
 
         # reranker 阈值过滤
         node_dict: dict[str, GmNode] = {s.content : s  for s in seeds}
-        filter_contents: List[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.85)
+        filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.85)
         if filter_contents:
             seeds = [node_dict[c] for c in filter_contents]
 
         if not seeds:
             return {'nodes': [], 'edges': [], 'token_estimate': 0}
 
-        seed_ids: List[str] = [n.id for n in seeds]
+        seed_ids: list[str] = [n.id for n in seeds]
 
         # 社区扩展
-        expanded_ids: Set[str] = set(seed_ids)
+        expanded_ids: set[str] = set(seed_ids)
 
         for seed in seeds:
-            peers: List[str] = get_community_peers(self.db, seed.id, 2)
+            peers: list[str] = get_community_peers(self.db, seed.id, 2)
             expanded_ids.update(peers)
 
         # 图遍历拿三元组
@@ -142,8 +142,8 @@ class Recaller:
             getattr(self.cfg, 'recall_max_hops', 2)
         )
 
-        nodes: List[GmNode] = walk_result['nodes']
-        edges: List[GmEdge] = walk_result['edges']
+        nodes: list[GmNode] = walk_result['nodes']
+        edges: list[GmEdge] = walk_result['edges']
 
         if not nodes:
             return {'nodes': [], 'edges': [], 'token_estimate': 0}
@@ -191,17 +191,17 @@ class Recaller:
         Returns:
             泛化召回结果
         """
-        seeds: List[GmNode] = []
+        seeds: list[GmNode] = []
 
         # 优先用社区向量搜索
         if self.embed:
             try:
-                vec: List[float] = await self.embed.aembed_query(query)
-                scored_communities: List[ScoredCommunity] = community_vector_search(self.db, vec)
+                vec: list[float] = await self.embed.aembed_query(query)
+                scored_communities: list[ScoredCommunity] = community_vector_search(self.db, vec)
 
                 if scored_communities:
                     community_ids = [c['id'] for c in scored_communities]
-                    seeds: List[GmNode] = nodes_by_community_ids(self.db, community_ids, 3)
+                    seeds: list[GmNode] = nodes_by_community_ids(self.db, community_ids, 3)
 
             except Exception:
                 # embedding 失败，fallback
@@ -209,36 +209,36 @@ class Recaller:
 
         # reranker 阈值过滤
         node_dict: dict[str, GmNode] = {s.content : s  for s in seeds}
-        filter_contents: List[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.85)
+        filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.85)
         if filter_contents:
             seeds = [node_dict[c] for c in filter_contents]
 
         # fallback：按时间取社区代表节点
         if not seeds:
-            seeds: List[GmNode] = community_representatives(self.db, 2)
+            seeds: list[GmNode] = community_representatives(self.db, 2)
 
         if not seeds:
             return {'nodes': [], 'edges': [], 'token_estimate': 0}
 
-        seed_ids: List[str] = [n.id for n in seeds]
+        seed_ids: list[str] = [n.id for n in seeds]
 
         walk_result = graph_walk(self.db, seed_ids, 1)
 
-        nodes: List[GmNode] = walk_result['nodes']
-        edges: List[GmEdge] = walk_result['edges']
+        nodes: list[GmNode] = walk_result['nodes']
+        edges: list[GmEdge] = walk_result['edges']
 
         if not nodes:
             return {'nodes': [], 'edges': [], 'token_estimate': 0}
 
         # 个性化 PageRank 排序
-        candidate_ids: List[str] = [n.id for n in nodes]
+        candidate_ids: list[str] = [n.id for n in nodes]
         ppr_result: PPRResult = personalized_page_rank(
             self.db, seed_ids, candidate_ids, self.cfg
         )
-        ppr_scores: Dict[str, float] = ppr_result['scores']
+        ppr_scores: dict[str, float] = ppr_result['scores']
 
         # 排序并截取前 limit 个
-        filtered: List[GmNode] = sorted(
+        filtered: list[GmNode] = sorted(
             nodes,
             key=lambda n: (
                 ppr_scores.get(n.id, 0.0),
@@ -248,7 +248,7 @@ class Recaller:
             reverse=True
         )[:limit]
 
-        final_ids: Set[str] = {n.id for n in filtered}
+        final_ids: set[str] = {n.id for n in filtered}
 
         return {
             'nodes': filtered,
@@ -272,8 +272,8 @@ class Recaller:
         Returns:
             合并后的召回结果
         """
-        node_map: Dict[str, GmNode] = {}
-        edge_map: Dict[str, GmEdge] = {}
+        node_map: dict[str, GmNode] = {}
+        edge_map: dict[str, GmEdge] = {}
 
         # 精确路径全部入场
         for n in precise['nodes']:
@@ -288,7 +288,7 @@ class Recaller:
                 node_map[n.id] = n
 
         # 合并边：两端都在最终节点集中的边才保留
-        final_ids: Set[str] = set(node_map.keys())
+        final_ids: set[str] = set(node_map.keys())
 
         for e in generalized['edges']:
             if (e.id not in edge_map and
@@ -296,8 +296,8 @@ class Recaller:
                 e.to_id in final_ids):
                 edge_map[e.id] = e
 
-        nodes: List[GmNode] = list(node_map.values())
-        edges: List[GmEdge] = list(edge_map.values())
+        nodes: list[GmNode] = list(node_map.values())
+        edges: list[GmEdge] = list(edge_map.values())
 
         return {
             'nodes': nodes,
@@ -305,7 +305,7 @@ class Recaller:
             'token_estimate': self._estimate_tokens(nodes),
         }
 
-    def _estimate_tokens(self, nodes: List[GmNode]) -> int:
+    def _estimate_tokens(self, nodes: list[GmNode]) -> int:
         """
         估算 token 数量
 
@@ -344,7 +344,7 @@ class Recaller:
             name: str = getattr(node, 'name', '')
             description: str = getattr(node, 'description', '')
             text: str = f"{name}: {description}\n{content[:500]}"
-            vec: List[float] = await self.embed.aembed_query(text)
+            vec: list[float] = await self.embed.aembed_query(text)
             if vec:
                 save_vector(self.db, getattr(node, 'id', ''), content, vec)
 

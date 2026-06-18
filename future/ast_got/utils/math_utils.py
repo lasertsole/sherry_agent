@@ -1,10 +1,10 @@
 import math
-from typing import List, Dict, Any
+from typing import Any
 import datetime
 
 
-def bayesian_update(prior_confidence: List[float], evidence_confidence: List[float],
-                   statistical_power: float, edge_type: str) -> List[float]:
+def bayesian_update(prior_confidence: list[float], evidence_confidence: list[float],
+                   statistical_power: float, edge_type: str) -> list[float]:
     edge_type_weights = {
         "supportive": 1.0,
         "causal": 1.2,
@@ -23,7 +23,7 @@ def bayesian_update(prior_confidence: List[float], evidence_confidence: List[flo
     return updated_confidence
 
 
-def calculate_entropy(distribution: List[float]) -> float:
+def calculate_entropy(distribution: list[float]) -> float:
     total = sum(distribution)
     if total == 0:
         return 0
@@ -38,7 +38,7 @@ def calculate_entropy(distribution: List[float]) -> float:
     return entropy
 
 
-def calculate_kl_divergence(p: List[float], q: List[float]) -> float:
+def calculate_kl_divergence(p: list[float], q: list[float]) -> float:
     p_sum = sum(p)
     q_sum = sum(q)
 
@@ -56,7 +56,7 @@ def calculate_kl_divergence(p: List[float], q: List[float]) -> float:
     return kl_div
 
 
-def calculate_info_gain(graph, node_id: str, evidence_result: Dict[str, Any]) -> Dict[str, float]:
+def calculate_info_gain(graph, node_id: str, evidence_result: dict[str, Any]) -> dict[str, float]:
     if node_id not in graph.graph:
         return {}
 

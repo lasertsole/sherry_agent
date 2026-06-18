@@ -1,10 +1,8 @@
+from typing import Any
 from loguru import logger
-from typing import Dict, Any, List
-
 from models import simple_chat_model
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
-
 from future.ast_got.models.graph import AGoTGraph
 
 
@@ -22,7 +20,7 @@ class ImprovementSuggestion(BaseModel):
 
 
 class ReflectionStage:
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Reflection Stage")
 
         parameters = context.get("parameters", {})
@@ -155,7 +153,7 @@ class ReflectionStage:
             }
         }
 
-    def _check_high_confidence_impact_coverage(self, graph: AGoTGraph) -> Dict[str, Any]:
+    def _check_high_confidence_impact_coverage(self, graph: AGoTGraph) -> dict[str, Any]:
         high_conf_count = 0
         high_impact_count = 0
 
@@ -198,7 +196,7 @@ class ReflectionStage:
                 "message": f"Poor coverage of high-confidence ({conf_percentage:.1%}) and high-impact ({impact_percentage:.1%}) nodes."
             }
 
-    def _check_bias_flags(self, graph: AGoTGraph) -> Dict[str, Any]:
+    def _check_bias_flags(self, graph: AGoTGraph) -> dict[str, Any]:
         flagged_nodes = 0
         serious_bias_nodes = 0
 
@@ -238,7 +236,7 @@ class ReflectionStage:
                     "message": "No bias flags detected."
                 }
 
-    def _check_knowledge_gaps_addressed(self, graph: AGoTGraph, composition_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _check_knowledge_gaps_addressed(self, graph: AGoTGraph, composition_result: dict[str, Any]) -> dict[str, Any]:
         gap_nodes = 0
 
         for _, data in graph.graph.nodes(data=True):
@@ -270,7 +268,7 @@ class ReflectionStage:
                 "message": "No significant knowledge gaps identified."
             }
 
-    def _check_falsifiability(self, graph: AGoTGraph) -> Dict[str, Any]:
+    def _check_falsifiability(self, graph: AGoTGraph) -> dict[str, Any]:
         hypothesis_nodes = 0
         falsifiable_nodes = 0
 
@@ -309,7 +307,7 @@ class ReflectionStage:
                 "message": f"Poor falsifiability: only {falsifiable_percentage:.1%} of hypotheses have falsification criteria."
             }
 
-    def _check_causal_claims(self, graph: AGoTGraph) -> Dict[str, Any]:
+    def _check_causal_claims(self, graph: AGoTGraph) -> dict[str, Any]:
         causal_edges = 0
         well_supported_causal = 0
 
@@ -349,7 +347,7 @@ class ReflectionStage:
                 "message": f"Weak causal validity: only {supported_percentage:.1%} of causal claims are well-supported."
             }
 
-    def _check_temporal_consistency(self, graph: AGoTGraph) -> Dict[str, Any]:
+    def _check_temporal_consistency(self, graph: AGoTGraph) -> dict[str, Any]:
         temporal_edges = 0
         consistent_temporal = 0
 
@@ -389,7 +387,7 @@ class ReflectionStage:
                 "message": f"Poor temporal consistency: only {consistent_percentage:.1%} of temporal relationships are well-defined."
             }
 
-    def _check_statistical_rigor(self, graph: AGoTGraph) -> Dict[str, Any]:
+    def _check_statistical_rigor(self, graph: AGoTGraph) -> dict[str, Any]:
         evidence_nodes = 0
         powered_nodes = 0
 
@@ -428,7 +426,7 @@ class ReflectionStage:
                 "message": f"Poor statistical rigor: only {powered_percentage:.1%} of evidence has adequate statistical power."
             }
 
-    def _check_collaboration_attributions(self, graph: AGoTGraph) -> Dict[str, Any]:
+    def _check_collaboration_attributions(self, graph: AGoTGraph) -> dict[str, Any]:
         attributed_nodes = 0
 
         for _, data in graph.graph.nodes(data=True):
@@ -453,8 +451,8 @@ class ReflectionStage:
     # ============================================================
 
     def _ai_holistic_audit(self, graph: AGoTGraph,
-                            audit_results: Dict[str, Any],
-                            final_confidence: List[float]):
+                            audit_results: dict[str, Any],
+                            final_confidence: list[float]):
         """[AI] 综合 8 项审计检查结果，生成整体质量评估
 
         返回 {summary, assessment} 字典，失败时返回 None。
@@ -507,7 +505,7 @@ Generate:
         return None
 
     def _ai_suggest_improvements(self, graph: AGoTGraph,
-                                 audit_results: Dict[str, Any]):
+                                 audit_results: dict[str, Any]):
         """[AI] 根据审计结果生成具体改进建议
 
         返回改进建议列表，失败时返回空列表。
@@ -539,7 +537,7 @@ For each area that needs improvement (especially warnings and failures), suggest
 Return up to 5 improvement suggestions.
 """)
 
-            result = simple_chat_model.with_structured_output(List[ImprovementSuggestion]).invoke([prompt])
+            result = simple_chat_model.with_structured_output(list[ImprovementSuggestion]).invoke([prompt])
             if isinstance(result, list):
                 suggestions = []
                 for item in result:

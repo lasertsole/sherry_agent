@@ -11,6 +11,7 @@ Example:
 import sys
 from pathlib import Path
 from loguru import logger
+from pydantic import validate_call
 
 # Note: In Python REPL environment, sys.stdout is a StringIO object without reconfigure()
 # Use try/except to handle both environments
@@ -30,7 +31,7 @@ if str(project_root) not in sys.path:
 from raganything import RAGAnything
 from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_rag_anything
 
-
+@validate_call
 async def query(question: str) -> None:
     """Query the rag_anything-anything knowledge graph"""
     try:

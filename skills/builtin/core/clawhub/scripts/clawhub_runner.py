@@ -3,6 +3,7 @@ ClawHub command runner — replaces {{ROOT_DIR}} placeholders with the actual pr
 """
 import subprocess
 from config import ROOT_DIR
+from pydantic import validate_call
 
 
 def _resolve_workdir(workdir: str) -> str:
@@ -10,6 +11,7 @@ def _resolve_workdir(workdir: str) -> str:
     return workdir.replace("{{ROOT_DIR}}", str(ROOT_DIR))
 
 
+@validate_call
 def run_clawhub_command(command: list[str]) -> dict:
     """
     Run a clawhub command with {{ROOT_DIR}} placeholders resolved.

@@ -1,9 +1,9 @@
 import json
 from loguru import logger
 from robyn import Response
+from typing import Any, Callable
 from robyn import Robyn, ALLOW_CORS
 from server.service import session_end
-from typing import Any, Dict, Callable
 from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
 from context_engine import rectification_and_standardization
@@ -35,7 +35,7 @@ def handle_exception(error: Exception):
         }, ensure_ascii=False),
     )
 
-ws_event_processor_dict: Dict[str, Callable[[str, str | dict[str, Any]], str]] = {}
+ws_event_processor_dict: dict[str, Callable[[str, str | dict[str, Any]], str]] = {}
 
 async def ws_processor(session_id: str, event: str, content: str | dict[str, Any]) -> Any:
     try:

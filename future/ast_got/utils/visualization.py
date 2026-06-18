@@ -1,6 +1,6 @@
 import os
 import networkx as nx
-from typing import Dict, Any
+from typing import Any
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
@@ -27,7 +27,7 @@ EDGE_COLORS = {
 }
 
 
-def visualize_graph(graph: nx.DiGraph, hyperedges: Dict[str, Any], 
+def visualize_graph(graph: nx.DiGraph, hyperedges: dict[str, Any], 
                     stage_name: str, output_dir: str = "output") -> str:
     os.makedirs(output_dir, exist_ok=True)
     
@@ -113,7 +113,7 @@ def visualize_graph(graph: nx.DiGraph, hyperedges: Dict[str, Any],
     return filepath
 
 
-def visualize_layers(graph: nx.DiGraph, layers: Dict[str, set],
+def visualize_layers(graph: nx.DiGraph, layers: dict[str, set],
                      stage_name: str, output_dir: str = "output") -> str:
     os.makedirs(output_dir, exist_ok=True)
     
