@@ -1,9 +1,7 @@
 """Skills loader and snapshot builder."""
 
-from __future__ import annotations
-
 import yaml
-from typing import Any, List, Optional
+from typing import Any
 from config import ROOT_DIR, SKILLS_DIR
 
 
@@ -49,7 +47,7 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     return skills
 
 
-def get_skills_text(selected_skill_names: Optional[List[str]]=None, exclude_auth_skills: bool | None = None) -> str:
+def get_skills_text(selected_skill_names: list[str] | None = None, exclude_auth_skills: bool | None = None) -> str:
     """
     获取 skills xml
     :param selected_skill_names: 选中的技能名字列表
@@ -58,7 +56,7 @@ def get_skills_text(selected_skill_names: Optional[List[str]]=None, exclude_auth
     """
     skills: list[dict[str, Any]] = scan_skills()
 
-    exclude_skill_names: List[str] = []
+    exclude_skill_names: list[str] = []
     if exclude_auth_skills is not None and exclude_auth_skills:
         exclude_skill_names = ["clawhub", "skill_creator"]
 

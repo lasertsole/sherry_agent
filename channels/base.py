@@ -1,7 +1,5 @@
 """Base channel interface for chat platforms."""
 
-from __future__ import annotations
-
 from typing import Any
 from loguru import logger
 from bus.queue import MessageBus

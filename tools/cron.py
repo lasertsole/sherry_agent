@@ -1,23 +1,23 @@
 from datetime import datetime
 from langchain.tools import BaseTool
 from cron.core import CronService, cron_service
-from typing import Any, Optional, Type, Literal
+from typing import Any, Type, Literal
 from pydantic import BaseModel, Field, PrivateAttr
 from cron.types import CronSchedule, CronJob, CronJobState
 
 
 class CronInput(BaseModel):
     action: Literal["add", "list", "remove", "set_context"] = Field(..., description="Action to perform: 'add', 'list', 'remove', or 'set_context'(set receiver's channel and chat_id in context)")
-    name: str = Field(None, description="Optional short human-readable label for the job (e.g., 'weather-monitor', 'daily-standup'). Defaults to first 30 chars of message.")
-    message: Optional[str] = Field(None, description="Reminder message (for add)")
-    every_seconds: Optional[int] = Field(None, description="Interval in seconds (for recurring tasks)")
-    cron_expr: Optional[str] = Field(None, description="Cron expression like '0 9 * * *'")
-    tz: Optional[str] = Field(None, description="IANA timezone (e.g. 'America/Vancouver')")
-    at: Optional[str] = Field(None, description="ISO datetime (e.g. '2026-02-12T10:30:00')")
-    job_id: Optional[str] = Field(None, description="Job ID (for remove)")
-    deliver: bool = Field(None, description="Whether to deliver the execution result to the user channel (default true)")
-    channel: Optional[str] = Field(None, description="Channel to send the execution result to, when chat_id is no empty, channel must be no empty")
-    chat_id: Optional[str] = Field(None, description="Chat to send the execution result to, when channel is no empty, chat_id must be no empty")
+    name: str| None = Field(None, description="Optional short human-readable label for the job (e.g., 'weather-monitor', 'daily-standup'). Defaults to first 30 chars of message.")
+    message: str | None = Field(None, description="Reminder message (for add)")
+    every_seconds: int | None = Field(None, description="Interval in seconds (for recurring tasks)")
+    cron_expr: str | None = Field(None, description="Cron expression like '0 9 * * *'")
+    tz: str | None = Field(None, description="IANA timezone (e.g. 'America/Vancouver')")
+    at: str | None = Field(None, description="ISO datetime (e.g. '2026-02-12T10:30:00')")
+    job_id: str | None = Field(None, description="Job ID (for remove)")
+    deliver: bool | None = Field(None, description="Whether to deliver the execution result to the user channel (default true)")
+    channel: str | None = Field(None, description="Channel to send the execution result to, when chat_id is no empty, channel must be no empty")
+    chat_id: str | None = Field(None, description="Chat to send the execution result to, when channel is no empty, chat_id must be no empty")
 
 class CronTool(BaseTool):
     name: str = "cron"

@@ -1,9 +1,6 @@
 """System prompt assembly."""
 
-from __future__ import annotations
-
 from pathlib import Path
-from typing import List, Optional
 from skills import get_skills_text
 from config import WORKSPACE_DIR, SRC_DIR
 from workspace import CORE_SYSTEM_FILE_NAMES, ALL_SYSTEM_FILE_NAMES
@@ -26,7 +23,7 @@ skill_guide_text: str = f"""
 2.技能生成的临时资源（如图片、语音等）存放在{(SRC_DIR / "temp").as_posix()}目录下
 """
 
-def build_system_prompt(selected_file_names: Optional[List[str]] = None, selected_skill_names: Optional[List[str]] = None) -> str:
+def build_system_prompt(selected_file_names: list[str] | None = None, selected_skill_names: list[str] | None = None) -> str:
     skill_paths:str = get_skills_text(selected_skill_names)
     skill_paths = f"{skill_paths}\n\n{skill_guide_text}"
 

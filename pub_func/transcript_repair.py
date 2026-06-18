@@ -7,17 +7,17 @@ Tool use/result pairing repair for assembled context.
 """
 
 import time
-from typing import TypedDict, List, Set, Dict, Any, Optional
+from typing import TypedDict, Any
 from langchain_core.messages import ToolMessage, AIMessage, BaseMessage
 
 class ToolCallLike(TypedDict):
     """工具调用类型"""
     id: str
-    name: Optional[str]
-    error: Optional[str]
+    name: str | None
+    error: str | None
 
 
-def extract_tool_call_id(block: Dict[str, Any]) -> Optional[str]:
+def extract_tool_call_id(block: dict[str, Any]) -> str | None:
     """
     从工具调用块中提取 ID
 
@@ -36,7 +36,7 @@ def extract_tool_call_id(block: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def extract_tool_calls_from_assistant(msg: AIMessage) -> List[ToolCallLike]:
+def extract_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
     """
     从助手消息中提取工具调用列表
 
@@ -51,7 +51,7 @@ def extract_tool_calls_from_assistant(msg: AIMessage) -> List[ToolCallLike]:
     if not isinstance(tool_calls, list):
         return []
 
-    calls: List[ToolCallLike] = []
+    calls: list[ToolCallLike] = []
 
     for block in tool_calls:
         if not block or not isinstance(block, dict):
@@ -69,7 +69,7 @@ def extract_tool_calls_from_assistant(msg: AIMessage) -> List[ToolCallLike]:
 
     return calls
 
-def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> List[ToolCallLike]:
+def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
     """
     从助手消息中提取无效工具调用列表
 
@@ -84,7 +84,7 @@ def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> List[ToolCallLi
     if not isinstance(invalid_tool_calls, list):
         return []
 
-    calls: List[ToolCallLike] = []
+    calls: list[ToolCallLike] = []
 
     for block in invalid_tool_calls:
         if not block or not isinstance(block, dict):
@@ -107,7 +107,7 @@ def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> List[ToolCallLi
     return calls
 
 
-def extract_tool_result_id(msg: ToolMessage) -> Optional[str]:
+def extract_tool_result_id(msg: ToolMessage) -> str | None:
     """
     从工具结果消息中提取 ID
 
@@ -124,7 +124,7 @@ def extract_tool_result_id(msg: ToolMessage) -> Optional[str]:
     return None
 
 
-def make_missing_tool_result(tool_call_id: str, tool_name: Optional[str] = None) -> ToolMessage:
+def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) -> ToolMessage:
     """
     创建缺失的工具结果消息
 
@@ -144,7 +144,7 @@ def make_missing_tool_result(tool_call_id: str, tool_name: Optional[str] = None)
     )
 
 
-def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMessage]:
+def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
     修复工具调用和结果的配对关系
 
@@ -156,8 +156,8 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
     Returns:
         修复后的消息列表
     """
-    out: List[BaseMessage] = []
-    seen_tool_result_ids: Set[str] = set()
+    out: list[BaseMessage] = []
+    seen_tool_result_ids: set[str] = set()
     changed = False
 
     def push_tool_result(msg: ToolMessage) -> None:
@@ -195,7 +195,7 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
         # 错误状态直接保留（但清空 invalid_tool_calls 以防被序列化为 OpenAI tool_calls）
         raw_invalid_tool_calls = getattr(msg, "invalid_tool_calls", None)
         has_invalid = isinstance(raw_invalid_tool_calls, list) and len(raw_invalid_tool_calls) > 0
-        invalid_tool_calls: List[ToolCallLike] = extract_invalid_tool_calls_from_assistant(msg)
+        invalid_tool_calls: list[ToolCallLike] = extract_invalid_tool_calls_from_assistant(msg)
 
         if getattr(msg, 'status', "") == "error" or has_invalid:
             if has_invalid:
@@ -215,9 +215,9 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
             i += 1
             continue
 
-        tool_call_ids:Set[str] = {t['id'] for t in tool_calls}
-        span_results_by_id: Dict[str, ToolMessage] = {}
-        remainder: List[ToolMessage] = []
+        tool_call_ids:set[str] = {t['id'] for t in tool_calls}
+        span_results_by_id: dict[str, ToolMessage] = {}
+        remainder: list[ToolMessage] = []
 
         # 查找后续的工具结果
         j = i + 1
@@ -275,8 +275,8 @@ def sanitize_tool_use_result_pairing(messages: List[BaseMessage]) -> List[BaseMe
         i = j
 
     # 最终清理：移除孤立的 ToolMessage（没有对应 AIMessage.tool_calls 的）
-    cleaned: List[BaseMessage] = []
-    active_tool_call_ids: Set[str] = set()
+    cleaned: list[BaseMessage] = []
+    active_tool_call_ids: set[str] = set()
 
     for msg in out:
         if isinstance(msg, AIMessage):

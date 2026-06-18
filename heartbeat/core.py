@@ -1,7 +1,5 @@
 """Heartbeat service - periodic agent wake-up to check for tasks."""
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 from loguru import logger

@@ -1,10 +1,7 @@
 """
 ClawHub command runner — replaces {{ROOT_DIR}} placeholders with the actual project root path.
 """
-from __future__ import annotations
 import subprocess
-import sys
-from pathlib import Path
 from config import ROOT_DIR
 
 

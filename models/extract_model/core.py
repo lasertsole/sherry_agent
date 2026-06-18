@@ -5,8 +5,6 @@ Reuses the model weights already downloaded under models/extract_model/.
 Uses mineru-vl-utils (MinerUClient) for high-level document parsing (PDF page -> Markdown).
 """
 
-from __future__ import annotations
-
 import os
 import sys
 from typing import Any

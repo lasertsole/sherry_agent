@@ -1,7 +1,6 @@
 """write file tool with project root restriction and autopep8 formatting for .py files."""
-from __future__ import annotations
+from typing import Any
 from pathlib import Path
-from typing import Any, Optional
 from config import ROOT_DIR
 from langchain_community.tools.file_management import WriteFileTool
 

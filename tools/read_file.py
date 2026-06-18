@@ -1,6 +1,4 @@
 """Read file tool with project root restriction."""
-
-from __future__ import annotations
 from config import ROOT_DIR
 from langchain_community.tools.file_management import ReadFileTool
 

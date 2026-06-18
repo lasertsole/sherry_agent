@@ -3,7 +3,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, List
+
 
 import requests
 import urllib3
@@ -104,7 +104,7 @@ if _use_local:
 class CustomEmbedding(Embeddings):
     """嵌入模型封装（自动选择本地 SentenceTransformer / 远程 MaaS API）"""
 
-    def _call_remote_api(self, texts: List[str]) -> dict:
+    def _call_remote_api(self, texts: list[str]) -> dict:
         """调用远程 MaaS embedding API"""
         cfg = _remote_config
         url = f"{cfg['api_base'].rstrip('/')}/embeddings"
@@ -122,12 +122,12 @@ class CustomEmbedding(Embeddings):
         resp.raise_for_status()
         return resp.json()
 
-    def _embed_local(self, texts: List[str]) -> List[List[float]]:
+    def _embed_local(self, texts: list[str]) -> list[list[float]]:
         """本地 SentenceTransformer 编码"""
         embeddings = _local_model.encode(texts, normalize_embeddings=True)
         return embeddings.tolist()
 
-    def _embed_remote(self, texts: List[str]) -> List[List[float]]:
+    def _embed_remote(self, texts: list[str]) -> list[list[float]]:
         """远程 API 编码"""
         result = self._call_remote_api(texts)
         # 按输入顺序返回 embedding 向量
@@ -136,7 +136,7 @@ class CustomEmbedding(Embeddings):
         data.sort(key=lambda x: x["index"])
         return [item["embedding"] for item in data]
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """为多个文档生成嵌入向量"""
         if not texts:
             return []
@@ -145,7 +145,7 @@ class CustomEmbedding(Embeddings):
             return self._embed_local(texts)
         return self._embed_remote(texts)
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> list[float]:
         """为单个查询生成嵌入向量"""
         if _backend == "local":
             return self._embed_local([text])[0]

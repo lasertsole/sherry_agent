@@ -1,16 +1,14 @@
 """Channel manager for coordinating chat channels."""
-from __future__ import annotations
-
 import json
 import asyncio
-from loguru import logger
 from pathlib import Path
+from loguru import logger
 from config import ROOT_DIR
 from .base import BaseChannel
 from bus.queue import MessageBus
 from asyncio import AbstractEventLoop
+from typing import Any, Callable, Awaitable
 from bus import InboundMessage, OutboundMessage
-from typing import Any, Optional, Callable, Awaitable
 
 class ChannelManager:
     """
@@ -70,7 +68,7 @@ class ChannelManager:
     def set_outbound_consumer(self, outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]])->None:
         self._outbound_consumer = outbound_consumer
 
-    def __init__(self, config: Optional[dict[str, str]] = None,  bus: Optional[MessageBus] = None):
+    def __init__(self, config: dict[str, str] | None = None,  bus: MessageBus | None = None):
         if config is None:
             channels_json = Path(ROOT_DIR) / "channels.json"
             if not channels_json.exists():

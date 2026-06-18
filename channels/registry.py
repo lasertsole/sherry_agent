@@ -1,7 +1,5 @@
 """Auto-discovery for built-in channel modules and external plugins."""
 
-from __future__ import annotations
-
 import pkgutil
 import importlib
 from loguru import logger

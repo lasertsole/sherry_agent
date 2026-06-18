@@ -1,7 +1,6 @@
 import os
 import requests
 from pathlib import Path
-from typing import Union
 from loguru import logger
 from config import ENV_PATH
 from requests import Response
@@ -70,7 +69,7 @@ class TTS_Request(BaseModel):
     speed_factor: float = 1.0
     fragment_interval: float = 0.3
     seed: int = -1
-    streaming_mode: Union[bool, int] = False
+    streaming_mode: bool | int = False
     parallel_infer: bool = True
     repetition_penalty: float = 1.35
     sample_steps: int = 32
