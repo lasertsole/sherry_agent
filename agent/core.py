@@ -22,7 +22,7 @@ memory_store.load_from_disk()
 
 def built_agent(
     session_id: str,
-    system_prompt: str | None = None,
+    system_prompt: str,
     temperature: float = 0.8,
     enable_tool: bool = True,
     checkpointer: Checkpointer | None = None,

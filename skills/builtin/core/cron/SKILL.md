@@ -5,6 +5,7 @@ description: 'Schedule reminders and recurring tasks. Actions: add, list, remove
 
 ## add a job to the cron
 ```python
+from loguru import logger
 from skills.builtin.core.cron.scripts import cron
 
 if __name__ == '__main__':
@@ -16,24 +17,28 @@ if __name__ == '__main__':
     at: str | None = "{placeholder}" # <- ISO datetime (e.g. '2026-02-12T10:30:00')
     deliver: bool | None = bool("{placeholder}") #"Whether to deliver the execution result to the user channel (default false)"
 
-    cron.add_job(name, message, every_seconds, cron_expr, tz, at, deliver)
+    res = cron.add_job(name, message, every_seconds, cron_expr, tz, at, deliver)
+    logger.info(res)
 ```
 
 ## list jobs
 ```python
+from loguru import logger
 from skills.builtin.core.cron.scripts import cron
 
 if __name__ == '__main__':
-    cron.list_jobs()
+    res = cron.list_jobs()
+    logger.info(res)
 ```
 
 ## remove jobs
 ```python
+from loguru import logger
 from skills.builtin.core.cron.scripts import cron
 
 if __name__ == '__main__':
     job_id: str | None = "{placeholder}"  # <- Job ID (for remove)
-    cron.remove_job(job_id)
+    res = cron.remove_job(job_id)
 ```
 
 ## set_context

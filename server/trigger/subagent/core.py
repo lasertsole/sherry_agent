@@ -2,8 +2,8 @@ import json
 from typing import Any
 from threading import Thread
 from channels import channel_manager
-from subagent import subagent_manager
 from runtime import relation_register
+from tools.subagent.base import subagent_manager
 from bus import InboundMessage, OutboundMessage
 
 """Subagent notification handler"""

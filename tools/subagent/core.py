@@ -1,12 +1,12 @@
 """Spawn tool for creating background subagents."""
 
-import asyncio
 import time
+import asyncio
 from loguru import logger
 from typing import Any, Type
 from langchain.tools import BaseTool
+from .base import SubagentManager, subagent_manager
 from pydantic import BaseModel, Field, validate_call
-from subagent import SubagentManager, subagent_manager
 
 class SubagentInput(BaseModel):
     task: str = Field(..., description="Subtasks to execute")
