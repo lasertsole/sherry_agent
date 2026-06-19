@@ -102,11 +102,11 @@ if action == "run" and self.on_execute:
 ### 基础用法
 
 ```python
-from heartbeat import heartbeat_service
+from skills.builtin.core.heartbeat import heartbeat_service
 
 # 配置回调
-heartbeat_service.on_execute = my_task_executor    # async (tasks: str) -> str
-heartbeat_service.on_notify  = my_notifier         # async (response: str) -> None
+heartbeat_service.on_execute = my_task_executor  # async (tasks: str) -> str
+heartbeat_service.on_notify = my_notifier  # async (response: str) -> None
 
 # 启动（默认 30 分钟间隔）
 await heartbeat_service.start()
@@ -123,12 +123,12 @@ if result:
 ### 自定义配置
 
 ```python
-from heartbeat import HeartbeatService
+from skills.builtin.core.heartbeat import HeartbeatService
 
 service = HeartbeatService(
     on_execute=my_executor,
     on_notify=my_notifier,
-    interval_s=15 * 60,    # 15 分钟
+    interval_s=15 * 60,  # 15 分钟
     timezone="Asia/Shanghai",
     enabled=True,
 )

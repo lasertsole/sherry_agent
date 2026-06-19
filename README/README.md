@@ -19,33 +19,33 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 ## 🚀 Key Features
 
 ### 1. 🧠 Deep Memory System (Context Engine)
-- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/mes_memory/README.md)) + long-term knowledge graph ([Skill Memory](context_engine/skill_memory/README.md))
+- **Dual Memory Architecture**: Short-term session memory ([MesMemory](../context_engine/mes_memory/README.md)) + long-term knowledge graph ([Skill Memory](../context_engine/skill_memory/README.md))
 - **Skill Memory Graph**: Automatically extracts knowledge points from conversations to build a dynamic knowledge graph
 - **Community Detection & Summarization**: Periodically partitions the graph and generates summaries for efficient long-term memory retrieval
 - **Query Rewriting**: Disambiguates pronouns and references using conversation history before retrieval
 - **Persistent Storage**: Stores conversation history and memory nodes in SQLite + FTS5, supporting cross-session memory inheritance
 - **Async Non-blocking Extraction**: Skill Memory extraction runs in the background; MesMemory writes are synchronous and immediate
-- ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
+- ▶️ _See the [Context Engine README](../context_engine/README.md) for architecture, data models, and API details_
 
 ### 2. 🛠️ Dynamic Skill System
 - **SKILL.md Standard**: Skills defined in standardized Markdown format — the Agent can autonomously read and learn new abilities
 - **Tool Calling**: Built-in Web search, file I/O, code execution (Python Repl), terminal commands, message search, and more
 - **Subagents**: Supports running complex time-consuming tasks in parallel in the background, with async results via a message bus
-- ▶️ _See the [Subagent System README](tools/subagent/README.md) for lifecycle, Commander architecture, and API docs_
+- ▶️ _See the [Subagent System README](../tools/subagent/README.md) for lifecycle, Commander architecture, and API docs_
 
 ### 3. 🌐 Multi-Channel Access
 - **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
 - **Next-Generation Client** ([client_future](client_future/)): A Tauri 2 + Nuxt 4 desktop/mobile SPA client, currently in development
 - **QQ Bot**: Integrated with `qq-botpy` for direct interaction in QQ groups or private chats
-- **Message Bus**: Internal async message queue ([MessageBus](bus/queue.py)) decouples input/output channels
+- **Message Bus**: Internal async message queue ([MessageBus](../bus/queue.py)) decouples input/output channels
 
 ### 4. 🔊 Multimodal Interaction
 - **TTS Voice Synthesis**: Foreign integrated with GPT-SoVITS for real-time voice replies that faithfully reproduce the character's voice
 - **Visual Understanding**: Supports Image-to-Text (VL) models for recognizing and analyzing user-uploaded images
 
 ### 5. ⏰ Scheduled & Proactive Behavior
-- **Cron Service** ([cron/](skills/builtin/core/cron/scripts/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
-- **Heartbeat Service** ([heartbeat/](heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
+- **Cron Service** ([cron/](../skills/builtin/core/cron/scripts/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
+- **Heartbeat Service** ([heartbeat/](../skills/builtin/core/heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
 ---
 
 ## 🏗️ Tech Stack
@@ -232,13 +232,13 @@ Each major subsystem has its own detailed README:
 
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
-| **Context Engine** | Dual memory system (MesMemory + Skill Memory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **MesMemory** | Short-term session message memory | [EN](context_engine/mes_memory/README.md) · [ZH](context_engine/mes_memory/README.zh.md) |
-| **Skill Memory** | Long-term knowledge graph memory | [EN](context_engine/skill_memory/README.md) · [ZH](context_engine/skill_memory/README.zh.md) |
-| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](tools/subagent/README.md) · [ZH](tools/subagent/README.zh.md) |
-| **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
-| **Heartbeat Service** | Periodic wake-up task check | [EN](heartbeat/README.md) · [ZH](heartbeat/README.zh.md) |
-| **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
+| **Context Engine** | Dual memory system (MesMemory + Skill Memory) | [EN](../context_engine/README.md) · [ZH](../context_engine/README.zh.md) |
+| **MesMemory** | Short-term session message memory | [EN](../context_engine/mes_memory/README.md) · [ZH](../context_engine/mes_memory/README.zh.md) |
+| **Skill Memory** | Long-term knowledge graph memory | [EN](../context_engine/skill_memory/README.md) · [ZH](../context_engine/skill_memory/README.zh.md) |
+| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](../tools/subagent/README.md) · [ZH](../tools/subagent/README.zh.md) |
+| **Cron Service** | Scheduled/periodic agent task execution | [EN](../skills/builtin/core/cron/scripts/README.md) · [ZH](../skills/builtin/core/cron/scripts/README.zh.md) |
+| **Heartbeat Service** | Periodic wake-up task check | [EN](../skills/builtin/core/heartbeat/README.md) · [ZH](../skills/builtin/core/heartbeat/README.zh.md) |
+| **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](../client_future/README.md) · [ZH](../client_future/README.zh.md) |
 
 ---
 

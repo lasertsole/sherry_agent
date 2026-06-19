@@ -3,10 +3,10 @@ from threading import Thread
 from typing import AsyncGenerator
 from type import MultiModalMessage
 from runtime import relation_register
-from heartbeat import heartbeat_service
 from server.service import async_generate
 from bus import InboundMessage, OutboundMessage
 from channels import BaseChannel, channel_manager
+from skills.builtin.core.heartbeat import heartbeat_service
 from server.service import process_heartbeat_task, process_heartbeat_notify
 from pub_func import string_to_unique_int, process_sse_data, check_if_image_and_convert_to_base64
 
