@@ -4,8 +4,10 @@ import json
 import time
 import uuid
 import asyncio
+import threading
 from pathlib import Path
 from loguru import logger
+from config import ROOT_DIR
 from datetime import datetime
 from models import chat_model
 from channels import channel_manager
@@ -15,10 +17,9 @@ from langchain_core.messages import HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 from typing import Any, Callable, Coroutine, Literal
 from workspace.prompt_builder import build_system_prompt
-from .types import CronJob, CronJobState, CronPayload, CronRunRecord, CronSchedule, CronStore
+from .types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
-current_dir: Path = Path(__file__).parent
-cron_store_path: Path = current_dir / "jobs.json"
+cron_store_path: Path = ROOT_DIR / "cron_jobs.json"
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -90,7 +91,6 @@ class CronService:
         if self._store and self.store_path.exists():
             mtime = self.store_path.stat().st_mtime
             if mtime != self._last_mtime:
-                logger.info("Cron: jobs.json modified externally, reloading")
                 self._store = None
         if self._store:
             return self._store
@@ -123,15 +123,6 @@ class CronService:
                             last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
                             last_status=j.get("state", {}).get("lastStatus"),
                             last_error=j.get("state", {}).get("lastError"),
-                            run_history=[
-                                CronRunRecord(
-                                    run_at_ms=r["runAtMs"],
-                                    status=r["status"],
-                                    duration_ms=r.get("durationMs", 0),
-                                    error=r.get("error"),
-                                )
-                                for r in j.get("state", {}).get("runHistory", [])
-                            ],
                         ),
                         created_at_ms=j.get("createdAtMs", 0),
                         updated_at_ms=j.get("updatedAtMs", 0),
@@ -180,15 +171,6 @@ class CronService:
                         "lastRunAtMs": j.state.last_run_at_ms,
                         "lastStatus": j.state.last_status,
                         "lastError": j.state.last_error,
-                        "runHistory": [
-                            {
-                                "runAtMs": r.run_at_ms,
-                                "status": r.status,
-                                "durationMs": r.duration_ms,
-                                "error": r.error,
-                            }
-                            for r in j.state.run_history
-                        ],
                     },
                     "createdAtMs": j.created_at_ms,
                     "updatedAtMs": j.updated_at_ms,
@@ -238,8 +220,11 @@ class CronService:
         if self._timer_task:
             self._timer_task.cancel()
 
+        if not self._running:
+            return
+
         next_wake = self._get_next_wake_ms()
-        if not next_wake or not self._running:
+        if not next_wake:
             return
 
         delay_ms = max(0, next_wake - _now_ms())
@@ -292,13 +277,8 @@ class CronService:
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = end_ms
 
-        job.state.run_history.append(CronRunRecord(
-            run_at_ms=start_ms,
-            status=job.state.last_status,
-            duration_ms=end_ms - start_ms,
-            error=job.state.last_error,
-        ))
-        job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY:]
+        # Write execution log to logs/output/cron/ instead of run_history
+        self._write_execution_log(job, start_ms, end_ms)
 
         # Handle one-shot jobs
         if job.schedule.kind == "at":
@@ -310,6 +290,35 @@ class CronService:
         else:
             # Compute next run
             job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+
+    def _write_execution_log(self, job: CronJob, start_ms: int, end_ms: int) -> None:
+        """Write job execution log to logs/output/cron/ instead of in-memory run_history."""
+        log_dir = ROOT_DIR / "logs" / "output" / "cron"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"{job.id}.log"
+        
+        from datetime import datetime
+        start_dt = datetime.fromtimestamp(start_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        end_dt = datetime.fromtimestamp(end_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        duration_ms = end_ms - start_ms
+        
+        log_entry = {
+            "timestamp": end_dt,
+            "job_id": job.id,
+            "job_name": job.name,
+            "start_time": start_dt,
+            "end_time": end_dt,
+            "duration_ms": duration_ms,
+            "status": job.state.last_status,
+            "error": job.state.last_error,
+            "message": job.payload.message,
+        }
+        
+        import json
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        
+        logger.info("Cron: execution log written to %s", log_file)
 
     # ========== Public API ==========
 
@@ -330,6 +339,19 @@ class CronService:
             delete_after_run: bool = False,
     ) -> CronJob:
         """Add a new job."""
+        # Auto-start if not running
+        if not self._running:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self.start())
+                else:
+                    loop.run_until_complete(self.start())
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.start())
+
         store = self._load_store()
         _validate_schedule_for_add(schedule)
         now = _now_ms()
@@ -361,6 +383,19 @@ class CronService:
 
     def register_system_job(self, job: CronJob) -> CronJob:
         """Register an internal system job (idempotent on restart)."""
+        # Auto-start if not running
+        if not self._running:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self.start())
+                else:
+                    loop.run_until_complete(self.start())
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.start())
+
         store = self._load_store()
         now = _now_ms()
         job.state = CronJobState(next_run_at_ms=_compute_next_run(job.schedule, now))
@@ -440,6 +475,25 @@ class CronService:
 
 cron_service = CronService()
 
+def _start_cron_service_thread():
+    """Run cron_service.start() in a dedicated daemon thread with its own event loop."""
+    global _started
+    with _start_lock:
+        if _started:
+            return
+        _started = True
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        loop.run_until_complete(cron_service.start())
+        loop.run_forever()
+    except Exception:
+        logger.exception("Cron service thread exited")
+    finally:
+        loop.close()
+
 
 async def _on_cron_job(cron_job: CronJob) -> None:
     payload: CronPayload = cron_job.payload
@@ -469,3 +523,6 @@ async def _on_cron_job(cron_job: CronJob) -> None:
     await bus.publish_inbound(msg)
 
 cron_service.set_on_job(_on_cron_job)
+_started = False
+_start_lock = threading.Lock()
+threading.Thread(target=_start_cron_service_thread, daemon=True, name="cron-service").start()

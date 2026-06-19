@@ -60,27 +60,21 @@ async def _rerank_model_func(
         for r in results
     ]
 
-_lightRAG: LightRAG | None = None
-
-
 async def get_lightrag() -> LightRAG:
     """获取 LightRAG 单例实例"""
-    working_dir: str = (SRC_DIR / "rag_anything" / "store").resolve().as_posix()
+    working_dir: str = (SRC_DIR / "rag" / "store").resolve().as_posix()
 
-    global _lightRAG
+    _lightRAG = LightRAG(
+        working_dir=working_dir,
+        llm_model_func=_llm_model_func,
+        embedding_func=EmbeddingFunc(
+            embedding_dim=1024,  # BGE-M3 模型的维度
+            max_token_size=8192,
+            func=_embedding_func,
+        ),
+        rerank_model_func=_rerank_model_func,
+    )
 
-    if _lightRAG is None:
-        _lightRAG = LightRAG(
-            working_dir=working_dir,
-            llm_model_func=_llm_model_func,
-            embedding_func=EmbeddingFunc(
-                embedding_dim=1024,  # BGE-M3 模型的维度
-                max_token_size=8192,
-                func=_embedding_func,
-            ),
-            rerank_model_func=_rerank_model_func,
-        )
-
-        await _lightRAG.initialize_storages()
+    await _lightRAG.initialize_storages()
 
     return _lightRAG

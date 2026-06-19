@@ -166,59 +166,53 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         parser: Parser name to use ("mineru", "fallback_txt", etc.)
         parse_method: Parser method ("auto", etc.)
     """
-    global _rag_anything
-    
     start_time = time.time()
+    logger.info(f"Initializing RAGAnything: parser={parser}, parse_method={parse_method}")
 
-    if _rag_anything is None:
-        logger.info(f"Initializing RAGAnything: parser={parser}, parse_method={parse_method}")
-        
-        # Auto-download and configure models
-        # Bypass system proxy to avoid SSL errors with hf-mirror.com
-        for proxy_var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
-            os.environ.pop(proxy_var, None)
+    # Auto-download and configure models
+    # Bypass system proxy to avoid SSL errors with hf-mirror.com
+    for proxy_var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+        os.environ.pop(proxy_var, None)
 
-        try:
-            ensure_mineru_models(source="huggingface")
-            logger.debug("Mineru models downloaded from HuggingFace")
-        except Exception as e:
-            logger.warning(f"Download from huggingface failed: {e}")
-            logger.info("Retrying with modelscope ...")
-            ensure_mineru_models(source="modelscope")
-            logger.debug("Mineru models downloaded from ModelScope")
+    try:
+        ensure_mineru_models(source="huggingface")
+        logger.debug("Mineru models downloaded from HuggingFace")
+    except Exception as e:
+        logger.warning(f"Download from huggingface failed: {e}")
+        logger.info("Retrying with modelscope ...")
+        ensure_mineru_models(source="modelscope")
+        logger.debug("Mineru models downloaded from ModelScope")
 
-        # Switch to local model mode
-        os.environ["MINERU_MODEL_SOURCE"] = "local"
+    # Switch to local model mode
+    os.environ["MINERU_MODEL_SOURCE"] = "local"
 
-        # Ensure .venv\Scripts is on PATH so subprocess can find "mineru" CLI
-        _venv_scripts = os.path.join(os.path.dirname(sys.executable))
-        if _venv_scripts not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = _venv_scripts + os.pathsep + os.environ.get("PATH", "")
+    # Ensure .venv\Scripts is on PATH so subprocess can find "mineru" CLI
+    _venv_scripts = os.path.join(os.path.dirname(sys.executable))
+    if _venv_scripts not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _venv_scripts + os.pathsep + os.environ.get("PATH", "")
 
-        from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_lightrag
+    from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_lightrag
 
-        lightrag = await get_lightrag()
-        logger.debug("LightRAG initialized")
+    lightrag = await get_lightrag()
+    logger.debug("LightRAG initialized")
 
-        working_dir: str = (SRC_DIR / "rag_anything" / "store").resolve().as_posix()
-        config = RAGAnythingConfig(
-            parser = parser,
-            parse_method = parse_method,
-            working_dir = working_dir,
-            parser_output_dir = str(SRC_DIR / "rag_anything/output"),
-        )
-        _rag_anything = RAGAnything(
-            lightrag = lightrag,
-            vision_model_func = _vision_model_func,
-            config = config,
-        )
-        
-        elapsed = time.time() - start_time
-        logger.info(
-            f"RAGAnything initialized successfully: duration={elapsed:.2f}s, "
-            f"parser={parser}, working_dir={config.working_dir}"
-        )
-    else:
-        logger.debug("RAGAnything instance already initialized, returning cached instance")
+    working_dir: str = (SRC_DIR / "rag" / "store").resolve().as_posix()
+    config = RAGAnythingConfig(
+        parser = parser,
+        parse_method = parse_method,
+        working_dir = working_dir,
+        parser_output_dir = str(SRC_DIR / "rag/output"),
+    )
+    _rag_anything = RAGAnything(
+        lightrag = lightrag,
+        vision_model_func = _vision_model_func,
+        config = config,
+    )
+
+    elapsed = time.time() - start_time
+    logger.info(
+        f"RAGAnything initialized successfully: duration={elapsed:.2f}s, "
+        f"parser={parser}, working_dir={config.working_dir}"
+    )
 
     return _rag_anything

@@ -771,7 +771,7 @@ self._turn_prompt: str
 ### 工具调用计数器
 
 ```python
-self._tool_call_counts: Dict[str, int] = {}
+self._tool_call_counts: dict[str, int] = {}
 ```
 
 由 `ToolLoopPrevention` 管理，每轮在 `abefore_agent` 中重置。

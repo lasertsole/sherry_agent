@@ -1,5 +1,4 @@
 from typing import Callable
-from .cron import build_cron_tool
 from langchain_core.tools import BaseTool
 from .terminal import build_terminal_tool
 from .subagent import build_subagent_tool
@@ -18,7 +17,6 @@ CORE_TOOLS_BUILDERS: list[Callable[[str | None], BaseTool]] = [
 
 MAIN_TOOLS_BUILDERS: list[Callable[[str | None], BaseTool]] = [
     *CORE_TOOLS_BUILDERS,
-    build_cron_tool,
     build_subagent_tool
 ]
 
@@ -27,8 +25,7 @@ ALL_TOOLS_BUILDERS = [
     build_memory_tool,
     build_message_search_tool,
     build_web_search_tool,
-    build_terminal_tool,
-    build_cron_tool
+    build_terminal_tool
 ]
 
 def build_core_tools(session_id: str | None = None)-> list[BaseTool]:

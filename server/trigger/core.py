@@ -107,18 +107,9 @@ async def handle_connect(websocket: WebSocketAdapter):
 
     relation_register.register_websocket(session_id=session_id, websocket=websocket)
 
-    state_register.set_state(session_id, "should_skill_memory_maintenance", False)
-
-    async def skill_memory_maintenance(session_id: str)->None:
-        if state_register.get_state(session_id, "skill_memory_maintenance", False) == True:
-            state_register.set_state(session_id, "skill_memory_maintenance", False)
-            await rectification_and_standardization(session_id)
-
     # Register skill memory maintenance(threshold = 20, minutes = 15)
-    count_register.register(session_id, "skill_memory_maintenance", skill_memory_maintenance, args={"session_id": session_id},
+    count_register.register(session_id, "skill_memory_maintenance", rectification_and_standardization, args={"session_id": session_id},
                             threshold=20)
-    timer_register.register(session_id, "skill_memory_maintenance", skill_memory_maintenance, args={"session_id": session_id},
-                            minutes = 10)
 
 @ws_handler.on_close
 async def handle_disconnect(websocket: WebSocketAdapter):

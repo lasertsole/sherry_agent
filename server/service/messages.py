@@ -203,7 +203,6 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         state_register.set_state(session_id, "current_tool_name", "")
         state_register.set_state(session_id, "current_tool_id", "")
         state_register.set_state(session_id, "answering", False)
-        state_register.set_state(session_id, "skill_memory_maintenance", True)
 
         try:
             # increase count for skill memory maintenance

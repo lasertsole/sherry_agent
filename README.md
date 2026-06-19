@@ -44,7 +44,7 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 - **Visual Understanding**: Supports Image-to-Text (VL) models for recognizing and analyzing user-uploaded images
 
 ### 5. ⏰ Scheduled & Proactive Behavior
-- **Cron Service** ([cron/](cron/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
+- **Cron Service** ([cron/](skills/builtin/core/cron/scripts/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
 - **Heartbeat Service** ([heartbeat/](heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
 ---
 
@@ -236,7 +236,7 @@ Each major subsystem has its own detailed README:
 | **MesMemory** | Short-term session message memory | [EN](context_engine/mes_memory/README.md) · [ZH](context_engine/mes_memory/README.zh.md) |
 | **Skill Memory** | Long-term knowledge graph memory | [EN](context_engine/skill_memory/README.md) · [ZH](context_engine/skill_memory/README.zh.md) |
 | **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](subagent/README.md) · [ZH](subagent/README.zh.md) |
-| **Cron Service** | Scheduled/periodic agent task execution | [EN](cron/README.md) · [ZH](cron/README.zh.md) |
+| **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat Service** | Periodic wake-up task check | [EN](heartbeat/README.md) · [ZH](heartbeat/README.zh.md) |
 | **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
 
@@ -286,7 +286,7 @@ You can also start each component manually:
 
 ```bash
 python -m server  # Start backend
-streamlit run client/core.py  # Start frontend
+streamlit run client/base.py  # Start frontend
 ```
 
 ---

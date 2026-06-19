@@ -1,6 +1,5 @@
 import asyncio
 from threading import Thread
-from cron import cron_service
 from typing import AsyncGenerator
 from type import MultiModalMessage
 from runtime import relation_register
@@ -71,8 +70,6 @@ def _run() -> None:
 
     # Start heartbeat service
     asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)
-    # Start cron service
-    asyncio.run_coroutine_threadsafe(cron_service.start(), event_loop)
     # Start channel manager (internally calls run_forever)
     channel_manager.start_service()
 

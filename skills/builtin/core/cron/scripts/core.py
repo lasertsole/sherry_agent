@@ -1,82 +1,33 @@
 from datetime import datetime
-from langchain.tools import BaseTool
-from typing import Any, Type, Literal
-from cron.core import CronService, cron_service
-from cron.types import CronSchedule, CronJob, CronJobState
-from pydantic import BaseModel, Field, PrivateAttr, validate_call
+from pydantic import Field, validate_call
+from skills.builtin.core.cron.scripts.base import cron_service, CronService
+from skills.builtin.core.cron.scripts.types import CronSchedule, CronJob, CronJobState
 
-
-class CronInput(BaseModel):
-    action: Literal["add", "list", "remove", "set_context"] = Field(..., description="Action to perform: 'add', 'list', 'remove', or 'set_context'(set receiver's channel and chat_id in context)")
-    name: str| None = Field(None, description="Optional short human-readable label for the job (e.g., 'weather-monitor', 'daily-standup'). Defaults to first 30 chars of message.")
-    message: str | None = Field(None, description="Reminder message (for add)")
-    every_seconds: int | None = Field(None, description="Interval in seconds (for recurring tasks)")
-    cron_expr: str | None = Field(None, description="Cron expression like '0 9 * * *'")
-    tz: str | None = Field(None, description="IANA timezone (e.g. 'America/Vancouver')")
-    at: str | None = Field(None, description="ISO datetime (e.g. '2026-02-12T10:30:00')")
-    job_id: str | None = Field(None, description="Job ID (for remove)")
-    deliver: bool | None = Field(None, description="Whether to deliver the execution result to the user channel (default true)")
-    channel: str | None = Field(None, description="Channel to send the execution result to, when chat_id is no empty, channel must be no empty")
-    chat_id: str | None = Field(None, description="Chat to send the execution result to, when channel is no empty, chat_id must be no empty")
-
-class CronTool(BaseTool):
-    name: str = "cron"
-    description: str = "Schedule reminders and recurring tasks. Actions: add, list, remove or set_context."
-    args_schema: Type[BaseModel] = CronInput
-
-    _cron: CronService = PrivateAttr()
-    _channel: str | None = PrivateAttr(default=None)
-    _chat_id: str | None = PrivateAttr(default=None)
+class Cron:
+    _cronService: CronService
+    _instance: "Cron | None" = None
+    _channel: str | None = None
+    _chat_id: str | None = None
     _default_timezone: str = "UTC"
 
-    def _set_context(self,  channel: str, chat_id: str) -> None:
+    def __new__(cls) -> "Cron":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -> None:
+        if not hasattr(self, "_cronService"):
+            self._cronService = cron_service
+
+    @validate_call
+    def set_context(
+            self,
+        channel: str = Field(min_length=1),
+        chat_id: str = Field(min_length=1)
+    ) -> None:
         """Set the current session context for delivery."""
         self._channel = channel
         self._chat_id = chat_id
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        self._cron = cron_service
-
-    def _run(self, **kwargs: Any) -> str:
-        import asyncio
-        return asyncio.run(self._arun(**kwargs))
-
-    @validate_call
-    async def _arun(
-        self,
-        action: str,
-        name: str | None = None,
-        message: str = "",
-        every_seconds: int | None = None,
-        cron_expr: str | None = None,
-        tz: str | None = None,
-        at: str | None = None,
-        job_id: str | None = None,
-        deliver: bool = True,
-        channel: str | None = None,
-        chat_id: str | None = None,
-        **kwargs: Any,
-    ) -> str:
-        match action:
-            case "add":
-                return self._add_job(name, message, every_seconds, cron_expr, tz, at, deliver)
-            case "list":
-                return self._list_jobs()
-            case "remove":
-                return self._remove_job(job_id)
-            case "set_context":
-                if (
-                        channel is None
-                        or channel == ""
-                        or chat_id is None
-                        or chat_id == ""
-                ):
-                    return "channel and chat_id are both required"
-                self._set_context(channel=channel, chat_id=chat_id)
-                return "Session context set"
-            case _:
-                return f"Unknown action: {action}"
 
     @staticmethod
     def _validate_timezone(tz: str) -> str | None:
@@ -99,7 +50,8 @@ class CronTool(BaseTool):
         dt = datetime.fromtimestamp(ms / 1000, tz=ZoneInfo(tz_name))
         return f"{dt.isoformat()} ({tz_name})"
 
-    def _add_job(
+    @validate_call
+    def add_job(
         self,
         name: str | None,
         message: str,
@@ -145,7 +97,7 @@ class CronTool(BaseTool):
         else:
             return "Error: either every_seconds, cron_expr, or at is required"
 
-        job = self._cron.add_job(
+        job = self._cronService.add_job(
             name=name or message[:30],
             schedule=schedule,
             message=message,
@@ -196,8 +148,9 @@ class CronTool(BaseTool):
             return "Dream memory consolidation for long-term memory."
         return "System-managed internal job."
 
-    def _list_jobs(self) -> str:
-        jobs = self._cron.list_jobs()
+    @validate_call
+    def list_jobs(self) -> str:
+        jobs = self._cronService.list_jobs()
         if not jobs:
             return "No scheduled jobs."
         lines = []
@@ -211,14 +164,15 @@ class CronTool(BaseTool):
             lines.append("\n".join(parts))
         return "Scheduled jobs:\n" + "\n".join(lines)
 
-    def _remove_job(self, job_id: str | None) -> str:
+    @validate_call
+    def remove_job(self, job_id: str | None) -> str:
         if not job_id:
             return "Error: job_id is required for remove"
-        result = self._cron.remove_job(job_id)
+        result = self._cronService.remove_job(job_id)
         if result == "removed":
             return f"Removed job {job_id}"
         if result == "protected":
-            job = self._cron.get_job(job_id)
+            job = self._cronService.get_job(job_id)
             if job and job.name == "dream":
                 return (
                     "Cannot remove job `dream`.\n"
@@ -231,7 +185,4 @@ class CronTool(BaseTool):
             )
         return f"Job {job_id} not found"
 
-def build_cron_tool(session_id: str | None = None) -> CronTool:
-    tool: CronTool = CronTool()
-    tool.handle_tool_error = True
-    return tool
+cron = Cron()
