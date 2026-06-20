@@ -8,6 +8,7 @@ ENV_PATH = ROOT_DIR / ".env"
 
 INTERPRETER_PATH = ROOT_DIR / ".venv/Scripts/python"
 CONTEXT_ENGINE_PATH = ROOT_DIR / "context_engine"
+PLUGINS_PATH = ROOT_DIR / "plugins"
 
 SRC_DIR = ROOT_DIR / "src"
 

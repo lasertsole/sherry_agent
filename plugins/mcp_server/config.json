@@ -1,0 +1,7 @@
+{
+    "calculator": {
+        "transport": "stdio",
+        "command": "$sys.executable",
+        "args": ["$here/../../tests/mcp_server.py"]
+    }
+}
