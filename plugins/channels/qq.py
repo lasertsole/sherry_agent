@@ -1,7 +1,7 @@
 """QQ channel implementation using botpy SDK."""
 
-import asyncio
 import time
+import asyncio
 from loguru import logger
 from pydantic import Field
 from collections import deque

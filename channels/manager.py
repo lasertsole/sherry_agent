@@ -1,10 +1,9 @@
 """Channel manager for coordinating chat channels."""
 import json
 import asyncio
-from pathlib import Path
 from loguru import logger
-from config import ROOT_DIR
 from .base import BaseChannel
+from config import PLUGINS_PATH
 from bus.queue import MessageBus
 from asyncio import AbstractEventLoop
 from typing import Any, Callable, Awaitable
@@ -70,7 +69,7 @@ class ChannelManager:
 
     def __init__(self, config: dict[str, str] | None = None,  bus: MessageBus | None = None):
         if config is None:
-            channels_json = Path(ROOT_DIR) / "channels.json"
+            channels_json = PLUGINS_PATH / "channels/config.json"
             if not channels_json.exists():
                 return
 
