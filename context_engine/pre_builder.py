@@ -13,7 +13,7 @@ def build_mixed_query(query: str, turns_of_history: str = "") -> str:
         turns_of_history: Conversation history context (optional)
 
     Returns:
-        str: Rewritten query text
+        str: Rewritten query text, or empty string if the query is purely casual chat (no task intent)
     """
 
     if query is None or not query.strip():
@@ -38,6 +38,7 @@ def build_mixed_query(query: str, turns_of_history: str = "") -> str:
     - IMPORTANT: Must NEVER return empty. Always return either the rewritten query or the original query.
     - Keep the query concise but information-rich
     - Return ONLY the rewritten query text, no JSON, no explanations
+    - CRITICAL: If the user's current query (and historical context) is purely casual chat — greetings, farewells, small talk, filler phrases like "ok", "got it", "haha", "I see", "lol", "good night", "thank you", emoji reactions, etc. that expects no substantive response beyond social pleasantry — then return rewritten_query as empty string "" to indicate no rewriting is needed. Do NOT rewrite casual chat into a task query.
 
     ### Query Rewriting Examples (all with multi-turn history):
 
@@ -197,10 +198,10 @@ def build_mixed_query(query: str, turns_of_history: str = "") -> str:
     ]
 
     response = simple_chat_model.invoke(messages)
-    mixed_query = response.content.strip() if response.content else query
+    mixed_query = response.content.strip() if response.content is not None else query
 
-    # Ensure result is not empty
+    # If LLM explicitly returned empty string (casual chat marker), propagate it
     if not mixed_query:
-        mixed_query = query
+        return mixed_query
 
     return mixed_query

@@ -16,23 +16,36 @@ class ContextEngineHook(AgentMiddleware):
         self._turn_prompt: str = ""
 
     async def _build_turn_prompt(self, query_text: str) -> None:
+        query_text = query_text.strip()
+
+        if query_text == "":
+            self._turn_prompt = ""
+            return None
+
         # Retrieve recent conversation turns
         recent_messages_addition: str = retrieve_history_by_last_n_prompt(session_id=self._session_id)
 
         # Build an enriched query with more informative features using recent history and the original query
         transformer_query_text: str = build_mixed_query(turns_of_history=recent_messages_addition, query=query_text)
+        transformer_query_text = transformer_query_text.strip()
 
-        # Retrieve graph-memory system prompt augmentation
-        assemble_result: dict[str, str] = await assemble(user_text=transformer_query_text)
-        skill_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
 
-        # Build structured user message separating the original query from RAG context
-        structured_content: str = textwrap.dedent(f"""\
-            {skill_system_prompt_addition}\n\n
-            Using the reference materials above (note: they may contain inaccuracies, so use them critically), answer the user's question naturally, as if this knowledge is already yours. Do NOT mention, quote, or refer to any "reference materials", "context", "memory", or the fact that you were given additional information. Respond in the same tone and style you always use — the user should never sense that external context was injected.\n\n
-        """)
+        if transformer_query_text != "":
+            # Retrieve graph-memory system prompt augmentation
+            assemble_result: dict[str, str] = await assemble(user_text=transformer_query_text)
+            skill_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
 
-        self._turn_prompt = structured_content
+            # Build structured user message separating the original query from RAG context
+            structured_content: str = textwrap.dedent(f"""\
+                {skill_system_prompt_addition}\n\n
+                Using the reference materials above (note: they may contain inaccuracies, so use them critically), answer the user's question naturally, as if this knowledge is already yours. Do NOT mention, quote, or refer to any "reference materials", "context", "memory", or the fact that you were given additional information. Respond in the same tone and style you always use — the user should never sense that external context was injected.\n\n
+            """)
+
+            self._turn_prompt = structured_content
+        else:
+            self._turn_prompt = ""
+
+        return None
 
     async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         state_mes_list: list[BaseMessage] = state["messages"]
@@ -49,7 +62,7 @@ class ContextEngineHook(AgentMiddleware):
         query: str | dict[str, Any] | list[dict[str, Any]] = getattr(last_mes, "content", None)
 
         if query is None:
-            return None
+            pass
         elif isinstance(query, list):
             query_text: str | None = None
             target_item: dict[str, Any] | None = None
@@ -83,7 +96,7 @@ class ContextEngineHook(AgentMiddleware):
             # Prepend the turn prompt to the user input
             last_mes.content = self._turn_prompt + query_text
 
-            return None
+        return None
 
     async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         # Get the formatted message list of the last conversation turn
