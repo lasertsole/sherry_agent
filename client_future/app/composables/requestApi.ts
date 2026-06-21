@@ -4,7 +4,7 @@ import type { Response } from "~/types/response";
 interface Params {
     url: NitroFetchRequest;
     opts?: { [key: string]: any } | FormData;
-    method?: 'get' | 'post' | 'put' | 'delete';
+    method?: 'get' | 'post' | 'put' | 'patch' | 'delete';
     contentType?: 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data';
     lazy?: boolean;
     headeropts?: { [key: string]: any };
