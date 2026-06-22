@@ -1,5 +1,5 @@
 import textwrap
-from models import simple_chat_model
+from models import auxiliary_llm
 from config import ASSISTANT_NAME, USER_NAME
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -197,7 +197,7 @@ def build_mixed_query(query: str, turns_of_history: str = "") -> str:
         ))
     ]
 
-    response = simple_chat_model.invoke(messages)
+    response = auxiliary_llm.invoke(messages)
     mixed_query = response.content.strip() if response.content is not None else query
 
     # If LLM explicitly returned empty string (casual chat marker), propagate it

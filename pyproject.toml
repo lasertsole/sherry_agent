@@ -49,4 +49,4 @@ dev = [
 ]
 
 [tool.uv.sources]
-editdistance = { path = "models/SST_model/editdistance-0.8.1-py3-none-any.whl" }
+editdistance = { path = "models/STT_model/editdistance-0.8.1-py3-none-any.whl" }

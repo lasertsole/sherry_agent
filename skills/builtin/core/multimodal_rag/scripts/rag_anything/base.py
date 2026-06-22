@@ -9,7 +9,7 @@ if _project_root not in sys.path:
 from config.path import SRC_DIR
 from lightrag.utils import EmbeddingFunc
 from lightrag import LightRAG, QueryParam
-from models import embed_model, simple_chat_model
+from models import embed_model, auxiliary_llm
 from models.reranker_model import reranker_model
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -26,7 +26,7 @@ async def _llm_model_func(
     history_messages: list = None,
     **kwargs,
 ) -> str:
-    """将本地 simple_chat_model 适配为 LightRAG 需要的格式"""
+    """将本地 auxiliary_llm 适配为 LightRAG 需要的格式"""
     messages = []
     if system_prompt:
         messages.append(SystemMessage(content=system_prompt))
@@ -34,7 +34,7 @@ async def _llm_model_func(
         messages.extend(history_messages)
     messages.append(HumanMessage(content=prompt))
 
-    response = await simple_chat_model.ainvoke(messages)
+    response = await auxiliary_llm.ainvoke(messages)
     return response.content
 
 async def _embedding_func(texts: list[str]) -> np.ndarray:

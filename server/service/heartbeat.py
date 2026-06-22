@@ -2,7 +2,7 @@ import json
 from typing import Any
 from pathlib import Path
 from loguru import logger
-from models import chat_model
+from models import main_llm
 from config import PLUGINS_PATH
 from bus import OutboundMessage
 from tools import build_core_tools
@@ -21,7 +21,7 @@ async def process_heartbeat_task(task: str) -> str:
         graph_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
 
         agent: CompiledStateGraph = create_agent(
-            model=chat_model,
+            model=main_llm,
             tools=build_core_tools(),
         )
 

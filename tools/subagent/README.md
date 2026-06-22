@@ -152,7 +152,7 @@ _run_subagent(session_id, task_id, task, label)
 | Component | Details |
 |-----------|---------|
 | **System Prompt** | Comprehensive guidance on task decomposition, parallelization rules, todo format, and dynamic plan adjustment |
-| **Model** | `chat_model` (shared across the agent system) |
+| **Model** | `main_llm` (shared across the agent system) |
 | **Checkpointer** | `InMemorySaver` — preserves conversation state within the session |
 | **Tools** | `todo_writer` + `worker` |
 | **Middlewares** | `SummarizationMiddleware` (trigger at 15 messages, keep 8) + `todo_injector` (pre-model) + `todo_cleaner` (post-agent) |
@@ -213,7 +213,7 @@ The Commander's persona is an "intelligent task commander" that:
 
 - **Trigger**: When message count exceeds 15.
 - **Keep**: Reduces to 8 most recent messages.
-- **Model**: Uses the same `chat_model` for summarization.
+- **Model**: Uses the same `main_llm` for summarization.
 
 ## SubagentTool (External Interface)
 
@@ -307,7 +307,7 @@ Results pass through the `MessageBus` as an `InboundMessage` with `injected_even
 | Layer | Technology |
 |-------|-----------|
 | Agent Framework | [LangGraph](https://github.com/langchain-ai/langgraph) (`CompiledStateGraph`) |
-| LLM | `chat_model` (shared project model, configurable via `.env`) |
+| LLM | `main_llm` (shared project model, configurable via `.env`) |
 | Checkpointing | `InMemorySaver` (memory-based, within session) |
 | Middleware | `@before_model` / `@after_agent` decorators (`langchain.agents.middleware`) |
 | Async | `asyncio.create_task`, `asyncio.gather`, `asyncio.wait_for` |

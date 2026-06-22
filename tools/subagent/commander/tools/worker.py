@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 from pathlib import Path
 from loguru import logger
-from models import chat_model
+from models import main_llm
 from config import SESSIONS_DIR
 from skills import get_skills_text
 from ...type import SubAgentOutput
@@ -103,11 +103,11 @@ class Worker(BaseTool):
 
                 agent: CompiledStateGraph = create_agent(
                     system_prompt=system_prompt,
-                    model=chat_model,
+                    model=main_llm,
                     tools=build_core_tools(self._session_id),
                     middleware=[
                         SummarizationMiddleware(
-                            model=chat_model,
+                            model=main_llm,
                             trigger=("messages", 20),
                             keep=("messages", 10),
                         ),

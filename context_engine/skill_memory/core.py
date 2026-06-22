@@ -9,7 +9,7 @@ from typing import TypedDict, Any
 from pub_func import slice_last_turn
 from .async_task_queue import async_task_queue
 from langchain_core.embeddings import Embeddings
-from models import simple_chat_model, embed_model
+from models import auxiliary_llm, embed_model
 from .type import GmConfig, GmNode, ExtractionResult
 from langchain_core.messages import BaseMessage, ToolMessage
 from .format import sanitize_tool_use_result_pairing, assemble_context
@@ -35,7 +35,7 @@ DEFAULT_CONFIG: GmConfig = GmConfig(
     pagerank_damping = 0.85,
     pagerank_iterations = 20,
     embedding = embed_model,
-    llm = simple_chat_model
+    llm = auxiliary_llm
 )
 
 db = get_db()

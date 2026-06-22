@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 from loguru import logger
 from config import HEARTBEAT_PATH
-from models import simple_chat_model
+from models import auxiliary_llm
 from .evaluate import evaluate_response
 from typing import Any, Callable, Coroutine
 
@@ -74,7 +74,7 @@ class HeartbeatService:
         Returns (action, tasks) where action is 'skip' or 'run'.
         """
         from pub_func import current_time_str
-        response = simple_chat_model.bind_tools(_HEARTBEAT_TOOL).invoke([
+        response = auxiliary_llm.bind_tools(_HEARTBEAT_TOOL).invoke([
             {"role": "system", "content": "You are a heartbeat agent. Call the heartbeat tool to report your decision."},
             {"role": "user", "content": (
                 f"Current Time: {current_time_str(self.timezone)}\n\n"

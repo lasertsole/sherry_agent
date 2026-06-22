@@ -11,11 +11,11 @@ current_dir = Path(__file__).parent.resolve()
 
 # 加载环境变量
 load_dotenv(ENV_PATH, override = True)
-api_key = os.getenv("CHAT_API_KEY")
-api_name = os.getenv("CHAT_API_NAME")
-model_provider = os.getenv("CHAT_MODEL_PROVIDER")
-api_base = os.getenv("CHAT_API_BASE")
-max_tokens = os.getenv("CHAT_MAX_TOKEN")
+api_key = os.getenv("MAIN_LLM_API_KEY")
+api_name = os.getenv("MAIN_LLM_NAME")
+model_provider = os.getenv("MAIN_LLM_PROVIDER")
+api_base = os.getenv("MAIN_LLM_API_BASE")
+max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
 if max_tokens:
     max_tokens = min(int(max_tokens), 65536)
 
@@ -30,8 +30,8 @@ model_config:dict[str, Any] = {
     "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2} # 设置模型上下文窗口大小
 }
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
-chat_model = init_chat_model(**model_config) #生成模型对象
-chat_model = chat_model.configurable_fields(
+main_llm = init_chat_model(**model_config) #生成模型对象
+main_llm = main_llm.configurable_fields(
     temperature=ConfigurableField(
         id="temperature",
     )

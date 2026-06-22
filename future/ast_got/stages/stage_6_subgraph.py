@@ -1,7 +1,7 @@
 import textwrap
 from typing import Any
 from loguru import logger
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 
@@ -244,7 +244,7 @@ class SubgraphStage:
             - name: short snake_case identifier capturing the subgraph's essence (e.g. "core_empirical_evidence")
             - description: one or two sentences explaining what this subgraph means for the research question
             """))
-            result = simple_chat_model.with_structured_output(SubgraphLabel).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(SubgraphLabel).invoke([prompt])
             if isinstance(result, SubgraphLabel) and result.name:
                 return result
         except Exception as e:

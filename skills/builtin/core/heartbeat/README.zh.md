@@ -173,6 +173,6 @@ heartbeat_service.stop()
 | 组件 | 技术 |
 |------|------|
 | 运行时 | Python asyncio |
-| LLM 决策 | `simple_chat_model`（bind_tools） |
+| LLM 决策 | `auxiliary_llm`（bind_tools） |
 | 文件读取 | pathlib |
 | 配置 | `config.HEARTBEAT_PATH` |

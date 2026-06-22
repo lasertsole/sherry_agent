@@ -1,7 +1,7 @@
 import datetime
 from typing import Any
 from loguru import logger
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 
@@ -321,7 +321,7 @@ Write a concise 3-5 sentence executive summary covering:
 2. Key findings from the extracted subgraphs
 3. Main conclusions and their confidence level
 """)
-            result = simple_chat_model.with_structured_output(ExecutiveSummary).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(ExecutiveSummary).invoke([prompt])
             if isinstance(result, ExecutiveSummary) and result.summary:
                 return result.summary
         except Exception as e:
@@ -388,7 +388,7 @@ Write a 3-8 sentence analysis paragraph that:
 3. Draws meaningful conclusions relevant to the research context
 4. Notes any supporting evidence structures
 """)
-            result = simple_chat_model.with_structured_output(SectionAnalysis).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(SectionAnalysis).invoke([prompt])
             if isinstance(result, SectionAnalysis) and result.content:
                 # Extract citations from the AI output (hypothesis nodes)
                 # This keeps the citation collection working for the bibliography
@@ -460,7 +460,7 @@ Write a 3-6 sentence synthesis paragraph that:
 3. Highlights novel insights that emerge from the cross-disciplinary connections
 4. Suggests implications that span across traditional disciplinary boundaries
 """)
-            result = simple_chat_model.with_structured_output(InterdisciplinaryInsight).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(InterdisciplinaryInsight).invoke([prompt])
             if isinstance(result, InterdisciplinaryInsight) and result.insight:
                 return result.insight
         except Exception as e:
@@ -512,7 +512,7 @@ Generate a 3-6 sentence analysis that:
 3. Suggests promising research directions to fill these gaps
 4. Highlights areas where additional evidence would strengthen conclusions
 """)
-            result = simple_chat_model.with_structured_output(GapsAnalysis).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(GapsAnalysis).invoke([prompt])
             if isinstance(result, GapsAnalysis) and result.content:
                 return result.content
         except Exception as e:

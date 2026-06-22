@@ -6,7 +6,7 @@ import sqlite3
 from loguru import logger
 import concurrent.futures
 from typing import Any, Type
-from models import chat_model
+from models import main_llm
 from pub_func import run_async
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field, validate_call
@@ -184,7 +184,7 @@ async def _summarize(
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = chat_model.invoke([
+            response = main_llm.invoke([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ])

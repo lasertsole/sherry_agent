@@ -1,7 +1,7 @@
 import datetime
 from typing import Any
 from loguru import logger
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from tests import calculate_semantic_overlap
 from langchain_core.messages import HumanMessage
@@ -252,7 +252,7 @@ Adjustment guidelines:
 Return adjusted thresholds (0-1) and your reasoning.
 """)
 
-            result = simple_chat_model.with_structured_output(ThresholdSuggestion).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(ThresholdSuggestion).invoke([prompt])
             if isinstance(result, ThresholdSuggestion):
                 return (result.pruning_threshold, result.impact_threshold, result.merging_threshold)
         except Exception as e:
@@ -301,7 +301,7 @@ For each node:
 Consider the node's content, uniqueness, and relevance to the research question.
 """)
 
-                result = simple_chat_model.with_structured_output(list[PruningDecision]).invoke([prompt])
+                result = auxiliary_llm.with_structured_output(list[PruningDecision]).invoke([prompt])
 
                 if isinstance(result, list):
                     for i, d in enumerate(result):
@@ -358,7 +358,7 @@ A valid merge requires:
 Return should_merge and reasoning.
 """)
 
-            result = simple_chat_model.with_structured_output(MergeJudgment).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(MergeJudgment).invoke([prompt])
             if isinstance(result, MergeJudgment) and result.should_merge:
                 # 由规则决定保留哪个节点（更可靠的评分机制）
                 conf1 = sum(d1.get("confidence", [0.5])) / max(len(d1.get("confidence", [0.5])), 1)
@@ -421,7 +421,7 @@ Requirements:
 - merged_description: Synthesized content preserving all unique insights
 """)
 
-            result = simple_chat_model.with_structured_output(NodeFusion).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(NodeFusion).invoke([prompt])
 
             if isinstance(result, NodeFusion):
                 if result.merged_label and len(result.merged_label) <= 150:

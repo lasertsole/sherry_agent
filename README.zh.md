@@ -146,11 +146,11 @@ EMA_AI_agent/
 │
 ├── models/                 # 模型封装
 │   ├── chat_model.py       # 聊天模型 (LangChain BaseChatModel)
-│   ├── simple_chat_model.py # 轻量聊天模型
+│   ├── auxiliary_llm.py # 轻量聊天模型
 │   ├── reasoner_model.py   # 推理模型 (思维链)
 │   ├── VTTT_model.py       # 视频-文本-文本模型
 │   ├── ITT_model.py        # 图像-文本模型
-│   ├── SST_model/          # 语音-文本模型
+│   ├── STT_model/          # 语音-文本模型
 │   ├── embed_model/        # 文本嵌入模型
 │   ├── reranker_model/     # 交叉编码重排序器
 │   ├── extract_model/      # 实体提取模型
@@ -271,7 +271,7 @@ uv sync
 
 ```bash
 cp .env.example .env
-# 编辑 .env 文件，配置 CHAT_API_KEY, GPT_SOVITS_DIR 等
+# 编辑 .env 文件，配置 MAIN_LLM_API_KEY, GPT_SOVITS_DIR 等
 ```
 
 ### 4. 启动服务

@@ -1,6 +1,6 @@
 import time
 from loguru import logger
-from models import chat_model
+from models import main_llm
 from pydantic import BaseModel
 from skills import build_skills_snapshot
 from langgraph.types import Checkpointer
@@ -38,7 +38,7 @@ def built_agent(
         f"temperature={temperature}, enable_tool={enable_tool}"
     )
 
-    model = chat_model.bind(temperature=temperature)
+    model = main_llm.bind(temperature=temperature)
 
     if checkpointer is None:
         checkpointer = InMemorySaver()
@@ -58,7 +58,7 @@ def built_agent(
             MultimodalProcessor(session_id=session_id),
             ContextEngineHook(session_id=session_id),
             Summarization(
-                model=chat_model,
+                model=main_llm,
                 session_id=session_id,
                 trigger=[
                     ("fraction", 0.5),

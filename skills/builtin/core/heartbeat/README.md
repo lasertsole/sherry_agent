@@ -173,6 +173,6 @@ Defaults to `True` (notify) on failure, ensuring important messages are never si
 | Component | Technology |
 |-----------|-----------|
 | Runtime | Python asyncio |
-| LLM Decision | `simple_chat_model` (bind_tools) |
+| LLM Decision | `auxiliary_llm` (bind_tools) |
 | File I/O | pathlib |
 | Configuration | `config.HEARTBEAT_PATH` |

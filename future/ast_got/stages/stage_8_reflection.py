@@ -1,6 +1,6 @@
 from typing import Any
 from loguru import logger
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 from future.ast_got.models.graph import AGoTGraph
@@ -497,7 +497,7 @@ Generate:
    multiple audit dimensions and explains what they collectively imply
 """)
 
-            result = simple_chat_model.with_structured_output(HolisticAssessment).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(HolisticAssessment).invoke([prompt])
             if isinstance(result, HolisticAssessment) and result.summary:
                 return {"summary": result.summary, "assessment": result.assessment}
         except Exception as e:
@@ -537,7 +537,7 @@ For each area that needs improvement (especially warnings and failures), suggest
 Return up to 5 improvement suggestions.
 """)
 
-            result = simple_chat_model.with_structured_output(list[ImprovementSuggestion]).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(list[ImprovementSuggestion]).invoke([prompt])
             if isinstance(result, list):
                 suggestions = []
                 for item in result:

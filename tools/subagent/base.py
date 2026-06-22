@@ -2,7 +2,7 @@ import uuid
 import asyncio
 from pathlib import Path
 from loguru import logger
-from models import chat_model
+from models import main_llm
 from .type import SubAgentOutput
 from .commander import build_commander
 from skills.loader import get_skills_text
@@ -201,7 +201,7 @@ class SubagentManager:
                     + '\n\nPlease convey the results to the user in a tone that matches the character persona, and tell user where result is.'
                 ), HumanMessage(content=msg.content)]
 
-                res_msg: AIMessage = chat_model.invoke(messages)
+                res_msg: AIMessage = main_llm.invoke(messages)
                 msg.content = res_msg.content
 
                 # 返回结果

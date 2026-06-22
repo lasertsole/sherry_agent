@@ -146,11 +146,11 @@ EMA_AI_agent/
 │
 ├── models/                 # Model wrappers
 │   ├── chat_model.py       # Chat model (LangChain BaseChatModel)
-│   ├── simple_chat_model.py # Lightweight chat model
+│   ├── auxiliary_llm.py # Lightweight chat model
 │   ├── reasoner_model.py   # Reasoner model (chain-of-thought)
 │   ├── VTTT_model.py       # Video-Text-to-Text model
 │   ├── ITT_model.py        # Image-to-Text model
-│   ├── SST_model/          # Speech-to-Text model
+│   ├── STT_model/          # Speech-to-Text model
 │   ├── embed_model/        # Text embedding model
 │   ├── reranker_model/     # Cross-encoder reranker
 │   ├── extract_model/      # Entity extraction model
@@ -269,7 +269,7 @@ Copy the `.env` example and fill in your API Keys (DeepSeek, OpenAI, etc.) and T
 
 ```bash
 cp .env.example .env
-# Edit .env to configure CHAT_API_KEY, GPT_SOVITS_DIR, etc.
+# Edit .env to configure MAIN_LLM_API_KEY, GPT_SOVITS_DIR, etc.
 ```
 
 ### 4. Start Services

@@ -39,7 +39,7 @@ class DecompositionStage:
         )
 
         chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
-        invoker: RunnableSerializable = chat_prompt | simple_chat_model.with_structured_output(DimensionPlan)
+        invoker: RunnableSerializable = chat_prompt | auxiliary_llm.with_structured_output(DimensionPlan)
 
         result: DimensionPlan = invoker.invoke({
             "query": query,

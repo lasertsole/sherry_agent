@@ -9,7 +9,7 @@ from pathlib import Path
 from loguru import logger
 from config import ROOT_DIR
 from datetime import datetime
-from models import chat_model
+from models import main_llm
 from channels import channel_manager
 from langchain.agents import create_agent
 from bus import MessageBus, InboundMessage
@@ -505,7 +505,7 @@ async def _on_cron_job(cron_job: CronJob) -> None:
 
     agent: CompiledStateGraph = create_agent(
         system_prompt = build_system_prompt(),
-        model = chat_model,
+        model = main_llm,
         tools = build_core_tools(),
     )
 

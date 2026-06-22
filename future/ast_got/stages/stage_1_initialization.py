@@ -2,7 +2,7 @@ import datetime
 from typing import Any
 from tests import Node
 from loguru import logger
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from future.ast_got.models.graph import AGoTGraph
 from langchain_core.runnables import RunnableSerializable
@@ -59,7 +59,7 @@ class InitializationStage:
 
         chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
 
-        invoker: RunnableSerializable = chat_prompt | simple_chat_model.with_structured_output(DomainExtraction)
+        invoker: RunnableSerializable = chat_prompt | auxiliary_llm.with_structured_output(DomainExtraction)
 
         result: DomainExtraction = invoker.invoke({"query": query})
 

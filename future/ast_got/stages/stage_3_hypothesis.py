@@ -2,7 +2,7 @@ import random
 import datetime
 from typing import Any
 from loguru import logger
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from tests.ast_got.models.node import Node
 from tests.ast_got.models.edge import Edge
@@ -48,7 +48,7 @@ class HypothesisStage:
         )
 
         chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
-        invoker: RunnableSerializable = chat_prompt | simple_chat_model.with_structured_output(HypothesisPlan)
+        invoker: RunnableSerializable = chat_prompt | auxiliary_llm.with_structured_output(HypothesisPlan)
 
         result: HypothesisPlan = invoker.invoke({
             "query": query,

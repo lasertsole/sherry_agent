@@ -1,5 +1,5 @@
 from loguru import logger
-from models import simple_chat_model
+from models import auxiliary_llm
 
 _EVALUATE_SYSTEM_PROMPT = (
     "You are a notification gate for a background agent. "
@@ -45,7 +45,7 @@ def evaluate_response(response: str, task_context: str)-> bool:
     that important messages are never silently dropped.
     """
     try:
-        llm_response = simple_chat_model.bind_tools(_EVALUATE_TOOL).invoke([
+        llm_response = auxiliary_llm.bind_tools(_EVALUATE_TOOL).invoke([
             {"role": "system", "content": _EVALUATE_SYSTEM_PROMPT},
             {"role": "user", "content": (
                 f"## Original task\n{task_context}\n\n"

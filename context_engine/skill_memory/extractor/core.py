@@ -5,7 +5,7 @@ skill_memory — Knowledge Graph Extraction Engine
 import json
 from ..type import GmNode
 from typing import Literal
-from models import chat_model
+from models import main_llm
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -256,7 +256,7 @@ class Extractor:
         structured_llm = ChatPromptTemplate.from_messages([
             ("system", EXTRACT_SYS),  # 假设 EXTRACT_SYS 是你的系统提示词字符串
             ("human", "{user_input}")
-        ]) | chat_model.with_structured_output(ExtractionResult)
+        ]) | main_llm.with_structured_output(ExtractionResult)
 
         return structured_llm.invoke({"user_input": extract_user_prompt(msgs, ", ".join(existing_names))})
 
@@ -272,7 +272,7 @@ class Extractor:
         Returns:
             包含升级技能、新边和失效节点的结果
         """
-        return chat_model.with_structured_output(FinalizeResult, method='json_mode').invoke(
+        return main_llm.with_structured_output(FinalizeResult, method='json_mode').invoke(
             [SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))],
             max_tokens=16384
         )
