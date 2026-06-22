@@ -1,6 +1,5 @@
 import json
 from typing import Any
-from threading import Thread
 from channels import channel_manager
 from runtime import relation_register
 from tools.subagent.base import subagent_manager
@@ -24,15 +23,5 @@ async def _process_subagent_notify(msg: InboundMessage):
         await websocket.send_text(json.dumps(res))
 
 """End subagent notification handler"""
-def _run() -> None:
-    event_loop = subagent_manager.get_event_loop()
-    subagent_manager.set_consumer(_process_subagent_notify)
-    subagent_manager.start_service()
-
-    try:
-        event_loop.run_forever()
-    except Exception:
-        pass
-
-_subagent_thread: Thread = Thread(target=_run, daemon=True)
-_subagent_thread.start()
+subagent_manager.set_consumer(_process_subagent_notify)
+subagent_manager.start_service()

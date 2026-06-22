@@ -170,10 +170,16 @@ def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
     # lazy import to avoid circular dependency: subagent -> agent -> tools -> subagent
     from agent.middlewares.tool_call_normalize import ToolCallNormalize
 
+    # Create InMemorySaver here so its internal lock binds to the
+    # event loop that is active when build_commander is called
+    # (the subagent's dedicated loop), avoiding "bound to a different
+    # event loop" errors during agent.ainvoke().
+    _checkpointer = InMemorySaver()
+
     agent: CompiledStateGraph = create_agent(
         system_prompt=_system_prompt,
         model = main_llm,
-        checkpointer = InMemorySaver(),
+        checkpointer = _checkpointer,
         tools = [todo_writer_tool, worker_tool],
         middleware=[
             SummarizationMiddleware(

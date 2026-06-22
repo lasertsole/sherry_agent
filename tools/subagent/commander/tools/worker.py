@@ -1,6 +1,8 @@
 import asyncio
 from typing import Any
 from pathlib import Path
+
+from langgraph.checkpoint.memory import InMemorySaver
 from loguru import logger
 from models import main_llm
 from config import SESSIONS_DIR
@@ -105,6 +107,7 @@ class Worker(BaseTool):
                     system_prompt=system_prompt,
                     model=main_llm,
                     tools=build_core_tools(self._session_id),
+                    checkpointer= InMemorySaver(),
                     middleware=[
                         SummarizationMiddleware(
                             model=main_llm,
@@ -116,6 +119,9 @@ class Worker(BaseTool):
                     ],
                     response_format=SubAgentOutput
                 )
+                # Force checkpointer to False to prevent AsyncSqliteSaver default creation
+                # which would bind its asyncio.Lock to the wrong event loop.
+                agent.checkpointer = False
                 agent_res: dict[str, Any] = await agent.ainvoke(
                     input={"messages": [HumanMessage(content=description)]},
                     config=build_agent_config(session_id=self._session_id, args=[{"recursion_limit": 50}])
@@ -156,7 +162,7 @@ class Worker(BaseTool):
             )
 
         except Exception as e:
-            logger.error("Subagent [%s] failed: %s", self._task_id, e)
+            logger.error("Subagent [{}] failed: {}", label, e)
             return render_template_file(
                 file_path=(self._template_dir / "subagent_announce.md").resolve().as_posix(),
                 variables={

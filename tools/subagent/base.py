@@ -7,12 +7,14 @@ from models import main_llm
 from .type import SubAgentOutput
 from type.bus import InboundMessage
 from .commander import build_commander
+from threading import Thread, Event
 from skills.loader import get_skills_text
 from config import SRC_DIR, WORKSPACE_DIR
 from typing import Any, Callable, Awaitable
 from workspace import CORE_SYSTEM_FILE_NAMES
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
+from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from pub_func import render_template_file, build_agent_config
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
@@ -20,7 +22,7 @@ _current_dir = Path(__file__).parent
 _template_dir = (_current_dir / "templates").resolve()
 
 class SubagentManager:
-    """Manages background subagent execution."""
+    """Manages background subagent execution with a dedicated thread + event loop."""
 
     """单例模式"""
     _instance = None
@@ -35,6 +37,9 @@ class SubagentManager:
         self,
         bus: MessageBus | None = None,
     ):
+        if SubagentManager._initialized:
+            return
+
         if bus is None:
             bus = MessageBus()
         self._bus = bus
@@ -42,13 +47,23 @@ class SubagentManager:
         self._session_tasks: dict[str, set[str]] = {}  # session_id -> {task_id, ...}
         self._consumer: Callable[[InboundMessage], Awaitable[None]] | None = None
 
-        # 如果有运行中的事件循环，则使用它， 否则创建一个新的
-        try:
-            self._event_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._event_loop = asyncio.new_event_loop()
+        # Create a dedicated event loop + daemon thread, isolated from the main thread
+        self._event_loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._loop_thread: Thread = Thread(target=self._run_loop, daemon=True, name="subagent-loop")
+        self._loop_ready = Event()
+        self._loop_thread.start()
+        self._loop_ready.wait()  # block until loop is set up and running
 
         SubagentManager._initialized = True
+
+    def _run_loop(self) -> None:
+        """Dedicated thread entry: set event loop and run forever."""
+        asyncio.set_event_loop(self._event_loop)
+        self._loop_ready.set()
+        try:
+            self._event_loop.run_forever()
+        except Exception:
+            pass
 
     async def spawn(
         self,
@@ -133,6 +148,9 @@ class SubagentManager:
 
         try:
             agent: CompiledStateGraph = build_commander(session_id=session_id, task_id=task_id)
+            # Force checkpointer to None to prevent AsyncSqliteSaver default creation
+            # which would bind its asyncio.Lock to the wrong event loop.
+            agent.checkpointer = False
             agent_res: dict[str, Any] = await agent.ainvoke(
                 input={"messages": [HumanMessage(content=task)]},
                 config=build_agent_config(session_id=session_id, args=[{"recursion_limit": 30}])
@@ -151,6 +169,7 @@ class SubagentManager:
             )
 
         except Exception as e:
+            logger.exception(e)
             announce_content: str = render_template_file(
                 file_path=(_template_dir / "subagent_announce.md").resolve().as_posix(),
                 variables={
@@ -209,14 +228,11 @@ class SubagentManager:
                 await self._consumer(msg)
 
     def start_service(self) -> None:
-        if not self._event_loop.is_running():
-            self._event_loop.create_task(self._consume_loop())
-
-            # 防止重复运行报错
-            try:
-                self._event_loop.run_forever()
-            except Exception:
-                pass
+        """Start the consume loop on the dedicated thread's event loop."""
+        asyncio.run_coroutine_threadsafe(
+            self._consume_loop(),
+            self._event_loop,
+        )
 
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
