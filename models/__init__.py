@@ -1,4 +1,4 @@
-from .sovits_model import *
+from .TTS_model import *
 from .ITT_model import ITT_model
 from .VTTT_model import VTTT_model
 from .chat_model import chat_model

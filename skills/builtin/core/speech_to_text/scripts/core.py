@@ -4,7 +4,7 @@ from config import MODELS_DIR
 from pydantic import validate_call
 from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
-model_dir = MODELS_DIR / "SST_model"
+model_dir = MODELS_DIR / "STT_model"
 
 model = AutoModel(
     model = (model_dir / "model_weight").as_posix(),

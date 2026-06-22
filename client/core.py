@@ -11,7 +11,7 @@ from websocket import WebSocket, create_connection
 from streamlit.delta_generator import DeltaGenerator
 from client.api import post_agent_astream, clear_session
 from streamlit.elements.widgets.chat import ChatInputValue
-from models.sovits_model import TTS_Request, fetch_TTS_sound
+from models.TTS_model import TTS_Request, fetch_TTS_sound
 from config import USER_NAME, ASSISTANT_NAME, API_HOST, API_PORT
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
