@@ -91,7 +91,7 @@
         </div>
       </div>
       <!-- 聊天主体 -->
-      <div class="flex-1 border-b border-solid border-gray-light dark:border-gray-dark"></div>
+      <ChatBox :messages="currentSession?.messages" />
       <!-- 聊天输入框区域 -->
       <div class="flex flex-col h-40">
         <!-- 聊天工具 -->
@@ -128,6 +128,7 @@
 // components
 import HistoryItem from './components/HistoryItem.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
+import ChatBox from './components/ChatBox.vue';
 // function
 import { computed } from 'vue';
 import type { SessionRecord } from './type.ts';
@@ -147,6 +148,7 @@ const historyList = ref<SessionRecord[]>([
 ]);
 
 /** 当前会话 */
+const currentSession = ref<SessionRecord>();
 const currentSessionId = ref<string>();
 
 /** 工具触发 */
