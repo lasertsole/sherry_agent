@@ -1,13 +1,12 @@
 import asyncio
 from threading import Thread
-from cron import cron_service
 from typing import AsyncGenerator
-from type import MultiModalMessage
 from runtime import relation_register
-from heartbeat import heartbeat_service
 from server.service import async_generate
-from bus import InboundMessage, OutboundMessage
+from type.message import MultiModalMessage
+from type.bus import InboundMessage, OutboundMessage
 from channels import BaseChannel, channel_manager
+from skills.builtin.core.heartbeat import heartbeat_service
 from server.service import process_heartbeat_task, process_heartbeat_notify
 from pub_func import string_to_unique_int, process_sse_data, check_if_image_and_convert_to_base64
 
@@ -71,8 +70,6 @@ def _run() -> None:
 
     # Start heartbeat service
     asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)
-    # Start cron service
-    asyncio.run_coroutine_threadsafe(cron_service.start(), event_loop)
     # Start channel manager (internally calls run_forever)
     channel_manager.start_service()
 

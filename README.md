@@ -1,4 +1,4 @@
-# 🍊 EMA AI Agent - 橘雪莉 (Sherry)
+# 🍊 EMA AI Agent - Sherry
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue)
 ![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
@@ -12,7 +12,7 @@
 
 EMA AI Agent is a highly anthropomorphic AI agent system with long-term memory and complex reasoning capabilities. It's more than just a chatbot — it's a virtual companion with an independent **Persona**, a dynamic **Skill Memory Graph**, and proactive behavior through scheduled tasks and background subagents.
 
-The Agent's character, **橘雪莉 (Sherry)**, is a detective girl with a dual personality contrast (gentle/cold) that shifts based on intimacy level. The entire system is designed to support immersive, persistent role-playing with memory that accumulates across sessions.
+The Agent's character, **Sherry**, is a detective girl with a dual personality contrast (gentle/cold) that shifts based on intimacy level. The entire system is designed to support immersive, persistent role-playing with memory that accumulates across sessions.
 
 ---
 
@@ -31,21 +31,21 @@ The Agent's character, **橘雪莉 (Sherry)**, is a detective girl with a dual p
 - **SKILL.md Standard**: Skills defined in standardized Markdown format — the Agent can autonomously read and learn new abilities
 - **Tool Calling**: Built-in Web search, file I/O, code execution (Python Repl), terminal commands, message search, and more
 - **Subagents**: Supports running complex time-consuming tasks in parallel in the background, with async results via a message bus
-- ▶️ _See the [Subagent System README](subagent/README.md) for lifecycle, Commander architecture, and API docs_
+- ▶️ _See the [Subagent System README](tools/subagent/README.md) for lifecycle, Commander architecture, and API docs_
 
 ### 3. 🌐 Multi-Channel Access
 - **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
 - **Next-Generation Client** ([client_future](client_future/)): A Tauri 2 + Nuxt 4 desktop/mobile SPA client, currently in development
 - **QQ Bot**: Integrated with `qq-botpy` for direct interaction in QQ groups or private chats
-- **Message Bus**: Internal async message queue ([MessageBus](bus/queue.py)) decouples input/output channels
+- **Message Bus**: Internal async message queue ([MessageBus](bus/core.py)) decouples input/output channels
 
 ### 4. 🔊 Multimodal Interaction
 - **TTS Voice Synthesis**: Foreign integrated with GPT-SoVITS for real-time voice replies that faithfully reproduce the character's voice
 - **Visual Understanding**: Supports Image-to-Text (VL) models for recognizing and analyzing user-uploaded images
 
 ### 5. ⏰ Scheduled & Proactive Behavior
-- **Cron Service** ([cron/](cron/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
-- **Heartbeat Service** ([heartbeat/](heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
+- **Cron Service** ([cron/](skills/builtin/core/cron/scripts/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
+- **Heartbeat Service** ([heartbeat/](skills/builtin/core/heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
 ---
 
 ## 🏗️ Tech Stack
@@ -146,11 +146,11 @@ EMA_AI_agent/
 │
 ├── models/                 # Model wrappers
 │   ├── chat_model.py       # Chat model (LangChain BaseChatModel)
-│   ├── simple_chat_model.py # Lightweight chat model
+│   ├── auxiliary_llm.py # Lightweight chat model
 │   ├── reasoner_model.py   # Reasoner model (chain-of-thought)
 │   ├── VTTT_model.py       # Video-Text-to-Text model
 │   ├── ITT_model.py        # Image-to-Text model
-│   ├── SST_model/          # Speech-to-Text model
+│   ├── STT_model/          # Speech-to-Text model
 │   ├── embed_model/        # Text embedding model
 │   ├── reranker_model/     # Cross-encoder reranker
 │   ├── extract_model/      # Entity extraction model
@@ -235,9 +235,9 @@ Each major subsystem has its own detailed README:
 | **Context Engine** | Dual memory system (MesMemory + Skill Memory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
 | **MesMemory** | Short-term session message memory | [EN](context_engine/mes_memory/README.md) · [ZH](context_engine/mes_memory/README.zh.md) |
 | **Skill Memory** | Long-term knowledge graph memory | [EN](context_engine/skill_memory/README.md) · [ZH](context_engine/skill_memory/README.zh.md) |
-| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](subagent/README.md) · [ZH](subagent/README.zh.md) |
-| **Cron Service** | Scheduled/periodic agent task execution | [EN](cron/README.md) · [ZH](cron/README.zh.md) |
-| **Heartbeat Service** | Periodic wake-up task check | [EN](heartbeat/README.md) · [ZH](heartbeat/README.zh.md) |
+| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](tools/subagent/README.md) · [ZH](tools/subagent/README.zh.md) |
+| **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
+| **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
 | **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
 
 ---
@@ -269,7 +269,7 @@ Copy the `.env` example and fill in your API Keys (DeepSeek, OpenAI, etc.) and T
 
 ```bash
 cp .env.example .env
-# Edit .env to configure CHAT_API_KEY, GPT_SOVITS_DIR, etc.
+# Edit .env to configure MAIN_LLM_API_KEY, GPT_SOVITS_DIR, etc.
 ```
 
 ### 4. Start Services
@@ -286,7 +286,7 @@ You can also start each component manually:
 
 ```bash
 python -m server  # Start backend
-streamlit run client/core.py  # Start frontend
+streamlit run client/base.py  # Start frontend
 ```
 
 ---

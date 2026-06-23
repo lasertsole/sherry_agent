@@ -3,15 +3,21 @@ import type { Response, UseFetchResponse } from "@/types/response";
 
 /**
  * 请求历史对话记录
+ * @param session_id 会话ID
+ * @param min_turn_num 最小轮次
+ * @param turn_page_size 每页轮次大小
+ * @param turn_page_num 页码
  * @returns {Promise<BaseMessage[]>} 历史对话记录数组
  */
-export async function get_history_turn_message(session_id:string, last_turn_count:number):Promise<BaseMessage[]> {
+export async function get_history_by_page(session_id:string, min_turn_num:number, turn_page_size:number, turn_page_num:number):Promise<BaseMessage[]> {
     try {
         const res:Response = await fetchApi({
-            url: '/n_turns_history_messages',
+            url: '/get_history_by_page',
             opts: {
                 session_id,
-                last_turn_count
+                min_turn_num,
+                turn_page_size,
+                turn_page_num
             },
             method: 'get',
         });

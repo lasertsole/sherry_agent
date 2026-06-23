@@ -1,5 +1,5 @@
 import datetime
-from typing import Dict, Any, Optional
+from typing import Any
 
 
 class Edge:
@@ -9,7 +9,7 @@ class Edge:
                  target: str,
                  edge_type: str,
                  confidence: float,
-                 metadata: Optional[Dict[str, Any]] = None):
+                 metadata: dict[str, Any] | None = None):
         self.edge_id = edge_id
         self.source = source
         self.target = target
@@ -20,7 +20,7 @@ class Edge:
         if "timestamp" not in self.metadata:
             self.metadata["timestamp"] = str(datetime.datetime.now())
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "edge_id": self.edge_id,
             "source": self.source,
@@ -31,7 +31,7 @@ class Edge:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Edge':
+    def from_dict(cls, data: dict[str, Any]) -> 'Edge':
         edge_id = data.pop("edge_id")
         source = data.pop("source")
         target = data.pop("target")

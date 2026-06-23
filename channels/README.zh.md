@@ -107,9 +107,10 @@ bus = channel_manager.get_bus()
 
 ```python
 from channels.base import BaseChannel
-from bus.queue import MessageBus
-from bus.events import OutboundMessage
+from bus.core import MessageBus
+from type.bus import OutboundMessage
 from typing import Any
+
 
 class MyChannel(BaseChannel):
     name = "my_channel"

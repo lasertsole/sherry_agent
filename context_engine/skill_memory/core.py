@@ -5,11 +5,11 @@ from loguru import logger
 from config import SRC_DIR
 from .recaller import Recaller
 from .extractor import Extractor
+from typing import TypedDict, Any
 from pub_func import slice_last_turn
-from typing import TypedDict, List, Any, Dict
 from .async_task_queue import async_task_queue
 from langchain_core.embeddings import Embeddings
-from models import simple_chat_model, embed_model
+from models import auxiliary_llm, embed_model
 from .type import GmConfig, GmNode, ExtractionResult
 from langchain_core.messages import BaseMessage, ToolMessage
 from .format import sanitize_tool_use_result_pairing, assemble_context
@@ -21,8 +21,8 @@ from .store import (get_db, delete_node, save_message, get_unextracted, get_by_s
 
 
 class RecallResult(TypedDict):
-    nodes: List[Any]
-    edges: List[Any]
+    nodes: list[Any]
+    edges: list[Any]
 
 # ── Initialize Core Modules ────────────────────────────────
 DEFAULT_CONFIG: GmConfig = GmConfig(
@@ -35,7 +35,7 @@ DEFAULT_CONFIG: GmConfig = GmConfig(
     pagerank_damping = 0.85,
     pagerank_iterations = 20,
     embedding = embed_model,
-    llm = simple_chat_model
+    llm = auxiliary_llm
 )
 
 db = get_db()
@@ -43,8 +43,8 @@ recaller = Recaller(db, DEFAULT_CONFIG)
 extractor = Extractor()
 
 # ── Session Runtime State ────────────────────────────────
-msg_seq: Dict[str, int] = {}
-turn_counter: Dict[str, int] = {} # community maintenance counter
+msg_seq: dict[str, int] = {}
+turn_counter: dict[str, int] = {} # community maintenance counter
 
 # ─── Get Last Complete User Turn ──────────────────────────
 def estimate_msg_tokens(msg: BaseMessage) -> int:
@@ -166,7 +166,7 @@ def ingest_message(session_id: str, message: BaseMessage)-> None:
     msg_seq[session_id] = seq
 
     role = getattr(message, 'type', 'unknown') or 'unknown'
-    content: str | List[dict[str, Any]] = getattr(message, 'content', '')
+    content: str | list[dict[str, Any]] = getattr(message, 'content', '')
 
     if role == "human": # extract string content
         content:str = extract_text_from_content(content)
@@ -185,7 +185,7 @@ async def run_turn_extract(session_id: str) -> None:
     existing = [node.name for node in get_by_session(db, session_id)]
     result: ExtractionResult = await extractor.extract(messages=msgs, existing_names=existing)
 
-    name_to_id: Dict[str, str] = {}
+    name_to_id: dict[str, str] = {}
     for nc in getattr(result, "nodes", []):
         upsert_result: UpsertResult = upsert_node(
             db = db,
@@ -276,7 +276,7 @@ async def assemble(
     if filtered_parts:
         system_prompt_addition = "\n\n".join(filtered_parts)
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "messages": normalize_message_content(repaired),
         "estimated_tokens": gm_tokens + last_turn["tokens"],
     }
@@ -335,7 +335,7 @@ async def rectification_and_standardization(session_id: str) -> None:
     """Session end cleanup and knowledge consolidation"""
     try:
         # Fetch all nodes in this session
-        nodes: List[GmNode] = get_by_session(db, session_id)
+        nodes: list[GmNode] = get_by_session(db, session_id)
 
         if nodes:
             # Get global Top 20 nodes as graph summary
@@ -343,10 +343,10 @@ async def rectification_and_standardization(session_id: str) -> None:
             cursor.execute(
                 "SELECT name, type, validated_count, pagerank FROM gm_nodes ORDER BY pagerank DESC LIMIT 20"
             )
-            top_nodes: List[dict[str, Any]] = [dict(r) for r in cursor.fetchall()]
+            top_nodes: list[dict[str, Any]] = [dict(r) for r in cursor.fetchall()]
 
             # Build summary string
-            summary_parts: List[str] = []
+            summary_parts: list[str] = []
             for n in top_nodes:
                 name = n['name']
                 node_type = n['type']

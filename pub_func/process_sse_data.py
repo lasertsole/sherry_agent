@@ -1,10 +1,10 @@
-from typing import Any, List
+from typing import Any
 
 def process_sse_data(data: Any)-> str:
-    res_lines: List[str] =  []
+    res_lines: list[str] =  []
     if data:
         decoded_line: str = data if isinstance(data, str) else data.decode()
-        decoded_lines: List[str] = decoded_line.splitlines()
+        decoded_lines: list[str] = decoded_line.splitlines()
         for line in decoded_lines:
             if line.startswith("data: "):
                 res:str = line[6:].strip()

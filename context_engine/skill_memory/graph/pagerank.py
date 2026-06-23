@@ -26,22 +26,22 @@ skill_memory — Personalized PageRank (PPR)
 
 import time
 from ..type import GmConfig
+from typing import TypedDict
 from sqlite3 import Connection
 from ..store.core import update_pageranks
-from typing import TypedDict, List, Dict, Set, Optional
 
 
 # ─── 图结构缓存（避免每次 recall 都查 SQL） ─────────────────
 
 class GraphStructure(TypedDict):
     """图结构"""
-    node_ids: Set[str]
-    adj: Dict[str, List[str]]  # 无向邻接表
+    node_ids: set[str]
+    adj: dict[str, list[str]]  # 无向邻接表
     n: int  # 节点数
     cached_at: int  # 缓存时间
 
 
-_cached: Optional[GraphStructure] = None
+_cached: GraphStructure | None = None
 CACHE_TTL = 30_000  # 30 秒缓存
 
 
@@ -74,7 +74,7 @@ def load_graph(db: Connection) -> GraphStructure:
     edge_rows = cursor.fetchall()
 
     # 构建无向邻接表
-    adj: Dict[str, List[str]] = {node_id: [] for node_id in node_ids}
+    adj: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
 
     for from_id, to_id in edge_rows:
         if from_id not in node_ids or to_id not in node_ids:
@@ -97,13 +97,13 @@ def invalidate_graph_cache() -> None:
 
 class PPRResult(TypedDict):
     """个性化 PageRank 结果"""
-    scores: Dict[str, float]  # nodeId → 个性化分数
+    scores: dict[str, float]  # nodeId → 个性化分数
 
 
 def personalized_page_rank(
     db: Connection,
-    seed_ids: List[str],
-    candidate_ids: List[str],
+    seed_ids: list[str],
+    candidate_ids: list[str],
     cfg: GmConfig,
 ) -> PPRResult:
     """
@@ -143,13 +143,13 @@ def personalized_page_rank(
     seed_set = set(valid_seeds)
 
     # 初始分数：集中在种子节点上
-    rank: Dict[str, float] = {}
+    rank: dict[str, float] = {}
     for node_id in node_ids:
         rank[node_id] = teleport_weight if node_id in seed_set else 0.0
 
     # 迭代
     for _ in range(iterations):
-        new_rank: Dict[str, float] = {}
+        new_rank: dict[str, float] = {}
 
         # teleport 分量：回到种子节点
         for node_id in node_ids:
@@ -193,8 +193,8 @@ def personalized_page_rank(
 
 class GlobalPageRankResult(TypedDict):
     """全局 PageRank 结果"""
-    scores: Dict[str, float]
-    top_k: List[Dict[str, object]]  # [{id, name, score}, ...]
+    scores: dict[str, float]
+    top_k: list[dict[str, object]]  # [{id, name, score}, ...]
 
 
 def compute_global_page_rank(db: Connection, cfg: GmConfig) -> GlobalPageRankResult:
@@ -233,11 +233,11 @@ def compute_global_page_rank(db: Connection, cfg: GmConfig) -> GlobalPageRankRes
 
     # 全局：均匀 teleport
     init_score = 1.0 / n
-    rank: Dict[str, float] = {node_id: init_score for node_id in node_ids}
+    rank: dict[str, float] = {node_id: init_score for node_id in node_ids}
 
     # 迭代
     for _ in range(iterations):
-        new_rank: Dict[str, float] = {}
+        new_rank: dict[str, float] = {}
         base = (1 - damping) / n
 
         # 初始化基础分数

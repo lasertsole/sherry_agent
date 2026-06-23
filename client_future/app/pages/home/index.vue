@@ -221,5 +221,5 @@ const openHeaderMenu = (event: Event) => {
   headerToolsMenuRef.value?.toggle(event);
 };
 
-get_history_turn_message('main', 10);
+get_history_by_page('main', 10, 10, 1);
 </script>

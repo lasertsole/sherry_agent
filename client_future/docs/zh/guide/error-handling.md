@@ -25,7 +25,8 @@ interface FrontendError {
 | `SESSION_ERROR` | 会话管理失败 | 否 | 无效/过期的 session ID |
 | `TOOL_ERROR` | 工具执行失败 | 否 | Python REPL 崩溃、终端错误 |
 | `SKILL_ERROR` | 技能加载或注册失败 | 否 | 无效的技能定义 |
-| `UNKNOWN_ERROR` | 未知错误 | 否 | 未分类错误的兜底 |
+| `BACKEND_ERROR` | Python 后端 HTTP 桥接失败 | **是** | 连接拒绝、超时、Python 响应异常 |
+| `UNKNOWN_ERROR` | 未知错误 | 否 | 未分类错误的兆底 |
 
 ## 错误处理模式
 
@@ -58,7 +59,7 @@ async function callWithRetry<T>(
 }
 
 function isRetryable(code: string): boolean {
-  return ['IO_ERROR', 'CHANNEL_ERROR', 'MODEL_ERROR', 'DATABASE_ERROR']
+  return ['IO_ERROR', 'CHANNEL_ERROR', 'MODEL_ERROR', 'DATABASE_ERROR', 'BACKEND_ERROR']
     .includes(code);
 }
 ```
@@ -79,6 +80,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   SESSION_ERROR:   '会话已过期，请开始新对话。',
   TOOL_ERROR:      '工具执行失败。',
   SKILL_ERROR:     '技能加载失败。',
+  BACKEND_ERROR:   '后端服务不可达，请确保 Python 服务已启动。',
   UNKNOWN_ERROR:   '发生了未知错误。',
 };
 ```

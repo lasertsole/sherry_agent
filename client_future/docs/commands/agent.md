@@ -80,3 +80,52 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
 
 - [Streaming Events](/events/streaming) — For real-time chunk-by-chunk streaming
 - [Session Commands](/commands/session) — Manage session state
+
+---
+
+## `agent_stop`
+
+Stop an ongoing agent generation for the given session.
+
+Sends a cancellation request to the Python backend (`POST /sessions/agent/sse/stop`).
+The SSE stream will terminate and emit `agent:stream:end`.
+
+### Signature
+
+```typescript
+await invoke('agent_stop', {
+  request: StopRequest,
+});
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `request` | [`StopRequest`](/types/reference#stoprequest) | Yes | Session to stop |
+
+#### StopRequest
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `session_id` | `string` | Yes | Session whose generation should be cancelled |
+
+### Returns
+
+`void`
+
+### Example
+
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+
+// Stop generation for the current session
+await invoke('agent_stop', {
+  request: { session_id: 'main' },
+});
+```
+
+### Related
+
+- [`agent_chat`](#agent_chat) — Start a chat (which can be stopped)
+- [Streaming Events](/events/streaming) — Event lifecycle including error on stop

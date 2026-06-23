@@ -1081,16 +1081,16 @@ await rectification_and_standardization(session_id)
 ```python
 from context_engine.skill_memory.core import DEFAULT_CONFIG
 from models.embed_model.core import embed_model
-from models.chat_model import chat_model
+from models.LLMs.main_llm import main_llm
 
 # Modify configuration
 custom_config = DEFAULT_CONFIG.model_copy(update={
     "db_path": "./custom_skill_memory.db",
-    "compact_turn_count": 10,      # Maintain every 10 turns
-    "recall_max_nodes": 10,        # Recall 10 nodes
-    "recall_max_depth": 3,         # Graph traversal depth 3
-    "dedup_threshold": 0.95,       # Higher dedup threshold
-    "pagerank_iterations": 30,     # More PageRank iterations
+    "compact_turn_count": 10,  # Maintain every 10 turns
+    "recall_max_nodes": 10,  # Recall 10 nodes
+    "recall_max_depth": 3,  # Graph traversal depth 3
+    "dedup_threshold": 0.95,  # Higher dedup threshold
+    "pagerank_iterations": 30,  # More PageRank iterations
 })
 ```
 

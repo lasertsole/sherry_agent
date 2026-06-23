@@ -5,22 +5,21 @@ import asyncio
 import sqlite3
 from loguru import logger
 import concurrent.futures
-from models import chat_model
+from typing import Any, Type
+from models import main_llm
 from pub_func import run_async
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field
-from typing import Any, Type, List, Union, Dict, Optional, Tuple
+from pydantic import BaseModel, Field, validate_call
 from context_engine.mes_memory import get_db, search_messages, get_turns_by_turn_num_scope
 
-_MAX_SUMMARY_TOKENS = 10000
 MAX_SESSION_CHARS = 100_000
 
 class MessageSearchSchema(BaseModel):
-    query: Optional[str] = Field(
+    query: str | None = Field(
         default=None,
         description="Search query — keywords, phrases, or boolean expressions to find in past sessions. Omit this parameter entirely to browse recent sessions instead (returns titles, previews, timestamps with no LLM cost)."
     )
-    role_filter: Optional[str] = Field(
+    role_filter: str | None = Field(
         default=None,
         description="Optional: only search messages from specific roles (comma-separated). E.g. 'user,assistant' to skip tool outputs."
     )
@@ -42,7 +41,7 @@ def _tool_error(message, **extra) -> str:
         result.update(extra)
     return json.dumps(result, ensure_ascii=False)
 
-def _format_conversation(messages: List[Dict[str, Any]]) -> str:
+def _format_conversation(messages: list[dict[str, Any]]) -> str:
     """Format session messages into a readable transcript for summarization."""
     parts = []
     for msg in messages:
@@ -162,7 +161,7 @@ def _truncate_around_matches(
 
 async def _summarize(
     conversation_text: str, query: str
-) -> Optional[str]:
+) -> str | None:
     """Summarize a single session conversation focused on the search query."""
     system_prompt = (
         "You are reviewing a past conversation transcript to help recall what happened. "
@@ -185,7 +184,7 @@ async def _summarize(
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = chat_model.invoke([
+            response = main_llm.invoke([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ])
@@ -272,11 +271,11 @@ def session_search(
             }, ensure_ascii=False)
 
         # context of message
-        raw_scopes: List[List[dict[str, Any]]] = []
+        raw_scopes: list[list[dict[str, Any]]] = []
         for result in raw_results:
             raw_scopes.append(get_turns_by_turn_num_scope(result["session_id"], result["turn_num"]))
 
-        tasks: List[Tuple[str, dict[str, Any], str]] = []
+        tasks: list[tuple[str, dict[str, Any], str]] = []
         for messages, match_info in zip(raw_scopes, raw_results):
             try:
                 if not messages:
@@ -293,12 +292,12 @@ def session_search(
                 )
 
         # Summarize all sessions in parallel
-        async def _summarize_all() -> List[Union[str, Exception]]:
+        async def _summarize_all() -> list[str | Exception]:
             """Summarize all sessions with bounded concurrency."""
             max_concurrency = 5
             semaphore = asyncio.Semaphore(max_concurrency)
 
-            async def _bounded_summary(text: str) -> Optional[str]:
+            async def _bounded_summary(text: str) -> str | None:
                 async with semaphore:
                     return await _summarize(text, query)
 
@@ -327,7 +326,7 @@ def session_search(
                 "error": "Session summarization timed out. Try a more specific query or reduce the limit.",
             }, ensure_ascii=False)
 
-        summaries:List[str] = []
+        summaries:list[str] = []
         for (session_id, match_info, conversation_text), result in zip(tasks, results):
             if isinstance(result, Exception):
                 logger.warning(
@@ -393,11 +392,13 @@ class MessageSearchTool(BaseTool):
         super().__init__(**kwargs)
         self._session_id: str | None = session_id
 
-    def _run(self, query: Optional[str] = None, role_filter: Optional[str] = None, limit: int = 3,
+    @validate_call
+    def _run(self, query: str | None = None, role_filter: str | None = None, limit: int = 3,
              **kwargs: Any) -> str:
         return session_search(query, self._session_id, role_filter, limit)
 
-    async def _arun(self, query: Optional[str] = None, role_filter: Optional[str] = None, limit: int = 3,
+    @validate_call
+    async def _arun(self, query: str | None = None, role_filter: str | None = None, limit: int = 3,
                     **kwargs: Any) -> str:
         """Async execution."""
         return session_search(query, self._session_id, role_filter, limit)

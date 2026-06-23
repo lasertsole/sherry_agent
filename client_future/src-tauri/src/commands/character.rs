@@ -5,6 +5,7 @@
 //! - `PUT    /character` → [`character_write`]
 //! - `PATCH  /character` → [`character_update`]
 
+use crate::services::python_bridge::PythonBridge;
 use crate::utils::error::FrontendError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -76,10 +77,16 @@ pub struct CharacterResponse {
 /// console.log(response.character_data.identity?.name);
 /// ```
 #[tauri::command]
-pub async fn character_read() -> Result<CharacterResponse, FrontendError> {
+pub async fn character_read(
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<CharacterResponse, FrontendError> {
     tracing::info!("character_read called");
-    // TODO: wire up to workspace/character
-    todo!("character_read not yet implemented")
+    // Python returns dict[str, dict[str, str]] directly
+    let character_data: CharacterData = bridge
+        .get_json("/character", &[])
+        .await
+        .map_err(FrontendError::from)?;
+    Ok(CharacterResponse { character_data })
 }
 
 /// Overwrite character configuration (full replacement).
@@ -118,13 +125,17 @@ pub async fn character_read() -> Result<CharacterResponse, FrontendError> {
 #[tauri::command]
 pub async fn character_write(
     payload: CharacterPayload,
+    bridge: tauri::State<'_, PythonBridge>,
 ) -> Result<(), FrontendError> {
     tracing::info!(
         sections = payload.character_data.len(),
         "character_write called"
     );
-    // TODO: wire up to workspace/character
-    todo!("character_write not yet implemented")
+    bridge
+        .put_json::<_, serde_json::Value>("/character", &payload)
+        .await
+        .map_err(FrontendError::from)?;
+    Ok(())
 }
 
 /// Partially update character configuration (merge).
@@ -163,13 +174,17 @@ pub async fn character_write(
 #[tauri::command]
 pub async fn character_update(
     payload: CharacterPayload,
+    bridge: tauri::State<'_, PythonBridge>,
 ) -> Result<(), FrontendError> {
     tracing::info!(
         sections = payload.character_data.len(),
         "character_update called"
     );
-    // TODO: wire up to workspace/character
-    todo!("character_update not yet implemented")
+    bridge
+        .patch_json::<_, serde_json::Value>("/character", &payload)
+        .await
+        .map_err(FrontendError::from)?;
+    Ok(())
 }
 
 // ── Tests ───────────────────────────────────────────────────

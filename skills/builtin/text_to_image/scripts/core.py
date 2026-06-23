@@ -15,10 +15,12 @@ import requests
 from dotenv import load_dotenv
 from config.path import SRC_DIR
 from pub_func import generate_tsid
+from pydantic import validate_call
 
 # Load environment variables
 load_dotenv(project_root / ".env", override=True)
 
+@validate_call
 def generate_image(prompt: str) -> None:
     """
     Generate an image from a text description.

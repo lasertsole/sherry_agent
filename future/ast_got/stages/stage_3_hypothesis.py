@@ -1,8 +1,8 @@
 import random
 import datetime
+from typing import Any
 from loguru import logger
-from typing import Dict, Any, List
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from tests.ast_got.models.node import Node
 from tests.ast_got.models.edge import Edge
@@ -19,18 +19,18 @@ class HypothesisItem(BaseModel):
         description="A detailed description of the hypothesis, including relationships between variables")
     falsification_criteria: str = Field(
         description="Specific criteria or experimental methods to falsify this hypothesis")
-    disciplinary_tags: List[str] = Field(description="Disciplinary domain tags relevant to this hypothesis")
+    disciplinary_tags: list[str] = Field(description="Disciplinary domain tags relevant to this hypothesis")
     plan_type: str = Field(description="Type of validation plan, e.g., search, experiment, simulation, meta_analysis")
     impact_score: float = Field(description="Importance score of this hypothesis for solving the core problem (0-1)")
 
 
 class HypothesisPlan(BaseModel):
     """假设生成计划"""
-    hypotheses: List[HypothesisItem] = Field(description="针对该维度生成的假设列表")
+    hypotheses: list[HypothesisItem] = Field(description="针对该维度生成的假设列表")
 
 
 class HypothesisStage:
-    def _generate_hypotheses_for_dimension(self, query: str, dim_label: str, disciplines: List[str], k: int) -> List[
+    def _generate_hypotheses_for_dimension(self, query: str, dim_label: str, disciplines: list[str], k: int) -> list[
         HypothesisItem]:
         """调用模型为特定维度生成假设"""
         system_template = """你是科学假设生成专家。请根据用户问题和给定的分析维度，生成具有高度可证伪性的科学假设。
@@ -48,7 +48,7 @@ class HypothesisStage:
         )
 
         chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
-        invoker: RunnableSerializable = chat_prompt | simple_chat_model.with_structured_output(HypothesisPlan)
+        invoker: RunnableSerializable = chat_prompt | auxiliary_llm.with_structured_output(HypothesisPlan)
 
         result: HypothesisPlan = invoker.invoke({
             "query": query,
@@ -58,7 +58,7 @@ class HypothesisStage:
         })
         return result.hypotheses
 
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Hypothesis Generation Stage")
 
         dimension_nodes = context.get("dimension_nodes", [])

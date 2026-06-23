@@ -2,8 +2,9 @@ import json
 import os
 import re
 import sys
+from typing import Any
 from pathlib import Path
-from typing import Any, List, Dict, Optional
+
 
 import requests
 import urllib3
@@ -122,8 +123,8 @@ class RerankerModel:
 
     # ── 本地调用 ──────────────────────────────
     def _rank_local(
-        self, query: str, documents: List[str], top_k: int | None, gap_score: float
-    ) -> List[Dict[str, Any]]:
+        self, query: str, documents: list[str], top_k: int | None, gap_score: float
+    ) -> list[dict[str, Any]]:
         pairs = [[query, doc] for doc in documents]
         scores = _local_model.predict(pairs)
 
@@ -145,7 +146,7 @@ class RerankerModel:
         ]
         return results
 
-    def _filter_local(self, query: str, documents: List[str], gap_score: float) -> List[str]:
+    def _filter_local(self, query: str, documents: list[str], gap_score: float) -> list[str]:
         pairs = [[query, doc] for doc in documents]
         scores = _local_model.predict(pairs)
 
@@ -156,7 +157,7 @@ class RerankerModel:
         return [documents[idx] for _, (idx, _) in enumerate(doc_score_pairs)]
 
     # ── 远程调用 ──────────────────────────────
-    def _call_remote_api(self, query: str, documents: List[str]) -> dict:
+    def _call_remote_api(self, query: str, documents: list[str]) -> dict:
         cfg = _remote_config
         url = f"{cfg['api_base']}/rerank"
         headers = {
@@ -174,8 +175,8 @@ class RerankerModel:
         return resp.json()
 
     def _rank_remote(
-        self, query: str, documents: List[str], top_k: int | None, gap_score: float
-    ) -> List[Dict[str, Any]]:
+        self, query: str, documents: list[str], top_k: int | None, gap_score: float
+    ) -> list[dict[str, Any]]:
         result = self._call_remote_api(query, documents)
         ranked = sorted(result["results"], key=lambda x: x["relevance_score"], reverse=True)
 
@@ -194,7 +195,7 @@ class RerankerModel:
         ]
         return results
 
-    def _filter_remote(self, query: str, documents: List[str], gap_score: float) -> List[str]:
+    def _filter_remote(self, query: str, documents: list[str], gap_score: float) -> list[str]:
         result = self._call_remote_api(query, documents)
         filtered = [item for item in result["results"] if item["relevance_score"] >= gap_score]
         return [documents[item["index"]] for item in filtered]
@@ -203,10 +204,10 @@ class RerankerModel:
     def rank(
         self,
         query: str,
-        documents: List[str],
+        documents: list[str],
         top_k: int | None = None,
-        gap_score: Optional[float] = None,
-    ) -> List[Dict[str, Any]]:
+        gap_score: float | None = None,
+    ) -> list[dict[str, Any]]:
         if not documents:
             return []
 
@@ -223,9 +224,9 @@ class RerankerModel:
     def filter(
         self,
         query: str,
-        documents: List[str],
+        documents: list[str],
         gap_score: float = 0.85,
-    ) -> List[str]:
+    ) -> list[str]:
         if not documents:
             return []
 

@@ -2,8 +2,9 @@
 
 ## Overview
 
-The EMA AI Agent backend is a Tauri application that exposes **11 IPC commands** to the frontend.
-All commands are called via Tauri's `invoke()` API and return typed results.
+The EMA AI Agent uses a **hybrid architecture**: the Tauri/Rust backend exposes **12 IPC commands** that proxy all requests to the Python backend via HTTP. The frontend uses `bridge.ts` to auto-detect the runtime (Tauri IPC vs browser HTTP).
+
+All IPC commands are called via Tauri's `invoke()` API and return typed results.
 
 ## Prerequisites
 
@@ -32,7 +33,8 @@ All command names use `snake_case` matching the Rust function names:
 
 | Command Name | Module | Description |
 |---|---|---|
-| `agent_chat` | agent | Send a message, get agent response |
+| `agent_chat` | agent | Send a message, get streamed agent response |
+| `agent_stop` | agent | Stop an ongoing agent generation |
 | `session_clear` | session | Clear session state |
 | `session_history` | session | Get conversation history |
 | `system_prompt_read` | system_prompt | Read all prompt files |
@@ -71,6 +73,24 @@ try {
   // error.message = "model error: connection refused"
 }
 ```
+
+## Bridge Layer (`bridge.ts`)
+
+For production use, prefer the unified `bridge.ts` composable over raw `invoke()` calls.
+It auto-detects Tauri desktop mode vs browser dev mode:
+
+```typescript
+import { sendChatMessage, clearSession, checkHealth } from '~/composables/bridge';
+
+// Works in both Tauri desktop and browser dev mode
+await sendChatMessage(
+  { session_id: 'main', text: 'Hello!', image_base64_list: [] },
+  (chunk) => appendToChat(chunk),
+);
+```
+
+In **Tauri mode**, `bridge.ts` calls `invoke()` and listens for Tauri Events for streaming.
+In **browser mode**, it calls the Python backend directly via `fetch()` with SSE.
 
 ## Next Steps
 

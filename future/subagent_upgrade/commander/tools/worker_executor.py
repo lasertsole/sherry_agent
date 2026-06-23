@@ -1,6 +1,6 @@
 import asyncio
 from typing import Any
-from models import chat_model
+from models import main_llm
 from skills import get_skills_text
 from logging import Logger, getLogger
 from config import SRC_DIR, WORKSPACE_DIR
@@ -60,11 +60,11 @@ class WorkerExecutor:
 
             agent: CompiledStateGraph = create_agent(
                 system_prompt=system_prompt,
-                model=chat_model,
+                model=main_llm,
                 tools=build_core_tools(self._session_id),
                 middleware=[
                     SummarizationMiddleware(
-                        model=chat_model,
+                        model=main_llm,
                         trigger=("messages", 20),
                         keep=("messages", 10),
                     ),

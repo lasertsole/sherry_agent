@@ -2,11 +2,11 @@ import json
 from typing import Any
 from pathlib import Path
 from loguru import logger
-from config import ROOT_DIR
-from models import chat_model
-from bus import OutboundMessage
+from models import main_llm
+from config import PLUGINS_PATH
 from tools import build_core_tools
 from context_engine import assemble
+from type.bus import OutboundMessage
 from langchain.agents import create_agent
 from channels import BaseChannel, channel_manager
 from langgraph.graph.state import CompiledStateGraph
@@ -21,7 +21,7 @@ async def process_heartbeat_task(task: str) -> str:
         graph_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
 
         agent: CompiledStateGraph = create_agent(
-            model=chat_model,
+            model=main_llm,
             tools=build_core_tools(),
         )
 
@@ -42,7 +42,7 @@ async def process_heartbeat_task(task: str) -> str:
         return f"Error occurred: {e}"
 
 async def process_heartbeat_notify(agent_res: str) -> None:
-    channels_json: Path = Path(ROOT_DIR) / "channels.json"
+    channels_json: Path = PLUGINS_PATH / "channels/config.json"
     res: dict[str, str] = {}
 
     if channels_json.exists():

@@ -175,7 +175,7 @@ _run_subagent(session_id, task_id, task, label)
 | 组件 | 详情 |
 |------|------|
 | **系统提示词** | 关于任务分解、程序化编排、todo 格式和恢复策略的全面指导 |
-| **模型** | `chat_model`（整个 Agent 系统共享） |
+| **模型** | `main_llm`（整个 Agent 系统共享） |
 | **检查点** | `InMemorySaver` — 在会话内保持对话状态 |
 | **工具** | `todo_writer` + `worker` + `program_generator` + `program_runner` + `program_interrupter` + `program_resumer` |
 | **中间件** | `SummarizationMiddleware`（15条消息触发，保留8条）+ `todo_injector`（模型调用前）+ `todo_cleaner`（智能体结束后） |
@@ -281,7 +281,7 @@ Commander 的角色是"智能任务指挥官"，其行为：
 
 - **触发条件**: 消息数量超过15条。
 - **保留**: 缩减到最近的8条消息。
-- **模型**: 使用相同的 `chat_model` 进行摘要。
+- **模型**: 使用相同的 `main_llm` 进行摘要。
 
 ## SubagentTool（外部接口）
 
@@ -392,7 +392,7 @@ Commander 决定：重试（快速/温和）、跳过或完全重置。失败记
 | 层级 | 技术 |
 |------|------|
 | 智能体框架 | [LangGraph](https://github.com/langchain-ai/langgraph) (`CompiledStateGraph`) |
-| LLM | `chat_model`（项目共享模型，通过 `.env` 配置） |
+| LLM | `main_llm`（项目共享模型，通过 `.env` 配置） |
 | 检查点 | `InMemorySaver`（内存型，会话内） |
 | 中间件 | `@before_model` / `@after_agent` 装饰器 (`langchain.agents.middleware`) |
 | 异步 | `asyncio.create_task`, `asyncio.gather`, `asyncio.wait_for` |

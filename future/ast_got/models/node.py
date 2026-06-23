@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 
 class Node:
@@ -7,8 +7,8 @@ class Node:
                  node_id: str,
                  label: str,
                  node_type: str,
-                 confidence: List[float],
-                 metadata: Optional[Dict[str, Any]] = None):
+                 confidence: list[float],
+                 metadata: dict[str, Any] | None = None):
         self.node_id = node_id
         self.label = label
         self.node_type = node_type
@@ -18,7 +18,7 @@ class Node:
         if "timestamp" not in self.metadata:
             self.metadata["timestamp"] = str(datetime.datetime.now())
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "node_id": self.node_id,
             "label": self.label,
@@ -28,7 +28,7 @@ class Node:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Node':
+    def from_dict(cls, data: dict[str, Any]) -> 'Node':
         node_id = data.pop("node_id")
         label = data.pop("label")
         node_type = data.pop("node_type")

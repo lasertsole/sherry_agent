@@ -1,12 +1,11 @@
 import datetime
+from typing import Any
 from loguru import logger
-from typing import Dict, Any, List, Set
-
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
+from tests import calculate_semantic_overlap
 from langchain_core.messages import HumanMessage
 from future.ast_got.models.graph import AGoTGraph
-from tests import calculate_semantic_overlap
 
 
 # ============================================================
@@ -40,7 +39,7 @@ class NodeFusion(BaseModel):
 
 
 class PruningStage:
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Pruning/Merging Stage")
 
         parameters = context.get("parameters", {})
@@ -65,8 +64,8 @@ class PruningStage:
         merged_nodes = 0
 
         # ===== Phase 1: Pruning =====
-        nodes_to_prune: Set[str] = set()
-        borderline_nodes: List[tuple] = []  # 需要 AI 判断的"灰色地带"节点
+        nodes_to_prune: set[str] = set()
+        borderline_nodes: list[tuple] = []  # 需要 AI 判断的"灰色地带"节点
 
         for node_id, node_data in graph.graph.nodes(data=True):
             if node_data.get("node_type") in ["root", "dimension"]:
@@ -96,9 +95,9 @@ class PruningStage:
                 nodes_to_prune.add(node_id)
 
         # ===== Phase 2: Merge Candidate Detection =====
-        nodes_to_merge: Dict[str, str] = {}
+        nodes_to_merge: dict[str, str] = {}
 
-        node_types: Dict[str, list] = {}
+        node_types: dict[str, list] = {}
         for node_id, node_data in graph.graph.nodes(data=True):
             if node_id in nodes_to_prune:
                 continue
@@ -253,7 +252,7 @@ Adjustment guidelines:
 Return adjusted thresholds (0-1) and your reasoning.
 """)
 
-            result = simple_chat_model.with_structured_output(ThresholdSuggestion).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(ThresholdSuggestion).invoke([prompt])
             if isinstance(result, ThresholdSuggestion):
                 return (result.pruning_threshold, result.impact_threshold, result.merging_threshold)
         except Exception as e:
@@ -262,14 +261,14 @@ Return adjusted thresholds (0-1) and your reasoning.
 
     def _ai_pruning_decisions(
         self, graph: AGoTGraph, query: str,
-        borderline_nodes: List[tuple]
-    ) -> Set[str]:
+        borderline_nodes: list[tuple]
+    ) -> set[str]:
         """[AI] 判断灰色地带节点是否应该被剪枝
 
         分批调用 AI，避免 Prompt 过长。
         当 AI 调用失败时，保守保留所有灰色地带节点。
         """
-        pruned: Set[str] = set()
+        pruned: set[str] = set()
         try:
             batch_size = 5
             for batch_start in range(0, len(borderline_nodes), batch_size):
@@ -302,7 +301,7 @@ For each node:
 Consider the node's content, uniqueness, and relevance to the research question.
 """)
 
-                result = simple_chat_model.with_structured_output(List[PruningDecision]).invoke([prompt])
+                result = auxiliary_llm.with_structured_output(list[PruningDecision]).invoke([prompt])
 
                 if isinstance(result, list):
                     for i, d in enumerate(result):
@@ -330,7 +329,7 @@ Consider the node's content, uniqueness, and relevance to the research question.
             d1 = graph.graph.nodes[n1_id]
             d2 = graph.graph.nodes[n2_id]
 
-            def safe_get(data: Dict, key: str, default="") -> str:
+            def safe_get(data: dict, key: str, default="") -> str:
                 val = data.get(key, default)
                 if isinstance(val, str):
                     return val[:200]
@@ -359,7 +358,7 @@ A valid merge requires:
 Return should_merge and reasoning.
 """)
 
-            result = simple_chat_model.with_structured_output(MergeJudgment).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(MergeJudgment).invoke([prompt])
             if isinstance(result, MergeJudgment) and result.should_merge:
                 # 由规则决定保留哪个节点（更可靠的评分机制）
                 conf1 = sum(d1.get("confidence", [0.5])) / max(len(d1.get("confidence", [0.5])), 1)
@@ -374,7 +373,7 @@ Return should_merge and reasoning.
             logger.warning(f"AI merge judgment failed: {e}")
         return False, n1_id
 
-    def _ai_fuse_nodes(self, src: Dict, tgt: Dict):
+    def _ai_fuse_nodes(self, src: dict, tgt: dict):
         """[AI] 合并节点内容：基础字段融合 + AI 综合摘要
 
         先执行字段级别的兜底合并，
@@ -393,7 +392,7 @@ Return should_merge and reasoning.
 
         # [AI] 生成综合标签和描述
         try:
-            def safe_val(data: Dict, key: str, alt_key: str = "") -> str:
+            def safe_val(data: dict, key: str, alt_key: str = "") -> str:
                 val = data.get(key, "")
                 if not val and alt_key:
                     val = data.get(alt_key, "")
@@ -422,7 +421,7 @@ Requirements:
 - merged_description: Synthesized content preserving all unique insights
 """)
 
-            result = simple_chat_model.with_structured_output(NodeFusion).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(NodeFusion).invoke([prompt])
 
             if isinstance(result, NodeFusion):
                 if result.merged_label and len(result.merged_label) <= 150:

@@ -1,6 +1,6 @@
 from enum import Enum
 from pydantic import BaseModel
-from typing import Any, List, Optional, Literal
+from typing import Any, Literal
 
 """
     skill_memory type definitions
@@ -22,7 +22,7 @@ class Node(BaseModel):
 class GmNode(Node):
     id: str
     validated_count: int
-    source_sessions: List[str]
+    source_sessions: list[str]
     community_id: str | None
     pagerank: float
     created_at: int
@@ -42,7 +42,7 @@ class Edge(BaseModel):
     to_id: str
     type: EdgeType
     instruction: str
-    condition: Optional[str]
+    condition: str | None
 
 class GmEdge(Edge):
     id: str
@@ -65,21 +65,21 @@ class Signal(BaseModel):
 
 # ─── Extraction Results ──────────────────────────────────────
 class ExtractionResult(BaseModel):
-    nodes: List[Node]
-    edges: List[Edge]
+    nodes: list[Node]
+    edges: list[Edge]
 
 class PromotedSkill(Node):
     type: Literal[NodeType.SKILL]
 
 class FinalizeResult(BaseModel):
-    promoted_skills: List[PromotedSkill]
-    new_edges: List[Edge]
-    invalidations: List[str]
+    promoted_skills: list[PromotedSkill]
+    new_edges: list[Edge]
+    invalidations: list[str]
 
 # ─── Recall Results ──────────────────────────────────────────
 class RecallResult(BaseModel):
-    nodes: List[GmNode]
-    edges: List[GmEdge]
+    nodes: list[GmNode]
+    edges: list[GmEdge]
     token_estimate: int
 
 # ─── Plugin Config ───────────────────────────────────────────
@@ -89,8 +89,8 @@ class GmConfig(BaseModel):
     recall_max_nodes: int
     recall_max_depth: int
     fresh_tail_count: int
-    embedding: Optional[Any]
-    llm: Optional[Any]
+    embedding: Any | None
+    llm: Any | None
     dedup_threshold: float
     pagerank_damping: float
     pagerank_iterations: int

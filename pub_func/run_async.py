@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from typing import Optional
+
 
 _tool_loop = None          # persistent loop for the main (CLI) thread
 _worker_thread_local = threading.local()
@@ -80,7 +80,7 @@ def run_async(coro, timeout: float = 300):
         # worker, which previously leaked the thread on every 300 s timeout).
         import concurrent.futures
 
-        worker_loop: Optional[asyncio.AbstractEventLoop] = None
+        worker_loop: asyncio.AbstractEventLoop | None = None
         loop_ready = threading.Event()
 
         def _run_in_worker():

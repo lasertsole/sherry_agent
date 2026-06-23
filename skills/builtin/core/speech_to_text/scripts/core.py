@@ -1,9 +1,10 @@
 from loguru import  logger
 from funasr import AutoModel
 from config import MODELS_DIR
+from pydantic import validate_call
 from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
-model_dir = MODELS_DIR / "SST_model"
+model_dir = MODELS_DIR / "STT_model"
 
 model = AutoModel(
     model = (model_dir / "model_weight").as_posix(),
@@ -14,6 +15,7 @@ model = AutoModel(
     device = "cuda:0",
 )
 
+@validate_call
 def stt(audio_path: str)-> None:
     try:
         res = model.generate(

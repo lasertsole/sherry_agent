@@ -13,6 +13,7 @@ Example:
 import sys
 import zipfile
 from pathlib import Path
+from pydantic import validate_call
 from .quick_validate import validate_skill
 
 
@@ -31,8 +32,8 @@ def _cleanup_partial_archive(skill_filename: Path) -> None:
     except OSError:
         pass
 
-
-def package_skill(skill_path, output_dir=None):
+@validate_call
+def package_skill(skill_path: str | Path, output_dir=None):
     """
     Package a skill folder into a .skill file.
 

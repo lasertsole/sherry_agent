@@ -2,8 +2,8 @@ import sys
 import cv2
 import base64
 from pathlib import Path
-
 from loguru import logger
+from pydantic import validate_call
 from langchain_core.messages import HumanMessage
 
 # Dynamically add project root to sys.path
@@ -55,7 +55,7 @@ def _image_to_data_url(path: str) -> str:
     mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
     return f"data:image/{mime};base64,{b64}"
 
-
+@validate_call
 def vtt(video_path: str, query: str = "")-> None:
     # --- Duration check ---
     try:
@@ -86,7 +86,7 @@ def vtt(video_path: str, query: str = "")-> None:
                        f" try extracting video frames as input for the VLM model.")
         return  None
 
-
+@validate_call
 def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> None:
     # --- Duration check ---
     try:

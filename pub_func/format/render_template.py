@@ -2,11 +2,11 @@
 模板渲染工具 - 将模板中的 {{ variable }} 占位符替换为实际值
 """
 
-from typing import Dict, Any
 import re
+from typing import Any
 
 
-def template_render(template_content: str, variables: Dict[str, Any]) -> str:
+def template_render(template_content: str, variables: dict[str, Any]) -> str:
     """
     将模板字符串中的 {{ variable }} 占位符替换为指定值
 
@@ -40,7 +40,7 @@ def template_render(template_content: str, variables: Dict[str, Any]) -> str:
     return result
 
 
-def render_template_file(file_path: str, variables: Dict[str, Any]) -> str:
+def render_template_file(file_path: str, variables: dict[str, Any]) -> str:
     """
     读取模板文件并渲染变量
 

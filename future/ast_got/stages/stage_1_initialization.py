@@ -1,9 +1,9 @@
 import datetime
-from loguru import logger
-from typing import Dict, Any, List
-from models import simple_chat_model
-from pydantic import BaseModel, Field
+from typing import Any
 from tests import Node
+from loguru import logger
+from models import auxiliary_llm
+from pydantic import BaseModel, Field
 from future.ast_got.models.graph import AGoTGraph
 from langchain_core.runnables import RunnableSerializable
 from langchain_core.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate, ChatPromptTemplate
@@ -11,10 +11,10 @@ from langchain_core.prompts import SystemMessagePromptTemplate, HumanMessageProm
 
 class DomainExtraction(BaseModel):
     """Extract the academic domains involved in the question"""
-    domains: List[str] = Field(description="List of academic domains involved in the question, e.g., ['Physics', 'Astronomy']", default=[])
+    domains: list[str] = Field(description="List of academic domains involved in the question, e.g., ['Physics', 'Astronomy']", default=[])
 
 class InitializationStage:
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Initialization Stage")
 
         query = context.get("query", "")
@@ -51,7 +51,7 @@ class InitializationStage:
             }
         }
 
-    def _extract_disciplines(self, query: str, parameters: Dict[str, Any]) -> List[str]:
+    def _extract_disciplines(self, query: str, parameters: dict[str, Any]) -> list[str]:
         system_template = "You are a domain planning expert. Please identify the academic domains involved in the user's question."
 
         system_prompt = SystemMessagePromptTemplate.from_template(system_template)
@@ -59,7 +59,7 @@ class InitializationStage:
 
         chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
 
-        invoker: RunnableSerializable = chat_prompt | simple_chat_model.with_structured_output(DomainExtraction)
+        invoker: RunnableSerializable = chat_prompt | auxiliary_llm.with_structured_output(DomainExtraction)
 
         result: DomainExtraction = invoker.invoke({"query": query})
 

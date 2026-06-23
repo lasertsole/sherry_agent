@@ -1,9 +1,10 @@
 import json
 import time
+from typing import Any
 from pathlib import Path
 from collections import deque
-from type import Chat, File, FileType
-from typing import List, Optional, Deque, Any
+from type.client import Chat, File, FileType
+
 
 current_dir = Path(__file__).parent.resolve()
 SESSION_FOLDER = (current_dir / '../../src/sessions').resolve()
@@ -19,7 +20,7 @@ class ChatStorage:
         self._session_id = session_id
 
         # 获取已持久化的聊天记录
-        chats_list: List[Chat] = []
+        chats_list: list[Chat] = []
 
         SESSION_FOLDER.mkdir(parents=True, exist_ok=True)
         self._chats_storage_file = (SESSION_FOLDER / f"{self._session_id}.jsonl").resolve()
@@ -44,12 +45,12 @@ class ChatStorage:
     def get_session_id(self)->str:
         return self._session_id
 
-    def get_chats(self) -> List[dict[str, Any]]:
+    def get_chats(self) -> list[dict[str, Any]]:
         return list([chat.model_dump() for chat in self._chats_deque])
 
-    def _delete_file(self, new_chat_deque: Deque[Chat]):
+    def _delete_file(self, new_chat_deque: deque[Chat]):
         # 获取所有多媒体文件夹
-        file_type_list:List[str] = [member.value for member in FileType.__members__.values()]
+        file_type_list:list[str] = [member.value for member in FileType.__members__.values()]
 
         # 根据文件夹名创建dict类型变量delete_folders_dict
         delete_folders_dict = {folder: [] for folder in file_type_list}
@@ -62,7 +63,7 @@ class ChatStorage:
         # 如果new_chat_deque内的文件在delete_folders_dict内，则将文件从delete_folders_dict字典内中移除
         for chat in new_chat_deque:
             for file_type in file_type_list:
-                file_list: List[str] = getattr(chat, f"{file_type}_path_list")
+                file_list: list[str] = getattr(chat, f"{file_type}_path_list")
                 if file_list:
                     delete_folders_dict[file_type] = [file_path for file_path in delete_folders_dict[file_type] if file_path not in file_list]
 
@@ -75,7 +76,7 @@ class ChatStorage:
                 except Exception as e:
                     pass
 
-    def __storage_chats_deque(self, _chats_deque: Deque[Chat]):
+    def __storage_chats_deque(self, _chats_deque: deque[Chat]):
         SESSION_FOLDER.mkdir(parents=True, exist_ok=True)
 
         # 将新聊天记录列表写回文件
@@ -83,7 +84,7 @@ class ChatStorage:
             for chat in _chats_deque:
                 f.write(json.dumps(chat.model_dump(), ensure_ascii=False) + "\n")
 
-    def add_chat(self, new_chat: dict[str, Any], files: Optional[List[File]] = None):
+    def add_chat(self, new_chat: dict[str, Any], files: list[File] | None = None):
         _new_chat = Chat(**new_chat)
         
         # 将新聊天记录装入双向列表

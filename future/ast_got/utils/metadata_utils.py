@@ -1,8 +1,8 @@
 import hashlib
 import numpy as np
+from typing import Any
 from loguru import logger
 from models.embed_model import embed_model
-from typing import Dict, Any, List, Optional
 
 
 def generate_id(prefix: str, content: str) -> str:
@@ -11,8 +11,8 @@ def generate_id(prefix: str, content: str) -> str:
     return f"{prefix}_{hash_hex}"
 
 
-def calculate_semantic_overlap(metadata1: Dict[str, Any], metadata2: Dict[str, Any],
-                              keys_to_compare: Optional[List[str]] = None) -> float:
+def calculate_semantic_overlap(metadata1: dict[str, Any], metadata2: dict[str, Any],
+                              keys_to_compare: list[str] | None = None) -> float:
     # 排除技术性字段
     exclusions = {'node_id', 'edge_id', 'timestamp', 'revision_history',
                   'confidence', 'impact_score'}
@@ -74,7 +74,7 @@ def _to_semantic_text(key: str, value: Any) -> str:
         return str(value)
 
 
-def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
     """计算余弦相似度"""
     v1 = np.array(vec1)
     v2 = np.array(vec2)
@@ -109,7 +109,7 @@ def check_falsifiability(criteria: str) -> float:
     return min(score, 1.0)
 
 
-def detect_biases(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+def detect_biases(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     biases = []
 
     confidence = metadata.get('confidence', [])

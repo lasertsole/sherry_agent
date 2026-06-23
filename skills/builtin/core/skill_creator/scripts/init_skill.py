@@ -16,6 +16,9 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import Any
+
+from pydantic import validate_call
 
 MAX_SKILL_NAME_LENGTH = 64
 ALLOWED_RESOURCES = {"scripts", "references", "assets"}
@@ -202,7 +205,8 @@ def _resolve_path(path_str: str) -> Path:
     return Path(resolved).resolve()
 
 
-def normalize_skill_name(skill_name):
+@validate_call
+def normalize_skill_name(skill_name: str):
     """Normalize a skill name to lowercase hyphen-case."""
     normalized = skill_name.strip().lower()
     normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
@@ -210,13 +214,13 @@ def normalize_skill_name(skill_name):
     normalized = re.sub(r"-{2,}", "-", normalized)
     return normalized
 
-
-def title_case_skill_name(skill_name):
+@validate_call
+def title_case_skill_name(skill_name: str):
     """Convert hyphenated skill name to Title Case for display."""
     return " ".join(word.capitalize() for word in skill_name.split("-"))
 
-
-def parse_resources(raw_resources):
+@validate_call
+def parse_resources(raw_resources: str)-> list[str]:
     if not raw_resources:
         return []
     resources = [item.strip() for item in raw_resources.split(",") if item.strip()]
@@ -234,8 +238,8 @@ def parse_resources(raw_resources):
             seen.add(resource)
     return deduped
 
-
-def create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_examples):
+@validate_call
+def create_resource_dirs(skill_dir: str | Path, skill_name: str, skill_title: str, resources: list[str], include_examples: bool):
     for resource in resources:
         resource_dir = skill_dir / resource
         resource_dir.mkdir(exist_ok=True)
@@ -262,8 +266,8 @@ def create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_
             else:
                 print("[OK] Created assets/")
 
-
-def init_skill(skill_name, path, resources, include_examples):
+@validate_call
+def init_skill(skill_name: str, path:  str, resources: list[str], include_examples: bool):
     """
     Initialize a new skill directory with template SKILL.md.
 
@@ -347,8 +351,8 @@ def main():
     )
     args = parser.parse_args()
 
-    raw_skill_name = args.skill_name
-    skill_name = normalize_skill_name(raw_skill_name)
+    raw_skill_name: str = args.skill_name
+    skill_name: str = normalize_skill_name(raw_skill_name)
     if not skill_name:
         print("[ERROR] Skill name must include at least one letter or digit.")
         sys.exit(1)
@@ -361,12 +365,12 @@ def main():
     if skill_name != raw_skill_name:
         print(f"Note: Normalized skill name from '{raw_skill_name}' to '{skill_name}'.")
 
-    resources = parse_resources(args.resources)
+    resources:list[str] = parse_resources(args.resources)
     if args.examples and not resources:
         print("[ERROR] --examples requires --resources to be set.")
         sys.exit(1)
 
-    path = args.path
+    path: str = args.path
 
     print(f"Initializing skill: {skill_name}")
     print(f"   Location: {path}")

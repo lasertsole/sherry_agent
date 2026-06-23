@@ -1,6 +1,6 @@
 import textwrap
 from pathlib import Path
-from models import chat_model
+from models import main_llm
 from config import SESSIONS_DIR
 from ..type import SubAgentOutput
 from langchain.agents import create_agent
@@ -182,7 +182,7 @@ def build_commander(session_id: str, task_id: str) -> CompiledStateGraph:
 
     agent: CompiledStateGraph = create_agent(
         system_prompt=_system_prompt,
-        model=chat_model,
+        model=main_llm,
         checkpointer=InMemorySaver(),
         tools=[
             todo_writer_tool,
@@ -194,7 +194,7 @@ def build_commander(session_id: str, task_id: str) -> CompiledStateGraph:
         ],
         middleware=[
             SummarizationMiddleware(
-                model=chat_model,
+                model=main_llm,
                 trigger=("messages", 15),
                 keep=("messages", 8),
             ),

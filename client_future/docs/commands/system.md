@@ -1,6 +1,6 @@
 # System Commands
 
-Tauri-native utility commands for app metadata and health checking.
+Tauri-native utility commands. `system_info` is pure Rust; `system_health` pings the Python backend.
 
 ## `system_info`
 
@@ -42,7 +42,9 @@ console.log(`Tauri: ${info.tauri_version}`);
 
 ## `system_health`
 
-Quick health check — verifies core subsystems are reachable.
+Quick health check — pings the Python backend (`GET /system_prompt`) to verify connectivity.
+
+Returns `healthy: true` when the Python backend responds, `healthy: false` with a descriptive message when it is unreachable.
 
 ### Signature
 

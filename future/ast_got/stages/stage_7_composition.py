@@ -1,8 +1,7 @@
 import datetime
+from typing import Any
 from loguru import logger
-from typing import Dict, Any, List
-
-from models import simple_chat_model
+from models import auxiliary_llm
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 
@@ -34,7 +33,7 @@ class GapsAnalysis(BaseModel):
 
 
 class CompositionStage:
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Composition Stage")
 
         subgraphs = context.get("subgraphs", [])
@@ -117,7 +116,7 @@ class CompositionStage:
         }
 
     def _generate_executive_summary(self, graph: AGoTGraph,
-                                  subgraphs: List[Dict[str, Any]],
+                                  subgraphs: list[dict[str, Any]],
                                   query: str) -> str:
         """生成执行摘要：优先 AI，失败时回退到模板"""
         ai_result = self._ai_executive_summary(graph, subgraphs, query)
@@ -153,8 +152,8 @@ class CompositionStage:
         return summary
 
     def _generate_section_from_subgraph(self, graph: AGoTGraph,
-                                      subgraph_data: Dict[str, Any],
-                                      citations: List[Dict[str, Any]]) -> str:
+                                      subgraph_data: dict[str, Any],
+                                      citations: list[dict[str, Any]]) -> str:
         """生成子图分析段落：优先 AI，失败时回退到模板"""
         ai_result = self._ai_section_analysis(graph, subgraph_data, citations)
         if ai_result is not None:
@@ -288,7 +287,7 @@ class CompositionStage:
     # ============================================================
 
     def _ai_executive_summary(self, graph: AGoTGraph,
-                              subgraphs: List[Dict[str, Any]],
+                              subgraphs: list[dict[str, Any]],
                               query: str) -> str:
         """[AI] 生成执行摘要"""
         try:
@@ -322,7 +321,7 @@ Write a concise 3-5 sentence executive summary covering:
 2. Key findings from the extracted subgraphs
 3. Main conclusions and their confidence level
 """)
-            result = simple_chat_model.with_structured_output(ExecutiveSummary).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(ExecutiveSummary).invoke([prompt])
             if isinstance(result, ExecutiveSummary) and result.summary:
                 return result.summary
         except Exception as e:
@@ -330,8 +329,8 @@ Write a concise 3-5 sentence executive summary covering:
         return None
 
     def _ai_section_analysis(self, graph: AGoTGraph,
-                             subgraph_data: Dict[str, Any],
-                             citations: List[Dict[str, Any]]) -> str:
+                             subgraph_data: dict[str, Any],
+                             citations: list[dict[str, Any]]) -> str:
         """[AI] 分析单个子图并生成段落"""
         try:
             nodes = subgraph_data.get("nodes", [])
@@ -389,7 +388,7 @@ Write a 3-8 sentence analysis paragraph that:
 3. Draws meaningful conclusions relevant to the research context
 4. Notes any supporting evidence structures
 """)
-            result = simple_chat_model.with_structured_output(SectionAnalysis).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(SectionAnalysis).invoke([prompt])
             if isinstance(result, SectionAnalysis) and result.content:
                 # Extract citations from the AI output (hypothesis nodes)
                 # This keeps the citation collection working for the bibliography
@@ -461,7 +460,7 @@ Write a 3-6 sentence synthesis paragraph that:
 3. Highlights novel insights that emerge from the cross-disciplinary connections
 4. Suggests implications that span across traditional disciplinary boundaries
 """)
-            result = simple_chat_model.with_structured_output(InterdisciplinaryInsight).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(InterdisciplinaryInsight).invoke([prompt])
             if isinstance(result, InterdisciplinaryInsight) and result.insight:
                 return result.insight
         except Exception as e:
@@ -513,14 +512,14 @@ Generate a 3-6 sentence analysis that:
 3. Suggests promising research directions to fill these gaps
 4. Highlights areas where additional evidence would strengthen conclusions
 """)
-            result = simple_chat_model.with_structured_output(GapsAnalysis).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(GapsAnalysis).invoke([prompt])
             if isinstance(result, GapsAnalysis) and result.content:
                 return result.content
         except Exception as e:
             logger.warning(f"AI gap analysis failed: {e}")
         return None
 
-    def _format_citations_vancouver(self, citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _format_citations_vancouver(self, citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """纯格式化逻辑——无需 AI"""
         formatted = []
 

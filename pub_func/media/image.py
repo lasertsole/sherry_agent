@@ -5,10 +5,9 @@ import base64
 import requests
 from PIL import Image
 from loguru import logger
-from typing import Optional, Tuple
 
 
-def detect_image_format(image_data: bytes) -> Optional[str]:
+def detect_image_format(image_data: bytes) -> str | None:
     """通过文件头检测图片格式"""
     IMAGE_SIGNATURES = {
         b'\xFF\xD8\xFF': 'JPEG',
@@ -31,7 +30,7 @@ def detect_image_format(image_data: bytes) -> Optional[str]:
     return None
 
 
-def validate_and_fix_base64(base64_string: str) -> Optional[str]:
+def validate_and_fix_base64(base64_string: str) -> str | None:
     """
     验证并修复base64字符串的padding
 
@@ -72,7 +71,7 @@ def validate_and_fix_base64(base64_string: str) -> Optional[str]:
         return None
 
 
-def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int = 10) -> Optional[str]:
+def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int = 10) -> str | None:
     """下载图片并转换为base64格式"""
     try:
         response = requests.get(url, timeout=timeout, stream=True)
@@ -196,7 +195,7 @@ def compress_image_if_needed(image_data: bytes, max_size_mb: float = 5.0, max_di
         # 如果压缩失败，返回原始数据
         return image_data
 
-def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> Optional[bytes]:
+def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> bytes | None:
     """
     下载文件，带重试机制和正确的请求头
 
@@ -264,7 +263,7 @@ def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> Op
 
     return None
 
-def clean_and_validate_base64(base64_string: str) -> Optional[str]:
+def clean_and_validate_base64(base64_string: str) -> str | None:
     """
     清理并验证base64字符串，移除所有非法字符
 
@@ -328,7 +327,7 @@ def clean_and_validate_base64(base64_string: str) -> Optional[str]:
         logger.debug(traceback.format_exc())
         return None
 
-def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int = 10) -> Optional[str]:
+def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int = 10) -> str | None:
     """下载图片并转换为base64格式"""
     try:
         logger.info(f"开始处理图片URL: {url[:100]}...")
@@ -403,8 +402,8 @@ def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int
         logger.debug(traceback.format_exc())
         return False, None, None, None
 
-def check_if_image_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int = 10) -> Tuple[
-    bool, Optional[str], Optional[str], Optional[str]]:
+def check_if_image_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int = 10) -> tuple[
+    bool, str | None, str | None, str | None]:
     """
     综合判断URL是否为图片，如果是则转换为base64
 

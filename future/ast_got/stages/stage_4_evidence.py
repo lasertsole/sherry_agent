@@ -1,11 +1,11 @@
 import json
 import random
 import datetime
-from loguru import logger
-from typing import Dict, Any, List
-from models import simple_chat_model
-from langchain.agents import create_agent
 from tests import Node
+from typing import Any
+from loguru import logger
+from models import auxiliary_llm
+from langchain.agents import create_agent
 from future.ast_got.models.edge import Edge
 from langchain_core.messages import HumanMessage
 from future.ast_got.models.graph import AGoTGraph
@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field
 class EdgeTypeOutput(BaseModel):
     type: str = Field(description="Relationship type: 'supportive', 'contradictory', 'correlative', 'causal', or 'temporal'")
     subtype: str | None = Field(default=None, description="Subtype if applicable (e.g., 'direct', 'indirect', 'precedence')")
-    causal_metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata for causal relationships (e.g., confounders)")
-    temporal_metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata for temporal relationships (e.g., delay, pattern)")
+    causal_metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata for causal relationships (e.g., confounders)")
+    temporal_metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata for temporal relationships (e.g., delay, pattern)")
 
 class IBNDecision(BaseModel):
     should_create: bool = Field(description="Whether an interdisciplinary bridge is needed")
@@ -49,7 +49,7 @@ class DecayFactor(BaseModel):
     reasoning: str = Field(description="Why this specific decay rate was chosen based on the field and age")
 
 class EvidenceStage:
-    def execute(self, graph: AGoTGraph, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, graph: AGoTGraph, context: dict[str, Any]) -> dict[str, Any]:
         logger.info("Executing Evidence Integration Stage")
 
         hypotheses = context.get("hypotheses", [])
@@ -230,7 +230,7 @@ class EvidenceStage:
             if plan_type == "search":
                 agent = create_agent(
                     system_prompt=system_prompt,
-                    model=simple_chat_model,
+                    model=auxiliary_llm,
                     tools=[build_web_search_tool()],
                 )
 
@@ -256,7 +256,7 @@ class EvidenceStage:
             elif plan_type == "experiment":
                 agent = create_agent(
                     system_prompt=system_prompt,
-                    model=simple_chat_model,
+                    model=auxiliary_llm,
                     tools=[build_python_repl_tool()],
                 )
 
@@ -278,7 +278,7 @@ class EvidenceStage:
                     })
             else:
                 # 默认使用 LLM 进行逻辑推演
-                result = simple_chat_model.invoke(
+                result = auxiliary_llm.invoke(
                     [system_prompt, HumanMessage(content=f"Logically evaluate: {description}")])
                 evidence.append({
                     "content": result.content,
@@ -338,7 +338,7 @@ class EvidenceStage:
                     """)
 
             # 调用模型并指定响应格式
-            result = simple_chat_model.with_structured_output(EdgeTypeOutput).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(EdgeTypeOutput).invoke([prompt])
 
             if isinstance(result, EdgeTypeOutput):
                 return {
@@ -376,7 +376,7 @@ class EvidenceStage:
                     A bridge is needed if there is a non-trivial, insightful connection between these distinct fields that enhances the understanding of the hypothesis.
                     """)
 
-            result = simple_chat_model.with_structured_output(IBNDecision).invoke([prompt])
+            result = auxiliary_llm.with_structured_output(IBNDecision).invoke([prompt])
 
             if isinstance(result, IBNDecision):
                 # 只有当 AI 认为需要建立桥梁，且强度超过一定阈值时才返回 True
@@ -439,7 +439,7 @@ class EvidenceStage:
             Return a list of nodes that need their confidence adjusted.
             """)
 
-            structured_llm = simple_chat_model.with_structured_output(List[DecayFactor])
+            structured_llm = auxiliary_llm.with_structured_output(list[DecayFactor])
             result = structured_llm.invoke([prompt])
 
             if isinstance(result, list):
@@ -489,7 +489,7 @@ class EvidenceStage:
                     Return a list of detected patterns.
                     """)
 
-            structured_llm = simple_chat_model.with_structured_output(List[TemporalPattern])
+            structured_llm = auxiliary_llm.with_structured_output(list[TemporalPattern])
             result = structured_llm.invoke([prompt])
 
             if isinstance(result, list):
@@ -537,7 +537,7 @@ class EvidenceStage:
             Return the most scientifically sound structural adjustment.
             """)
 
-            structured_llm = simple_chat_model.with_structured_output(TopologyAction)
+            structured_llm = auxiliary_llm.with_structured_output(TopologyAction)
             result = structured_llm.invoke([prompt])
 
             if isinstance(result, TopologyAction):
@@ -585,7 +585,7 @@ class EvidenceStage:
                     """)
 
             # 使用 with_structured_output 处理列表输出
-            structured_llm = simple_chat_model.with_structured_output(List[BiasFlag])
+            structured_llm = auxiliary_llm.with_structured_output(list[BiasFlag])
             result = structured_llm.invoke([prompt])
 
             if isinstance(result, list):

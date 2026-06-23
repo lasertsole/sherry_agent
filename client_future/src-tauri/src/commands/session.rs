@@ -4,6 +4,7 @@
 //! - `DELETE /sessions` → [`session_clear`]
 //! - `GET /n_turns_history_messages` → [`session_history`]
 
+use crate::services::python_bridge::PythonBridge;
 use crate::utils::error::FrontendError;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -90,10 +91,16 @@ pub struct HistoryMessage {
 #[tauri::command]
 pub async fn session_clear(
     request: ClearSessionRequest,
+    bridge: tauri::State<'_, PythonBridge>,
 ) -> Result<(), FrontendError> {
     tracing::info!(session_id = %request.session_id, "session_clear called");
-    // TODO: wire up to session store
-    todo!("session_clear not yet implemented")
+    bridge
+        .delete_json(
+            "/sessions",
+            &serde_json::json!({ "session_id": request.session_id }),
+        )
+        .await
+        .map_err(FrontendError::from)
 }
 
 /// Retrieve conversation history for a session.
@@ -135,14 +142,51 @@ pub async fn session_clear(
 #[tauri::command]
 pub async fn session_history(
     request: HistoryRequest,
+    bridge: tauri::State<'_, PythonBridge>,
 ) -> Result<Vec<HistoryMessage>, FrontendError> {
     tracing::info!(
         session_id = %request.session_id,
         last_turn_count = ?request.last_turn_count,
         "session_history called"
     );
-    // TODO: wire up to session store
-    todo!("session_history not yet implemented")
+
+    let turn_count = request.last_turn_count.unwrap_or(10);
+    let turn_count_str = turn_count.to_string();
+    let query_with_count: Vec<(&str, &str)> = vec![
+        ("session_id", &request.session_id),
+        ("last_turn_count", &turn_count_str),
+    ];
+
+    // Python returns LangChain messages_to_dict() format:
+    // [{"type": "human", "data": {"content": "..."}}, {"type": "ai", "data": {"content": "..."}}]
+    let raw: Vec<serde_json::Value> = bridge
+        .get_json("/n_turns_history_messages", &query_with_count)
+        .await
+        .map_err(FrontendError::from)?;
+
+    let messages: Vec<HistoryMessage> = raw
+        .into_iter()
+        .filter_map(|msg| {
+            let msg_type = msg.get("type")?.as_str()?;
+            let data = msg.get("data")?;
+            let content = data.get("content")?.as_str()?.to_string();
+
+            let role = match msg_type {
+                "human" => "user",
+                "ai" => "assistant",
+                "tool" => "tool",
+                other => other,
+            };
+
+            Some(HistoryMessage {
+                role: role.to_string(),
+                content,
+                timestamp: None,
+            })
+        })
+        .collect();
+
+    Ok(messages)
 }
 
 // ── Tests ───────────────────────────────────────────────────

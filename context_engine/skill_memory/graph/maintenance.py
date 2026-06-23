@@ -18,8 +18,8 @@ from loguru import logger
 from ..type import GmConfig
 from sqlite3 import Connection
 from .dedup import dedup, DedupResult
-from typing import Optional, TypedDict
 from langchain_core.embeddings import Embeddings
+from typing import TypedDict, Callable, Awaitable
 from .community import detect_communities, summarize_communities, CommunityResult
 from .pagerank import compute_global_page_rank, invalidate_graph_cache, GlobalPageRankResult
 
@@ -34,15 +34,15 @@ class MaintenanceResult(TypedDict):
 
 
 # LLM 和 Embedding 函数类型定义
-CompleteFn = callable  # Callable[[str, str], Awaitable[str]]
-EmbedFn = callable  # Callable[[str], Awaitable[list[float]]]
+CompleteFn = Callable[[str, str], Awaitable[str]]
+EmbedFn = Callable[[str], Awaitable[list[float]]]
 
 
 async def run_maintenance(
         db: Connection,
         cfg: GmConfig,
-        llm: Optional[CompleteFn] = None,
-        embed: Optional[Embeddings] = None,
+        llm: CompleteFn | None = None,
+        embed: Embeddings | None = None,
 ) -> MaintenanceResult:
     """
     执行图谱维护流程

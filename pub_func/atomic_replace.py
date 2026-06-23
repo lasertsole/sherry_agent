@@ -1,8 +1,7 @@
 import os
 from pathlib import Path
-from typing import Union
 
-def atomic_replace(tmp_path: Union[str, Path], target: Union[str, Path]) -> str:
+def atomic_replace(tmp_path: str | Path, target: str | Path) -> str:
     """Atomically move *tmp_path* onto *target*, preserving symlinks.
 
     ``os.replace(tmp, target)`` atomically swaps ``tmp`` into place at

@@ -15,6 +15,59 @@
 
 ---
 
+## 架构说明
+
+### 混合架构（方案 A）
+
+```
++--------------------------------------------------------------------+
+|                    Tauri 2 桌面应用 (client_future/)                  |
+|                                                                    |
+|  +-------------------+       invoke()       +--------------------+ |
+|  |  Nuxt 4 前端      | ===================> |  Rust 后端层       | |
+|  |  (app/)           |                      |  (src-tauri/src/)  | |
+|  |                   | <=================== |                    | |
+|  |  bridge.ts        |   Tauri Events       |  commands/         | |
+|  |  (双模式)         |   (流式)             |  services/         | |
+|  +-------------------+                      |  utils/            | |
+|                                             +---------+----------+ |
+|                                                       |            |
++-------------------------------------------------------|------------+
+                                                        |
+                                          reqwest HTTP (localhost:8080)
+                                          SSE 流 / JSON REST
+                                                        |
++-------------------------------------------------------|------------+
+|                    Python 后端 (server/)                |            |
+|                                                        v           |
+|  Robyn HTTP + SSE + WebSocket                                      |
+|  Agent 核心 (LangGraph) | RAG | TTS (SoVITS) | 多通道 Bot         |
++--------------------------------------------------------------------+
+```
+
+**rust实现**：Rust 层实现了以下功能：
+1. 接收前端的 Tauri IPC 调用
+2. 以 HTTP 请求转发到 Python 后端（`http://127.0.0.1:8080`）
+3. 将 Python 的 SSE 流转换为 Tauri Events，供前端实时更新
+
+### 数据流
+
+```
+用户交互 (Vue 组件)
+    -> bridge.ts (自动检测 Tauri / 浏览器模式)
+        |
+        |--> [Tauri 模式] invoke() -> Rust IPC 命令
+        |        -> PythonBridge (reqwest HTTP) -> Python 后端
+        |        -> SSE 流 -> Tauri Events -> 前端监听器
+        |
+        |--> [浏览器模式] fetch() -> Python 后端 (直接 SSE)
+        |
+    -> Pinia Store (状态更新)
+    -> 响应式 UI 更新
+```
+
+---
+
 ## 目录结构
 
 ```
@@ -201,6 +254,13 @@ pnpm build
 pnpm tauri build
 ```
 
+```bash
+# 从项目根目录 (EMA_AI_agent/)
+python -m server
+```
+
+后端默认在 `http://127.0.0.1:8080` 启动（可通过 `.env` 配置）。
+
 ### 添加新页面/组件
 
 1. 在 `app/pages/` 下创建 `.vue` 文件 — Nuxt 4 自动注册路由
@@ -209,6 +269,27 @@ pnpm tauri build
 4. 在 `app/assets/ts/tailwind.config.ts` 中添加自定义 token
 
 ---
+
+### 添加新 IPC 命令
+
+1. 在 `src-tauri/src/commands/<module>.rs` 定义请求/响应类型，加 `#[derive(TS)]`
+2. 实现 `#[tauri::command]` 函数，使用 `PythonBridge` 方法
+3. 在 `lib.rs` 的 `.invoke_handler(tauri::generate_handler![...])` 中注册
+4. 运行 `cargo test` 重新生成 TypeScript 类型到 `app/types/backend/`
+5. 在 `app/composables/bridge.ts` 中添加对应封装
+
+---
+
+## API 文档
+
+完整 API 文档位于 `docs/` 目录（VitePress）：
+
+- [入门指南](docs/zh/guide/getting-started.md)
+- [Agent 命令](docs/zh/commands/agent.md)
+- [流式事件](docs/zh/events/streaming.md)
+- [错误处理](docs/zh/guide/error-handling.md)
+- [类型参考](docs/zh/types/reference.md)
+
 
 ## 许可证
 

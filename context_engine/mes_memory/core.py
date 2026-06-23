@@ -3,10 +3,10 @@ import json
 import sqlite3
 import textwrap
 import threading
+from typing import Any
 from loguru import logger
 from itertools import groupby
-from typing import List, Dict, Any
-from models import simple_chat_model
+from models import auxiliary_llm
 from langchain.agents import create_agent
 from config import ASSISTANT_NAME, USER_NAME
 from pub_func import contains_cjk, count_cjk
@@ -134,10 +134,10 @@ def _decode_content(content: Any) -> Any:
 def search_messages(
     query: str,
     session_id: str,
-    role_filter: List[str] = None,
+    role_filter: list[str] = None,
     limit: int = 20,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     import time
     start_time = time.time()
     
@@ -439,7 +439,7 @@ async def nudge_messages(session_id: str, skip_last_turn: bool = False, nudge_tu
             memory_store.format_for_system_prompt("user")
         ])
         extract_memory_agent: CompiledStateGraph = create_agent(
-            model = simple_chat_model,
+            model = auxiliary_llm,
             system_prompt = system_prompt,
             tools = [build_memory_tool(session_id)],
         )

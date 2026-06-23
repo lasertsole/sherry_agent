@@ -1,14 +1,15 @@
 import uuid
 import asyncio
 from pathlib import Path
-from models import chat_model
+from models import main_llm
 from .type import SubAgentOutput
 from workspace import CORE_FILE_NAMES
 from logging import Logger, getLogger
 from .commander import build_commander
 from skills.loader import get_skills_text
 from config import SRC_DIR, WORKSPACE_DIR
-from bus import InboundMessage, MessageBus
+from bus import MessageBus
+from type.bus import InboundMessage
 from typing import Any, Callable, Awaitable
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
@@ -203,7 +204,7 @@ class SubagentManager:
                     + '\n\nPlease convey the results to the user in a tone that matches the character persona, and tell user where result is.'
                 ), HumanMessage(content=msg.content)]
 
-                res_msg: AIMessage = chat_model.invoke(messages)
+                res_msg: AIMessage = main_llm.invoke(messages)
                 msg.content = res_msg.content
 
                 # 返回结果

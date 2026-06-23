@@ -1,8 +1,8 @@
 """write file tool with project root restriction and autopep8 formatting for .py files."""
-from __future__ import annotations
+from typing import Any
 from pathlib import Path
-from typing import Any, Optional
 from config import ROOT_DIR
+from pydantic import validate_call
 from langchain_community.tools.file_management import WriteFileTool
 
 
@@ -19,6 +19,7 @@ def _format_py_code(text: str) -> str:
 class FormattedWriteFileTool(WriteFileTool):
     """WriteFileTool that auto-formats .py files with autopep8."""
 
+    @validate_call
     def _run(
         self,
         file_path: str,
@@ -27,18 +28,18 @@ class FormattedWriteFileTool(WriteFileTool):
         **kwargs: Any,
     ) -> str:
         is_py = Path(file_path).suffix == ".py"
-        if is_py and not append:
-            # New write: format the content upfront
-            text = _format_py_code(text)
-            return super()._run(file_path=file_path, text=text, append=False, **kwargs)
-
-        if is_py and append:
-            # Append first, then format the entire file
-            result = super()._run(file_path=file_path, text=text, append=True, **kwargs)
-            full_text = Path(file_path).read_text(encoding="utf-8")
-            formatted = _format_py_code(full_text)
-            super()._run(file_path=file_path, text=formatted, append=False, **kwargs)
-            return result
+        if is_py:
+            if append:
+                # Append first, then format the entire file
+                result = super()._run(file_path=file_path, text=text, append=True, **kwargs)
+                full_text = Path(file_path).read_text(encoding="utf-8")
+                formatted = _format_py_code(full_text)
+                super()._run(file_path=file_path, text=formatted, append=False, **kwargs)
+                return result
+            else:
+                # New write: format the content upfront
+                text = _format_py_code(text)
+                return super()._run(file_path=file_path, text=text, append=False, **kwargs)
 
         return super()._run(file_path=file_path, text=text, append=append, **kwargs)
 

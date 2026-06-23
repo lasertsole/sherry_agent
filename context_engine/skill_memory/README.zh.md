@@ -1081,16 +1081,16 @@ await rectification_and_standardization(session_id)
 ```python
 from context_engine.skill_memory.core import DEFAULT_CONFIG
 from models.embed_model.core import embed_model
-from models.chat_model import chat_model
+from models.LLMs.main_llm import main_llm
 
 # 修改配置
 custom_config = DEFAULT_CONFIG.model_copy(update={
     "db_path": "./custom_skill_memory.db",
-    "compact_turn_count": 10,      # 每 10 轮维护一次
-    "recall_max_nodes": 10,        # 召回 10 个节点
-    "recall_max_depth": 3,         # 图遍历深度 3
-    "dedup_threshold": 0.95,       # 更高的去重阈值
-    "pagerank_iterations": 30,     # 更多 PageRank 迭代次数
+    "compact_turn_count": 10,  # 每 10 轮维护一次
+    "recall_max_nodes": 10,  # 召回 10 个节点
+    "recall_max_depth": 3,  # 图遍历深度 3
+    "dedup_threshold": 0.95,  # 更高的去重阈值
+    "pagerank_iterations": 30,  # 更多 PageRank 迭代次数
 })
 ```
 

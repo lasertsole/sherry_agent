@@ -14,7 +14,6 @@ import json
 import shutil
 import networkx as nx
 from loguru import logger
-from typing import Dict, Any, Optional
 from tests.ast_got.models.graph import AGoTGraph
 from tests.ast_got.models.hyperedge import Hyperedge
 
@@ -86,7 +85,7 @@ class CheckpointManager:
     # 加载
     # -----------------------------------------------------------
 
-    def load(self) -> Optional[dict]:
+    def load(self) -> dict | None:
         """加载断点，返回 None 表示没有有效断点"""
         if not self._has_valid_checkpoint():
             return None

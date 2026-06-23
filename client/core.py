@@ -2,16 +2,16 @@ import json
 import base64
 import threading
 import streamlit as st
+from typing import Any
 from pathlib import Path
-from typing import List, Any
 from urllib.parse import urlencode
-from type import MultiModalMessage
 from pub_func import sanitize_content
+from type.message import MultiModalMessage
 from websocket import WebSocket, create_connection
 from streamlit.delta_generator import DeltaGenerator
 from client.api import post_agent_astream, clear_session
 from streamlit.elements.widgets.chat import ChatInputValue
-from models.sovits_model import TTS_Request, fetch_TTS_sound
+from models.TTS_model import TTS_Request, fetch_TTS_sound
 from config import USER_NAME, ASSISTANT_NAME, API_HOST, API_PORT
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
@@ -150,7 +150,7 @@ def main()-> None:
 
     if user_input_obj:
         _multi_modal_message: MultiModalMessage = MultiModalMessage(text=user_input_obj.text)
-        _files: List[UploadedFile] = user_input_obj.files
+        _files: list[UploadedFile] = user_input_obj.files
 
         # 添加用户消息框UI
         with st_container:
@@ -158,7 +158,7 @@ def main()-> None:
                 st.markdown(f"{USER_NAME}:{_multi_modal_message.text}")
 
         # 遍历用户上传图片文件
-        image_base64_list: List[str] = []
+        image_base64_list: list[str] = []
         for _file in _files:
             # 显示图片
             st.image(_file)

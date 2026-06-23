@@ -22,6 +22,9 @@ else:
 
 
 if __name__ == "__main__":
+    # run core service thread
+    import skills.builtin.core.cron.scripts.base
+
     # Import triggers to register all routes and handlers
     from .trigger import app
     app.start(host=API_HOST, port=API_PORT)

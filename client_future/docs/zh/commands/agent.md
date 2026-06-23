@@ -80,3 +80,52 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
 
 - [流式事件](/zh/events/streaming) — 实时逐块流式传输
 - [Session 命令](/zh/commands/session) — 管理会话状态
+
+---
+
+## `agent_stop`
+
+停止指定会话正在进行的 Agent 生成。
+
+向 Python 后端发送取消请求 (`POST /sessions/agent/sse/stop`)。
+SSE 流将终止并发出 `agent:stream:end` 事件。
+
+### 签名
+
+```typescript
+await invoke('agent_stop', {
+  request: StopRequest,
+});
+```
+
+### 参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `request` | [`StopRequest`](/zh/types/reference#stoprequest) | 是 | 要停止的会话 |
+
+#### StopRequest
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `session_id` | `string` | 是 | 要取消生成的会话 ID |
+
+### 返回值
+
+`void`
+
+### 示例
+
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+
+// 停止当前会话的生成
+await invoke('agent_stop', {
+  request: { session_id: 'main' },
+});
+```
+
+### 相关
+
+- [`agent_chat`](#agent_chat) — 开始对话（可被停止）
+- [流式事件](/zh/events/streaming) — 包含停止时错误的事件生命周期

@@ -1,12 +1,9 @@
 """Terminal tool with sandbox and blacklist."""
 
-from __future__ import annotations
-
 import locale
 import subprocess
-from langchain_community.tools import ShellTool
-from typing import Union, List, Any
 from config import ROOT_DIR
+from langchain_community.tools import ShellTool
 
 
 BLACKLIST = {"rm -rf /", "mkfs", "shutdown", "reboot"}
@@ -22,7 +19,8 @@ class SafeShellTool(ShellTool):
         # Detect system encoding (Windows typically uses GBK/codepage 936)
         self._encoding = locale.getpreferredencoding() or "utf-8"
 
-    def _run(self, commands: Union[str, List[str]], **kwargs) -> str:
+
+    def _run(self, commands: str | list[str], **kwargs) -> str:
         for bad in BLACKLIST:
             if bad in commands:
                 return "Blocked: unsafe command."
@@ -33,7 +31,7 @@ class SafeShellTool(ShellTool):
             # Fallback: retry with system encoding (GBK on Chinese Windows)
             return self._run_with_encoding(commands, encoding=self._encoding)
 
-    def _run_with_encoding(self, commands: Union[str, List[str]], encoding: str) -> str:
+    def _run_with_encoding(self, commands: str | list[str], encoding: str) -> str:
         """Run command with explicit encoding for stdout/stderr."""
         if isinstance(commands, list):
             cmd_str = " && ".join(commands)

@@ -5,6 +5,7 @@
 //! - `PUT    /system_prompt` → [`system_prompt_write`]
 //! - `PATCH  /system_prompt` → [`system_prompt_update`]
 
+use crate::services::python_bridge::PythonBridge;
 use crate::utils::error::FrontendError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -67,10 +68,16 @@ pub struct PromptFileResponse {
 /// console.log(response.file_to_content['AGENTS.md']);
 /// ```
 #[tauri::command]
-pub async fn system_prompt_read() -> Result<PromptFileResponse, FrontendError> {
+pub async fn system_prompt_read(
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<PromptFileResponse, FrontendError> {
     tracing::info!("system_prompt_read called");
-    // TODO: wire up to workspace/prompt_builder
-    todo!("system_prompt_read not yet implemented")
+    // Python returns dict[str, str] directly, wrap in PromptFileResponse
+    let file_to_content: HashMap<String, String> = bridge
+        .get_json("/system_prompt", &[])
+        .await
+        .map_err(FrontendError::from)?;
+    Ok(PromptFileResponse { file_to_content })
 }
 
 /// Overwrite system prompt files (full replacement).
@@ -110,13 +117,17 @@ pub async fn system_prompt_read() -> Result<PromptFileResponse, FrontendError> {
 #[tauri::command]
 pub async fn system_prompt_write(
     payload: PromptFilePayload,
+    bridge: tauri::State<'_, PythonBridge>,
 ) -> Result<(), FrontendError> {
     tracing::info!(
         file_count = payload.file_to_content.len(),
         "system_prompt_write called"
     );
-    // TODO: wire up to workspace/prompt_builder
-    todo!("system_prompt_write not yet implemented")
+    bridge
+        .put_json::<_, serde_json::Value>("/system_prompt", &payload)
+        .await
+        .map_err(FrontendError::from)?;
+    Ok(())
 }
 
 /// Partially update system prompt files (merge).
@@ -155,13 +166,17 @@ pub async fn system_prompt_write(
 #[tauri::command]
 pub async fn system_prompt_update(
     payload: PromptFilePayload,
+    bridge: tauri::State<'_, PythonBridge>,
 ) -> Result<(), FrontendError> {
     tracing::info!(
         file_count = payload.file_to_content.len(),
         "system_prompt_update called"
     );
-    // TODO: wire up to workspace/prompt_builder
-    todo!("system_prompt_update not yet implemented")
+    bridge
+        .patch_json::<_, serde_json::Value>("/system_prompt", &payload)
+        .await
+        .map_err(FrontendError::from)?;
+    Ok(())
 }
 
 // ── Tests ───────────────────────────────────────────────────

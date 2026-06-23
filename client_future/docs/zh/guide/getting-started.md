@@ -2,8 +2,9 @@
 
 ## 概述
 
-EMA AI Agent 后端是一个 Tauri 应用，向前端暴露 **11 个 IPC 命令**。
-所有命令通过 Tauri 的 `invoke()` API 调用，返回带类型的结果。
+EMA AI Agent 采用**混合架构**：Tauri/Rust 后端暴露 **12 个 IPC 命令**，通过 HTTP 将所有请求代理到 Python 后端。前端使用 `bridge.ts` 自动检测运行环境（Tauri IPC 或浏览器 HTTP）。
+
+所有 IPC 命令通过 Tauri 的 `invoke()` API 调用，返回带类型的结果。
 
 ## 前提条件
 
@@ -32,7 +33,8 @@ const history = await invoke<HistoryMessage[]>('session_history', {
 
 | 命令名 | 模块 | 说明 |
 |---|---|---|
-| `agent_chat` | agent | 发送消息，获取 Agent 回复 |
+| `agent_chat` | agent | 发送消息，获取流式 Agent 回复 |
+| `agent_stop` | agent | 停止正在进行的 Agent 生成 |
 | `session_clear` | session | 清除会话状态 |
 | `session_history` | session | 获取对话历史 |
 | `system_prompt_read` | system_prompt | 读取所有提示词文件 |
@@ -70,6 +72,24 @@ try {
   // error.message = "model error: connection refused"
 }
 ```
+
+## 桥接层 (`bridge.ts`)
+
+生产环境建议使用统一的 `bridge.ts` 组合式，而非直接调用 `invoke()`。
+它自动检测 Tauri 桌面模式和浏览器开发模式：
+
+```typescript
+import { sendChatMessage, clearSession, checkHealth } from '~/composables/bridge';
+
+// Tauri 桌面模式和浏览器开发模式均可使用
+await sendChatMessage(
+  { session_id: 'main', text: '你好！', image_base64_list: [] },
+  (chunk) => appendToChat(chunk),
+);
+```
+
+**Tauri 模式**下，`bridge.ts` 调用 `invoke()` 并通过 Tauri Events 接收流式数据。
+**浏览器模式**下，它通过 `fetch()` 直接调用 Python 后端并使用 SSE。
 
 ## 下一步
 
