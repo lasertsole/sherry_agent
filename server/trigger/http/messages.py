@@ -1,7 +1,7 @@
 import time
 from loguru import logger
-from runtime import state_register
 from server.trigger.core import app
+from runtime import state_register_mem
 from robyn import SSEMessage, SSEResponse
 from type.message import MultiModalMessage
 from server.service import async_generate, clear_session, get_history_by_page as _get_history_by_page
@@ -79,7 +79,7 @@ async def stream_async_events_handler(request):
 def stream_async_stop_handler(request):
     request_json = request.json()
     session_id = request_json.get("session_id", None)
-    state_register.set_state(session_id, "answering", False)
+    state_register_mem.set_state(session_id, "answering", False)
 
 @app.delete("/sessions")
 async def clear_session_handler(request):

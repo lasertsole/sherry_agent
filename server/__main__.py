@@ -1,6 +1,7 @@
 import os
 import nest_asyncio
 from logs import init_logger
+from config import STATIC_DIR
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
 
@@ -27,4 +28,11 @@ if __name__ == "__main__":
 
     # Import triggers to register all routes and handlers
     from .trigger import app
+
+    # 配置静态文件目录托管
+    app.serve_directory(
+        route="/static",  # 客户端访问的 URL 前缀
+        directory_path=os.path.join(os.getcwd(), STATIC_DIR.absolute().as_posix())
+    )
+
     app.start(host=API_HOST, port=API_PORT)

@@ -11,7 +11,7 @@ current_file = Path(__file__).resolve()
 project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-from config import SRC_DIR
+from config import TEMP_DIR
 from models import VTTT_model
 
 MIN_DURATION_SEC = 5.0
@@ -99,13 +99,16 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
         logger.error(err_mes)
         return err_mes
 
+    from pathlib import Path
+
     # Fallback: extract frames locally and send as base64 images
+    output_dir = Path(TEMP_DIR / "multimedia")
     try:
         from skills.builtin.core.video_text_to_text.scripts import extract_frames
 
         frames = extract_frames(
             video_path,
-            (SRC_DIR / "mutil_temp").as_posix(),
+            output_dir.as_posix(),
             threshold=0.3,
             interval_sec=interval_sec,
             prefix="frame",
@@ -136,3 +139,9 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
         err_mes: str = f"[Error] {e}"
         logger.error(err_mes)
         return err_mes
+    finally:
+        # Clean up extracted frame files
+        if output_dir.exists():
+            import shutil
+            shutil.rmtree(output_dir, ignore_errors=True)
+            logger.debug("Cleaned up extracted frames: %s", output_dir)

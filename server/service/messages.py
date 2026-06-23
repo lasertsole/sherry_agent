@@ -4,8 +4,6 @@ import asyncio
 from loguru import logger
 from robyn import SSEMessage
 from config import ASSISTANT_NAME
-from runtime import count_register
-from runtime import state_register
 from typing import AsyncGenerator, Any
 from type.message import MultiModalMessage
 from langchain.messages import AIMessageChunk
@@ -13,6 +11,7 @@ from pub_func import build_agent_config, is_url
 from langgraph.graph.state import CompiledStateGraph
 from ..DAO import clear_session as clear_session_DAO
 from workspace.prompt_builder import build_system_prompt
+from runtime import state_register_mem, state_register_db
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from agent import built_agent, build_async_sqlite_checkpointer
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
@@ -116,7 +115,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     ai_text:str = ""
 
     # Control answering
-    state_register.set_state(session_id, "answering", True)
+    state_register_mem.set_state(session_id, "answering", True)
 
     try:
         yield SSEMessage(f"{ASSISTANT_NAME}:")
@@ -125,7 +124,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             # Stream directly from the context-assembled agent
             generator = await _get_generator(session_id, multi_modal_message)
             async for chunk in generator:
-                if not state_register.get_state(session_id, "answering", False):
+                if not state_register_mem.get_state(session_id, "answering", False):
                     raise asyncio.CancelledError
 
                 msg_chunk: BaseMessage = chunk[0]
@@ -139,30 +138,30 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                     # Tool call output logic
                     tool_calls: list[ToolCall] | list[ToolCallChunk] = msg_chunk.tool_calls if msg_chunk.tool_calls and len(
                         msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
-                    if len(tool_calls) > 0 or state_register.get_state(session_id, "current_tool_id", "").strip():
+                    if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
                         repeat_flag: bool = True  # Prevent duplicate tool call output
                         if len(tool_calls) > 0:
                             tool_call = tool_calls[0]
 
                             if tool_call["name"]:
-                                if tool_call["name"].strip() or tool_call["name"].strip() != state_register.get_state(session_id, "current_tool_name"):
-                                    state_register.set_state(session_id, "current_tool_name", tool_call['name'])
+                                if tool_call["name"].strip() or tool_call["name"].strip() != state_register_mem.get_state(session_id, "current_tool_name"):
+                                    state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
 
                             if tool_call["id"]:
-                                if tool_call["id"].strip() or tool_call["id"].strip() != state_register.get_state(session_id, "current_tool_id"):
-                                    state_register.set_state(session_id,"current_tool_id", tool_call['id'])
+                                if tool_call["id"].strip() or tool_call["id"].strip() != state_register_mem.get_state(session_id, "current_tool_id"):
+                                    state_register_mem.set_state(session_id,"current_tool_id", tool_call['id'])
                                     repeat_flag = False
 
                         if not repeat_flag:
-                            res: str = f"\n\n**Calling tool {state_register.get_state(session_id, "current_tool_name", "")}...**"
+                            res: str = f"\n\n**Calling tool {state_register_mem.get_state(session_id, "current_tool_name", "")}...**"
                             ai_text += res
                             yield SSEMessage(res)
 
-                    if state_register.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
-                        res: str = f"\n\n**Tool {state_register.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
+                    if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
+                        res: str = f"\n\n**Tool {state_register_mem.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
                         ai_text += res
                         yield SSEMessage(res)
-                        state_register.set_state(session_id, "current_tool_id", "")
+                        state_register_mem.set_state(session_id, "current_tool_id", "")
                     # End tool call output logic
 
                     # Conversation output logic
@@ -200,13 +199,19 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         raise e
     finally:
         # Reset tool tracking state
-        state_register.set_state(session_id, "current_tool_name", "")
-        state_register.set_state(session_id, "current_tool_id", "")
-        state_register.set_state(session_id, "answering", False)
+        state_register_mem.set_state(session_id, "current_tool_name", "")
+        state_register_mem.set_state(session_id, "current_tool_id", "")
+        state_register_mem.set_state(session_id, "answering", False)
 
         try:
             # increase count for skill memory maintenance
-            count_register.increase(session_id, "skill_memory_maintenance")
+            turns: int = state_register_db.get_state(session_id, "skill_memory_rectification_and_standardization_turns", 0) + 1
+            logger.info(turns)
+            if turns % 10 == 0:
+                state_register_db.set_state(session_id, "skill_memory_rectification_and_standardization_turns", 0)
+                await rectification_and_standardization(session_id = session_id)
+            else:
+                state_register_db.set_state(session_id, "skill_memory_rectification_and_standardization_turns", turns)
         except BaseException as e:
             logger.error(f"Failed to increase count for skill memory maintenance: session_id={session_id}, error={str(e)}")
 
@@ -216,13 +221,6 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 def get_history_by_page(session_id: str, min_turn_num: int, turn_page_size: int, turn_page_num: int) -> list[dict[str, Any]]:
     return _get_history_by_page(session_id, min_turn_num, turn_page_size, turn_page_num)
 """End history retrieval logic"""
-
-"""Session end logic"""
-async def session_end(session_id: str):
-    logger.info(f"Session ending: session_id={session_id}")
-    await rectification_and_standardization(session_id = session_id)
-    logger.info(f"Session ended: session_id={session_id}")
-"""End session end logic"""
 
 """Clear session history logic"""
 async def clear_session(session_id: str):

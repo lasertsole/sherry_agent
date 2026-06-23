@@ -7,7 +7,7 @@ from config import SRC_DIR
 from runtime import Register
 
 
-class StateRegister(Register):
+class StateRegisterMeM(Register):
     def __init__(self):
         self._states = {}
 
@@ -92,7 +92,7 @@ class StateRegister(Register):
             logger.exception(f"update_states failed: session_id={session_id}")
         return False
 
-state_register = StateRegister()
+state_register_mem = StateRegisterMeM()
 
 class StateRegisterDB(Register):
     def __init__(self):

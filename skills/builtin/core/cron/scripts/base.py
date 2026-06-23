@@ -236,7 +236,8 @@ class CronService:
             if self._running:
                 await self._on_timer()
 
-        self._timer_task = asyncio.create_task(tick())
+        loop = _get_cron_loop()
+        self._timer_task = loop.create_task(tick())
 
     async def _on_timer(self) -> None:
         """Handle timer tick - run due jobs."""
@@ -475,6 +476,19 @@ class CronService:
         }
 
 cron_service = CronService()
+_cron_loop: asyncio.AbstractEventLoop | None = None
+_cron_loop_lock = threading.Lock()
+
+
+def _get_cron_loop() -> asyncio.AbstractEventLoop:
+    """Return the cron service's dedicated event loop (thread-safe)."""
+    global _cron_loop
+    with _cron_loop_lock:
+        if _cron_loop is None or _cron_loop.is_closed():
+            _cron_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_cron_loop)
+        return _cron_loop
+
 
 def _start_cron_service_thread():
     """Run cron_service.start() in a dedicated daemon thread with its own event loop."""
@@ -484,8 +498,7 @@ def _start_cron_service_thread():
             return
         _started = True
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    loop = _get_cron_loop()
 
     try:
         loop.run_until_complete(cron_service.start())

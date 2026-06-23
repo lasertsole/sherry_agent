@@ -49,9 +49,6 @@ def build_mcp_tools(session_id: str | None = None) -> list[BaseTool]:
     from langchain_mcp_adapters.client import MultiServerMCPClient
     servers = _load_config()
     client = MultiServerMCPClient(servers)
-
-    logger.info("[Fetching tools from MCP server...]")
     tools: list[BaseTool] = run_async(client.get_tools())
-    logger.info(f"[Retrieved {len(tools)} tool(s)]:")
 
     return tools

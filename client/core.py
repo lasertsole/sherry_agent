@@ -127,7 +127,7 @@ def main()-> None:
     # 创建历史聊天消息UI列表
     with st_container:
         for _chat in chat_list:
-            with st.chat_message(_chat["role"], avatar=f"./src/avatar/{_chat['role']}.jpg"):
+            with st.chat_message(_chat["role"], avatar=f"http://{API_HOST}:{API_PORT}/static/avatar/{_chat['role']}.jpg"):
                 st.markdown(_chat["content"])
                 if "audio_path_list" in _chat and _chat["audio_path_list"] is not None:
                     for file_path in _chat["audio_path_list"]:
@@ -154,7 +154,7 @@ def main()-> None:
 
         # 添加用户消息框UI
         with st_container:
-            with st.chat_message(name = "user", avatar = "./src/avatar/user.jpg"):
+            with st.chat_message(name = "user", avatar = f"http://{API_HOST}:{API_PORT}/static/avatar/user.jpg"):
                 st.markdown(f"{USER_NAME}:{_multi_modal_message.text}")
 
         # 遍历用户上传图片文件
@@ -177,7 +177,7 @@ def main()-> None:
 
         # 添加AI消息框UI
         with st_container:
-            with st.chat_message(name = "assistant", avatar="./src/avatar/assistant.jpg"):
+            with st.chat_message(name = "assistant", avatar=f"http://{API_HOST}:{API_PORT}/static/avatar/assistant.jpg"):
 
                 request_json = dict(
                     session_id = session_id,
