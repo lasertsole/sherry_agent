@@ -89,23 +89,18 @@ class Worker(BaseTool):
 
             # Define the actual task logic
             async def execute_task() -> str:
-                # Reuse main agent's skill-memory to reduce subagent trial-and-error cost
-                assemble_result: dict[str, str] = await assemble(user_text=description, messages=[])
-                graph_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
-
                 # Build subagent system prompt
                 system_prompt = (
-                        self._build_worker_prompt()
-                        + graph_system_prompt_addition
-                        + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
+                    self._build_worker_prompt()
+                    + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
-                from tools import build_core_tools
+                from tools import build_all_tools_except_subagent
                 from agent.middlewares import ToolCallNormalize, ContextEngineHook
 
                 agent: CompiledStateGraph = create_agent(
                     system_prompt=system_prompt,
                     model=main_llm,
-                    tools=build_core_tools(self._session_id),
+                    tools=build_all_tools_except_subagent(self._session_id),
                     checkpointer= InMemorySaver(),
                     middleware=[
                         ContextEngineHook(session_id=self._session_id),
