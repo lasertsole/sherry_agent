@@ -23,7 +23,7 @@ from raganything import RAGAnything
 from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_rag_anything
 
 @validate_call
-async def folder_index(input_folder_path: str, classify_folder: str) -> None:
+async def folder_index(input_folder_path: str, classify_folder: str) -> str:
     """Index files in the specified folder into the rag_anything-anything knowledge graph"""
     rag: RAGAnything = await get_rag_anything()
 
@@ -34,7 +34,9 @@ async def folder_index(input_folder_path: str, classify_folder: str) -> None:
         recursive=True,
         max_workers=4,
     )
-    logger.info(f"✅ Indexing complete! Folder '{input_folder_path}' added to knowledge graph category '{classify_folder}'")
+    suc_mess: str = f"✅ Indexing complete! Folder '{input_folder_path}' added to knowledge graph category '{classify_folder}'"
+    logger.info(suc_mess)
+    return suc_mess
 
 @validate_call
 async def file_index(input_file_path: str, classify_folder: str) -> None:

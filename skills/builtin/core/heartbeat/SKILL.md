@@ -14,7 +14,8 @@ from skills.builtin.core.heartbeat.scripts import add_task_to_heartbeat
 task_text: str = "{placeholder}" # <- The task description to add (as a Markdown list item or paragraph)
 index: int | None = int("{placeholder}") # <- Optional 0-based insertion position within Active Tasks content lines (skipping blanks and HTML comments). ``None`` (default) appends at end.
 
-add_task_to_heartbeat(task_text, index)
+res = add_task_to_heartbeat(task_text, index)
+print(res)
 ```
 
 Example values for `task_text`:
@@ -41,7 +42,8 @@ Use this when a task is done and won't be executed again — it moves the task f
 ```python
 from skills.builtin.core.heartbeat.scripts import move_task_to_completed
 task_text: str = "{placeholder}" # <- The task description to add (as a Markdown list item or paragraph)
-move_task_to_completed(task_text)
+res = move_task_to_completed(task_text)
+print(res)
 ```
 
 ### Remove task(s) from Completed
@@ -55,21 +57,31 @@ Both functions accept `None | str | list[str]` — the behavior is determined by
 from skills.builtin.core.heartbeat.scripts import remove_tasks_from_completed
 
 # Clear all completed records
-remove_tasks_from_completed()
+res = remove_tasks_from_completed()
+print(res)
 
 # Remove any line containing "check email"
-remove_tasks_from_completed("check email")
+res = remove_tasks_from_completed("check email")
+print(res)
 
 # Remove multiple by substring match
-remove_tasks_from_completed(["check email", "pull code", "daily report"])
+res = remove_tasks_from_completed(["check email", "pull code", "daily report"])
+print(res)
 ```
 
 `clear_completed_tasks` is an alias with identical behavior:
 
 ```python
 from skills.builtin.core.heartbeat.scripts import clear_completed_tasks
+# all
+res = clear_completed_tasks()
+print(res)
 
-clear_completed_tasks()                      # all
-clear_completed_tasks("check email")          # single substring
-clear_completed_tasks(["pull code", "report"])  # batch
+# single substring
+res = clear_completed_tasks("check email")
+print(res)
+
+# batch
+clear_completed_tasks(["pull code", "report"])
+print(res)
 ```

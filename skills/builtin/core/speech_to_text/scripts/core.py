@@ -16,7 +16,7 @@ model = AutoModel(
 )
 
 @validate_call
-def stt(audio_path: str)-> None:
+def stt(audio_path: str)-> str:
     try:
         res = model.generate(
             input=audio_path,
@@ -28,6 +28,10 @@ def stt(audio_path: str)-> None:
             merge_length_s=15,
         )
         text = rich_transcription_postprocess(res[0]["text"])
-        logger.info(f"Audio recognition completed, content:\n{text}")
+        suc_mes:str = f"Audio recognition completed, content:\n{text}"
+        logger.info(suc_mes)
+        return suc_mes
     except Exception as e:
-        logger.error(f"[Error] Call failed: {e}")
+        err_mes: str = f"[Error] Call failed: {e}"
+        logger.error(err_mes)
+        return err_mes

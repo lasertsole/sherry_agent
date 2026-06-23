@@ -80,7 +80,7 @@ def add_task_to_heartbeat(task_text: str, index: int | None = None) -> str:
 
     new_content = "\n".join(lines)
     path.write_text(new_content, encoding="utf-8")
-    return new_content
+    return "add task successfully"
 
 
 def list_active_tasks() -> list[str]:
@@ -184,7 +184,7 @@ def remove_tasks_from_completed(task_text: str | list[str] | None = None) -> str
 
     new_content = "\n".join(lines)
     path.write_text(new_content, encoding="utf-8")
-    return new_content
+    return "remove tasks from completed successfully"
 
 
 def clear_completed_tasks(task_text: str | list[str] | None = None) -> str:
@@ -251,4 +251,4 @@ def move_task_to_completed(task_text: str) -> str:
 
     new_content = "\n".join(lines)
     path.write_text(new_content, encoding="utf-8")
-    return new_content
+    return "move task successfully"

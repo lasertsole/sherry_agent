@@ -24,10 +24,11 @@ class Cron:
             self,
         channel: str = Field(min_length=1),
         chat_id: str = Field(min_length=1)
-    ) -> None:
+    ) -> str:
         """Set the current session context for delivery."""
         self._channel = channel
         self._chat_id = chat_id
+        return "set context successfully"
 
     @staticmethod
     def _validate_timezone(tz: str) -> str | None:

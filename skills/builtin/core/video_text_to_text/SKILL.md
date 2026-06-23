@@ -11,7 +11,8 @@ from skills.builtin.core.video_text_to_text.scripts import vtt
 if __name__ == '__main__':
     video_path: str = "{placeholder}"  # <- replace with the absolute path of the input video file
     query: str = "{placeholder}"  # <- replace with the query
-    vtt(video_path, query)
+    res = vtt(video_path, query)
+    print(res)
 ```
 
 ## Use the fallback when video input is unsupported but image input is accepted
@@ -24,5 +25,6 @@ if __name__ == '__main__':
     query: str = "{placeholder}"  # <- replace with the query
     interval_sec: float = float(
         "{placeholder}")  # <- replace with the interval seconds, value in [0.5, 3.0],please accord to the video length
-    vtt_fackback(video_path, query, interval_sec)
+    res = vtt_fackback(video_path, query, interval_sec)
+    print(res)
 ```
