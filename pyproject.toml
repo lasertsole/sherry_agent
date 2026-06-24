@@ -42,6 +42,7 @@ dependencies = [
     "websockets>=15.0.1",
     "autopep8>=2.3.2",
     "langchain-mcp-adapters>=0.3.0",
+    "llama-cpp-python>=0.3.31",
 ]
 
 [dependency-groups]

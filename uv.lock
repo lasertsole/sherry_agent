@@ -860,6 +860,15 @@ wheels = [
 ]
 
 [[package]]
+name = "diskcache"
+version = "5.6.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/21/1c1ffc1a039ddcc459db43cc108658f32c57d271d7289a2794e401d0fdb6/diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc", size = 67916, upload-time = "2023-08-31T06:12:00.316Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19", size = 45550, upload-time = "2023-08-31T06:11:58.822Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -912,6 +921,7 @@ dependencies = [
     { name = "leidenalg" },
     { name = "lightrag-hku" },
     { name = "live2d-py" },
+    { name = "llama-cpp-python" },
     { name = "loguru" },
     { name = "matplotlib" },
     { name = "mineru-vl-utils", extra = ["transformers"] },
@@ -958,6 +968,7 @@ requires-dist = [
     { name = "leidenalg", specifier = ">=0.12.0" },
     { name = "lightrag-hku", specifier = ">=1.5.0" },
     { name = "live2d-py", specifier = ">=0.7.0.4" },
+    { name = "llama-cpp-python", specifier = ">=0.3.31" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "mineru-vl-utils", extras = ["transformers"], specifier = ">=1.0.5" },
@@ -2332,6 +2343,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/00/dc/6c64084356678241b21154f97dbcb4496dc8e1e98424fbb0c080e32e883c/live2d_py-0.7.0.4-cp314-cp314-macosx_15_0_universal2.whl", hash = "sha256:f4b9817a079496d7e525edad98bbd0ae8b0001bad22d784798ca82b7f762714e", size = 532608, upload-time = "2026-05-22T15:30:05.291Z" },
     { url = "https://files.pythonhosted.org/packages/a0/d3/7bec98d363ee0448230e0d685a38f9586f23dfae2ee4e8817f52383bdf9c/live2d_py-0.7.0.4-cp314-cp314-win_amd64.whl", hash = "sha256:5c958e51771bc4e86477cdd0ba684af046e7e9c4d2938c663d8fd620844c9cd9", size = 451301, upload-time = "2026-05-22T15:30:56.492Z" },
 ]
+
+[[package]]
+name = "llama-cpp-python"
+version = "0.3.31"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "diskcache" },
+    { name = "jinja2" },
+    { name = "numpy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/17/16fa56a288d66cc6c00f791c8f5af0acd5dbf8005be9e875da670b51652d/llama_cpp_python-0.3.31.tar.gz", hash = "sha256:c3fd23b2c7197770321020a89f23c6515a366511dce4fcda1e81cfb749267a94", size = 70091532, upload-time = "2026-06-20T08:49:57.393Z" }
 
 [[package]]
 name = "llvmlite"

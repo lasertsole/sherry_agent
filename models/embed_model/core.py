@@ -57,7 +57,7 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
         _abort("EMBEDDING_MODEL_PROVIDER is empty — 远程 embedding 需要设置模型提供商 (例如 openai)")
 
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    return ("remote", False, {"provider": provider, "api_base": api_base, "api_key": api_key, "api_name": api_name})
+    return "remote", False, {"provider": provider, "api_base": api_base, "api_key": api_key, "api_name": api_name}
 
 
 # ─────────────────────────────────────────────
