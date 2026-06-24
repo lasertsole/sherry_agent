@@ -161,9 +161,6 @@ const handleOperate = (type: string, event: string) => {
         return;
       case 'knowledgeBase':
         return;
-      case 'changeTheme':
-        handleToggleTheme();
-        return;
       default:
         return;
     }
