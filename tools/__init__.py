@@ -43,13 +43,19 @@ ALL_TOOLS_BUILDERS = [
 ]
 
 def build_core_tools(session_id: str | None = None) -> list[BaseTool]:
-    """核心工具"""
+    """Core tools (REPL, file read/write)"""
     return _flatten(CORE_TOOLS_BUILDERS, session_id)
 
 def build_main_tools(session_id: str | None = None) -> list[BaseTool]:
-    """主要工具"""
+    """Core tools + subagent"""
     return _flatten(MAIN_TOOLS_BUILDERS, session_id)
 
 def build_all_tools(session_id: str | None = None) -> list[BaseTool]:
-    """全部工具"""
+    """All available tools"""
     return _flatten(ALL_TOOLS_BUILDERS, session_id)
+
+def build_all_tools_except_subagent(session_id: str | None = None) -> list[BaseTool]:
+    """All tools except SubagentTool (avoids recursive subagent-in-subagent)"""
+    from .subagent import build_subagent_tool
+    builders = [b for b in ALL_TOOLS_BUILDERS if b is not build_subagent_tool]
+    return _flatten(builders, session_id)

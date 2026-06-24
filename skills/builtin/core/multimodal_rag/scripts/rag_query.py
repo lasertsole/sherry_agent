@@ -32,12 +32,16 @@ from raganything import RAGAnything
 from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_rag_anything
 
 @validate_call
-async def query(question: str) -> None:
+async def query(question: str) -> str:
     """Query the rag_anything-anything knowledge graph"""
     try:
         rag: RAGAnything = await get_rag_anything()
         res = await rag.aquery(question)
         logger.info(f"[Query] {question}")
-        logger.info(f"[Answer] {res}")
+        answer = f"[Answer] {res}"
+        logger.info(answer)
+        return answer
     except Exception as e:
-        logger.error(f"[Error] Query failed: {e}")
+        err_mes:str = f"[Error] Query failed: {repr(e)}"
+        logger.error(err_mes)
+        return err_mes

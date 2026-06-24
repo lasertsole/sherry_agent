@@ -39,6 +39,7 @@ from skills.builtin.core.cron.scripts import cron
 if __name__ == '__main__':
     job_id: str | None = "{placeholder}"  # <- Job ID (for remove)
     res = cron.remove_job(job_id)
+    print(res)
 ```
 
 ## set_context
@@ -49,5 +50,6 @@ if __name__ == '__main__':
     channel: str = "{placeholder}" # <- Channel to send the execution result to, when chat_id is no empty, channel must be no empty (default None)
     chat_id: str = "{placeholder}" # <- Chat to send the execution result to, when channel is no empty, chat_id must be no empty (default None)
 
-    cron.set_context(channel=channel, chat_id=chat_id)
+    res = cron.set_context(channel=channel, chat_id=chat_id)
+    print(res)
 ```

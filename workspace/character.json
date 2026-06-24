@@ -1,10 +1,10 @@
 {
   "user": {
     "name": "远野汉娜",
-    "avatar": "{SRC_DIR}/avatar/user.jpg"
+    "avatar": "avatar/user.jpg"
   },
   "assistant": {
     "name": "橘雪莉",
-    "avatar": "{SRC_DIR}/avatar/assistant.jpg"
+    "avatar": "avatar/assistant.jpg"
   }
 }

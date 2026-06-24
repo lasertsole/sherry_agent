@@ -11,7 +11,7 @@ current_file = Path(__file__).resolve()
 project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-from config import SRC_DIR
+from config import TEMP_DIR
 from models import VTTT_model
 
 MIN_DURATION_SEC = 5.0
@@ -56,13 +56,14 @@ def _image_to_data_url(path: str) -> str:
     return f"data:image/{mime};base64,{b64}"
 
 @validate_call
-def vtt(video_path: str, query: str = "")-> None:
+def vtt(video_path: str, query: str = "")-> str:
     # --- Duration check ---
     try:
         _validate_video_duration(video_path)
     except ValueError as e:
-        logger.error(f"[Error] {e}")
-        return None
+        err_mes:str = f"[Error] {e}"
+        logger.error(err_mes)
+        return err_mes
 
     # Primary path: send the raw video as base64 (works with some backends)
     try:
@@ -79,29 +80,35 @@ def vtt(video_path: str, query: str = "")-> None:
             {"type": "video_url", "video_url": {"url": data_url}},
         ])
         res = VTTT_model.invoke([msg])
-        logger.info(f"Video recognition completed, content:\n{res.content}")
-        return None
+        suc_mes: str = f"Video recognition completed, content:\n{res.content}"
+        logger.info(suc_mes)
+        return suc_mes
     except Exception as e:
-        logger.warning(f"[warn] Primary video path failed: {e}, Video format may not be supported,"
+        warn_mes: str = (f"[warn] Primary video path failed: {e}, Video format may not be supported,"
                        f" try extracting video frames as input for the VLM model.")
-        return  None
+        logger.warning(warn_mes)
+        return  warn_mes
 
 @validate_call
-def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> None:
+def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
     # --- Duration check ---
     try:
         _validate_video_duration(video_path)
     except ValueError as e:
-        logger.error(f"[Error] {e}")
-        return None
+        err_mes: str = f"[Error] {e}"
+        logger.error(err_mes)
+        return err_mes
+
+    from pathlib import Path
 
     # Fallback: extract frames locally and send as base64 images
+    output_dir = Path(TEMP_DIR / "multimedia")
     try:
         from skills.builtin.core.video_text_to_text.scripts import extract_frames
 
         frames = extract_frames(
             video_path,
-            (SRC_DIR / "mutil_temp").as_posix(),
+            output_dir.as_posix(),
             threshold=0.3,
             interval_sec=interval_sec,
             prefix="frame",
@@ -109,8 +116,9 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> None:
         logger.info(f"Total frames extracted: {len(frames)}")
 
         if len(frames) == 0:
-            logger.error("No frames extracted from video.")
-            return None
+            err_mes: str = "No frames extracted from video."
+            logger.error(err_mes)
+            return err_mes
 
         image_dict: list[dict[str, str]] = [
             {"type": "image_url", "image_url": {"url": _image_to_data_url(r.image_path), "detail": "low"}}
@@ -124,8 +132,16 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> None:
             *image_dict,
         ])
         res = VTTT_model.invoke([msg])
-        logger.info(f"Video recognition completed, content:\n{res.content}")
-        return None
+        suc_mes: str = f"Video recognition completed, content:\n{res.content}"
+        logger.info(suc_mes)
+        return suc_mes
     except Exception as e:
-        logger.error(f"[Error] Vision model call failed: {e}")
-        return None
+        err_mes: str = f"[Error] {e}"
+        logger.error(err_mes)
+        return err_mes
+    finally:
+        # Clean up extracted frame files
+        if output_dir.exists():
+            import shutil
+            shutil.rmtree(output_dir, ignore_errors=True)
+            logger.debug("Cleaned up extracted frames: %s", output_dir)

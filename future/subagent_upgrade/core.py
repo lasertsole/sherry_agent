@@ -7,7 +7,7 @@ from workspace import CORE_FILE_NAMES
 from logging import Logger, getLogger
 from .commander import build_commander
 from skills.loader import get_skills_text
-from config import SRC_DIR, WORKSPACE_DIR
+from config import TEMP_DIR, WORKSPACE_DIR
 from bus import MessageBus
 from type.bus import InboundMessage
 from typing import Any, Callable, Awaitable
@@ -105,7 +105,7 @@ class SubagentManager:
         skill_guide_text: str = f"""
         补充说明：
         1.将<skill_folder>替换成技能文件SKILL.md所在的目录 比如技能文件在 "./skills/text_to_image/SKILL.md", 那么文件目录就在 "./skills/text_to_image"
-        2.技能生成的临时资源（如图片、语音等）存放在{(SRC_DIR / "temp").as_posix()}目录下
+        2.技能生成的临时资源（如图片、语音等）存放在{TEMP_DIR.as_posix()}目录下
         """
         skill_paths:str = get_skills_text(selected_skill_names = None, exclude_auth_skills=True) # 排除高权限技能
         skill_paths = f"{skill_paths}\n\n{skill_guide_text}"

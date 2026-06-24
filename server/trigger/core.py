@@ -3,11 +3,9 @@ from loguru import logger
 from robyn import Response
 from typing import Any, Callable
 from robyn import Robyn, ALLOW_CORS
-from server.service import session_end
 from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
-from context_engine import rectification_and_standardization
-from runtime import relation_register, clear_all_register_sessions, count_register, state_register, timer_register
+from runtime import relation_register, clear_all_register_sessions
 
 # Create the app
 app = Robyn(__file__)
@@ -107,10 +105,6 @@ async def handle_connect(websocket: WebSocketAdapter):
 
     relation_register.register_websocket(session_id=session_id, websocket=websocket)
 
-    # Register skill memory maintenance(threshold = 10)
-    count_register.register(session_id, "skill_memory_maintenance", rectification_and_standardization, args={"session_id": session_id},
-                            threshold=10)
-
 @ws_handler.on_close
 async def handle_disconnect(websocket: WebSocketAdapter):
     logger.info(f"Client {websocket.id} disconnected")
@@ -121,9 +115,6 @@ async def handle_disconnect(websocket: WebSocketAdapter):
     if session_id:
         logger.info(f"WebSocket session cleanup: session_id={session_id}, websocket_id={websocket.id}")
         relation_register.unregister_websocket_by_websocket_id(websocket_id=websocket.id)
-
-        # Execute session end hook
-        await session_end(session_id=session_id)
 
         clear_all_register_sessions(session_id=session_id)
     else:

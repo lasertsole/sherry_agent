@@ -18,7 +18,7 @@ from .graph import (invalidate_graph_cache, detect_communities, summarize_commun
                     MaintenanceResult)
 from .store import (get_db, delete_node, save_message, get_unextracted, get_by_session, upsert_node, find_by_id, find_by_name,
                    upsert_edge, delete_extracted, UpsertResult)
-
+from runtime import state_register_db
 
 class RecallResult(TypedDict):
     nodes: list[Any]
@@ -44,7 +44,6 @@ extractor = Extractor()
 
 # ── Session Runtime State ────────────────────────────────
 msg_seq: dict[str, int] = {}
-turn_counter: dict[str, int] = {} # community maintenance counter
 
 # ─── Get Last Complete User Turn ──────────────────────────
 def estimate_msg_tokens(msg: BaseMessage) -> int:
@@ -299,11 +298,11 @@ async def after_turn(
     asyncio.create_task(run_extract())
 
     # ★ Community maintenance: triggered every N turns (pure computation, <5ms)
-    turns:int = turn_counter.get(session_id, 0) + 1
+    turns:int = state_register_db.get_state(session_id, "skill_memory_maintain_turns", 0) + 1
     maintain_interval:int = getattr(DEFAULT_CONFIG, 'compact_turn_count', 6)
 
     if turns >= maintain_interval:
-        turn_counter[session_id] = 0
+        state_register_db.set_state(session_id, "skill_memory_maintain_turns", 0)
 
         try:
             invalidate_graph_cache()
@@ -325,6 +324,8 @@ async def after_turn(
 
         except Exception as e:
             logger.error(f"[skill_memory] periodic maintenance failed: {e}")
+    else:
+        state_register_db.set_state(session_id, "skill_memory_maintain_turns", turns)
 
 async def dispose() -> None:
     """Release all memory"""
@@ -421,4 +422,3 @@ async def rectification_and_standardization(session_id: str) -> None:
     finally:
         # Clean up session state
         msg_seq.pop(session_id, None)
-        turn_counter.pop(session_id, None)

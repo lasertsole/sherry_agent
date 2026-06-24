@@ -13,7 +13,7 @@ import json
 import base64
 import requests
 from dotenv import load_dotenv
-from config.path import SRC_DIR
+from config.path import STATIC_DIR
 from pub_func import generate_tsid
 from pydantic import validate_call
 
@@ -43,7 +43,7 @@ def generate_image(prompt: str) -> None:
             logger.info("Error: TTI_API_NAME environment variable not set")
 
         if not api_key:
-            logger.info("Error: ITT_API_KEY environment variable not set")
+            logger.info("Error: TTI_API_KEY environment variable not set")
 
         # Send request.
         headers = {
@@ -62,7 +62,7 @@ def generate_image(prompt: str) -> None:
         logger.info(f"Using prompt: {prompt}")
         response = requests.post(url, headers=headers, data=json.dumps(data), verify=False)
 
-        save_path = Path(SRC_DIR) / "temp" / f"{generate_tsid()}.png"
+        save_path = STATIC_DIR / "images" / f"{generate_tsid()}.png"
 
         # Ensure the directory exists
         save_path.parent.mkdir(parents=True, exist_ok=True)

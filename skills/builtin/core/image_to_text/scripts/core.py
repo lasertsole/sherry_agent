@@ -22,7 +22,7 @@ from langchain_core.messages import HumanMessage
 load_dotenv(project_root / ".env", override=True)
 
 @validate_call
-def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible.")-> None:
+def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible.")-> str:
     """Recognize image content (supports local file path or URL)
 
     Args:
@@ -53,30 +53,34 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
                 tmp.write(resp.content)
                 tmp_path = Path(tmp.name)
 
-            logger.info(f"Image downloaded to temp file: {tmp_path}")
+            logger.info(f"[info] Image downloaded to temp file: {tmp_path}")
             path = tmp_path
         except Exception as e:
-            logger.error(f"[Error] Failed to download image: {e}")
-            return None
+            err_mes: str = f"[Error] Image download failed: {repr(e)}"
+            logger.error(err_mes)
+            return err_mes
     else:
         path = Path(image_path)
         try:
             if not path.exists():
-                logger.info(f"File does not exist: {image_path}")
-                return None
+                info_mes: str = f"[warn] Image path does not exist: {repr(path)}"
+                logger.info(info_mes)
+                return info_mes
         except Exception as e:
-            logger.error(f"Invalid file path: {image_path}, {e}")
-            return None
+            err_mes: str = f"[error] Invalid file path: {image_path}, {repr(e)}"
+            logger.error(err_mes)
+            return err_mes
 
     # ----- Phase 2: Verify image integrity -----
     try:
         with Image.open(path) as img:
             img.verify()
     except Exception as e:
-        logger.error(f"Not a valid image file: {image_path}, {e}")
+        err_mes: str = f"[error] Not a valid image file: {image_path}, {repr(e)}"
+        logger.error(err_mes)
         if is_url(image_path):
             tmp_path.unlink(missing_ok=True)
-        return None
+        return err_mes
 
     # ----- Phase 3: Convert to base64 -----
     try:
@@ -86,10 +90,11 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
         with open(path, "rb") as image_file:
             encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
     except Exception as e:
-        logger.error(f"[Error] Image conversion failed: {e}")
+        err_mes = f"[Error] Image conversion failed: {repr(e)}"
+        logger.error(err_mes)
         if is_url(image_path):
             tmp_path.unlink(missing_ok=True)
-        return None
+        return err_mes
 
     # ----- Phase 4: Call the vision model -----
     try:
@@ -101,9 +106,13 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
 
         res = ITT_model.invoke([HumanMessage(content=content_list)])
 
-        logger.info(f"Image recognition completed, content:\n{res.content}")
+        suc_mess: str = f"[success] Image recognition completed, content:\n{res.content}"
+        logger.info(suc_mess)
+        return suc_mess
     except Exception as e:
-        logger.error(f"[Error] Vision model call failed: {e}")
+        err_mes:str = f"[Error] Vision model call failed: {e}"
+        logger.error(err_mes)
+        return err_mes
     finally:
         # Clean up temp file if it was downloaded from a URL
         if is_url(image_path):

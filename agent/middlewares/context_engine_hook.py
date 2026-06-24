@@ -124,12 +124,6 @@ class ContextEngineHook(AgentMiddleware):
         user_text = user_text.removeprefix(self._turn_prompt)
         last_human_message.content = user_text
 
-        ai_text:str = ""
-
-        for m in format_last_turn_messages[1:]:
-            if isinstance(m, AIMessage):
-                ai_text += m.content
-
         # Launch context engine post-processing asynchronously
         after_turn_task: Task = asyncio.create_task(after_turn(session_id = self._session_id, last_turn_messages = format_last_turn_messages))
 

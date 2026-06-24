@@ -21,7 +21,8 @@ if __name__ == "__main__":
     # coro = file_index(_input_file_path, _classify_folder)
 
     # Run
-    asyncio.run(coro)
+    res = asyncio.run(coro)
+    print(res)
 ```
 
 **Query the rag-anything knowledge graph:**
@@ -32,5 +33,6 @@ from skills.builtin.core.multimodal_rag.scripts import query
 
 if __name__ == "__main__":
     _query: str = "{placeholder}"  # <- replace with the question
-    asyncio.run(query(_query))
+    res = asyncio.run(query(_query))
+    print(res)
 ```

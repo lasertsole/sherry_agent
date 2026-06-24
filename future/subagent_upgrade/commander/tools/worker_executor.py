@@ -3,7 +3,7 @@ from typing import Any
 from models import main_llm
 from skills import get_skills_text
 from logging import Logger, getLogger
-from config import SRC_DIR, WORKSPACE_DIR
+from config import TEMP_DIR, WORKSPACE_DIR
 from workspace import CORE_FILE_NAMES
 from langchain.agents import create_agent
 from langgraph.graph.state import CompiledStateGraph
@@ -24,7 +24,7 @@ class WorkerExecutor:
         skill_guide_text = f"""
         补充说明：
         1.将<skill_folder>替换成技能文件SKILL.md所在的目录 比如技能文件在 "./skills/text_to_image/SKILL.md", 那么文件目录就在 "./skills/text_to_image"
-        2.技能生成的临时资源（如图片、语音等）存放在{(SRC_DIR / "temp").as_posix()}目录下
+        2.技能生成的临时资源（如图片、语音等）存放在{TEMP_DIR.as_posix()}目录下
         """
         skill_paths = get_skills_text(selected_skill_names=None, exclude_auth_skills=True)
         skill_paths = f"{skill_paths}\n\n{skill_guide_text}"
