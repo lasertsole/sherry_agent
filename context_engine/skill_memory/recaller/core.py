@@ -119,7 +119,7 @@ class Recaller:
 
         # reranker 阈值过滤
         node_dict: dict[str, GmNode] = {s.content : s  for s in seeds}
-        filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.85)
+        filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.5)
         if filter_contents:
             seeds = [node_dict[c] for c in filter_contents]
 
@@ -209,7 +209,7 @@ class Recaller:
 
         # reranker 阈值过滤
         node_dict: dict[str, GmNode] = {s.content : s  for s in seeds}
-        filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.85)
+        filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.5)
         if filter_contents:
             seeds = [node_dict[c] for c in filter_contents]
 
