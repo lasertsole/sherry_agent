@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import ConfigurableField
 
-# 获取当前所在文件夹
+# Locate current directory
 current_dir = Path(__file__).parent.resolve()
 
-# 加载环境变量
+# Load environment variables
 load_dotenv(ENV_PATH, override = True)
 api_key = os.getenv("VTTT_API_KEY")
 api_name = os.getenv("VTTT_API_NAME")
@@ -26,7 +26,7 @@ model_config:dict[str, Any] = {
 }
 
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
-VTTT_model = init_chat_model(**model_config) #生成模型对象
+VTTT_model = init_chat_model(**model_config)  # Instantiate model
 VTTT_model = VTTT_model.configurable_fields(
     temperature=ConfigurableField(
         id="temperature",

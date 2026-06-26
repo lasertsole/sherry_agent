@@ -7,6 +7,7 @@ from config import HEARTBEAT_PATH
 from models import auxiliary_llm
 from .evaluate import evaluate_response
 from typing import Any, Callable, Coroutine
+from pydantic import BaseModel, Field
 
 
 _HEARTBEAT_TOOL = [
@@ -33,6 +34,19 @@ _HEARTBEAT_TOOL = [
         },
     }
 ]
+
+# Pydantic model for heartbeat decision (fallback path)
+class _HeartbeatDecision(BaseModel):
+    """Report heartbeat decision after reviewing tasks."""
+
+    action: str = Field(
+        description="skip = nothing to do, run = has active tasks",
+        pattern=r"^(skip|run)$",
+    )
+    tasks: str = Field(
+        default="",
+        description="Natural-language summary of active tasks (required for run)",
+    )
 
 
 class HeartbeatService:
@@ -71,23 +85,50 @@ class HeartbeatService:
     def _decide(self, content: str) -> tuple[str, str]:
         """Phase 1: ask LLM to decide skip/run via virtual tool call.
 
+        Falls back to ``with_structured_output`` if the underlying model
+        does not support ``bind_tools`` (e.g. local GGUF branch).
+
         Returns (action, tasks) where action is 'skip' or 'run'.
         """
         from pub_func import current_time_str
-        response = auxiliary_llm.bind_tools(_HEARTBEAT_TOOL).invoke([
-            {"role": "system", "content": "You are a heartbeat agent. Call the heartbeat tool to report your decision."},
-            {"role": "user", "content": (
-                f"Current Time: {current_time_str(self.timezone)}\n\n"
-                "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
-                f"{content}"
-            )},
-        ])
+        from langchain_core.messages import HumanMessage, SystemMessage
 
-        if not response.tool_calls or len(response.tool_calls) == 0:
+        system_msg = f"You are a heartbeat agent. Call the heartbeat tool to report your decision."
+        user_msg = (
+            f"Current Time: {current_time_str(self.timezone)}\n\n"
+            "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
+            f"{content}"
+        )
+
+        # ── Attempt bind_tools path ──────────────────────────────────
+        try:
+            response = auxiliary_llm.bind_tools(_HEARTBEAT_TOOL).invoke([
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ])
+
+            if response.tool_calls and len(response.tool_calls) > 0:
+                args = response.tool_calls[0].get("args", {})
+                return args.get("action", "skip"), args.get("tasks", "")
+
+            # Empty tool_calls → treat as skip
+            logger.debug("Heartbeat _decide: no tool calls returned, treating as skip")
             return "skip", ""
+        except NotImplementedError:
+            logger.warning("Heartbeat _decide: bind_tools not supported, falling back to with_structured_output")
+        except Exception:
+            logger.exception("Heartbeat _decide: bind_tools failed, falling back to with_structured_output")
 
-        args = response.tool_calls[0].get("args", {})
-        return args.get("action", "skip"), args.get("tasks", "")
+        # ── Fallback: with_structured_output ──────────────────────────
+        try:
+            structured = auxiliary_llm.with_structured_output(_HeartbeatDecision).invoke([
+                SystemMessage(content=system_msg),
+                HumanMessage(content=user_msg),
+            ])
+            return structured.action, structured.tasks or ""
+        except Exception:
+            logger.exception("Heartbeat _decide: with_structured_output also failed, defaulting to skip")
+            return "skip", ""
 
     async def start(self) -> None:
         """Start the heartbeat service."""

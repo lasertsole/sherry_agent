@@ -20,7 +20,7 @@ _WEIGHT_DIR = _MODEL_DIR / "model_weight"
 
 
 def _read_dotenv(key: str, default: str = "") -> str:
-    """仅从 .env 文件解析，不依赖 os.environ（避免被其他模块的 load_dotenv 副作用影响）。"""
+    """Parse from .env file only, avoiding os.environ (to skip load_dotenv side effects)."""
     try:
         text = ENV_PATH.read_text(encoding="utf-8")
         for mobj in re.finditer(rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$', text, re.MULTILINE):
@@ -40,7 +40,7 @@ def _abort(msg: str) -> None:
 
 def _detect_backend() -> tuple[str, bool, dict | None]:
     """
-    检测后端模式并返回配置。
+    Detect backend mode and return configuration.
     Returns: (backend_type, has_local, remote_config_or_None)
     """
     raw = _read_dotenv("EMBEDDING_MODEL_LOCAL", "true").strip().lower()
@@ -49,35 +49,35 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
     if use_local:
         return ("local", True, None)
 
-    # 远程模式 → 校验配置
+    # Remote mode → validate configuration
     provider = _read_dotenv("EMBEDDING_MODEL_PROVIDER")
     api_base = _read_dotenv("EMBEDDING_API_BASE")
     api_key = _read_dotenv("EMBEDDING_API_KEY")
     api_name = _read_dotenv("EMBEDDING_API_NAME")
 
     if not api_base:
-        _abort("EMBEDDING_API_BASE is empty — 远程 embedding 需要设置 API 地址 (例如 https://api.modelarts-maas.com/v1)")
+        _abort("EMBEDDING_API_BASE is empty — remote embedding requires API base URL (e.g. https://api.modelarts-maas.com/v1)")
     if not api_key:
-        _abort("EMBEDDING_API_KEY is empty — 远程 embedding 需要设置 API Key")
+        _abort("EMBEDDING_API_KEY is empty — remote embedding requires API Key")
     if not api_name:
-        _abort("EMBEDDING_API_NAME is empty — 远程 embedding 需要设置模型名称 (例如 bge-m3)")
+        _abort("EMBEDDING_API_NAME is empty — remote embedding requires model name (e.g. bge-m3)")
     if not provider:
-        _abort("EMBEDDING_MODEL_PROVIDER is empty — 远程 embedding 需要设置模型提供商 (例如 openai)")
+        _abort("EMBEDDING_MODEL_PROVIDER is empty — remote embedding requires model provider (e.g. openai)")
 
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     return "remote", False, {"provider": provider, "api_base": api_base, "api_key": api_key, "api_name": api_name}
 
 
 # ─────────────────────────────────────────────
-# 1. 下载辅助函数
+# 1. Download helper
 # ─────────────────────────────────────────────
 def _ensure_downloaded() -> None:
-    """首次运行时下载 GGUF 文件到 model_weight/ 目录（仅下载，不加载到内存）。"""
+    """Download GGUF to model_weight/ on first run (download only, no model loading)."""
     if _GGUF_MODEL_PATH.is_file():
         return
     _WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading bge-m3-q8_0.gguf to %s ...", _WEIGHT_DIR)
-    # 借用 Llama.from_pretrained 的下载能力，下载后直接关闭不保留
+    # Borrow Llama.from_pretrained download capability; close immediately, keep nothing in memory
     tmp = Llama.from_pretrained(
         repo_id="ggml-org/bge-m3-Q8_0-GGUF",
         filename="bge-m3-q8_0.gguf",
@@ -88,32 +88,32 @@ def _ensure_downloaded() -> None:
 
 
 def _load_model() -> Llama:
-    """加载 Llama 模型并返回实例。"""
+    """Load Llama model and return the instance."""
     if not _GGUF_MODEL_PATH.is_file():
         _ensure_downloaded()
     return Llama(model_path=str(_GGUF_MODEL_PATH), embedding=True, n_gpu_layers=0, verbose=False)
 
 
 # ─────────────────────────────────────────────
-# 2. 模块级初始化（只执行一次）
+# 2. Module-level initialisation (runs once)
 # ─────────────────────────────────────────────
 _backend, _use_local, _remote_config = _detect_backend()
 
 _GGUF_MODEL_PATH = _WEIGHT_DIR / "bge-m3-q8_0.gguf"
 
 if _use_local and not _GGUF_MODEL_PATH.is_file():
-    # 首次运行，下载到 model_weight/ 目录（但不加载到内存）
+    # First run: download to model_weight/ (no model loading)
     _ensure_downloaded()
 
 
 # ─────────────────────────────────────────────
-# 2. CustomEmbedding 类
+# 2. CustomEmbedding class
 # ─────────────────────────────────────────────
 class CustomEmbedding(Embeddings):
-    """嵌入模型封装（自动选择本地 llama.cpp / 远程 MaaS API）"""
+    """Embedding model wrapper (auto-selects local llama.cpp / remote MaaS API)."""
 
     def _call_remote_api(self, texts: list[str]) -> dict:
-        """调用远程 MaaS embedding API"""
+        """Call remote MaaS embedding API."""
         cfg = _remote_config
         url = f"{cfg['api_base'].rstrip('/')}/embeddings"
         headers = {
@@ -138,7 +138,7 @@ class CustomEmbedding(Embeddings):
         return [x / norm for x in vec]
 
     def _embed_local(self, texts: list[str]) -> list[list[float]]:
-        """本地 llama.cpp 编码（按需加载模型，用毕卸载，输出做 L2 归一化）"""
+        """Local llama.cpp encoding (load on demand, release after use, L2-normalise output)."""
         if not texts:
             return []
         model = _load_model()
@@ -151,16 +151,16 @@ class CustomEmbedding(Embeddings):
             model.close()
 
     def _embed_remote(self, texts: list[str]) -> list[list[float]]:
-        """远程 API 编码"""
+        """Remote API encoding."""
         result = self._call_remote_api(texts)
-        # 按输入顺序返回 embedding 向量
+        # Return embeddings in input order
         data = result.get("data", [])
-        # data 数组每项含 index 和 embedding
+        # Each item in data has index and embedding
         data.sort(key=lambda x: x["index"])
         return [item["embedding"] for item in data]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """为多个文档生成嵌入向量"""
+        """Generate embedding vectors for multiple documents."""
         if not texts:
             return []
 
@@ -169,11 +169,11 @@ class CustomEmbedding(Embeddings):
         return self._embed_remote(texts)
 
     def embed_query(self, text: str) -> list[float]:
-        """为单个查询生成嵌入向量"""
+        """Generate an embedding vector for a single query."""
         if _backend == "local":
             return self._embed_local([text])[0]
         return self._embed_remote([text])[0]
 
 
-# 单例实例
+# Singleton instance
 embed_model: CustomEmbedding = CustomEmbedding()

@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import ConfigurableField
 
-# 获取当前所在文件夹
+# Locate current directory
 current_dir = Path(__file__).parent.resolve()
 
-# 加载环境变量
+# Load environment variables
 load_dotenv(ENV_PATH, override = True)
 api_key = os.getenv("MAIN_LLM_API_KEY")
 api_name = os.getenv("MAIN_LLM_NAME")
@@ -27,10 +27,10 @@ model_config:dict[str, Any] = {
     "base_url": api_base,
     "temperature": 0,
     "max_retries": 2,
-    "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2} # 设置模型上下文窗口大小
+    "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2}  # Set model context window size
 }
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
-main_llm = init_chat_model(**model_config) #生成模型对象
+main_llm = init_chat_model(**model_config)  # Instantiate model
 main_llm = main_llm.configurable_fields(
     temperature=ConfigurableField(
         id="temperature",

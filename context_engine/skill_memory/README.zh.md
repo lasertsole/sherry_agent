@@ -552,7 +552,7 @@ class Recaller:
 filter_contents = reranker_model.filter(
     query=query,
     candidates=[node.content for node in seeds],
-    gap_score=0.85  # 阈值
+    gap_score=0.5  # 阈值
 )
 ```
 
@@ -857,7 +857,7 @@ async def _recall_precise(query, limit):
         seeds.extend([n for n in fts_results if n.id not in seen_ids])
     
     # 3. 重排序过滤
-    filter_contents = reranker_model.filter(query, [s.content for s in seeds], gap_score=0.85)
+    filter_contents = reranker_model.filter(query, [s.content for s in seeds], gap_score=0.5)
     seeds = [node_dict[c] for c in filter_contents]
     
     # 4. 社区扩展
@@ -899,7 +899,7 @@ async def _recall_generalized(query, limit):
         seeds = community_representatives(db, 2)
     
     # 3. 重排序过滤
-    filter_contents = reranker_model.filter(query, [s.content for s in seeds], gap_score=0.85)
+    filter_contents = reranker_model.filter(query, [s.content for s in seeds], gap_score=0.5)
     
     # 4. 浅层图遍历
     walk_result = graph_walk(db, seed_ids, max_depth=1)
