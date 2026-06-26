@@ -5,10 +5,13 @@ import math
 import urllib3
 import requests
 from pathlib import Path
+import logging
 from typing import Optional
 from config import ENV_PATH
 from llama_cpp import Llama
 from langchain_core.embeddings import Embeddings
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -66,26 +69,41 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
 
 
 # ─────────────────────────────────────────────
-# 1. 模块级初始化（只执行一次）
+# 1. 下载辅助函数
+# ─────────────────────────────────────────────
+def _ensure_downloaded() -> None:
+    """首次运行时下载 GGUF 文件到 model_weight/ 目录（仅下载，不加载到内存）。"""
+    if _GGUF_MODEL_PATH.is_file():
+        return
+    _WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info("Downloading bge-m3-q8_0.gguf to %s ...", _WEIGHT_DIR)
+    # 借用 Llama.from_pretrained 的下载能力，下载后直接关闭不保留
+    tmp = Llama.from_pretrained(
+        repo_id="ggml-org/bge-m3-Q8_0-GGUF",
+        filename="bge-m3-q8_0.gguf",
+        local_dir=str(_WEIGHT_DIR),
+        embedding=True,
+    )
+    tmp.close()
+
+
+def _load_model() -> Llama:
+    """加载 Llama 模型并返回实例。"""
+    if not _GGUF_MODEL_PATH.is_file():
+        _ensure_downloaded()
+    return Llama(model_path=str(_GGUF_MODEL_PATH), embedding=True, n_gpu_layers=0, verbose=False)
+
+
+# ─────────────────────────────────────────────
+# 2. 模块级初始化（只执行一次）
 # ─────────────────────────────────────────────
 _backend, _use_local, _remote_config = _detect_backend()
-_local_model: Optional[Llama] = None
 
 _GGUF_MODEL_PATH = _WEIGHT_DIR / "bge-m3-q8_0.gguf"
 
-if _use_local:
-    if _GGUF_MODEL_PATH.is_file():
-        # 本地已有缓存 → 直接加载
-        _local_model = Llama(model_path=str(_GGUF_MODEL_PATH), embedding=True)
-    else:
-        # 下载到 models/embed_model/model_weight/ 目录
-        _WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
-        _local_model = Llama.from_pretrained(
-            repo_id="ggml-org/bge-m3-Q8_0-GGUF",
-            filename="bge-m3-q8_0.gguf",
-            local_dir=str(_WEIGHT_DIR),
-            embedding=True,
-        )
+if _use_local and not _GGUF_MODEL_PATH.is_file():
+    # 首次运行，下载到 model_weight/ 目录（但不加载到内存）
+    _ensure_downloaded()
 
 
 # ─────────────────────────────────────────────
@@ -120,12 +138,17 @@ class CustomEmbedding(Embeddings):
         return [x / norm for x in vec]
 
     def _embed_local(self, texts: list[str]) -> list[list[float]]:
-        """本地 llama.cpp 编码（输出做 L2 归一化）"""
-        embeddings = _local_model.create_embedding(input=texts)
-        # 按输入顺序返回 embedding 向量
-        data = embeddings.get("data", [])
-        data.sort(key=lambda x: x["index"])
-        return [self._l2_normalize(item["embedding"]) for item in data]
+        """本地 llama.cpp 编码（按需加载模型，用毕卸载，输出做 L2 归一化）"""
+        if not texts:
+            return []
+        model = _load_model()
+        try:
+            embeddings = model.create_embedding(input=texts)
+            data = embeddings.get("data", [])
+            data.sort(key=lambda x: x["index"])
+            return [self._l2_normalize(item["embedding"]) for item in data]
+        finally:
+            model.close()
 
     def _embed_remote(self, texts: list[str]) -> list[list[float]]:
         """远程 API 编码"""
