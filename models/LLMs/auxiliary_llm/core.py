@@ -78,9 +78,9 @@ else:
     from llama_cpp import Llama
 
     model_weight_dir = Path(__file__).parent.resolve() / "model_weight"
-    _model_path = model_weight_dir / "Qwen3-8B-Q4_K_M.gguf"
-    _HF_REPO_ID = "Qwen/Qwen3-8B-GGUF"
-    _HF_FILENAME = "Qwen3-8B-Q4_K_M.gguf"
+    _model_path = model_weight_dir / "Qwen3.5-9B-q4_k_m.gguf"
+    _HF_REPO_ID = "Smoffyy/Qwen3.5-9B-Instruct-Pure-GGUF"
+    _HF_FILENAME = "Qwen3.5-9B-q4_k_m.gguf"
 
     def _resolve_model_path() -> str:
         if _model_path.is_file():
