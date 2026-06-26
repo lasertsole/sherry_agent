@@ -5,7 +5,7 @@ import nest_asyncio
 from typing import Any
 from pathlib import Path
 from loguru import logger
-from models import ITT_model
+from models import ITTT_model
 from config import MODELS_DIR, SRC_DIR
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
@@ -35,7 +35,7 @@ async def _vision_model_func(
 ) -> str:
     # 如果提供了messages格式（用于多模态VLM增强查询），直接使用
     if messages:
-        result = ITT_model.invoke(messages)
+        result = ITTT_model.invoke(messages)
         return result.content
     # 传统单图片格式
     elif image_data:
@@ -58,7 +58,7 @@ async def _vision_model_func(
             if image_data
             else {"role": "user", "content": prompt},
         ]
-        result = ITT_model.invoke(messages)
+        result = ITTT_model.invoke(messages)
         return result.content
     else:
         from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_lightrag

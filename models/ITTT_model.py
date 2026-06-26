@@ -11,10 +11,10 @@ current_dir = Path(__file__).parent.resolve()
 
 # 加载环境变量
 load_dotenv(ENV_PATH, override = True)
-api_key = os.getenv("ITT_API_KEY")
-api_name = os.getenv("ITT_API_NAME")
-api_base = os.getenv("ITT_API_BASE")
-model_provider = os.getenv("ITT_MODEL_PROVIDER")
+api_key = os.getenv("ITTT_API_KEY")
+api_name = os.getenv("ITTT_API_NAME")
+api_base = os.getenv("ITTT_API_BASE")
+model_provider = os.getenv("ITTT_MODEL_PROVIDER")
 
 model_config:dict[str, Any] = {
     "model_provider": model_provider,
@@ -26,8 +26,8 @@ model_config:dict[str, Any] = {
 }
 
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
-ITT_model = init_chat_model(**model_config) #生成模型对象
-ITT_model = ITT_model.configurable_fields(
+ITTT_model = init_chat_model(**model_config) #生成模型对象
+ITTT_model = ITTT_model.configurable_fields(
     temperature=ConfigurableField(
         id="temperature",
     )

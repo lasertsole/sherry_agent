@@ -206,8 +206,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         try:
             # increase count for skill memory maintenance
             turns: int = state_register_db.get_state(session_id, "skill_memory_rectification_and_standardization_turns", 0) + 1
-            logger.info(turns)
-            if turns % 10 == 0:
+            logger.info(f"[skill_memory] rectification_and_standardization turn {turns} / 13")
+            if turns % 13 == 0:
                 state_register_db.set_state(session_id, "skill_memory_rectification_and_standardization_turns", 0)
                 await rectification_and_standardization(session_id = session_id)
             else:

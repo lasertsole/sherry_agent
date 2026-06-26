@@ -36,16 +36,17 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 ### 3. 🌐 Multi-Channel Access
 - **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
 - **Next-Generation Client** ([client_future](client_future/)): A Tauri 2 + Nuxt 4 desktop/mobile SPA client, currently in development
-- **QQ Bot**: Integrated with `qq-botpy` for direct interaction in QQ groups or private chats
+- **QQ Bot**: QQ channel adapter via plugin system (`plugins/channels/`)
 - **Message Bus**: Internal async message queue ([MessageBus](bus/core.py)) decouples input/output channels
 
 ### 4. 🔊 Multimodal Interaction
-- **TTS Voice Synthesis**: Foreign integrated with GPT-SoVITS for real-time voice replies that faithfully reproduce the character's voice
+- **TTS Voice Synthesis**: CosyVoice-based voice synthesis for real-time voice replies that faithfully reproduce the character's voice ([models/TTS_model/](models/TTS_model/))
 - **Visual Understanding**: Supports Image-to-Text (VL) models for recognizing and analyzing user-uploaded images
 
 ### 5. ⏰ Scheduled & Proactive Behavior
-- **Cron Service** ([cron/](skills/builtin/core/cron/scripts/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
-- **Heartbeat Service** ([heartbeat/](skills/builtin/core/heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
+- **Cron Service** ([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): Schedule periodic, one-shot, or cron-expression-based agent tasks
+- **Heartbeat Service** ([skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)): Periodic wake-up that checks HEARTBEAT.md for pending tasks and executes them automatically during idle time
+
 ---
 
 ## 🏗️ Tech Stack
@@ -72,50 +73,37 @@ Built on **Python 3.13**, with the following core technologies:
 EMA_AI_agent/
 ├── agent/                  # Agent core logic & middleware
 │   ├── core.py             # Main agent loop (LangGraph compiled graph)
-│   ├── middlewares/        # 6 middlewares: ContextEngineHook, Summarization,
+│   ├── middlewares/        # Middlewares: ContextEngineHook, Summarization,
 │   │                       #   ToolLoopPrevention, ToolCallNormalize,
 │   │                       #   ToolTimeout, MultimodalProcessor
 │   └── checkpointer/       # Session state checkpointing
 │
 ├── bus/                    # Message bus (async queue)
-│   ├── queue.py            # MessageBus — inbound/outbound queues
-│   └── events.py           # InboundMessage, OutboundMessage data models
+│   └── core.py             # MessageBus — inbound/outbound queues & events
 │
-├── channels/               # Channel adapters (QQ, WebSocket)
+├── channels/               # Channel interface definitions
+│   ├── base.py             # Abstract channel base
+│   ├── manager.py          # Channel lifecycle manager
+│   └── registry.py         # Channel registration
+│
 ├── client/                 # Streamlit frontend entry
+│   ├── api/                # API client layer
+│   └── core.py             # Streamlit app entry
+│
 ├── client_future/          # Next-gen client (Tauri 2 + Nuxt 4)
 │   ├── app/                # Nuxt 4 SPA source
-│   │   ├── app.vue                  # Root component entry
-│   │   ├── common.scss              # Global SCSS mixin library
-│   │   ├── assets/
-│   │   │   ├── css/
-│   │   │   │   ├── main.css         # Global CSS reset + CSS variables
-│   │   │   │   ├── main.scss        # (reserved)
-│   │   │   │   └── tailwind.scss    # Tailwind directives
-│   │   │   └── ts/
-│   │   │       └── tailwind.config.ts # Tailwind custom tokens
-│   │   ├── composables/             # Vue 3 composable logic
-│   │   │   └── mitt.ts              # mitt event bus instance
-│   │   ├── declare/                 # (reserved) Type declarations
-│   │   │   └── declarations.d.ts
-│   │   ├── layouts/
-│   │   │   └── default.vue          # Default layout entry
-│   │   ├── pages/
-│   │   │   └── index.vue            # Main page
-│   │   ├── nuxt.config.ts           # Nuxt 4 configuration
-│   │   ├── package.json             # Dependency manifest
-│   │   └── tsconfig.json            # TypeScript configuration
-│   ├── src-tauri/                   # Tauri 2 native shell
-│   │   ├── capabilities/
-│   │   │   └── default.json         # Permission config
-│   │   ├── src/
-│   │   │   ├── lib.rs               # Tauri app entry
-│   │   │   └── main.rs              # Windows subsystem entry
-│   │   ├── Cargo.toml               # Rust dependencies
-│   │   ├── tauri.conf.json          # Tauri 2 config
-│   │   └── build.rs                 # Tauri build script
-│   ├── README.md                    # This file (English)
-│   └── README.zh.md                 # Chinese version
+│   │   ├── app.vue         # Root component entry
+│   │   ├── pages/          # Page components
+│   │   ├── layouts/        # Layout components
+│   │   ├── composables/    # Vue 3 composable logic
+│   │   ├── assets/         # CSS & config assets
+│   │   ├── nuxt.config.ts  # Nuxt 4 configuration
+│   │   └── package.json    # Dependency manifest
+│   ├── src-tauri/          # Tauri 2 native shell (Rust)
+│   │   ├── src/            # Rust source
+│   │   ├── Cargo.toml      # Rust dependencies
+│   │   └── tauri.conf.json # Tauri 2 config
+│   └── README.md           # English documentation
 │
 ├── config/                 # Centralized configuration
 │   ├── path.py             # File path configuration
@@ -123,11 +111,9 @@ EMA_AI_agent/
 │   ├── character.py        # Character profile configuration
 │   └── num.py              # Numeric/tuning parameters
 │
-├── context_engine/         # Memory engine — see README for full docs
+├── context_engine/         # Memory engine
 │   ├── pre_builder.py      # Unified pre-build API (query rewrite + memory assembly)
 │   ├── mes_memory/         # Short-term session message memory (SQLite + FTS5)
-│   │   ├── core.py         # Business logic: retrieval, search, nudge extraction
-│   │   └── store/          # Data layer: SQLite CRUD, migrations
 │   └── skill_memory/       # Long-term knowledge graph
 │       ├── core.py         # Orchestrator: assemble, ingest, after_turn
 │       ├── extractor/      # LLM-based node/edge extraction from dialogue
@@ -135,93 +121,124 @@ EMA_AI_agent/
 │       ├── graph/          # Community detection (Leiden), PageRank, dedup
 │       └── store/          # SQLite + vectors + FTS5 storage
 │
-├── cron/                   # Scheduled task service — see README
-│   ├── core.py             # CronService: timer loop, job execution
-│   ├── types.py            # CronSchedule, CronPayload, CronJob models
-│   └── jobs.json           # Persistent job store
+├── future/                 # Experimental / upcoming features
 │
-├── heartbeat/              # Periodic task check service — see README
-│   ├── core.py             # HeartbeatService: loop, LLM decision, execution
-│   └── evaluate.py         # Notification gate: decide if results are worth delivering
+├── logs/                   # Logging system
+│   ├── logger.py           # Log configuration
+│   └── output/             # Log output directory
 │
 ├── models/                 # Model wrappers
 │   ├── chat_model.py       # Chat model (LangChain BaseChatModel)
-│   ├── auxiliary_llm.py # Lightweight chat model
-│   ├── reasoner_model.py   # Reasoner model (chain-of-thought)
+│   ├── LLMs/               # LLM model configs
+│   │   ├── auxiliary_llm.py    # Lightweight chat model
+│   │   ├── main_llm.py         # Primary chat model
+│   │   └── reasoner_llm.py     # Chain-of-thought reasoning model
 │   ├── VTTT_model.py       # Video-Text-to-Text model
-│   ├── ITT_model.py        # Image-to-Text model
+│   ├── ITTT_model.py        # Image-to-Text model
 │   ├── STT_model/          # Speech-to-Text model
+│   ├── TTS_model/          # CosyVoice TTS voice synthesis
 │   ├── embed_model/        # Text embedding model
 │   ├── reranker_model/     # Cross-encoder reranker
-│   ├── extract_model/      # Entity extraction model
-│   └── sovits_model/       # TTS voice synthesis (GPT-SoVITS)
+│   └── extract_model/      # Entity extraction model
+│
+├── plugins/                # Plugin system
+│   ├── channels/           # Channel plugins (QQ bot, etc.)
+│   └── mcp_server/         # MCP server configurations
 │
 ├── pub_func/               # Common utility functions
-├── rag/                    # Retrieval-Augmented Generation modules
-│   ├── agentic_rag/        # Agentic RAG with tool-calling orchestration
-│   ├── mutil_hop_graphrag/ # Multi-hop reasoning over graph knowledge
-│   └── rag_anything/       # General-purpose RAG adapter
+│   ├── format/             # Text formatting utilities
+│   ├── media/              # Media processing utilities
+│   ├── message/            # Message processing utilities
+│   └── validator/          # Input validation utilities
 │
-├── runtime/                # Runtime utilities
+├── runtime/                # Runtime state & utilities
+│   ├── core.py             # Core runtime lifecycle
+│   ├── _callback_executor.py   # Async callback executor
 │   ├── count_register.py   # Usage/statistics counters
-│   └── relation_register.py# Relationship/intimacy tracking
+│   ├── relation_register.py    # Relationship/intimacy tracking
+│   ├── state_register.py   # State registry
+│   └── timer_register.py   # Timer registry
 │
 ├── server/                 # Robyn backend service & API routes
-├── sessions/               # Session runtime data (per-session)
+│   ├── DAO/                # Data access objects
+│   ├── service/            # Business logic services
+│   └── trigger/            # Trigger managers
+│       ├── channels/       # Incoming channel triggers
+│       ├── http/           # HTTP endpoint triggers
+│       └── subagent/       # Subagent result triggers
+│
+├── sessions/               # Session management
+│   ├── main/               # Active session store
+│   └── store.py            # Session CRUD operations
+│
 ├── skills/                 # Skill library (SKILL.md definition files)
 │   ├── loader.py           # Skill autodiscovery & registration
 │   ├── skills_snapshot.py  # Builds skill prompt snapshot
 │   └── builtin/            # Built-in skill implementations
-│       ├── core/           # Core built-in skills
-│       │   ├── web_search/     # Web search & scrape
-│       │   ├── python_repl/    # Python code execution
-│       │   ├── terminal/       # Terminal command execution
-│       │   ├── image_to_text/  # Image understanding
-│       │   ├── speech_to_text/ # Speech recognition
-│       │   ├── video_text_to_text/ # Video understanding
-│       │   ├── rag/            # RAG-based knowledge retrieval
-│       │   ├── clawhub/        # GitHub repository cloner
-│       │   └── skill_creator/  # Auto-generate new skills
-│       └── text_to_image/  # Image generation
+│       └── core/           # Core built-in skills
+│           ├── web_search/     # Web search & scrape
+│           ├── cron/           # Cron scheduled task skill
+│           ├── heartbeat/      # Heartbeat periodic check skill
+│           ├── image_to_text/  # Image understanding
+│           ├── speech_to_text/ # Speech recognition
+│           ├── video_text_to_text/ # Video understanding
+│           ├── multimodal_rag/ # RAG-based knowledge retrieval
+│           ├── clawhub/        # GitHub repository cloner
+│           └── skill_creator/  # Auto-generate new skills
+│
 ├── src/                    # Runtime data directories
-│   ├── avatar/             # Character avatar images
 │   ├── checkpoints/        # Session checkpoints
+│   ├── data/               # Data storage
 │   ├── gallery/            # Image gallery
 │   ├── rag/                # RAG index data
-│   ├── sessions/           # Session stores
-│   ├── store/              # Data stores
-│   └── temp/               # Temporary files
+│   ├── sessions/           # Session runtime stores
+│   └── store/              # Data stores
 │
-├── subagent/               # Subagent system — see README
-│   ├── core.py             # SubagentManager (singleton orchestrator)
-│   ├── commander/          # LangGraph-based Commander agent
-│   │   ├── core.py         # build_commander() — graph construction
-│   │   ├── tools/          # TodoWriter, Worker (parallel dispatch)
-│   │   └── middlewares/    # TodoInjector, TodoCleaner, SummarizationMiddleware
-│   ├── templates/          # Result announcement templates (Jinja2-style)
-│   └── type.py             # SubAgentOutput data model
+├── static/                 # Static assets
+│   ├── avatar/             # Character avatar images
+│   └── images/             # Other images
+│
+├── temp/                   # Temporary files
 │
 ├── tests/                  # Test suite
-├── future/                 # New functions that may be released in the future.
+│
 ├── tools/                  # Agent-accessible tools
+│   ├── subagent/           # Subagent system
+│   │   ├── core.py         # SubagentManager (singleton orchestrator)
+│   │   ├── commander/      # LangGraph-based Commander agent
+│   │   ├── templates/      # Result announcement templates
+│   │   └── type.py         # SubAgentOutput data model
+│   ├── mcp_plugin.py       # MCP plugin tool
 │   ├── web_search.py       # Web search tool
 │   ├── python_repl.py      # Python code execution
 │   ├── terminal.py         # Terminal command execution
 │   ├── read_file.py        # File reading
 │   ├── write_file.py       # File writing
-│   ├── subagent.py         # Subagent spawn tool (SubagentTool)
-│   ├── cron.py             # Cron management tool
 │   ├── memory.py           # Memory inspection tool
-│   └── message_search.py   # Conversation search tool
+│   ├── message_search.py   # Conversation search tool
+│   └── cron.py             # Cron management tool (deprecated)
 │
 ├── type/                   # Shared data models
-│   ├── __init__.py         # MultiModalMessage, Chat, FileType, etc.
-│   └── ...                 # Pydantic v2 models
+│   ├── message.py          # MultiModalMessage, Chat, etc.
+│   ├── bus.py              # Message bus data models
+│   └── client.py           # Client data models
 │
-├── workspace/              # Character profile files (IDENTITY.md, SOUL.md, USER.md)
-├── output/                 # Output directory (generated files)
+├── workspace/              # Character profile & behavior definition
+│   ├── IDENTITY.md         # Name, age, interests, relationships
+│   ├── SOUL.md             # Personality contrasts, speech style
+│   ├── AGENTS.md           # Tool usage priorities, safety boundaries
+│   ├── USER.md             # User-specific preferences & facts
+│   ├── HEARTBEAT.md        # Pending tasks for heartbeat service
+│   ├── character.json      # Character configuration
+│   ├── prompt_builder.py   # Profile-to-prompt builder
+│   ├── template/           # Prompt templates
+│   └── memory/             # Long-term memory storage
+│
+├── .env                    # Environment variables (API keys, model paths)
+├── .env.example            # Environment variable template
+├── pyproject.toml          # Python dependencies (uv managed)
 ├── start.sh                # One-click startup script
-└── .env                    # Environment variables (API keys, model paths)
+└── TODOList.md             # Development roadmap
 ```
 
 ---
@@ -239,6 +256,7 @@ Each major subsystem has its own detailed README:
 | **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
 | **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
+| **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
 
 ---
 
@@ -265,11 +283,11 @@ On first run, the system will automatically download the Embedding model and Rer
 > You can also manually download the models and place them in the directories to skip the auto-download.
 
 ### 3. Configure Environment Variables
-Copy the `.env` example and fill in your API Keys (DeepSeek, OpenAI, etc.) and TTS model path.
+Copy the `.env` example and fill in your API Keys (DeepSeek, OpenAI, etc.) and model paths.
 
 ```bash
 cp .env.example .env
-# Edit .env to configure MAIN_LLM_API_KEY, GPT_SOVITS_DIR, etc.
+# Edit .env to configure MAIN_LLM_API_KEY, TTS model path, etc.
 ```
 
 ### 4. Start Services
@@ -286,7 +304,7 @@ You can also start each component manually:
 
 ```bash
 python -m server  # Start backend
-streamlit run client/base.py  # Start frontend
+streamlit run client/core.py  # Start frontend
 ```
 
 ---
@@ -296,9 +314,11 @@ streamlit run client/base.py  # Start frontend
 The Agent's behavior is driven by Markdown files under `workspace/`:
 
 - **IDENTITY.md**: Defines name, age, interests, relationships, etc.
-- **SOUL.md**: Defines personality contrasts, speech style (e.g. "~です"), and behavioral logic.
+- **SOUL.md**: Defines personality contrasts, speech style, and behavioral logic.
 - **AGENTS.md**: Defines tool usage priorities, safety boundaries, and ethical guidelines.
 - **USER.md**: Stores user-specific interaction preferences and known facts.
+- **HEARTBEAT.md**: Lists pending tasks for the heartbeat scheduled service.
+- **character.json**: Structured character configuration (JSON).
 
 ---
 

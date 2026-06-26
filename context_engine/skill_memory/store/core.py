@@ -9,7 +9,7 @@ from ..type import GmNode, GmEdge
 from pub_func import contains_cjk
 from typing import Any, TypedDict
 
-# ─── 工具 ─────────────────────────────────────────────────────
+# ─── Utilities ─────────────────────────────────────────────────
 def get_timestamp() -> int:
     return int(time.time() * 1000)
 
@@ -46,7 +46,7 @@ def to_edge(r: dict[str, Any])-> GmEdge:
         created_at = r["created_at"],
     )
 
-# 标准化 name：全小写，空格转连字符，保留中文
+# Normalize name: lowercase, spaces to hyphens, preserve CJK
 def normalize_name(name: str) -> str:
     name = name.strip().lower()
     name = re.sub(r'[\s_]+', '-', name)
@@ -55,7 +55,7 @@ def normalize_name(name: str) -> str:
 
     return name.strip('-')
 
-# ─── 节点 CRUD ───────────────────────────────────────────────
+# ─── Node CRUD ────────────────────────────────────────────────
 def find_by_name(db: sqlite3.Connection, name: str) -> GmNode | None:
     cursor = db.cursor()
 
@@ -124,50 +124,50 @@ def upsert_node(db: sqlite3.Connection, c: dict, session_id: str) -> UpsertResul
 
 
 def delete_node(db: sqlite3.Connection, node_id: str) -> None:
-    """将指定节点硬删除"""
-    # 1. 先删除所有与该节点相关的边（from_id 或 to_id 等于该节点）
+    """Hard-delete the specified node"""
+    # 1. Delete all edges associated with this node (from_id or to_id)
     db.execute("DELETE FROM gm_edges WHERE from_id=? OR to_id=?", (node_id, node_id))
 
-    # 2. 后删除向量节点
+    # 2. Delete vector
     db.execute("DELETE FROM gm_vectors WHERE node_id=?", (node_id,))
 
-    # 3. 再删除节点本身
+    # 3. Delete the node itself
     db.execute("DELETE FROM gm_nodes WHERE id=?", (node_id,))
 
     db.commit()
 
-# 合并两个节点：keepId 保留，mergeId 删除，边迁移
+# Merge two nodes: keep keepId, delete mergeId, migrate edges
 def merge_nodes(db: sqlite3.Connection, keep_id: str, merge_id: str) -> None:
     """
-    合并两个节点：保留 keep_id，将 merge_id 标记为已弃用，并迁移其边关系
+    Merge two nodes: keep keep_id, mark merge_id as deprecated, and migrate its edges
     """
-    # 获取两个节点的信息
+    # Fetch info for both nodes
     keep = find_by_id(db, keep_id)
     merge = find_by_id(db, merge_id)
     if not keep or not merge:
         return
 
-    # 合并属性：取内容更长的作为新内容，累加验证次数，合并会话来源
+    # Merge attributes: keep the longer content, accumulate validation count, merge session sources
     sessions = list(set(keep.source_sessions + merge.source_sessions))
     count = keep.validated_count + merge.validated_count
     content = keep.content if len(keep.content) >= len(merge.content) else merge.content
     desc = keep.description if len(keep.description) >= len(merge.description) else merge.description
 
-    # 更新保留节点的信息
+    # Update the retained node
     db.execute(
         "UPDATE gm_nodes SET content=?, description=?, validated_count=?, "
         "source_sessions=?, updated_at=? WHERE id=?",
         (content, desc, count, json.dumps(sessions), get_timestamp(), keep_id)
     )
 
-    # 迁移边关系：将指向 merge_id 的边重新指向 keep_id
+    # Migrate edges: re-point edges targeting merge_id to keep_id
     db.execute("UPDATE gm_edges SET from_id=? WHERE from_id=?", (keep_id, merge_id))
     db.execute("UPDATE gm_edges SET to_id=? WHERE to_id=?", (keep_id, merge_id))
 
-    # 删除自环（防止出现 keep_id → keep_id 的无效边）
+    # Delete self-loops (prevent invalid keep_id → keep_id edges)
     db.execute("DELETE FROM gm_edges WHERE from_id = to_id")
 
-    # 删除重复边（相同 from_id, to_id, type 的只保留一条）
+    # Delete duplicate edges (keep only one per from_id, to_id, type)
     db.execute("""
         DELETE FROM gm_edges WHERE id NOT IN (
             SELECT MIN(id) FROM gm_edges GROUP BY from_id, to_id, type
@@ -176,7 +176,7 @@ def merge_nodes(db: sqlite3.Connection, keep_id: str, merge_id: str) -> None:
 
     db.commit()
 
-    # 最后将被合并的节点删除
+    # Finally delete the merged node
     delete_node(db, merge_id)
 
 def update_pageranks(db: sqlite3.Connection, scores: dict) -> None:
@@ -194,11 +194,11 @@ def update_pageranks(db: sqlite3.Connection, scores: dict) -> None:
 
 
 def update_communities(db: sqlite3.Connection, labels: dict) -> None:
-    """批量更新社区 ID"""
+    """Batch update community IDs"""
     cursor = db.cursor()
     try:
         db.execute("BEGIN TRANSACTION")
-        # 使用 executemany 进行批量操作
+        # Use executemany for batch operations
         cursor.executemany(
             "UPDATE gm_nodes SET community_id=? WHERE id=?",
             [(cid, node_id) for node_id, cid in labels.items()]
@@ -208,61 +208,61 @@ def update_communities(db: sqlite3.Connection, labels: dict) -> None:
         db.rollback()
         raise e
 
-# ─── 边 CRUD ─────────────────────────────────────────────────
+# ─── Edge CRUD ────────────────────────────────────────────────
 def upsert_edge(
         db: sqlite3.Connection,
         edge_data: dict
 ) -> None:
-    """插入或更新边关系：如果已存在则更新，否则创建新记录"""
-    # 检查是否已存在相同的边（from_id, to_id, type）
+    """Insert or update an edge: update if exists, otherwise create a new record"""
+    # Check if the same edge already exists (from_id, to_id, type)
     existing = db.execute(
         "SELECT id FROM gm_edges WHERE from_id=? AND to_id=? AND type=?",
         (edge_data['from_id'], edge_data['to_id'], edge_data['type'])
     ).fetchone()
 
     if existing:
-        # 已存在则更新 instruction
+        # Update instruction if edge already exists
         db.execute(
             "UPDATE gm_edges SET instruction=? WHERE id=?",
             (edge_data['instruction'], existing[0])
         )
     else:
-        # 不存在则插入新记录
+        # Insert new record if it doesn't exist
         db.execute(
             """INSERT INTO gm_edges 
             (id, from_id, to_id, type, instruction, condition, session_id, created_at)
             VALUES (?,?,?,?,?,?,?,?)""",
             (
-                uid("e"),  # 生成唯一ID
+                uid("e"),  # Generate unique ID
                 edge_data['from_id'],
                 edge_data['to_id'],
                 edge_data['type'] if isinstance(edge_data['type'], str) else edge_data['type'].value,
                 edge_data['instruction'],
-                edge_data.get('condition'),  # 使用get避免KeyError
+                edge_data.get('condition'),  # Use get to avoid KeyError
                 edge_data['session_id'],
-                get_timestamp()  # 当前时间戳
+                get_timestamp()  # Current timestamp
             )
         )
     db.commit()
 
 
 def edges_from(db: sqlite3.Connection, node_id: str) -> list:
-    """获取从指定节点出发的所有边"""
+    """Get all edges starting from the specified node"""
     rows = db.execute("SELECT * FROM gm_edges WHERE from_id=?", (node_id,)).fetchall()
     return [to_edge(dict(row)) for row in rows]
 
 
 def edges_to(db: sqlite3.Connection, node_id: str) -> list:
-    """获取指向指定节点的所有边"""
+    """Get all edges pointing to the specified node"""
     rows = db.execute("SELECT * FROM gm_edges WHERE to_id=?", (node_id,)).fetchall()
     return [to_edge(dict(row)) for row in rows]
 
 
-# ─── FTS5 搜索 ───────────────────────────────────────────────
+# ─── FTS5 Search ──────────────────────────────────────────────
 _fts5_available: bool | None = None
 
 def fts5_available(db: sqlite3.Connection) -> bool:
-    """检查数据库是否支持FTS5全文搜索"""
+    """Check whether the database supports FTS5 full-text search"""
 
     global _fts5_available
     if _fts5_available is not None:
@@ -279,13 +279,13 @@ def fts5_available(db: sqlite3.Connection) -> bool:
 
 
 def search_nodes(db: sqlite3.Connection, query: str, limit: int = 6) -> list:
-    """搜索节点：优先使用FTS5全文搜索，降级为LIKE模糊匹配"""
-    # 解析查询词
+    """Search nodes: prefer FTS5 full-text search, fall back to LIKE fuzzy matching"""
+    # Parse query terms
     terms = [term for term in query.strip().split() if term][:8]
     if not terms:
         return top_nodes(db, limit)
 
-    # 优先尝试FTS5搜索
+    # Try FTS5 search first
     if fts5_available(db):
         try:
             fts_query = " OR ".join(f'"{term.replace('"', "")}"' for term in terms)
@@ -308,12 +308,12 @@ def search_nodes(db: sqlite3.Connection, query: str, limit: int = 6) -> list:
             if rows:
                 return [to_node(dict(row)) for row in rows]
         except Exception:
-            # FTS查询失败，降级到普通搜索
+            # FTS query failed, fall back to plain search
             pass
 
-    # 降级方案：使用LIKE进行模糊匹配
+    # Fallback: use LIKE fuzzy matching
     where_conditions = " OR ".join(["(name LIKE ? OR description LIKE ? OR content LIKE ?)" for _ in terms])
-    like_values = [f"%{term}%" for term in terms for _ in range(3)]  # 每个term对应name/desc/content
+    like_values = [f"%{term}%" for term in terms for _ in range(3)]  # Each term → name/desc/content
 
     sql = f"""
         SELECT * FROM gm_nodes WHERE ({where_conditions})
@@ -324,7 +324,7 @@ def search_nodes(db: sqlite3.Connection, query: str, limit: int = 6) -> list:
 
 
 def top_nodes(db: sqlite3.Connection, limit: int = 6) -> list:
-    """获取热门节点：按pagerank、验证次数和更新时间排序"""
+    """Get top nodes: sorted by pagerank, validation count, and update time"""
 
     sql = """
         SELECT * FROM gm_nodes
@@ -334,13 +334,13 @@ def top_nodes(db: sqlite3.Connection, limit: int = 6) -> list:
     return [to_node(dict(row)) for row in rows]
 
 
-# ─── 递归 CTE 图遍历 ────────────────────────────────────────
+# ─── Recursive CTE Graph Traversal ───────────────────────────
 def graph_walk(
         db: sqlite3.Connection,
         seed_ids: list[str],
         max_depth: int,
 ) -> dict[str, list]:
-    """使用递归 CTE 进行图遍历，获取种子节点的邻居"""
+    """Use recursive CTE for graph traversal to get neighbors of seed nodes"""
 
     if not seed_ids:
         return {"nodes": [], "edges": []}
@@ -381,10 +381,10 @@ def graph_walk(
 
     return {"nodes": nodes, "edges": edges}
 
-# ─── 按 sessions 查询 ────────────────────────────────────────
+# ─── Query by Sessions ────────────────────────────────────────
 
 def get_by_session(db: sqlite3.Connection, session_id: str) -> list[GmNode]:
-    """根据 sessions ID 获取相关节点"""
+    """Get nodes related to the given session ID"""
     sql = """
         SELECT DISTINCT n.* FROM gm_nodes n, json_each(n.source_sessions) j
         WHERE j.value = ?
@@ -393,7 +393,7 @@ def get_by_session(db: sqlite3.Connection, session_id: str) -> list[GmNode]:
     return [to_node(dict(row)) for row in rows]
 
 
-# ─── 消息 CRUD ───────────────────────────────────────────────
+# ─── Message CRUD ─────────────────────────────────────────────
 def save_message(
         db: sqlite3.Connection,
         session_id: str,
@@ -401,10 +401,7 @@ def save_message(
         role: str,
         content: Any
 ) -> None:
-    """保存消息到数据库"""
-    import json
-    import time
-
+    """Save a message to the database"""
     db.execute("""
         INSERT OR IGNORE INTO gm_messages (id, session_id, turn_index, role, content, created_at)
         VALUES (?,?,?,?,?,?)
@@ -413,7 +410,7 @@ def save_message(
 
 
 def get_unextracted(db: sqlite3.Connection, session_id: str, limit: int) -> list:
-    """获取未提取的消息"""
+    """Get unextracted messages"""
 
     sql = """
         SELECT * FROM gm_messages 
@@ -426,7 +423,7 @@ def get_unextracted(db: sqlite3.Connection, session_id: str, limit: int) -> list
 
 
 def delete_extracted(db: sqlite3.Connection, session_id: str, up_to_turn: int) -> None:
-    """删除已提取的消息记录"""
+    """Delete extracted messages"""
     db.execute("""
         DELETE FROM gm_messages 
         WHERE session_id=? AND turn_index<=?
@@ -440,16 +437,16 @@ def get_episodic_messages(
         max_chars: int = 1500,
 ) -> list[dict]:
     """
-    溯源选拉：按 sessions 拉取 human/ai 核心对话（跳过 tool/tool_result）
-    用于 assemble 时补充三元组的原始上下文
+    Traceback selection: pull human/ai core conversations by sessions (skip tool/tool_result)
+    Used when assembling triples to supplement the original context
 
     Args:
-        session_ids: sessions ID 列表
-        near_time: 优先取时间最接近的消息（节点的 updated_at）
-        max_chars: 总字符上限
+        session_ids: list of session IDs
+        near_time: prefer messages closest to this time (node's updated_at)
+        max_chars: total character limit
 
     Returns:
-        包含 session_id, turnIndex, role, text, createdAt 的字典列表
+        list of dicts with session_id, turnIndex, role, text, createdAt
     """
     if not session_ids:
         return []
@@ -509,9 +506,9 @@ def get_episodic_messages(
     return results
 
 
-# ─── 信号 CRUD ───────────────────────────────────────────────
+# ─── Signal CRUD ──────────────────────────────────────────────
 def save_signal(db: sqlite3.Connection, session_id: str, signal_data: dict) -> None:
-    """保存信号到数据库"""
+    """Save a signal to the database"""
 
     db.execute("""
         INSERT INTO gm_signals (id, session_id, turn_index, type, data, created_at)
@@ -521,7 +518,7 @@ def save_signal(db: sqlite3.Connection, session_id: str, signal_data: dict) -> N
     db.commit()
 
 def pending_signals(db: sqlite3.Connection, session_id: str) -> list:
-    """获取未处理的信号"""
+    """Get pending signals"""
     sql = """
         SELECT * FROM gm_signals 
         WHERE session_id=? AND processed=0 
@@ -540,7 +537,7 @@ def pending_signals(db: sqlite3.Connection, session_id: str) -> list:
 
 
 def mark_signals_done(db: sqlite3.Connection, session_id: str) -> None:
-    """标记信号处理完成"""
+    """Mark signals as processed"""
     db.execute("""
         UPDATE gm_signals 
         SET processed=1 
@@ -548,9 +545,9 @@ def mark_signals_done(db: sqlite3.Connection, session_id: str) -> None:
     """, (session_id,))
     db.commit()
 
-# ─── 统计 ────────────────────────────────────────────────────
+# ─── Statistics ───────────────────────────────────────────────
 def get_stats(db: sqlite3.Connection) -> dict:
-    """获取图谱统计信息"""
+    """Get graph statistics"""
     total_nodes = db.execute(
         "SELECT COUNT(*) as c FROM gm_nodes"
     ).fetchone()['c']
@@ -590,7 +587,7 @@ def get_stats(db: sqlite3.Connection) -> dict:
     }
 
 
-# ─── 向量存储 + 搜索 ────────────────────────────────────────
+# ─── Vector Storage + Search ─────────────────────────────────
 
 def save_vector(
         db: sqlite3.Connection,
@@ -741,14 +738,19 @@ class CommunitySummary(TypedDict):
 
 
 def upsert_community_summary(
-        db: sqlite3.Connection,
-        summary_id: str,
-        summary_text: str,
-        node_count: int,
-        embedding: list[float]
+    db: sqlite3.Connection,
+    summary_id: str,
+    summary_text: str,
+    embedding: list[float],
+    node_ids: list[str] | None = None
 ) -> None:
-    """插入或更新社区摘要"""
+    """插入或更新社区摘要
+
+    node_count 从 node_ids 长度自动推算，调用方无需再传入。
+    """
     now = get_timestamp()
+    node_ids_json = json.dumps(sorted(node_ids)) if node_ids else '[]'
+    node_count = len(node_ids) if node_ids else 0
 
     existing = db.execute(
         "SELECT id FROM gm_communities WHERE id=?",
@@ -759,21 +761,21 @@ def upsert_community_summary(
         if embedding:
             db.execute("""
                 UPDATE gm_communities 
-                SET summary=?, node_count=?, embedding=?, updated_at=? 
+                SET summary=?, node_count=?, node_ids=?, embedding=?, updated_at=? 
                 WHERE id=?
-            """, (summary_text, node_count, json.dumps(embedding), now, summary_id))
+            """, (summary_text, node_count, node_ids_json, json.dumps(embedding), now, summary_id))
         else:
             db.execute("""
                 UPDATE gm_communities 
-                SET summary=?, node_count=?, updated_at=? 
+                SET summary=?, node_count=?, node_ids=?, updated_at=? 
                 WHERE id=?
-            """, (summary_text, node_count, now, summary_id))
+            """, (summary_text, node_count, node_ids_json, now, summary_id))
     else:
         db.execute("""
             INSERT INTO gm_communities 
-            (id, summary, node_count, embedding, created_at, updated_at) 
-            VALUES (?,?,?,?,?,?)
-        """, (summary_id, summary_text, node_count,
+            (id, summary, node_count, node_ids, embedding, created_at, updated_at) 
+            VALUES (?,?,?,?,?,?,?)
+        """, (summary_id, summary_text, node_count, node_ids_json,
               json.dumps(embedding) if embedding else None, now, now))
 
     db.commit()

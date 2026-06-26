@@ -5,13 +5,13 @@ import streamlit as st
 from typing import Any
 from pathlib import Path
 from urllib.parse import urlencode
-from pub_func import sanitize_content
+# from pub_func import sanitize_content
 from type.message import MultiModalMessage
 from websocket import WebSocket, create_connection
 from streamlit.delta_generator import DeltaGenerator
 from client.api import post_agent_astream, clear_session
 from streamlit.elements.widgets.chat import ChatInputValue
-from models.TTS_model import TTS_Request, fetch_TTS_sound
+# from models.TTS_model import TTS_Request, fetch_TTS_sound
 from config import USER_NAME, ASSISTANT_NAME, API_HOST, API_PORT
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
@@ -193,20 +193,20 @@ def main()-> None:
                 # 创建文件列表
                 file_list: list[bytes] = []
 
-                with st.spinner("正在生成语音..."):
-                    # 生成语音,当生成失败时跳过生成
-                    try:
-                        # 去除多余字符
-                        clear_content = sanitize_content(_content)
-
-                        audio_requires = TTS_Request(text=clear_content, text_lang="zh")
-                        response = fetch_TTS_sound(audio_requires)
-                        if response is not None:
-                            file: bytes = response.content
-                            st.audio(data = file, format="audio/ogg")
-                            file_list.append(file)
-                    except Exception as e:
-                        pass
+                # with st.spinner("正在生成语音..."):
+                #     # 生成语音,当生成失败时跳过生成
+                #     try:
+                #         # 去除多余字符
+                #         clear_content = sanitize_content(_content)
+                #
+                #         audio_requires = TTS_Request(text=clear_content, text_lang="zh")
+                #         response = fetch_TTS_sound(audio_requires)
+                #         if response is not None:
+                #             file: bytes = response.content
+                #             st.audio(data = file, format="audio/ogg")
+                #             file_list.append(file)
+                #     except Exception as e:
+                #         pass
 
                 # 将AI消息持久化
                 storage_add_chat(session_id=session_id, role="assistant", multi_modal_message=MultiModalMessage(text=_content, audio_bytes_list=file_list))

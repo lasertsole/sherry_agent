@@ -1,14 +1,15 @@
 """
 skill_memory - Community Detection
 
-用途：
-  - 发现知识域（Docker 相关技能自动聚成一组）
-  - recall 时可以拉整个社区的节点
-  - assemble 时同社区节点放一起，上下文更连贯
-  - kg_stats 展示社区分布
+Purpose:
+  - Discover knowledge domains (e.g., Docker-related skills cluster together automatically)
+  - Pull entire community's nodes during recall
+  - Group same-community nodes together during assemble for coherent context
+  - Show community distribution in kg_stats
 """
 
 import re
+import json
 import sqlite3
 import leidenalg
 import igraph as ig
@@ -22,7 +23,7 @@ from ..store.core import update_communities, upsert_community_summary, prune_com
 
 
 class CommunityResult(TypedDict):
-    """社区检测结果"""
+    """Community detection result"""
     labels: dict[str, str]
     communities: dict[str, list[str]]
     count: int
@@ -45,11 +46,21 @@ def detect_communities(db: Connection) -> CommunityResult:
             edges.append((id_to_idx[f], id_to_idx[t]))
 
     g = ig.Graph(len(node_ids), edges, directed=False)
+    g.simplify(multiple=True, loops=True)
+    graph_density = g.density()
+    if graph_density < 0.3:
+        safe_resolution = graph_density * 1.5
+    elif 0.3 <= graph_density < 0.6:
+        safe_resolution = graph_density * 1.2
+    else:
+        safe_resolution = 0.85
+    safe_resolution = max(min(safe_resolution, 0.99), 0.001)
 
     partition = leidenalg.find_partition(
         g,
-        leidenalg.ModularityVertexPartition,
-        n_iterations=2
+        leidenalg.CPMVertexPartition,
+        resolution_parameter = safe_resolution,
+        n_iterations = -1
     )
 
     temp_communities = {}
@@ -88,17 +99,17 @@ def get_community_peers(
     limit: int = 5
 ) -> list[str]:
     """
-    获取同社区的节点 ID 列表
+    Get node IDs belonging to the same community.
 
-    recall 时用：找到种子节点 → 拉同社区的其他节点作为补充
+    Used during recall: find seed node → pull other nodes from the same community as supplement.
 
     Args:
-        db: SQLite 数据库连接
-        node_id: 种子节点 ID
-        limit: 返回的最大节点数
+        db: SQLite database connection
+        node_id: Seed node ID
+        limit: Maximum number of nodes to return
 
     Returns:
-        同社区的节点 ID 列表
+        List of node IDs in the same community
     """
     cursor = db.cursor()
     cursor.execute(
@@ -122,17 +133,17 @@ def get_community_peers(
     return [r[0] for r in cursor.fetchall()]
 
 
-# ─── 社区描述生成 ────────────────────────────────────────────
+# ─── Community Summary Generation ────────────────────────────
 
-# 类型定义
+# Type definitions
 CompleteFn = Callable[[str, str], Awaitable[str]]
 EmbedFn = Callable[[str], Awaitable[list[float]]]
 
-COMMUNITY_SUMMARY_SYS = """你是知识图谱摘要引擎。根据节点列表，用简短的描述概括这组节点的主题领域。
-要求：
-- 只返回短语本身，不要解释
-- 描述涵盖的工具/技术/任务领域
-- 不要使用"社区"这个词\n"""
+COMMUNITY_SUMMARY_SYS = """You are a knowledge graph summarization engine. Based on the node list, summarize the topic area of these nodes in a brief description.
+Requirements:
+- Return only the phrase itself, no explanations
+- The description should cover the tools/technologies/task domains
+- Do not use the word "community"\n"""
 
 
 async def summarize_communities(
@@ -142,27 +153,43 @@ async def summarize_communities(
     embed: Embeddings = None,
 ) -> int:
     """
-    为所有社区生成 LLM 摘要描述 + embedding 向量
+    Generate LLM summary descriptions + embedding vectors for all communities.
 
-    调用时机：runMaintenance → detectCommunities 之后
+    Invoked after: runMaintenance → detectCommunities
 
     Args:
-        db: SQLite 数据库连接
-        communities: 社区 ID 到成员节点 ID 列表的映射
-        llm: LLM 补全函数
-        embed: Embedding
+        db: SQLite database connection
+        communities: Mapping from community ID to list of member node IDs
+        llm: LLM completion function
+        embed: Embedding model
 
     Returns:
-        生成的摘要数量
+        Number of summaries generated
     """
     prune_community_summaries(db)
     generated: int = 0
 
     cursor: sqlite3.Cursor = db.cursor()
 
+    # Skip summary generation when community members haven't changed, to save tokens
     for community_id, member_ids in communities.items():
         if not member_ids:
             continue
+
+        sorted_member_ids = sorted(member_ids)
+        cursor.execute(
+            "SELECT node_ids FROM gm_communities WHERE id = ?",
+            (community_id,)
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                old_node_ids = json.loads(row[0])
+                if sorted(old_node_ids) == sorted_member_ids:
+                    logger.info(f"[skill_memory] Skip unchanged community: {community_id}")
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         placeholders: str = ",".join("?" * len(member_ids))
 
@@ -184,12 +211,12 @@ async def summarize_communities(
         )
 
         try:
-            # LLM 生成描述
+            # LLM generates the description
             summary: AIMessage = await llm.ainvoke(
-                COMMUNITY_SUMMARY_SYS+f"社区成员：\n{member_text}",
+                COMMUNITY_SUMMARY_SYS+f"Community members:\n{member_text}",
             )
 
-            # 清理输出
+            # Clean up output
             cleaned: str = summary.content.strip()
             cleaned: str = re.sub(r'<think>[\s\S]*?</think>', '', cleaned, flags=re.IGNORECASE)
             cleaned: str = re.sub(r'<think>[\s\S]*', '', cleaned, flags=re.IGNORECASE)
@@ -201,7 +228,7 @@ async def summarize_communities(
             if not cleaned:
                 continue
 
-            # 生成社区 embedding（用描述 + 成员名拼接）
+            # Generate community embedding (concatenate description + member names)
             embedding: list[float] | None = None
             try:
                 embed_text = f"{cleaned}\n{', '.join([m['description'] for m in members])}"
@@ -209,7 +236,7 @@ async def summarize_communities(
             except Exception:
                 logger.error(f"[DEBUG] community embedding failed for {community_id}")
 
-            upsert_community_summary(db, community_id, cleaned, len(member_ids), embedding)
+            upsert_community_summary(db, community_id, cleaned, embedding, member_ids)
             generated += 1
 
         except Exception as e:

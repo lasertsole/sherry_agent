@@ -27,7 +27,7 @@ class RecallResult(TypedDict):
 # ── Initialize Core Modules ────────────────────────────────
 DEFAULT_CONFIG: GmConfig = GmConfig(
     db_path=f"{SRC_DIR}/store/skill_memory/skill_memory.db",
-    compact_turn_count = 6,
+    compact_turn_count = 7,
     recall_max_nodes = 6,
     recall_max_depth = 2,
     fresh_tail_count = 10,
@@ -299,7 +299,8 @@ async def after_turn(
 
     # ★ Community maintenance: triggered every N turns (pure computation, <5ms)
     turns:int = state_register_db.get_state(session_id, "skill_memory_maintain_turns", 0) + 1
-    maintain_interval:int = getattr(DEFAULT_CONFIG, 'compact_turn_count', 6)
+    maintain_interval:int = getattr(DEFAULT_CONFIG, 'compact_turn_count', 7)
+    logger.info(f"[skill_memory] summarize_communities turn {turns} / {maintain_interval}")
 
     if turns >= maintain_interval:
         state_register_db.set_state(session_id, "skill_memory_maintain_turns", 0)

@@ -21,7 +21,7 @@ def get_db():
 
     return _db
 
-# 仅用于测试：关闭并重置单例
+# For testing only: close and reset the singleton
 def close_db()->None:
     global _db
     if _db:
@@ -39,7 +39,7 @@ def _migrate(db) -> None:
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
     db.commit()
 
-# ─── 核心表：节点 + 边 ──────────────────────────────────────
+# ─── Core tables: nodes + edges ──────────────────────────────────────
 def m1_core(db: sqlite3.Connection) -> None:
     db.executescript("""
         CREATE TABLE IF NOT EXISTS gm_nodes (
@@ -71,7 +71,7 @@ def m1_core(db: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS ix_gm_edges_from ON gm_edges(from_id);
         CREATE INDEX IF NOT EXISTS ix_gm_edges_to   ON gm_edges(to_id);
     """)
-# ─── 消息存储 ────────────────────────────────────────────────
+# ─── Message storage ──────────────────────────────────────────
 
 def m2_messages(db: sqlite3.Connection) -> None:
     db.executescript("""
@@ -86,7 +86,7 @@ def m2_messages(db: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS ix_gm_msg_session ON gm_messages(session_id, turn_index);
     """)
 
-# ─── 信号存储 ────────────────────────────────────────────────
+# ─── Signal storage ───────────────────────────────────────────
 def m3_signals(db: sqlite3.Connection) -> None:
     db.executescript("""
         CREATE TABLE IF NOT EXISTS gm_signals (
@@ -101,7 +101,7 @@ def m3_signals(db: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS ix_gm_sig_session ON gm_signals(session_id, processed);
     """)
 
-# ─── FTS5 全文索引 ───────────────────────────────────────────
+# ─── FTS5 full-text index ──────────────────────────────────────
 def m4_fts5(db: sqlite3.Connection) -> None:
     try:
         db.executescript("""
@@ -159,7 +159,7 @@ def m4_fts5(db: sqlite3.Connection) -> None:
     except Exception as e:
         print(f"[WARN] FTS5 not available, falling back to LIKE search: {e}")
 
-# ─── 向量存储 ────────────────────────────────────────────────
+# ─── Vector storage ───────────────────────────────────────────
 def m5_vectors(db: sqlite3.Connection) -> None:
     db.executescript("""
         CREATE TABLE IF NOT EXISTS gm_vectors (
@@ -169,13 +169,14 @@ def m5_vectors(db: sqlite3.Connection) -> None:
         );
     """)
 
-# ─── 社区描述存储 ────────────────────────────────────────────
+# ─── Community summary storage ────────────────────────────────
 def m6_communities(db: sqlite3.Connection) -> None:
     db.executescript("""
         CREATE TABLE IF NOT EXISTS gm_communities (
             id          TEXT PRIMARY KEY,
             summary     TEXT NOT NULL,
             node_count  INTEGER NOT NULL DEFAULT 0,
+            node_ids    TEXT NOT NULL DEFAULT '[]',
             embedding   BLOB,
             created_at  INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL

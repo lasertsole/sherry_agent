@@ -1,14 +1,19 @@
-import json
-import os
 import re
 import sys
-from pathlib import Path
-
-
-import requests
+import json
+import math
 import urllib3
+import requests
+from pathlib import Path
+from typing import Optional
 from config import ENV_PATH
+from llama_cpp import Llama
 from langchain_core.embeddings import Embeddings
+
+
+
+_MODEL_DIR = Path(__file__).resolve().parent
+_WEIGHT_DIR = _MODEL_DIR / "model_weight"
 
 
 def _read_dotenv(key: str, default: str = "") -> str:
@@ -57,52 +62,37 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
         _abort("EMBEDDING_MODEL_PROVIDER is empty — 远程 embedding 需要设置模型提供商 (例如 openai)")
 
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    return ("remote", False, {"provider": provider, "api_base": api_base, "api_key": api_key, "api_name": api_name})
+    return "remote", False, {"provider": provider, "api_base": api_base, "api_key": api_key, "api_name": api_name}
 
 
 # ─────────────────────────────────────────────
 # 1. 模块级初始化（只执行一次）
 # ─────────────────────────────────────────────
 _backend, _use_local, _remote_config = _detect_backend()
-_local_model = None
+_local_model: Optional[Llama] = None
+
+_GGUF_MODEL_PATH = _WEIGHT_DIR / "bge-m3-q8_0.gguf"
 
 if _use_local:
-    from sentence_transformers import SentenceTransformer
-
-    current_dir = Path(__file__).parent.resolve()
-    model_cache_folder = current_dir / "model_weight"
-
-    if model_cache_folder.exists():
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-
-        actual_model_path = model_cache_folder
-        hf_snapshot_dir = model_cache_folder / "models--BAAI--bge-m3" / "snapshots"
-
-        if hf_snapshot_dir.exists():
-            snapshot_folders = [f for f in hf_snapshot_dir.iterdir() if f.is_dir()]
-            if snapshot_folders:
-                actual_model_path = snapshot_folders[0]
-
-        _local_model = SentenceTransformer(actual_model_path.as_posix())
+    if _GGUF_MODEL_PATH.is_file():
+        # 本地已有缓存 → 直接加载
+        _local_model = Llama(model_path=str(_GGUF_MODEL_PATH), embedding=True)
     else:
-        os.environ["HF_HUB_OFFLINE"] = "0"
-        os.environ["TRANSFORMERS_OFFLINE"] = "0"
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "0"
-
-        _local_model = SentenceTransformer("BAAI/bge-m3", cache_folder=model_cache_folder.as_posix())
-
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        # 下载到 models/embed_model/model_weight/ 目录
+        _WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
+        _local_model = Llama.from_pretrained(
+            repo_id="ggml-org/bge-m3-Q8_0-GGUF",
+            filename="bge-m3-q8_0.gguf",
+            local_dir=str(_WEIGHT_DIR),
+            embedding=True,
+        )
 
 
 # ─────────────────────────────────────────────
 # 2. CustomEmbedding 类
 # ─────────────────────────────────────────────
 class CustomEmbedding(Embeddings):
-    """嵌入模型封装（自动选择本地 SentenceTransformer / 远程 MaaS API）"""
+    """嵌入模型封装（自动选择本地 llama.cpp / 远程 MaaS API）"""
 
     def _call_remote_api(self, texts: list[str]) -> dict:
         """调用远程 MaaS embedding API"""
@@ -122,10 +112,20 @@ class CustomEmbedding(Embeddings):
         resp.raise_for_status()
         return resp.json()
 
+    @staticmethod
+    def _l2_normalize(vec: list[float]) -> list[float]:
+        norm = math.sqrt(sum(x * x for x in vec))
+        if norm == 0.0:
+            return vec
+        return [x / norm for x in vec]
+
     def _embed_local(self, texts: list[str]) -> list[list[float]]:
-        """本地 SentenceTransformer 编码"""
-        embeddings = _local_model.encode(texts, normalize_embeddings=True)
-        return embeddings.tolist()
+        """本地 llama.cpp 编码（输出做 L2 归一化）"""
+        embeddings = _local_model.create_embedding(input=texts)
+        # 按输入顺序返回 embedding 向量
+        data = embeddings.get("data", [])
+        data.sort(key=lambda x: x["index"])
+        return [self._l2_normalize(item["embedding"]) for item in data]
 
     def _embed_remote(self, texts: list[str]) -> list[list[float]]:
         """远程 API 编码"""
