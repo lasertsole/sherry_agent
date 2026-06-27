@@ -94,13 +94,13 @@ class Worker(BaseTool):
                     self._build_worker_prompt()
                     + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
-                from tools import build_all_tools_except_subagent
+                from tools import ALL_TOOLS_BUILDERS, build_subagent_tool
                 from agent.middlewares import ToolCallNormalize, ContextEngineHook
 
                 agent: CompiledStateGraph = create_agent(
                     system_prompt=system_prompt,
                     model=main_llm,
-                    tools=build_all_tools_except_subagent(self._session_id),
+                    tools=[b(self._session_id) for b in ALL_TOOLS_BUILDERS if b is not build_subagent_tool],
                     checkpointer= InMemorySaver(),
                     middleware=[
                         ContextEngineHook(session_id=self._session_id),

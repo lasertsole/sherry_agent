@@ -53,9 +53,3 @@ def build_main_tools(session_id: str | None = None) -> list[BaseTool]:
 def build_all_tools(session_id: str | None = None) -> list[BaseTool]:
     """All available tools"""
     return _flatten(ALL_TOOLS_BUILDERS, session_id)
-
-def build_all_tools_except_subagent(session_id: str | None = None) -> list[BaseTool]:
-    """All tools except SubagentTool (avoids recursive subagent-in-subagent)"""
-    from .subagent import build_subagent_tool
-    builders = [b for b in ALL_TOOLS_BUILDERS if b is not build_subagent_tool]
-    return _flatten(builders, session_id)

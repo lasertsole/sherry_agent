@@ -74,11 +74,5 @@ def built_agent(
         ],
         response_format = response_format
     )
-    
-    elapsed = time.time() - start_time
-    logger.info(
-        f"Agent built successfully: session_id={session_id}, duration={elapsed:.2f}s, "
-        f"middleware_count=4"
-    )
 
     return agent
