@@ -1,4 +1,6 @@
 import time
+
+from langchain_core.tools import BaseTool
 from loguru import logger
 from models import main_llm
 from pydantic import BaseModel
@@ -8,7 +10,7 @@ from langchain.agents import create_agent
 from context_engine import add_session_if_not_exists
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
-from tools import memory_store, MAIN_TOOLS_BUILDERS, build_subagent_tool
+from tools import memory_store, build_main_tools, build_subagent_tool
 from .middlewares import (ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize, MultimodalProcessor,
                           ToolTimeout)
 
@@ -20,16 +22,10 @@ build_skills_snapshot()
 # compression is triggered during this server run.
 memory_store.load_from_disk()
 
-all_tools = [
-    *MAIN_TOOLS_BUILDERS,
-    build_subagent_tool
-]
-
 def built_agent(
     session_id: str,
     system_prompt: str,
     temperature: float = 0.8,
-    enable_tool: bool = True,
     checkpointer: Checkpointer | None = None,
     response_format: BaseModel | None = None
 )-> CompiledStateGraph:
@@ -40,7 +36,6 @@ def built_agent(
     
     logger.info(
         f"Building agent: session_id={session_id}"
-        f"temperature={temperature}, enable_tool={enable_tool}"
     )
 
     model = main_llm.bind(temperature=temperature)
@@ -49,8 +44,10 @@ def built_agent(
         checkpointer = InMemorySaver()
 
     # Build tool list
-    tools = [t(session_id) for t in all_tools] if enable_tool else None
-    tool_count = len(tools) if tools else 0
+    tools: list[BaseTool] = build_main_tools(session_id)
+    subagent_tool = build_subagent_tool(session_id)
+    tools.append(subagent_tool)
+    tool_count = len(tools)
     logger.debug(f"Tools built: session_id={session_id}, tool_count={tool_count}")
 
     # Build the agent
