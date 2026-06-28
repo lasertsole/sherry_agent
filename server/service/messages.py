@@ -94,13 +94,6 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
     # Create the agent
     agent = await built_agent()
 
-    # Create a fresh checkpointer per request to avoid asyncio.Lock
-    # cross-event-loop binding issues under Robyn + nest_asyncio.
-    # AsyncSqliteSaver binds its lock to the running event loop at
-    # __init__ time; caching the checkpointer globally would crash on
-    # subsequent requests running in a different event loop.
-    agent.checkpointer = await build_async_sqlite_checkpointer()
-
     # Prepare the content_list
     content_list:list[dict[str, str]] = _get_content_list(multi_modal_message)
             

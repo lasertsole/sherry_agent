@@ -2,10 +2,14 @@ import aiosqlite
 from pathlib import Path
 from config import SRC_DIR
 from pub_func import rand_str_to_int
+from agent.checkpointer.thread_safe_checkpointer import (
+    ThreadSafeAsyncSqliteSaver,
+)
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+
 # 创建异步sqlite保存器
-async def build_async_sqlite_checkpointer() -> AsyncSqliteSaver:
+async def build_async_sqlite_checkpointer() -> ThreadSafeAsyncSqliteSaver:
     checkpoints_dir: Path = (SRC_DIR / "checkpoints").resolve()
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     sqlite_file_path: Path = checkpoints_dir / "sqlite.db"
@@ -15,7 +19,7 @@ async def build_async_sqlite_checkpointer() -> AsyncSqliteSaver:
     await conn.execute("PRAGMA foreign_keys = ON")
     await conn.execute("PRAGMA cache_size=-64000")
 
-    checkpointer = AsyncSqliteSaver(conn)
+    checkpointer = ThreadSafeAsyncSqliteSaver(conn)
 
     return checkpointer
 
