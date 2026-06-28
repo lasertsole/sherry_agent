@@ -1,15 +1,14 @@
-import time
-
-from langchain_core.tools import BaseTool
 from loguru import logger
 from models import main_llm
-from pydantic import BaseModel
 from skills import build_skills_snapshot
-from langgraph.types import Checkpointer
+from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
 from context_engine import add_session_if_not_exists
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.checkpoint.memory import InMemorySaver
+from langchain.agents.middleware import dynamic_prompt
+from workspace.prompt_builder import build_system_prompt
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from agent.checkpointer import build_async_sqlite_checkpointer
 from tools import memory_store, build_main_tools, build_subagent_tool
 from .middlewares import (ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize, MultimodalProcessor,
                           ToolTimeout)
@@ -22,15 +21,14 @@ build_skills_snapshot()
 # compression is triggered during this server run.
 memory_store.load_from_disk()
 
-def built_agent(
+@dynamic_prompt
+def state_aware_system_prompt(_request) -> str:
+    return build_system_prompt()
+
+async def built_agent(
     session_id: str,
-    system_prompt: str,
     temperature: float = 0.8,
-    checkpointer: Checkpointer | None = None,
-    response_format: BaseModel | None = None
 )-> CompiledStateGraph:
-    start_time = time.time()
-    
     # Create a session record if one does not already exist
     add_session_if_not_exists(session_id)
     
@@ -40,8 +38,8 @@ def built_agent(
 
     model = main_llm.bind(temperature=temperature)
 
-    if checkpointer is None:
-        checkpointer = InMemorySaver()
+
+    checkpointer: BaseCheckpointSaver = await build_async_sqlite_checkpointer()
 
     # Build tool list
     tools: list[BaseTool] = build_main_tools(session_id)
@@ -54,9 +52,9 @@ def built_agent(
     agent = create_agent(
         model = model,
         checkpointer = checkpointer,
-        system_prompt = system_prompt,
         tools = tools,
         middleware = [
+            state_aware_system_prompt,
             MultimodalProcessor(session_id=session_id),
             ContextEngineHook(session_id=session_id),
             Summarization(
@@ -74,7 +72,6 @@ def built_agent(
             ToolCallNormalize(session_id=session_id),
             ToolTimeout(session_id=session_id)
         ],
-        response_format = response_format
     )
 
     return agent

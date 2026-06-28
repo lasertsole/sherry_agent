@@ -10,7 +10,7 @@ from .python_repl import build_python_repl_tool
 from .memory import build_memory_tool, memory_store
 from .message_search import build_message_search_tool
 
-def _flatten(builders: list, session_id: str | None) -> list[BaseTool]:
+def _flatten(builders: list, session_id: str) -> list[BaseTool]:
     """Call each builder; if result is a list, extend; otherwise append."""
     tools: list[BaseTool] = []
     for b in builders:
@@ -32,6 +32,6 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[str | None], BaseTool]] = [
     build_mcp_tools
 ]
 
-def build_main_tools(session_id: str | None = None) -> list[BaseTool]:
+def build_main_tools(session_id: str) -> list[BaseTool]:
     """Core tools + subagent"""
     return _flatten(_MAIN_TOOLS_BUILDERS, session_id)

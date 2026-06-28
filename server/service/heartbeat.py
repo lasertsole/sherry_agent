@@ -7,6 +7,7 @@ from config import PLUGINS_PATH
 from context_engine import assemble
 from type.bus import OutboundMessage
 from langchain.agents import create_agent
+from workspace import CORE_SYSTEM_FILE_NAMES
 from channels import BaseChannel, channel_manager
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
@@ -29,7 +30,7 @@ async def process_heartbeat_task(task: str) -> str:
         messages: list[BaseMessage] = [
             SystemMessage(
                 content=
-                build_system_prompt(selected_file_names=[])
+                build_system_prompt(selected_file_names=CORE_SYSTEM_FILE_NAMES)
                 + graph_system_prompt_addition
             ),
             HumanMessage(content=task)

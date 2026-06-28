@@ -1,13 +1,17 @@
 """Workspace package."""
-CORE_SYSTEM_FILE_NAMES = [
+CORE_SYSTEM_FILE_NAMES: list[str] = [
     "AGENTS.md",
 ]
 
-ALL_SYSTEM_FILE_NAMES = [
-    *CORE_SYSTEM_FILE_NAMES,
+COMMUNITY_SYSTEM_FILE_NAMES: list[str] = [
     "SOUL.md",
     "IDENTITY.md",
     "USER.md",
+]
+
+ALL_SYSTEM_FILE_NAMES: list[str] = [
+    *CORE_SYSTEM_FILE_NAMES,
+    *COMMUNITY_SYSTEM_FILE_NAMES,
 ]
 
 FILE_DESCRIPTIONS: dict[str, str] = {
