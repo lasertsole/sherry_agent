@@ -515,12 +515,13 @@ async def _on_cron_job(cron_job: CronJob) -> None:
     channel: str = payload.channel
     to: str = payload.to
 
-    from tools import build_core_tools
+    from tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
+    tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 
     agent: CompiledStateGraph = create_agent(
         system_prompt = build_system_prompt(),
         model = main_llm,
-        tools = build_core_tools(),
+        tools = tools,
     )
 
     result: dict[str, Any] = await agent.ainvoke(input={"messages": [HumanMessage(content=message)]})

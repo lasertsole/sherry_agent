@@ -915,8 +915,8 @@ dependencies = [
     { name = "croniter" },
     { name = "dotenv" },
     { name = "editdistance" },
-    { name = "fastapi" },
     { name = "funasr" },
+    { name = "gguf" },
     { name = "instructor" },
     { name = "langchain" },
     { name = "langchain-classic" },
@@ -962,8 +962,8 @@ requires-dist = [
     { name = "croniter", specifier = ">=6.2.2" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "editdistance", path = "models/STT_model/editdistance-0.8.1-py3-none-any.whl" },
-    { name = "fastapi", specifier = ">=0.136.3" },
     { name = "funasr", specifier = ">=1.3.9" },
+    { name = "gguf", specifier = ">=0.19.0" },
     { name = "instructor", specifier = ">=1.15.3" },
     { name = "langchain", specifier = ">=1.3.4" },
     { name = "langchain-classic", specifier = ">=1.0.7" },
@@ -1276,6 +1276,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/16/9d72d3514b21f92eecef1b7b0071bc334f615f67e2b10564cc8b789c3432/funasr-1.3.9.tar.gz", hash = "sha256:cb2b00d0b07d16d3c5996bfcd1c511dd676360a9831b1e92de8bd07eda355e82", size = 46585658, upload-time = "2026-05-29T19:43:08.961Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/76/5b09344699d2961ab888ee96ef49d11232948cf137629465f105c1a2767d/funasr-1.3.9-py3-none-any.whl", hash = "sha256:3a2be55d6b3abc24ebb5e537789f321076df3077b000ad29530d52b3c73eed72", size = 915605, upload-time = "2026-05-29T19:43:03.01Z" },
+]
+
+[[package]]
+name = "gguf"
+version = "0.19.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/ae/17f1308ae45cd7b08ebb521747d5b23f4efc4d172038a4e228dd5106c3ff/gguf-0.19.0.tar.gz", hash = "sha256:dbadcd6cc7ccd44256f2229fe7c2dff5e8aa5cf0612ab987fd2b1a57e428923f", size = 111220, upload-time = "2026-05-06T13:04:03.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/bb/d71d6da82763528c2c2ed6b59a9d6142c6595545a4c448e2085d155e88c2/gguf-0.19.0-py3-none-any.whl", hash = "sha256:70bcd10edfe697fb2dad6e40af2234b9d8ece9a41a99761405121ebda1c3c1cd", size = 118475, upload-time = "2026-05-06T13:04:02.588Z" },
 ]
 
 [[package]]

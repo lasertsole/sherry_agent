@@ -11,7 +11,6 @@ from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 from config import TEMP_DIR, WORKSPACE_DIR
 from workspace import CORE_SYSTEM_FILE_NAMES
-from context_engine import assemble, after_turn
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.messages import HumanMessage, BaseMessage
@@ -94,13 +93,13 @@ class Worker(BaseTool):
                     self._build_worker_prompt()
                     + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
-                from tools import ALL_TOOLS_BUILDERS, build_subagent_tool
+                from tools import MAIN_TOOLS_BUILDERS
                 from agent.middlewares import ToolCallNormalize, ContextEngineHook
 
                 agent: CompiledStateGraph = create_agent(
                     system_prompt=system_prompt,
                     model=main_llm,
-                    tools=[b(self._session_id) for b in ALL_TOOLS_BUILDERS if b is not build_subagent_tool],
+                    tools=[b(self._session_id) for b in MAIN_TOOLS_BUILDERS],
                     checkpointer= InMemorySaver(),
                     middleware=[
                         ContextEngineHook(session_id=self._session_id),
@@ -174,8 +173,6 @@ class Worker(BaseTool):
             if messages and len(messages) > 0:
                 last_turn_messages: list[BaseMessage] = slice_last_turn(messages)["messages"]
                 format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
-                # Start context engine post-processing
-                asyncio.create_task(after_turn(session_id=self._session_id, last_turn_messages=format_last_turn_messages))
 
 
     async def _arun(

@@ -56,12 +56,13 @@ class WorkerExecutor:
                 + "\n\nComplete the task as simply as possible, and terminate immediately upon completion."
             )
 
-            from tools import build_core_tools
+            from tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
+            tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 
             agent: CompiledStateGraph = create_agent(
                 system_prompt=system_prompt,
                 model=main_llm,
-                tools=build_core_tools(self._session_id),
+                tools=tools,
                 middleware=[
                     SummarizationMiddleware(
                         model=main_llm,

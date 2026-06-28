@@ -4,7 +4,6 @@ from pathlib import Path
 from loguru import logger
 from models import main_llm
 from config import PLUGINS_PATH
-from tools import build_core_tools
 from context_engine import assemble
 from type.bus import OutboundMessage
 from langchain.agents import create_agent
@@ -12,7 +11,9 @@ from channels import BaseChannel, channel_manager
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
+from tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
 
+tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 
 async def process_heartbeat_task(task: str) -> str:
     try:
@@ -22,7 +23,7 @@ async def process_heartbeat_task(task: str) -> str:
 
         agent: CompiledStateGraph = create_agent(
             model=main_llm,
-            tools=build_core_tools(),
+            tools=tools,
         )
 
         messages: list[BaseMessage] = [

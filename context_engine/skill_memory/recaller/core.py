@@ -1,16 +1,16 @@
 """
-skill_memory — 跨对话召回
+skill_memory — Cross-session recall
 
-并行双路径召回（两条路径同时跑，合并去重）：
+Parallel dual-path recall (both paths run concurrently, results merged and deduplicated):
 
-精确路径（向量/FTS5 → 社区扩展 → 图遍历 → PPR 排序）：
-  找到和当前查询语义相关的具体三元组
+Precise path (vector/FTS5 → community expansion → graph traversal → PPR ranking):
+  Find specific triplets semantically relevant to the current query.
 
-泛化路径（社区代表节点 → 图遍历 → PPR 排序）：
-  提供跨领域的全局概览，覆盖精确路径可能遗漏的知识域
+Generalized path (community representative nodes → graph traversal → PPR ranking):
+  Provide a cross-domain global overview, covering knowledge areas the precise path may miss.
 
-合并策略：精确路径的结果优先（PPR 分数更高），
-          泛化路径补充精确路径未覆盖的社区。
+Merge strategy: Precise path results take priority (higher PPR scores),
+               generalized path supplements communities not covered by the precise path.
 """
 import math
 import hashlib
@@ -31,20 +31,20 @@ from ..store.core import (
 
 
 class RecallResult(TypedDict):
-    """召回结果"""
+    """Recall result"""
     nodes: list[GmNode]
     edges: list[GmEdge]
     token_estimate: int
 
 
 class ScoredNode(TypedDict):
-    """带分数的节点"""
+    """Scored node"""
     node: GmNode
     score: float
 
 
 class ScoredCommunity(TypedDict):
-    """带分数的社区"""
+    """Scored community"""
     id: str
     summary: str
     score: float
@@ -52,15 +52,15 @@ class ScoredCommunity(TypedDict):
 
 
 class Recaller:
-    """知识图谱召回器"""
+    """Knowledge graph recaller"""
 
     def __init__(self, db: Connection, cfg: GmConfig):
         """
-        初始化召回器
+        Initialize the recaller.
 
         Args:
-            db: SQLite 数据库连接
-            cfg: Graph Memory 配置
+            db: SQLite database connection
+            cfg: Graph Memory configuration
         """
         self.db = db
         self.cfg = cfg
@@ -68,36 +68,36 @@ class Recaller:
 
     async def recall(self, query: str) -> RecallResult:
         """
-        执行召回流程
+        Execute the recall pipeline.
 
         Args:
-            query: 查询字符串
+            query: Query string
 
         Returns:
-            召回结果（节点、边、token 估算）
+            Recall result (nodes, edges, token estimate)
         """
         limit: int = getattr(self.cfg, 'recall_max_nodes', 6)
 
-        # ── 两条路径各自独立跑满，不分配额 ──────────────────
+        # ── Both paths run independently to full capacity, no quota split ──────────────────
 
         precise: RecallResult = await self._recall_precise(query, limit)
         generalized: RecallResult = await self._recall_generalized(query, limit)
 
-        # ── 合并去重（全部保留，只去重复节点） ────────────────
+        # ── Merge and deduplicate (keep all, only remove duplicate nodes) ────────────────
         merged: RecallResult = self._merge_results(precise, generalized)
 
         return merged
 
     async def _recall_precise(self, query: str, limit: int) -> RecallResult:
         """
-        精确召回：向量/FTS5 找种子 → 社区扩展 → 图遍历 → PPR 排序
+        Precise recall: vector/FTS5 seeds → community expansion → graph traversal → PPR ranking.
 
         Args:
-            query: 查询字符串
-            limit: 返回节点数量限制
+            query: Query string
+            limit: Maximum number of nodes to return
 
         Returns:
-            精确召回结果
+            Precise recall result
         """
         if self.embed:
             try:
@@ -106,7 +106,7 @@ class Recaller:
                     self.db, vec, math.ceil(limit / 2)
                 )
                 seeds: list[GmNode] = [s['node'] for s in scored]
-                # 向量结果不足时补 FTS5
+                # Fall back to FTS5 if insufficient vector results
                 if len(seeds) < 2:
                     fts_results = search_nodes(self.db, query, limit)
                     seen_ids: set[str] = {n.id for n in seeds}
@@ -117,7 +117,7 @@ class Recaller:
         else:
             seeds: list[GmNode]  = search_nodes(self.db, query, limit)
 
-        # reranker 阈值过滤
+        # Reranker threshold filtering
         node_dict: dict[str, GmNode] = {s.content : s  for s in seeds}
         filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.5)
         if filter_contents:
@@ -128,14 +128,14 @@ class Recaller:
 
         seed_ids: list[str] = [n.id for n in seeds]
 
-        # 社区扩展
+        # Community expansion
         expanded_ids: set[str] = set(seed_ids)
 
         for seed in seeds:
             peers: list[str] = get_community_peers(self.db, seed.id, 2)
             expanded_ids.update(peers)
 
-        # 图遍历拿三元组
+        # Graph traversal to fetch triplets
         walk_result = graph_walk(
             self.db,
             list(expanded_ids),
@@ -148,14 +148,14 @@ class Recaller:
         if not nodes:
             return {'nodes': [], 'edges': [], 'token_estimate': 0}
 
-        # 个性化 PageRank 排序
+        # Personalized PageRank ranking
         candidate_ids = [n.id for n in nodes]
         ppr_result = personalized_page_rank(
             self.db, seed_ids, candidate_ids, self.cfg
         )
         ppr_scores = ppr_result['scores']
 
-        # 排序并截取前 limit 个
+        # Sort and truncate to limit
         filtered = sorted(
             nodes,
             key=lambda n: (
@@ -179,21 +179,21 @@ class Recaller:
 
     async def _recall_generalized(self, query: str, limit: int) -> RecallResult:
         """
-        泛化召回：社区向量搜索 → 取匹配社区的成员 → 图遍历 → PPR 排序
+        Generalized recall: community vector search → fetch matching community members → graph traversal → PPR ranking.
 
-        有社区向量时：query vs 社区 embedding 匹配，按相似度排序社区
-        无社区向量时：fallback 到 communityRepresentatives（按时间取代表节点）
+        When community vectors exist: query vs community embedding matching, sort communities by similarity.
+        When no community vectors: fallback to communityRepresentatives (time-based representative nodes).
 
         Args:
-            query: 查询字符串
-            limit: 返回节点数量限制
+            query: Query string
+            limit: Maximum number of nodes to return
 
         Returns:
-            泛化召回结果
+            Generalized recall result
         """
         seeds: list[GmNode] = []
 
-        # 优先用社区向量搜索
+        # Prefer community vector search
         if self.embed:
             try:
                 vec: list[float] = await self.embed.aembed_query(query)
@@ -204,16 +204,16 @@ class Recaller:
                     seeds: list[GmNode] = nodes_by_community_ids(self.db, community_ids, 3)
 
             except Exception:
-                # embedding 失败，fallback
+                # embedding failed, fallback
                 pass
 
-        # reranker 阈值过滤
+        # Reranker threshold filtering
         node_dict: dict[str, GmNode] = {s.content : s  for s in seeds}
         filter_contents: list[str] = reranker_model.filter(query, [s.content for s in seeds], gap_score = 0.5)
         if filter_contents:
             seeds = [node_dict[c] for c in filter_contents]
 
-        # fallback：按时间取社区代表节点
+        # fallback: time-based community representative nodes
         if not seeds:
             seeds: list[GmNode] = community_representatives(self.db, 2)
 
@@ -230,14 +230,14 @@ class Recaller:
         if not nodes:
             return {'nodes': [], 'edges': [], 'token_estimate': 0}
 
-        # 个性化 PageRank 排序
+        # Personalized PageRank ranking
         candidate_ids: list[str] = [n.id for n in nodes]
         ppr_result: PPRResult = personalized_page_rank(
             self.db, seed_ids, candidate_ids, self.cfg
         )
         ppr_scores: dict[str, float] = ppr_result['scores']
 
-        # 排序并截取前 limit 个
+        # Sort and truncate to limit
         filtered: list[GmNode] = sorted(
             nodes,
             key=lambda n: (
@@ -263,31 +263,31 @@ class Recaller:
         self, precise: RecallResult, generalized: RecallResult
     ) -> RecallResult:
         """
-        合并两条路径的结果：全部保留，只去重复节点
+        Merge results from both paths: keep all, only deduplicate nodes.
 
         Args:
-            precise: 精确召回结果
-            generalized: 泛化召回结果
+            precise: Precise recall result
+            generalized: Generalized recall result
 
         Returns:
-            合并后的召回结果
+            Merged recall result
         """
         node_map: dict[str, GmNode] = {}
         edge_map: dict[str, GmEdge] = {}
 
-        # 精确路径全部入场
+        # Precise path results take precedence
         for n in precise['nodes']:
             node_map[n.id] = n
 
         for e in precise['edges']:
             edge_map[e.id] = e
 
-        # 泛化路径去重后全部入场
+        # Generalized path results included after deduplication
         for n in generalized['nodes']:
             if n.id not in node_map:
                 node_map[n.id] = n
 
-        # 合并边：两端都在最终节点集中的边才保留
+        # Merge edges: only keep edges whose both endpoints are in the final node set
         final_ids: set[str] = set(node_map.keys())
 
         for e in generalized['edges']:
@@ -307,13 +307,13 @@ class Recaller:
 
     def _estimate_tokens(self, nodes: list[GmNode]) -> int:
         """
-        估算 token 数量
+        Estimate token count.
 
         Args:
-            nodes: 节点列表
+            nodes: List of nodes
 
         Returns:
-            估算的 token 数
+            Estimated number of tokens
         """
         total_chars = sum(
             len(getattr(n, 'content', '')) + len(getattr(n, 'description', ''))
@@ -323,10 +323,10 @@ class Recaller:
 
     async def sync_embed(self, node: GmNode) -> None:
         """
-        异步同步 embedding，不阻塞主流程
+        Async embedding sync, non-blocking for the main flow.
 
         Args:
-            node: 需要生成 embedding 的节点
+            node: Node that needs embedding generation
         """
 
         if not self.embed:
@@ -349,5 +349,5 @@ class Recaller:
                 save_vector(self.db, getattr(node, 'id', ''), content, vec)
 
         except Exception:
-            # 不影响主流程
+            # Does not affect the main flow
             pass

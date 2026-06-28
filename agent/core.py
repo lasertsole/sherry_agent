@@ -5,10 +5,10 @@ from pydantic import BaseModel
 from skills import build_skills_snapshot
 from langgraph.types import Checkpointer
 from langchain.agents import create_agent
-from tools import build_all_tools, memory_store
 from context_engine import add_session_if_not_exists
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
+from tools import memory_store, MAIN_TOOLS_BUILDERS, build_subagent_tool
 from .middlewares import (ContextEngineHook, Summarization, ToolLoopPrevention, ToolCallNormalize, MultimodalProcessor,
                           ToolTimeout)
 
@@ -19,6 +19,11 @@ build_skills_snapshot()
 # Load memory markdown files from disk; keep them unchanged until
 # compression is triggered during this server run.
 memory_store.load_from_disk()
+
+all_tools = [
+    *MAIN_TOOLS_BUILDERS,
+    build_subagent_tool
+]
 
 def built_agent(
     session_id: str,
@@ -44,7 +49,7 @@ def built_agent(
         checkpointer = InMemorySaver()
 
     # Build tool list
-    tools = build_all_tools(session_id) if enable_tool else None
+    tools = [t(session_id) for t in all_tools] if enable_tool else None
     tool_count = len(tools) if tools else 0
     logger.debug(f"Tools built: session_id={session_id}, tool_count={tool_count}")
 

@@ -2,25 +2,25 @@
 skill_memory — Personalized PageRank (PPR)
 
 ═══════════════════════════════════════════════════════════════
-个性化 PageRank（Personalized PageRank）
+Personalized PageRank (PPR)
 
-区别于全局 PageRank：
-  全局 PR：所有节点均匀起步，算一个固定的全局排名
-  个性化 PPR：从用户查询命中的种子节点出发，沿边传播权重
-              离种子越近的节点分数越高
+Unlike global PageRank:
+  Global PR: All nodes start with uniform scores; computes a fixed global ranking
+  Personalized PPR: Starts from seed nodes hit by the user query; propagates weight along edges
+                   Nodes closer to seeds get higher scores
 
-同一个图谱：
-  问 "Docker 部署"   → Docker 相关 SKILL 分数最高
-  问 "conda 环境"    → conda 相关 SKILL 分数最高
-  问 "bilibili 爬虫" → bilibili 相关 TASK/SKILL 分数最高
+Same graph, different queries:
+  Query "Docker deployment"   → Docker-related SKILL nodes score highest
+  Query "conda environment"   → conda-related SKILL nodes score highest
+  Query "bilibili crawler"    → bilibili-related TASK/SKILL nodes score highest
 
-计算时机：
-  recall 时实时算（不存数据库），每次查询都是新鲜的
-  O(iterations * edges)，几千节点 < 5ms
+Computation timing:
+  Computed in real-time during recall (not stored in DB); every query is fresh
+  O(iterations * edges), thousands of nodes < 5ms
 
-另外保留一个全局 PageRank 作为基线，用于：
-  - topNodes 兜底（没有种子时）
-  - session_end 时写入 gm_nodes.pagerank 列
+A global PageRank is also retained as a baseline for:
+  - topNodes fallback (when no seed available)
+  - Written to gm_nodes.pagerank column at session_end
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -31,31 +31,32 @@ from sqlite3 import Connection
 from ..store.core import update_pageranks
 
 
-# ─── 图结构缓存（避免每次 recall 都查 SQL） ─────────────────
+# ─── Graph structure cache (avoids SQL query on every recall) ─────────────────
 
 class GraphStructure(TypedDict):
-    """图结构"""
+    """Graph structure"""
     node_ids: set[str]
-    adj: dict[str, list[str]]  # 无向邻接表
-    n: int  # 节点数
-    cached_at: int  # 缓存时间
+    adj: dict[str, list[str]]  # undirected adjacency list
+    n: int  # node count
+    cached_at: int  # cache timestamp
 
 
 _cached: GraphStructure | None = None
-CACHE_TTL = 30_000  # 30 秒缓存
+CACHE_TTL = 30_000  # 30 second cache
 
 
 def load_graph(db: Connection) -> GraphStructure:
     """
-    读取图结构（带缓存）
+    Load graph structure (with caching).
 
-    compact 会新增节点/边，但 30 秒内的查询共享同一份图结构没问题
+    Compaction adds new nodes/edges, but sharing the same graph structure
+    within 30 seconds is acceptable.
 
     Args:
-        db: SQLite 数据库连接
+        db: SQLite database connection
 
     Returns:
-        包含节点 ID 集合、邻接表和节点数的图结构
+        Graph structure containing node ID set, adjacency list, and node count
     """
     global _cached
 
@@ -64,16 +65,16 @@ def load_graph(db: Connection) -> GraphStructure:
 
     cursor = db.cursor()
 
-    # 读取活跃节点
+    # Load active nodes
     cursor.execute("SELECT id FROM gm_nodes")
     node_rows = cursor.fetchall()
     node_ids = {row[0] for row in node_rows}
 
-    # 读取边
+    # Load edges
     cursor.execute("SELECT from_id, to_id FROM gm_edges")
     edge_rows = cursor.fetchall()
 
-    # 构建无向邻接表
+    # Build undirected adjacency list
     adj: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
 
     for from_id, to_id in edge_rows:
@@ -87,17 +88,17 @@ def load_graph(db: Connection) -> GraphStructure:
 
 def invalidate_graph_cache() -> None:
     """
-    图结构变化时清除缓存（compact/finalize 后调用）
+    Clear graph structure cache (called after compact/finalize).
     """
     global _cached
     _cached = None
 
 
-# ─── 个性化 PageRank ─────────────────────────────────────────
+# ─── Personalized PageRank ─────────────────────────────────────────
 
 class PPRResult(TypedDict):
-    """个性化 PageRank 结果"""
-    scores: dict[str, float]  # nodeId → 个性化分数
+    """Personalized PageRank result"""
+    scores: dict[str, float]  # nodeId → personalized score
 
 
 def personalized_page_rank(
@@ -107,20 +108,21 @@ def personalized_page_rank(
     cfg: GmConfig,
 ) -> PPRResult:
     """
-    个性化 PageRank
+    Personalized PageRank.
 
-    从 seed_ids 出发传播权重：
-      - teleport 概率 (1-damping) 总是回到种子节点（不是均匀回到所有节点）
-      - 这样种子附近的节点天然获得更高分数
+    Propagates weight from seed_ids:
+      - teleport probability (1-damping) always returns to seed nodes
+        (not uniformly to all nodes)
+      - This means nodes near seeds naturally get higher scores
 
     Args:
-        db: SQLite 数据库连接
-        seed_ids: 用户查询命中的种子节点（FTS5/向量搜索结果）
-        candidate_ids: 需要排序的候选节点（图遍历结果）
-        cfg: Graph Memory 配置
+        db: SQLite database connection
+        seed_ids: Seed nodes hit by the user query (FTS5/vector search results)
+        candidate_ids: Candidate nodes to rank (graph traversal results)
+        cfg: Graph Memory configuration
 
     Returns:
-        候选节点的个性化分数字典
+        Dictionary of personalized scores for candidate nodes
     """
     graph = load_graph(db)
     node_ids = graph['node_ids']
@@ -133,29 +135,29 @@ def personalized_page_rank(
     if n == 0 or not seed_ids:
         return {'scores': {}}
 
-    # 过滤掉不存在的种子节点
+    # Filter out non-existent seed nodes
     valid_seeds = [sid for sid in seed_ids if sid in node_ids]
     if not valid_seeds:
         return {'scores': {}}
 
-    # teleport 向量：只指向种子节点，均匀分配
+    # Teleport vector: points only to seed nodes, uniformly distributed
     teleport_weight = 1.0 / len(valid_seeds)
     seed_set = set(valid_seeds)
 
-    # 初始分数：集中在种子节点上
+    # Initial scores: concentrated on seed nodes
     rank: dict[str, float] = {}
     for node_id in node_ids:
         rank[node_id] = teleport_weight if node_id in seed_set else 0.0
 
-    # 迭代
+    # Iterate
     for _ in range(iterations):
         new_rank: dict[str, float] = {}
 
-        # teleport 分量：回到种子节点
+        # Teleport component: return to seed nodes
         for node_id in node_ids:
             new_rank[node_id] = (1 - damping) * teleport_weight if node_id in seed_set else 0.0
 
-        # 传播分量：从邻居获得权重
+        # Propagation component: gain weight from neighbors
         for node_id, neighbors in adj.items():
             if not neighbors:
                 continue
@@ -169,7 +171,8 @@ def personalized_page_rank(
             for neighbor in neighbors:
                 new_rank[neighbor] = new_rank.get(neighbor, 0.0) + damping * contrib
 
-        # dangling nodes 的分数传播回种子节点（不是均匀分配到所有节点）
+        # Dangling nodes' scores propagate back to seed nodes
+        # (not uniformly distributed to all nodes)
         dangling_sum = 0.0
         for node_id in node_ids:
             neighbors = adj.get(node_id, [])
@@ -183,36 +186,36 @@ def personalized_page_rank(
 
         rank = new_rank
 
-    # 只返回候选节点的分数
+    # Only return scores for candidate nodes
     result_scores = {cid: rank.get(cid, 0.0) for cid in candidate_ids}
 
     return {'scores': result_scores}
 
 
-# ─── 全局 PageRank（基线，session_end 时更新） ──────────────
+# ─── Global PageRank (baseline, updated at session_end) ──────────────
 
 class GlobalPageRankResult(TypedDict):
-    """全局 PageRank 结果"""
+    """Global PageRank result"""
     scores: dict[str, float]
     top_k: list[dict[str, object]]  # [{id, name, score}, ...]
 
 
 def compute_global_page_rank(db: Connection, cfg: GmConfig) -> GlobalPageRankResult:
     """
-    全局 PageRank — 写入 gm_nodes.pagerank 作为基线
+    Global PageRank — written to gm_nodes.pagerank as a baseline.
 
-    用途：
-      - topNodes 兜底排序（没有查询种子时的 fallback）
-      - gm_stats 展示全局重要节点
+    Purpose:
+      - topNodes fallback ordering (when no query seed is available)
+      - gm_stats display of globally important nodes
 
-    只在 session_end / gm_maintain 时调用
+    Only called at session_end / gm_maintain.
 
     Args:
-        db: SQLite 数据库连接
-        cfg: Graph Memory 配置
+        db: SQLite database connection
+        cfg: Graph Memory configuration
 
     Returns:
-        包含所有节点分数和 top20 节点的结果
+        Result containing all node scores and top 20 nodes
     """
     graph = load_graph(db)
     node_ids = graph['node_ids']
@@ -225,26 +228,26 @@ def compute_global_page_rank(db: Connection, cfg: GmConfig) -> GlobalPageRankRes
     if n == 0:
         return {'scores': {}, 'top_k': []}
 
-    # 获取节点名称映射
+    # Get node name mapping
     cursor = db.cursor()
     cursor.execute("SELECT id, name FROM gm_nodes")
     name_rows = cursor.fetchall()
     name_map = {row[0]: row[1] for row in name_rows}
 
-    # 全局：均匀 teleport
+    # Global: uniform teleport
     init_score = 1.0 / n
     rank: dict[str, float] = {node_id: init_score for node_id in node_ids}
 
-    # 迭代
+    # Iterate
     for _ in range(iterations):
         new_rank: dict[str, float] = {}
         base = (1 - damping) / n
 
-        # 初始化基础分数
+        # Initialize base scores
         for node_id in node_ids:
             new_rank[node_id] = base
 
-        # 传播分量
+        # Propagation component
         for node_id, neighbors in adj.items():
             if not neighbors:
                 continue
@@ -258,7 +261,7 @@ def compute_global_page_rank(db: Connection, cfg: GmConfig) -> GlobalPageRankRes
             for neighbor in neighbors:
                 new_rank[neighbor] = new_rank.get(neighbor, base) + damping * contrib
 
-        # dangling nodes 处理
+        # Dangling node handling
         dangling_sum = sum(rank.get(node_id, 0.0) for node_id in node_ids if not adj.get(node_id))
 
         if dangling_sum > 0:
@@ -268,10 +271,10 @@ def compute_global_page_rank(db: Connection, cfg: GmConfig) -> GlobalPageRankRes
 
         rank = new_rank
 
-    # 写入数据库
+    # Write to database
     update_pageranks(db, rank)
 
-    # 排序取 top 20
+    # Sort and take top 20
     sorted_scores = sorted(rank.items(), key=lambda x: x[1], reverse=True)[:20]
     top_k = [
         {'id': node_id, 'name': name_map.get(node_id, node_id), 'score': score}

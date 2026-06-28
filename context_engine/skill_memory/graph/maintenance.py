@@ -1,15 +1,15 @@
 """
-skill_memory — 图谱维护
+skill_memory — Graph Maintenance
 
-调用时机：session_end（finalize 之后）
+Invoked at: session_end (after finalize)
 
-执行顺序：
-  1. 去重（先合并再算分数，避免重复节点干扰排名）
-  2. 全局 PageRank（基线分数写入 DB，供 topNodes 兜底用）
-  3. 社区检测（重新划分知识域）
-  4. 社区描述生成（LLM 为每个社区生成一句话摘要）
+Execution order:
+  1. Deduplication (merge first, then compute scores — avoids duplicate nodes skewing rankings)
+  2. Global PageRank (baseline score written to DB, used as fallback for topNodes)
+  3. Community detection (re-partition knowledge domains)
+  4. Community summary generation (LLM generates one-sentence summary per community)
 
-注意：个性化 PPR 不在这里跑，它在 recall 时实时计算。
+Note: Personalized PPR is NOT run here — it is computed in real-time during recall.
 """
 
 import os
@@ -25,7 +25,7 @@ from .pagerank import compute_global_page_rank, invalidate_graph_cache, GlobalPa
 
 
 class MaintenanceResult(TypedDict):
-    """维护操作的结果"""
+    """Result of maintenance operations"""
     dedup: DedupResult
     pagerank: GlobalPageRankResult
     community: CommunityResult
@@ -33,7 +33,7 @@ class MaintenanceResult(TypedDict):
     duration_ms: int
 
 
-# LLM 和 Embedding 函数类型定义
+# LLM and Embedding function type definitions
 CompleteFn = Callable[[str, str], Awaitable[str]]
 EmbedFn = Callable[[str], Awaitable[list[float]]]
 
@@ -45,36 +45,36 @@ async def run_maintenance(
         embed: Embeddings | None = None,
 ) -> MaintenanceResult:
     """
-    执行图谱维护流程
+    Execute the graph maintenance pipeline.
 
     Args:
-        db: SQLite 数据库连接
-        cfg: Graph Memory 配置
-        llm: LLM 补全函数（可选）
-        embed: Embedding
+        db: SQLite database connection
+        cfg: Graph Memory configuration
+        llm: LLM completion function (optional)
+        embed: Embedding model (optional)
 
     Returns:
-        包含去重、PageRank、社区检测结果的字典
+        Dictionary containing dedup, PageRank, and community detection results
     """
     start: float = time.time()
 
-    # 去重/新增节点后清除图结构缓存
+    # Clear graph structure cache after dedup/new node insertion
     invalidate_graph_cache()
 
-    # 1. 去重
+    # 1. Deduplication
     dedup_result: DedupResult = dedup(db, cfg)
 
-    # 去重可能合并了节点，再清一次缓存
+    # Dedup may have merged nodes, clear cache again
     if dedup_result.get('merged', 0) > 0:
         invalidate_graph_cache()
 
-    # 2. 全局 PageRank（基线）
+    # 2. Global PageRank (baseline)
     pagerank_result: GlobalPageRankResult = compute_global_page_rank(db, cfg)
 
-    # 3. 社区检测
+    # 3. Community detection
     community_result: CommunityResult = detect_communities(db)
 
-    # 4. 社区描述生成（需要 LLM）
+    # 4. Community summary generation (requires LLM)
     community_summaries: int = 0
     if llm and len(community_result.get('communities', {})) > 0:
         try:

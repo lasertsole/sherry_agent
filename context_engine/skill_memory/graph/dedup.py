@@ -1,21 +1,22 @@
 """
-skill_memory — 向量余弦去重
+skill_memory — Vector Cosine Deduplication
 
-向量余弦去重 — 发现并合并语义重复的节点
+Vector cosine deduplication — detect and merge semantically duplicate nodes.
 
-原理：两个节点的 embedding 余弦相似度 > threshold → 视为重复
+Principle: If the cosine similarity of two nodes' embeddings exceeds the threshold,
+they are considered duplicates.
 
-例子：
-  - "conda-env-create" 和 "conda-create-environment" → 同一个技能
-  - "importerror-libgl1" 和 "libgl-missing-error" → 同一个事件
+Examples:
+  - "conda-env-create" and "conda-create-environment" → same skill
+  - "importerror-libgl1" and "libgl-missing-error" → same event
 
-合并策略：
-  - 保留 validated_count 更高的节点
-  - 合并 source_sessions
-  - 迁移边（from/to 都改指向保留节点）
-  - 被合并节点标记 deprecated
+Merge strategy:
+  - Keep the node with higher validated_count
+  - Merge source_sessions
+  - Migrate edges (both from/to point to the kept node)
+  - Mark the merged node as deprecated
 
-复杂度：O(n²) 比较，n = 有向量的节点数。几千节点 < 50ms。
+Complexity: O(n²) comparisons, n = nodes with vectors. Thousands of nodes < 50ms.
 """
 
 import math
@@ -26,7 +27,7 @@ from ..store.core import find_by_id, get_all_vectors, merge_nodes
 
 
 class DuplicatePair(TypedDict):
-    """重复节点对"""
+    """Duplicate node pair"""
     node_a: str
     node_b: str
     name_a: str
@@ -35,21 +36,21 @@ class DuplicatePair(TypedDict):
 
 
 class DedupResult(TypedDict):
-    """去重结果"""
+    """Deduplication result"""
     pairs: list[DuplicatePair]
     merged: int
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """
-    计算两个向量的余弦相似度
+    Compute cosine similarity between two vectors.
 
     Args:
-        a: 向量 a
-        b: 向量 b
+        a: Vector a
+        b: Vector b
 
     Returns:
-        余弦相似度值 (0-1 之间)
+        Cosine similarity value (between 0 and 1)
     """
     min_len = min(len(a), len(b))
     dot = 0.0
@@ -66,17 +67,18 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 def detect_duplicates(db: Connection, cfg: GmConfig) -> list[DuplicatePair]:
     """
-    检测重复节点对
+    Detect duplicate node pairs.
 
-    需要 embedding 才能工作，没有向量的节点会被跳过。
-    FTS5 名称完全匹配由 store.upsert_node 已处理，这里处理语义重复。
+    Requires embeddings to work — nodes without vectors are skipped.
+    Exact name matching via FTS5 is already handled by store.upsert_node.
+    This function handles semantic duplicates.
 
     Args:
-        db: SQLite 数据库连接
-        cfg: Graph Memory 配置
+        db: SQLite database connection
+        cfg: Graph Memory configuration
 
     Returns:
-        按相似度降序排列的重复对列表
+        List of duplicate pairs sorted by similarity (descending)
     """
     vectors_data = get_all_vectors(db)
 
@@ -106,30 +108,30 @@ def detect_duplicates(db: Connection, cfg: GmConfig) -> list[DuplicatePair]:
                         'similarity': sim,
                     })
 
-    # 按相似度降序排序
+    # Sort by similarity descending
     return sorted(pairs, key=lambda x: x['similarity'], reverse=True)
 
 
 def dedup(db: Connection, cfg: GmConfig) -> DedupResult:
     """
-    检测并自动合并重复节点
+    Detect and automatically merge duplicate nodes.
 
-    合并规则：
-      - 同类型才合并（SKILL+SKILL，EVENT+EVENT）
-      - 保留 validated_count 更高的
-      - validated_count 相同时保留更新时间更近的
+    Merge rules:
+      - Only merge nodes of the same type (SKILL+SKILL, EVENT+EVENT)
+      - Keep the node with higher validated_count
+      - When validated_count is equal, keep the more recently updated node
 
     Args:
-        db: SQLite 数据库连接
-        cfg: Graph Memory 配置
+        db: SQLite database connection
+        cfg: Graph Memory configuration
 
     Returns:
-        包含重复对和合并数量的结果字典
+        Dictionary containing duplicate pairs and merge count
     """
     pairs = detect_duplicates(db, cfg)
     merged = 0
 
-    # 已经被合并过的节点不再参与合并
+    # Nodes already merged are excluded from further merging
     consumed = set()
 
     for pair in pairs:
@@ -142,11 +144,11 @@ def dedup(db: Connection, cfg: GmConfig) -> DedupResult:
         if not node_a or not node_b:
             continue
 
-        # 只合并同类型节点
+        # Only merge nodes of the same type
         if node_a.type != node_b.type:
             continue
 
-        # 决定保留哪个节点
+        # Decide which node to keep
         keep_id: str
         merge_id: str
 
@@ -157,7 +159,7 @@ def dedup(db: Connection, cfg: GmConfig) -> DedupResult:
             keep_id = node_b.id
             merge_id = node_a.id
         else:
-            # validated_count 相同则保留更新更近的
+            # When validated_count is equal, keep the more recently updated node
             if node_a.updated_at >= node_b.updated_at:
                 keep_id = node_a.id
                 merge_id = node_b.id
