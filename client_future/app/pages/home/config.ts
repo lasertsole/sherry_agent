@@ -32,19 +32,15 @@ export const headerTools: Tool[] = [
     toolName: '配置知识库',
     icon: 'pi pi-file-edit',
     title: '配置知识库',
-    event: 'knowledgeBase'
+    event: 'knowledgeBase',
+    label: '配置知识库'
   },
   {
     toolName: '个人中心',
     icon: 'pi pi-user',
     title: '个人中心',
-    event: 'userCenter'
-  },
-  {
-    toolName: '主题模式',
-    icon: 'pi pi-sliders-h',
-    title: '主题模式',
-    event: 'changeTheme'
+    event: 'userCenter',
+    label: '个人中心'
   }
 ];
 
