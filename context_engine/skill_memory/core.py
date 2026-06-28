@@ -298,11 +298,11 @@ async def after_turn(
     asyncio.create_task(run_extract())
 
     # ★ Community maintenance: triggered every N turns (pure computation, <5ms)
-    turns:int = state_register_db.get_state(session_id, "skill_memory_maintain_turns", 0) + 1
+    skill_memory_maintain_turns: int = state_register_db.get_state(session_id, "skill_memory_maintain_turns", 0) + 1
     maintain_interval:int = getattr(DEFAULT_CONFIG, 'compact_turn_count', 7)
-    logger.info(f"[skill_memory] summarize_communities turn {turns} / {maintain_interval}")
+    logger.info(f"[skill_memory] summarize_communities turn {skill_memory_maintain_turns} / {maintain_interval}")
 
-    if turns >= maintain_interval:
+    if skill_memory_maintain_turns >= maintain_interval:
         state_register_db.set_state(session_id, "skill_memory_maintain_turns", 0)
 
         try:
@@ -326,7 +326,17 @@ async def after_turn(
         except Exception as e:
             logger.error(f"[skill_memory] periodic maintenance failed: {e}")
     else:
-        state_register_db.set_state(session_id, "skill_memory_maintain_turns", turns)
+        state_register_db.set_state(session_id, "skill_memory_maintain_turns", skill_memory_maintain_turns)
+
+    # skill_memory_rectification_and_standardization: triggered every 13 turns (heavy computation, may take seconds)
+    skill_memory_rectification_and_standardization_turns: int = state_register_db.get_state(session_id, "skill_memory_rectification_and_standardization_turns", 0) + 1
+    logger.info(f"[skill_memory] rectification_and_standardization turn {skill_memory_rectification_and_standardization_turns} / 13")
+    if skill_memory_rectification_and_standardization_turns % 13 == 0:
+        state_register_db.set_state(session_id, "skill_memory_rectification_and_standardization_turns", 0)
+        await rectification_and_standardization(session_id = session_id)
+    else:
+        state_register_db.set_state(session_id, "skill_memory_rectification_and_standardization_turns", skill_memory_rectification_and_standardization_turns)
+
 
 async def dispose() -> None:
     """Release all memory"""

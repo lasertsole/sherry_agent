@@ -5,17 +5,18 @@ from loguru import logger
 from robyn import SSEMessage
 from config import ASSISTANT_NAME
 from typing import AsyncGenerator, Any
+from runtime import state_register_mem
 from type.message import MultiModalMessage
 from langchain.messages import AIMessageChunk
 from pub_func import build_agent_config, is_url
 from langgraph.graph.state import CompiledStateGraph
 from ..DAO import clear_session as clear_session_DAO
 from workspace.prompt_builder import build_system_prompt
-from runtime import state_register_mem, state_register_db
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from agent import built_agent, build_async_sqlite_checkpointer
+from context_engine import get_history_by_page as _get_history_by_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
-from context_engine import rectification_and_standardization, get_history_by_page as _get_history_by_page
+
 
 def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> list[BaseMessage]:
     return agent.get_state(config=build_agent_config(session_id)).values.get("messages", [])
@@ -202,18 +203,6 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)
-
-        try:
-            # increase count for skill memory maintenance
-            turns: int = state_register_db.get_state(session_id, "skill_memory_rectification_and_standardization_turns", 0) + 1
-            logger.info(f"[skill_memory] rectification_and_standardization turn {turns} / 13")
-            if turns % 13 == 0:
-                state_register_db.set_state(session_id, "skill_memory_rectification_and_standardization_turns", 0)
-                await rectification_and_standardization(session_id = session_id)
-            else:
-                state_register_db.set_state(session_id, "skill_memory_rectification_and_standardization_turns", turns)
-        except BaseException as e:
-            logger.error(f"Failed to increase count for skill memory maintenance: session_id={session_id}, error={str(e)}")
 
 """End response generation logic"""
 
