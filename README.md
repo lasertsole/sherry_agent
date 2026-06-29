@@ -152,10 +152,10 @@ EMA_AI_agent/
 ├── runtime/                # Runtime state & utilities
 │   ├── core.py             # Core runtime lifecycle
 │   ├── _callback_executor.py   # Async callback executor
-│   ├── count_register.py   # Usage/statistics counters
+│   ├── count_call_register.py   # Usage/statistics counters
 │   ├── relation_register.py    # Relationship/intimacy tracking
 │   ├── state_register.py   # State registry
-│   └── timer_register.py   # Timer registry
+│   └── timer_call_register.py   # Timer registry
 │
 ├── server/                 # Robyn backend service & API routes
 │   ├── DAO/                # Data access objects

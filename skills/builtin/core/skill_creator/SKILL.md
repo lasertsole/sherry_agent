@@ -268,7 +268,7 @@ Skip this step only if the skill being developed already exists, and iteration o
 
 When creating a new skill from scratch, always run the `init_skill.py` script. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
 
-For `sherry`, custom skills should live under the active workspace `{{ROOT_DIR}}/skills/` directory so they can be discovered automatically at runtime (for example, `{{ROOT_DIR}}/skills/my-skill/SKILL.md`).
+For `sherry`, custom/third-party skills should live under `{{ROOT_DIR}}/skills/plugins/` directory so they can be discovered automatically at runtime (for example, `{{ROOT_DIR}}/skills/plugins/my-skill/SKILL.md`), keeping them separate from built-in skills under `{{ROOT_DIR}}/skills/builtin/`.
 
 Usage:
 
@@ -279,9 +279,9 @@ scripts/init_skill.py <skill-name> --path <output-directory> [--resources script
 Examples:
 
 ```bash
-scripts/init_skill.py my-skill --path {{ROOT_DIR}}/skills
-scripts/init_skill.py my-skill --path {{ROOT_DIR}}/skills --resources scripts,references
-scripts/init_skill.py my-skill --path {{ROOT_DIR}}/skills --resources scripts --examples
+scripts/init_skill.py my-skill --path {{ROOT_DIR}}/skills/plugins
+scripts/init_skill.py my-skill --path {{ROOT_DIR}}/skills/plugins --resources scripts,references
+scripts/init_skill.py my-skill --path {{ROOT_DIR}}/skills/plugins --resources scripts --examples
 ```
 
 The script:

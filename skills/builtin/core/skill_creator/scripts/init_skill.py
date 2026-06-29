@@ -6,8 +6,8 @@ Usage:
     init_skill.py <skill-name> --path <path> [--resources scripts,references,assets] [--examples]
 
 Examples:
-    init_skill.py my-new-skill --path {{ROOT_DIR}}/skills
-    init_skill.py my-new-skill --path {{ROOT_DIR}}/skills --resources scripts,references
+    init_skill.py my-new-skill --path {{ROOT_DIR}}/skills/plugins
+    init_skill.py my-new-skill --path {{ROOT_DIR}}/skills/plugins --resources scripts,references
     init_skill.py my-api-helper --path skills/private --resources scripts --examples
     init_skill.py custom-skill --path /custom/location
 """

@@ -152,10 +152,10 @@ EMA_AI_agent/
 ├── runtime/                # 运行时状态与工具
 │   ├── core.py             # 运行时生命周期
 │   ├── _callback_executor.py   # 异步回调执行器
-│   ├── count_register.py   # 用量/统计计数器
+│   ├── count_call_register.py   # 用量/统计计数器
 │   ├── relation_register.py    # 关系/亲密度追踪
 │   ├── state_register.py   # 状态注册表
-│   └── timer_register.py   # 计时器注册表
+│   └── timer_call_register.py   # 计时器注册表
 │
 ├── server/                 # Robyn 后端服务与 API 路由
 │   ├── DAO/                # 数据访问层
