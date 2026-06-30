@@ -3,7 +3,6 @@ from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing_extensions import override
 from langchain.agents import AgentState
-from context_engine import nudge_messages
 from typing import Any, Callable, Awaitable
 from langchain.agents.middleware.types import ResponseT
 from workspace.prompt_builder import build_system_prompt
@@ -27,13 +26,13 @@ class Summarization(SummarizationMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        session_id = request.state.get("session_id", "")
+        state = request.state
+        session_id = state.get("session_id", "")
         if session_id.strip() == "":
             err_text: str = "Not pass session_id"
             logger.error(err_text)
             raise RuntimeError(err_text)
 
-        state: dict[str, Any] = request.state
         state_mes_list_copy_without_system_mes: list[BaseMessage] = [m for m in state["messages"].copy() if not isinstance(m, SystemMessage)]
 
         copy_state: AgentState[Any] = state.copy()
@@ -49,10 +48,6 @@ class Summarization(SummarizationMiddleware):
         reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
 
         from tools import memory_store
-        memory_store.load_from_disk()
-
-        await nudge_messages(session_id=session_id, nudge_turn=0)
-
         memory_store.load_from_disk()
 
         return await handler(

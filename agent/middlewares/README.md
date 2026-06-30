@@ -84,7 +84,7 @@ Agent Execution Pipeline:
 │        ├─ Call parent summarization → reduce_messages       │
 │        ├─ Re-insert SystemMessage and last HumanMessage      │
 │        ├─ memory_store.load_from_disk()  (before nudge)      │
-│        ├─ nudge_messages(session_id, nudge_turn=0)           │
+│        ├─ nudge_memory(session_id, nudge_turn=0)           │
 │        └─ memory_store.load_from_disk()  (after nudge)       │
 │                                                              │
 │  ③ LLM Inference                                             │
@@ -261,7 +261,7 @@ Input: Potentially oversized message list (e.g., 100K+ tokens)
 5. Re-insert SystemMessage after the first RemoveMessage in reduce_messages
 6. If the saved last HumanMessage != the last one in reduce_messages, re-insert it
 7. memory_store.load_from_disk()  — sync in-memory state with disk
-8. nudge_messages(session_id, nudge_turn=0)  — force preference extraction
+8. nudge_memory(session_id, nudge_turn=0)  — force preference extraction
 9. memory_store.load_from_disk()  — reload to capture nudge writes
 10. Return res (the parent's result dict)
 ```
@@ -486,7 +486,7 @@ Input: After inference completes
 | **Timing** | Before & after Agent | Before model call | Wrap tool call | Before model call | Wrap tool call | Before & after Agent |
 | **Core Operation** | Context enrichment + persistence | Summarization + preference extraction | Throttle repeated tool calls | Sanitize tool call/result pairs | Enforce timeout on tool calls | Decode images, strip image_url blocks |
 | **Blocking** | Async non-blocking (after part) | Sync blocking | Sync blocking | Sync blocking | Async with timeout | Sync blocking |
-| **Dependencies** | Context Engine (`assemble`, `after_turn`, `add_messages`) | MesMemory (`nudge_messages`), `memory_store` | None | `pub_func.sanitize_tool_use_result_pairing` | `TOOL_CALL_TIMEOUT_MINUTES` env var | `PIL` (Pillow), `SRC_DIR` config |
+| **Dependencies** | Context Engine (`assemble`, `after_turn`, `add_messages`) | MesMemory (`nudge_memory`), `memory_store` | None | `pub_func.sanitize_tool_use_result_pairing` | `TOOL_CALL_TIMEOUT_MINUTES` env var | `PIL` (Pillow), `SRC_DIR` config |
 | **Frequency** | Every Agent inference turn | Only when context is too long (parent decides) | Every tool call | Every model inference | Every tool call | Every turn with multimodal input |
 | **Message Mutation** | In-place (enrich + restore) | Clone + modify copy | Returns error `ToolMessage` | Full message list rewrite | Returns error `ToolMessage` | In-place content rewrite |
 
@@ -527,7 +527,7 @@ sequenceDiagram
         Summ->>Summ: Call parent summarization
         Summ->>Summ: Re-insert SystemMessage + last HumanMessage
         Summ->>Summ: memory_store.load_from_disk()
-        Summ->>CE: nudge_messages(session_id, nudge_turn=0)
+        Summ->>CE: nudge_memory(session_id, nudge_turn=0)
         Summ->>Summ: memory_store.load_from_disk()
     end
     
@@ -666,7 +666,7 @@ self._turn_prompt: str
 
 - **Type**: In-memory cache backed by markdown files on disk
 - **Read**: `memory_store.load_from_disk()` — synchronizes in-memory state with disk
-- **Write**: `nudge_messages()` — writes extracted preferences to markdown files
+- **Write**: `nudge_memory()` — writes extracted preferences to markdown files
 - **Consistency**: Loaded before and after nudge to prevent stale reads
 
 ---

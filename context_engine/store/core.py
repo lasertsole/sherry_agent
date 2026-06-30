@@ -18,35 +18,6 @@ def get_max_turn_num(session_id: str) -> int:
     ).fetchone()
     return max_turn_num_row[0] if max_turn_num_row and max_turn_num_row[0] is not None else 0
 
-def add_session_if_not_exists(session_id: str) -> None:
-    _db.execute("""
-    INSERT OR IGNORE INTO sessions (session_id) VALUES (?)
-    """, (session_id, ))
-
-def update_session(session_id: str, params: dict[str, Any]) -> None:
-    if not params:
-        return
-
-    # 黑名单：不允许更新这些字段
-    block_fields = [
-        "session_id",
-    ]
-
-    # 过滤出合法的字段
-    valid_params = {k: v for k, v in params.items() if k not in block_fields}
-
-    # 动态构建 SET 子句
-    set_clauses = [f"{field} = ?" for field in valid_params.keys()]
-    set_clause_str = ", ".join(set_clauses)
-
-    # 构建完整的 SQL 语句
-    sql = f"UPDATE sessions SET {set_clause_str} WHERE session_id = ?"
-
-    # 参数值 + session_id
-    param_values: list[Any] = list(valid_params.values()) + [session_id]
-
-    _db.execute(sql, param_values)
-
 async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     if messages is None or len(messages)==0:
         return

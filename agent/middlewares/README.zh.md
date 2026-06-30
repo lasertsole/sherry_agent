@@ -88,7 +88,7 @@ Agent 执行流水线：
 │        ├─ 调用父类压缩逻辑 → reduce_messages                 │
 │        ├─ 重新插入 SystemMessage 和最后一条 HumanMessage      │
 │        ├─ memory_store.load_from_disk()  (nudge 前)           │
-│        ├─ nudge_messages(session_id, nudge_turn=0)           │
+│        ├─ nudge_memory(session_id, nudge_turn=0)           │
 │        └─ memory_store.load_from_disk()  (nudge 后)           │
 │                                                              │
 │  ③ LLM 推理                                                  │
@@ -273,7 +273,7 @@ summarizer = Summarization(session_id="session_001", ...)
 5. 在 reduce_messages 中的第一个 RemoveMessage 之后重新插入 SystemMessage
 6. 如果保存的最后一条 HumanMessage != reduce_messages 中的最后一条，重新插入
 7. memory_store.load_from_disk()  — 同步内存状态与磁盘
-8. nudge_messages(session_id, nudge_turn=0)  — 强制偏好提取
+8. nudge_memory(session_id, nudge_turn=0)  — 强制偏好提取
 9. memory_store.load_from_disk()  — 重新加载以捕获 nudge 写入
 10. 返回 res（父类的结果字典）
 ```
@@ -568,7 +568,7 @@ sequenceDiagram
         Summ->>Summ: 调用父类压缩逻辑
         Summ->>Summ: 插回 SystemMessage + 最后 HumanMessage
         Summ->>Summ: memory_store.load_from_disk()
-        Summ->>CE: nudge_messages(session_id, nudge_turn=0)
+        Summ->>CE: nudge_memory(session_id, nudge_turn=0)
         Summ->>Summ: memory_store.load_from_disk()
     end
     
@@ -765,7 +765,7 @@ self._turn_prompt: str
 
 - **类型**：内存缓存，底层由磁盘上的 markdown 文件支持
 - **读取**：`memory_store.load_from_disk()` — 将内存状态与磁盘同步
-- **写入**：`nudge_messages()` — 将提取的偏好写入 markdown 文件
+- **写入**：`nudge_memory()` — 将提取的偏好写入 markdown 文件
 - **一致性**：在 nudge 前后各加载一次，防止读取过期数据
 
 ### 工具调用计数器

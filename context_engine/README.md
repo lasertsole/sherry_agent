@@ -53,7 +53,7 @@ MesMemory complements [Skill Memory](../skill_memory/README.md):
 │   - Migrations     │   conversation string          │
 │ • core.py         │ • search_messages() → FTS5     │
 │   - CRUD ops       │   search + context             │
-│   - Message writes │ • nudge_messages() →          │
+│   - Message writes │ • nudge_memory() →          │
 │   - Turn queries   │   trigger preference extr.     │
 └───────────────────┴────────────────────────────────┘
 ```
@@ -72,7 +72,7 @@ MesMemory complements [Skill Memory](../skill_memory/README.md):
 | `retrieve_history_by_last_n_prompt(session_id, n)` | Get the last N turns and format as prompt context |
 | `search_messages(query, session_id, ...)` | FTS5 full-text search with Chinese trigram support and context expansion |
 | `append_messages(session_id, messages)` | Write messages and trigger nudge check |
-| `nudge_messages(session_id, ...)` | Check if the nudge threshold is reached and trigger preference extraction |
+| `nudge_memory(session_id, ...)` | Check if the nudge threshold is reached and trigger preference extraction |
 
 ---
 
@@ -209,13 +209,13 @@ for r in results:
 ### 4. Memory Nudging (Preference Extraction)
 
 ```python
-from context_engine.mes_memory import nudge_messages, append_messages
+from context_engine.mes_memory import nudge_memory, append_messages
 
 # Auto-check nudge on message write
 await append_messages("session_001", messages, nudge_turn=10)
 
 # Or trigger manually
-await nudge_messages("session_001", nudge_turn=10, skip_last_turn=False)
+await nudge_memory("session_001", nudge_turn=10, skip_last_turn=False)
 ```
 
 **Workflow:**
@@ -282,7 +282,7 @@ Full-text search messages.
 
 ---
 
-### `nudge_messages(session_id, skip_last_turn=False, nudge_turn=10)`
+### `nudge_memory(session_id, skip_last_turn=False, nudge_turn=10)`
 Manually trigger user preference extraction.
 
 | Parameter | Type | Description |

@@ -52,7 +52,7 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 │   - SQLite 连接    │   _prompt() → 历史格式化       │
 │   - 迁移管理       │ • search_messages() → FTS5    │
 │ • core.py         │   搜索 + 上下文预览              │
-│   - CRUD 操作      │ • nudge_messages() →          │
+│   - CRUD 操作      │ • nudge_memory() →          │
 │   - 消息写入        │   触发偏好提取                  │
 │   - 轮次查询        │                              │
 └───────────────────┴────────────────────────────────┘
@@ -72,7 +72,7 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 | `retrieve_history_by_last_n_prompt(session_id, n)` | 获取最近 N 轮对话并格式化为 prompt 上下文 |
 | `search_messages(query, session_id, ...)` | FTS5 全文搜索，支持中文 trigram、上下文扩展 |
 | `append_messages(session_id, messages)` | 写入消息并触发 nudge 检查 |
-| `nudge_messages(session_id, ...)` | 检查是否达到 nudge 轮次阈值，触发偏好提取 |
+| `nudge_memory(session_id, ...)` | 检查是否达到 nudge 轮次阈值，触发偏好提取 |
 
 ---
 
@@ -209,13 +209,13 @@ for r in results:
 ### 4. 记忆 Nudging（偏好提取）
 
 ```python
-from context_engine.mes_memory import nudge_messages, append_messages
+from context_engine.mes_memory import nudge_memory, append_messages
 
 # 写入消息时自动检查 nudge
 await append_messages("session_001", messages, nudge_turn=10)
 
 # 或手动触发
-await nudge_messages("session_001", nudge_turn=10, skip_last_turn=False)
+await nudge_memory("session_001", nudge_turn=10, skip_last_turn=False)
 ```
 
 **工作流程：**
@@ -282,7 +282,7 @@ await nudge_messages("session_001", nudge_turn=10, skip_last_turn=False)
 
 ---
 
-### `nudge_messages(session_id, skip_last_turn=False, nudge_turn=10)`
+### `nudge_memory(session_id, skip_last_turn=False, nudge_turn=10)`
 手动触发用户偏好提取。
 
 | 参数 | 类型 | 说明 |

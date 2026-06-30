@@ -11,7 +11,7 @@ def _migrate(db: sqlite3.Connection) -> None:
     cur = db.execute("SELECT MAX(v) as v FROM _migrations").fetchone()[0]
     if cur is None:
         cur = 0
-    steps = [build_sessions_tb, build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb]
+    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb]
     for i in range(cur, len(steps)):
         steps[i](db)
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
@@ -38,13 +38,6 @@ def get_db():
     _migrate(_db)
 
     return _db
-
-def build_sessions_tb(db: sqlite3.Connection) -> None:
-    db.executescript("""
-    CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        nudge_turn_num INTEGER NOT NULL DEFAULT 0
-    );""")
 
 def build_messages_tb(db: sqlite3.Connection) -> None:
     db.executescript("""

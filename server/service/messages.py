@@ -12,10 +12,8 @@ from langchain.messages import AIMessageChunk
 from pub_func import build_agent_config, is_url
 from langgraph.graph.state import CompiledStateGraph
 from ..DAO import clear_session as clear_session_DAO
-from context_engine import add_session_if_not_exists
 from context_engine import get_history_by_page as _get_history_by_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
-from agent.checkpointer import build_async_sqlite_checkpointer
 
 
 def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> list[BaseMessage]:
@@ -83,9 +81,6 @@ def _get_content_list(multi_modal_message: MultiModalMessage)-> list[dict[str, s
 """Agent assembly logic — builds agent with context"""
 async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True):
     start_time = time.time()
-
-    # Create a session record if one does not already exist
-    add_session_if_not_exists(session_id)
 
     logger.info(
         f"Building agent: session_id={session_id}"

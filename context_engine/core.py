@@ -1,18 +1,12 @@
 import re
 import json
 import sqlite3
-import textwrap
 import threading
 from typing import Any
 from loguru import logger
-from itertools import groupby
-from models import auxiliary_llm
-from langchain.agents import create_agent
 from config import ASSISTANT_NAME, USER_NAME
 from pub_func import contains_cjk, count_cjk
-from langgraph.graph.state import CompiledStateGraph
-from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
-from .store import get_db, get_messages_by_lastest_n_turns, update_session, add_messages
+from .store import get_db, get_messages_by_lastest_n_turns
 
 
 _db: sqlite3.Connection = get_db()
@@ -378,82 +372,3 @@ def search_messages(
         match.pop("content", None)
 
     return matches
-
-async def append_messages(session_id: str, messages: list[BaseMessage], nudge_turn:int = 10) -> None:
-    await add_messages(session_id, messages)
-
-    await nudge_messages(session_id = session_id, nudge_turn = nudge_turn)
-
-async def nudge_messages(session_id: str, skip_last_turn: bool = False, nudge_turn:int = 10) -> None:
-    session_row = _db.execute("""
-    select nudge_turn_num from sessions where session_id = ?
-    """, (session_id,)).fetchone()
-
-    session_dict: dict[str, int] = dict(session_row)
-
-    nudge_turn_num: int = session_dict["nudge_turn_num"] or 0
-
-    turn_num_row = _db.execute("""
-    select MAX(turn_num) from messages where session_id = ?
-    """, (session_id, )).fetchone()
-    turn_num: int = turn_num_row[0] or 1
-
-    if turn_num - nudge_turn_num < nudge_turn:
-        return
-
-    gap: int = turn_num - nudge_turn_num
-
-    if gap > 0:
-        messages: list[dict] = get_messages_by_lastest_n_turns(session_id, gap)
-
-        filter_messages: list[dict] = []
-        for m in messages:
-            if skip_last_turn and m.get("turn_num") == turn_num:
-                continue
-
-            role: str = m.get("role")
-            if role != "ai" and role != "human":
-                continue
-            filter_messages.append(m)
-
-        filter_messages.sort(key=lambda x: x.get("turn_num", 0))
-
-        final_messages: list[BaseMessage] = []
-
-        for t_num, turn_group in groupby(filter_messages, key=lambda x: x.get("turn_num", 0)):
-            for role, role_group in groupby(list(turn_group), key=lambda x: x.get("role")):
-                combined_content = "".join([m.get("content", "") for m in role_group])
-
-                if role == "ai":
-                    final_messages.append(AIMessage(content=combined_content))
-                elif role == "human":
-                    final_messages.append(HumanMessage(content=combined_content))
-
-        from tools import build_memory_tool, memory_store
-
-        system_prompt: str = "\n\n".join([
-            """
-                Below are the existing user preferences (Earlier entries are at the top). 
-            """,
-            memory_store.format_for_system_prompt("memory"),
-            memory_store.format_for_system_prompt("user")
-        ])
-        extract_memory_agent: CompiledStateGraph = create_agent(
-            model = auxiliary_llm,
-            system_prompt = system_prompt,
-            tools = [build_memory_tool()],
-        )
-
-        # invoke
-        final_messages.append(HumanMessage(content=textwrap.dedent("""\
-            Review the historical chat records and call the 'memory' tool to record the user's preferences one by one.
-            Please add, update, or replace them based on the situation. Do not add duplicate preferences that already exist.
-            If the user preferences are full, merge them as appropriate. In the worst case, remove earlier preferences to make room for new ones. (Earlier entries are at the top)
-            Note: 1.If you notice that the user has already updated certain preferences via the 'memory' tool in the chat history, avoid duplicating those updates.
-                  2.Avoid storing irrelevant data (e.g., tool execution logs or results) in the memory entries.
-        """)))
-
-        await extract_memory_agent.ainvoke(input={"messages": final_messages})
-
-        # update nudge turn num
-        update_session(session_id, {"nudge_turn_num": turn_num})
