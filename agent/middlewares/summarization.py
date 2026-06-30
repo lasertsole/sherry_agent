@@ -1,94 +1,60 @@
-from typing import Any
 from loguru import logger
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing_extensions import override
 from langchain.agents import AgentState
 from context_engine import nudge_messages
-from langchain.agents.middleware import SummarizationMiddleware
-from langchain_core.messages import BaseMessage, SystemMessage, RemoveMessage, HumanMessage
+from typing import Any, Callable, Awaitable
+from langchain.agents.middleware.types import ResponseT
+from workspace.prompt_builder import build_system_prompt
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
+from langchain.agents.middleware import SummarizationMiddleware, ModelRequest, ModelResponse, ExtendedModelResponse
 
 
 class Summarization(SummarizationMiddleware):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-
     @override
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
-        session_id: str = state.get("session_id", "")
+        pass
+
+    @override
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        session_id = request.state.get("session_id", "")
         if session_id.strip() == "":
             err_text: str = "Not pass session_id"
             logger.error(err_text)
             raise RuntimeError(err_text)
 
-        # Clone the message list to avoid mutating the original
+        state: dict[str, Any] = request.state
+        state_mes_list_copy_without_system_mes: list[BaseMessage] = [m for m in state["messages"].copy() if not isinstance(m, SystemMessage)]
+
         copy_state: AgentState[Any] = state.copy()
-        state_mes_list_copy: list[BaseMessage] = state["messages"].copy()
-        copy_state["messages"] = state_mes_list_copy
-        
-        # Preserve the system message
-        remain_system_mes: SystemMessage | None = None
+        copy_state["messages"] = state_mes_list_copy_without_system_mes
 
-        for i, m in enumerate(state_mes_list_copy):
-            if isinstance(m, SystemMessage):
-                remain_system_mes = m
-
-                # Strip the system message from the list to avoid polluting summary density
-                del state_mes_list_copy[i]
-                break
-
-        if remain_system_mes is None:
-            return None
-
-        # Preserve the last user message
-        remain_human_mes: HumanMessage | None = None
-
-        for i in range(len(state_mes_list_copy) - 1, -1, -1):
-            if isinstance(state_mes_list_copy[i], HumanMessage):
-                remain_human_mes = state_mes_list_copy[i]
-                break
-
-        # Perform message compression via parent summarizer
-        res: dict[str, Any] = await super().abefore_model(copy_state, runtime)
+        res: dict[str, Any] | None = await super().abefore_model(copy_state, request.runtime)
         if res is None:
-            return None
+            if request.system_message is None:
+                return await handler(request.override(system_message = SystemMessage(content = build_system_prompt())))
 
-        # Get the compressed message list
+            return await handler(request)
+
         reduce_messages: list[BaseMessage] = res["messages"]
 
-        # 插回系统提示信息
-        system_insert_index = -1
-        for i, m in enumerate(reduce_messages):
-            if isinstance(m, RemoveMessage):
-                system_insert_index = i + 1  # 记录后一个位置
-                break
-
-        if system_insert_index > 0:
-            reduce_messages.insert(system_insert_index, remain_system_mes)
-        else:
-            reduce_messages.insert(0, remain_system_mes)
-
-        # 插入最后一条用户信息
-        last_human_mes: HumanMessage | None = None
-        for i in range(len(reduce_messages) - 1, -1, -1):
-            if isinstance(reduce_messages[i], HumanMessage):
-                last_human_mes = reduce_messages[i]
-                break
-
-        if remain_human_mes != last_human_mes:
-            reduce_messages.insert(system_insert_index + 1, remain_human_mes)
-
-        # 压缩时前重置 memory
         from tools import memory_store
         memory_store.load_from_disk()
 
-        # 总结用户偏好存入memory.md和user.md
-        await nudge_messages(session_id= session_id, nudge_turn = 0)
+        await nudge_messages(session_id=session_id, nudge_turn=0)
 
-        # 压缩时后重置 memory
         memory_store.load_from_disk()
 
-        return res
+        return await handler(
+            request.override(messages = reduce_messages, system_message = SystemMessage(content = build_system_prompt()))
+        )
