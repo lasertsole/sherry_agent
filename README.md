@@ -19,7 +19,7 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 ## 🚀 Key Features
 
 ### 1. 🧠 Deep Memory System (Context Engine)
-- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/mes_memory/README.md)) + long-term knowledge graph ([Skill Memory](context_engine/skill_memory/README.md))
+- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/README.md)) + long-term knowledge graph ([Skill Memory](context_engine/skill_memory/README.md))
 - **Skill Memory Graph**: Automatically extracts knowledge points from conversations to build a dynamic knowledge graph
 - **Community Detection & Summarization**: Periodically partitions the graph and generates summaries for efficient long-term memory retrieval
 - **Query Rewriting**: Disambiguates pronouns and references using conversation history before retrieval
@@ -248,7 +248,7 @@ Each major subsystem has its own detailed README:
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
 | **Context Engine** | Dual memory system (MesMemory + Skill Memory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **MesMemory** | Short-term session message memory | [EN](context_engine/mes_memory/README.md) · [ZH](context_engine/mes_memory/README.zh.md) |
+| **MesMemory** | Short-term session message memory | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
 | **Skill Memory** | Long-term knowledge graph memory | [EN](context_engine/skill_memory/README.md) · [ZH](context_engine/skill_memory/README.zh.md) |
 | **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](tools/subagent/README.md) · [ZH](tools/subagent/README.zh.md) |
 | **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |

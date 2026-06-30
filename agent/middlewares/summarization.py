@@ -7,7 +7,7 @@ from context_engine import nudge_messages
 from typing import Any, Callable, Awaitable
 from langchain.agents.middleware.types import ResponseT
 from workspace.prompt_builder import build_system_prompt
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, RemoveMessage
 from langchain.agents.middleware import SummarizationMiddleware, ModelRequest, ModelResponse, ExtendedModelResponse
 
 
@@ -46,7 +46,7 @@ class Summarization(SummarizationMiddleware):
 
             return await handler(request)
 
-        reduce_messages: list[BaseMessage] = res["messages"]
+        reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
 
         from tools import memory_store
         memory_store.load_from_disk()

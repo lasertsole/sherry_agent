@@ -100,7 +100,7 @@ async def _arun_task(
                 + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
             from tools import build_main_tools
-            from agent.middlewares import ToolCallNormalize, ContextEngineHook
+            from agent.middlewares import ToolCallNormalize
 
             agent: CompiledStateGraph = create_agent(
                 system_prompt=system_prompt,
@@ -109,7 +109,6 @@ async def _arun_task(
                 tools=build_main_tools(),
                 checkpointer= InMemorySaver(),
                 middleware=[
-                    ContextEngineHook(),
                     SummarizationMiddleware(
                         model=main_llm,
                         trigger=("messages", 20),

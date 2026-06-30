@@ -10,14 +10,12 @@ from workspace.prompt_builder import build_system_prompt
 from agent.checkpointer import build_async_sqlite_checkpointer
 from tools import memory_store, build_main_tools, build_subagent_tool
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
-from .middlewares import (ContextEngineHook, Summarization, ToolLoopPrevention,
-                          ToolCallNormalize, MultimodalProcessor, ToolTimeout)
+from .middlewares import Summarization, ToolLoopPrevention, ToolCallNormalize, MultimodalProcessor, ToolTimeout
 
 
 # ── Extended state schema ────────────────────────────────────────────────
 # Carries ``session_id`` through the graph so that middlewares reading
 # ``request.state["session_id"]`` is used by middlewares that need it
-# (e.g. ContextEngineHook).
 
 class StateSchema(AgentState):
     """Agent state that preserves an ``session_id``."""
@@ -64,7 +62,6 @@ async def built_agent(
             middleware = [
                 state_aware_system_prompt,
                 MultimodalProcessor(),
-                ContextEngineHook(),
                 Summarization(
                     model=main_llm,
                     trigger=[

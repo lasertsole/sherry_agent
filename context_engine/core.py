@@ -441,7 +441,7 @@ async def nudge_messages(session_id: str, skip_last_turn: bool = False, nudge_tu
         extract_memory_agent: CompiledStateGraph = create_agent(
             model = auxiliary_llm,
             system_prompt = system_prompt,
-            tools = [build_memory_tool(session_id)],
+            tools = [build_memory_tool()],
         )
 
         # invoke

@@ -4,7 +4,6 @@ from pathlib import Path
 from loguru import logger
 from models import main_llm
 from config import PLUGINS_PATH
-from context_engine import assemble
 from type.bus import OutboundMessage
 from langchain.agents import create_agent
 from workspace import CORE_SYSTEM_FILE_NAMES
@@ -19,8 +18,6 @@ tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool
 async def process_heartbeat_task(task: str) -> str:
     try:
         # Get graph-memory system prompt
-        assemble_result: dict[str, str] = await assemble(user_text=task, messages=[])
-        graph_system_prompt_addition: str = assemble_result.get("system_prompt_addition", "")
 
         agent: CompiledStateGraph = create_agent(
             model=main_llm,
@@ -31,7 +28,6 @@ async def process_heartbeat_task(task: str) -> str:
             SystemMessage(
                 content=
                 build_system_prompt(selected_file_names=CORE_SYSTEM_FILE_NAMES)
-                + graph_system_prompt_addition
             ),
             HumanMessage(content=task)
         ]
