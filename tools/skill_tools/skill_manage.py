@@ -11,7 +11,8 @@ from typing import Literal, Type, Any
 from pydantic import BaseModel, Field
 from typing_extensions import override
 from langchain_core.tools import BaseTool
-from pub_func import run_async, atomic_replace, has_traversal_component, validate_within_dir
+from tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
+from pub_func import atomic_replace, has_traversal_component, validate_within_dir
 
 _AUTO_SKILLS_DIR: Path = SKILLS_DIR / "auto/"
 _MAX_NAME_LENGTH: int = 64
@@ -417,7 +418,6 @@ def _patch_skill(
     # This handles whitespace normalization, indentation differences,
     # escape sequences, and block-anchor matching — saving the agent
     # from exact-match failures on minor formatting mismatches.
-    from tools.fuzzy_match import fuzzy_find_and_replace
 
     new_content, match_count, _strategy, match_error = fuzzy_find_and_replace(
         content, old_string, new_string, replace_all
@@ -427,7 +427,6 @@ def _patch_skill(
         preview = content[:500] + ("..." if len(content) > 500 else "")
         err_msg = match_error
         try:
-            from tools.fuzzy_match import format_no_match_hint
             err_msg += format_no_match_hint(match_error, match_count, old_string, content)
         except Exception:
             pass
@@ -436,7 +435,7 @@ def _patch_skill(
             "error": err_msg,
             "file_preview": preview,
         }
-
+ 
     # Check size limit on the result
     target_label = "SKILL.md" if not file_path else file_path
     err = _validate_content_size(new_content, label=target_label)
@@ -465,7 +464,7 @@ def _patch_skill(
     }
     return result
 
-def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, Any]:
+def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]:
     """Delete a skill.
 
     ``absorbed_into`` declares intent:
@@ -479,31 +478,15 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
     """
     existing = _find_skill(name)
     if not existing:
-        return {"success": False, "error": _skill_not_found_error(name)}
-    guard = _background_review_write_guard(name, existing["path"], "delete")
-    if guard:
-        return guard
-
-    # Fail closed on unverified deletes during the curator consolidation pass.
-    # A bare prune (no absorbed_into) from the LLM umbrella pass is the
-    # fail-open behavior reported in #29912 — refuse it; keep the skill active.
-    fail_closed = _curator_consolidation_delete_guard(name, absorbed_into)
-    if fail_closed:
-        return fail_closed
+        return {"success": False, "error": f"Skill '{name}' not found."}
 
     pinned_err = _pinned_guard(name)
     if pinned_err:
         return {"success": False, "error": pinned_err}
 
     # Validate absorbed_into target when declared non-empty
-    absorbed_target = (
-        absorbed_into.strip()
-        if absorbed_into is not None and isinstance(absorbed_into, str)
-        else ""
-    )
-    is_consolidation = bool(absorbed_target)
-    if is_consolidation:
-        target_name = absorbed_target
+    if absorbed_into is not None and isinstance(absorbed_into, str) and absorbed_into.strip():
+        target_name = absorbed_into.strip()
         if target_name == name:
             return {
                 "success": False,
@@ -521,38 +504,6 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
 
     skill_dir = existing["path"]
     skills_root = _containing_skills_root(skill_dir)
-
-    # Defense-in-depth before the recursive delete (port of Kilo Code #11240).
-    unsafe = _validate_delete_target(skill_dir)
-    if unsafe:
-        return {"success": False, "error": unsafe}
-
-    # During the curator consolidation pass, a verified consolidation must be
-    # RECOVERABLE: archival into ~/.hermes/skills/.archive/ is documented as
-    # the maximum destructive action the curator may take, and
-    # `hermes curator restore` promises the skill can be brought back. Route
-    # through the recoverable archive primitive instead of permanent rmtree so
-    # a misjudged consolidation can be undone (#29912). Foreground,
-    # user-directed deletes keep their existing hard-delete semantics.
-    try:
-        from tools.skill_provenance import is_background_review
-        curator_pass = is_background_review()
-    except Exception:
-        curator_pass = False
-
-    if curator_pass:
-        try:
-            from tools.skill_usage import archive_skill
-            ok, archive_msg = archive_skill(name)
-        except Exception as e:
-            return {"success": False, "error": f"failed to archive '{name}': {e}"}
-        if not ok:
-            return {"success": False, "error": archive_msg}
-        message = f"Skill '{name}' archived ({archive_msg})."
-        if is_consolidation:
-            message += f" Content absorbed into '{absorbed_target}'."
-        return {"success": True, "message": message, "_archived": True}
-
     shutil.rmtree(skill_dir)
 
     # Clean up empty category directories (don't remove the skills root itself)
@@ -561,8 +512,8 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
         parent.rmdir()
 
     message = f"Skill '{name}' deleted."
-    if is_consolidation:
-        message += f" Content absorbed into '{absorbed_target}'."
+    if absorbed_into is not None and isinstance(absorbed_into, str) and absorbed_into.strip():
+        message += f" Content absorbed into '{absorbed_into.strip()}'."
 
     return {
         "success": True,
