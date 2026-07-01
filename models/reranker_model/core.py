@@ -22,8 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from huggingface_hub import hf_hub_download
-
+import requests
 from config import ENV_PATH
 
 def _read_dotenv(key: str, default: str = "") -> str:
@@ -40,7 +39,10 @@ def _read_dotenv(key: str, default: str = "") -> str:
 
 
 def _is_local() -> bool:
-    raw = _read_dotenv("RERANKER_MODEL_LOCAL", "true").strip().lower()
+    raw = os.environ.get("RERANKER_MODEL_LOCAL")
+    if raw is None:
+        raw = _read_dotenv("RERANKER_MODEL_LOCAL", "true")
+    raw = str(raw).strip().lower()
     return raw not in ("", "false", "0", "no")
 
 
@@ -89,6 +91,7 @@ def _ensure_model(
         return str(dest)
 
     # Auto-download
+    from huggingface_hub import hf_hub_download
     _MODEL_WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading %s/%s (%s) …", GGUF_REPO_ID, GGUF_FILENAME, "636 MB Q8_0")
     dest = hf_hub_download(
@@ -546,4 +549,173 @@ class CrossEncoderGGUF:
             self.close()
 
 
-__all__ = ["CrossEncoderGGUF"]
+# ---------------------------------------------------------------------------
+# CloudReranker — cloud API backed reranker (mirrors CrossEncoderGGUF API)
+# ---------------------------------------------------------------------------
+
+
+class CloudReranker:
+    """OpenAI-compatible cloud reranker.
+
+    Reads ``RERANKER_API_BASE``, ``RERANKER_API_KEY``, ``RERANKER_API_NAME``
+    from ``.env`` and provides ``predict()``, ``rank()``, ``filter()`` with
+    identical signatures and behaviour to ``CrossEncoderGGUF``.
+
+    The cloud API returns ``relevance_score`` as a sigmoid-normalised
+    probability in [0.0, 1.0] — no further normalisation is needed beyond
+    hard-clamping.
+    """
+
+    def __init__(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        self._api_base = (api_base or _read_dotenv("RERANKER_API_BASE", "")).rstrip("/")
+        self._api_key = api_key or _read_dotenv("RERANKER_API_KEY", "")
+        self._model = model or _read_dotenv("RERANKER_API_NAME", "bge-reranker-v2-m3")
+        if not self._api_base or not self._api_key:
+            raise RuntimeError(
+                "RERANKER_API_BASE and RERANKER_API_KEY must be set in .env "
+                "when RERANKER_MODEL_LOCAL=false"
+            )
+        self._url = f"{self._api_base}/rerank"
+        self._headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+
+    # ── predict ──────────────────────────────────────────────────────────
+
+    def predict(self, query: str, passage: str) -> float:
+        """Score a single query–passage pair. Returns float in [0, 1]."""
+        resp = requests.post(
+            self._url,
+            headers=self._headers,
+            json={
+                "model": self._model,
+                "query": query,
+                "documents": [passage],
+            },
+            verify=False,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return max(0.0, min(1.0, float(data["results"][0]["relevance_score"])))
+
+    def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Score a list of (query, passage) pairs."""
+        return [self.predict(q, p) for q, p in pairs]
+
+    # ── rank ─────────────────────────────────────────────────────────────
+
+    def rank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+        gap_score: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Score and rank documents by relevance to *query*.
+
+        Args:
+            query: The query string.
+            documents: List of candidate document texts.
+            top_k: If set, only return the top-k highest-scoring documents.
+            gap_score: Minimum score threshold (0.0–1.0); documents below this
+                       are excluded.
+
+        Returns:
+            A list of dicts ordered by descending score, each with keys:
+                rank (int), corpus_id (int), document (str), score (float).
+        """
+        if not documents:
+            return []
+
+        _gap_score: float = 0.0
+        if gap_score is not None:
+            if gap_score < 0.0 or gap_score > 1.0:
+                raise ValueError("gap_score must be between 0.0 and 1.0")
+            _gap_score = gap_score
+
+        resp = requests.post(
+            self._url,
+            headers=self._headers,
+            json={
+                "model": self._model,
+                "query": query,
+                "documents": documents,
+            },
+            verify=False,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        doc_scores: list[tuple[int, float]] = [
+            (int(entry["index"]), max(0.0, min(1.0, float(entry["relevance_score"]))))
+            for entry in data["results"]
+        ]
+        ranked = sorted(doc_scores, key=lambda x: x[1], reverse=True)
+
+        if top_k is not None:
+            ranked = ranked[:top_k]
+
+        results = [
+            {
+                "rank": i + 1,
+                "corpus_id": idx,
+                "document": documents[idx],
+                "score": round(score, 4),
+            }
+            for i, (idx, score) in enumerate(ranked)
+            if score >= _gap_score
+        ]
+        return results
+
+    # ── filter ───────────────────────────────────────────────────────────
+
+    def filter(
+        self,
+        query: str,
+        documents: list[str],
+        gap_score: float = 0.5,
+    ) -> list[str]:
+        """Filter documents, keeping only those with relevance >= *gap_score*.
+
+        Args:
+            query: The query string.
+            documents: List of candidate document texts.
+            gap_score: Minimum score threshold (0.0–1.0); defaults to 0.5.
+
+        Returns:
+            Document texts that score >= *gap_score*, in original order.
+        """
+        if not documents:
+            return []
+
+        resp = requests.post(
+            self._url,
+            headers=self._headers,
+            json={
+                "model": self._model,
+                "query": query,
+                "documents": documents,
+            },
+            verify=False,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        idx_score: list[tuple[int, float]] = [
+            (int(e["index"]), max(0.0, min(1.0, float(e["relevance_score"]))))
+            for e in data["results"]
+        ]
+        idx_score.sort(key=lambda x: x[0])
+        return [documents[idx] for idx, sc in idx_score if sc >= gap_score]
+
+
+__all__ = ["CrossEncoderGGUF", "CloudReranker"]

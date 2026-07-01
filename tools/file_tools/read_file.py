@@ -1,14 +1,12 @@
 """Read file tool with pagination support (offset + limit) and line numbers."""
 import json
-import os
-from pathlib import Path
 from typing import Optional, Type
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from config import ROOT_DIR
+from tools.pub_base import resolve_path
 
 
 class ReadFileInput(BaseModel):
@@ -28,14 +26,6 @@ class ReadFileInput(BaseModel):
         le=2000,
         description="Maximum number of lines to read (default: 500, max: 2000)",
     )
-
-
-def _resolve_path(file_path: str) -> Path:
-    """Resolve file_path against ROOT_DIR if relative; expand ~."""
-    p = Path(os.path.expanduser(file_path))
-    if not p.is_absolute():
-        p = ROOT_DIR / p
-    return p.resolve()
 
 
 def _add_line_numbers(content: str, start_line: int = 1) -> str:
@@ -72,7 +62,7 @@ class ReadFileTool(BaseTool):
         limit: int = 500,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        resolved = _resolve_path(file_path)
+        resolved = resolve_path(file_path)
 
         if not resolved.exists():
             return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)

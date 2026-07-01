@@ -1,9 +1,15 @@
 import os
+import sys
 import nest_asyncio
 from logs import init_logger
 from config import STATIC_DIR
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
+
+# Fix UnicodeEncodeError for emoji in Windows GBK terminal
+if sys.stdout.encoding and sys.stdout.encoding.lower() in ('gbk', 'gb2312', 'gb18030'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Fix nested event loop conflicts
 nest_asyncio.apply()

@@ -17,34 +17,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from config import ROOT_DIR
-
-
-def _resolve_path(file_path: str) -> Path:
-    p = Path(os.path.expanduser(file_path))
-    if not p.is_absolute():
-        p = ROOT_DIR / p
-    return p.resolve()
-
-
-def _is_text_file(path: Path, sample_size: int = 4096) -> bool:
-    try:
-        with path.open("rb") as f:
-            chunk = f.read(sample_size)
-        if b"\x00" in chunk:
-            return False
-        return True
-    except (OSError, PermissionError):
-        return False
-
-
-def _should_skip_dir(d: Path) -> bool:
-    name = d.name
-    if name.startswith(".") and name not in (".", ".."):
-        return True
-    if name in ("__pycache__", "node_modules", ".venv", "venv", ".git", ".hg", ".svn", ".idea", ".mypy_cache"):
-        return True
-    return False
+from tools.pub_base import is_text_file, resolve_path, should_skip_dir
 
 
 # ── Content search (grep-like) ───────────────────────────────────────────
@@ -62,14 +35,14 @@ def _search_content(
     truncated = False
 
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not _should_skip_dir(Path(dirpath) / d)]
+        dirnames[:] = [d for d in dirnames if not should_skip_dir(Path(dirpath) / d)]
 
         for fname in sorted(filenames):
             if file_glob and not fnmatch.fnmatch(fname, file_glob):
                 continue
 
             fpath = Path(dirpath) / fname
-            if not fpath.is_file() or not _is_text_file(fpath):
+            if not fpath.is_file() or not is_text_file(fpath):
                 continue
 
             try:
@@ -123,7 +96,7 @@ def _search_files(pattern: str, root: Path, limit: int, offset: int) -> dict:
     truncated = False
 
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not _should_skip_dir(Path(dirpath) / d)]
+        dirnames[:] = [d for d in dirnames if not should_skip_dir(Path(dirpath) / d)]
 
         for fname in sorted(filenames):
             if fnmatch.fnmatch(fname, bare_name) or fnmatch.fnmatch(fname, f"*{bare_name}*"):
@@ -208,7 +181,7 @@ class SearchFilesTool(BaseTool):
         context: int = 0,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        resolved = _resolve_path(path)
+        resolved = resolve_path(path)
 
         if not resolved.exists():
             return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)

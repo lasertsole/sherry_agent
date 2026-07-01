@@ -1,1 +1,1 @@
-from .model import SenseVoiceSmall
+from .core import SenseVoiceSmall

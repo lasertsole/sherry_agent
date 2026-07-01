@@ -6,7 +6,6 @@ import urllib3
 import requests
 from pathlib import Path
 from loguru import logger
-from typing import Optional
 from config import ENV_PATH
 from langchain_core.embeddings import Embeddings
 

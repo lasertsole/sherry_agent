@@ -22,7 +22,7 @@ Usage:
 import os
 import atexit
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional
 
 from config import ENV_PATH
 from dotenv import load_dotenv
