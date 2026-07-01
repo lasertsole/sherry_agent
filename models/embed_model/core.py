@@ -5,14 +5,10 @@ import math
 import urllib3
 import requests
 from pathlib import Path
-import logging
+from loguru import logger
 from typing import Optional
 from config import ENV_PATH
-from llama_cpp import Llama
 from langchain_core.embeddings import Embeddings
-
-logger = logging.getLogger(__name__)
-
 
 
 _MODEL_DIR = Path(__file__).resolve().parent
@@ -73,11 +69,12 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
 # ─────────────────────────────────────────────
 def _ensure_downloaded() -> None:
     """Download GGUF to model_weight/ on first run (download only, no model loading)."""
+    from llama_cpp import Llama
+
     if _GGUF_MODEL_PATH.is_file():
         return
     _WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading bge-m3-q8_0.gguf to %s ...", _WEIGHT_DIR)
-    # Borrow Llama.from_pretrained download capability; close immediately, keep nothing in memory
     tmp = Llama.from_pretrained(
         repo_id="ggml-org/bge-m3-Q8_0-GGUF",
         filename="bge-m3-q8_0.gguf",
@@ -87,8 +84,10 @@ def _ensure_downloaded() -> None:
     tmp.close()
 
 
-def _load_model() -> Llama:
+def _load_model():
     """Load Llama model and return the instance."""
+    from llama_cpp import Llama
+
     if not _GGUF_MODEL_PATH.is_file():
         _ensure_downloaded()
     return Llama(model_path=str(_GGUF_MODEL_PATH), embedding=True, n_gpu_layers=0, verbose=False)
