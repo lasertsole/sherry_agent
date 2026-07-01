@@ -6,7 +6,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from loguru import logger
-from config import SKILLS_DIR
+from config import AUTO_SKILLS_DIR
 from typing import Literal, Type, Any
 from pydantic import BaseModel, Field
 from typing_extensions import override
@@ -14,13 +14,15 @@ from langchain_core.tools import BaseTool
 from tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
 from pub_func import atomic_replace, has_traversal_component, validate_within_dir
 
-_AUTO_SKILLS_DIR: Path = SKILLS_DIR / "auto/"
 _MAX_NAME_LENGTH: int = 64
 _MAX_DESCRIPTION_LENGTH: int = 1024
 _MAX_SKILL_CONTENT_CHARS = 100_000   # ~36k tokens at 2.75 chars/token
 _VALID_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*$')
 # Subdirectories allowed for write_file/remove_file
 _ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets"}
+_MAX_SKILL_FILE_BYTES = 1_048_576    # 1 MiB per supporting file
+# Subdirectories allowed for write_file/remove_file
+ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets"}
 
 class SkillManageSchema(BaseModel):
     """Schema for skill_manage tool arguments."""
@@ -96,17 +98,99 @@ class SkillManageSchema(BaseModel):
         )
     )
 
-def _find_skill(name: str) -> str | None:
-    for skill_md in _AUTO_SKILLS_DIR.glob("**/SKILL.md"):
+def _write_file(name: str, file_path: str, file_content: str) -> dict[str, Any]:
+    """Add or overwrite a supporting file within any skill directory."""
+    err = _validate_file_path(file_path)
+    if err:
+        return {"success": False, "error": err}
+
+    if not file_content and file_content != "":
+        return {"success": False, "error": "file_content is required."}
+
+    # Check size limits
+    content_bytes = len(file_content.encode("utf-8"))
+    if content_bytes > _MAX_SKILL_FILE_BYTES:
+        return {
+            "success": False,
+            "error": (
+                f"File content is {content_bytes:,} bytes "
+                f"(limit: {_MAX_SKILL_FILE_BYTES:,} bytes / 1 MiB). "
+                f"Consider splitting into smaller files."
+            ),
+        }
+    err = _validate_content_size(file_content, label=file_path)
+    if err:
+        return {"success": False, "error": err}
+
+    skill_dir = _find_skill(name)
+    if not skill_dir:
+        return {"success": False, "error": f"Skill '{name}' not found. Create it first with action='create'."}
+
+    target, err = _resolve_skill_target(skill_dir, file_path)
+    if err:
+        return {"success": False, "error": err}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(target, file_content)
+
+    return {
+        "success": True,
+        "message": f"File '{file_path}' written to skill '{name}'.",
+        "path": str(target),
+    }
+
+
+def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
+    """Remove a supporting file from any skill directory."""
+    err = _validate_file_path(file_path)
+    if err:
+        return {"success": False, "error": err}
+
+    skill_dir = _find_skill(name)
+    if not skill_dir:
+        return {"success": False, "error": f"Skill '{name}' not found."}
+
+    target, err = _resolve_skill_target(skill_dir, file_path)
+    if err:
+        return {"success": False, "error": err}
+    if not target.exists():
+        # List what's actually there for the model to see
+        available = []
+        for subdir in ALLOWED_SUBDIRS:
+            d = skill_dir / subdir
+            if d.exists():
+                for f in d.rglob("*"):
+                    if f.is_file():
+                        available.append(str(f.relative_to(skill_dir)))
+        return {
+            "success": False,
+            "error": f"File '{file_path}' not found in skill '{name}'.",
+            "available_files": available if available else None,
+        }
+
+    target.unlink()
+
+    # Clean up empty subdirectories
+    parent = target.parent
+    if parent != skill_dir and parent.exists() and not any(parent.iterdir()):
+        parent.rmdir()
+
+    return {
+        "success": True,
+        "message": f"File '{file_path}' removed from skill '{name}'.",
+    }
+
+
+def _find_skill(name: str) -> Path | None:
+    for skill_md in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
         if skill_md.parent.name == name:
-            return skill_md.parent.as_posix()
+            return skill_md.parent
     return None
 
 def _resolve_skill_dir(name: str, category: str = None) -> Path:
     """Build the directory path for a new skill, optionally under a category."""
     if category:
-        return _AUTO_SKILLS_DIR / category / name
-    return _AUTO_SKILLS_DIR / name
+        return AUTO_SKILLS_DIR / category / name
+    return AUTO_SKILLS_DIR / name
 
 def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -> None:
     """
@@ -146,6 +230,53 @@ def _resolve_skill_target(skill_dir: Path, file_path: str) -> tuple[Path | None,
     if error:
         return None, error
     return target, None
+
+def _pinned_guard(name: str) -> str | None:
+    """Return a refusal message if *name* is pinned, else None.
+
+    Pin protects a skill from **deletion** — both the curator's auto-archive
+    passes and the agent's ``skill_manage(action="delete")`` tool call. The
+    agent can still patch/edit pinned skills; pin only guards against
+    irrecoverable loss, not against content evolution.
+
+    Best-effort: if the sidecar is unreadable we let the delete through
+    rather than block on a broken telemetry file.
+    """
+    try:
+        from tools import skill_usage
+        rec = skill_usage.get_record(name)
+        if rec.get("pinned"):
+            return (
+                f"Skill '{name}' is pinned and cannot be deleted by "
+                f"skill_manage. Ask the user to run "
+                f"`hermes curator unpin {name}` if they want to delete it. "
+                f"Patches and edits are allowed on pinned skills; only "
+                f"deletion is blocked."
+            )
+    except Exception:
+        logger.debug("pinned-guard lookup failed for %s", name, exc_info=True)
+    return None
+
+def _containing_skills_root(skill_path: Path) -> Path:
+    """Return the skills root directory (local or external_dirs entry) that
+    contains ``skill_path``.  Falls back to the local ``SKILLS_DIR`` if no
+    match is found (defensive — callers should have located the skill via
+    ``_find_skill`` first).
+    """
+    from tools.pub_base import get_all_skills_dirs
+
+    try:
+        resolved = skill_path.resolve()
+    except OSError:
+        resolved = skill_path
+
+    for root in get_all_skills_dirs():
+        try:
+            resolved.relative_to(root.resolve())
+            return root
+        except (ValueError, OSError):
+            continue
+    return AUTO_SKILLS_DIR
 
 # =============================================================================
 # Validation helpers
@@ -305,7 +436,7 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
     if existing:
         return {
             "success": False,
-            "error": f"A skill named '{name}' already exists at {existing}."
+            "error": f"A skill named '{name}' already exists at {existing.as_posix()}."
         }
 
     # Create the skill directory
@@ -316,22 +447,11 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
     skill_md = skill_dir / "SKILL.md"
     _atomic_write_text(skill_md, content)
 
-    # Extract description from frontmatter for verbose notifications
-    _desc = ""
-    try:
-        _fm_end = re.search(r'\n---\s*\n', content[3:])
-        if _fm_end:
-            _parsed = yaml.safe_load(content[3:_fm_end.start() + 3])
-            _desc = str(_parsed.get("description", ""))[:120]
-    except Exception:
-        pass
-
     result = {
         "success": True,
         "message": f"Skill '{name}' created.",
-        "path": str(skill_dir.relative_to(SKILLS_DIR)),
+        "path": str(skill_dir.relative_to(AUTO_SKILLS_DIR)),
         "skill_md": str(skill_md),
-        "_change": {"description": _desc},
     }
     if category:
         result["category"] = category
@@ -351,29 +471,18 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
     if err:
         return {"success": False, "error": err}
 
-    skill_dir: str | None = _find_skill(name)
+    skill_dir: Path | None = _find_skill(name)
     if not skill_dir:
-        return {"success": False, "error": f"Skill '{name}' not found in folder '{_AUTO_SKILLS_DIR.as_posix()}'"}
+        return {"success": False, "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'"}
 
-    skill_md = Path(skill_dir) / "SKILL.md"
+    skill_md = skill_dir / "SKILL.md"
 
     _atomic_write_text(skill_md, content)
-
-    # Extract description from new content for verbose notifications
-    _desc = ""
-    try:
-        _fm_end = re.search(r'\n---\s*\n', content[3:])
-        if _fm_end:
-            _parsed = yaml.safe_load(content[3:_fm_end.start() + 3])
-            _desc = str(_parsed.get("description", ""))[:120]
-    except Exception:
-        pass
 
     return {
         "success": True,
         "message": f"Skill '{name}' updated (full rewrite).",
-        "path": str(skill_dir),
-        "_change": {"description": _desc},
+        "path": skill_dir.as_posix(),
     }
 
 def _patch_skill(
@@ -395,7 +504,7 @@ def _patch_skill(
 
     skill_dir = _find_skill(name)
     if not skill_dir:
-        return {"success": False, "error": f"Skill '{name}' not found in folder '{_AUTO_SKILLS_DIR.as_posix()}'"}
+        return {"success": False, "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'"}
 
     if file_path:
         # Patching a supporting file
@@ -453,16 +562,10 @@ def _patch_skill(
 
     _atomic_write_text(target, new_content)
 
-    result = {
+    return {
         "success": True,
         "message": f"Patched {'SKILL.md' if not file_path else file_path} in skill '{name}' ({match_count} replacement{'s' if match_count > 1 else ''}).",
     }
-    # Include change previews for verbose notifications
-    result["_change"] = {
-        "old": old_string[:200] + ("…" if len(old_string) > 200 else ""),
-        "new": new_string[:200] + ("…" if len(new_string) > 200 else ""),
-    }
-    return result
 
 def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]:
     """Delete a skill.
@@ -476,8 +579,8 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
         target must exist on disk. Validated here so the model can't claim an
         umbrella that doesn't exist.
     """
-    existing = _find_skill(name)
-    if not existing:
+    skill_dir = _find_skill(name)
+    if not skill_dir:
         return {"success": False, "error": f"Skill '{name}' not found."}
 
     pinned_err = _pinned_guard(name)
@@ -502,7 +605,6 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
                 ),
             }
 
-    skill_dir = existing["path"]
     skills_root = _containing_skills_root(skill_dir)
     shutil.rmtree(skill_dir)
 
@@ -525,7 +627,7 @@ class SkillManage(BaseTool):
     description: str = (
         "Manage skills (create, update, delete). Skills are your procedural "
         "memory — reusable approaches for recurring task types. "
-        f"New skills go to {_AUTO_SKILLS_DIR.as_posix()}; existing skills can be modified wherever they live.\n\n"
+        f"New skills go to {AUTO_SKILLS_DIR.as_posix()}; existing skills can be modified wherever they live.\n\n"
         "Actions: create (full SKILL.md + optional category), "
         "patch (old_string/new_string — preferred for fixes), "
         "edit (full SKILL.md rewrite — major overhauls only), "
@@ -617,8 +719,7 @@ class SkillManage(BaseTool):
             # user-directed, and those skills belong to the user (the curator must
             # not touch them). Best-effort; telemetry failures never break the tool.
             try:
-                from tools.skill_usage import bump_patch, forget, mark_agent_created
-                from tools.skill_provenance import is_background_review
+                from tools.pub_base import bump_patch, forget, mark_agent_created, is_background_review
                 if action == "create":
                     if is_background_review():
                         mark_agent_created(name)
