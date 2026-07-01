@@ -86,10 +86,14 @@ class ReadFileTool(BaseTool):
 
         try:
             with resolved.open("r", encoding="utf-8", errors="replace") as f:
-                all_lines = f.readlines()
+                raw = f.read()
         except Exception as e:
             return json.dumps({"error": f"Failed to read file: {e}"}, ensure_ascii=False)
 
+        if raw.startswith("\ufeff"):
+            raw = raw[1:]
+
+        all_lines = raw.splitlines(keepends=True)
         total_lines = len(all_lines)
         offset = max(1, min(offset, total_lines + 1))
         limit = max(1, min(limit, 2000))
