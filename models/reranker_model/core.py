@@ -16,6 +16,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,7 +24,31 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from huggingface_hub import hf_hub_download
 
-from llama_cpp import llama_cpp as ll
+from config import ENV_PATH
+
+def _read_dotenv(key: str, default: str = "") -> str:
+    try:
+        text = ENV_PATH.read_text(encoding="utf-8")
+        for mobj in re.finditer(rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$', text, re.MULTILINE):
+            raw = mobj.group(1)
+            raw = raw.strip("\"'").strip()
+            if raw:
+                return raw
+    except Exception:
+        pass
+    return default
+
+
+def _is_local() -> bool:
+    raw = _read_dotenv("RERANKER_MODEL_LOCAL", "true").strip().lower()
+    return raw not in ("", "false", "0", "no")
+
+
+def _ll():
+    if not _is_local():
+        raise RuntimeError("RERANKER_MODEL_LOCAL=false, local llama_cpp is disabled")
+    from llama_cpp import llama_cpp as ll
+    return ll
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -285,6 +310,7 @@ class CrossEncoderGGUF:
             self._meta = _get_meta(self._model_path)
 
         # ── Load model ──────────────────────────────────────────────
+        ll = _ll()
         model_params = ll.llama_model_default_params()
         if use_gpu:
             model_params.n_gpu_layers = -1
@@ -428,6 +454,7 @@ class CrossEncoderGGUF:
         Uses ``llama_batch_get_one`` which avoids the per-token field
         assignment overhead of ``llama_batch_init``.
         """
+        ll = _ll()
         n_tokens = len(tokens)
         tok_arr = (ll.llama_token * n_tokens)(*tokens)
         tok_ptr = ctypes.cast(tok_arr, ctypes.POINTER(ll.llama_token))
@@ -466,6 +493,7 @@ class CrossEncoderGGUF:
         return ids
 
     def _tokenize(self, text: str) -> list[int]:
+        ll = _ll()
         """Tokenise *text* (no special tokens) and return a list of token ids."""
         text_bytes = text.encode("utf-8")
         text_len = len(text_bytes)
@@ -482,6 +510,7 @@ class CrossEncoderGGUF:
             False,   # parse_special
         )
         if n < 0:
+            ll = _ll()
             # Buffer too small — resize
             max_tokens = -n
             buf = (ll.llama_token * max_tokens)()
@@ -497,6 +526,7 @@ class CrossEncoderGGUF:
         return [buf[i] for i in range(n)]
 
     def close(self) -> None:
+        ll = _ll()
         """Release native resources."""
         if hasattr(self, "_ctx") and self._ctx is not None:
             try:
