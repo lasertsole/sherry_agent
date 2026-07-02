@@ -6,6 +6,7 @@ from langchain.agents import AgentState
 from typing import Any, Callable, Awaitable
 from langchain.agents.middleware.types import ResponseT
 from workspace.prompt_builder import build_system_prompt
+from runtime import state_register_db, state_register_mem
 from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, RemoveMessage
 from langchain.agents.middleware import SummarizationMiddleware, ModelRequest, ModelResponse, ExtendedModelResponse
 
@@ -33,23 +34,23 @@ class Summarization(SummarizationMiddleware):
             logger.error(err_text)
             raise RuntimeError(err_text)
 
-        state_mes_list_copy_without_system_mes: list[BaseMessage] = [m for m in state["messages"].copy() if not isinstance(m, SystemMessage)]
+        res: dict[str, Any] | None = await super().abefore_model(state, request.runtime)
 
-        copy_state: AgentState[Any] = state.copy()
-        copy_state["messages"] = state_mes_list_copy_without_system_mes
-
-        res: dict[str, Any] | None = await super().abefore_model(copy_state, request.runtime)
+        # No compression triggered: return directly to preserve prefix cache
         if res is None:
-            if request.system_message is None:
-                return await handler(request.override(system_message = SystemMessage(content = build_system_prompt())))
-
             return await handler(request)
+        # Compression triggered: prefix cache is already invalidated, refresh system prompt
+        else:
+            reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
 
-        reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
+            from tools import memory_store
+            memory_store.load_from_disk()
 
-        from tools import memory_store
-        memory_store.load_from_disk()
+            # Persist the system prompt to both in-memory and DB state stores
+            system_prompt: str = build_system_prompt()
+            state_register_mem.set_state(session_id, "system_prompt", system_prompt)
+            state_register_db.set_state(session_id, "system_prompt", system_prompt)
 
-        return await handler(
-            request.override(messages = reduce_messages, system_message = SystemMessage(content = build_system_prompt()))
-        )
+            return await handler(
+                request.override(messages = reduce_messages, system_message = SystemMessage(content = system_prompt))
+            )

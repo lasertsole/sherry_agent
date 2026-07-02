@@ -134,14 +134,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                 metadata: dict[str, Any] = chunk[1]
 
                 # Filter out outputs from non-model nodes in the lifecycle
-                if metadata.get("langgraph_node", None) != "model":
+                if metadata.get("langgraph_node", None) != "model" or metadata.get("lc_source") == "summarization":
                     continue
-
-                # Filter out summarization middleware outputs
-                if isinstance(msg_chunk, AIMessageChunk):
-                    additional_kwargs = getattr(msg_chunk, "additional_kwargs", {}) or {}
-                    if additional_kwargs.get("lc_source") == "summarization":
-                        continue
 
                 if isinstance(msg_chunk, AIMessageChunk):
                     # Tool call output logic

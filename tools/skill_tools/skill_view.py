@@ -1,11 +1,12 @@
 import json
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path
+from loguru import logger
 from typing import Any, Type
+from config import AUTO_SKILLS_DIR
 from pydantic import BaseModel, Field
 from typing_extensions import override
 from langchain_core.tools import BaseTool
-from loguru import logger
-from config import ROOT_DIR, AUTO_SKILLS_DIR
+from pathlib import PurePosixPath, PureWindowsPath
 from tools.pub_base import (
     sort_skills,
     find_auto_skills,
@@ -49,7 +50,7 @@ def _skill_lookup_path_error(name: str) -> str | None:
     return None
 
 
-def _is_skill_support_path(path) -> bool:
+def _is_skill_support_path(path: str | Path) -> bool:
     """Check if a path is under a skill support directory (references/templates/assets/scripts)."""
     try:
         parts = Path(path).parts if not isinstance(path, PurePosixPath) else path.parts

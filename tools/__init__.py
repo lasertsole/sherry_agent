@@ -1,7 +1,8 @@
+from langchain_core.tools import BaseTool
 from .file_tools import *
+from .skill_tools import *
 from typing import Callable
 from .mcp_plugin import build_mcp_tools
-from langchain_core.tools import BaseTool
 from .terminal import build_terminal_tool
 from .subagent import build_subagent_tool
 from .web_search import build_web_search_tool
@@ -30,6 +31,9 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool]] = [
     build_web_search_tool,
     build_terminal_tool,
     build_mcp_tools,
+    build_skill_manage_tool,
+    build_skill_list_tool,
+    build_skill_view_tool
 ]
 
 def build_main_tools() -> list[BaseTool]:

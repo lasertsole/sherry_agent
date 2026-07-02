@@ -1,20 +1,13 @@
-import asyncio
-from asyncio import Task
-
-from langgraph.runtime import Runtime
-from loguru import logger
 from langgraph.types import Command
-from langgraph.typing import ContextT
 from typing_extensions import override
-from context_engine import add_messages
+from runtime import state_register_mem
+from langchain.agents import create_agent
+from loguru import logger
 from typing import Callable, Awaitable, Any
+from langchain.agents.middleware import AgentMiddleware
+from runtime import state_register_db
 from langgraph.prebuilt.tool_node import ToolCallRequest
-from runtime import state_register_db, state_register_mem
-from pub_func import slice_last_turn, sanitize_tool_use_result_pairing
-from langchain_core.messages import BaseMessage, AIMessage, ToolMessage
-from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse, StateT
-from langchain.agents.middleware import AgentMiddleware, ModelResponse, ModelRequest
-
+from langchain_core.messages import BaseMessage, ToolMessage
 
 _MEMORY_REVIEW_PROMPT = (
     "Review the conversation above and consider saving to memory if appropriate.\n\n"
@@ -199,64 +192,13 @@ _COMBINED_REVIEW_PROMPT = (
     "and stop — but don't reach for that conclusion as a default."
 )
 
-class ContextEngineHook(AgentMiddleware):
-    def __init__(self):
-        super().__init__()
-        self.system_prompt: str = ""
+_NUDGE_ALLOWED_TOOLS: frozenset[str] = frozenset({
+    "skill_list", "skill_manage", "skill_view", "memory",
+})
 
-    async def _nudge_memory(self, session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
-        state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
-        try:
-            pass
-        finally:
-            state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
 
-    async def _nudge_skill(self, session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
-        state_register_mem.set_state(session_id, "nudge_review_skill_lock", True)
-        try:
-            pass
-        finally:
-            state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
-
-    async def _nudge_combined(self, session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
-        state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
-        state_register_mem.set_state("nudge_review_skill_lock", True)
-        try:
-            pass
-        finally:
-            state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
-            state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
-
+class _NudgeLimitTool(AgentMiddleware):
     @override
-    async def awrap_model_call(
-        self,
-        request: ModelRequest[ContextT],
-        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
-    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        state = request.state
-        session_id: str = state.get("session_id", "")
-        if session_id.strip() == "":
-            err_text: str = "Not pass session_id"
-            logger.error(err_text)
-            raise RuntimeError(err_text)
-
-        res: ModelResponse = await handler(request)
-
-        # set system_prompt
-        self.system_prompt: str = request.system_prompt
-
-        # Get the formatted message list of the last conversation turn
-        all_messages: list[BaseMessage] = state["messages"]
-        last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
-        format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
-
-        # Persist user messages to MesMemory
-        add_history_task: Task = asyncio.create_task(add_messages(session_id = session_id, messages=format_last_turn_messages))
-
-        await asyncio.gather(add_history_task)
-
-        return res
-
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -268,44 +210,56 @@ class ContextEngineHook(AgentMiddleware):
             logger.error(err_text)
             raise RuntimeError(err_text)
 
+        tool_name: str = request.tool_call.get("name", "unknown")
+
+        # Block tools not in the nudge whitelist
+        if tool_name not in _NUDGE_ALLOWED_TOOLS:
+            return ToolMessage(
+                content=(
+                    f"Tool [{tool_name}] is not allowed during nudge phase. "
+                    f"Only {sorted(_NUDGE_ALLOWED_TOOLS)} are permitted. "
+                    "Execution has been skipped. Please reconsider your approach."
+                ),
+                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                status="error",
+            )
+
         nudge_review_skill_count: int = state_register_db.get_state(session_id, "nudge_review_skill_count", 0) + 1
         state_register_db.set_state(session_id, "nudge_review_skill_count", nudge_review_skill_count)
         return await handler(request)
 
-    async def aafter_agent(
-        self, state: StateT, runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
-        session_id: str = state.get("session_id", "")
-        if session_id.strip() == "":
-            err_text: str = "Not pass session_id"
-            logger.error(err_text)
-            raise RuntimeError(err_text)
+async def _create_agent(system_prompt: str):
+    from models import main_llm
+    from agent import get_agent_tools
+    return create_agent(
+        model=main_llm,
+        system_prompt=system_prompt,
+        middleware=[_NudgeLimitTool()],
+        tools=get_agent_tools()
+    )
 
-        messages: list[BaseMessage] = state["messages"]
+async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
+    state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
+    try:
+        _agent = _create_agent(system_prompt)
+    finally:
+        state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
 
-        # nudge memory
-        nudge_review_memory_count: int = state_register_db.get_state(self.system_prompt, "nudge_review_memory_count", 0) + 1
-        nudge_review_skill_count: int = state_register_db.get_state(session_id, "nudge_review_skill_count", 0)
 
-        need_nudge_review_memory:bool = nudge_review_memory_count >= 10
-        need_nudge_skill_memory:bool = nudge_review_skill_count >= 10
+async def _nudge_skill(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
+    state_register_mem.set_state(session_id, "nudge_review_skill_lock", True)
+    try:
+        _agent = _create_agent(system_prompt)
+    finally:
+        state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
 
-        if need_nudge_skill_memory and need_nudge_review_memory:
-            state_register_db.set_state(session_id, "nudge_review_memory_count", 0)
-            state_register_db.set_state(session_id, "nudge_review_skill_count", 0)
 
-            await self._nudge_combined(session_id, self.system_prompt, messages)
-        else:
-            # nudge memory
-            if need_nudge_review_memory:
-                state_register_db.set_state(session_id, "nudge_review_memory_count", 0)
-                await self._nudge_memory(session_id, self.system_prompt, messages)
-            else:
-                state_register_db.set_state(session_id, "nudge_review_memory_count", nudge_review_memory_count)
-
-            # nudge skill
-            if need_nudge_skill_memory:
-                state_register_db.set_state(session_id, "nudge_review_skill_count", 0)
-                await self._nudge_skill(session_id, self.system_prompt, messages)
-
-        return None
+async def _nudge_combined(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
+    state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
+    state_register_mem.set_state("nudge_review_skill_lock", True)
+    try:
+        _agent = _create_agent(system_prompt)
+    finally:
+        state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
+        state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
