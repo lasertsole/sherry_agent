@@ -49,8 +49,8 @@ class ContextEngineHook(AgentMiddleware):
             logger.error(err_text)
             raise RuntimeError(err_text)
 
-        if request.system_prompt is None or request.system_prompt.strip() == "":
-            request = request.override(system_message = SystemMessage(content=self._get_and_reload_system_prompt(session_id)))
+        # using system prompt through cache which match session_id
+        request = request.override(system_message = SystemMessage(content=self._get_and_reload_system_prompt(session_id)))
 
         res: ModelResponse = await handler(request)
 

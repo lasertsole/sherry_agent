@@ -6,7 +6,7 @@ def build_agent_config(session_id: str, args: list[dict[str, Any]] | None = None
     try:
         config: RunnableConfig = {"configurable": {"thread_id": rand_str_to_int(session_id)}}
 
-        # 合并参数
+        # Merge additional arguments into the config
         if args is not None:
             for arg in args:
                 config.update(arg)

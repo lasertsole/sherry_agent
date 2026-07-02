@@ -1,8 +1,9 @@
 """
-判断一个字符串是否为 URL。
+Check whether a string is a URL.
 
-使用 urllib.parse 做严格 URL 解析 + 常见 scheme 白名单，
-避免了正则表达式常见的边界情况问题（过长输入 ReDoS、编码字符误判等）。
+Uses ``urllib.parse`` for strict URL parsing with a common scheme
+whitelist, avoiding regex edge cases (ReDoS on long input,
+misinterpreting encoded characters, etc.).
 
 Usage:
     from pub_func.validator.is_url import is_url
@@ -14,7 +15,7 @@ Usage:
 
 from urllib.parse import urlparse
 
-# 视为合法 URL 的 scheme 白名单
+# Scheme whitelist for valid URLs
 _VALID_SCHEMES = frozenset({
     "http",
     "https",
@@ -46,20 +47,20 @@ def is_url(value: str) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
 
-    # urllib.parse 能处理绝大部分畸形输入而不会抛异常，
-    # 唯一可能 raise 的是包含 NUL 字节的字符串
+    # urllib.parse handles most malformed input without throwing;
+    # the only thing that can raise ValueError is a NUL-byte in the string
     try:
         parsed = urlparse(value.strip())
     except ValueError:
         return False
 
-    # (1) scheme 必须在白名单内
+    # (1) scheme must be in the whitelist
     if parsed.scheme not in _VALID_SCHEMES:
         return False
 
-    # (2) 对于 http/https/ws/wss/ftp 等，必须有 netloc
+    # (2) http/https/ws/wss/ftp etc. must have a netloc
     if parsed.scheme in {"http", "https", "ftp", "ftps", "sftp", "ssh", "ws", "wss", "file"}:
         return bool(parsed.netloc)
 
-    # (3) mailto/tel/sms 只需要 scheme + path
+    # (3) mailto/tel/sms only need a scheme + path
     return bool(parsed.path)

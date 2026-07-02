@@ -1,12 +1,12 @@
 def escape_xml(s: str) -> str:
     """
-    XML 转义
+    XML escape.
 
     Args:
-        s: 原始字符串
+        s: Input string.
 
     Returns:
-        转义后的字符串
+        Escaped string.
     """
     return (
         s.replace('&', '&amp;')

@@ -64,7 +64,7 @@ _OVERLOADED_PATTERNS: tuple[str, ...] = (
 _CONTEXT_OVERFLOW_PATTERNS: tuple[str, ...] = (
     "context_length_exceeded", "context window", "max context",
     "too many tokens", "reduce the length", "maximum context length",
-    "token limit", "context length", "上下文长度",
+    "token limit", "context length", "context length",
 )
 
 _CONTENT_POLICY_PATTERNS: tuple[str, ...] = (

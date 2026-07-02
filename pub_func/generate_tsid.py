@@ -2,11 +2,11 @@ from datetime import datetime, timedelta
 
 def generate_tsid(days_offset: int = 0) -> str:
     """
-    生成时间戳 ID: YYYYMMDDHHmmss（如 202602260705）
-    同时作为可读时间和唯一标识
+    Generate a timestamp ID: YYYYMMDDHHmmss (e.g. 202602260705).
+    Serves as both a human-readable timestamp and a unique identifier.
 
     Args:
-        days_offset: 天数偏移量，0表示当前时间，-7表示7天前， 7表示7天后
+        days_offset: Day offset. 0 = now, -7 = 7 days ago, 7 = 7 days ahead.
     """
     now: datetime = datetime.now() + timedelta(days=days_offset)
     year = now.year

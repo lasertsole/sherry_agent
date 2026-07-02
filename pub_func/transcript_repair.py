@@ -3,7 +3,7 @@ Transcript Repair
 
 Tool use/result pairing repair for assembled context.
 
-裁剪消息后修复 tool_use/toolResult 配对，防止 agent 报 "Message ordering conflict"
+Repair tool_use/toolResult pairing after message trimming to prevent agent "Message ordering conflict" errors
 """
 
 import time
@@ -11,7 +11,7 @@ from typing import TypedDict, Any
 from langchain_core.messages import ToolMessage, AIMessage, BaseMessage
 
 class ToolCallLike(TypedDict):
-    """工具调用类型"""
+    """Tool-call type definition."""
     id: str
     name: str | None
     error: str | None
@@ -19,13 +19,13 @@ class ToolCallLike(TypedDict):
 
 def extract_tool_call_id(block: dict[str, Any]) -> str | None:
     """
-    从工具调用块中提取 ID
+    Extract the ID from a tool-call block.
 
     Args:
-        block: 工具调用字典
+        block: Tool-call dictionary.
 
     Returns:
-        工具调用 ID，如果不存在则返回 None
+        Tool-call ID, or None if not found.
     """
     if isinstance(block.get('id'), str) and block['id']:
         return block['id']
@@ -38,13 +38,13 @@ def extract_tool_call_id(block: dict[str, Any]) -> str | None:
 
 def extract_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
     """
-    从助手消息中提取工具调用列表
+    Extract tool-call entries from an assistant message.
 
     Args:
-        msg: 助手消息
+        msg: Assistant message.
 
     Returns:
-        工具调用列表
+        List of tool-call entries.
     """
     tool_calls = getattr(msg, "tool_calls", None)
 
@@ -71,13 +71,13 @@ def extract_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
 
 def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
     """
-    从助手消息中提取无效工具调用列表
+    Extract invalid tool-call entries from an assistant message.
 
     Args:
-        msg: 助手消息
+        msg: Assistant message.
 
     Returns:
-        工具调用列表
+        List of invalid tool-call entries.
     """
     invalid_tool_calls = getattr(msg, "invalid_tool_calls", None)
 
@@ -109,13 +109,13 @@ def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLi
 
 def extract_tool_result_id(msg: ToolMessage) -> str | None:
     """
-    从工具结果消息中提取 ID
+    Extract the tool-call ID from a tool-result message.
 
     Args:
-        msg: 工具结果消息
+        msg: Tool-result message.
 
     Returns:
-        工具调用 ID，如果不存在则返回 None
+        Tool-call ID, or None if not found.
     """
     tool_call_id = getattr(msg, "tool_call_id", None)
     if tool_call_id and isinstance(tool_call_id, str):
@@ -126,14 +126,14 @@ def extract_tool_result_id(msg: ToolMessage) -> str | None:
 
 def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) -> ToolMessage:
     """
-    创建缺失的工具结果消息
+    Create a placeholder tool-result message for a missing result.
 
     Args:
-        tool_call_id: 工具调用 ID
-        tool_name: 工具名称（可选）
+        tool_call_id: Tool-call ID.
+        tool_name: Tool name (optional).
 
     Returns:
-        虚拟的工具结果消息
+        A dummy ToolMessage indicating the result was missing.
     """
     return ToolMessage(
         name = tool_name or 'unknown',
@@ -146,22 +146,23 @@ def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) ->
 
 def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
-    修复工具调用和结果的配对关系
+    Repair tool-call / tool-result pairing.
 
-    裁剪消息后修复 tool_use/toolResult 配对，防止 agent 报 "Message ordering conflict"
+    Fixes tool_use/tool_result pairing after message trimming to prevent
+    "Message ordering conflict" errors from the agent.
 
     Args:
-        messages: 消息列表
+        messages: List of messages.
 
     Returns:
-        修复后的消息列表
+        Repaired message list.
     """
     out: list[BaseMessage] = []
     seen_tool_result_ids: set[str] = set()
     changed = False
 
     def push_tool_result(msg: ToolMessage) -> None:
-        """添加工具结果消息，避免重复"""
+        """Push a tool-result message, deduplicating by ID."""
         nonlocal changed
 
         result_id = extract_tool_result_id(msg)
@@ -180,7 +181,7 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
         msg = messages[i]
 
         if not isinstance(msg, AIMessage):
-            # 保留有内容的 ToolMessage，丢弃空内容的 ToolMessage
+            # Keep ToolMessages with content; drop empty ones
             if isinstance(msg, ToolMessage):
                 if msg.content:
                     out.append(msg)
@@ -192,22 +193,23 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
             i += 1
             continue
 
-        # 错误状态直接保留（但清空 invalid_tool_calls 以防被序列化为 OpenAI tool_calls）
+        # Keep error-status messages (but clear invalid_tool_calls to prevent serialisation as OpenAI tool_calls)
         raw_invalid_tool_calls = getattr(msg, "invalid_tool_calls", None)
         has_invalid = isinstance(raw_invalid_tool_calls, list) and len(raw_invalid_tool_calls) > 0
         invalid_tool_calls: list[ToolCallLike] = extract_invalid_tool_calls_from_assistant(msg)
 
         if getattr(msg, 'status', "") == "error" or has_invalid:
             if has_invalid:
-                # LangChain 会将 invalid_tool_calls 序列化为 tool_calls 发送给 API，
-                # 如果后面没有对应 ToolMessage 会触发 400 错误。历史 invalid 调用直接清除。
+                # LangChain serialises invalid_tool_calls as tool_calls for the API;
+                # if a corresponding ToolMessage is missing this triggers a 400 error.
+                # Historical invalid calls are simply cleared.
                 msg = msg.model_copy(update={"invalid_tool_calls": []})
                 changed = True
             out.append(msg)
             i += 1
             continue
 
-        # 提取工具调用
+        # Extract tool calls
         tool_calls = extract_tool_calls_from_assistant(msg)
 
         if not tool_calls:
@@ -219,7 +221,7 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
         span_results_by_id: dict[str, ToolMessage] = {}
         remainder: list[ToolMessage] = []
 
-        # 查找后续的工具结果
+        # Find subsequent tool results
         j = i + 1
         while j < len(messages):
             next_msg = messages[j]
@@ -249,13 +251,13 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
 
             j += 1
 
-        # 添加助手消息
+        # Add assistant message
         out.append(msg)
 
         if len(span_results_by_id)>0 and len(remainder)>0:
             changed = True
 
-        # 添加工具结果（现有的或虚拟的）
+        # Add tool results (existing or dummy)
         for call in tool_calls:
             existing = span_results_by_id.get(call['id'])
 
@@ -268,13 +270,13 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
                     tool_name=call.get('name'),
                 ))
 
-        # 添加剩余消息
+        # Add remaining messages
         for rem in remainder:
             out.append(rem)
 
         i = j
 
-    # 最终清理：移除孤立的 ToolMessage（没有对应 AIMessage.tool_calls 的）
+    # Final cleanup: remove orphaned ToolMessages (no corresponding AIMessage.tool_calls)
     cleaned: list[BaseMessage] = []
     active_tool_call_ids: set[str] = set()
 

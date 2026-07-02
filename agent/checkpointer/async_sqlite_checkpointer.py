@@ -8,7 +8,7 @@ from agent.checkpointer.thread_safe_checkpointer import (
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
-# 创建异步sqlite保存器
+# Create async sqlite checkpointer
 async def build_async_sqlite_checkpointer() -> ThreadSafeAsyncSqliteSaver:
     checkpoints_dir: Path = (SRC_DIR / "checkpoints").resolve()
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
@@ -23,9 +23,9 @@ async def build_async_sqlite_checkpointer() -> ThreadSafeAsyncSqliteSaver:
 
     return checkpointer
 
-# 删除指定session_id 的所有聊天记录
+# Delete all chat records for a given session_id
 async def delete_thread_history(session_id: str) -> None:
-    """删除指定 thread_id 的所有聊天记录（checkpoints + writes）。"""
+    """Delete all chat records (checkpoints + writes) for the given thread_id."""
     thread_id: int = rand_str_to_int(session_id)
 
     checkpoints_dir: Path = (SRC_DIR / "checkpoints").resolve()

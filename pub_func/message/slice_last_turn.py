@@ -35,12 +35,12 @@ def _truncate_msg(msg: BaseMessage)-> BaseMessage:
 
     return msg.model_copy(deep=True, update={"content": truncated_text})
 
-# ─── 取最后一轮完整用户对话 ─────────────────────────────────
+# ─── Take the last complete user turn ────────────────────────
 def slice_last_turn(messages: List[BaseMessage]) -> SliceLastNTurn:
     """
-        从最后一个 role=user 到消息末尾，完整保留。
-        tool_use/tool_result 天然配对不会切断。
-        超长 tool_result 截断（保头尾砍中间）。
+        From the last role=user to the end, kept intact.
+        tool_use/tool_result pairs are naturally preserved.
+        Oversized tool_result is truncated (head + tail, middle dropped).
     """
     return slice_last_n_turn(messages, 1)
 

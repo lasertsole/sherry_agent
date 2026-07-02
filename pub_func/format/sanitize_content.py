@@ -1,16 +1,16 @@
 import re
 
 def sanitize_content(content: str) -> str:
-    #"""去除括号内字符"""
+    #"""Remove content inside brackets"""
     res = re.sub(r'[（\\(].*?[）\\)]', ' ', content)
 
-    # 清除换行符和回车符，替换为空格，防止单词粘连
+    # Replace newlines / carriage returns with spaces to prevent word glueing
     res = re.sub(r'[\r\n]+', ' ', res)
 
-    # 清除缩进符（制表符 \t）和连续的空格
+    # Collapse tabs and consecutive spaces into a single space
     res = re.sub(r'[\t ]+', ' ', res)
 
-    # 去除思维链标签
+    # Strip chain-of-thought tags
     res = re.sub(r"<think>.*?</think>", "", res)
     res = re.sub(r"<thinking>.*?</thinking>", "", res)
 
