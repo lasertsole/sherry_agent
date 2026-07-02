@@ -2,10 +2,10 @@
 
 import yaml
 from typing import Any
-from config import ROOT_DIR, SKILLS_DIR
+from config import ROOT_DIR, SKILLS_DIR, AUTO_SKILLS_DIR
 
 
-def _parse_frontmatter(text: str) -> dict[str, Any]:
+def parse_frontmatter(text: str) -> dict[str, Any]:
     if not text.startswith("---"):
         return {}
     parts = text.split("---", 2)
@@ -31,7 +31,7 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
         seen_paths.add(skill_file)
 
         content = skill_file.read_text(encoding="utf-8")
-        meta = _parse_frontmatter(content)
+        meta = parse_frontmatter(content)
         name = str(meta.get("name", skill_file.parent.name))
         desc = str(meta.get("description", ""))
         rel = skill_file.relative_to(ROOT_DIR)

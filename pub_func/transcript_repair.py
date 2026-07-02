@@ -137,7 +137,7 @@ def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) ->
     """
     return ToolMessage(
         name = tool_name or 'unknown',
-        content = "[skill_memory] tool result missing after context trim.",
+        content = "tool result missing after context trim.",
         tool_call_id = tool_call_id,
         status = "error",
         additional_kwargs = {"timestamp": int(time.time() * 1000)}
