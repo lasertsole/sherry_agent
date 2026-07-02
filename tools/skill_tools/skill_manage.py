@@ -6,11 +6,11 @@ import shutil
 import tempfile
 from pathlib import Path
 from loguru import logger
-from config import AUTO_SKILLS_DIR
 from typing import Literal, Type, Any
 from pydantic import BaseModel, Field
 from typing_extensions import override
 from langchain_core.tools import BaseTool
+from config import AUTO_SKILLS_DIR, ROOT_DIR
 from tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
 from pub_func import atomic_replace, has_traversal_component, validate_within_dir
 
@@ -21,8 +21,6 @@ _VALID_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*$')
 # Subdirectories allowed for write_file/remove_file
 _ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets"}
 _MAX_SKILL_FILE_BYTES = 1_048_576    # 1 MiB per supporting file
-# Subdirectories allowed for write_file/remove_file
-ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets"}
 
 class SkillManageSchema(BaseModel):
     """Schema for skill_manage tool arguments."""
@@ -139,7 +137,7 @@ def _write_file(name: str, file_path: str, file_content: str) -> dict[str, Any]:
     }
 
 
-def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
+def _remove_file(name: str, file_path: str) -> dict[str, Any]:
     """Remove a supporting file from any skill directory."""
     err = _validate_file_path(file_path)
     if err:
@@ -155,7 +153,7 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
     if not target.exists():
         # List what's actually there for the model to see
         available = []
-        for subdir in ALLOWED_SUBDIRS:
+        for subdir in _ALLOWED_SUBDIRS:
             d = skill_dir / subdir
             if d.exists():
                 for f in d.rglob("*"):
@@ -231,46 +229,26 @@ def _resolve_skill_target(skill_dir: Path, file_path: str) -> tuple[Path | None,
         return None, error
     return target, None
 
-def _pinned_guard(name: str) -> str | None:
-    """Return a refusal message if *name* is pinned, else None.
-
-    Pin protects a skill from **deletion** — both the curator's auto-archive
-    passes and the agent's ``skill_manage(action="delete")`` tool call. The
-    agent can still patch/edit pinned skills; pin only guards against
-    irrecoverable loss, not against content evolution.
-
-    Best-effort: if the sidecar is unreadable we let the delete through
-    rather than block on a broken telemetry file.
-    """
-    try:
-        from tools import skill_usage
-        rec = skill_usage.get_record(name)
-        if rec.get("pinned"):
-            return (
-                f"Skill '{name}' is pinned and cannot be deleted by "
-                f"skill_manage. Ask the user to run "
-                f"`hermes curator unpin {name}` if they want to delete it. "
-                f"Patches and edits are allowed on pinned skills; only "
-                f"deletion is blocked."
-            )
-    except Exception:
-        logger.debug("pinned-guard lookup failed for %s", name, exc_info=True)
-    return None
-
 def _containing_skills_root(skill_path: Path) -> Path:
     """Return the skills root directory (local or external_dirs entry) that
     contains ``skill_path``.  Falls back to the local ``SKILLS_DIR`` if no
     match is found (defensive — callers should have located the skill via
     ``_find_skill`` first).
     """
-    from tools.pub_base import get_all_skills_dirs
 
     try:
         resolved = skill_path.resolve()
     except OSError:
         resolved = skill_path
 
-    for root in get_all_skills_dirs():
+    from tools.pub_base import get_all_auto_skills_dirs
+
+    try:
+        resolved = skill_path.resolve()
+    except OSError:
+        resolved = skill_path
+
+    for root in get_all_auto_skills_dirs():
         try:
             resolved.relative_to(root.resolve())
             return root
@@ -463,6 +441,10 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
 
 def _edit_skill(name: str, content: str) -> dict[str, Any]:
     """Replace the SKILL.md of any existing skill (full rewrite)."""
+    err = _validate_name(name)
+    if err:
+        return {"success": False, "error": err}
+
     err = _validate_frontmatter(content)
     if err:
         return {"success": False, "error": err}
@@ -579,13 +561,13 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
         target must exist on disk. Validated here so the model can't claim an
         umbrella that doesn't exist.
     """
+    err = _validate_name(name)
+    if err:
+        return {"success": False, "error": err}
+
     skill_dir = _find_skill(name)
     if not skill_dir:
         return {"success": False, "error": f"Skill '{name}' not found."}
-
-    pinned_err = _pinned_guard(name)
-    if pinned_err:
-        return {"success": False, "error": pinned_err}
 
     # Validate absorbed_into target when declared non-empty
     if absorbed_into is not None and isinstance(absorbed_into, str) and absorbed_into.strip():
@@ -627,7 +609,7 @@ class SkillManage(BaseTool):
     description: str = (
         "Manage skills (create, update, delete). Skills are your procedural "
         "memory — reusable approaches for recurring task types. "
-        f"New skills go to {AUTO_SKILLS_DIR.as_posix()}; existing skills can be modified wherever they live.\n\n"
+        f"New skills go to {AUTO_SKILLS_DIR.relative_to(ROOT_DIR)}; existing skills can be modified wherever they live.\n\n"
         "Actions: create (full SKILL.md + optional category), "
         "patch (old_string/new_string — preferred for fixes), "
         "edit (full SKILL.md rewrite — major overhauls only), "
@@ -708,8 +690,8 @@ class SkillManage(BaseTool):
 
         if result.get("success"):
             try:
-                from agent.prompt_builder import clear_skills_system_prompt_cache
-                clear_skills_system_prompt_cache(clear_snapshot=True)
+                from skills import build_skills_snapshot
+                build_skills_snapshot()
             except Exception:
                 pass
             # Curator telemetry: bump patch_count on edit/patch/write_file (the actions
@@ -751,7 +733,7 @@ class SkillManage(BaseTool):
         absorbed_into: str | None,
         **kwargs: Any
     ) -> Any:
-        return self._arun(
+        return self._run(
             action,
             name,
             content,
