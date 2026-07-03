@@ -22,6 +22,10 @@ class ContextEngineHook(AgentMiddleware):
         super().__init__()
 
     @staticmethod
+    def _is_lock(session_id: str)-> bool:
+        return state_register_mem.get_state(session_id, "nudge_review_memory_lock", False) or state_register_mem.get_state(session_id, "nudge_review_skill_lock", False)
+
+    @staticmethod
     def _get_and_reload_system_prompt(session_id)-> str:
         system_prompt = state_register_mem.get_state(session_id, "system_prompt", None)
 
@@ -96,27 +100,33 @@ class ContextEngineHook(AgentMiddleware):
 
         system_prompt: str = self._get_and_reload_system_prompt(session_id)
         # nudge memory
-        nudge_review_memory_count: int = state_register_db.get_state(system_prompt, "nudge_review_memory_count", 0) + 1
+        nudge_review_memory_count: int = state_register_db.get_state(session_id, "nudge_review_memory_count", 0) + 1
         nudge_review_skill_count: int = state_register_db.get_state(session_id, "nudge_review_skill_count", 0)
+
+        # if nudge is continute, skip this turn.
+        if self._is_lock(session_id):
+            state_register_db.set_state(session_id, "nudge_review_memory_count", nudge_review_memory_count)
+            return None
 
         need_nudge_review_memory:bool = nudge_review_memory_count >= 10
         need_nudge_skill_memory:bool = nudge_review_skill_count >= 10
 
         if need_nudge_skill_memory and need_nudge_review_memory:
+            # nudge memory
             state_register_db.set_state(session_id, "nudge_review_memory_count", 0)
             state_register_db.set_state(session_id, "nudge_review_skill_count", 0)
 
             await _nudge_combined(session_id, system_prompt, messages)
         else:
-            # nudge memory
             if need_nudge_review_memory:
+                # nudge memory and skill
                 state_register_db.set_state(session_id, "nudge_review_memory_count", 0)
                 await _nudge_memory(session_id, system_prompt, messages)
             else:
                 state_register_db.set_state(session_id, "nudge_review_memory_count", nudge_review_memory_count)
 
-            # nudge skill
             if need_nudge_skill_memory:
+                # nudge skill
                 state_register_db.set_state(session_id, "nudge_review_skill_count", 0)
                 await _nudge_skill(session_id, system_prompt, messages)
 
