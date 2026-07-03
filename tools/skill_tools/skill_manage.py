@@ -637,6 +637,7 @@ class SkillManage(BaseTool):
         "pitfalls come up; pin only guards against irrecoverable loss."
     )
     args_schema: Type[BaseModel] = SkillManageSchema
+    metadata: dict = {"idempotent": False, "nudge": True}
 
     @override
     def _run(

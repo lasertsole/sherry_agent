@@ -18,6 +18,7 @@ class SafeShellTool(ShellTool):
         super().__init__(root_dir=root_dir)
         # Detect system encoding (Windows typically uses GBK/codepage 936)
         self._encoding = locale.getpreferredencoding() or "utf-8"
+        self.metadata = {"idempotent": False}
 
 
     def _run(self, commands: str | list[str], **kwargs) -> str:

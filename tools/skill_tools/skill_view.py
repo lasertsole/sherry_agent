@@ -426,6 +426,7 @@ class SkillView(BaseTool):
         "To access those, call again with file_path parameter."
     )
     args_schema: Type[BaseModel] = SkillViewSchema
+    metadata: dict = {"idempotent": True, "nudge": True}
 
     @override
     def _run(self, name: str, file_path: str | None = None) -> str:

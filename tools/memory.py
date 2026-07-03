@@ -582,6 +582,7 @@ class MemoryTool(BaseTool):
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state."
     )
     args_schema: Type[BaseModel] = MemoryActionSchema
+    metadata: dict = {"idempotent": True, "nudge": True}
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)

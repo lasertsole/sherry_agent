@@ -169,6 +169,7 @@ class SearchFilesTool(BaseTool):
         "find files by name pattern (target='files'). "
         "Use file_glob to filter by extension when searching content."
     )
+    metadata: dict = {"idempotent": True}
 
     def _run(
         self,

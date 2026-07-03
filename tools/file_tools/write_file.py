@@ -48,4 +48,5 @@ def build_write_file_tool() -> WriteFileTool:
     tool = FormattedWriteFileTool(root_dir=str(ROOT_DIR))
     tool.handle_tool_error = True
     tool.name = "write_file"
+    tool.metadata = {"idempotent": False}
     return tool

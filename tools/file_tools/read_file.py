@@ -54,6 +54,7 @@ class ReadFileTool(BaseTool):
         "Read a file with pagination and line numbers. "
         "Use offset and limit to read specific sections of large files."
     )
+    metadata: dict = {"idempotent": True}
 
     def _run(
         self,

@@ -15,6 +15,7 @@ class SkillList(BaseTool):
     name: str = "skill_list"
     description: str = "List available skills (name + description). Use skill_view(name) to load full content."
     args_schema: Type[BaseModel] = SkillListSchema
+    metadata: dict = {"idempotent": True, "nudge": True}
 
     @override
     def _run(self, category: str | None):
