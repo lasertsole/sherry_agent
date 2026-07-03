@@ -193,11 +193,6 @@ _COMBINED_REVIEW_PROMPT = (
     "and stop — but don't reach for that conclusion as a default."
 )
 
-_NUDGE_ALLOWED_TOOLS: frozenset[str] = frozenset({
-    "skill_list", "skill_manage", "skill_view", "memory",
-})
-
-
 class _NudgeLimitTool(AgentMiddleware):
     @override
     async def awrap_tool_call(
@@ -213,12 +208,10 @@ class _NudgeLimitTool(AgentMiddleware):
 
         tool_name: str = request.tool_call.get("name", "unknown")
 
-        # Block tools not in the nudge whitelist
-        if tool_name not in _NUDGE_ALLOWED_TOOLS:
+        if not self._is_nudge_allowed(request.tool):
             return ToolMessage(
                 content=(
                     f"Tool [{tool_name}] is not allowed during nudge phase. "
-                    f"Only {sorted(_NUDGE_ALLOWED_TOOLS)} are permitted. "
                     "Execution has been skipped. Please reconsider your approach."
                 ),
                 tool_call_id=request.tool_call["id"],
@@ -227,6 +220,12 @@ class _NudgeLimitTool(AgentMiddleware):
             )
 
         return await handler(request)
+
+    @staticmethod
+    def _is_nudge_allowed(tool: Any) -> bool:
+        if tool is not None and isinstance(getattr(tool, "metadata", None), dict):
+            return bool(tool.metadata.get("nudge", False))
+        return False
 
 async def _create_nudge_agent(system_prompt: str):
     from models import main_llm
