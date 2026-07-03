@@ -1,10 +1,7 @@
-"""Per-agent iteration budget — thread-safe consume/refund counter.
+"""Per-agent iteration budget — consume/refund counter.
 
-Equivalent to hermes-agent's ``agent/iteration_budget.py``.
-
-Each agent instance (parent or subagent) holds an :class:`IterationBudget`;
-the parent's cap comes from ``max_iterations`` (default 50), each subagent's
-cap comes from ``subagent_max_iterations`` (default 30).
+Each agent instance holds an :class:`IterationBudget`;
+the cap comes from ``max_iterations`` (default 50).
 
 When the budget is exhausted the middleware returns a terminal
 ``AIMessage`` instead of calling the model, forcing the conversation to
@@ -13,14 +10,12 @@ a graceful stop.
 
 from __future__ import annotations
 
-import threading
-from typing import Any, Callable, Awaitable
-
 from loguru import logger
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
-from langgraph.prebuilt.tool_node import ToolCallRequest
 from typing_extensions import override
+from typing import Any, Callable, Awaitable
+from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ResponseT, ModelRequest, ModelResponse, ExtendedModelResponse
@@ -40,17 +35,14 @@ class IterationBudget(AgentMiddleware):
     max_iterations : int
         Maximum number of combined model-call + tool-call iterations allowed
         in a single turn.  Default **50**.
-    subagent_max_iterations : int
-        Budget for subagent delegations.  Default **30**.
     """
 
     _BUDGET_KEY = "iteration_budget"
     _USED_KEY = "iteration_budget_used"
 
-    def __init__(self, max_iterations: int = 50, subagent_max_iterations: int = 30):
+    def __init__(self, max_iterations: int = 50):
         super().__init__()
         self.max_iterations = max_iterations
-        self.subagent_max_iterations = subagent_max_iterations
 
     def _get_session_id(self, state: dict[str, Any]) -> str:
         session_id: str = state.get("session_id", "")
@@ -71,7 +63,7 @@ class IterationBudget(AgentMiddleware):
 
     @override
     async def abefore_agent(
-        self, state: AgentState, runtime: Runtime
+        self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
         session_id = self._get_session_id(state)
         state_register_mem.set_state(session_id, self._BUDGET_KEY, self.max_iterations)
@@ -89,9 +81,9 @@ class IterationBudget(AgentMiddleware):
         if not self._consume(session_id):
             remaining = self._remaining(session_id)
             logger.warning(
-                "IterationBudget exhausted for session %s (used=%d, max=%d). "
+                "IterationBudget exhausted for session %s (remaining=%d, max=%d). "
                 "Returning terminal message instead of calling model.",
-                session_id, self.max_iterations, self.max_iterations,
+                session_id, remaining, self.max_iterations,
             )
             return AIMessage(
                 content=(

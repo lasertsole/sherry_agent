@@ -49,17 +49,6 @@ class ToolCallGuardrailConfig:
     no_progress_block_after: int = 5
 
 
-IDEMPOTENT_TOOLS: set[str] = {
-    "read_file", "search_files", "web_search", "list_directory",
-    "get_file_content", "skill_view", "skills_list", "memory_search",
-}
-
-MUTATING_TOOLS: set[str] = {
-    "terminal", "write_file", "patch", "execute_code", "todo",
-    "memory", "skill_manage", "delegate_task",
-}
-
-
 @dataclass
 class _ToolCallRecord:
     name: str
@@ -74,6 +63,7 @@ class _TurnGuardrailState:
     exact_failure_counts: dict[str, int] = field(default_factory=dict)
     same_tool_failure_counts: dict[str, int] = field(default_factory=dict)
     no_progress_counts: dict[str, int] = field(default_factory=dict)
+    blocked_tools: set[str] = field(default_factory=set)
     halt_decision: GuardrailAction | None = None
 
 
@@ -87,24 +77,20 @@ class ToolGuardrails(AgentMiddleware):
     ----------
     config : ToolCallGuardrailConfig
         Tuning thresholds.  See :class:`ToolCallGuardrailConfig` defaults.
-    idempotent_tools : set[str] | None
-        Tool names that are read-only / side-effect-free.
-        Defaults to :data:`IDEMPOTENT_TOOLS`.
-    mutating_tools : set[str] | None
-        Tool names that modify state.
-        Defaults to :data:`MUTATING_TOOLS`.
     """
 
     def __init__(
         self,
         config: ToolCallGuardrailConfig | None = None,
-        idempotent_tools: set[str] | None = None,
-        mutating_tools: set[str] | None = None,
     ):
         super().__init__()
         self.config = config or ToolCallGuardrailConfig()
-        self.idempotent_tools = idempotent_tools if idempotent_tools is not None else IDEMPOTENT_TOOLS
-        self.mutating_tools = mutating_tools if mutating_tools is not None else MUTATING_TOOLS
+
+    def _is_idempotent(self, tool_name: str, tool: Any) -> bool:
+        if tool is not None and isinstance(getattr(tool, "metadata", None), dict):
+            if tool.metadata.get("idempotent") is not None:
+                return bool(tool.metadata["idempotent"])
+        return False
 
     def _get_session_id(self, state: dict[str, Any]) -> str:
         session_id: str = state.get("session_id", "")
@@ -131,10 +117,13 @@ class ToolGuardrails(AgentMiddleware):
         return hashlib.md5(content.encode()).hexdigest()
 
     def _evaluate(
-        self, gs: _TurnGuardrailState, tool_name: str, args_hash: str, result_hash: str | None, is_error: bool
+        self, gs: _TurnGuardrailState, tool_name: str, args_hash: str, result_hash: str | None, is_error: bool, is_idempotent: bool
     ) -> GuardrailAction:
         if gs.halt_decision is not None:
             return GuardrailAction.HALT
+
+        if tool_name in gs.blocked_tools:
+            return GuardrailAction.BLOCK
 
         action = GuardrailAction.ALLOW
 
@@ -160,7 +149,7 @@ class ToolGuardrails(AgentMiddleware):
             elif self.config.warnings_enabled and same_count >= self.config.same_tool_failure_warn_after and action == GuardrailAction.ALLOW:
                 action = GuardrailAction.WARN
         else:
-            if tool_name in self.idempotent_tools and result_hash is not None:
+            if is_idempotent and result_hash is not None:
                 for rec in reversed(gs.records):
                     if rec.name == tool_name and rec.result_hash == result_hash:
                         no_progress_key = f"{tool_name}:{result_hash}"
@@ -177,6 +166,8 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.HALT:
             gs.halt_decision = action
+        elif action == GuardrailAction.BLOCK:
+            gs.blocked_tools.add(tool_name)
 
         return action
 
@@ -206,7 +197,7 @@ class ToolGuardrails(AgentMiddleware):
 
     @override
     async def abefore_agent(
-        self, state: AgentState, runtime: Runtime
+        self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
         session_id = self._get_session_id(state)
         state_register_mem.set_state(session_id, _GUARDRAIL_STATE_KEY, _TurnGuardrailState())
@@ -224,9 +215,19 @@ class ToolGuardrails(AgentMiddleware):
         tool_args: dict[str, Any] = request.tool_call.get("args", {})
         args_hash = self._args_hash(tool_args)
 
+        is_idempotent = self._is_idempotent(tool_name, request.tool)
+
         if gs.halt_decision is not None:
             return ToolMessage(
                 content=self._halt_message(tool_name, "previous halt"),
+                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                status="error",
+            )
+
+        if tool_name in gs.blocked_tools:
+            return ToolMessage(
+                content=self._block_message(tool_name, "previously blocked", 0, 0),
                 tool_call_id=request.tool_call["id"],
                 name=tool_name,
                 status="error",
@@ -236,7 +237,7 @@ class ToolGuardrails(AgentMiddleware):
 
         is_error = getattr(result, "status", None) == "error"
         result_content = str(result.content) if result.content else ""
-        result_hash = self._result_hash(result_content) if not is_error and tool_name in self.idempotent_tools else None
+        result_hash = self._result_hash(result_content) if not is_error and is_idempotent else None
 
         gs.records.append(_ToolCallRecord(
             name=tool_name,
@@ -245,7 +246,7 @@ class ToolGuardrails(AgentMiddleware):
             result_hash=result_hash,
         ))
 
-        action = self._evaluate(gs, tool_name, args_hash, result_hash, is_error)
+        action = self._evaluate(gs, tool_name, args_hash, result_hash, is_error, is_idempotent)
         self._save_state(session_id, gs)
 
         if action == GuardrailAction.HALT:
@@ -260,18 +261,25 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.BLOCK:
             if is_error:
-                pathology = "exact failure repetition"
+                exact_key = f"{tool_name}:{args_hash}"
+                exact_count = gs.exact_failure_counts.get(exact_key, 0)
                 same_count = gs.same_tool_failure_counts.get(tool_name, 0)
-                limit = self.config.exact_failure_block_after
                 if same_count >= self.config.same_tool_failure_halt_after:
                     pathology = "same-tool failure accumulation"
                     limit = self.config.same_tool_failure_halt_after
+                    count = same_count
+                else:
+                    pathology = "exact failure repetition"
+                    limit = self.config.exact_failure_block_after
+                    count = exact_count
             else:
                 pathology = "idempotent no-progress"
+                no_progress_key = f"{tool_name}:{result_hash}" if result_hash else ""
+                count = gs.no_progress_counts.get(no_progress_key, 0)
                 limit = self.config.no_progress_block_after
 
             return ToolMessage(
-                content=self._block_message(tool_name, pathology, 0, limit),
+                content=self._block_message(tool_name, pathology, count, limit),
                 tool_call_id=request.tool_call["id"],
                 name=tool_name,
                 status="error",
@@ -294,9 +302,11 @@ class ToolGuardrails(AgentMiddleware):
                         same_count, self.config.same_tool_failure_halt_after,
                     )
             else:
+                no_progress_key = f"{tool_name}:{result_hash}" if result_hash else ""
+                np_count = gs.no_progress_counts.get(no_progress_key, 0)
                 warning = self._warning_message(
                     tool_name, "idempotent no-progress",
-                    0, self.config.no_progress_block_after,
+                    np_count, self.config.no_progress_block_after,
                 )
 
             result = ToolMessage(
