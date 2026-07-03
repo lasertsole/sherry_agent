@@ -251,7 +251,7 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.HALT:
             halt_msg = self._halt_message(tool_name, "excessive repetition")
-            logger.error("ToolGuardrails HALT: session=%s tool=%s", session_id, tool_name)
+            logger.error("ToolGuardrails HALT: session={} tool={}", session_id, tool_name)
             return ToolMessage(
                 content=halt_msg,
                 tool_call_id=request.tool_call["id"],

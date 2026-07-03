@@ -3,6 +3,7 @@ import re
 import yaml
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from loguru import logger
@@ -122,6 +123,9 @@ def _write_file(name: str, file_path: str, file_content: str) -> dict[str, Any]:
 
     skill_dir = _find_skill(name)
     if not skill_dir:
+        outside_err = _check_skill_outside_auto(name)
+        if outside_err:
+            return {"success": False, "error": outside_err}
         return {"success": False, "error": f"Skill '{name}' not found. Create it first with action='create'."}
 
     target, err = _resolve_skill_target(skill_dir, file_path)
@@ -145,6 +149,9 @@ def _remove_file(name: str, file_path: str) -> dict[str, Any]:
 
     skill_dir = _find_skill(name)
     if not skill_dir:
+        outside_err = _check_skill_outside_auto(name)
+        if outside_err:
+            return {"success": False, "error": outside_err}
         return {"success": False, "error": f"Skill '{name}' not found."}
 
     target, err = _resolve_skill_target(skill_dir, file_path)
@@ -178,10 +185,56 @@ def _remove_file(name: str, file_path: str) -> dict[str, Any]:
     }
 
 
+def _force_remove_tree(path: Path) -> None:
+    """Remove a directory tree, with Windows-reserved filename fallback.
+
+    ``shutil.rmtree`` fails on Windows for directory entries whose names
+    are pure-dot segments longer than 1 (e.g. ``....``), because Windows
+    resolves those as aliases for the parent directory.  When the normal
+    Python path fails, fall back to ``cmd /c rd /s /q``.
+    """
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        if os.name != "nt":
+            raise
+        # Windows-only fallback: cmd /c rd /s /q handles reserved names
+        logger.warning("shutil.rmtree failed for '{}'; falling back to cmd rd", path)
+        result = subprocess.run(
+            ["cmd", "/c", "rd", "/s", "/q", str(path)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise OSError(
+                f"Failed to remove '{path}' even with cmd fallback: "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            ) from None
+
+
 def _find_skill(name: str) -> Path | None:
     for skill_md in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
         if skill_md.parent.name == name:
             return skill_md.parent
+    return None
+
+def _check_skill_outside_auto(name: str) -> str | None:
+    """Check if a skill with the given name exists outside the auto directory.
+    
+    Returns an error message if found outside auto/, or None if not found anywhere.
+    """
+    from config import SKILLS_DIR
+    
+    for sub_dir_name in ["builtin", "plugins"]:
+        search_dir = SKILLS_DIR / sub_dir_name
+        if search_dir and search_dir.exists():
+            for skill_md in search_dir.glob("**/SKILL.md"):
+                if skill_md.parent.name == name:
+                    return (
+                        f"Skill '{name}' exists under '{sub_dir_name}/' but "
+                        f"skill_manage can only operate on skills under '{AUTO_SKILLS_DIR.name}/'. "
+                        f"Use skill_manage to manage auto/ skills only."
+                    )
     return None
 
 def _resolve_skill_dir(name: str, category: str = None) -> Path:
@@ -364,7 +417,7 @@ def _validate_file_path(file_path: str) -> str | None:
     # exception below can never be reached by a traversal-laden path).
 
     if has_traversal_component(file_path):
-        return "Path traversal ('..') is not allowed."
+        return "Path traversal (e.g. '..' or '...') is not allowed."
 
     # SKILL.md is the canonical skill file and lives at the skill root, not
     # under an allowed subdirectory. Accept its two natural spellings —
@@ -455,6 +508,9 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
 
     skill_dir: Path | None = _find_skill(name)
     if not skill_dir:
+        outside_err = _check_skill_outside_auto(name)
+        if outside_err:
+            return {"success": False, "error": outside_err}
         return {"success": False, "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'"}
 
     skill_md = skill_dir / "SKILL.md"
@@ -486,6 +542,9 @@ def _patch_skill(
 
     skill_dir = _find_skill(name)
     if not skill_dir:
+        outside_err = _check_skill_outside_auto(name)
+        if outside_err:
+            return {"success": False, "error": outside_err}
         return {"success": False, "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'"}
 
     if file_path:
@@ -567,6 +626,9 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
 
     skill_dir = _find_skill(name)
     if not skill_dir:
+        outside_err = _check_skill_outside_auto(name)
+        if outside_err:
+            return {"success": False, "error": outside_err}
         return {"success": False, "error": f"Skill '{name}' not found."}
 
     # Validate absorbed_into target when declared non-empty
@@ -588,7 +650,7 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
             }
 
     skills_root = _containing_skills_root(skill_dir)
-    shutil.rmtree(skill_dir)
+    _force_remove_tree(skill_dir)
 
     # Clean up empty category directories (don't remove the skills root itself)
     parent = skill_dir.parent
@@ -609,7 +671,11 @@ class SkillManage(BaseTool):
     description: str = (
         "Manage skills (create, update, delete). Skills are your procedural "
         "memory — reusable approaches for recurring task types. "
-        f"New skills go to {AUTO_SKILLS_DIR.relative_to(ROOT_DIR)}; existing skills can be modified wherever they live.\n\n"
+        f"New skills go to {AUTO_SKILLS_DIR.relative_to(ROOT_DIR)}/<skill-name>/; "
+        f"if you pass `category` (e.g. 'devops'), the path becomes {AUTO_SKILLS_DIR.relative_to(ROOT_DIR)}/<category>/<skill-name>/.\n\n"
+        "IMPORTANT: This tool can ONLY operate on skills under the "
+        f"'{AUTO_SKILLS_DIR.name}/' directory. Skills in 'builtin/' or 'plugins/' "
+        "are read-only and cannot be modified or deleted through this tool.\n\n"
         "Actions: create (full SKILL.md + optional category), "
         "patch (old_string/new_string — preferred for fixes), "
         "edit (full SKILL.md rewrite — major overhauls only), "

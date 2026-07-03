@@ -101,6 +101,7 @@ async def _arun_task(
 
             from tools import build_main_tools
             from agent.middlewares import ToolCallNormalize
+            from agent.middlewares.iteration_budget import IterationBudget
 
             agent: CompiledStateGraph = create_agent(
                 system_prompt=system_prompt,
@@ -116,6 +117,7 @@ async def _arun_task(
                     ),
                     # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
                     ToolCallNormalize(),
+                    IterationBudget(),
                 ],
                 response_format=SubAgentOutput
             )

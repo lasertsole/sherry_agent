@@ -72,9 +72,9 @@ Built on **Python 3.13**, with the following core technologies:
 EMA_AI_agent/
 ├── agent/                  # Agent core logic & middleware
 │   ├── core.py             # Main agent loop (LangGraph compiled graph)
-│   ├── middlewares/        # Middlewares: ContextEngineHook, Summarization,
-│   │                       #   ToolLoopPrevention, ToolCallNormalize,
-│   │                       #   ToolTimeout, MultimodalProcessor
+│   ├── middlewares/        # Middlewares: Summarization, ToolCallNormalize,
+│   │                       #   ToolGuardrails, ToolTimeout, IterationBudget,
+│   │                       #   MultimodalProcessor, ContextEngineHook
 │   └── checkpointer/       # Session state checkpointing
 │
 ├── bus/                    # Message bus (async queue)
@@ -255,6 +255,7 @@ Each major subsystem has its own detailed README:
 | **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
 | **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
 | **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
+| **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 
 ---
 

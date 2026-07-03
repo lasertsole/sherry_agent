@@ -1,11 +1,10 @@
-from loguru import logger
 from langgraph.types import Command
-from runtime import state_register_db
 from typing_extensions import override
 from runtime import state_register_mem
 from langchain.agents import create_agent
 from typing import Callable, Awaitable, Any
 from langchain_core.messages import HumanMessage
+from langchain.agents.middleware import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages import BaseMessage, ToolMessage
@@ -200,12 +199,6 @@ class _NudgeLimitTool(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        session_id: str = request.state.get("session_id", "")
-        if session_id.strip() == "":
-            err_text: str = "Not pass session_id"
-            logger.error(err_text)
-            raise RuntimeError(err_text)
-
         tool_name: str = request.tool_call.get("name", "unknown")
 
         if not self._is_nudge_allowed(request.tool):
@@ -227,13 +220,20 @@ class _NudgeLimitTool(AgentMiddleware):
             return bool(tool.metadata.get("nudge", False))
         return False
 
+class StateSchema(AgentState):
+    """Agent state that preserves an ``session_id``."""
+    session_id: str
+
 async def _create_nudge_agent(system_prompt: str):
     from models import main_llm
     from agent import get_agent_tools
+    from agent.middlewares import ToolGuardrails, IterationBudget
+
     return create_agent(
         model=main_llm,
+        state_schema=StateSchema,
         system_prompt=system_prompt,
-        middleware=[_NudgeLimitTool()],
+        middleware=[_NudgeLimitTool(), ToolGuardrails(), IterationBudget()],
         tools=get_agent_tools()
     )
 

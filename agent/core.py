@@ -7,7 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 from agent.checkpointer import build_async_sqlite_checkpointer
 from tools import memory_store, build_main_tools, build_subagent_tool
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
-from .middlewares import Summarization, ToolLoopPrevention, ToolCallNormalize, MultimodalProcessor, ToolTimeout, ContextEngineHook
+from .middlewares import Summarization, ToolCallNormalize, MultimodalProcessor, ToolTimeout, ContextEngineHook, ToolGuardrails, IterationBudget
 
 
 # ── Extended state schema ────────────────────────────────────────────────
@@ -57,6 +57,10 @@ async def built_agent(
             middleware = [
                 ContextEngineHook(),
                 MultimodalProcessor(),
+                IterationBudget(90),
+                ToolGuardrails(),
+                ToolCallNormalize(),
+                ToolTimeout(),
                 Summarization(
                     model=auxiliary_llm,
                     trigger=[
@@ -67,9 +71,6 @@ async def built_agent(
                     keep=("messages", 10),
 
                 ),
-                ToolLoopPrevention(),
-                ToolCallNormalize(),
-                ToolTimeout()
             ],
         )
 

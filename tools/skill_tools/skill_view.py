@@ -2,14 +2,13 @@ import json
 from pathlib import Path
 from loguru import logger
 from typing import Any, Type
-from config import AUTO_SKILLS_DIR
+from config import SKILLS_DIR
 from pydantic import BaseModel, Field
 from typing_extensions import override
 from langchain_core.tools import BaseTool
 from pathlib import PurePosixPath, PureWindowsPath
 from tools.pub_base import (
     sort_skills,
-    find_auto_skills,
     parse_frontmatter,
     iter_skill_index_files,
     skill_matches_platform,
@@ -46,7 +45,7 @@ def _skill_lookup_path_error(name: str) -> str | None:
     ):
         return "Skill name must be a relative path within the skills directory."
     if has_traversal_component(candidate):
-        return "Skill name cannot contain '..' path traversal components."
+        return "Skill name cannot contain path traversal components (e.g. '..' or '...')."
     return None
 
 
@@ -75,10 +74,9 @@ def _parse_tags(tags_value) -> list[str]:
 
 def _get_category_from_path(skill_path) -> str | None:
     try:
-        rel_path = skill_path.relative_to(AUTO_SKILLS_DIR)
-        parts = rel_path.parts
-        if len(parts) >= 3:
-            return parts[0]
+        rel_path = skill_path.relative_to(SKILLS_DIR)
+        if len(rel_path.parts) >= 1:
+            return rel_path.parts[0]
     except (ValueError, Exception):
         pass
     return None
@@ -97,7 +95,7 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
                 ensure_ascii=False,
             )
 
-        if not AUTO_SKILLS_DIR.exists():
+        if not SKILLS_DIR.exists():
             return json.dumps(
                 {
                     "success": False,
@@ -123,7 +121,7 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
             candidates.append((sd, smd))
 
         # Strategy 1: direct path
-        direct_path = AUTO_SKILLS_DIR / name
+        direct_path = SKILLS_DIR / name
         if (
             not _is_skill_support_path(direct_path)
             and direct_path.is_dir()
@@ -136,7 +134,7 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
             _record(None, direct_path.with_suffix(".md"))
 
         # Strategy 2: recursive by directory name + frontmatter name
-        for found_skill_md in iter_skill_index_files(AUTO_SKILLS_DIR, "SKILL.md"):
+        for found_skill_md in iter_skill_index_files(SKILLS_DIR, "SKILL.md"):
             if any(part in EXCLUDED_SKILL_DIRS for part in found_skill_md.parts):
                 continue
             if found_skill_md.parent.name == name:
@@ -151,7 +149,7 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
                 _record(found_skill_md.parent, found_skill_md)
 
         # Strategy 3: legacy flat <name>.md
-        for found_md in AUTO_SKILLS_DIR.rglob(f"{name}.md"):
+        for found_md in SKILLS_DIR.rglob(f"{name}.md"):
             if found_md.name != "SKILL.md" and not _is_skill_support_path(found_md):
                 _record(None, found_md)
 
@@ -178,7 +176,8 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
             skill_dir, skill_md = candidates[0]
 
         if not skill_md or not skill_md.exists():
-            available = [s["name"] for s in sort_skills(find_auto_skills())[:20]]
+            from skills.loader import scan_skills
+            available = [s["name"] for s in sort_skills(scan_skills())[:20]]
             return json.dumps(
                 {
                     "success": False,
@@ -372,7 +371,7 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
             linked_files["scripts"] = script_files
 
         try:
-            rel_path = str(skill_md.relative_to(AUTO_SKILLS_DIR))
+            rel_path = str(skill_md.relative_to(SKILLS_DIR))
         except ValueError:
             rel_path = str(skill_md.relative_to(skill_md.parent.parent)) if skill_md.parent.parent else skill_md.name
 

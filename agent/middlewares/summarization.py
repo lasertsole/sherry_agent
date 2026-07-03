@@ -116,7 +116,7 @@ class Summarization(SummarizationMiddleware):
         attempts: int = state_register_mem.get_state(session_id, _COMPRESSION_COUNT_KEY, 0)
         if attempts >= _MAX_COMPRESSION_ATTEMPTS:
             logger.info(
-                "Summarization: max compression attempts (%d) reached for session %s.",
+                "Summarization: max compression attempts ({}) reached for session {}.",
                 _MAX_COMPRESSION_ATTEMPTS, session_id,
             )
             return True

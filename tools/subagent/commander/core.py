@@ -4,8 +4,8 @@ from models import main_llm
 from config import SESSIONS_DIR
 from ..type import SubAgentOutput
 from langchain.agents import create_agent
-from langchain.agents.middleware import AgentState
 from langchain_core.tools import BaseTool
+from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from .tools import build_todo_writer_tool, build_worker_tool
@@ -173,8 +173,7 @@ def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
     worker_tool: BaseTool = build_worker_tool(task_id)
 
     # lazy import to avoid circular dependency: subagent -> agent -> tools -> subagent
-    from agent.middlewares.tool_call_normalize import ToolCallNormalize
-
+    from agent.middlewares import ToolCallNormalize, IterationBudget, ToolGuardrails
     # Create InMemorySaver here so its internal lock binds to the
     # event loop that is active when build_commander is called
     # (the subagent's dedicated loop), avoiding "bound to a different
@@ -196,6 +195,8 @@ def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
             todo_cleaner_builder(session_id, task_id),
             # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
             ToolCallNormalize(),
+            IterationBudget(),
+            ToolGuardrails()
         ],
         response_format=SubAgentOutput
     )

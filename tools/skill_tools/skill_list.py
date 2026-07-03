@@ -4,9 +4,8 @@ from pydantic import BaseModel, Field
 from tools.pub_base import sort_skills
 from typing_extensions import override
 from langchain_core.tools import BaseTool
-from config import ROOT_DIR, AUTO_SKILLS_DIR
-
-relative_path = AUTO_SKILLS_DIR.relative_to(ROOT_DIR)
+from config import ROOT_DIR, SKILLS_DIR
+relative_path = SKILLS_DIR.relative_to(ROOT_DIR)
 
 class SkillListSchema(BaseModel):
     category: str | None = Field(description="Optional category filter to narrow results.", default = None)
@@ -20,21 +19,20 @@ class SkillList(BaseTool):
     @override
     def _run(self, category: str | None):
         try:
-            if not AUTO_SKILLS_DIR.exists():
-                AUTO_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+            if not SKILLS_DIR.exists():
                 return json.dumps(
                     {
                         "success": True,
                         "skills": [],
                         "categories": [],
-                        "message": f"No skills found. Skills directory created at {relative_path}",
+                        "message": f"Skills directory not found at {relative_path}",
                     },
                     ensure_ascii=False,
                 )
 
             # Find all skills
-            from tools.pub_base import find_auto_skills
-            all_skills = find_auto_skills()
+            from skills.loader import scan_skills
+            all_skills = scan_skills(use_cache=False)
 
             if not all_skills:
                 return json.dumps(
@@ -42,7 +40,7 @@ class SkillList(BaseTool):
                         "success": True,
                         "skills": [],
                         "categories": [],
-                        "message": "No skills found in {relative_path} directory.",
+                        "message": f"No skills found in {relative_path} directory.",
                     },
                     ensure_ascii=False,
                 )
