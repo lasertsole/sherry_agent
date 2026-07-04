@@ -31,7 +31,7 @@ def build_system_prompt(selected_file_names: list[str] | None = None, selected_s
         file_paths = [_read_text(WORKSPACE_DIR / f) for f in selected_file_names]
 
     else:
-        from tools import memory_store
+        from agent.tools import memory_store
 
         file_paths = [
             *[_read_text(WORKSPACE_DIR / f) for f in ALL_SYSTEM_FILE_NAMES],

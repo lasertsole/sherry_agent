@@ -31,7 +31,7 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 - **SKILL.md Standard**: Skills defined in standardized Markdown format — the Agent can autonomously read and learn new abilities
 - **Tool Calling**: Built-in Web search, file I/O, code execution (Python Repl), terminal commands, message search, and more
 - **Subagents**: Supports running complex time-consuming tasks in parallel in the background, with async results via a message bus
-- ▶️ _See the [Subagent System README](tools/subagent/README.md) for lifecycle, Commander architecture, and API docs_
+- ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for lifecycle, Commander architecture, and API docs_
 
 ### 3. 🌐 Multi-Channel Access
 - **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
@@ -250,7 +250,7 @@ Each major subsystem has its own detailed README:
 | **Context Engine** | Dual memory system (MesMemory + Skill Memory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
 | **MesMemory** | Short-term session message memory | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
 | **Skill Memory** | Long-term knowledge graph memory | [EN](context_engine/skill_memory/README.md) · [ZH](context_engine/skill_memory/README.zh.md) |
-| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](tools/subagent/README.md) · [ZH](tools/subagent/README.zh.md) |
+| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
 | **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |

@@ -118,6 +118,9 @@ class CountCallRegister(Register):
         return True
 
     def clear_session(self, session_id: str):
+        if session_id not in self.session_id_to_counter:
+            logger.warning(f"session_id {session_id} not found in count_call_register")
+            return
         del self.session_id_to_counter[session_id]
         del self.session_id_to_trigger[session_id]
 

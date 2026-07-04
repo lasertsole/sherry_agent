@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import override
 from langchain_core.tools import BaseTool
 from pathlib import PurePosixPath, PureWindowsPath
-from tools.pub_base import (
+from agent.tools.pub_base import (
     sort_skills,
     parse_frontmatter,
     iter_skill_index_files,

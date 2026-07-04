@@ -207,7 +207,7 @@ class Summarization(SummarizationMiddleware):
 
         self._record_compression(session_id, original_messages, reduce_messages)
 
-        from tools import memory_store
+        from agent.tools import memory_store
         memory_store.load_from_disk()
 
         system_prompt: str = build_system_prompt()

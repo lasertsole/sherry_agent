@@ -11,7 +11,7 @@ from channels import BaseChannel, channel_manager
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
-from tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
+from agent.tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
 
 tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 

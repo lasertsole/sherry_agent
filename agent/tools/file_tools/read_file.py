@@ -6,7 +6,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from tools.pub_base import resolve_path
+from agent.tools.pub_base import resolve_path
 
 
 class ReadFileInput(BaseModel):

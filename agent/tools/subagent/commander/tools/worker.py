@@ -99,7 +99,7 @@ async def _arun_task(
                 _build_worker_prompt()
                 + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
-            from tools import build_main_tools
+            from agent.tools import build_main_tools
             from agent.middlewares import ToolCallNormalize
             from agent.middlewares.iteration_budget import IterationBudget
 

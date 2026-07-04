@@ -10,14 +10,13 @@ actual indentation pattern.
 """
 import difflib
 import json
-import re
 from difflib import SequenceMatcher
 from typing import Optional, Type
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-from tools.pub_base import resolve_path, fuzzy_find_and_replace
+from agent.tools.pub_base import resolve_path, fuzzy_find_and_replace
 
 # ── Diff helper ──────────────────────────────────────────────────────────
 

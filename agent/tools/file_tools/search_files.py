@@ -17,7 +17,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from tools.pub_base import is_text_file, resolve_path, should_skip_dir
+from agent.tools.pub_base import is_text_file, resolve_path, should_skip_dir
 
 
 # ── Content search (grep-like) ───────────────────────────────────────────
