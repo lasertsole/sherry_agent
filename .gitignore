@@ -9,3 +9,5 @@ logs/output
 *.db-wal
 model_weight/
 workspace/
+skills/auto
+**/wiki/
