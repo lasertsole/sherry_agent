@@ -148,7 +148,7 @@ async def _arun_task(
         return result
 
     except asyncio.TimeoutError:
-        logger.error("Subagent [%s] timed out after %s minutes", label, timeout_mins)
+        logger.error("Subagent [{}] timed out after {} minutes", label, timeout_mins)
         return render_template_file(
             file_path=(_template_dir / "subagent_announce.md").resolve().as_posix(),
             variables={

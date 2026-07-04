@@ -19,7 +19,7 @@ class Register(ABC):
     @final
     def clear_all_register_sessions(cls, session_id: str) -> None:
         for subclass in cls.__subclasses__():
-            if subclass._instance is not None:
+            if subclass in cls._instances and cls._instances[subclass] is not None:
                 instance = subclass()
                 instance.clear_session(session_id)
 

@@ -1,3 +1,4 @@
+from loguru import logger
 from langgraph.types import Command
 from typing_extensions import override
 from runtime import state_register_mem
@@ -241,7 +242,8 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
     state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
     try:
         _agent = await _create_nudge_agent(system_prompt)
-        await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_MEMORY_REVIEW_PROMPT)]})
+        res = await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_MEMORY_REVIEW_PROMPT)]})
+        logger.info("nudge memory res is {}", res["messages"][-1])
     finally:
         state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
 
@@ -250,7 +252,8 @@ async def _nudge_skill(session_id: str, system_prompt: str, messages: list[BaseM
     state_register_mem.set_state(session_id, "nudge_review_skill_lock", True)
     try:
         _agent = await _create_nudge_agent(system_prompt)
-        await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_SKILL_REVIEW_PROMPT)]})
+        res = await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_SKILL_REVIEW_PROMPT)]})
+        logger.info("nudge skill res is {}", res["messages"][-1])
     finally:
         state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
 
@@ -260,7 +263,9 @@ async def _nudge_combined(session_id: str, system_prompt: str, messages: list[Ba
     state_register_mem.set_state(session_id, "nudge_review_skill_lock", True)
     try:
         _agent = await _create_nudge_agent(system_prompt)
-        await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_COMBINED_REVIEW_PROMPT)]})
+        res = await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_COMBINED_REVIEW_PROMPT)]})
+        logger.info("nudge combined res is {}", res["messages"][-1])
     finally:
+        state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
         state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
         state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
