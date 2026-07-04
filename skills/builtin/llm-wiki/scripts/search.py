@@ -108,8 +108,8 @@ def lint_wiki() -> dict:
                 outbound_links[rel_path].add(target)
                 inbound_links[target].add(rel_path)
 
-            # 检查frontmatter
-            if content.startswith("---"):
+            # 检查frontmatter（跳过raw/目录，raw使用自己的frontmatter格式）
+            if not rel_path.startswith("raw") and content.startswith("---"):
                 parts = content.split("---", 2)
                 if len(parts) >= 3:
                     fm = parts[1]
@@ -132,8 +132,10 @@ def lint_wiki() -> dict:
         except Exception as e:
             report["errors"].append(f"Failed to process {rel_path}: {e}")
 
-    # 孤儿页面：没有入链的页面
+    # 孤儿页面：没有入链的页面（跳过raw/目录）
     for page in all_md_files:
+        if page.startswith("raw"):
+            continue
         page_name = Path(page).stem
         if page_name not in inbound_links:
             report["orphan_pages"].append(page)

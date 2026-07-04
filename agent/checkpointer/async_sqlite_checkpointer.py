@@ -5,7 +5,6 @@ from pub_func import rand_str_to_int
 from agent.checkpointer.thread_safe_checkpointer import (
     ThreadSafeAsyncSqliteSaver,
 )
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
 # Create async sqlite checkpointer
