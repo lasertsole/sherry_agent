@@ -6,6 +6,7 @@ from typing import Any
 from loguru import logger
 from config import SRC_DIR
 from pub_func import is_url
+from typing_extensions import override
 
 # Magic byte signatures → file extension
 # Ordered by specificity (more bytes = earlier check)
@@ -87,7 +88,10 @@ class MultimodalProcessor(AgentMiddleware):
             return "\n".join(texts)
         return ""
 
-    async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+    # ------------------------------------------------------------------
+    # before_agent implementation (shared by sync + async)
+    # ------------------------------------------------------------------
+    def _before_agent_impl(self, state: AgentState) -> None:
         session_id: str = state.get("session_id", "")
         if session_id.strip() == "":
             err_text: str = "Not pass session_id"
@@ -98,12 +102,12 @@ class MultimodalProcessor(AgentMiddleware):
         last_mes: BaseMessage = state_mes_list[-1]
 
         if not isinstance(last_mes, HumanMessage):
-            return None
+            return
 
         content: str | dict[str, Any] | list[dict[str, Any]] = getattr(last_mes, "content", None)
 
         if not isinstance(content, list):
-            return None
+            return
 
         text_dict: dict[str, Any] | None = None
         image_path_list: list[str] = []
@@ -160,7 +164,7 @@ class MultimodalProcessor(AgentMiddleware):
                         audio_path_list.append(url)
 
                 elif item.get("type") == "audio_bytes":
-                    audio_bytes:bytes = item.get("audio_bytes")
+                    audio_bytes: bytes = item.get("audio_bytes")
                     if audio_bytes is None:
                         logger.error("Audio bytes is None!")
                         continue
@@ -198,13 +202,13 @@ class MultimodalProcessor(AgentMiddleware):
             text_dict = {"type": "text", "text": ""}
 
         if len(image_path_list) > 0:
-            text_dict["text"] += f"[System: The user uploaded {len(image_path_list)} image(s). Location: {",".join(image_path_list)}. If you need to view the image(s), use the image_to_text skill.]"
+            text_dict["text"] += f"[System: The user uploaded {len(image_path_list)} image(s). Location: {','.join(image_path_list)}. If you need to view the image(s), use the image_to_text skill.]"
 
         if len(audio_path_list) > 0:
-            text_dict["text"] += f"[System: The user uploaded {len(audio_path_list)} audio(s). Location: {",".join(audio_path_list)}. If you need to view the audio(s), use the speech_to_text skill.]"
+            text_dict["text"] += f"[System: The user uploaded {len(audio_path_list)} audio(s). Location: {','.join(audio_path_list)}. If you need to view the audio(s), use the speech_to_text skill.]"
 
         if len(video_path_list) > 0:
-            text_dict["text"] += f"[System: The user uploaded {len(video_path_list)} video(s). Location: {",".join(video_path_list)}. If you need to view the video(s), use the video_text_to_text skill.]"
+            text_dict["text"] += f"[System: The user uploaded {len(video_path_list)} video(s). Location: {','.join(video_path_list)}. If you need to view the video(s), use the video_text_to_text skill.]"
 
         last_mes.content = [text_dict]
 
@@ -217,7 +221,10 @@ class MultimodalProcessor(AgentMiddleware):
                 text_only = self._strip_image_url_from_content(mes_content)
                 mes.content = text_only if text_only else mes_content
 
-    async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+    # ------------------------------------------------------------------
+    # after_agent implementation (shared by sync + async)
+    # ------------------------------------------------------------------
+    def _after_agent_impl(self, state: AgentState) -> None:
         # Clean up cached image files: delete if filename is not a pure numeric timestamp; delete if older than 7 days
         session_id: str = state.get("session_id", "")
         if session_id.strip() == "":
@@ -227,7 +234,7 @@ class MultimodalProcessor(AgentMiddleware):
 
         temp_dir = SRC_DIR / session_id / "mutil_temp"
         if not temp_dir.exists():
-            return None
+            return
 
         now_ms: int = int(time.time() * 1000)
         seven_days_ms: int = 7 * 24 * 60 * 60 * 1000
@@ -251,4 +258,28 @@ class MultimodalProcessor(AgentMiddleware):
         if deleted_count > 0:
             logger.info(f"Cleaned up {deleted_count} expired cached images")
 
+    # ------------------------------------------------------------------
+    # Sync before_agent
+    # ------------------------------------------------------------------
+    @override
+    def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        self._before_agent_impl(state)
+        return None
+
+    @override
+    async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        self._before_agent_impl(state)
+        return None
+
+    # ------------------------------------------------------------------
+    # Sync after_agent
+    # ------------------------------------------------------------------
+    @override
+    def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        self._after_agent_impl(state)
+        return None
+
+    @override
+    async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        self._after_agent_impl(state)
         return None

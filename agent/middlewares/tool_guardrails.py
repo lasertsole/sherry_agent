@@ -195,45 +195,38 @@ class ToolGuardrails(AgentMiddleware):
             "to prevent an infinite loop."
         )
 
+    @staticmethod
+    def _before_agent_impl(state: AgentState) -> None:
+        session_id: str = state.get("session_id", "")
+        if not session_id.strip():
+            raise RuntimeError("ToolGuardrails: session_id is required")
+        state_register_mem.set_state(session_id, _GUARDRAIL_STATE_KEY, _TurnGuardrailState())
+
+    @override
+    def before_agent(
+        self, state: AgentState, runtime: Runtime[ContextT]
+    ) -> dict[str, Any] | None:
+        self._before_agent_impl(state)
+        return None
+
     @override
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
-        session_id = self._get_session_id(state)
-        state_register_mem.set_state(session_id, _GUARDRAIL_STATE_KEY, _TurnGuardrailState())
+        self._before_agent_impl(state)
         return None
 
-    @override
-    async def awrap_tool_call(
+    def _wrap_tool_call_impl(
         self,
         request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
+        result: ToolMessage,
     ) -> ToolMessage:
         session_id = self._get_session_id(request.state)
         gs = self._get_state(session_id)
         tool_name: str = request.tool_call.get("name", "unknown")
         tool_args: dict[str, Any] = request.tool_call.get("args", {})
         args_hash = self._args_hash(tool_args)
-
         is_idempotent = self._is_idempotent(tool_name, request.tool)
-
-        if gs.halt_decision is not None:
-            return ToolMessage(
-                content=self._halt_message(tool_name, "previous halt"),
-                tool_call_id=request.tool_call["id"],
-                name=tool_name,
-                status="error",
-            )
-
-        if tool_name in gs.blocked_tools:
-            return ToolMessage(
-                content=self._block_message(tool_name, "previously blocked", 0, 0),
-                tool_call_id=request.tool_call["id"],
-                name=tool_name,
-                status="error",
-            )
-
-        result: ToolMessage = await handler(request)
 
         is_error = getattr(result, "status", None) == "error"
         result_content = str(result.content) if result.content else ""
@@ -309,7 +302,7 @@ class ToolGuardrails(AgentMiddleware):
                     np_count, self.config.no_progress_block_after,
                 )
 
-            result = ToolMessage(
+            return ToolMessage(
                 content=f"{result_content}\n\n{warning}",
                 tool_call_id=result.tool_call_id,
                 name=result.name,
@@ -317,3 +310,58 @@ class ToolGuardrails(AgentMiddleware):
             )
 
         return result
+
+    def _wrap_tool_call_precheck(
+        self,
+        request: ToolCallRequest,
+    ) -> ToolMessage | None:
+        """Pre-check guardrail state before calling the handler.
+
+        Returns a blocking ToolMessage if the tool is halted/blocked, or None to proceed.
+        """
+        tool_name: str = request.tool_call.get("name", "unknown")
+
+        session_id = self._get_session_id(request.state)
+        gs = self._get_state(session_id)
+
+        if gs.halt_decision is not None:
+            return ToolMessage(
+                content=self._halt_message(tool_name, "previous halt"),
+                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                status="error",
+            )
+
+        if tool_name in gs.blocked_tools:
+            return ToolMessage(
+                content=self._block_message(tool_name, "previously blocked", 0, 0),
+                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                status="error",
+            )
+
+        return None
+
+    @override
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage],
+    ) -> ToolMessage:
+        blocked = self._wrap_tool_call_precheck(request)
+        if blocked is not None:
+            return blocked
+        result: ToolMessage = handler(request)
+        return self._wrap_tool_call_impl(request, result)
+
+    @override
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
+    ) -> ToolMessage:
+        blocked = self._wrap_tool_call_precheck(request)
+        if blocked is not None:
+            return blocked
+        result: ToolMessage = await handler(request)
+        return self._wrap_tool_call_impl(request, result)

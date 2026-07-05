@@ -1,6 +1,8 @@
 import asyncio
 from pathlib import Path
 from loguru import logger
+
+from agent import codeact_agent
 from models import main_llm
 from runtime import Register
 from langchain.tools import tool
@@ -103,21 +105,18 @@ async def _arun_task(
             from agent.middlewares import ToolCallNormalize
             from agent.middlewares.iteration_budget import IterationBudget
 
-            agent: CompiledStateGraph = create_agent(
+            agent = codeact_agent(
                 system_prompt=system_prompt,
                 model=main_llm,
-                state_schema=WorkerStateSchema,
                 tools=build_main_tools(),
-                checkpointer= InMemorySaver(),
+                state_schema=WorkerStateSchema,
                 middleware=[
                     SummarizationMiddleware(
                         model=main_llm,
-                        trigger=("messages", 20),
+                        trigger=("messages", 30),
                         keep=("messages", 10),
                     ),
-                    # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
-                    ToolCallNormalize(),
-                    IterationBudget(),
+                    IterationBudget()
                 ],
                 response_format=SubAgentOutput
             )

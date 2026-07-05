@@ -2,7 +2,7 @@ import re
 import inspect
 import functools
 from typing import Any, Callable, Sequence, cast
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from .utils import extract_and_combine_codeblocks
 from langchain_core.messages import AnyMessage, SystemMessage
 from langchain_core.tools import tool as create_tool
@@ -72,11 +72,13 @@ class CodeActState(MessagesState):
         context: 执行上下文，包含可用的工具函数和所有之前的变量
         structured_response: 可选的 structured output（由 response_format 控制）
         jump_to: 可选的跳转目标（由 middleware 使用）
+        session_id: 当前会话 ID，由 build_agent_config 传入
     """
     script: str | None
     context: dict[str, Any]
     structured_response: Any | None
     jump_to: str | None
+    session_id: str | None
 
 
 def _tool_signature(tool: BaseTool) -> str:
@@ -377,6 +379,18 @@ def create_codeact(
     ]
     composed_wrap_model_call = _chain_model_call_handlers(wrap_model_call_handlers)
 
+    # Warn for middleware that only provides async wrap_model_call
+    if not composed_wrap_model_call:
+        for m in middleware:
+            m_cls = type(m)
+            if hasattr(m, "awrap_model_call") and m_cls.awrap_model_call is not AgentMiddleware.awrap_model_call:
+                if not (hasattr(m, "wrap_model_call") and m_cls.wrap_model_call is not AgentMiddleware.wrap_model_call):
+                    import warnings
+                    warnings.warn(
+                        f"Middleware '{m_cls.__name__}' defines awrap_model_call but CodeAct's "
+                        f"graph is synchronous-only — the handler will be silently skipped."
+                    )
+
     # ------------------------------------------------------------------
     # collect middleware-provided tools (codeact doesn't use them, but
     # we keep the interface consistent)
@@ -389,13 +403,47 @@ def create_codeact(
     # merge middleware state schemas into CodeActState
     # ------------------------------------------------------------------
     merged_schema: type = state_schema
-    for mw in middleware:
-        mw_schema = getattr(mw, "state_schema", None)
-        if mw_schema is not None and mw_schema is not type(None):
-            # Merge base fields into the schema if not already present
-            # For simplicity we keep the declared CodeActState which already
-            # has jump_to - middleware can extend via Pydantic annotations.
-            pass
+    # Collect middleware schemas (TypedDicts) and merge fields into CodeActState.
+    # Follows the same last-wins pattern as create_agent in factory.py.
+    schemas_to_merge: list[type] = [
+        mw.state_schema for mw in middleware
+        if getattr(mw, "state_schema", None) is not None
+        and mw.state_schema is not type(None)
+    ]
+    if schemas_to_merge:
+        from typing import get_type_hints, Annotated
+        from typing_extensions import TypedDict
+
+        # Process middleware schemas first, then base schema last (last-wins).
+        # Collect annotations; later entries override earlier ones.
+        merged_annotations: dict[str, Any] = {}
+        processed_schemas: list[type] = [*schemas_to_merge, state_schema]
+
+        for schema in processed_schemas:
+            try:
+                hints = get_type_hints(schema, include_extras=True)
+            except Exception:
+                hints = {}
+            merged_annotations.update(hints)
+
+        # Apply field_info_map overrides from middleware (description-only)
+        # by wrapping the annotation in Annotated[..., ...(description=...)]
+        for mw in middleware:
+            fim = getattr(mw, "field_info_map", None)
+            if not fim:
+                continue
+            for field_name, overrides in fim.items():
+                if field_name not in merged_annotations:
+                    continue
+                desc = overrides.get("description")
+                if desc:
+                    existing = merged_annotations[field_name]
+                    merged_annotations[field_name] = Annotated[existing, Field(description=desc)]  # type: ignore[valid-type]
+
+        merged_schema = TypedDict("CodeActState", merged_annotations)
+
+    # Use merged_schema if any middleware schemas were found, otherwise use state_schema
+    graph_state_schema: type = merged_schema if schemas_to_merge else state_schema
 
     # ------------------------------------------------------------------
     # Internal nodes
@@ -527,25 +575,56 @@ def create_codeact(
     # ------------------------------------------------------------------
     # Build graph and inject middleware edges
     # ------------------------------------------------------------------
-    agent = StateGraph(state_schema)
+    agent = StateGraph(graph_state_schema)
     agent.add_node("call_model", call_model, destinations=(END, "sandbox", "structured_output"))
     agent.add_node("sandbox", sandbox)
     agent.add_node("structured_output", structured_output, destinations=(END, "call_model"))
 
     # Determine if any middleware has before_agent/after_agent hooks
-    hook_before_agent: list[Any] = [m for m in middleware if _has_before_agent_hook(m)]
-    hook_after_agent: list[Any] = [m for m in middleware if _has_after_agent_hook(m)]
-    hook_before_model: list[Any] = [m for m in middleware if _has_before_model_hook(m)]
-    hook_after_model: list[Any] = [m for m in middleware if _has_after_model_hook(m)]
+    # Also include middleware that only provides async hooks — inject_hooks will
+    # handle the async-only case with a warning (CodeAct graph is sync-only).
+    def _has_before_agent_or_async(m: AgentMiddleware) -> bool:
+        return (
+            _has_before_agent_hook(m)
+            or (hasattr(m, "abefore_agent") and type(m).abefore_agent is not AgentMiddleware.abefore_agent)
+        )
+
+    def _has_after_agent_or_async(m: AgentMiddleware) -> bool:
+        return (
+            _has_after_agent_hook(m)
+            or (hasattr(m, "aafter_agent") and type(m).aafter_agent is not AgentMiddleware.aafter_agent)
+        )
+
+    def _has_before_model_or_async(m: AgentMiddleware) -> bool:
+        return (
+            _has_before_model_hook(m)
+            or (hasattr(m, "abefore_model") and type(m).abefore_model is not AgentMiddleware.abefore_model)
+        )
+
+    def _has_after_model_or_async(m: AgentMiddleware) -> bool:
+        return (
+            _has_after_model_hook(m)
+            or (hasattr(m, "aafter_model") and type(m).aafter_model is not AgentMiddleware.aafter_model)
+        )
+
+    hook_before_agent: list[Any] = [m for m in middleware if _has_before_agent_or_async(m)]
+    hook_after_agent: list[Any] = [m for m in middleware if _has_after_agent_or_async(m)]
+    hook_before_model: list[Any] = [m for m in middleware if _has_before_model_or_async(m)]
+    hook_after_model: list[Any] = [m for m in middleware if _has_after_model_or_async(m)]
 
     # Resolve routing targets for model hooks (used inside call_model closure)
+    # Only consider middleware with a sync after_model hook — async-only ones
+    # will be skipped by inject_hooks and their graph node won't exist.
+    hook_after_model_sync: list[Any] = [m for m in middleware if _has_after_model_hook(m)]
     after_model_first_node: str | None = (
-        f"{hook_after_model[0].name}.after_model" if hook_after_model else None
+        f"{hook_after_model_sync[0].name}.after_model" if hook_after_model_sync else None
     )
 
     # Before/after agent hooks — only inject if at least one middleware provides them
+    before_agent_first = None
+    before_model_first = None
     if hook_before_agent:
-        inject_hooks(
+        before_agent_first, _, _ = inject_hooks(
             agent,
             middleware_list=hook_before_agent,
             suffix="before_agent",
@@ -570,7 +649,7 @@ def create_codeact(
 
     # Before/after model hooks
     if hook_before_model:
-        inject_hooks(
+        before_model_first, _, _ = inject_hooks(
             agent,
             middleware_list=hook_before_model,
             suffix="before_model",
@@ -594,19 +673,19 @@ def create_codeact(
         )
 
     # --- START edge ---
-    if hook_before_agent:
-        agent.add_edge(START, f"{hook_before_agent[0].name}.before_agent")
+    if before_agent_first:
+        agent.add_edge(START, before_agent_first)
         # Last before_agent node already edges to "call_model" via _add_middleware_edge
-    elif hook_before_model:
+    elif before_model_first:
         # Route through before_model chain first (last before_model → call_model via _add_middleware_edge)
-        agent.add_edge(START, f"{hook_before_model[0].name}.before_model")
+        agent.add_edge(START, before_model_first)
     else:
         agent.add_edge(START, "call_model")
 
     # --- sandbox → call_model loop edge ---
     # If before_model hooks exist, sandbox routes through them
-    if hook_before_model:
-        agent.add_edge("sandbox", f"{hook_before_model[0].name}.before_model")
+    if before_model_first:
+        agent.add_edge("sandbox", before_model_first)
     else:
         agent.add_edge("sandbox", "call_model")
 
@@ -646,12 +725,21 @@ def inject_hooks(
     default_destination: str,
     model_destination: str,
     end_destination: str,
-) -> None:
+) -> tuple[str | None, str | None, int]:
     """Inject middleware hook nodes between other graph nodes.
 
     Each middleware in the list gets its own graph node named
     ``{middleware.name}.{suffix}``. Nodes are chained in order.
+
+    Returns:
+        (first_node_name, last_node_name, added_count) — the first and last
+        actually-created node names, and how many nodes were added.
+        Returns (None, None, 0) if no nodes were created (e.g. all async-only).
     """
+    first_node_name: str | None = None
+    last_node_name: str | None = None
+    added_count = 0
+
     for i, mw in enumerate(middleware_list):
         node_name = f"{mw.name}.{suffix}"
         sync_fn = getattr(mw, hook_attr, None)
@@ -664,7 +752,17 @@ def inject_hooks(
         if not has_sync and not has_async:
             continue
 
-        def make_node(fn_sync, fn_async, node_name=node_name):
+        # warn for only-async middleware: CodeAct graph is sync-only
+        if not has_sync and has_async:
+            import warnings
+            mw_cls = type(mw).__name__
+            warnings.warn(
+                f"Middleware '{mw_cls}' defines async hook '{ahook_attr}' but CodeAct's "
+                f"graph is synchronous-only — the hook will be silently skipped."
+            )
+            continue
+
+        def make_node(fn_sync, node_name=node_name):
             def _run(state):
                 result = fn_sync(state, runtime=None) if fn_sync else None
                 if result is None:
@@ -674,12 +772,19 @@ def inject_hooks(
                 return {}
             return _run
 
-        agent.add_node(node_name, make_node(sync_fn, async_fn, node_name))
+        agent.add_node(node_name, make_node(sync_fn, node_name))
+        if first_node_name is None:
+            first_node_name = node_name
+        last_node_name = node_name
+        added_count += 1
 
     # Wire edges
     prev = None
     for i, mw in enumerate(middleware_list):
         node_name = f"{mw.name}.{suffix}"
+        # Skip async-only middleware that wasn't actually added as a node
+        if node_name not in agent.nodes:
+            continue
         if prev is None:
             # First node in chain — already added as a graph node above;
             # its incoming edge is wired by the caller (e.g. START → first before_agent node).
@@ -698,6 +803,8 @@ def inject_hooks(
             end_destination=end_destination,
             can_jump_to=None,  # type: ignore[arg-type]
         )
+
+    return first_node_name, last_node_name, added_count
 
 
 JSON_CODEBLOCK_PATTERN = r"(?:^|\n)```json\s*\n(.*?)```(?:\n|$)"

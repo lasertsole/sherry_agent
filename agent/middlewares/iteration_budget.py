@@ -15,8 +15,8 @@ from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing_extensions import override
 from typing import Any, Callable, Awaitable
-from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.prebuilt.tool_node import ToolCallRequest, Command
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ResponseT, ModelRequest, ModelResponse, ExtendedModelResponse
 
@@ -44,7 +44,7 @@ class IterationBudget(AgentMiddleware):
         super().__init__()
         self.max_iterations = max_iterations
 
-    def _get_session_id(self, state: dict[str, Any]) -> str:
+    def _get_session_id(self, state: AgentState) -> str:
         session_id: str = state.get("session_id", "")
         if not session_id.strip():
             raise RuntimeError("IterationBudget: session_id is required")
@@ -54,34 +54,46 @@ class IterationBudget(AgentMiddleware):
         used: int = state_register_mem.get_state(session_id, self._USED_KEY, 0)
         if used >= self.max_iterations:
             return False
-        state_register_mem.set_state(session_id, self._USED_KEY, used + 1)
+        used += 1
+        remaining = self.max_iterations - used
+        state_register_mem.set_state(session_id, self._USED_KEY, used)
+        logger.info("session_id {} consume {} times, {} remaining before halt", session_id, used, remaining)
         return True
 
     def _remaining(self, session_id: str) -> int:
         used: int = state_register_mem.get_state(session_id, self._USED_KEY, 0)
         return max(0, self.max_iterations - used)
 
+    def _before_agent_impl(self, state: AgentState) -> None:
+        session_id = self._get_session_id(state)
+        state_register_mem.set_state(session_id, self._BUDGET_KEY, self.max_iterations)
+        state_register_mem.set_state(session_id, self._USED_KEY, 0)
+
+    @override
+    def before_agent(
+        self, state: AgentState, runtime: Runtime[ContextT]
+    ) -> dict[str, Any] | None:
+        self._before_agent_impl(state)
+        return None
+
     @override
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
-        session_id = self._get_session_id(state)
-        state_register_mem.set_state(session_id, self._BUDGET_KEY, self.max_iterations)
-        state_register_mem.set_state(session_id, self._USED_KEY, 0)
+        self._before_agent_impl(state)
         return None
 
-    @override
-    async def awrap_model_call(
+    def _wrap_model_call_impl(
         self,
         request: ModelRequest[ContextT],
-        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
-    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+    ) -> AIMessage | None:
+        """Check budget and return terminal AIMessage if exhausted, or None to proceed."""
         session_id = self._get_session_id(request.state)
 
         if not self._consume(session_id):
             remaining = self._remaining(session_id)
             logger.warning(
-                "IterationBudget exhausted for session %s (remaining=%d, max=%d). "
+                "IterationBudget exhausted for session {} (remaining={}, max={}). "
                 "Returning terminal message instead of calling model.",
                 session_id, remaining, self.max_iterations,
             )
@@ -93,14 +105,35 @@ class IterationBudget(AgentMiddleware):
                 )
             )
 
-        return await handler(request)
+        return None
 
     @override
-    async def awrap_tool_call(
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        terminal = self._wrap_model_call_impl(request)
+        if terminal is not None:
+            return terminal
+        return handler(request)
+
+    @override
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        terminal = self._wrap_model_call_impl(request)
+        if terminal is not None:
+            return terminal
+        return await handler(request)
+
+    def _wrap_tool_call_impl(
         self,
         request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
-    ) -> ToolMessage:
+    ) -> ToolMessage | None:
+        """Check budget and return terminal ToolMessage if exhausted, or None to proceed."""
         session_id = self._get_session_id(request.state)
 
         if not self._consume(session_id):
@@ -120,4 +153,26 @@ class IterationBudget(AgentMiddleware):
                 status="error",
             )
 
+        return None
+
+    @override
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        terminal = self._wrap_tool_call_impl(request)
+        if terminal is not None:
+            return terminal
+        return handler(request)
+
+    @override
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        terminal = self._wrap_tool_call_impl(request)
+        if terminal is not None:
+            return terminal
         return await handler(request)

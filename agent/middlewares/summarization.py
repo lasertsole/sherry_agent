@@ -4,7 +4,9 @@ from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing_extensions import override
 from langchain.agents import AgentState
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, TYPE_CHECKING, Sequence, cast
+if TYPE_CHECKING:
+    from langchain.agents.middleware.types import ResponseT
 from langchain.agents.middleware.types import ResponseT
 from workspace.prompt_builder import build_system_prompt
 from runtime import state_register_db, state_register_mem
@@ -90,10 +92,10 @@ class Summarization(SummarizationMiddleware):
 
         return adjusted
 
-    @override
-    async def abefore_agent(
-        self, state: AgentState, runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
+    # ------------------------------------------------------------------
+    # Shared before_agent impl
+    # ------------------------------------------------------------------
+    def _before_agent_impl(self, state: AgentState) -> None:
         session_id: str = state.get("session_id", "")
         if session_id.strip():
             state_register_mem.set_state(session_id, _COMPRESSION_COUNT_KEY, 0)
@@ -101,10 +103,33 @@ class Summarization(SummarizationMiddleware):
             state_register_mem.set_state(session_id, _COMPRESSION_LAST_TOKENS_KEY, None)
 
     @override
-    async def abefore_model(
+    def before_agent(
+        self, state: AgentState, runtime: Runtime[ContextT]
+    ) -> dict[str, Any] | None:
+        self._before_agent_impl(state)
+        return None
+
+    @override
+    async def abefore_agent(
+        self, state: AgentState, runtime: Runtime[ContextT]
+    ) -> dict[str, Any] | None:
+        self._before_agent_impl(state)
+        return None
+
+    # ------------------------------------------------------------------
+    # Sync before_model
+    # ------------------------------------------------------------------
+    @override
+    def before_model(
         self, state: AgentState[Any], runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
         pass
+
+    @override
+    async def abefore_model(
+        self, state: AgentState[Any], runtime: Runtime[ContextT]
+    ) -> dict[str, Any] | None:
+        return self.before_model(state, runtime)
 
     @staticmethod
     def _is_output_cap_error(error: Exception) -> bool:
@@ -132,7 +157,7 @@ class Summarization(SummarizationMiddleware):
         return False
 
     def _record_compression(
-        self, session_id: str, before_messages: list[BaseMessage], after_messages: list[BaseMessage],
+        self, session_id: str, before_messages: Sequence[BaseMessage], after_messages: Sequence[BaseMessage],
     ) -> None:
         attempts: int = state_register_mem.get_state(session_id, _COMPRESSION_COUNT_KEY, 0) + 1
         state_register_mem.set_state(session_id, _COMPRESSION_COUNT_KEY, attempts)
@@ -180,30 +205,23 @@ class Summarization(SummarizationMiddleware):
             truncated.append(m)
         return truncated
 
-    @override
-    async def awrap_model_call(
+    # ------------------------------------------------------------------
+    # Shared post-compression logic (called by both sync and async after before_model)
+    # ------------------------------------------------------------------
+    def _apply_compression(
         self,
+        state: AgentState,
         request: ModelRequest[ContextT],
-        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
-    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        state = request.state
-        session_id = state.get("session_id", "")
-        if session_id.strip() == "":
-            err_text: str = "Not pass session_id"
-            logger.error(err_text)
-            raise RuntimeError(err_text)
+        res: dict[str, Any],
+        session_id: str,
+    ) -> ModelRequest[ContextT]:
+        """Apply message compression and return an overridden ModelRequest.
 
-        res: dict[str, Any] | None = await super().abefore_model(state, request.runtime)
-
-        if res is None:
-            return await handler(request)
-
-        if self._should_skip_compression(session_id):
-            return await handler(request)
-
+        Shared by sync and async paths — both call this after ``before_model`` / ``abefore_model``.
+        """
         reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
         reduce_messages = self._truncate_messages(reduce_messages)
-        original_messages: list[BaseMessage] = state.get("messages", [])
+        original_messages: list[AnyMessage] = state.get("messages", [])
 
         self._record_compression(session_id, original_messages, reduce_messages)
 
@@ -214,6 +232,61 @@ class Summarization(SummarizationMiddleware):
         state_register_mem.set_state(session_id, "system_prompt", system_prompt)
         state_register_db.set_state(session_id, "system_prompt", system_prompt)
 
-        return await handler(
-            request.override(messages = reduce_messages, system_message = SystemMessage(content = system_prompt))
+        return request.override(
+            messages=cast("list[AnyMessage]", reduce_messages), system_message=SystemMessage(content=system_prompt)
         )
+
+    # ------------------------------------------------------------------
+    # Shared session validation
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _get_session_or_raise(state: AgentState) -> str:
+        session_id: str = state.get("session_id", "")
+        if session_id.strip() == "":
+            err_text: str = "Not pass session_id"
+            logger.error(err_text)
+            raise RuntimeError(err_text)
+        return session_id
+
+    # ------------------------------------------------------------------
+    # Shared post-compression decision (called by both sync and async)
+    # ------------------------------------------------------------------
+    def _wrap_model_call_impl(
+        self,
+        request: ModelRequest[ContextT],
+        res: dict[str, Any] | None,
+        session_id: str,
+    ) -> ModelRequest[ContextT] | None:
+        """Return overridden request if compression should apply, else None."""
+        if res is None:
+            return None
+
+        if self._should_skip_compression(session_id):
+            return None
+
+        return self._apply_compression(state=request.state, request=request, res=res, session_id=session_id)
+
+    # ------------------------------------------------------------------
+    # Sync wrap_model_call
+    # ------------------------------------------------------------------
+    @override
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        session_id = self._get_session_or_raise(request.state)
+        res: dict[str, Any] | None = super().before_model(request.state, cast("Runtime[None]", request.runtime))
+        overridden = self._wrap_model_call_impl(request, res, session_id)
+        return handler(overridden if overridden is not None else request)
+
+    @override
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        session_id = self._get_session_or_raise(request.state)
+        res: dict[str, Any] | None = await super().abefore_model(request.state, cast("Runtime[None]", request.runtime))
+        overridden = self._wrap_model_call_impl(request, res, session_id)
+        return await handler(overridden if overridden is not None else request)

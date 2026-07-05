@@ -51,7 +51,29 @@ class ToolTimeout(AgentMiddleware):
         )
 
     # ------------------------------------------------------------------
-    # Timeout wrapper
+    # Timeout implementation (shared by sync + async)
+    # ------------------------------------------------------------------
+    def _wrap_tool_call_impl(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage],
+    ) -> ToolMessage:
+        """Synchronous variant: no asyncio.wait_for, just pass through."""
+        return handler(request)
+
+    # ------------------------------------------------------------------
+    # Sync wrap_tool_call
+    # ------------------------------------------------------------------
+    @override
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage],
+    ) -> ToolMessage:
+        return self._wrap_tool_call_impl(request, handler)
+
+    # ------------------------------------------------------------------
+    # Async wrap_tool_call
     # ------------------------------------------------------------------
     @override
     async def awrap_tool_call(
