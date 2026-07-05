@@ -4,6 +4,7 @@ import re
 import io
 import ast
 import builtins
+import types
 import contextlib
 from typing import Any
 
@@ -89,4 +90,35 @@ def eval_sandbox(code: str, _locals: dict[str, Any]) -> tuple[str, dict[str, Any
 
     new_keys = set(_locals.keys()) - original_keys
     new_vars = {key: _locals[key] for key in new_keys}
-    return result, new_vars
+
+    # 过滤掉不可被 msgpack 序列化的变量（如 module、open file handle 等），
+    # 防止它们流入 state.context 导致 LangGraph checkpoint 的 ormsgpack.packb() 失败。
+    _SERIALIZABLE_TYPES = (
+        str, int, float, bool, type(None),
+        bytes, bytearray,
+        list, tuple, dict, set, frozenset,
+    )
+    filtered = {}
+    for k, v in new_vars.items():
+        if isinstance(v, _SERIALIZABLE_TYPES):
+            filtered[k] = v
+        elif isinstance(v, (types.ModuleType, io.IOBase)):
+            # module 和 file handle 不能序列化 → 丢弃
+            continue
+        elif callable(v):
+            # 函数/类 → 丢弃
+            continue
+        elif isinstance(v, type):
+            # 类型对象 → 丢弃
+            continue
+        else:
+            # 其他类型尝试 repr 兜底
+            try:
+                import ormsgpack
+                ormsgpack.packb(v)
+                filtered[k] = v
+            except Exception:
+                # 不能序列化 → 保存 repr 字符串
+                filtered[k] = repr(v)
+
+    return result, filtered

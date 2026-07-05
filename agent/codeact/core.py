@@ -1,13 +1,14 @@
 import re
 import inspect
 import functools
-from typing import Any, Callable, Sequence, cast
-from pydantic import BaseModel, Field, ValidationError
+from loguru import logger
+from typing import Any, Callable, Sequence
 from .utils import extract_and_combine_codeblocks
-from langchain_core.messages import AnyMessage, SystemMessage
 from langchain_core.tools import tool as create_tool
+from pydantic import BaseModel, Field, ValidationError
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool, BaseTool
+from langchain_core.messages import AnyMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph, MessagesState
 from langgraph.types import Command
 from langgraph.typing import ContextT
@@ -315,7 +316,10 @@ def _execute_model_sync(
         messages.append(request.system_message)
     messages.extend(request.messages)
 
+    logger.info("[CODECT_TRACE] _execute_model_sync invoke start msgs={}", len(messages))
     output = request.model.invoke(messages)
+    logger.info("[CODECT_TRACE] _execute_model_sync invoke returned len={} has_content={}",
+                len(messages), bool(output and output.content))
 
     if name:
         output.name = name
@@ -449,6 +453,7 @@ def create_codeact(
     # Internal nodes
     # ------------------------------------------------------------------
     def call_model(state: state_schema) -> Command:
+        logger.info("[CODECT_TRACE] call_model enter msgs={}", len(state.get("messages", [])))
         # Build ModelRequest
         request = _build_model_request(
             model=model,
@@ -470,7 +475,9 @@ def create_codeact(
 
         # Execute through middleware chain or directly
         if composed_wrap_model_call is not None:
+            logger.info("[CODECT_TRACE] call_model calling composed_wrap_model_call")
             result = composed_wrap_model_call(request, _inner)
+            logger.info("[CODECT_TRACE] call_model composed_wrap_model_call returned")
             if isinstance(result, _ComposedExtendedModelResponse):
                 model_response = result.model_response
                 extra_commands = result.commands
@@ -517,11 +524,23 @@ def create_codeact(
                 update={"messages": [response], "script": code, **merged_update},
             )
         else:
-            # 没有代码块，结束循环并回答用户
+            # 没有代码块
+            if response_format is not None:
+                # 有 response_format → 路由到 structured_output 兜底格式化
+                return Command(
+                    goto=goto_structured,
+                    update={"messages": [response], "script": None, **merged_update},
+                )
+            # 无 response_format → 结束循环并回答用户
             return Command(update={"messages": [response], "script": None, **merged_update})
 
     def structured_output(state: state_schema) -> Command:
-        """解析 LLM 输出的 JSON 代码块并验证结构。"""
+        """解析 LLM 输出的 JSON 代码块并验证结构。
+
+        如果 messages[-1] 包含 ```json 代码块，正常 parse→structured_response。
+        如果不存在 JSON 代码块（LLM 直接回答了纯文本）且 response_format 有值，
+        则单独调一次 LLM 要求它按 schema 输出结构化 JSON。
+        """
         if response_format is None:
             return Command(
                 update={
@@ -531,34 +550,43 @@ def create_codeact(
                     "script": None,
                 }
             )
+
         last_message = state["messages"][-1]
         json_str = _extract_json_codeblock(last_message.content)
+
+        if json_str:
+            # ── LLM 已经输出 JSON 代码块 → 正常 parse ──
+            try:
+                parsed = response_format.model_validate_json(json_str)
+                return Command(update={"script": None, "structured_response": parsed})
+            except ValidationError as e:
+                return Command(
+                    goto="call_model",
+                    update={
+                        "messages": [
+                            last_message,
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Failed to parse structured response: {e}\n\n"
+                                    "Please ensure your JSON code block matches the expected schema "
+                                    "and try again."
+                                ),
+                            },
+                        ],
+                        "script": None,
+                    }
+                )
+
+        # ── 没有 JSON 代码块 → 用 with_structured_output 按 schema 强约束输出 ──
         try:
-            parsed = response_format.model_validate_json(json_str)
-        except ValidationError as e:
-            return Command(
-                goto="call_model",
-                update={
-                    "messages": [
-                        last_message,
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Failed to parse structured response: {e}\n\n"
-                                "Please ensure your JSON code block matches the expected schema "
-                                "and try again."
-                            ),
-                        },
-                    ],
-                    "script": None,
-                }
-            )
-        return Command(
-            update={
-                "script": None,
-                "structured_response": parsed,
-            }
-        )
+            structured_llm = model.with_structured_output(response_format)
+            parsed = structured_llm.invoke(state["messages"])
+            return Command(update={"script": None, "structured_response": parsed})
+        except Exception:
+            pass  # fall through to final fallback
+
+        return Command(update={"script": None, "structured_response": None})
 
     def sandbox(state: state_schema) -> dict:
         existing_context = state.get("context", {})

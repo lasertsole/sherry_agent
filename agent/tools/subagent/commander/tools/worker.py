@@ -1,22 +1,18 @@
 import asyncio
 from pathlib import Path
 from loguru import logger
-
-from agent import codeact_agent
 from models import main_llm
 from runtime import Register
+from agent import codeact_agent
 from langchain.tools import tool
 from typing import Annotated, Any
 from skills import get_skills_text
 from ...type import SubAgentOutput
 from pydantic import BaseModel, Field
-from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 from config import TEMP_DIR, WORKSPACE_DIR
 from workspace import CORE_SYSTEM_FILE_NAMES
 from langchain.agents.middleware import AgentState
-from langgraph.graph.state import CompiledStateGraph
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_core.messages import HumanMessage, BaseMessage
 from langchain.agents.middleware import SummarizationMiddleware
@@ -96,20 +92,19 @@ async def _arun_task(
 
     try:
         timeout_seconds: int = timeout_mins * 60
+
         async def execute_task() -> str:
             system_prompt = (
                 _build_worker_prompt()
                 + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
             from agent.tools import build_main_tools
-            from agent.middlewares import ToolCallNormalize
-            from agent.middlewares.iteration_budget import IterationBudget
+            from agent.middlewares import IterationBudget
 
             agent = codeact_agent(
                 system_prompt=system_prompt,
                 model=main_llm,
                 tools=build_main_tools(),
-                state_schema=WorkerStateSchema,
                 middleware=[
                     SummarizationMiddleware(
                         model=main_llm,
@@ -125,7 +120,7 @@ async def _arun_task(
                 input={"session_id": worker_session_id, "messages": [HumanMessage(content=description)]},
                 config=build_agent_config(session_id=worker_session_id, args=[{"recursion_limit": 50}])
             )
-            structured_response: SubAgentOutput = agent_res.get("structured_response", {})
+            structured_response: SubAgentOutput = agent_res["structured_response"]
 
             nonlocal messages
             messages = agent_res.get("messages", [])
@@ -159,7 +154,7 @@ async def _arun_task(
         )
 
     except Exception as e:
-        logger.error("Subagent [{}] failed: {}", label, e)
+        logger.exception("Subagent [{}] failed: {}", label, e)
         return render_template_file(
             file_path=(_template_dir / "subagent_announce.md").resolve().as_posix(),
             variables={
@@ -182,6 +177,13 @@ async def _arun_task(
 def build_worker_tool(task_id: str) -> BaseTool:
     """Build the worker @tool with task_id closed over and error handling enabled."""
 
+    def _sync_run_worker(
+        worker_tasks: list[WorkerTask],
+        session_id: str = "",
+    ) -> list[str]:
+        """Synchronous fallback for codeact sandbox (tool.run sync path)."""
+        return asyncio.run(_arun_worker(worker_tasks, session_id, task_id))
+
     @tool(args_schema=WorkerArgs, infer_schema=False)
     async def worker(
         worker_tasks: list[WorkerTask],
@@ -191,4 +193,6 @@ def build_worker_tool(task_id: str) -> BaseTool:
         return await _arun_worker(worker_tasks, session_id, task_id)
 
     worker.handle_tool_error = True
+    # Set sync func fallback so codeact sandbox (tool.run sync path) works
+    worker.func = _sync_run_worker  # type: ignore[attr-defined]
     return worker

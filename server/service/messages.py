@@ -120,6 +120,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     # Control answering
     state_register_mem.set_state(session_id, "answering", True)
 
+    generator = None
+
     try:
         yield SSEMessage(f"{ASSISTANT_NAME}:")
 
@@ -201,6 +203,12 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         logger.exception(e)
         raise e
     finally:
+        # Gracefully close the async generator to avoid GeneratorExit/RuntimeError
+        if generator is not None and is_stream:
+            try:
+                await generator.aclose()
+            except Exception:
+                pass  # GeneratorExit is expected and harmless
         # Reset tool tracking state
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")

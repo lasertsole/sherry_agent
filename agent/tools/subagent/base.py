@@ -17,6 +17,7 @@ from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
 from pub_func import render_template_file, build_agent_config
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from concurrent.futures import ThreadPoolExecutor
 
 _current_dir = Path(__file__).parent
 _template_dir = (_current_dir / "templates").resolve()
@@ -53,8 +54,10 @@ class SubagentManager:
         self._loop_ready = Event()
         self._loop_thread.start()
         self._loop_ready.wait()  # block until loop is set up and running
+        self.executor:ThreadPoolExecutor = ThreadPoolExecutor(max_workers=5)
 
         SubagentManager._initialized = True
+
 
     def _run_loop(self) -> None:
         """Dedicated thread entry: set event loop and run forever."""
@@ -149,11 +152,16 @@ class SubagentManager:
         commander_session_id: str = f"commander-{session_id}"
         try:
             agent: CompiledStateGraph = build_commander(session_id=commander_session_id, task_id=task_id)
-            agent_res: dict[str, Any] = await agent.ainvoke(
-                input={"session_id": commander_session_id, "messages": [HumanMessage(content=task)]},
-                config=build_agent_config(session_id=commander_session_id, args=[{"recursion_limit": 30}])
-            )
+            print("commander before")
+            def _invoke_agent() -> dict[str, Any]:
+                return agent.invoke(
+                    input={"session_id": commander_session_id, "messages": [HumanMessage(content=task)]},
+                    config=build_agent_config(session_id=commander_session_id),
+                )
 
+            future = self.executor.submit(_invoke_agent)
+            agent_res: dict[str, Any] = future.result()
+            print("commander after")
             structured_response: SubAgentOutput = agent_res.get("structured_response", {})
 
             announce_content: str = render_template_file(

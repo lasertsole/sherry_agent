@@ -1,10 +1,10 @@
+from pydantic import BaseModel
 from .utils import eval_sandbox
 from .core import create_codeact
 from typing import Any, Callable, Sequence
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel
 from langchain.agents.middleware.types import AgentMiddleware
 
 def codeact_agent(
@@ -37,7 +37,8 @@ def codeact_agent(
         response_format=response_format,
         middleware=middleware,
     )
-    return code_act.compile(checkpointer=MemorySaver())
+    result = code_act.compile(checkpointer=MemorySaver())
+    return result
 
 __all__ = [
     "codeact_agent"

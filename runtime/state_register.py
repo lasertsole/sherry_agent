@@ -42,14 +42,11 @@ class StateRegisterMeM(Register):
     def delete_state(self, session_id: str, key: str) -> bool:
         try:
             if session_id not in self._states:
-                logger.warning(f"session_id {session_id} not found")
                 return False
 
             if key in self._states[session_id]:
                 del self._states[session_id][key]
                 return True
-
-            logger.warning(f"key {key} not found in session_id {session_id}")
         except Exception:
             logger.exception(f"delete_state failed: session_id={session_id}, key={key}")
         return False
@@ -57,10 +54,8 @@ class StateRegisterMeM(Register):
     def clear_session(self, session_id: str) -> bool:
         try:
             if session_id in self._states:
-                del self._states[session_id]
+                self._states.pop(session_id, None)
                 return True
-
-            logger.warning(f"session_id {session_id} not found")
         except Exception:
             logger.exception(f"clear_session failed: session_id={session_id}")
         return False
