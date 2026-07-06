@@ -3,6 +3,7 @@ from pathlib import Path
 from models import main_llm
 from config import SESSIONS_DIR
 from ..type import SubAgentOutput
+from .middlewares import TODOManager
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 from langchain.agents.middleware import AgentState
@@ -10,7 +11,6 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from .tools import build_todo_writer_tool, build_worker_tool
 from langchain.agents.middleware import SummarizationMiddleware
-from .middlewares import todo_injector_builder, todo_cleaner_builder
 
 _system_prompt: str = textwrap.dedent("""\
 # Role: Task Commander
@@ -160,17 +160,15 @@ worker(task_list=[
 Remember: Your goal is to systematically break down, track, and execute complex tasks while **maximizing parallel execution** to optimize speed, maintaining clear progress visibility through the todo list.
 """)
 
-class SubagentStateSchema(AgentState):
+class CommanderStateSchema(AgentState):
     """Agent state that preserves session_id for tool injection."""
+    master_session_id: str
     session_id: str
+    task_id: str
 
-def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
-    todo_dir: Path = SESSIONS_DIR / session_id / "todo"
-    # Ensure the directory exists
-    todo_dir.mkdir(parents=True, exist_ok=True)
-
-    todo_writer_tool: BaseTool = build_todo_writer_tool(task_id)
-    worker_tool: BaseTool = build_worker_tool(task_id)
+def build_commander()-> CompiledStateGraph:
+    todo_writer_tool: BaseTool = build_todo_writer_tool()
+    worker_tool: BaseTool = build_worker_tool()
 
     # lazy import to avoid circular dependency: subagent -> agent -> tools -> subagent
     from agent.middlewares import ToolCallNormalize, IterationBudget, ToolGuardrails
@@ -183,7 +181,7 @@ def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
         system_prompt=_system_prompt,
         model = main_llm,
         checkpointer = _checkpointer,
-        state_schema = SubagentStateSchema,
+        state_schema = CommanderStateSchema,
         tools = [todo_writer_tool, worker_tool],
         middleware=[
             SummarizationMiddleware(
@@ -191,8 +189,7 @@ def build_commander(session_id: str, task_id: str)-> CompiledStateGraph:
                 trigger=("messages", 15),
                 keep=("messages", 8),
             ),
-            todo_injector_builder(session_id, task_id),
-            todo_cleaner_builder(session_id, task_id),
+            TODOManager(),
             # Must be last: abefore_model runs after Summarization to catch orphan tool_calls
             ToolCallNormalize(),
             IterationBudget(),

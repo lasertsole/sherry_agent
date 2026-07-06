@@ -65,14 +65,14 @@ class WorkerArgs(BaseModel):
 
 async def _arun_worker(
     worker_tasks: list[WorkerTask],
-    session_id: str,
+    master_session_id: str,
     task_id: str,
 ) -> list[str]:
     """Execute all tasks concurrently"""
     tasks_list: list[asyncio.Task] = []
     for t in worker_tasks:
         task: asyncio.Task = asyncio.create_task(
-            _arun_task(t.label, t.description, t.timeout_mins, session_id, task_id)
+            _arun_task(t.label, t.description, t.timeout_mins, master_session_id, task_id)
         )
         tasks_list.append(task)
 
@@ -89,7 +89,7 @@ async def _arun_task(
 ) -> str:
     messages: list[BaseMessage] = []
     worker_session_id: str = f"{session_id}-{task_id}"
-
+    logger.info("worker [{}] start: {}, worker_session_id is {}", label, description, worker_session_id)
     try:
         timeout_seconds: int = timeout_mins * 60
 
@@ -98,13 +98,13 @@ async def _arun_task(
                 _build_worker_prompt()
                 + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
-            from agent.tools import build_main_tools
             from agent.middlewares import IterationBudget
+            from agent.tools import build_without_session_id_tools
 
             agent = codeact_agent(
                 system_prompt=system_prompt,
                 model=main_llm,
-                tools=build_main_tools(),
+                tools=build_without_session_id_tools(),
                 middleware=[
                     SummarizationMiddleware(
                         model=main_llm,
@@ -118,7 +118,7 @@ async def _arun_task(
 
             agent_res: dict[str, Any] = await agent.ainvoke(
                 input={"session_id": worker_session_id, "messages": [HumanMessage(content=description)]},
-                config=build_agent_config(session_id=worker_session_id, args=[{"recursion_limit": 50}])
+                config=build_agent_config(session_id=worker_session_id)
             )
             structured_response: SubAgentOutput = agent_res["structured_response"]
 
@@ -174,25 +174,16 @@ async def _arun_task(
             sanitize_tool_use_result_pairing(last_turn_messages)
 
 
-def build_worker_tool(task_id: str) -> BaseTool:
+def build_worker_tool() -> BaseTool:
     """Build the worker @tool with task_id closed over and error handling enabled."""
-
-    def _sync_run_worker(
-        worker_tasks: list[WorkerTask],
-        session_id: str = "",
-    ) -> list[str]:
-        """Synchronous fallback for codeact sandbox (tool.run sync path)."""
-        return asyncio.run(_arun_worker(worker_tasks, session_id, task_id))
-
     @tool(args_schema=WorkerArgs, infer_schema=False)
     async def worker(
         worker_tasks: list[WorkerTask],
-        session_id: Annotated[str, InjectedState("session_id")] = "",
+        master_session_id: Annotated[str, InjectedState("master_session_id")] = "",
+        task_id: Annotated[str, InjectedState("task_id")] = "",
     ) -> list[str]:
         """Execute multiple independent sub-tasks that can run in parallel without interference. Returns a list of sub-task results."""
-        return await _arun_worker(worker_tasks, session_id, task_id)
+        return await _arun_worker(worker_tasks, master_session_id, task_id)
 
     worker.handle_tool_error = True
-    # Set sync func fallback so codeact sandbox (tool.run sync path) works
-    worker.func = _sync_run_worker  # type: ignore[attr-defined]
     return worker
