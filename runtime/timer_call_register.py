@@ -75,7 +75,7 @@ class TimerCallRegister(Register):
 
         # Start the timer coroutine on the background thread's event loop
         self._executor.create_task(
-            self._run_timer(session_id, name, minutes, callback, args),
+            self._run_timer(session_id, name, minutes, callback, args, timer),
             name=task_name,
         )
 
@@ -99,7 +99,7 @@ class TimerCallRegister(Register):
         logger.info(f"[timer_call_register] unregistered timer '{name}' for session {session_id}")
         return True
 
-    async def _run_timer(self, session_id: str, name: str, minutes: int, callback: Callable, args: dict[str, Any]):
+    async def _run_timer(self, session_id: str, name: str, minutes: int, callback: Callable, args: dict[str, Any], timer_obj: Timer):
         """
         Repeating countdown task (runs in background thread event loop).
         Loops forever until cancelled or unregistered.
@@ -118,9 +118,9 @@ class TimerCallRegister(Register):
                 logger.info(f"[timer_call_register] timer '{name}' cancelled for session {session_id}")
                 break
 
-        # Clean up registration on cancel
+        # Clean up registration on cancel — only if still the same timer object
         timers = self.session_id_to_timers.get(session_id)
-        if timers and name in timers:
+        if timers and name in timers and timers[name] is timer_obj:
             del timers[name]
 
     def reset_timer(self, session_id: str, name: str) -> bool:
@@ -155,7 +155,7 @@ class TimerCallRegister(Register):
         timers[name] = new_timer
 
         self._executor.create_task(
-            self._run_timer(session_id, name, minutes, callback, args),
+            self._run_timer(session_id, name, minutes, callback, args, new_timer),
             name=task_name,
         )
 
