@@ -9,6 +9,7 @@ from langchain_core.tools import tool as create_tool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool, BaseTool
 from langchain_core.messages import AnyMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser
 from langgraph.graph import END, START, StateGraph, MessagesState
 from langgraph.types import Command
 from langgraph.typing import ContextT
@@ -18,6 +19,7 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain.agents.factory import (
     _ComposedExtendedModelResponse,
     _normalize_to_model_response,
@@ -495,11 +497,12 @@ def create_codeact(
             return Command(update={"messages": [response], "script": None, **merged_update})
 
     def structured_output(state: state_schema) -> Command:
-        """Request structured JSON output via HumanMessage + with_structured_output(method="json_schema").
+        """Request structured JSON output via HumanMessage + json_mode + PydanticOutputParser.
 
-        Preserves the message prefix for prefix cache hit. Only appends a
-        HumanMessage at the tail and constrains output format via json_schema
-        mode (no tool injection, no cache breakage).
+        Preserves the message prefix for prefix cache hit. Uses bind(response_format)
+        as an API parameter (no tool injection, no cache breakage), and
+        PydanticOutputParser for post-hoc validation so parse failures can be
+        handled gracefully instead of raising.
         """
         if response_format is None:
             return Command(
@@ -512,19 +515,20 @@ def create_codeact(
             )
 
         try:
-            schema_json = response_format.model_json_schema()
+            parser = PydanticOutputParser(pydantic_object=response_format)
             retry_messages = list(state["messages"]) + [
                 {
                     "role": "user",
                     "content": (
                         "You must respond with a JSON object that matches "
                         "the following schema. Do NOT include any other text.\n\n"
-                        f"```json\n{json.dumps(schema_json, ensure_ascii=False, indent=2)}\n```"
+                        f"{parser.get_format_instructions()}"
                     ),
                 },
             ]
-            structured_llm = model.with_structured_output(response_format, method="json_schema")
-            parsed = structured_llm.invoke(retry_messages)
+            json_mode_llm = model.bind(response_format={"type": "json_object"})
+            raw_response = json_mode_llm.invoke(retry_messages)
+            parsed = parser.parse(raw_response.content)
             return Command(update={"script": None, "structured_response": parsed})
         except Exception:
             pass
