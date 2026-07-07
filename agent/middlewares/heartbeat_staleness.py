@@ -54,6 +54,11 @@ _STATE_KEY_KILLED = "heartbeat_killed"
 _TIMER_NAME = "heartbeat_staleness_check"
 
 
+class HeartbeatTimeoutError(RuntimeError):
+    """Raised when heartbeat staleness threshold is exceeded (graceful termination)."""
+    pass
+
+
 class HeartbeatStaleness(AgentMiddleware):
     """Detect and terminate agents that make no progress.
 
@@ -193,16 +198,14 @@ class HeartbeatStaleness(AgentMiddleware):
             stale_limit = self.stale_cycles_idle
             tolerance_seconds = stale_limit * self.heartbeat_interval_minutes * 60
             logger.warning(
-                "[HeartbeatStaleness] session={} killed — returning terminal message",
+                "[HeartbeatStaleness] session={} killed — raising HeartbeatTimeoutError",
                 session_id,
             )
-            return AIMessage(
-                content=(
-                    f"Heartbeat staleness timeout exceeded (~{tolerance_seconds}s idle, "
-                    f"~{self.stale_cycles_in_tool * self.heartbeat_interval_minutes * 60}s in-tool). "
-                    "I must stop here. Please summarize what has been accomplished "
-                    "and what remains to be done."
-                )
+            raise HeartbeatTimeoutError(
+                f"Heartbeat staleness timeout exceeded "
+                f"(~{tolerance_seconds}s idle, "
+                f"~{self.stale_cycles_in_tool * self.heartbeat_interval_minutes * 60}s in-tool). "
+                "The agent must stop here."
             )
 
         current_iter: int = state_register_mem.get_state(session_id, _STATE_KEY_ITER, 0)
@@ -238,17 +241,12 @@ class HeartbeatStaleness(AgentMiddleware):
         if self._is_killed(session_id):
             tool_name: str = request.tool_call.get("name", "unknown")
             logger.warning(
-                "[HeartbeatStaleness] session={} killed during tool call [{}]",
+                "[HeartbeatStaleness] session={} killed during tool call [{}] — raising HeartbeatTimeoutError",
                 session_id, tool_name,
             )
-            return ToolMessage(
-                content=(
-                    f"Tool [{tool_name}] skipped — heartbeat staleness timeout exceeded. "
-                    "No further actions can be taken."
-                ),
-                tool_call_id=request.tool_call["id"],
-                name=tool_name,
-                status="error",
+            raise HeartbeatTimeoutError(
+                f"Tool [{tool_name}] skipped — heartbeat staleness timeout exceeded. "
+                "No further actions can be taken."
             )
 
         tool_name = request.tool_call.get("name", "unknown")

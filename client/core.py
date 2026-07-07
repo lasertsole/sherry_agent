@@ -12,6 +12,7 @@ from client.api import post_agent_astream, clear_session
 from streamlit.elements.widgets.chat import ChatInputValue
 from config import USER_NAME, ASSISTANT_NAME, API_HOST, API_PORT
 from streamlit.runtime.uploaded_file_manager import UploadedFile
+from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 from client.utils import storage_add_chat, ChatStorage, clear_session as clear_streamlit_session
 
@@ -82,6 +83,8 @@ def get_ws() -> WebSocket:
                     if event_type == "notification":
                         st.session_state.notifications.append(content)
 
+        except StopException:
+            pass  # Streamlit rerun 时会触发，是正常生命周期信号
         except Exception as e:
             print(f"WebSocket 监听出错: {e}")
 

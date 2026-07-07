@@ -14,6 +14,7 @@ from langgraph.graph.state import CompiledStateGraph
 from ..DAO import clear_session as clear_session_DAO
 from context_engine import get_history_by_page as _get_history_by_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
+from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 
 
 def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> list[BaseMessage]:
@@ -193,6 +194,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         yield SSEMessage("Request cancelled")
         logger.info(
             f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s"
+        )
+    except HeartbeatTimeoutError as e:
+        elapsed = time.time() - start_time
+        yield SSEMessage(f"\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated.")
+        logger.warning(
+            f"Agent heartbeat timeout: session_id={session_id}, duration={elapsed:.2f}s, "
+            f"error={e}"
         )
     except Exception as e:
         elapsed = time.time() - start_time

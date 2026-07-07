@@ -16,6 +16,7 @@ from workspace import CORE_SYSTEM_FILE_NAMES
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
 from pub_func import render_template_file, build_agent_config
+from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 _current_dir = Path(__file__).parent
@@ -169,6 +170,19 @@ class SubagentManager:
                     "task": task,
                     "finish_reason": structured_response.finish_reason,
                     "result": structured_response.result,
+                }
+            )
+
+        except HeartbeatTimeoutError as e:
+            logger.warning("Subagent [{}] heartbeat timeout: {}", task_id, e)
+            announce_content: str = render_template_file(
+                file_path=(_template_dir / "subagent_announce.md").resolve().as_posix(),
+                variables={
+                    "label": label,
+                    "status_text": "heartbeat timeout",
+                    "task": task,
+                    "finish_reason": str(e),
+                    "result": "",
                 }
             )
 
