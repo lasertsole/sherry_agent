@@ -91,11 +91,14 @@ class TimerCallRegister(Register):
             logger.warning(f"[timer_call_register] {name} is not registered in session {session_id}")
             return False
 
-        timer = timers[name]
+        timer = timers.pop(name, None)
+        if timer is None:
+            logger.warning(f"[timer_call_register] {name} already removed from session {session_id}")
+            return False
+
         if timer.task_name:
             self._executor.cancel_task(timer.task_name)
 
-        del timers[name]
         logger.info(f"[timer_call_register] unregistered timer '{name}' for session {session_id}")
         return True
 
