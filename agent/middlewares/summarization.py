@@ -27,8 +27,9 @@ _COMPRESSION_LAST_TOKENS_KEY = "summarization_compression_last_tokens"
 
 
 class Summarization(SummarizationMiddleware):
-    def __init__(self, **kwargs):
+    def __init__(self, need_update_system_prompt: bool = False, **kwargs):
         super().__init__(**kwargs)
+        self._need_update_system_prompt: bool = need_update_system_prompt
 
     @override
     def _determine_cutoff_index(self, messages: list[AnyMessage]) -> int:
@@ -225,16 +226,20 @@ class Summarization(SummarizationMiddleware):
 
         self._record_compression(session_id, original_messages, reduce_messages)
 
-        from agent.tools import memory_store
-        memory_store.load_from_disk()
+        system_prompt: str | None = None
+        if self._need_update_system_prompt:
+            from agent.tools import memory_store
+            memory_store.load_from_disk()
+            system_prompt = build_system_prompt()
+            state_register_mem.set_state(session_id, "system_prompt", system_prompt)
+            state_register_db.set_state(session_id, "system_prompt", system_prompt)
 
-        system_prompt: str = build_system_prompt()
-        state_register_mem.set_state(session_id, "system_prompt", system_prompt)
-        state_register_db.set_state(session_id, "system_prompt", system_prompt)
-
-        return request.override(
-            messages=cast("list[AnyMessage]", reduce_messages), system_message=SystemMessage(content=system_prompt)
-        )
+        override_kwargs: dict[str, Any] = {
+            "messages": cast("list[AnyMessage]", reduce_messages),
+        }
+        if system_prompt:
+            override_kwargs["system_message"] = SystemMessage(content=system_prompt)
+        return request.override(**override_kwargs)
 
     # ------------------------------------------------------------------
     # Shared session validation

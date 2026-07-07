@@ -66,6 +66,7 @@ async def built_agent(
                 ToolCallNormalize(),
                 HeartbeatStaleness(),
                 Summarization(
+                    need_update_system_prompt=True,
                     model=auxiliary_llm,
                     trigger=[
                         ("fraction", 0.5),
