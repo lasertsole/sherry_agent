@@ -98,8 +98,8 @@ async def _arun_task(
                 _build_worker_prompt()
                 + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
-            from agent.middlewares import IterationBudget
             from agent.tools import build_without_session_id_tools
+            from agent.middlewares import IterationBudget, HeartbeatStaleness
 
             agent = codeact_agent(
                 system_prompt=system_prompt,
@@ -111,6 +111,7 @@ async def _arun_task(
                         trigger=("messages", 30),
                         keep=("messages", 10),
                     ),
+                    HeartbeatStaleness(),
                     IterationBudget()
                 ],
                 response_format=SubAgentOutput

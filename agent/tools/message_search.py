@@ -401,4 +401,5 @@ def _message_search_tool(
 def build_message_search_tool() -> BaseTool:
     """Return the message search tool with error handling enabled."""
     _message_search_tool.handle_tool_error = True
+    _message_search_tool.metadata = {"idempotent": False}
     return _message_search_tool

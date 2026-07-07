@@ -7,8 +7,12 @@ from langgraph.graph.state import CompiledStateGraph
 from agent.checkpointer import build_async_sqlite_checkpointer
 from agent.tools import memory_store, build_main_tools, build_subagent_tool
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
-from .middlewares import Summarization, ToolCallNormalize, MultimodalProcessor, ToolTimeout, ContextEngineHook, ToolGuardrails, IterationBudget
+from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
+                          IterationBudget, HeartbeatStaleness)
+from .smart_tool_node import patch_tool_node
 
+# 只有幂等的工具才能并行执行，非幂等串行执行
+patch_tool_node()
 
 # ── Extended state schema ────────────────────────────────────────────────
 # Carries ``session_id`` through the graph so that middlewares reading
@@ -60,7 +64,7 @@ async def built_agent(
                 IterationBudget(90),
                 ToolGuardrails(),
                 ToolCallNormalize(),
-                ToolTimeout(),
+                HeartbeatStaleness(),
                 Summarization(
                     model=auxiliary_llm,
                     trigger=[

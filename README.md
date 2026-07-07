@@ -32,6 +32,8 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 - **Tool Calling**: Built-in Web search, file I/O, code execution (Python Repl), terminal commands, message search, and more
 - **Subagents**: Supports running complex time-consuming tasks in parallel in the background, with async results via a message bus
 - ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for lifecycle, Commander architecture, and API docs_
+- **Tool Timeouts**: Python REPL, terminal, and web search tools each have independent configurable timeouts with automatic kill on expiry
+- ▶️ _See the [Middlewares README](agent/middlewares/README.md) for the middleware pipeline_
 
 ### 3. 🌐 Multi-Channel Access
 - **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
@@ -72,10 +74,35 @@ Built on **Python 3.13**, with the following core technologies:
 EMA_AI_agent/
 ├── agent/                  # Agent core logic & middleware
 │   ├── core.py             # Main agent loop (LangGraph compiled graph)
-│   ├── middlewares/        # Middlewares: Summarization, ToolCallNormalize,
-│   │                       #   ToolGuardrails, ToolTimeout, IterationBudget,
-│   │                       #   MultimodalProcessor, ContextEngineHook
-│   └── checkpointer/       # Session state checkpointing
+│   ├── checkpointer/       # Session state checkpointing
+│   ├── codeact/            # CodeAct agent (code-interactive execution)
+│   │   ├── core.py         # CodeAct loop & tool orchestration
+│   │   └── utils.py        # CodeAct utilities
+│   ├── middlewares/        # Middleware pipeline
+│   │   ├── summarization.py         # Conversation summarization
+│   │   ├── tool_call_normalize.py   # Tool call normalization & routing
+│   │   ├── tool_guardrails.py       # Tool safety guardrails
+│   │   ├── iteration_budget.py      # Turn budget limiter
+│   │   ├── multimodal_processor.py  # Vision input processing
+│   │   ├── heartbeat_staleness.py   # Heartbeat staleness check
+│   │   └── context_engine/          # Context engine hooks
+│   ├── tools/              # Agent-accessible tools
+│   │   ├── subagent/       # Subagent system (hierarchical task decomposition)
+│   │   │   ├── base.py     # SubagentManager (singleton orchestrator)
+│   │   │   ├── core.py     # Subagent spawn tool
+│   │   │   ├── commander/  # LangGraph-based Commander agent
+│   │   │   ├── templates/  # Result announcement templates
+│   │   │   └── type.py     # SubAgentOutput data model
+│   │   ├── file_tools/     # File I/O tools (read, write, patch, search)
+│   │   ├── skill_tools/    # Skill management tools (list, view, manage)
+│   │   ├── pub_base/       # Shared tool utilities (path, skill utils)
+│   │   ├── mcp_plugin.py   # MCP plugin tool
+│   │   ├── web_search.py   # Web search tool
+│   │   ├── python_repl.py  # Python code execution (subprocess with timeout)
+│   │   ├── terminal.py     # Terminal command execution (sandboxed, with timeout)
+│   │   ├── memory.py       # Memory inspection tool
+│   │   └── message_search.py # Conversation search tool
+│   └── utils/              # Agent helper utilities
 │
 ├── bus/                    # Message bus (async queue)
 │   └── core.py             # MessageBus — inbound/outbound queues & events
@@ -87,7 +114,8 @@ EMA_AI_agent/
 │
 ├── client/                 # Streamlit frontend entry
 │   ├── api/                # API client layer
-│   └── core.py             # Streamlit app entry
+│   ├── core.py             # Streamlit app entry
+│   └── utils/              # Frontend utility helpers
 │
 ├── client_future/          # Next-gen client (Tauri 2 + Nuxt 4)
 │   ├── app/                # Nuxt 4 SPA source
@@ -158,9 +186,11 @@ EMA_AI_agent/
 │   └── timer_call_register.py   # Timer registry
 │
 ├── server/                 # Robyn backend service & API routes
+│   ├── __main__.py         # Server entry point
 │   ├── DAO/                # Data access objects
 │   ├── service/            # Business logic services
 │   └── trigger/            # Trigger managers
+│       ├── core.py         # Trigger manager
 │       ├── channels/       # Incoming channel triggers
 │       ├── http/           # HTTP endpoint triggers
 │       └── subagent/       # Subagent result triggers
@@ -172,6 +202,9 @@ EMA_AI_agent/
 ├── skills/                 # Skill library (SKILL.md definition files)
 │   ├── loader.py           # Skill autodiscovery & registration
 │   ├── skills_snapshot.py  # Builds skill prompt snapshot
+│   ├── skills_snapshot.json # Cached skill prompt snapshot
+│   ├── auto/               # Auto-learned skills
+│   ├── plugins/            # Plugin-provided skills
 │   └── builtin/            # Built-in skill implementations
 │       └── core/           # Core built-in skills
 │           ├── web_search/     # Web search & scrape
@@ -187,8 +220,6 @@ EMA_AI_agent/
 ├── src/                    # Runtime data directories
 │   ├── checkpoints/        # Session checkpoints
 │   ├── data/               # Data storage
-│   ├── gallery/            # Image gallery
-│   ├── rag/                # RAG index data
 │   ├── sessions/           # Session runtime stores
 │   └── store/              # Data stores
 │
@@ -200,22 +231,6 @@ EMA_AI_agent/
 │
 ├── tests/                  # Test suite
 │
-├── tools/                  # Agent-accessible tools
-│   ├── subagent/           # Subagent system
-│   │   ├── core.py         # SubagentManager (singleton orchestrator)
-│   │   ├── commander/      # LangGraph-based Commander agent
-│   │   ├── templates/      # Result announcement templates
-│   │   └── type.py         # SubAgentOutput data model
-│   ├── mcp_plugin.py       # MCP plugin tool
-│   ├── web_search.py       # Web search tool
-│   ├── python_repl.py      # Python code execution
-│   ├── terminal.py         # Terminal command execution
-│   ├── read_file.py        # File reading
-│   ├── write_file.py       # File writing
-│   ├── memory.py           # Memory inspection tool
-│   ├── message_search.py   # Conversation search tool
-│   └── cron.py             # Cron management tool (deprecated)
-│
 ├── type/                   # Shared data models
 │   ├── message.py          # MultiModalMessage, Chat, etc.
 │   ├── bus.py              # Message bus data models
@@ -225,7 +240,7 @@ EMA_AI_agent/
 │   ├── IDENTITY.md         # Name, age, interests, relationships
 │   ├── SOUL.md             # Personality contrasts, speech style
 │   ├── AGENTS.md           # Tool usage priorities, safety boundaries
-│   ├── USER.md             # User-specific preferences & facts
+│   ├── USER.md             # User-specific interaction preferences & known facts
 │   ├── HEARTBEAT.md        # Pending tasks for heartbeat service
 │   ├── character.json      # Character configuration
 │   ├── prompt_builder.py   # Profile-to-prompt builder
@@ -235,8 +250,13 @@ EMA_AI_agent/
 ├── .env                    # Environment variables (API keys, model paths)
 ├── .env.example            # Environment variable template
 ├── pyproject.toml          # Python dependencies (uv managed)
+├── uv.lock                 # Lockfile for uv
 ├── start.sh                # One-click startup script
-└── TODOList.md             # Development roadmap
+├── introduce.md            # Project introduction (EN)
+├── introduce.zh.md         # Project introduction (ZH)
+├── TODOList.md             # Development roadmap (EN)
+├── TODOList.zh.md          # Development roadmap (ZH)
+└── cron_jobs.json          # Cron job schedule data
 ```
 
 ---
@@ -256,6 +276,7 @@ Each major subsystem has its own detailed README:
 | **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
 | **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
+| **CodeAct** | Code-interactive execution loop | [EN](agent/codeact/README.md) |
 
 ---
 

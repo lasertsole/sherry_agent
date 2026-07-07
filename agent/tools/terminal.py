@@ -1,11 +1,12 @@
-"""Terminal tool with sandbox and blacklist."""
+"""Terminal tool with sandbox, blacklist, and timeout."""
 
 import locale
 import subprocess
+from loguru import logger
 from config import ROOT_DIR
 from langchain_community.tools import ShellTool
 
-
+TERMINAL_TIMEOUT = 30  # seconds
 BLACKLIST = {"rm -rf /", "mkfs", "shutdown", "reboot"}
 
 
@@ -33,12 +34,13 @@ class SafeShellTool(ShellTool):
             return self._run_with_encoding(commands, encoding=self._encoding)
 
     def _run_with_encoding(self, commands: str | list[str], encoding: str) -> str:
-        """Run command with explicit encoding for stdout/stderr."""
+        """Run command with explicit encoding for stdout/stderr, with timeout."""
         if isinstance(commands, list):
             cmd_str = " && ".join(commands)
         else:
             cmd_str = commands
 
+        proc = None
         try:
             proc = subprocess.Popen(
                 cmd_str,
@@ -47,11 +49,20 @@ class SafeShellTool(ShellTool):
                 stderr=subprocess.STDOUT,
                 cwd=str(ROOT_DIR),
             )
-            stdout_bytes, _ = proc.communicate()
+            stdout_bytes, _ = proc.communicate(timeout=TERMINAL_TIMEOUT)
             output = stdout_bytes.decode(encoding, errors="replace")
             if proc.returncode != 0:
                 return f"Exit code {proc.returncode}\n{output}"
             return output
+        except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+                proc.communicate()
+            logger.warning("terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120])
+            return (
+                f"Terminal command timed out after {TERMINAL_TIMEOUT} seconds. "
+                "The command was forcibly terminated. Please try a simpler command."
+            )
         except Exception as e:
             return f"Error: {e}"
 

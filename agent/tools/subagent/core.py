@@ -5,15 +5,10 @@ import asyncio
 from loguru import logger
 from typing import Annotated
 from .base import subagent_manager
-from pydantic import BaseModel, Field
 from langchain.tools import BaseTool, tool
 from langgraph.prebuilt.tool_node import InjectedState
 
-class SubagentInput(BaseModel):
-    task: str = Field(..., description="Subtasks to execute")
-
-
-@tool(args_schema=SubagentInput, infer_schema=False)
+@tool
 async def subagent_tool(
     task: str,
     label: str | None = None,

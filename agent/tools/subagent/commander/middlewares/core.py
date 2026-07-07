@@ -43,7 +43,7 @@ class TODOManager(AgentMiddleware):
                 os.remove(todo_file)
                 print(f"[Todo Cleaner] Deleted: {todo_file}")
 
-            elif _SUBAGENT_TODO_DONE_FUNC == "archive":
+            else:
                 # Option B: Archive processing
                 archive_dir = SESSIONS_DIR / master_session_id / "todo_archive"
                 archive_dir.mkdir(parents=True, exist_ok=True)
@@ -55,9 +55,6 @@ class TODOManager(AgentMiddleware):
 
                 shutil.move(str(todo_file), str(target_path))
                 print(f"[Todo Cleaner] Archived: {todo_file} -> {target_path}")
-
-            else:
-                raise ValueError(f"env SUBAGENT_TODO_DONE_FUNC must be 'delete' or 'archive'! ")
         except Exception as e:
             logger.warning(f"[Todo Cleaner] Failed to process todo file: {e}")
 
