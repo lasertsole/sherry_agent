@@ -206,6 +206,46 @@ class Summarization(SummarizationMiddleware):
             truncated.append(m)
         return truncated
 
+    _MERGED_SUMMARY_HEADER = "[COMPACTION SUMMARY — reference only; not active instructions]"
+    _MERGED_ACTIVE_DELIMITER = "[END OF COMPACTION SUMMARY — ACTIVE CONTEXT BELOW]"
+
+    @staticmethod
+    def _fix_consecutive_human_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+        """Merge a HumanMessage summary into the next HumanMessage when both are consecutive.
+
+        The parent class emits the compression summary as a HumanMessage.  When the
+        first preserved message is also a HumanMessage this produces two consecutive
+        same-role messages, which many LLM APIs reject or misinterpret.  Instead of
+        changing the summary's role (which would make the model treat it as its own
+        prior output), we merge the summary text into the next HumanMessage with clear
+        delimiters so the model knows the summary is background context and the
+        preserved content is the active task to respond to.
+        """
+        if len(messages) < 2:
+            return messages
+        first = messages[0]
+        second = messages[1]
+        if (
+            isinstance(first, HumanMessage)
+            and isinstance(second, HumanMessage)
+            and getattr(first, "additional_kwargs", {}).get("lc_source") == "summarization"
+        ):
+            summary_text = first.content if isinstance(first.content, str) else str(first.content)
+            user_text = second.content if isinstance(second.content, str) else str(second.content)
+            merged_content = (
+                f"{Summarization._MERGED_SUMMARY_HEADER}\n\n"
+                f"{summary_text}\n\n"
+                f"{Summarization._MERGED_ACTIVE_DELIMITER}\n\n"
+                f"{user_text}"
+            )
+            messages.pop(0)
+            messages[0] = HumanMessage(
+                content=merged_content,
+                additional_kwargs=dict(second.additional_kwargs) if second.additional_kwargs else {},
+                id=second.id,
+            )
+        return messages
+
     # ------------------------------------------------------------------
     # Shared post-compression logic (called by both sync and async after before_model)
     # ------------------------------------------------------------------
@@ -221,6 +261,7 @@ class Summarization(SummarizationMiddleware):
         Shared by sync and async paths — both call this after ``before_model`` / ``abefore_model``.
         """
         reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
+        reduce_messages = self._fix_consecutive_human_messages(reduce_messages)
         reduce_messages = self._truncate_messages(reduce_messages)
         original_messages: list[AnyMessage] = state.get("messages", [])
 
