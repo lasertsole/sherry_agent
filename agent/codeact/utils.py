@@ -98,10 +98,20 @@ def eval_sandbox(code: str, _locals: dict[str, Any]) -> tuple[str, dict[str, Any
         bytes, bytearray,
         list, tuple, dict, set, frozenset,
     )
+    # msgpack 仅支持 64-bit 有符号整数（-2^63 ~ 2^63-1），
+    # Python 无限精度 int 超出此范围会导致或msgpack.packb() 抛出 TypeError。
+    # 此处统一将所有超出 64-bit 的 int 转为 str 以防止 checkpoint 序列化崩溃。
+    _MAX_SAFE_INT = 2**63 - 1
+    _MIN_SAFE_INT = -(2**63)
+
     filtered = {}
     for k, v in new_vars.items():
         if isinstance(v, _SERIALIZABLE_TYPES):
-            filtered[k] = v
+            # int 类型需要额外检查是否超出 64-bit 范围
+            if isinstance(v, int) and not isinstance(v, bool) and (v > _MAX_SAFE_INT or v < _MIN_SAFE_INT):
+                filtered[k] = str(v)
+            else:
+                filtered[k] = v
         elif isinstance(v, (types.ModuleType, io.IOBase)):
             # module 和 file handle 不能序列化 → 丢弃
             continue

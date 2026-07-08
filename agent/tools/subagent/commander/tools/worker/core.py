@@ -87,7 +87,7 @@ async def _arun_task(
     task_id: str
 ) -> str:
     messages: list[BaseMessage] = []
-    worker_session_id: str = f"{session_id}-{task_id}"
+    worker_session_id: str = f"worker-{session_id}-{task_id}"
     logger.info("worker [{}] start: {}, worker_session_id is {}", label, description, worker_session_id)
     try:
         timeout_seconds: int = timeout_mins * 60

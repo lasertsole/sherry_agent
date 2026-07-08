@@ -538,6 +538,12 @@ def create_codeact(
     def _sanitize_for_serialization(obj: Any) -> Any:
         if hasattr(obj, "item"):
             return obj.item()
+        if isinstance(obj, int) and not isinstance(obj, bool):
+            # msgpack 仅支持 64-bit 有符号整数
+            _MAX = 2**63 - 1
+            _MIN = -(2**63)
+            if obj > _MAX or obj < _MIN:
+                return str(obj)
         return obj
 
     def sandbox(state: state_schema) -> dict:

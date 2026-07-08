@@ -214,7 +214,6 @@ class SubagentManager:
                 "subagent_task_id": task_id,
             },
         )
-
         await self._bus.publish_inbound(msg)
 
 
@@ -233,7 +232,11 @@ class SubagentManager:
 
     async def _consume_loop(self):
         while True:
-            msg: InboundMessage = await self._bus.consume_inbound()
+            try:
+                msg: InboundMessage = await self._bus.consume_inbound()
+            except Exception as e:
+                logger.error("Subagent consume loop failed to consume from bus: {}", e)
+                continue
 
             if self._consumer:
                 try:
@@ -252,7 +255,10 @@ class SubagentManager:
                     # Fall back to the raw result — never drop it
                 finally:
                     # Always forward the result, even if personalization failed
-                    await self._consumer(msg)
+                    try:
+                        await self._consumer(msg)
+                    except Exception as e:
+                        logger.error("Subagent consumer callback failed: {}", e)
 
     def start_service(self) -> None:
         """Start the consume loop on the dedicated thread's event loop."""
