@@ -7,15 +7,15 @@ from agent import codeact_agent
 from langchain.tools import tool
 from typing import Annotated, Any
 from skills import get_skills_text
-from ...type import SubAgentOutput
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from config import TEMP_DIR, WORKSPACE_DIR
 from workspace import CORE_SYSTEM_FILE_NAMES
 from langchain.agents.middleware import AgentState
+from agent.tools.subagent.type import SubAgentOutput
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_core.messages import HumanMessage, BaseMessage
-from langchain.agents.middleware import SummarizationMiddleware
+from agent.tools.subagent.commander.tools.worker.middlewares import WorkerSummarization
 from pub_func import render_template_file, slice_last_turn, sanitize_tool_use_result_pairing, build_agent_config
 
 class WorkerStateSchema(AgentState):
@@ -106,7 +106,7 @@ async def _arun_task(
                 model=main_llm,
                 tools=build_without_session_id_tools(),
                 middleware=[
-                    SummarizationMiddleware(
+                    WorkerSummarization(
                         model=main_llm,
                         trigger=("messages", 30),
                         keep=("messages", 10),

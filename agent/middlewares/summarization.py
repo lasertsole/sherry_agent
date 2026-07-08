@@ -261,8 +261,8 @@ class Summarization(SummarizationMiddleware):
         Shared by sync and async paths — both call this after ``before_model`` / ``abefore_model``.
         """
         reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
-        reduce_messages = self._fix_consecutive_human_messages(reduce_messages)
         reduce_messages = self._truncate_messages(reduce_messages)
+        reduce_messages = self._fix_consecutive_human_messages(reduce_messages)
         original_messages: list[AnyMessage] = state.get("messages", [])
 
         self._record_compression(session_id, original_messages, reduce_messages)
