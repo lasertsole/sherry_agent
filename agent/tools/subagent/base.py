@@ -236,18 +236,23 @@ class SubagentManager:
             msg: InboundMessage = await self._bus.consume_inbound()
 
             if self._consumer:
-                # Personalize the result to match the character persona
-                messages = [SystemMessage(
-                    content=
-                    build_system_prompt()
-                    + '\n\nPlease convey the results to the user in a tone that matches the character persona, and tell user where result is.'
-                ), HumanMessage(content=msg.content)]
+                try:
+                    # Personalize the result to match the character persona
+                    messages = [SystemMessage(
+                        content=
+                        build_system_prompt()
+                        + '\n\nPlease convey the results to the user in a tone that matches the character persona.'
+                    ), HumanMessage(content=msg.content)]
 
-                res_msg: AIMessage = main_llm.invoke(messages)
-                msg.content = res_msg.content
-
-                # Forward the result
-                await self._consumer(msg)
+                    res_msg: AIMessage = await main_llm.ainvoke(messages)
+                    # Preserve the raw result alongside the personalized summary
+                    msg.content = res_msg.content + '\n\n---\n' + msg.content
+                except Exception as e:
+                    logger.error("Subagent consume failed (LLM personalize): {}", e)
+                    # Fall back to the raw result — never drop it
+                finally:
+                    # Always forward the result, even if personalization failed
+                    await self._consumer(msg)
 
     def start_service(self) -> None:
         """Start the consume loop on the dedicated thread's event loop."""

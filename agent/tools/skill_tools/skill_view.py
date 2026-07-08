@@ -350,14 +350,13 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
                     )
 
         # Read tags / related_skills
-        hermes_meta = {}
-        metadata = frontmatter.get("metadata")
-        if isinstance(metadata, dict):
-            hermes_meta = metadata.get("hermes", {}) or {}
+        meta = frontmatter.get("metadata")
+        if not isinstance(meta, dict):
+            meta = {}
 
-        tags = _parse_tags(hermes_meta.get("tags") or frontmatter.get("tags", ""))
+        tags = _parse_tags(meta.get("tags") or frontmatter.get("tags", ""))
         related_skills = _parse_tags(
-            hermes_meta.get("related_skills") or frontmatter.get("related_skills", "")
+            meta.get("related_skills") or frontmatter.get("related_skills", "")
         )
 
         linked_files = {}

@@ -10,15 +10,17 @@ from runtime import state_register_mem
 from type.message import MultiModalMessage
 from langchain.messages import AIMessageChunk
 from pub_func import build_agent_config, is_url
-from langgraph.graph.state import CompiledStateGraph
 from ..DAO import clear_session as clear_session_DAO
 from context_engine import get_history_by_page as _get_history_by_page
-from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
+from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
 
 
-def _get_agent_history_list(agent: CompiledStateGraph, session_id: str)-> list[BaseMessage]:
-    return agent.get_state(config=build_agent_config(session_id)).values.get("messages", [])
+async def _get_agent_history_list(session_id: str)-> list[BaseMessage]:
+    agent = await built_agent()
+
+    state = await agent.aget_state(config=build_agent_config(session_id))
+    return state.values.get("messages", [])
 
 def _get_content_list(multi_modal_message: MultiModalMessage)-> list[dict[str, str]]:
     user_text: str = multi_modal_message.text

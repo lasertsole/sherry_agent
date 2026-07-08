@@ -698,7 +698,7 @@ class SkillManage(BaseTool):
         "Good skills: trigger conditions, numbered steps with exact commands, "
         "pitfalls section, verification steps. Use skill_view() to see format examples.\n\n"
         "Pinned skills are protected from deletion only — skill_manage(action='delete') "
-        "will refuse with a message pointing the user to `hermes curator unpin <name>`. "
+        "will refuse for pinned skills. "
         "Patches and edits go through on pinned skills so you can still improve them as "
         "pitfalls come up; pin only guards against irrecoverable loss."
     )
@@ -776,8 +776,8 @@ class SkillManage(BaseTool):
                     bump_patch(name)
                 elif action == "delete":
                     # A recoverable curator archive (routed through archive_skill)
-                    # keeps its usage record as STATE_ARCHIVED so `hermes curator
-                    # status`/`restore` still see it. Only a hard delete forgets.
+                    # keeps its usage record as STATE_ARCHIVED so curator
+                    # status/restore still see it. Only a hard delete forgets.
                     if not result.get("_archived"):
                         forget(name)
             except Exception:

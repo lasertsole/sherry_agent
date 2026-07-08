@@ -21,8 +21,7 @@ from pub_func import render_template_file, slice_last_turn, sanitize_tool_use_re
 class WorkerStateSchema(AgentState):
     session_id: str
 
-_current_dir = Path(__file__).parents[2].resolve()
-_template_dir = (_current_dir / "templates").resolve()
+_template_dir = Path(__file__).parents[3].resolve() / "templates"
 
 def _build_worker_prompt() -> str:
     """
