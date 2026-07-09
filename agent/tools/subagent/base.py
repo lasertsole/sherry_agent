@@ -160,16 +160,16 @@ class SubagentManager:
                 },
                 config=build_agent_config(session_id=commander_session_id)
             )
-            structured_response: SubAgentOutput = agent_res.get("structured_response", {})
+            structured_response: SubAgentOutput | None = agent_res.get("structured_response")
 
             announce_content: str = render_template_file(
                 file_path=(_template_dir / "subagent_announce.md").resolve().as_posix(),
                 variables={
                     "label": label,
-                    "status_text": "completed successfully" if structured_response.status == "ok" else "failed",
+                    "status_text": "completed successfully" if structured_response and structured_response.status == "ok" else "failed",
                     "task": task,
-                    "finish_reason": structured_response.finish_reason,
-                    "result": structured_response.result,
+                    "finish_reason": structured_response.finish_reason if structured_response else "",
+                    "result": structured_response.result if structured_response else "",
                 }
             )
 
