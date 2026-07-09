@@ -9,7 +9,10 @@ from runtime import Register
 
 class StateRegisterMeM(Register):
     def __init__(self):
+        if getattr(self, '_initialized', False):
+            return
         self._states = {}
+        self._initialized = True
 
     def set_state(self, session_id: str, key: str, value: Any) -> bool:
         try:
