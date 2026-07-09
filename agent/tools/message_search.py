@@ -215,6 +215,51 @@ async def _summarize(
                 )
                 return None
 
+def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str:
+    """Return metadata for the most recent sessions (no LLM cost)."""
+    try:
+        rows = db.execute(
+            """
+            SELECT session_id,
+                   MIN(CASE WHEN role = 'human' THEN content END) AS first_user_msg,
+                   MAX(timestamp) AS last_activity
+            FROM messages
+            WHERE session_id != ?
+            GROUP BY session_id
+            ORDER BY last_activity DESC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+
+        results = []
+        for row in rows:
+            sid = row["session_id"]
+            preview = row["first_user_msg"] or ""
+            if isinstance(preview, list):
+                preview = next(
+                    (p.get("text", "") for p in preview if isinstance(p, dict) and p.get("type") == "text"),
+                    "[multimodal content]",
+                )
+            preview = (preview[:200] + "…") if len(preview) > 200 else preview
+            results.append({
+                "session_id": sid,
+                "preview": preview,
+                "last_activity": row["last_activity"],
+            })
+
+        return json.dumps({
+            "success": True,
+            "query": None,
+            "mode": "recent_sessions",
+            "results": results,
+            "count": len(results),
+        }, ensure_ascii=False)
+    except Exception as e:
+        logger.error("Recent sessions query failed: %s", e, exc_info=True)
+        return _tool_error(f"Recent sessions query failed: {str(e)}", success=False)
+
+
 def session_search(
     query: str | None,
     session_id: str,
@@ -243,7 +288,7 @@ def session_search(
     # Recent sessions mode: when query is empty, return metadata for recent sessions.
     # No LLM calls — just DB queries for titles, previews, timestamps.
     if not query or not query.strip() or query.strip() == "":
-        raise Exception("No query provided")
+        return _recent_sessions(db, session_id, limit)
 
     query = query.strip()
 
