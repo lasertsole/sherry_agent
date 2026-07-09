@@ -18,20 +18,21 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 
 ## 🚀 Key Features
 
-### 1. 🧠 Deep Memory System (Context Engine)
-- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/README.md)) + long-term knowledge graph ([Skill Memory](context_engine/skill_memory/README.md))
-- **Skill Memory Graph**: Automatically extracts knowledge points from conversations to build a dynamic knowledge graph
-- **Community Detection & Summarization**: Periodically partitions the graph and generates summaries for efficient long-term memory retrieval
-- **Query Rewriting**: Disambiguates pronouns and references using conversation history before retrieval
-- **Persistent Storage**: Stores conversation history and memory nodes in SQLite + FTS5, supporting cross-session memory inheritance
-- **Async Non-blocking Extraction**: Skill Memory extraction runs in the background; MesMemory writes are synchronous and immediate
-- ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
+### 1. 🧠 Deep Memory System (Context Engine + XpGraph)
+- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/README.md)) + long-term experience knowledge graph ([XpGraph](agent/tools/pub_base/xp_graph/README.md))
+- **XpGraph (Experience Graph)**: Distillation-first knowledge graph that extracts high-signal, reusable experiences from task execution into structured nodes and edges
+- **Multi-Role Knowledge Bases**: Strategy-level graph shared by main agent + Commander (`default`), operation-level graph for Workers (`worker`)
+- **Dual-Path Recall**: Precise (vector/FTS5 → community expansion → PPR) + generalized (community vector → representatives) retrieval with reranking
+- **Community Detection & Summarization**: Leiden algorithm partitions the graph and generates summaries for efficient long-term retrieval
+- **Persistent Storage**: SQLite + FTS5 + vector embeddings, supporting cross-session knowledge inheritance
+- ▶️ _See the [Context Engine README](context_engine/README.md) and [XpGraph README](agent/tools/pub_base/xp_graph/README.md) for architecture, data models, and API details_
 
 ### 2. 🛠️ Dynamic Skill System
 - **SKILL.md Standard**: Skills defined in standardized Markdown format — the Agent can autonomously read and learn new abilities
 - **Tool Calling**: Built-in Web search, file I/O, code execution (Python Repl), terminal commands, message search, and more
 - **Subagents**: Supports running complex time-consuming tasks in parallel in the background, with async results via a message bus
-- ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for lifecycle, Commander architecture, and API docs_
+- **Experience Closed Loop**: Subagents record findings via draft tool → distill experiences after task completion → ingest into XpGraph → recall and inject into future tasks
+- ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for lifecycle, Commander architecture, distillation pipeline, and API docs_
 - **Tool Timeouts**: Python REPL, terminal, and web search tools each have independent configurable timeouts with automatic kill on expiry
 - ▶️ _See the [Middlewares README](agent/middlewares/README.md) for the middleware pipeline_
 
@@ -88,14 +89,23 @@ EMA_AI_agent/
 │   │   └── context_engine/          # Context engine hooks
 │   ├── tools/              # Agent-accessible tools
 │   │   ├── subagent/       # Subagent system (hierarchical task decomposition)
-│   │   │   ├── base.py     # SubagentManager (singleton orchestrator)
-│   │   │   ├── core.py     # Subagent spawn tool
+│   │   │   ├── base.py     # SubagentManager (singleton orchestrator + distillation)
+│   │   │   ├── core.py     # Subagent spawn tool (@tool)
+│   │   │   ├── draft.py    # Draft tool — record key findings during execution
+│   │   │   ├── distiller.py # Post-task experience distillation
 │   │   │   ├── commander/  # LangGraph-based Commander agent
 │   │   │   ├── templates/  # Result announcement templates
 │   │   │   └── type.py     # SubAgentOutput data model
 │   │   ├── file_tools/     # File I/O tools (read, write, patch, search)
 │   │   ├── skill_tools/    # Skill management tools (list, view, manage)
-│   │   ├── pub_base/       # Shared tool utilities (path, skill utils)
+│   │   ├── pub_base/       # Shared tool utilities & infrastructure
+│   │   │   └── xp_graph/   # Experience knowledge graph engine (XpGraph)
+│   │   │       ├── core.py     # XpGraphInstance factory, after_turn, ingest
+│   │   │       ├── store/      # SQLite CRUD, FTS5, vector storage
+│   │   │       ├── recaller/   # Dual-path recall (precise + generalized)
+│   │   │       ├── extractor/  # Dialogue knowledge extraction
+│   │   │       ├── graph/      # PageRank, community, dedup, maintenance
+│   │   │       └── format/     # XML assembly & system prompt generation
 │   │   ├── mcp_plugin.py   # MCP plugin tool
 │   │   ├── web_search.py   # Web search tool
 │   │   ├── python_repl.py  # Python code execution (subprocess with timeout)
@@ -139,14 +149,8 @@ EMA_AI_agent/
 │   └── num.py              # Numeric/tuning parameters
 │
 ├── context_engine/         # Memory engine
-│   ├── pre_builder.py      # Unified pre-build API (query rewrite + memory assembly)
-│   ├── mes_memory/         # Short-term session message memory (SQLite + FTS5)
-│   └── skill_memory/       # Long-term knowledge graph
-│       ├── core.py         # Orchestrator: assemble, ingest, after_turn
-│       ├── extractor/      # LLM-based node/edge extraction from dialogue
-│       ├── recaller/       # Dual-path recall (precise + generalized)
-│       ├── graph/          # Community detection (Leiden), PageRank, dedup
-│       └── store/          # SQLite + vectors + FTS5 storage
+│   ├── core.py             # Message retrieval & search APIs
+│   └── store/              # Short-term session message memory (SQLite + FTS5)
 │
 ├── future/                 # Experimental / upcoming features
 │
@@ -267,16 +271,14 @@ Each major subsystem has its own detailed README:
 
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
-| **Context Engine** | Dual memory system (MesMemory + Skill Memory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **MesMemory** | Short-term session message memory | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **Skill Memory** | Long-term knowledge graph memory | [EN](context_engine/skill_memory/README.md) · [ZH](context_engine/skill_memory/README.zh.md) |
-| **Subagent System** | Hierarchical task decomposition & parallel execution | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
+| **Context Engine** | Short-term session message memory (MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
+| **XpGraph** | Long-term experience knowledge graph | [EN](agent/tools/pub_base/xp_graph/README.md) · [ZH](agent/tools/pub_base/xp_graph/README.zh.md) |
+| **Subagent System** | Hierarchical task decomposition, parallel execution & experience distillation | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
+| **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
+| **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
+| **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
 | **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
-| **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
-| **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
-| **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
-| **CodeAct** | Code-interactive execution loop | [EN](agent/codeact/README.md) |
 
 ---
 
