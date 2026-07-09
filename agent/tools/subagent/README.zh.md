@@ -4,14 +4,18 @@
 
 # Subagent System
 
-> EMA AI Agent 的层级任务分解与并行执行子系统。
+> 带经验知识图谱集成的层级任务分解与并行执行子系统。
 
 ## 概述
 
-**Subagent System** 使 EMA AI Agent 能够将复杂任务分解，在后台并行执行子任务，并通过消息总线异步返回结果。它由两个核心层组成：
+**Subagent System** 使 AI Agent 能够将复杂任务分解，在后台并行执行子任务，并通过消息总线异步返回结果。它具备**经验知识图谱（xp_graph）闭环**：草稿 → 蒸馏 → 写入 → 召回 → 组装注入。
+
+核心层：
 
 - **`SubagentManager`** — 单例编排器，管理后台子代理任务的生命周期。
-- **`Commander`** — 按任务创建的 LangGraph 智能体，负责计划、分解和调度工作给子子代理。
+- **`Commander`** — 按任务创建的 LangGraph 智能体，负责计划、分解和调度工作给 Worker。
+- **Distiller** — 任务结束后蒸馏引擎，将可复用经验提取写入 xp_graph。
+- **Draft 工具** — Agent 可调用的工具，用于在任务执行中记录关键发现。
 
 ## 架构
 
@@ -19,73 +23,153 @@
 用户 / 主 Agent
        │
        ▼
-┌──────────────────────────────────────┐
-│          SubagentManager             │
-│  (单例，生命周期编排器)                │
-│                                      │
-│  - spawn() → 创建后台任务             │
-│  - _run_subagent() → 构建并运行       │
-│  - cancel_by_session() → 清理         │
-│  - start_service() → 事件循环         │
-│  - _consume_loop() → 转发结果         │
-└──────────┬───────────────────────────┘
-           │ 创建
-           ▼
-┌──────────────────────────────────────┐
-│           Commander Agent            │
-│  (LangGraph, 按任务实例化)            │
-│                                      │
-│  工具:                               │
-│  ┌──────────┐  ┌──────────┐         │
-│  │TodoWriter│  │  Worker  │         │
-│  │(写入     │  │(并行调度) │         │
-│  │ todo.md) │  │          │         │
-│  └──────────┘  └────┬─────┘         │
-│                     │                │
-│  中间件:             │                │
-│  ┌──────────────┐   │                │
-│  │TodoInjector  │   │                │
-│  │(模型调用前)   │   │                │
-│  ├──────────────┤   │                │
-│  │Summarization │   │                │
-│  │(消息摘要)     │   │                │
-│  ├──────────────┤   │                │
-│  │TodoCleaner   │   │                │
-│  │(智能体结束后) │   │                │
-│  └──────────────┘   │                │
-└─────────────────────┼────────────────┘
-                      │ 调度
-                      ▼
-              ┌────────────────┐
-              │ 子子代理        │
-              │ 子子代理        │
-              │ 子子代理        │
-              │ ... (并行)      │
-              └────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     SubagentManager                          │
+│  (单例，生命周期编排器)                                       │
+│                                                              │
+│  _run_subagent() 流程:                                      │
+│    1. 召回 xp_graph → 注入 AIMessage 到 Commander          │
+│    2. Commander 执行任务 (工具: todo_writer, worker, draft) │
+│    3. 发布结果到消息总线 (方案 C)                            │
+│    4. 蒸馏经验写入知识图谱                                   │
+│    5. 清理运行时寄存器                                       │
+└──────────────────────────────────────────────────────────────┘
+       │ 创建
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│                      Commander 智能体                        │
+│  (LangGraph, 按任务实例化)                                   │
+│                                                              │
+│  工具:                                                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
+│  │TodoWriter│  │  Worker  │  │  Draft   │                  │
+│  │(写入     │  │(并行调度)│  │(记录发现)│                  │
+│  │ todo.md) │  │          │  │          │                  │
+│  └──────────┘  └────┬─────┘  └──────────┘                 │
+│                      │                                       │
+│  中间件:              │                                       │
+│  ┌───────────────┐   │                                       │
+│  │Summarization  │   │                                       │
+│  ├───────────────┤   │                                       │
+│  │TODOManager    │   │                                       │
+│  │(注入+归档)    │   │                                       │
+│  ├───────────────┤   │                                       │
+│  │ToolCallNorm   │   │                                       │
+│  ├───────────────┤   │                                       │
+│  │IterationBudget│   │                                       │
+│  ├───────────────┤   │                                       │
+│  │ToolGuardrails │   │                                       │
+│  └───────────────┘   │                                       │
+└──────────────────────┼──────────────────────────────────────┘
+                        │ 调度
+                        ▼
+                ┌────────────────┐
+                │ Worker 智能体   │
+                │ (codeact_agent)│
+                │ Worker 智能体   │
+                │ ... (并行)      │
+                └────────────────┘
+                        │
+                        ▼ 任务结束后
+┌──────────────────────────────────────────────────────────────┐
+│              经验知识图谱 (xp_graph)                          │
+│                                                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │  Draft 工具  │→ │  蒸馏器     │→ │  xp_graph   │         │
+│  │(任务中记录  │  │(辅助LLM     │  │(节点/边     │         │
+│  │ 关键发现)    │  │  提取经验)  │  │ 向量/FTS5)  │         │
+│  └─────────────┘  └─────────────┘  └──────┬──────┘        │
+│                                              │ 召回          │
+│  ┌───────────────────────────────────────────┘               │
+│  │  下次任务: 召回 → 组装 → 作为 AIMessage 注入              │
+│  └───────────────────────────────────────────────────────────│
+│                                                              │
+│  DB 角色:                                                    │
+│    default → store/xp_graph/xp_graph.db (策略级)            │
+│    worker  → store/xp_graph/worker/xp_graph.db (操作级)     │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## 模块结构
 
 ```
 subagent/
-├── __init__.py              # 导出: SubagentManager, subagent_manager
-├── core.py                  # SubagentManager — 单例编排器
+├── __init__.py              # 导出: build_subagent_tool
+├── base.py                  # SubagentManager — 单例编排器 + 蒸馏流程
+├── core.py                  # @tool subagent_tool — 异步生成接口
 ├── type.py                  # SubAgentOutput — pydantic 数据模型
+├── draft.py                 # Draft @tool — 记录关键发现 + 辅助函数
+├── distiller.py             # 蒸馏器 — 任务结束后经验蒸馏
 ├── commander/
 │   ├── __init__.py          # 导出: build_commander
 │   ├── core.py              # build_commander() — 创建 LangGraph 智能体
 │   ├── tools/
 │   │   ├── todo_writer.py   # TodoWriter — 写入 todo.md 文件
-│   │   └── worker.py        # Worker — 并行子子代理调度
+│   │   └── worker/
+│   │       ├── core.py      # Worker — 并行子任务调度
+│   │       └── middlewares/
+│   │           └── WorkerSummarization.py
 │   └── middlewares/
-│       ├── __init__.py      # 导出: todo_injector_builder, todo_cleaner_builder
-│       ├── todo_injector.py # 模型调用前中间件 — 注入 todo 状态
-│       └── todo_cleaner.py  # 智能体结束后中间件 — 归档/删除 todo 文件
+│       └── core.py          # TODOManager — 注入 + 归档 todo 上下文
 ├── templates/
 │   └── subagent_announce.md # 结果通知的 Jinja2 模板
-├── README.en.md             # English version
-└── README.zh.md             # 本文件（中文）
+├── README.md
+└── README.zh.md
 ```
+
+## 经验知识图谱闭环
+
+### 流程
+
+```
+1. 任务执行: Commander/Worker 调用 draft_tool → state_register_db
+2. 任务完成: bus.publish → distill_and_ingest → Register.clear_all
+3. 蒸馏: auxiliary_llm 从草稿+结果中提取节点/边
+4. 写入: 策略级 → xp_graph("default"), 操作级 → xp_graph("worker")
+5. 下次任务: recall(task) → assemble_context → AIMessage 注入
+```
+
+### Draft 工具
+
+`draft` 是 Commander、Worker 和主 Agent 均可调用的 `@tool` 函数：
+
+```python
+@tool
+def draft(
+    key_points: str,
+    category: Literal["strategy", "obstacle", "tool_pattern", "insight"],
+    session_id: Annotated[str, InjectedState("session_id")] = "",
+) -> str
+```
+
+辅助函数（供蒸馏器使用）：
+- `get_drafts(session_id)` — 读取所有草稿
+- `append_drafts(session_id, drafts)` — 将 Worker 草稿合并到 Commander session
+- `clear_drafts(session_id)` — 蒸馏后清空草稿
+
+### 蒸馏器
+
+`distill_and_ingest()` 在每次 subagent 任务结束后执行（方案 C 顺序）：
+
+1. **策略级蒸馏** → `get_instance("default").ingest_experiences()`（Commander 层面的模式）
+2. **操作级蒸馏** → `get_instance("worker").ingest_experiences()`（Worker 层面的技巧）
+
+Worker 草稿在蒸馏前被合并到 Commander session 中。
+
+### 知识图谱注入
+
+在 `agent.ainvoke()` 之前，召回的经验以 `AIMessage` 注入：
+
+```python
+messages = [HumanMessage(content=task)]
+# 从 xp_graph 召回
+if recall_result["nodes"]:
+    assembled = assemble_context(db, nodes, edges)
+    messages.append(AIMessage(content=f"徊\n{system_prompt}\n\n{xml}\n徊"))
+```
+
+- **Commander**: 从 `xp_graph("default")` 召回（策略级）
+- **Worker**: 从 `xp_graph("worker")` 召回（操作级）
 
 ## 数据模型
 
@@ -100,217 +184,120 @@ class SubAgentOutput(BaseModel):
 
 ## SubagentManager 生命周期
 
-### 单例模式
+### 方案 C：发布 → 蒸馏 → 清理
 
-`SubagentManager` 使用经典单例模式（`__new__` + `_instance` 守卫）。每次 `SubagentManager()` 调用都返回同一实例。`_initialized` 标志防止重复初始化。
+Commander 执行完成后（成功、超时或异常）：
 
-### 事件循环管理
+```
+1. 发布结果到消息总线（用户立即收到通知）
+2. distill_and_ingest()（草稿仍在 state_register_db 中）
+3. Register.clear_all_register_sessions()（清理，草稿随之清除）
+```
 
-构造时：
-1. 尝试 `asyncio.get_running_loop()` — 如果已有运行中的事件循环则复用。
-2. 回退到 `asyncio.new_event_loop()` — 创建专用于后台任务的事件循环。
+确保用户即时获取结果，同时草稿数据在蒸馏完成前不被清理。
 
 ### 生成 → 执行 → 通知
 
 ```
 spawn(task, session_id)
   │
-  ├─ 生成 task_id (UUID，取前8字符)
-  ├─ 创建 asyncio.create_task(_run_subagent(...))
+  ├─ 生成 task_id（基于时间戳）
+  ├─ 创建 asyncio 任务 (_run_subagent)
   ├─ 在 _running_tasks 和 _session_tasks 中注册
-  ├─ 注册 _cleanup 回调（任务完成时从跟踪中移除）
-  └─ 返回 "已启动" 消息给调用方
+  ├─ 注册 _cleanup 回调
+  └─ 返回 "已启动" 消息
 
 _run_subagent(session_id, task_id, task, label)
   │
-  ├─ 通过 build_commander(session_id, task_id) 构建 Commander 智能体
-  ├─ agent.ainvoke({messages: [HumanMessage(task)]})
-  │     └─ Commander 分解任务、调用工具、返回 SubAgentOutput
+  ├─ 召回 commander xp_graph → 构建 messages（含 AIMessage 知识注入）
+  ├─ 构建 Commander 智能体
+  ├─ agent.ainvoke({messages: [HumanMessage(task), AIMessage(knowledge)]})
   ├─ 使用 subagent_announce.md 模板渲染结果
-  ├─ 创建 InboundMessage (channel="system", metadata injected_event="subagent_result")
-  └─ 发布到 MessageBus → consumer 转发给用户
+  ├─ 发布 InboundMessage 到消息总线
+  ├─ distill_and_ingest() → 提取经验写入知识图谱
+  └─ Register.clear_all_register_sessions()
 ```
-
-### 取消
-
-`cancel_by_session(session_id)` — 取消指定会话的所有运行中的后台任务，并通过 `asyncio.gather(return_exceptions=True)` 等待优雅关闭。
 
 ### 服务模式
 
 `start_service()` 启动 `_consume_loop()`，其功能：
 1. 等待总线上的 `InboundMessage`。
-2. 通过角色人设提示词重新人格化结果（system prompt + chat model）。
+2. 通过角色人设提示词重新人格化结果。
 3. 转发给注册的 `_consumer` 回调。
 
 ## Commander 智能体
 
 ### 构建
 
-`build_commander(session_id, task_id)` — 确保 `{SESSIONS_DIR}/{session_id}/todo/` 存在，然后构建 LangGraph 智能体：
+`build_commander()` 构建 LangGraph 智能体：
 
 | 组件 | 详情 |
 |------|------|
-| **系统提示词** | 关于任务分解、并行化规则、todo 格式和动态计划调整的全面指导 |
-| **模型** | `main_llm`（整个 Agent 系统共享） |
-| **检查点** | `InMemorySaver` — 在会话内保持对话状态 |
-| **工具** | `todo_writer` + `worker` |
-| **中间件** | `SummarizationMiddleware`（15条消息触发，保留8条）+ `todo_injector`（模型调用前）+ `todo_cleaner`（智能体结束后） |
+| **系统提示词** | 任务分解、并行化、动态计划调整、草稿记录 |
+| **模型** | `main_llm`（项目共享模型） |
+| **检查点** | `InMemorySaver` |
+| **工具** | `todo_writer` + `worker` + `draft` |
+| **中间件** | `SummarizationMiddleware`（15条触发，保留8条）+ `TODOManager` + `ToolCallNormalize` + `IterationBudget` + `ToolGuardrails` |
 | **响应格式** | `SubAgentOutput` 结构化输出 |
-
-### 系统提示词要点
-
-Commander 的角色是"智能任务指挥官"，其行为：
-
-1. **评估复杂度** — 简单任务直接执行。复杂任务走 todo 工作流。
-2. **分解** — 将工作分解为带有优先级、并行分组标识和清晰描述的子任务。
-3. **并行化** — 将独立子任务分组到单次 `worker` 调用中并发执行。
-4. **跟踪** — 维护 todo.md 文件，包含状态、结果和进度统计。
-5. **调整** — 支持小幅调整（修改任务）和大幅重构（重写计划）。
-6. **处理失败** — 记录失败，决定重试/跳过/重新计划。
-
-## Commander 工具
-
-### TodoWriter (`write_todo`)
-
-- **用途**: 在会话的 todo 目录中写入/更新 `todo/{task_id}.md`。
-- **行为**: 每次调用使用完整内容覆盖文件。
-- **同步 + 异步**: 支持 `_run`（同步）和 `_arun`（异步）。
-
-### Worker (`worker`)
-
-- **用途**: 并发执行多个独立的子任务。
-- **输入**: `WorkerArgs.worker_tasks: list[WorkerTask]`
-  - 每个 `WorkerTask` 包含: `label`, `description`, `timeout_mins` (5-30, 默认5)。
-- **执行模型**:
-  - 每个子任务创建一个 `asyncio.create_task`。
-  - 通过 `asyncio.gather` 并发运行。
-  - 每个子任务智能体是完整的 LangGraph 智能体，具备：
-    - Context Engine 集成（`assemble()` 用于记忆检索，`after_turn()` 用于经验抽取）。
-    - `build_core_tools()` — 除 Commander 自身工具外的所有可用工具。
-    - `SummarizationMiddleware`（20条消息触发，保留10条）。
-    - `SubAgentOutput` 响应格式。
-    - 通过 `asyncio.wait_for` 实现可配置超时。
-- **结果**: 每个子任务返回从 `subagent_announce.md` 渲染的通知字符串。
 
 ## Commander 中间件
 
-### TodoInjector（模型调用前）
+### TODOManager（替代了 TodoInjector + TodoCleaner）
 
-- **钩子**: `@before_model` — 每次模型调用前运行。
-- **功能**: 读取 `todo/{task_id}.md` 并将其内容作为带有 `[SYSTEM CONTEXT - TODO LIST UPDATE]` 标签的 `HumanMessage` 注入。
-- **跳过**: 如果 todo 文件不存在或无法读取，返回 `None`（无操作）。
+- **`abefore_model`**: 读取 `todo/{task_id}.md` 并注入为 `[SYSTEM CONTEXT - TODO LIST UPDATE]`。
+- **`aafter_agent`**: 归档 todo 文件到 `todo_archive/` 或删除。
 
-### TodoCleaner（智能体结束后）
+### ToolCallNormalize
 
-- **钩子**: `@after_agent` — 智能体完成运行后执行。
-- **功能**: 清理 `todo/{task_id}.md` 文件。
-- **模式**:
-  - `"delete"` — 直接通过 `os.remove()` 删除文件。
-  - `"archive"`（默认）— 通过 `shutil.move()` 移动到 `todo_archive/{task_id}_{timestamp}.md`。
+修复摘要裁剪消息后产生的孤立 tool_call。
 
-### SummarizationMiddleware
+### IterationBudget
 
-- **触发条件**: 消息数量超过15条。
-- **保留**: 缩减到最近的8条消息。
-- **模型**: 使用相同的 `main_llm` 进行摘要。
+限制每次任务的智能体迭代次数。
 
-## SubagentTool（外部接口）
+### ToolGuardrails
 
-位于 `tools/subagent.py` — 一个 LangChain `BaseTool`，允许主 Agent 生成子代理：
+验证工具调用是否符合安全规则。
 
-```python
-class SubagentTool(BaseTool):
-    name = "subagent"
-    description = "为后台任务执行创建子代理。"
+## Worker 智能体
 
-    async def _arun(self, task: str, label: str | None = None) -> str
-```
+Worker 是 `codeact_agent` 实例（非 LangGraph agent），具备：
 
-- **仅异步**: `_run()` 抛出 `RuntimeError` 以防止同步调用导致死锁。
-- **线程安全**: 使用 `asyncio.run_coroutine_threadsafe()` 将工作调度到 SubagentManager 的事件循环上。
-- **需要运行中的事件循环**: 生成前检查 `event_loop.is_running()`。
-
-## 通知模板
-
-`templates/subagent_announce.md` 是一个 Jinja2 风格模板，渲染参数：
-
-```markdown
-[Subagent '{{ label }}' {{ status_text }}]
-
-Task: {{ task }}
-finish_reason: {{ finish_reason }}
-Result: {{ result }}
-
-请以自然的口吻向用户总结。保持简洁（1-2句）。
-不要提及"subagent"或任务ID等技术细节。
-```
-
-## 任务生命周期图
-
-```
-用户任务请求
-       │
-       ▼
-主 Agent 调用 SubagentTool._arun()
-       │
-       ▼
-SubagentManager.spawn()
-  ├── 生成 task_id
-  ├── 创建 asyncio 任务 (_run_subagent)
-  └── 返回"已启动"给调用方
-       │
-       ▼
-Commander 智能体 (LangGraph)
-  ├── 步骤0: 评估复杂度
-  ├── 步骤1: 写入 todo.md (TodoWriter)
-  ├── 步骤2: 执行并行分组 (Worker)
-  │     └── 子子代理 1 ──► 结果
-  │     └── 子子代理 2 ──► 结果
-  │     └── 子子代理 3 ──► 结果
-  ├── 步骤3: 处理依赖（如有）
-  ├── 步骤4: 更新 todo.md
-  └── 返回 SubAgentOutput
-       │
-       ▼
-SubagentManager._run_subagent()
-  ├── 渲染通知模板
-  ├── 在总线上创建 InboundMessage
-  └── Consumer → 角色人设风格转发给用户
-```
+- **工具**: `build_without_session_id_tools()`（除 subagent 特有工具外的所有工具，含 `draft`）
+- **中间件**: `WorkerSummarization` + `HeartbeatStaleness` + `IterationBudget`
+- **响应格式**: `SubAgentOutput`
+- **xp_graph 注入**: 执行前从 `xp_graph("worker")` 召回操作级经验
+- **草稿合并**: Worker 草稿在 `finally` 块中合并到 Commander session
 
 ## 常见问题
 
-### 为什么 SubagentManager 是单例？
-后台任务必须全局跟踪，而非按会话跟踪。单例确保对取消、生命周期管理和事件循环有单一控制点。
+### 为什么蒸馏器从 xp_graph 移出？
 
-### 为什么 SubagentTool 仅支持异步？
-主 Agent 可能在不同线程中运行。同步调用会阻塞调用线程并带来死锁风险。`asyncio.run_coroutine_threadsafe()` 提供线程安全的调度。
+`distiller.py` 原本在 `xp_graph/extractor/` 中，但它引用了 `draft.py`（subagent 层），形成了反向依赖：`xp_graph`（基础设施）→ `subagent`（业务层）。将蒸馏器移到 `subagent/` 使依赖方向变为单向：`subagent/distiller` → `xp_graph` ✓
 
-### 如果子子代理超时会怎样？
-`Worker` 工具将每个子任务包装在 `asyncio.wait_for()` 中。超时时，会渲染包含超时时长的失败通知。
+### 为什么用方案 C（发布 → 蒸馏 → 清理）？
 
-### Commander 如何知道下一步做什么？
-`TodoInjector` 中间件在每次模型调用前读取 `todo.md` 并注入为上下文，使 Commander 始终看到最新的计划状态。
+用户应即时获取结果。蒸馏需要 `state_register_db` 中的草稿数据，如果先 `Register.clear_all` 则草稿丢失。方案 C 兼顾两者：及时交付 + 完整蒸馏。
 
-### 我可以自定义 Commander 的行为吗？
-可以 — `commander/core.py` 中的系统提示词是主要控制面。修改提示词可以改变分解策略、并行化规则或 todo 格式。
+### 蒸馏失败怎么办？
 
-### 子子代理失败会怎样？
-Commander 决定：重试、跳过或重新计划。失败记录在 `finish_reason` 字段中，并体现在 todo.md 更新中。
+蒸馏被 `try/except` 包裹，失败仅记录警告日志，不影响已发布给用户的结果。
 
-### 结果如何传递给用户？
-结果通过 `MessageBus` 作为带有 `injected_event: "subagent_result"` 的 `InboundMessage` 传递。`_consume_loop` 通过角色人设重新人格化消息后展示。
+### Worker 的草稿如何收集？
+
+在 `_arun_task` 的 `finally` 块中，通过 `get_drafts(worker_session_id)` 读取 Worker 草稿，然后通过 `append_drafts(commander_session_id, ...)` 合并到 Commander session。蒸馏器统一从 Commander session 读取。
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 智能体框架 | [LangGraph](https://github.com/langchain-ai/langgraph) (`CompiledStateGraph`) |
-| LLM | `main_llm`（项目共享模型，通过 `.env` 配置） |
-| 检查点 | `InMemorySaver`（内存型，会话内） |
-| 中间件 | `@before_model` / `@after_agent` 装饰器 (`langchain.agents.middleware`) |
+| 智能体框架 | LangGraph (`CompiledStateGraph`) + codeact_agent |
+| LLM | `main_llm`（共享），`auxiliary_llm`（蒸馏） |
+| 检查点 | `InMemorySaver` |
+| 中间件 | `@before_model` / `@after_agent` 装饰器 |
+| 知识图谱 | `xp_graph`（SQLite + FTS5 + 向量搜索 + PageRank） |
 | 异步 | `asyncio.create_task`, `asyncio.gather`, `asyncio.wait_for` |
-| 数据校验 | Pydantic v2 (`BaseModel`, `Field`, `Literal`) |
+| 数据校验 | Pydantic v2 |
 | 模板 | 自定义 `render_template_file()`（Jinja2 风格） |
 | 消息总线 | 项目内部 `MessageBus` / `InboundMessage` |
-| 记忆系统 | Context Engine (`assemble()` / `after_turn()`) |
+| 状态管理 | `state_register_db`（SQLite），`state_register_mem`（内存） |

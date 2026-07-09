@@ -4,14 +4,18 @@
 
 # Subagent System
 
-> A hierarchical task decomposition and parallel execution subsystem for the EMA AI Agent.
+> A hierarchical task decomposition and parallel execution subsystem with experience knowledge graph integration.
 
 ## Overview
 
-The **Subagent System** enables the EMA AI Agent to decompose complex tasks, execute sub-tasks in parallel in the background, and return results asynchronously through a message bus. It consists of two core layers:
+The **Subagent System** enables the AI Agent to decompose complex tasks, execute sub-tasks in parallel in the background, and return results asynchronously through a message bus. It features an **experience knowledge graph (xp_graph) closed loop**: draft → distill → ingest → recall → assemble.
+
+Core layers:
 
 - **`SubagentManager`** — Singleton orchestrator that manages the lifecycle of background subagent tasks.
-- **`Commander`** — Per-task LangGraph agent that plans, decomposes, and dispatches work to sub-subagents.
+- **`Commander`** — Per-task LangGraph agent that plans, decomposes, and dispatches work to workers.
+- **Distiller** — Post-task distillation engine that extracts reusable knowledge into the xp_graph.
+- **Draft Tool** — Agent-callable tool for recording key findings during task execution.
 
 ## Architecture
 
@@ -19,74 +23,154 @@ The **Subagent System** enables the EMA AI Agent to decompose complex tasks, exe
 User / Main Agent
        │
        ▼
-┌──────────────────────────────────────┐
-│          SubagentManager             │
-│  (singleton, lifecycle orchestrator) │
-│                                      │
-│  - spawn() → creates background task │
-│  - _run_subagent() → builds & runs   │
-│  - cancel_by_session() → cleanup     │
-│  - start_service() → event loop      │
-│  - _consume_loop() → relay results   │
-└──────────┬───────────────────────────┘
-           │ creates
-           ▼
-┌──────────────────────────────────────┐
-│           Commander Agent            │
-│  (LangGraph, per-task instance)      │
-│                                      │
-│  Tools:                              │
-│  ┌──────────┐  ┌──────────┐         │
-│  │TodoWriter│  │  Worker  │         │
-│  │(write    │  │(parallel │         │
-│  │ todo.md) │  │ dispatch)│         │
-│  └──────────┘  └────┬─────┘         │
-│                     │                │
-│  Middlewares:       │                │
-│  ┌──────────────┐   │                │
-│  │TodoInjector  │   │                │
-│  │(before model)│   │                │
-│  ├──────────────┤   │                │
-│  │Summarization │   │                │
-│  │Middlewar     │   │                │
-│  ├──────────────┤   │                │
-│  │TodoCleaner   │   │                │
-│  │(after agent) │   │                │
-│  └──────────────┘   │                │
-└─────────────────────┼────────────────┘
-                      │ dispatches
-                      ▼
-              ┌────────────────┐
-              │ Sub-Subagent   │
-              │ sub-subagent   │
-              │ sub-subagent   │
-              │ ... (parallel) │
-              └────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     SubagentManager                          │
+│  (singleton, lifecycle orchestrator)                         │
+│                                                              │
+│  _run_subagent() flow:                                      │
+│    1. Recall xp_graph → inject AIMessage into Commander     │
+│    2. Commander executes task (tools: todo_writer, worker,  │
+│       draft)                                                 │
+│    3. Publish result to bus (Plan C)                        │
+│    4. Distill experiences into knowledge graph               │
+│    5. Clear runtime registers                               │
+└──────────────────────────────────────────────────────────────┘
+       │ creates
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│                      Commander Agent                         │
+│  (LangGraph, per-task instance)                             │
+│                                                              │
+│  Tools:                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
+│  │TodoWriter│  │  Worker  │  │  Draft   │                  │
+│  │(write    │  │(parallel │  │(record   │                  │
+│  │ todo.md) │  │ dispatch)│  │findings) │                  │
+│  └──────────┘  └────┬─────┘  └──────────┘                 │
+│                      │                                       │
+│  Middlewares:        │                                       │
+│  ┌───────────────┐   │                                       │
+│  │Summarization  │   │                                       │
+│  ├───────────────┤   │                                       │
+│  │TODOManager    │   │                                       │
+│  │(inject+clean)│   │                                       │
+│  ├───────────────┤   │                                       │
+│  │ToolCallNorm   │   │                                       │
+│  ├───────────────┤   │                                       │
+│  │IterationBudget│   │                                       │
+│  ├───────────────┤   │                                       │
+│  │ToolGuardrails │   │                                       │
+│  └───────────────┘   │                                       │
+└──────────────────────┼──────────────────────────────────────┘
+                        │ dispatches
+                        ▼
+                ┌────────────────┐
+                │ Worker Agent   │
+                │ (codeact_agent)│
+                │ Worker Agent   │
+                │ ... (parallel) │
+                └────────────────┘
+                        │
+                        ▼ after task
+┌──────────────────────────────────────────────────────────────┐
+│              Experience Knowledge Graph (xp_graph)           │
+│                                                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │  Draft Tool │→ │  Distiller  │→ │  xp_graph   │         │
+│  │(record notes│  │(auxiliary   │  │(nodes/edges │         │
+│  │ during task)│  │  LLM extract│  │ vector/FTS5)│         │
+│  └─────────────┘  └─────────────┘  └──────┬──────┘        │
+│                                              │ recall        │
+│  ┌───────────────────────────────────────────┘               │
+│  │  Next task: recall → assemble → inject as AIMessage      │
+│  └───────────────────────────────────────────────────────────│
+│                                                              │
+│  DB Roles:                                                   │
+│    default → store/xp_graph/xp_graph.db (strategy-level)    │
+│    worker  → store/xp_graph/worker/xp_graph.db (operation)  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Module Structure
 
 ```
 subagent/
-├── __init__.py              # Exports: SubagentManager, subagent_manager
-├── core.py                  # SubagentManager — singleton orchestrator
+├── __init__.py              # Exports: build_subagent_tool
+├── base.py                  # SubagentManager — singleton orchestrator + distillation
+├── core.py                  # @tool subagent_tool — async spawn interface
 ├── type.py                  # SubAgentOutput — pydantic data model
+├── draft.py                 # Draft @tool — record key findings + helper functions
+├── distiller.py             # Distiller — post-task experience distillation
 ├── commander/
 │   ├── __init__.py          # Exports: build_commander
 │   ├── core.py              # build_commander() — creates LangGraph agent
 │   ├── tools/
 │   │   ├── todo_writer.py   # TodoWriter — writes todo.md files
-│   │   └── worker.py        # Worker — parallel sub-subagent dispatch
+│   │   └── worker/
+│   │       ├── core.py      # Worker — parallel sub-task dispatch
+│   │       └── middlewares/
+│   │           └── WorkerSummarization.py
 │   └── middlewares/
-│       ├── __init__.py      # Exports: todo_injector_builder, todo_cleaner_builder
-│       ├── todo_injector.py # Pre-model middleware — injects todo status
-│       └── todo_cleaner.py  # Post-agent middleware — archives/deletes todo files
+│       └── core.py          # TODOManager — inject + archive todo context
 ├── templates/
 │   └── subagent_announce.md # Jinja2 template for result announcement
-├── README.md                # Entry point
-├── README.en.md             # This file (English)
-└── README.zh.md             # Chinese version
+├── README.md
+└── README.zh.md
 ```
+
+## Experience Knowledge Graph Closed Loop
+
+### Flow
+
+```
+1. Task Execution:  Commander/Worker call draft_tool → state_register_db
+2. Task Completion:  bus.publish → distill_and_ingest → Register.clear_all
+3. Distillation:     auxiliary_llm extracts nodes/edges from drafts + result
+4. Ingestion:        strategy → xp_graph("default"), operation → xp_graph("worker")
+5. Next Task:        recall(task) → assemble_context → AIMessage injection
+```
+
+### Draft Tool
+
+`draft` is a `@tool` function available to Commander, Worker, and main Agent:
+
+```python
+@tool
+def draft(
+    key_points: str,
+    category: Literal["strategy", "obstacle", "tool_pattern", "insight"],
+    session_id: Annotated[str, InjectedState("session_id")] = "",
+) -> str
+```
+
+Helper functions (used by distiller):
+- `get_drafts(session_id)` — read all draft entries
+- `append_drafts(session_id, drafts)` — merge drafts from Worker to Commander session
+- `clear_drafts(session_id)` — clear draft entries after distillation
+
+### Distiller
+
+`distill_and_ingest()` runs after each subagent task (Plan C order):
+
+1. **Strategy distillation** → `get_instance("default").ingest_experiences()` (Commander-level patterns)
+2. **Operation distillation** → `get_instance("worker").ingest_experiences()` (Worker-level techniques)
+
+Worker drafts are merged into the Commander session before distillation.
+
+### Knowledge Graph Injection
+
+Before `agent.ainvoke()`, recalled experiences are injected as an `AIMessage`:
+
+```python
+messages = [HumanMessage(content=task)]
+# recall from xp_graph
+if recall_result["nodes"]:
+    assembled = assemble_context(db, nodes, edges)
+    messages.append(AIMessage(content=f"徊\n{system_prompt}\n\n{xml}\n徊"))
+```
+
+- **Commander**: recalls from `xp_graph("default")` (strategy-level)
+- **Worker**: recalls from `xp_graph("worker")` (operation-level)
 
 ## Data Model
 
@@ -94,224 +178,127 @@ subagent/
 
 ```python
 class SubAgentOutput(BaseModel):
-    status: Literal["ok", "failed"]         # Task success/failure
-    finish_reason: str                      # Completion reason (error details if failed)
-    result: str                             # Output or result storage path
+    status: Literal["ok", "failed"]
+    finish_reason: str
+    result: str
 ```
 
 ## SubagentManager Lifecycle
 
-### Singleton Pattern
+### Plan C: Publish → Distill → Clear
 
-`SubagentManager` uses a classic singleton (`__new__` + `_instance` guard). Every `SubagentManager()` call returns the same instance. The `_initialized` flag prevents re-initialization.
+After Commander execution completes (success, timeout, or error):
 
-### Event Loop Management
+```
+1. Publish result to bus (user gets notification immediately)
+2. distill_and_ingest() (drafts are still in state_register_db)
+3. Register.clear_all_register_sessions() (cleanup, drafts cleared)
+```
 
-On construction:
-1. Tries `asyncio.get_running_loop()` — reuses the current event loop if one is running.
-2. Falls back to `asyncio.new_event_loop()` — creates a dedicated loop for background tasks.
+This ensures the user receives results promptly while drafts remain available for distillation.
 
 ### Spawn → Execute → Announce
 
 ```
 spawn(task, session_id)
   │
-  ├─ Generate task_id (UUID, first 8 chars)
-  ├─ Create asyncio.create_task(_run_subagent(...))
+  ├─ Generate task_id (timestamp-based)
+  ├─ Create asyncio task (_run_subagent)
   ├─ Track in _running_tasks and _session_tasks
-  ├─ Register _cleanup callback (removes from tracking on completion)
-  └─ Return "started" message to caller
+  ├─ Register _cleanup callback
+  └─ Return "started" message
 
 _run_subagent(session_id, task_id, task, label)
   │
-  ├─ Build Commander agent via build_commander(session_id, task_id)
-  ├─ agent.ainvoke({messages: [HumanMessage(task)]})
-  │     └─ Commander decomposes, calls tools, returns SubAgentOutput
-  ├─ Render subagent_announce.md template with result
-  ├─ Create InboundMessage (channel="system", metadata injected_event="subagent_result")
-  └─ Publish to MessageBus → consumer relays to user
+  ├─ Recall commander xp_graph → build messages with AIMessage injection
+  ├─ Build Commander agent
+  ├─ agent.ainvoke({messages: [HumanMessage(task), AIMessage(knowledge)]})
+  ├─ Render announcement template with SubAgentOutput
+  ├─ Publish InboundMessage to bus
+  ├─ distill_and_ingest() → extract experiences into knowledge graph
+  └─ Register.clear_all_register_sessions()
 ```
-
-### Cancellation
-
-`cancel_by_session(session_id)` — cancels all running background tasks for a given session and waits for graceful shutdown via `asyncio.gather(return_exceptions=True)`.
 
 ### Service Mode
 
 `start_service()` launches `_consume_loop()` which:
 1. Awaits `InboundMessage` from the bus.
-2. Re-personalizes the result through the character persona (system prompt + chat model).
+2. Re-personalizes the result through the character persona.
 3. Forwards to the registered `_consumer` callback.
 
 ## Commander Agent
 
 ### Construction
 
-`build_commander(session_id, task_id)` — ensures `{SESSIONS_DIR}/{session_id}/todo/` exists, then builds a LangGraph agent with:
+`build_commander()` builds a LangGraph agent with:
 
 | Component | Details |
 |-----------|---------|
-| **System Prompt** | Comprehensive guidance on task decomposition, parallelization rules, todo format, and dynamic plan adjustment |
-| **Model** | `main_llm` (shared across the agent system) |
-| **Checkpointer** | `InMemorySaver` — preserves conversation state within the session |
-| **Tools** | `todo_writer` + `worker` |
-| **Middlewares** | `SummarizationMiddleware` (trigger at 15 messages, keep 8) + `todo_injector` (pre-model) + `todo_cleaner` (post-agent) |
+| **System Prompt** | Task decomposition, parallelization, dynamic plan adjustment, draft recording |
+| **Model** | `main_llm` (shared project model) |
+| **Checkpointer** | `InMemorySaver` |
+| **Tools** | `todo_writer` + `worker` + `draft` |
+| **Middlewares** | `SummarizationMiddleware` (trigger 15, keep 8) + `TODOManager` + `ToolCallNormalize` + `IterationBudget` + `ToolGuardrails` |
 | **Response Format** | `SubAgentOutput` structured output |
-
-### System Prompt Highlights
-
-The Commander's persona is an "intelligent task commander" that:
-
-1. **Assesses complexity** — Simple tasks → execute directly. Complex tasks → proceed with todo workflow.
-2. **Decomposes** — Breaks work into subtasks with priority, parallel group assignment, and clear descriptions.
-3. **Parallelizes** — Groups independent subtasks into single `worker` calls for concurrent execution.
-4. **Tracks** — Maintains a todo.md file with status, results, and progress stats.
-5. **Adapts** — Supports minor adjustments (modify tasks) and major rework (rewrite plan) based on execution feedback.
-6. **Handles failures** — Logs failures, decides retry/skip/replan.
-
-## Commander Tools
-
-### TodoWriter (`write_todo`)
-
-- **Purpose**: Writes/updates `todo/{task_id}.md` in the session's todo directory.
-- **Behavior**: Overwrites the file with the full content every call.
-- **Sync + Async**: Supports both `_run` (sync) and `_arun` (async).
-
-### Worker (`worker`)
-
-- **Purpose**: Executes multiple independent sub-tasks concurrently.
-- **Input**: `WorkerArgs.worker_tasks: list[WorkerTask]`
-  - Each `WorkerTask` has: `label`, `description`, `timeout_mins` (5-30, default 5).
-- **Execution Model**:
-  - Creates one `asyncio.create_task` per subtask.
-  - Runs all via `asyncio.gather`.
-  - Each subtask agent is a full LangGraph agent with:
-    - Context Engine integration (`assemble()` for memory, `after_turn()` for experience extraction).
-    - `build_core_tools()` — all available tools except the commander's own tools.
-    - `SummarizationMiddleware` (trigger at 20, keep 10).
-    - `SubAgentOutput` response format.
-    - Configurable timeout via `asyncio.wait_for`.
-- **Result**: Each subtask returns an announcement string rendered from `subagent_announce.md`.
 
 ## Commander Middlewares
 
-### TodoInjector (pre-model)
+### TODOManager (replaces TodoInjector + TodoCleaner)
 
-- **Hook**: `@before_model` — runs before every model invocation.
-- **Function**: Reads `todo/{task_id}.md` and injects its content as a `HumanMessage` with tag `[SYSTEM CONTEXT - TODO LIST UPDATE]`.
-- **Skip**: If the todo file doesn't exist or can't be read, returns `None` (no-op).
+- **`abefore_model`**: Reads `todo/{task_id}.md` and injects as `[SYSTEM CONTEXT - TODO LIST UPDATE]`.
+- **`aafter_agent`**: Archives todo file to `todo_archive/` or deletes it.
 
-### TodoCleaner (post-agent)
+### ToolCallNormalize
 
-- **Hook**: `@after_agent` — runs after the agent completes.
-- **Function**: Cleans up the `todo/{task_id}.md` file.
-- **Modes**:
-  - `"delete"` — Directly removes the file via `os.remove()`.
-  - `"archive"` (default) — Moves to `todo_archive/{task_id}_{timestamp}.md` via `shutil.move()`.
+Fixes orphan tool calls after summarization trims messages.
 
-### SummarizationMiddleware
+### IterationBudget
 
-- **Trigger**: When message count exceeds 15.
-- **Keep**: Reduces to 8 most recent messages.
-- **Model**: Uses the same `main_llm` for summarization.
+Limits the number of agent iterations per task.
 
-## SubagentTool (External Interface)
+### ToolGuardrails
 
-Located in `tools/subagent.py` — a LangChain `BaseTool` that allows the main Agent to spawn subagents:
+Validates tool calls against safety rules.
 
-```python
-class SubagentTool(BaseTool):
-    name = "subagent"
-    description = "Spawn a subagent for background task execution."
+## Worker Agent
 
-    async def _arun(self, task: str, label: str | None = None) -> str
-```
+Workers are `codeact_agent` instances (not LangGraph agents) with:
 
-- **Async-only**: `_run()` raises `RuntimeError` to prevent deadlocks from synchronous calls.
-- **Thread-safe**: Uses `asyncio.run_coroutine_threadsafe()` to schedule work on the SubagentManager's event loop.
-- **Requires running event loop**: Checks `event_loop.is_running()` before spawning.
-
-## Announcement Template
-
-`templates/subagent_announce.md` is a Jinja2-style template rendered with:
-
-```markdown
-[Subagent '{{ label }}' {{ status_text }}]
-
-Task: {{ task }}
-finish_reason: {{ finish_reason }}
-Result: {{ result }}
-
-Summarize this naturally for the user. Keep it brief (1-2 sentences).
-Do not mention technical details like "subagent" or task IDs.
-```
-
-## Task Lifecycle Diagram
-
-```
-User Task Request
-       │
-       ▼
-Main Agent calls SubagentTool._arun()
-       │
-       ▼
-SubagentManager.spawn()
-  ├── Generate task_id
-  ├── Create asyncio task (_run_subagent)
-  └── Return "started" to caller
-       │
-       ▼
-Commander Agent (LangGraph)
-  ├── Step 0: Assess complexity
-  ├── Step 1: Write todo.md (TodoWriter)
-  ├── Step 2: Execute parallel groups (Worker)
-  │     └── Sub-subagent 1 ──► result
-  │     └── Sub-subagent 2 ──► result
-  │     └── Sub-subagent 3 ──► result
-  ├── Step 3: Handle dependencies (if any)
-  ├── Step 4: Update todo.md
-  └── Return SubAgentOutput
-       │
-       ▼
-SubagentManager._run_subagent()
-  ├── Render announcement template
-  ├── Create InboundMessage on bus
-  └── Consumer → persona-style relay to user
-```
+- **Tools**: `build_without_session_id_tools()` (all tools except subagent-specific ones, including `draft`)
+- **Middlewares**: `WorkerSummarization` + `HeartbeatStaleness` + `IterationBudget`
+- **Response Format**: `SubAgentOutput`
+- **xp_graph injection**: Recalls from `xp_graph("worker")` before execution
+- **Draft merge**: Worker drafts are merged into Commander session in `finally` block
 
 ## FAQ
 
-### Why is SubagentManager a singleton?
-Background tasks must be tracked globally, not per-session. Singleton ensures a single point of control for cancellation, lifecycle management, and the event loop.
+### Why is distiller moved out of xp_graph?
 
-### Why async-only for SubagentTool?
-The main agent may run in a different thread. Synchronous invocation would block the calling thread and risk deadlocks. `asyncio.run_coroutine_threadsafe()` provides thread-safe scheduling.
+`distiller.py` was originally inside `xp_graph/extractor/`, but it imports `draft.py` (subagent layer). This created a reverse dependency: `xp_graph` (infrastructure) → `subagent` (business). Moving distiller to `subagent/` makes the dependency direction one-way: `subagent/distiller` → `xp_graph` ✓
 
-### What happens if a sub-subagent times out?
-The `Worker` tool wraps each subtask in `asyncio.wait_for()`. On timeout, a failure announcement is rendered with the timeout duration.
+### Why Plan C (publish → distill → clear)?
 
-### How does the Commander know what to do next?
-The `TodoInjector` middleware reads `todo.md` before every model call and injects it as context, so the Commander always sees the current plan status.
+The user should receive results immediately. Distillation needs draft data from `state_register_db`, which would be lost if `Register.clear_all` runs first. Plan C ensures both: prompt delivery and complete distillation.
 
-### Can I customize the Commander's behavior?
-Yes — the system prompt in `commander/core.py` is the primary control surface. Modify the prompt to change decomposition strategy, parallelization rules, or todo format.
+### What if distillation fails?
 
-### What happens to failed sub-subagents?
-The Commander decides: retry, skip, or replan. The failure is recorded in the `finish_reason` field and visible in the todo.md update.
+Distillation is wrapped in `try/except`. Failure only logs a warning — it does not affect the result already published to the user.
 
-### How are results delivered to the user?
-Results pass through the `MessageBus` as an `InboundMessage` with `injected_event: "subagent_result"`. The `_consume_loop` re-personalizes the message through the character persona before displaying.
+### How are Worker drafts collected?
+
+In `_arun_task`'s `finally` block, Worker drafts are read via `get_drafts(worker_session_id)` and appended to the Commander session via `append_drafts(commander_session_id, ...)`. The distiller reads from the Commander session uniformly.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Agent Framework | [LangGraph](https://github.com/langchain-ai/langgraph) (`CompiledStateGraph`) |
-| LLM | `main_llm` (shared project model, configurable via `.env`) |
-| Checkpointing | `InMemorySaver` (memory-based, within session) |
-| Middleware | `@before_model` / `@after_agent` decorators (`langchain.agents.middleware`) |
+| Agent Framework | LangGraph (`CompiledStateGraph`) + codeact_agent |
+| LLM | `main_llm` (shared), `auxiliary_llm` (distillation) |
+| Checkpointing | `InMemorySaver` |
+| Middleware | `@before_model` / `@after_agent` decorators |
+| Knowledge Graph | `xp_graph` (SQLite + FTS5 + vector search + PageRank) |
 | Async | `asyncio.create_task`, `asyncio.gather`, `asyncio.wait_for` |
-| Data Validation | Pydantic v2 (`BaseModel`, `Field`, `Literal`) |
+| Data Validation | Pydantic v2 |
 | Templating | Custom `render_template_file()` (Jinja2-style) |
 | Message Bus | Project-internal `MessageBus` / `InboundMessage` |
-| Memory | Context Engine (`assemble()` / `after_turn()`) |
+| State Management | `state_register_db` (SQLite), `state_register_mem` (in-memory) |
