@@ -2,7 +2,7 @@
 
 [**English**](README.md) | **中文文档**
 
-> **MesMemory** 是 EMA AI Agent 的短期对话记忆引擎，负责消息的持久化存储、历史检索、全文搜索以及用户偏好提取。
+> **MesMemory** 是 EMA AI Agent 的短期对话记忆引擎，负责消息的持久化存储、历史检索、全文搜索。
 
 ---
 
@@ -33,9 +33,8 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 ### 核心能力
 
 1. **消息持久化** — 将每轮对话的 human/ai/tool 消息写入 SQLite
-2. **历史检索** — 按最近 N 轮次或指定轮次范围获取历史消息
+2. **历史检索** — 按最近 N 轮次、分页或指定轮次范围获取历史消息
 3. **全文搜索** — 基于 FTS5 的对话搜索，支持中文分词（trigram）和上下文预览
-4. **记忆 nudging** — 定期触发用户偏好提取，将对话中的偏好写入长期 memory store
 
 ---
 
@@ -43,7 +42,7 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 
 ```
 ┌────────────────────────────────────────────────────┐
-│                   MesMemory Core                    │
+│                   context_engine                     │
 ├───────────────────┬────────────────────────────────┤
 │    store/         │          core.py                │
 │   (数据层)        │        (业务逻辑层)              │
@@ -52,9 +51,10 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 │   - SQLite 连接    │   _prompt() → 历史格式化       │
 │   - 迁移管理       │ • search_messages() → FTS5    │
 │ • core.py         │   搜索 + 上下文预览              │
-│   - CRUD 操作      │ • nudge_memory() →          │
-│   - 消息写入        │   触发偏好提取                  │
-│   - 轮次查询        │                              │
+│   - CRUD 操作      │ • _sanitize_fts5_query()     │
+│   - 消息写入        │   查询净化                     │
+│   - 轮次查询        │ • _decode_content()          │
+│   - 分页历史        │   JSON 内容解码                │
 └───────────────────┴────────────────────────────────┘
 ```
 
@@ -63,7 +63,7 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 | 文件 | 职责 |
 |------|------|
 | `store/db.py` | SQLite 连接管理、WAL 模式、自动迁移（建表、索引、FTS5 触发器） |
-| `store/core.py` | 消息 CRUD：`add_messages`、`get_messages_by_lastest_n_turns`、`get_turns_by_turn_num_scope`、`update_session` |
+| `store/core.py` | 消息 CRUD：`add_messages`、`get_messages_by_lastest_n_turns`、`get_turns_by_turn_num_scope`、`get_history_by_page`、`get_max_turn_num` |
 
 ### 业务层（core.py）
 
@@ -71,8 +71,16 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 |------|------|
 | `retrieve_history_by_last_n_prompt(session_id, n)` | 获取最近 N 轮对话并格式化为 prompt 上下文 |
 | `search_messages(query, session_id, ...)` | FTS5 全文搜索，支持中文 trigram、上下文扩展 |
-| `append_messages(session_id, messages)` | 写入消息并触发 nudge 检查 |
-| `nudge_memory(session_id, ...)` | 检查是否达到 nudge 轮次阈值，触发偏好提取 |
+| `_sanitize_fts5_query(query)` | 净化用户输入以安全用于 FTS5 MATCH 查询（内部函数） |
+| `_decode_content(content)` | 反转 JSON 编码的消息内容（内部函数） |
+
+### 包导出（`__init__.py`）
+
+```python
+# context_engine/__init__.py
+from .store import *                                              # get_db, add_messages, get_messages_by_lastest_n_turns, get_turns_by_turn_num_scope, get_history_by_page
+from .core import retrieve_history_by_last_n_prompt, search_messages
+```
 
 ---
 
@@ -81,12 +89,6 @@ MesMemory 与 [Skill Memory](../skill_memory/README.zh.md) 互为补充：
 ### 数据库 Schema
 
 ```sql
--- 会话表
-CREATE TABLE sessions (
-    session_id TEXT PRIMARY KEY,
-    nudge_turn_num INTEGER NOT NULL DEFAULT 0
-);
-
 -- 消息表
 CREATE TABLE messages (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,22 +129,23 @@ CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
 ### 1. 消息持久化
 
 ```python
-from context_engine.mes_memory import append_messages
+from context_engine.store import add_messages
 
 # 写入一轮对话消息（自动递增 turn_num）
-await append_messages("session_001", [user_msg, ai_msg])
+await add_messages("session_001", [user_msg, ai_msg])
 ```
 
 - human/ai/tool 三种角色消息均被持久化
-- 自动从 `lc_source == "summarization"` 的 human 消息（压缩摘要来源）
+- 自动过滤 `lc_source == "summarization"` 的 human 消息（压缩摘要来源）
 - 每条消息携带 `YYYYMMDDHHmmss` 时间戳
+- 内容使用 `\x00json:` 前缀进行 JSON 编码
 
 ---
 
 ### 2. 历史检索
 
 ```python
-from context_engine.mes_memory import retrieve_history_by_last_n_prompt
+from context_engine import retrieve_history_by_last_n_prompt
 
 # 获取最近 5 轮对话，格式化为 prompt
 history = retrieve_history_by_last_n_prompt("session_001", n=5)
@@ -173,12 +176,21 @@ from context_engine.store import get_turns_by_turn_num_scope
 rows = get_turns_by_turn_num_scope("session_001", target_turn_num=10, half_scope=5)
 ```
 
+分页历史查询：
+
+```python
+from context_engine.store import get_history_by_page
+
+# 获取第 1 页，每页 10 轮
+rows = get_history_by_page("session_001", min_turn_num=1, turn_page_size=10, turn_page_num=1)
+```
+
 ---
 
 ### 3. 全文搜索
 
 ```python
-from context_engine.mes_memory import search_messages
+from context_engine import search_messages
 
 # 搜索包含 "Docker" 的消息，带上下文预览
 results = search_messages(
@@ -197,63 +209,18 @@ for r in results:
 **搜索特性：**
 
 - **双 FTS5 表**：`messages_fts`（默认 unicode61 分词）和 `messages_fts_trigram`（trigram 分词，支持中文）
-- **自动路由**：检测到中文查询（3 个以上 CJK 字符）自动走 trigram 路径，否则走默认 FTS5
-- **智能降级**：短中文查询（<3 CJK 字符）自动降级为 LIKE 查询
-- **查询净化**：自动处理 FTS5 特殊字符、引号平衡、布尔运算符清理
+- **自动路由**：检测到中文查询（每个 token 3 个以上 CJK 字符）自动走 trigram 路径，否则走默认 FTS5
+- **逐 token CJK 检查**：如 "广西 OR 桂林 OR 漓江" 等多词查询，逐 token 检查 CJK 长度，任一 token 不足 3 个 CJK 字符则整条查询降级为 LIKE
+- **智能降级**：短中文查询（每个 token <3 CJK 字符）自动降级为 LIKE 查询
+- **查询净化**：自动处理 FTS5 特殊字符、引号平衡、布尔运算符清理、连字符/点号术语加引号
 - **上下文扩展**：每条结果自动附带前后各 1 条消息作为上下文
 - **多模态友好**：对包含图片等非文本内容的消息，显示 `[multimodal content]` 标记
 - **结果精简**：返回的 matches 不包含完整 `content` 字段（仅提供 snippet 和 context），节省 token
-
----
-
-### 4. 记忆 Nudging（偏好提取）
-
-```python
-from context_engine.mes_memory import nudge_memory, append_messages
-
-# 写入消息时自动检查 nudge
-await append_messages("session_001", messages, nudge_turn=10)
-
-# 或手动触发
-await nudge_memory("session_001", nudge_turn=10, skip_last_turn=False)
-```
-
-**工作流程：**
-
-```
-写入消息 → 检查当前轮次与上次 nudge 轮次的差值
-    ↓ 差值 < nudge_turn（默认 10）
-    跳过
-    ↓ 差值 ≥ nudge_turn
-    1. 获取从上次 nudge 至今的所有消息
-    2. 过滤掉 tool 消息，只保留 human/ai
-    3. 按 turn 和 role 合并为 BaseMessage
-    4. 加载现有 memory store 中的偏好
-    5. 调用 extract_memory_agent（LLM）
-    6. agent 调用 memory 工具写入/更新用户偏好
-    7. 更新 sessions 表的 nudge_turn_num
-```
-
-**特点：**
-- 增量处理：只处理上次 nudge 之后的新对话
-- 去重：agent 被指示不添加已存在的偏好
-- 容量管理：偏好满时自动合并或移除旧的
-- 聪明过滤：跳过已被用户通过 memory 工具手动更新的项
+- **线程安全**：所有数据库操作受 threading lock 保护
 
 ---
 
 ## API 参考
-
-### `append_messages(session_id, messages, nudge_turn=10)`
-写入消息并触发 nudge 检查。
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `session_id` | `str` | 会话 ID |
-| `messages` | `list[BaseMessage]` | LangChain BaseMessage 列表 |
-| `nudge_turn` | `int` | nudge 检查间隔（默认 10 轮） |
-
----
 
 ### `retrieve_history_by_last_n_prompt(session_id, n=5)`
 获取最近 N 轮对话并格式化为 prompt 字符串。
@@ -282,14 +249,13 @@ await nudge_memory("session_001", nudge_turn=10, skip_last_turn=False)
 
 ---
 
-### `nudge_memory(session_id, skip_last_turn=False, nudge_turn=10)`
-手动触发用户偏好提取。
+### `add_messages(session_id, messages)`
+（store 层）写入消息到数据库。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `session_id` | `str` | 会话 ID |
-| `skip_last_turn` | `bool` | 是否跳过最新一轮 |
-| `nudge_turn` | `int` | nudge 检查间隔 |
+| `messages` | `list[BaseMessage]` | LangChain BaseMessage 列表 |
 
 ---
 
@@ -305,23 +271,41 @@ await nudge_memory("session_001", nudge_turn=10, skip_last_turn=False)
 
 ---
 
-### `add_messages(session_id, messages)`
-（store 层）写入消息到数据库，不触发 nudge。
+### `get_turns_by_turn_num_scope(session_id, target_turn_num, half_scope=5)`
+获取目标轮次前后一定范围内的消息。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `session_id` | `str` | 会话 ID |
-| `messages` | `list[BaseMessage]` | LangChain BaseMessage 列表 |
+| `target_turn_num` | `int` | 目标轮次号 |
+| `half_scope` | `int` | 前后各多少轮（默认 5） |
+
+**返回：** `list[dict]` — 每条记录包含完整的消息字段，JSON 已解码
 
 ---
 
-### `update_session(session_id, params)`
-更新会话属性（如 nudge_turn_num）。
+### `get_history_by_page(session_id, min_turn_num=1, turn_page_size=10, turn_page_num=1)`
+分页获取历史消息。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `session_id` | `str` | 会话 ID |
-| `params` | `dict` | 要更新的字段键值对（`session_id` 字段被禁止更新） |
+| `min_turn_num` | `int` | 最小轮次号（≥1，默认 1） |
+| `turn_page_size` | `int` | 每页轮次数（≥1，默认 10） |
+| `turn_page_num` | `int` | 页码（≥1，默认 1） |
+
+**返回：** `list[dict]` — 每条记录包含完整的消息字段，JSON 已解码
+
+---
+
+### `get_max_turn_num(session_id)`
+获取会话的最大轮次号。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `session_id` | `str` | 会话 ID |
+
+**返回：** `int` — 最大轮次号，若无消息则返回 0
 
 ---
 
@@ -345,9 +329,9 @@ MesMemory 负责**原始消息存储与检索**（短期记忆），Skill Memory
 
 ---
 
-### Q4: nudge_turn 设置为多大合适？
+### Q4: 逐 token CJK 路由是如何工作的？
 
-默认 10 轮。太频繁（如 1-3 轮）会导致每轮都调用 LLM 提取偏好，增加成本。太长（如 30+ 轮）可能遗漏用户的短期行为变化。建议 5-15 轮之间。
+对于中文查询，系统逐个检查每个非运算符 token 的 CJK 字符数。如果任一 CJK token 不足 3 个 CJK 字符，trigram FTS5 无法匹配（要求每个 token ≥3 个 CJK 字符），因此整条查询降级为 LIKE 搜索。这解决了如 `"广西 OR 桂林 OR 漓江"` 等每个词仅 2 个 CJK 字符的情况。
 
 ---
 
@@ -358,6 +342,7 @@ MesMemory 负责**原始消息存储与检索**（短期记忆），Skill Memory
 | **数据库** | SQLite 3 + WAL 模式 |
 | **全文搜索** | FTS5 + Trigram 分词 |
 | **框架** | LangChain BaseMessage |
+| **参数校验** | Pydantic `@validate_call` |
 | **存储路径** | `store/mes_memory/mes_memory.db` |
 
 ---
@@ -368,4 +353,4 @@ MesMemory 负责**原始消息存储与检索**（短期记忆），Skill Memory
 
 ---
 
-**最后更新：** 2026-05-30
+**最后更新：** 2026-07-09
