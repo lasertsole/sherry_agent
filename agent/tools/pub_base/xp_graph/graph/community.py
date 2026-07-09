@@ -186,7 +186,7 @@ async def summarize_communities(
             try:
                 old_node_ids = json.loads(row[0])
                 if sorted(old_node_ids) == sorted_member_ids:
-                    logger.info(f"[xp_graph] Skip unchanged community: {community_id}")
+                    logger.debug(f"[xp_graph] Skip unchanged community: {community_id}")
                     continue
             except (json.JSONDecodeError, TypeError):
                 pass

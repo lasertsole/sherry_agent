@@ -1,6 +1,6 @@
 """
-llm-wiki scripts package.
-由于技能目录名包含连字符(llm-wiki)，无法使用标准Python包导入，
+llm_wiki scripts package.
+由于技能目录名包含连字符(llm_wiki)，无法使用标准Python包导入，
 所有模块间引用均使用 importlib 动态加载。
 """
 

@@ -178,11 +178,11 @@ class ChannelManager:
         # Stop event loop
         self._event_loop.stop()
         self._event_loop = None
-        logger.info("Channel manager service stopped")
+        logger.debug("Channel manager service stopped")
 
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
-        logger.info("Outbound dispatcher started")
+        logger.debug("Outbound dispatcher started")
 
         while True:
             try:

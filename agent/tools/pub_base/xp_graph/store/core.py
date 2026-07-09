@@ -46,7 +46,7 @@ def to_edge(r: dict[str, Any])-> GmEdge:
         created_at = r["created_at"],
     )
 
-# Normalize name: lowercase, spaces to hyphens, preserve CJK
+# Normalize name: lowercase, spaces to hyphens, preserve CJK characters
 def normalize_name(name: str) -> str:
     name = name.strip().lower()
     name = re.sub(r'[\s_]+', '-', name)
@@ -124,8 +124,8 @@ def upsert_node(db: sqlite3.Connection, c: dict, session_id: str) -> UpsertResul
 
 
 def delete_node(db: sqlite3.Connection, node_id: str) -> None:
-    """Hard-delete the specified node"""
-    # 1. Delete all edges associated with this node (from_id or to_id)
+    """Hard-delete a node and all its edges and vectors"""
+    # Delete all edges associated with this node (from_id or to_id)
     db.execute("DELETE FROM gm_edges WHERE from_id=? OR to_id=?", (node_id, node_id))
 
     # 2. Delete vector
@@ -180,7 +180,7 @@ def merge_nodes(db: sqlite3.Connection, keep_id: str, merge_id: str) -> None:
     delete_node(db, merge_id)
 
 def update_pageranks(db: sqlite3.Connection, scores: dict) -> None:
-    """批量更新 PageRank 分数"""
+    """Batch update PageRank scores"""
     cursor = db.cursor()
     try:
         db.execute("BEGIN")
@@ -247,13 +247,13 @@ def upsert_edge(
 
 
 def edges_from(db: sqlite3.Connection, node_id: str) -> list:
-    """Get all edges starting from the specified node"""
+    """Get all edges where this node is the source"""
     rows = db.execute("SELECT * FROM gm_edges WHERE from_id=?", (node_id,)).fetchall()
     return [to_edge(dict(row)) for row in rows]
 
 
 def edges_to(db: sqlite3.Connection, node_id: str) -> list:
-    """Get all edges pointing to the specified node"""
+    """Get all edges where this node is the target"""
     rows = db.execute("SELECT * FROM gm_edges WHERE to_id=?", (node_id,)).fetchall()
     return [to_edge(dict(row)) for row in rows]
 
@@ -311,9 +311,9 @@ def search_nodes(db: sqlite3.Connection, query: str, limit: int = 6) -> list:
             # FTS query failed, fall back to plain search
             pass
 
-    # Fallback: use LIKE fuzzy matching
+    # Fallback: use LIKE fuzzy matching on name, description, content
     where_conditions = " OR ".join(["(name LIKE ? OR description LIKE ? OR content LIKE ?)" for _ in terms])
-    like_values = [f"%{term}%" for term in terms for _ in range(3)]  # Each term → name/desc/content
+    like_values = [f"%{term}%" for term in terms for _ in range(3)]  # Each term searched across name/desc/content
 
     sql = f"""
         SELECT * FROM gm_nodes WHERE ({where_conditions})
@@ -482,7 +482,7 @@ def save_vector(
         content: str,
         vec: list[float]
 ) -> None:
-    """保存向量到数据库"""
+    """Save or update a vector embedding for a node"""
     import hashlib
 
     content_hash = hashlib.md5(content.encode()).hexdigest()
@@ -494,7 +494,7 @@ def save_vector(
     db.commit()
 
 def get_vector_hash(db: sqlite3.Connection, node_id: str) -> str | None:
-    """获取向量的内容哈希"""
+    """Get the content hash of a vector"""
 
     row = db.execute(
         "SELECT content_hash FROM gm_vectors WHERE node_id=?",
@@ -504,7 +504,7 @@ def get_vector_hash(db: sqlite3.Connection, node_id: str) -> str | None:
 
 
 def get_all_vectors(db: sqlite3.Connection) -> list[dict]:
-    """获取所有向量（供去重/聚类用）"""
+    """Get all vectors (for deduplication/clustering)"""
     rows = db.execute("""
         SELECT v.node_id, v.embedding FROM gm_vectors v
         JOIN gm_nodes n ON n.id = v.node_id
@@ -520,7 +520,7 @@ def get_all_vectors(db: sqlite3.Connection) -> list[dict]:
 
 
 class ScoredNode(TypedDict):
-    """带分数的节点"""
+    """Node with a similarity score"""
     node: GmNode
     score: float
 
@@ -531,7 +531,7 @@ def vector_search_with_score(
         limit: int,
         min_score: float = 0.35
 ) -> list[ScoredNode]:
-    """向量搜索并返回带余弦相似度的节点"""
+    """Vector search returning nodes with cosine similarity scores"""
     import math
 
     rows = db.execute("""
@@ -571,7 +571,7 @@ def vector_search(
         limit: int,
         min_score: float = 0.5
 ) -> list[GmNode]:
-    """向量搜索（兼容旧接口）"""
+    """Vector search (legacy interface returning nodes only)"""
     scored = vector_search_with_score(db, query_vec, limit, min_score)
     return [item['node'] for item in scored]
 
@@ -581,8 +581,8 @@ def community_representatives(
         per_community: int = 2
 ) -> list[GmNode]:
     """
-    社区代表节点：每个社区取最近更新的 topN 个节点
-    用于泛化召回 —— 用户问"做了哪些工作"时按领域返回概览
+    Community representative nodes: top N most recently updated nodes per community
+    Used for generalized recall — returns an overview by domain
     """
     rows = db.execute("""
         SELECT * FROM gm_nodes
@@ -599,7 +599,7 @@ def community_representatives(
         if len(by_community[cid]) < per_community:
             by_community[cid].append(node)
 
-    # 社区按最新更新时间排序
+    # Sort communities by most recent update
     sorted_communities = sorted(
         by_community.items(),
         key=lambda x: max(n.updated_at for n in x[1]),
@@ -613,10 +613,10 @@ def community_representatives(
     return result
 
 
-# ─── 社区描述 CRUD ──────────────────────────────────────────
+# ─── Community Summary CRUD ─────────────────────────────────
 
 class CommunitySummary(TypedDict):
-    """社区摘要"""
+    """Community summary data"""
     id: str
     summary: str
     node_count: int
@@ -631,9 +631,9 @@ def upsert_community_summary(
     embedding: list[float],
     node_ids: list[str] | None = None
 ) -> None:
-    """插入或更新社区摘要
+    """Insert or update a community summary
 
-    node_count 从 node_ids 长度自动推算，调用方无需再传入。
+    node_count is derived from len(node_ids) automatically.
     """
     now = get_timestamp()
     node_ids_json = json.dumps(sorted(node_ids)) if node_ids else '[]'
@@ -671,7 +671,7 @@ def get_community_summary(
         db: sqlite3.Connection,
         summary_id: str
 ) -> CommunitySummary | None:
-    """获取社区摘要"""
+    """Get a community summary by ID"""
     row = db.execute(
         "SELECT * FROM gm_communities WHERE id=?",
         (summary_id,)
@@ -691,7 +691,7 @@ def get_community_summary(
 def get_all_community_summaries(
         db: sqlite3.Connection
 ) -> list[CommunitySummary]:
-    """获取所有社区摘要"""
+    """Get all community summaries"""
 
     rows = db.execute("""
         SELECT * FROM gm_communities 
@@ -711,7 +711,7 @@ def get_all_community_summaries(
 
 
 class ScoredCommunity(TypedDict):
-    """带分数的社区"""
+    """Community with a similarity score"""
     id: str
     summary: str
     score: float
@@ -724,7 +724,7 @@ def community_vector_search(
         min_score: float = 0.35
 ) -> list[ScoredCommunity]:
     """
-    社区向量搜索：用 query 向量匹配社区 embedding，返回按相似度排序的社区
+    Community vector search: match query vector against community embeddings, return sorted by similarity
     """
     import math
 
@@ -769,7 +769,7 @@ def nodes_by_community_ids(
         per_community: int = 3
 ) -> list[GmNode]:
     """
-    按社区 ID 列表获取成员节点（按时间倒序）
+    Get member nodes by community IDs (sorted by update time descending)
     """
     if not community_ids:
         return []
@@ -801,7 +801,7 @@ def nodes_by_community_ids(
 
 
 def prune_community_summaries(db: sqlite3.Connection) -> int:
-    """清除已不存在的社区描述"""
+    """Remove summaries for communities that no longer exist"""
     cursor = db.cursor()
     cursor.execute("""
         DELETE FROM gm_communities WHERE id NOT IN (

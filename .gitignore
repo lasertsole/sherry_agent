@@ -11,3 +11,7 @@ model_weight/
 workspace/
 skills/auto
 **/wiki/
+skills/skills_snapshot.json
+.omo/
+static/
+sessions/**/*.md

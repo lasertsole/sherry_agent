@@ -100,9 +100,9 @@ def _find_modelscope_cache_dir(model_name: str, model_type_label: str) -> str | 
                 snapshots = list(snapshots_dir.iterdir())
                 if snapshots:
                     snapshot_dir = max(snapshots, key=lambda p: p.stat().st_mtime)
-                    logger.info(f"Found {model_type_label} model in modelscope cache: {snapshot_dir}")
+                    logger.debug(f"Found {model_type_label} model in modelscope cache: {snapshot_dir}")
                     return str(snapshot_dir)
-            logger.info(f"Found {model_type_label} model in modelscope cache (no snapshots): {candidate}")
+            logger.debug(f"Found {model_type_label} model in modelscope cache (no snapshots): {candidate}")
             return str(candidate)
 
     return None
@@ -135,7 +135,7 @@ def _find_hf_cache_dir(hf_model_name: str, model_type_label: str) -> str | None:
         return None
 
     snapshot_dir = max(snapshots, key=lambda p: p.stat().st_mtime)
-    logger.info(f"Found {model_type_label} model in huggingface cache: {snapshot_dir}")
+    logger.debug(f"Found {model_type_label} model in huggingface cache: {snapshot_dir}")
     return str(snapshot_dir)
 
 
@@ -175,7 +175,7 @@ def _copy_cache_to_project(model_type: str, cache_path: str) -> str:
     target_dir = EXTRACT_MODELS_DIR / model_type
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Copying {model_type} model from cache to project: {target_dir} ...")
+    logger.debug(f"Copying {model_type} model from cache to project: {target_dir} ...")
     for item in Path(cache_path).iterdir():
         dest = target_dir / item.name
         if item.is_dir():
@@ -185,7 +185,7 @@ def _copy_cache_to_project(model_type: str, cache_path: str) -> str:
         else:
             shutil.copy2(item, dest)
 
-    logger.info(f"Copied {model_type} model to {target_dir}")
+    logger.debug(f"Copied {model_type} model to {target_dir}")
     return str(target_dir)
 
 
@@ -202,16 +202,16 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
     # 先检查是否已在项目内
     project_path = _find_model_in_project(model_type)
     if project_path:
-        logger.info(f"{model_type} model already exists in project: {project_path}")
+        logger.debug(f"{model_type} model already exists in project: {project_path}")
         return project_path
 
     # 再检查是否有缓存（匹配指定的 source）
     try:
         cache_path = _resolve_cache_path(source, model_type)
-        logger.info(f"Found {model_type} model in cache: {cache_path}")
+        logger.debug(f"Found {model_type} model in cache: {cache_path}")
         return _copy_cache_to_project(model_type, cache_path)
     except RuntimeError:
-        logger.info(f"No cached {model_type} model found, downloading from {source} ...")
+        logger.debug(f"No cached {model_type} model found, downloading from {source} ...")
 
     # 下载（如果 huggingface 失败，fallback 到 modelscope）
     sources_to_try = [source]
@@ -219,7 +219,7 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
         sources_to_try.append("modelscope")
 
     for attempt_source in sources_to_try:
-        logger.info(f"Downloading MinerU {model_type} models from {attempt_source} ...")
+        logger.debug(f"Downloading MinerU {model_type} models from {attempt_source} ...")
         result = subprocess.run(
             [
                 str(MINERU_DOWNLOAD_SCRIPT),
@@ -232,11 +232,11 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         if result.returncode == 0:
-            logger.info(f"Download from {attempt_source} succeeded")
+            logger.debug(f"Download from {attempt_source} succeeded")
             if result.stdout:
-                logger.info(f"stdout:\n{result.stdout}")
+                logger.debug(f"stdout:\n{result.stdout}")
             if result.stderr:
-                logger.info(f"stderr:\n{result.stderr}")
+                logger.debug(f"stderr:\n{result.stderr}")
 
             # 下载后从缓存找到路径并复制到项目
             cache_path = _resolve_cache_path(attempt_source, model_type)
@@ -264,14 +264,14 @@ def _write_mineru_configs(model_type: str, project_model_path: str) -> None:
     config = _update_models_dir(config, model_type, project_model_path)
     config = _ensure_config_has_version(config)
     _write_config(PROJECT_CONFIG_FILE, config)
-    logger.info(f"Updated {PROJECT_CONFIG_FILE}")
+    logger.debug(f"Updated {PROJECT_CONFIG_FILE}")
 
     # 同时也更新 ~/mineru.json 保持一致性
     user_config = _read_config(USER_CONFIG_FILE)
     user_config = _update_models_dir(user_config, model_type, project_model_path)
     user_config = _ensure_config_has_version(user_config)
     _write_config(USER_CONFIG_FILE, user_config)
-    logger.info(f"Updated {USER_CONFIG_FILE}")
+    logger.debug(f"Updated {USER_CONFIG_FILE}")
 
 
 # ──────────────────────────────────────────────
@@ -315,7 +315,7 @@ def ensure_mineru_models(source: str = "huggingface", download_vlm: bool = True)
         except RuntimeError as e:
             logger.warning(f"VLM model handling failed (continuing without VLM): {e}")
 
-    logger.info(f"MinerU models configured: pipeline={pipeline_path}, vlm={vlm_path or '(not configured)'}")
+    logger.debug(f"MinerU models configured: pipeline={pipeline_path}, vlm={vlm_path or '(not configured)'}")
     return {"pipeline": pipeline_path, "vlm": vlm_path}
 
 

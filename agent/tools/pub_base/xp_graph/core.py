@@ -105,7 +105,7 @@ class XpGraphInstance:
         if name_to_id:
             invalidate_graph_cache()
 
-        logger.info(f"[xp_graph:{self.role}] ingested {len(experiences)} experiences")
+        logger.debug(f"[xp_graph:{self.role}] ingested {len(experiences)} experiences")
 
     async def after_turn(self, session_id: str, last_turn_experiences: list | None = None) -> None:
         if last_turn_experiences:
@@ -113,7 +113,7 @@ class XpGraphInstance:
 
         xp_graph_maintain_turns: int = state_register_db.get_state(session_id, "xp_graph_maintain_turns", 0) + 1
         maintain_interval: int = getattr(self.config, 'compact_turn_count', 7)
-        logger.info(f"[xp_graph:{self.role}] maintain turn {xp_graph_maintain_turns} / {maintain_interval}")
+        logger.debug(f"[xp_graph:{self.role}] maintain turn {xp_graph_maintain_turns} / {maintain_interval}")
 
         if xp_graph_maintain_turns >= maintain_interval:
             state_register_db.set_state(session_id, "xp_graph_maintain_turns", 0)
@@ -167,7 +167,7 @@ class XpGraphInstance:
             result: MaintenanceResult = await run_maintenance(self.db, self.config, self.config.llm, embed)
 
             top_pr_names = [f"{n['name']}({n['score']})" for n in result["pagerank"]["top_k"][:3]]
-            logger.info(
+            logger.debug(
                 f"[xp_graph:{self.role}] maintenance: {result['duration_ms']}ms, "
                 f"dedup={result['dedup']['merged']}, communities={result['community']['count']}, "
                 f"summaries={result['community_summaries']}, top_pr={', '.join(top_pr_names)}"

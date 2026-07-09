@@ -170,10 +170,10 @@ async def distill_and_ingest(
     if strategy_result.nodes:
         commander_memory = get_instance("default")
         await commander_memory.ingest_experiences(commander_session_id, strategy_result.nodes)
-        logger.info(f"[distiller] ingested {len(strategy_result.nodes)} strategy nodes + {len(strategy_result.edges)} edges")
+        logger.debug(f"[distiller] ingested {len(strategy_result.nodes)} strategy nodes + {len(strategy_result.edges)} edges")
 
     operation_result = await distill(task, result, session_id, commander_session_id, level="operation")
     if operation_result.nodes:
         worker_memory = get_instance("worker")
         await worker_memory.ingest_experiences(commander_session_id, operation_result.nodes)
-        logger.info(f"[distiller] ingested {len(operation_result.nodes)} operation nodes + {len(operation_result.edges)} edges")
+        logger.debug(f"[distiller] ingested {len(operation_result.nodes)} operation nodes + {len(operation_result.edges)} edges")

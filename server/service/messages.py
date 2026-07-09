@@ -85,7 +85,7 @@ def _get_content_list(multi_modal_message: MultiModalMessage)-> list[dict[str, s
 async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True):
     start_time = time.time()
 
-    logger.info(
+    logger.debug(
         f"Building agent: session_id={session_id}"
     )
 
@@ -96,7 +96,7 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
     content_list:list[dict[str, str]] = _get_content_list(multi_modal_message)
             
     elapsed = time.time() - start_time
-    logger.info(
+    logger.debug(
         f"Agent generator prepared: session_id={session_id}, duration={elapsed:.2f}s, "
         f"is_stream={is_stream}, has_images={len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0}"
     )
@@ -112,7 +112,7 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 """Response generation logic — yields SSE messages"""
 async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[str, None]:
     start_time = time.time()
-    logger.info(
+    logger.debug(
         f"Agent execution started: session_id={session_id}, is_stream={is_stream}, "
         f"input_text_length={len(multi_modal_message.text) if multi_modal_message.text else 0}"
     )
@@ -132,8 +132,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             # Stream directly from the context-assembled agent
             generator = await _get_generator(session_id, multi_modal_message)
             async for chunk in generator:
-                if not state_register_mem.get_state(session_id, "answering", False):
-                    raise asyncio.CancelledError
+                # if not state_register_mem.get_state(session_id, "answering", False):
+                #     raise asyncio.CancelledError
                 msg_chunk: BaseMessage = chunk[0]
                 metadata: dict[str, Any] = chunk[1]
 
@@ -186,14 +186,14 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             yield SSEMessage(res)
 
         elapsed = time.time() - start_time
-        logger.info(
+        logger.debug(
             f"Agent execution completed: session_id={session_id}, duration={elapsed:.2f}s, "
             f"output_length={len(ai_text)}"
         )
     except asyncio.CancelledError:
         elapsed = time.time() - start_time
         yield SSEMessage("Request cancelled")
-        logger.info(
+        logger.debug(
             f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s"
         )
     except HeartbeatTimeoutError as e:
@@ -232,7 +232,7 @@ def get_history_by_page(session_id: str, min_turn_num: int, turn_page_size: int,
 
 """Clear session history logic"""
 async def clear_session(session_id: str):
-    logger.info(f"Clearing session history: session_id={session_id}")
+    logger.debug(f"Clearing session history: session_id={session_id}")
     await clear_session_DAO(session_id = session_id)
-    logger.info(f"Session history cleared: session_id={session_id}")
+    logger.debug(f"Session history cleared: session_id={session_id}")
 """End clear session history logic"""

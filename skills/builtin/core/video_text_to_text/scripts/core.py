@@ -81,7 +81,7 @@ def vtt(video_path: str, query: str = "")-> str:
         ])
         res = VTTT_model.invoke([msg])
         suc_mes: str = f"Video recognition completed, content:\n{res.content}"
-        logger.info(suc_mes)
+        logger.debug(suc_mes)
         return suc_mes
     except Exception as e:
         warn_mes: str = (f"[warn] Primary video path failed: {e}, Video format may not be supported,"
@@ -113,7 +113,7 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
             interval_sec=interval_sec,
             prefix="frame",
         )
-        logger.info(f"Total frames extracted: {len(frames)}")
+        logger.debug(f"Total frames extracted: {len(frames)}")
 
         if len(frames) == 0:
             err_mes: str = "No frames extracted from video."
@@ -133,7 +133,7 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
         ])
         res = VTTT_model.invoke([msg])
         suc_mes: str = f"Video recognition completed, content:\n{res.content}"
-        logger.info(suc_mes)
+        logger.debug(suc_mes)
         return suc_mes
     except Exception as e:
         err_mes: str = f"[Error] {e}"

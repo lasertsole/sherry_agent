@@ -69,7 +69,7 @@ class TimerCallRegister(Register):
                 result = callback(**args)
                 if inspect.iscoroutine(result):
                     self._executor.run_coroutine(result)
-                logger.info(f"[timer_call_register] execute_now: timer '{name}' triggered immediately for session {session_id}")
+                logger.debug(f"[timer_call_register] execute_now: timer '{name}' triggered immediately for session {session_id}")
             except Exception:
                 logger.exception(f"[timer_call_register] execute_now: callback '{name}' failed for session {session_id}")
 
@@ -79,7 +79,7 @@ class TimerCallRegister(Register):
             name=task_name,
         )
 
-        logger.info(f"[timer_call_register] registered timer '{name}' for session {session_id}, {minutes}min")
+        logger.debug(f"[timer_call_register] registered timer '{name}' for session {session_id}, {minutes}min")
         return True
 
     def unregister(self, session_id: str, name: str) -> bool:
@@ -99,7 +99,7 @@ class TimerCallRegister(Register):
         if timer.task_name:
             self._executor.cancel_task(timer.task_name)
 
-        logger.info(f"[timer_call_register] unregistered timer '{name}' for session {session_id}")
+        logger.debug(f"[timer_call_register] unregistered timer '{name}' for session {session_id}")
         return True
 
     async def _run_timer(self, session_id: str, name: str, minutes: int, callback: Callable, args: dict[str, Any], timer_obj: Timer):
@@ -114,11 +114,11 @@ class TimerCallRegister(Register):
                     result = callback(**args)
                     if inspect.iscoroutine(result):
                         self._executor.run_coroutine(result)
-                    logger.info(f"[timer_call_register] timer '{name}' triggered after {minutes}min for session {session_id}")
+                    logger.debug(f"[timer_call_register] timer '{name}' triggered after {minutes}min for session {session_id}")
                 except Exception:
                     logger.exception(f"[timer_call_register] callback '{name}' failed for session {session_id}")
             except asyncio.CancelledError:
-                logger.info(f"[timer_call_register] timer '{name}' cancelled for session {session_id}")
+                logger.debug(f"[timer_call_register] timer '{name}' cancelled for session {session_id}")
                 break
 
         # Clean up registration on cancel — only if still the same timer object
@@ -162,7 +162,7 @@ class TimerCallRegister(Register):
             name=task_name,
         )
 
-        logger.info(f"[timer_call_register] reset timer '{name}' for session {session_id}, {minutes}min")
+        logger.debug(f"[timer_call_register] reset timer '{name}' for session {session_id}, {minutes}min")
         return True
 
     def clear_session(self, session_id: str):
@@ -174,7 +174,7 @@ class TimerCallRegister(Register):
             if timer.task_name:
                 self._executor.cancel_task(timer.task_name)
         if timers:
-            logger.info(f"[timer_call_register] cleared all timers for session {session_id}")
+            logger.debug(f"[timer_call_register] cleared all timers for session {session_id}")
 
 
 timer_call_register = TimerCallRegister()

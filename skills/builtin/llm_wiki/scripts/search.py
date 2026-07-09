@@ -1,5 +1,5 @@
 """
-llm-wiki search: Wiki搜索与健康检查
+llm_wiki search: Wiki搜索与健康检查
 """
 
 import sys

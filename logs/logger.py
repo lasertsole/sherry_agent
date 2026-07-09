@@ -3,8 +3,10 @@ import sys
 import time
 from pathlib import Path
 from loguru import logger
-from config import ROOT_DIR
+from dotenv import load_dotenv
+from config import ROOT_DIR, ENV_PATH
 
+load_dotenv(ENV_PATH, override = True)
 
 def _clean_expired_logs(log_dir: Path, timeout_days: int = 7):
     """Delete log files older than `days` in the log directory."""
@@ -16,6 +18,13 @@ def _clean_expired_logs(log_dir: Path, timeout_days: int = 7):
             p.unlink(missing_ok=True)
 
 
+def _resolve_level() -> str:
+    """从 .env 读取 LOG_LEVEL，无效值回退 INFO。"""
+    raw = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    valid = {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"}
+    return raw if raw in valid else "INFO"
+
+
 def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
     """初始化全局日志配置"""
     if not os.path.exists(log_dir):
@@ -24,22 +33,23 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
     # 0. 删除过期日志
     _clean_expired_logs(Path(log_dir), timeout_days)
 
+    level = _resolve_level()
+
     # 1. 清除 Loguru 默认配置
     logger.remove()
 
-    # 2. 控制台输出（包含所有 INFO 及以上日志）
+    # 2. 控制台输出
     logger.add(
         sys.stderr,
-        level="INFO",
+        level=level,
         format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
         enqueue=True
     )
 
-    # 3. 正常流水日志（引入 {os.getpid()} 规避多进程切分死锁，利用 filter 只保留 INFO 和 SUCCESS）
+    # 3. 正常流水日志（filter 保留当前等级及以上，同时始终保留 SUCCESS）
     logger.add(
         os.path.join(log_dir, f"info_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
-        level="INFO",
-        filter=lambda record: record["level"].name in ("INFO", "SUCCESS"),
+        level=level,
         rotation="100 MB",
         retention="30 days",
         compression="zip",

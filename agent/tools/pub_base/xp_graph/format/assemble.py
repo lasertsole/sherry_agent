@@ -15,11 +15,11 @@ CHARS_PER_TOKEN = 3
 
 
 class SelectedNode(TypedDict):
-    """选中的节点"""
+    """A selected node with its type"""
     type: str
 
 class AssembleResult(TypedDict):
-    """组装结果"""
+    """Assembly result with XML, system prompt, and token count"""
     xml: str | None
     system_prompt: str
     tokens: int
@@ -27,14 +27,14 @@ class AssembleResult(TypedDict):
 
 def build_system_prompt_addition(selected_nodes: list[SelectedNode], edge_count: int) -> str:
     """
-    构建知识图谱的 system prompt 引导文字
+    Build the system prompt addition for the knowledge graph
 
     Args:
-        selected_nodes: 选中的节点列表
-        edge_count: 边的数量
+        selected_nodes: List of selected nodes
+        edge_count: Number of edges
 
     Returns:
-        system prompt 补充文本
+        System prompt addition text
     """
     if not selected_nodes:
         return ""
@@ -45,7 +45,7 @@ def build_system_prompt_addition(selected_nodes: list[SelectedNode], edge_count:
     is_rich = len(selected_nodes) >= 4 or edge_count >= 3
 
     sections = [
-        "## Graph Memory — 知识图谱记忆",
+        "## Graph Memory",
         "",
         "Below `<knowledge_graph>` is your accumulated experience from past conversations.",
         "It contains structured knowledge — NOT raw conversation history.",
@@ -102,33 +102,33 @@ def assemble_context(
     recalled_edges: list[GmEdge]
 ) -> AssembleResult:
     """
-    组装知识图谱为 XML context
+    Assemble the knowledge graph into XML context
 
     Args:
-        db: SQLite 数据库连接
-        recalled_nodes: 召回节点列表
-        recalled_edges: 召回边列表
+        db: SQLite database connection
+        recalled_nodes: List of recalled nodes
+        recalled_edges: List of recalled edges
 
     Returns:
-        包含 XML、system prompt 和 token 数的结果字典
+        Result dict with XML, system prompt, and token count
     """
 
-    # recall 返回多少节点就放多少，不截断
+    # Include all recalled nodes without truncation
     node_map: dict[str, GmNode] = {}
 
     for n in recalled_nodes:
         node_map[n.id] = n
 
-    # 排序：本 sessions > SKILL 优先 > validated_count > 全局 pagerank 基线
+    # Sort: SKILL priority > validated_count > global pagerank
     type_pri: dict[NodeType, int] = {NodeType.SKILL: 3, NodeType.TASK: 2, NodeType.EVENT: 1}
 
-    # recall 返回的已经是 PPR 排序过的，全量放入
+    # Recalled nodes are already PPR-sorted; include them all
     selected = sorted(
         node_map.values(),
         key=lambda n: (
-            -(type_pri.get(n.type, 0)),  # SKILL 优先
-            -n.validated_count,  # validated_count 降序
-            -n.pagerank  # pagerank 降序
+            -(type_pri.get(n.type, 0)),  # SKILL first
+            -n.validated_count,  # validated_count descending
+            -n.pagerank  # pagerank descending
         )
     )
 
@@ -140,11 +140,11 @@ def assemble_context(
             'tokens': 0
         }
 
-    # ID 到名称的映射
+    # Map node IDs to names
     id_to_name: dict[str, str] = {n.id: n.name for n in selected}
     selected_ids: set[str] = {n.id for n in selected}
 
-    # 过滤边（只保留两端节点都在 selected 中的边）
+    # Filter edges that connect nodes within the selected set
     seen_edges: set[str] = set()
     edges: list[GmEdge] = [
         e for e in recalled_edges
@@ -154,7 +154,7 @@ def assemble_context(
            and not seen_edges.add(e.id)  # type: ignore
     ]
 
-    # 按社区分组节点
+    # Group nodes by community
     by_community: dict[str, list[GmNode]] = {}
     no_community: list[GmNode] = []
 
@@ -167,7 +167,7 @@ def assemble_context(
         else:
             no_community.append(n)
 
-    # 生成节点 XML（按社区分组）
+    # Generate node XML grouped by community
     xml_parts: list[str] = []
 
     for cid, members in by_community.items():
@@ -189,7 +189,7 @@ def assemble_context(
 
         xml_parts.append(f'  </community>')
 
-    # 无社区的节点直接放顶层
+    # Nodes without a community go at the top level
     for n in no_community:
         tag = n.type.value.lower()
         updated_date = datetime.fromtimestamp(n.updated_at / 1000).isoformat()[:10]
@@ -203,7 +203,7 @@ def assemble_context(
 
     nodes_xml = "\n".join(xml_parts)
 
-    # 生成边的 XML
+    # Generate edge XML
     if edges:
         edge_lines = []
         for e in edges:
@@ -223,7 +223,7 @@ def assemble_context(
 
     xml = f"<knowledge_graph>\n{nodes_xml}{edges_xml}\n</knowledge_graph>"
 
-    # 构建 system prompt
+    # Build system prompt
     selected_node_info = [SelectedNode(type = n.type.value) for n in selected]
     system_prompt = build_system_prompt_addition(selected_node_info, len(edges))
 

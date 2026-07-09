@@ -152,7 +152,7 @@ class FallbackTxtParser(Parser):
 
 # Register the fallback parser before creating RAGAnything
 register_parser("fallback_txt", FallbackTxtParser)
-logger.info("Registered FallbackTxtParser as 'fallback_txt'")
+logger.debug("Registered FallbackTxtParser as 'fallback_txt'")
 
 
 _rag_anything: RAGAnything | None = None
@@ -167,7 +167,7 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         parse_method: Parser method ("auto", etc.)
     """
     start_time = time.time()
-    logger.info(f"Initializing RAGAnything: parser={parser}, parse_method={parse_method}")
+    logger.debug(f"Initializing RAGAnything: parser={parser}, parse_method={parse_method}")
 
     # Auto-download and configure models
     # Bypass system proxy to avoid SSL errors with hf-mirror.com
@@ -179,7 +179,7 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
         logger.debug("Mineru models downloaded from HuggingFace")
     except Exception as e:
         logger.warning(f"Download from huggingface failed: {e}")
-        logger.info("Retrying with modelscope ...")
+        logger.debug("Retrying with modelscope ...")
         ensure_mineru_models(source="modelscope")
         logger.debug("Mineru models downloaded from ModelScope")
 
@@ -210,7 +210,7 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
     )
 
     elapsed = time.time() - start_time
-    logger.info(
+    logger.debug(
         f"RAGAnything initialized successfully: duration={elapsed:.2f}s, "
         f"parser={parser}, working_dir={config.working_dir}"
     )

@@ -51,16 +51,16 @@ class IterationBudget(AgentMiddleware):
         return session_id
 
     def _consume(self, session_id: str) -> bool:
-        logger.info("[IB_TRACE] _consume enter session_id={}", session_id)
+        logger.debug("[IB_TRACE] _consume enter session_id={}", session_id)
         used: int = state_register_mem.get_state(session_id, self._USED_KEY, 0)
         if used >= self.max_iterations:
-            logger.info("[IB_TRACE] _consume exhausted session_id={} used={} max={}", session_id, used, self.max_iterations)
+            logger.debug("[IB_TRACE] _consume exhausted session_id={} used={} max={}", session_id, used, self.max_iterations)
             return False
         used += 1
         remaining = self.max_iterations - used
         state_register_mem.set_state(session_id, self._USED_KEY, used)
-        logger.info("session_id {} consume {} times, {} remaining before halt", session_id, used, remaining)
-        logger.info("[IB_TRACE] _consume exit session_id={} used={} remaining={}", session_id, used, remaining)
+        logger.debug("session_id {} consume {} times, {} remaining before halt", session_id, used, remaining)
+        logger.debug("[IB_TRACE] _consume exit session_id={} used={} remaining={}", session_id, used, remaining)
         return True
 
     def _remaining(self, session_id: str) -> int:
@@ -117,14 +117,14 @@ class IterationBudget(AgentMiddleware):
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         session_id = self._get_session_id(request.state)
-        logger.info("[IB_TRACE] wrap_model_call enter session_id={}", session_id)
+        logger.debug("[IB_TRACE] wrap_model_call enter session_id={}", session_id)
         terminal = self._wrap_model_call_impl(request)
         if terminal is not None:
-            logger.info("[IB_TRACE] wrap_model_call terminal (budget exhausted) session_id={}", session_id)
+            logger.debug("[IB_TRACE] wrap_model_call terminal (budget exhausted) session_id={}", session_id)
             return terminal
-        logger.info("[IB_TRACE] wrap_model_call calling inner handler session_id={}", session_id)
+        logger.debug("[IB_TRACE] wrap_model_call calling inner handler session_id={}", session_id)
         result = handler(request)
-        logger.info("[IB_TRACE] wrap_model_call inner handler returned session_id={}", session_id)
+        logger.debug("[IB_TRACE] wrap_model_call inner handler returned session_id={}", session_id)
         return result
 
     @override

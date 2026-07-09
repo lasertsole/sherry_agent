@@ -196,12 +196,12 @@ class ContextEngineHook(AgentMiddleware):
             nudge_review_skill_count >= _NUDGE_SKILL_THRESHOLD
         )
 
-        logger.info(
+        logger.debug(
             "nudge_review_memory_count is {}, need_nudge_review_memory is {}",
             nudge_review_memory_count,
             need_nudge_review_memory,
         )
-        logger.info(
+        logger.debug(
             "nudge_review_skill_count is {}, need_nudge_skill_memory is {}",
             nudge_review_skill_count,
             need_nudge_skill_memory,

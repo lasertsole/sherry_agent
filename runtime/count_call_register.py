@@ -44,7 +44,7 @@ class CountCallRegister(Register):
             args = {}
 
         if name in self.session_id_to_counter.setdefault(session_id, {}):
-            logger.info(f"{name} is already registered for session {session_id}")
+            logger.debug(f"{name} is already registered for session {session_id}")
             return False
 
         self.session_id_to_counter.setdefault(session_id, {})[name] = 0
@@ -56,7 +56,7 @@ class CountCallRegister(Register):
                 result = callback(**args)
                 if inspect.iscoroutine(result):
                     self._callback_executor.run_coroutine(result)
-                logger.info(f"[count_call_register] execute_now: callback '{name}' triggered immediately for session {session_id}")
+                logger.debug(f"[count_call_register] execute_now: callback '{name}' triggered immediately for session {session_id}")
             except Exception:
                 logger.exception(f"[count_call_register] execute_now: callback '{name}' failed for session {session_id}")
 

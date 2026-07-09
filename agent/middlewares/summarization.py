@@ -141,7 +141,7 @@ class Summarization(SummarizationMiddleware):
     def _should_skip_compression(session_id: str) -> bool:
         attempts: int = state_register_mem.get_state(session_id, _COMPRESSION_COUNT_KEY, 0)
         if attempts >= _MAX_COMPRESSION_ATTEMPTS:
-            logger.info(
+            logger.debug(
                 "Summarization: max compression attempts ({}) reached for session {}.",
                 _MAX_COMPRESSION_ATTEMPTS, session_id,
             )
@@ -149,7 +149,7 @@ class Summarization(SummarizationMiddleware):
 
         ineffective: int = state_register_mem.get_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
         if ineffective >= _INEFFECTIVE_THRESHOLD:
-            logger.info(
+            logger.debug(
                 "Summarization: anti-thrashing triggered (%d ineffective) for session %s.",
                 ineffective, session_id,
             )
@@ -173,7 +173,7 @@ class Summarization(SummarizationMiddleware):
         if not effective:
             ineffective: int = state_register_mem.get_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0) + 1
             state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, ineffective)
-            logger.info(
+            logger.debug(
                 "Summarization: compression ineffective (attempt %d, "
                 "msg_reduction=%s, token_reduction=%.1f%%) session=%s",
                 attempts, msg_reduced, token_reduction_pct * 100, session_id,

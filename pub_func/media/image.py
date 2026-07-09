@@ -125,7 +125,7 @@ def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int
             logger.error("base64 validation failed")
             return None
 
-        logger.info(f"Image converted successfully, format: {detected_format}, base64 length: {len(validated_uri)} chars")
+        logger.debug(f"Image converted successfully, format: {detected_format}, base64 length: {len(validated_uri)} chars")
         return validated_uri
 
     except Exception as e:
@@ -152,16 +152,16 @@ def compress_image_if_needed(image_data: bytes, max_size_mb: float = 5.0, max_di
         original_size_mb = len(image_data) / (1024 * 1024)
 
         if original_size_mb <= max_size_mb:
-            logger.info(f"Image size OK: {original_size_mb:.2f}MB <= {max_size_mb}MB, no compression needed")
+            logger.debug(f"Image size OK: {original_size_mb:.2f}MB <= {max_size_mb}MB, no compression needed")
             return image_data
 
-        logger.info(f"Image too large: {original_size_mb:.2f}MB > {max_size_mb}MB, starting compression...")
+        logger.debug(f"Image too large: {original_size_mb:.2f}MB > {max_size_mb}MB, starting compression...")
 
         # Open image
         img = Image.open(io.BytesIO(image_data))
         original_width, original_height = img.size
 
-        logger.info(f"Original dimensions: {original_width}x{original_height}")
+        logger.debug(f"Original dimensions: {original_width}x{original_height}")
 
         # Calculate scale ratio
         scale = min(max_dimension / original_width, max_dimension / original_height, 1.0)
@@ -170,12 +170,12 @@ def compress_image_if_needed(image_data: bytes, max_size_mb: float = 5.0, max_di
             new_width = int(original_width * scale)
             new_height = int(original_height * scale)
             img = img.resize((new_width, new_height), Image.LANCZOS)
-            logger.info(f"Resized to: {new_width}x{new_height} (scale: {scale:.2f})")
+            logger.debug(f"Resized to: {new_width}x{new_height} (scale: {scale:.2f})")
 
         # Convert to RGB (if RGBA or P mode)
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
-            logger.info("Converted colour mode to RGB")
+            logger.debug("Converted colour mode to RGB")
 
         # Save as JPEG (high compression ratio)
         output_buffer = io.BytesIO()
@@ -184,7 +184,7 @@ def compress_image_if_needed(image_data: bytes, max_size_mb: float = 5.0, max_di
         compressed_data = output_buffer.getvalue()
         compressed_size_mb = len(compressed_data) / (1024 * 1024)
 
-        logger.info(f"✅ Compression successful: {original_size_mb:.2f}MB -> {compressed_size_mb:.2f}MB")
+        logger.debug(f"✅ Compression successful: {original_size_mb:.2f}MB -> {compressed_size_mb:.2f}MB")
 
         return compressed_data
 
@@ -218,7 +218,7 @@ def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> by
 
     for attempt in range(max_retries):
         try:
-            logger.info(f"Download attempt ({attempt + 1}/{max_retries}): {url[:100]}...")
+            logger.debug(f"Download attempt ({attempt + 1}/{max_retries}): {url[:100]}...")
 
             response = requests.get(url, headers=headers, timeout=timeout, stream=True)
 
@@ -243,14 +243,14 @@ def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> by
                 logger.warning(f"Downloaded content is empty (attempt {attempt + 1})")
                 continue
 
-            logger.info(f"Download successful, size: {len(image_data)} bytes")
+            logger.debug(f"Download successful, size: {len(image_data)} bytes")
             return image_data
 
         except requests.exceptions.HTTPError as e:
             logger.error(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt  # Exponential backoff
-                logger.info(f"Waiting {wait_time}s before retry...")
+                logger.debug(f"Waiting {wait_time}s before retry...")
                 time.sleep(wait_time)
             else:
                 return None
@@ -330,7 +330,7 @@ def clean_and_validate_base64(base64_string: str) -> str | None:
 def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int = 10) -> str | None:
     """Download an image and convert it to base64."""
     try:
-        logger.info(f"Processing image URL: {url[:100]}...")
+        logger.debug(f"Processing image URL: {url[:100]}...")
 
         # Use retry-enabled download function
         image_data = download_with_retry(url, timeout)
@@ -345,7 +345,7 @@ def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int
             logger.warning(f"Image too large: {size_mb:.2f}MB > {max_size_mb}MB")
             return None
 
-        logger.info(f"Image downloaded, size: {len(image_data)} bytes ({size_mb:.2f}MB)")
+        logger.debug(f"Image downloaded, size: {len(image_data)} bytes ({size_mb:.2f}MB)")
 
         # Detect actual format
         detected_format = detect_image_format(image_data)
@@ -354,7 +354,7 @@ def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int
             logger.warning("Will attempt to continue processing...")
             detected_format = 'JPEG'
 
-        logger.info(f"Detected image format: {detected_format}")
+        logger.debug(f"Detected image format: {detected_format}")
 
         # Compress image (if too large)
         compressed_data = compress_image_if_needed(
@@ -364,7 +364,7 @@ def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int
         )
 
         compressed_size_mb = len(compressed_data) / (1024 * 1024)
-        logger.info(f"Size after compression: {compressed_size_mb:.2f}MB")
+        logger.debug(f"Size after compression: {compressed_size_mb:.2f}MB")
 
         # Convert to base64 (no line breaks)
         base64_bytes = base64.b64encode(compressed_data)
@@ -379,7 +379,7 @@ def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int
         mime_type = 'image/jpeg'  # Always use JPEG after compression
         data_uri = f"data:{mime_type};base64,{base64_string}"
 
-        logger.info(f"Built data URI, total length: {len(data_uri)} chars")
+        logger.debug(f"Built data URI, total length: {len(data_uri)} chars")
 
         # Clean and validate base64
         validated_uri = clean_and_validate_base64(data_uri)
@@ -387,7 +387,7 @@ def download_and_convert_to_base64(url: str, timeout: int = 10, max_size_mb: int
             logger.error("base64 validation failed")
             return None
 
-        logger.info(f"✅ Image conversion successful, format: JPEG, base64 length: {len(validated_uri)} chars")
+        logger.debug(f"✅ Image conversion successful, format: JPEG, base64 length: {len(validated_uri)} chars")
         return validated_uri
 
     except Exception as e:
@@ -418,7 +418,7 @@ def check_if_image_and_convert_to_base64(url: str, timeout: int = 10, max_size_m
     try:
         # For QQ multimedia URLs, skip HEAD request and download directly
         if 'multimedia.nt.qq.com.cn' in url or 'qq.com' in url:
-            logger.info("Detected QQ multimedia URL, attempting direct download...")
+            logger.debug("Detected QQ multimedia URL, attempting direct download...")
 
             # Download and convert directly
             base64_str = download_and_convert_to_base64(url, timeout, max_size_mb)
@@ -441,7 +441,7 @@ def check_if_image_and_convert_to_base64(url: str, timeout: int = 10, max_size_m
 
         if 'image/' in content_type:
             file_format = content_type.split('/')[-1].upper()
-            logger.info(f"Content-Type indicates image: {content_type}, format: {file_format}")
+            logger.debug(f"Content-Type indicates image: {content_type}, format: {file_format}")
 
             base64_str = download_and_convert_to_base64(url, timeout, max_size_mb)
             if base64_str:

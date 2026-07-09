@@ -284,9 +284,9 @@ def _execute_model_sync(
         messages.append(request.system_message)
     messages.extend(request.messages)
 
-    logger.info("[CODECT_TRACE] _execute_model_sync invoke start msgs={}", len(messages))
+    logger.debug("[CODECT_TRACE] _execute_model_sync invoke start msgs={}", len(messages))
     output = request.model.invoke(messages)
-    logger.info("[CODECT_TRACE] _execute_model_sync invoke returned len={} has_content={}",
+    logger.debug("[CODECT_TRACE] _execute_model_sync invoke returned len={} has_content={}",
                 len(messages), bool(output and output.content))
 
     if name:
@@ -422,7 +422,7 @@ def create_codeact(
     # Internal nodes
     # ------------------------------------------------------------------
     def call_model(state: state_schema) -> Command:
-        logger.info("[CODECT_TRACE] call_model enter msgs={}", len(state.get("messages", [])))
+        logger.debug("[CODECT_TRACE] call_model enter msgs={}", len(state.get("messages", [])))
         # Build ModelRequest
         request = _build_model_request(
             model=model,
@@ -444,9 +444,9 @@ def create_codeact(
 
         # Execute through middleware chain or directly
         if composed_wrap_model_call is not None:
-            logger.info("[CODECT_TRACE] call_model calling composed_wrap_model_call")
+            logger.debug("[CODECT_TRACE] call_model calling composed_wrap_model_call")
             result = composed_wrap_model_call(request, _inner)
-            logger.info("[CODECT_TRACE] call_model composed_wrap_model_call returned")
+            logger.debug("[CODECT_TRACE] call_model composed_wrap_model_call returned")
             if isinstance(result, _ComposedExtendedModelResponse):
                 model_response = result.model_response
                 extra_commands = result.commands

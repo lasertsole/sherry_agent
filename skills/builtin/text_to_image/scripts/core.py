@@ -37,13 +37,13 @@ def generate_image(prompt: str) -> None:
         api_key = os.getenv("TTI_API_KEY")
 
         if not url:
-            logger.info("Error: TTI_API_BASE environment variable not set")
+            logger.debug("Error: TTI_API_BASE environment variable not set")
 
         if not api_name:
-            logger.info("Error: TTI_API_NAME environment variable not set")
+            logger.debug("Error: TTI_API_NAME environment variable not set")
 
         if not api_key:
-            logger.info("Error: TTI_API_KEY environment variable not set")
+            logger.debug("Error: TTI_API_KEY environment variable not set")
 
         # Send request.
         headers = {
@@ -58,8 +58,8 @@ def generate_image(prompt: str) -> None:
             "seed": 1
         }
 
-        logger.info(f"Calling API to generate image...")
-        logger.info(f"Using prompt: {prompt}")
+        logger.debug(f"Calling API to generate image...")
+        logger.debug(f"Using prompt: {prompt}")
         response = requests.post(url, headers=headers, data=json.dumps(data), verify=False)
 
         save_path = STATIC_DIR / "images" / f"{generate_tsid()}.png"
@@ -81,7 +81,7 @@ def generate_image(prompt: str) -> None:
                     parts = b64_data.split(',', 1)
                     if len(parts) == 2:
                         b64_data = parts[1]
-                        logger.info(f"Extracted pure base64 data, length: {len(b64_data)}")
+                        logger.debug(f"Extracted pure base64 data, length: {len(b64_data)}")
                     else:
                         logger.warning(f"Warning: Unable to parse Data URL format: {b64_data[:50]}...")
 
@@ -93,9 +93,9 @@ def generate_image(prompt: str) -> None:
                     with open(save_path, "wb") as f:
                         f.write(image_data)
 
-                    logger.info(f"Image saved successfully at: {save_path}")
-                    logger.info(f"File size: {save_path.stat().st_size} bytes")
-                    logger.info(f"Generated: {save_path}")
+                    logger.debug(f"Image saved successfully at: {save_path}")
+                    logger.debug(f"File size: {save_path.stat().st_size} bytes")
+                    logger.debug(f"Generated: {save_path}")
 
                 except Exception as decode_error:
                     logger.error(f"Base64 decode failed: {decode_error}")

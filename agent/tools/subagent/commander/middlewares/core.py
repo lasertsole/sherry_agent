@@ -115,7 +115,7 @@ class TODOManager(AgentMiddleware):
             raise RuntimeError("TODOManager: task_id is required")
 
         todo_file = _todo_file_path(master_session_id, task_id)
-        logger.info("TODOManager after_agent todo file exists: {}", todo_file)
+        logger.debug("TODOManager after_agent todo file exists: {}", todo_file)
 
         if not todo_file.exists():
             return None
@@ -123,7 +123,7 @@ class TODOManager(AgentMiddleware):
         try:
             if _SUBAGENT_TODO_DONE_FUNC == "delete":
                 os.remove(todo_file)
-                logger.info("[Todo Cleaner] Deleted: {}", todo_file)
+                logger.debug("[Todo Cleaner] Deleted: {}", todo_file)
             else:
                 archive_dir = SESSIONS_DIR / master_session_id / "todo_archive"
                 archive_dir.mkdir(parents=True, exist_ok=True)
@@ -133,7 +133,7 @@ class TODOManager(AgentMiddleware):
                 target_path = archive_dir / new_filename
 
                 shutil.move(str(todo_file), str(target_path))
-                logger.info("[Todo Cleaner] Archived: {} -> {}", todo_file, target_path)
+                logger.debug("[Todo Cleaner] Archived: {} -> {}", todo_file, target_path)
         except Exception as e:
             logger.warning("[Todo Cleaner] Failed to process todo file: {}", e)
 
@@ -159,7 +159,7 @@ class TODOManager(AgentMiddleware):
                 if isinstance(m, HumanMessage) and not getattr(m, "additional_kwargs", {}).get("lc_source"):
                     goal_text = m.content if isinstance(m.content, str) else str(m.content)
                     persist_goal(master_session_id, task_id, goal_text)
-                    logger.info("TODOManager: persisted original goal for task {}", task_id)
+                    logger.debug("TODOManager: persisted original goal for task {}", task_id)
                     break
 
         parts: list[str] = []

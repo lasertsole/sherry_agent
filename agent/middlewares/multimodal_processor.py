@@ -154,7 +154,7 @@ class MultimodalProcessor(AgentMiddleware):
                         temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
                         temp_path = temp_path.resolve()
                         image.save(temp_path)
-                        logger.info("Image cached successfully!")
+                        logger.debug("Image cached successfully!")
                         image_path_list.append(temp_path.as_posix())
 
                 elif item.get("type") == "audio_url":
@@ -175,7 +175,7 @@ class MultimodalProcessor(AgentMiddleware):
                     temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
                     temp_path = temp_path.resolve()
                     temp_path.write_bytes(audio_bytes)
-                    logger.info(f"Audio cached successfully! (extension={ext})")
+                    logger.debug(f"Audio cached successfully! (extension={ext})")
                     audio_path_list.append(temp_path.as_posix())
 
                 elif item.get("type") == "video_url":
@@ -195,7 +195,7 @@ class MultimodalProcessor(AgentMiddleware):
                     temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
                     temp_path = temp_path.resolve()
                     temp_path.write_bytes(video_bytes)
-                    logger.info(f"Video cached successfully! (extension={ext})")
+                    logger.debug(f"Video cached successfully! (extension={ext})")
                     video_path_list.append(temp_path.as_posix())
 
         if text_dict is None:
@@ -256,7 +256,7 @@ class MultimodalProcessor(AgentMiddleware):
                 deleted_count += 1
 
         if deleted_count > 0:
-            logger.info(f"Cleaned up {deleted_count} expired cached images")
+            logger.debug(f"Cleaned up {deleted_count} expired cached images")
 
     # ------------------------------------------------------------------
     # Sync before_agent

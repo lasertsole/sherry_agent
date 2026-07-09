@@ -110,4 +110,4 @@ class SmartToolNode(_OrigToolNode):
 def patch_tool_node():
     import langchain.agents.factory as _f
     _f.ToolNode = SmartToolNode
-    logger.info("smart_tool_node: patched factory.ToolNode -> SmartToolNode")
+    logger.debug("smart_tool_node: patched factory.ToolNode -> SmartToolNode")

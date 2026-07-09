@@ -132,7 +132,7 @@ class HeartbeatStaleness(AgentMiddleware):
                 )
                 state_register_mem.set_state(session_id, _STATE_KEY_KILLED, True)
             else:
-                logger.info(
+                logger.debug(
                     "[HeartbeatStaleness] session={} stale count={}/{} (tool={})",
                     session_id, stale, stale_limit, current_tool or "<none>",
                 )
@@ -146,7 +146,7 @@ class HeartbeatStaleness(AgentMiddleware):
             minutes=self.heartbeat_interval_minutes,
             execute_now=True,
         )
-        logger.info(
+        logger.debug(
             "[HeartbeatStaleness] started heartbeat for session={} "
             "(interval={}min, idle_cycles={}, tool_cycles={})",
             session_id, self.heartbeat_interval_minutes,
@@ -155,7 +155,7 @@ class HeartbeatStaleness(AgentMiddleware):
 
     def _stop_heartbeat(self, session_id: str) -> None:
         timer_call_register.unregister(session_id, _TIMER_NAME)
-        logger.info("[HeartbeatStaleness] stopped heartbeat for session={}", session_id)
+        logger.debug("[HeartbeatStaleness] stopped heartbeat for session={}", session_id)
 
     def _before_agent_impl(self, state: AgentState) -> None:
         session_id = self._sid(state)

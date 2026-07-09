@@ -11,11 +11,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from pub_func import sanitize_content, escape_xml, escape_prompt_braces
 
-# ─── 节点/边合法值 ──────────────────────────────────────────────
+# ─── Node/Edge Valid Values ───────────────────────────────────────
 VALID_NODE_TYPES = {"TASK", "SKILL", "EVENT"}
 VALID_EDGE_TYPES = {"USED_SKILL", "SOLVED_BY", "REQUIRES", "PATCHES", "CONFLICTS_WITH"}
 
-# 边类型 → 合法的 from 节点类型
+# Edge type → valid from node types
 EDGE_FROM_CONSTRAINT: dict[str, set[str]] = {
     "USED_SKILL": {"TASK"},
     "SOLVED_BY": {"EVENT", "SKILL"},
@@ -24,7 +24,7 @@ EDGE_FROM_CONSTRAINT: dict[str, set[str]] = {
     "CONFLICTS_WITH": {"SKILL"},
 }
 
-# 边类型 → 合法的 to 节点类型
+# Edge type → valid to node types
 EDGE_TO_CONSTRAINT: dict[str, set[str]] = {
     "USED_SKILL": {"SKILL"},
     "SOLVED_BY": {"SKILL"},
@@ -34,171 +34,171 @@ EDGE_TO_CONSTRAINT: dict[str, set[str]] = {
 }
 
 
-# ─── 类型定义 ─────────────────────────────────────────────────
+# ─── Type Definitions ─────────────────────────────────────────────
 class Node(BaseModel):
-    """节点"""
-    type: Literal["TASK", "SKILL", "EVENT"] = Field(description="节点类型")
-    name: str = Field(description="节点名称")
-    description: str = Field(description="节点描述")
-    content: str = Field(description="节点内容")
+    """A knowledge graph node"""
+    type: Literal["TASK", "SKILL", "EVENT"] = Field(description="Node type")
+    name: str = Field(description="Node name")
+    description: str = Field(description="Node description")
+    content: str = Field(description="Node content")
 
 
 class Edge(BaseModel):
-    """边"""
-    from_node: str = Field(description="边的 from 节点名称")
-    to_node: str = Field(description="边的 to 节点名称")
-    type: str = Field(description="边的类型")
-    instruction: str = Field(description="边的执行步骤")
-    condition: str | None = Field(default=None, description="边的条件")
+    """A knowledge graph edge"""
+    from_node: str = Field(description="Edge source node name")
+    to_node: str = Field(description="Edge target node name")
+    type: str = Field(description="Edge type")
+    instruction: str = Field(description="Edge execution instruction")
+    condition: str | None = Field(default=None, description="Edge trigger condition")
 
 
 class ExtractionResult(BaseModel):
-    """提取结果"""
-    nodes: list[Node] = Field(description="提取的节点列表", default=[])
-    edges: list[Edge] = Field(description="提取的边列表", default=[])
+    """Extraction result containing nodes and edges"""
+    nodes: list[Node] = Field(description="Extracted node list", default=[])
+    edges: list[Edge] = Field(description="Extracted edge list", default=[])
 
 
 class PromotedSkill(Node):
-    """升级的技能"""
+    """A skill promoted from an EVENT node"""
     type: Literal["SKILL"]
 
 
 class FinalizeResult(BaseModel):
-    """整理结果"""
+    """Finalization result containing promoted skills, new edges, and invalidations"""
     promoted_skills: list[PromotedSkill]
     new_edges: list[Edge]
     invalidations: list[str]
 
 
-# ─── 提取 System Prompt ─────────────────────────────────────────
+# ─── Extraction System Prompt ─────────────────────────────────────
 
-EXTRACT_SYS = escape_prompt_braces("""你是 xp_graph 知识图谱提取引擎，从 AI Agent 对话中提取可复用的结构化知识三元组（节点 + 关系）。
-提取的知识将在未来对话中被召回，帮助 Agent 避免重复犯错、复用已验证方案。
-输出严格 JSON：{"nodes":[...],"edges":[...]}，不包含任何额外文字。
+EXTRACT_SYS = escape_prompt_braces("""You are the xp_graph knowledge graph extraction engine. Extract reusable structured knowledge triples (nodes + edges) from AI Agent conversations.
+Extracted knowledge will be recalled in future conversations, helping the Agent avoid repeating mistakes and reuse proven solutions.
+Output strict JSON: {"nodes":[...],"edges":[...]}, with no extra text.
 
-1. 节点提取：
-   1.1 从对话中识别三类知识节点：
-       - TASK：用户要求 Agent 完成的具体任务，或对话中讨论、分析、对比的主题
-       - SKILL：可复用的操作技能，有具体工具/命令/API，有明确触发条件，步骤可直接执行
-       - EVENT：一次性的报错或异常，记录现象、原因和解决方法
-   1.2 每个节点必须包含 4 个字段，缺一不可：
-       - type：节点类型，只允许 TASK / SKILL / EVENT
-       - name：全小写连字符命名，确保整个提取过程命名一致
-       - description：一句话说明什么场景触发
-       - content：纯文本格式的知识内容
-   1.3 name 命名规范：
-       - TASK：动词 - 对象格式，如 deploy-bilibili-mcp、extract-pdf-tables、compare-ocr-engines
-       - SKILL：工具 - 操作格式，如 conda-env-create、docker-port-expose
-       - EVENT：现象 - 工具格式，如 importerror-libgl1、timeout-paddleocr
-       - 已有节点列表会提供，相同事物必须复用已有 name，不得创建重复节点
-   1.4 content 模板（纯文本，按 type 选用）：
-       TASK → "[name]\n目标：...\n执行步骤:\n1. ...\n2. ...\n结果：..."
-       SKILL → "[name]\n触发条件：...\n执行步骤:\n1. ...\n2. ...\n常见错误:\n- ... -> ..."
-       EVENT → "[name]\n现象：...\n原因：...\n解决方法：..."
+1. Node Extraction:
+   1.1 Identify three types of knowledge nodes from the conversation:
+       - TASK: A specific task the user asked the Agent to complete, or a topic discussed, analyzed, or compared in the conversation
+       - SKILL: A reusable operational skill with specific tools/commands/APIs, clear trigger conditions, and directly executable steps
+       - EVENT: A one-time error or exception, recording the symptom, cause, and solution
+   1.2 Every node must include all 4 fields:
+       - type: Node type, only TASK / SKILL / EVENT allowed
+       - name: Lowercase hyphenated name, ensure consistent naming across the entire extraction
+       - description: One sentence describing what scenario triggers this
+       - content: Knowledge content in plain text format
+   1.3 name naming convention:
+       - TASK: verb-object format, e.g., deploy-bilibili-mcp, extract-pdf-tables, compare-ocr-engines
+       - SKILL: tool-action format, e.g., conda-env-create, docker-port-expose
+       - EVENT: phenomenon-tool format, e.g., importerror-libgl1, timeout-paddleocr
+       - An existing node list will be provided; reuse existing names for the same entity — do not create duplicate nodes
+   1.4 content templates (plain text, choose by type):
+       TASK → "[name]\nObjective: ...\nSteps:\n1. ...\n2. ...\nResult: ..."
+       SKILL → "[name]\nTrigger: ...\nSteps:\n1. ...\n2. ...\nCommon Errors:\n- ... -> ..."
+       EVENT → "[name]\nSymptom: ...\nCause: ...\nSolution: ..."
 
-2. 关系提取：
-   2.1 识别节点之间直接、明确的关系，只允许以下 5 种边类型。
-   2.2 每条边必须包含 from_node、to_node、type、instruction 四个字段，缺一不可。
-   2.3 边类型定义与方向约束（严格遵守，不得混用）：
+2. Edge Extraction:
+   2.1 Identify direct, explicit relationships between nodes. Only the following 5 edge types are allowed.
+   2.2 Every edge must include from_node, to_node, type, instruction — all 4 fields required.
+   2.3 Edge type definitions and direction constraints (strictly follow, do not mix):
 
        USED_SKILL
-         方向：TASK → SKILL（且仅限此方向）
-         含义：任务执行过程中使用了该技能
-         instruction：写第几步用的、怎么调用的、传了什么参数
-         判定：from_node 节点是 TASK，to_node 节点是 SKILL
+         Direction: TASK → SKILL (and only this direction)
+         Meaning: The task used this skill during execution
+         instruction: Which step used it, how it was called, what parameters were passed
+         Condition: from_node is TASK, to_node is SKILL
 
        SOLVED_BY
-         方向：EVENT → SKILL 或 SKILL → SKILL
-         含义：该报错/问题被该技能解决
-         instruction：写具体执行了什么命令/操作来解决
-         condition（必填）：写什么错误或条件触发了这个解决方案
-         判定：from_node 节点是 EVENT 或 SKILL，to_node 节点是 SKILL
-         注意：TASK 节点不能作为 SOLVED_BY 的 from_node，TASK 使用技能必须用 USED_SKILL
+         Direction: EVENT → SKILL or SKILL → SKILL
+         Meaning: The error/problem was resolved by this skill
+         instruction: What specific command/operation was executed to resolve it
+         condition (required): What error or condition triggered this solution
+         Condition: from_node is EVENT or SKILL, to_node is SKILL
+         Note: TASK nodes cannot be the from_node of SOLVED_BY. Tasks using skills must use USED_SKILL.
 
        REQUIRES
-         方向：SKILL → SKILL
-         含义：执行该技能前必须先完成另一个技能
-         instruction：写为什么依赖、怎么判断前置条件是否已满足
+         Direction: SKILL → SKILL
+         Meaning: This skill requires another skill to be completed first
+         instruction: Why the dependency exists, how to determine if the prerequisite is met
 
        PATCHES
-         方向：SKILL → SKILL（新 → 旧）
-         含义：新技能修正/替代了旧技能的做法
-         instruction：写旧方案有什么问题、新方案改了什么
+         Direction: SKILL → SKILL (new → old)
+         Meaning: A new skill corrects/replaces an old approach
+         instruction: What was wrong with the old solution, what the new approach changed
 
        CONFLICTS_WITH
-         方向：SKILL ↔ SKILL（双向）
-         含义：两个技能在同一场景互斥
-         instruction：写冲突的具体表现、应该选哪个
+         Direction: SKILL ↔ SKILL (bidirectional)
+         Meaning: Two skills are mutually exclusive in the same scenario
+         instruction: Specific conflict symptoms, which one to choose
 
-   2.4 关系方向选择决策树（按此顺序判定）：
-       a. from_node 是 TASK，to_node 是 SKILL → 必须用 USED_SKILL
-       b. from_node 是 EVENT，to_node 是 SKILL → 必须用 SOLVED_BY
-       c. from_node 和 to_node 都是 SKILL → 根据语义选 SOLVED_BY / REQUIRES / PATCHES / CONFLICTS_WITH
-       d. 不存在其他合法组合，不符合以上任何一条的关系不要提取
+   2.4 Relationship direction decision tree (evaluate in this order):
+       a. from_node is TASK, to_node is SKILL → must use USED_SKILL
+       b. from_node is EVENT, to_node is SKILL → must use SOLVED_BY
+       c. from_node and to_node are both SKILL → choose SOLVED_BY / REQUIRES / PATCHES / CONFLICTS_WITH based on semantics
+       d. No other valid combinations exist. Do not extract relationships that don't match any of the above.
 
-3. 提取策略（宁多勿漏）：
-   3.1 所有对话内容都应尝试提取，包括讨论、分析、对比、方案选型等
-   3.2 用户纠正 AI 的错误时，旧做法和新做法都要提取，用 PATCHES 边关联
-   3.3 讨论和对比类对话提取为 TASK，记录讨论的结论和要点
-   3.4 只有纯粹的寒暄问候（如"你好""谢谢"）才不提取
+3. Extraction Strategy (better to over-extract than miss):
+   3.1 Attempt to extract from all conversation content, including discussions, analyses, comparisons, technology selection, etc.
+   3.2 When the user corrects an AI error, extract both the old and new approaches, linked with a PATCHES edge.
+   3.3 Extracting discussions and comparisons as TASK nodes, recording conclusions and key points.
+   3.4 Only pure greetings (e.g., "hello", "thanks") should be skipped.
 
-4. 输出规范：
-   4.1 只返回 JSON，格式为 {"nodes":[...],"edges":[...]}
-   4.2 禁止 markdown 代码块包裹，禁止解释文字，禁止额外字段
-   4.3 没有知识产出时返回 {"nodes":[],"edges":[]}
-   4.4 每条 edge 的 instruction 必须写具体可执行的内容，不能为空或写"见上文"
+4. Output Specification:
+   4.1 Return only JSON, format: {"nodes":[...],"edges":[...]}
+   4.2 No markdown code block wrapping, no explanatory text, no extra fields
+   4.3 When no knowledge is produced, return {"nodes":[],"edges":[]}
+   4.4 Each edge's instruction must contain specific executable content — cannot be empty or say "see above"
 
-示例 1（TASK + SKILL + USED_SKILL 边）：
+Example 1 (TASK + SKILL + USED_SKILL edge):
 
-对话摘要：用户要求抓取 B 站弹幕，Agent 使用 bili-tool 的 danmaku 子命令完成。
+Conversation summary: The user asked to scrape Bilibili danmaku. The Agent used the bili-tool danmaku subcommand.
 
-输出：
-{"nodes":[{"type":"TASK","name":"extract-bilibili-danmaku","description":"从 B 站视频中批量抓取弹幕数据","content":"extract-bilibili-danmaku\n目标：从指定 B 站视频抓取全部弹幕\n执行步骤:\n1. 获取视频 BV 号\n2. 调用 bili-tool danmaku --bv BVxxx\n3. 输出 JSON 格式弹幕列表\n结果：成功抓取 2341 条弹幕"},{"type":"SKILL","name":"bili-tool-danmaku","description":"使用 bili-tool 抓取 B 站视频弹幕","content":"bili-tool-danmaku\n触发条件：需要抓取 B 站视频弹幕时\n执行步骤:\n1. pip install bilibili-api-python\n2. python bili_tool.py danmaku --bv BVxxx --output danmaku.json\n常见错误:\n- cookie 过期 -> 重新获取 SESSDATA"}],"edges":[{"from_node":"extract-bilibili-danmaku","to_node":"bili-tool-danmaku","type":"USED_SKILL","instruction":"第 2 步调用 bili-tool danmaku 子命令，传入 --bv 和 --output 参数"}]}
+Output:
+{"nodes":[{"type":"TASK","name":"extract-bilibili-danmaku","description":"Batch scrape danmaku data from Bilibili videos","content":"extract-bilibili-danmaku\nObjective: Scrape all danmaku from a specific Bilibili video\nSteps:\n1. Get the video BV ID\n2. Call bili-tool danmaku --bv BVxxx\n3. Output JSON-formatted danmaku list\nResult: Successfully scraped 2341 danmaku entries"},{"type":"SKILL","name":"bili-tool-danmaku","description":"Use bili-tool to scrape Bilibili video danmaku","content":"bili-tool-danmaku\nTrigger: When needing to scrape Bilibili video danmaku\nSteps:\n1. pip install bilibili-api-python\n2. python bili_tool.py danmaku --bv BVxxx --output danmaku.json\nCommon Errors:\n- cookie expired -> re-fetch SESSDATA"}],"edges":[{"from_node":"extract-bilibili-danmaku","to_node":"bili-tool-danmaku","type":"USED_SKILL","instruction":"Step 2 calls bili-tool danmaku subcommand with --bv and --output parameters"}]}
 
-示例 2（EVENT + SKILL + SOLVED_BY 边）：
+Example 2 (EVENT + SKILL + SOLVED_BY edge):
 
-对话摘要：执行 PaddleOCR 时报 libGL 缺失，通过 apt 安装解决。
+Conversation summary: Running PaddleOCR reported libGL missing, resolved by apt install.
 
-输出：
-{"nodes":[{"type":"EVENT","name":"importerror-libgl1","description":"导入 cv2/paddleocr 时报 libGL.so.1 缺失","content":"importerror-libgl1\n现象: ImportError: libGL.so.1: cannot open shared object file\n原因: OpenCV 依赖系统级 libGL 库，conda/pip 不自动安装\n解决方法: apt install -y libgl1-mesa-glx"},{"type":"SKILL","name":"apt-install-libgl1","description":"安装 libgl1 解决 OpenCV 系统依赖缺失","content":"apt-install-libgl1\n触发条件: ImportError: libGL.so.1\n执行步骤:\n1. sudo apt update\n2. sudo apt install -y libgl1-mesa-glx\n常见错误:\n- Permission denied -> 加 sudo"}],"edges":[{"from_node":"importerror-libgl1","to_node":"apt-install-libgl1","type":"SOLVED_BY","instruction":"执行 sudo apt install -y libgl1-mesa-glx","condition":"报 ImportError: libGL.so.1 时"}]}
+Output:
+{"nodes":[{"type":"EVENT","name":"importerror-libgl1","description":"libGL.so.1 missing when importing cv2/paddleocr","content":"importerror-libgl1\nSymptom: ImportError: libGL.so.1: cannot open shared object file\nCause: OpenCV depends on system-level libGL library, not auto-installed by conda/pip\nSolution: apt install -y libgl1-mesa-glx"},{"type":"SKILL","name":"apt-install-libgl1","description":"Install libgl1 to fix missing OpenCV system dependency","content":"apt-install-libgl1\nTrigger: ImportError: libGL.so.1\nSteps:\n1. sudo apt update\n2. sudo apt install -y libgl1-mesa-glx\nCommon Errors:\n- Permission denied -> add sudo"}],"edges":[{"from_node":"importerror-libgl1","to_node":"apt-install-libgl1","type":"SOLVED_BY","instruction":"Execute sudo apt install -y libgl1-mesa-glx","condition":"When ImportError: libGL.so.1 is reported"}]}
 
-没有需要处理的项返回空数组。只返回 JSON，禁止额外文字。
+Return empty arrays for nothing to process. Return only JSON, no extra text.
 """)
 
-# ─── 提取 User Prompt ───────────────────────────────────────────
+# ─── Extraction User Prompt ───────────────────────────────────────
 def extract_user_prompt(msgs: str, existing: str) -> str:
-    """构建提取的 user prompt"""
+    """Build the extraction user prompt"""
     return f"""<Existing Nodes>
-{existing or "（无）"}
+{existing or "(none)"}
 
 <Conversation>
 {msgs}"""
 
 
-# ─── 整理 System Prompt ─────────────────────────────────────────
-FINALIZE_SYS = """你是图谱节点整理引擎，对本次对话产生的节点做 sessions 结束前的最终审查。
-审查本次对话所有节点，执行以下三项操作，输出严格 JSON。
+# ─── Finalization System Prompt ───────────────────────────────────
+FINALIZE_SYS = """You are the graph node finalization engine. Perform a final review of nodes generated in this session before it ends.
+Review all nodes from this session and execute the following three operations. Output strict JSON.
 
-1. EVENT 升级为 SKILL：
-   如果某个 EVENT 节点具有通用复用价值（不限于特定场景），将其升级为 SKILL。
-   升级时需要：改名为 SKILL 命名规范（工具 - 操作）、完善 content 为 SKILL 纯文本模板格式。
-   写入 promotedSkills 数组。
+1. Promote EVENT to SKILL:
+    If an EVENT node has general reusable value (not limited to a specific scenario), promote it to SKILL.
+    When promoting: rename to SKILL naming convention (tool-action), update content to SKILL plain text template format.
+    Write to promotedSkills array.
 
-2. 补充遗漏关系：
-   整体回顾所有节点，发现单次提取时难以察觉的跨节点关系。
-   关系类型只允许：USED_SKILL、SOLVED_BY、REQUIRES、PATCHES、CONFLICTS_WITH。
-   严格遵守方向约束：TASK->SKILL 用 USED_SKILL，EVENT->SKILL 用 SOLVED_BY。
-   写入 newEdges 数组。
+2. Add Missing Edges:
+    Review all nodes holistically to find cross-node relationships that were hard to detect during single extraction.
+    Edge types allowed: USED_SKILL, SOLVED_BY, REQUIRES, PATCHES, CONFLICTS_WITH.
+    Strictly follow direction constraints: TASK->SKILL use USED_SKILL, EVENT->SKILL use SOLVED_BY.
+    Write to newEdges array.
 
-3. 标记失效节点：
-   因本次对话中的新发现而失效的旧节点，将其 node_id 写入 invalidations 数组。
+3. Mark Obsolete Nodes:
+    Old nodes invalidated by new discoveries in this session — write their node_id to the invalidations array.
 
-没有需要处理的项返回空数组。只返回 JSON，禁止额外文字。
-格式：{"promoted_skills":[{"type":"SKILL","name":"...","description":"...","content":"..."}],"new_edges":[{"from_node":"...","to_node":"...","type":"...","instruction":"...","condition":"..."}],"invalidations":["node-id"]}"""
+Return empty arrays for nothing to process. Return only JSON, no extra text.
+Format: {"promoted_skills":[{"type":"SKILL","name":"...","description":"...","content":"..."}],"new_edges":[{"from_node":"...","to_node":"...","type":"...","instruction":"...","condition":"..."}],"invalidations":["node-id"]}"""
 
-# ─── 整理 User Prompt ───────────────────────────────────────────
+# ─── Finalization User Prompt ─────────────────────────────────────
 def finalize_user_prompt(nodes: list[GmNode], summary: str) -> str:
-    """构建整理的 user prompt"""
+    """Build the finalization user prompt"""
     nodes_summary = json.dumps([
         {
             'id': n.id,
@@ -219,20 +219,20 @@ def finalize_user_prompt(nodes: list[GmNode], summary: str) -> str:
 
 # ─── Extractor ────────────────────────────────────────────────
 class Extractor:
-    """知识图谱提取器"""
+    """Knowledge graph extractor"""
     @staticmethod
     async def extract(messages: list[dict], existing_names: list[str]) -> ExtractionResult:
         """
-        从对话中提取知识图谱
+        Extract a knowledge graph from conversation messages
 
         Args:
-            messages: 对话消息列表
-            existing_names: 已有节点名称列表
+            messages: List of conversation messages
+            existing_names: List of existing node names
 
         Returns:
-            包含节点和边的提取结果
+            Extraction result containing nodes and edges
         """
-        # 格式化消息
+        # Format messages
         msgs_parts = []
         for m in messages:
             role = m.get('role', '?').upper()
@@ -244,7 +244,7 @@ class Extractor:
             else:
                 text = json.dumps(content, ensure_ascii=False)
 
-            # 过滤特殊字符
+            # Filter special characters
             text = sanitize_content(text)
             text = escape_xml(text)
 
@@ -254,7 +254,7 @@ class Extractor:
         msgs = "\n\n---\n\n".join(msgs_parts)
 
         structured_llm = ChatPromptTemplate.from_messages([
-            ("system", EXTRACT_SYS),  # 假设 EXTRACT_SYS 是你的系统提示词字符串
+            ("system", EXTRACT_SYS),  # EXTRACT_SYS is the extraction system prompt
             ("human", "{user_input}")
         ]) | main_llm.with_structured_output(ExtractionResult)
 
@@ -263,14 +263,14 @@ class Extractor:
     @staticmethod
     async def finalize(session_nodes: list[GmNode], graph_summary: str) -> FinalizeResult:
         """
-        Session 结束前的最终审查
+        Final review before session end
 
         Args:
-            session_nodes: Session 中的节点列表
-            graph_summary: 图谱摘要
+            session_nodes: List of nodes in this session
+            graph_summary: Graph summary
 
         Returns:
-            包含升级技能、新边和失效节点的结果
+            Result containing promoted skills, new edges, and invalidations
         """
         return main_llm.with_structured_output(FinalizeResult, method='json_mode').invoke(
             [SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))],

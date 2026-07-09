@@ -35,7 +35,7 @@ async def folder_index(input_folder_path: str, classify_folder: str) -> str:
         max_workers=4,
     )
     suc_mess: str = f"✅ Indexing complete! Folder '{input_folder_path}' added to knowledge graph category '{classify_folder}'"
-    logger.info(suc_mess)
+    logger.debug(suc_mess)
     return suc_mess
 
 @validate_call
@@ -47,4 +47,4 @@ async def file_index(input_file_path: str, classify_folder: str) -> None:
         output_dir=SRC_DIR / "rag" / "rag_anything" / classify_folder / "output",
         parse_method="auto",
     )
-    logger.info(f"✅ Indexing complete! File '{input_file_path}' added to knowledge graph category '{classify_folder}'")
+    logger.debug(f"✅ Indexing complete! File '{input_file_path}' added to knowledge graph category '{classify_folder}'")

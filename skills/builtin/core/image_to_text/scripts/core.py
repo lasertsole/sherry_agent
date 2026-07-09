@@ -35,7 +35,7 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
     # ----- Phase 1: Get image data -----
     if is_url(image_path):
         # URL → download to temp file
-        logger.info(f"Downloading image from URL: {image_path}")
+        logger.debug(f"Downloading image from URL: {image_path}")
         try:
             resp = requests.get(image_path, stream=True, timeout=60)
             resp.raise_for_status()
@@ -64,7 +64,7 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
         try:
             if not path.exists():
                 info_mes: str = f"[warn] Image path does not exist: {repr(path)}"
-                logger.info(info_mes)
+                logger.debug(info_mes)
                 return info_mes
         except Exception as e:
             err_mes: str = f"[error] Invalid file path: {image_path}, {repr(e)}"

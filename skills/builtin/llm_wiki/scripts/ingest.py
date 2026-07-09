@@ -1,5 +1,5 @@
 """
-llm-wiki ingest: 原始资料导入
+llm_wiki ingest: 原始资料导入
 """
 
 import sys
@@ -57,7 +57,7 @@ sha256: {sha256_hash}
 
     try:
         file_path.write_text(full_content, encoding="utf-8")
-        logger.info(f"Source saved: {file_path}")
+        logger.debug(f"Source saved: {file_path}")
         return {
             "file_path": str(file_path),
             "sha256": sha256_hash,

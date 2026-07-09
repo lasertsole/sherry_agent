@@ -1,5 +1,5 @@
 """
-llm-wiki core: Wiki路径管理与初始化
+llm_wiki core: Wiki路径管理与初始化
 所有路径均通过项目根目录动态计算，无硬编码绝对路径。
 """
 
@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from loguru import logger
 
-# 动态定位项目根目录 (skills/builtin/llm-wiki/scripts/ 向上4层)
+# 动态定位项目根目录 (skills/builtin/llm_wiki/scripts/ 向上4层)
 current_file = Path(__file__).resolve()
 project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
@@ -110,7 +110,7 @@ def init_wiki() -> dict:
                 fpath.write_text("", encoding="utf-8")
                 result["created_files"].append(str(fpath))
 
-        logger.info(f"Wiki initialized at: {wiki_root}")
+        logger.debug(f"Wiki initialized at: {wiki_root}")
 
     except Exception as e:
         logger.error(f"Wiki initialization failed: {e}")
