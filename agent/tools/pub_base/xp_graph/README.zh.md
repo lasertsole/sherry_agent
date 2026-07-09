@@ -29,6 +29,8 @@
 
 XpGraph 是**蒸馏优先**的知识图谱系统。与传统 RAG 从原始对话消息中提取不同，XpGraph 只存储**预蒸馏的经验对象**——通过专门的 LLM 调用提取的高信噪比、可复用知识。
 
+XpGraph 是**纯基础设施层**，无任何业务依赖。业务层组件（如 Distiller 和 Draft 工具）由 `subagent` 模块拥有，通过调用 XpGraph 的公共 API 写入知识。
+
 | 传统 RAG | XpGraph |
 |----------|---------|
 | 摄取原始消息 → 事后提取 | 先蒸馏经验 → 直写图谱 |
@@ -39,9 +41,9 @@ XpGraph 是**蒸馏优先**的知识图谱系统。与传统 RAG 从原始对话
 
 ### 核心能力
 
-1. **蒸馏式提取** — 三层提取：草稿工具 → 压缩前 fork → 任务结束蒸馏
+1. **蒸馏式提取** — 当前两层激活：草稿工具（第一层）+ 任务结束蒸馏（第三层）；压缩前 fork（第二层）尚未实现
 2. **多角色知识库** — Commander 与主 agent 共享策略级知识库；Worker 独立使用操作级知识库
-3. **知识注入** — 召回经验以 `AIMessage(content="<thinking>...")` 形式注入到第一个 HumanMessage 之后
+3. **知识注入** — 召回经验以 `AIMessage(content="徊...徊")` 形式注入到第一个 HumanMessage 之后
 4. **图谱社区检测** — Leiden 算法自动聚类相关知识领域
 5. **个性化 PageRank** — 基于查询上下文的动态节点排序
 6. **混合检索** — 向量相似度 + FTS5 全文搜索 + 图遍历
@@ -53,27 +55,34 @@ XpGraph 是**蒸馏优先**的知识图谱系统。与传统 RAG 从原始对话
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                       XpGraph Core                               │
-├──────────────┬──────────────┬──────────────┬───────────────────┤
-│  Distiller   │   Recaller   │    Graph     │      Store        │
-├──────────────┼──────────────┼──────────────┼───────────────────┤
-│ • 压缩前fork │ • 双路召回   │ • 社区检测   │ • SQLite（按角色  │
-│ • 任务结束   │ • PPR 排序   │ • PageRank   │ • FTS5            │
-│ • 策略级/    │ • 重排序    │ • 去重合并   │ • 向量存储        │
-│   操作级     │              │              │                   │
-└──────────────┴──────────────┴──────────────┴───────────────────┘
-                      ↕ 草稿（由 subagent 拥有）
+├──────────────────┬──────────────┬───────────────────────────────┤
+│    Recaller      │    Graph     │           Store               │
+├──────────────────┼──────────────┼───────────────────────────────┤
+│ • 双路召回       │ • 社区检测   │ • SQLite（按角色）             │
+│ • PPR 排序       │ • PageRank   │ • FTS5                        │
+│ • 重排序         │ • 去重合并   │ • 向量存储                    │
+└──────────────────┴──────────────┴───────────────────────────────┘
+                      ↕ 由 subagent 调用（Distiller / Draft）
 ```
+
+> **注意：** Distiller（`agent/tools/subagent/distiller.py`）和 Draft 工具（`agent/tools/subagent/draft.py`）先前属于 XpGraph，现已移至 **subagent** 业务层。XpGraph 现在是纯基础设施模块，不含业务逻辑。Distiller 通过调用 XpGraph 的公共 API（`get_instance`、`ingest_experiences` 等）写入蒸馏后的经验。
 
 ### 模块职责
 
 | 模块 | 文件路径 | 核心功能 |
 |------|---------|----------|
-| **Distiller** | `extractor/distiller.py` | 任务结束后蒸馏策略级/操作级经验 |
 | **Extractor** | `extractor/core.py` | 从预蒸馏输入中提取节点/边；会话结束终审 |
 | **Recaller** | `recaller/core.py` | 执行双路召回（精确 + 泛化）；合并结果 |
 | **Graph** | `graph/*.py` | 社区检测、PageRank 计算、去重合并、图谱维护 |
 | **Store** | `store/core.py` | SQLite CRUD、向量存储、FTS5 搜索 |
 | **Core** | `core.py` | `XpGraphInstance` 工厂；编排各模块 |
+
+**业务层模块（不属于 XpGraph）：**
+
+| 模块 | 文件路径 | 核心功能 |
+|------|---------|----------|
+| **Distiller** | `agent/tools/subagent/distiller.py` | 任务结束后蒸馏策略级/操作级经验；通过 `_ingest_edges()` 写入边 |
+| **Draft** | `agent/tools/subagent/draft.py` | 记录子 agent 任务执行中的关键发现 |
 
 ---
 
@@ -84,14 +93,13 @@ XpGraph 是**蒸馏优先**的知识图谱系统。与传统 RAG 从原始对话
  │                     Commander 执行                              │
  │                                                                 │
  │  1. 知识注入                                                    │
- │     任务描述 → assemble() → AIMessage<thinking>                │
+ │     任务描述 → assemble() → AIMessage<徊...徊>                  │
  │                                                                 │
  │  2. 执行过程中                                                  │
  │     Agent 调用 draft tool → 洞察存入 state_register            │
  │                                                                 │
- │  3. 压缩前蒸馏                                                  │
- │     SummarizationMiddleware 触发 → fork 提取即将被丢弃消息      │
- │     中的洞察 → 追加为草稿                                      │
+ │  3. Worker 执行                                                 │
+ │     Worker 完成后将草稿合并到 Commander 会话                    │
  └────────────────────────┬────────────────────────────────────────┘
                           │
           ┌───────────────┴───────────────┐
@@ -99,20 +107,22 @@ XpGraph 是**蒸馏优先**的知识图谱系统。与传统 RAG 从原始对话
  ┌─────────────────┐           ┌─────────────────────┐
  │  Worker 任务 A   │           │   Worker 任务 B      │
  │                  │           │                      │
- │  相同三步骤：    │           │  相同三步骤：        │
+ │  相同两步骤：    │           │  相同两步骤：        │
  │  注入 →         │           │  注入 →              │
- │  草稿 →         │           │  草稿 →              │
- │  压缩前蒸馏     │           │  压缩前蒸馏          │
+ │  草稿           │           │  草稿                │
  └────────┬────────┘           └──────────┬──────────┘
           │                               │
           └───────────────┬───────────────┘
                           ▼
  ┌─────────────────────────────────────────────────────────────────┐
  │                    任务结束蒸馏                                  │
+ │                    （由 subagent 模块拥有）                      │
  │                                                                 │
- │  1. 收集：任务描述 + 最终结果 + 所有草稿                        │
- │  2. 蒸馏策略级经验 → default DB（commander 共享）               │
- │  3. 蒸馏操作级经验 → worker DB（独立）                          │
+ │  1. 合并 Worker 草稿到 Commander 会话                           │
+ │  2. 收集：任务描述 + 最终结果 + 所有草稿                        │
+ │  3. 蒸馏策略级经验 → default DB（commander 共享）               │
+ │  4. 蒸馏操作级经验 → worker DB（独立）                          │
+ │  5. 同时写入节点和边到对应知识图谱                               │
  └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -142,14 +152,14 @@ XpGraph 是**蒸馏优先**的知识图谱系统。与传统 RAG 从原始对话
 
 ## 知识注入
 
-当 Commander 或 Worker 启动任务时，会从对应角色的知识库中召回相关经验，以 `AIMessage` 的 `<thinking>` 内容注入到消息流中，紧跟在第一个 `HumanMessage` 之后。
+当 Commander 或 Worker 启动任务时，会从对应角色的知识库中召回相关经验，以 `AIMessage` 的 `徊...徊` 标记注入到消息流中，紧跟在第一个 `HumanMessage` 之后。
 
 **Commander（策略级，从 default DB）：**
 
 ```python
 messages = [
     HumanMessage(content="部署 Python Web 应用到 Kubernetes"),
-    AIMessage(content="<thinking>\n<xp_graph>...策略知识 XML...</xp_graph>\n</thinking>")
+    AIMessage(content="徊\n<xp_graph>...策略知识 XML...</xp_graph>\n徊")
 ]
 ```
 
@@ -158,7 +168,7 @@ messages = [
 ```python
 messages = [
     HumanMessage(content="在 conda 环境中安装 Python 依赖"),
-    AIMessage(content="<thinking>\n<xp_graph>...操作知识 XML...</xp_graph>\n</thinking>")
+    AIMessage(content="徊\n<xp_graph>...操作知识 XML...</xp_graph>\n徊")
 ]
 ```
 
@@ -168,33 +178,38 @@ messages = [
 
 ## 经验蒸馏管线
 
-XpGraph 采用**三层蒸馏**方式，而非摄取原始对话消息：
+XpGraph 采用**三层蒸馏**设计，当前两层激活：
 
 ### 第一层：草稿工具（主动）
 
-`draft` 工具对所有 agent 可用。当 agent 发现值得记录的内容时调用：
+`draft` 工具对所有 agent 可用（由 `subagent` 模块拥有）。当 agent 发现值得记录的内容时调用：
 
 ```python
-draft(insight="配置文件必须在 init() 之前加载，否则会静默使用默认空值")
+draft(key_points="配置文件必须在 init() 之前加载，否则会静默使用默认空值",
+      category="insight")
 ```
 
-草稿存储在 `state_register` 中，每个会话上限 10 条。
+草稿存储在 `state_register` 中，每个会话上限 10 条。Worker 任务完成后，其草稿会**合并到 Commander 会话**，以便统一蒸馏。
 
-### 第二层：压缩前 Fork（自动）
+### 第二层：压缩前 Fork（计划中 — 尚未实现）
 
-当 `SummarizationMiddleware` 触发消息压缩时，`CommanderDistillSummarization` 或 `WorkerDistillSummarization` 中间件拦截即将被丢弃的消息，将其发送给 `auxiliary_llm` 进行蒸馏提示，提取的洞察追加为草稿。
+当 `SummarizationMiddleware` 触发消息压缩时，中间件会拦截即将被丢弃的消息，将其发送给 `auxiliary_llm` 进行蒸馏提示，提取的洞察追加为草稿。
 
 - Commander：**策略级**蒸馏提示（任务拆分策略、并行模式、依赖陷阱）
 - Worker：**操作级**蒸馏提示（工具使用模式、API 陷阱、错误规避方法）
 
+> 此层当前延期。活跃管线依赖第一层（草稿）和第三层（任务结束蒸馏）。
+
 ### 第三层：任务结束蒸馏（后处理）
 
-子 agent 任务完成后，在 `finally` 块中触发 `distill_and_ingest()`：
+子 agent 任务完成后，在 `finally` 块中触发 `distill_and_ingest()`（由 `subagent` 模块拥有）：
 
-1. 收集原始任务、最终结果和所有累积的草稿
-2. 使用角色特定的提示词调用 `auxiliary_llm.with_structured_output(DistillResult)`
-3. 生成结构化的 `DistillNode` 和 `DistillEdge` 对象
-4. 策略级经验写入 default DB，操作级经验写入 worker DB
+1. Worker 草稿合并到 Commander 会话
+2. 收集原始任务、最终结果和所有累积的草稿
+3. 使用角色特定的提示词调用 `auxiliary_llm.with_structured_output(DistillResult)`
+4. 生成结构化的 `DistillNode` 和 `DistillEdge` 对象
+5. 策略级经验（节点 + 边）写入 default DB，操作级经验（节点 + 边）写入 worker DB
+6. 边的写入使用 `_ingest_edges()` 辅助函数解析节点名称并创建关系
 
 ---
 
@@ -210,7 +225,7 @@ XpGraph 为不同角色维护独立的 SQLite 数据库：
 ### XpGraphInstance 工厂
 
 ```python
-from agent.tools.xp_graph.core import get_instance
+from agent.tools.pub_base.xp_graph.core import get_instance
 
 commander_memory = get_instance("default")
 worker_memory = get_instance("worker")
@@ -326,7 +341,7 @@ class GmConfig(BaseModel):
 ### 获取知识实例
 
 ```python
-from agent.tools.xp_graph.core import get_instance
+from agent.tools.pub_base.xp_graph.core import get_instance
 
 # Commander/主 agent（策略级）
 memory = get_instance("default")
@@ -345,13 +360,13 @@ result = await memory.assemble(
 
 if "system_prompt_addition" in result:
     knowledge_xml = result["system_prompt_addition"]
-    # 以 AIMessage<thinking> 注入到第一个 HumanMessage 之后
+    # 以 AIMessage<徊...徊> 注入到第一个 HumanMessage 之后
 ```
 
-### 写入预蒸馏经验
+### 写入预蒸馏经验（从 Subagent Distiller 调用）
 
 ```python
-from agent.tools.xp_graph.extractor.distiller import distill_and_ingest
+from agent.tools.subagent.distiller import distill_and_ingest
 
 await distill_and_ingest(
     task="部署 Python 应用到 Kubernetes",
@@ -364,14 +379,15 @@ await distill_and_ingest(
 ### 记录草稿洞察
 
 ```python
-# Agent 执行过程中作为工具调用
-draft(insight="Docker build cache 在 requirements.txt 变更时必须清除")
+# Agent 执行过程中作为工具调用（由 subagent 模块拥有）
+draft(key_points="Docker build cache 在 requirements.txt 变更时必须清除",
+      category="insight")
 ```
 
 ### 查询统计信息
 
 ```python
-from agent.tools.xp_graph.store import get_db, all_active_nodes, all_edges
+from agent.tools.pub_base.xp_graph.store import get_db, all_active_nodes, all_edges
 
 db = get_db()  # default 角色
 nodes = all_active_nodes(db)

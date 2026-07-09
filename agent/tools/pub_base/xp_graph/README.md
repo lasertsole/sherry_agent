@@ -29,6 +29,8 @@
 
 XpGraph is a **distillation-first** knowledge graph system. Unlike traditional RAG that ingests raw conversation messages, XpGraph only stores **pre-distilled experience objects** — high-signal, reusable knowledge extracted via dedicated LLM calls.
 
+XpGraph is a **pure infrastructure layer** with no business dependencies. Business-layer components such as the Distiller and Draft tool are owned by the `subagent` module and call into XpGraph's public API.
+
 | Traditional RAG | XpGraph |
 |----------------|---------|
 | Ingest raw messages → extract later | Distill experiences → write directly |
@@ -39,9 +41,9 @@ XpGraph is a **distillation-first** knowledge graph system. Unlike traditional R
 
 ### Core Capabilities
 
-1. **Distillation-Based Extraction** — Three-layer extraction: draft tool → pre-compaction fork → task-end distiller
+1. **Distillation-Based Extraction** — Two active layers: draft tool (Layer 1) + task-end distiller (Layer 3); pre-compaction fork (Layer 2) is planned
 2. **Multi-Role Knowledge Bases** — Commander shares with main agent (strategy-level); Worker gets its own DB (operation-level)
-3. **Knowledge Injection** — Recalled experiences injected as `AIMessage(content="<thinking>...")` after the first HumanMessage
+3. **Knowledge Injection** — Recalled experiences injected as `AIMessage(content="徊...徊")` after the first HumanMessage
 4. **Graph Community Detection** — Leiden algorithm auto-clusters related knowledge domains
 5. **Personalized PageRank** — Dynamic node ranking based on query context
 6. **Hybrid Retrieval** — Vector similarity + FTS5 full-text search + graph traversal
@@ -53,27 +55,34 @@ XpGraph is a **distillation-first** knowledge graph system. Unlike traditional R
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                       XpGraph Core                               │
-├──────────────┬──────────────┬──────────────┬───────────────────┤
-│  Distiller   │   Recaller   │    Graph     │      Store        │
-├──────────────┼──────────────┼──────────────┼───────────────────┤
-│ • Pre-compact│ • Dual-Path  │ • Community  │ • SQLite (per-role│
-│ • Task-end   │ • PPR Rank   │ • PageRank   │ • FTS5            │
-│ • Strategy/  │ • Reranker   │ • Dedup Merge│ • Vector          │
-│   Operation  │              │              │                   │
-└──────────────┴──────────────┴──────────────┴───────────────────┘
-                      ↕ drafts (owned by subagent)
+├──────────────────┬──────────────┬───────────────────────────────┤
+│    Recaller      │    Graph     │           Store               │
+├──────────────────┼──────────────┼───────────────────────────────┤
+│ • Dual-Path      │ • Community  │ • SQLite (per-role)           │
+│ • PPR Rank       │ • PageRank   │ • FTS5                        │
+│ • Reranker       │ • Dedup Merge│ • Vector                      │
+└──────────────────┴──────────────┴───────────────────────────────┘
+                      ↕ called by subagent (Distiller / Draft)
 ```
+
+> **Note:** The Distiller (`agent/tools/subagent/distiller.py`) and Draft tool (`agent/tools/subagent/draft.py`) were previously part of XpGraph but have been moved to the **subagent** business layer. XpGraph is now a pure infrastructure module with no business logic. The Distiller calls XpGraph's public API (`get_instance`, `ingest_experiences`, etc.) to write distilled experiences.
 
 ### Module Responsibilities
 
 | Module | File Path | Core Function |
 |--------|-----------|---------------|
-| **Distiller** | `extractor/distiller.py` | Task-end distillation of strategy/operation experiences |
 | **Extractor** | `extractor/core.py` | Node/edge extraction from pre-distilled input; session-end finalizer |
 | **Recaller** | `recaller/core.py` | Dual-path recall (precise + generalized); merge results |
 | **Graph** | `graph/*.py` | Community detection, PageRank, dedup, maintenance |
 | **Store** | `store/core.py` | SQLite CRUD, vector storage, FTS5 search |
 | **Core** | `core.py` | `XpGraphInstance` factory; orchestrate modules |
+
+**Business-layer modules (not part of XpGraph):**
+
+| Module | File Path | Core Function |
+|--------|-----------|---------------|
+| **Distiller** | `agent/tools/subagent/distiller.py` | Task-end distillation of strategy/operation experiences; edge ingestion via `_ingest_edges()` |
+| **Draft** | `agent/tools/subagent/draft.py` | Record key findings during subagent task execution |
 
 ---
 
@@ -84,14 +93,13 @@ XpGraph is a **distillation-first** knowledge graph system. Unlike traditional R
  │                     Commander Execution                         │
  │                                                                 │
  │  1. Knowledge Injection                                         │
- │     task description → assemble() → AIMessage<thinking>        │
+ │     task description → assemble() → AIMessage<徊...徊>          │
  │                                                                 │
  │  2. During Execution                                            │
  │     Agent calls draft tool → insights saved to state_register  │
  │                                                                 │
- │  3. Pre-Compaction Distillation                                 │
- │     SummarizationMiddleware triggers → fork extracts insights  │
- │     from messages about to be discarded → saved as drafts      │
+ │  3. Worker Execution                                            │
+ │     Worker drafts merged to Commander session on completion     │
  └────────────────────────┬────────────────────────────────────────┘
                           │
           ┌───────────────┴───────────────┐
@@ -99,20 +107,22 @@ XpGraph is a **distillation-first** knowledge graph system. Unlike traditional R
  ┌─────────────────┐           ┌─────────────────────┐
  │  Worker Task A   │           │   Worker Task B      │
  │                  │           │                      │
- │  Same 3 steps:  │           │  Same 3 steps:      │
+ │  Same 2 steps:  │           │  Same 2 steps:      │
  │  injection →    │           │  injection →        │
- │  draft →        │           │  draft →            │
- │  pre-compaction │           │  pre-compaction     │
+ │  draft          │           │  draft              │
  └────────┬────────┘           └──────────┬──────────┘
           │                               │
           └───────────────┬───────────────┘
                           ▼
  ┌─────────────────────────────────────────────────────────────────┐
  │                    Task-End Distillation                        │
+ │                    (owned by subagent module)                   │
  │                                                                 │
- │  1. Gather: task description + result + all drafts              │
- │  2. Distill strategy-level experiences → default DB (commander) │
- │  3. Distill operation-level experiences → worker DB             │
+ │  1. Merge worker drafts into Commander session                  │
+ │  2. Gather: task description + result + all drafts              │
+ │  3. Distill strategy-level experiences → default DB (commander) │
+ │  4. Distill operation-level experiences → worker DB             │
+ │  5. Ingest both nodes and edges into respective knowledge graphs│
  └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -142,14 +152,14 @@ XpGraph is a **distillation-first** knowledge graph system. Unlike traditional R
 
 ## Knowledge Injection
 
-When a Commander or Worker starts a task, relevant experiences are recalled and injected into the message stream as an `AIMessage` with `<thinking>` content, placed immediately after the first `HumanMessage`.
+When a Commander or Worker starts a task, relevant experiences are recalled and injected into the message stream as an `AIMessage` with `徊...徊` markers, placed immediately after the first `HumanMessage`.
 
 **Commander (strategy-level, from default DB):**
 
 ```python
 messages = [
     HumanMessage(content="Deploy a Python web app to Kubernetes"),
-    AIMessage(content="<thinking>\n<xp_graph>...strategy knowledge XML...</xp_graph>\n</thinking>")
+    AIMessage(content="徊\n<xp_graph>...strategy knowledge XML...</xp_graph>\n徊")
 ]
 ```
 
@@ -158,7 +168,7 @@ messages = [
 ```python
 messages = [
     HumanMessage(content="Install Python dependencies in a conda environment"),
-    AIMessage(content="<thinking>\n<xp_graph>...operation knowledge XML...</xp_graph>\n</thinking>")
+    AIMessage(content="徊\n<xp_graph>...operation knowledge XML...</xp_graph>\n徊")
 ]
 ```
 
@@ -168,33 +178,38 @@ This ensures the agent has access to relevant past experiences without polluting
 
 ## Experience Distillation Pipeline
 
-XpGraph uses a **three-layer distillation** approach instead of ingesting raw messages:
+XpGraph uses a **three-layer distillation** design, with two layers currently active:
 
 ### Layer 1: Draft Tool (Active)
 
-The `draft` tool is available to all agents. When an agent discovers something worth remembering, it calls:
+The `draft` tool is available to all agents (owned by the `subagent` module). When an agent discovers something worth remembering, it calls:
 
 ```python
-draft(insight="The config file must be loaded before init() or it silently defaults to empty")
+draft(key_points="The config file must be loaded before init() or it silently defaults to empty",
+      category="insight")
 ```
 
-Drafts are stored in `state_register` and capped at 10 per session.
+Drafts are stored in `state_register` and capped at 10 per session. When a Worker task completes, its drafts are **merged into the Commander session** so that all drafts are available for unified distillation.
 
-### Layer 2: Pre-Compaction Fork (Automatic)
+### Layer 2: Pre-Compaction Fork (Planned — Not Yet Implemented)
 
-When `SummarizationMiddleware` triggers message compression, the `CommanderDistillSummarization` or `WorkerDistillSummarization` middleware intercepts the messages about to be discarded, sends them to `auxiliary_llm` with a distillation prompt, and saves the extracted insights as additional drafts.
+When `SummarizationMiddleware` triggers message compression, the middleware would intercept the messages about to be discarded, send them to `auxiliary_llm` with a distillation prompt, and save the extracted insights as additional drafts.
 
 - Commander: **strategy-level** distillation prompt (task decomposition, parallel patterns, dependency pitfalls)
 - Worker: **operation-level** distillation prompt (tool usage patterns, API gotchas, error workarounds)
 
-### Layer 3: Task-End Distiller (Post-Processing)
+> This layer is currently deferred. The active pipeline relies on Layer 1 (drafts) and Layer 3 (task-end distiller).
 
-After the subagent task completes, `distill_and_ingest()` is triggered in the `finally` block:
+### Layer 3: Task-End Distiller (Active)
 
-1. Gathers the original task, final result, and all accumulated drafts
-2. Calls `auxiliary_llm.with_structured_output(DistillResult)` with role-specific prompts
-3. Produces structured `DistillNode` and `DistillEdge` objects
-4. Writes strategy-level experiences to the default DB, operation-level to the worker DB
+After the subagent task completes, `distill_and_ingest()` is triggered in the `finally` block (owned by the `subagent` module):
+
+1. Worker drafts are merged into the Commander session
+2. Gathers the original task, final result, and all accumulated drafts
+3. Calls `auxiliary_llm.with_structured_output(DistillResult)` with role-specific prompts
+4. Produces structured `DistillNode` and `DistillEdge` objects
+5. Writes strategy-level experiences (nodes + edges) to the default DB, operation-level (nodes + edges) to the worker DB
+6. Edge ingestion uses the `_ingest_edges()` helper to resolve node names and create relationships
 
 ---
 
@@ -210,7 +225,7 @@ XpGraph maintains separate SQLite databases for different roles:
 ### XpGraphInstance Factory
 
 ```python
-from agent.tools.xp_graph.core import get_instance
+from agent.tools.pub_base.xp_graph.core import get_instance
 
 commander_memory = get_instance("default")
 worker_memory = get_instance("worker")
@@ -326,7 +341,7 @@ Triggered by `rectification_and_standardization()`:
 ### Get a Knowledge Instance
 
 ```python
-from agent.tools.xp_graph.core import get_instance
+from agent.tools.pub_base.xp_graph.core import get_instance
 
 # Commander/main agent (strategy-level)
 memory = get_instance("default")
@@ -345,13 +360,13 @@ result = await memory.assemble(
 
 if "system_prompt_addition" in result:
     knowledge_xml = result["system_prompt_addition"]
-    # Inject as AIMessage<thinking> after first HumanMessage
+    # Inject as AIMessage with 徊...徊 markers after first HumanMessage
 ```
 
-### Ingest Pre-Distilled Experiences
+### Ingest Pre-Distilled Experiences (from Subagent Distiller)
 
 ```python
-from agent.tools.xp_graph.extractor.distiller import distill_and_ingest
+from agent.tools.subagent.distiller import distill_and_ingest
 
 await distill_and_ingest(
     task="Deploy a Python app to Kubernetes",
@@ -364,14 +379,15 @@ await distill_and_ingest(
 ### Record a Draft Insight
 
 ```python
-# Called by the agent as a tool during execution
-draft(insight="Docker build cache must be invalidated when requirements.txt changes")
+# Called by the agent as a tool during execution (owned by subagent module)
+draft(key_points="Docker build cache must be invalidated when requirements.txt changes",
+      category="insight")
 ```
 
 ### Query Statistics
 
 ```python
-from agent.tools.xp_graph.store import get_db, all_active_nodes, all_edges
+from agent.tools.pub_base.xp_graph.store import get_db, all_active_nodes, all_edges
 
 db = get_db()  # default role
 nodes = all_active_nodes(db)
