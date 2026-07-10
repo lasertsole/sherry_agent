@@ -588,11 +588,11 @@ class MemoryTool(BaseTool):
         super().__init__(**kwargs)
 
     @validate_call
-    def _run(self, action: str, target: str, content: str, old_text: str, **kwargs: Any) -> str:
+    def _run(self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any) -> str:
         return memory_tool(action, target, content, old_text)
 
     @validate_call
-    async def _arun(self, action: str, target: str, content: str, old_text: str, **kwargs: Any) -> str:
+    async def _arun(self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any) -> str:
         return memory_tool(action, target, content, old_text)
 
 def build_memory_tool() -> MemoryTool:

@@ -225,7 +225,7 @@ XpGraph maintains separate SQLite databases for different roles:
 ### XpGraphInstance Factory
 
 ```python
-from agent.tools.pub_base.xp_graph.core import get_instance
+from agent.tools.xp_graph import get_instance
 
 commander_memory = get_instance("default")
 worker_memory = get_instance("worker")
@@ -341,7 +341,7 @@ Triggered by `rectification_and_standardization()`:
 ### Get a Knowledge Instance
 
 ```python
-from agent.tools.pub_base.xp_graph.core import get_instance
+from agent.tools.xp_graph import get_instance
 
 # Commander/main agent (strategy-level)
 memory = get_instance("default")
@@ -387,7 +387,7 @@ draft(key_points="Docker build cache must be invalidated when requirements.txt c
 ### Query Statistics
 
 ```python
-from agent.tools.pub_base.xp_graph.store import get_db, all_active_nodes, all_edges
+from agent.tools.xp_graph import get_db, all_active_nodes, all_edges
 
 db = get_db()  # default role
 nodes = all_active_nodes(db)

@@ -225,7 +225,7 @@ XpGraph 为不同角色维护独立的 SQLite 数据库：
 ### XpGraphInstance 工厂
 
 ```python
-from agent.tools.pub_base.xp_graph.core import get_instance
+from agent.tools.xp_graph import get_instance
 
 commander_memory = get_instance("default")
 worker_memory = get_instance("worker")
@@ -341,7 +341,7 @@ class GmConfig(BaseModel):
 ### 获取知识实例
 
 ```python
-from agent.tools.pub_base.xp_graph.core import get_instance
+from agent.tools.xp_graph import get_instance
 
 # Commander/主 agent（策略级）
 memory = get_instance("default")
@@ -387,7 +387,7 @@ draft(key_points="Docker build cache 在 requirements.txt 变更时必须清除"
 ### 查询统计信息
 
 ```python
-from agent.tools.pub_base.xp_graph.store import get_db, all_active_nodes, all_edges
+from agent.tools.xp_graph import get_db, all_active_nodes, all_edges
 
 db = get_db()  # default 角色
 nodes = all_active_nodes(db)
