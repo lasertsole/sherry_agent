@@ -28,13 +28,11 @@ class CommunityResult(TypedDict):
     communities: dict[str, list[str]]
     count: int
 
-def _compute_safe_resolution(g: ig.Graph, directed: bool) -> float:
+def _compute_safe_resolution(g: ig.Graph) -> float:
     graph_density = g.density()
-    if directed:
-        graph_density = graph_density * 2
-    if graph_density < 0.3:
+    if graph_density < 0.15:
         safe_resolution = graph_density * 1.5
-    elif 0.3 <= graph_density < 0.6:
+    elif 0.15 <= graph_density < 0.3:
         safe_resolution = graph_density * 1.2
     else:
         safe_resolution = 0.85
@@ -60,7 +58,7 @@ def detect_communities(db: Connection) -> CommunityResult:
 
     g = ig.Graph(len(node_ids), edges, directed=True)
     g.simplify(multiple=True, loops=True)
-    safe_resolution = _compute_safe_resolution(g, directed=True)
+    safe_resolution = _compute_safe_resolution(g)
 
     partition = leidenalg.find_partition(
         g,

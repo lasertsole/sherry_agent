@@ -34,8 +34,8 @@ from config import MEMORY_DIR
 from pub_func import atomic_replace
 from langchain.tools import BaseTool
 from contextlib import contextmanager
-from typing import Any, Literal, Type
-from pydantic import BaseModel, Field, validate_call
+from pydantic import BaseModel, Field
+from typing import Any, Literal, Type, override
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 msvcrt = None
 try:
@@ -587,11 +587,11 @@ class MemoryTool(BaseTool):
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
 
-    @validate_call
+    @override
     def _run(self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any) -> str:
         return memory_tool(action, target, content, old_text)
 
-    @validate_call
+    @override
     async def _arun(self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any) -> str:
         return memory_tool(action, target, content, old_text)
 

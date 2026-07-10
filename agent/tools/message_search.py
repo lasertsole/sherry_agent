@@ -6,11 +6,11 @@ import sqlite3
 from loguru import logger
 import concurrent.futures
 from models import main_llm
-from typing import Any, Annotated
 from pub_func import run_async
+from typing import Any, Annotated
 from langchain.tools import BaseTool, tool
+from pydantic import BaseModel, Field, validate_call
 from langgraph.prebuilt.tool_node import InjectedState
-from pydantic import BaseModel, Field
 from context_engine import get_db, search_messages, get_turns_by_turn_num_scope
 
 MAX_SESSION_CHARS = 100_000
@@ -260,6 +260,7 @@ def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str
         return _tool_error(f"Recent sessions query failed: {str(e)}", success=False)
 
 
+@validate_call
 def session_search(
     query: str | None,
     session_id: str,
@@ -407,7 +408,7 @@ def session_search(
         return _tool_error(f"Search failed: {str(e)}", success=False)
 
 
-@tool(args_schema=MessageSearchSchema, infer_schema=False)
+@tool("message_search", args_schema=MessageSearchSchema)
 def _message_search_tool(
     query: str | None = None,
     role_filter: str | None = None,

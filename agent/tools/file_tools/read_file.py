@@ -1,12 +1,10 @@
 """Read file tool with pagination support (offset + limit) and line numbers."""
 import json
-from typing import Optional, Type
-
-from langchain_core.callbacks import CallbackManagerForToolRun
-from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-
+from langchain_core.tools import BaseTool
+from typing import Optional, Type, override
 from agent.tools.pub_base import resolve_path
+from langchain_core.callbacks import CallbackManagerForToolRun
 
 
 class ReadFileInput(BaseModel):
@@ -56,13 +54,9 @@ class ReadFileTool(BaseTool):
     )
     metadata: dict = {"idempotent": True}
 
-    def _run(
-        self,
-        file_path: str,
-        offset: int = 1,
-        limit: int = 500,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
+    # ── shared core ────────────────────────────────────────────────────────
+
+    def _core(self, file_path: str, offset: int = 1, limit: int = 500) -> str:
         resolved = resolve_path(file_path)
 
         if not resolved.exists():
@@ -113,6 +107,27 @@ class ReadFileTool(BaseTool):
             )
 
         return json.dumps(result, ensure_ascii=False)
+
+    @override
+    def _run(
+        self,
+        file_path: str,
+        offset: int = 1,
+        limit: int = 500,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return self._core(file_path, offset, limit)
+
+    @override
+    async def _arun(
+        self,
+        file_path: str,
+        offset: int = 1,
+        limit: int = 500,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return self._core(file_path, offset, limit)
+
 
 
 def build_read_file_tool() -> ReadFileTool:

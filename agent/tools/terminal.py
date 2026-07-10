@@ -1,9 +1,10 @@
 """Terminal tool with sandbox, blacklist, and timeout."""
 
-import asyncio
 import locale
+import asyncio
 import subprocess
 from loguru import logger
+from typing import override
 from config import ROOT_DIR
 from langchain_community.tools import ShellTool
 
@@ -22,7 +23,7 @@ class SafeShellTool(ShellTool):
         self._encoding = locale.getpreferredencoding() or "utf-8"
         self.metadata = {"idempotent": False}
 
-
+    @override
     def _run(self, commands: str | list[str], **kwargs) -> str:
         for bad in BLACKLIST:
             if bad in commands:
@@ -34,6 +35,7 @@ class SafeShellTool(ShellTool):
         # use _run_with_encoding which has proper timeout and encoding handling.
         return self._run_with_encoding(commands, encoding=self._encoding)
 
+    @override
     async def _arun(self, commands: str | list[str], **kwargs) -> str:
         """Async version: non-blocking subprocess via asyncio.
 

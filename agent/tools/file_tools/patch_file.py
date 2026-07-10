@@ -8,14 +8,13 @@ Each strategy is tried in order; the first match wins.  When a non-exact
 strategy matches, ``new_string`` is re-indented to preserve the file's
 actual indentation pattern.
 """
-import difflib
 import json
+import difflib
 from difflib import SequenceMatcher
-from typing import Optional, Type
-
-from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
+from typing import Optional, Type, override
 from pydantic import BaseModel, Field
+from langchain_core.callbacks import CallbackManagerForToolRun
 from agent.tools.pub_base import resolve_path, fuzzy_find_and_replace
 
 # ── Diff helper ──────────────────────────────────────────────────────────
@@ -91,13 +90,14 @@ class PatchFileTool(BaseTool):
     )
     metadata: dict = {"idempotent": False}
 
-    def _run(
+    # ── shared core ────────────────────────────────────────────────────────
+
+    def _core(
         self,
         file_path: str,
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         resolved = resolve_path(file_path)
 
@@ -144,6 +144,28 @@ class PatchFileTool(BaseTool):
             "matches": match_count,
             "diff": diff,
         }, ensure_ascii=False)
+
+    @override
+    def _run(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return self._core(file_path, old_string, new_string, replace_all)
+
+    @override
+    async def _arun(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return self._core(file_path, old_string, new_string, replace_all)
 
 
 def build_patch_file_tool() -> PatchFileTool:

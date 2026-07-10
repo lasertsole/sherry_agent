@@ -3,15 +3,14 @@
 Uses subprocess to run code in an isolated Python process. On timeout the
 child process is killed cleanly — no thread/memory leakage.
 """
-import json
-import os
-import subprocess
+
 import sys
+import json
 import textwrap
-from typing import Optional
+import subprocess
 from loguru import logger
-from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 from langchain_experimental.tools import PythonREPLTool
+from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 
 PYTHON_REPL_TIMEOUT = 30  # seconds
 
@@ -101,14 +100,14 @@ class TimedPythonREPLTool(PythonREPLTool):
     def _run(
         self,
         query: str,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return _run_with_timeout(query, PYTHON_REPL_TIMEOUT)
 
     async def _arun(
         self,
         query: str,
-        run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
+        run_manager: AsyncCallbackManagerForToolRun  | None= None,
     ) -> str:
         import asyncio
         return await asyncio.to_thread(_run_with_timeout, query, PYTHON_REPL_TIMEOUT)

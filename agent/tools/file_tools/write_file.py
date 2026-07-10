@@ -1,8 +1,10 @@
 """write file tool with project root restriction and autopep8 formatting for .py files."""
-from typing import Any
+import asyncio
+from typing import Optional, override
 from pathlib import Path
 from config import ROOT_DIR
-from pydantic import validate_call
+
+from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_community.tools.file_management import WriteFileTool
 
 
@@ -19,29 +21,49 @@ def _format_py_code(text: str) -> str:
 class FormattedWriteFileTool(WriteFileTool):
     """WriteFileTool that auto-formats .py files with autopep8."""
 
-    @validate_call
-    def _run(
+    # ── shared core ────────────────────────────────────────────────────────
+
+    def _core(
         self,
         file_path: str,
         text: str,
         append: bool = False,
-        **kwargs: Any,
     ) -> str:
         is_py = Path(file_path).suffix == ".py"
         if is_py:
             if append:
                 # Append first, then format the entire file
-                result = super()._run(file_path=file_path, text=text, append=True, **kwargs)
+                result = super()._run(file_path=file_path, text=text, append=True)
                 full_text = Path(file_path).read_text(encoding="utf-8")
                 formatted = _format_py_code(full_text)
-                super()._run(file_path=file_path, text=formatted, append=False, **kwargs)
+                super()._run(file_path=file_path, text=formatted, append=False)
                 return result
             else:
                 # New write: format the content upfront
                 text = _format_py_code(text)
-                return super()._run(file_path=file_path, text=text, append=False, **kwargs)
+                return super()._run(file_path=file_path, text=text, append=False)
 
-        return super()._run(file_path=file_path, text=text, append=append, **kwargs)
+        return super()._run(file_path=file_path, text=text, append=append)
+
+    @override
+    def _run(
+        self,
+        file_path: str,
+        text: str,
+        append: bool = False,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return self._core(file_path, text, append)
+
+    @override
+    async def _arun(
+        self,
+        file_path: str,
+        text: str,
+        append: bool = False,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return await asyncio.to_thread(self._core, file_path, text, append)
 
 
 def build_write_file_tool() -> WriteFileTool:

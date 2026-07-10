@@ -11,7 +11,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Optional, Type
+from typing import Optional, Type, override
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -171,7 +171,9 @@ class SearchFilesTool(BaseTool):
     )
     metadata: dict = {"idempotent": True}
 
-    def _run(
+    # ── shared core ────────────────────────────────────────────────────────
+
+    def _core(
         self,
         pattern: str,
         target: str = "content",
@@ -180,7 +182,6 @@ class SearchFilesTool(BaseTool):
         limit: int = 50,
         offset: int = 0,
         context: int = 0,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         resolved = resolve_path(path)
 
@@ -195,6 +196,34 @@ class SearchFilesTool(BaseTool):
             result = _search_content(pattern, resolved, file_glob, limit, offset, context)
 
         return json.dumps(result, ensure_ascii=False)
+
+    @override
+    def _run(
+        self,
+        pattern: str,
+        target: str = "content",
+        path: str = ".",
+        file_glob: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        context: int = 0,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return self._core(pattern, target, path, file_glob, limit, offset, context)
+
+    @override
+    async def _arun(
+        self,
+        pattern: str,
+        target: str = "content",
+        path: str = ".",
+        file_glob: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        context: int = 0,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        return self._core(pattern, target, path, file_glob, limit, offset, context)
 
 
 def build_search_files_tool() -> SearchFilesTool:

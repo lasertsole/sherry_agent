@@ -1,17 +1,18 @@
 import os
 import asyncio
-import logging
 from loguru import logger
 from config import ENV_PATH
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
 load_dotenv(ENV_PATH, override=True)
-
-logger = logging.getLogger(__name__)
 
 tavily_api_key = os.getenv("TAVILY_API_KEY")
 
 WEB_SEARCH_TIMEOUT = 15  # seconds
+
+class WebSearchSchema(BaseModel):
+    query: str = Field(description="The search query to look up on the web.")
 
 
 def build_web_search_tool():
@@ -42,7 +43,7 @@ def build_web_search_tool():
         base._arun = _arun_with_timeout
         return base
     else:
-        @tool
+        @tool("web_search", args_schema=WebSearchSchema)
         def web_search(query: str) -> str:
             """Search the web for information. Currently unavailable due to missing API key or configuration."""
             return "Web search is currently unavailable. TAVILY_API_KEY is not configured or the service is unreachable. Please answer without web search."
