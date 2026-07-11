@@ -3,7 +3,6 @@ import asyncio
 from pathlib import Path
 from loguru import logger
 from bus import MessageBus
-from models.LLMs.main_llm import create_main_llm
 from runtime import Register
 from .type import SubAgentOutput
 from type.bus import InboundMessage
@@ -13,6 +12,7 @@ from skills.loader import get_skills_text
 from config import TEMP_DIR, WORKSPACE_DIR
 from typing import Any, Callable, Awaitable
 from workspace import CORE_SYSTEM_FILE_NAMES
+from models.LLMs.main_llm import create_main_llm
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
 from pub_func import render_template_file, build_agent_config

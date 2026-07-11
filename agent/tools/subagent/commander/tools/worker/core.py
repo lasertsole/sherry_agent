@@ -1,10 +1,8 @@
-import os
 import asyncio
 from pathlib import Path
 from loguru import logger
-from config import ENV_PATH
+
 from runtime import Register
-from dotenv import load_dotenv
 from agent import codeact_agent
 from langchain.tools import tool
 from typing import Annotated, Any
@@ -14,28 +12,12 @@ from langchain_core.tools import BaseTool
 from config import TEMP_DIR, WORKSPACE_DIR
 from agent.codeact.core import CodeActState
 from workspace import CORE_SYSTEM_FILE_NAMES
+from models.LLMs.main_llm import create_main_llm
 from agent.tools.subagent.type import SubAgentOutput
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_core.messages import HumanMessage, BaseMessage
 from agent.tools.subagent.commander.tools.worker.middlewares import WorkerSummarization
 from pub_func import render_template_file, slice_last_turn, sanitize_tool_use_result_pairing, build_agent_config
-
-load_dotenv(ENV_PATH, override = True)
-api_key = os.getenv("MAIN_LLM_API_KEY")
-api_name = os.getenv("MAIN_LLM_NAME")
-model_provider = os.getenv("MAIN_LLM_PROVIDER")
-api_base = os.getenv("MAIN_LLM_API_BASE")
-max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
-
-model_config: dict[str, Any] = {
-    "model_provider": model_provider,
-    "model": api_name,
-    "api_key": api_key,
-    "base_url": api_base,
-    "temperature": 0,
-    "max_retries": 2,
-    "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2}  # Set model context window size
-}
 
 class WorkerStateSchema(CodeActState):
     session_id: str
@@ -119,17 +101,18 @@ async def _arun_task(
 
             from agent.tools import build_without_session_id_tools
             from agent.middlewares import IterationBudget, HeartbeatStaleness
-            from langchain.chat_models import init_chat_model
-            model = init_chat_model(**model_config)
+
+            # Create a fresh LLM instance for the worker on the current event loop.
+            _llm = create_main_llm()
 
             agent = codeact_agent(
                 system_prompt=system_prompt,
-                model=model,
+                model=_llm,
                 tools=build_without_session_id_tools(),
                 state_schema= WorkerStateSchema,
                 middleware=[
                     WorkerSummarization(
-                        model=model,
+                        model=_llm,
                         trigger=("messages", 30),
                         keep=("messages", 10),
                     ),

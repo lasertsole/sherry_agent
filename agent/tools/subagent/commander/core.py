@@ -1,35 +1,14 @@
-import os
 import textwrap
-from typing import Any
-from config import ENV_PATH
-from dotenv import load_dotenv
 from ..type import SubAgentOutput
 from .middlewares import TODOManager
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
+from models.LLMs.main_llm import create_main_llm
 from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from .tools import build_todo_writer_tool, build_worker_tool
 from .middlewares.CommanderSummarization import CommanderSummarization
-
-
-load_dotenv(ENV_PATH, override = True)
-api_key = os.getenv("MAIN_LLM_API_KEY")
-api_name = os.getenv("MAIN_LLM_NAME")
-model_provider = os.getenv("MAIN_LLM_PROVIDER")
-api_base = os.getenv("MAIN_LLM_API_BASE")
-max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
-
-model_config: dict[str, Any] = {
-    "model_provider": model_provider,
-    "model": api_name,
-    "api_key": api_key,
-    "base_url": api_base,
-    "temperature": 0,
-    "max_retries": 2,
-    "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2}  # Set model context window size
-}
 
 _system_prompt: str = textwrap.dedent("""\
 # Role: Task Commander
@@ -192,9 +171,12 @@ def build_commander()-> CompiledStateGraph:
 
     # lazy import to avoid circular dependency: subagent -> agent -> tools -> subagent
     from agent.middlewares import ToolCallNormalize, IterationBudget, ToolGuardrails
-    from langchain.chat_models import init_chat_model
 
-    model = init_chat_model(**model_config)
+    # Create a fresh LLM instance on the current (daemon thread) event loop.
+    # The module-level main_llm singleton holds httpx transport pools whose
+    # asyncio.Lock objects are bound to the main thread's event loop, causing
+    # agent.ainvoke() to deadlock silently on the daemon thread.
+    _llm = create_main_llm()
 
     # Create InMemorySaver here so its internal lock binds to the
     # event loop that is active when build_commander is called
@@ -203,13 +185,13 @@ def build_commander()-> CompiledStateGraph:
     _checkpointer = InMemorySaver()
     agent: CompiledStateGraph = create_agent(
         system_prompt=_system_prompt,
-        model = model,
+        model = _llm,
         checkpointer = _checkpointer,
         state_schema = CommanderStateSchema,
         tools = [todo_writer_tool, worker_tool],
         middleware=[
             CommanderSummarization(
-                model=model,
+                model=_llm,
                 trigger=("messages", 15),
                 keep=("messages", 8),
             ),
