@@ -1,9 +1,13 @@
-from loguru import logger
-from typing import Literal, Annotated
+from typing import Literal, Any
 from pydantic import BaseModel, Field
-from langchain_core.tools import tool
 from runtime import state_register_mem
-from langgraph.prebuilt.tool_node import InjectedState
+from models.LLMs.main_llm import create_main_llm
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.messages import SystemMessage, HumanMessage
+from .type import Node, Edge, ExtractionResult, NodeType, EdgeType, GmNode
+from .store import upsert_node, upsert_edge, find_by_name, UpsertResult, sync_node_embed
+from .async_task_queue import async_task_queue
+from models import embed_model
 
 
 # ─── ExperienceTrace Models ─────────────────────────────────────
@@ -21,14 +25,13 @@ class Failure(BaseModel):
     symptom: str = Field(description="What went wrong (symptom)")
     cause: str = Field(description="Root cause of the failure")
     fixes: list[Fix] = Field(default=[], description="Fixes applied or attempted")
-    abandoned: bool = Field(default=False, description="Whether this failure path was abandoned")
-
 
 class PathStep(BaseModel):
     """A step in the execution path."""
     tool: str = Field(description="Tool or skill used")
     input: str = Field(description="Input or command executed")
     output: str | None = Field(default=None, description="Output or result")
+    trigger: str | None = Field(default=None, description="Why this tool/approach was chosen over alternatives")
 
 
 class ExperienceTrace(BaseModel):
@@ -45,234 +48,243 @@ class ExperienceTrace(BaseModel):
     failures: list[Failure] = Field(default=[], description="Failures encountered")
     requires: list[str] | None = Field(default=None, description="Required skills or prerequisites")
 
+_XP_GRAPH_DRAFT: str = "xp_graph_draft"
 
-def _handle_read_draft(session_id: str) -> str:
-    """Read the current draft for a session."""
+def update_draft(session_id: str, system_prompt: str, messages: list[BaseModel]) -> None:
+    additional_prompt: str =  state_register_mem.get_state(session_id, "xp_graph_draft", "")
 
-    draft_data: ExperienceTrace = state_register_mem.get_state(session_id, "xp_graph_draft", None)
-    if draft_data is not None:
-        import json
-        return json.dumps(draft_data, ensure_ascii=False)
-    return "draft is empty"
+    if additional_prompt.strip() != "":
+        additional_prompt = "目前已提取的结构化经验数据如下：\n" + additional_prompt + "\n请根据实际情况，在已有结构化经验上进行改动\n\n"
+
+    distill_prompt: str = (
+        "回顾上述对话消息，从中提炼出 ExperienceTrace 结构化经验数据。\n"
+        f"{additional_prompt}"
+        "严格按照以下字段输出 JSON：\n\n"
+        "1. task: 本次任务的核心目标描述（一句话概括）。\n"
+        "2. path: 执行路径，每一步包含：\n"
+        "   - tool: 使用的工具或技能名称\n"
+        "   - input: 输入/执行的命令或内容\n"
+        "   - output: 输出结果（如有）\n"
+        "   - trigger: 选择此工具/方案的理由（如有）\n"
+        "3. failures: 遇到的失败记录，每条包含：\n"
+        "   - symptom: 失败的征兆\n"
+        "   - cause: 根本原因\n"
+        "   - fixes: 尝试过的修复策略列表（strategy 为 parameter/approach/workaround 之一，description 描述修复内容，tool 可选）\n"
+        "4. requires: 执行本任务所需的前置技能或先决条件列表\n\n"
+        "如果没有对应内容，path 为 []，failures 为 []，requires 为 null。"
+        "只输出 JSON，不要额外解释。"
+    )
+    parser = PydanticOutputParser(pydantic_object=ExperienceTrace)
+    json_mode_llm = create_main_llm()
+    json_mode_llm.bind(response_format={"type": "json_object"})
+    raw_basemodel = json_mode_llm.invoke(
+        input={"messages": [SystemMessage(content=system_prompt), *messages, HumanMessage(content=distill_prompt)]}
+    )
+    state_register_mem.set_state(session_id, _XP_GRAPH_DRAFT, parser.parse(raw_basemodel.content))
+
+def _serialize_draft(draft: ExperienceTrace) -> str:
+    """Serialize ExperienceTrace into a structured text for LLM consumption."""
+    parts = [f"Task: {draft.task}"]
+
+    if draft.path:
+        parts.append("\nExecution Path:")
+        for i, step in enumerate(draft.path, 1):
+            parts.append(f"  Step {i}:")
+            parts.append(f"    Tool: {step.tool}")
+            parts.append(f"    Input: {step.input}")
+            if step.output:
+                parts.append(f"    Output: {step.output}")
+            if step.trigger:
+                parts.append(f"    Reason: {step.trigger}")
+
+    if draft.failures:
+        parts.append("\nFailures:")
+        for i, fail in enumerate(draft.failures, 1):
+            parts.append(f"  Failure {i}:")
+            parts.append(f"    Symptom: {fail.symptom}")
+            parts.append(f"    Cause: {fail.cause}")
+            for j, fix in enumerate(fail.fixes, 1):
+                parts.append(f"    Fix {j}:")
+                parts.append(f"      Strategy: {fix.strategy}")
+                parts.append(f"      Description: {fix.description}")
+                if fix.tool:
+                    parts.append(f"      Tool: {fix.tool}")
+
+    if draft.requires:
+        parts.append("\nPrerequisites:")
+        for req in draft.requires:
+            parts.append(f"  - {req}")
+
+    return "\n".join(parts)
 
 
-def _handle_rewrite_draft(session_id: str, content: str | None) -> str:
-    """Overwrite the draft with a parsed ExperienceTrace."""
-    if not content or not content.strip():
-        return "Input content cannot be empty"
-    try:
-        import json
-        trace = ExperienceTrace(**json.loads(content))
-        state_register_mem.set_state(session_id, "xp_graph_draft", trace.model_dump())
-        return "Draft rewritten successfully"
-    except Exception as e:
-        logger.warning("rewrite_draft failed: {}", e)
-        return f"Rewrite failed: {e}"
+EXTRACT_GRAPH_SYS = """You are the xp_graph knowledge graph extraction engine. Extract reusable structured knowledge (nodes + edges) from a structured experience trace.
+
+Output strict JSON: {{"nodes":[...],"edges":[...]}}, with no extra text.
+
+The input is a structured experience trace containing:
+- Task: What the agent was asked to do
+- Execution Path: Steps taken (tools, inputs, outputs, reasons)
+- Failures: Errors encountered (symptom, cause, fixes)
+- Prerequisites: Required skills or dependencies
+
+1. Node Extraction:
+   1.1 Three node types:
+       - TASK: The task the agent performed
+       - SKILL: A reusable operational skill with specific tools/commands
+       - EVENT: A failure or error, recording symptom, cause, and solution
+   1.2 Every node must include all 4 fields:
+       - type: TASK / SKILL / EVENT
+       - name: Lowercase hyphenated name, consistent across extraction
+       - description: One sentence describing what scenario triggers this
+       - content: Knowledge content in plain text format
+   1.3 name naming convention:
+       - TASK: verb-object format, e.g., deploy-bilibili-mcp
+       - SKILL: tool-action format, e.g., conda-env-create, docker-port-expose
+       - EVENT: phenomenon-tool format, e.g., importerror-libgl1
+   1.4 content templates (plain text, choose by type):
+       TASK → "[name]\\nObjective: ...\\nSteps:\\n1. ...\\n2. ...\\nResult: ..."
+       SKILL → "[name]\\nTrigger: ...\\nSteps:\\n1. ...\\n2. ...\\nCommon Errors:\\n- ... -> ..."
+       EVENT → "[name]\\nSymptom: ...\\nCause: ...\\nSolution: ..."
+
+2. Edge Extraction:
+   2.1 Only 5 edge types allowed. Every edge must include from_node, to_node, type, instruction.
+   2.2 Edge types and direction constraints:
+
+       USED_SKILL (TASK → SKILL only)
+         instruction: Which step used it, how it was called, what parameters were passed
+         condition: Why this skill was chosen (from Reason field)
+
+       SOLVED_BY (EVENT → SKILL or SKILL → SKILL)
+         instruction: What was executed to resolve the issue
+         condition (required): The error symptom that triggered this solution
+
+       REQUIRES (SKILL → SKILL)
+         instruction: Why the dependency exists, how to determine if prerequisite is met
+
+       PATCHES (SKILL → SKILL, new → old)
+         instruction: What was wrong with the old approach, what the new one changed
+
+       CONFLICTS_WITH (SKILL ↔ SKILL, bidirectional)
+         instruction: Specific conflict symptoms, which one to choose
+
+3. Extraction Strategy:
+   3.1 Extract the task as a single TASK node.
+   3.2 Each distinct tool/approach in the execution path should be a SKILL node.
+   3.3 Each failure should be an EVENT node. Fix with a tool → SKILL + SOLVED_BY edge.
+   3.4 Prerequisites → SKILL nodes + REQUIRES edges.
+   3.5 Look for relationships BETWEEN path steps: if step N replaces/corrects step N-1's approach, add a PATCHES edge. If two tools conflict, add CONFLICTS_WITH.
+   3.6 Also look for relationships BETWEEN skills derived from path AND skills derived from fix tools — if a fix tool corrects an approach used in a path step, add PATCHES.
+   3.7 content should be rich and actionable — use the full input/output/reason details from the trace.
+
+4. Output Specification:
+    4.1 Return only JSON: {{"nodes":[...],"edges":[...]}}
+   4.2 No markdown code block wrapping, no explanatory text
+   4.3 Each edge's instruction must contain specific executable content"""
 
 
-def _handle_merge_draft(session_id: str, content: str | None) -> str:
-    """Parse incoming JSON as ExperienceTrace and merge into existing draft."""
-    if not content or not content.strip():
-        return "Input content cannot be empty"
-    try:
-        import json
-        incoming = ExperienceTrace(**json.loads(content))
+def extract_graph(
+    session_id: str,
+    role: str,
+    ) -> ExtractionResult | None:
+    """
+    Convert the ExperienceTrace draft stored in session state into an
+    ExtractionResult (knowledge graph nodes + edges) using LLM reasoning,
+    then persist the result to the database.
 
-        # Read existing trace from state register
-        draft_data = state_register_mem.get_state(session_id, "xp_graph_draft", None)
-        existing: ExperienceTrace | None = None
-        if draft_data is not None:
-            if isinstance(draft_data, dict):
-                existing = ExperienceTrace(**draft_data)
-            elif isinstance(draft_data, str):
-                existing = ExperienceTrace(**json.loads(draft_data))
+    The LLM receives the full ExperienceTrace as structured text and
+    autonomously decides the optimal node/edge representation, including
+    implicit relationships (PATCHES, CONFLICTS_WITH) that the old
+    mechanical mapping could not capture.
 
-        # Append-mode merge logic
-        if existing is None:
-            merged = incoming.model_copy(deep=True)
-        else:
-            merged = existing.model_copy(deep=True)
-            merged.task = incoming.task
-            merged.path = merged.path + incoming.path
-            merged.failures = merged.failures + incoming.failures
-            if incoming.requires:
-                if merged.requires is None:
-                    merged.requires = list(incoming.requires)
-                else:
-                    seen = set(merged.requires)
-                    for req in incoming.requires:
-                        if req not in seen:
-                            merged.requires.append(req)
-                            seen.add(req)
-        state_register_mem.set_state(session_id, "xp_graph_draft", merged.model_dump())
-        return "Draft merged successfully"
-    except Exception as e:
-        logger.warning("merge_draft failed: {}", e)
-        return f"Merge failed: {e}"
+    The database connection is resolved from ``role`` via ``get_db(role)``.
 
-def _handle_write_graph() -> str:
-    """Write to graph (placeholder for future implementation)."""
-    return ""
-
-
-def _handle_retrieve_graph(query: str | None = None) -> str:
-    """Retrieve knowledge from the graph using a natural language query.
-
-    Uses the Recaller's dual-path recall (precise + generalized) to find
-    relevant nodes and edges. Returns formatted XML context string.
+    Persistence steps: node dedup + upsert, edge upsert, async
+    embedding, cache invalidation.
 
     Args:
-        query: Natural language search query.
+        session_id: Session identifier.
+        role: Role name (e.g. "default", "worker").
 
     Returns:
-        Formatted knowledge context string, or empty string if query is empty.
+        ExtractionResult containing extracted nodes and edges.
+
+    Raises:
+        RuntimeError: If no draft exists for the given session_id.
     """
-    if not query or not query.strip():
-        return "Query is empty. Please provide a natural language query string for retrieval."
+    draft: ExperienceTrace | None = state_register_mem.get_state(session_id, _XP_GRAPH_DRAFT, None)
+    if draft is None:
+        raise RuntimeError("xp draft is None")
 
-    try:
-        import asyncio
-        from .base import get_instance
+    from langchain_core.prompts import ChatPromptTemplate
+    from models.LLMs.main_llm import main_llm
 
-        instance = get_instance("default")
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(instance.assemble(query))
-        if result and "system_prompt_addition" in result:
-            return result["system_prompt_addition"]
-        return ""
-    except Exception as e:
-        logger.warning("retrieve_graph failed: {}", e)
-        return ""
+    serialized = _serialize_draft(draft)
 
+    structured_llm = ChatPromptTemplate.from_messages([
+        ("system", EXTRACT_GRAPH_SYS),
+        ("human", "Extract nodes and edges from the following experience trace:\n\n{trace}"),
+    ]) | main_llm.with_structured_output(ExtractionResult)
 
-def _resolve_draft_content(
-    experience_trace: ExperienceTrace | None,
-    query: str | None,
-) -> str | None:
-    """Resolve draft content from experience_trace or query string.
+    result: ExtractionResult = structured_llm.invoke({"trace": serialized})
 
-    `experience_trace` takes precedence. Falls back to `query` as JSON string.
-    """
-    if experience_trace is not None:
-        import json
-        return json.dumps(experience_trace.model_dump(), ensure_ascii=False)
-    return query
+    # ── Resolve db from role ──
+    from .store.db import get_db
+    db = get_db(role)
 
+    # ── Persist extracted nodes/edges ──
+    from loguru import logger
+    from .graph import invalidate_graph_cache
 
-def _dispatch_xp_graph(
-    mode: Literal["read_draft", "rewrite_draft", "merge_draft", "update_graph", "retrieve_graph"],
-    session_id: str,
-    experience_trace: ExperienceTrace | None = None,
-    query: str | None = None,
-) -> str:
-    """Dispatch xp_graph request to the appropriate handler based on mode.
+    # ── Node dedup & upsert ──
+    name_to_id: dict[str, str] = {}
+    for node in result.nodes:
+        existing = find_by_name(db, node.name)
+        if existing is not None:
+            name_to_id[node.name] = existing.id
+            continue
 
-    Args:
-        mode: Operation mode.
-        session_id: Current session ID.
-        experience_trace: Structured ExperienceTrace for draft operations.
-        query: Natural language query for retrieve_graph, or JSON string fallback for drafts.
-    """
+        node_type = node.type if isinstance(node.type, str) else node.type.value
+        upsert_result: UpsertResult = upsert_node(
+            db=db,
+            c={
+                "type": node_type,
+                "name": node.name,
+                "description": node.description,
+                "content": node.content,
+            },
+            session_id=session_id,
+            )
+        gm_node = upsert_result["node"]
+        if gm_node is not None:
+            name_to_id[node.name] = gm_node.id
+            async_task_queue.add_task(sync_node_embed(db, gm_node, embed_model))
 
-    if mode == "read_draft":
-        return _handle_read_draft(session_id)
+    # ── Edge upsert ──
+    for edge in result.edges:
+        from_node = find_by_name(db, edge.from_id)
+        to_node = find_by_name(db, edge.to_id)
+        if from_node is None or to_node is None:
+            logger.warning(
+                f"[xp_graph:{role}] skipping edge {edge.from_id}→{edge.to_id}: "
+                f"node not found in DB"
+            )
+            continue
+        upsert_edge(
+            db=db,
+            edge_data={
+                "from_id": from_node.id,
+                "to_id": to_node.id,
+                "type": edge.type,
+                "instruction": edge.instruction,
+                "condition": edge.condition,
+                "session_id": session_id,
+            },
+        )
 
-    elif mode == "rewrite_draft":
-        content = _resolve_draft_content(experience_trace, query)
-        return _handle_rewrite_draft(session_id, content)
+    if name_to_id:
+        invalidate_graph_cache()
 
-    elif mode == "merge_draft":
-        content = _resolve_draft_content(experience_trace, query)
-        return _handle_merge_draft(session_id, content)
+    logger.debug(f"[xp_graph:{role}] persisted extraction: {len(result.nodes)} nodes, {len(result.edges)} edges")
 
-    elif mode == "update_graph":
-        return _handle_write_graph()
-
-    elif mode == "retrieve_graph":
-        return _handle_retrieve_graph(query)
-
-    return f"Unknown mode: {mode}"
-
-# ─── XP Graph Tool ──────────────────────────────────────────────
-class XPGraphSchema(BaseModel):
-    """Schema for the xp_graph tool.
-
-    Two independent payload fields:
-      - `experience_trace`: Structured ExperienceTrace object for draft operations
-        (rewrite_draft / merge_draft).
-      - `query`: Natural language string for knowledge retrieval (retrieve_graph mode).
-        Also accepted as JSON-serialized ExperienceTrace string for draft operations
-        when `experience_trace` is not provided (legacy compatibility).
-
-    Modes:
-      - read_draft:      Read the current draft string.
-      - rewrite_draft:   Overwrite the draft with a new ExperienceTrace.
-                         Reads from `experience_trace` first, falls back to `query` JSON.
-      - merge_draft:     Merge an incoming ExperienceTrace into the existing draft.
-                         Reads from `experience_trace` first, falls back to `query` JSON.
-      - update_graph:    Write new graph data (placeholder for future implementation).
-      - retrieve_graph:  Retrieve knowledge from the graph using `query` as the search string.
-    """
-    mode: Literal[
-        "read_draft", "rewrite_draft", "merge_draft",
-        "update_graph", "retrieve_graph"
-    ] = Field(description="Operation mode")
-    experience_trace: ExperienceTrace | None = Field(
-        default=None,
-        description=(
-            "Structured ExperienceTrace object for draft operations (rewrite_draft / merge_draft)."
-            " When both `experience_trace` and `query` are provided, `experience_trace` takes"
-            " precedence for draft modes."
-        ),
-    )
-    query: str | None = Field(
-        default=None,
-        description=(
-            "Natural language query string for knowledge retrieval via `retrieve_graph` mode."
-            " Also accepted as JSON-serialized ExperienceTrace string for draft operations"
-            " when `experience_trace` is not provided (legacy compatibility)."
-        ),
-    )
-
-
-@tool("xp_graph", args_schema=XPGraphSchema)
-def xp_graph(
-    mode: Literal["read_draft", "rewrite_draft", "merge_draft", "update_graph", "retrieve_graph"],
-    experience_trace: ExperienceTrace | None = None,
-    query: str | None = None,
-    role: Annotated[str, InjectedState("role")] = "",
-    session_id: Annotated[str, InjectedState("session_id")] = "",
-):
-    """Experience graph draft tool.
-
-    Manages structured experience traces during task execution and retrieves
-    knowledge from the experience graph.
-
-    Modes:
-      - read_draft:     Return the current draft as a string.
-      - rewrite_draft:  Overwrite the draft with the given ExperienceTrace.
-                        Reads from `experience_trace` first, falls back to `query` as JSON.
-                        Returns a confirmation message.
-      - merge_draft:    Merge an incoming ExperienceTrace into the existing draft
-                        (append path/failures, overwrite task, dedup requires).
-                        Reads from `experience_trace` first, falls back to `query` as JSON.
-                        Returns a confirmation message.
-      - update_graph:   (Placeholder) Write graph data.
-      - retrieve_graph: Retrieve knowledge from the graph using `query` as the
-                        natural language search string.
-
-    When the draft is empty, both rewrite_draft and merge_draft behave the same
-    (set the draft to the incoming trace).
-    """
-    if not session_id or not session_id.strip():
-        err_text = "session id can not setting"
-        logger.error(err_text)
-        raise RuntimeError("session id can not setting")
-
-    return _dispatch_xp_graph(mode, session_id, experience_trace, query)
-
-
-def build_xp_graph_tool():
-    xp_graph.metadata = {"idempotent": False}
-    xp_graph.handle_tool_error = True
-    return xp_graph
+    return result

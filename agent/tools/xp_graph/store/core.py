@@ -3,11 +3,13 @@ import json
 import time
 import random
 import string
+import hashlib
 import sqlite3
 from loguru import logger
 from ..type import GmNode, GmEdge
 from pub_func import contains_cjk
 from typing import Any, TypedDict
+from langchain_core.embeddings import Embeddings
 
 # ─── Utilities ─────────────────────────────────────────────────
 def get_timestamp() -> int:
@@ -501,6 +503,38 @@ def get_vector_hash(db: sqlite3.Connection, node_id: str) -> str | None:
         (node_id,)
     ).fetchone()
     return row['content_hash'] if row else None
+
+
+async def sync_node_embed(db: sqlite3.Connection, node: GmNode, embed: Embeddings | None) -> None:
+    """
+    Async embedding sync, non-blocking for the main flow.
+
+    Args:
+        db: SQLite database connection
+        node: Node that needs embedding generation
+        embed: Embeddings instance (if None, this is a no-op)
+    """
+    if not embed:
+        return
+
+    content: str = getattr(node, 'content', '')
+    hash_obj: str = hashlib.md5(content.encode()).hexdigest()
+
+    existing_hash: str = get_vector_hash(db, node.id)
+
+    if existing_hash == hash_obj:
+        return
+
+    try:
+        name: str = getattr(node, 'name', '')
+        description: str = getattr(node, 'description', '')
+        text: str = f"{name}: {description}\n{content[:500]}"
+        vec: list[float] = await embed.aembed_query(text)
+        if vec:
+            save_vector(db, getattr(node, 'id', ''), content, vec)
+    except Exception:
+        # Does not affect the main flow
+        pass
 
 
 def get_all_vectors(db: sqlite3.Connection) -> list[dict]:

@@ -13,7 +13,6 @@ Merge strategy: Precise path results take priority (higher PPR scores),
                generalized path supplements communities not covered by the precise path.
 """
 import math
-import hashlib
 from typing import TypedDict
 from ..graph import PPRResult
 from sqlite3 import Connection
@@ -26,7 +25,7 @@ from ..store.core import (
     search_nodes, vector_search_with_score,
     graph_walk, community_representatives,
     community_vector_search, nodes_by_community_ids,
-    save_vector, get_vector_hash,
+    sync_node_embed,
 )
 
 
@@ -324,30 +323,9 @@ class Recaller:
     async def sync_embed(self, node: GmNode) -> None:
         """
         Async embedding sync, non-blocking for the main flow.
+        Delegates to sync_node_embed in store/core.py.
 
         Args:
             node: Node that needs embedding generation
         """
-
-        if not self.embed:
-            return
-
-        content: str = getattr(node, 'content', '')
-        hash_obj: str = hashlib.md5(content.encode()).hexdigest()
-
-        existing_hash: str = get_vector_hash(self.db, node.id)
-
-        if existing_hash == hash_obj:
-            return
-
-        try:
-            name: str = getattr(node, 'name', '')
-            description: str = getattr(node, 'description', '')
-            text: str = f"{name}: {description}\n{content[:500]}"
-            vec: list[float] = await self.embed.aembed_query(text)
-            if vec:
-                save_vector(self.db, getattr(node, 'id', ''), content, vec)
-
-        except Exception:
-            # Does not affect the main flow
-            pass
+        await sync_node_embed(self.db, node, self.embed)
