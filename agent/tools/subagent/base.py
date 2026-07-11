@@ -156,6 +156,7 @@ class SubagentManager:
                     "master_session_id": session_id,
                     "session_id": commander_session_id,
                     "task_id": task_id,
+                    "role": "commander",
                     "messages": [HumanMessage(content=task)]
                 },
                 config=build_agent_config(session_id=commander_session_id)

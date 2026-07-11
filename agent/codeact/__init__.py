@@ -14,6 +14,7 @@ def codeact_agent(
     eval_fn: Callable[[str, dict[str, Any]], tuple[str, dict[str, Any]]] | None = None,
     *,
     response_format: type[BaseModel] | None = None,
+    state_schema: type | None = None,
     middleware: Sequence[AgentMiddleware] | None = None,
 ):
     """构建 CodeAct Agent（session 级，只构建一次）。
@@ -25,6 +26,7 @@ def codeact_agent(
         eval_fn: 在沙箱中执行代码的函数。为 None 则使用内置 eval_sandbox。
         response_format: 可选的 Pydantic 模型，提供时 LLM 输出 JSON 代码块
             会解析为结构化响应并存储在 structured_response 中。
+        state_schema: 可选的自定义 state schema。
         middleware: 可选的 middleware 列表，用于拦截/增强 agent 执行。
     """
     _eval_fn = eval_fn or eval_sandbox
@@ -35,6 +37,7 @@ def codeact_agent(
         eval_fn=_eval_fn,
         system_prompt=system_prompt,
         response_format=response_format,
+        state_schema=state_schema,
         middleware=middleware,
     )
     result = code_act.compile(checkpointer=MemorySaver())

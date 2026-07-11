@@ -11,15 +11,16 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from config import TEMP_DIR, WORKSPACE_DIR
 from workspace import CORE_SYSTEM_FILE_NAMES
-from langchain.agents.middleware import AgentState
+from agent.codeact.core import CodeActState
 from agent.tools.subagent.type import SubAgentOutput
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_core.messages import HumanMessage, BaseMessage
 from agent.tools.subagent.commander.tools.worker.middlewares import WorkerSummarization
 from pub_func import render_template_file, slice_last_turn, sanitize_tool_use_result_pairing, build_agent_config
 
-class WorkerStateSchema(AgentState):
+class WorkerStateSchema(CodeActState):
     session_id: str
+    role: str
 
 _template_dir = Path(__file__).parents[3].resolve() / "templates"
 
@@ -104,6 +105,7 @@ async def _arun_task(
                 system_prompt=system_prompt,
                 model=main_llm,
                 tools=build_without_session_id_tools(),
+                state_schema= WorkerStateSchema,
                 middleware=[
                     WorkerSummarization(
                         model=main_llm,
@@ -117,7 +119,7 @@ async def _arun_task(
             )
 
             agent_res: dict[str, Any] = await agent.ainvoke(
-                input={"session_id": worker_session_id, "messages": [HumanMessage(content=description)]},
+                input={"session_id": worker_session_id, "role": "worker", "messages": [HumanMessage(content=description)]},
                 config=build_agent_config(session_id=worker_session_id)
             )
             structured_response: SubAgentOutput = agent_res["structured_response"]

@@ -36,6 +36,8 @@ class WorkerSummarization(SummarizationMiddleware):
     @override
     def before_model(self, state: AgentState[Any], runtime) -> dict[str, Any] | None:
         self._capture_goal(state.get("messages", []))
+        logger.debug("WorkerSummarization.before_model: session_id={}, role={}",
+                     state.get("session_id"), state.get("role"))
         res = super().before_model(state, runtime)
         if res is not None and self._original_goal:
             self._inject_goal(res)
@@ -44,6 +46,8 @@ class WorkerSummarization(SummarizationMiddleware):
     @override
     async def abefore_model(self, state: AgentState[Any], runtime) -> dict[str, Any] | None:
         self._capture_goal(state.get("messages", []))
+        logger.debug("WorkerSummarization.abefore_model: session_id={}, role={}",
+                     state.get("session_id"), state.get("role"))
         res = await super().abefore_model(state, runtime)
         if res is not None and self._original_goal:
             self._inject_goal(res)

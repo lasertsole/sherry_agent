@@ -163,6 +163,7 @@ class CommanderStateSchema(AgentState):
     master_session_id: str
     session_id: str
     task_id: str
+    role: str
 
 def build_commander()-> CompiledStateGraph:
     todo_writer_tool: BaseTool = build_todo_writer_tool()

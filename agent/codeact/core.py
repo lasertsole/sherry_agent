@@ -390,6 +390,14 @@ def create_codeact(
         # Process middleware schemas first, then base schema last (last-wins).
         # Collect annotations; later entries override earlier ones.
         merged_annotations: dict[str, Any] = {}
+        # Start with CodeActState fields so that sandbox/structured_output nodes
+        # have all required keys (script, context, structured_response, jump_to).
+        base_annotations: dict[str, Any] = {}
+        try:
+            base_annotations = dict(get_type_hints(CodeActState, include_extras=True))
+        except Exception:
+            pass
+        merged_annotations.update(base_annotations)
         processed_schemas: list[type] = [*schemas_to_merge, state_schema]
 
         for schema in processed_schemas:
@@ -547,6 +555,9 @@ def create_codeact(
         return obj
 
     def sandbox(state: state_schema) -> dict:
+        import logging
+        logging.warning("SANDBOX_DIAG: state keys=%s, has_script=%s, type=%s",
+                        list(state.keys()), 'script' in state, type(state).__name__)
         existing_context = state.get("context", {})
         context = {**existing_context, **tools_context}
         output, new_vars = eval_fn(state["script"], context)
