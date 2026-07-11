@@ -1,7 +1,5 @@
 import textwrap
-from pathlib import Path
 from models import main_llm
-from config import SESSIONS_DIR
 from ..type import SubAgentOutput
 from .middlewares import TODOManager
 from langchain.agents import create_agent
@@ -10,7 +8,7 @@ from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from .tools import build_todo_writer_tool, build_worker_tool
-from langchain.agents.middleware import SummarizationMiddleware
+from .middlewares.CommanderSummarization import CommanderSummarization
 
 _system_prompt: str = textwrap.dedent("""\
 # Role: Task Commander
@@ -184,7 +182,7 @@ def build_commander()-> CompiledStateGraph:
         state_schema = CommanderStateSchema,
         tools = [todo_writer_tool, worker_tool],
         middleware=[
-            SummarizationMiddleware(
+            CommanderSummarization(
                 model=main_llm,
                 trigger=("messages", 15),
                 keep=("messages", 8),
