@@ -58,11 +58,6 @@ async def subagent_tool(
         )
 
         result = await asyncio.wrap_future(future)
-        elapsed = time.time() - start_time
-        logger.info(
-            f"Subagent tool completed: session_id={session_id}, "
-            f"label={label}, duration={elapsed:.2f}s"
-        )
         return result
     except Exception as e:
         elapsed = time.time() - start_time

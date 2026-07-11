@@ -1,5 +1,8 @@
+import os
 import textwrap
-from models import main_llm
+from typing import Any
+from config import ENV_PATH
+from dotenv import load_dotenv
 from ..type import SubAgentOutput
 from .middlewares import TODOManager
 from langchain.agents import create_agent
@@ -9,6 +12,24 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from .tools import build_todo_writer_tool, build_worker_tool
 from .middlewares.CommanderSummarization import CommanderSummarization
+
+
+load_dotenv(ENV_PATH, override = True)
+api_key = os.getenv("MAIN_LLM_API_KEY")
+api_name = os.getenv("MAIN_LLM_NAME")
+model_provider = os.getenv("MAIN_LLM_PROVIDER")
+api_base = os.getenv("MAIN_LLM_API_BASE")
+max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
+
+model_config: dict[str, Any] = {
+    "model_provider": model_provider,
+    "model": api_name,
+    "api_key": api_key,
+    "base_url": api_base,
+    "temperature": 0,
+    "max_retries": 2,
+    "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2}  # Set model context window size
+}
 
 _system_prompt: str = textwrap.dedent("""\
 # Role: Task Commander
@@ -171,6 +192,10 @@ def build_commander()-> CompiledStateGraph:
 
     # lazy import to avoid circular dependency: subagent -> agent -> tools -> subagent
     from agent.middlewares import ToolCallNormalize, IterationBudget, ToolGuardrails
+    from langchain.chat_models import init_chat_model
+
+    model = init_chat_model(**model_config)
+
     # Create InMemorySaver here so its internal lock binds to the
     # event loop that is active when build_commander is called
     # (the subagent's dedicated loop), avoiding "bound to a different
@@ -178,13 +203,13 @@ def build_commander()-> CompiledStateGraph:
     _checkpointer = InMemorySaver()
     agent: CompiledStateGraph = create_agent(
         system_prompt=_system_prompt,
-        model = main_llm,
+        model = model,
         checkpointer = _checkpointer,
         state_schema = CommanderStateSchema,
         tools = [todo_writer_tool, worker_tool],
         middleware=[
             CommanderSummarization(
-                model=main_llm,
+                model=model,
                 trigger=("messages", 15),
                 keep=("messages", 8),
             ),

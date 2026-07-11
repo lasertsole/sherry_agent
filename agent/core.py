@@ -11,8 +11,8 @@ from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor,
                           IterationBudget, HeartbeatStaleness)
 from .smart_tool_node import patch_tool_node
 
-# 只有幂等的工具才能并行执行，非幂等串行执行
-patch_tool_node()
+# # 只有幂等的工具才能并行执行，非幂等串行执行
+# patch_tool_node()
 
 # ── Extended state schema ────────────────────────────────────────────────
 # Carries ``session_id`` through the graph so that middlewares reading

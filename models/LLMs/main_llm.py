@@ -1,13 +1,9 @@
 import os
 from typing import Any
-from pathlib import Path
 from config import ENV_PATH
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import ConfigurableField
-
-# Locate current directory
-current_dir = Path(__file__).parent.resolve()
 
 # Load environment variables
 load_dotenv(ENV_PATH, override = True)
@@ -18,7 +14,6 @@ api_base = os.getenv("MAIN_LLM_API_BASE")
 max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
 if max_tokens:
     max_tokens = min(int(max_tokens), 65536)
-
 
 model_config:dict[str, Any] = {
     "model_provider": model_provider,

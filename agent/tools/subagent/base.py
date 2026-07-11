@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 from loguru import logger
 from bus import MessageBus
-from models import main_llm
+from models.LLMs.main_llm import create_main_llm
 from runtime import Register
 from .type import SubAgentOutput
 from type.bus import InboundMessage
@@ -150,7 +150,11 @@ class SubagentManager:
 
         commander_session_id: str = f"commander-{session_id}"
         try:
+            logger.debug("Subagent [{}] step 1/4: building commander agent...", task_id)
             agent: CompiledStateGraph = build_commander()
+            logger.debug("Subagent [{}] step 1/4: commander agent built OK", task_id)
+
+            logger.debug("Subagent [{}] step 2/4: calling agent.ainvoke...", task_id)
             agent_res: dict[str, Any] = await agent.ainvoke(
                 input={
                     "master_session_id": session_id,
@@ -161,7 +165,11 @@ class SubagentManager:
                 },
                 config=build_agent_config(session_id=commander_session_id)
             )
+            logger.debug("Subagent [{}] step 2/4: ainvoke returned, keys={}", task_id, list(agent_res.keys()) if agent_res else "None")
+
             structured_response: SubAgentOutput | None = agent_res.get("structured_response")
+            logger.debug("Subagent [{}] step 3/4: structured_response={}", task_id,
+                f"status={structured_response.status}" if structured_response else "None")
 
             announce_content: str = render_template_file(
                 file_path=(_template_dir / "subagent_announce.md").resolve().as_posix(),
@@ -173,6 +181,7 @@ class SubagentManager:
                     "result": structured_response.result if structured_response else "",
                 }
             )
+            logger.debug("Subagent [{}] step 4/4: announce template rendered", task_id)
 
         except HeartbeatTimeoutError as e:
             logger.warning("Subagent [{}] heartbeat timeout: {}", task_id, e)
@@ -215,6 +224,12 @@ class SubagentManager:
                 "subagent_task_id": task_id,
             },
         )
+
+        logger.info("Subagent [{}] completed. Result: status={}, finish_reason={}, result={}", task_id, 
+            structured_response.status if structured_response else "N/A",
+            structured_response.finish_reason if structured_response else "N/A",
+            (structured_response.result[:200] + "...") if structured_response and len(structured_response.result) > 200 else (structured_response.result if structured_response else "N/A"))
+
         await self._bus.publish_inbound(msg)
 
 
@@ -232,6 +247,8 @@ class SubagentManager:
         self._consumer = consumer
 
     async def _consume_loop(self):
+        # Create a fresh LLM for the consume loop on the daemon thread's event loop.
+        _llm = create_main_llm()
         while True:
             try:
                 msg: InboundMessage = await self._bus.consume_inbound()
@@ -248,7 +265,7 @@ class SubagentManager:
                         + '\n\nPlease convey the results to the user in a tone that matches the character persona.'
                     ), HumanMessage(content=msg.content)]
 
-                    res_msg: AIMessage = await main_llm.ainvoke(messages)
+                    res_msg: AIMessage = await _llm.ainvoke(messages)
                     # Preserve the raw result alongside the personalized summary
                     msg.content = res_msg.content + '\n\n---\n' + msg.content
                 except Exception as e:
