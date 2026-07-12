@@ -1,5 +1,5 @@
 from loguru import logger
-from models import auxiliary_llm
+from models import build_auxiliary_llm
 
 _EVALUATE_SYSTEM_PROMPT = (
     "You are a notification gate for a background agent. "
@@ -44,6 +44,7 @@ def evaluate_response(response: str, task_context: str)-> bool:
     ``_decide()``).  Falls back to ``True`` (notify) on any failure so
     that important messages are never silently dropped.
     """
+    auxiliary_llm = build_auxiliary_llm()
     try:
         llm_response = auxiliary_llm.bind_tools(_EVALUATE_TOOL).invoke([
             {"role": "system", "content": _EVALUATE_SYSTEM_PROMPT},

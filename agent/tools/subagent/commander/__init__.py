@@ -1,1 +1,1 @@
-from .core import build_commander
+from .core import build_commander, get_commander_system_prompt

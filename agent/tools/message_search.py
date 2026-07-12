@@ -5,9 +5,9 @@ import asyncio
 import sqlite3
 from loguru import logger
 import concurrent.futures
-from models import main_llm
 from pub_func import run_async
 from typing import Any, Annotated
+from models import build_main_llm
 from langchain.tools import BaseTool, tool
 from pydantic import BaseModel, Field, validate_call
 from langgraph.prebuilt.tool_node import InjectedState
@@ -185,6 +185,7 @@ async def _summarize(
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
             response = main_llm.invoke([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

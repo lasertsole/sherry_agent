@@ -12,7 +12,7 @@ from langchain_core.tools import BaseTool
 from config import TEMP_DIR, WORKSPACE_DIR
 from agent.codeact.core import CodeActState
 from workspace import CORE_SYSTEM_FILE_NAMES
-from models.LLMs.main_llm import create_main_llm
+from models.LLMs.main_llm import build_main_llm
 from agent.tools.subagent.type import SubAgentOutput
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_core.messages import HumanMessage, BaseMessage
@@ -103,7 +103,7 @@ async def _arun_task(
             from agent.middlewares import IterationBudget, HeartbeatStaleness
 
             # Create a fresh LLM instance for the worker on the current event loop.
-            _llm = create_main_llm()
+            _llm = build_main_llm()
 
             agent = codeact_agent(
                 system_prompt=system_prompt,

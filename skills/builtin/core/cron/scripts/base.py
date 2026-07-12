@@ -10,7 +10,7 @@ from loguru import logger
 from bus import MessageBus
 from config import ROOT_DIR
 from datetime import datetime
-from models import main_llm
+from models import build_main_llm
 from type.bus import InboundMessage
 from channels import channel_manager
 from langchain.agents import create_agent
@@ -517,6 +517,8 @@ async def _on_cron_job(cron_job: CronJob) -> None:
 
     from agent.tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
     tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
+
+    main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
 
     agent: CompiledStateGraph = create_agent(
         system_prompt = build_system_prompt(),

@@ -226,10 +226,12 @@ class StateSchema(AgentState):
     session_id: str
 
 async def _create_nudge_agent(system_prompt: str):
-    from models import main_llm
     from agent import get_agent_tools
+    from models import build_main_llm
     from agent.middlewares import ToolGuardrails, IterationBudget
 
+
+    main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
     return create_agent(
         model=main_llm,
         state_schema=StateSchema,

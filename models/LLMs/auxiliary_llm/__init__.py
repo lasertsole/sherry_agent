@@ -1,5 +1,5 @@
-from .core import auxiliary_llm
+from .core import build_auxiliary_llm
 
 __all__ = [
-    "auxiliary_llm",
+    "build_auxiliary_llm",
 ]

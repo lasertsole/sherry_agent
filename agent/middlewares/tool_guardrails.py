@@ -243,8 +243,8 @@ class ToolGuardrails(AgentMiddleware):
         self._save_state(session_id, gs)
 
         if action == GuardrailAction.HALT:
-            halt_msg = self._halt_message(tool_name, "excessive repetition")
             logger.error("ToolGuardrails HALT: session={} tool={}", session_id, tool_name)
+            halt_msg = self._halt_message(tool_name, "excessive repetition")
             return ToolMessage(
                 content=halt_msg,
                 tool_call_id=request.tool_call["id"],
@@ -253,6 +253,7 @@ class ToolGuardrails(AgentMiddleware):
             )
 
         if action == GuardrailAction.BLOCK:
+            logger.error("ToolGuardrails BLOCK: session={} tool={}", session_id, tool_name)
             if is_error:
                 exact_key = f"{tool_name}:{args_hash}"
                 exact_count = gs.exact_failure_counts.get(exact_key, 0)
@@ -279,6 +280,7 @@ class ToolGuardrails(AgentMiddleware):
             )
 
         if action == GuardrailAction.WARN:
+            logger.error("ToolGuardrails WARN: session={} tool={}", session_id, tool_name)
             if is_error:
                 exact_key = f"{tool_name}:{args_hash}"
                 exact_count = gs.exact_failure_counts.get(exact_key, 0)

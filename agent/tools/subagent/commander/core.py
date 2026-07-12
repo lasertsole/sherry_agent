@@ -1,14 +1,13 @@
 import textwrap
 from ..type import SubAgentOutput
-from .middlewares import TODOManager
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
-from models.LLMs.main_llm import create_main_llm
+from models.LLMs.main_llm import build_main_llm
 from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
+from .middlewares import TODOManager, CommanderSummarization
 from .tools import build_todo_writer_tool, build_worker_tool
-from .middlewares.CommanderSummarization import CommanderSummarization
 
 _system_prompt: str = textwrap.dedent("""\
 # Role: Task Commander
@@ -158,6 +157,10 @@ worker(task_list=[
 Remember: Your goal is to systematically break down, track, and execute complex tasks while **maximizing parallel execution** to optimize speed, maintaining clear progress visibility through the todo list.
 """)
 
+def get_commander_system_prompt() -> str:
+    """Return the Commander agent's system prompt text."""
+    return _system_prompt
+
 class CommanderStateSchema(AgentState):
     """Agent state that preserves session_id for tool injection."""
     master_session_id: str
@@ -176,7 +179,7 @@ def build_commander()-> CompiledStateGraph:
     # The module-level main_llm singleton holds httpx transport pools whose
     # asyncio.Lock objects are bound to the main thread's event loop, causing
     # agent.ainvoke() to deadlock silently on the daemon thread.
-    _llm = create_main_llm()
+    _llm = build_main_llm()
 
     # Create InMemorySaver here so its internal lock binds to the
     # event loop that is active when build_commander is called
@@ -184,7 +187,7 @@ def build_commander()-> CompiledStateGraph:
     # event loop" errors during agent.ainvoke().
     _checkpointer = InMemorySaver()
     agent: CompiledStateGraph = create_agent(
-        system_prompt=_system_prompt,
+        system_prompt=get_commander_system_prompt(),
         model = _llm,
         checkpointer = _checkpointer,
         state_schema = CommanderStateSchema,
@@ -203,5 +206,11 @@ def build_commander()-> CompiledStateGraph:
         ],
         response_format=SubAgentOutput
     )
+
+    # Attach system_prompt as an attribute so callers (e.g. tests) can
+    # retrieve it from the agent object without a separate import.
+    # RunnableBinding.__getattr__ delegates to the underlying CompiledStateGraph
+    # (via Pregel / object), so arbitrary attribute assignment works.
+    agent.system_prompt = _system_prompt
 
     return agent

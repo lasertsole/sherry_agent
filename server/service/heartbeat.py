@@ -2,8 +2,8 @@ import json
 from typing import Any
 from pathlib import Path
 from loguru import logger
-from models import main_llm
 from config import PLUGINS_PATH
+from models import build_main_llm
 from type.bus import OutboundMessage
 from langchain.agents import create_agent
 from workspace import CORE_SYSTEM_FILE_NAMES
@@ -18,6 +18,7 @@ tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool
 async def process_heartbeat_task(task: str) -> str:
     try:
         # Get graph-memory system prompt
+        main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
 
         agent: CompiledStateGraph = create_agent(
             model=main_llm,

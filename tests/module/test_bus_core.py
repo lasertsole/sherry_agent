@@ -1,4 +1,4 @@
-"""Module tests for bus/core.py — async MessageBus."""
+"""Module tests for bus/TODOManager.py — async MessageBus."""
 
 import pytest
 import asyncio

@@ -1,8 +1,9 @@
 from skills import build_skills_snapshot
 from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
-from models import main_llm, auxiliary_llm
+
 from langchain.agents.middleware import AgentState
+from models import build_main_llm, build_auxiliary_llm
 from langgraph.graph.state import CompiledStateGraph
 from agent.checkpointer import build_async_sqlite_checkpointer
 from agent.tools import memory_store, build_main_tools, build_subagent_tool
@@ -51,6 +52,9 @@ async def built_agent(
 
         # Delete all checkpoints but keeps the latest checkpoint
         await checkpointer.aclean_old_checkpoints()
+
+        main_llm = build_main_llm()
+        auxiliary_llm = build_auxiliary_llm()
 
         # Build the agent
         _agent =  create_agent(

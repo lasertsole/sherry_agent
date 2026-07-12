@@ -4,14 +4,12 @@ from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing_extensions import override
 from langchain.agents import AgentState
-from typing import Any, Callable, Awaitable, TYPE_CHECKING, Sequence, cast
-if TYPE_CHECKING:
-    from langchain.agents.middleware.types import ResponseT
 from langchain.agents.middleware.types import ResponseT
 from workspace.prompt_builder import build_system_prompt
 from runtime import state_register_db, state_register_mem
-from langchain_core.messages import AnyMessage, BaseMessage, SystemMessage, AIMessage, HumanMessage, ToolMessage, RemoveMessage
+from typing import Any, Callable, Awaitable, Sequence, cast
 from langchain.agents.middleware import SummarizationMiddleware, ModelRequest, ModelResponse, ExtendedModelResponse
+from langchain_core.messages import AnyMessage, BaseMessage, SystemMessage, AIMessage, HumanMessage, ToolMessage, RemoveMessage
 
 
 _MAX_COMPRESSION_ATTEMPTS = 3
@@ -124,7 +122,7 @@ class Summarization(SummarizationMiddleware):
     def before_model(
         self, state: AgentState[Any], runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
-        pass
+        return None
 
     @override
     async def abefore_model(

@@ -4,7 +4,6 @@ from config import ENV_PATH
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import ConfigurableField
-from langchain_core.language_models import BaseChatModel
 
 # Load environment variables
 load_dotenv(ENV_PATH, override = True)
@@ -23,11 +22,11 @@ model_config:dict[str, Any] = {
     "base_url": api_base,
     "temperature": 0,
     "max_retries": 2,
-    "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2}  # Set model context window size
+    "profile": {"max_input_tokens": max_tokens}  # Set model context window size
 }
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
 
-def create_main_llm()-> BaseChatModel:
+def build_main_llm(temperature: float | None = None):
     """Create a fresh LLM instance bound to the current event loop.
 
     The module-level ``main_llm`` singleton is created at import time on the
@@ -42,8 +41,9 @@ def create_main_llm()-> BaseChatModel:
     bound to the *current* event loop.
     """
     model = init_chat_model(**model_config)
-    return model.configurable_fields(
+    model = model.configurable_fields(
         temperature=ConfigurableField(id="temperature")
     )
-
-main_llm = init_chat_model(**model_config)  # Instantiate model
+    if temperature is not None:
+        model = model.bind(temperature=temperature)
+    return model

@@ -1,5 +1,5 @@
-from .core import embed_model
+from .core import build_embed_model
 
 __all__ = [
-    "embed_model",
+    "build_embed_model"
 ]

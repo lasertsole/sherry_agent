@@ -6,11 +6,11 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from lightrag import LightRAG
 from config.path import SRC_DIR
 from lightrag.utils import EmbeddingFunc
-from lightrag import LightRAG, QueryParam
-from models import embed_model, auxiliary_llm
 from models.reranker_model import reranker_model
+from models import build_embed_model, build_auxiliary_llm
 from langchain_core.messages import SystemMessage, HumanMessage
 
 # 设置 LightRAG 知识图谱大小控制的环境变量，缓解图谱无限膨胀
@@ -34,11 +34,13 @@ async def _llm_model_func(
         messages.extend(history_messages)
     messages.append(HumanMessage(content=prompt))
 
+    auxiliary_llm = build_auxiliary_llm()
     response = await auxiliary_llm.ainvoke(messages)
     return response.content
 
 async def _embedding_func(texts: list[str]) -> np.ndarray:
     """将本地 embed_model 适配为 LightRAG 需要的格式"""
+    embed_model = build_embed_model()
     embeddings = embed_model.embed_documents(texts)
     return np.array(embeddings)
 

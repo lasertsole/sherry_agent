@@ -1,13 +1,18 @@
+import json
+import textwrap
+from loguru import logger
 from typing import Literal, Any
 from pydantic import BaseModel, Field
 from runtime import state_register_mem
-from models.LLMs.main_llm import create_main_llm
+from models.LLMs.main_llm import build_main_llm
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import SystemMessage, HumanMessage
-from .type import Node, Edge, ExtractionResult, NodeType, EdgeType, GmNode
-from .store import upsert_node, upsert_edge, find_by_name, UpsertResult, sync_node_embed
+from .type import  ExtractionResult, GmNode
 from .async_task_queue import async_task_queue
-from models import embed_model
+from langchain_core.embeddings import Embeddings
+from models import build_embed_model
+from .store import delete_node, get_by_session, upsert_node, find_by_name, upsert_edge, UpsertResult, sync_node_embed
+from .graph import run_maintenance, MaintenanceResult
 
 
 # ─── ExperienceTrace Models ─────────────────────────────────────
@@ -54,33 +59,36 @@ def update_draft(session_id: str, system_prompt: str, messages: list[BaseModel])
     additional_prompt: str =  state_register_mem.get_state(session_id, "xp_graph_draft", "")
 
     if additional_prompt.strip() != "":
-        additional_prompt = "目前已提取的结构化经验数据如下：\n" + additional_prompt + "\n请根据实际情况，在已有结构化经验上进行改动\n\n"
+        additional_prompt = "Already extracted structured experience data:\n" + additional_prompt + "\nModify the existing structured experience based on actual conditions\n\n"
 
     distill_prompt: str = (
-        "回顾上述对话消息，从中提炼出 ExperienceTrace 结构化经验数据。\n"
+        "Review the conversation messages above and extract structured ExperienceTrace data.\n"
         f"{additional_prompt}"
-        "严格按照以下字段输出 JSON：\n\n"
-        "1. task: 本次任务的核心目标描述（一句话概括）。\n"
-        "2. path: 执行路径，每一步包含：\n"
-        "   - tool: 使用的工具或技能名称\n"
-        "   - input: 输入/执行的命令或内容\n"
-        "   - output: 输出结果（如有）\n"
-        "   - trigger: 选择此工具/方案的理由（如有）\n"
-        "3. failures: 遇到的失败记录，每条包含：\n"
-        "   - symptom: 失败的征兆\n"
-        "   - cause: 根本原因\n"
-        "   - fixes: 尝试过的修复策略列表（strategy 为 parameter/approach/workaround 之一，description 描述修复内容，tool 可选）\n"
-        "4. requires: 执行本任务所需的前置技能或先决条件列表\n\n"
-        "如果没有对应内容，path 为 []，failures 为 []，requires 为 null。"
-        "只输出 JSON，不要额外解释。"
+        "Output strictly in JSON with the following fields:\n\n"
+        "1. task: Core objective of this task (one sentence summary).\n"
+        "2. path: Execution path, each step contains:\n"
+        "   - tool: Tool or skill name used\n"
+        "   - input: Input/command executed or content\n"
+        "   - output: Output result (if any)\n"
+        "   - trigger: Reason for choosing this tool/approach (if any)\n"
+        "3. failures: Failure records encountered, each contains:\n"
+        "   - symptom: Failure symptom\n"
+        "   - cause: Root cause\n"
+        "   - fixes: List of fix strategies attempted (strategy is one of parameter/approach/workaround, description describes the fix, tool is optional)\n"
+        "4. requires: List of prerequisite skills or conditions needed for this task\n\n"
+        "If there is no corresponding content, path is [], failures is [], requires is null."
+        "Output only JSON, no extra explanation."
     )
     parser = PydanticOutputParser(pydantic_object=ExperienceTrace)
-    json_mode_llm = create_main_llm()
+    json_mode_llm = build_main_llm()
     json_mode_llm.bind(response_format={"type": "json_object"})
     raw_basemodel = json_mode_llm.invoke(
         input={"messages": [SystemMessage(content=system_prompt), *messages, HumanMessage(content=distill_prompt)]}
     )
-    state_register_mem.set_state(session_id, _XP_GRAPH_DRAFT, parser.parse(raw_basemodel.content))
+    experience_trace: ExperienceTrace = parser.parse(raw_basemodel.content)
+    logger.debug("update_draft experience_trace is {}", experience_trace)
+
+    state_register_mem.set_state(session_id, _XP_GRAPH_DRAFT, experience_trace)
 
 def _serialize_draft(draft: ExperienceTrace) -> str:
     """Serialize ExperienceTrace into a structured text for LLM consumption."""
@@ -183,10 +191,10 @@ The input is a structured experience trace containing:
    4.3 Each edge's instruction must contain specific executable content"""
 
 
-def extract_graph(
+def extract(
     session_id: str,
     role: str,
-    ) -> ExtractionResult | None:
+) -> None:
     """
     Convert the ExperienceTrace draft stored in session state into an
     ExtractionResult (knowledge graph nodes + edges) using LLM reasoning,
@@ -217,14 +225,13 @@ def extract_graph(
         raise RuntimeError("xp draft is None")
 
     from langchain_core.prompts import ChatPromptTemplate
-    from models.LLMs.main_llm import main_llm
 
     serialized = _serialize_draft(draft)
-
+    model = build_main_llm()
     structured_llm = ChatPromptTemplate.from_messages([
         ("system", EXTRACT_GRAPH_SYS),
         ("human", "Extract nodes and edges from the following experience trace:\n\n{trace}"),
-    ]) | main_llm.with_structured_output(ExtractionResult)
+    ]) | model.with_structured_output(ExtractionResult)
 
     result: ExtractionResult = structured_llm.invoke({"trace": serialized})
 
@@ -258,6 +265,7 @@ def extract_graph(
         gm_node = upsert_result["node"]
         if gm_node is not None:
             name_to_id[node.name] = gm_node.id
+            embed_model = build_embed_model()
             async_task_queue.add_task(sync_node_embed(db, gm_node, embed_model))
 
     # ── Edge upsert ──
@@ -275,7 +283,7 @@ def extract_graph(
             edge_data={
                 "from_id": from_node.id,
                 "to_id": to_node.id,
-                "type": edge.type,
+                "type": edge.type.value,
                 "instruction": edge.instruction,
                 "condition": edge.condition,
                 "session_id": session_id,
@@ -287,4 +295,133 @@ def extract_graph(
 
     logger.debug(f"[xp_graph:{role}] persisted extraction: {len(result.nodes)} nodes, {len(result.edges)} edges")
 
-    return result
+# ─── Finalization System Prompt ───────────────────────────────────
+FINALIZE_SYS = """You are the graph node finalization engine. Perform a final review of nodes generated in this session before it ends.
+Review all nodes from this session and execute the following three operations. Output strict JSON.
+
+1. Promote EVENT to SKILL:
+    If an EVENT node has general reusable value (not limited to a specific scenario), promote it to SKILL.
+    When promoting: rename to SKILL naming convention (tool-action), update content to SKILL plain text template format.
+    Write to promotedSkills array.
+
+2. Add Missing Edges:
+    Review all nodes holistically to find cross-node relationships that were hard to detect during single extraction.
+    Edge types allowed: USED_SKILL, SOLVED_BY, REQUIRES, PATCHES, CONFLICTS_WITH.
+    Strictly follow direction constraints: TASK->SKILL use USED_SKILL, EVENT->SKILL use SOLVED_BY.
+    Write to newEdges array.
+
+3. Mark Obsolete Nodes:
+    Old nodes invalidated by new discoveries in this session — write their node_id to the invalidations array.
+
+Return empty arrays for nothing to process. Return only JSON, no extra text.
+Format: {"promoted_skills":[{"type":"SKILL","name":"...","description":"...","content":"..."}],"new_edges":[{"from_node":"...","to_node":"...","type":"...","instruction":"...","condition":"..."}],"invalidations":["node-id"]}"""
+
+
+class Node(BaseModel):
+    """A knowledge graph node"""
+    type: Literal["TASK", "SKILL", "EVENT"] = Field(description="Node type")
+    name: str = Field(description="Node name")
+    description: str = Field(description="Node description")
+    content: str = Field(description="Node content")
+
+
+class PromotedSkill(Node):
+    """A skill promoted from an EVENT node"""
+    type: Literal["SKILL"]
+
+class Edge(BaseModel):
+    """A knowledge graph edge"""
+    from_node: str = Field(description="Edge source node name")
+    to_node: str = Field(description="Edge target node name")
+    type: str = Field(description="Edge type")
+    instruction: str = Field(description="Edge execution instruction")
+    condition: str | None = Field(default=None, description="Edge trigger condition")
+
+class FinalizeResult(BaseModel):
+    """Finalization result containing promoted skills, new edges, and invalidations"""
+    promoted_skills: list[PromotedSkill]
+    new_edges: list[Edge]
+    invalidations: list[str]
+
+def finalize_user_prompt(nodes: list[GmNode], summary: str) -> str:
+    """Build the finalization user prompt"""
+    nodes_summary = json.dumps([
+        {
+            'id': n.id,
+            'type': n.type.value if hasattr(n.type, 'value') else str(n.type),
+            'name': n.name,
+            'description': n.description,
+            'v': getattr(n, 'validated_count', 0)
+        }
+        for n in nodes
+    ], indent=2, ensure_ascii=False)
+
+    return textwrap.dedent(f"""\
+        <Session Nodes>
+    
+        {nodes_summary}
+        
+        <Graph Summary>
+        {summary}
+    """)
+
+async def finalize(session_nodes: list[GmNode], graph_summary: str) -> FinalizeResult:
+    """
+    Final review before session end
+
+    Args:
+        session_nodes: List of nodes in this session
+        graph_summary: Graph summary
+
+    Returns:
+        Result containing promoted skills, new edges, and invalidations
+    """
+    model = build_main_llm()
+    return model.with_structured_output(FinalizeResult, method='json_mode').invoke(
+        [SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))],
+        max_tokens=16384
+    )
+
+
+async def rectification_and_standardization(self, session_id: str) -> None:
+    try:
+        nodes: list[GmNode] = get_by_session(self.db, session_id)
+        if nodes:
+            cursor = self.db.cursor()
+            cursor.execute(
+                "SELECT name, type, validated_count, pagerank FROM gm_nodes ORDER BY pagerank DESC LIMIT 20")
+            top_nodes: list[dict[str, Any]] = [dict(r) for r in cursor.fetchall()]
+
+            summary_parts: list[str] = []
+            for n in top_nodes:
+                summary_parts.append(f"{n['type']}:{n['name']}(v{n['validated_count']},pr{n['pagerank']})")
+            summary: str = ", ".join(summary_parts)
+
+            fin = await self.extractor.finalize(session_nodes=nodes, graph_summary=summary)
+
+            for nc in fin.promoted_skills:
+                if nc.name and nc.content:
+                    upsert_node(self.db, {"type": "SKILL", "name": nc.name, "description": nc.description or "",
+                                          "content": nc.content}, session_id)
+
+            for ec in fin.new_edges:
+                from_node = find_by_name(self.db, ec.from_node)
+                to_node = find_by_name(self.db, ec.to_node)
+                if from_node and to_node:
+                    upsert_edge(self.db, {"from_id": from_node.id, "to_id": to_node.id, "type": ec.type,
+                                          "instruction": ec.instruction, "session_id": session_id})
+
+            for node_id in fin.invalidations:
+                delete_node(self.db, node_id)
+
+        embed: Embeddings | None = getattr(self.recaller, "embed", None)
+        result: MaintenanceResult = await run_maintenance(self.db, self.config, self.config.llm, embed)
+
+        top_pr_names = [f"{n['name']}({n['score']})" for n in result["pagerank"]["top_k"][:3]]
+        logger.debug(
+            f"[xp_graph:{self.role}] maintenance: {result['duration_ms']}ms, "
+            f"dedup={result['dedup']['merged']}, communities={result['community']['count']}, "
+            f"summaries={result['community_summaries']}, top_pr={', '.join(top_pr_names)}"
+        )
+    except Exception as e:
+        logger.error(f"[xp_graph:{self.role}] session_end error: {e}")

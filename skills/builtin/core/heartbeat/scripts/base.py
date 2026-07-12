@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 from loguru import logger
 from config import HEARTBEAT_PATH
-from models import auxiliary_llm
+from models import build_auxiliary_llm
 from .evaluate import evaluate_response
 from typing import Any, Callable, Coroutine
 from pydantic import BaseModel, Field
@@ -101,6 +101,7 @@ class HeartbeatService:
         )
 
         # ── Attempt bind_tools path ──────────────────────────────────
+        auxiliary_llm = build_auxiliary_llm()
         try:
             response = auxiliary_llm.bind_tools(_HEARTBEAT_TOOL).invoke([
                 {"role": "system", "content": system_msg},

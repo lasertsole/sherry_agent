@@ -7,17 +7,19 @@ from runtime import Register
 from .type import SubAgentOutput
 from type.bus import InboundMessage
 from threading import Thread, Event
-from .commander import build_commander
 from skills.loader import get_skills_text
 from config import TEMP_DIR, WORKSPACE_DIR
 from typing import Any, Callable, Awaitable
 from workspace import CORE_SYSTEM_FILE_NAMES
-from models.LLMs.main_llm import create_main_llm
+from models.LLMs.main_llm import build_main_llm
 from langgraph.graph.state import CompiledStateGraph
+from agent.tools.xp_graph import update_draft, extract
 from workspace.prompt_builder import build_system_prompt
 from pub_func import render_template_file, build_agent_config
+from .commander import build_commander, get_commander_system_prompt
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
 
 _current_dir = Path(__file__).parent
 _template_dir = (_current_dir / "templates").resolve()
@@ -167,6 +169,11 @@ class SubagentManager:
             )
             logger.debug("Subagent [{}] step 2/4: ainvoke returned, keys={}", task_id, list(agent_res.keys()) if agent_res else "None")
 
+            # update draft and extract experience
+            state = await agent.aget_state(config=build_agent_config(commander_session_id))
+            update_draft(commander_session_id, get_commander_system_prompt(), state.values.get("messages", []))
+            extract(commander_session_id, "commander")
+
             structured_response: SubAgentOutput | None = agent_res.get("structured_response")
             logger.debug("Subagent [{}] step 3/4: structured_response={}", task_id,
                 f"status={structured_response.status}" if structured_response else "None")
@@ -248,7 +255,7 @@ class SubagentManager:
 
     async def _consume_loop(self):
         # Create a fresh LLM for the consume loop on the daemon thread's event loop.
-        _llm = create_main_llm()
+        _llm = build_main_llm()
         while True:
             try:
                 msg: InboundMessage = await self._bus.consume_inbound()

@@ -26,13 +26,13 @@ model_config:dict[str, Any] = {
     "base_url": api_base,
     "temperature": 0.5,
     "max_retries": 2,
-    "profile": {"max_input_tokens": max_tokens, "repetition_penalty": 1.2}  # Set model context window size
+    "profile": {"max_input_tokens": max_tokens}  # Set model context window size
 }
+
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
-# Reasoning model
-reasoner_model = init_chat_model(**model_config)
-reasoner_model = reasoner_model.configurable_fields(
-    temperature=ConfigurableField(
-        id="temperature",
+def build_reasoner_model():
+    return init_chat_model(**model_config).configurable_fields(
+        temperature=ConfigurableField(
+            id="temperature",
+        )
     )
-)

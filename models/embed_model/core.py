@@ -172,6 +172,5 @@ class CustomEmbedding(Embeddings):
             return self._embed_local([text])[0]
         return self._embed_remote([text])[0]
 
-
-# Singleton instance
-embed_model: CustomEmbedding = CustomEmbedding()
+def build_embed_model()-> CustomEmbedding:
+    return CustomEmbedding()
