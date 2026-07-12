@@ -8,6 +8,13 @@ _default_db_path = Path(SRC_DIR) / "store/xp_graph/xp_graph.db"
 _db_pool: dict[str, sqlite3.Connection] = {}
 
 
+def resolve_db_path(role: str = "default") -> Path:
+    """Resolve the DB file path for a given role."""
+    if role == "default":
+        return _default_db_path
+    return Path(SRC_DIR) / "store/xp_graph" / role / "xp_graph.db"
+
+
 def get_db(role: str = "default") -> sqlite3.Connection:
     """Get a database connection by role.
 
@@ -20,10 +27,7 @@ def get_db(role: str = "default") -> sqlite3.Connection:
     if role in _db_pool:
         return _db_pool[role]
 
-    if role == "default":
-        db_path = _default_db_path
-    else:
-        db_path = Path(SRC_DIR) / "store/xp_graph" / role / "xp_graph.db"
+    db_path = resolve_db_path(role)
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)

@@ -21,11 +21,11 @@ class SelectedNode(TypedDict):
 class AssembleResult(TypedDict):
     """Assembly result with XML, system prompt, and token count"""
     xml: str | None
-    system_prompt: str
+    prompt: str
     tokens: int
 
 
-def build_system_prompt_addition(selected_nodes: list[SelectedNode], edge_count: int) -> str:
+def build_prompt_addition(selected_nodes: list[SelectedNode], edge_count: int) -> str:
     """
     Build the system prompt addition for the knowledge graph
 
@@ -136,7 +136,7 @@ def assemble_context(
     if not selected:
         return {
             'xml': None,
-            'system_prompt': '',
+            'prompt': '',
             'tokens': 0
         }
 
@@ -225,12 +225,12 @@ def assemble_context(
 
     # Build system prompt
     selected_node_info = [SelectedNode(type = n.type.value) for n in selected]
-    system_prompt = build_system_prompt_addition(selected_node_info, len(edges))
+    prompt = build_prompt_addition(selected_node_info, len(edges))
 
-    full_content = system_prompt + "\n\n" + xml
+    full_content = prompt + "\n\n" + xml
 
     return {
         'xml': xml,
-        'system_prompt': system_prompt,
+        'prompt': prompt,
         'tokens': math.ceil(len(full_content) / CHARS_PER_TOKEN)
     }

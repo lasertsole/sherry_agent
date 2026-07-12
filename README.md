@@ -19,13 +19,13 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 ## 🚀 Key Features
 
 ### 1. 🧠 Deep Memory System (Context Engine + XpGraph)
-- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/README.md)) + long-term experience knowledge graph ([XpGraph](agent/tools/pub_base/xp_graph/README.md))
+- **Dual Memory Architecture**: Short-term session memory ([MesMemory](context_engine/README.md)) + long-term experience knowledge graph ([XpGraph](agent/tools/xp_graph/README.md))
 - **XpGraph (Experience Graph)**: Distillation-first knowledge graph that extracts high-signal, reusable experiences from task execution into structured nodes and edges
 - **Multi-Role Knowledge Bases**: Strategy-level graph shared by main agent + Commander (`default`), operation-level graph for Workers (`worker`)
 - **Dual-Path Recall**: Precise (vector/FTS5 → community expansion → PPR) + generalized (community vector → representatives) retrieval with reranking
 - **Community Detection & Summarization**: Leiden algorithm partitions the graph and generates summaries for efficient long-term retrieval
 - **Persistent Storage**: SQLite + FTS5 + vector embeddings, supporting cross-session knowledge inheritance
-- ▶️ _See the [Context Engine README](context_engine/README.md) and [XpGraph README](agent/tools/pub_base/xp_graph/README.md) for architecture, data models, and API details_
+- ▶️ _See the [Context Engine README](context_engine/README.md) and [XpGraph README](agent/tools/xp_graph/README.md) for architecture, data models, and API details_
 
 ### 2. 🛠️ Dynamic Skill System
 - **SKILL.md Standard**: Skills defined in standardized Markdown format — the Agent can autonomously read and learn new abilities
@@ -99,13 +99,13 @@ EMA_AI_agent/
 │   │   ├── file_tools/     # File I/O tools (read, write, patch, search)
 │   │   ├── skill_tools/    # Skill management tools (list, view, manage)
 │   │   ├── pub_base/       # Shared tool utilities & infrastructure
-│   │   │   └── xp_graph/   # Experience knowledge graph engine (XpGraph)
-│   │   │       ├── core.py     # XpGraphInstance factory, after_turn, ingest
-│   │   │       ├── store/      # SQLite CRUD, FTS5, vector storage
-│   │   │       ├── recaller/   # Dual-path recall (precise + generalized)
-│   │   │       ├── extractor/  # Dialogue knowledge extraction
-│   │   │       ├── graph/      # PageRank, community, dedup, maintenance
-│   │   │       └── format/     # XML assembly & system prompt generation
+│   │   ├── xp_graph/       # Experience knowledge graph engine (XpGraph)
+│   │   │   ├── core.py     # XpGraphInstance factory, after_turn, ingest
+│   │   │   ├── store/      # SQLite CRUD, FTS5, vector storage
+│   │   │   ├── recaller/   # Dual-path recall (precise + generalized)
+│   │   │   ├── extractor/  # Dialogue knowledge extraction
+│   │   │   ├── graph/      # PageRank, community, dedup, maintenance
+│   │   │   └── format/     # XML assembly & system prompt generation
 │   │   ├── mcp_plugin.py   # MCP plugin tool
 │   │   ├── web_search.py   # Web search tool
 │   │   ├── python_repl.py  # Python code execution (subprocess with timeout)
@@ -272,7 +272,7 @@ Each major subsystem has its own detailed README:
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
 | **Context Engine** | Short-term session message memory (MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **XpGraph** | Long-term experience knowledge graph | [EN](agent/tools/pub_base/xp_graph/README.md) · [ZH](agent/tools/pub_base/xp_graph/README.zh.md) |
+| **XpGraph** | Long-term experience knowledge graph | [EN](agent/tools/xp_graph/README.md) · [ZH](agent/tools/xp_graph/README.zh.md) |
 | **Subagent System** | Hierarchical task decomposition, parallel execution & experience distillation | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |

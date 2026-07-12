@@ -1,19 +1,173 @@
 import json
 import textwrap
 from loguru import logger
-from typing import Literal, Any
+from .recaller import Recaller
+from .format import assemble_context
 from pydantic import BaseModel, Field
-from runtime import state_register_mem
+from .store.db import get_db, resolve_db_path
+from .async_task_queue import async_task_queue
 from models.LLMs.main_llm import build_main_llm
+from langchain_core.tools import tool, BaseTool
+from langchain_core.embeddings import Embeddings
+from typing import Literal, Any, TypedDict, Annotated
+from .type import  ExtractionResult, GmNode, GmConfig
+from langgraph.prebuilt.tool_node import InjectedState
+from runtime import state_register_mem, state_register_db
+from models import build_embed_model, build_auxiliary_llm
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import SystemMessage, HumanMessage
-from .type import  ExtractionResult, GmNode
-from .async_task_queue import async_task_queue
-from langchain_core.embeddings import Embeddings
-from models import build_embed_model
+from . import CommunityResult, detect_communities, summarize_communities
+from .graph import MaintenanceResult, run_maintenance, invalidate_graph_cache
 from .store import delete_node, get_by_session, upsert_node, find_by_name, upsert_edge, UpsertResult, sync_node_embed
-from .graph import run_maintenance, MaintenanceResult
 
+
+def _build_config(role: str)-> GmConfig:
+    return GmConfig(
+        db_path=resolve_db_path(role).as_posix(),
+        compact_turn_count=7,
+        recall_max_nodes=6,
+        recall_max_depth=2,
+        fresh_tail_count=10,
+        dedup_threshold=0.90,
+        pagerank_damping=0.85,
+        pagerank_iterations=20,
+        embedding=build_embed_model(),
+        llm=build_auxiliary_llm(),
+    )
+
+FINALIZE_SYS = """You are the graph node finalization engine. Perform a final review of nodes generated in this session before it ends.
+Review all nodes from this session and execute the following three operations. Output strict JSON.
+
+1. Promote EVENT to SKILL:
+    If an EVENT node has general reusable value (not limited to a specific scenario), promote it to SKILL.
+    When promoting: rename to SKILL naming convention (tool-action), update content to SKILL plain text template format.
+    Write to promotedSkills array.
+
+2. Add Missing Edges:
+    Review all nodes holistically to find cross-node relationships that were hard to detect during single extraction.
+    Edge types allowed: USED_SKILL, SOLVED_BY, REQUIRES, PATCHES, CONFLICTS_WITH.
+    Strictly follow direction constraints: TASK->SKILL use USED_SKILL, EVENT->SKILL use SOLVED_BY.
+    Write to newEdges array.
+
+3. Mark Obsolete Nodes:
+    Old nodes invalidated by new discoveries in this session — write their node_id to the invalidations array.
+
+Return empty arrays for nothing to process. Return only JSON, no extra text.
+Format: {"promoted_skills":[{"type":"SKILL","name":"...","description":"...","content":"..."}],"new_edges":[{"from_node":"...","to_node":"...","type":"...","instruction":"...","condition":"..."}],"invalidations":["node-id"]}"""
+
+
+class Node(BaseModel):
+    """A knowledge graph node"""
+    type: Literal["TASK", "SKILL", "EVENT"] = Field(description="Node type")
+    name: str = Field(description="Node name")
+    description: str = Field(description="Node description")
+    content: str = Field(description="Node content")
+
+
+class PromotedSkill(Node):
+    """A skill promoted from an EVENT node"""
+    type: Literal["SKILL"]
+
+class Edge(BaseModel):
+    """A knowledge graph edge"""
+    from_node: str = Field(description="Edge source node name")
+    to_node: str = Field(description="Edge target node name")
+    type: str = Field(description="Edge type")
+    instruction: str = Field(description="Edge execution instruction")
+    condition: str | None = Field(default=None, description="Edge trigger condition")
+
+class FinalizeResult(BaseModel):
+    """Finalization result containing promoted skills, new edges, and invalidations"""
+    promoted_skills: list[PromotedSkill]
+    new_edges: list[Edge]
+    invalidations: list[str]
+
+
+def finalize_user_prompt(nodes: list[GmNode], summary: str) -> str:
+    """Build the finalization user prompt"""
+    nodes_summary = json.dumps([
+        {
+            'id': n.id,
+            'type': n.type.value if hasattr(n.type, 'value') else str(n.type),
+            'name': n.name,
+            'description': n.description,
+            'v': getattr(n, 'validated_count', 0)
+        }
+        for n in nodes
+    ], indent=2, ensure_ascii=False)
+
+    return textwrap.dedent(f"""\
+        <Session Nodes>
+
+        {nodes_summary}
+
+        <Graph Summary>
+        {summary}
+    """)
+
+
+async def finalize(session_nodes: list[GmNode], graph_summary: str) -> FinalizeResult:
+    """
+    Final review before session end
+
+    Args:
+        session_nodes: List of nodes in this session
+        graph_summary: Graph summary
+
+    Returns:
+        Result containing promoted skills, new edges, and invalidations
+    """
+    model = build_main_llm()
+    return model.with_structured_output(FinalizeResult, method='json_mode').invoke(
+        [SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))],
+        max_tokens=16384
+    )
+
+async def _rectification_and_standardization(session_id: str, role: str) -> None:
+    try:
+        db = get_db(role)
+        nodes: list[GmNode] = get_by_session(db, session_id)
+        recaller = Recaller(db, _build_config(role))
+        if nodes:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT name, type, validated_count, pagerank FROM gm_nodes ORDER BY pagerank DESC LIMIT 20")
+            top_nodes: list[dict[str, Any]] = [dict(r) for r in cursor.fetchall()]
+
+            summary_parts: list[str] = []
+            for n in top_nodes:
+                summary_parts.append(f"{n['type']}:{n['name']}(v{n['validated_count']},pr{n['pagerank']})")
+            summary: str = ", ".join(summary_parts)
+
+            fin = await finalize(session_nodes=nodes, graph_summary=summary)
+
+            for nc in fin.promoted_skills:
+                if nc.name and nc.content:
+                    upsert_node(db, {"type": "SKILL", "name": nc.name, "description": nc.description or "",
+                                          "content": nc.content}, session_id)
+
+            for ec in fin.new_edges:
+                from_node = find_by_name(db, ec.from_node)
+                to_node = find_by_name(db, ec.to_node)
+                if from_node and to_node:
+                    upsert_edge(db, {"from_id": from_node.id, "to_id": to_node.id, "type": ec.type,
+                                          "instruction": ec.instruction, "session_id": session_id})
+
+            for node_id in fin.invalidations:
+                delete_node(db, node_id)
+
+        embed: Embeddings | None = getattr(recaller, "embed", None)
+        llm = build_auxiliary_llm()
+        result: MaintenanceResult = await run_maintenance(db, _build_config(role), llm, embed)
+
+        top_pr_names = [f"{n['name']}({n['score']})" for n in result["pagerank"]["top_k"][:3]]
+        logger.debug(
+            f"[xp_graph:{role}] maintenance: {result['duration_ms']}ms, "
+            f"dedup={result['dedup']['merged']}, communities={result['community']['count']}, "
+            f"summaries={result['community_summaries']}, top_pr={', '.join(top_pr_names)}"
+        )
+    except Exception as e:
+        logger.error(f"[xp_graph:{role}] session_end error: {e}")
 
 # ─── ExperienceTrace Models ─────────────────────────────────────
 class Fix(BaseModel):
@@ -54,6 +208,10 @@ class ExperienceTrace(BaseModel):
     requires: list[str] | None = Field(default=None, description="Required skills or prerequisites")
 
 _XP_GRAPH_DRAFT: str = "xp_graph_draft"
+
+class RecallResult(TypedDict):
+    nodes: list[Any]
+    edges: list[Any]
 
 def update_draft(session_id: str, system_prompt: str, messages: list[BaseModel]) -> None:
     raw_state: ExperienceTrace | None = state_register_mem.get_state(session_id, "xp_graph_draft", None)
@@ -196,9 +354,74 @@ The input is a structured experience trace containing:
    4.3 Each edge's instruction must contain specific executable content"""
 
 
-def extract(
+XP_GRAPH_MAINTAIN_TURNS: str = "xp_graph_maintain_turns"
+MAINTAIN_INTERVAL: int = 7
+RECTIFICATION_AND_STANDARDIZATION_TURNS: str = "xp_graph_rectification_and_standardization_turns"
+RECTIFICATION_AND_STANDARDIZATION_INTERVAL: int = 13
+
+async def _maybe_maintain_communities(
+    db,
     session_id: str,
     role: str,
+) -> None:
+    """Run community detection + summarization every MAINTAIN_INTERVAL turns.
+
+    This is a periodic maintenance task triggered by turn count stored in state_register_db.
+    """
+    xp_graph_maintain_turns: int = state_register_db.get_state(session_id, XP_GRAPH_MAINTAIN_TURNS, 0) + 1
+    logger.debug(f"[skill_memory] summarize_communities turn {xp_graph_maintain_turns} / {MAINTAIN_INTERVAL}")
+    if xp_graph_maintain_turns >= MAINTAIN_INTERVAL:
+        state_register_db.set_state(session_id, XP_GRAPH_MAINTAIN_TURNS, 0)
+
+        try:
+            invalidate_graph_cache()
+            comm: CommunityResult = detect_communities(db)
+
+            # Generate summaries immediately after each community detection (needs LLM), ensuring generalized recall is available
+            if comm["communities"] and len(comm["communities"]) > 0:
+                recaller = Recaller(db, _build_config(role))
+                embed: Embeddings = getattr(recaller, 'embed', None)
+                llm = build_auxiliary_llm()
+                summaries = await summarize_communities(
+                    db,
+                    comm["communities"],
+                    llm,
+                    embed
+                )
+                logger.info(
+                    f"[skill_memory] community summaries refreshed: "
+                    f"{summaries} summaries"
+                )
+
+        except Exception as e:
+            logger.error(f"[skill_memory] periodic maintenance failed: {e}")
+    else:
+        state_register_db.set_state(session_id, XP_GRAPH_MAINTAIN_TURNS, xp_graph_maintain_turns)
+
+
+async def _maybe_run_rectification(session_id: str, role: str) -> None:
+    """Run rectification_and_standardization every RECTIFICATION_AND_STANDARDIZATION_INTERVAL turns.
+
+    This is a periodic maintenance task triggered by turn count stored in state_register_db.
+    """
+    xp_graph_rectification_and_standardization_turns: int = (
+        state_register_db.get_state(session_id, RECTIFICATION_AND_STANDARDIZATION_TURNS, 0) + 1
+    )
+    logger.info(
+        f"[skill_memory] rectification_and_standardization turn "
+        f"{xp_graph_rectification_and_standardization_turns} / {RECTIFICATION_AND_STANDARDIZATION_INTERVAL}"
+    )
+    if xp_graph_rectification_and_standardization_turns % RECTIFICATION_AND_STANDARDIZATION_INTERVAL == 0:
+        state_register_db.set_state(session_id, RECTIFICATION_AND_STANDARDIZATION_TURNS, 0)
+        await _rectification_and_standardization(session_id=session_id, role=role)
+    else:
+        state_register_db.set_state(session_id, RECTIFICATION_AND_STANDARDIZATION_TURNS,
+                                    xp_graph_rectification_and_standardization_turns)
+
+
+async def extract(
+    session_id: str,
+    role: Literal["default", "commander", "worker"],
 ) -> None:
     """
     Convert the ExperienceTrace draft stored in session state into an
@@ -217,7 +440,7 @@ def extract(
 
     Args:
         session_id: Session identifier.
-        role: Role name (e.g. "default", "worker").
+        role: Role name (e.g. "default", "commander", "worker").
 
     Returns:
         ExtractionResult containing extracted nodes and edges.
@@ -241,12 +464,10 @@ def extract(
     result: ExtractionResult = structured_llm.invoke({"trace": serialized})
 
     # ── Resolve db from role ──
-    from .store.db import get_db
     db = get_db(role)
 
     # ── Persist extracted nodes/edges ──
     from loguru import logger
-    from .graph import invalidate_graph_cache
 
     # ── Node dedup & upsert ──
     name_to_id: dict[str, str] = {}
@@ -300,133 +521,77 @@ def extract(
 
     logger.debug(f"[xp_graph:{role}] persisted extraction: {len(result.nodes)} nodes, {len(result.edges)} edges")
 
-# ─── Finalization System Prompt ───────────────────────────────────
-FINALIZE_SYS = """You are the graph node finalization engine. Perform a final review of nodes generated in this session before it ends.
-Review all nodes from this session and execute the following three operations. Output strict JSON.
+    await _maybe_maintain_communities(db, session_id, role)
 
-1. Promote EVENT to SKILL:
-    If an EVENT node has general reusable value (not limited to a specific scenario), promote it to SKILL.
-    When promoting: rename to SKILL naming convention (tool-action), update content to SKILL plain text template format.
-    Write to promotedSkills array.
-
-2. Add Missing Edges:
-    Review all nodes holistically to find cross-node relationships that were hard to detect during single extraction.
-    Edge types allowed: USED_SKILL, SOLVED_BY, REQUIRES, PATCHES, CONFLICTS_WITH.
-    Strictly follow direction constraints: TASK->SKILL use USED_SKILL, EVENT->SKILL use SOLVED_BY.
-    Write to newEdges array.
-
-3. Mark Obsolete Nodes:
-    Old nodes invalidated by new discoveries in this session — write their node_id to the invalidations array.
-
-Return empty arrays for nothing to process. Return only JSON, no extra text.
-Format: {"promoted_skills":[{"type":"SKILL","name":"...","description":"...","content":"..."}],"new_edges":[{"from_node":"...","to_node":"...","type":"...","instruction":"...","condition":"..."}],"invalidations":["node-id"]}"""
+    await _maybe_run_rectification(session_id, role)
 
 
-class Node(BaseModel):
-    """A knowledge graph node"""
-    type: Literal["TASK", "SKILL", "EVENT"] = Field(description="Node type")
-    name: str = Field(description="Node name")
-    description: str = Field(description="Node description")
-    content: str = Field(description="Node content")
+class XPRetrieveSchema(BaseModel):
+    query: str = Field(description="Query string used to search the experience knowledge graph for relevant methods, skills, or error solutions")
 
+@tool("xp_retrieve", args_schema=XPRetrieveSchema)
+async def xp_retrieve_tool(query: str, role: Annotated[str, InjectedState("session_id")] = "")-> str:
+    """Search the experience knowledge graph for relevant methods, then summarize them into a readable answer.
 
-class PromotedSkill(Node):
-    """A skill promoted from an EVENT node"""
-    type: Literal["SKILL"]
+    Recalls similar historical tasks, reusable skills, and past error solutions
+    from the experience knowledge graph, then filters and organizes the results
+    into a concise answer. Returns "No relevant methods found." when nothing
+    matches the query."""
+    db = get_db(role)
 
-class Edge(BaseModel):
-    """A knowledge graph edge"""
-    from_node: str = Field(description="Edge source node name")
-    to_node: str = Field(description="Edge target node name")
-    type: str = Field(description="Edge type")
-    instruction: str = Field(description="Edge execution instruction")
-    condition: str | None = Field(default=None, description="Edge trigger condition")
+    recaller = Recaller(db, _build_config(role))
+    rec: RecallResult = await recaller.recall(query)
+    nodes = rec["nodes"]
+    edges = rec["edges"]
 
-class FinalizeResult(BaseModel):
-    """Finalization result containing promoted skills, new edges, and invalidations"""
-    promoted_skills: list[PromotedSkill]
-    new_edges: list[Edge]
-    invalidations: list[str]
+    if not nodes:
+        return "No relevant methods found."
 
-def finalize_user_prompt(nodes: list[GmNode], summary: str) -> str:
-    """Build the finalization user prompt"""
-    nodes_summary = json.dumps([
-        {
-            'id': n.id,
-            'type': n.type.value if hasattr(n.type, 'value') else str(n.type),
-            'name': n.name,
-            'description': n.description,
-            'v': getattr(n, 'validated_count', 0)
-        }
-        for n in nodes
-    ], indent=2, ensure_ascii=False)
-
-    return textwrap.dedent(f"""\
-        <Session Nodes>
-    
-        {nodes_summary}
-        
-        <Graph Summary>
-        {summary}
-    """)
-
-async def finalize(session_nodes: list[GmNode], graph_summary: str) -> FinalizeResult:
-    """
-    Final review before session end
-
-    Args:
-        session_nodes: List of nodes in this session
-        graph_summary: Graph summary
-
-    Returns:
-        Result containing promoted skills, new edges, and invalidations
-    """
-    model = build_main_llm()
-    return model.with_structured_output(FinalizeResult, method='json_mode').invoke(
-        [SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))],
-        max_tokens=16384
+    assemble_result = assemble_context(
+        db,
+        recalled_nodes=nodes,
+        recalled_edges=edges
     )
+    xml = assemble_result["xml"]
 
-
-async def rectification_and_standardization(self, session_id: str) -> None:
+    llm = build_auxiliary_llm(temperature=0.0)
+    filter_prompt = (
+        "You are an experience knowledge graph query assistant. Below is the recalled node and edge data (XML format).\n\n"
+        "Graph structure:\n"
+        "- Three node types: SKILL (reusable operational method), TASK (historical task), EVENT (historical error and solution)\n"
+        "- Nodes are grouped by community; knowledge within the same community is related\n"
+        "- Edge types:\n"
+        "  · USED_SKILL: A TASK used a SKILL\n"
+        "  · SOLVED_BY: An EVENT was resolved by a SKILL\n"
+        "  · REQUIRES: One SKILL depends on another SKILL\n"
+        "  · PATCHES: A newer SKILL corrects an older one\n"
+        "  · CONFLICTS_WITH: Two SKILLs are mutually exclusive\n\n"
+        "Filter the XML data below based on the user's question and return only the relevant methods.\n"
+        f"User question: {query}\n\n"
+        "Recalled knowledge graph data:\n"
+        f"{xml}\n\n"
+        "Rules:\n"
+        "1. Keep only nodes and edges directly relevant to the user's question\n"
+        "2. If relevant content is found, present it in clear, concise language\n"
+        "3. If no relevant method is found, reply with exactly: No relevant methods found.\n"
+        "4. Do not fabricate information — base your answer solely on the recalled data"
+    )
     try:
-        nodes: list[GmNode] = get_by_session(self.db, session_id)
-        if nodes:
-            cursor = self.db.cursor()
-            cursor.execute(
-                "SELECT name, type, validated_count, pagerank FROM gm_nodes ORDER BY pagerank DESC LIMIT 20")
-            top_nodes: list[dict[str, Any]] = [dict(r) for r in cursor.fetchall()]
-
-            summary_parts: list[str] = []
-            for n in top_nodes:
-                summary_parts.append(f"{n['type']}:{n['name']}(v{n['validated_count']},pr{n['pagerank']})")
-            summary: str = ", ".join(summary_parts)
-
-            fin = await self.extractor.finalize(session_nodes=nodes, graph_summary=summary)
-
-            for nc in fin.promoted_skills:
-                if nc.name and nc.content:
-                    upsert_node(self.db, {"type": "SKILL", "name": nc.name, "description": nc.description or "",
-                                          "content": nc.content}, session_id)
-
-            for ec in fin.new_edges:
-                from_node = find_by_name(self.db, ec.from_node)
-                to_node = find_by_name(self.db, ec.to_node)
-                if from_node and to_node:
-                    upsert_edge(self.db, {"from_id": from_node.id, "to_id": to_node.id, "type": ec.type,
-                                          "instruction": ec.instruction, "session_id": session_id})
-
-            for node_id in fin.invalidations:
-                delete_node(self.db, node_id)
-
-        embed: Embeddings | None = getattr(self.recaller, "embed", None)
-        result: MaintenanceResult = await run_maintenance(self.db, self.config, self.config.llm, embed)
-
-        top_pr_names = [f"{n['name']}({n['score']})" for n in result["pagerank"]["top_k"][:3]]
-        logger.debug(
-            f"[xp_graph:{self.role}] maintenance: {result['duration_ms']}ms, "
-            f"dedup={result['dedup']['merged']}, communities={result['community']['count']}, "
-            f"summaries={result['community_summaries']}, top_pr={', '.join(top_pr_names)}"
-        )
+        response = await llm.ainvoke(filter_prompt)
+        if hasattr(response, 'content'):
+            raw = response.content
+            result = raw[0] if isinstance(raw, list) else raw
+        else:
+            result = str(response)
+        result = str(result).strip()
+        if "No relevant methods found." in result:
+            return "No relevant methods found."
+        return result
     except Exception as e:
-        logger.error(f"[xp_graph:{self.role}] session_end error: {e}")
+        logger.error(f"[xp_retrieve] LLM filtering failed: {e}")
+        return xml or "No relevant methods found."
+
+def build_xp_retrieve_tool()-> BaseTool:
+    xp_retrieve_tool.handle_tool_error = True
+    xp_retrieve_tool.metadata = {"idempotent": True}
+    return xp_retrieve_tool

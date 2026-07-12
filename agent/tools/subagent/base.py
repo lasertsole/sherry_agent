@@ -172,7 +172,7 @@ class SubagentManager:
             # update draft and extract experience
             state = await agent.aget_state(config=build_agent_config(commander_session_id))
             update_draft(commander_session_id, get_commander_system_prompt(), state.values.get("messages", []))
-            extract(commander_session_id, "commander")
+            await extract(commander_session_id, "commander")
 
             structured_response: SubAgentOutput | None = agent_res.get("structured_response")
             logger.debug("Subagent [{}] step 3/4: structured_response={}", task_id,
