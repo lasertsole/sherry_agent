@@ -56,10 +56,15 @@ class ExperienceTrace(BaseModel):
 _XP_GRAPH_DRAFT: str = "xp_graph_draft"
 
 def update_draft(session_id: str, system_prompt: str, messages: list[BaseModel]) -> None:
-    additional_prompt: str =  state_register_mem.get_state(session_id, "xp_graph_draft", "")
+    raw_state: ExperienceTrace | None = state_register_mem.get_state(session_id, "xp_graph_draft", None)
+    if raw_state is None:
+        additional_prompt: str = ""
+    else:
+        # Already an ExperienceTrace object — serialize it back to text
+        additional_prompt = _serialize_draft(raw_state)
 
     if additional_prompt.strip() != "":
-        additional_prompt = "Already extracted structured experience data:\n" + additional_prompt + "\nModify the existing structured experience based on actual conditions\n\n"
+        additional_prompt = f"Already extracted structured experience data:\n{additional_prompt}\nModify the existing structured experience based on actual conditions\n\n"
 
     distill_prompt: str = (
         "Review the conversation messages above and extract structured ExperienceTrace data.\n"
@@ -81,9 +86,9 @@ def update_draft(session_id: str, system_prompt: str, messages: list[BaseModel])
     )
     parser = PydanticOutputParser(pydantic_object=ExperienceTrace)
     json_mode_llm = build_main_llm()
-    json_mode_llm.bind(response_format={"type": "json_object"})
+    json_mode_llm = json_mode_llm.bind(response_format={"type": "json_object"})
     raw_basemodel = json_mode_llm.invoke(
-        input={"messages": [SystemMessage(content=system_prompt), *messages, HumanMessage(content=distill_prompt)]}
+        input=[SystemMessage(content=system_prompt), *messages, HumanMessage(content=distill_prompt)]
     )
     experience_trace: ExperienceTrace = parser.parse(raw_basemodel.content)
     logger.debug("update_draft experience_trace is {}", experience_trace)
