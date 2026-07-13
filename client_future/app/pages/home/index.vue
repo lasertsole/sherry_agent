@@ -118,7 +118,7 @@
           </template>
         </div>
         <!-- 输入框 -->
-        <div class="flex-1"></div>
+        <ChatInputBox></ChatInputBox>
       </div>
     </div>
   </div>
