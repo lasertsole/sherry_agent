@@ -8,13 +8,13 @@
 
 ## 概述
 
-**Subagent System** 使 AI Agent 能够将复杂任务分解，在后台并行执行子任务，并通过消息总线异步返回结果。它具备**经验知识图谱（xp_graph）闭环**：草稿 → 蒸馏 → 写入 → 召回 → 组装注入。
+**Subagent System** 使 AI Agent 能够将复杂任务分解，在后台并行执行子任务，并通过消息总线异步返回结果。它具备**经验知识图谱闭环**：草稿 → 蒸馏 → 写入 → 召回 → 组装注入。
 
 核心层：
 
 - **`SubagentManager`** — 单例编排器，管理后台子代理任务的生命周期。
 - **`Commander`** — 按任务创建的 LangGraph 智能体，负责计划、分解和调度工作给 Worker。
-- **Distiller** — 任务结束后蒸馏引擎，将可复用经验提取写入 xp_graph。
+- **Distiller** — 任务结束后蒸馏引擎，将可复用经验提取写入知识图谱。
 - **Draft 工具** — Agent 可调用的工具，用于在任务执行中记录关键发现。
 
 ## 架构
@@ -28,7 +28,7 @@
 │  (单例，生命周期编排器)                                       │
 │                                                              │
 │  _run_subagent() 流程:                                      │
-│    1. 召回 xp_graph → 注入 AIMessage 到 Commander          │
+│    1. 召回知识图谱 → 注入 AIMessage 到 Commander          │
 │    2. Commander 执行任务 (工具: todo_writer, worker, draft) │
 │    3. 发布结果到消息总线 (方案 C)                            │
 │    4. 蒸馏经验写入知识图谱                                   │
@@ -72,12 +72,12 @@
                         │
                         ▼ 任务结束后
 ┌──────────────────────────────────────────────────────────────┐
-│              经验知识图谱 (xp_graph)                          │
+│              经验知识图谱                                     │
 │                                                              │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │  Draft 工具  │→ │  蒸馏器     │→ │  xp_graph   │         │
-│  │(任务中记录  │  │(辅助LLM     │  │(节点/边     │         │
-│  │ 关键发现)    │  │  提取经验)  │  │ 向量/FTS5)  │         │
+│  │  Draft 工具  │→ │  蒸馏器     │→ │  知识       │         │
+│  │(任务中记录  │  │(辅助LLM     │  │  图谱       │         │
+│  │ 关键发现)    │  │  提取经验)  │  │(节点/边     │         │
 │  └─────────────┘  └─────────────┘  └──────┬──────┘        │
 │                                              │ 召回          │
 │  ┌───────────────────────────────────────────┘               │
@@ -85,8 +85,8 @@
 │  └───────────────────────────────────────────────────────────│
 │                                                              │
 │  DB 角色:                                                    │
-│    default → store/xp_graph/xp_graph.db (策略级)            │
-│    worker  → store/xp_graph/worker/xp_graph.db (操作级)     │
+│    default → 经验图谱（策略级）                              │
+│    worker  → 经验图谱（操作级）                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -125,7 +125,7 @@ subagent/
 1. 任务执行: Commander/Worker 调用 draft_tool → state_register_db
 2. 任务完成: bus.publish → distill_and_ingest → Register.clear_all
 3. 蒸馏: auxiliary_llm 从草稿+结果中提取节点/边
-4. 写入: 策略级 → xp_graph("default"), 操作级 → xp_graph("worker")
+4. 写入: 策略级 → 知识图谱("default"), 操作级 → 知识图谱("worker")
 5. 下次任务: recall(task) → assemble_context → AIMessage 注入
 ```
 
@@ -162,14 +162,14 @@ Worker 草稿在蒸馏前被合并到 Commander session 中。
 
 ```python
 messages = [HumanMessage(content=task)]
-# 从 xp_graph 召回
+# 从知识图谱召回
 if recall_result["nodes"]:
     assembled = assemble_context(db, nodes, edges)
     messages.append(AIMessage(content=f"徊\n{system_prompt}\n\n{xml}\n徊"))
 ```
 
-- **Commander**: 从 `xp_graph("default")` 召回（策略级）
-- **Worker**: 从 `xp_graph("worker")` 召回（操作级）
+- **Commander**: 从经验图谱召回（策略级）
+- **Worker**: 从经验图谱召回（操作级）
 
 ## 数据模型
 
@@ -209,7 +209,7 @@ spawn(task, session_id)
 
 _run_subagent(session_id, task_id, task, label)
   │
-  ├─ 召回 commander xp_graph → 构建 messages（含 AIMessage 知识注入）
+  ├─ 召回 commander 知识图谱 → 构建 messages（含 AIMessage 知识注入）
   ├─ 构建 Commander 智能体
   ├─ agent.ainvoke({messages: [HumanMessage(task), AIMessage(knowledge)]})
   ├─ 使用 subagent_announce.md 模板渲染结果
@@ -266,14 +266,14 @@ Worker 是 `codeact_agent` 实例（非 LangGraph agent），具备：
 - **工具**: `build_worker_tools()`（除 subagent 特有工具外的所有工具，含 `draft`）
 - **中间件**: `WorkerSummarization` + `HeartbeatStaleness` + `IterationBudget`
 - **响应格式**: `SubAgentOutput`
-- **xp_graph 注入**: 执行前从 `xp_graph("worker")` 召回操作级经验
+- **知识图谱注入**: 执行前从知识图谱召回操作级经验
 - **草稿合并**: Worker 草稿在 `finally` 块中合并到 Commander session
 
 ## 常见问题
 
-### 为什么蒸馏器从 xp_graph 移出？
+### 为什么蒸馏器从知识图谱模块移出？
 
-`distiller.py` 原本在 `xp_graph/extractor/` 中，但它引用了 `draft.py`（subagent 层），形成了反向依赖：`xp_graph`（基础设施）→ `subagent`（业务层）。将蒸馏器移到 `subagent/` 使依赖方向变为单向：`subagent/distiller` → `xp_graph` ✓
+`distiller.py` 原本在知识图谱抽取器中，但它引用了 `draft.py`（subagent 层），形成了反向依赖：知识图谱基础设施 → subagent 业务层。将蒸馏器移到 `subagent/` 使依赖方向变为单向：`subagent/distiller` → 知识图谱 ✓
 
 ### 为什么用方案 C（发布 → 蒸馏 → 清理）？
 
@@ -295,7 +295,7 @@ Worker 是 `codeact_agent` 实例（非 LangGraph agent），具备：
 | LLM | `main_llm`（共享），`auxiliary_llm`（蒸馏） |
 | 检查点 | `InMemorySaver` |
 | 中间件 | `@before_model` / `@after_agent` 装饰器 |
-| 知识图谱 | `xp_graph`（SQLite + FTS5 + 向量搜索 + PageRank） |
+| 知识图谱 | 经验图谱（SQLite + FTS5 + 向量搜索 + PageRank） |
 | 异步 | `asyncio.create_task`, `asyncio.gather`, `asyncio.wait_for` |
 | 数据校验 | Pydantic v2 |
 | 模板 | 自定义 `render_template_file()`（Jinja2 风格） |

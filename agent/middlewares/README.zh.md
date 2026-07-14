@@ -56,7 +56,7 @@ Agent Middlewares 基于 LangChain 的中间件体系（`AgentMiddleware` / `Sum
 5. **工具循环防护** — 自动检测并阻止同一工具在单轮内被反复调用
 6. **工具调用标准化** — 修复工具调用/结果配对不一致，清理孤立消息
 7. **心跳超时监控** — 定期检测 Worker Agent 是否有进展，无进展时自动终止，防止僵尸 Agent 占用资源
-8. **知识图谱维护** — 每轮推理后调用 `xp_graph.after_turn()` 进行知识图谱的周期性维护
+8. **知识图谱维护** — 每轮推理后调用知识图谱的 `after_turn()` 进行周期性维护
 9. **多模态图片处理** — 将 base64 编码的图片解码为临时文件，推理后自动清理
 
 ---
@@ -109,7 +109,7 @@ Agent 执行流水线：
 │     │  ├─ 去除增强前缀，还原原始用户输入                      │
 │     │  ├─ asyncio.create_task(after_turn())   → 异步学习     │
 │     │  ├─ asyncio.create_task(add_messages()) → 持久化       │
-│     │  └─ xp_graph.after_turn(session_id)    → 知识图谱维护  │
+│     │  └─ 知识图谱维护 (after_turn)                       │
 │     ├─ HeartbeatStaleness.aafter_agent（仅 Worker Agent）     │
 │     │  └─ 停止心跳定时器                                     │
 │     └─ MultimodalProcessor.aafter_agent                      │
@@ -238,7 +238,7 @@ async def _build_turn_prompt(self, query_text: str) -> None:
    └─ add_messages(session_id, messages)
        └─ 持久化到 MesMemory SQLite 存储
    └─ await asyncio.gather(task1, task2)
-8. xp_graph.after_turn(session_id) → 知识图谱周期性维护
+8. 知识图谱维护 (after_turn(session_id)) → 周期性维护
    └─ 包括修剪过时节点、更新边权重等
    └─ 失败时仅 debug 级别日志，不影响 Agent 流程
 ```
@@ -251,7 +251,7 @@ async def _build_turn_prompt(self, query_text: str) -> None:
 | 上下文窗口管理 | 存储前去除增强前缀 |
 | 工具调用完整性 | `sanitize_tool_use_result_pairing` 修复不均衡配对 |
 | 多格式用户输入 | 与 `abefore_agent` 同理处理 `str`、`dict`、`list[dict]` |
-| 知识图谱维护 | `xp_graph.after_turn()` 在 nudge 后调用，try/except 包裹 |
+| 知识图谱维护 | `after_turn()` 在 nudge 后调用，try/except 包裹 |
 
 ---
 
@@ -624,7 +624,7 @@ processor = MultimodalProcessor(session_id="session_001")
 | **触发时机** | 模型调用前 | Agent 前 | 每次工具调用（`awrap_tool_call`） | 工具返回后（`awrap_after_tool`） | Agent 前后 + 每次模型/工具调用 | Agent 前后 | Agent 前后 |
 | **核心操作** | 压缩 + 偏好提取 | 消息配对修复 | 三级防护（warn/block/halt） | 迭代计数 + 强制结束 | 心跳监控 + 超时终止 | 图片解码 + 临时文件清理 | 上下文增强 + 持久化 + 知识图谱维护 |
 | **阻塞性** | 同步阻塞 | 同步 | 同步 | 同步 | 异步定时器 | 同步 | 异步非阻塞（after 部分） |
-| **依赖** | MesMemory、`memory_store` | `sanitize_tool_use_result_pairing` | 无 | 无 | `timer_call_register`、`state_register_mem` | PIL (Pillow) | Context Engine、`xp_graph` |
+| **依赖** | MesMemory、`memory_store` | `sanitize_tool_use_result_pairing` | 无 | 无 | `timer_call_register`、`state_register_mem` | PIL (Pillow) | Context Engine、知识图谱 |
 | **频率** | 仅上下文过长时 | 每轮 Agent 推理 | 每次工具调用 | 每次工具返回 | 定时器周期 | 每轮 Agent 推理 | 每轮 Agent 推理 |
 | **适用范围** | 主 Agent | 主 Agent | 主 Agent | 主 Agent | **仅 Worker Agent** | 主 Agent | 主 Agent |
 
@@ -644,7 +644,7 @@ sequenceDiagram
     participant LLM
     participant Guard as ToolGuardrails
     participant HB as HeartbeatStaleness
-    participant XPG as xp_graph
+    participant KG as 知识图谱
 
     User->>Agent: 发送消息
     Agent->>Norm: abefore_agent(state, runtime)
@@ -726,8 +726,8 @@ sequenceDiagram
             CEHook->>CE: after_turn(session_id, messages)
             CEHook->>CE: add_messages(session_id, messages)
         end
-        CEHook->>XPG: xp_graph.after_turn(session_id)
-        XPG-->>CEHook: 知识图谱维护完成（或静默失败）
+        CEHook->>KG: after_turn(session_id)
+        KG-->>CEHook: 知识图谱维护完成（或静默失败）
     end
     
     Agent->>Proc: aafter_agent(state, runtime)
@@ -752,7 +752,7 @@ sequenceDiagram
 | **LLM 推理（每次模型调用）** | — | — | — | — | 递增迭代计数器；若 killed 则抛 HeartbeatTimeoutError | — | — |
 | **LLM 推理（每次工具调用）** | — | — | 三级判定（warn/block/halt） | — | 记录当前工具；若 killed 则抛 HeartbeatTimeoutError | — | — |
 | **After Tool** | — | — | 注册工具执行结果 | 自增迭代计数器 | 清除当前工具标记 | — | — |
-| **After Agent** | 存储摘要结果 | 更新 last_names 跟踪 | — | — | 停止心跳定时器 | 扫描 mutil_temp → 删除超 7 天文件 | 提取最后一轮 → 清理工具配对 → 还原输入 → 异步持久化 → xp_graph 维护 |
+| **After Agent** | 存储摘要结果 | 更新 last_names 跟踪 | — | — | 停止心跳定时器 | 扫描 mutil_temp → 删除超 7 天文件 | 提取最后一轮 → 清理工具配对 → 还原输入 → 异步持久化 → 知识图谱维护 |
 
 ---
 
@@ -850,7 +850,7 @@ awrap_tool_call(request, handler)  ← HeartbeatStaleness
 
 ### 8. 知识图谱周期性维护
 
-`ContextEngineHook.aafter_agent` 在 nudge 逻辑之后调用 `xp_graph.after_turn(session_id)`，对知识图谱进行周期性维护（如修剪过时节点、更新边权重）。该调用使用 try/except 包裹，失败时仅记录 debug 级别日志，不影响 Agent 主流程。
+`ContextEngineHook.aafter_agent` 在 nudge 逻辑之后调用知识图谱的 `after_turn(session_id)`，对知识图谱进行周期性维护（如修剪过时节点、更新边权重）。该调用使用 try/except 包裹，失败时仅记录 debug 级别日志，不影响 Agent 主流程。
 
 ### 9. 分段式前处理编排
 
@@ -1045,7 +1045,7 @@ await hook.abefore_agent(state, runtime)
 
 # ... LLM 推理之后 ...
 await hook.aafter_agent(state, runtime)
-# → 对话持久化到 MesMemory，Skill Memory 更新，xp_graph 维护
+# → 对话持久化到 MesMemory，Skill Memory 更新，知识图谱维护
 ```
 
 ### 独立使用 Summarization
@@ -1165,9 +1165,9 @@ Summarization 中间件在处理前克隆消息列表，以避免对原始 `stat
 
 空闲状态（无工具运行）使用更严格的阈值（7 周期 ≈ 7 分钟），因为此时 Agent 既没有在调用工具也没有在生成回复，极可能已卡死。工具执行中使用更宽松的阈值（20 周期 ≈ 20 分钟），因为某些工具（如终端命令、大文件读取、网络请求）可能需要较长时间完成。
 
-### Q10: xp_graph.after_turn 失败会影响 Agent 吗？
+### Q10: 知识图谱维护失败会影响 Agent 吗？
 
-不会。`xp_graph.after_turn(session_id)` 调用被 try/except 包裹，失败时仅记录 debug 级别日志。知识图谱维护是非关键的后台优化操作，不应影响 Agent 的正常推理流程。
+不会。`after_turn(session_id)` 调用被 try/except 包裹，失败时仅记录 debug 级别日志。知识图谱维护是非关键的后台优化操作，不应影响 Agent 的正常推理流程。
 
 ### Q11: `StateRegisterMeM` 和 `StateRegisterDB` 为什么要加 `_initialized` 守卫？
 
@@ -1183,7 +1183,7 @@ Summarization 中间件在处理前克隆消息列表，以避免对原始 `stat
 | **Agent 运行时** | LangGraph `Runtime` |
 | **消息模型** | LangChain `BaseMessage` / `SystemMessage` / `HumanMessage` / `AIMessage` / `RemoveMessage` |
 | **记忆系统** | Context Engine（Skill Memory Graph + MesMemory） |
-| **知识图谱维护** | `xp_graph.after_turn()` — 周期性节点修剪和边权重更新 |
+| **知识图谱维护** | `after_turn()` — 周期性节点修剪和边权重更新 |
 | **存储（MesMemory）** | SQLite + FTS5 |
 | **存储（Memory Store）** | 磁盘 markdown 文件（`.md`），加载到内存单例 |
 | **状态寄存器** | `StateRegisterMeM`（内存）+ `StateRegisterDB`（SQLite），`_initialized` 守卫防重复初始化 |

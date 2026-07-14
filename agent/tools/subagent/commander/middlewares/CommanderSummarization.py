@@ -3,7 +3,6 @@ from langgraph.typing import ContextT
 from typing_extensions import override
 from typing import Any, Awaitable, Callable, cast
 from langchain.agents import AgentState
-from agent.tools.xp_graph import update_draft
 from langchain.agents.middleware.types import ResponseT
 from langchain_core.messages import AnyMessage, BaseMessage, AIMessage, RemoveMessage
 from langchain.agents.middleware import SummarizationMiddleware, ModelRequest, ModelResponse, ExtendedModelResponse
@@ -34,8 +33,6 @@ class CommanderSummarization(SummarizationMiddleware):
         system_prompt: str = request.system_prompt or ""
         messages: list[AnyMessage] = request.messages
 
-        update_draft(session_id, system_prompt, cast("list[Any]", messages))
-
         res: dict[str, Any] | None = super().before_model(request.state, cast("Any", request.runtime))
         if res is None:
             return handler(request)
@@ -56,8 +53,6 @@ class CommanderSummarization(SummarizationMiddleware):
         session_id: str = self._get_session_or_raise(request.state)
         system_prompt: str = request.system_prompt or ""
         messages: list[AnyMessage] = request.messages
-
-        update_draft(session_id, system_prompt, cast("list[Any]", messages))
 
         res: dict[str, Any] | None = await super().abefore_model(request.state, cast("Any", request.runtime))
         if res is None:

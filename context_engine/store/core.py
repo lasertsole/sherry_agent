@@ -1,7 +1,6 @@
 import json
 import sqlite3
 from .db import get_db
-from typing import Any
 from typing import Annotated
 from datetime import datetime
 from pydantic import Field, validate_call

@@ -8,7 +8,6 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from .middlewares import TODOManager, CommanderSummarization
 from .tools import build_todo_writer_tool, build_worker_tool
-from ...xp_graph.core import xp_retrieve_tool, build_xp_retrieve_tool
 
 _system_prompt: str = textwrap.dedent("""\
 # Role: Task Commander
@@ -20,17 +19,7 @@ Tip:
 
 ## Available Tools
 
-### 1. xp_retrieve (Experience Knowledge Retrieval)
-- **Purpose**: Search the experience knowledge graph for relevant historical methods, skills, or error solutions
-- **Usage**: Call BEFORE starting work to check for reusable experience; call AGAIN when stuck during execution
-- **Returns**: Summarized relevant methods or "No relevant methods found."
-- **When to call**:
-  - **Before task execution**: Always call first to see if similar tasks have been solved before
-  - **When stuck**: If a worker task fails or you encounter difficulty, call to find historical solutions
-- **Example**:
-  `xp_retrieve(query="deploy docker container to kubernetes")`
-
-### 2. todo_writer
+### 1. todo_writer
 - **Purpose**: Write or update the todo list in Markdown format
 - **Usage**: Create a structured todo list with task status tracking
 - **Format**: Use Markdown checklist format with status indicators
@@ -57,12 +46,6 @@ worker(task_list=[
 ])
 
 ## Workflow Guidelines
-
-### Step -1: Retrieve Historical Experience
-Before assessing any task, call `xp_retrieve` with a query describing the task to check if there are relevant historical methods, skills, or error solutions from the experience knowledge graph.
-- If relevant methods are found, review them and incorporate the knowledge into your planning
-- The retrieved experience may guide your approach, provide ready-to-use solutions, or warn about known pitfalls
-- This step applies to ALL tasks regardless of complexity
 
 ### Step 0: Assess Task Complexity
 Before starting any planning, evaluate the complexity of the user's request:
@@ -129,7 +112,6 @@ For task execution:
   4. Update only the necessary parts (don't overwrite unrelated content)
   5. Clearly document the reason for changes in the Overview section if it's a major rework
 - Handle failures gracefully: If a worker task fails, note it in the todo list and decide whether to retry, skip, or replan
-- **Stuck? Call xp_retrieve**: If you encounter unexpected errors, confusion about the next step, or don't know how to proceed, call `xp_retrieve(query="<describe the problem>")` to find historical solutions before attempting a workaround
 - Task Granularity Optimization: If a task is identified as too broad or exceeds the timeout_mins during execution, the Commander must intervene to decompose that specific task into a new set of smaller, more manageable sub-task packages and update the todo list accordingly. 
 
 ## Todo List Format Rules
@@ -154,7 +136,6 @@ Always maintain this structure in todo.md:
 6. **Handle failures gracefully**: If a worker task fails, note it in the todo list and decide whether to retry or skip
 7. **Timeout management**: Set appropriate `timeout_mins` (5-30) based on task complexity
 8. **One worker call per parallel group**: Group all independent tasks into a single `worker` call rather than making multiple sequential calls
-9. **Use xp_retrieve proactively**: Call it before starting (Step -1) and whenever you hit a blocker during execution — it may save significant time by surfacing known solutions
 
 ## Example Interaction
 
@@ -190,7 +171,6 @@ class CommanderStateSchema(AgentState):
 def build_commander()-> CompiledStateGraph:
     todo_writer_tool: BaseTool = build_todo_writer_tool()
     worker_tool: BaseTool = build_worker_tool()
-    xp_retrieve_tool: BaseTool = build_xp_retrieve_tool()
 
     # lazy import to avoid circular dependency: subagent -> agent -> tools -> subagent
     from agent.middlewares import ToolCallNormalize, IterationBudget, ToolGuardrails
@@ -211,7 +191,7 @@ def build_commander()-> CompiledStateGraph:
         model = _llm,
         checkpointer = _checkpointer,
         state_schema = CommanderStateSchema,
-        tools = [todo_writer_tool, worker_tool, xp_retrieve_tool],
+        tools = [todo_writer_tool, worker_tool],
         middleware=[
             CommanderSummarization(
                 model=_llm,

@@ -228,7 +228,11 @@ def search_messages(
                 if t.upper() not in ("AND", "OR", "NOT")
             ] or [raw_query]
             token_clauses = []
-            like_params: list = [session_id]  # for m.session_id = ?
+            # NOTE: SQL placeholder order: instr(?) is FIRST (in SELECT),
+            # then m.session_id = ? (in WHERE), then LIKE values, then
+            # role_filter, then LIMIT/OFFSET.  Parameter list must match.
+            like_params: list = [non_op_tokens[0]]  # for instr(?) — goes first
+            like_params.append(session_id)          # for m.session_id = ?
             for tok in non_op_tokens:
                 esc = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 token_clauses.append(
@@ -239,8 +243,6 @@ def search_messages(
             if role_filter:
                 like_where.append(f"m.role IN ({','.join('?' for _ in role_filter)})")
                 like_params.extend(role_filter)
-            # instr() for snippet uses first search token
-            like_params.append(non_op_tokens[0])
             like_sql = f"""
                 SELECT 
                 m.id,

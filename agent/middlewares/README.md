@@ -290,7 +290,7 @@ The **innermost middleware** — closest to the LLM. Manages system prompts, con
 - **`awrap_after_agent`:**
   1. Persists the assistant response to `MesMemory` via `add_messages()`
   2. Runs the **nudge system** (see below) as a post-agent side effect
-  3. Calls **`xp_graph.after_turn(session_id)`** for periodic knowledge graph maintenance (e.g., pruning stale nodes, updating edge weights). Wrapped in try/except — failure is non-fatal and logged at debug level.
+  3. Calls **knowledge graph maintenance (`after_turn`)** for periodic tasks (e.g., pruning stale nodes, updating edge weights). Wrapped in try/except — failure is non-fatal and logged at debug level.
 - **`awrap_tool_call` (nudge side effect):** increments a skill-review counter in `MesMemory` each time a tool is called
 
 #### Nudge System (`nudge.py`)
@@ -307,9 +307,9 @@ Periodically injects intervention messages to encourage the user to engage with 
 
 Nudge messages are sent as **separate `AIMessage` chunks** appended after the normal assistant response, so they appear as natural follow-up suggestions in the UI.
 
-#### xp_graph Integration
+#### Knowledge Graph Integration
 
-After the nudge logic, `aafter_agent` calls `xp_graph.after_turn(session_id)` for periodic knowledge graph maintenance. This includes tasks such as pruning stale nodes and updating edge weights. The call is wrapped in a try/except block — if it fails, the error is logged at debug level and does not interrupt the agent flow.
+After the nudge logic, `aafter_agent` calls the knowledge graph's `after_turn(session_id)` for periodic maintenance. This includes tasks such as pruning stale nodes and updating edge weights. The call is wrapped in a try/except block — if it fails, the error is logged at debug level and does not interrupt the agent flow.
 
 **Configuration (in `system/config.tool.md`):**
 
@@ -327,7 +327,7 @@ After the nudge logic, `aafter_agent` calls `xp_graph.after_turn(session_id)` fo
 
 - **`MemoryCache`** — thread-safe in-memory cache for system prompts and metadata
 - **`MesMemory`** — persistent conversation memory backend (stores messages, nudge locks, skill review counters)
-- **`xp_graph`** — knowledge graph module for periodic maintenance after each turn
+- **Experience graph** — knowledge graph module for periodic maintenance after each turn
 - **`system/config.tool.md`** — configuration file for system prompt and nudge intervals
 
 ---
@@ -482,7 +482,7 @@ ContextEngineHook.awrap_before_agent(state)
     │
     ▼
 ContextEngineHook.awrap_after_agent(state)
-    │  persist to MesMemory, run nudge, xp_graph.after_turn()
+    │  persist to MesMemory, run nudge, knowledge graph maintenance
     ▼
 MultimodalProcessor.awrap_after_agent(state)
     │  clean up resolved URIs from history

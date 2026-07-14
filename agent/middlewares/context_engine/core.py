@@ -1,18 +1,16 @@
 import asyncio
-from asyncio import Task
 from loguru import logger
 from langgraph.types import Command
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing_extensions import override
 from context_engine import add_messages
-from typing import Callable, Awaitable, Any, Sequence, cast
+from typing import Callable, Awaitable, Any, cast
 from workspace.prompt_builder import build_system_prompt
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from runtime import state_register_db, state_register_mem
 from .nudge import _nudge_memory, _nudge_skill, _nudge_combined
-from pub_func.message.slice_last_turn import slice_last_turn
-from pub_func.transcript_repair import sanitize_tool_use_result_pairing
+from pub_func import sanitize_tool_use_result_pairing, slice_last_turn, run_async
 from langchain.agents.middleware import AgentMiddleware, ModelResponse, ModelRequest
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, SystemMessage
 from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse, StateT
@@ -80,17 +78,7 @@ class ContextEngineHook(AgentMiddleware):
                 )
             )
         )
-
-    # ------------------------------------------------------------------
-    # Shared: format & persist last turn messages
-    # ------------------------------------------------------------------
-    def _persist_last_turn(self, state: Any, session_id: str) -> None:
-        all_messages: list[BaseMessage] = cast("list[BaseMessage]", state["messages"])
-        last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
-        format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
-        # Sync log — actual async persistence is handled in the async hook
-        logger.debug("_persist_last_turn: session={}, messages={}", session_id, len(format_last_turn_messages))
-
+    
     # ------------------------------------------------------------------
     # Shared: tool call nudge counter (called by both sync and async)
     # ------------------------------------------------------------------
@@ -114,12 +102,7 @@ class ContextEngineHook(AgentMiddleware):
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         request = self._wrap_model_call_impl(request)
-        res: ModelResponse = handler(request)
-
-        session_id = self._get_session_id_or_raise(request.state)
-        self._persist_last_turn(request.state, session_id)
-
-        return res
+        return handler(request)
 
     @override
     async def awrap_model_call(
@@ -128,18 +111,7 @@ class ContextEngineHook(AgentMiddleware):
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         request = self._wrap_model_call_impl(request)
-        res: ModelResponse = await handler(request)
-
-        session_id = self._get_session_id_or_raise(request.state)
-
-        # Persist user messages to MesMemory (async)
-        all_messages: list[BaseMessage] = cast("list[BaseMessage]", request.state["messages"])
-        last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
-        format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
-        add_history_task: Task[None] = asyncio.create_task(add_messages(session_id=session_id, messages=format_last_turn_messages))
-        await asyncio.gather(add_history_task)
-
-        return res
+        return await handler(request)
 
     @override
     def wrap_tool_call(
@@ -238,18 +210,12 @@ class ContextEngineHook(AgentMiddleware):
         session_id, system_prompt, messages, need_memory, need_skill = result
 
         if need_memory and need_skill:
-            asyncio.get_event_loop().run_until_complete(
-                _nudge_combined(session_id, system_prompt, messages)
-            )
+            run_async(_nudge_combined(session_id, system_prompt, messages))
         else:
             if need_memory:
-                asyncio.get_event_loop().run_until_complete(
-                    _nudge_memory(session_id, system_prompt, messages)
-                )
+                run_async(_nudge_memory(session_id, system_prompt, messages))
             if need_skill:
-                asyncio.get_event_loop().run_until_complete(
-                    _nudge_skill(session_id, system_prompt, messages)
-                )
+                run_async(_nudge_skill(session_id, system_prompt, messages))
 
         return None
 
@@ -263,12 +229,24 @@ class ContextEngineHook(AgentMiddleware):
 
         session_id, system_prompt, messages, need_memory, need_skill = result
 
-        if need_memory and need_skill:
-            await _nudge_combined(session_id, system_prompt, messages)
-        else:
-            if need_memory:
-                await _nudge_memory(session_id, system_prompt, messages)
-            if need_skill:
-                await _nudge_skill(session_id, system_prompt, messages)
+        # Persist last turn messages to MesMemory
+        all_messages: list[BaseMessage] = cast("list[BaseMessage]", state["messages"])
+        last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
+        format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
+
+        # Run persistence and nudge concurrently
+        async def _persist() -> None:
+            await add_messages(session_id=session_id, messages=format_last_turn_messages)
+
+        async def _nudge() -> None:
+            if need_memory and need_skill:
+                await _nudge_combined(session_id, system_prompt, messages)
+            else:
+                if need_memory:
+                    await _nudge_memory(session_id, system_prompt, messages)
+                if need_skill:
+                    await _nudge_skill(session_id, system_prompt, messages)
+
+        await asyncio.gather(_persist(), _nudge())
 
         return None

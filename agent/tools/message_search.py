@@ -261,7 +261,6 @@ def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str
         return _tool_error(f"Recent sessions query failed: {str(e)}", success=False)
 
 
-@validate_call
 def session_search(
     query: str | None,
     session_id: str,
