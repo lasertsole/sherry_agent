@@ -556,11 +556,27 @@ def create_codeact(
 
     def sandbox(state: state_schema) -> dict:
         import logging
+        import traceback
+        from .ast_rewrite import rewrite_no_swallow
         logging.warning("SANDBOX_DIAG: state keys=%s, has_script=%s, type=%s",
                         list(state.keys()), 'script' in state, type(state).__name__)
         existing_context = state.get("context", {})
         context = {**existing_context, **tools_context}
-        output, new_vars = eval_fn(state["script"], context)
+        script = state.get("script")
+        if not script:
+            return {
+                "messages": [{"role": "user", "content": "No code to execute."}],
+                "context": existing_context,
+            }
+        script = rewrite_no_swallow(script)
+        try:
+            output, new_vars = eval_fn(script, context)
+        except Exception:
+            tb = traceback.format_exc()
+            return {
+                "messages": [{"role": "user", "content": f"Execution error:\n```\n{tb}\n```\nPlease fix the code and try again."}],
+                "context": existing_context,
+            }
         new_context = {**existing_context, **new_vars}
         new_context = {k: _sanitize_for_serialization(v) for k, v in new_context.items()}
         content = output
