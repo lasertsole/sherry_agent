@@ -15,7 +15,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 PYTHON_REPL_TIMEOUT = 30  # seconds
 
 _REPL_WRAPPER = textwrap.dedent("""\
-import sys, json
+import sys, json, traceback
 from io import StringIO
 
 _real_stdout = sys.stdout
@@ -45,11 +45,12 @@ try:
     exec({command_repr}, {{"__builtins__": __builtins__}}, {{}})
     out = sys.stdout.getvalue()
     err = sys.stderr.getvalue()
-    print(json.dumps({{"out": out, "err": err, "exc": None}}), file=_real_stdout, end="")
+    print(json.dumps({{"out": out, "err": err, "exc": None, "tb": None}}), file=_real_stdout, end="")
 except Exception as e:
     out = sys.stdout.getvalue()
     err = sys.stderr.getvalue()
-    print(json.dumps({{"out": out, "err": err, "exc": repr(e)}}), file=_real_stdout, end="")
+    tb = traceback.format_exc()
+    print(json.dumps({{"out": out, "err": err, "exc": repr(e), "tb": tb}}), file=_real_stdout, end="")
 """)
 
 
@@ -86,7 +87,14 @@ def _run_with_timeout(command: str, timeout: int) -> str:
         return f"Error: failed to parse output\n{stdout[:500]}"
 
     if result["exc"]:
-        return f"Error: {result['exc']}\n{result['out']}"
+        parts = [f"Error: {result['exc']}"]
+        if result["out"]:
+            parts.append(f"stdout:\n{result['out']}")
+        if result["err"]:
+            parts.append(f"stderr:\n{result['err']}")
+        if result.get("tb"):
+            parts.append(f"Traceback:\n{result['tb']}")
+        return "\n".join(parts)
     return result["out"] or "(no output)"
 
 
