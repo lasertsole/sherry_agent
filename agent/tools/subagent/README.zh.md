@@ -263,7 +263,7 @@ _run_subagent(session_id, task_id, task, label)
 
 Worker 是 `codeact_agent` 实例（非 LangGraph agent），具备：
 
-- **工具**: `build_without_session_id_tools()`（除 subagent 特有工具外的所有工具，含 `draft`）
+- **工具**: `build_worker_tools()`（除 subagent 特有工具外的所有工具，含 `draft`）
 - **中间件**: `WorkerSummarization` + `HeartbeatStaleness` + `IterationBudget`
 - **响应格式**: `SubAgentOutput`
 - **xp_graph 注入**: 执行前从 `xp_graph("worker")` 召回操作级经验

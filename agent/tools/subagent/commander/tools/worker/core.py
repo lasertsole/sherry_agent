@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 from loguru import logger
-
+from typing import Callable
 from runtime import Register
 from agent import codeact_agent
 from langchain.tools import tool
@@ -99,8 +99,10 @@ async def _arun_task(
                 _build_worker_prompt()
                 + "\n\n Complete the task as simply as possible, and terminate immediately upon completion to submit the results.")
 
-            from agent.tools import build_without_session_id_tools
             from agent.middlewares import IterationBudget, HeartbeatStaleness
+            from agent.tools import (build_read_file_tool, build_write_file_tool, build_patch_file_tool,
+                                     build_web_search_tool,
+                                     build_terminal_tool, build_mcp_tools, tool_flatten)
 
             # Create a fresh LLM instance for the worker on the current event loop.
             _llm = build_main_llm()
@@ -108,7 +110,14 @@ async def _arun_task(
             agent = codeact_agent(
                 system_prompt=system_prompt,
                 model=_llm,
-                tools=build_without_session_id_tools(),
+                tools=tool_flatten([
+                    build_read_file_tool,
+                    build_write_file_tool,
+                    build_patch_file_tool,
+                    build_web_search_tool,
+                    build_terminal_tool,
+                    build_mcp_tools,
+                ]),
                 state_schema= WorkerStateSchema,
                 middleware=[
                     WorkerSummarization(

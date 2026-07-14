@@ -264,7 +264,7 @@ Validates tool calls against safety rules.
 
 Workers are `codeact_agent` instances (not LangGraph agents) with:
 
-- **Tools**: `build_without_session_id_tools()` (all tools except subagent-specific ones, including `draft`)
+- **Tools**: `build_worker_tools()` (all tools except subagent-specific ones, including `draft`)
 - **Middlewares**: `WorkerSummarization` + `HeartbeatStaleness` + `IterationBudget`
 - **Response Format**: `SubAgentOutput`
 - **xp_graph injection**: Recalls from `xp_graph("worker")` before execution

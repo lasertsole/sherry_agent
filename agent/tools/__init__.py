@@ -10,7 +10,7 @@ from .python_repl import build_python_repl_tool
 from .memory import build_memory_tool, memory_store
 from .message_search import build_message_search_tool
 
-def _flatten(builders: list) -> list[BaseTool]:
+def tool_flatten(builders: list[Callable[[], BaseTool]]) -> list[BaseTool]:
     """Call each builder; if result is a list, extend; otherwise append."""
     tools: list[BaseTool] = []
     for b in builders:
@@ -21,7 +21,7 @@ def _flatten(builders: list) -> list[BaseTool]:
             tools.append(result)
     return tools
 
-_WITHOUT_SESSION_ID_TOOLS_BUILDERS: list[Callable[[], BaseTool]] = [
+_MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool]] = [
     build_python_repl_tool,
     build_read_file_tool,
     build_write_file_tool,
@@ -32,17 +32,10 @@ _WITHOUT_SESSION_ID_TOOLS_BUILDERS: list[Callable[[], BaseTool]] = [
     build_mcp_tools,
     build_skill_manage_tool,
     build_skill_list_tool,
-    build_skill_view_tool
-]
-
-_MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool]] = [
-    *_WITHOUT_SESSION_ID_TOOLS_BUILDERS,
+    build_skill_view_tool,
     build_message_search_tool
 ]
 
-def build_without_session_id_tools() -> list[BaseTool]:
-    return _flatten(_WITHOUT_SESSION_ID_TOOLS_BUILDERS)
-
 def build_main_tools() -> list[BaseTool]:
     """Core tools + subagent"""
-    return _flatten(_MAIN_TOOLS_BUILDERS)
+    return tool_flatten(_MAIN_TOOLS_BUILDERS)

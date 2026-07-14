@@ -99,6 +99,10 @@ class ContextEngineHook(AgentMiddleware):
         request: ToolCallRequest,
     ) -> None:
         """Increment nudge skill counter."""
+        metadata = getattr(request.tool, "metadata", None)
+        if isinstance(metadata, dict) and metadata.get("nudge", False):
+            return
+
         session_id = self._get_session_id_or_raise(request.state)
         nudge_review_skill_count: int = state_register_db.get_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0) + 1
         state_register_db.set_state(session_id, _NUDGE_SKILL_COUNT_KEY, nudge_review_skill_count)
