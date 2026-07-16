@@ -1,0 +1,23 @@
+# Curator Configuration
+# Background skill maintenance orchestrator for agent-created skills.
+
+# Whether Curator is enabled
+enabled: true
+
+# Minimum interval between curator runs (hours)
+interval_hours: 168  # 7 days
+
+# Agent must be idle for at least N hours before curator triggers
+min_idle_hours: 2
+
+# Days of inactivity before a skill is marked stale
+stale_after_days: 30
+
+# Days of inactivity before a skill is archived
+archive_after_days: 90
+
+# Whether to enable LLM consolidation pass (merge narrow skills into umbrellas)
+consolidate: false
+
+# Whether to clean up usage records for built-in skills
+prune_builtins: true
