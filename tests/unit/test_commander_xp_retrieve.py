@@ -99,7 +99,7 @@ class TestXpRetrieveDirectly:
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
             mock_aux_llm.return_value = mock_llm
 
-            from agent.tools.xp_graph.core import xp_retrieve_tool
+            from context_engine.xp_graph.core import xp_retrieve_tool
             result = await xp_retrieve_tool.ainvoke({"query": "deploy to kubernetes", "role": "test"})
 
             assert "deploy" in result.lower() or "docker" in result.lower() or "kubectl" in result.lower(), \
@@ -122,7 +122,7 @@ class TestXpRetrieveDirectly:
             mock_recaller.recall = AsyncMock(return_value={"nodes": [], "edges": []})
             mock_recaller_cls.return_value = mock_recaller
 
-            from agent.tools.xp_graph.core import xp_retrieve_tool
+            from context_engine.xp_graph.core import xp_retrieve_tool
             result = await xp_retrieve_tool.ainvoke({"query": "nonsense query that matches nothing", "role": "test"})
 
             assert result == "No relevant methods found.", \
@@ -155,7 +155,7 @@ class TestXpRetrieveDirectly:
             mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM unavailable"))
             mock_aux_llm.return_value = mock_llm
 
-            from agent.tools.xp_graph.core import xp_retrieve_tool
+            from context_engine.xp_graph.core import xp_retrieve_tool
             result = await xp_retrieve_tool.ainvoke({"query": "test query", "role": "test"})
 
             # Should fall back to XML

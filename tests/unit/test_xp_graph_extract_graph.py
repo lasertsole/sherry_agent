@@ -1,13 +1,13 @@
 """Tests for xp_graph.core.extract() �?draft �?ExtractionResult conversion via LLM."""
 
 import pytest
-from unittest.mock import patch, MagicMock, ANY
+from unittest.mock import patch, MagicMock
 
-from agent.tools.xp_graph.core import (
+from context_engine.xp_graph.core import (
     ExperienceTrace, PathStep, Failure, Fix,
     extract, _serialize_draft,
 )
-from agent.tools.xp_graph.type import NodeType, EdgeType, Node, Edge, ExtractionResult
+from context_engine.xp_graph.type import NodeType, EdgeType, Node, Edge, ExtractionResult
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ class TestExtractGraph:
 
     def test_extract_empty_path_and_failures(self, mock_state_register, mock_llm):
         """Minimal draft with empty path/failures/null requires �?only TASK node."""
-        from agent.tools.xp_graph.core import state_register_mem as mock
+        from context_engine.xp_graph.core import state_register_mem as mock
         mock.get_state.return_value = ExperienceTrace(
             task="simple task",
             path=[],
@@ -246,7 +246,7 @@ class TestExtractGraph:
 
     def test_extract_reuses_seen_skills(self, mock_state_register, mock_llm):
         """Same tool used repeatedly �?one SKILL node, multiple USED_SKILL edges."""
-        from agent.tools.xp_graph.core import state_register_mem as mock
+        from context_engine.xp_graph.core import state_register_mem as mock
         mock.get_state.return_value = ExperienceTrace(
             task="test dedup",
             path=[
@@ -281,7 +281,7 @@ class TestExtractGraph:
 
     def test_extract_edge_condition(self, mock_state_register, mock_llm):
         """USED_SKILL edges carry condition."""
-        from agent.tools.xp_graph.core import state_register_mem as mock
+        from context_engine.xp_graph.core import state_register_mem as mock
         mock.get_state.return_value = ExperienceTrace(
             task="test condition propagation",
             path=[

@@ -129,7 +129,7 @@ CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
 ### 1. 消息持久化
 
 ```python
-from context_engine.store import add_messages
+from context_engine.mes_memory.store import add_messages
 
 # 写入一轮对话消息（自动递增 turn_num）
 await add_messages("session_001", [user_msg, ai_msg])
@@ -170,7 +170,7 @@ Assistant: AI 回复
 也支持按轮次范围查询：
 
 ```python
-from context_engine.store import get_turns_by_turn_num_scope
+from context_engine.mes_memory.store import get_turns_by_turn_num_scope
 
 # 获取 target_turn_num 前后各 5 轮的记录
 rows = get_turns_by_turn_num_scope("session_001", target_turn_num=10, half_scope=5)
@@ -179,7 +179,7 @@ rows = get_turns_by_turn_num_scope("session_001", target_turn_num=10, half_scope
 分页历史查询：
 
 ```python
-from context_engine.store import get_history_by_page
+from context_engine.mes_memory.store import get_history_by_page
 
 # 获取第 1 页，每页 10 轮
 rows = get_history_by_page("session_001", min_turn_num=1, turn_page_size=10, turn_page_num=1)

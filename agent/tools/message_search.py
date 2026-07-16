@@ -9,7 +9,7 @@ from pub_func import run_async
 from typing import Any, Annotated
 from models import build_main_llm
 from langchain.tools import BaseTool, tool
-from pydantic import BaseModel, Field, validate_call
+from pydantic import BaseModel, Field
 from langgraph.prebuilt.tool_node import InjectedState
 from context_engine import get_db, search_messages, get_turns_by_turn_num_scope
 
@@ -261,7 +261,6 @@ def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str
         return _tool_error(f"Recent sessions query failed: {str(e)}", success=False)
 
 
-@validate_call
 def session_search(
     query: str | None,
     session_id: str,

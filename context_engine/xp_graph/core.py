@@ -21,7 +21,7 @@ from .graph import MaintenanceResult, run_maintenance, invalidate_graph_cache
 from .store import delete_node, get_by_session, upsert_node, find_by_name, upsert_edge, UpsertResult, sync_node_embed
 
 
-def _build_config(role: str)-> GmConfig:
+def build_config(role: str)-> GmConfig:
     return GmConfig(
         db_path=resolve_db_path(role).as_posix(),
         compact_turn_count=7,
@@ -127,7 +127,7 @@ async def _rectification_and_standardization(session_id: str, role: str) -> None
     try:
         db = get_db(role)
         nodes: list[GmNode] = get_by_session(db, session_id)
-        recaller = Recaller(db, _build_config(role))
+        recaller = Recaller(db, build_config(role))
         if nodes:
             cursor = db.cursor()
             cursor.execute(
@@ -158,7 +158,7 @@ async def _rectification_and_standardization(session_id: str, role: str) -> None
 
         embed: Embeddings | None = getattr(recaller, "embed", None)
         llm = build_auxiliary_llm()
-        result: MaintenanceResult = await run_maintenance(db, _build_config(role), llm, embed)
+        result: MaintenanceResult = await run_maintenance(db, build_config(role), llm, embed)
 
         top_pr_names = [f"{n['name']}({n['score']})" for n in result["pagerank"]["top_k"][:3]]
         logger.debug(
@@ -379,7 +379,7 @@ async def _maybe_maintain_communities(
 
             # Generate summaries immediately after each community detection (needs LLM), ensuring generalized recall is available
             if comm["communities"] and len(comm["communities"]) > 0:
-                recaller = Recaller(db, _build_config(role))
+                recaller = Recaller(db, build_config(role))
                 embed: Embeddings = getattr(recaller, 'embed', None)
                 llm = build_auxiliary_llm()
                 summaries = await summarize_communities(
@@ -539,7 +539,7 @@ async def xp_retrieve_tool(query: str, role: Annotated[str, InjectedState("sessi
     matches the query."""
     db = get_db(role)
 
-    recaller = Recaller(db, _build_config(role))
+    recaller = Recaller(db, build_config(role))
     rec: RecallResult = await recaller.recall(query)
     nodes = rec["nodes"]
     edges = rec["edges"]

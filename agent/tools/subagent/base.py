@@ -13,10 +13,10 @@ from typing import Any, Callable, Awaitable
 from workspace import CORE_SYSTEM_FILE_NAMES
 from models.LLMs.main_llm import build_main_llm
 from langgraph.graph.state import CompiledStateGraph
-from agent.tools.xp_graph import update_draft, extract
+
 from workspace.prompt_builder import build_system_prompt
 from pub_func import render_template_file, build_agent_config
-from .commander import build_commander, get_commander_system_prompt
+from .commander import build_commander
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
@@ -106,7 +106,7 @@ class SubagentManager:
     def get_event_loop(self) -> asyncio.AbstractEventLoop:
         """Get the event loop."""
         return self._event_loop
-    
+
     def get_buts(self)-> MessageBus:
         return self._bus
 
@@ -169,10 +169,10 @@ class SubagentManager:
             )
             logger.debug("Subagent [{}] step 2/4: ainvoke returned, keys={}", task_id, list(agent_res.keys()) if agent_res else "None")
 
-            # update draft and extract experience
-            state = await agent.aget_state(config=build_agent_config(commander_session_id))
-            update_draft(commander_session_id, get_commander_system_prompt(), state.values.get("messages", []))
-            await extract(commander_session_id, "commander")
+
+
+
+
 
             structured_response: SubAgentOutput | None = agent_res.get("structured_response")
             logger.debug("Subagent [{}] step 3/4: structured_response={}", task_id,
@@ -232,7 +232,7 @@ class SubagentManager:
             },
         )
 
-        logger.info("Subagent [{}] completed. Result: status={}, finish_reason={}, result={}", task_id, 
+        logger.info("Subagent [{}] completed. Result: status={}, finish_reason={}, result={}", task_id,
             structured_response.status if structured_response else "N/A",
             structured_response.finish_reason if structured_response else "N/A",
             (structured_response.result[:200] + "...") if structured_response and len(structured_response.result) > 200 else (structured_response.result if structured_response else "N/A"))
@@ -303,5 +303,3 @@ class SubagentManager:
             1 for tid in tids
             if tid in self._running_tasks and not self._running_tasks[tid].done()
         )
-
-subagent_manager = SubagentManager()

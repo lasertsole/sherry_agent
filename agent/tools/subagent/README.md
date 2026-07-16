@@ -8,13 +8,13 @@
 
 ## Overview
 
-The **Subagent System** enables the AI Agent to decompose complex tasks, execute sub-tasks in parallel in the background, and return results asynchronously through a message bus. It features an **experience knowledge graph (xp_graph) closed loop**: draft → distill → ingest → recall → assemble.
+The **Subagent System** enables the AI Agent to decompose complex tasks, execute sub-tasks in parallel in the background, and return results asynchronously through a message bus. It features an **experience knowledge graph closed loop**: draft → distill → ingest → recall → assemble.
 
 Core layers:
 
 - **`SubagentManager`** — Singleton orchestrator that manages the lifecycle of background subagent tasks.
 - **`Commander`** — Per-task LangGraph agent that plans, decomposes, and dispatches work to workers.
-- **Distiller** — Post-task distillation engine that extracts reusable knowledge into the xp_graph.
+- **Distiller** — Post-task distillation engine that extracts reusable knowledge into the knowledge graph.
 - **Draft Tool** — Agent-callable tool for recording key findings during task execution.
 
 ## Architecture
@@ -28,7 +28,7 @@ User / Main Agent
 │  (singleton, lifecycle orchestrator)                         │
 │                                                              │
 │  _run_subagent() flow:                                      │
-│    1. Recall xp_graph → inject AIMessage into Commander     │
+│    1. Recall knowledge graph → inject AIMessage into Commander     │
 │    2. Commander executes task (tools: todo_writer, worker,  │
 │       draft)                                                 │
 │    3. Publish result to bus (Plan C)                        │
@@ -73,12 +73,12 @@ User / Main Agent
                         │
                         ▼ after task
 ┌──────────────────────────────────────────────────────────────┐
-│              Experience Knowledge Graph (xp_graph)           │
+│              Experience Knowledge Graph                      │
 │                                                              │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │  Draft Tool │→ │  Distiller  │→ │  xp_graph   │         │
-│  │(record notes│  │(auxiliary   │  │(nodes/edges │         │
-│  │ during task)│  │  LLM extract│  │ vector/FTS5)│         │
+│  │  Draft Tool │→ │  Distiller  │→ │  knowledge  │         │
+│  │(record notes│  │(auxiliary   │  │  graph      │         │
+│  │ during task)│  │  LLM extract│  │(nodes/edges │         │
 │  └─────────────┘  └─────────────┘  └──────┬──────┘        │
 │                                              │ recall        │
 │  ┌───────────────────────────────────────────┘               │
@@ -86,8 +86,8 @@ User / Main Agent
 │  └───────────────────────────────────────────────────────────│
 │                                                              │
 │  DB Roles:                                                   │
-│    default → store/xp_graph/xp_graph.db (strategy-level)    │
-│    worker  → store/xp_graph/worker/xp_graph.db (operation)  │
+│    default → experience graph (strategy-level)              │
+│    worker  → experience graph (operation-level)             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -126,7 +126,7 @@ subagent/
 1. Task Execution:  Commander/Worker call draft_tool → state_register_db
 2. Task Completion:  bus.publish → distill_and_ingest → Register.clear_all
 3. Distillation:     auxiliary_llm extracts nodes/edges from drafts + result
-4. Ingestion:        strategy → xp_graph("default"), operation → xp_graph("worker")
+4. Ingestion:        strategy → knowledge_graph("default"), operation → knowledge_graph("worker")
 5. Next Task:        recall(task) → assemble_context → AIMessage injection
 ```
 
@@ -163,14 +163,14 @@ Before `agent.ainvoke()`, recalled experiences are injected as an `AIMessage`:
 
 ```python
 messages = [HumanMessage(content=task)]
-# recall from xp_graph
+# recall from knowledge graph
 if recall_result["nodes"]:
     assembled = assemble_context(db, nodes, edges)
     messages.append(AIMessage(content=f"徊\n{system_prompt}\n\n{xml}\n徊"))
 ```
 
-- **Commander**: recalls from `xp_graph("default")` (strategy-level)
-- **Worker**: recalls from `xp_graph("worker")` (operation-level)
+- **Commander**: recalls from the experience graph (strategy-level)
+- **Worker**: recalls from the experience graph (operation-level)
 
 ## Data Model
 
@@ -210,7 +210,7 @@ spawn(task, session_id)
 
 _run_subagent(session_id, task_id, task, label)
   │
-  ├─ Recall commander xp_graph → build messages with AIMessage injection
+  ├─ Recall commander knowledge graph → build messages with AIMessage injection
   ├─ Build Commander agent
   ├─ agent.ainvoke({messages: [HumanMessage(task), AIMessage(knowledge)]})
   ├─ Render announcement template with SubAgentOutput
@@ -267,14 +267,14 @@ Workers are `codeact_agent` instances (not LangGraph agents) with:
 - **Tools**: `build_worker_tools()` (all tools except subagent-specific ones, including `draft`)
 - **Middlewares**: `WorkerSummarization` + `HeartbeatStaleness` + `IterationBudget`
 - **Response Format**: `SubAgentOutput`
-- **xp_graph injection**: Recalls from `xp_graph("worker")` before execution
+- **Knowledge graph injection**: Recalls from experience graph before execution
 - **Draft merge**: Worker drafts are merged into Commander session in `finally` block
 
 ## FAQ
 
-### Why is distiller moved out of xp_graph?
+### Why is distiller moved out of the knowledge graph module?
 
-`distiller.py` was originally inside `xp_graph/extractor/`, but it imports `draft.py` (subagent layer). This created a reverse dependency: `xp_graph` (infrastructure) → `subagent` (business). Moving distiller to `subagent/` makes the dependency direction one-way: `subagent/distiller` → `xp_graph` ✓
+`distiller.py` was originally inside the knowledge graph extractor, but it imports `draft.py` (subagent layer). This created a reverse dependency: knowledge graph infrastructure → subagent business logic. Moving distiller to `subagent/` makes the dependency direction one-way: `subagent/distiller` → knowledge graph ✓
 
 ### Why Plan C (publish → distill → clear)?
 
@@ -296,7 +296,7 @@ In `_arun_task`'s `finally` block, Worker drafts are read via `get_drafts(worker
 | LLM | `main_llm` (shared), `auxiliary_llm` (distillation) |
 | Checkpointing | `InMemorySaver` |
 | Middleware | `@before_model` / `@after_agent` decorators |
-| Knowledge Graph | `xp_graph` (SQLite + FTS5 + vector search + PageRank) |
+| Knowledge Graph | Experience graph (SQLite + FTS5 + vector search + PageRank) |
 | Async | `asyncio.create_task`, `asyncio.gather`, `asyncio.wait_for` |
 | Data Validation | Pydantic v2 |
 | Templating | Custom `render_template_file()` (Jinja2-style) |

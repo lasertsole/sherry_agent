@@ -130,7 +130,7 @@ CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
 ### 1. Message Persistence
 
 ```python
-from context_engine.store import add_messages
+from context_engine.mes_memory.store import add_messages
 
 # Write a dialogue turn (auto-increments turn_num)
 await add_messages("session_001", [user_msg, ai_msg])
@@ -171,7 +171,7 @@ Assistant: AI response
 Turn-range queries are also supported:
 
 ```python
-from context_engine.store import get_turns_by_turn_num_scope
+from context_engine.mes_memory.store import get_turns_by_turn_num_scope
 
 # Get 5 turns before and after target_turn_num
 rows = get_turns_by_turn_num_scope("session_001", target_turn_num=10, half_scope=5)
@@ -180,7 +180,7 @@ rows = get_turns_by_turn_num_scope("session_001", target_turn_num=10, half_scope
 Paginated history retrieval:
 
 ```python
-from context_engine.store import get_history_by_page
+from context_engine.mes_memory.store import get_history_by_page
 
 # Get page 1 with 10 turns per page
 rows = get_history_by_page("session_001", min_turn_num=1, turn_page_size=10, turn_page_num=1)

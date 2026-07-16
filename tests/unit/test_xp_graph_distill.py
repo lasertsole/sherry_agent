@@ -1,10 +1,10 @@
 """Tests for xp_graph.core.update_draft() — experience trace draft distillation."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agent.tools.xp_graph.core import ExperienceTrace, PathStep, Failure, Fix, update_draft
+from context_engine.xp_graph.core import ExperienceTrace, update_draft
 
 
 class FakeContent:
