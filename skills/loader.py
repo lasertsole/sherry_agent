@@ -13,33 +13,45 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
         return {}
     return yaml.safe_load(parts[1]) or {}
 
+
 def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
-    from .skills_snapshot import read_skills_snapshot
+    """Scan all SKILL.md files under *SKILLS_DIR*, delegating the ``auto/``
+    sub-tree to :func:`scan_auto_skills` which applies community-first
+    fallback logic.
+    """
+    from pathlib import Path
 
-    if use_cache:
-        skills_snapshot: list[dict[str, str]] | None = read_skills_snapshot()
-
-        if skills_snapshot:
-            return skills_snapshot
+    # Lazy import to avoid cycle: loader → export_skill → loader
+    from context_engine.xp_graph.export_skill import scan_auto_skills
 
     skills: list[dict[str, Any]] = []
-    seen_paths = set()  # 用于去重
+    seen_paths: set[Path] = set()
+
+    # 1. Delegate auto/ scanning to the unified function (community-first)
+    skills.extend(scan_auto_skills())
+
+    # 2. Scan the rest of SKILLS_DIR (built-in, plugins, testing, …)
+    #    skipping auto/ to avoid double-counting.
+    auto_dir_str = AUTO_SKILLS_DIR.resolve().as_posix()
 
     for skill_file in SKILLS_DIR.glob("**/SKILL.md"):
         if skill_file in seen_paths:
             continue
+
+        # Skip files under auto/ — already handled above
+        if skill_file.resolve().as_posix().startswith(auto_dir_str):
+            continue
+
         seen_paths.add(skill_file)
 
         content = skill_file.read_text(encoding="utf-8")
         meta = parse_frontmatter(content)
         name = str(meta.get("name", skill_file.parent.name))
         desc = str(meta.get("description", ""))
-        rel = skill_file.relative_to(ROOT_DIR)
         skills.append(
             {
                 "name": name,
                 "description": desc,
-                "location": f"./{rel.as_posix()}",
             }
         )
 
@@ -77,7 +89,6 @@ def get_skills_text(selected_skill_names: list[str] | None = None, exclude_auth_
         lines.append("  <skill>")
         lines.append(f"    <name>{s['name']}</name>")
         lines.append(f"    <description>{s['description']}</description>")
-        lines.append(f"    <location>{s['location']}</location>")
         lines.append("  </skill>")
     lines.append("</available_skills>")
     return "\n".join(lines)

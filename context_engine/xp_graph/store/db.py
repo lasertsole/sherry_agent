@@ -8,49 +8,32 @@ _default_db_path = Path(SRC_DIR) / "store/xp_graph/xp_graph.db"
 _db_pool: dict[str, sqlite3.Connection] = {}
 
 
-def resolve_db_path(role: str = "default") -> Path:
-    """Resolve the DB file path for a given role."""
-    if role == "default":
-        return _default_db_path
-    return Path(SRC_DIR) / "store/xp_graph" / role / "xp_graph.db"
+_db_conn: sqlite3.Connection | None = None
 
 
-def get_db(role: str = "default") -> sqlite3.Connection:
-    """Get a database connection by role.
+def get_db() -> sqlite3.Connection:
+    """Get the singleton database connection to xp_graph.db."""
+    global _db_conn
+    if _db_conn is not None:
+        return _db_conn
 
-    Roles map to subdirectories under store/xp_graph/:
-      "default"   → store/xp_graph/xp_graph.db        (main agent / commander)
-      "worker"    → store/xp_graph/worker/xp_graph.db  (worker)
-
-    Each role gets its own SQLite file in its own folder.
-    """
-    if role in _db_pool:
-        return _db_pool[role]
-
-    db_path = resolve_db_path(role)
-
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    _default_db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_default_db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     _migrate(conn)
 
-    _db_pool[role] = conn
+    _db_conn = conn
     return conn
 
 
-def close_db(role: str | None = None) -> None:
-    """Close and reset a database connection. If role is None, close all."""
-    if role is None:
-        for conn in _db_pool.values():
-            conn.close()
-        _db_pool.clear()
-        return
-
-    conn = _db_pool.pop(role, None)
-    if conn:
-        conn.close()
+def close_db() -> None:
+    """Close and reset the database connection."""
+    global _db_conn
+    if _db_conn:
+        _db_conn.close()
+        _db_conn = None
 
 
 def _migrate(db) -> None:
@@ -183,7 +166,7 @@ def m5_communities(db: sqlite3.Connection) -> None:
             id          TEXT PRIMARY KEY,
             summary     TEXT NOT NULL,
             node_count  INTEGER NOT NULL DEFAULT 0,
-            node_ids    TEXT NOT NULL DEFAULT '[]',
+            node_ids_snapshot    TEXT NOT NULL DEFAULT '[]',
             embedding   BLOB,
             created_at  INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL

@@ -187,7 +187,6 @@ def find_auto_skills(*, skip_disabled: bool = False) -> list[dict[str, Any]]:
             {
                 "name": name,
                 "description": desc,
-                "location": f"./{rel.as_posix()}",
             }
         )
 

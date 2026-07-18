@@ -1,11 +1,12 @@
-"""Tests for xp_graph.core.extract() �?draft �?ExtractionResult conversion via LLM."""
+"""Tests for xp_graph.core.extract() — trace → ExtractionResult conversion via LLM."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
+from langchain_core.messages import HumanMessage
 
 from context_engine.xp_graph.core import (
     ExperienceTrace, PathStep, Failure, Fix,
-    extract, _serialize_draft,
+    extract, _serialize_experience_trace,
 )
 from context_engine.xp_graph.type import NodeType, EdgeType, Node, Edge, ExtractionResult
 
@@ -49,23 +50,23 @@ def realistic_draft() -> ExperienceTrace:
     )
 
 
-@pytest.fixture
-def mock_state_register(realistic_draft):
-    """Patch state_register_mem to return the realistic draft."""
-    with patch("agent.tools.xp_graph.core.state_register_mem") as mock:
-        mock.get_state.return_value = realistic_draft
+@pytest.fixture(autouse=True)
+def mock_state_db():
+    """Mock state_register_db to avoid side effects from _maybe_maintain_communities etc."""
+    with patch("context_engine.xp_graph.core.state_register_db") as mock:
+        mock.get_state.return_value = 0
         yield mock
 
 
 # ─── Tests ───────────────────────────────────────────────────────────
 
 
-class TestSerializeDraft:
-    """Tests for the _serialize_draft helper."""
+class TestSerializeExperienceTrace:
+    """Tests for the _serialize_experience_trace helper."""
 
     def test_serialize_full(self, realistic_draft):
         """Full draft produces expected sections."""
-        text = _serialize_draft(realistic_draft)
+        text = _serialize_experience_trace(realistic_draft)
         assert "Task:" in text
         assert "Execution Path:" in text
         assert "Failures:" in text
@@ -78,7 +79,7 @@ class TestSerializeDraft:
     def test_serialize_empty_path(self):
         """Draft with no path/failures/requires serializes without those sections."""
         draft = ExperienceTrace(task="simple task", path=[], failures=[], requires=None)
-        text = _serialize_draft(draft)
+        text = _serialize_experience_trace(draft)
         assert "Task: simple task" in text
         assert "Execution Path" not in text
         assert "Failures" not in text
@@ -90,7 +91,7 @@ class TestExtractGraph:
 
     @pytest.fixture(autouse=True)
     def mock_llm(self):
-        """Mock main_llm.with_structured_output to return a controlled result."""
+        """Mock build_main_llm to return a model with .with_structured_output()."""
         default_result = ExtractionResult(
             nodes=[
                 Node(
@@ -144,15 +145,19 @@ class TestExtractGraph:
                 Edge(from_id="deploy-python-web-app-to-k8s", to_id="docker", type=EdgeType.REQUIRES, instruction="Docker is required for containerization", condition=None),
             ],
         )
-        with patch("models.LLMs.main_llm.main_llm") as mock:
-            # RunnableSequence calls mock() directly (not invoke) when mock is not Runnable
+        with patch("context_engine.xp_graph.core.build_main_llm") as mock:
+            mock_model = MagicMock()
             mock_structured = MagicMock(return_value=default_result)
-            mock.with_structured_output.return_value = mock_structured
+            mock_model.with_structured_output.return_value = mock_structured
+            mock.return_value = mock_model
             yield mock_structured
 
-    def test_extract_basic(self, mock_state_register):
+    @pytest.mark.asyncio
+    async def test_extract_basic(self, realistic_draft):
         """Happy path: draft produces correct ExtractionResult structure."""
-        result = extract(session_id="test-session", role="default")
+        result = await extract(
+            experience_trace=realistic_draft, session_id="test-session",
+        )
 
         # ── Node count ──────────────────────────────────────────
         # TASK(1) + SKILL from path(2) + EVENT(1) + SKILL from fix(1) + SKILL from requires(2) = 7
@@ -208,17 +213,10 @@ class TestExtractGraph:
         assert "Cause:" in event_node.content
         assert "Solution:" in event_node.content
 
-    def test_extract_no_state(self):
-        """extract raises RuntimeError when no draft exists."""
-        with patch("agent.tools.xp_graph.core.state_register_mem") as mock:
-            mock.get_state.return_value = None
-            with pytest.raises(RuntimeError, match="xp draft is None"):
-                extract(session_id="no-draft", role="default")
-
-    def test_extract_empty_path_and_failures(self, mock_state_register, mock_llm):
-        """Minimal draft with empty path/failures/null requires �?only TASK node."""
-        from context_engine.xp_graph.core import state_register_mem as mock
-        mock.get_state.return_value = ExperienceTrace(
+    @pytest.mark.asyncio
+    async def test_extract_empty_path_and_failures(self, mock_llm):
+        """Minimal draft with empty path/failures/null requires → only TASK node."""
+        minimal_draft = ExperienceTrace(
             task="simple task",
             path=[],
             failures=[],
@@ -237,17 +235,19 @@ class TestExtractGraph:
             edges=[],
         )
 
-        result = extract(session_id="minimal", role="default")
+        result = await extract(
+            experience_trace=minimal_draft, session_id="minimal",
+        )
 
         assert len(result.nodes) == 1
         assert result.nodes[0].type == NodeType.TASK
         assert result.nodes[0].name
         assert len(result.edges) == 0
 
-    def test_extract_reuses_seen_skills(self, mock_state_register, mock_llm):
-        """Same tool used repeatedly �?one SKILL node, multiple USED_SKILL edges."""
-        from context_engine.xp_graph.core import state_register_mem as mock
-        mock.get_state.return_value = ExperienceTrace(
+    @pytest.mark.asyncio
+    async def test_extract_reuses_seen_skills(self, mock_llm):
+        """Same tool used repeatedly → one SKILL node, multiple USED_SKILL edges."""
+        draft = ExperienceTrace(
             task="test dedup",
             path=[
                 PathStep(tool="web_search", input="query1", output="r1"),
@@ -267,7 +267,9 @@ class TestExtractGraph:
             ],
         )
 
-        result = extract(session_id="dedup", role="default")
+        result = await extract(
+            experience_trace=draft, session_id="dedup",
+        )
 
         # TASK(1) + SKILL(1, not 2)
         assert len(result.nodes) == 2
@@ -279,10 +281,10 @@ class TestExtractGraph:
         for e in result.edges:
             assert e.to_id == "web-search"
 
-    def test_extract_edge_condition(self, mock_state_register, mock_llm):
+    @pytest.mark.asyncio
+    async def test_extract_edge_condition(self, mock_llm):
         """USED_SKILL edges carry condition."""
-        from context_engine.xp_graph.core import state_register_mem as mock
-        mock.get_state.return_value = ExperienceTrace(
+        draft = ExperienceTrace(
             task="test condition propagation",
             path=[
                 PathStep(
@@ -305,14 +307,16 @@ class TestExtractGraph:
             ],
         )
 
-        result = extract(session_id="condition", role="default")
+        result = await extract(
+            experience_trace=draft, session_id="condition",
+        )
 
         assert len(result.edges) == 1
         assert result.edges[0].condition == "Need to get the source code first"
         assert result.edges[0].type == EdgeType.USED_SKILL
 
 
-# ─── Tests for _persist_extraction() (persist branch of extract) ──
+# ─── Tests for persist branch of extract() ──
 
 class MockGmNode:
     """Minimal GmNode stand-in for mocking find_by_name / upsert_node returns."""
@@ -322,47 +326,41 @@ class MockGmNode:
 
 
 class TestPersistExtraction:
-    """Tests for extract() with db �?persist with dedup + embedding."""
+    """Tests for extract() with db — persist with dedup + embedding."""
+
+    @pytest.fixture
+    def a_draft(self) -> ExperienceTrace:
+        """Draft ExperienceTrace for persist tests."""
+        return ExperienceTrace(
+            task="Test task",
+            path=[PathStep(tool="test_tool", input="input", output="output")],
+            failures=[],
+            requires=None,
+        )
 
     # ── Fixture: all collaborators mocked ──
     @pytest.fixture(autouse=True)
-    def mock_all(self):
-        """Mock state_register_mem and every DB-level call extract touches.
+    def mock_all(self, mock_state_db):
+        """Mock every DB-level call extract touches.
 
-        The persist branch lives in TODOManager.py, so patch targets are all in
-        agent.tools.xp_graph.core.
-
-        NOTE on patching strategy:
-        - extact_graph() does `from models.LLMs.main_llm import main_llm` inside the
-          function body (local import), so we must patch at the original module path:
-          `models.LLMs.main_llm.main_llm`.
-        - This matches what TestExtractGraph.mock_llm does (see above).
-        - sync_node_embed and embed_model are module-level imports in TODOManager.py, so we
-          patch them at agent.tools.xp_graph.core.
+        Patches are in context_engine.xp_graph.core since that's where extract() lives.
         """
         with (
-            patch("agent.tools.xp_graph.core.state_register_mem") as mock_state,
-            patch("agent.tools.xp_graph.core.find_by_name") as mock_find,
-            patch("agent.tools.xp_graph.core.upsert_node") as mock_upsert_node,
-            patch("agent.tools.xp_graph.core.upsert_edge") as mock_upsert_edge,
-            patch("agent.tools.xp_graph.core.async_task_queue") as mock_queue,
-            patch("agent.tools.xp_graph.core.sync_node_embed") as mock_sync_embed,
-            patch("agent.tools.xp_graph.core.embed_model") as mock_embed_model,
-            patch("agent.tools.xp_graph.graph.invalidate_graph_cache", new_callable=MagicMock) as mock_invalidate,
-            patch("models.LLMs.main_llm.main_llm") as mock_llm,
-            patch("agent.tools.xp_graph.store.db.get_db") as mock_get_db,
+            patch("context_engine.xp_graph.core.find_by_name") as mock_find,
+            patch("context_engine.xp_graph.core.upsert_node") as mock_upsert_node,
+            patch("context_engine.xp_graph.core.upsert_edge") as mock_upsert_edge,
+            patch("context_engine.xp_graph.core.async_task_queue") as mock_queue,
+            patch("context_engine.xp_graph.core.sync_node_embed") as mock_sync_embed,
+            patch("context_engine.xp_graph.core.build_embed_model") as mock_embed_model,
+            patch("context_engine.xp_graph.core.invalidate_graph_cache", new_callable=MagicMock) as mock_invalidate,
+            patch("context_engine.xp_graph.core.build_main_llm") as mock_build_llm,
+            patch("context_engine.xp_graph.core.get_db") as mock_get_db,
         ):
-            mock_state.get_state.return_value = ExperienceTrace(
-                task="Test task",
-                path=[PathStep(tool="test_tool", input="input", output="output")],
-                failures=[],
-                requires=None,
-            )
-            # The structured LLM chain: ChatPromptTemplate.from_messages([...]) | main_llm.with_structured_output(...)
-            # The | operator wraps the MagicMock in a RunnableLambda, which calls __call__ (not .invoke).
-            # So we set return_value on the mock itself, not on .invoke.return_value.
+            # The structured LLM chain: ChatPromptTemplate.from_messages([...]) | build_main_llm().with_structured_output(...)
+            mock_llm_model = MagicMock(name="model")
             self.mock_structured_llm = MagicMock(name="structured_llm")
-            mock_llm.with_structured_output.return_value = self.mock_structured_llm
+            mock_llm_model.with_structured_output.return_value = self.mock_structured_llm
+            mock_build_llm.return_value = mock_llm_model
 
             self.mock_find = mock_find
             self.mock_upsert_node = mock_upsert_node
@@ -377,8 +375,9 @@ class TestPersistExtraction:
             yield
 
     # ── Happy path ──────────────────────────────────────────────
-    def test_store_new_nodes_and_edges(self):
-        """New nodes �?upsert_node called, sync_node_embed queued, edges upserted."""
+    @pytest.mark.asyncio
+    async def test_store_new_nodes_and_edges(self, a_draft):
+        """New nodes → upsert_node called, sync_node_embed queued, edges upserted."""
         stub_result = ExtractionResult(
             nodes=[
                 Node(type=NodeType.TASK, name="test-task", description="A test task", content="test task content"),
@@ -395,8 +394,8 @@ class TestPersistExtraction:
         self.mock_find.side_effect = [
             None,                             # dedup: test-task not found
             None,                             # dedup: test-skill not found
-            node_1,                           # edge: test-task �?resolved DB node
-            node_2,                           # edge: test-skill �?resolved DB node
+            node_1,                           # edge: test-task → resolved DB node
+            node_2,                           # edge: test-skill → resolved DB node
         ]
         self.mock_upsert_node.side_effect = [
             {"node": node_1, "isNew": True},
@@ -404,8 +403,8 @@ class TestPersistExtraction:
         ]
         self.mock_structured_llm.return_value = stub_result
 
-        result = extract(
-            session_id="s1", role="default",
+        result = await extract(
+            experience_trace=a_draft, session_id="s1",
         )
 
         # ── Verify upsert_node calls ──
@@ -445,8 +444,9 @@ class TestPersistExtraction:
         # ── Verify return value ──
         assert result is stub_result
 
-    def test_store_skips_existing_node(self):
-        """Existing node (find_by_name returns not-None) �?skip upsert, no embed.
+    @pytest.mark.asyncio
+    async def test_store_skips_existing_node(self, a_draft):
+        """Existing node (find_by_name returns not-None) → skip upsert, no embed.
 
         Cache is invalidated because name_to_id is populated from existing.id.
         """
@@ -461,8 +461,8 @@ class TestPersistExtraction:
         self.mock_find.return_value = existing_node
         self.mock_structured_llm.return_value = stub_result
 
-        result = extract(
-            session_id="s1", role="default",
+        result = await extract(
+            experience_trace=a_draft, session_id="s1",
         )
 
         # ── No upsert_node called ──
@@ -477,7 +477,8 @@ class TestPersistExtraction:
         # ── Return value intact ──
         assert len(result.nodes) == 1
 
-    def test_store_skip_existing_but_upsert_new(self):
+    @pytest.mark.asyncio
+    async def test_store_skip_existing_but_upsert_new(self, a_draft):
         """Mix of existing & new nodes: only new ones get upserted + embedded."""
         existing_node = MockGmNode(id="n-existing-1", name="existing-node")
         new_node = MockGmNode(id="n-new-1", name="new-node")
@@ -493,8 +494,8 @@ class TestPersistExtraction:
         self.mock_upsert_node.return_value = {"node": new_node, "isNew": True}
         self.mock_structured_llm.return_value = stub_result
 
-        result = extract(
-            session_id="s1", role="default",
+        result = await extract(
+            experience_trace=a_draft, session_id="s1",
         )
 
         # ── Exactly one upsert ──
@@ -507,8 +508,9 @@ class TestPersistExtraction:
         # ── Cache invalidation triggered (name_to_id non-empty) ──
         self.mock_invalidate.assert_called_once()
 
-    def test_store_edges_with_missing_node_skips_and_warns(self):
-        """Edge referencing a node not in DB �?warning logged, edge skipped."""
+    @pytest.mark.asyncio
+    async def test_store_edges_with_missing_node_skips_and_warns(self, a_draft):
+        """Edge referencing a node not in DB → warning logged, edge skipped."""
         skip_node = MockGmNode(id="n-skip-1", name="no-such-node")
 
         stub_result = ExtractionResult(
@@ -521,15 +523,15 @@ class TestPersistExtraction:
         )
         self.mock_find.side_effect = [
             skip_node,   # dedup: my-task found (existing)
-            skip_node,   # edge from: my-task �?resolved DB node
-            None,        # edge to: no-such-node not found �?skip
+            skip_node,   # edge from: my-task → resolved DB node
+            None,        # edge to: no-such-node not found → skip
         ]
         self.mock_upsert_node.return_value = {"node": skip_node, "isNew": False}
         self.mock_structured_llm.return_value = stub_result
 
         with patch("loguru.logger") as mock_logger:
-            result = extract(
-                session_id="s1", role="default",
+            result = await extract(
+                experience_trace=a_draft, session_id="s1",
             )
 
         # ── Edge skipped ──
@@ -544,13 +546,14 @@ class TestPersistExtraction:
         # ── Cache invalidated (name_to_id was populated from dedup) ──
         self.mock_invalidate.assert_called_once()
 
-    def test_store_empty_extraction(self):
-        """Empty ExtractionResult (no nodes) �?nothing happens."""
+    @pytest.mark.asyncio
+    async def test_store_empty_extraction(self, a_draft):
+        """Empty ExtractionResult (no nodes) → nothing happens."""
         stub_result = ExtractionResult(nodes=[], edges=[])
         self.mock_structured_llm.return_value = stub_result
 
-        result = extract(
-            session_id="s1", role="default",
+        result = await extract(
+            experience_trace=a_draft, session_id="s1",
         )
 
         self.mock_find.assert_not_called()
@@ -562,8 +565,9 @@ class TestPersistExtraction:
         assert result.nodes == []
         assert result.edges == []
 
-    def test_store_node_type_enum_serialized(self):
-        """Node.type as Enum (not str) �?.value extracted correctly."""
+    @pytest.mark.asyncio
+    async def test_store_node_type_enum_serialized(self, a_draft):
+        """Node.type as Enum (not str) → .value extracted correctly."""
         stub_result = ExtractionResult(
             nodes=[
                 Node(type=NodeType.TASK, name="enum-task", description="Enum task", content="content"),
@@ -574,15 +578,16 @@ class TestPersistExtraction:
         self.mock_upsert_node.return_value = {"node": MockGmNode(id="n-enum-1", name="enum-task"), "isNew": True}
         self.mock_structured_llm.return_value = stub_result
 
-        result = extract(
-            session_id="s1", role="default",
+        result = await extract(
+            experience_trace=a_draft, session_id="s1",
         )
 
         call_args = self.mock_upsert_node.call_args[1]["c"]
         assert call_args["type"] == "TASK"
 
-    def test_store_edge_type_enum_serialized(self):
-        """Edge.type as Enum �?.value extracted for upsert_edge call."""
+    @pytest.mark.asyncio
+    async def test_store_edge_type_enum_serialized(self, a_draft):
+        """Edge.type as Enum → .value extracted for upsert_edge call."""
         stub_result = ExtractionResult(
             nodes=[
                 Node(type=NodeType.TASK, name="t1", description="d1", content="c1"),
@@ -603,8 +608,8 @@ class TestPersistExtraction:
         ]
         self.mock_structured_llm.return_value = stub_result
 
-        result = extract(
-            session_id="s1", role="default",
+        result = await extract(
+            experience_trace=a_draft, session_id="s1",
         )
 
         edge_data = self.mock_upsert_edge.call_args[1]["edge_data"]

@@ -2,7 +2,7 @@
 
 Tracks per-skill usage metadata in a sidecar JSON file (~/.hermes/skills/.usage.json)
 keyed by skill name. Counters are bumped by the existing skill tools (skill_view,
-skill_manage); the curator orchestrator reads the derived activity timestamp to
+skill tools); the curator orchestrator reads the derived activity timestamp to
 decide lifecycle transitions.
 
 Design notes:
@@ -12,7 +12,7 @@ Design notes:
   - All counter bumps are best-effort: failures log at DEBUG and return silently.
     A broken sidecar never breaks the underlying tool call.
   - Provenance filter: curator-managed skills are explicitly marked when
-    created through skill_manage. Bundled / hub-installed skills stay
+     created through agent tools. Bundled / hub-installed skills stay
     off-limits, and manually authored skills are not inferred from location.
 
 Lifecycle states:
@@ -212,7 +212,7 @@ def list_agent_created_skill_names() -> List[str]:
     """Enumerate skills explicitly authored by the agent.
 
     The curator operates exclusively on this set. Skills are only eligible
-    after ``skill_manage(action="create")`` marks them in ``.usage.json``;
+    after they are created and marked in ``.usage.json``;
     manually authored skills must not be inferred from filesystem location.
     Bundled / hub skills are maintained by their upstream sources and must
     never be pruned here.
@@ -415,7 +415,7 @@ def bump_use(skill_name: str) -> None:
 
 
 def bump_patch(skill_name: str) -> None:
-    """Bump patch_count and last_patched_at. Called from skill_manage (patch/edit)."""
+    """Bump patch_count and last_patched_at. Called when a skill is patched or edited."""
     def _apply(rec: Dict[str, Any]) -> None:
         rec["patch_count"] = int(rec.get("patch_count") or 0) + 1
         rec["last_patched_at"] = _now_iso()
@@ -423,7 +423,7 @@ def bump_patch(skill_name: str) -> None:
 
 
 def mark_agent_created(skill_name: str) -> None:
-    """Opt a skill created by skill_manage into curator management.
+    """Opt a skill created by the agent into curator management.
 
     Viewing or invoking a manually authored skill may still create telemetry,
     but only this explicit marker makes it eligible for automatic curation.

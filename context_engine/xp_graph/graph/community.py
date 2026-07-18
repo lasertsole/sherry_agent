@@ -190,14 +190,14 @@ async def summarize_communities(
 
         sorted_member_ids = sorted(member_ids)
         cursor.execute(
-            "SELECT node_ids FROM gm_communities WHERE id = ?",
+            "SELECT node_ids_snapshot FROM gm_communities WHERE id = ?",
             (community_id,)
         )
         row = cursor.fetchone()
         if row and row[0]:
             try:
-                old_node_ids = json.loads(row[0])
-                if sorted(old_node_ids) == sorted_member_ids:
+                old_node_ids_snapshot = json.loads(row[0])
+                if sorted(old_node_ids_snapshot) == sorted_member_ids:
                     logger.debug(f"[xp_graph] Skip unchanged community: {community_id}")
                     continue
             except (json.JSONDecodeError, TypeError):

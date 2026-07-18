@@ -1,10 +1,10 @@
-"""Tests for xp_graph.core.update_draft() — experience trace draft distillation."""
+"""Tests for xp_graph.core.distill_trace() — experience trace distillation via LLM."""
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from context_engine.xp_graph.core import ExperienceTrace, update_draft
+from context_engine.xp_graph.core import ExperienceTrace, PathStep, Failure, Fix, distill_trace
 
 
 class FakeContent:
@@ -27,7 +27,7 @@ class FakeChatModel:
 
 
 MOCK_JSON = """{
-    "task": "test the draft function",
+    "task": "test the distill function",
     "path": [
         {
             "tool": "mock_tool",
@@ -52,79 +52,62 @@ MOCK_JSON = """{
     "requires": ["python"]
 }"""
 
+MOCK_MINIMAL_JSON = """{
+    "task": "empty test",
+    "path": [],
+    "failures": [],
+    "requires": null
+}"""
+
 
 @pytest.fixture
 def mock_llm_factory():
     """Patch build_main_llm inside xp_graph.core to return the fake model."""
-    with patch("agent.tools.xp_graph.core.build_main_llm") as mock_factory:
+    with patch("context_engine.xp_graph.core.build_main_llm") as mock_factory:
         yield mock_factory
 
 
-@pytest.fixture
-def mock_state_register():
-    """Patch state_register_mem to avoid side effects and capture set_state calls."""
-    with patch("agent.tools.xp_graph.core.state_register_mem") as mock_reg:
-        mock_reg.get_state.return_value = ""
-        yield mock_reg
+class TestDistillTrace:
+    """Tests for the distill_trace() function."""
 
-
-# ─── Tests ─────────────────────────────────────────────────────────
-
-
-class TestUpdateDraft:
-    """Tests for the update_draft() function."""
-
-    def test_draft_success(self, mock_llm_factory, mock_state_register):
-        """Happy path: LLM returns valid JSON, parser produces ExperienceTrace stored in state."""
+    @pytest.mark.asyncio
+    async def test_distill_success(self, mock_llm_factory):
+        """Happy path: LLM returns valid JSON, parser produces ExperienceTrace."""
         mock_llm_factory.return_value = FakeChatModel(MOCK_JSON)
 
-        update_draft(
-            session_id="test-session",
+        result = await distill_trace(
             system_prompt="You are a helpful assistant.",
             messages=[HumanMessage(content="hello")],
         )
 
-        # Verify set_state was called with correct session_id and key
-        mock_state_register.set_state.assert_called_once()
-        args, _ = mock_state_register.set_state.call_args
-        session_id, key, stored = args
-        assert session_id == "test-session"
-        assert key == "xp_graph_draft"
-        assert isinstance(stored, ExperienceTrace)
-        assert stored.task == "test the draft function"
-        assert len(stored.path) == 1
-        assert stored.path[0].tool == "mock_tool"
-        assert stored.path[0].trigger == "needed to verify the function works"
-        assert len(stored.failures) == 1
-        assert stored.failures[0].symptom == "mock error"
-        assert len(stored.failures[0].fixes) == 1
-        assert stored.failures[0].fixes[0].strategy == "parameter"
-        assert stored.requires == ["python"]
+        assert isinstance(result, ExperienceTrace)
+        assert result.task == "test the distill function"
+        assert len(result.path) == 1
+        assert result.path[0].tool == "mock_tool"
+        assert result.path[0].trigger == "needed to verify the function works"
+        assert len(result.failures) == 1
+        assert result.failures[0].symptom == "mock error"
+        assert len(result.failures[0].fixes) == 1
+        assert result.failures[0].fixes[0].strategy == "parameter"
+        assert result.requires == ["python"]
 
-    def test_draft_empty_path_and_failures(self, mock_llm_factory, mock_state_register):
+    @pytest.mark.asyncio
+    async def test_distill_empty_path_and_failures(self, mock_llm_factory):
         """LLM returns minimal JSON: empty lists, null requires."""
-        minimal_json = """{
-            "task": "empty test",
-            "path": [],
-            "failures": [],
-            "requires": null
-        }"""
-        mock_llm_factory.return_value = FakeChatModel(minimal_json)
+        mock_llm_factory.return_value = FakeChatModel(MOCK_MINIMAL_JSON)
 
-        update_draft(
-            session_id="test-session",
+        result = await distill_trace(
             system_prompt="system",
             messages=[HumanMessage(content="test")],
         )
 
-        args, _ = mock_state_register.set_state.call_args
-        stored: ExperienceTrace = args[2]
-        assert stored.task == "empty test"
-        assert stored.path == []
-        assert stored.failures == []
-        assert stored.requires is None
+        assert result.task == "empty test"
+        assert result.path == []
+        assert result.failures == []
+        assert result.requires is None
 
-    def test_draft_trigger_is_optional(self, mock_llm_factory, mock_state_register):
+    @pytest.mark.asyncio
+    async def test_distill_trigger_is_optional(self, mock_llm_factory):
         """PathStep without 'trigger' field should be parsed as None."""
         json_no_trigger = """{
             "task": "test trigger null",
@@ -140,64 +123,57 @@ class TestUpdateDraft:
         }"""
         mock_llm_factory.return_value = FakeChatModel(json_no_trigger)
 
-        update_draft(
-            session_id="test-session",
+        result = await distill_trace(
             system_prompt="system",
             messages=[HumanMessage(content="test")],
         )
 
-        args, _ = mock_state_register.set_state.call_args
-        stored: ExperienceTrace = args[2]
-        assert len(stored.path) == 1
-        assert stored.path[0].tool == "web_search"
-        assert stored.path[0].trigger is None
+        assert len(result.path) == 1
+        assert result.path[0].tool == "web_search"
+        assert result.path[0].trigger is None
 
-    def test_draft_prompt_contains_trigger_and_required_fields(self):
+    @pytest.mark.asyncio
+    async def test_distill_prompt_contains_trigger_and_required_fields(self):
         """Verify the distill_prompt instructs the LLM about the 'trigger' field."""
         captured_messages = {}
 
         class CapturingModel(FakeChatModel):
             def invoke(self, input, **kwargs):
-                msgs = input.get("messages", [])
+                msgs = input if isinstance(input, list) else input.get("messages", [])
                 for m in msgs:
                     if isinstance(m, HumanMessage):
+                        # Track the last HumanMessage (distill prompt)
                         captured_messages["human"] = m.content
                 return FakeContent(self._json)
 
-        mock_json = '{"task":"x","path":[],"failures":[],"requires":null}'
-        model = CapturingModel(mock_json)
+        model = CapturingModel(MOCK_MINIMAL_JSON)
 
-        with patch("agent.tools.xp_graph.core.build_main_llm", return_value=model), \
-             patch("agent.tools.xp_graph.core.state_register_mem") as mock_reg:
-            mock_reg.get_state.return_value = ""
-            update_draft(
-                session_id="test-session",
+        with patch("context_engine.xp_graph.core.build_main_llm", return_value=model):
+            await distill_trace(
                 system_prompt="system",
                 messages=[HumanMessage(content="test msg")],
             )
 
         human_content = captured_messages.get("human", "")
         assert "trigger" in human_content
-        assert "选择此工具/方案的理由" in human_content
+        assert "选择此工具/方案的理由" not in human_content  # old prompt text
 
-    def test_draft_uses_distill_prompt_as_last_message(self, mock_llm_factory, mock_state_register):
+    @pytest.mark.asyncio
+    async def test_distill_uses_distill_prompt_as_last_message(self, mock_llm_factory):
         """Ensure the distill_prompt is the final HumanMessage in the LLM call."""
         all_sent_messages = []
 
         class ObserverModel(FakeChatModel):
             def invoke(self, input, **kwargs):
                 nonlocal all_sent_messages
-                msgs = input.get("messages", [])
-                all_sent_messages = msgs
+                all_sent_messages = input if isinstance(input, list) else input.get("messages", [])
                 return FakeContent(self._json)
 
         test_messages = [HumanMessage(content="user msg 1"), HumanMessage(content="user msg 2")]
-        mock_json = '{"task":"x","path":[],"failures":[],"requires":null}'
-        model = ObserverModel(mock_json)
+        model = ObserverModel(MOCK_MINIMAL_JSON)
 
         mock_llm_factory.return_value = model
-        update_draft(
-            session_id="test-session",
+        await distill_trace(
             system_prompt="system prompt text",
             messages=test_messages,
         )
@@ -213,41 +189,14 @@ class TestUpdateDraft:
         assert "path" in all_sent_messages[-1].content
         assert "failures" in all_sent_messages[-1].content
 
-    def test_draft_appends_existing_data(self, mock_llm_factory):
-        """When existing draft data exists, it's included in the prompt."""
-        with patch("agent.tools.xp_graph.core.state_register_mem") as mock_reg:
-            # Simulate existing draft data
-            mock_reg.get_state.return_value = "Previously extracted data here"
-
-            captured_prompt = {}
-
-            class CapturingModel(FakeChatModel):
-                def invoke(self, input, **kwargs):
-                    msgs = input.get("messages", [])
-                    for m in msgs:
-                        if isinstance(m, HumanMessage):
-                            captured_prompt["human"] = m.content
-                    return FakeContent('{"task":"x","path":[],"failures":[],"requires":null}')
-
-            mock_llm_factory.return_value = CapturingModel('{"task":"x","path":[],"failures":[],"requires":null}')
-            update_draft(
-                session_id="test-session",
-                system_prompt="system",
-                messages=[HumanMessage(content="test")],
-            )
-
-        human_content = captured_prompt.get("human", "")
-        assert "Previously extracted data here" in human_content
-        assert "在已有结构化经验上进行改动" in human_content
-
-    def test_draft_does_not_mutate_input_messages(self, mock_llm_factory, mock_state_register):
-        """Ensure the original messages list is not mutated by update_draft."""
+    @pytest.mark.asyncio
+    async def test_distill_does_not_mutate_input_messages(self, mock_llm_factory):
+        """Ensure the original messages list is not mutated by _distill_trace."""
         original_messages = [HumanMessage(content="msg 1")]
         original_len = len(original_messages)
 
         mock_llm_factory.return_value = FakeChatModel(MOCK_JSON)
-        update_draft(
-            session_id="test-session",
+        await distill_trace(
             system_prompt="system",
             messages=original_messages,
         )
@@ -255,3 +204,53 @@ class TestUpdateDraft:
         # Original messages should be unchanged (no append, no mutation)
         assert len(original_messages) == original_len
         assert original_messages[0].content == "msg 1"
+
+    @pytest.mark.asyncio
+    async def test_distill_appends_distill_prompt_without_previous_draft(self, mock_llm_factory):
+        """When there's no existing draft, the distill prompt simply follows the user messages.
+
+        This differs from the old update_draft which appended existing draft data.
+        _distill_trace does NOT look up previous draft data — it just distills what's given.
+        """
+        all_sent_messages = []
+
+        class ObserverModel(FakeChatModel):
+            def invoke(self, input, **kwargs):
+                nonlocal all_sent_messages
+                all_sent_messages = input if isinstance(input, list) else input.get("messages", [])
+                return FakeContent(self._json)
+
+        mock_llm_factory.return_value = ObserverModel(MOCK_MINIMAL_JSON)
+        await distill_trace(
+            system_prompt="system",
+            messages=[HumanMessage(content="test")],
+        )
+
+        # Messages: [SystemMessage, HumanMessage(user), HumanMessage(distill_prompt)]
+        assert len(all_sent_messages) == 3
+        assert isinstance(all_sent_messages[-1], HumanMessage)
+        # No previous draft data in the prompt
+        assert "在已有结构化经验上进行改动" not in all_sent_messages[-1].content
+
+    @pytest.mark.asyncio
+    async def test_distill_uses_json_mode(self, mock_llm_factory):
+        """Verify the LLM is called with response_format={'type': 'json_object'}."""
+        class BindingObserver(FakeChatModel):
+            def __init__(self, json_response: str):
+                super().__init__(json_response)
+                self._bound_kwargs = None
+
+            def bind(self, **kwargs):
+                self._bound_kwargs = kwargs
+                return self
+
+        model = BindingObserver(MOCK_JSON)
+        mock_llm_factory.return_value = model
+
+        await distill_trace(
+            system_prompt="system",
+            messages=[HumanMessage(content="test")],
+        )
+
+        assert model._bound_kwargs is not None
+        assert model._bound_kwargs.get("response_format") == {"type": "json_object"}

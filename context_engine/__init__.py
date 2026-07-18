@@ -1,2 +1,2 @@
-from xp_graph import *
-from mes_memory import *
+from .xp_graph import *
+from .mes_memory import *

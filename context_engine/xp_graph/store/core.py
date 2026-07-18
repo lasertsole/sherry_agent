@@ -663,15 +663,15 @@ def upsert_community_summary(
     summary_id: str,
     summary_text: str,
     embedding: list[float],
-    node_ids: list[str] | None = None
+    node_ids_snapshot: list[str] | None = None
 ) -> None:
     """Insert or update a community summary
 
-    node_count is derived from len(node_ids) automatically.
+    node_count is derived from len(node_ids_snapshot) automatically.
     """
     now = get_timestamp()
-    node_ids_json = json.dumps(sorted(node_ids)) if node_ids else '[]'
-    node_count = len(node_ids) if node_ids else 0
+    node_ids_json = json.dumps(sorted(node_ids_snapshot)) if node_ids_snapshot else '[]'
+    node_count = len(node_ids_snapshot) if node_ids_snapshot else 0
 
     existing = db.execute(
         "SELECT id FROM gm_communities WHERE id=?",
@@ -682,19 +682,19 @@ def upsert_community_summary(
         if embedding:
             db.execute("""
                 UPDATE gm_communities 
-                SET summary=?, node_count=?, node_ids=?, embedding=?, updated_at=? 
+                SET summary=?, node_count=?, node_ids_snapshot=?, embedding=?, updated_at=? 
                 WHERE id=?
             """, (summary_text, node_count, node_ids_json, json.dumps(embedding), now, summary_id))
         else:
             db.execute("""
                 UPDATE gm_communities 
-                SET summary=?, node_count=?, node_ids=?, updated_at=? 
+                SET summary=?, node_count=?, node_ids_snapshot=?, updated_at=? 
                 WHERE id=?
             """, (summary_text, node_count, node_ids_json, now, summary_id))
     else:
         db.execute("""
             INSERT INTO gm_communities 
-            (id, summary, node_count, node_ids, embedding, created_at, updated_at) 
+            (id, summary, node_count, node_ids_snapshot, embedding, created_at, updated_at) 
             VALUES (?,?,?,?,?,?,?)
         """, (summary_id, summary_text, node_count, node_ids_json,
               json.dumps(embedding) if embedding else None, now, now))

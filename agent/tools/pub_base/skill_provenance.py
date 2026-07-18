@@ -5,7 +5,7 @@ background self-improvement review fork. Skills a user asks a foreground
 agent to write belong to the user and must never be auto-curated.
 
 This module exposes a ContextVar that run_agent.py sets before each tool
-loop so tool handlers (e.g. skill_manage create) can check whether they
+loop so tool handlers (e.g. skill create/patch) can check whether they
 are executing inside the background-review fork.
 
 The signal piggybacks on AIAgent._memory_write_origin, which is already

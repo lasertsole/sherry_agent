@@ -1,4 +1,4 @@
-from skills import build_skills_snapshot
+
 from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentState
@@ -21,10 +21,6 @@ from .smart_tool_node import patch_tool_node
 class StateSchema(AgentState):
     """Agent state that preserves an ``session_id``."""
     session_id: str
-
-# Rebuild skill snapshot at server start to keep skills prompt stable
-# throughout this server run, ensuring reliable model prefix caching.
-build_skills_snapshot()
 
 # Load memory markdown files from disk; keep them unchanged until
 # compression is triggered during this server run.

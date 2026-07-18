@@ -2,17 +2,14 @@ import json
 import textwrap
 from loguru import logger
 from .recaller import Recaller
-from .format import assemble_context
 from pydantic import BaseModel, Field
-from .store.db import get_db, resolve_db_path
+from typing import Literal, Any, TypedDict
+from .store.db import get_db, _default_db_path
 from .async_task_queue import async_task_queue
 from models.LLMs.main_llm import build_main_llm
-from langchain_core.tools import tool, BaseTool
 from langchain_core.embeddings import Embeddings
-from typing import Literal, Any, TypedDict, Annotated
 from .type import  ExtractionResult, GmNode, GmConfig
-from langgraph.prebuilt.tool_node import InjectedState
-from runtime import state_register_mem, state_register_db
+from runtime import state_register_db
 from models import build_embed_model, build_auxiliary_llm
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -21,9 +18,9 @@ from .graph import MaintenanceResult, run_maintenance, invalidate_graph_cache
 from .store import delete_node, get_by_session, upsert_node, find_by_name, upsert_edge, UpsertResult, sync_node_embed
 
 
-def build_config(role: str)-> GmConfig:
+def build_config() -> GmConfig:
     return GmConfig(
-        db_path=resolve_db_path(role).as_posix(),
+        db_path=str(_default_db_path),
         compact_turn_count=7,
         recall_max_nodes=6,
         recall_max_depth=2,
@@ -123,11 +120,11 @@ async def finalize(session_nodes: list[GmNode], graph_summary: str) -> FinalizeR
         max_tokens=16384
     )
 
-async def _rectification_and_standardization(session_id: str, role: str) -> None:
+async def _rectification_and_standardization(session_id: str) -> None:
     try:
-        db = get_db(role)
+        db = get_db()
         nodes: list[GmNode] = get_by_session(db, session_id)
-        recaller = Recaller(db, build_config(role))
+        recaller = Recaller(db, build_config())
         if nodes:
             cursor = db.cursor()
             cursor.execute(
@@ -158,16 +155,16 @@ async def _rectification_and_standardization(session_id: str, role: str) -> None
 
         embed: Embeddings | None = getattr(recaller, "embed", None)
         llm = build_auxiliary_llm()
-        result: MaintenanceResult = await run_maintenance(db, build_config(role), llm, embed)
+        result: MaintenanceResult = await run_maintenance(db, build_config(), llm, embed)
 
         top_pr_names = [f"{n['name']}({n['score']})" for n in result["pagerank"]["top_k"][:3]]
         logger.debug(
-            f"[xp_graph:{role}] maintenance: {result['duration_ms']}ms, "
+            f"[xp_graph] maintenance: {result['duration_ms']}ms, "
             f"dedup={result['dedup']['merged']}, communities={result['community']['count']}, "
             f"summaries={result['community_summaries']}, top_pr={', '.join(top_pr_names)}"
         )
     except Exception as e:
-        logger.error(f"[xp_graph:{role}] session_end error: {e}")
+        logger.error(f"[xp_graph] session_end error: {e}")
 
 # ─── ExperienceTrace Models ─────────────────────────────────────
 class Fix(BaseModel):
@@ -207,26 +204,24 @@ class ExperienceTrace(BaseModel):
     failures: list[Failure] = Field(default=[], description="Failures encountered")
     requires: list[str] | None = Field(default=None, description="Required skills or prerequisites")
 
-_XP_GRAPH_DRAFT: str = "xp_graph_draft"
-
 class RecallResult(TypedDict):
     nodes: list[Any]
     edges: list[Any]
 
-def update_draft(session_id: str, system_prompt: str, messages: list[BaseModel]) -> None:
-    raw_state: ExperienceTrace | None = state_register_mem.get_state(session_id, "xp_graph_draft", None)
-    if raw_state is None:
-        additional_prompt: str = ""
-    else:
-        # Already an ExperienceTrace object — serialize it back to text
-        additional_prompt = _serialize_draft(raw_state)
 
-    if additional_prompt.strip() != "":
-        additional_prompt = f"Already extracted structured experience data:\n{additional_prompt}\nModify the existing structured experience based on actual conditions\n\n"
+async def distill_trace(
+    system_prompt: str,
+    messages: list[BaseModel],
+) -> ExperienceTrace:
+    """Distill conversation messages into a structured ExperienceTrace via LLM.
 
+    This is the first step of the extraction pipeline: it takes the raw
+    conversation context and produces a structured trace (task, path,
+    failures, requires) that the extraction LLM then converts into graph
+    nodes/edges.
+    """
     distill_prompt: str = (
         "Review the conversation messages above and extract structured ExperienceTrace data.\n"
-        f"{additional_prompt}"
         "Output strictly in JSON with the following fields:\n\n"
         "1. task: Core objective of this task (one sentence summary).\n"
         "2. path: Execution path, each step contains:\n"
@@ -249,17 +244,16 @@ def update_draft(session_id: str, system_prompt: str, messages: list[BaseModel])
         input=[SystemMessage(content=system_prompt), *messages, HumanMessage(content=distill_prompt)]
     )
     experience_trace: ExperienceTrace = parser.parse(raw_basemodel.content)
-    logger.debug("update_draft experience_trace is {}", experience_trace)
+    logger.debug("_distill_trace experience_trace is {}", experience_trace)
+    return experience_trace
 
-    state_register_mem.set_state(session_id, _XP_GRAPH_DRAFT, experience_trace)
-
-def _serialize_draft(draft: ExperienceTrace) -> str:
+def _serialize_experience_trace(experience_trace: ExperienceTrace) -> str:
     """Serialize ExperienceTrace into a structured text for LLM consumption."""
-    parts = [f"Task: {draft.task}"]
+    parts = [f"Task: {experience_trace.task}"]
 
-    if draft.path:
+    if experience_trace.path:
         parts.append("\nExecution Path:")
-        for i, step in enumerate(draft.path, 1):
+        for i, step in enumerate(experience_trace.path, 1):
             parts.append(f"  Step {i}:")
             parts.append(f"    Tool: {step.tool}")
             parts.append(f"    Input: {step.input}")
@@ -268,9 +262,9 @@ def _serialize_draft(draft: ExperienceTrace) -> str:
             if step.trigger:
                 parts.append(f"    Reason: {step.trigger}")
 
-    if draft.failures:
+    if experience_trace.failures:
         parts.append("\nFailures:")
-        for i, fail in enumerate(draft.failures, 1):
+        for i, fail in enumerate(experience_trace.failures, 1):
             parts.append(f"  Failure {i}:")
             parts.append(f"    Symptom: {fail.symptom}")
             parts.append(f"    Cause: {fail.cause}")
@@ -281,9 +275,9 @@ def _serialize_draft(draft: ExperienceTrace) -> str:
                 if fix.tool:
                     parts.append(f"      Tool: {fix.tool}")
 
-    if draft.requires:
+    if experience_trace.requires:
         parts.append("\nPrerequisites:")
-        for req in draft.requires:
+        for req in experience_trace.requires:
             parts.append(f"  - {req}")
 
     return "\n".join(parts)
@@ -362,7 +356,6 @@ RECTIFICATION_AND_STANDARDIZATION_INTERVAL: int = 13
 async def _maybe_maintain_communities(
     db,
     session_id: str,
-    role: str,
 ) -> None:
     """Run community detection + summarization every MAINTAIN_INTERVAL turns.
 
@@ -379,7 +372,7 @@ async def _maybe_maintain_communities(
 
             # Generate summaries immediately after each community detection (needs LLM), ensuring generalized recall is available
             if comm["communities"] and len(comm["communities"]) > 0:
-                recaller = Recaller(db, build_config(role))
+                recaller = Recaller(db, build_config())
                 embed: Embeddings = getattr(recaller, 'embed', None)
                 llm = build_auxiliary_llm()
                 summaries = await summarize_communities(
@@ -399,7 +392,7 @@ async def _maybe_maintain_communities(
         state_register_db.set_state(session_id, XP_GRAPH_MAINTAIN_TURNS, xp_graph_maintain_turns)
 
 
-async def _maybe_run_rectification(session_id: str, role: str) -> None:
+async def _maybe_run_rectification(session_id: str) -> None:
     """Run rectification_and_standardization every RECTIFICATION_AND_STANDARDIZATION_INTERVAL turns.
 
     This is a periodic maintenance task triggered by turn count stored in state_register_db.
@@ -413,48 +406,39 @@ async def _maybe_run_rectification(session_id: str, role: str) -> None:
     )
     if xp_graph_rectification_and_standardization_turns % RECTIFICATION_AND_STANDARDIZATION_INTERVAL == 0:
         state_register_db.set_state(session_id, RECTIFICATION_AND_STANDARDIZATION_TURNS, 0)
-        await _rectification_and_standardization(session_id=session_id, role=role)
+        await _rectification_and_standardization(session_id=session_id)
     else:
         state_register_db.set_state(session_id, RECTIFICATION_AND_STANDARDIZATION_TURNS,
                                     xp_graph_rectification_and_standardization_turns)
 
 
 async def extract(
+    experience_trace: ExperienceTrace,
     session_id: str,
-    role: Literal["default", "commander", "worker"],
-) -> None:
+) -> ExtractionResult:
     """
-    Convert the ExperienceTrace draft stored in session state into an
-    ExtractionResult (knowledge graph nodes + edges) using LLM reasoning,
-    then persist the result to the database.
+    Convert a pre-built ExperienceTrace into an ExtractionResult (knowledge
+    graph nodes + edges), and persist to the database — all in a single call.
 
-    The LLM receives the full ExperienceTrace as structured text and
-    autonomously decides the optimal node/edge representation, including
-    implicit relationships (PATCHES, CONFLICTS_WITH) that the old
-    mechanical mapping could not capture.
-
-    The database connection is resolved from ``role`` via ``get_db(role)``.
+    The caller is responsible for producing the ExperienceTrace (e.g. via
+    ``distill_trace()``). This function feeds the pre-built trace to an LLM
+    pass that autonomously decides the optimal node/edge representation,
+    including implicit relationships (PATCHES, CONFLICTS_WITH).
 
     Persistence steps: node dedup + upsert, edge upsert, async
     embedding, cache invalidation.
 
     Args:
+        experience_trace: Pre-distilled experience trace to convert into graph nodes/edges.
         session_id: Session identifier.
-        role: Role name (e.g. "default", "commander", "worker").
 
     Returns:
         ExtractionResult containing extracted nodes and edges.
-
-    Raises:
-        RuntimeError: If no draft exists for the given session_id.
     """
-    draft: ExperienceTrace | None = state_register_mem.get_state(session_id, _XP_GRAPH_DRAFT, None)
-    if draft is None:
-        raise RuntimeError("xp draft is None")
 
     from langchain_core.prompts import ChatPromptTemplate
 
-    serialized = _serialize_draft(draft)
+    serialized = _serialize_experience_trace(experience_trace)
     model = build_main_llm()
     structured_llm = ChatPromptTemplate.from_messages([
         ("system", EXTRACT_GRAPH_SYS),
@@ -463,8 +447,8 @@ async def extract(
 
     result: ExtractionResult = structured_llm.invoke({"trace": serialized})
 
-    # ── Resolve db from role ──
-    db = get_db(role)
+    # ── Resolve db ──
+    db = get_db()
 
     # ── Persist extracted nodes/edges ──
     from loguru import logger
@@ -486,7 +470,7 @@ async def extract(
                 "description": node.description,
                 "content": node.content,
             },
-            session_id=session_id,
+                session_id=session_id,
             )
         gm_node = upsert_result["node"]
         if gm_node is not None:
@@ -500,7 +484,7 @@ async def extract(
         to_node = find_by_name(db, edge.to_id)
         if from_node is None or to_node is None:
             logger.warning(
-                f"[xp_graph:{role}] skipping edge {edge.from_id}→{edge.to_id}: "
+                f"[xp_graph] skipping edge {edge.from_id}→{edge.to_id}: "
                 f"node not found in DB"
             )
             continue
@@ -519,79 +503,9 @@ async def extract(
     if name_to_id:
         invalidate_graph_cache()
 
-    logger.debug(f"[xp_graph:{role}] persisted extraction: {len(result.nodes)} nodes, {len(result.edges)} edges")
+    logger.debug(f"[xp_graph] persisted extraction: {len(result.nodes)} nodes, {len(result.edges)} edges")
 
-    await _maybe_maintain_communities(db, session_id, role)
+    await _maybe_maintain_communities(db, session_id)
+    await _maybe_run_rectification(session_id)
 
-    await _maybe_run_rectification(session_id, role)
-
-
-class XPRetrieveSchema(BaseModel):
-    query: str = Field(description="Query string used to search the experience knowledge graph for relevant methods, skills, or error solutions")
-
-@tool("xp_retrieve", args_schema=XPRetrieveSchema)
-async def xp_retrieve_tool(query: str, role: Annotated[str, InjectedState("session_id")] = "")-> str:
-    """Search the experience knowledge graph for relevant methods, then summarize them into a readable answer.
-
-    Recalls similar historical tasks, reusable skills, and past error solutions
-    from the experience knowledge graph, then filters and organizes the results
-    into a concise answer. Returns "No relevant methods found." when nothing
-    matches the query."""
-    db = get_db(role)
-
-    recaller = Recaller(db, build_config(role))
-    rec: RecallResult = await recaller.recall(query)
-    nodes = rec["nodes"]
-    edges = rec["edges"]
-
-    if not nodes:
-        return "No relevant methods found."
-
-    assemble_result = assemble_context(
-        db,
-        recalled_nodes=nodes,
-        recalled_edges=edges
-    )
-    xml = assemble_result["xml"]
-
-    llm = build_auxiliary_llm(temperature=0.0)
-    filter_prompt = (
-        "You are an experience knowledge graph query assistant. Below is the recalled node and edge data (XML format).\n\n"
-        "Graph structure:\n"
-        "- Three node types: SKILL (reusable operational method), TASK (historical task), EVENT (historical error and solution)\n"
-        "- Nodes are grouped by community; knowledge within the same community is related\n"
-        "- Edge types:\n"
-        "  · USED_SKILL: A TASK used a SKILL\n"
-        "  · SOLVED_BY: An EVENT was resolved by a SKILL\n"
-        "  · REQUIRES: One SKILL depends on another SKILL\n"
-        "  · PATCHES: A newer SKILL corrects an older one\n"
-        "  · CONFLICTS_WITH: Two SKILLs are mutually exclusive\n\n"
-        "Filter the XML data below based on the user's question and return only the relevant methods.\n"
-        f"User question: {query}\n\n"
-        "Recalled knowledge graph data:\n"
-        f"{xml}\n\n"
-        "Rules:\n"
-        "1. Keep only nodes and edges directly relevant to the user's question\n"
-        "2. If relevant content is found, present it in clear, concise language\n"
-        "3. If no relevant method is found, reply with exactly: No relevant methods found.\n"
-        "4. Do not fabricate information — base your answer solely on the recalled data"
-    )
-    try:
-        response = await llm.ainvoke(filter_prompt)
-        if hasattr(response, 'content'):
-            raw = response.content
-            result = raw[0] if isinstance(raw, list) else raw
-        else:
-            result = str(response)
-        result = str(result).strip()
-        if "No relevant methods found." in result:
-            return "No relevant methods found."
-        return result
-    except Exception as e:
-        logger.error(f"[xp_retrieve] LLM filtering failed: {e}")
-        return xml or "No relevant methods found."
-
-def build_xp_retrieve_tool()-> BaseTool:
-    xp_retrieve_tool.handle_tool_error = True
-    xp_retrieve_tool.metadata = {"idempotent": True}
-    return xp_retrieve_tool
+    return result
