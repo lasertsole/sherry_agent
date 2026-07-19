@@ -271,7 +271,14 @@ async def _create_nudge_agent(system_prompt: str):
     from agent import get_agent_tools
     from models import build_main_llm
     from agent.middlewares import ToolGuardrails, IterationBudget
+    from agent.tools.xp_graph import build_xp_graph_tool
 
+    # Exclude xp_graph_tool to prevent recursive extract() calls.
+    # Nudge already persists XpGraph data via _persist_nudge_xpgraph()
+    # after the agent returns, so the tool is unnecessary and dangerous.
+    xp_tool = build_xp_graph_tool()
+    all_tools = get_agent_tools()
+    nudge_tools = [t for t in all_tools if t.name != xp_tool.name]
 
     main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
     return create_agent(
@@ -279,7 +286,7 @@ async def _create_nudge_agent(system_prompt: str):
         state_schema=StateSchema,
         system_prompt=system_prompt,
         middleware=[_NudgeLimitTool(), ToolGuardrails(), IterationBudget()],
-        tools=get_agent_tools()
+        tools=nudge_tools
     )
 
 async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:

@@ -100,6 +100,10 @@ async def xp_graph_tool(
     # ── Auto-skill view mode ──────────────────────────────────────
     if experience_trace is None:
         return _list_or_view_auto_skill(auto_skill_name)
+    # ── Manual conversion: LLM may pass dict, not ExperienceTrace instance ──
+    if experience_trace is not None and not isinstance(experience_trace, ExperienceTrace):
+        experience_trace = ExperienceTrace(**experience_trace)
+
     # ── Knowledge graph extraction mode ───────────────────────────
     try:
         result = await extract(

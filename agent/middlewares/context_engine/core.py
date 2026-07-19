@@ -237,19 +237,34 @@ class ContextEngineHook(AgentMiddleware):
         last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
         format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
 
-        # Run persistence and nudge concurrently
+        # Run persistence concurrently with nudge. Nudge is fire-and-forget
+        # (wrapped with timeout) so it never blocks the main agent.
         async def _persist() -> None:
             await add_messages(session_id=session_id, messages=format_last_turn_messages)
 
         async def _nudge() -> None:
-            if need_memory and need_skill:
-                await _nudge_combined(session_id, system_prompt, messages)
-            else:
-                if need_memory:
-                    await _nudge_memory(session_id, system_prompt, messages)
-                if need_skill:
-                    await _nudge_skill(session_id, system_prompt, messages)
+            try:
+                if need_memory and need_skill:
+                    await asyncio.wait_for(
+                        _nudge_combined(session_id, system_prompt, messages), timeout=120.0
+                    )
+                else:
+                    if need_memory:
+                        await asyncio.wait_for(
+                            _nudge_memory(session_id, system_prompt, messages), timeout=60.0
+                        )
+                    if need_skill:
+                        await asyncio.wait_for(
+                            _nudge_skill(session_id, system_prompt, messages), timeout=120.0
+                        )
+            except asyncio.TimeoutError:
+                logger.warning("nudge timed out for session [{}], skipping", session_id)
 
-        await asyncio.gather(_persist(), _nudge())
+        _, pending = await asyncio.wait(
+            [asyncio.create_task(_persist()), asyncio.create_task(_nudge())],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()  # _nudge still running → release main agent immediately
 
         return None

@@ -1,4 +1,5 @@
 import json
+import asyncio
 import textwrap
 from loguru import logger
 from .recaller import Recaller
@@ -115,7 +116,7 @@ async def finalize(session_nodes: list[GmNode], graph_summary: str) -> FinalizeR
         Result containing promoted skills, new edges, and invalidations
     """
     model = build_main_llm()
-    return model.with_structured_output(FinalizeResult, method='json_mode').invoke(
+    return await model.with_structured_output(FinalizeResult, method='json_mode').ainvoke(
         [SystemMessage(FINALIZE_SYS), HumanMessage(finalize_user_prompt(session_nodes, graph_summary))],
         max_tokens=16384
     )
@@ -240,7 +241,7 @@ async def distill_trace(
     parser = PydanticOutputParser(pydantic_object=ExperienceTrace)
     json_mode_llm = build_main_llm()
     json_mode_llm = json_mode_llm.bind(response_format={"type": "json_object"})
-    raw_basemodel = json_mode_llm.invoke(
+    raw_basemodel = await json_mode_llm.ainvoke(
         input=[SystemMessage(content=system_prompt), *messages, HumanMessage(content=distill_prompt)]
     )
     experience_trace: ExperienceTrace = parser.parse(raw_basemodel.content)
@@ -412,6 +413,36 @@ async def _maybe_run_rectification(session_id: str) -> None:
                                     xp_graph_rectification_and_standardization_turns)
 
 
+def _llm_extract_sync(trace: str) -> ExtractionResult:
+    """Synchronous wrapper for the LLM extraction call.
+
+    Runs the full ChatPromptTemplate + with_structured_output + ainvoke
+    in a dedicated thread so the caller's event loop is never blocked by
+    a potentially slow LLM response.
+
+    Args:
+        trace: Serialized experience trace to extract nodes/edges from.
+
+    Returns:
+        ExtractionResult parsed from the LLM response.
+    """
+    from langchain_core.prompts import ChatPromptTemplate
+
+    model = build_main_llm()
+    structured_llm = ChatPromptTemplate.from_messages([
+        ("system", EXTRACT_GRAPH_SYS),
+        ("human", "Extract nodes and edges from the following experience trace:\n\n{trace}"),
+    ]) | model.with_structured_output(ExtractionResult)
+
+    # Create a fresh event loop for this thread to run the async LLM call
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(structured_llm.ainvoke({"trace": trace}))
+    finally:
+        loop.close()
+
+
 async def extract(
     experience_trace: ExperienceTrace,
     session_id: str,
@@ -436,16 +467,11 @@ async def extract(
         ExtractionResult containing extracted nodes and edges.
     """
 
-    from langchain_core.prompts import ChatPromptTemplate
-
     serialized = _serialize_experience_trace(experience_trace)
-    model = build_main_llm()
-    structured_llm = ChatPromptTemplate.from_messages([
-        ("system", EXTRACT_GRAPH_SYS),
-        ("human", "Extract nodes and edges from the following experience trace:\n\n{trace}"),
-    ]) | model.with_structured_output(ExtractionResult)
 
-    result: ExtractionResult = structured_llm.invoke({"trace": serialized})
+    # Run the LLM extraction in a separate thread to avoid blocking the
+    # main event loop — the LLM call may take tens of seconds.
+    result: ExtractionResult = await asyncio.to_thread(_llm_extract_sync, serialized)
 
     # ── Resolve db ──
     db = get_db()

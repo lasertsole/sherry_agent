@@ -342,8 +342,3 @@ def export_all_communities() -> list[Path]:
         AUTO_COMMUNITY_DIR,
     )
     return generated
-
-
-if __name__ == "__main__":
-    export_all_skills()
-    export_all_communities()
