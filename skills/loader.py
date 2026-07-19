@@ -15,22 +15,37 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
 
 
 def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
-    """Scan all SKILL.md files under *SKILLS_DIR*, delegating the ``auto/``
-    sub-tree to :func:`scan_auto_skills` which applies community-first
-    fallback logic.
+    """Scan all SKILL.md files under *SKILLS_DIR*, exporting ``auto/``
+    via :func:`export_all_communities` first so community and orphan skills
+    are always up-to-date and readable from ``skills/auto/community/``.
     """
     from pathlib import Path
 
     # Lazy import to avoid cycle: loader → export_skill → loader
-    from context_engine.xp_graph.export_skill import scan_auto_skills
+    from context_engine.xp_graph.export_skill import (
+        export_all_communities,
+        AUTO_COMMUNITY_DIR,
+    )
 
     skills: list[dict[str, Any]] = []
     seen_paths: set[Path] = set()
 
-    # 1. Delegate auto/ scanning to the unified function (community-first)
-    skills.extend(scan_auto_skills())
+    # 1. Export all community SKILL.md files (groups orphans as single bullets too)
+    export_all_communities()
 
-    # 2. Scan the rest of SKILLS_DIR (built-in, plugins, testing, …)
+    # 2. Scan skills/auto/community/ — always the source of truth for auto skills
+    if AUTO_COMMUNITY_DIR.exists():
+        for skill_file in AUTO_COMMUNITY_DIR.rglob("SKILL.md"):
+            if skill_file.parent.parent != AUTO_COMMUNITY_DIR:
+                continue
+            seen_paths.add(skill_file)
+            content = skill_file.read_text(encoding="utf-8")
+            meta = parse_frontmatter(content)
+            name = str(meta.get("name", skill_file.parent.name))
+            desc = str(meta.get("description", ""))
+            skills.append({"name": name, "description": desc})
+
+    # 3. Scan the rest of SKILLS_DIR (built-in, plugins, testing, …)
     #    skipping auto/ to avoid double-counting.
     auto_dir_str = AUTO_SKILLS_DIR.resolve().as_posix()
 

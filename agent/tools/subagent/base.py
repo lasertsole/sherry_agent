@@ -146,6 +146,7 @@ class SubagentManager:
         logger.info("Subagent [{}] starting task: {}", task_id, label)
 
         commander_session_id: str = f"commander-{session_id}"
+        structured_response: SubAgentOutput | None = None
         try:
             logger.debug("Subagent [{}] step 1/4: building commander agent...", task_id)
             agent: CompiledStateGraph = build_commander()
@@ -169,7 +170,7 @@ class SubagentManager:
 
 
 
-            structured_response: SubAgentOutput | None = agent_res.get("structured_response")
+            structured_response = agent_res.get("structured_response")
             logger.debug("Subagent [{}] step 3/4: structured_response={}", task_id,
                 f"status={structured_response.status}" if structured_response else "None")
 

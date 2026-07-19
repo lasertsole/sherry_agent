@@ -382,9 +382,9 @@ class TestExportAllCommunities:
         assert result == []
         assert AUTO_COMMUNITY_DIR.exists()
 
-    def test_fallback_no_communities(self, export_skill_env, mem_db):
-        """No gm_communities rows → fallback: skills exported as individual files."""
-        _insert_skill(mem_db, "fallback-skill", content="FB content", description="FB desc")
+    def test_orphan_no_communities(self, export_skill_env, mem_db):
+        """No gm_communities rows → orphan nodes exported as individual community files."""
+        _insert_skill(mem_db, "orphan-skill", content="FB content", description="FB desc")
 
         result = export_all_communities()
 
@@ -392,12 +392,14 @@ class TestExportAllCommunities:
         md_path = result[0]
         assert md_path.exists()
         text = md_path.read_text(encoding="utf-8")
-        assert "name: fallback-skill" in text
+        assert "name: orphan-skill" in text
+        assert "description: FB desc" in text
+        # Orphan now has full content, not a pointer
         assert "FB content" in text
         assert AUTO_COMMUNITY_DIR in md_path.parents
 
-    def test_fallback_clean_dir(self, export_skill_env, mem_db):
-        """Fallback path cleans the community dir before writing."""
+    def test_orphan_clean_dir(self, export_skill_env, mem_db):
+        """Orphan path cleans the community dir before writing."""
         stale_dir = AUTO_COMMUNITY_DIR / "stale"
         stale_dir.mkdir(parents=True)
         (stale_dir / "SKILL.md").write_text("stale")
@@ -409,8 +411,8 @@ class TestExportAllCommunities:
         assert len(result) == 1
         assert not (AUTO_COMMUNITY_DIR / "stale").exists()
 
-    def test_fallback_multiple_skills(self, export_skill_env, mem_db):
-        """Fallback exports all SKILL nodes even when multiple exist."""
+    def test_orphan_multiple_skills(self, export_skill_env, mem_db):
+        """Multiple orphan nodes are each exported individually."""
         _insert_skill(mem_db, "alpha", content="A")
         _insert_skill(mem_db, "beta", content="B")
 
@@ -422,13 +424,13 @@ class TestExportAllCommunities:
         assert "beta" in names
 
     def test_community_mode(self, export_skill_env, mem_db):
-        """When communities exist, skills are grouped by community_id."""
+        """When communities exist, skills are grouped by community_id with summary list."""
         _insert_community(mem_db, "c1", summary="Community One")
         _insert_community(mem_db, "c2", summary="Community Two")
 
-        _insert_skill(mem_db, "skill-1", description="S1", community_id="c1")
-        _insert_skill(mem_db, "skill-2", description="S2", community_id="c1")
-        _insert_skill(mem_db, "skill-3", description="S3", community_id="c2")
+        _insert_skill(mem_db, "skill-1", description="S1", content="C1", community_id="c1")
+        _insert_skill(mem_db, "skill-2", description="S2", content="C2", community_id="c1")
+        _insert_skill(mem_db, "skill-3", description="S3", content="C3", community_id="c2")
 
         result = export_all_communities()
 
@@ -441,12 +443,22 @@ class TestExportAllCommunities:
 
         c1_text = c1_md.read_text(encoding="utf-8")
         assert "Community One" in c1_text
-        assert "skill-1" in c1_text
-        assert "skill-2" in c1_text
+        # Frontmatter uses community_<cid> name
+        assert "name: community_c1" in c1_text
+        # Body now has full _build_skill_md content for each member
+        assert "name: skill-1" in c1_text
+        assert "name: skill-2" in c1_text
+        assert "S1" in c1_text
+        assert "S2" in c1_text
+        assert "C1" in c1_text   # full content present
+        assert "C2" in c1_text   # full content present
 
         c2_text = c2_md.read_text(encoding="utf-8")
         assert "Community Two" in c2_text
-        assert "skill-3" in c2_text
+        assert "name: community_c2" in c2_text
+        assert "name: skill-3" in c2_text
+        assert "S3" in c2_text
+        assert "C3" in c2_text   # full content present
 
     def test_community_clean_dir(self, export_skill_env, mem_db):
         """Community mode cleans target dir before writing."""
@@ -455,7 +467,7 @@ class TestExportAllCommunities:
         (stale_dir / "SKILL.md").write_text("stale")
 
         _insert_community(mem_db, "c1", summary="Active")
-        _insert_skill(mem_db, "alive", description="Alive", community_id="c1")
+        _insert_skill(mem_db, "alive", description="Alive", content="Alive body", community_id="c1")
 
         result = export_all_communities()
 
@@ -463,14 +475,21 @@ class TestExportAllCommunities:
         assert not (AUTO_COMMUNITY_DIR / "stale").exists()
         assert (AUTO_COMMUNITY_DIR / "c1" / "SKILL.md").exists()
 
-    def test_skills_without_community_skipped(self, export_skill_env, mem_db):
-        """In community mode, skills with community_id=None are skipped."""
+    def test_skills_without_community_exported_as_orphans(self, export_skill_env, mem_db):
+        """Nodes with community_id=None are exported as individual communities."""
         _insert_community(mem_db, "c1", summary="Active")
-        _insert_skill(mem_db, "orphan", description="No community")
-        _insert_skill(mem_db, "member", description="Has community", community_id="c1")
+        _insert_skill(mem_db, "orphan", description="No community", content="Orphan body")
+        _insert_skill(mem_db, "member", description="Has community", content="Member body", community_id="c1")
 
         result = export_all_communities()
 
-        assert len(result) == 1
+        # c1 community + orphan individual = 2
+        assert len(result) == 2
         assert (AUTO_COMMUNITY_DIR / "c1" / "SKILL.md").exists()
-        assert not (AUTO_COMMUNITY_DIR / "orphan").exists()
+        assert (AUTO_COMMUNITY_DIR / "orphan" / "SKILL.md").exists()
+
+        orphan_text = (AUTO_COMMUNITY_DIR / "orphan" / "SKILL.md").read_text(encoding="utf-8")
+        assert "name: orphan" in orphan_text
+        assert "description: No community" in orphan_text
+        # Orphan now has full content, not a pointer
+        assert "Orphan body" in orphan_text
