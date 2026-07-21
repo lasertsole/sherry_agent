@@ -76,6 +76,7 @@ class IterationBudget(AgentMiddleware):
     def before_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} before_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
@@ -83,6 +84,7 @@ class IterationBudget(AgentMiddleware):
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} abefore_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
@@ -116,6 +118,7 @@ class IterationBudget(AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
         session_id = self._get_session_id(request.state)
         logger.debug("[IB_TRACE] wrap_model_call enter session_id={}", session_id)
         terminal = self._wrap_model_call_impl(request)
@@ -133,6 +136,7 @@ class IterationBudget(AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
         terminal = self._wrap_model_call_impl(request)
         if terminal is not None:
             return terminal
@@ -170,6 +174,7 @@ class IterationBudget(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
+        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal
@@ -181,6 +186,7 @@ class IterationBudget(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
+        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal

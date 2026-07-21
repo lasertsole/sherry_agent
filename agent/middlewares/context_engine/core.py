@@ -101,6 +101,7 @@ class ContextEngineHook(AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
         request = self._wrap_model_call_impl(request)
         return handler(request)
 
@@ -110,6 +111,7 @@ class ContextEngineHook(AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
         request = self._wrap_model_call_impl(request)
         return await handler(request)
 
@@ -119,6 +121,7 @@ class ContextEngineHook(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
+        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
         self._wrap_tool_call_impl(request)
         return handler(request)
 
@@ -128,6 +131,7 @@ class ContextEngineHook(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
+        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
         self._wrap_tool_call_impl(request)
         return await handler(request)
 
@@ -203,6 +207,7 @@ class ContextEngineHook(AgentMiddleware):
     def after_agent(
         self, state: StateT, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} after_agent hook fired", type(self).__name__)
         result = self._after_agent_impl(state)
         if result is None:
             return None
@@ -226,6 +231,7 @@ class ContextEngineHook(AgentMiddleware):
     async def aafter_agent(
             self, state: StateT, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} aafter_agent hook fired", type(self).__name__)
         result = self._after_agent_impl(state)
         if result is None:
             return None

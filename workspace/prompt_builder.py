@@ -4,7 +4,6 @@ from pathlib import Path
 from skills import get_skills_text
 from config import WORKSPACE_DIR, TEMP_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
-from context_engine.xp_graph.export_skill import export_all_communities
 
 MAX_FILE_CHARS: int = 20_000
 
@@ -24,9 +23,6 @@ Notes:
 """
 
 def build_system_prompt(selected_file_names: list[str] | None = None, selected_skill_names: list[str] | None = None) -> str:
-    # rebuild xp_graph skills
-    export_all_communities()
-
     skill_paths:str = get_skills_text(selected_skill_names)
     skill_paths = f"{skill_paths}\n\n{skill_guide_text}"
 

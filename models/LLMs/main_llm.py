@@ -13,7 +13,7 @@ model_provider = os.getenv("MAIN_LLM_PROVIDER")
 api_base = os.getenv("MAIN_LLM_API_BASE")
 max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
 if max_tokens:
-    max_tokens = min(int(max_tokens), 65536)
+    max_tokens = int(max_tokens)
 
 model_config:dict[str, Any] = {
     "model_provider": model_provider,

@@ -180,7 +180,7 @@ def _write_skill_md(output_dir: Path, skill: GmNode, content: str) -> Path:
     skill_dir.mkdir(parents=True, exist_ok=True)
     md_path = skill_dir / "SKILL.md"
     md_path.write_text(content, encoding="utf-8")
-    logger.info("Exported: {} ({})", md_path, safe_name)
+    logger.debug("Exported: {} ({})", md_path, safe_name)
     return md_path
 
 
@@ -322,7 +322,7 @@ def export_all_communities() -> list[Path]:
         )
         md_path.write_text(frontmatter + combined + "\n", encoding="utf-8")
         generated.append(md_path)
-        logger.info("Exported community SKILL.md: {} ({} skills)", cid, len(members))
+        logger.debug("Exported community SKILL.md: {} ({} skills)", cid, len(members))
 
     # ── Export orphan nodes (full detail, same format as single/) ──
     for node in sorted(orphan_nodes, key=lambda n: n.name):
@@ -334,9 +334,9 @@ def export_all_communities() -> list[Path]:
         content = _build_skill_md(node, nodes_by_id, edges_by_from, edges_by_to)
         md_path.write_text(content + "\n", encoding="utf-8")
         generated.append(md_path)
-        logger.info("Exported orphan community SKILL.md: {}", safe_name)
+        logger.debug("Exported orphan community SKILL.md: {}", safe_name)
 
-    logger.info(
+    logger.debug(
         "Exported {} community SKILL.md(s) to {}.",
         len(generated),
         AUTO_COMMUNITY_DIR,

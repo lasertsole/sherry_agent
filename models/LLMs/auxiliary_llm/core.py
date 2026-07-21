@@ -77,7 +77,7 @@ def build_auxiliary_llm(temperature: float | None = None):
 
         _api_name = os.getenv("AUXILIARY_LLM_API_NAME", "").strip()
         _raw_max = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
-        _max_tokens = min(int(_raw_max), 65536) if _raw_max else 65536
+        _max_tokens = int(_raw_max) if _raw_max else 121072
 
         _model_config: dict[str, Any] = {
             "model_provider": _provider,

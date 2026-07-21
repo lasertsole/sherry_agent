@@ -242,6 +242,7 @@ class _NudgeLimitTool(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
+        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
         tool_name: str = request.tool_call.get("name", "unknown")
 
         if not self._is_nudge_allowed(request.tool):
