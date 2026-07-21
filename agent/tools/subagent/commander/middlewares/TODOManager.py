@@ -106,6 +106,7 @@ class TODOManager(AgentMiddleware):
     @override
     def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         """Clean up or archive the TODO file after Agent execution."""
+        logger.debug("{} after_agent hook fired", type(self).__name__)
         master_session_id: str = state.get("master_session_id", "")
         if not master_session_id.strip():
             raise RuntimeError("TODOManager: master_session_id is required")
@@ -143,6 +144,7 @@ class TODOManager(AgentMiddleware):
         state: AgentState,
         runtime: Runtime
     ) -> dict[str, Any] | None:
+        logger.debug("{} before_model hook fired", type(self).__name__)
         master_session_id: str = state.get("master_session_id", "")
         if not master_session_id.strip():
             raise RuntimeError("TODOManager: master_session_id is required")

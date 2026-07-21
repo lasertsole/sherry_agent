@@ -1,5 +1,6 @@
 from typing import Any
 from langgraph.runtime import Runtime
+from loguru import logger
 from typing_extensions import override
 from langchain_core.messages import RemoveMessage, BaseMessage
 from pub_func import sanitize_tool_use_result_pairing
@@ -21,8 +22,10 @@ class ToolCallNormalize(AgentMiddleware):
 
     @override
     def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        logger.debug("{} before_model hook fired", type(self).__name__)
         return self._before_model_impl(state)
 
     @override
     async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        logger.debug("{} abefore_model hook fired", type(self).__name__)
         return self._before_model_impl(state)

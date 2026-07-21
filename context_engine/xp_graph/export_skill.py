@@ -1,0 +1,344 @@
+﻿"""
+Export SKILL-type nodes from the XpGraph database as SKILL.md files.
+
+For each SKILL node in the DB, generates:
+  skills/auto/single/<normalized_name>/SKILL.md
+
+SKILL.md format:
+  ---
+  name: <skill_name>
+  description: <skill_description>
+  ---
+  <body: content + relationship info>
+
+Edge types handled: USED_SKILL, SOLVED_BY, REQUIRES, PATCHES, CONFLICTS_WITH
+For each relevant edge, the linked skill's name and description are included
+(but NOT the linked skill's full content).
+"""
+
+import shutil
+from pathlib import Path
+from loguru import logger
+
+from config.path import SKILLS_DIR
+from context_engine.xp_graph.store.core import (
+    all_active_nodes,
+    all_edges,
+    normalize_name,
+    get_all_community_summaries,
+)
+from context_engine.xp_graph.store.db import get_db
+from context_engine.xp_graph.type import GmNode, GmEdge, NodeType
+
+
+# 鈹€鈹€鈹€ Edge types that link SKILL to SKILL 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+_SKILL_EDGE_TYPES = frozenset({
+    "USED_SKILL",
+    "SOLVED_BY",
+    "REQUIRES",
+    "PATCHES",
+    "CONFLICTS_WITH",
+})
+
+# 鈹€鈹€鈹€ Output directories 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+AUTO_SINGLE_DIR = SKILLS_DIR / "auto" / "single"
+AUTO_COMMUNITY_DIR = SKILLS_DIR / "auto" / "community"
+
+
+def _clean_dir(directory: Path) -> None:
+    """Remove and recreate an empty directory."""
+    if directory.exists():
+        shutil.rmtree(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+
+
+def _edge_type_match(edge_type_val: str) -> bool:
+    """Check if an edge type value is in the SKILL-to-SKILL set."""
+    return edge_type_val in _SKILL_EDGE_TYPES
+
+
+def _build_relations(
+    skill_node: GmNode,
+    nodes_by_id: dict[str, GmNode],
+    edges_by_from: dict[str, list[GmEdge]],
+    edges_by_to: dict[str, list[GmEdge]],
+) -> list[dict[str, object]]:
+    """Collect all relevant relations for a skill node.
+
+    For each edge where the skill is either `from_id` or `to_id`
+    and the edge type is in _SKILL_EDGE_TYPES, resolve the peer skill
+    node's name + description.
+    """
+    relations: list[dict[str, object]] = []
+
+    # Outgoing edges (SKILL 鈫?other)
+    for edge in edges_by_from.get(skill_node.id, []):
+        if not _edge_type_match(edge.type.value):
+            continue
+        peer_node = nodes_by_id.get(edge.to_id)
+        if peer_node is None:
+            continue
+        relations.append({
+            "direction": "outgoing",
+            "edge_type": edge.type.value,
+            "edge_instruction": edge.instruction or "",
+            "edge_condition": edge.condition or "",
+            "peer_name": peer_node.name,
+            "peer_description": peer_node.description,
+        })
+
+    # Incoming edges (other 鈫?SKILL)
+    for edge in edges_by_to.get(skill_node.id, []):
+        if not _edge_type_match(edge.type.value):
+            continue
+        peer_node = nodes_by_id.get(edge.from_id)
+        if peer_node is None:
+            continue
+        relations.append({
+            "direction": "incoming",
+            "edge_type": edge.type.value,
+            "edge_instruction": edge.instruction or "",
+            "edge_condition": edge.condition or "",
+            "peer_name": peer_node.name,
+            "peer_description": peer_node.description,
+        })
+
+    return relations
+
+
+def _format_relations_section(relations: list[dict[str, object]]) -> str:
+    """Format the relations section of the SKILL.md body."""
+    if not relations:
+        return ""
+
+    lines = ["\n## Relations\n"]
+    for rel in relations:
+        direction = rel["direction"]
+        arrow = "鈫? if direction == "outgoing" else "鈫?
+        lines.append(
+            f"- **{rel['edge_type']}** {arrow} **{rel['peer_name']}**: "
+            f"{rel['peer_description']}"
+        )
+        instruction = rel.get("edge_instruction", "")
+        condition = rel.get("edge_condition", "")
+        if instruction:
+            lines.append(f"  - Instruction: {instruction}")
+        if condition:
+            lines.append(f"  - Condition: {condition}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_skill_md(
+    skill: GmNode,
+    nodes_by_id: dict[str, GmNode],
+    edges_by_from: dict[str, list[GmEdge]],
+    edges_by_to: dict[str, list[GmEdge]],
+) -> str:
+    """Build SKILL.md content for a single skill node."""
+    safe_name = normalize_name(skill.name)
+
+    # Collect relations
+    relations = _build_relations(skill, nodes_by_id, edges_by_from, edges_by_to)
+
+    # 鈹€鈹€ Build SKILL.md content 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    frontmatter_yaml = (
+        f"---\n"
+        f"name: {safe_name}\n"
+        f"description: {skill.description or skill.name}\n"
+        f"---\n"
+    )
+
+    body_parts: list[str] = []
+    if skill.content.strip():
+        body_parts.append(skill.content)
+
+    rel_section = _format_relations_section(relations)
+    if rel_section:
+        body_parts.append(rel_section)
+
+    meta_lines = [
+        "<!--",
+        f"  validated_count: {skill.validated_count}",
+        f"  source_sessions: {len(skill.source_sessions)}",
+        f"  created_at: {skill.created_at}",
+        f"  updated_at: {skill.updated_at}",
+        "-->",
+    ]
+    body_parts.append("\n" + "\n".join(meta_lines))
+
+    body = "\n\n".join(body_parts)
+
+    return frontmatter_yaml + "\n" + body
+
+
+def _write_skill_md(output_dir: Path, skill: GmNode, content: str) -> Path:
+    """Write a single SKILL.md file under the given output directory."""
+    safe_name = normalize_name(skill.name)
+    skill_dir = output_dir / safe_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    md_path = skill_dir / "SKILL.md"
+    md_path.write_text(content, encoding="utf-8")
+    logger.debug("Exported: {} ({})", md_path, safe_name)
+    return md_path
+
+
+def export_all_skills() -> list[Path]:
+    """Export all SKILL nodes from the XpGraph database as SKILL.md files.
+
+    Cleans the skills/auto/single/ directory first, then regenerates all files.
+
+    Returns:
+        List of paths to the generated SKILL.md files.
+    """
+    db = get_db()
+    all_nodes = all_active_nodes(db)
+    all_edges_list = all_edges(db)
+
+    # Filter to SKILL nodes only
+    skill_nodes = [n for n in all_nodes if n.type == NodeType.SKILL]
+    if not skill_nodes:
+        logger.info("No SKILL nodes found in DB.")
+        return []
+
+    # Clean output directory
+    _clean_dir(AUTO_SINGLE_DIR)
+
+    # Build lookup maps
+    nodes_by_id: dict[str, GmNode] = {n.id: n for n in all_nodes}
+    edges_by_from: dict[str, list[GmEdge]] = {}
+    edges_by_to: dict[str, list[GmEdge]] = {}
+    for edge in all_edges_list:
+        edges_by_from.setdefault(edge.from_id, []).append(edge)
+        edges_by_to.setdefault(edge.to_id, []).append(edge)
+
+    generated: list[Path] = []
+
+    for skill in skill_nodes:
+        content = _build_skill_md(skill, nodes_by_id, edges_by_from, edges_by_to)
+        md_path = _write_skill_md(AUTO_SINGLE_DIR, skill, content)
+        generated.append(md_path)
+
+    logger.info(
+        "Exported {} skill(s) to {}.",
+        len(generated),
+        AUTO_SINGLE_DIR,
+    )
+    return generated
+
+
+def export_all_communities() -> list[Path]:
+    """Export all SKILL nodes to skills/auto/community/<group>/SKILL.md.
+
+    .. important::
+
+       Before exporting communities, this function **always** calls
+       :func:`export_all_skills` first to ensure every skill has a standalone
+       full-detail copy under ``skills/auto/single/``.  The community SKILL.md
+       files only contain **name + description** summaries 鈥?agents that need
+       to execute a specific skill should read from ``single/<skill_name>/SKILL.md``.
+
+    Nodes with the same ``community_id`` are grouped into one community SKILL.md
+    under ``skills/auto/community/<community_id>/SKILL.md``:
+
+      Frontmatter:
+        name: community_<cid>
+        description: <community_summary>
+      Body: bullet list of member skills (each with name + description)
+
+    Nodes whose ``community_id`` is **None** are treated as individual communities
+    and exported under ``skills/auto/community/<skill_name>/SKILL.md``:
+
+      Frontmatter:
+        name: <skill_name>
+        description: <gm_node.description>
+      Body: a single bullet pointing to ``single/<skill_name>/SKILL.md``
+
+    Always cleans the ``skills/auto/community/`` directory first.
+
+    Returns:
+        List of generated SKILL.md paths.
+    """
+    # 鈹€鈹€ First: ensure every skill has a standalone copy in single/ 鈹€鈹€
+    export_all_skills()
+
+    db = get_db()
+
+    # Always clean output directory first
+    _clean_dir(AUTO_COMMUNITY_DIR)
+
+    skill_nodes = [n for n in all_active_nodes(db) if n.type == NodeType.SKILL]
+    if not skill_nodes:
+        logger.info("No SKILL nodes found in DB.")
+        return []
+
+    # Load community summaries (may be empty)
+    summaries = {s["id"]: s["summary"] for s in get_all_community_summaries(db)}
+
+    # 鈹€鈹€ Group: community_id != None 鈫?named community  鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    #            community_id == None 鈫?orphan (individual)           鈹€
+    community_skills: dict[str, list[GmNode]] = {}
+    orphan_nodes: list[GmNode] = []
+
+    for node in skill_nodes:
+        cid = node.community_id
+        if cid and cid.strip():
+            community_skills.setdefault(cid, []).append(node)
+        else:
+            orphan_nodes.append(node)
+
+    # Build lookup maps for _build_skill_md
+    nodes_by_id: dict[str, GmNode] = {n.id: n for n in all_active_nodes(db)}
+    all_edges_list = all_edges(db)
+    edges_by_from: dict[str, list[GmEdge]] = {}
+    edges_by_to: dict[str, list[GmEdge]] = {}
+    for edge in all_edges_list:
+        edges_by_from.setdefault(edge.from_id, []).append(edge)
+        edges_by_to.setdefault(edge.to_id, []).append(edge)
+
+    generated: list[Path] = []
+
+    # 鈹€鈹€ Export grouped communities (full detail for each member) 鈹€鈹€
+    for cid, members in sorted(community_skills.items()):
+        community_dir = AUTO_COMMUNITY_DIR / cid
+        community_dir.mkdir(parents=True, exist_ok=True)
+        md_path = community_dir / "SKILL.md"
+
+        description = summaries.get(cid, f"Community {cid}")
+        members.sort(key=lambda n: n.name)
+
+        parts: list[str] = []
+        for i, m in enumerate(members):
+            detail = _build_skill_md(m, nodes_by_id, edges_by_from, edges_by_to)
+            parts.append(detail)
+        combined = "\n\n---\n\n".join(parts)
+
+        frontmatter = (
+            "---\n"
+            f"name: community_{cid}\n"
+            f"description: {description}\n"
+            "---\n\n"
+        )
+        md_path.write_text(frontmatter + combined + "\n", encoding="utf-8")
+        generated.append(md_path)
+        logger.debug("Exported community SKILL.md: {} ({} skills)", cid, len(members))
+
+    # 鈹€鈹€ Export orphan nodes (full detail, same format as single/) 鈹€鈹€
+    for node in sorted(orphan_nodes, key=lambda n: n.name):
+        safe_name = normalize_name(node.name)
+        community_dir = AUTO_COMMUNITY_DIR / safe_name
+        community_dir.mkdir(parents=True, exist_ok=True)
+        md_path = community_dir / "SKILL.md"
+
+        content = _build_skill_md(node, nodes_by_id, edges_by_from, edges_by_to)
+        md_path.write_text(content + "\n", encoding="utf-8")
+        generated.append(md_path)
+        logger.debug("Exported orphan community SKILL.md: {}", safe_name)
+
+    logger.debug(
+        "Exported {} community SKILL.md(s) to {}.",
+        len(generated),
+        AUTO_COMMUNITY_DIR,
+    )
+    return generated

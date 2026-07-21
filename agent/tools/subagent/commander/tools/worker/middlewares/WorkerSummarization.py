@@ -35,6 +35,7 @@ class WorkerSummarization(SummarizationMiddleware):
 
     @override
     def before_model(self, state: AgentState[Any], runtime) -> dict[str, Any] | None:
+        logger.debug("{} before_model hook fired", type(self).__name__)
         self._capture_goal(state.get("messages", []))
         logger.debug("WorkerSummarization.before_model: session_id={}, role={}",
                      state.get("session_id"), state.get("role"))
@@ -45,6 +46,7 @@ class WorkerSummarization(SummarizationMiddleware):
 
     @override
     async def abefore_model(self, state: AgentState[Any], runtime) -> dict[str, Any] | None:
+        logger.debug("{} abefore_model hook fired", type(self).__name__)
         self._capture_goal(state.get("messages", []))
         logger.debug("WorkerSummarization.abefore_model: session_id={}, role={}",
                      state.get("session_id"), state.get("role"))

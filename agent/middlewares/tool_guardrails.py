@@ -206,6 +206,7 @@ class ToolGuardrails(AgentMiddleware):
     def before_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} before_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
@@ -213,6 +214,7 @@ class ToolGuardrails(AgentMiddleware):
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} abefore_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
@@ -350,6 +352,7 @@ class ToolGuardrails(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage],
     ) -> ToolMessage:
+        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
         blocked = self._wrap_tool_call_precheck(request)
         if blocked is not None:
             return blocked
@@ -362,6 +365,7 @@ class ToolGuardrails(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
     ) -> ToolMessage:
+        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
         blocked = self._wrap_tool_call_precheck(request)
         if blocked is not None:
             return blocked

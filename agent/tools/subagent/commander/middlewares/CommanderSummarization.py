@@ -29,6 +29,7 @@ class CommanderSummarization(SummarizationMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
         session_id: str = self._get_session_or_raise(request.state)
         system_prompt: str = request.system_prompt or ""
         messages: list[AnyMessage] = request.messages
@@ -50,6 +51,7 @@ class CommanderSummarization(SummarizationMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
         session_id: str = self._get_session_or_raise(request.state)
         system_prompt: str = request.system_prompt or ""
         messages: list[AnyMessage] = request.messages
@@ -67,8 +69,10 @@ class CommanderSummarization(SummarizationMiddleware):
 
     @override
     def before_model(self, state: AgentState[Any], runtime) -> dict[str, Any] | None:
+        logger.debug("{} before_model hook fired", type(self).__name__)
         return None
 
     @override
     async def abefore_model(self, state: AgentState[Any], runtime) -> dict[str, Any] | None:
+        logger.debug("{} abefore_model hook fired", type(self).__name__)
         return None

@@ -196,7 +196,7 @@ def build_commander()-> CompiledStateGraph:
             CommanderSummarization(
                 model=_llm,
                 trigger=("messages", 15),
-                keep=("messages", 8),
+                keep=("messages", 5),
             ),
             TODOManager(),
             # Must be last: abefore_model runs after Summarization to catch orphan tool_calls

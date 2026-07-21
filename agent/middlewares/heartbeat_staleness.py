@@ -173,21 +173,25 @@ class HeartbeatStaleness(AgentMiddleware):
 
     @override
     def before_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
+        logger.debug("{} before_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
     @override
     async def abefore_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
+        logger.debug("{} abefore_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
     @override
     def after_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
+        logger.debug("{} after_agent hook fired", type(self).__name__)
         self._after_agent_impl(state)
         return None
 
     @override
     async def aafter_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
+        logger.debug("{} aafter_agent hook fired", type(self).__name__)
         self._after_agent_impl(state)
         return None
 
@@ -219,6 +223,7 @@ class HeartbeatStaleness(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse | AIMessage | ExtendedModelResponse:
+        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
         terminal = self._wrap_model_call_impl(request)
         if terminal is not None:
             return terminal
@@ -230,6 +235,7 @@ class HeartbeatStaleness(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse | AIMessage | ExtendedModelResponse:
+        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
         terminal = self._wrap_model_call_impl(request)
         if terminal is not None:
             return terminal
@@ -264,6 +270,7 @@ class HeartbeatStaleness(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage],
     ) -> ToolMessage:
+        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal
@@ -277,6 +284,7 @@ class HeartbeatStaleness(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
     ) -> ToolMessage:
+        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal

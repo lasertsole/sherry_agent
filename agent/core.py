@@ -2,9 +2,10 @@ from skills import build_skills_snapshot
 from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentState
-from models import build_main_llm, build_auxiliary_llm
 from langgraph.graph.state import CompiledStateGraph
+from models import build_main_llm, build_auxiliary_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
+from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
 from agent.tools import memory_store, build_main_tools, build_subagent_tool
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
@@ -72,9 +73,7 @@ async def built_agent(
                     need_update_system_prompt=True,
                     model=auxiliary_llm,
                     trigger=[
-                        ("fraction", 0.5),
-                        ("messages", 40),
-                        ("tokens", 30000)
+                        ("tokens", int(main_llm_max_tokens / 2))
                     ],
                     keep=("messages", 10),
 

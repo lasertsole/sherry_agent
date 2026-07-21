@@ -263,11 +263,13 @@ class MultimodalProcessor(AgentMiddleware):
     # ------------------------------------------------------------------
     @override
     def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        logger.debug("{} before_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
     @override
     async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        logger.debug("{} abefore_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
@@ -276,10 +278,12 @@ class MultimodalProcessor(AgentMiddleware):
     # ------------------------------------------------------------------
     @override
     def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        logger.debug("{} after_agent hook fired", type(self).__name__)
         self._after_agent_impl(state)
         return None
 
     @override
     async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        logger.debug("{} aafter_agent hook fired", type(self).__name__)
         self._after_agent_impl(state)
         return None

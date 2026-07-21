@@ -105,6 +105,7 @@ class Summarization(SummarizationMiddleware):
     def before_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} before_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
@@ -112,6 +113,7 @@ class Summarization(SummarizationMiddleware):
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} abefore_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
 
@@ -122,12 +124,14 @@ class Summarization(SummarizationMiddleware):
     def before_model(
         self, state: AgentState[Any], runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} before_model hook fired", type(self).__name__)
         return None
 
     @override
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
+        logger.debug("{} abefore_model hook fired", type(self).__name__)
         return self.before_model(state, runtime)
 
     @staticmethod
@@ -319,6 +323,7 @@ class Summarization(SummarizationMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
         session_id = self._get_session_or_raise(request.state)
         res: dict[str, Any] | None = super().before_model(request.state, cast("Runtime[None]", request.runtime))
         overridden = self._wrap_model_call_impl(request, res, session_id)
@@ -330,7 +335,9 @@ class Summarization(SummarizationMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
         session_id = self._get_session_or_raise(request.state)
         res: dict[str, Any] | None = await super().abefore_model(request.state, cast("Runtime[None]", request.runtime))
+        print(res)
         overridden = self._wrap_model_call_impl(request, res, session_id)
         return await handler(overridden if overridden is not None else request)
