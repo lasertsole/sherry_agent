@@ -12,6 +12,9 @@ from langchain.agents.middleware import SummarizationMiddleware, ModelRequest, M
 from langchain_core.messages import AnyMessage, BaseMessage, SystemMessage, AIMessage, HumanMessage, ToolMessage, RemoveMessage
 
 
+_LAST_TURN_RATIO_THRESHOLD = 0.5
+_LAST_USER_QUESTION_KEY = "summarization_last_user_question"
+
 _MAX_COMPRESSION_ATTEMPTS = 3
 _INEFFECTIVE_THRESHOLD = 2
 _MIN_EFFECTIVENESS_PCT = 0.05
@@ -28,6 +31,7 @@ class Summarization(SummarizationMiddleware):
     def __init__(self, need_update_system_prompt: bool = False, **kwargs):
         super().__init__(**kwargs)
         self._need_update_system_prompt: bool = need_update_system_prompt
+        self._compress_last_turn: bool = False
 
     @override
     def _determine_cutoff_index(self, messages: list[AnyMessage]) -> int:
@@ -35,12 +39,13 @@ class Summarization(SummarizationMiddleware):
         if cutoff <= 0:
             return cutoff
 
-        last_user_idx = next(
-            (i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], HumanMessage)),
-            None,
-        )
-        if last_user_idx is not None and cutoff > last_user_idx:
-            cutoff = last_user_idx
+        if not self._compress_last_turn:
+            last_user_idx = next(
+                (i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], HumanMessage)),
+                None,
+            )
+            if last_user_idx is not None and cutoff > last_user_idx:
+                cutoff = last_user_idx
 
         adjusted = cutoff
         while adjusted > 0:
@@ -138,6 +143,62 @@ class Summarization(SummarizationMiddleware):
     def _is_output_cap_error(error: Exception) -> bool:
         msg = str(error).lower()
         return any(kw in msg for kw in ("max_tokens", "output length", "output cap", "max output"))
+
+    @staticmethod
+    def _slice_last_turn(messages: list[AnyMessage]) -> list[AnyMessage]:
+        if not messages:
+            return []
+        last_user_idx = next(
+            (i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], HumanMessage)),
+            None,
+        )
+        if last_user_idx is None:
+            return []
+        return messages[last_user_idx:]
+
+    @staticmethod
+    def _estimate_tokens(messages: Sequence[BaseMessage]) -> int:
+        total = 0
+        for m in messages:
+            total += len(str(getattr(m, "content", "")))
+            tool_calls = getattr(m, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
+                    total += len(str(tc.get("name", "")))
+                    total += len(str(tc.get("args", "")))
+            tool_call_id = getattr(m, "tool_call_id", None)
+            if tool_call_id:
+                total += len(str(tool_call_id))
+        return total // 4
+
+    def _check_last_turn_ratio(self, messages: list[AnyMessage], session_id: str) -> bool:
+        total_tokens = self._estimate_tokens(messages)
+        if total_tokens <= 0:
+            self._compress_last_turn = False
+            return False
+        last_turn = self._slice_last_turn(messages)
+        last_turn_tokens = self._estimate_tokens(last_turn)
+        ratio = last_turn_tokens / total_tokens
+        compress = ratio >= _LAST_TURN_RATIO_THRESHOLD
+        self._compress_last_turn = compress
+        if compress:
+            last_user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+            question = last_user_msg.content if last_user_msg and isinstance(last_user_msg.content, str) else ""
+            state_register_mem.set_state(session_id, _LAST_USER_QUESTION_KEY, question)
+        else:
+            state_register_mem.set_state(session_id, _LAST_USER_QUESTION_KEY, "")
+        logger.debug(
+            "Summarization: last-turn ratio=%.1f%%, compress_last_turn=%s, session=%s",
+            ratio * 100, compress, session_id,
+        )
+        return compress
+
+    _USER_QUESTION_MAX_CHARS = 2000
+
+    @staticmethod
+    def _format_user_question(question: str) -> str:
+        truncated = Summarization._truncate_content(question, Summarization._USER_QUESTION_MAX_CHARS)
+        return f"\n\n## USER'S LAST QUESTION\n{truncated}"
 
     @staticmethod
     def _should_skip_compression(session_id: str) -> bool:
@@ -258,16 +319,26 @@ class Summarization(SummarizationMiddleware):
         res: dict[str, Any],
         session_id: str,
     ) -> ModelRequest[ContextT]:
-        """Apply message compression and return an overridden ModelRequest.
-
-        Shared by sync and async paths — both call this after ``before_model`` / ``abefore_model``.
-        """
         reduce_messages: list[BaseMessage] = [m for m in res["messages"] if not isinstance(m, RemoveMessage)]
         reduce_messages = self._truncate_messages(reduce_messages)
+
+        if self._compress_last_turn:
+            last_user_question: str = state_register_mem.get_state(session_id, _LAST_USER_QUESTION_KEY, "")
+            if last_user_question:
+                question_block = self._format_user_question(last_user_question)
+                for i, m in enumerate(reduce_messages):
+                    if isinstance(m, HumanMessage) and getattr(m, "additional_kwargs", {}).get("lc_source") == "summarization":
+                        existing = m.content if isinstance(m.content, str) else str(m.content)
+                        reduce_messages[i] = m.model_copy(update={"content": f"{existing}{question_block}"})
+                        break
+
         reduce_messages = self._fix_consecutive_human_messages(reduce_messages)
         original_messages: list[AnyMessage] = state.get("messages", [])
 
         self._record_compression(session_id, original_messages, reduce_messages)
+
+        self._compress_last_turn = False
+        state_register_mem.set_state(session_id, _LAST_USER_QUESTION_KEY, "")
 
         system_prompt: str | None = None
         if self._need_update_system_prompt:
@@ -305,14 +376,20 @@ class Summarization(SummarizationMiddleware):
         res: dict[str, Any] | None,
         session_id: str,
     ) -> ModelRequest[ContextT] | None:
-        """Return overridden request if compression should apply, else None."""
         if res is None:
+            self._compress_last_turn = False
             return None
 
         if self._should_skip_compression(session_id):
+            self._compress_last_turn = False
             return None
 
-        return self._apply_compression(state=request.state, request=request, res=res, session_id=session_id)
+        original_prompt: str | None = None
+        try:
+            return self._apply_compression(state=request.state, request=request, res=res, session_id=session_id)
+        finally:
+            if original_prompt is not None:
+                self.summary_prompt = original_prompt
 
     # ------------------------------------------------------------------
     # Sync wrap_model_call
@@ -325,6 +402,7 @@ class Summarization(SummarizationMiddleware):
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         logger.debug("{} wrap_model_call hook fired", type(self).__name__)
         session_id = self._get_session_or_raise(request.state)
+        self._check_last_turn_ratio(request.state.get("messages", []), session_id)
         res: dict[str, Any] | None = super().before_model(request.state, cast("Runtime[None]", request.runtime))
         overridden = self._wrap_model_call_impl(request, res, session_id)
         return handler(overridden if overridden is not None else request)
@@ -337,6 +415,7 @@ class Summarization(SummarizationMiddleware):
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         logger.debug("{} awrap_model_call hook fired", type(self).__name__)
         session_id = self._get_session_or_raise(request.state)
+        self._check_last_turn_ratio(request.state.get("messages", []), session_id)
         res: dict[str, Any] | None = await super().abefore_model(request.state, cast("Runtime[None]", request.runtime))
         print(res)
         overridden = self._wrap_model_call_impl(request, res, session_id)
