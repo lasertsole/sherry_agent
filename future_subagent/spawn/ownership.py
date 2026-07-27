@@ -15,14 +15,14 @@ class SubagentSpawnOwnership(BaseModel):
     completion_requester_display_key: str
 
 
-def _resolve_internal_key(session_key: str | None, main_key: str, alias: str) -> str:
+def _resolve_internal_key(session_key: str | None, alias: str) -> str:
     """Return the canonical alias when the key is empty, otherwise the trimmed key."""
     if not session_key or not session_key.strip():
         return alias
     return session_key.strip()
 
 
-def _resolve_display_key(session_key: str, main_key: str, alias: str) -> str:
+def _resolve_display_key(session_key: str, alias: str) -> str:
     """Return the alias for display when the key matches it, otherwise the raw key."""
     if session_key == alias:
         return alias
@@ -32,7 +32,6 @@ def _resolve_display_key(session_key: str, main_key: str, alias: str) -> str:
 def resolve_spawn_ownership(
     requester_session_key: str,
     completion_owner_key: str | None = None,
-    main_key: str = "agent:main:session:default",
     alias: str = "agent:main:session:default",
 ) -> SubagentSpawnOwnership:
     """Resolve ownership for a sub-agent: controller, thread-binding, and completion delivery keys.
@@ -41,7 +40,7 @@ def resolve_spawn_ownership(
     explicit session segment, normalizes it to the canonical alias. Supports
     separate completion_owner_key for proxied spawn scenarios.
     """
-    canonical_alias = _resolve_canonical_alias(requester_session_key, main_key, alias)
+    canonical_alias = _resolve_canonical_alias(requester_session_key, alias)
 
     effective_requester = requester_session_key.strip() if requester_session_key else canonical_alias
     if ":main:" in effective_requester and ":session:" not in effective_requester:
@@ -52,13 +51,13 @@ def resolve_spawn_ownership(
 
     trimmed_owner = completion_owner_key.strip() if completion_owner_key else None
     completion_requester_session_key = (
-        _resolve_internal_key(trimmed_owner, main_key, canonical_alias)
+        _resolve_internal_key(trimmed_owner, canonical_alias)
         if trimmed_owner
         else controller_session_key
     )
 
     completion_requester_display_key = _resolve_display_key(
-        completion_requester_session_key, main_key, canonical_alias
+        completion_requester_session_key, canonical_alias
     )
 
     return SubagentSpawnOwnership(
@@ -69,7 +68,7 @@ def resolve_spawn_ownership(
     )
 
 
-def _resolve_canonical_alias(session_key: str, main_key: str, default_alias: str) -> str:
+def _resolve_canonical_alias(session_key: str, default_alias: str) -> str:
     """Extract the canonical 'agent:main:session:<id>' alias from a main-agent session key."""
     if ":main:" in session_key:
         parts = session_key.split(":")

@@ -13,6 +13,7 @@ Example:
 import sys
 import zipfile
 from pathlib import Path
+from config import ROOT_DIR
 from pydantic import validate_call
 from .quick_validate import validate_skill
 
@@ -76,7 +77,7 @@ def package_skill(skill_path: str | Path, output_dir=None):
         output_path = Path(output_dir).resolve()
         output_path.mkdir(parents=True, exist_ok=True)
     else:
-        output_path = Path.cwd()
+        output_path = ROOT_DIR
 
     skill_filename = output_path / f"{skill_name}.skill"
 

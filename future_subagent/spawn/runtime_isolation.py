@@ -4,8 +4,9 @@ Enforces CWD restrictions and cross-runtime spawn prevention (without
 porting the full ACP sandbox).
 """
 
-from pydantic import BaseModel
+
 from loguru import logger
+from config import ROOT_DIR
 
 
 class RuntimeIsolationConfig(BaseModel):
@@ -45,7 +46,7 @@ def resolve_spawned_workspace_inheritance(
     parts = requester_session_key.split(":")
     if len(parts) >= 3:
         from pathlib import Path
-        workspace_hint = Path.cwd() / "workspaces" / target_agent_id
+        workspace_hint = ROOT_DIR / "workspaces" / target_agent_id
         if workspace_hint.is_dir():
             return str(workspace_hint)
 

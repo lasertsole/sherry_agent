@@ -37,7 +37,7 @@ from .initial_message import build_subagent_initial_user_message
 from .inherited_tool_policy import apply_tool_policy, DEFAULT_SUBAGENT_BLOCKED_TOOLS
 from .context import prepare_spawned_context
 from .attachments import materialize_subagent_attachments
-from .ownership import resolve_spawn_ownership, SubagentSpawnOwnership
+from .ownership import resolve_spawn_ownership
 from .accepted_note import resolve_spawn_accepted_note
 from .thread_binding import resolve_thread_binding_policy, unbind_thread_on_cleanup, refresh_thread_binding
 from .runtime_isolation import resolve_runtime_isolation, validate_runtime_isolation, validate_cwd_restriction
@@ -293,7 +293,7 @@ async def spawn_subagent_direct(
 
         swarm_run = await reserve_swarm_run(swarm_group_id, task, requester_session_key, task_name=normalized_task_name, launch_fingerprint=launch_fingerprint)
         if swarm_run is not None:
-            from ..registry.memory import update as update_run
+            from ..registry.memory import get as get_run, update as update_run
             update_run(run.run_id, swarm_group_id=swarm_group_id, swarm_run_state=swarm_run.swarm_run_state)
             run = get_run(run.run_id) or run  # refresh local reference after in-place update
 
@@ -358,9 +358,6 @@ async def spawn_subagent_direct(
             forked_messages=forked_messages,
             tools=build_main_tools(),
             timeout_seconds=timeout_seconds,
-            spawn_mode=spawn_mode,
-            expects_completion_message=expects_completion_message,
-            ownership=ownership,
             model_override=resolved_model,
             output_schema=output_schema,
         )
@@ -394,9 +391,6 @@ async def _execute_subagent(
     forked_messages: list,
     tools: list | None,
     timeout_seconds: float,
-    spawn_mode: SpawnMode = SpawnMode.RUN,
-    expects_completion_message: bool = True,
-    ownership: SubagentSpawnOwnership | None = None,
     model_override: str | None = None,
     output_schema: dict | None = None,
 ) -> None:
@@ -418,9 +412,6 @@ async def _execute_subagent(
         forked_messages: Prior context messages forked from the parent (may be empty).
         tools: Tool list to make available; ``None`` falls back to :func:`build_main_tools`.
         timeout_seconds: Wall-clock timeout in seconds.
-        spawn_mode: :attr:`SpawnMode.RUN` or :attr:`SpawnMode.SESSION`.
-        expects_completion_message: Whether the parent awaits a completion callback.
-        ownership: Resolved ownership info for completion routing.
         model_override: LLM model name override for this child.
         output_schema: Optional JSON Schema for structured output validation.
     """

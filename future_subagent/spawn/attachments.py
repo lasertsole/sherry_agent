@@ -13,6 +13,7 @@ import base64
 import hashlib
 from pathlib import Path
 from loguru import logger
+from config import ROOT_DIR, TEMP_DIR
 
 
 class AttachmentError(Exception):
@@ -110,12 +111,12 @@ async def materialize_subagent_attachments(
         return MaterializeResult(status="error", error=f"Too many attachments: {len(attachments)} > {max_files}")
 
     if child_workspace is None:
-        child_workspace = Path.cwd()
+        child_workspace = TEMP_DIR
 
     attachment_uuid = str(uuid.uuid4())[:8]  # short UUID for readability in paths
-    root_dir = child_workspace / ".openclaw" / "attachments"
+    root_dir = child_workspace / "attachments"
     abs_dir = root_dir / attachment_uuid
-    rel_dir = f".openclaw/attachments/{attachment_uuid}"
+    rel_dir = f"attachments/{attachment_uuid}"
 
     manifest_entries: list[dict] = []
     total_bytes = 0
