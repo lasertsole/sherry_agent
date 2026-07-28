@@ -5,6 +5,7 @@ from logs import init_logger
 from config import STATIC_DIR
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
+from context_engine.curator import maybe_run_curator
 
 # Fix UnicodeEncodeError for emoji in Windows GBK terminal
 if sys.stdout.encoding and sys.stdout.encoding.lower() in ('gbk', 'gb2312', 'gb18030'):
@@ -34,6 +35,22 @@ if __name__ == "__main__":
 
     # Import triggers to register all routes and handlers
     from .trigger import app
+
+    # run curator to maintain auto-skills
+    import threading as _t
+
+    def _curator_loop():
+        import asyncio as _a
+        loop = _a.new_event_loop()
+        _a.set_event_loop(loop)
+        while True:
+            try:
+                maybe_run_curator()
+            except Exception:
+                pass
+            loop.run_until_complete(_a.sleep(5))
+
+    _t.Thread(target=_curator_loop, daemon=True, name="curator-timer").start()
 
     # Configuring Static File Directory Hosting
     app.serve_directory(

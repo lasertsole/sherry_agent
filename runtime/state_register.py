@@ -171,6 +171,17 @@ class StateRegisterDB(Register):
             logger.exception(f"delete_state_db failed: session_id={session_id}, key={key}")
         return False
 
+    def get_all_session_ids(self) -> list[str]:
+        """Return all distinct session_id values from the database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT DISTINCT session_id FROM states")
+                return [row[0] for row in cursor.fetchall()]
+        except Exception:
+            logger.exception("get_all_session_ids failed")
+        return []
+
     def clear_session(self, session_id: str) -> bool:
         try:
             with sqlite3.connect(self.db_path) as conn:

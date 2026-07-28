@@ -1,4 +1,4 @@
-import threading
+import asyncio
 from loguru import logger
 from typing import Any, Callable
 from datetime import datetime, timezone
@@ -90,7 +90,6 @@ def _run_llm_review(prompt: str) -> dict[str, Any]:
 
 def run_curator_review(
     on_summary: Callable[[str], None] | None = None,
-    synchronous: bool = True,
     dry_run: bool = False,
     consolidate: bool | None = None,
 ) -> dict[str, Any]:
@@ -124,71 +123,16 @@ def run_curator_review(
     state["last_run_summary"] = f"{prefix}{auto_summary}"
     save_state(state)
 
-    def _llm_pass() -> None:
-        nonlocal auto_summary
+    # --- synchronous LLM pass (blocks caller) ---
+    try:
+        before_report = agent_created_report()
+    except Exception:
+        before_report = []
+    before_names = {r.get("name") for r in before_report if isinstance(r, dict)}
 
-        try:
-            before_report = agent_created_report()
-        except Exception:
-            before_report = []
-        before_names = {r.get("name") for r in before_report if isinstance(r, dict)}
-
-        if not consolidate:
-            final_summary = f"{prefix}{auto_summary}; llm: skipped (consolidation off)"
-            llm_meta: dict[str, Any] = {"final": "", "summary": "skipped (consolidation off)", "model": "", "provider": "", "tool_calls": [], "error": None}
-            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-            try:
-                after_report = agent_created_report()
-            except Exception:
-                after_report = []
-            try:
-                report_path = _write_run_report(started_at=start, elapsed_seconds=elapsed, auto_counts=counts, auto_summary=auto_summary, before_report=before_report, before_names=before_names, after_report=after_report, llm_meta=llm_meta)
-                rp = str(report_path) if report_path else None
-            except Exception:
-                rp = None
-            state2 = load_state()
-            state2["last_run_duration_seconds"] = round(elapsed, 2)
-            state2["last_run_summary"] = final_summary
-            if rp:
-                state2["last_report_path"] = rp
-            save_state(state2)
-            if on_summary:
-                try:
-                    on_summary(f"curator: {final_summary}")
-                except Exception:
-                    pass
-            return
-
-        llm_meta: dict[str, Any] = {"final": "", "summary": "", "model": "", "provider": "", "tool_calls": [], "error": None}
-        try:
-            candidate_list = _render_candidate_list()
-            if "No agent-created skills" in candidate_list:
-                final_summary = f"{prefix}{auto_summary}; llm: skipped (no candidates)"
-                llm_meta["summary"] = "skipped (no candidates)"
-            else:
-                if dry_run:
-                    prompt = f"{CURATOR_DRY_RUN_BANNER}\n{CURATOR_REVIEW_PROMPT}\n{candidate_list}"
-                else:
-                    prompt = f"{CURATOR_REVIEW_PROMPT}\n{candidate_list}"
-                llm_meta = _run_llm_review(prompt)
-                final_summary = f"{prefix}{auto_summary}; llm: {llm_meta.get('summary', 'no change')}"
-        except Exception as e:
-            final_summary = f"{prefix}{auto_summary}; llm: error ({e})"
-            llm_meta = {"final": "", "summary": f"error ({e})", "model": "", "provider": "", "tool_calls": [], "error": str(e)}
-
-        try:
-            rename_lines = _build_rename_summary(before_names=before_names, after_report=agent_created_report(), tool_calls=llm_meta.get("tool_calls", []) or [], model_final=llm_meta.get("final", "") or "")
-            if rename_lines:
-                final_summary = f"{final_summary}\n{rename_lines}"
-        except Exception as e:
-            logger.debug("Curator rename summary build failed: {}", e)
-
-        if not dry_run:
-            try:
-                _apply_consolidation(llm_meta.get("final", ""))
-            except Exception as e:
-                logger.debug("Curator consolidation apply failed: {}", e)
-
+    if not consolidate:
+        final_summary = f"{prefix}{auto_summary}; llm: skipped (consolidation off)"
+        llm_meta: dict[str, Any] = {"final": "", "summary": "skipped (consolidation off)", "model": "", "provider": "", "tool_calls": [], "error": None}
         elapsed = (datetime.now(timezone.utc) - start).total_seconds()
         try:
             after_report = agent_created_report()
@@ -199,25 +143,76 @@ def run_curator_review(
             rp = str(report_path) if report_path else None
         except Exception:
             rp = None
-
         state2 = load_state()
         state2["last_run_duration_seconds"] = round(elapsed, 2)
         state2["last_run_summary"] = final_summary
         if rp:
             state2["last_report_path"] = rp
         save_state(state2)
-
         if on_summary:
             try:
                 on_summary(f"curator: {final_summary}")
             except Exception:
                 pass
+        return {
+            "started_at": start.isoformat(),
+            "auto_transitions": counts,
+            "summary_so_far": auto_summary,
+        }
 
-    if synchronous:
-        _llm_pass()
-    else:
-        t = threading.Thread(target=_llm_pass, daemon=True, name="curator-review")
-        t.start()
+    llm_meta: dict[str, Any] = {"final": "", "summary": "", "model": "", "provider": "", "tool_calls": [], "error": None}
+    try:
+        candidate_list = _render_candidate_list()
+        if "No agent-created skills" in candidate_list:
+            final_summary = f"{prefix}{auto_summary}; llm: skipped (no candidates)"
+            llm_meta["summary"] = "skipped (no candidates)"
+        else:
+            if dry_run:
+                prompt = f"{CURATOR_DRY_RUN_BANNER}\n{CURATOR_REVIEW_PROMPT}\n{candidate_list}"
+            else:
+                prompt = f"{CURATOR_REVIEW_PROMPT}\n{candidate_list}"
+            llm_meta = _run_llm_review(prompt)
+            final_summary = f"{prefix}{auto_summary}; llm: {llm_meta.get('summary', 'no change')}"
+    except Exception as e:
+        final_summary = f"{prefix}{auto_summary}; llm: error ({e})"
+        llm_meta = {"final": "", "summary": f"error ({e})", "model": "", "provider": "", "tool_calls": [], "error": str(e)}
+
+    try:
+        rename_lines = _build_rename_summary(before_names=before_names, after_report=agent_created_report(), tool_calls=llm_meta.get("tool_calls", []) or [], model_final=llm_meta.get("final", "") or "")
+        if rename_lines:
+            final_summary = f"{final_summary}\n{rename_lines}"
+    except Exception as e:
+        logger.debug("Curator rename summary build failed: {}", e)
+
+    if not dry_run:
+        try:
+            _apply_consolidation(llm_meta.get("final", ""))
+        except Exception as e:
+            logger.debug("Curator consolidation apply failed: {}", e)
+
+    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+    try:
+        after_report = agent_created_report()
+    except Exception:
+        after_report = []
+    try:
+        report_path = _write_run_report(started_at=start, elapsed_seconds=elapsed, auto_counts=counts, auto_summary=auto_summary, before_report=before_report, before_names=before_names, after_report=after_report, llm_meta=llm_meta)
+        rp = str(report_path) if report_path else None
+    except Exception:
+        rp = None
+
+    state2 = load_state()
+    state2["last_run_duration_seconds"] = round(elapsed, 2)
+    state2["last_run_summary"] = final_summary
+    if rp:
+        state2["last_report_path"] = rp
+    save_state(state2)
+
+    if on_summary:
+        try:
+            on_summary(f"curator: {final_summary}")
+        except Exception:
+            pass
 
     return {
         "started_at": start.isoformat(),
@@ -298,6 +293,33 @@ def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: 
         + "\n"
     )
     return fallback
+
+
+def _refresh_all_cached_system_prompts() -> None:
+    """Rebuild and overwrite the cached system_prompt for every known session.
+
+    After Curator consolidates/prunes skills the skill snapshot baked into
+    each session's cached system_prompt is stale.  This forces a fresh
+    build_system_prompt() and writes it into both mem and db stores so the
+    next turn picks up the new skill list immediately.
+    """
+    try:
+        from runtime import state_register_mem, state_register_db
+        from workspace.prompt_builder import build_system_prompt
+
+        new_prompt = build_system_prompt()
+        session_ids = state_register_db.get_all_session_ids()
+        if not session_ids:
+            logger.info("Curator: no sessions to refresh system_prompt for")
+            return
+
+        for sid in session_ids:
+            state_register_mem.set_state(sid, "system_prompt", new_prompt)
+            state_register_db.set_state(sid, "system_prompt", new_prompt)
+
+        logger.info("Curator: refreshed cached system_prompt for {} session(s)", len(session_ids))
+    except Exception:
+        logger.exception("Curator: failed to refresh cached system_prompts")
 
 
 def _apply_consolidation(llm_final: str) -> None:
@@ -403,3 +425,12 @@ def _apply_consolidation(llm_final: str) -> None:
             logger.info("Curator pruned '{}': {}", name, msg)
         else:
             logger.warning("Curator failed to prune '{}': {}", name, msg)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        asyncio.ensure_future(asyncio.to_thread(_refresh_all_cached_system_prompts))
+    else:
+        asyncio.run(asyncio.to_thread(_refresh_all_cached_system_prompts))
