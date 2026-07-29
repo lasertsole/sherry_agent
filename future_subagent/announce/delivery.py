@@ -234,8 +234,7 @@ def _build_delivery_context(run: SubagentRunRecord) -> DeliveryContext:
 
 async def _deliver_internal_injection(ctx: DeliveryContext) -> None:
     """Deliver result as an internal injection to a sub-agent requester session."""
-    from bus import MessageBus
-    from type.bus import InboundMessage
+    from ..events import InboundMessage, get_event_bus
 
     status = "ok" if ctx.outcome.status == "ok" else ctx.outcome.status.value
     content = f"[Subagent Internal] {ctx.child_label or ctx.task[:30]}: {status}"
@@ -257,14 +256,13 @@ async def _deliver_internal_injection(ctx: DeliveryContext) -> None:
         },
     )
 
-    bus = MessageBus()
-    await bus.publish_inbound(msg)
+    bus = get_event_bus()
+    await bus.publish_internal(msg)
 
 
 async def _deliver_completion_message(ctx: DeliveryContext) -> None:
     """Deliver result as a user-facing completion message to the requester session."""
-    from bus import MessageBus
-    from type.bus import InboundMessage
+    from ..events import InboundMessage, get_event_bus
 
     status_text = "completed successfully"
     if ctx.outcome.status == "killed":
@@ -297,5 +295,5 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
         },
     )
 
-    bus = MessageBus()
-    await bus.publish_inbound(msg)
+    bus = get_event_bus()
+    await bus.publish_internal(msg)

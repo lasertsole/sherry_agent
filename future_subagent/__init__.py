@@ -2,7 +2,7 @@
 
 Core pipeline:
 - Spawn: validate → register → build child agent → execute as background asyncio.Task
-- Announce: on completion → capture result → deliver to parent session via MessageBus
+- Announce: on completion → capture result → deliver to parent session via EventBus
 - Registry: in-memory + SQLite persisted run records, three state machines
 
 Usage:

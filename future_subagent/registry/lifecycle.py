@@ -221,7 +221,7 @@ async def _finalize_cleanup(run: SubagentRunRecord, reason: str) -> None:
         from ..session.cleanup import delete_subagent_session_for_cleanup
         await delete_subagent_session_for_cleanup(run.child_session_key, run.spawn_mode)
 
-    from ..registry import update as update_run
+    from ..registry import update_run
     update_run(run.run_id, cleanup_completed_at=time.monotonic())
 
     _cleanup_generations.pop(run.run_id, None)

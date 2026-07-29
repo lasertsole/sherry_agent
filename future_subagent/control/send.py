@@ -36,8 +36,7 @@ async def send_subagent_message(
     baseline = await _capture_baseline_reply(run.child_session_key)
 
     try:
-        from bus import MessageBus
-        from type.bus import InboundMessage
+        from ..events import InboundMessage, get_event_bus
 
         msg = InboundMessage(
             channel="system",
@@ -51,8 +50,8 @@ async def send_subagent_message(
             },
         )
 
-        bus = MessageBus()
-        await bus.publish_inbound(msg)
+        bus = get_event_bus()
+        await bus.publish_internal(msg)
         logger.info("Sent message to subagent run {}: {} chars", run_id, len(message))
     except Exception as e:
         logger.error("Failed to send message to subagent run {}: {}", run_id, e)

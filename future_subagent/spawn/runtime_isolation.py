@@ -6,6 +6,7 @@ porting the full ACP sandbox).
 
 
 from loguru import logger
+from pydantic import BaseModel
 from config import ROOT_DIR
 
 
