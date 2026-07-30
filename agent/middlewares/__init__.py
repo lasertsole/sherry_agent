@@ -5,3 +5,4 @@ from .context_engine import ContextEngineHook
 from .tool_call_normalize import ToolCallNormalize
 from .heartbeat_staleness import HeartbeatStaleness
 from .multimodal_processor import MultimodalProcessor
+from .HumanInTheLoop import HumanInTheLoop, HITLConfig
