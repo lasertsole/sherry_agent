@@ -8,7 +8,7 @@
 SubagentManager (singleton)
   ├── 专用 event loop + daemon thread
   ├── spawn(task, session_id, label) → 后台 asyncio.Task
-  ├── _run_subagent() → build_commander() → ainvoke() → bus.publish_inbound()
+  ├── _run_subagent() → build_commander() → ainvoke() → get_event_bus().publish_internal()
   ├── cancel_by_session() → 取消所有子任务
   └── _consume_loop() → 从 bus 消费 → LLM 个性化 → 转发给 consumer
 ```
@@ -16,15 +16,15 @@ SubagentManager (singleton)
 **核心数据流**:
 1. 主 agent 调用 `subagent` 工具 → `SubagentManager.spawn()`
 2. 后台线程执行 Commander → Worker → 得到 `SubAgentOutput`
-3. 通过 `MessageBus.publish_inbound()` 投递结果
+3. 通过 `EventBus.publish_internal()` 投递结果
 4. `_consume_loop()` 消费结果 → LLM 个性化 → 转发给前端
 
 ### 现有基础设施
 
 | 组件 | 路径 | 用途 |
 |------|------|------|
-| MessageBus | `bus/core.py` | 异步消息总线 |
-| InboundMessage | `type/bus.py` | 入站消息模型 |
+| EventBus | `future_subagent/events/core.py` | 自有异步事件总线 |
+| InboundMessage | `future_subagent/events/core.py` | 自有入站消息模型 |
 | Register | `runtime/` | 运行时状态注册 |
 | build_commander | `agent/tools/subagent/commander/core.py` | 构建 Commander agent |
 | codeact_agent | `agent/codeact/` | Worker agent |
@@ -135,8 +135,7 @@ async def _build_child_agent(
 # announce/delivery.py 中的双路径投递
 
 async def deliver_subagent_announcement(ctx: DeliveryContext) -> None:
-    from bus import MessageBus
-    from type.bus import InboundMessage
+    from ..events import InboundMessage, get_event_bus
 
     # 根据 ctx.is_requester_subagent 分流
     if ctx.is_requester_subagent:
@@ -167,8 +166,8 @@ async def deliver_subagent_announcement(ctx: DeliveryContext) -> None:
             },
         )
 
-    bus = MessageBus()
-    await bus.publish_inbound(msg)
+    bus = get_event_bus()
+    await bus.publish_internal(msg)
 ```
 
 ### 5. 共存策略
@@ -177,7 +176,7 @@ async def deliver_subagent_announcement(ctx: DeliveryContext) -> None:
 |------|--------------|-------------|
 | 工具名 | `subagent` | `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list` |
 | 管理器 | `SubagentManager` (singleton) | `SubagentRegistry` (dict + SQLite) |
-| 投递 | `MessageBus` | `MessageBus`（共用） |
+| 投递 | `MessageBus` | `EventBus`（自有） |
 | 子 agent | Commander + Worker | 直接 spawn LangGraph agent |
 | 知识图谱 | 有（draft→distill→ingest） | 暂无 |
 | 深度 | 单层 | 多层嵌套（默认 3 层） |

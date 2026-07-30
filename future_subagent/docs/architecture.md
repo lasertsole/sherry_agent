@@ -23,7 +23,7 @@ Parent Agent (LangGraph CompiledStateGraph)
        │
        ├─ announce/core.py: 捕获输出 → 构建通知 → 投递到父 session
        │    ├─ announce/output.py: 等待 outcome / 提取 summary / 统计
-       │    ├─ announce/delivery.py: 通过 MessageBus 投递 + 重试 + 挂起管理
+       │    ├─ announce/delivery.py: 通过 EventBus 投递 + 重试 + 挂起管理
        │    ├─ announce/capture.py: 带重试的输出读取
        │    └─ announce/dispatch.py: steer vs direct 策略
        │
@@ -214,13 +214,13 @@ registered → cleanup_handled → cleanup_completed_at
 现有系统 (agent/tools/subagent/):
   SubagentManager (singleton) → Commander → Worker
   工具名: "subagent"
-  投递: MessageBus
+   投递: MessageBus
 
 新系统 (future_subagent/):
-  SubagentRegistry → Spawn → Announce
-  工具名: "sessions_spawn", "sessions_yield", "sessions_send",
-          "sessions_kill", "sessions_steer", "agents_list", "subagents_list"
-  投递: MessageBus（复用）
+   SubagentRegistry → Spawn → Announce
+   工具名: "sessions_spawn", "sessions_yield", "sessions_send",
+           "sessions_kill", "sessions_steer", "agents_list", "subagents_list"
+   投递: EventBus（自有）
 
 共存方式:
   - 两套工具同时注册到 _MAIN_TOOLS_BUILDERS
