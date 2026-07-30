@@ -1,4 +1,13 @@
-"""HITL shared types, enums, constants, and configuration."""
+"""HITL shared types, enums, constants, and configuration.
+
+Defines the core data model for the Human-in-the-Loop middleware:
+- :class:`ApprovalMode` / :class:`ApprovalDecision` — approval strategy & result
+- :class:`ApprovalResult` — pipeline output with ``blocked`` convenience property
+- :class:`WriteTarget` / :class:`TriageStatus` / :class:`SmartApprovalResult` — gate enums
+- :class:`HITLConfig` — single-source-of-truth configuration dataclass
+- LangChain/LangGraph type stubs — graceful degradation when imports fail
+- :func:`interrupt` — thin wrapper around ``langgraph.types.interrupt``
+"""
 
 from __future__ import annotations
 
@@ -16,12 +25,25 @@ BLOCKED_MESSAGE = (
 
 
 class ApprovalMode(str, Enum):
+    """Approval strategy for the HITL pipeline.
+
+    - ``SMART``: Use an LLM to auto-approve/deny before escalating to human.
+    - ``MANUAL``: Always escalate to human for dangerous commands.
+    - ``OFF``: Bypass all approval gates (equivalent to YOLO mode).
+    """
     SMART = "smart"
     MANUAL = "manual"
     OFF = "off"
 
 
 class ApprovalDecision(str, Enum):
+    """Decision type returned after a command is approved or denied.
+
+    - ``ONCE``: Single-use approval — next invocation re-evaluates.
+    - ``SESSION``: Approved for the remainder of the session (stored in state).
+    - ``ALWAYS``: Added to permanent allowlist (persistent across sessions).
+    - ``DENY``: Rejected — the command must not be retried.
+    """
     ONCE = "once"
     SESSION = "session"
     ALWAYS = "always"
@@ -30,6 +52,14 @@ class ApprovalDecision(str, Enum):
 
 @dataclass
 class ApprovalResult:
+    """Result of a command/tool approval check.
+
+    Attributes:
+        approved: Whether the action is allowed to proceed.
+        decision: The specific :class:`ApprovalDecision` if one was made.
+        reason: Human-readable explanation of the result.
+        pattern_key: Matched pattern identifier (for allowlist tracking).
+    """
     approved: bool
     decision: ApprovalDecision | None = None
     reason: str = ""
@@ -37,15 +67,26 @@ class ApprovalResult:
 
     @property
     def blocked(self) -> bool:
+        """Convenience: ``True`` when ``approved`` is ``False``."""
         return not self.approved
 
 
 class WriteTarget(str, Enum):
+    """Target for write-approval staging.
+
+    - ``MEMORY``: Memory write (user profile / long-term storage).
+    - ``SKILLS``: Skill definition write.
+    """
     MEMORY = "memory"
     SKILLS = "skills"
 
 
 class TriageStatus(str, Enum):
+    """Status for the Kanban triage workflow.
+
+    - ``TODO`` / ``IN_PROGRESS`` / ``BLOCKED`` / ``DONE``: Standard task lifecycle.
+    - ``TRIAGE``: Escalated to a human decision-maker after exceeding recurrence limit.
+    """
     TODO = "todo"
     IN_PROGRESS = "in_progress"
     BLOCKED = "blocked"
@@ -57,6 +98,12 @@ BLOCK_RECURRENCE_LIMIT = 3
 
 
 class SmartApprovalResult(str, Enum):
+    """Result of a smart-approval LLM assessment.
+
+    - ``APPROVE``: LLM deemed the command safe.
+    - ``DENY``: LLM deemed the command dangerous.
+    - ``ESCALATE``: LLM uncertain — escalate to human.
+    """
     APPROVE = "approve"
     DENY = "deny"
     ESCALATE = "escalate"
@@ -109,7 +156,17 @@ except ImportError:
 
 
 def interrupt(value):
-    """Wrapper for langgraph interrupt, gracefully degrades."""
+    """Wrapper for ``langgraph.types.interrupt``, gracefully degrades.
+
+    Args:
+        value: The :class:`HITLRequest` to send to the human.
+
+    Returns:
+        The :class:`HITLResponse` from the human.
+
+    Raises:
+        RuntimeError: If ``langgraph`` is not installed or ``interrupt`` is unavailable.
+    """
     if _lg_interrupt is not None:
         return _lg_interrupt(value)
     raise RuntimeError("langgraph interrupt() not available — no human-in-the-loop transport")
@@ -117,6 +174,23 @@ def interrupt(value):
 
 @dataclass
 class HITLConfig:
+    """Single-source-of-truth configuration for the Human-in-the-Loop middleware.
+
+    Attributes:
+        mode: Approval strategy (smart / manual / off).
+        timeout: Default timeout in seconds for approval interrupts.
+        deny_rules: Glob-style patterns for unconditional denial.
+        yolo_mode: Bypass all approval when ``True``.
+        write_approval_memory: Stage memory writes for human approval.
+        write_approval_skills: Stage skill writes for human approval.
+        clarify_timeout: Timeout for clarify() interrupts.
+        kanban_recurrence_limit: Failure count before escalation to triage.
+        mcp_reload_confirm: Require human consent for MCP server reload.
+        destructive_slash_confirm: Require confirmation for destructive slash commands.
+        smart_approval_llm: Optional LLM instance for smart command assessment.
+        interrupted_tools: Mapping of tool_name → config for interrupt-on-use.
+        description_prefix: Prefix for auto-generated interrupt descriptions.
+    """
     mode: ApprovalMode = ApprovalMode.SMART
     timeout: int = 60
     deny_rules: list[str] = field(default_factory=list)

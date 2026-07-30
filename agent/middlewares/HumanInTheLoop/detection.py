@@ -1,6 +1,10 @@
-"""Hardline blocklist and dangerous pattern detection.
+"""Hardline blocklist and dangerous-pattern detection for shell commands.
 
-Pure functions — no state, no side effects, no langchain dependency.
+Two-tier detection:
+1. **Hardline** (:data:`HARDLINE_PATTERNS`) — unconditional block; no bypass possible.
+2. **Dangerous** (:data:`DANGEROUS_PATTERNS`) — matched patterns that require human approval.
+
+All functions are **pure** — no state, no side effects, no LangChain dependency.
 """
 
 from __future__ import annotations
@@ -10,6 +14,8 @@ import re
 # ── Hardline blocklist (unconditional, no bypass) ──────────────────────
 
 HARDLINE_PATTERNS: list[re.Pattern[str]] = [
+    # Matches: rm -rf /, rm -rf --no-preserve-root, rm -rf C:\
+    # Blocked unconditionally — system-destroying operations.
     re.compile(r"\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+(/|[A-Z]:\\)|--no-preserve-root)", re.IGNORECASE),
     re.compile(r"\bmkfs\b", re.IGNORECASE),
     re.compile(r"\bdd\s+if=.*of=/dev/", re.IGNORECASE),
@@ -22,10 +28,13 @@ HARDLINE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r">\s*/dev/sd[a-z]", re.IGNORECASE),
     re.compile(r"\bsysctl\s+-w\s", re.IGNORECASE),
     re.compile(r"\biptables\s+-F\b", re.IGNORECASE),
-]
+]  # fmt: skip
 
 # ── Dangerous pattern detection (47+ patterns) ────────────────────────
 
+# DANGEROUS_PATTERNS: 47+ regex/tag pairs.
+# Each entry is (compiled_regex, human_readable_tag).
+# Tags are used in ApprovalResult.pattern_key for allowlist tracking.
 DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)", re.IGNORECASE), "rm_recursive_force"),
     (re.compile(r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*|-[a-zA-Z]*r[a-zA-Z]*)\s+", re.IGNORECASE), "rm_recursive"),
@@ -85,7 +94,16 @@ DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 
 def detect_hardline_command(command: str) -> str | None:
-    """Return pattern tag if command matches hardline blocklist, else None."""
+    """Check if *command* matches any hardline blocklist pattern.
+
+    Hardline patterns are **unconditionally** denied — no bypass is possible.
+
+    Args:
+        command: The shell command string to inspect.
+
+    Returns:
+        A pattern tag like ``"hardline:\\\\brm\\\\s+..."`` if matched, or ``None``.
+    """
     for pattern in HARDLINE_PATTERNS:
         if pattern.search(command):
             return f"hardline:{pattern.pattern}"
@@ -93,7 +111,18 @@ def detect_hardline_command(command: str) -> str | None:
 
 
 def detect_dangerous_command(command: str) -> list[tuple[str, str]]:
-    """Return list of (regex_pattern, tag) for all matched dangerous patterns."""
+    """Find all dangerous patterns present in *command*.
+
+    Each match is returned as ``(regex_pattern, tag)``. Multiple patterns
+    may match a single command (e.g. both ``sudo_rm`` and ``rm_recursive_force``).
+
+    Args:
+        command: The shell command string to inspect.
+
+    Returns:
+        List of ``(pattern.pattern, tag)`` tuples for every matched pattern.
+        Empty list means the command appears safe.
+    """
     matches: list[tuple[str, str]] = []
     for pattern, tag in DANGEROUS_PATTERNS:
         if pattern.search(command):

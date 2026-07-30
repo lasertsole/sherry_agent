@@ -29,9 +29,9 @@ Subagent 系统的核心目标是让主 Agent 能够将复杂任务分解为并�
 │    │                                                             │
 │    ├─ 2. sessions_yield ──► 暂停当前 turn，等待子任务完成          │
 │    │                                                             │
-│    ├─ 3. sessions_send  ──► A2A 双向通信 (via MessageBus)        │
+│    ├─ 3. sessions_send  ──► A2A 双向通信 (via EventBus)          │
 │    │                                                             │
-│    └─ 4. 子 Agent 完成 ──► Announce 管道 ──► MessageBus 投递结果  │
+│    └─ 4. 子 Agent 完成 ──► Announce 管道 ──► EventBus 投递结果    │
 │                         ──► Registry 生命周期更新                 │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -266,7 +266,7 @@ Registry 是整个系统的状态中枢，维护所有子 Agent 运行记录的�
                 │     │     │     session_id = requester_session_key
                 │     │     │     metadata.injected_event = "subagent_result"
                 │     │     │     content = 格式化结果（截断 4K）
-                │     │     └── MessageBus.publish_inbound(msg)
+                │     │     └── get_event_bus().publish_internal(msg)
                 │     │     fire_delivery_target_hook() → 允许重定向
                 │     │
                 │     ├── 成功 → mark DELIVERED + 记录幂等 key → 返回
@@ -525,7 +525,7 @@ orphan/recovery.py — 按 run_id 延迟调度
 | `message` | str | 消息内容 |
 | `max_turns` | int | 最大轮次（默认 1） |
 
-通过 `MessageBus.publish_inbound()` 投递定向消息，`metadata.injected_event = "subagent_message"`。
+通过 `get_event_bus().publish_internal()` 投递定向消息，`metadata.injected_event = "subagent_message"`。
 
 #### agents_list — 可用 Agent 列表
 
@@ -607,7 +607,7 @@ Hook 按注册顺序串行执行，异常被吞咽不中断流程。
 | 深度 | 单层 | 多层嵌套（默认 3 层） |
 | 通信 | 单向回传 | 双向（sessions_send） |
 | 知识图谱 | 有（draft→distill→ingest） | 暂无 |
-| 投递通道 | MessageBus | MessageBus（共用） |
+| 投递通道 | MessageBus | EventBus（自有） |
 | 中间件 | — | Summarization + IterationBudget + ToolGuardrails + ToolCallNormalize + HeartbeatStaleness |
 
 两套工具同时注册到 `_MAIN_TOOLS_BUILDERS`，互不冲突，可渐进迁移。
@@ -617,11 +617,11 @@ Hook 按注册顺序串行执行，异常被吞咽不中断流程。
 | 决策 | 选择 | 理由 |
 |------|------|------|
 | 子 Agent 执行方式 | `CompiledStateGraph.ainvoke()` | 复用 LangGraph 基础设施，天然异步 |
-| 投递通道 | 复用 `MessageBus.publish_inbound()` | 项目已有机制，无需重建 |
+| 投递通道 | 自有 `EventBus.publish_internal()` | 与全局 MessageBus 解耦，独立演进 |
 | 持久化 | aiosqlite（仅 SQLite，无 JSON fallback） | 项目已有依赖，SQLite 全平台可靠 |
 | 沙箱 | 不移植 ACP | 同进程执行，通过工具黑名单控制权限 |
 | yield 实现 | `asyncio.Event` + Registry 回调 | Python 无 gateway steering，Event 等价 |
-| A2A 通信 | MessageBus + session key 路由 | 复用现有消息机制 |
+| A2A 通信 | EventBus + session key 路由 | 复用现有消息机制 |
 | 共存策略 | 独立新建，新工具命名空间不同 | 渐进迁移，不破坏现有功能 |
 | Fork 上下文 | `agent.aget_state()` 从 checkpointer 读取 | 决策 9：无需外部传入 parent_messages |
 | 屏蔽工具 | `sessions_spawn`、`sessions_yield`、`skill_manage`、`memory` | 防止递归 spawn 和越权操作 |

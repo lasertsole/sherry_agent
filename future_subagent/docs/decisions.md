@@ -17,22 +17,27 @@
 
 ---
 
-## 决策 2: 复用 MessageBus 而非新建 Announce 管道
+## 决策 2: 自有 EventBus 替代项目 MessageBus 依赖
 
-**日期**: 2026-07-15
+**日期**: 2026-07-29
 
-**背景**: OpenClaw 的 announce 投递深度依赖 gateway/channel（Discord/Slack/Telegram），Python 版需决定投递方式。
+**背景**: `future_subagent/` 原通过 `type.bus.InboundMessage` + `MessageBus.publish_inbound()` 投递结果，与项目全局 MessageBus 耦合。
 
-**决策**: 复用现有 `MessageBus.publish_inbound()` 进行结果投递。
+**决策**: 在 `future_subagent/events/core.py` 自有 `EventBus`（async Queue） + `InboundMessage` dataclass，接口为 `publish_internal()`。
 
 **理由**:
-- 项目已有 MessageBus + InboundMessage 机制
-- 无 Discord/Slack/Telegram 渠道需求
-- 保留重试/挂起/幂等等可靠性机制，但投递通道用 MessageBus
+- `future_subagent` 应与项目 MessageBus 解耦，避免后续改造双向依赖
+- 自有事件总线接口可独立演进，不影响全局消息通道
+- 消除对 `type.bus` 和 `bus/` 模块的导入依赖
 
 **影响**:
-- `announce/delivery.py` 大幅精简（1983行 → ~500行）
-- 无需实现 channel thread binding / route projection
+- `announce/delivery.py`、`control/send.py`、`session/cleanup.py` 导入从 `from bus import ...; from type.bus import ...` 改为 `from ..events import InboundMessage, get_event_bus`
+- 调用从 `bus.publish_inbound(msg)` 改为 `get_event_bus().publish_internal(msg)`
+- 文档同步更新
+
+## 决策 2b: (已废弃) 复用 MessageBus — 2026-07-15 原始决策
+
+> 原计划复用 `MessageBus.publish_inbound()`，2026-07-29 重构为自有 EventBus。保留此记录供历史追溯。
 
 ---
 
@@ -117,15 +122,15 @@
 
 **背景**: OpenClaw 的 sessions_send 支持 agent-to-agent 双向消息、ping-pong 轮次控制。
 
-**决策**: 通过 MessageBus + session key 路由实现。
+**决策**: 通过 EventBus + session key 路由实现。
 
 **理由**:
-- MessageBus 已有 publish/consume 机制
+- EventBus 自有 publish/consume 机制（与项目 MessageBus 解耦）
 - session key 可作为路由标识
 - ping-pong 通过消息计数器控制
 
 **影响**:
-- `sessions_send` 工具内部通过 MessageBus 发送定向消息
+- `sessions_send` 工具内部通过 EventBus 发送定向消息
 - 目标 session 通过 middleware 接收注入的消息
 - 需要维护 `pending_messages: dict[str, list[InboundMessage]]` 暂存
 
@@ -518,6 +523,6 @@
 | Browser/MCP cleanup | 项目无 browser/MCP 基础设施 |
 | Session write lock | Python 单进程无需跨 session 写锁 |
 | Cron session handling | 项目无 cron 调度基础 |
-| Completion handoff | MessageBus 路由已覆盖 |
+| Completion handoff | EventBus 路由已覆盖 |
 | Force synthetic client | Python 单进程无需 in-process 优化 |
 | Legacy field migration | 无旧格式数据需迁移 |

@@ -29,10 +29,10 @@ The core goal of the Subagent system is to enable the main Agent to decompose co
 │    │                                                             │
 │    ├─ 2. sessions_yield ──► Pause current turn, await children   │
 │    │                                                             │
-│    ├─ 3. sessions_send  ──► A2A Bidirectional (via MessageBus)  │
+│    ├─ 3. sessions_send  ──► A2A Bidirectional (via EventBus)    │
 │    │                                                             │
 │    └─ 4. Child completes ──► Announce Pipeline ──► Deliver via  │
-│                              MessageBus + Registry lifecycle     │
+│                              EventBus + Registry lifecycle       │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -267,7 +267,7 @@ Child Agent execution completed
                 │     │     │     session_id = requester_session_key
                 │     │     │     metadata.injected_event = "subagent_result"
                 │     │     │     content = formatted result (truncated at 4K)
-                │     │     └── MessageBus.publish_inbound(msg)
+                │     │     └── get_event_bus().publish_internal(msg)
                 │     │     fire_delivery_target_hook() → allow redirect
                 │     │
                 │     ├── Success → mark DELIVERED + record idempotency key → return
@@ -526,7 +526,7 @@ Returns: `"Turn yielded. You will be resumed when subagent results arrive."`
 | `message` | str | Message content |
 | `max_turns` | int | Maximum rounds (default 1) |
 
-Delivers a targeted message via `MessageBus.publish_inbound()` with `metadata.injected_event = "subagent_message"`.
+Delivers a targeted message via `get_event_bus().publish_internal()` with `metadata.injected_event = "subagent_message"`.
 
 #### agents_list — Available Agent List
 
@@ -608,7 +608,7 @@ Hooks execute sequentially in registration order; exceptions are swallowed and d
 | Depth | Single level | Multi-level nesting (default 3 levels) |
 | Communication | One-way return | Bidirectional (sessions_send) |
 | Knowledge graph | Yes (draft→distill→ingest) | Not yet |
-| Delivery channel | MessageBus | MessageBus (shared) |
+| Delivery channel | MessageBus | EventBus (own) |
 | Middlewares | — | Summarization + IterationBudget + ToolGuardrails + ToolCallNormalize + HeartbeatStaleness |
 
 Both tool sets are registered in `_MAIN_TOOLS_BUILDERS` simultaneously without conflict, enabling gradual migration.
@@ -618,11 +618,11 @@ Both tool sets are registered in `_MAIN_TOOLS_BUILDERS` simultaneously without c
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Child Agent execution | `CompiledStateGraph.ainvoke()` | Reuses LangGraph infrastructure, native async |
-| Delivery channel | Reuse `MessageBus.publish_inbound()` | Existing mechanism, no rebuild needed |
+| Delivery channel | Own `EventBus.publish_internal()` | Decoupled from global MessageBus; independent evolution |
 | Persistence | aiosqlite only (no JSON fallback) | Already a project dependency; SQLite is reliable cross-platform |
 | Sandbox | No ACP port | Same-process execution; permissions controlled via tool deny lists |
 | Yield implementation | `asyncio.Event` + Registry callback | Python has no gateway steering; Event is equivalent |
-| A2A communication | MessageBus + session key routing | Reuses existing messaging mechanism |
+| A2A communication | EventBus + session key routing | Reuses existing messaging mechanism |
 | Coexistence strategy | Independent new module, separate tool namespace | Gradual migration without breaking existing functionality |
 | Full fork context | `agent.aget_state()` from checkpointer | Decision 9: no external `parent_messages` param needed |
 | Blocked tools | `sessions_spawn`, `sessions_yield`, `skill_manage`, `memory` | Prevents recursive spawn and privilege escalation |

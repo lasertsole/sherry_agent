@@ -41,6 +41,11 @@ class HumanInTheLoop(AgentMiddleware):
     """
 
     def __init__(self, config: HITLConfig | None = None):
+        """Initialise the HITL middleware with an optional custom config.
+
+        Instantiates all sub-gates and parses ``interrupted_tools`` from the
+        config into :class:`InterruptOnConfig` entries.
+        """
         super().__init__()
         self.config = config or HITLConfig()
 
@@ -68,9 +73,11 @@ class HumanInTheLoop(AgentMiddleware):
     # ── Hook registration ────────────────────────────────────────────────
 
     def register_approval_hook(self, hook: Callable[[str, ApprovalResult], None]):
+        """Register an external callback invoked after every approval decision."""
         self._approval_hooks.append(hook)
 
     def _make_hook_dispatcher(self) -> Callable[[str, ApprovalResult], None]:
+        """Build a dispatcher that calls all registered approval hooks safely."""
         def _dispatch(session_id: str, result: ApprovalResult):
             for hook in self._approval_hooks:
                 try:
@@ -83,27 +90,43 @@ class HumanInTheLoop(AgentMiddleware):
 
     @staticmethod
     def _session_id(state: AgentState) -> str:
+        """Extract session_id from agent state, defaulting to ``"default"``."""
         sid = state.get("session_id", "")
         return sid.strip() or "default"
 
     def _get_state(self, session_id: str, key: str, default: Any = None) -> Any:
+        """Read a namespaced HITL value from the in-memory state register."""
         return state_register_mem.get_state(session_id, f"{_STATE_PREFIX}:{key}", default)
 
     def _set_state(self, session_id: str, key: str, value: Any) -> bool:
+        """Write a namespaced HITL value to the in-memory state register."""
         return state_register_mem.set_state(session_id, f"{_STATE_PREFIX}:{key}", value)
 
     # ── Delegating convenience methods ───────────────────────────────────
 
     def check_command(self, command: str, session_id: str) -> ApprovalResult:
+        """Delegate to :meth:`ApprovalPipeline.check_command`."""
         return self.approval.check_command(command, session_id)
 
     def check_command_with_approval(self, command: str, session_id: str, prompt_fn=None) -> ApprovalResult:
+        """Delegate to :meth:`ApprovalPipeline.check_command_with_approval`."""
         return self.approval.check_command_with_approval(command, session_id, prompt_fn)
 
     def smart_approve(self, command: str) -> SmartApprovalResult:
+        """Delegate to :meth:`ApprovalPipeline.smart_approve`."""
         return self.approval.smart_approve(command)
 
     def clarify(self, question: str, choices: list[str] | None = None, session_id: str = "default") -> str | None:
+        """Ask the user a clarification question via an interrupt.
+
+        Args:
+            question: The question to present to the user.
+            choices:  Optional multiple-choice options (max 4, plus "Other").
+            session_id: Session context.
+
+        Returns:
+            The user's response string if approved, ``None`` if rejected or on error.
+        """
         if choices:
             choices = choices[:4] + ["Other (type your answer)"]
         from .types import ActionRequest as AR, ReviewConfig as RC, HITLRequest as HR
@@ -122,51 +145,67 @@ class HumanInTheLoop(AgentMiddleware):
             return None
 
     def request_write(self, target: WriteTarget, content: str, session_id: str) -> ApprovalResult:
+        """Delegate to :meth:`WriteApprovalGate.request_write`."""
         return self.write_gate.request_write(target, content, session_id)
 
     def approve_write(self, session_id: str, write_id: str) -> bool:
+        """Delegate to :meth:`WriteApprovalGate.approve_write`."""
         return self.write_gate.approve_write(session_id, write_id)
 
     def reject_write(self, session_id: str, write_id: str) -> bool:
+        """Delegate to :meth:`WriteApprovalGate.reject_write`."""
         return self.write_gate.reject_write(session_id, write_id)
 
     def get_pending_writes(self, session_id: str, target: WriteTarget | None = None):
+        """Delegate to :meth:`WriteApprovalGate.get_pending_writes`."""
         return self.write_gate.get_pending_writes(session_id, target)
 
     def set_interrupt(self, session_id: str, active: bool = True):
+        """Delegate to :meth:`InterruptManager.set_interrupt`."""
         self.interrupt_mgr.set_interrupt(session_id, active)
 
     def is_interrupted(self, session_id: str) -> bool:
+        """Delegate to :meth:`InterruptManager.is_interrupted`."""
         return self.interrupt_mgr.is_interrupted(session_id)
 
     def clear_interrupt(self, session_id: str):
+        """Delegate to :meth:`InterruptManager.clear_interrupt`."""
         self.interrupt_mgr.clear_interrupt(session_id)
 
     def request_tool_approval(self, tool_name: str, tool_args: dict, session_id: str) -> ApprovalResult:
+        """Delegate to :meth:`ApprovalPipeline.request_tool_approval`."""
         return self.approval.request_tool_approval(tool_name, tool_args, session_id)
 
     def approve_tool_for_session(self, tool_name: str, tool_args: dict, session_id: str):
+        """Delegate to :meth:`ApprovalPipeline.approve_tool_for_session`."""
         self.approval.approve_tool_for_session(tool_name, tool_args, session_id)
 
     def request_elicitation_consent(self, server_name: str, session_id: str) -> ApprovalResult:
+        """Delegate to :meth:`MCPElicitationConsent.request_consent`."""
         return self.mcp_consent.request_consent(server_name, session_id)
 
     def report_task_failure(self, task_id: str, session_id: str):
+        """Delegate to :meth:`KanbanTriage.report_task_failure`."""
         return self.kanban.report_task_failure(task_id, session_id)
 
     def resolve_triage(self, task_id: str, session_id: str):
+        """Delegate to :meth:`KanbanTriage.resolve_triage`."""
         self.kanban.resolve_triage(task_id, session_id)
 
     def is_user_allowed(self, platform: str, user_id: str) -> bool:
+        """Delegate to :meth:`PairingStore.is_user_allowed`."""
         return self.pairing.is_user_allowed(platform, user_id)
 
     def approve_user(self, platform: str, user_id: str):
+        """Delegate to :meth:`PairingStore.approve_user`."""
         self.pairing.approve_user(platform, user_id)
 
     def revoke_user(self, platform: str, user_id: str):
+        """Delegate to :meth:`PairingStore.revoke_user`."""
         self.pairing.revoke_user(platform, user_id)
 
     def confirm_destructive(self, action: str, session_id: str) -> ApprovalResult:
+        """Delegate to :meth:`SlashConfirm.confirm_destructive`."""
         return self.slash_confirm.confirm_destructive(action, session_id)
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
