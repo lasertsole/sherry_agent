@@ -40,13 +40,15 @@ class InboundMessage:
 class EventBus:
     """Async event queue for subagent-internal message delivery.
 
-    Each ``InboundMessage`` published via ``publish_internal()`` is pushed onto an
-    ``asyncio.Queue`` and can be consumed by the sub-agent session loop or
-    cleanup routines.
+    Uses a thread-safe collections.deque as the backing store so that
+    publish and consume can happen on different event loops / threads
+    without "bound to a different event loop" errors.
     """
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[InboundMessage] = asyncio.Queue()
+        import collections
+        self._buffer: collections.deque[InboundMessage] = collections.deque()
+        self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -54,29 +56,46 @@ class EventBus:
 
     async def publish_internal(self, msg: InboundMessage) -> None:
         """Publish an internal inbound message to the sub-agent event bus."""
+        self._buffer.append(msg)
         logger.debug(
             "EventBus.publish_internal: channel={}, session_id={}, content_length={}",
             msg.channel,
             msg.session_id,
             len(msg.content),
         )
-        await self._queue.put(msg)
 
-    async def consume(self) -> InboundMessage:
-        """Consume the next message (blocks until available)."""
-        msg = await self._queue.get()
+    def publish_internal_sync(self, msg: InboundMessage) -> None:
+        """Thread-safe publish: works from any thread/event loop."""
+        self._buffer.append(msg)
         logger.debug(
-            "EventBus.consume: channel={}, session_id={}, queue_size={}",
+            "EventBus.publish_internal_sync: channel={}, session_id={}, content_length={}",
             msg.channel,
             msg.session_id,
-            self._queue.qsize(),
+            len(msg.content),
         )
-        return msg
+
+    async def consume(self) -> InboundMessage:
+        """Consume the next message (blocks until available).
+
+        Polls the buffer with short sleeps when empty. This avoids
+        asyncio.Event / asyncio.Queue cross-loop binding issues.
+        """
+        while True:
+            if self._buffer:
+                msg = self._buffer.popleft()
+                logger.debug(
+                    "EventBus.consume: channel={}, session_id={}, remaining={}",
+                    msg.channel,
+                    msg.session_id,
+                    len(self._buffer),
+                )
+                return msg
+            await asyncio.sleep(0.05)
 
     @property
     def size(self) -> int:
-        """Number of pending messages in the queue."""
-        return self._queue.qsize()
+        """Number of pending messages in the buffer."""
+        return len(self._buffer)
 
 
 # ------------------------------------------------------------------

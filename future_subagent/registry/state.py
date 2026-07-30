@@ -38,7 +38,7 @@ async def restore_runs_from_disk() -> None:
 
 
 async def init_registry() -> None:
-    """Initialize the registry: create tables, restore from disk, and load settle-wake state. Call at service startup."""
+    """Initialize the registry: create tables, restore from disk, load settle-wake state, and start EventBus bridge. Call at service startup."""
     await store_sqlite.ensure_db()
     await restore_runs_from_disk()
 
@@ -48,6 +48,12 @@ async def init_registry() -> None:
         batch.load_persisted_state()
     except Exception as e:
         logger.debug("Failed to load settle-wake state: {}", e)
+
+    try:
+        from ..events.bridge import start_bridge
+        start_bridge()
+    except Exception as e:
+        logger.warning("Failed to start EventBus bridge: {}", e)
 
     logger.info("Subagent registry initialized")
 
