@@ -182,15 +182,8 @@ class StateRegisterDB(Register):
             logger.exception("get_all_session_ids failed")
         return []
 
+    # Register can't clear StateRegisterDB
     def clear_session(self, session_id: str) -> bool:
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM states WHERE session_id = ?", (session_id,))
-                conn.commit()
-            return True
-        except Exception:
-            logger.exception(f"clear_session_db failed: session_id={session_id}")
         return False
 
     def has_session(self, session_id: str) -> bool:

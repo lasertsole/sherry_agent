@@ -87,3 +87,31 @@ from context_engine.curator.orchestrator import (
     run_curator_review,
     maybe_run_curator,
 )
+
+# run curator to maintain auto-skills
+import threading as _t
+
+_curator_check_interval: int = 3600
+_idle_for_seconds: int = 0
+
+def _curator_loop():
+    import asyncio as _a
+    loop = _a.new_event_loop()
+    _a.set_event_loop(loop)
+
+    global _idle_for_seconds
+    global _curator_check_interval
+    while True:
+        try:
+            _idle_for_seconds += _curator_check_interval
+            maybe_run_curator(idle_for_seconds=_idle_for_seconds)
+        except Exception:
+            pass
+        loop.run_until_complete(_a.sleep(_curator_check_interval))
+
+def reset_idle_for_seconds()-> None:
+    global _idle_for_seconds
+    _idle_for_seconds = 0
+
+
+_t.Thread(target=_curator_loop, daemon=True, name="curator-timer").start()
