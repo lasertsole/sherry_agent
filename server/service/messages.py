@@ -11,6 +11,7 @@ from type.message import MultiModalMessage
 from langchain.messages import AIMessageChunk
 from pub_func import build_agent_config, is_url
 from ..DAO import clear_session as clear_session_DAO
+from context_engine.curator import reset_idle_for_seconds
 from context_engine import get_history_by_page as _get_history_by_page
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
@@ -103,7 +104,7 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 
     input_dict = {"session_id": session_id, "messages": [HumanMessage(content=content_list)]}
     if is_stream:
-        return agent.astream(input=input_dict, config=build_agent_config(session_id), stream_mode="messages")
+        return agent.astream(input=input_dict, config=build_agent_config(session_id), stream_mode=["messages", "updates"])
     else:
         return agent.ainvoke(input=input_dict, config=build_agent_config(session_id))
 
@@ -120,6 +121,9 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     # Create the agent with assembled context
     ai_text:str = ""
 
+    # reset curator reset_idle_for_seconds
+    reset_idle_for_seconds()
+
     # Control answering
     state_register_mem.set_state(session_id, "answering", True)
 
@@ -132,8 +136,16 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             # Stream directly from the context-assembled agent
             generator = await _get_generator(session_id, multi_modal_message)
             async for chunk in generator:
-                msg_chunk: BaseMessage = chunk[0]
-                metadata: dict[str, Any] = chunk[1]
+                # With stream_mode=["messages", "updates"], each chunk is (mode, data).
+                # Only process the "messages" mode; skip "updates" mode chunks.
+                mode: str = chunk[0]
+                data: Any = chunk[1]
+                if mode != "messages":
+                    continue
+
+                # For "messages" mode, data is (message_chunk, metadata_dict).
+                msg_chunk: BaseMessage = data[0]
+                metadata: dict[str, Any] = data[1]
 
                 # Filter out outputs from non-model nodes in the lifecycle
                 if metadata.get("langgraph_node", None) != "model" or metadata.get("lc_source") == "summarization":
