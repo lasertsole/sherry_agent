@@ -417,6 +417,5 @@ class Summarization(SummarizationMiddleware):
         session_id = self._get_session_or_raise(request.state)
         self._check_last_turn_ratio(request.state.get("messages", []), session_id)
         res: dict[str, Any] | None = await super().abefore_model(request.state, cast("Runtime[None]", request.runtime))
-        print(res)
         overridden = self._wrap_model_call_impl(request, res, session_id)
         return await handler(overridden if overridden is not None else request)

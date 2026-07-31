@@ -16,7 +16,6 @@ from .types import (
     ApprovalResult,
     SmartApprovalResult,
     WriteTarget,
-    PendingWrite,
     TriageStatus,
     BLOCK_RECURRENCE_LIMIT,
     HITLConfig,
@@ -31,6 +30,7 @@ from .detection import (
 )
 from .approval import ApprovalPipeline, _extract_pattern, _args_hash
 from .gates import (
+    PendingWrite,
     WriteApprovalGate,
     InterruptManager,
     MCPElicitationConsent,
