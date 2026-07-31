@@ -104,7 +104,7 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 
     input_dict = {"session_id": session_id, "messages": [HumanMessage(content=content_list)]}
     if is_stream:
-        return agent.astream(input=input_dict, config=build_agent_config(session_id), stream_mode="messages")
+        return agent.astream(input=input_dict, config=build_agent_config(session_id), stream_mode=["messages", "updates"])
     else:
         return agent.ainvoke(input=input_dict, config=build_agent_config(session_id))
 
@@ -136,49 +136,58 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             # Stream directly from the context-assembled agent
             generator = await _get_generator(session_id, multi_modal_message)
             async for chunk in generator:
-                msg_chunk: BaseMessage = chunk[0]
-                metadata: dict[str, Any] = chunk[1]
+                # With stream_mode=["messages", "updates"], each chunk is (mode, data).
+                # Only process the "messages" mode; skip "updates" mode chunks.
+                mode: str = chunk[0]
+                data: Any = chunk[1]
+                if mode != "messages":
+                    # For "messages" mode, data is (message_chunk, metadata_dict).
+                    msg_chunk: BaseMessage = data[0]
+                    metadata: dict[str, Any] = data[1]
 
-                # Filter out outputs from non-model nodes in the lifecycle
-                if metadata.get("langgraph_node", None) != "model" or metadata.get("lc_source") == "summarization":
-                    continue
+                    # Filter out outputs from non-model nodes in the lifecycle
+                    if metadata.get("langgraph_node", None) != "model" or metadata.get("lc_source") == "summarization":
+                        continue
 
-                if isinstance(msg_chunk, AIMessageChunk):
-                    # Tool call output logic
-                    tool_calls: list[ToolCall] | list[ToolCallChunk] = msg_chunk.tool_calls if msg_chunk.tool_calls and len(
-                        msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
-                    if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
-                        repeat_flag: bool = True  # Prevent duplicate tool call output
-                        if len(tool_calls) > 0:
-                            tool_call = tool_calls[0]
+                    if isinstance(msg_chunk, AIMessageChunk):
+                        # Tool call output logic
+                        tool_calls: list[ToolCall] | list[ToolCallChunk] = msg_chunk.tool_calls if msg_chunk.tool_calls and len(
+                            msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
+                        if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
+                            repeat_flag: bool = True  # Prevent duplicate tool call output
+                            if len(tool_calls) > 0:
+                                tool_call = tool_calls[0]
 
-                            if tool_call["name"]:
-                                if tool_call["name"].strip() or tool_call["name"].strip() != state_register_mem.get_state(session_id, "current_tool_name"):
-                                    state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
+                                if tool_call["name"]:
+                                    if tool_call["name"].strip() or tool_call["name"].strip() != state_register_mem.get_state(session_id, "current_tool_name"):
+                                        state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
 
-                            if tool_call["id"]:
-                                if tool_call["id"].strip() or tool_call["id"].strip() != state_register_mem.get_state(session_id, "current_tool_id"):
-                                    state_register_mem.set_state(session_id,"current_tool_id", tool_call['id'])
-                                    repeat_flag = False
+                                if tool_call["id"]:
+                                    if tool_call["id"].strip() or tool_call["id"].strip() != state_register_mem.get_state(session_id, "current_tool_id"):
+                                        state_register_mem.set_state(session_id,"current_tool_id", tool_call['id'])
+                                        repeat_flag = False
 
-                        if not repeat_flag:
-                            res: str = f"\n\n**Calling tool {state_register_mem.get_state(session_id, "current_tool_name", "")}...**"
+                            if not repeat_flag:
+                                res: str = f"\n\n**Calling tool {state_register_mem.get_state(session_id, "current_tool_name", "")}...**"
+                                ai_text += res
+                                yield SSEMessage(res)
+
+                        if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
+                            res: str = f"\n\n**Tool {state_register_mem.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
                             ai_text += res
                             yield SSEMessage(res)
+                            state_register_mem.set_state(session_id, "current_tool_id", "")
+                        # End tool call output logic
 
-                    if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
-                        res: str = f"\n\n**Tool {state_register_mem.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
-                        ai_text += res
-                        yield SSEMessage(res)
-                        state_register_mem.set_state(session_id, "current_tool_id", "")
-                    # End tool call output logic
+                        # Conversation output logic
+                        if len(msg_chunk.content) > 0:
+                            res: str = msg_chunk.content
+                            ai_text += res
+                            yield SSEMessage(res)
+                        # End conversation output logic
 
-                    # Conversation output logic
-                    if len(msg_chunk.content) > 0:
-                        res: str = msg_chunk.content
-                        ai_text += res
-                        yield SSEMessage(res)
-                    # End conversation output logic
+                else:
+                    pass
 
         else:
             generator = await _get_generator(session_id, multi_modal_message, is_stream = False)
