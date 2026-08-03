@@ -16,7 +16,6 @@ from .types import (
     ApprovalResult,
     SmartApprovalResult,
     WriteTarget,
-    PendingWrite,
     TriageStatus,
     BLOCK_RECURRENCE_LIMIT,
     HITLConfig,
@@ -37,6 +36,7 @@ from .gates import (
     KanbanTriage,
     PairingStore,
     SlashConfirm,
+    PendingWrite,
 )
 from .core import HumanInTheLoop
 
