@@ -4,11 +4,11 @@ from typing import AsyncGenerator
 from runtime import relation_register
 from server.service import async_generate
 from type.message import MultiModalMessage
-from type.bus import InboundMessage, OutboundMessage
 from channels import BaseChannel, channel_manager
+from type.bus import InboundMessage, OutboundMessage
 from skills.builtin.core.heartbeat import heartbeat_service
 from server.service import process_heartbeat_task, process_heartbeat_notify
-from pub_func import string_to_unique_int, process_sse_data, check_if_image_and_convert_to_base64
+from pub_func import string_to_unique_int, check_if_image_and_convert_to_base64
 
 """Channel inbound message handler"""
 async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> None:
@@ -35,7 +35,7 @@ async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> Non
     ai_reply: str = ""
     stream: AsyncGenerator[str, None] = async_generate(session_id = session_id, multi_modal_message = user_input, is_stream = False)
     async for item in stream:
-        ai_reply += process_sse_data(item)
+        ai_reply += item
 
     await channel.send(OutboundMessage(channel=channel.name, chat_id = message.chat_id, content = ai_reply))
 
