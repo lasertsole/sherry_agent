@@ -9,12 +9,6 @@ from type.message import MultiModalMessage
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
 
-@app.post("/sessions/agent/sse/stop")
-def stream_async_stop_handler(request):
-    request_json = request.json()
-    session_id = request_json.get("session_id", None)
-    state_register_mem.set_state(session_id, "answering", False)
-
 @app.websocket("/sessions/agent/ws")
 async def agent_ws_handler(websocket: WebSocketAdapter):
     logger.info(f"Agent WebSocket handler started: websocket_id={websocket.id}")
@@ -27,6 +21,14 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                 session_id: str | None = obj.get("session_id", None)
                 if session_id is None:
                     await websocket.send_text(json.dumps({"event": "error", "session_id": None, "content": "Missing session_id"}))
+                    continue
+
+                # Stop an ongoing generation for this session (replaces the old
+                # HTTP POST /sessions/agent/sse/stop endpoint).
+                if obj.get("type") == "stop":
+                    state_register_mem.set_state(session_id, "answering", False)
+                    logger.info(f"Agent WS stop requested: session_id={session_id}")
+                    await websocket.send_text(json.dumps({"event": "stopped", "session_id": session_id, "content": ""}))
                     continue
 
                 multi_modal_message_data: dict[str, Any] | None = obj.get("multi_modal_message", None)

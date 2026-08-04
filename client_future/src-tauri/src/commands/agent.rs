@@ -2,7 +2,7 @@
 //!
 //! Maps to Python backend:
 //! - `POST /sessions/agent/sse` → [`agent_chat`]
-//! - `POST /sessions/agent/sse/stop` → [`agent_stop`]
+//! - WebSocket `/sessions/agent/ws` (`{"type":"stop"}`) → [`agent_stop`]
 //!
 //! # Streaming Events
 //!
@@ -241,7 +241,8 @@ pub async fn agent_chat(
 
 /// Stop an ongoing agent generation for the given session.
 ///
-/// Sends a cancellation request to the Python backend. The SSE
+/// Sends a cancellation request to the Python backend over the agent
+/// WebSocket (`/sessions/agent/ws`, `{"type":"stop"}`). The SSE
 /// stream will terminate and emit `agent:stream:end`.
 ///
 /// # Frontend Example
