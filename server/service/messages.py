@@ -2,7 +2,6 @@ import time
 import base64
 import asyncio
 from loguru import logger
-from robyn import SSEMessage
 from agent import built_agent
 from config import ASSISTANT_NAME
 from typing import AsyncGenerator, Any
@@ -110,7 +109,7 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 
 """End agent assembly logic"""
 
-"""Response generation logic — yields SSE messages"""
+"""Response generation logic — yields plain string chunks"""
 async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[str, None]:
     start_time = time.time()
     logger.debug(
@@ -130,7 +129,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     generator = None
 
     try:
-        yield SSEMessage(f"{ASSISTANT_NAME}:")
+        yield f"{ASSISTANT_NAME}:"
 
         if is_stream:
             # Stream directly from the context-assembled agent
@@ -172,12 +171,12 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                         if not repeat_flag:
                             res: str = f"\n\n**Calling tool {state_register_mem.get_state(session_id, "current_tool_name", "")}...**"
                             ai_text += res
-                            yield SSEMessage(res)
+                            yield res
 
                     if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
                         res: str = f"\n\n**Tool {state_register_mem.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
                         ai_text += res
-                        yield SSEMessage(res)
+                        yield res
                         state_register_mem.set_state(session_id, "current_tool_id", "")
                     # End tool call output logic
 
@@ -185,7 +184,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                     if len(msg_chunk.content) > 0:
                         res: str = msg_chunk.content
                         ai_text += res
-                        yield SSEMessage(res)
+                        yield res
                     # End conversation output logic
 
         else:
@@ -193,7 +192,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             result: dict[str, Any] = await generator
             res: str = result["messages"][-1].content
             ai_text += res
-            yield SSEMessage(res)
+            yield res
 
         elapsed = time.time() - start_time
         logger.debug(
@@ -202,13 +201,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         )
     except asyncio.CancelledError:
         elapsed = time.time() - start_time
-        yield SSEMessage("Request cancelled")
+        yield "Request cancelled"
         logger.debug(
             f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s"
         )
     except HeartbeatTimeoutError as e:
         elapsed = time.time() - start_time
-        yield SSEMessage(f"\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated.")
+        yield f"\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated."
         logger.warning(
             f"Agent heartbeat timeout: session_id={session_id}, duration={elapsed:.2f}s, "
             f"error={e}"

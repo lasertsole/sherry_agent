@@ -180,7 +180,11 @@ def main()-> None:
                     is_stream = True,
                 )
 
-                _content = st.write_stream(post_agent_astream(request_json))
+                async def _stream_content():
+                    async for _sid, _chunk in post_agent_astream(request_json):
+                        yield _chunk
+
+                _content = st.write_stream(_stream_content())
 
                 # 去除开头的ASSISTANT_NAME
                 _content = _content[len(f"{ASSISTANT_NAME}:"):]
