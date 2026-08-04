@@ -257,27 +257,69 @@ impl PythonBridge {
         Ok(line_stream)
     }
 
-    /// Post a stop-generation request to the Python backend.
+    /// Build the agent WebSocket URL by converting `base_url`
+    /// (`http(s)://...`) into its `ws(s)://...` counterpart.
+    fn ws_url(&self) -> String {
+        let ws_base = if let Some(rest) = self.base_url.strip_prefix("https://") {
+            format!("wss://{rest}")
+        } else if let Some(rest) = self.base_url.strip_prefix("http://") {
+            format!("ws://{rest}")
+        } else {
+            self.base_url.clone()
+        };
+        format!("{}", ws_base.trim_end_matches('/'))
+    }
+
+    /// Post a stop-generation request to the Python backend over WebSocket.
     ///
-    /// This is a fire-and-forget POST; errors are logged but not propagated
-    /// because the stream may already be closing.
+    /// Connects to `/sessions/agent/ws`, sends `{"type":"stop","session_id":...}`,
+    /// and waits for the `{"event":"stopped"}` acknowledgement. This is the
+    /// transport-level replacement of the legacy HTTP `/sessions/agent/sse/stop`
+    /// endpoint. Errors are logged but not propagated because the stream may
+    /// already be closing; the call never blocks indefinitely.
     pub async fn post_stop(&self, session_id: &str) {
-        let body = serde_json::json!({ "session_id": session_id });
-        match self
-            .client
-            .post(self.url("/sessions/agent/sse/stop"))
-            .json(&body)
-            .send()
+        let url = format!("{}/sessions/agent/ws", self.ws_url());
+        // Wait a short time for the "stopped" acknowledgement; a timeout is
+        // acceptable since the stream may already be closing.
+        let ws_result = tokio::time::timeout(
+            Duration::from_secs(5),
+            PythonBridge::send_stop_ws(&url, session_id),
+        )
+        .await;
+
+        match ws_result {
+            Ok(Ok(())) => tracing::info!(session_id, "stop generation request sent via WebSocket"),
+            Ok(Err(e)) => tracing::warn!(session_id, error = %e, "stop request failed via WebSocket"),
+            Err(_) => tracing::warn!(session_id, "stop request timed out via WebSocket"),
+        }
+    }
+
+    /// Open a WebSocket to the given agent URL, send the stop frame, and wait
+    /// for the `{"event":"stopped"}` acknowledgement.
+    async fn send_stop_ws(url: &str, session_id: &str) -> Result<(), String> {
+        use futures_util::SinkExt;
+
+        let (mut socket, _) =
+            tokio_tungstenite::connect_async(url).await.map_err(|e| e.to_string())?;
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                serde_json::json!({ "type": "stop", "session_id": session_id }).to_string(),
+            ))
             .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::info!(session_id, "stop generation request sent");
-            }
-            Ok(resp) => {
-                tracing::warn!(session_id, status = %resp.status(), "stop request returned error status");
-            }
-            Err(e) => {
-                tracing::warn!(session_id, error = %e, "stop request failed");
+            .map_err(|e| e.to_string())?;
+
+        loop {
+            match socket.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if obj.get("event").and_then(|v| v.as_str()) == Some("stopped") {
+                            return Ok(());
+                        }
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(e.to_string()),
+                None => return Err("connection closed before stop confirmation".into()),
             }
         }
     }

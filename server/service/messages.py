@@ -137,6 +137,9 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             async for chunk in generator:
                 # With stream_mode=["messages", "updates"], each chunk is (mode, data).
                 # Only process the "messages" mode; skip "updates" mode chunks.
+                if state_register_mem.get_state(session_id, "answering") == False:
+                    raise asyncio.CancelledError
+
                 mode: str = chunk[0]
                 data: Any = chunk[1]
                 if mode != "messages":

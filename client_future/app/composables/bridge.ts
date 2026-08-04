@@ -176,12 +176,67 @@ export async function stopChatMessage(sessionId: string): Promise<void> {
     const invoke = await getInvoke();
     await invoke('agent_stop', { request: { session_id: sessionId } });
   } else {
-    await fetchApi({
-      url: '/sessions/agent/sse/stop',
-      opts: { session_id: sessionId },
-      method: 'post',
-    });
+    await stopChatMessageBrowser(sessionId);
   }
+}
+
+/**
+ * Browser mode: send a stop command over the agent WebSocket
+ * (`/sessions/agent/ws`) instead of relying on the legacy HTTP stop endpoint.
+ */
+function stopChatMessageBrowser(sessionId: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const baseURL: string = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
+    const wsBase = baseURL.replace(/^https?:\/\//, (m) => (m === 'https://' ? 'wss://' : 'ws://'));
+    const url = `${wsBase.replace(/\/+$/, '')}/sessions/agent/ws`;
+
+    let socket: WebSocket | null = null;
+
+    try {
+      socket = new WebSocket(url);
+    } catch (e) {
+      reject(e);
+      return;
+    }
+
+    // Resolve once the server acknowledges the stop.
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data as string);
+        if (data && data.event === 'stopped' && data.session_id === sessionId) {
+          cleanup();
+          resolve();
+        }
+      } catch {
+        // ignore non-JSON frames
+      }
+    };
+
+    socket.onopen = () => {
+      socket?.send(JSON.stringify({ type: 'stop', session_id: sessionId }));
+    };
+
+    socket.onerror = () => {
+      cleanup();
+      reject(new Error(`WebSocket stop failed: ${url}`));
+    };
+
+    socket.onclose = () => {
+      cleanup();
+      reject(new Error('WebSocket closed before stop confirmation'));
+    };
+
+    const cleanup = () => {
+      if (socket) {
+        socket.onmessage = null;
+        socket.onopen = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
+        socket = null;
+      }
+    };
+  });
 }
 
 // ── Session ──────────────────────────────────────────────
