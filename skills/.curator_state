@@ -1,0 +1,9 @@
+{
+  "last_report_path": "C:\\app\\code\\project\\EMA_AI_agent\\logs\\curator\\20260728-115336",
+  "last_run_at": "2026-07-28T11:53:36.239659+00:00",
+  "last_run_duration_seconds": 0.01,
+  "last_run_summary": "auto: no changes; llm: skipped (consolidation off)",
+  "last_run_summary_shown_at": null,
+  "paused": false,
+  "run_count": 1
+}
