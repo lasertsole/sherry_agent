@@ -7,6 +7,7 @@
     "dev": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
+    "typecheck": "vue-tsc --noEmit",
     "postinstall": "nuxt prepare",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -46,6 +47,7 @@
     "happy-dom": "^20.11.1",
     "sass": "^1.101.0",
     "sass-loader": "^16.0.8",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.3.9"
   }
 }

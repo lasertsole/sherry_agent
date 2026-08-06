@@ -12,106 +12,133 @@ vi.mock('../requestApi', () => ({
 
 import * as bridge from '../bridge';
 
-function sseResponse(events: string): Response {
-  const body = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(events));
-      controller.close();
-    },
-  });
-  return { ok: true, status: 200, body } as unknown as Response;
-}
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   mocks.fetchApi.mockReset();
 });
 
-describe('sendChatMessage (browser SSE)', () => {
-  it('POSTs the request JSON and streams text chunks', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(sseResponse('data: hello\ndata: world\ndata:\n\n'));
-    (globalThis as any).fetch = fetchMock;
+/** Minimal WebSocket double used by the browser-mode tests. */
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
 
+  onopen: ((ev: any) => void) | null = null;
+  onmessage: ((ev: any) => void) | null = null;
+  onerror: ((ev: any) => void) | null = null;
+  onclose: ((ev: any) => void) | null = null;
+  sent: string[] = [];
+  url: string;
+  closed = false;
+  readyState = FakeWebSocket.CONNECTING;
+
+  constructor(url: string) {
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+  }
+  send(data: string) {
+    this.sent.push(data);
+  }
+  close() {
+    this.closed = true;
+    this.readyState = FakeWebSocket.CLOSED;
+  }
+  /** Simulate the backend opening the connection. */
+  open() {
+    this.readyState = FakeWebSocket.OPEN;
+    this.onopen?.({});
+  }
+  /** Simulate an inbound frame (assumes string payload). */
+  frame(payload: unknown) {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    this.onmessage?.({ data });
+  }
+  error() {
+    this.onerror?.({});
+  }
+  closeFromServer() {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.onclose?.({});
+  }
+}
+
+beforeEach(() => {
+  FakeWebSocket.instances = [];
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+});
+
+describe('sendChatMessage (browser WebSocket)', () => {
+  it('opens the WS URL, sends the request, and streams text chunks', async () => {
     const onChunk = vi.fn();
-    await bridge.sendChatMessage(
+    const promise = bridge.sendChatMessage(
       { session_id: 's1', text: 'hi', image_base64_list: ['img1'] },
       onChunk,
     );
 
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost:8080/sessions/agent/sse');
-    expect(init.method).toBe('POST');
-    expect(init.headers['Content-Type']).toBe('application/json');
-    expect(JSON.parse(init.body)).toEqual({
-      session_id: 's1',
-      multi_modal_message: {
-        text: 'hi',
-        image_base64_list: ['img1'],
-      },
-    });
+    const ws = FakeWebSocket.instances[0];
+    expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
 
-    expect(onChunk).toHaveBeenNthCalledWith(1, 'hello');
-    expect(onChunk).toHaveBeenNthCalledWith(2, 'world');
-    // bare "data:" line => empty string chunk
-    expect(onChunk).toHaveBeenNthCalledWith(3, '');
+    ws.open();
+    expect(ws.sent).toEqual([
+      JSON.stringify({
+        session_id: 's1',
+        multi_modal_message: { text: 'hi', image_base64_list: ['img1'] },
+      }),
+    ]);
+
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'hel' });
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'lo' });
+    expect(onChunk).toHaveBeenNthCalledWith(1, 'hel');
+    expect(onChunk).toHaveBeenNthCalledWith(2, 'lo');
+
+    ws.frame({ event: 'done', session_id: 's1', content: '' });
+    await promise;
+    expect(ws.closed).toBe(true);
   });
 
   it('defaults text and images when not provided', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(sseResponse('data: hi\n\n'));
-    (globalThis as any).fetch = fetchMock;
-
-    await bridge.sendChatMessage({ session_id: 's9' }, () => {});
-
-    const [, init] = fetchMock.mock.calls[0];
-    expect(JSON.parse(init.body)).toEqual({
-      session_id: 's9',
-      multi_modal_message: { text: '', image_base64_list: [] },
-    });
+    const promise = bridge.sendChatMessage({ session_id: 's9' }, () => {});
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    expect(ws.sent[0]).toBe(
+      JSON.stringify({
+        session_id: 's9',
+        multi_modal_message: { text: '', image_base64_list: [] },
+      }),
+    );
+    ws.frame({ event: 'done', session_id: 's9', content: '' });
+    await promise;
   });
 
-  it('throws when response is not ok', async () => {
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
-    await expect(
-      bridge.sendChatMessage({ session_id: 's1' }, () => {}),
-    ).rejects.toThrow('SSE request failed: HTTP 500');
+  it('rejects on error frame', async () => {
+    const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    ws.frame({ event: 'error', session_id: 's1', content: 'boom' });
+    await expect(promise).rejects.toThrow('boom');
+    expect(ws.closed).toBe(true);
   });
 
-  it('throws when body is null', async () => {
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, body: null });
-    await expect(
-      bridge.sendChatMessage({ session_id: 's1' }, () => {}),
-    ).rejects.toThrow('response body is not readable');
+  it('rejects on socket error before done', async () => {
+    const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
+    const ws = FakeWebSocket.instances[0];
+    ws.error();
+    await expect(promise).rejects.toThrow('WebSocket connection error');
+    expect(ws.closed).toBe(true);
+  });
+
+  it('rejects when the socket closes before completion', async () => {
+    const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
+    const ws = FakeWebSocket.instances[0];
+    ws.closeFromServer();
+    await expect(promise).rejects.toThrow('WebSocket closed before stream completion');
   });
 });
 
 describe('stopChatMessage (browser WebSocket)', () => {
-  class FakeWebSocket {
-    static instances: FakeWebSocket[] = [];
-    onopen: ((ev: any) => void) | null = null;
-    onmessage: ((ev: any) => void) | null = null;
-    onerror: ((ev: any) => void) | null = null;
-    onclose: ((ev: any) => void) | null = null;
-    sent: string[] = [];
-    url: string;
-    closed = false;
-
-    constructor(url: string) {
-      this.url = url;
-      FakeWebSocket.instances.push(this);
-    }
-    send(data: string) {
-      this.sent.push(data);
-    }
-    close() {
-      this.closed = true;
-    }
-  }
-
   beforeEach(() => {
     FakeWebSocket.instances = [];
     vi.stubGlobal('WebSocket', FakeWebSocket);

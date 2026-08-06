@@ -1,5 +1,6 @@
 import type { MultiModalMessage } from "@/types/message";
 import type { Response } from "@/types/response";
+import { streamChatMessage } from './bridge';
 import {
     cacheMessages,
     cachedMaxTurnNum,
@@ -90,15 +91,15 @@ export async function clearSession(session_id: string): Promise<boolean> {
 }
 
 /**
- * SSE 流式请求 AI 回复
- * (对应 client/api/core.py post_agent_astream)
+ * 流式请求 AI 回复，桥接到统一的 WebSocket 通路
+ * (对应 server/trigger/ws/messages.py `/sessions/agent/ws`)
  *
- * 通过 EventSource / fetch ReadableStream 接收 SSE 事件流，
- * 每收到一个 data 块就调用 onData 回调，stream 结束后调用 onDone。
+ * 浏览器模式经由 WebSocket 接收流式块；Tauri 模式经由 IPC + Tauri Events。
+ * 与旧的（已失效的）`/sessions/agent/sse` HTTP 端点解耦。
  *
  * @param session_id 会话ID
  * @param multi_modal_message 用户输入 { text, image_base64_list?, audio_bytes_list?, video_bytes_list? }
- * @param onData 每块 SSE data 的回调
+ * @param onData 每块文本回调
  * @param onDone 流结束回调
  * @param onError 出错回调
  * @returns {AbortController} 外部可通过 controller.abort() 中止请求
@@ -111,58 +112,35 @@ export function postAgentStream(
     onError?: (err: unknown) => void,
 ): AbortController {
     const controller = new AbortController();
-    const baseUrl = import.meta.env.VITE_API_BACK_URL || '';
+    let stopFn: (() => void) | null = null;
 
-    (async () => {
-        try {
-            const response = await fetch(`${baseUrl}/sessions/agent/sse`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id, multi_modal_message }),
-                signal: controller.signal,
-            });
+    // 桥接到 bridge 的统一流式入口（浏览器 WS / Tauri IPC）。
+    const { controller: stream, promise } = streamChatMessage(
+        {
+            session_id,
+            text: multi_modal_message.text ?? '',
+            image_base64_list: multi_modal_message.image_base64_list,
+        },
+        onData,
+    );
+    stopFn = () => stream.abort();
 
-            if (!response.ok) {
-                throw new Error(`SSE request failed: ${response.status}`);
-            }
+    // 用户主动 abort → 触发流式止停
+    controller.signal.addEventListener('abort', () => stopFn?.());
 
-            const reader = response.body?.getReader();
-            if (!reader) {
-                throw new Error('Response body is not readable');
-            }
-
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-
-                // SSE lines: 逐行解析，提取 "data: " 前缀的内容
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || ''; // 最后一个不完整片段保留
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6).trim();
-                        if (data) {
-                            onData(data);
-                        }
-                    }
-                }
-            }
-
+    promise
+        .then(() => {
             onDone?.();
-        } catch (err: unknown) {
-            if (err instanceof DOMException && err.name === 'AbortError') {
-                // 主动中止，不触发 onError
+        })
+        .catch((err) => {
+            // 主动中止（abort/stop）不算业务错误，不触发 onError
+            const message = err instanceof Error ? err.message : String(err);
+            if (message === 'aborted') {
+                controller.abort();
                 return;
             }
             onError?.(err);
-        }
-    })();
+        });
 
     return controller;
 }

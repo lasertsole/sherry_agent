@@ -118,7 +118,7 @@
           </template>
         </div>
         <!-- 输入框 -->
-        <ChatInputBox></ChatInputBox>
+        <ChatInputBox :sending="isSending" @send="handleSend" @stop="handleStop" />
       </div>
     </div>
   </div>
@@ -175,6 +175,91 @@ const loadSessionHistory = async (sessionId: string) => {
   const messages = await get_history_by_turn_page(sessionId, 0, 10, 1);
   currentSession.value = { ...(currentSession.value ?? {}), id: sessionId, messages: toMessageItems(messages) } as SessionRecord;
   currentSessionId.value = sessionId;
+};
+
+/** 是否处于 AI 回复生成中 */
+const isSending = ref(false);
+/** 当前进行中的流式请求控制器（用于停止生成） */
+let activeAgentController: AbortController | null = null;
+/** 自增 id 计数器（用于本地临时消息，避免与真实 id 冲突） */
+let tempIdCounter = 0;
+
+/** 停止当前 AI 回复生成（前端本地中止 + 通知后端止停） */
+const handleStop = () => {
+  activeAgentController?.abort();
+  activeAgentController = null;
+  isSending.value = false;
+};
+
+/**
+ * 处理输入框发送：把用户消息加入列表，并通过流式请求（Tauri IPC 或浏览器 WebSocket）获取 AI 回复。
+ *
+ * @param text 用户输入内容
+ */
+const handleSend = async (text: string) => {
+  const sessionId = currentSessionId.value || 'main';
+
+  // 确保当前会话已初始化
+  if (!currentSession.value) {
+    currentSession.value = { id: sessionId, title: '示例会话', createTime: '' } as SessionRecord;
+    currentSessionId.value = sessionId;
+  }
+
+  const turnNum = (currentSession.value.messages?.length ?? 0) + 1;
+
+  // 追加用户消息（本地即时显示）
+  const userMsg: MessageItem = {
+    session_id: sessionId,
+    role: CHAT_ROLE.USER,
+    content: text,
+    id: --tempIdCounter,
+    turn_num: turnNum,
+    timestamp: new Date().toISOString()
+  };
+
+  // 追加 AI 占位消息（内容随流式块逐步填充）
+  const aiMsg: MessageItem = {
+    session_id: sessionId,
+    role: CHAT_ROLE.AI,
+    content: '',
+    id: --tempIdCounter,
+    turn_num: turnNum + 1,
+    timestamp: new Date().toISOString()
+  };
+
+  currentSession.value.messages = [
+    ...(currentSession.value.messages ?? []),
+    userMsg,
+    aiMsg
+  ];
+
+  isSending.value = true;
+  try {
+    activeAgentController = postAgentStream(
+      sessionId,
+      { text },
+      (chunk: string) => {
+        aiMsg.content += chunk;
+        // 触发响应式更新
+        currentSession.value = { ...currentSession.value, messages: [...(currentSession.value.messages ?? [])] };
+      },
+      () => {
+        // 流正常结束，解锁输入框
+        activeAgentController = null;
+        isSending.value = false;
+      },
+      (err) => {
+        activeAgentController = null;
+        aiMsg.content = `（回复失败：${String(err)}）`;
+        isSending.value = false;
+      }
+    );
+  } catch (e) {
+    // 同步抛错（罕见），此时流未启动，直接解锁
+    activeAgentController = null;
+    aiMsg.content = `（发送失败：${String(e)}）`;
+    isSending.value = false;
+  }
 };
 
 /** 工具触发 */

@@ -11,17 +11,60 @@
  * @module bridge
  */
 
-import type { ChatRequest } from '~/types/backend/ChatRequest';
-import type { ChatChunk } from '~/types/backend/ChatChunk';
 import type { HistoryMessage } from '~/types/backend/HistoryMessage';
 import type { PromptFileResponse } from '~/types/backend/PromptFileResponse';
 import type { CharacterResponse } from '~/types/backend/CharacterResponse';
 import type { HealthStatus } from '~/types/backend/HealthStatus';
-import type { AgentStreamChunk } from '~/types/backend/AgentStreamChunk';
-import type { AgentStreamEnd } from '~/types/backend/AgentStreamEnd';
-import type { AgentStreamError } from '~/types/backend/AgentStreamError';
-import type { AgentStreamStart } from '~/types/backend/AgentStreamStart';
 import { fetchApi } from './requestApi';
+
+/**
+ * Chat 请求体 —— 供 sendChatMessage / handleSend 使用。
+ * 字段与后端 `type/message.py` MultiModalMessage 保持一致。
+ */
+export interface ChatRequest {
+  /** 会话 ID（缺省时后端按 "main"/默认会话处理） */
+  session_id?: string;
+  /** 文本内容 */
+  text: string;
+  /** 图片 base64 列表 */
+  image_base64_list?: string[];
+}
+
+/**
+ * 浏览器模式下后端 `/sessions/agent/ws` 返回的流式事件帧。
+ * 对应 `server/trigger/ws/messages.py` 的 `{"event": ..., "session_id": ..., "content": ...}`。
+ */
+export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped';
+
+export interface AgentWsEvent {
+  event: AgentWsEventType;
+  session_id?: string | null;
+  content?: string;
+}
+
+/** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
+interface AgentStreamStart {
+  session_id: string;
+}
+interface AgentStreamChunk {
+  session_id: string;
+  content: string;
+  is_final?: boolean;
+}
+interface AgentStreamEnd {
+  session_id: string;
+  content: string;
+}
+interface AgentStreamError {
+  session_id: string;
+  code: number;
+  message: string;
+}
+interface ChatChunk {
+  id: string;
+  role: string;
+  content: string;
+}
 
 // ── Runtime detection ────────────────────────────────────
 
@@ -50,21 +93,18 @@ async function getListen() {
  * Send a chat message and receive streaming chunks.
  *
  * In Tauri mode the chunks arrive via Tauri Events
- * (`agent:stream:chunk`). In browser mode the SSE stream
- * is consumed directly from the Python backend.
+ * (`agent:stream:chunk`). In browser mode the request streams over the
+ * backend WebSocket (`/sessions/agent/ws`).
  *
  * @param request  The chat payload (session_id, text, images).
  * @param onChunk  Callback invoked for each text fragment.
- * @returns        Resolves when the stream completes.
+ * @returns        Resolves when the stream completes; rejects on error.
  */
 export async function sendChatMessage(
   request: ChatRequest,
   onChunk: (text: string) => void,
 ): Promise<void> {
-  if (isTauri()) {
-    return sendChatMessageTauri(request, onChunk);
-  }
-  return sendChatMessageBrowser(request, onChunk);
+  return streamChatMessage(request, onChunk).promise;
 }
 
 /** Tauri mode: invoke IPC + listen for Tauri Events. */
@@ -118,52 +158,185 @@ async function sendChatMessageTauri(
   });
 }
 
-/** Browser mode: direct SSE fetch to the Python backend. */
-async function sendChatMessageBrowser(
+/**
+ * Resolve the WebSocket base URL from an HTTP API base URL.
+ *
+ * `http://host:port` -> `ws://host:port`, `https://` -> `wss://`,
+ * and strips any trailing slashes.
+ */
+function resolveWsBaseUrl(apiBaseUrl: string): string {
+  return apiBaseUrl.replace(/^https?:\/\//, (m) => (m === 'https://' ? 'wss://' : 'ws://')).replace(/\/+$/, '');
+}
+
+/**
+ * A handle that can be used to stop an ongoing generation request.
+ *
+ * `abort()` instructs the backend to halt the stream for the session and
+ * tears down the underlying WebSocket. `closed` becomes `true` once torn down.
+ */
+export interface StreamController {
+  /** Whether the connection has been closed/stopped/errored. */
+  readonly closed: boolean;
+  /** Stop the generation and close the connection. */
+  abort(): void;
+}
+
+/**
+ * High-level streamed agent chat, following the unified bridge convention.
+ *
+ * - **Tauri**: invokes `agent_chat` IPC and consumes `agent:stream:*` Tauri Events.
+ * - **Browser**: opens a WebSocket to `/sessions/agent/ws`.
+ *
+ * Returns a `StreamController` whose `abort()` stops the generation, plus a
+ * Promise that resolves when the stream completes (`done`) and rejects on
+ * error or unexpected teardown.
+ *
+ * @param request  The chat payload.
+ * @param onChunk  Called with each text fragment.
+ * @returns        `{ controller, promise }`.
+ */
+export function streamChatMessage(
   request: ChatRequest,
   onChunk: (text: string) => void,
-): Promise<void> {
-  const baseURL = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
-
-  const response = await fetch(`${baseURL}/sessions/agent/sse`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      session_id: request.session_id,
-      multi_modal_message: {
-        text: request.text || '',
-        image_base64_list: request.image_base64_list || [],
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`SSE request failed: HTTP ${response.status}`);
+): {
+  controller: StreamController;
+  promise: Promise<void>;
+} {
+  if (isTauri()) {
+    const promise = sendChatMessageTauri(request, onChunk);
+    return {
+      controller: { closed: false, abort: () => void stopChatMessage(request.session_id || 'main') },
+      promise,
+    };
   }
+  return sendChatMessageWs(request, onChunk);
+}
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('response body is not readable');
+/**
+ * Browser mode: stream agent chat over the backend WebSocket
+ * (`/sessions/agent/ws`) instead of the (non-existent) SSE HTTP endpoint.
+ *
+ * Protocol (see `server/trigger/ws/messages.py`):
+ * - Client sends `{ session_id, multi_modal_message: { text, image_base64_list } }`
+ * - Server replies with a stream of `{ event: "chunk", content }` frames,
+ *   terminated by `{ event: "done" }` (success) or `{ event: "error", content }`.
+ *
+ * @param request  The chat payload.
+ * @param onChunk  Called with each text fragment.
+ * @returns        `{ controller, promise }` — `promise` resolves on completion.
+ */
+function sendChatMessageWs(
+  request: ChatRequest,
+  onChunk: (text: string) => void,
+): {
+  controller: StreamController;
+  promise: Promise<void>;
+} {
+  const baseURL = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
+  const url = `${resolveWsBaseUrl(baseURL)}/sessions/agent/ws`;
+  const sessionId = request.session_id || 'main';
 
-  const decoder = new TextDecoder();
-  let buffer = '';
+  let socket: WebSocket | null = null;
+  let done: boolean = false;
+  let release: (err?: string) => void = () => {};
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('data: ')) {
-        onChunk(trimmed.slice(6));
-      } else if (trimmed === 'data:') {
-        onChunk('');
+  const closeSocket = () => {
+    const s = socket;
+    socket = null;
+    if (s) {
+      s.onopen = null;
+      s.onmessage = null;
+      s.onerror = null;
+      s.onclose = null;
+      if (s.readyState === WebSocket.OPEN || s.readyState === WebSocket.CONNECTING) {
+        s.close();
       }
     }
+  };
+
+  const controller: StreamController = {
+    get closed() {
+      return done;
+    },
+    abort: () => {
+      if (done || !socket) return;
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'stop', session_id: sessionId }));
+      }
+      done = true;
+      closeSocket();
+      release('aborted');
+    },
+  };
+
+  const promise = new Promise<void>((resolve, reject) => {
+    release = (err?: string) => {
+      if (done && err === 'aborted') return; // aborts already handled at caller
+      if (err) reject(new Error(err));
+      else resolve();
+    };
+  });
+
+  try {
+    socket = new WebSocket(url);
+  } catch (e) {
+    release(String(e));
+    return { controller, promise };
   }
+
+  socket.onopen = () => {
+    socket?.send(
+      JSON.stringify({
+        session_id: sessionId,
+        multi_modal_message: {
+          text: request.text || '',
+          image_base64_list: request.image_base64_list || [],
+        },
+      }),
+    );
+  };
+
+  socket.onmessage = (event) => {
+    let data: AgentWsEvent;
+    try {
+      data = JSON.parse(event.data as string) as AgentWsEvent;
+    } catch {
+      return; // ignore non-JSON frames
+    }
+    if (data.event === 'chunk') {
+      onChunk(data.content ?? '');
+    } else if (data.event === 'done') {
+      if (!done) {
+        done = true;
+        closeSocket();
+        release();
+      }
+    } else if (data.event === 'error') {
+      if (!done) {
+        done = true;
+        closeSocket();
+        release(data.content || 'WebSocket stream error');
+      }
+    }
+    // 'stopped' frames are consumed by the stop flow and ignored here.
+  };
+
+  socket.onerror = () => {
+    if (!done) {
+      done = true;
+      closeSocket();
+      release('WebSocket connection error');
+    }
+  };
+
+  socket.onclose = () => {
+    if (!done) {
+      done = true;
+      release('WebSocket closed before stream completion');
+    }
+  };
+
+  return { controller, promise };
 }
 
 // ── Stop generation ──────────────────────────────────────
