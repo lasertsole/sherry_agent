@@ -1,6 +1,6 @@
 from loguru import logger
 from server.trigger.core import app
-from server.service import clear_session, get_history_by_page as _get_history_by_page
+from server.service import clear_session, get_history_by_turn_page as _get_history_by_turn_page
 
 @app.delete("/sessions")
 async def clear_session_handler(request):
@@ -11,8 +11,8 @@ async def clear_session_handler(request):
     await clear_session(session_id=session_id)
     logger.info(f"Session cleared: session_id={session_id}")
 
-@app.get("/get_history_by_page")
-async def get_history_by_page(request):
+@app.get("/get_history_by_turn_page")
+async def get_history_by_turn_page(request):
     """
     Read history messages with pagination.
 
@@ -42,4 +42,4 @@ async def get_history_by_page(request):
     if not turn_page_num:
         raise ValueError("turn_page_num is required")
 
-    return _get_history_by_page(session_id, min_turn_num, turn_page_size, turn_page_num)
+    return _get_history_by_turn_page(session_id, min_turn_num, turn_page_size, turn_page_num)

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 //   - unit suite  : pure `.ts` composable logic (no SFC compiler needed)
 //   - integration : `.vue` SFC compilation via @vitejs/plugin-vue
 //
-// Nuxt auto-imports (useColorMode, fetchApi, get_history_by_page, ...) are not
+// Nuxt auto-imports (useColorMode, fetchApi, get_history_by_turn_page, ...) are not
 // available in a bare Vitest/happy-dom environment, so tests stub them on
 // `globalThis` (the same pattern already proven in `setup.ts`).
 export default defineConfig({

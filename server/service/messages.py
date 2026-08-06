@@ -11,8 +11,8 @@ from langchain.messages import AIMessageChunk
 from pub_func import build_agent_config, is_url
 from ..DAO import clear_session as clear_session_DAO
 from context_engine.curator import reset_idle_for_seconds
-from context_engine import get_history_by_page as _get_history_by_page
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
+from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
 
 
@@ -238,8 +238,8 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 """End response generation logic"""
 
 """History retrieval logic"""
-def get_history_by_page(session_id: str, min_turn_num: int, turn_page_size: int, turn_page_num: int) -> list[dict[str, Any]]:
-    return _get_history_by_page(session_id, min_turn_num, turn_page_size, turn_page_num)
+def get_history_by_turn_page(session_id: str, min_turn_num: int, turn_page_size: int, turn_page_num: int) -> list[dict[str, Any]]:
+    return _get_history_by_turn_page(session_id, min_turn_num, turn_page_size, turn_page_num)
 """End history retrieval logic"""
 
 """Clear session history logic"""

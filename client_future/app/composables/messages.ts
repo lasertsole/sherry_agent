@@ -1,31 +1,73 @@
-import type { BaseMessage, MultiModalMessage } from "@/types/message";
-import type { Response, UseFetchResponse } from "@/types/response";
+import type { MultiModalMessage } from "@/types/message";
+import type { Response } from "@/types/response";
+import {
+    cacheMessages,
+    cachedMaxTurnNum,
+    clearCachedSession,
+    readCachedMessages,
+    type CachedMessage,
+} from './db';
 
 /**
- * 请求历史对话记录
+ * 请求历史对话记录（本地 Dexie 缓存优先）。
+ *
+ * 每次请求会：
+ * 1. 先从本地缓存读取该会话已有的消息，并取缓存中的最大 `turn_num`
+ *    作为 `min_turn_num`（只向服务端请求缓存中缺失的新轮次）；
+ * 2. 把服务端返回的增量消息合并写入缓存（按消息 `id` 去重）；
+ * 3. 返回「缓存 + 增量」合并后的完整列表。
+ *
  * @param session_id 会话ID
- * @param min_turn_num 最小轮次
+ * @param min_turn_num 最小轮次（缓存为空时传 0；存在缓存时会被缓存最大轮次覆盖）
  * @param turn_page_size 每页轮次大小
  * @param turn_page_num 页码
- * @returns {Promise<BaseMessage[]>} 历史对话记录数组
+ * @returns {Promise<CachedMessage[]>} 历史对话记录数组（本地缓存行的原样结构）
  */
-export async function get_history_by_page(session_id:string, min_turn_num:number, turn_page_size:number, turn_page_num:number):Promise<BaseMessage[]> {
+export async function get_history_by_turn_page(session_id:string, min_turn_num:number, turn_page_size:number, turn_page_num:number):Promise<CachedMessage[]> {
+    const cached = await readCachedMessages(session_id);
+    // 用本地缓存的已有数据的最大 turn_num 作为 min_turn_num，
+    // 只向服务端请求缓存中缺失的、更新轮次的数据；
+    // 但调用方传入的 min_turn_num 优先（可用于覆盖缓存 max，加载更早历史/指定范围）。
+    const cachedMinTurn = await cachedMaxTurnNum(session_id);
+    const effectiveMinTurn = cachedMinTurn > min_turn_num ? cachedMinTurn : min_turn_num;
+
     try {
         const res:Response = await fetchApi({
-            url: '/get_history_by_page',
+            url: '/get_history_by_turn_page',
             opts: {
                 session_id,
-                min_turn_num,
+                min_turn_num: effectiveMinTurn,
                 turn_page_size,
                 turn_page_num
             },
             method: 'get',
         });
-        return res.data || [];
+
+        const fetched: CachedMessage[] = res.data || [];
+        // 写入缓存（bulkPut 以 id 为主键去重）
+        await cacheMessages(fetched);
+
+        return mergeDedup(cached, fetched);
     } catch (error) {
-        return [];
+        // 服务端请求失败时，回退返回本地缓存，保证离线可用
+        return cached;
     };
 };
+
+/**
+ * 按会话合并缓存与服务端返回的消息，并对 `id` 去重后按 `turn_num` 升序返回。
+ */
+function mergeDedup(
+    cached: CachedMessage[],
+    fetched: CachedMessage[],
+): CachedMessage[] {
+    const seen = new Map<number, CachedMessage>();
+    for (const m of cached) seen.set(m.id, m);
+    for (const m of fetched) seen.set(m.id, m); // 服务端数据覆盖缓存中的同 id 行
+    return [...seen.values()].sort(
+        (a, b) => a.turn_num - b.turn_num || a.id - b.id,
+    );
+}
 
 /**
  * 清除会话历史
@@ -40,6 +82,7 @@ export async function clearSession(session_id: string): Promise<boolean> {
             opts: { session_id },
             method: 'delete',
         });
+        await clearCachedSession(session_id);
         return true;
     } catch (error) {
         return false;
