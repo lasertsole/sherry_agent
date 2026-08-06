@@ -19,7 +19,7 @@ const primevueStub = {
   ChatInputBox: { template: '<div class="cib"></div>' },
 };
 
-// `get_history_by_page` is a Nuxt auto-import pre-stubbed in setup.ts, so the
+// `get_history_by_turn_page` is a Nuxt auto-import pre-stubbed in setup.ts, so the
 // module-level call in index.vue is a no-op. Children are real components whose
 // heavy deps (PrimeVue/markdown) are stubbed above.
 function mountHome() {

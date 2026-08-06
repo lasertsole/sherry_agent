@@ -131,7 +131,9 @@ import ModeSwitch from './components/ModeSwitch.vue';
 import ChatBox from './components/ChatBox.vue';
 // function
 import { computed } from 'vue';
-import type { SessionRecord } from './type.ts';
+import type { SessionRecord, MessageItem } from './type.ts';
+import { CHAT_ROLE } from './type.ts';
+import type { CachedMessage } from '@/composables/db';
 import { tools, headerTools } from './config';
 import { Menu } from 'primevue';
 
@@ -150,6 +152,30 @@ const historyList = ref<SessionRecord[]>([
 /** 当前会话 */
 const currentSession = ref<SessionRecord>();
 const currentSessionId = ref<string>();
+
+/**
+ * 将后端返回的历史消息行（CachedMessage[]）转为聊天列表所需的 MessageItem[]。
+ * 结构与后端 messages 表一致，仅对可能为空的字段做兜底，保证 ChatBox 渲染安全。
+ */
+const toMessageItems = (rows: CachedMessage[]): MessageItem[] =>
+  rows.map(row => ({
+    session_id: row.session_id,
+    role: row.role as CHAT_ROLE,
+    content: row.content ?? '',
+    id: row.id,
+    turn_num: row.turn_num,
+    timestamp: row.timestamp ?? ''
+  }));
+
+/**
+ * 加载指定会话的历史消息（本地缓存优先，后台合并服务端增量），
+ * 更新当前会话展示并写入 messages，供 ChatBox 渲染。
+ */
+const loadSessionHistory = async (sessionId: string) => {
+  const messages = await get_history_by_turn_page(sessionId, 0, 10, 1);
+  currentSession.value = { ...(currentSession.value ?? {}), id: sessionId, messages: toMessageItems(messages) } as SessionRecord;
+  currentSessionId.value = sessionId;
+};
 
 /** 工具触发 */
 const handleOperate = (type: string, event: string) => {
@@ -187,7 +213,8 @@ const handleCreateSession = () => {};
 
 /** 会话切换 */
 const handleToggleSession = (id: string) => {
-  currentSessionId.value = id;
+  if (currentSessionId.value === id) return;
+  loadSessionHistory(id);
   isSidebarOpen.value = false;
 };
 
@@ -220,5 +247,6 @@ const openHeaderMenu = (event: Event) => {
   headerToolsMenuRef.value?.toggle(event);
 };
 
-get_history_by_page('main', 10, 10, 1);
+// 首屏加载默认会话(main)的历史消息,接收合并后的列表渲染到 ChatBox
+loadSessionHistory('main');
 </script>

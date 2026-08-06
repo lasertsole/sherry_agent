@@ -4,7 +4,7 @@
  * In a bare happy-dom environment neither the Nuxt SPA runtime NOR Nuxt's
  * auto-import system is booted. That leaves two gaps to fill on `globalThis`:
  *
- *  1. Nuxt auto-imports (useFetch, fetchApi, get_history_by_page, useColorMode)
+ *  1. Nuxt auto-imports (useFetch, fetchApi, get_history_by_turn_page, useColorMode)
  *     → controllably stubbed so components never reach the backend.
  *  2. Vue Composition API aliases (ref, computed, watch, ...) which the `.vue`
  *     SFCs use WITHOUT an explicit `import`. In Nuxt these come from Nuxt's
@@ -38,7 +38,7 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   (globalThis as any)[name] = impl;
 }
 
-// Nuxt auto-import used by `requestApi.ts` (called from `get_history_by_page`).
+// Nuxt auto-import used by `requestApi.ts` (called from `get_history_by_turn_page`).
 (globalThis as any).useFetch = vi.fn().mockReturnValue({
   data: { value: null },
   error: { value: null },
@@ -50,9 +50,9 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
 );
 
 // Nuxt auto-import called inline at setup by `home/index.vue`
-// (`get_history_by_page('main', 10, 10, 1)`). Resolve to an empty list so the
+// (`get_history_by_turn_page('main', 0, 10, 1)`). Resolve to an empty list so the
 // page mounts without touching the backend.
-(globalThis as any).get_history_by_page = vi.fn(async () => []);
+(globalThis as any).get_history_by_turn_page = vi.fn(async () => []);
 
 // Nuxt auto-import used by `ModeSwitch.vue` for dark/light theme.
 (globalThis as any).useColorMode = vi.fn(() => ({
