@@ -125,87 +125,133 @@ describe('clearSession', () => {
 });
 
 describe('postAgentStream', () => {
-  function sseResponse(events: string): Response {
-    const body = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(events));
-        controller.close();
-      },
-    });
-    return {
-      ok: true,
-      status: 200,
-      body,
-    } as unknown as Response;
-  }
+  let sockets: FakeWebSocket[];
 
-  it('parses SSE data lines and calls onData with each chunk', async () => {
-    (globalThis as any).fetch = vi.fn().mockResolvedValue(
-      sseResponse('data: hello\ndata: world\n\n'),
+  beforeEach(() => {
+    sockets = [];
+    vi.stubGlobal(
+      'WebSocket',
+      class FakeWebSocket {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSING = 2;
+        static readonly CLOSED = 3;
+        onopen: ((ev: any) => void) | null = null;
+        onmessage: ((ev: any) => void) | null = null;
+        onerror: ((ev: any) => void) | null = null;
+        onclose: ((ev: any) => void) | null = null;
+        sent: string[] = [];
+        url: string;
+        closed = false;
+        readyState = FakeWebSocket.CONNECTING;
+        constructor(url: string) {
+          this.url = url;
+          sockets.push(this);
+        }
+        send(data: string) {
+          this.sent.push(data);
+        }
+        close() {
+          this.closed = true;
+          this.readyState = FakeWebSocket.CLOSED;
+        }
+        // Simulate the backend opening the connection; mirrors the real
+        // WebSocket readyState transition to OPEN.
+        open() {
+          this.readyState = FakeWebSocket.OPEN;
+          this.onopen?.({});
+        }
+      } as unknown as typeof WebSocket,
     );
+  });
 
+  it('opens the WS bridge, sends the request, and calls onData with each chunk', async () => {
     const onData = vi.fn();
     const onDone = vi.fn();
 
-    await new Promise<void>((resolve, reject) => {
-      postAgentStream('s1', { text: 'hi' }, onData, onDone, reject);
-      setTimeout(() => resolve(), 20);
+    const promise = new Promise<void>((resolve, reject) => {
+      postAgentStream('s1', { text: 'hi' }, onData, () => {
+        onDone();
+        resolve();
+      }, reject);
     });
 
+    const ws = sockets[0];
+    expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
+    ws.open();
+    // Tauri mode guarded out; browser uses streamChatMessage -> sendChatMessageWs.
+    expect(ws.sent).toEqual([
+      JSON.stringify({
+        session_id: 's1',
+        multi_modal_message: { text: 'hi', image_base64_list: [] },
+      }),
+    ]);
+
+    ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'hel' }) });
+    ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'lo' }) });
     expect(onData).toHaveBeenCalledTimes(2);
-    expect(onData).toHaveBeenNthCalledWith(1, 'hello');
-    expect(onData).toHaveBeenNthCalledWith(2, 'world');
+    expect(onData).toHaveBeenNthCalledWith(1, 'hel');
+    expect(onData).toHaveBeenNthCalledWith(2, 'lo');
+
+    ws.onmessage?.({ data: JSON.stringify({ event: 'done', session_id: 's1', content: '' }) });
+    await promise;
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 
-  it('POSTs to the SSE endpoint with JSON body and content-type header', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(sseResponse('data: chunk\n\n'));
-    (globalThis as any).fetch = fetchMock;
-
-    await new Promise<void>((resolve) => {
-      postAgentStream('s7', { text: 'ping' }, () => {}, () => resolve());
+  it('sends the request body with the given session id/text', async () => {
+    const done = new Promise<void>((resolve, reject) => {
+      postAgentStream('s7', { text: 'ping' }, () => {}, resolve, reject);
     });
+    const ws = sockets[0];
+    ws.open();
+    ws.onmessage?.({ data: JSON.stringify({ event: 'done', session_id: 's7', content: '' }) });
+    await done;
 
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost:8080/sessions/agent/sse');
-    expect(init.method).toBe('POST');
-    expect(init.headers['Content-Type']).toBe('application/json');
-    expect(JSON.parse(init.body)).toEqual({
-      session_id: 's7',
-      multi_modal_message: { text: 'ping' },
-    });
+    expect(ws.sent).toEqual([
+      JSON.stringify({
+        session_id: 's7',
+        multi_modal_message: { text: 'ping', image_base64_list: [] },
+      }),
+    ]);
   });
 
-  it('calls onError when the response is not ok', async () => {
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
-
+  it('calls onError on an error frame', async () => {
     const onError = vi.fn();
-    await new Promise<void>((resolve) => {
+    const promise = new Promise<void>((resolve) => {
       postAgentStream('s1', { text: 'x' }, () => {}, () => {}, onError);
-      setTimeout(() => resolve(), 20);
+      setTimeout(resolve, 20);
     });
+    const ws = sockets[0];
+    ws.open();
+    ws.onmessage?.({ data: JSON.stringify({ event: 'error', session_id: 's1', content: 'boom' }) });
+    await promise;
     expect(onError).toHaveBeenCalled();
   });
 
-  it('calls onError when the response body is not readable', async () => {
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, body: null });
-
+  it('calls onError on socket error', async () => {
     const onError = vi.fn();
-    await new Promise<void>((resolve) => {
+    const promise = new Promise<void>((resolve) => {
       postAgentStream('s1', { text: 'x' }, () => {}, () => {}, onError);
-      setTimeout(() => resolve(), 20);
+      setTimeout(resolve, 20);
     });
+    const ws = sockets[0];
+    ws.open();
+    ws.onerror?.({});
+    await promise;
     expect(onError).toHaveBeenCalled();
   });
 
   it('does not call onError when the request is aborted', async () => {
-    (globalThis as any).fetch = vi.fn().mockResolvedValue(sseResponse('data: x\n\n'));
-
     const onError = vi.fn();
     const controller = postAgentStream('s1', { text: 'x' }, () => {}, () => {}, onError);
+    const ws = sockets[0];
+    ws.open();
+
     controller.abort();
 
     await new Promise((r) => setTimeout(r, 30));
     expect(onError).not.toHaveBeenCalled();
+    // Stop frame is sent over the same socket before teardown.
+    expect(ws.sent.some((s) => JSON.parse(s).type === 'stop')).toBe(true);
   });
 });
