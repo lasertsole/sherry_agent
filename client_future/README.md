@@ -9,7 +9,7 @@ The current `client/` is a conversational Web UI built with Python 3.10 + Stream
 - **Smoother interactions** — Vue 3 reactive partial updates instead of full-page re-runs
 - **Offline-first** — Dexie.js (IndexedDB) for caching conversation history locally
 - **Native desktop capabilities** — Tauri 2 provides system tray, global shortcuts (Alt+Space), file system access, and other features impossible in Streamlit
-- **Component-driven architecture** — Vue 3 Composition API + Pinia for scalable team collaboration
+- **Component-driven architecture** — Vue 3 Composition API + composables for scalable team collaboration
 
 > **Development status**: Active development; core chat UI and Tauri IPC bridge are functional.
 
@@ -65,7 +65,7 @@ User interaction (Vue component)
         |
         |--> [Browser mode] fetchApi() -> Python backend (direct SSE/REST)
         |
-    -> Pinia Store (state update)
+    -> Reactive state (composables + mitt event bus)
     -> Reactive UI update
 ```
 
@@ -83,19 +83,15 @@ client_future/
 ├── pnpm-lock.yaml                 # pnpm lockfile
 ├── pnpm-workspace.yaml            # pnpm workspace definition
 ├── prettier.config.mjs            # Prettier code formatter config
-├── tailwind.config.js             # Tailwind configuration
 ├── tsconfig.json                  # TypeScript configuration
 ├── app/                           # Nuxt 4 SPA source
 │   ├── app.vue                    # Root component entry
 │   ├── common.scss                # Global SCSS mixin library (layout, shapes, scrollbar, etc.)
 │   ├── assets/
 │   │   ├── css/
-│   │   │   ├── main.css           # Global CSS reset + CSS variables
-│   │   │   ├── main.scss          # (reserved)
-│   │   │   └── tailwind.scss      # Tailwind directives (@tailwind base/components/utilities)
-│   │   ├── images/                # (reserved) Static images
-│   │   └── ts/
-│   │       └── tailwind.config.ts # Tailwind custom tokens (width, height, z-index utilities)
+│   │   │   ├── main.css           # Tailwind v4 entry (@import 'tailwindcss') + @theme tokens + global reset
+│   │   │   └── main.scss          # (reserved)
+│   │   └── images/                # (reserved) Static images
 │   ├── common/
 │   │   └── utils.ts               # Shared utilities (formatCompactTimeString via dayjs)
 │   ├── components/
@@ -188,9 +184,9 @@ client_future/
 |-------|-----------|---------|
 | **Cross-platform shell** | [Tauri 2](https://v2.tauri.app/) | Packages the web frontend as a native desktop app with system API access |
 | **Frontend framework** | [Nuxt 4](https://nuxt.com/) + [Vue 3](https://vuejs.org/) | SPA mode (`ssr: false`), Composition API + `<script setup lang="ts">` |
-| **UI components** | [PrimeVue 4](https://primevue.org/) + [PrimeIcons](https://primevue.org/icons) | Pre-built UI components (Button, Checkbox, Menu, ToggleSwitch, etc.) |
-| **State management** | [Pinia](https://pinia.vuejs.org/) + [pinia-plugin-persistedstate](https://prazdevs.github.io/pinia-plugin-persistedstate/) | Global state + persistence |
-| **Styling** | [Tailwind CSS](https://tailwindcss.com/) (via `@nuxtjs/tailwindcss`) + SCSS | Utility-first CSS + custom mixin library |
+| **UI components** | [PrimeVue 5](https://primevue.org/) + [PrimeIcons](https://primevue.org/icons) | Pre-built UI components (Button, Checkbox, Menu, ToggleSwitch, etc.) |
+| **State management** | [Vue 3 Composition API](https://vuejs.org/guide/extras/composition-api-faq) (composables + [mitt](https://github.com/developit/mitt) event bus) | Global state + reactive UI updates |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) (v4 via `@tailwindcss/vite`) + SCSS | Utility-first CSS + custom mixin library |
 | **Color mode** | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/) | Dark/Light theme switching |
 | **Internationalization** | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) | Chinese (default) / English |
 | **Markdown rendering** | [markdown-it](https://github.com/markdown-it/markdown-it) | Chat message markdown → HTML |
@@ -208,7 +204,7 @@ client_future/
 
 - **Nuxt**: `ssr: false` (pure SPA); `pages/` directory structure; Vite config with `VITE_*` and `TAURI_*` environment variable prefix allowlist; route `/` redirects to `/home`
 - **Tauri**: App identifier `com.ema-ai.agent`, product name "EMA AI Agent", dev URL `http://localhost:3000`, CSP set to `null` to allow inline styles, window 800×600 resizable
-- **Tailwind**: Loaded via `@nuxtjs/tailwindcss` module, config at `app/assets/ts/tailwind.config.ts` and root `tailwind.config.js`, provides custom `w-*`/`h-*`/`z-*` utility classes
+- **Tailwind** (v4): Loaded via `@tailwindcss/vite` Vite plugin, entry at `app/assets/css/main.css` (`@import 'tailwindcss'`), custom tokens (colors, breakpoints, z-index) defined in the `@theme` block; dynamic spacing (e.g. `h-15`) is auto-generated via `--spacing`
 - **i18n**: Default locale `zh`, strategy `prefix_except_default`
 - **PrimeVue**: Noir preset (slate color palette), dark mode via `.dark` CSS class selector
 
@@ -234,7 +230,7 @@ Current state:  client/ (Python+Streamlit) — production
                          ├── WebSocket real-time updates
                          ├── Markdown rendering + XSS sanitization
                          ├── Dark/Light mode + i18n
-                         └── Componentized Pinia state management
+                         └── Module-based state via Vue 3 composables
 ```
 
 `client_future` will **not** replace `client/` overnight. Migration happens module by module, and eventually `client/` will be deprecated.
@@ -337,11 +333,11 @@ src-tauri/src/
 |-----------|---------|---------------|
 | Language | Python 3.10 | TypeScript / Rust |
 | Framework | Streamlit | Nuxt 4 + Vue 3 |
-| UI Library | Streamlit native | PrimeVue 4 + Tailwind CSS |
+| UI Library | Streamlit native | PrimeVue 5 + Tailwind CSS |
 | Rendering | Full-page re-run | Reactive partial update |
 | Desktop support | None (Web only) | Tauri 2 native desktop |
 | Storage | Python in-memory (ChatStorage) | Dexie.js IndexedDB |
-| State management | Streamlit Session State | Pinia + persistence plugin |
+| State management | Streamlit Session State | Vue 3 composables + mitt event bus |
 | Markdown | N/A | markdown-it + DOMPurify |
 | Visualization | Streamlit native charts | D3.js SVG |
 | Events | N/A | mitt event bus + WebSocket |
@@ -400,7 +396,7 @@ EMA_AUTO_START_BACKEND=true               # Auto-start Python backend with Tauri
 1. Create a `.vue` file under `app/pages/` — Nuxt 4 auto-registers the route
 2. Create components under `app/components/` — auto-available globally
 3. Create composable logic under `app/composables/`
-4. Add custom tokens to `app/assets/ts/tailwind.config.ts`
+4. Add custom tokens to the `@theme` block in `app/assets/css/main.css`
 5. Add i18n keys to `app/i18n/locales/zh.json` and `en.json`
 
 ### Starting the Python Backend

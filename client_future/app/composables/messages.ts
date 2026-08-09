@@ -19,7 +19,7 @@ import {
  * 3. 返回「缓存 + 增量」合并后的完整列表。
  *
  * @param session_id 会话ID
- * @param min_turn_num 最小轮次（缓存为空时传 0；存在缓存时会被缓存最大轮次覆盖）
+ * @param min_turn_num 最小轮次（>= 1；存在缓存时会被缓存最大轮次覆盖）
  * @param turn_page_size 每页轮次大小
  * @param turn_page_num 页码
  * @returns {Promise<CachedMessage[]>} 历史对话记录数组（本地缓存行的原样结构）
@@ -30,7 +30,9 @@ export async function get_history_by_turn_page(session_id:string, min_turn_num:n
     // 只向服务端请求缓存中缺失的、更新轮次的数据；
     // 但调用方传入的 min_turn_num 优先（可用于覆盖缓存 max，加载更早历史/指定范围）。
     const cachedMinTurn = await cachedMaxTurnNum(session_id);
-    const effectiveMinTurn = cachedMinTurn > min_turn_num ? cachedMinTurn : min_turn_num;
+    // 服务端约定 min_turn_num >= 1；缓存为空（无最大轮次）时取调用方传入值，
+    // 但仍需保证 >= 1（0 会被服务端 Pydantic 校验拒绝）。
+    const effectiveMinTurn = cachedMinTurn > min_turn_num ? cachedMinTurn : Math.max(min_turn_num, 1);
 
     try {
         const res:Response = await fetchApi({

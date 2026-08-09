@@ -1,4 +1,5 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import tailwindcss from '@tailwindcss/vite';
 import Aura from '@primeuix/themes/aura';
 import { definePreset } from '@primeuix/themes';
 
@@ -49,6 +50,7 @@ export default defineNuxtConfig({
     // Additional environment variables can be found at
     // https://v2.tauri.app/reference/environment-variables/
     envPrefix: ['VITE_', 'TAURI_'],
+    plugins: [tailwindcss()],
     server: {
       // Tauri requires a consistent port
       strictPort: true,
@@ -56,17 +58,7 @@ export default defineNuxtConfig({
   },
 
   // 导入第三方模块
-  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/i18n', '@nuxtjs/color-mode', '@primevue/nuxt-module'],
-
-  tailwindcss: {
-    cssPath: ['~/assets/css/tailwind.scss', { injectPosition: "first" }],
-    configPath: '~/tailwind.config.js',
-    exposeConfig: {
-      level: 2
-    },
-    config: {},
-    viewer: true,
-  },
+  modules: ['@nuxtjs/i18n', '@nuxtjs/color-mode', '@primevue/nuxt-module'],
 
   primevue: {
     options: {
@@ -83,7 +75,7 @@ export default defineNuxtConfig({
   i18n: {
     strategy: 'prefix_except_default',
     defaultLocale: 'zh',
-    langDir: new URL('./app/i18n/locales/', import.meta.url).pathname,
+    langDir: '../app/i18n/locales',
     locales: [
       { code: 'zh', name: '简体中文', file: 'zh.json' },
       { code: 'en', name: 'English', file: 'en.json' }
