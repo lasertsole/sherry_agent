@@ -10,9 +10,16 @@
         { hidden: message.role === CHAT_ROLE.TOOL },
         filteredMessages?.[index - 1]?.role === message.role ? 'mt-1' : 'mt-6'
       ]">
-      <div class="flex justify-center items-center w-10 h-10 rounded-full">
+      <div class="flex justify-center items-center w-10 h-10 rounded-full overflow-hidden shrink-0 bg-gray-100 dark:bg-gray-800">
         <!-- 头像区域，连续消息不展示头像 -->
-        <span :class="['pi pi-user', { hidden: filteredMessages?.[index - 1]?.role === message.role }]"></span>
+        <img
+          v-if="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
+          :class="['w-full h-full object-cover', { hidden: filteredMessages?.[index - 1]?.role === message.role }]"
+          :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
+          :alt="message.role === CHAT_ROLE.USER ? userName : aiName" />
+        <span
+          v-else
+          :class="['pi pi-user', { hidden: filteredMessages?.[index - 1]?.role === message.role }]"></span>
       </div>
       <!-- 消息主体 -->
       <div :class="['flex flex-col max-w-[60%]', message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start']">
@@ -24,7 +31,7 @@
             { 'text-left': message.role === CHAT_ROLE.AI }
           ]">
           <span class="text-sm font-semibold text-[#111827] dark:text-[#E5E7EB]">{{
-            message.role === CHAT_ROLE.AI ? '橘雪莉' : '我'
+            message.role === CHAT_ROLE.AI ? aiName : userName
           }}</span>
           <span class="text-xs font-normal text-[#6B7280] dark:text-[#9CA3AF]">{{
             formatCompactTimeString(message.timestamp)
@@ -66,14 +73,39 @@ import DOMPurify from 'dompurify';
 
 interface Props {
   messages: MessageItem[] | undefined;
+  /** 用户头像 URL（服务端返回） */
+  userAvatar?: string;
+  /** AI 头像 URL（服务端返回） */
+  aiAvatar?: string;
+  /** 用户显示名（服务端返回） */
+  userName?: string;
+  /** AI 显示名（服务端返回） */
+  aiName?: string;
 }
 const props = withDefaults(defineProps<Props>(), {
-  messages: () => [] as MessageItem[]
+  messages: () => [] as MessageItem[],
+  userAvatar: '',
+  aiAvatar: '',
+  userName: '我',
+  aiName: '橘雪莉'
 });
 
 /** 过滤tool后的消息列表 */
+const isToolCallMsg = (msg: MessageItem) =>
+  (msg as unknown as { tool_calls?: unknown[] }).tool_calls?.length;
 const filteredMessages = computed(() => {
-  return props.messages.filter(item => item.role !== CHAT_ROLE.TOOL);
+  return props.messages.filter((item: MessageItem) => {
+    // 隐藏 tool 消息
+    if (item.role === CHAT_ROLE.TOOL) {
+      return false;
+    }
+    // 隐藏「AI 空占位」消息：发送后 AI 尚未产出任何内容（也无工具调用）时，
+    // 不渲染这个只有名字+空白框的占位气泡，避免「橘雪莉」看起来贴在白框里。
+    if (item.role === CHAT_ROLE.AI && !item.content.trim() && !isToolCallMsg(item)) {
+      return false;
+    }
+    return true;
+  });
 });
 
 // 初始化 markdown-it

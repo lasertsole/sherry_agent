@@ -18,7 +18,7 @@
         isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
       ]">
       <!-- LOGO区域 -->
-      <div class="flex items-center h-15 text-xl">🍊橘雪莉</div>
+      <div class="flex items-center h-15 text-xl">🍊{{ characterInfo.aiName }}</div>
       <!-- 记录列表 -->
       <div class="flex flex-col overflow-auto flex-1 gap-3">
         <div
@@ -60,7 +60,7 @@
           variant="text"
           @click="isSidebarOpen = !isSidebarOpen" />
         <!-- 移动端展示 -->
-        <div class="md:hidden h-full flex items-center text-xl">🍊橘雪莉</div>
+        <div class="md:hidden h-full flex items-center text-xl">🍊{{ characterInfo.aiName }}</div>
         <!-- 顶部工具栏 -->
         <div class="flex items-center gap-3">
           <ModeSwitch />
@@ -91,7 +91,12 @@
         </div>
       </div>
       <!-- 聊天主体 -->
-      <ChatBox :messages="currentSession?.messages" />
+      <ChatBox
+        :messages="chatMessages"
+        :user-avatar="characterInfo.userAvatar"
+        :ai-avatar="characterInfo.aiAvatar"
+        :user-name="characterInfo.userName"
+        :ai-name="characterInfo.aiName" />
       <!-- 聊天输入框区域 -->
       <div class="flex flex-col h-40">
         <!-- 聊天工具 -->
@@ -130,15 +135,53 @@ import HistoryItem from './components/HistoryItem.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
 import ChatBox from './components/ChatBox.vue';
 // function
-import { computed } from 'vue';
+import { computed, onMounted } from 'vue';
 import type { SessionRecord, MessageItem } from './type.ts';
 import { CHAT_ROLE } from './type.ts';
 import type { CachedMessage } from '@/composables/db';
 import { tools, headerTools } from './config';
 import { Menu } from 'primevue';
+import { readCharacter } from '@/composables/bridge';
 
 /** 侧边栏展开状态（移动端） */
 const isSidebarOpen = ref(false);
+
+/**
+ * 角色显示信息（来自服务端 character.json）
+ * - user.avatar / assistant.avatar 为相对 `static/` 的路径，拼接 base URL 得到完整图片地址
+ */
+const backendBaseUrl = ref<string>(import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080');
+const characterInfo = ref<{ userName: string; userAvatar: string; aiName: string; aiAvatar: string }>({
+  userName: '我',
+  userAvatar: '',
+  aiName: '橘雪莉',
+  aiAvatar: ''
+});
+
+/** 解析角色配置：把 `avatar/xxx.jpg` 形式的路径拼接成完整静态资源 URL */
+const resolveCharacter = (data?: Record<string, Record<string, string>>) => {
+  const base = (backendBaseUrl.value || '').replace(/\/+$/, '');
+  const user = data?.user ?? {};
+  const assistant = data?.assistant ?? {};
+  const resolveUrl = (path?: string) => (path ? `${base}/static/${path.replace(/^\/+/, '')}` : '');
+  characterInfo.value = {
+    userName: user.name || '我',
+    userAvatar: resolveUrl(user.avatar),
+    aiName: assistant.name || 'AI',
+    aiAvatar: resolveUrl(assistant.avatar)
+  };
+};
+
+/** 从服务端加载角色配置（头像 + 名字） */
+const loadCharacter = async () => {
+  try {
+    const data = (await readCharacter()) as Record<string, Record<string, string>>;
+    resolveCharacter(data);
+  } catch (error) {
+    // 服务端不可达时保留默认头像与名字
+    console.warn('[loadCharacter] 获取角色配置失败，保留默认头像：', error);
+  }
+};
 
 /** 历史会话 */
 const historyList = ref<SessionRecord[]>([
@@ -152,6 +195,15 @@ const historyList = ref<SessionRecord[]>([
 /** 当前会话 */
 const currentSession = ref<SessionRecord>();
 const currentSessionId = ref<string>();
+
+/**
+ * 当前会话要渲染的消息列表 —— 单一数据源。
+ *
+ * 历史上直接对 `currentSession.value` 做整体赋值（`= {...}`），导致
+ * 「loadSessionHistory 的迟到结果覆盖用户刚发送的本地消息」的竞态，表现为
+ * 发送后列表被清空。现在所有追加/合并都只操作这个数组，不再整体重建会话对象。
+ */
+const chatMessages = ref<MessageItem[]>([]);
 
 /**
  * 将后端返回的历史消息行（CachedMessage[]）转为聊天列表所需的 MessageItem[]。
@@ -169,12 +221,35 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] =>
 
 /**
  * 加载指定会话的历史消息（本地缓存优先，后台合并服务端增量），
- * 更新当前会话展示并写入 messages，供 ChatBox 渲染。
+ * 合并进 `chatMessages`（按 id 去重），供 ChatBox 渲染。
+ *
+ * 修复：不再整体重建 `currentSession.value`（那会覆盖用户已发送的本地消息，
+ * 导致「发送后列表被清空」）。只把历史行合并进单一列表，已存在的消息保留。
  */
 const loadSessionHistory = async (sessionId: string) => {
-  const messages = await get_history_by_turn_page(sessionId, 0, 10, 1);
-  currentSession.value = { ...(currentSession.value ?? {}), id: sessionId, messages: toMessageItems(messages) } as SessionRecord;
   currentSessionId.value = sessionId;
+
+  const rows = await get_history_by_turn_page(sessionId, 0, 10, 1);
+  const historyItems = toMessageItems(rows);
+
+  // 合并去重：已存在的 id 保留本地版本（含发送后尚未持久化的临时消息 id 为负值），
+  // 服务端真实 id 的原样补入。整体按 turn_num 升序保证顺序稳定。
+  const mergedById = new Map<number, MessageItem>();
+  for (const m of chatMessages.value) mergedById.set(m.id, m);
+  for (const h of historyItems) {
+    // 仅当本地没有同 id 的消息时才补入，避免覆盖流式过程中已更新的内容
+    if (!mergedById.has(h.id)) mergedById.set(h.id, h);
+  }
+  chatMessages.value = [...mergedById.values()].sort(
+    (a, b) => a.turn_num - b.turn_num || b.id - a.id,
+  );
+
+  // 若当前会话对象未初始化，补一个最小结构（消息已由 chatMessages 单独承载）
+  if (!currentSession.value) {
+    currentSession.value = { id: sessionId, title: '示例会话', createTime: '' } as SessionRecord;
+  } else {
+    currentSession.value.id = sessionId;
+  }
 };
 
 /** 是否处于 AI 回复生成中 */
@@ -205,7 +280,7 @@ const handleSend = async (text: string) => {
     currentSessionId.value = sessionId;
   }
 
-  const turnNum = (currentSession.value.messages?.length ?? 0) + 1;
+  const turnNum = chatMessages.value.length + 1;
 
   // 追加用户消息（本地即时显示）
   const userMsg: MessageItem = {
@@ -227,11 +302,7 @@ const handleSend = async (text: string) => {
     timestamp: new Date().toISOString()
   };
 
-  currentSession.value.messages = [
-    ...(currentSession.value.messages ?? []),
-    userMsg,
-    aiMsg
-  ];
+  chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
 
   isSending.value = true;
   try {
@@ -240,8 +311,8 @@ const handleSend = async (text: string) => {
       { text },
       (chunk: string) => {
         aiMsg.content += chunk;
-        // 触发响应式更新
-        currentSession.value = { ...currentSession.value, messages: [...(currentSession.value.messages ?? [])] };
+        // 直接替换整个数组以触发响应式更新（aiMsg 本身是引用，content 已在原地累加）
+        chatMessages.value = [...chatMessages.value];
       },
       () => {
         // 流正常结束，解锁输入框
@@ -296,9 +367,17 @@ const handleOperate = (type: string, event: string) => {
 /** 新增会话 */
 const handleCreateSession = () => {};
 
-/** 会话切换 */
+/**
+ * 会话切换：先清空当前渲染列表与会话对象，再加载新会话历史。
+ *
+ * 必须清空，否则 loadSessionHistory 是「合并」语义，会把上一个会话的消息
+ * 混进新会话。清空后加载期间 ChatBox 短暂为空是可接受的（切换反馈）。
+ */
 const handleToggleSession = (id: string) => {
   if (currentSessionId.value === id) return;
+  currentSession.value = undefined;
+  chatMessages.value = [];
+  currentSessionId.value = id;
   loadSessionHistory(id);
   isSidebarOpen.value = false;
 };
@@ -334,4 +413,8 @@ const openHeaderMenu = (event: Event) => {
 
 // 首屏加载默认会话(main)的历史消息,接收合并后的列表渲染到 ChatBox
 loadSessionHistory('main');
+// 挂载后从服务端加载角色配置（头像 + 名字）
+onMounted(() => {
+  loadCharacter();
+});
 </script>

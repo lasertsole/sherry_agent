@@ -1,7 +1,32 @@
 @import 'primeicons/primeicons.css';
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* 使用 .dark 类名触发器暗黑模式（与 @nuxtjs/color-mode 一致） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ==========================================================================
+   Tailwind v4 主题令牌（@theme 块，取代已删除的 tailwind.config.js / tailwind.config.ts）
+   ========================================================================== */
+@theme {
+  /* 自定义断点 */
+  --breakpoint-sm: 480px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 976px;
+  --breakpoint-xl: 1440px;
+
+  /* 自定义颜色 */
+  --color-gray-dark: #273444;
+  --color-gray-light: #eef0f3;
+  --color-theme-main: var(--theme-text);
+
+  /* 自定义字体 */
+  --font-serif: Merriweather, serif;
+
+  /* 自定义 z-index */
+  --z-index-1: 1;
+  --z-index-2: 2;
+  --z-index-3: 3;
+}
 
 * {
   margin: 0;

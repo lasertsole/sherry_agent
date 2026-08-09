@@ -9,7 +9,7 @@
 - **更流畅的交互** — 不再每次操作全页回滚，Vue 3 响应式驱动局部更新
 - **离线优先** — Dexie.js（IndexedDB）存储会话历史，减少网络依赖
 - **原生桌面能力** — Tauri 2 提供系统托盘、全局快捷键（Alt+Space）、文件系统等 Streamlit 无法实现的功能
-- **组件化架构** — Vue 3 组合式 API + Pinia 状态管理，便于团队协作扩展
+- **组件化架构** — Vue 3 组合式 API + composables，便于团队协作扩展
 
 > **开发状态**：积极开发中；核心聊天 UI 和 Tauri IPC 桥接已可用。
 
@@ -65,7 +65,7 @@
         |
         |--> [浏览器模式] fetchApi() -> Python 后端 (直接 SSE/REST)
         |
-    -> Pinia Store (状态更新)
+    -> 响应式状态 (composables + mitt 事件总线)
     -> 响应式 UI 更新
 ```
 
@@ -83,19 +83,15 @@ client_future/
 ├── pnpm-lock.yaml                 # pnpm 锁定文件
 ├── pnpm-workspace.yaml            # pnpm 工作区定义
 ├── prettier.config.mjs            # Prettier 代码格式化配置
-├── tailwind.config.js             # Tailwind 配置
 ├── tsconfig.json                  # TypeScript 配置
 ├── app/                           # Nuxt 4 SPA 源码
 │   ├── app.vue                    # 根组件入口
 │   ├── common.scss                # 全局 SCSS mixins 库（布局、形状、滚动条等）
 │   ├── assets/
 │   │   ├── css/
-│   │   │   ├── main.css           # 全局 CSS 重置 + CSS 变量
-│   │   │   ├── main.scss          # (预留)
-│   │   │   └── tailwind.scss      # Tailwind 指令注入
-│   │   ├── images/                # (预留) 静态图片资源
-│   │   └── ts/
-│   │       └── tailwind.config.ts # Tailwind 自定义 token
+│   │   │   ├── main.css           # Tailwind v4 入口（`@import 'tailwindcss'`）+ @theme token + 全局重置
+│   │   │   └── main.scss          # (预留)
+│   │   └── images/                # (预留) 静态图片资源
 │   ├── common/
 │   │   └── utils.ts               # 共享工具函数（formatCompactTimeString，基于 dayjs）
 │   ├── components/
@@ -187,9 +183,9 @@ client_future/
 |------|------|------|
 | **跨平台壳** | [Tauri 2](https://v2.tauri.app/) | 将 Web 前端打包为原生桌面应用，提供系统 API |
 | **前端框架** | [Nuxt 4](https://nuxt.com/) + [Vue 3](https://vuejs.org/) | SPA 模式（`ssr: false`），组合式 API + `<script setup lang="ts">` |
-| **UI 组件** | [PrimeVue 4](https://primevue.org/) + [PrimeIcons](https://primevue.org/icons) | 预构建 UI 组件（Button、Checkbox、Menu、ToggleSwitch 等） |
-| **状态管理** | [Pinia](https://pinia.vuejs.org/) + [pinia-plugin-persistedstate](https://prazdevs.github.io/pinia-plugin-persistedstate/) | 全局状态 + 持久化 |
-| **样式** | [Tailwind CSS](https://tailwindcss.com/)（通过 `@nuxtjs/tailwindcss`）+ SCSS | 原子化 CSS + 自定义 Mixin 库 |
+| **UI 组件** | [PrimeVue 5](https://primevue.org/) + [PrimeIcons](https://primevue.org/icons) | 预构建 UI 组件（Button、Checkbox、Menu、ToggleSwitch 等） |
+| **状态管理** | [Vue 3 组合式 API](https://cn.vuejs.org/guide/extras/composition-api-faq)（composables + [mitt](https://github.com/developit/mitt) 事件总线） | 全局状态 + 响应式 UI 更新 |
+| **样式** | [Tailwind CSS](https://tailwindcss.com/)（v4，通过 `@tailwindcss/vite`）+ SCSS | 原子化 CSS + 自定义 Mixin 库 |
 | **色彩模式** | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/) | 深色/浅色主题切换 |
 | **国际化** | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) | 中文（默认）/ 英文 |
 | **Markdown 渲染** | [markdown-it](https://github.com/markdown-it/markdown-it) | 聊天消息 Markdown → HTML |
@@ -207,7 +203,7 @@ client_future/
 
 - **Nuxt**: `ssr: false`，纯 SPA；`pages/` 目录结构；Vite 配置 `VITE_*` 和 `TAURI_*` 环境变量前缀白名单；路由 `/` 重定向到 `/home`
 - **Tauri**: 应用标识 `com.ema-ai.agent`，产品名 "EMA AI Agent"，开发 URL `http://localhost:3000`，CSP 设为空（`null`）以允许内联样式，窗口 800×600 可调整大小
-- **Tailwind**: 通过 `@nuxtjs/tailwindcss` 模块引入，配置文件位于 `app/assets/ts/tailwind.config.ts` 和根目录 `tailwind.config.js`，提供 `w-*`/`h-*`/`z-*` 等自定义工具类
+- **Tailwind**（v4）: 通过 `@tailwindcss/vite` Vite 插件引入，入口 `app/assets/css/main.css`（`@import 'tailwindcss'`），自定义 token（颜色、断点、z-index）在 `@theme` 块中定义；动态间距（如 `h-15`）由 `--spacing` 自动生成
 - **i18n**: 默认语言 `zh`，策略 `prefix_except_default`
 - **PrimeVue**: Noir 预设（slate 色板），深色模式通过 `.dark` CSS 类选择器触发
 
@@ -233,7 +229,7 @@ client_future/
                          ├── WebSocket 实时推送
                          ├── Markdown 渲染 + XSS 净化
                          ├── 深色/浅色模式 + 国际化
-                         └── 组件化 Pinia 状态管理
+                         └── 基于 Vue 3 composables 的模块化状态管理
 ```
 
 `client_future` **不会**一蹴而就替换 `client/`，而是逐步按模块迁移，最终 `client/` 将被废弃。
@@ -336,11 +332,11 @@ src-tauri/src/
 |------|---------|---------------|
 | 语言 | Python 3.10 | TypeScript / Rust |
 | 框架 | Streamlit | Nuxt 4 + Vue 3 |
-| UI 组件库 | Streamlit 原生 | PrimeVue 4 + Tailwind CSS |
+| UI 组件库 | Streamlit 原生 | PrimeVue 5 + Tailwind CSS |
 | 渲染模式 | 全页回滚 (Script Re-run) | 响应式局部更新 |
 | 桌面支持 | 无（仅 Web） | Tauri 2 原生桌面 |
 | 存储 | Python 内存 (ChatStorage) | Dexie.js IndexedDB |
-| 状态管理 | Streamlit Session State | Pinia + 持久化插件 |
+| 状态管理 | Streamlit Session State | Vue 3 composables + mitt 事件总线 |
 | Markdown | N/A | markdown-it + DOMPurify |
 | 可视化 | Streamlit 原生图表 | D3.js SVG |
 | 事件 | N/A | mitt 事件总线 + WebSocket |
@@ -399,7 +395,7 @@ EMA_AUTO_START_BACKEND=true               # 随 Tauri 应用自动启动 Python 
 1. 在 `app/pages/` 下创建 `.vue` 文件 — Nuxt 4 自动注册路由
 2. 在 `app/components/` 下创建组件 — 自动全局可用
 3. 在 `app/composables/` 下创建组合式逻辑
-4. 在 `app/assets/ts/tailwind.config.ts` 中添加自定义 token
+4. 在 `app/assets/css/main.css` 的 `@theme` 块中添加自定义 token
 5. 在 `app/i18n/locales/zh.json` 和 `en.json` 中添加 i18n 键
 
 ### 启动 Python 后端

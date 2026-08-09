@@ -1,8 +1,8 @@
 <template>
   <ToggleSwitch
     class="hidden sm:block"
-    true-value="dark"
-    false-value="light"
+    trueValue="dark"
+    falseValue="light"
     v-model="currentMode"
     @value-change="handleSwitch">
     <template #handle="{ checked }">

@@ -52,7 +52,7 @@ def update_system_prompt_file(file_to_content: dict[str, str])->None:
 def read_character()-> dict[str, dict[str, str]]:
     """Read character configuration"""
     file_path = WORKSPACE_DIR / "character.json"
-    character_data:dict[str, dict[str, str]] = json.loads(file_path.read_text())
+    character_data:dict[str, dict[str, str]] = json.loads(file_path.read_text(encoding="utf-8"))
     return character_data
 
 def write_character(character_data: dict[str, dict[str, str]])->None:
@@ -69,7 +69,7 @@ def write_character(character_data: dict[str, dict[str, str]])->None:
         raise ValueError("Invalid character data")
 
     file_path = WORKSPACE_DIR / "character.json"
-    file_path.write_text(json.dumps(character_data, indent=4, ensure_ascii=False))
+    file_path.write_text(json.dumps(character_data, indent=4, ensure_ascii=False), encoding="utf-8")
 
 def update_character(character_data: dict[str, dict[str, str]])->None:
     """Update character configuration (only overwrite provided fields, leave others unchanged)"""

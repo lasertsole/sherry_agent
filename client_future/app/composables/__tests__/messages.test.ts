@@ -97,6 +97,26 @@ describe('get_history_by_turn_page', () => {
     await expect(get_history_by_turn_page('s1', 0, 10, 1)).resolves.toEqual([]);
   });
 
+  it('clamps caller-passed min_turn_num=0 to 1 when cache is empty (server requires >= 1)', async () => {
+    // Cache empty => cachedMaxTurnNum = 0, caller passes 0 => must be clamped to 1,
+    // otherwise the server-side Pydantic validation rejects it (>= 1).
+    const data = [{ ...rows[0], id: 10, turn_num: 1 }];
+    const mock = stubFetchApi({ code: 200, data });
+
+    await get_history_by_turn_page('s1', 0, 10, 1);
+
+    expect(mock).toHaveBeenCalledWith({
+      url: '/get_history_by_turn_page',
+      opts: {
+        session_id: 's1',
+        min_turn_num: 1,
+        turn_page_size: 10,
+        turn_page_num: 1,
+      },
+      method: 'get',
+    });
+  });
+
   it('falls back to cache when fetchApi rejects', async () => {
     mockDb.readCachedMessages.mockResolvedValue([rows[0]]);
     stubFetchApi(Promise.reject(new Error('boom')));
