@@ -206,6 +206,33 @@ const currentSessionId = ref<string>();
 const chatMessages = ref<MessageItem[]>([]);
 
 /**
+ * 将后端返回的 content 归一化为纯文本字符串。
+ *
+ * 后端 messages 表的 content 存在两种形态：
+ * 1. 多模态结构化数组：`[{ type: 'text', text: '...' }, { type: 'image', ... }]`
+ * 2. 纯文本字符串：`'...'`
+ *
+ * ChatBox 通过 markdown-it 渲染 content，其只接受字符串（传入数组会抛
+ * `Error: Input data should be a String`，导致整个消息列表渲染中断）。
+ * 这里把数组形式拆解为纯文本字符串（丢弃非文本的分段，仅拼接 text 字段），
+ * 保证渲染安全且内容连续。
+ */
+const normalizeContent = (content: unknown): string => {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part: unknown) =>
+        typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string'
+          ? (part as { text: string }).text
+          : '',
+      )
+      .join('');
+  }
+  // 其它形态（null / 数字 / 对象等）统一兜底为空字符串
+  return '';
+};
+
+/**
  * 将后端返回的历史消息行（CachedMessage[]）转为聊天列表所需的 MessageItem[]。
  * 结构与后端 messages 表一致，仅对可能为空的字段做兜底，保证 ChatBox 渲染安全。
  */
@@ -213,7 +240,7 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] =>
   rows.map(row => ({
     session_id: row.session_id,
     role: row.role as CHAT_ROLE,
-    content: row.content ?? '',
+    content: normalizeContent(row.content),
     id: row.id,
     turn_num: row.turn_num,
     timestamp: row.timestamp ?? ''
@@ -234,8 +261,39 @@ const loadSessionHistory = async (sessionId: string) => {
 
   // 合并去重：已存在的 id 保留本地版本（含发送后尚未持久化的临时消息 id 为负值），
   // 服务端真实 id 的原样补入。整体按 turn_num 升序保证顺序稳定。
+  //
+  // 竞态修复：发送后尚未持久化的临时消息 id 为负值（handleSend 用 --tempIdCounter），
+  // 而当服务端稍后返回同一消息的真实正 id 行时，二者的 id 不同，按 id 去重会同时保留
+  // 「临时负 id 副本」和「服务端正 id 行」，造成同一消息渲染两次。
+  //
+  // 因此对每个本地负 id 临时副本，直接在服务端历史行里按
+  // 「同会话 + 同 turn_num + 同 role + 同 content」精确匹配其正 id 真身；
+  // 命中则用服务端行替换（丢弃临时副本）。注意不能仅按 (session, turn, role) 归并查找
+  // —— 同一轮次内可能出现多条同 role 的行（例如一次 AI 回合内的工具调用 + 最终回复，
+  // add_messages 把整批写进同一个 turn_num），归并键会丢失其中若干行。逐行精确匹配
+  // content 可保证不会跨行误替换。
   const mergedById = new Map<number, MessageItem>();
-  for (const m of chatMessages.value) mergedById.set(m.id, m);
+  const serverRowFor = (m: MessageItem) =>
+    historyItems.find(
+      (h) =>
+        h.id >= 0 &&
+        h.session_id === m.session_id &&
+        h.turn_num === m.turn_num &&
+        h.role === m.role &&
+        h.content === m.content,
+    );
+  for (const m of chatMessages.value) {
+    // 本地临时负 id 行：若服务端已返回同一逻辑消息的正 id 行，则跳过（用服务端行）。
+    if (m.id < 0) {
+      const serverRow = serverRowFor(m);
+      // 命中：用服务端正 id 行替换临时副本，后续循环加入；此处占位以免重复
+      if (serverRow) {
+        mergedById.set(serverRow.id, serverRow);
+        continue;
+      }
+    }
+    mergedById.set(m.id, m);
+  }
   for (const h of historyItems) {
     // 仅当本地没有同 id 的消息时才补入，避免覆盖流式过程中已更新的内容
     if (!mergedById.has(h.id)) mergedById.set(h.id, h);

@@ -46,7 +46,13 @@ export async function get_history_by_turn_page(session_id:string, min_turn_num:n
             method: 'get',
         });
 
-        const fetched: CachedMessage[] = res.data || [];
+        // 服务端 /get_history_by_turn_page 直接返回消息行数组（list[dict]），
+        // 而不是 { data: [...] } 包装对象。这里做兼容：若响应本身就是数组则直接用，
+        // 否则退化读取 res.data（兼容历史包装格式）。
+        const fetched: CachedMessage[] = Array.isArray(res)
+            ? (res as unknown as CachedMessage[])
+            : (res.data || []);
+
         // 写入缓存（bulkPut 以 id 为主键去重）
         await cacheMessages(fetched);
 
