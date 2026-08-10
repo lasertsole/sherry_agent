@@ -1,5 +1,5 @@
 <template>
-  <div class="flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto p-3">
+  <div class="flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4">
     <div
       v-for="(message, index) in filteredMessages"
       :key="message.id"

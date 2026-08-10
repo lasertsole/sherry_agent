@@ -7,11 +7,14 @@ import { test, Page, ConsoleMessage, Request } from '@playwright/test';
  *  - bubbles: div.w-fit.p-3.text-sm.break-words (ChatBox message bubble)
  *
  * Goals:
- *  1. Confirm sequential sends each register (+2 bubbles per send).
+ *  1. Confirm sequential sends each register (the user bubble always appears;
+ *     the AI bubble only after it emits text — ChatBox hides empty-AI placeholders).
  *  2. Fine-grained polling captures any transient drop-to-zero (~1s after send).
  *  3. Log all history/ws network + pageerrors + console errors.
+ *
+ * NOTE (Aug-2026): live Nuxt dev server is on port 5177 (was 3000 pre-refactor).
  */
-const APP = 'http://localhost:3000';
+const APP = 'http://localhost:5177';
 const INPUT = 'div.inputBox[contenteditable="true"]';
 const SEND = 'button.send';
 const BUBBLE = 'div.w-fit.p-3.text-sm.break-words';
@@ -73,6 +76,7 @@ test('sequential sends with correct selectors; capture clear events', async ({ p
     let n = before;
     let lastDelta = 0;
     let minObserved = before;
+    let aiBubbleSeen = false;
     while (Date.now() < deadline) {
       await page.waitForTimeout(60);
       n = await bubbleCount(page);
@@ -81,9 +85,21 @@ test('sequential sends with correct selectors; capture clear events', async ({ p
         mark(`!! DIP below prior-min: ${minObserved} @ t+${Date.now() - t0}`);
       }
       lastDelta = n - before;
-      if (lastDelta >= 2) break;
+      // The user bubble appears immediately (+1). The AI bubble appears once the
+      // model emits text (empty-AI placeholders are HIDDEN by ChatBox), so wait
+      // for that second bubble OR the generation to settle (send button comes back).
+      if (lastDelta >= 2) {
+        aiBubbleSeen = true;
+        break;
+      }
+      const settled = await page
+        .locator(`${SEND}:has-text("发送")`)
+        .waitFor({ state: 'visible', timeout: 500 })
+        .then(() => true)
+        .catch(() => false);
+      if (settled && lastDelta >= 1) break;
     }
-    mark(`after "${text}": +${lastDelta} -> total ${n} (minSeen=${minObserved})`);
+    mark(`after "${text}": +${lastDelta} -> total ${n} (minSeen=${minObserved}, aiBubble=${aiBubbleSeen})`);
     await logBubbles(page, `post-send "${text}"`);
     return n;
   }
