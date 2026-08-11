@@ -169,14 +169,16 @@ const backendBaseUrl = ((import.meta.env.VITE_API_BACK_URL as string) ?? '').rep
  *  - 用户消息：原始 base64（不含 data: 前缀）→ 本地拼成 data:image/*;base64,<data>
  *  - AI 消息：持久化的绝对文件路径 → 走后端 /media，后端按 session_id + 文件名返回图片；
  *    需取原始 basename（如 <ts>.png），丢弃文件路径中的目录部分。
- * 判定依据：路径条目必然含 / 或 \ 分隔符，或带常见媒体扩展名；
- * base64 纯由 [A-Za-z0-9+/=] 组成且不含分隔符。
+ * 判定依据：文件路径必然带反斜杠 \，或以常见媒体扩展名结尾；
+ * 纯 base64 的字母表恰好含 / 与 +（且通常以 = 补位），
+ * 因此绝不能把含 / 当作“文件路径”的判据——那会把用户原始
+ * base64 图片误判成 /media 请求（历史 4 次“media not found”根因）。
  */
 const resolveImageSrc = (message: MessageItem, entry: string): string => {
   const s = (entry ?? '').trim();
   if (!s) return '';
   const isFilePath =
-    /[\\/]/.test(s) || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(s);
+    s.includes('\\') || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(s);
   if (isFilePath) {
     // AI 消息：走 /media 拉取；文件可能带任意目录前缀，取其 basename
     const filename = s.split(/[\\/]/).pop() || '';
