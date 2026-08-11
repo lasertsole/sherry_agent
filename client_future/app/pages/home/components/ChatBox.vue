@@ -1,5 +1,7 @@
 <template>
-  <div class="flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4">
+  <div
+    ref="scrollContainerRef"
+    class="flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4">
     <div
       v-for="message in filteredMessages"
       :key="message.id"
@@ -156,6 +158,32 @@ const consecutiveIdSet = computed(() => {
   return result;
 });
 const isConsecutive = (id: number) => consecutiveIdSet.value.has(id);
+
+/** 聊天列表滚动容器（最外层 overflow-auto div），用于自动滚到底部 */
+const scrollContainerRef = useTemplateRef<HTMLDivElement>('scrollContainerRef');
+
+/**
+ * 将聊天列表滚动到底部（新消息可见）。
+ *
+ * 必须在 DOM 更新后（nextTick）再取 scrollHeight，否则测量到的是旧高度，
+ * 会导致滚不到最新消息底部。父组件 home/index.vue 在每次流式块到达时都会
+ * 重新赋值 messages 数组（新引用），因此 watch 引用变化即可覆盖「首屏加载」、
+ * 「发送消息」与「AI 每回复一块」三种场景。
+ */
+const scrollToBottom = () => {
+  nextTick(() => {
+    const el = scrollContainerRef.value;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
+};
+
+// 消息列表任一变化（含流式逐块追加）后均保持在底部
+watch(() => props.messages, () => scrollToBottom());
+
+// 组件挂载（首屏打开）后滚到底部，让最新消息可见
+onMounted(() => scrollToBottom());
 
 // 初始化 markdown-it
 const md = new MarkdownIt({ html: true, linkify: true });
