@@ -62,6 +62,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "finish_reason": None,
                 "reasoning": None,
                 "reasoning_content": None,
+                "images": None,
             })
         elif m.type == "human":
             additional_kwargs:dict[str, str] = getattr(m, "additional_kwargs", {})
@@ -70,6 +71,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             # so compressed history doesn't pollute the raw store.
             if additional_kwargs.get("lc_source", None) == "summarization":
                 continue
+
+            # Persist any media file paths declared by the multimodal processor.
+            images: list[str] = additional_kwargs.get("images", []) or []
 
             insert_rows.append({
                 "session_id": session_id,
@@ -84,6 +88,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "finish_reason": None,
                 "reasoning": None,
                 "reasoning_content": None,
+                "images": json.dumps(images, ensure_ascii=False) if images else None,
             })
         elif m.type == "tool":
             # Tool message: carry tool metadata (call id, name, execution status).
@@ -100,6 +105,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "reasoning": None,
                 "reasoning_content": None,
                 "timestamp": base_timestamp,
+                "images": None,
             })
 
     # Bulk-insert all accumulated rows in a single transaction.
@@ -116,7 +122,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             timestamp,
             finish_reason,
             reasoning,
-            reasoning_content
+            reasoning_content,
+            images
         ) VALUES (
             :session_id,
             :turn_num,
@@ -129,7 +136,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             :timestamp,
             :finish_reason,
             :reasoning,
-            :reasoning_content
+            :reasoning_content,
+            :images
         )
     """, insert_rows)
 
@@ -176,6 +184,8 @@ def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scop
                 row["content"] = json.loads(row["content"])
             if isinstance(row["tool_calls"], str):
                 row["tool_calls"] = json.loads(row["tool_calls"])
+            if isinstance(row["images"], str):
+                row["images"] = json.loads(row["images"])
             result.append(row)
 
         return result
@@ -235,6 +245,8 @@ def get_history_by_turn_page(
                 row["content"] = json.loads(row["content"])
             if isinstance(row["tool_calls"], str):
                 row["tool_calls"] = json.loads(row["tool_calls"])
+            if isinstance(row["images"], str):
+                row["images"] = json.loads(row["images"])
             result.append(row)
 
         return result

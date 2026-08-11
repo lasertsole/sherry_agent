@@ -11,7 +11,7 @@ def _migrate(db: sqlite3.Connection) -> None:
     cur = db.execute("SELECT MAX(v) as v FROM _migrations").fetchone()[0]
     if cur is None:
         cur = 0
-    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb]
+    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb, add_images_column]
     for i in range(cur, len(steps)):
         steps[i](db)
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
@@ -54,11 +54,25 @@ def build_messages_tb(db: sqlite3.Connection) -> None:
         timestamp TEXT NOT NULL,
         finish_reason TEXT,
         reasoning TEXT,
-        reasoning_content TEXT
+        reasoning_content TEXT,
+        images TEXT
     );
     
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num);""")
+
+def add_images_column(db: sqlite3.Connection) -> None:
+    """Add an `images` column to the messages table (JSON-encoded list of paths).
+
+    This is a one-time additive migration for databases created before the
+    column existed. It uses try/except to ignore the error raised when the
+    column is already present.
+    """
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN images TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:
     db.executescript("""

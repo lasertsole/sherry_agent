@@ -1,7 +1,7 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import tailwindcss from '@tailwindcss/vite';
-import Aura from '@primeuix/themes/aura';
-import { definePreset } from '@primeuix/themes';
+import Aura from '@primevue/themes/aura';
+import { definePreset } from '@primevue/themes';
 
 // 自定义黑色主题预设
 const NoirPreset = definePreset(Aura, {
