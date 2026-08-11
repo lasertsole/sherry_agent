@@ -111,6 +111,7 @@ class MultimodalProcessor(AgentMiddleware):
 
         text_dict: dict[str, Any] | None = None
         image_path_list: list[str] = []
+        media_path_list: list[str] = []
         audio_path_list: list[str] = []
         video_path_list: list[str] = []
 
@@ -156,6 +157,18 @@ class MultimodalProcessor(AgentMiddleware):
                         image.save(temp_path)
                         logger.debug("Image cached successfully!")
                         image_path_list.append(temp_path.as_posix())
+
+                        # Persist a copy into the session's media/ folder so the image
+                        # survives even after mutil_temp is garbage-collected. The
+                        # persistent path is stored in additional_kwargs["images"] and
+                        # later saved to the DB so history can render it after refresh.
+                        media_dir = SRC_DIR / session_id / "media"
+                        media_dir.mkdir(parents=True, exist_ok=True)
+                        media_path = media_dir / f"{str(int(time.time() * 1000))}{ext}"
+                        media_path = media_path.resolve()
+                        image.save(media_path)
+                        logger.debug("Image persisted to media folder successfully!")
+                        media_path_list.append(media_path.as_posix())
 
                 elif item.get("type") == "audio_url":
                     url: str = item.get("audio_url", {}).get("url", "")
@@ -211,6 +224,13 @@ class MultimodalProcessor(AgentMiddleware):
             text_dict["text"] += f"[System: The user uploaded {len(video_path_list)} video(s). Location: {','.join(video_path_list)}. If you need to view the video(s), use the video_text_to_text skill.]"
 
         last_mes.content = [text_dict]
+
+        # Persist the list of media file paths into additional_kwargs so the
+        # context engine can save them to the messages table for history rendering.
+        if len(media_path_list) > 0:
+            additional_kwargs: dict[str, Any] = dict(getattr(last_mes, "additional_kwargs", {}) or {})
+            additional_kwargs["images"] = media_path_list
+            last_mes.additional_kwargs = additional_kwargs
 
         # Strip image_url blocks from history messages (DeepSeek and similar models don't support image_url format)
         for mes in state_mes_list[:-1]:

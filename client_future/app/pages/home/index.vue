@@ -1,5 +1,13 @@
 <template>
   <div class="w-full h-full flex text-theme-main">
+    <!-- 隐藏的图片文件选择框（由工具栏「图片」按钮触发） -->
+    <input
+      ref="imageFileInputRef"
+      type="file"
+      accept="image/*"
+      multiple
+      class="hidden"
+      @change="onImageSelected" />
     <!-- 移动端菜单遮罩层 -->
     <div
       v-if="isSidebarOpen"
@@ -124,6 +132,26 @@
         </div>
         <!-- 输入框 -->
         <ChatInputBox :sending="isSending" @send="handleSend" @stop="handleStop" />
+        <!-- 图片预览区 -->
+        <template v-if="selectedImages.length > 0">
+          <div class="flex items-center gap-2 px-2 py-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+            <div
+              v-for="(img, idx) in selectedImages"
+              :key="idx"
+              class="relative shrink-0 group">
+              <img
+                :src="`data:image/*;base64,${img.base64}`"
+                :alt="img.name"
+                class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark" />
+              <button
+                type="button"
+                class="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-xs cursor-pointer"
+                @click="removeImage(idx)">
+                ✕
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -142,6 +170,7 @@ import type { CachedMessage } from '@/composables/db';
 import { tools, headerTools } from './config';
 import { Menu } from 'primevue';
 import { readCharacter } from '@/composables/bridge';
+import type { ChatRequest } from '@/composables/bridge';
 
 /** 侧边栏展开状态（移动端） */
 const isSidebarOpen = ref(false);
@@ -241,6 +270,8 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] =>
     session_id: row.session_id,
     role: row.role as CHAT_ROLE,
     content: normalizeContent(row.content),
+    // 透传图片数组：用户消息为 base64，AI 消息为持久化文件路径，交由 ChatBox 区分渲染
+    images: row.images ?? undefined,
     id: row.id,
     turn_num: row.turn_num,
     timestamp: row.timestamp ?? ''
@@ -298,8 +329,12 @@ const loadSessionHistory = async (sessionId: string) => {
     // 仅当本地没有同 id 的消息时才补入，避免覆盖流式过程中已更新的内容
     if (!mergedById.has(h.id)) mergedById.set(h.id, h);
   }
+  // 按 turn_num 升序排序；同轮次内按 id 升序（与后端 messages 表
+  // "ORDER BY turn_num ASC, id ASC" 一致）。此前用 id 降序会把同一轮次内
+  // （用户消息 + AI 回复共享同一 turn_num）的插入顺序颠倒，导致刷新后
+  // AI 回复跑到用户消息上面、最后一条 AI 回复不在最底部。
   chatMessages.value = [...mergedById.values()].sort(
-    (a, b) => a.turn_num - b.turn_num || b.id - a.id,
+    (a, b) => a.turn_num - b.turn_num || a.id - b.id,
   );
 
   // 若当前会话对象未初始化，补一个最小结构（消息已由 chatMessages 单独承载）
@@ -338,35 +373,51 @@ const handleSend = async (text: string) => {
     currentSessionId.value = sessionId;
   }
 
-  const turnNum = chatMessages.value.length + 1;
+  // 计算下一轮次号：取当前消息中最大 turn_num + 1，而非按数组长度。
+  // 后端 add_messages 以「一次对话」为一轮，用户消息 + AI 回复（含工具调用行）
+  // 共享同一 turn_num（每轮递增 1）。若按 chatMessages.length 推算，
+  // 一轮含多条消息时（1 用户 + 1 AI + 可能的工具行）会与实际持久化的
+  // turn_num 错位，刷新后历史顺序与该轮次号不一致。
+  const turnNum =
+    chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
+
+  // 携带本次待发送的图片（发送时取走并清空待发送列表）
+  const imageBase64List = selectedImages.value.map((img) => img.base64);
 
   // 追加用户消息（本地即时显示）
   const userMsg: MessageItem = {
     session_id: sessionId,
     role: CHAT_ROLE.USER,
     content: text,
+    images: imageBase64List,
     id: --tempIdCounter,
     turn_num: turnNum,
     timestamp: new Date().toISOString()
   };
 
-  // 追加 AI 占位消息（内容随流式块逐步填充）
+  // 追加 AI 占位消息（内容随流式块逐步填充）。
+  // 与用户消息共享同一 turn_num（后端会把整批写进同一个 turn_num）。
   const aiMsg: MessageItem = {
     session_id: sessionId,
     role: CHAT_ROLE.AI,
     content: '',
     id: --tempIdCounter,
-    turn_num: turnNum + 1,
+    turn_num: turnNum,
     timestamp: new Date().toISOString()
   };
 
   chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
 
+  // 发送后清空待发送图片与输入区
+  selectedImages.value = [];
+
   isSending.value = true;
   try {
+    const req: ChatRequest = { text };
+    if (imageBase64List.length > 0) req.image_base64_list = imageBase64List;
     activeAgentController = postAgentStream(
       sessionId,
-      { text },
+      req,
       (chunk: string) => {
         aiMsg.content += chunk;
         // 直接替换整个数组以触发响应式更新（aiMsg 本身是引用，content 已在原地累加）
@@ -389,6 +440,59 @@ const handleSend = async (text: string) => {
     aiMsg.content = `（发送失败：${String(e)}）`;
     isSending.value = false;
   }
+};
+
+/**
+ * 已选图片（base64 形式，随消息发送）。
+ * 仅在「本地预览 + 发送」期间存在，发送/取消后清空。
+ */
+const selectedImages = ref<{ base64: string; name: string }[]>([]);
+
+/** 隐藏的图片文件选择框 */
+const imageFileInput = useTemplateRef<HTMLInputElement>('imageFileInputRef');
+
+/** 读取图片文件为 DataURL（含 data:image/...;base64 前缀，需剥离前缀再发送） */
+const readImageFile = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+/** 移除一张已选图片 */
+const removeImage = (index: number) => {
+  selectedImages.value.splice(index, 1);
+  selectedImages.value = [...selectedImages.value];
+};
+
+/** 触发系统图片文件选择 */
+const triggerImagePicker = () => {
+  imageFileInput.value?.click();
+};
+
+/** 图片选择回调：读取为 base64 并加入待发送列表 */
+const onImageSelected = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  // 先拷贝为普通数组副本再重置 input.value。
+  // input.files 是「活」的 FileList —— 一旦把 value 置空，浏览器会立即清空该 FileList，
+  // 若此后才读取 files 会得到空数组，导致 selectedImages 永不入库、预览区不显示。
+  const files = Array.from(input.files ?? []);
+  input.value = ''; // 允许重复选择同一文件
+  if (files.length === 0) return;
+
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    try {
+      const dataUrl = await readImageFile(file);
+      // data:image/png;base64,xxxxx -> 仅保留 base64 部分
+      const base64 = dataUrl.split(',')[1] ?? '';
+      selectedImages.value.push({ base64, name: file.name });
+    } catch (e) {
+      console.warn('[onImageSelected] 读取图片失败：', file.name, e);
+    }
+  }
+  selectedImages.value = [...selectedImages.value];
 };
 
 /** 工具触发 */
@@ -415,6 +519,7 @@ const handleOperate = (type: string, event: string) => {
       case 'uploadFile':
         return;
       case 'uploadImage':
+        triggerImagePicker();
         return;
       default:
         return;

@@ -323,6 +323,81 @@ impl PythonBridge {
             }
         }
     }
+
+    /// Stream an agent chat turn over the agent WebSocket.
+    ///
+    /// Connects to `{path}` (typically `/sessions/agent/ws`), sends `body`
+    /// (the [`ChatRequest`] payload: `session_id` + `multi_modal_message`)
+    /// once, then drives the receive loop:
+    ///
+    /// | server event | action |
+    /// |--------------|--------|
+    /// | `chunk` | forwards `content` to `on_chunk` |
+    /// | `error` | returns `Err(AppError::Backend)` with the `content` message |
+    /// | `done` / `stopped` | returns `Ok(())` |
+    ///
+    /// This is the transport-level replacement of the legacy HTTP
+    /// `POST /sessions/agent/sse` endpoint, which no longer exists in the
+    /// Python backend. Keep this method generic over a path so future agent
+    /// channels can reuse it.
+    ///
+    /// [`ChatRequest`]: crate::commands::agent::ChatRequest
+    pub async fn stream_agent_message<F>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        mut on_chunk: F,
+    ) -> AppResult<()>
+    where
+        F: FnMut(&str),
+    {
+        use futures_util::SinkExt;
+
+        let url = format!("{}{}", self.ws_url(), path);
+        let (mut socket, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .map_err(|e| AppError::Backend(format!("agent WS connect failed: {e}")))?;
+
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Text(body.to_string()))
+            .await
+            .map_err(|e| AppError::Backend(format!("agent WS send failed: {e}")))?;
+
+        loop {
+            match socket.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                    let obj: serde_json::Value = match serde_json::from_str(&text) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!("agent WS: unparseable frame: {e}");
+                            continue;
+                        }
+                    };
+
+                    match obj.get("event").and_then(|v| v.as_str()).unwrap_or("") {
+                        "chunk" => {
+                            let content = obj.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            on_chunk(content);
+                        }
+                        "error" => {
+                            let msg = obj
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("agent error");
+                            return Err(AppError::Backend(msg.to_string()));
+                        }
+                        "done" | "stopped" => return Ok(()),
+                        _ => {}
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(e)) => {
+                    return Err(AppError::Backend(format!("agent WS read error: {e}")));
+                }
+                None => return Err(AppError::Backend("agent WS closed unexpectedly".into())),
+            }
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────

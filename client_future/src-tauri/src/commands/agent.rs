@@ -1,7 +1,7 @@
 //! Agent IPC commands — chat, streaming, and agent lifecycle.
 //!
 //! Maps to Python backend:
-//! - `POST /sessions/agent/sse` → [`agent_chat`]
+//! - WebSocket `/sessions/agent/ws` → [`agent_chat`]
 //! - WebSocket `/sessions/agent/ws` (`{"type":"stop"}`) → [`agent_stop`]
 //!
 //! # Streaming Events
@@ -12,7 +12,6 @@
 use super::events::*;
 use crate::services::python_bridge::PythonBridge;
 use crate::utils::error::FrontendError;
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use ts_rs::TS;
@@ -166,67 +165,47 @@ pub async fn agent_chat(
         }
     });
 
-    // 3. Send SSE request to Python backend
-    let resp = match bridge.post_sse("/sessions/agent/sse", &body).await {
-        Ok(r) => r,
-        Err(e) => {
-            let fe: FrontendError = e.into();
-            let _ = app.emit(
-                AGENT_STREAM_ERROR,
-                AgentStreamError {
-                    session_id: session_id.clone(),
-                    message_id: message_id.clone(),
-                    code: fe.code.clone(),
-                    message: fe.message.clone(),
-                },
-            );
-            return Err(fe);
-        }
-    };
-
-    // 4. Consume SSE stream, emit chunks as Tauri events
-    let stream = match PythonBridge::sse_lines(resp).await {
-        Ok(s) => s,
-        Err(e) => {
-            let fe: FrontendError = e.into();
-            let _ = app.emit(
-                AGENT_STREAM_ERROR,
-                AgentStreamError {
-                    session_id: session_id.clone(),
-                    message_id: message_id.clone(),
-                    code: fe.code.clone(),
-                    message: fe.message.clone(),
-                },
-            );
-            return Err(fe);
-        }
-    };
-
+    // 3. Stream the turn over the agent WebSocket, emitting chunks as Tauri
+    //    events in real time. This replaces the legacy SSE path
+    //    (`POST /sessions/agent/sse`), which no longer exists in the backend.
     let mut chunks: Vec<ChatChunk> = Vec::new();
-    let mut stream = std::pin::pin!(stream);
+    let stream_result = bridge
+        .stream_agent_message("/sessions/agent/ws", &body, |content| {
+            let _ = app.emit(
+                AGENT_STREAM_CHUNK,
+                AgentStreamChunk {
+                    session_id: session_id.clone(),
+                    message_id: message_id.clone(),
+                    content: content.to_string(),
+                },
+            );
+            chunks.push(ChatChunk {
+                content: content.to_string(),
+                done: false,
+            });
+        })
+        .await;
 
-    while let Some(line) = stream.next().await {
-        let chunk = ChatChunk {
-            content: line,
-            done: false,
-        };
+    if let Err(e) = stream_result {
+        let fe: FrontendError = e.into();
         let _ = app.emit(
-            AGENT_STREAM_CHUNK,
-            AgentStreamChunk {
+            AGENT_STREAM_ERROR,
+            AgentStreamError {
                 session_id: session_id.clone(),
                 message_id: message_id.clone(),
-                content: chunk.content.clone(),
+                code: fe.code.clone(),
+                message: fe.message.clone(),
             },
         );
-        chunks.push(chunk);
+        return Err(fe);
     }
 
-    // 5. Mark the last chunk as done
+    // 4. Mark the last chunk as done
     if let Some(last) = chunks.last_mut() {
         last.done = true;
     }
 
-    // 6. Emit stream end event
+    // 5. Emit stream end event
     let _ = app.emit(
         AGENT_STREAM_END,
         AgentStreamEnd {
