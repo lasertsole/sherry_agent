@@ -2,3 +2,4 @@
 import server.trigger.http.messages
 import server.trigger.http.media
 import server.trigger.http.workplace
+import server.trigger.http.image

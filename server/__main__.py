@@ -2,7 +2,7 @@ import os
 import sys
 import nest_asyncio
 from logs import init_logger
-from config import STATIC_DIR
+from config import STATIC_DIR, SRC_DIR
 from dotenv import load_dotenv
 from config import API_HOST, API_PORT, ENV_PATH
 
@@ -42,6 +42,15 @@ if __name__ == "__main__":
     app.serve_directory(
         route="/static",  # URL prefix accessed by the client.
         directory_path=os.path.join(os.getcwd(), STATIC_DIR.absolute().as_posix())
+    )
+
+    # Ensure the /images upload directory exists before serving it statically.
+    images_dir = SRC_DIR / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    app.serve_directory(
+        route="/images",
+        directory_path=os.path.join(os.getcwd(), str(images_dir))
     )
 
     app.start(host=API_HOST, port=API_PORT)
