@@ -2,45 +2,45 @@ import type { Tool } from './type';
 
 export const tools: Tool[] = [
   {
-    toolName: '新建对话',
+    toolName: 'toolbar.newChat',
     icon: 'pi pi-comment',
-    title: '新建对话',
+    title: 'toolbar.newChat',
     event: 'createSession'
   },
   {
-    toolName: '知识库',
+    toolName: 'toolbar.knowledgeBase',
     icon: 'pi pi-database',
-    title: '知识库',
+    title: 'toolbar.knowledgeBase',
     event: 'knowledgeBase'
   },
   {
-    toolName: '文件',
+    toolName: 'toolbar.file',
     icon: 'pi pi-upload',
-    title: '上传文件',
+    title: 'toolbar.uploadFile',
     event: 'uploadFile'
   },
   {
-    toolName: '图片',
+    toolName: 'toolbar.image',
     icon: 'pi pi-image',
-    title: '上传图片',
+    title: 'toolbar.uploadImage',
     event: 'uploadImage'
   }
 ];
 
 export const headerTools: Tool[] = [
   {
-    toolName: '配置知识库',
+    toolName: 'toolbar.configKnowledgeBase',
     icon: 'pi pi-file-edit',
-    title: '配置知识库',
+    title: 'toolbar.configKnowledgeBase',
     event: 'knowledgeBase',
-    label: '配置知识库'
+    label: 'toolbar.configKnowledgeBase'
   },
   {
-    toolName: '个人中心',
+    toolName: 'toolbar.userCenter',
     icon: 'pi pi-user',
-    title: '个人中心',
+    title: 'toolbar.userCenter',
     event: 'userCenter',
-    label: '个人中心'
+    label: 'toolbar.userCenter'
   }
 ];
 

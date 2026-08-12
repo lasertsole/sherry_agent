@@ -8,7 +8,7 @@
             contenteditable="true"
             :contenteditable="!sending"
             :aria-disabled="sending"
-            :placeholder="sending ? 'AI 正在思考中...' : defaultHint"
+            :placeholder="sending ? t('chatInput.thinking') : t('chatInput.placeholder')"
             ref="inputDom"
             @input.stop="inputFunc($event)"
             @keydown.enter.stop.prevent="handleKeyEnter($event)"
@@ -17,14 +17,14 @@
 
         <Button
             v-if="!sending"
-            label="发送"
+            :label="t('chatInput.send')"
             class="send"
             :disabled="!sendingAllowed"
             @click="handleSend"
         />
         <Button
             v-else
-            label="停止"
+            :label="t('chatInput.stop')"
             class="send"
             severity="danger"
             @click="emit('stop')"
@@ -35,8 +35,9 @@
 <script lang="ts" setup>
 import { computed, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
+import { useI18n } from 'vue-i18n';
 
-const defaultHint = '请输入内容...';
+const { t } = useI18n();
 
 /** 是否处于 AI 回复生成中（由父组件控制，防止重复发送） */
 const props = withDefaults(defineProps<Props>(), {

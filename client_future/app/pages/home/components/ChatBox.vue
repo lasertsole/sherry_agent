@@ -20,7 +20,7 @@
           v-if="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
           :class="['w-full h-full object-cover', { hidden: isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL }]"
           :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
-          :alt="message.role === CHAT_ROLE.USER ? userName : aiName" />
+          :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName" />
         <span
           v-else
           :class="['pi pi-user', { hidden: isConsecutive(message.id) }]"></span>
@@ -36,7 +36,7 @@
             { 'text-left': message.role === CHAT_ROLE.AI }
           ]">
           <span class="text-sm font-semibold text-[#111827] dark:text-[#E5E7EB]">{{
-            message.role === CHAT_ROLE.AI ? aiName : userName
+            message.role === CHAT_ROLE.AI ? resolvedAiName : resolvedUserName
           }}</span>
           <span class="text-xs font-normal text-[#6B7280] dark:text-[#9CA3AF]">{{
             formatCompactTimeString(message.timestamp)
@@ -82,7 +82,7 @@
                 <div
                   v-else
                   class="w-24 h-24 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">
-                  图片加载失败
+                  {{ t('chatBox.imageLoadFailed') }}
                 </div>
               </template>
             </div>
@@ -101,8 +101,11 @@
 import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
 import { formatCompactTimeString } from '@/common/utils';
+import { useI18n } from 'vue-i18n';
 import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
+
+const { t } = useI18n();
 
 interface Props {
   messages: MessageItem[] | undefined;
@@ -119,9 +122,14 @@ const props = withDefaults(defineProps<Props>(), {
   messages: () => [] as MessageItem[],
   userAvatar: '',
   aiAvatar: '',
-  userName: '我',
-  aiName: '橘雪莉'
+  userName: '',
+  aiName: ''
 });
+
+/** 用户显示名：props 空时回退到 i18n 默认值 */
+const resolvedUserName = computed(() => props.userName || t('chatBox.defaultUserName'));
+/** AI 显示名：props 空时回退到 i18n 默认值 */
+const resolvedAiName = computed(() => props.aiName || t('chatBox.defaultAiName'));
 
 // 图片预览
 const { openPreview } = useImagePreview();

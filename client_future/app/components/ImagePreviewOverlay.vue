@@ -14,14 +14,18 @@
           @wheel.prevent="onWheel"
           @mousedown="onMouseDown"
           @load="onImageLoad" />
-        <div class="image-preview-hint">滚动缩放 · 拖拽移动 · ESC 或点击空白关闭</div>
+        <div class="image-preview-hint">{{ t('imagePreview.hint') }}</div>
       </div>
     </Transition>
   </Teleport>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
+
 const { isPreviewVisible, previewSrc, closePreview } = useImagePreview();
+
+const { t } = useI18n();
 
 const scale = ref(1);
 const translateX = ref(0);

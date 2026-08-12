@@ -401,7 +401,7 @@ impl PythonBridge {
         mut on_chunk: F,
     ) -> AppResult<()>
     where
-        F: FnMut(&str),
+        F: FnMut(&str, &str),
     {
         use futures_util::SinkExt;
 
@@ -429,7 +429,8 @@ impl PythonBridge {
                     match obj.get("event").and_then(|v| v.as_str()).unwrap_or("") {
                         "chunk" => {
                             let content = obj.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                            on_chunk(content);
+                            let chunk_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                            on_chunk(content, chunk_type);
                         }
                         "error" => {
                             let msg = obj
