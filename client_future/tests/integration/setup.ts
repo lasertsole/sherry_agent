@@ -59,3 +59,13 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   preference: 'light',
   value: 'light',
 }));
+
+// Nuxt auto-import used by `ChatBox.vue` / `home/index.vue` for image preview.
+// Mock the composable (module-scope `ref` in useImagePreview.ts would otherwise
+// run before the vueAutoImports loop above, so we don't import the real one).
+(globalThis as any).useImagePreview = vi.fn(() => ({
+  previewSrc: Vue.ref(''),
+  isPreviewVisible: Vue.ref(false),
+  openPreview: vi.fn(),
+  closePreview: vi.fn(),
+}));

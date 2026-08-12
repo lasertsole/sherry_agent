@@ -87,6 +87,33 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
     expect(imgs[0].attributes('src')).toBe(`data:image/*;base64,${b1}`);
     expect(imgs[1].attributes('src')).toBe(`data:image/*;base64,${b2}`);
   });
+
+  it('passes an explicit absolute-url image through unchanged (no /media misroute)', () => {
+    const url = 'http://127.0.0.1:8080/images/abc123.png';
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [url], content: '' })],
+      },
+    });
+    const img = wrapper.find('img.w-24');
+    expect(img.exists()).toBe(true);
+    // 绝对 URL 必须原样透传，而不是被 isFilePath(.png) 误判成 /media 请求
+    expect(img.attributes('src')).toBe(url);
+  });
+
+  it('falls back to served URLs parsed from the content Location marker when images is empty', () => {
+    const url = 'http://127.0.0.1:8080/images/abc123.png';
+    const con =
+      `[System: The user uploaded 1 image(s). Location: ${url}. If you need to view the image(s), use the image_to_text skill.]`;
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [], content: con })],
+      },
+    });
+    const img = wrapper.find('img.w-24');
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toBe(url);
+  });
 });
 
 const primevueStub = {
