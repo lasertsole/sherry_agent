@@ -1,22 +1,24 @@
 <template>
   <div
     ref="scrollContainerRef"
-    class="flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4">
+    class="flex flex-col gap-6 flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4">
     <div
-      v-for="message in filteredMessages"
-      :key="message.id"
-      :class="[
-        'flex-1 flex justify-start gap-3',
-        { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
-        { 'text-left': message.role === CHAT_ROLE.AI },
-        { hidden: message.role === CHAT_ROLE.TOOL },
-        isConsecutive(message.id) ? 'mt-1' : 'mt-6'
-      ]">
-      <div class="flex justify-center items-center w-10 h-10 rounded-full overflow-hidden shrink-0 bg-gray-100 dark:bg-gray-800">
-        <!-- 头像区域，连续消息不展示头像 -->
+      v-for="group in turnGroups"
+      :key="group[0].id"
+      :class="['flex flex-col', { 'gap-3': turnSpacingClass(group) }]">
+      <div
+        v-for="message in group"
+        :key="message.id"
+        :class="[
+          'flex justify-start gap-3',
+          { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
+          { 'text-left': message.role === CHAT_ROLE.AI }
+        ]">
+        <div class="flex justify-center items-center w-10 h-10 rounded-full overflow-hidden shrink-0 bg-gray-100 dark:bg-gray-800">
+        <!-- 头像区域，连续消息与工具调用均不展示头像（隐藏 img，与连续消息渲染一致） -->
         <img
           v-if="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
-          :class="['w-full h-full object-cover', { hidden: isConsecutive(message.id) }]"
+          :class="['w-full h-full object-cover', { hidden: isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL }]"
           :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
           :alt="message.role === CHAT_ROLE.USER ? userName : aiName" />
         <span
@@ -25,8 +27,9 @@
       </div>
       <!-- 消息主体 -->
       <div :class="['flex flex-col max-w-[60%]', message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start']">
-        <!-- 用户 时间 -->
+        <!-- 用户/AI 时间 -->
         <div
+          v-if="message.role !== CHAT_ROLE.TOOL"
           :class="[
             'flex items-center gap-2 mb-1',
             { 'text-right justify-end': message.role === CHAT_ROLE.USER },
@@ -39,8 +42,22 @@
             formatCompactTimeString(message.timestamp)
           }}</span>
         </div>
-        <!-- 内容 -->
+        <!-- 工具调用卡片 -->
         <div
+          v-if="message.role === CHAT_ROLE.TOOL"
+          class="flex items-center gap-2 px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300">
+          <span class="pi pi-hammer text-xs"></span>
+          <span class="font-medium">{{ message.toolName }}</span>
+          <span
+            v-if="message.toolStatus === 'running'"
+            class="pi pi-spin pi-spinner text-xs text-blue-500"></span>
+          <span
+            v-else
+            class="pi pi-check text-xs text-green-500"></span>
+        </div>
+        <!-- 对话内容气泡 -->
+        <div
+          v-else
           :class="[
             'w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
             message.role === CHAT_ROLE.USER
@@ -65,21 +82,14 @@
                 <div
                   v-else
                   class="w-24 h-24 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">
-                  🖼️ 图片加载失败
+                  图片加载失败
                 </div>
               </template>
             </div>
           </template>
-          <template v-if="message?.tool_calls?.length">
-            <div
-              v-for="tool in message.tool_calls"
-              :key="tool.id"
-              class="font-serif text-slate-500 font-bold">
-              🛠️正在调用工具{{ tool.name }}...
-            </div>
-          </template>
         </div>
       </div>
+    </div>
     </div>
   </div>
 </template>
@@ -121,13 +131,9 @@ const isToolCallMsg = (msg: MessageItem) =>
   (msg as unknown as { tool_calls?: unknown[] }).tool_calls?.length;
 const filteredMessages = computed(() => {
   return props.messages.filter((item: MessageItem) => {
-    // 隐藏 tool 消息
-    if (item.role === CHAT_ROLE.TOOL) {
-      return false;
-    }
     // 隐藏「AI 空占位」消息：发送后 AI 尚未产出任何内容（也无工具调用）时，
     // 不渲染这个只有名字+空白框的占位气泡，避免「橘雪莉」看起来贴在白框里。
-    if (item.role === CHAT_ROLE.AI && !item.content.trim() && !isToolCallMsg(item)) {
+    if (item.role === CHAT_ROLE.AI && !item.content.trim()) {
       return false;
     }
     return true;
@@ -162,6 +168,43 @@ const consecutiveIdSet = computed(() => {
   return result;
 });
 const isConsecutive = (id: number) => consecutiveIdSet.value.has(id);
+
+/**
+ * 将渲染消息按「回合」分组，实现分段间距：
+ *  - 用户消息（USER）自成一组：前后都是回合边界，由外层 gap-6(24px) 提供疏离；
+ *  - 首条消息后的连续 AI/TOOL 行归入同一组：组内用 gap-3(12px) 收紧
+ *    （气泡↔工具卡片↔气泡紧凑贴合，含工具调用区间）。
+ *
+ * 这样相邻两行的间距即满足需求：只有「AI/TOOL → AI/TOOL」是 12px，
+ * 任何涉 USER 的边界（user→AI、AI→user、user→user）都是外层 24px 的角色切换间距。
+ *
+ * 分组依据**渲染顺序**（filteredMessages）：空 AI 占位消息已被过滤，因此
+ * `user → AI占位(过滤) → user` 会在渲染顺序上直接相邻，本行 user 正确开启新回合，
+ * 避免下一条 AI 被误并入前一回合。
+ */
+const turnGroups = computed<MessageItem[][]>(() => {
+  const groups: MessageItem[][] = [];
+  for (const item of filteredMessages.value) {
+    const last = groups.length ? groups[groups.length - 1] : null;
+    const prevRole = last ? last[last.length - 1].role : null;
+    // 新回合：首条、本行是 user（永远自成一组）、或上一行是 user（AI 回复与用户气泡分隔）
+    if (item.role === CHAT_ROLE.USER || groups.length === 0 || prevRole === CHAT_ROLE.USER) {
+      groups.push([item]);
+    } else {
+      // AI/TOOL 连续行 → 并入最后一个非用户分组
+      groups[groups.length - 1].push(item);
+    }
+  }
+  return groups;
+});
+
+/**
+ * 判断某回合内是否应使用 12px 的内部间距（flex gap-3）。
+ * 只有「多行且首行非 user」的组（纯 AI/TOOL 连续行）使用 gap-3；
+ * 单行组或含 user 的组不需要，其上下间距由外层 gap-6(24px) 提供。
+ */
+const turnSpacingClass = (group: MessageItem[]): boolean =>
+  group.length > 1 && group[0].role !== CHAT_ROLE.USER;
 
 /** 聊天列表滚动容器（最外层 overflow-auto div），用于自动滚到底部 */
 const scrollContainerRef = useTemplateRef<HTMLDivElement>('scrollContainerRef');

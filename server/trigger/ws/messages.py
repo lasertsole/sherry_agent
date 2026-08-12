@@ -49,7 +49,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                 start_time = time.time()
                 try:
                     async for chunk in async_generate(session_id, multi_modal_message):
-                        await websocket.send_text(json.dumps({"event": "chunk", "session_id": session_id, "content": chunk}))
+                        await websocket.send_text(json.dumps({"event": "chunk", "session_id": session_id, "type": chunk["type"], "content": chunk["content"]}))
 
                     await websocket.send_text(json.dumps({"event": "done", "session_id": session_id, "content": ""}))
                     elapsed = time.time() - start_time

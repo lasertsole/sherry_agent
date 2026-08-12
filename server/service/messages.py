@@ -3,7 +3,6 @@ import base64
 import asyncio
 from loguru import logger
 from agent import built_agent
-from config import ASSISTANT_NAME
 from typing import AsyncGenerator, Any
 from runtime import state_register_mem
 from type.message import MultiModalMessage
@@ -108,8 +107,18 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 
 """End agent assembly logic"""
 
-"""Response generation logic — yields plain string chunks"""
-async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[str, None]:
+"""Response generation logic — yields typed dict chunks
+
+Each yielded item is a dict ``{"type": <str>, "content": <str>}`` where
+``type`` is one of:
+- ``"text"``       — conversational text fragment
+- ``"tool_start"`` — a tool invocation begins (content = tool name)
+- ``"tool_end"``   — a tool invocation completes (content = tool name)
+
+Callers that only need the plain text (e.g. channel consumers) can
+join ``chunk["content"]`` for every item.
+"""
+async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[dict[str, str], None]:
     start_time = time.time()
     logger.debug(
         f"Agent execution started: session_id={session_id}, is_stream={is_stream}, "
@@ -125,8 +134,6 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     generator = None
 
     try:
-        yield f"{ASSISTANT_NAME}:"
-
         if is_stream:
             # Stream directly from the context-assembled agent
             generator = await _get_generator(session_id, multi_modal_message)
@@ -168,14 +175,14 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                                     repeat_flag = False
 
                         if not repeat_flag:
-                            res: str = f"\n\n**Calling tool {state_register_mem.get_state(session_id, "current_tool_name", "")}...**"
-                            ai_text += res
-                            yield res
+                            tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                            ai_text += f"\n\n**Calling tool {tool_name}...**"
+                            yield {"type": "tool_start", "content": tool_name}
 
                     if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
-                        res: str = f"\n\n**Tool {state_register_mem.get_state(session_id, "current_tool_name", "")} completed.**\n\n"
-                        ai_text += res
-                        yield res
+                        tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                        ai_text += f"\n\n**Tool {tool_name} completed.**\n\n"
+                        yield {"type": "tool_end", "content": tool_name}
                         state_register_mem.set_state(session_id, "current_tool_id", "")
                     # End tool call output logic
 
@@ -183,7 +190,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                     if len(msg_chunk.content) > 0:
                         res: str = msg_chunk.content
                         ai_text += res
-                        yield res
+                        yield {"type": "text", "content": res}
                     # End conversation output logic
 
         else:
@@ -191,7 +198,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             result: dict[str, Any] = await generator
             res: str = result["messages"][-1].content
             ai_text += res
-            yield res
+            yield {"type": "text", "content": res}
 
         elapsed = time.time() - start_time
         logger.debug(
@@ -200,13 +207,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         )
     except asyncio.CancelledError:
         elapsed = time.time() - start_time
-        yield "Request cancelled"
+        yield {"type": "text", "content": "Request cancelled"}
         logger.debug(
             f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s"
         )
     except HeartbeatTimeoutError as e:
         elapsed = time.time() - start_time
-        yield f"\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated."
+        yield {"type": "text", "content": "\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated."}
         logger.warning(
             f"Agent heartbeat timeout: session_id={session_id}, duration={elapsed:.2f}s, "
             f"error={e}"

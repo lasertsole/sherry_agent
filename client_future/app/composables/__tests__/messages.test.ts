@@ -203,15 +203,15 @@ describe('postAgentStream', () => {
     expect(ws.sent).toEqual([
       JSON.stringify({
         session_id: 's1',
-        multi_modal_message: { text: 'hi', image_base64_list: [] },
+        multi_modal_message: { text: 'hi', image_base64_list: [], image_path_list: [] },
       }),
     ]);
 
-    ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'hel' }) });
-    ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'lo' }) });
+    ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' }) });
+    ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'lo', type: 'text' }) });
     expect(onData).toHaveBeenCalledTimes(2);
-    expect(onData).toHaveBeenNthCalledWith(1, 'hel');
-    expect(onData).toHaveBeenNthCalledWith(2, 'lo');
+    expect(onData).toHaveBeenNthCalledWith(1, 'hel', 'text');
+    expect(onData).toHaveBeenNthCalledWith(2, 'lo', 'text');
 
     ws.onmessage?.({ data: JSON.stringify({ event: 'done', session_id: 's1', content: '' }) });
     await promise;
@@ -230,7 +230,7 @@ describe('postAgentStream', () => {
     expect(ws.sent).toEqual([
       JSON.stringify({
         session_id: 's7',
-        multi_modal_message: { text: 'ping', image_base64_list: [] },
+        multi_modal_message: { text: 'ping', image_base64_list: [], image_path_list: [] },
       }),
     ]);
   });

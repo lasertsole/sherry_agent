@@ -38,10 +38,15 @@ export interface ChatRequest {
  */
 export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped';
 
+/** Chunk type — distinguishes conversational text from tool-call markers. */
+export type AgentChunkType = 'text' | 'tool_start' | 'tool_end';
+
 export interface AgentWsEvent {
   event: AgentWsEventType;
   session_id?: string | null;
   content?: string;
+  /** Chunk type (only present on "chunk" events). Defaults to "text" for backwards compat. */
+  type?: AgentChunkType;
 }
 
 /** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
@@ -52,6 +57,8 @@ interface AgentStreamChunk {
   session_id: string;
   content: string;
   is_final?: boolean;
+  /** Chunk type — "text" | "tool_start" | "tool_end". Defaults to "text". */
+  chunk_type?: AgentChunkType;
 }
 interface AgentStreamEnd {
   session_id: string;
@@ -91,6 +98,9 @@ async function getListen() {
 
 // ── Agent chat (streaming) ───────────────────────────────
 
+/** Typed chunk callback: receives the text fragment and its semantic type. */
+export type OnChunkCallback = (content: string, type: AgentChunkType) => void;
+
 /**
  * Send a chat message and receive streaming chunks.
  *
@@ -99,12 +109,12 @@ async function getListen() {
  * backend WebSocket (`/sessions/agent/ws`).
  *
  * @param request  The chat payload (session_id, text, images).
- * @param onChunk  Callback invoked for each text fragment.
+ * @param onChunk  Callback invoked for each text fragment with its type.
  * @returns        Resolves when the stream completes; rejects on error.
  */
 export async function sendChatMessage(
   request: ChatRequest,
-  onChunk: (text: string) => void,
+  onChunk: OnChunkCallback,
 ): Promise<void> {
   return streamChatMessage(request, onChunk).promise;
 }
@@ -112,7 +122,7 @@ export async function sendChatMessage(
 /** Tauri mode: invoke IPC + listen for Tauri Events. */
 async function sendChatMessageTauri(
   request: ChatRequest,
-  onChunk: (text: string) => void,
+  onChunk: OnChunkCallback,
 ): Promise<void> {
   const invoke = await getInvoke();
   const listen = await getListen();
@@ -137,7 +147,7 @@ async function sendChatMessageTauri(
 
     // Listen for chunks
     listen<AgentStreamChunk>('agent:stream:chunk', (event) => {
-      onChunk(event.payload.content);
+      onChunk(event.payload.content, event.payload.chunk_type ?? 'text');
     }).then((fn) => { unlistenChunk = fn; });
 
     // Listen for stream end
@@ -194,12 +204,12 @@ export interface StreamController {
  * error or unexpected teardown.
  *
  * @param request  The chat payload.
- * @param onChunk  Called with each text fragment.
+ * @param onChunk  Called with each text fragment and its semantic type.
  * @returns        `{ controller, promise }`.
  */
 export function streamChatMessage(
   request: ChatRequest,
-  onChunk: (text: string) => void,
+  onChunk: OnChunkCallback,
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -284,7 +294,7 @@ async function uploadImagesToUrls(base64List: string[], baseURL: string): Promis
 
 function sendChatMessageWs(
   request: ChatRequest,
-  onChunk: (text: string) => void,
+  onChunk: OnChunkCallback,
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -384,7 +394,7 @@ function sendChatMessageWs(
         return;
       }
       if (data.event === 'chunk') {
-        onChunk(data.content ?? '');
+        onChunk(data.content ?? '', data.type ?? 'text');
       } else if (data.event === 'done') {
         if (!done) {
           done = true;

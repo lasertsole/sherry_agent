@@ -280,7 +280,10 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] =>
     images: row.images ?? undefined,
     id: row.id,
     turn_num: row.turn_num,
-    timestamp: row.timestamp ?? ''
+    timestamp: row.timestamp ?? '',
+    // 透传工具字段（历史消息中 role=tool 的行会有值）
+    toolName: row.tool_name ?? undefined,
+    toolStatus: (row.tool_status as 'running' | 'done') ?? undefined,
   }));
 
 /**
@@ -368,6 +371,9 @@ const handleStop = () => {
 /**
  * 处理输入框发送：把用户消息加入列表，并通过流式请求（Tauri IPC 或浏览器 WebSocket）获取 AI 回复。
  *
+ * 流式回复动态分段：后端按 chunk type（text / tool_start / tool_end）区分对话文本
+ * 与工具调用，前端据此实时创建/更新独立的消息气泡——对话一个框、工具调用一个框。
+ *
  * @param text 用户输入内容
  */
 const handleSend = async (text: string) => {
@@ -380,10 +386,6 @@ const handleSend = async (text: string) => {
   }
 
   // 计算下一轮次号：取当前消息中最大 turn_num + 1，而非按数组长度。
-  // 后端 add_messages 以「一次对话」为一轮，用户消息 + AI 回复（含工具调用行）
-  // 共享同一 turn_num（每轮递增 1）。若按 chatMessages.length 推算，
-  // 一轮含多条消息时（1 用户 + 1 AI + 可能的工具行）会与实际持久化的
-  // turn_num 错位，刷新后历史顺序与该轮次号不一致。
   const turnNum =
     chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
 
@@ -401,8 +403,7 @@ const handleSend = async (text: string) => {
     timestamp: new Date().toISOString()
   };
 
-  // 追加 AI 占位消息（内容随流式块逐步填充）。
-  // 与用户消息共享同一 turn_num（后端会把整批写进同一个 turn_num）。
+  // 初始 AI 占位消息（内容随流式块逐步填充）
   const aiMsg: MessageItem = {
     session_id: sessionId,
     role: CHAT_ROLE.AI,
@@ -412,23 +413,73 @@ const handleSend = async (text: string) => {
     timestamp: new Date().toISOString()
   };
 
+  // 本轮所有 AI/TOOL 消息（用于流式回调中动态追加/更新）
+  const turnMsgs: MessageItem[] = [aiMsg];
+
   chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
 
   // 发送后清空待发送图片与输入区
   selectedImages.value = [];
 
   isSending.value = true;
+
+  /**
+   * 流式 chunk 回调：按 type 动态管理消息分段。
+   *
+   * - text: 追加到最后一条 AI 消息；若最后一条是 TOOL 消息则新建 AI 消息
+   * - tool_start: 新建一条 TOOL 消息（status=running）
+   * - tool_end: 将最后一条 TOOL 消息标记为 done
+   */
+  const onStreamChunk = (content: string, type: AgentChunkType) => {
+    if (type === 'text') {
+      const last = turnMsgs[turnMsgs.length - 1];
+      if (last && last.role === CHAT_ROLE.AI) {
+        last.content += content;
+      } else {
+        const newAi: MessageItem = {
+          session_id: sessionId,
+          role: CHAT_ROLE.AI,
+          content,
+          id: --tempIdCounter,
+          turn_num: turnNum,
+          timestamp: new Date().toISOString()
+        };
+        turnMsgs.push(newAi);
+        chatMessages.value = [...chatMessages.value, newAi];
+      }
+    } else if (type === 'tool_start') {
+      const toolMsg: MessageItem = {
+        session_id: sessionId,
+        role: CHAT_ROLE.TOOL,
+        content: '',
+        toolName: content,
+        toolStatus: 'running',
+        id: --tempIdCounter,
+        turn_num: turnNum,
+        timestamp: new Date().toISOString()
+      };
+      turnMsgs.push(toolMsg);
+      chatMessages.value = [...chatMessages.value, toolMsg];
+    } else if (type === 'tool_end') {
+      // 标记最近的 TOOL 消息为已完成
+      for (let i = turnMsgs.length - 1; i >= 0; i--) {
+        if (turnMsgs[i].role === CHAT_ROLE.TOOL) {
+          turnMsgs[i].toolStatus = 'done';
+          break;
+        }
+      }
+    }
+    // 触发响应式更新
+    chatMessages.value = [...chatMessages.value];
+  };
+
   try {
     const req: ChatRequest = { text };
     if (imageBase64List.length > 0) req.image_base64_list = imageBase64List;
     activeAgentController = postAgentStream(
       sessionId,
       req,
-      (chunk: string) => {
-        aiMsg.content += chunk;
-        // 直接替换整个数组以触发响应式更新（aiMsg 本身是引用，content 已在原地累加）
-        chatMessages.value = [...chatMessages.value];
-      },
+      onStreamChunk,
       () => {
         // 流正常结束，解锁输入框
         activeAgentController = null;
@@ -454,6 +505,9 @@ const handleSend = async (text: string) => {
  */
 const selectedImages = ref<{ base64: string; name: string }[]>([]);
 
+/** 单条消息允许附带的最大图片数量 */
+const MAX_SELECTED_IMAGES = 10;
+
 /** 隐藏的图片文件选择框 */
 const imageFileInput = useTemplateRef<HTMLInputElement>('imageFileInputRef');
 
@@ -477,7 +531,7 @@ const triggerImagePicker = () => {
   imageFileInput.value?.click();
 };
 
-/** 图片选择回调：读取为 base64 并加入待发送列表 */
+/** 图片选择回调：读取为 base64 并加入待发送列表（上限 MAX_SELECTED_IMAGES） */
 const onImageSelected = async (event: Event) => {
   const input = event.target as HTMLInputElement;
   // 先拷贝为普通数组副本再重置 input.value。
@@ -487,7 +541,18 @@ const onImageSelected = async (event: Event) => {
   input.value = ''; // 允许重复选择同一文件
   if (files.length === 0) return;
 
-  for (const file of files) {
+  // 数量上限：超出的部分直接截断并提示
+  const remaining = MAX_SELECTED_IMAGES - selectedImages.value.length;
+  if (remaining <= 0) {
+    alert(`最多只能上传 ${MAX_SELECTED_IMAGES} 张图片`);
+    return;
+  }
+  const accepted = files.slice(0, remaining);
+  if (files.length > remaining) {
+    alert(`最多只能上传 ${MAX_SELECTED_IMAGES} 张图片，已超出 ${files.length - remaining} 张`);
+  }
+
+  for (const file of accepted) {
     if (!file.type.startsWith('image/')) continue;
     try {
       const dataUrl = await readImageFile(file);
