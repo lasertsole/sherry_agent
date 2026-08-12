@@ -1,6 +1,6 @@
 import type { MultiModalMessage } from "@/types/message";
 import type { Response } from "@/types/response";
-import { streamChatMessage } from './bridge';
+import { streamChatMessage, type OnChunkCallback } from './bridge';
 import {
     cacheMessages,
     cachedMaxTurnNum,
@@ -107,7 +107,7 @@ export async function clearSession(session_id: string): Promise<boolean> {
  *
  * @param session_id 会话ID
  * @param multi_modal_message 用户输入 { text, image_base64_list?, audio_bytes_list?, video_bytes_list? }
- * @param onData 每块文本回调
+ * @param onData 每块文本回调（携带语义类型：text / tool_start / tool_end）
  * @param onDone 流结束回调
  * @param onError 出错回调
  * @returns {AbortController} 外部可通过 controller.abort() 中止请求
@@ -115,7 +115,7 @@ export async function clearSession(session_id: string): Promise<boolean> {
 export function postAgentStream(
     session_id: string,
     multi_modal_message: MultiModalMessage,
-    onData: (chunk: string) => void,
+    onData: OnChunkCallback,
     onDone?: () => void,
     onError?: (err: unknown) => void,
 ): AbortController {

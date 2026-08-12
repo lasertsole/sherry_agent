@@ -1,6 +1,5 @@
 import asyncio
 from threading import Thread
-from typing import AsyncGenerator
 from runtime import relation_register
 from server.service import async_generate
 from type.message import MultiModalMessage
@@ -33,9 +32,9 @@ async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> Non
     relation_register.register_channel_chat(session_id=session_id, channel_id=channel.name, chat_id=message.chat_id)
 
     ai_reply: str = ""
-    stream: AsyncGenerator[str, None] = async_generate(session_id = session_id, multi_modal_message = user_input, is_stream = False)
+    stream = async_generate(session_id = session_id, multi_modal_message = user_input, is_stream = False)
     async for item in stream:
-        ai_reply += item
+        ai_reply += item["content"]
 
     await channel.send(OutboundMessage(channel=channel.name, chat_id = message.chat_id, content = ai_reply))
 

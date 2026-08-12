@@ -72,27 +72,45 @@ beforeEach(() => {
 
 describe('sendChatMessage (browser WebSocket)', () => {
   it('opens the WS URL, sends the request, and streams text chunks', async () => {
+    // `image_base64_list` triggers the async `/images/upload` path before the
+    // WebSocket is created, so stub `fetch` and wait for the upload to resolve
+    // before grabbing the WS instance.
+    const uploadFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, url: 'http://localhost:8080/uploads/img1.png' }),
+    });
+    vi.stubGlobal('fetch', uploadFetch);
+
     const onChunk = vi.fn();
     const promise = bridge.sendChatMessage(
       { session_id: 's1', text: 'hi', image_base64_list: ['img1'] },
       onChunk,
     );
 
+    // Let the upload (`fetch` + `resp.json`) resolve so the WebSocket is created.
+    await vi.waitFor(() => expect(FakeWebSocket.instances[0]).toBeTruthy());
+
     const ws = FakeWebSocket.instances[0];
+    expect(ws).toBeTruthy();
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
 
     ws.open();
+    // base64 payload is uploaded and its resolved URL sent as image_path_list.
     expect(ws.sent).toEqual([
       JSON.stringify({
         session_id: 's1',
-        multi_modal_message: { text: 'hi', image_base64_list: ['img1'] },
+        multi_modal_message: {
+          text: 'hi',
+          image_base64_list: [],
+          image_path_list: ['http://localhost:8080/uploads/img1.png'],
+        },
       }),
     ]);
 
-    ws.frame({ event: 'chunk', session_id: 's1', content: 'hel' });
-    ws.frame({ event: 'chunk', session_id: 's1', content: 'lo' });
-    expect(onChunk).toHaveBeenNthCalledWith(1, 'hel');
-    expect(onChunk).toHaveBeenNthCalledWith(2, 'lo');
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' });
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'lo', type: 'text' });
+    expect(onChunk).toHaveBeenNthCalledWith(1, 'hel', 'text');
+    expect(onChunk).toHaveBeenNthCalledWith(2, 'lo', 'text');
 
     ws.frame({ event: 'done', session_id: 's1', content: '' });
     await promise;
@@ -106,7 +124,7 @@ describe('sendChatMessage (browser WebSocket)', () => {
     expect(ws.sent[0]).toBe(
       JSON.stringify({
         session_id: 's9',
-        multi_modal_message: { text: '', image_base64_list: [] },
+        multi_modal_message: { text: '', image_base64_list: [], image_path_list: [] },
       }),
     );
     ws.frame({ event: 'done', session_id: 's9', content: '' });
