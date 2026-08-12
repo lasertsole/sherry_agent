@@ -36,10 +36,25 @@ export interface ChatRequest {
  * 浏览器模式下后端 `/sessions/agent/ws` 返回的流式事件帧。
  * 对应 `server/trigger/ws/messages.py` 的 `{"event": ..., "session_id": ..., "content": ...}`。
  */
-export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped';
+export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'tool_start' | 'tool_end';
+
+/** HITL interrupt payload sent by the server when the agent pauses for human approval. */
+export interface HitlInterruptData {
+  tool_name: string;
+  tool_args: Record<string, unknown>;
+  description: string;
+  allowed_decisions: string[];
+}
+
+/** HITL decision sent by the client to resume the agent. */
+export interface HitlResponse {
+  decision: 'approve' | 'reject' | 'edit';
+  message?: string;
+  edited_args?: Record<string, unknown>;
+}
 
 export interface AgentWsEvent {
   event: AgentWsEventType;
@@ -100,6 +115,9 @@ async function getListen() {
 
 /** Typed chunk callback: receives the text fragment and its semantic type. */
 export type OnChunkCallback = (content: string, type: AgentChunkType) => void;
+
+/** HITL interrupt callback: invoked when the agent pauses for human approval. */
+export type OnHitlCallback = (data: HitlInterruptData) => void;
 
 /**
  * Send a chat message and receive streaming chunks.
@@ -191,6 +209,8 @@ export interface StreamController {
   readonly closed: boolean;
   /** Stop the generation and close the connection. */
   abort(): void;
+  /** Send a HITL decision (approve/reject/edit) to resume a pending agent. */
+  sendHitlResponse?(response: HitlResponse): void;
 }
 
 /**
@@ -210,6 +230,7 @@ export interface StreamController {
 export function streamChatMessage(
   request: ChatRequest,
   onChunk: OnChunkCallback,
+  onHitl?: OnHitlCallback,
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -221,7 +242,7 @@ export function streamChatMessage(
       promise,
     };
   }
-  return sendChatMessageWs(request, onChunk);
+  return sendChatMessageWs(request, onChunk, onHitl);
 }
 
 /**
@@ -295,6 +316,7 @@ async function uploadImagesToUrls(base64List: string[], baseURL: string): Promis
 function sendChatMessageWs(
   request: ChatRequest,
   onChunk: OnChunkCallback,
+  onHitl?: OnHitlCallback,
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -335,6 +357,19 @@ function sendChatMessageWs(
         closeSocket();
       }
       release('aborted');
+    },
+    sendHitlResponse: (response: HitlResponse) => {
+      // 连接已关闭/中止时静默忽略
+      if (done || !socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(
+        JSON.stringify({
+          type: 'hitl_response',
+          session_id: sessionId,
+          decision: response.decision,
+          message: response.message ?? '',
+          edited_args: response.edited_args,
+        }),
+      );
     },
   };
 
@@ -395,6 +430,11 @@ function sendChatMessageWs(
       }
       if (data.event === 'chunk') {
         onChunk(data.content ?? '', data.type ?? 'text');
+      } else if (data.event === 'hitl_request') {
+        // HITL 中断：agent 需人工审批，调用 onHitl 回调（无回调时静默忽略）
+        if (onHitl && data.content) {
+          onHitl(data.content as unknown as HitlInterruptData);
+        }
       } else if (data.event === 'done') {
         if (!done) {
           done = true;

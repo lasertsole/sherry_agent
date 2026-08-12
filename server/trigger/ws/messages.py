@@ -4,7 +4,7 @@ from typing import Any
 from loguru import logger
 from server.trigger.core import app
 from runtime import state_register_mem
-from server.service import async_generate
+from server.service import async_generate, get_pending_interrupt, resume_agent
 from type.message import MultiModalMessage
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
@@ -31,6 +31,43 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     await websocket.send_text(json.dumps({"event": "stopped", "session_id": session_id, "content": ""}))
                     continue
 
+                # HITL resume — client sends back a human decision after an interrupt
+                if obj.get("type") == "hitl_response":
+                    decision: str = obj.get("decision", "reject")
+                    hitl_message: str = obj.get("message", "")
+                    edited_args: dict[str, Any] | None = obj.get("edited_args")
+                    logger.info(
+                        f"Agent WS HITL resume: session_id={session_id}, decision={decision}"
+                    )
+                    try:
+                        async for chunk in resume_agent(
+                            session_id, decision, hitl_message, edited_args,
+                        ):
+                            await websocket.send_text(json.dumps({
+                                "event": "chunk", "session_id": session_id,
+                                "type": chunk["type"], "content": chunk["content"],
+                            }))
+
+                        # Check for another interrupt after resume
+                        interrupt_data = await get_pending_interrupt(session_id)
+                        if interrupt_data:
+                            await websocket.send_text(json.dumps({
+                                "event": "hitl_request", "session_id": session_id,
+                                "content": interrupt_data,
+                            }))
+                        else:
+                            await websocket.send_text(json.dumps({
+                                "event": "done", "session_id": session_id, "content": "",
+                            }))
+                    except Exception as e:
+                        logger.error(
+                            f"Agent WS HITL resume failed: session_id={session_id}, error={str(e)}"
+                        )
+                        await websocket.send_text(json.dumps({
+                            "event": "error", "session_id": session_id, "content": str(e),
+                        }))
+                    continue
+
                 multi_modal_message_data: dict[str, Any] | None = obj.get("multi_modal_message", None)
                 if not multi_modal_message_data:
                     await websocket.send_text(json.dumps({"event": "error", "session_id": session_id, "content": "Missing multi_modal_message"}))
@@ -51,7 +88,19 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     async for chunk in async_generate(session_id, multi_modal_message):
                         await websocket.send_text(json.dumps({"event": "chunk", "session_id": session_id, "type": chunk["type"], "content": chunk["content"]}))
 
-                    await websocket.send_text(json.dumps({"event": "done", "session_id": session_id, "content": ""}))
+                    # After stream ends, check if the agent paused for HITL approval
+                    interrupt_data = await get_pending_interrupt(session_id)
+                    if interrupt_data:
+                        logger.info(
+                            f"Agent WS HITL interrupt detected: session_id={session_id}, "
+                            f"tool={interrupt_data.get('tool_name')}"
+                        )
+                        await websocket.send_text(json.dumps({
+                            "event": "hitl_request", "session_id": session_id,
+                            "content": interrupt_data,
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({"event": "done", "session_id": session_id, "content": ""}))
                     elapsed = time.time() - start_time
                     logger.info(
                         f"Agent WS request completed: session_id={session_id}, duration={elapsed:.2f}s"

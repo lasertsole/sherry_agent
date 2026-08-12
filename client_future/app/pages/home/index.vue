@@ -156,6 +156,35 @@
         <ChatInputBox :sending="isSending" @send="handleSend" @stop="handleStop" />
       </div>
     </div>
+
+    <!-- HITL 审批弹窗 -->
+    <Dialog
+      v-model:visible="hitlRequest"
+      :header="t('hitl.title', 'Action Requires Approval')"
+      :modal="true"
+      :closable="false"
+      class="w-[90vw] md:w-[500px]">
+      <div class="flex flex-col gap-3">
+        <div class="text-sm text-gray-500">{{ t('hitl.tool', 'Tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span></div>
+        <div v-if="hitlRequest?.description" class="text-sm whitespace-pre-wrap">{{ hitlRequest.description }}</div>
+        <div v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0" class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded-lg overflow-auto max-h-40">
+          <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <Button
+            :label="t('hitl.reject', 'Reject')"
+            icon="pi pi-times"
+            severity="danger"
+            @click="handleHitlDecision('reject')" />
+          <Button
+            :label="t('hitl.approve', 'Approve')"
+            icon="pi pi-check"
+            @click="handleHitlDecision('approve')" />
+        </div>
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -167,14 +196,13 @@ import ChatBox from './components/ChatBox.vue';
 // function
 import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { SessionRecord, MessageItem } from './type.ts';
+import type { SessionRecord, MessageItem, HitlRequestData } from './type.ts';
 import { CHAT_ROLE } from './type.ts';
 import type { CachedMessage } from '@/composables/db';
 import { tools, headerTools } from './config';
 import { Menu } from 'primevue';
 import { readCharacter } from '@/composables/bridge';
-import type { ChatRequest } from '@/composables/bridge';
-import type { AgentChunkType } from '@/composables/bridge';
+import type { ChatRequest, AgentChunkType, HitlResponse } from '@/composables/bridge';
 
 // 图片预览
 const { openPreview } = useImagePreview();
@@ -364,6 +392,25 @@ let activeAgentController: AbortController | null = null;
 /** 自增 id 计数器（用于本地临时消息，避免与真实 id 冲突） */
 let tempIdCounter = 0;
 
+/** HITL 审批请求（当 agent 暂停等待人工审批时设置） */
+const hitlRequest = ref<HitlRequestData | null>(null);
+
+/** 处理 HITL 审批请求：显示审批弹窗 */
+const handleHitlRequest = (data: HitlRequestData) => {
+  hitlRequest.value = data;
+};
+
+/** 用户审批/拒绝 HITL 请求 */
+const handleHitlDecision = (decision: 'approve' | 'reject', message: string = '') => {
+  if (!activeAgentController) return;
+  const sender = (activeAgentController as any).sendHitlResponse as
+    | ((response: HitlResponse) => void) | null;
+  if (sender) {
+    sender({ decision, message });
+  }
+  hitlRequest.value = null;
+};
+
 /** 停止当前 AI 回复生成（前端本地中止 + 通知后端止停） */
 const handleStop = () => {
   activeAgentController?.abort();
@@ -492,7 +539,8 @@ const handleSend = async (text: string) => {
         activeAgentController = null;
         aiMsg.content = t('errors.replyFailed', { reason: String(err) });
         isSending.value = false;
-      }
+      },
+      handleHitlRequest,
     );
   } catch (e) {
     // 同步抛错（罕见），此时流未启动，直接解锁
