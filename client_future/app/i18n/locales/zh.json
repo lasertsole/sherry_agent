@@ -38,5 +38,12 @@
   },
   "imagePreview": {
     "hint": "滚动缩放 · 拖拽移动 · ESC 或点击空白关闭"
+  },
+  "hitl": {
+    "title": "操作需要审批",
+    "tool": "工具",
+    "description": "描述",
+    "reject": "拒绝",
+    "approve": "批准"
   }
 }

@@ -38,5 +38,12 @@
   },
   "imagePreview": {
     "hint": "Scroll to zoom · Drag to move · ESC or click blank to close"
+  },
+  "hitl": {
+    "title": "Action Requires Approval",
+    "tool": "Tool",
+    "description": "Description",
+    "reject": "Reject",
+    "approve": "Approve"
   }
 }
