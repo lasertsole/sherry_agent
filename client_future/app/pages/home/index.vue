@@ -32,7 +32,7 @@
         <div
           v-if="historyList.length === 0"
           class="flex items-center justify-center h-full w-full text-[#868686]">
-          暂无会话记录
+          {{ t('history.noSessions') }}
         </div>
         <HistoryItem
           v-for="(item, index) in historyList"
@@ -48,11 +48,11 @@
             v-model="isCheckAllSession"
             :indeterminate="isIndeterminate"
             binary />
-          <span>全选</span>
+          <span>{{ t('history.selectAll') }}</span>
         </div>
         <Button
           icon="pi pi-trash"
-          label="批量删除对话" />
+          :label="t('history.batchDelete')" />
       </div>
     </div>
 
@@ -91,9 +91,9 @@
               :icon="tool.icon"
               v-for="tool in headerTools"
               :key="tool.event"
-              :title="tool.title"
+              :title="t(tool.title)"
               @click="handleOperate('headerBar', tool.event)"
-              :label="tool.toolName"
+              :label="t(tool.toolName)"
               variant="text" />
           </div>
         </div>
@@ -119,7 +119,7 @@
               @click="openPreview(`data:image/*;base64,${img.base64}`)" />
             <button
               type="button"
-              :title="'移除图片'"
+              :title="t('chatBox.removeImage')"
               class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
               @click="removeImage(idx)">
               ✕
@@ -136,7 +136,7 @@
               v-for="tool in tools"
               :key="tool.event"
               :icon="tool.icon"
-              :label="tool.toolName"
+              :label="t(tool.toolName)"
               @click="handleOperate('toolBar', tool.event)"
               size="small"
               variant="text" />
@@ -146,7 +146,7 @@
               v-for="tool in tools"
               :key="tool.event"
               :icon="tool.icon"
-              :aria-label="tool.toolName"
+              :aria-label="t(tool.toolName)"
               @click="handleOperate('toolBar', tool.event)"
               size="small"
               variant="text" />
@@ -166,6 +166,7 @@ import ModeSwitch from './components/ModeSwitch.vue';
 import ChatBox from './components/ChatBox.vue';
 // function
 import { computed, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { SessionRecord, MessageItem } from './type.ts';
 import { CHAT_ROLE } from './type.ts';
 import type { CachedMessage } from '@/composables/db';
@@ -178,6 +179,8 @@ import type { AgentChunkType } from '@/composables/bridge';
 // 图片预览
 const { openPreview } = useImagePreview();
 
+const { t } = useI18n();
+
 /** 侧边栏展开状态（移动端） */
 const isSidebarOpen = ref(false);
 
@@ -187,9 +190,9 @@ const isSidebarOpen = ref(false);
  */
 const backendBaseUrl = ref<string>(import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080');
 const characterInfo = ref<{ userName: string; userAvatar: string; aiName: string; aiAvatar: string }>({
-  userName: '我',
+  userName: t('chatBox.defaultUserName'),
   userAvatar: '',
-  aiName: '橘雪莉',
+  aiName: t('chatBox.defaultAiName'),
   aiAvatar: ''
 });
 
@@ -200,9 +203,9 @@ const resolveCharacter = (data?: Record<string, Record<string, string>>) => {
   const assistant = data?.assistant ?? {};
   const resolveUrl = (path?: string) => (path ? `${base}/static/${path.replace(/^\/+/, '')}` : '');
   characterInfo.value = {
-    userName: user.name || '我',
+    userName: user.name || t('chatBox.defaultUserName'),
     userAvatar: resolveUrl(user.avatar),
-    aiName: assistant.name || 'AI',
+    aiName: assistant.name || t('chatBox.defaultAiName'),
     aiAvatar: resolveUrl(assistant.avatar)
   };
 };
@@ -222,7 +225,7 @@ const loadCharacter = async () => {
 const historyList = ref<SessionRecord[]>([
   {
     id: '1',
-    title: '示例会话',
+    title: t('history.exampleTitle'),
     createTime: '2026-06-17 10:42'
   }
 ]);
@@ -348,7 +351,7 @@ const loadSessionHistory = async (sessionId: string) => {
 
   // 若当前会话对象未初始化，补一个最小结构（消息已由 chatMessages 单独承载）
   if (!currentSession.value) {
-    currentSession.value = { id: sessionId, title: '示例会话', createTime: '' } as SessionRecord;
+    currentSession.value = { id: sessionId, title: t('history.exampleTitle'), createTime: '' } as SessionRecord;
   } else {
     currentSession.value.id = sessionId;
   }
@@ -381,7 +384,7 @@ const handleSend = async (text: string) => {
 
   // 确保当前会话已初始化
   if (!currentSession.value) {
-    currentSession.value = { id: sessionId, title: '示例会话', createTime: '' } as SessionRecord;
+    currentSession.value = { id: sessionId, title: t('history.exampleTitle'), createTime: '' } as SessionRecord;
     currentSessionId.value = sessionId;
   }
 
@@ -487,14 +490,14 @@ const handleSend = async (text: string) => {
       },
       (err) => {
         activeAgentController = null;
-        aiMsg.content = `（回复失败：${String(err)}）`;
+        aiMsg.content = t('errors.replyFailed', { reason: String(err) });
         isSending.value = false;
       }
     );
   } catch (e) {
     // 同步抛错（罕见），此时流未启动，直接解锁
     activeAgentController = null;
-    aiMsg.content = `（发送失败：${String(e)}）`;
+    aiMsg.content = t('errors.sendFailed', { reason: String(e) });
     isSending.value = false;
   }
 };
@@ -544,12 +547,12 @@ const onImageSelected = async (event: Event) => {
   // 数量上限：超出的部分直接截断并提示
   const remaining = MAX_SELECTED_IMAGES - selectedImages.value.length;
   if (remaining <= 0) {
-    alert(`最多只能上传 ${MAX_SELECTED_IMAGES} 张图片`);
+    alert(t('chatInput.maxImages', { count: MAX_SELECTED_IMAGES }));
     return;
   }
   const accepted = files.slice(0, remaining);
   if (files.length > remaining) {
-    alert(`最多只能上传 ${MAX_SELECTED_IMAGES} 张图片，已超出 ${files.length - remaining} 张`);
+    alert(t('chatInput.maxImagesExceed', { count: MAX_SELECTED_IMAGES, extra: files.length - remaining }));
   }
 
   for (const file of accepted) {

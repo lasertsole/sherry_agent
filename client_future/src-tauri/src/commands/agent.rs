@@ -180,13 +180,14 @@ pub async fn agent_chat(
     //    (`POST /sessions/agent/sse`), which no longer exists in the backend.
     let mut chunks: Vec<ChatChunk> = Vec::new();
     let stream_result = bridge
-        .stream_agent_message("/sessions/agent/ws", &body, |content| {
+        .stream_agent_message("/sessions/agent/ws", &body, |content, chunk_type| {
             let _ = app.emit(
                 AGENT_STREAM_CHUNK,
                 AgentStreamChunk {
                     session_id: session_id.clone(),
                     message_id: message_id.clone(),
                     content: content.to_string(),
+                    chunk_type: chunk_type.to_string(),
                 },
             );
             chunks.push(ChatChunk {

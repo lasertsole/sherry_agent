@@ -17,7 +17,7 @@
     </div>
     <!-- 创建时间 & 操作 -->
     <div class="flex justify-between mt-3 text-xs">
-      <span>创建时间：{{ props.historyRecord?.createTime }}</span>
+      <span>{{ t('history.createdAt', { time: props.historyRecord?.createTime }) }}</span>
       <span></span>
       <span
         class="pi pi-ellipsis-h md:hidden"
@@ -43,6 +43,9 @@
 import { Menu } from 'primevue';
 // 方法/类型
 import type { SessionRecord } from '../type';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const modelList = defineModel('selectedList', { type: Array, default: () => [] });
 
@@ -63,8 +66,8 @@ interface MenuItem {
 
 /** 操作菜单 */
 const menuItems = ref<MenuItem[]>([
-  { label: '修改标题', icon: 'pi pi-pen-to-square' },
-  { label: '删除会话', icon: 'pi pi-trash' }
+  { label: t('history.editTitle'), icon: 'pi pi-pen-to-square' },
+  { label: t('history.deleteSession'), icon: 'pi pi-trash' }
 ]);
 
 const mainenuRef = ref<InstanceType<typeof Menu>>();

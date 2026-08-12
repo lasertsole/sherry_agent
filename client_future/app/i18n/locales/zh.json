@@ -1,3 +1,42 @@
 {
-  "chatInput": "请输入"
+  "chatInput": {
+    "placeholder": "请输入内容...",
+    "thinking": "AI 正在思考中...",
+    "send": "发送",
+    "stop": "停止",
+    "maxImages": "最多只能上传 {count} 张图片",
+    "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张"
+  },
+  "chatBox": {
+    "defaultUserName": "我",
+    "defaultAiName": "橘雪莉",
+    "imageLoadFailed": "图片加载失败",
+    "removeImage": "移除图片"
+  },
+  "history": {
+    "noSessions": "暂无会话记录",
+    "selectAll": "全选",
+    "batchDelete": "批量删除对话",
+    "createdAt": "创建时间：{time}",
+    "editTitle": "修改标题",
+    "deleteSession": "删除会话",
+    "exampleTitle": "示例会话"
+  },
+  "toolbar": {
+    "newChat": "新建对话",
+    "knowledgeBase": "知识库",
+    "uploadFile": "上传文件",
+    "file": "文件",
+    "uploadImage": "上传图片",
+    "image": "图片",
+    "configKnowledgeBase": "配置知识库",
+    "userCenter": "个人中心"
+  },
+  "errors": {
+    "replyFailed": "（回复失败：{reason}）",
+    "sendFailed": "（发送失败：{reason}）"
+  },
+  "imagePreview": {
+    "hint": "滚动缩放 · 拖拽移动 · ESC 或点击空白关闭"
+  }
 }
