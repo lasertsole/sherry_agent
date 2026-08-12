@@ -142,7 +142,8 @@
               <img
                 :src="`data:image/*;base64,${img.base64}`"
                 :alt="img.name"
-                class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark" />
+                class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
+                @click="openPreview(`data:image/*;base64,${img.base64}`)" />
               <button
                 type="button"
                 class="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-xs cursor-pointer"
@@ -171,6 +172,10 @@ import { tools, headerTools } from './config';
 import { Menu } from 'primevue';
 import { readCharacter } from '@/composables/bridge';
 import type { ChatRequest } from '@/composables/bridge';
+import type { AgentChunkType } from '@/composables/bridge';
+
+// 图片预览
+const { openPreview } = useImagePreview();
 
 /** 侧边栏展开状态（移动端） */
 const isSidebarOpen = ref(false);

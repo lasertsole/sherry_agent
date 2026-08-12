@@ -14,3 +14,4 @@ skills/auto
 .omo/
 static/
 sessions/**/*.md
+.idea/
