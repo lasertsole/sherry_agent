@@ -58,3 +58,11 @@ export enum CHAT_ROLE {
   /** 用户 */
   USER = 'human'
 }
+
+/** HITL 审批请求（对应后端 HitlInterruptData） */
+export interface HitlRequestData {
+  tool_name: string;
+  tool_args: Record<string, unknown>;
+  description: string;
+  allowed_decisions: string[];
+}

@@ -12,6 +12,8 @@ from ..DAO import clear_session as clear_session_DAO
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
+from langgraph.types import Command
+from config.character import ASSISTANT_NAME
 
 
 async def _get_agent_history_list(session_id: str)-> list[BaseMessage]:
@@ -237,6 +239,161 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)
+
+"""HITL interrupt detection — checks agent state for pending interrupts.
+
+When the HumanInTheLoop middleware calls ``interrupt()``, the agent stream
+ends and the interrupt payload is stored in the graph state's ``tasks``.
+This function inspects the state and returns the interrupt request so
+the WebSocket layer can forward it to the client for human approval.
+"""
+async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
+    """Return the pending HITL interrupt payload for a session, or ``None``.
+
+    The returned dict has the shape::
+
+        {
+            "tool_name": str,
+            "tool_args": dict,
+            "description": str,
+            "allowed_decisions": list[str],
+        }
+    """
+    try:
+        agent = await built_agent()
+        if agent is None:
+            return None
+        config = build_agent_config(session_id)
+        state = await agent.aget_state(config=config)
+
+        for task in getattr(state, "tasks", []):
+            if hasattr(task, "interrupts") and task.interrupts:
+                for intr in task.interrupts:
+                    value = getattr(intr, "value", None)
+                    if value is None:
+                        continue
+                    action_requests = value.get("action_requests", []) if isinstance(value, dict) else []
+                    review_configs = value.get("review_configs", []) if isinstance(value, dict) else []
+                    if not action_requests:
+                        continue
+                    ar = action_requests[0]
+                    rc = review_configs[0] if review_configs else {}
+                    return {
+                        "tool_name": ar.get("name", "unknown"),
+                        "tool_args": ar.get("args", {}),
+                        "description": ar.get("description", ""),
+                        "allowed_decisions": rc.get("allowed_decisions", ["approve", "reject"]),
+                    }
+            break
+        return None
+    except Exception as e:
+        logger.debug(f"get_pending_interrupt failed for session_id={session_id}: {e}")
+        return None
+"""End HITL interrupt detection"""
+
+"""HITL resume — continues the agent after a human decision.
+
+Called when the client sends back an approval/rejection. Uses
+``Command(resume=...)`` to un-pause the graph and streams the
+remaining output just like ``async_generate``.
+"""
+async def resume_agent(
+    session_id: str,
+    decision: str,
+    message: str = "",
+    edited_args: dict[str, Any] | None = None,
+) -> AsyncGenerator[dict[str, str], None]:
+    """Resume the agent after a HITL interrupt.
+
+    Args:
+        session_id:  Active session ID.
+        decision:    ``"approve"``, ``"reject"``, or ``"edit"``.
+        message:     Optional user message accompanying the decision.
+        edited_args: When ``decision == "edit"``, the new tool arguments.
+
+    Yields:
+        Same chunk format as :func:`async_generate`.
+    """
+    start_time = time.time()
+    logger.info(
+        f"Agent resume started: session_id={session_id}, decision={decision}"
+    )
+
+    agent = await built_agent()
+    config = build_agent_config(session_id)
+
+    resume_value: dict[str, Any] = {"decisions": [{"type": decision, "message": message}]}
+    if decision == "edit" and edited_args is not None:
+        resume_value["decisions"][0]["edited_action"] = {"args": edited_args}
+
+    state_register_mem.set_state(session_id, "answering", True)
+
+    try:
+        yield {"type": "text", "content": f"{ASSISTANT_NAME}:"}
+
+        async for chunk in agent.astream(
+            Command(resume=resume_value),
+            config=config,
+            stream_mode=["messages", "updates"],
+        ):
+            if state_register_mem.get_state(session_id, "answering") == False:
+                raise asyncio.CancelledError
+
+            mode: str = chunk[0]
+            data: Any = chunk[1]
+            if mode != "messages":
+                continue
+
+            msg_chunk: BaseMessage = data[0]
+            metadata: dict[str, Any] = data[1]
+
+            if metadata.get("langgraph_node", None) != "model" or metadata.get("lc_source") == "summarization":
+                continue
+
+            if isinstance(msg_chunk, AIMessageChunk):
+                tool_calls = msg_chunk.tool_calls if msg_chunk.tool_calls and len(msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
+                if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
+                    repeat_flag = True
+                    if len(tool_calls) > 0:
+                        tool_call = tool_calls[0]
+                        if tool_call["name"]:
+                            if tool_call["name"].strip() or tool_call["name"].strip() != state_register_mem.get_state(session_id, "current_tool_name"):
+                                state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
+                        if tool_call["id"]:
+                            if tool_call["id"].strip() or tool_call["id"].strip() != state_register_mem.get_state(session_id, "current_tool_id"):
+                                state_register_mem.set_state(session_id, "current_tool_id", tool_call['id'])
+                                repeat_flag = False
+                    if not repeat_flag:
+                        tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                        yield {"type": "tool_start", "content": tool_name}
+
+                if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
+                    tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                    yield {"type": "tool_end", "content": tool_name}
+                    state_register_mem.set_state(session_id, "current_tool_id", "")
+
+                if len(msg_chunk.content) > 0:
+                    yield {"type": "text", "content": msg_chunk.content}
+
+        elapsed = time.time() - start_time
+        logger.debug(
+            f"Agent resume completed: session_id={session_id}, duration={elapsed:.2f}s"
+        )
+    except asyncio.CancelledError:
+        yield {"type": "text", "content": "Request cancelled"}
+        logger.debug(f"Agent resume cancelled: session_id={session_id}")
+    except HeartbeatTimeoutError as e:
+        yield {"type": "text", "content": "\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated."}
+        logger.warning(f"Agent resume heartbeat timeout: session_id={session_id}, error={e}")
+    except Exception as e:
+        logger.error(f"Agent resume failed: session_id={session_id}, error={str(e)}")
+        logger.exception(e)
+        raise e
+    finally:
+        state_register_mem.set_state(session_id, "current_tool_name", "")
+        state_register_mem.set_state(session_id, "current_tool_id", "")
+        state_register_mem.set_state(session_id, "answering", False)
+"""End HITL resume"""
 
 """End response generation logic"""
 

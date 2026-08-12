@@ -1,6 +1,6 @@
 import type { MultiModalMessage } from "@/types/message";
 import type { Response } from "@/types/response";
-import { streamChatMessage, type OnChunkCallback } from './bridge';
+import { streamChatMessage, type OnChunkCallback, type OnHitlCallback, type StreamController } from './bridge';
 import {
     cacheMessages,
     cachedMaxTurnNum,
@@ -118,9 +118,11 @@ export function postAgentStream(
     onData: OnChunkCallback,
     onDone?: () => void,
     onError?: (err: unknown) => void,
+    onHitl?: OnHitlCallback,
 ): AbortController {
     const controller = new AbortController();
     let stopFn: (() => void) | null = null;
+    let hitlSender: (((response: import('./bridge').HitlResponse) => void) | null) = null;
 
     // 桥接到 bridge 的统一流式入口（浏览器 WS / Tauri IPC）。
     const { controller: stream, promise } = streamChatMessage(
@@ -130,8 +132,13 @@ export function postAgentStream(
             image_base64_list: multi_modal_message.image_base64_list,
         },
         onData,
+        onHitl,
     );
     stopFn = () => stream.abort();
+    hitlSender = stream.sendHitlResponse ?? null;
+
+    // 将 sendHitlResponse 挂载到返回的 AbortController 上
+    (controller as any).sendHitlResponse = hitlSender;
 
     // 用户主动 abort → 触发流式止停
     controller.signal.addEventListener('abort', () => stopFn?.());

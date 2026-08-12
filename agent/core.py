@@ -9,6 +9,7 @@ from agent.tools import memory_store, build_main_tools, build_subagent_tool
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
                           IterationBudget, HeartbeatStaleness)
+from .middlewares.HumanInTheLoop import HumanInTheLoop, HITLConfig
 from .smart_tool_node import patch_tool_node
 
 # # 只有幂等的工具才能并行执行，非幂等串行执行
@@ -64,6 +65,7 @@ async def built_agent(
                 ToolGuardrails(),
                 ToolCallNormalize(),
                 HeartbeatStaleness(),
+                HumanInTheLoop(HITLConfig()),
                 Summarization(
                     need_update_system_prompt=True,
                     model=auxiliary_llm,
