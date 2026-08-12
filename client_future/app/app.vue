@@ -2,6 +2,7 @@
   <NuxtLayout>
     <NuxtPage keepalive/>
   </NuxtLayout>
+  <ImagePreviewOverlay />
 </template>
 
 <script lang="ts" setup>

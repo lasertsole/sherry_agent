@@ -59,7 +59,8 @@
                 <img
                   v-if="!failedImageSources.has(resolveImageSrc(message, src))"
                   :src="resolveImageSrc(message, src)"
-                  class="w-24 h-24 object-cover rounded-lg border border-solid border-gray-200"
+                  class="w-24 h-24 object-cover rounded-lg border border-solid border-gray-200 cursor-pointer hover:opacity-80 transition-opacity duration-200"
+                  @click="openPreview(resolveImageSrc(message, src))"
                   @error="onImageError($event, resolveImageSrc(message, src))" />
                 <div
                   v-else
@@ -111,6 +112,9 @@ const props = withDefaults(defineProps<Props>(), {
   userName: '我',
   aiName: '橘雪莉'
 });
+
+// 图片预览
+const { openPreview } = useImagePreview();
 
 /** 过滤tool后的消息列表 */
 const isToolCallMsg = (msg: MessageItem) =>
