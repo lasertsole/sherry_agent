@@ -105,7 +105,29 @@
         :ai-avatar="characterInfo.aiAvatar"
         :user-name="characterInfo.userName"
         :ai-name="characterInfo.aiName" />
-      <!-- 聊天输入框区域 -->
+      <!-- 图片预览区（独立于输入框上方，避免挤压 h-40 输入框导致发送按钮上移 / ✕ 按钮被裁剪） -->
+      <template v-if="selectedImages.length > 0">
+        <div class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+          <div
+            v-for="(img, idx) in selectedImages"
+            :key="idx"
+            class="relative shrink-0 group">
+            <img
+              :src="`data:image/*;base64,${img.base64}`"
+              :alt="img.name"
+              class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
+              @click="openPreview(`data:image/*;base64,${img.base64}`)" />
+            <button
+              type="button"
+              :title="'移除图片'"
+              class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
+              @click="removeImage(idx)">
+              ✕
+            </button>
+          </div>
+        </div>
+      </template>
+      <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
       <div class="flex flex-col h-40">
         <!-- 聊天工具 -->
         <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
@@ -132,27 +154,6 @@
         </div>
         <!-- 输入框 -->
         <ChatInputBox :sending="isSending" @send="handleSend" @stop="handleStop" />
-        <!-- 图片预览区 -->
-        <template v-if="selectedImages.length > 0">
-          <div class="flex items-center gap-2 px-2 py-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-            <div
-              v-for="(img, idx) in selectedImages"
-              :key="idx"
-              class="relative shrink-0 group">
-              <img
-                :src="`data:image/*;base64,${img.base64}`"
-                :alt="img.name"
-                class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
-                @click="openPreview(`data:image/*;base64,${img.base64}`)" />
-              <button
-                type="button"
-                class="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-xs cursor-pointer"
-                @click="removeImage(idx)">
-                ✕
-              </button>
-            </div>
-          </div>
-        </template>
       </div>
     </div>
   </div>

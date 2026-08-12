@@ -49,10 +49,10 @@
             { 'rounded-xl': isConsecutive(message.id) }
           ]">
           <div v-html="safeHtml(message.content)"></div>
-          <template v-if="message.images?.length">
+          <template v-if="messageImages(message).length">
             <div class="flex flex-wrap gap-2 mt-2">
               <template
-                v-for="(src, i) in message.images"
+                v-for="(src, i) in messageImages(message)"
                 :key="i">
                 <!-- 历史消息的媒体可能已在磁盘上不存在（media 特性落地前写入的行），
                      加载失败时隐藏破图占位并展示占位块，避免出现 broken image 图标。 -->
@@ -209,6 +209,10 @@ const backendBaseUrl = ((import.meta.env.VITE_API_BACK_URL as string) ?? '').rep
 const resolveImageSrc = (message: MessageItem, entry: string): string => {
   const s = (entry ?? '').trim();
   if (!s) return '';
+  // 绝对 URL（http/https）直接透传：中间件注入的用户图片是已服务
+  // 出来的 http(s)://…/images/<hash>.png，必须以原样渲染，不能按扩展名
+  // 误判成 /media 文件路径（否则 404 / 破图）。
+  if (/^https?:\/\//i.test(s)) return s;
   const isFilePath =
     s.includes('\\') || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(s);
   if (isFilePath) {
@@ -218,6 +222,33 @@ const resolveImageSrc = (message: MessageItem, entry: string): string => {
   }
   // 用户消息：本地 base64
   return `data:image/*;base64,${s}`;
+};
+
+/**
+ * Extract image URLs injected by the multimodal processor into message content.
+ *
+ * The middleware persists a marker like:
+ *   "[System: The user uploaded N image(s). Location: http://…/images/<hash>.png,…]"
+ * This fallback resolves those served URLs so history/legacy rows whose
+ * `images` field is empty still render their images.
+ */
+const extractContentImageUrls = (content: string): string[] => {
+  if (!content) return [];
+  const m = content.match(/Location:\s*([^\]\n]+)/);
+  if (!m) return [];
+  return m[1]
+    .split(/[,\s]+/)
+    .map((u) => u.replace(/[\]\s.,!;:]+$/g, ''))
+    .filter((u) => /^https?:\/\//i.test(u));
+};
+
+/**
+ * Images to render for a message: explicit `images` wins; otherwise fall back
+ * to URLs parsed from the content's Location marker.
+ */
+const messageImages = (message: MessageItem): string[] => {
+  const explicit = message.images ?? [];
+  return explicit.length > 0 ? explicit : extractContentImageUrls(message.content);
 };
 
 /**
