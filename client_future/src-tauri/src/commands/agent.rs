@@ -27,7 +27,8 @@ use uuid::Uuid;
 /// |-------|------|----------|-------------|
 /// | `session_id` | `string` | Yes | Unique session identifier |
 /// | `text` | `string \| null` | No | Text message content |
-/// | `image_base64_list` | `string[]` | No | Base64-encoded image data |
+/// | `image_base64_list` | `string[]` | No | Base64-encoded image data (uploaded to backend before WS call) |
+/// | `image_path_list` | `string[]` | No | HTTP image URLs already uploaded to the backend |
 ///
 /// At least one of `text` or `image_base64_list` should be provided.
 ///
@@ -37,7 +38,8 @@ use uuid::Uuid;
 /// {
 ///   "session_id": "main",
 ///   "text": "Hello, how are you?",
-///   "image_base64_list": []
+///   "image_base64_list": [],
+///   "image_path_list": []
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -50,6 +52,9 @@ pub struct ChatRequest {
     /// Optional list of base64-encoded images for multi-modal input.
     #[serde(default)]
     pub image_base64_list: Vec<String>,
+    /// Optional list of HTTP image URLs already uploaded to the backend.
+    #[serde(default)]
+    pub image_path_list: Vec<String>,
 }
 
 /// A single streaming chunk returned by the agent.
@@ -147,7 +152,11 @@ pub async fn agent_chat(
     let message_id = Uuid::new_v4().to_string();
     let session_id = request.session_id.clone();
 
-    // 1. Emit stream start event
+    // 1. Upload any base64 images to the backend over HTTP, converting them
+    //    to lightweight image URLs so the WebSocket text frame stays small.
+    let image_urls = bridge.upload_images(&request.image_base64_list).await?;
+
+    // 2. Emit stream start event (only after upload succeeds)
     let _ = app.emit(
         AGENT_STREAM_START,
         AgentStreamStart {
@@ -156,16 +165,17 @@ pub async fn agent_chat(
         },
     );
 
-    // 2. Build Python backend request body
+    // 3. Build Python backend request body with image URLs (not base64)
     let body = serde_json::json!({
-        "session_id": request.session_id,
+        "session_id": &request.session_id,
         "multi_modal_message": {
             "text": request.text.unwrap_or_default(),
-            "image_base64_list": request.image_base64_list,
+            "image_base64_list": [],
+            "image_path_list": image_urls,
         }
     });
 
-    // 3. Stream the turn over the agent WebSocket, emitting chunks as Tauri
+    // 4. Stream the turn over the agent WebSocket, emitting chunks as Tauri
     //    events in real time. This replaces the legacy SSE path
     //    (`POST /sessions/agent/sse`), which no longer exists in the backend.
     let mut chunks: Vec<ChatChunk> = Vec::new();
@@ -254,6 +264,7 @@ mod tests {
         assert_eq!(req.session_id, "s1");
         assert_eq!(req.text.as_deref(), Some("hello"));
         assert!(req.image_base64_list.is_empty());
+        assert!(req.image_path_list.is_empty());
     }
 
     #[test]
@@ -292,11 +303,20 @@ mod tests {
     }
 
     #[test]
+    fn chat_request_deserializes_image_path_list() {
+        let json = r#"{"session_id":"s1","image_path_list":["http://127.0.0.1:8080/images/abc.png"]}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.image_path_list.len(), 1);
+        assert_eq!(req.image_path_list[0], "http://127.0.0.1:8080/images/abc.png");
+    }
+
+    #[test]
     fn chat_request_round_trip() {
         let original = ChatRequest {
             session_id: "main".into(),
             text: Some("How's the weather?".into()),
             image_base64_list: vec![],
+            image_path_list: vec![],
         };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: ChatRequest = serde_json::from_str(&json).unwrap();

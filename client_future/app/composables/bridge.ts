@@ -26,8 +26,10 @@ export interface ChatRequest {
   session_id?: string;
   /** 文本内容 */
   text: string;
-  /** 图片 base64 列表 */
+  /** 图片 base64 列表（Tauri 模式使用；浏览器模式下会自动上传转为 image_path_list） */
   image_base64_list?: string[];
+  /** 图片 URL 列表（浏览器模式使用，来自 /images/upload 上传后返回的 HTTP URL） */
+  image_path_list?: string[];
 }
 
 /**
@@ -216,15 +218,70 @@ export function streamChatMessage(
  * Browser mode: stream agent chat over the backend WebSocket
  * (`/sessions/agent/ws`) instead of the (non-existent) SSE HTTP endpoint.
  *
- * Protocol (see `server/trigger/ws/messages.py`):
- * - Client sends `{ session_id, multi_modal_message: { text, image_base64_list } }`
- * - Server replies with a stream of `{ event: "chunk", content }` frames,
- *   terminated by `{ event: "done" }` (success) or `{ event: "error", content }`.
+ * 协议（参见 `server/trigger/ws/messages.py`）：
+ * - 客户端先将 base64 图片通过 HTTP POST /images/upload 上传获取 URL，
+ *   再通过 WebSocket 发送消息体：
+ *   `{ session_id, multi_modal_message: { text, image_base64_list: [], image_path_list: [上传后的URL...] } }`
+ * - 服务端返回 `{ event: "chunk", content }` 流式帧，
+ *   以 `{ event: "done" }`（成功）或 `{ event: "error", content }` 结束。
  *
  * @param request  The chat payload.
  * @param onChunk  Called with each text fragment.
  * @returns        `{ controller, promise }` — `promise` resolves on completion.
  */
+/**
+ * 将 base64 图片上传到后端 /images/upload 并返回 URL 列表。
+ *
+ * @param base64List  base64 编码的图片字符串列表（可能带 data:...;base64, 前缀）
+ * @param baseURL     后端 HTTP 基地址
+ * @returns           上传后的图片 URL 数组（与输入同序）
+ */
+async function uploadImagesToUrls(base64List: string[], baseURL: string): Promise<string[]> {
+  const urls: string[] = [];
+  for (const base64 of base64List) {
+    let contentType = 'image/png';
+    let pureBase64 = base64;
+
+    // 若带有 data:image/xxx;base64, 前缀，则剥离并提取 MIME 类型
+    const match = pureBase64.match(/^data:(image\/[\w+-]+);base64,(.+)$/);
+    if (match) {
+      contentType = match[1];
+      pureBase64 = match[2];
+    }
+
+    const bytes = Uint8Array.from(atob(pureBase64), (c) => c.charCodeAt(0));
+
+    let resp: Response;
+    try {
+      resp = await fetch(`${baseURL}/images/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': contentType },
+        body: bytes,
+      });
+    } catch (e) {
+      throw new Error(`图片上传网络错误: ${e}`);
+    }
+
+    if (!resp.ok) {
+      throw new Error(`图片上传失败: HTTP ${resp.status}`);
+    }
+
+    let json: { success?: boolean; url?: string; filename?: string };
+    try {
+      json = await resp.json();
+    } catch {
+      throw new Error('图片上传失败: 服务器返回非 JSON 响应');
+    }
+
+    if (!json.success || !json.url) {
+      throw new Error(`图片上传失败: ${JSON.stringify(json)}`);
+    }
+
+    urls.push(json.url);
+  }
+  return urls;
+}
+
 function sendChatMessageWs(
   request: ChatRequest,
   onChunk: (text: string) => void,
@@ -259,82 +316,105 @@ function sendChatMessageWs(
       return done;
     },
     abort: () => {
-      if (done || !socket) return;
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'stop', session_id: sessionId }));
-      }
+      if (done) return;
       done = true;
-      closeSocket();
+      if (socket) {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'stop', session_id: sessionId }));
+        }
+        closeSocket();
+      }
       release('aborted');
     },
   };
 
-  const promise = new Promise<void>((resolve, reject) => {
+  const promise = new Promise<void>(async (resolve, reject) => {
     release = (err?: string) => {
-      if (done && err === 'aborted') return; // aborts already handled at caller
+      if (done && err === 'aborted') return;
       if (err) reject(new Error(err));
       else resolve();
     };
-  });
 
-  try {
-    socket = new WebSocket(url);
-  } catch (e) {
-    release(String(e));
-    return { controller, promise };
-  }
+    // 将 base64 图片上传到后端 /images/upload，获取 HTTP URL
+    let imageUrls: string[] = [];
+    const imageList = request.image_base64_list;
+    if (imageList && imageList.length > 0) {
+      try {
+        imageUrls = await uploadImagesToUrls(imageList, baseURL);
+      } catch (e) {
+        if (!done) {
+          done = true;
+          release(`图片上传失败: ${e}`);
+        }
+        return;
+      }
+    }
 
-  socket.onopen = () => {
-    socket?.send(
-      JSON.stringify({
-        session_id: sessionId,
-        multi_modal_message: {
-          text: request.text || '',
-          image_base64_list: request.image_base64_list || [],
-        },
-      }),
-    );
-  };
+    // 上传期间被中止，不再建立 WebSocket
+    if (done) return;
 
-  socket.onmessage = (event) => {
-    let data: AgentWsEvent;
     try {
-      data = JSON.parse(event.data as string) as AgentWsEvent;
-    } catch {
-      return; // ignore non-JSON frames
+      socket = new WebSocket(url);
+    } catch (e) {
+      if (!done) {
+        done = true;
+        release(String(e));
+      }
+      return;
     }
-    if (data.event === 'chunk') {
-      onChunk(data.content ?? '');
-    } else if (data.event === 'done') {
+
+    socket.onopen = () => {
+      socket?.send(
+        JSON.stringify({
+          session_id: sessionId,
+          multi_modal_message: {
+            text: request.text || '',
+            image_base64_list: [],
+            image_path_list: imageUrls,
+          },
+        }),
+      );
+    };
+
+    socket.onmessage = (event) => {
+      let data: AgentWsEvent;
+      try {
+        data = JSON.parse(event.data as string) as AgentWsEvent;
+      } catch {
+        return;
+      }
+      if (data.event === 'chunk') {
+        onChunk(data.content ?? '');
+      } else if (data.event === 'done') {
+        if (!done) {
+          done = true;
+          closeSocket();
+          release();
+        }
+      } else if (data.event === 'error') {
+        if (!done) {
+          done = true;
+          closeSocket();
+          release(data.content || 'WebSocket stream error');
+        }
+      }
+    };
+
+    socket.onerror = () => {
       if (!done) {
         done = true;
         closeSocket();
-        release();
+        release('WebSocket connection error');
       }
-    } else if (data.event === 'error') {
+    };
+
+    socket.onclose = () => {
       if (!done) {
         done = true;
-        closeSocket();
-        release(data.content || 'WebSocket stream error');
+        release('WebSocket closed before stream completion');
       }
-    }
-    // 'stopped' frames are consumed by the stop flow and ignored here.
-  };
-
-  socket.onerror = () => {
-    if (!done) {
-      done = true;
-      closeSocket();
-      release('WebSocket connection error');
-    }
-  };
-
-  socket.onclose = () => {
-    if (!done) {
-      done = true;
-      release('WebSocket closed before stream completion');
-    }
-  };
+    };
+  });
 
   return { controller, promise };
 }

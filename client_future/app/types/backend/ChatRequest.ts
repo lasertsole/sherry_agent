@@ -9,7 +9,8 @@
  * |-------|------|----------|-------------|
  * | `session_id` | `string` | Yes | Unique session identifier |
  * | `text` | `string \| null` | No | Text message content |
- * | `image_base64_list` | `string[]` | No | Base64-encoded image data |
+ * | `image_base64_list` | `string[]` | No | Base64-encoded image data (uploaded to backend before WS call) |
+ * | `image_path_list` | `string[]` | No | HTTP image URLs already uploaded to the backend |
  *
  * At least one of `text` or `image_base64_list` should be provided.
  *
@@ -19,7 +20,8 @@
  * {
  *   "session_id": "main",
  *   "text": "Hello, how are you?",
- *   "image_base64_list": []
+ *   "image_base64_list": [],
+ *   "image_path_list": []
  * }
  * ```
  */
@@ -35,4 +37,8 @@ text: string | null,
 /**
  * Optional list of base64-encoded images for multi-modal input.
  */
-image_base64_list: Array<string>, };
+image_base64_list: Array<string>, 
+/**
+ * Optional list of HTTP image URLs already uploaded to the backend.
+ */
+image_path_list: Array<string>, };

@@ -40,9 +40,10 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
 
                 text_preview = multi_modal_message.text[:50] if multi_modal_message.text else ""
                 image_count = len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0
+                image_path_count = len(multi_modal_message.image_path_list) if multi_modal_message.image_path_list else 0
                 logger.info(
                     f"Agent WS request started: session_id={session_id}, "
-                    f"text_preview='{text_preview}', image_count={image_count}"
+                    f"text_preview='{text_preview}', image_count={image_count}, image_path_count={image_path_count}"
                 )
 
                 start_time = time.time()

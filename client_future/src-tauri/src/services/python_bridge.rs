@@ -12,6 +12,7 @@
 //! ```
 //! These are mapped to [`AppError::Backend`] and then to [`FrontendError`].
 
+use base64::Engine;
 use crate::utils::error::{AppError, AppResult};
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -89,6 +90,57 @@ impl PythonBridge {
         };
 
         Err(AppError::Backend(format!("HTTP {status}: {message}")))
+    }
+
+    /// Upload each base64-encoded image to the backend `/images/upload`
+    /// endpoint, returning the corresponding list of absolute HTTP URLs
+    /// (same order).
+    ///
+    /// The backend stores raw bytes and serves them from `/images/{filename}`.
+    /// Returns URLs to place in `image_path_list`.
+    pub async fn upload_images(&self, base64_list: &[String]) -> AppResult<Vec<String>> {
+        if base64_list.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut urls = Vec::with_capacity(base64_list.len());
+
+        for b64 in base64_list {
+            let encoded = if let Some(comma_pos) = b64.find(',') {
+                &b64[comma_pos + 1..]
+            } else {
+                b64.as_str()
+            };
+
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|e| AppError::Backend(format!("base64 decode failed: {e}")))?;
+
+            let resp = self
+                .client
+                .post(self.url("/images/upload"))
+                .header("Content-Type", "image/png")
+                .body(bytes)
+                .send()
+                .await?;
+
+            let resp = Self::check_response(resp).await?;
+            let body = resp.bytes().await?;
+            let json: serde_json::Value = serde_json::from_slice(&body)
+                .map_err(|e| AppError::Backend(format!("invalid upload response: {e}")))?;
+
+            let url = json
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .ok_or_else(|| AppError::Backend("missing 'url' in upload response".into()))?;
+
+            tracing::debug!(image_url = %url, "image uploaded");
+            urls.push(url);
+        }
+
+        tracing::info!(count = urls.len(), "uploaded images to backend");
+        Ok(urls)
     }
 
     // ── JSON REST methods ────────────────────────────────────
