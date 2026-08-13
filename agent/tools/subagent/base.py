@@ -263,7 +263,7 @@ class SubagentManager:
                     # Personalize the result to match the character persona
                     messages = [SystemMessage(
                         content=
-                        build_system_prompt()
+                        build_system_prompt(session_id=msg.session_id)
                         + '\n\nPlease convey the results to the user in a tone that matches the character persona.'
                     ), HumanMessage(content=msg.content)]
 

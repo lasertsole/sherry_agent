@@ -57,6 +57,7 @@ pub fn run() {
             character::character_read,
             character::character_write,
             character::character_update,
+            character::upload_avatar,
             // System
             system::system_info,
             system::system_health,

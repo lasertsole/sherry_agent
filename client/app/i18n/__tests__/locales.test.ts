@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import zh from '../locales/zh.json';
 import en from '../locales/en.json';
+import ja from '../locales/ja.json';
+import ko from '../locales/ko.json';
 
 type Dict = { [key: string]: unknown };
 
@@ -37,25 +39,30 @@ const placeholdersOf = (obj: Dict, prefix = ''): Record<string, Set<string>> => 
 };
 
 describe('i18n locale parity', () => {
-  it('zh.json 与 en.json 拥有完全一致的 key 结构', () => {
+  const others: Dict[] = [zh, en, ja, ko];
+
+  it('所有语言与 zh.json 拥有完全一致的 key 结构', () => {
     const zhKeys = flatten(zh as Dict).sort();
-    const enKeys = flatten(en as Dict).sort();
-
-    expect(zhKeys).toEqual(enKeys);
-  });
-
-  it('zh.json 与 en.json 的插值占位符保持一致', () => {
-    const zhPlaceholders = placeholdersOf(zh as Dict);
-    const enPlaceholders = placeholdersOf(en as Dict);
-
-    for (const key of Object.keys(zhPlaceholders)) {
-      expect([...zhPlaceholders[key]].sort()).toEqual([...enPlaceholders[key]].sort());
+    for (const other of others) {
+      expect(flatten(other).sort()).toEqual(zhKeys);
     }
   });
 
-  it('zh.json 与 en.json 的根命名空间保持一致', () => {
-    expect(Object.keys(zh as Dict).sort()).toEqual(
-      Object.keys(en as Dict).sort(),
-    );
+  it('所有语言与 zh.json 的插值占位符保持一致', () => {
+    for (const other of others) {
+      const otherPlaceholders = placeholdersOf(other as Dict);
+      for (const key of Object.keys(otherPlaceholders)) {
+        expect([...otherPlaceholders[key]].sort()).toEqual(
+          [...placeholdersOf(zh as Dict)[key]].sort(),
+        );
+      }
+    }
+  });
+
+  it('所有语言与 zh.json 的根命名空间保持一致', () => {
+    const zhNamespaces = Object.keys(zh as Dict).sort();
+    for (const other of others) {
+      expect(Object.keys(other).sort()).toEqual(zhNamespaces);
+    }
   });
 });
