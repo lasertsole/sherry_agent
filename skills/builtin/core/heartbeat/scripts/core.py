@@ -2,7 +2,7 @@ import re
 import shutil
 from pathlib import Path
 from loguru import logger
-from config import WORKSPACE_DIR, WORKSPACE_TEMPLATE_DIR, HEARTBEAT_PATH
+from config import WORKSPACE_DIR, HEARTBEAT_PATH, HEARTBEAT_TEMPLATE_PATH
 
 
 def _find_heading(lines: list[str], heading: str) -> int:
@@ -34,7 +34,7 @@ def _section_content_indices(lines: list[str], heading_idx: int) -> tuple[int, l
 
 def ensure_heartbeat_file_exists() -> None:
     """Ensure HEARTBEAT.md exists."""
-    src = WORKSPACE_TEMPLATE_DIR / "HEARTBEAT.md"
+    src = HEARTBEAT_TEMPLATE_PATH
     dst = WORKSPACE_DIR / "HEARTBEAT.md"
     if not dst.exists():
         shutil.copy2(src, dst)

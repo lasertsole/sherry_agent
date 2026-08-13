@@ -673,9 +673,63 @@ export async function updateCharacter(data: CharacterData): Promise<void> {
     await fetchApi({
       url: '/character',
       opts: { character_data: data },
-      method: 'put',
+      method: 'patch',
     });
   }
+}
+
+/**
+ * Convert a File to a base64 data URL string (Tauri IPC helper).
+ */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Upload an avatar image and return the relative path (e.g. `avatar/xxx.png`).
+ *
+ * - **Tauri**: sends the base64 payload to the `upload_avatar` IPC command.
+ * - **Browser**: POSTs raw image bytes to `/character/avatar`.
+ */
+export async function uploadAvatar(file: File): Promise<string> {
+  if (isTauri()) {
+    const invoke = await getInvoke();
+    const base64 = await fileToBase64(file);
+    return invoke<string>('upload_avatar', { base64 });
+  }
+  const resp = await fetch(`${import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080'}/character/avatar`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'image/png' },
+    body: await file.arrayBuffer(),
+  });
+  if (!resp.ok) {
+    throw new Error(`头像上传失败: HTTP ${resp.status}`);
+  }
+  const json = await resp.json();
+  if (!json || typeof json.path !== 'string') {
+    throw new Error('头像上传失败: 服务器返回格式异常');
+  }
+  return json.path;
+}
+
+/**
+ * List all skills (builtin, auto, third_party).
+ */
+export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
+  return fetchApi({ url: '/skills', method: 'get' }) as unknown as Promise<{ skills: SkillInfo[] }>;
+}
+
+/**
+ * Read a single skill's full SKILL.md content.
+ */
+export async function readSkill(location: string): Promise<SkillDetail> {
+  const cleanPath = location.replace(/^\.\//, '');
+  return fetchApi({ url: `/skills/${cleanPath}`, method: 'get' }) as unknown as Promise<SkillDetail>;
 }
 
 // ── Health ───────────────────────────────────────────────
@@ -699,4 +753,17 @@ export async function checkHealth(): Promise<HealthStatus> {
   } catch (e) {
     return { healthy: false, message: String(e) };
   }
+}
+
+// ── Skills ───────────────────────────────────────────────
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  location: string;
+  category: 'builtin' | 'auto' | 'third_party';
+}
+
+export interface SkillDetail extends SkillInfo {
+  content: string;
 }

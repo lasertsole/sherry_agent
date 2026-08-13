@@ -8,25 +8,24 @@
       multiple
       class="hidden"
       @change="onImageSelected" />
-    <!-- 移动端菜单遮罩层 -->
-    <div
-      v-if="isSidebarOpen"
-      class="fixed inset-0 bg-[#ddd] opacity-30 z-40 md:hidden"
-      @click="isSidebarOpen = false"></div>
-
     <!-- 左侧-历史记录区域 -->
     <!-- 移动端：固定定位，默认隐藏，通过按钮切换 -->
     <!-- md：固定定位，显示宽度 280px -->
     <!-- lg：相对定位，显示宽度 360px -->
     <div
       :class="[
-        'flex flex-col px-4 fixed md:relative h-full md:h-auto md:translate-x-0',
-        'transition-transform duration-300 z-50 md:z-auto w-[280px] md:w-[280px] lg:w-[360px]',
-        'border-r border-solid border-gray-light bg-[#fff] dark:border-gray-dark dark:bg-[#2a2a36]',
-        isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        'flex flex-col px-4 relative h-full w-[280px] md:w-[280px] lg:w-[360px]',
+        'border-r border-solid border-gray-light bg-[#fff] dark:border-gray-dark dark:bg-[#2a2a36]'
       ]">
       <!-- LOGO区域 -->
       <div class="flex items-center h-15 text-xl">🍊{{ characterInfo.aiName }}</div>
+      <!-- 新建对话 -->
+      <Button
+        icon="pi pi-comment"
+        :label="t('toolbar.newChat')"
+        class="mt-3 mb-3"
+        @click="handleCreateSession"
+        size="small" />
       <!-- 记录列表 -->
       <div class="flex flex-col overflow-auto flex-1 gap-3">
         <div
@@ -61,12 +60,6 @@
       <!-- 顶部工具栏 -->
       <div
         class="flex md:justify-end justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
-        <!-- 移动端菜单切换按钮 -->
-        <Button
-          icon="pi pi-bars"
-          class="md:hidden"
-          variant="text"
-          @click="isSidebarOpen = !isSidebarOpen" />
         <!-- 移动端展示 -->
         <div class="md:hidden h-full flex items-center text-xl">🍊{{ characterInfo.aiName }}</div>
         <!-- 顶部工具栏 -->
@@ -84,7 +77,7 @@
             class="md:hidden"
             ref="headerToolsMenuRef"
             id="header_tools"
-            :model="headerTools"
+            :model="headerMenuModel"
             :popup="true"></Menu>
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
             <Button
@@ -157,6 +150,12 @@
       </div>
     </div>
 
+    <!-- 技能查看弹窗 -->
+    <SkillsDialog v-model="showSkillsDialog" />
+
+    <!-- 系统配置弹窗 -->
+    <ConfigDialog v-model="showConfigDialog" @saved="loadCharacter" />
+
     <!-- HITL 审批弹窗 -->
     <Dialog
       v-model:visible="hitlRequest"
@@ -193,6 +192,8 @@
 import HistoryItem from './components/HistoryItem.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
 import ChatBox from './components/ChatBox.vue';
+import SkillsDialog from './components/SkillsDialog.vue';
+import ConfigDialog from './components/ConfigDialog.vue';
 // function
 import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -209,8 +210,11 @@ const { openPreview } = useImagePreview();
 
 const { t } = useI18n();
 
-/** 侧边栏展开状态（移动端） */
-const isSidebarOpen = ref(false);
+/** 技能查看弹窗开关 */
+const showSkillsDialog = ref(false);
+
+/** 系统配置弹窗开关 */
+const showConfigDialog = ref(false);
 
 /**
  * 角色显示信息（来自服务端 character.json）
@@ -617,9 +621,13 @@ const handleOperate = (type: string, event: string) => {
   // 头部区域
   if (type === 'headerBar') {
     switch (event) {
-      case 'userCenter':
-        return;
       case 'knowledgeBase':
+        return;
+      case 'skills':
+        showSkillsDialog.value = true;
+        return;
+      case 'systemConfig':
+        showConfigDialog.value = true;
         return;
       default:
         return;
@@ -658,7 +666,6 @@ const handleCreateSession = () => {
   currentSession.value = newSession;
   currentSessionId.value = sessionId;
   chatMessages.value = [];
-  isSidebarOpen.value = false;
 };
 
 /**
@@ -673,7 +680,6 @@ const handleToggleSession = (id: string) => {
   chatMessages.value = [];
   currentSessionId.value = id;
   loadSessionHistory(id);
-  isSidebarOpen.value = false;
 };
 
 /** 全选状态 */
@@ -704,6 +710,15 @@ const headerToolsMenuRef = ref<InstanceType<typeof Menu>>();
 const openHeaderMenu = (event: Event) => {
   headerToolsMenuRef.value?.toggle(event);
 };
+
+/** 移动端头部工具菜单（为每个工具绑定 command 回调，保证点击可用） */
+const headerMenuModel = computed(() =>
+  headerTools.map((tool) => ({
+    label: t(tool.title),
+    icon: tool.icon,
+    command: () => handleOperate('headerBar', tool.event),
+  })),
+);
 
 // 首屏加载默认会话(main)的历史消息，获取合并后的列表渲染到 ChatBox
 loadSessionHistory('main');

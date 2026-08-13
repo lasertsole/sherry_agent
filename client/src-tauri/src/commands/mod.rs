@@ -10,7 +10,7 @@
 //! | [`agent`] | `agent_chat` | Send messages and get agent responses |
 //! | [`session`] | `session_clear`, `session_history` | Session lifecycle management |
 //! | [`system_prompt`] | `system_prompt_read/write/update` | System prompt CRUD |
-//! | [`character`] | `character_read/write/update` | Character config CRUD |
+//! | [`character`] | `character_read/write/update`, `upload_avatar` | Character config CRUD + avatar upload |
 //! | [`system`] | `system_info`, `system_health` | App metadata and health |
 //! | [`events`] | — | Streaming event types and constants |
 

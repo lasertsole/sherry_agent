@@ -143,6 +143,41 @@ impl PythonBridge {
         Ok(urls)
     }
 
+    /// Upload a character avatar's raw image bytes to the backend
+    /// `POST /character/avatar` endpoint, returning the relative path
+    /// (e.g. `avatar/xxx.png`) to persist in character data.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` — Decoded raw image bytes.
+    /// * `content_type` — Original MIME type (`image/png`, `image/jpeg`, ...);
+    ///   used by the backend to choose the file extension.
+    pub async fn upload_avatar(&self, bytes: Vec<u8>, content_type: &str) -> AppResult<String> {
+        let ct = content_type.split(';').next().unwrap_or("image/png").trim();
+        let resp = self
+            .client
+            .post(self.url("/character/avatar"))
+            .header("Content-Type", ct)
+            .body(bytes)
+            .send()
+            .await?;
+
+        let resp = Self::check_response(resp).await?;
+        let body = resp.bytes().await?;
+        let json: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
+            AppError::Backend(format!("invalid avatar upload response: {e}"))
+        })?;
+
+        let path = json
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| AppError::Backend("missing 'path' in avatar upload response".into()))?;
+
+        tracing::debug!(avatar_path = %path, content_type = %ct, "avatar uploaded");
+        Ok(path)
+    }
+
     // ── JSON REST methods ────────────────────────────────────
 
     /// `GET {path}` with optional query parameters, returning deserialized JSON.

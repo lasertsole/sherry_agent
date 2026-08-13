@@ -30,8 +30,20 @@
     "file": "文件",
     "uploadImage": "上传图片",
     "image": "图片",
+    "skills": "技能",
     "configKnowledgeBase": "配置知识库",
-    "userCenter": "个人中心"
+    "systemConfig": "系统配置"
+  },
+  "skills": {
+    "title": "技能管理",
+    "empty": "该分类下暂无技能",
+    "selectHint": "请选择左侧技能查看详情",
+    "readonly": "只读",
+    "tabs": {
+      "builtin": "内置",
+      "auto": "自动",
+      "thirdParty": "第三方"
+    }
   },
   "errors": {
     "replyFailed": "（回复失败：{reason}）",
@@ -46,5 +58,40 @@
     "description": "描述",
     "reject": "拒绝",
     "approve": "批准"
+  },
+  "config": {
+    "title": "系统配置",
+    "save": "保存",
+    "cancel": "取消",
+    "uploadAvatar": "上传头像",
+    "tabs": {
+      "agents": "核心规则",
+      "identity": "身份信息",
+      "soul": "人格灵魂",
+      "user": "用户信息",
+      "character": "角色配置",
+      "language": "语言设置"
+    },
+    "desc": {
+      "agents": "Agent核心规则：会话流程、安全、模块索引",
+      "identity": "Agent身份：名字、emoji、头像",
+      "soul": "Agent人格、语气、性格",
+      "user": "用户信息和偏好",
+      "language": "选择界面显示语言"
+    },
+    "language": {
+      "label": "界面语言",
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "role": {
+      "assistant": "AI 角色",
+      "aiName": "AI 名称",
+      "userRole": "用户角色",
+      "userName": "用户名称",
+      "avatar": "头像"
+    }
   }
 }

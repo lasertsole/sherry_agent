@@ -187,6 +187,75 @@ pub async fn character_update(
     Ok(())
 }
 
+/// Upload a character avatar image and return its persisted relative path.
+///
+/// Receives a base64 data URL from the frontend (e.g.
+/// `data:image/png;base64,....`), decodes it to raw bytes, and forwards
+/// them to `POST /character/avatar` on the Python backend. The backend
+/// stores the image under `static/avatar/` and returns the relative path
+/// (e.g. `avatar/xxx.png`) which the caller persists into character data.
+///
+/// # Arguments
+///
+/// * `base64` — Full base64 data URL of the image (with MIME type prefix).
+///
+/// # Returns
+///
+/// `Result<String, FrontendError>` — The relative avatar path (e.g. `avatar/xxx.png`),
+/// matching the bridge's `invoke<string>` contract and the browser-mode `json.path`.
+///
+/// # Frontend Example
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/core';
+///
+/// const path = await invoke<string>('upload_avatar', { base64: 'data:image/png;base64,c2hlcnJ5...' });
+/// ```
+#[tauri::command]
+pub async fn upload_avatar(
+    base64: String,
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<String, FrontendError> {
+    // Split the data URL into its MIME type and base64 payload.
+    // Format: "data:<mime>;base64,<payload>" (or raw base64 without prefix).
+    let (mime, payload) = match base64.split_once(',') {
+        Some((meta, payload)) if meta.starts_with("data:") => {
+            // e.g. meta = "data:image/png;base64" → mime = "image/png"
+            let mime = meta
+                .trim_start_matches("data:")
+                .split(';')
+                .next()
+                .unwrap_or("image/png")
+                .to_string();
+            (mime, payload)
+        }
+        _ => ("image/png".to_string(), base64.as_str()),
+    };
+
+    if payload.trim().is_empty() {
+        return Err(FrontendError::from(crate::utils::error::AppError::Backend(
+            "empty avatar payload".into(),
+        )));
+    }
+
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .map_err(|e| {
+            crate::utils::error::AppError::Backend(format!("invalid base64 avatar: {e}"))
+        })?;
+
+    tracing::debug!(
+        bytes = bytes.len(),
+        mime = %mime,
+        "upload_avatar resolved payload"
+    );
+
+    let path = bridge.upload_avatar(bytes, &mime).await?;
+    tracing::info!(path = %path, "avatar uploaded");
+    Ok(path)
+}
+
 // ── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]

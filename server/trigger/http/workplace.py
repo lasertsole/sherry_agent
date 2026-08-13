@@ -1,7 +1,10 @@
 from server.trigger.core import app
 from loguru import logger
+from robyn import Response
 from server.service import (read_system_prompt_file, write_system_prompt_file, update_system_prompt_file, read_character,
                             write_character, update_character)
+from config import STATIC_DIR
+import uuid
 
 @app.get("/system_prompt")
 async def read_system_prompt_handler(request)-> dict[str, str]:
@@ -78,3 +81,59 @@ async def update_character_handler(request):
         f"Updating character configuration: character_count={character_count}, keys={list(character_data.keys())}")
     update_character(character_data)
     logger.info(f"Character configuration updated: character_count={character_count}")
+
+
+_CONTENT_TYPE_TO_EXT: dict[str, str] = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+}
+
+_DEFAULT_EXT = ".png"
+
+
+@app.post("/character/avatar")
+async def upload_avatar_handler(request):
+    """
+    Upload avatar image
+
+    Accept raw image bytes in the request body and persist to static/avatar/.
+    Returns a JSON object with the relative path to the stored avatar (e.g. avatar/xxx.png).
+    """
+    body = request.body
+
+    if isinstance(body, bytes):
+        data = body
+    elif isinstance(body, str):
+        data = body.encode("utf-8")
+    else:
+        data = b""
+
+    if not body or not data:
+        logger.warning("Avatar upload rejected: empty body")
+        return Response(
+            status_code=400,
+            headers={"Content-Type": "application/json"},
+            description='{"success": false, "message": "Empty request body"}',
+        )
+
+    content_type = request.headers.get("Content-Type")
+    if content_type:
+        ct = content_type.split(";")[0].strip().lower()
+        ext = _CONTENT_TYPE_TO_EXT.get(ct, _DEFAULT_EXT)
+    else:
+        ext = _DEFAULT_EXT
+
+    filename = f"{uuid.uuid4().hex}{ext}"
+
+    avatar_dir = STATIC_DIR / "avatar"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = avatar_dir / filename
+    file_path.write_bytes(data)
+
+    logger.info(f"Avatar uploaded: filename={filename}, size={len(data)}")
+    return {"path": f"avatar/{filename}"}

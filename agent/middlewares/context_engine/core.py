@@ -41,7 +41,7 @@ class ContextEngineHook(AgentMiddleware):
             system_prompt = state_register_db.get_state(session_id, "system_prompt", None)
 
             if system_prompt is None:
-                system_prompt = build_system_prompt()
+                system_prompt = build_system_prompt(session_id=session_id)
                 state_register_db.set_state(session_id, "system_prompt", system_prompt)
 
             state_register_mem.set_state(session_id, "system_prompt", system_prompt)

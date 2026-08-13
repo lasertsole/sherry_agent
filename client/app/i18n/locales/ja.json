@@ -1,0 +1,97 @@
+{
+  "chatInput": {
+    "placeholder": "メッセージを入力してください...",
+    "thinking": "AI が考えています...",
+    "send": "送信",
+    "stop": "停止",
+    "maxImages": "最大 {count} 枚の画像をアップロードできます",
+    "maxImagesExceed": "最大 {count} 枚の画像をアップロードできます。{extra} 枚超過しています"
+  },
+  "chatBox": {
+    "defaultUserName": "わたし",
+    "defaultAiName": "橘雪莉",
+    "imageLoadFailed": "画像の読み込みに失敗しました",
+    "removeImage": "画像を削除"
+  },
+  "history": {
+    "noSessions": "会話履歴がありません",
+    "selectAll": "すべて選択",
+    "batchDelete": "会話を一括削除",
+    "createdAt": "作成日時：{time}",
+    "editTitle": "タイトルを編集",
+    "deleteSession": "会話を削除",
+    "exampleTitle": "サンプル会話",
+    "newSession": "新しい会話"
+  },
+  "toolbar": {
+    "newChat": "新しい会話",
+    "knowledgeBase": "ナレッジベース",
+    "uploadFile": "ファイルをアップロード",
+    "file": "ファイル",
+    "uploadImage": "画像をアップロード",
+    "image": "画像",
+    "skills": "スキル",
+    "configKnowledgeBase": "ナレッジベースを設定",
+    "systemConfig": "システム設定"
+  },
+  "skills": {
+    "title": "スキル管理",
+    "empty": "このカテゴリにはスキルがありません",
+    "selectHint": "左側のスキルを選択して詳細を表示",
+    "readonly": "読み取り専用",
+    "tabs": {
+      "builtin": "組み込み",
+      "auto": "自動",
+      "thirdParty": "第三者の"
+    }
+  },
+  "errors": {
+    "replyFailed": "（返信に失敗：{reason}）",
+    "sendFailed": "（送信に失敗：{reason}）"
+  },
+  "imagePreview": {
+    "hint": "スクロールでズーム ・ ドラッグで移動 ・ ESC または空白クリックで閉じる"
+  },
+  "hitl": {
+    "title": "操作の承認が必要です",
+    "tool": "ツール",
+    "description": "説明",
+    "reject": "拒否",
+    "approve": "承認"
+  },
+  "config": {
+    "title": "システム設定",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "uploadAvatar": "アバターをアップロード",
+    "tabs": {
+      "agents": "コアルール",
+      "identity": "身元情報",
+      "soul": "人格・魂",
+      "user": "ユーザー情報",
+      "character": "キャラクター設定",
+      "language": "言語設定"
+    },
+    "desc": {
+      "agents": "Agent コアルール：会話フロー、セキュリティ、モジュール一覧",
+      "identity": "Agent 身元：名前、絵文字、アバター",
+      "soul": "Agent 人格、トーン、性格",
+      "user": "ユーザー情報と好み",
+      "language": "表示言語を選択してください"
+    },
+    "language": {
+      "label": "表示言語",
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "role": {
+      "assistant": "AI ロール",
+      "aiName": "AI 名前",
+      "userRole": "ユーザーロール",
+      "userName": "ユーザー名",
+      "avatar": "アバター"
+    }
+  }
+}

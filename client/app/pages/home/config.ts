@@ -2,18 +2,6 @@ import type { Tool } from './type';
 
 export const tools: Tool[] = [
   {
-    toolName: 'toolbar.newChat',
-    icon: 'pi pi-comment',
-    title: 'toolbar.newChat',
-    event: 'createSession'
-  },
-  {
-    toolName: 'toolbar.knowledgeBase',
-    icon: 'pi pi-database',
-    title: 'toolbar.knowledgeBase',
-    event: 'knowledgeBase'
-  },
-  {
     toolName: 'toolbar.file',
     icon: 'pi pi-upload',
     title: 'toolbar.uploadFile',
@@ -29,6 +17,13 @@ export const tools: Tool[] = [
 
 export const headerTools: Tool[] = [
   {
+    toolName: 'toolbar.skills',
+    icon: 'pi pi-bolt',
+    title: 'toolbar.skills',
+    event: 'skills',
+    label: 'toolbar.skills'
+  },
+  {
     toolName: 'toolbar.configKnowledgeBase',
     icon: 'pi pi-file-edit',
     title: 'toolbar.configKnowledgeBase',
@@ -36,11 +31,11 @@ export const headerTools: Tool[] = [
     label: 'toolbar.configKnowledgeBase'
   },
   {
-    toolName: 'toolbar.userCenter',
-    icon: 'pi pi-user',
-    title: 'toolbar.userCenter',
-    event: 'userCenter',
-    label: 'toolbar.userCenter'
+    toolName: 'toolbar.systemConfig',
+    icon: 'pi pi-sliders-h',
+    title: 'toolbar.systemConfig',
+    event: 'systemConfig',
+    label: 'toolbar.systemConfig'
   }
 ];
 
