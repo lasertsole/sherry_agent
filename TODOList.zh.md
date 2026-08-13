@@ -2,7 +2,7 @@
 
 ## 1. 重写前端
 
-使用 `client_future/` 文件夹下的 Tauri 2 + Nuxt 4 前端项目替代 `client/` 文件夹下的 Streamlit 前端。
+`client/` 文件夹下的 Tauri 2 + Nuxt 4 前端项目已替代旧的 Streamlit 前端。
 
 ### 架构
 
