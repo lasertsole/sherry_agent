@@ -2,7 +2,7 @@
 
 ## 1. Rewrite Frontend
 
-Replace the Streamlit frontend under `client/` with the Tauri 2 + Nuxt 4 frontend project under `client_future/`.
+The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy Streamlit frontend.
 
 ### Architecture
 

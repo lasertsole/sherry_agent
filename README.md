@@ -38,7 +38,7 @@ The Agent's character, **Sherry**, is a detective girl with a dual personality c
 
 ### 3. 🌐 Multi-Channel Access
 - **Web UI**: Modern chat interface built with Streamlit, supporting multimodal input (images, voice)
-- **Next-Generation Client** ([client_future](client_future/)): A Tauri 2 + Nuxt 4 desktop/mobile SPA client, currently in development
+- **Next-Generation Client** ([client](client/)): A Tauri 2 + Nuxt 4 desktop/mobile SPA client
 - **QQ Bot**: QQ channel adapter via plugin system (`plugins/channels/`)
 - **Message Bus**: Internal async message queue ([MessageBus](bus/core.py)) decouples input/output channels
 
@@ -115,12 +115,7 @@ EMA_AI_agent/
 │   ├── manager.py          # Channel lifecycle manager
 │   └── registry.py         # Channel registration
 │
-├── client/                 # Streamlit frontend entry
-│   ├── api/                # API client layer
-│   ├── core.py             # Streamlit app entry
-│   └── utils/              # Frontend utility helpers
-│
-├── client_future/          # Next-gen client (Tauri 2 + Nuxt 4)
+├── client/                 # Next-gen client (Tauri 2 + Nuxt 4)
 │   ├── app/                # Nuxt 4 SPA source
 │   │   ├── app.vue         # Root component entry
 │   │   ├── pages/          # Page components
@@ -268,7 +263,7 @@ Each major subsystem has its own detailed README:
 | **Subagent System** | Hierarchical task decomposition, parallel execution & experience distillation | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
-| **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client_future/README.md) · [ZH](client_future/README.zh.md) |
+| **Next-gen Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client/README.md) · [ZH](client/README.zh.md) |
 | **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
 
@@ -318,7 +313,6 @@ You can also start each component manually:
 
 ```bash
 python -m server  # Start backend
-streamlit run client/core.py  # Start frontend
 ```
 
 ---

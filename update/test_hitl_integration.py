@@ -530,7 +530,7 @@ class TestClientBridgeHitl:
 
     def test_bridge_has_hitl_types(self):
         """Verify bridge.ts exports HITL types."""
-        path = Path(__file__).resolve().parent.parent.parent / "client_future" / "app" / "composables" / "bridge.ts"
+        path = Path(__file__).resolve().parent.parent.parent / "client" / "app" / "composables" / "bridge.ts"
         source = path.read_text(encoding="utf-8")
         assert "HitlInterruptData" in source
         assert "HitlResponse" in source
@@ -538,25 +538,25 @@ class TestClientBridgeHitl:
 
     def test_bridge_has_send_hitl_response(self):
         """Verify StreamController has sendHitlResponse method."""
-        path = Path(__file__).resolve().parent.parent.parent / "client_future" / "app" / "composables" / "bridge.ts"
+        path = Path(__file__).resolve().parent.parent.parent / "client" / "app" / "composables" / "bridge.ts"
         source = path.read_text(encoding="utf-8")
         assert "sendHitlResponse" in source
 
     def test_bridge_handles_hitl_request_event(self):
         """Verify the WS onmessage handler processes hitl_request events."""
-        path = Path(__file__).resolve().parent.parent.parent / "client_future" / "app" / "composables" / "bridge.ts"
+        path = Path(__file__).resolve().parent.parent.parent / "client" / "app" / "composables" / "bridge.ts"
         source = path.read_text(encoding="utf-8")
         assert "hitl_request" in source
 
     def test_messages_ts_passes_on_hitl(self):
         """Verify messages.ts passes onHitl callback to streamChatMessage."""
-        path = Path(__file__).resolve().parent.parent.parent / "client_future" / "app" / "composables" / "messages.ts"
+        path = Path(__file__).resolve().parent.parent.parent / "client" / "app" / "composables" / "messages.ts"
         source = path.read_text(encoding="utf-8")
         assert "onHitl" in source
 
     def test_index_vue_has_hitl_ui(self):
         """Verify index.vue has HITL approval dialog."""
-        path = Path(__file__).resolve().parent.parent.parent / "client_future" / "app" / "pages" / "home" / "index.vue"
+        path = Path(__file__).resolve().parent.parent.parent / "client" / "app" / "pages" / "home" / "index.vue"
         source = path.read_text(encoding="utf-8")
         assert "hitlRequest" in source
         assert "handleHitlDecision" in source
@@ -564,6 +564,6 @@ class TestClientBridgeHitl:
 
     def test_type_ts_has_hitl_request_data(self):
         """Verify type.ts exports HitlRequestData."""
-        path = Path(__file__).resolve().parent.parent.parent / "client_future" / "app" / "pages" / "home" / "type.ts"
+        path = Path(__file__).resolve().parent.parent.parent / "client" / "app" / "pages" / "home" / "type.ts"
         source = path.read_text(encoding="utf-8")
         assert "HitlRequestData" in source
