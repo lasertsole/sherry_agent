@@ -1,0 +1,3 @@
+[     459ms] [INFO] <Suspense> is an experimental feature and its API will likely change. @ http://localhost:3000/_nuxt/@fs/C:/app/code/project/EMA_AI_agent/client_future/node_modules/.pnpm/@vue+runtime-core@3.5.41/node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js?v=fca79f45:6066
+[     498ms] [WARNING] [NUXT_E3003] `useAsyncData`/`useFetch` was called after the component had already mounted, so the data fetch cannot be awaited during setup.
+╰▶ fix: Use `$fetch()` for requests triggered after mount (e.g. in event handlers), or call `useAsyncData`/`useFetch` in the `setup()` function. @ http://localhost:3000/_nuxt/@fs/C:/app/code/project/EMA_AI_agent/client_future/node_modules/.cache/vite/client/deps/nostics.js?v=fca79f45:37
