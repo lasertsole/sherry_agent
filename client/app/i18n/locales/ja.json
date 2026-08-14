@@ -17,9 +17,13 @@
     "noSessions": "会話履歴がありません",
     "selectAll": "すべて選択",
     "batchDelete": "会話を一括削除",
+    "batchDeleteConfirm": "選択した会話を一括削除してもよろしいですか？この操作は元に戻せません。",
     "createdAt": "作成日時：{time}",
     "editTitle": "タイトルを編集",
     "deleteSession": "会話を削除",
+    "deleteConfirm": "この会話を削除してもよろしいですか？この操作は元に戻せません。",
+    "confirmDelete": "削除",
+    "cancelDelete": "キャンセル",
     "exampleTitle": "サンプル会話",
     "newSession": "新しい会話"
   },

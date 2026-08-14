@@ -50,7 +50,7 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
 );
 
 // Nuxt auto-import called inline at setup by `home/index.vue`
-// (`get_history_by_turn_page('main', 0, 10, 1)`). Resolve to an empty list so the
+// (`get_history_by_turn_page('default', 0, 10, 1)`). Resolve to an empty list so the
 // page mounts without touching the backend.
 (globalThis as any).get_history_by_turn_page = vi.fn(async () => []);
 

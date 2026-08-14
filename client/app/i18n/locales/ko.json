@@ -17,9 +17,13 @@
     "noSessions": "대화 기록이 없습니다",
     "selectAll": "전체 선택",
     "batchDelete": "대화 일괄 삭제",
+    "batchDeleteConfirm": "선택한 대화를 일괄 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
     "createdAt": "만든 시간：{time}",
     "editTitle": "제목 수정",
     "deleteSession": "대화 삭제",
+    "deleteConfirm": "이 대화를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+    "confirmDelete": "삭제",
+    "cancelDelete": "취소",
     "exampleTitle": "예시 대화",
     "newSession": "새 대화"
   },

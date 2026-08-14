@@ -4,7 +4,7 @@ import ChatBox from '@/pages/home/components/ChatBox.vue';
 import { CHAT_ROLE, type MessageItem } from '@/pages/home/type';
 
 const base = (over: Partial<MessageItem>): MessageItem => ({
-  session_id: 'main',
+  session_id: 'default',
   role: CHAT_ROLE.USER,
   content: 'hello',
   id: 1,

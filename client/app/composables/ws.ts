@@ -11,8 +11,8 @@
 import { ref, type Ref } from 'vue';
 import { emit } from './mitt';
 
-/** 会话 ID（当前固定为 "main"） */
-const SESSION_ID = 'main';
+/** 会话 ID（当前固定为 "default"） */
+const SESSION_ID = 'default';
 
 /** WebSocket 单例引用 */
 let wsInstance: WebSocket | null = null;

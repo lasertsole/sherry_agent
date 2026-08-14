@@ -48,6 +48,10 @@ export default defineConfig([
   {
     rules: {
       'no-console': 'warn',
+      // 禁止直接使用 v-html 插入未净化 HTML，防止 XSS。
+      // 唯一例外的 ChatBox.vue 绑定的是 safeHtml()（markdown-it + DOMPurify 净化）后的输出，
+      // 已以行级 eslint-disable 注明理由。
+      'vue/no-v-html': 'error',
       'vue/multi-word-component-names': 'off',
       'no-undef': 'off', //交给nuxt框架检查
       '@typescript-eslint/no-unsafe-function-type': 'off',

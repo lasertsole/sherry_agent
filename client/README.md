@@ -263,7 +263,7 @@ The `bridge.ts` composable provides a unified API that works in both Tauri deskt
 
 WebSocket singleton for real-time server push notifications:
 
-- Connects to `{wsBase}/sessions/ws?session_id=main`
+- Connects to `{wsBase}/sessions/ws?session_id=default`
 - Auto-reconnects on disconnect (5-second delay)
 - Emits events via mitt: `ws:connected`, `ws:disconnected`, `ws:notification`, `ws:message`
 - Resolves WS URL from `VITE_API_BACK_URL` environment variable

@@ -56,7 +56,7 @@ import type { ChatChunk, ChatRequest } from '@/types/backend/ChatRequest';
 // 简单文本聊天
 const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
-    session_id: 'main',
+    session_id: 'default',
     text: '你好，今天怎么样？',
     image_base64_list: [],
   },
@@ -69,7 +69,7 @@ console.log(fullResponse);
 // 带图片的多模态聊天
 const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
-    session_id: 'main',
+    session_id: 'default',
     text: '描述这张图片',
     image_base64_list: [base64ImageData],
   },
@@ -121,7 +121,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 // 停止当前会话的生成
 await invoke('agent_stop', {
-  request: { session_id: 'main' },
+  request: { session_id: 'default' },
 });
 ```
 

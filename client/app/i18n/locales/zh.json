@@ -17,9 +17,13 @@
     "noSessions": "暂无会话记录",
     "selectAll": "全选",
     "batchDelete": "批量删除对话",
+    "batchDeleteConfirm": "确定要批量删除选中的对话吗？此操作不可恢复。",
     "createdAt": "创建时间：{time}",
     "editTitle": "修改标题",
     "deleteSession": "删除会话",
+    "deleteConfirm": "确定要删除该会话吗？此操作不可恢复。",
+    "confirmDelete": "删除",
+    "cancelDelete": "取消",
     "exampleTitle": "示例会话",
     "newSession": "新会话"
   },

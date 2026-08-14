@@ -157,18 +157,18 @@ mod tests {
     #[test]
     fn stream_start_serializes() {
         let payload = AgentStreamStart {
-            session_id: "main".into(),
+            session_id: "default".into(),
             message_id: "msg_001".into(),
         };
         let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("\"session_id\":\"main\""));
+        assert!(json.contains("\"session_id\":\"default\""));
         assert!(json.contains("\"message_id\":\"msg_001\""));
     }
 
     #[test]
     fn stream_chunk_serializes() {
         let payload = AgentStreamChunk {
-            session_id: "main".into(),
+            session_id: "default".into(),
             message_id: "msg_001".into(),
             content: "Hello!".into(),
             chunk_type: "text".into(),
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn stream_end_serializes() {
         let payload = AgentStreamEnd {
-            session_id: "main".into(),
+            session_id: "default".into(),
             message_id: "msg_001".into(),
             total_chunks: 42,
         };
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn stream_error_serializes() {
         let payload = AgentStreamError {
-            session_id: "main".into(),
+            session_id: "default".into(),
             message_id: "msg_001".into(),
             code: "MODEL_ERROR".into(),
             message: "connection refused".into(),

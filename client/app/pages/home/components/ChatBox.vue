@@ -65,6 +65,7 @@
               : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* 左侧气泡：白色 */,
             { 'rounded-xl': isConsecutive(message.id) }
           ]">
+          <!-- eslint-disable-next-line vue/no-v-html -- safeHtml() 已内部净化（markdown-it + DOMPurify 白名单），此处 v-html 绑定的是净化后的安全 HTML -->
           <div v-html="safeHtml(message.content)"></div>
           <template v-if="messageImages(message).length">
             <div class="flex flex-wrap gap-2 mt-2">

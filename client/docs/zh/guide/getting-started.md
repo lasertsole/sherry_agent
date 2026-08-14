@@ -23,7 +23,7 @@ console.log(`运行 ${info.name} v${info.version}`);
 
 // 带参数的命令
 const history = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'main', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 },
 });
 ```
 
@@ -54,7 +54,7 @@ Tauri 命令以对象形式接收参数。Rust 函数中的参数名即为 invok
 // Rust: fn session_clear(request: ClearSessionRequest)
 // TypeScript:
 await invoke('session_clear', {
-  request: { session_id: 'main' }  // <-- "request" 与 Rust 参数名对应
+  request: { session_id: 'default' }  // <-- "request" 与 Rust 参数名对应
 });
 ```
 
@@ -83,7 +83,7 @@ import { sendChatMessage, clearSession, checkHealth } from '~/composables/bridge
 
 // Tauri 桌面模式和浏览器开发模式均可使用
 await sendChatMessage(
-  { session_id: 'main', text: '你好！', image_base64_list: [] },
+  { session_id: 'default', text: '你好！', image_base64_list: [] },
   (chunk) => appendToChat(chunk),
 );
 ```

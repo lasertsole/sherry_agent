@@ -22,7 +22,7 @@ import { fetchApi } from './requestApi';
  * 字段与后端 `type/message.py` MultiModalMessage 保持一致。
  */
 export interface ChatRequest {
-  /** 会话 ID（缺省时后端按 "main"/默认会话处理） */
+  /** 会话 ID（缺省时后端按 "default"/默认会话处理） */
   session_id?: string;
   /** 文本内容 */
   text: string;
@@ -238,7 +238,7 @@ export function streamChatMessage(
   if (isTauri()) {
     const promise = sendChatMessageTauri(request, onChunk);
     return {
-      controller: { closed: false, abort: () => void stopChatMessage(request.session_id || 'main') },
+      controller: { closed: false, abort: () => void stopChatMessage(request.session_id || 'default') },
       promise,
     };
   }
@@ -323,7 +323,7 @@ function sendChatMessageWs(
 } {
   const baseURL = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
   const url = `${resolveWsBaseUrl(baseURL)}/sessions/agent/ws`;
-  const sessionId = request.session_id || 'main';
+  const sessionId = request.session_id || 'default';
 
   let socket: WebSocket | null = null;
   let done: boolean = false;

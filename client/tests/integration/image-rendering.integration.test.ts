@@ -20,7 +20,7 @@ import type { CachedMessage } from '@/composables/db';
  */
 
 const base = (over: Partial<MessageItem>): MessageItem => ({
-  session_id: 'main',
+  session_id: 'default',
   role: CHAT_ROLE.USER,
   content: 'hello',
   id: 1,
@@ -50,7 +50,7 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
           base({
             id: 2,
             role: CHAT_ROLE.AI,
-            session_id: 'main',
+            session_id: 'default',
             images: ['C:/project/src/main/media/12345_67890.png'],
             // 注意：AI 消息 content 为空会被 filteredMessages 当作「空占位」过滤掉，
             // 进而连带图片分支也不渲染 —— 必须给非空内容才走正常渲染路径。
@@ -63,7 +63,7 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
     expect(img.exists()).toBe(true);
     // backendBaseUrl 来自 VITE_API_BACK_URL=http://localhost:8080
     expect(img.attributes('src')).toBe(
-      'http://localhost:8080/media?session_id=main&filename=12345_67890.png',
+      'http://localhost:8080/media?session_id=default&filename=12345_67890.png',
     );
   });
 
@@ -135,7 +135,7 @@ describe('home/index.vue image pass-through (integration, backend mocked)', () =
     // 返回带图片的历史行（toMessageItems 的输入是 CachedMessage）。
     const rows: CachedMessage[] = [
       {
-        session_id: 'main',
+        session_id: 'default',
         role: CHAT_ROLE.USER,
         content: 'with image',
         images: ['aGVsbG8='],
