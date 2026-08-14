@@ -4,6 +4,7 @@ __pycache__
 .env
 models/
 logs/output
+logs/curator
 *.db
 *.db-shm
 *.db-wal

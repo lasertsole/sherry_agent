@@ -39,19 +39,23 @@
           :history-record="item"
           :is-active="currentSessionId === item.id"
           @choose-session="handleToggleSession"
+          @delete-session="handleDeleteSession"
           v-model:selectedList="selectedSessionIds" />
       </div>
       <div class="h-17 flex items-center justify-between">
         <div class="flex items-center justify-center gap-1">
           <Checkbox
-            v-model="isCheckAllSession"
+            :model-value="isCheckAllSession"
             :indeterminate="isIndeterminate"
-            binary />
+            binary
+            @update:model-value="handleToggleSelectAll" />
           <span>{{ t('history.selectAll') }}</span>
         </div>
         <Button
           icon="pi pi-trash"
-          :label="t('history.batchDelete')" />
+          :label="t('history.batchDelete')"
+          :disabled="selectedSessionIds.length === 0"
+          @click="handleBatchDelete" />
       </div>
     </div>
 
@@ -91,62 +95,75 @@
           </div>
         </div>
       </div>
-      <!-- 聊天主体 -->
-      <ChatBox
-        :messages="chatMessages"
-        :user-avatar="characterInfo.userAvatar"
-        :ai-avatar="characterInfo.aiAvatar"
-        :user-name="characterInfo.userName"
-        :ai-name="characterInfo.aiName" />
-      <!-- 图片预览区（独立于输入框上方，避免挤压 h-40 输入框导致发送按钮上移 / ✕ 按钮被裁剪） -->
-      <template v-if="selectedImages.length > 0">
-        <div class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-          <div
-            v-for="(img, idx) in selectedImages"
-            :key="idx"
-            class="relative shrink-0 group">
-            <img
-              :src="`data:image/*;base64,${img.base64}`"
-              :alt="img.name"
-              class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
-              @click="openPreview(`data:image/*;base64,${img.base64}`)" />
-            <button
-              type="button"
-              :title="t('chatBox.removeImage')"
-              class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-              @click="removeImage(idx)">
-              ✕
-            </button>
+      <!-- 聊天主体 / 空态（session 栏为空时显示"开启新对话"） -->
+      <template v-if="historyList.length > 0">
+        <ChatBox
+          :messages="chatMessages"
+          :user-avatar="characterInfo.userAvatar"
+          :ai-avatar="characterInfo.aiAvatar"
+          :user-name="characterInfo.userName"
+          :ai-name="characterInfo.aiName" />
+        <!-- 图片预览区（独立于输入框上方，避免挤压 h-40 输入框导致发送按钮上移 / ✕ 按钮被裁剪） -->
+        <template v-if="selectedImages.length > 0">
+          <div class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+            <div
+              v-for="(img, idx) in selectedImages"
+              :key="idx"
+              class="relative shrink-0 group">
+              <img
+                :src="`data:image/*;base64,${img.base64}`"
+                :alt="img.name"
+                class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
+                @click="openPreview(`data:image/*;base64,${img.base64}`)" />
+              <button
+                type="button"
+                :title="t('chatBox.removeImage')"
+                class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
+                @click="removeImage(idx)">
+                ✕
+              </button>
+            </div>
           </div>
+        </template>
+        <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
+        <div class="flex flex-col h-40">
+          <!-- 聊天工具 -->
+          <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
+            <template class="hidden sm:block">
+              <Button
+                v-for="tool in tools"
+                :key="tool.event"
+                :icon="tool.icon"
+                :label="t(tool.toolName)"
+                @click="handleOperate('toolBar', tool.event)"
+                size="small"
+                variant="text" />
+            </template>
+            <template class="block sm:hidden">
+              <Button
+                v-for="tool in tools"
+                :key="tool.event"
+                :icon="tool.icon"
+                :aria-label="t(tool.toolName)"
+                @click="handleOperate('toolBar', tool.event)"
+                size="small"
+                variant="text" />
+            </template>
+          </div>
+          <!-- 输入框 -->
+          <ChatInputBox :sending="isSending" @send="handleSend" @stop="handleStop" />
         </div>
       </template>
-      <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
-      <div class="flex flex-col h-40">
-        <!-- 聊天工具 -->
-        <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
-          <template class="hidden sm:block">
-            <Button
-              v-for="tool in tools"
-              :key="tool.event"
-              :icon="tool.icon"
-              :label="t(tool.toolName)"
-              @click="handleOperate('toolBar', tool.event)"
-              size="small"
-              variant="text" />
-          </template>
-          <template class="block sm:hidden">
-            <Button
-              v-for="tool in tools"
-              :key="tool.event"
-              :icon="tool.icon"
-              :aria-label="t(tool.toolName)"
-              @click="handleOperate('toolBar', tool.event)"
-              size="small"
-              variant="text" />
-          </template>
+      <!-- 空态：无会话时显示居中的"开启新对话"按钮 -->
+      <div v-else class="flex-1 flex flex-col items-center justify-center gap-4">
+        <div class="flex flex-col items-center gap-2">
+          <span class="pi pi-comments text-4xl text-[#9CA3AF]"></span>
+          <p class="text-base font-medium text-[#6B7280] dark:text-[#9CA3AF]">{{ t('history.noSessions') }}</p>
         </div>
-        <!-- 输入框 -->
-        <ChatInputBox :sending="isSending" @send="handleSend" @stop="handleStop" />
+        <Button
+          icon="pi pi-plus"
+          :label="t('toolbar.newChat')"
+          @click="handleCreateSession" />
       </div>
     </div>
 
@@ -204,6 +221,7 @@ import { tools, headerTools } from './config';
 import { Menu } from 'primevue';
 import { readCharacter } from '@/composables/bridge';
 import type { ChatRequest, AgentChunkType, HitlResponse } from '@/composables/bridge';
+import { getSessionList, clearSession } from '@/composables/messages';
 
 // 图片预览
 const { openPreview } = useImagePreview();
@@ -255,6 +273,27 @@ const loadCharacter = async () => {
 
 /** 历史会话 */
 const historyList = ref<SessionRecord[]>([]);
+
+/**
+ * 从服务端拉取全部会话列表并填充左侧历史列表。
+ *
+ * 会话列表的唯一权威来源是服务端（context_engine）。这里会把服务端返回的
+ * `{session_id, last_time, title}` 映射为前端 `SessionRecord`（id / createTime / title）。
+ * 本地新建但尚未持久化的会话（createTime 为本地时间）会保留在列表头部。
+ */
+const loadSessionList = async () => {
+  try {
+    const sessions = await getSessionList();
+    // 保留本地新建但服务端尚不存在的会话（如刚点「新建对话」还没发消息）
+    const localOnly = historyList.value.filter(
+      (s) => !sessions.some((row) => row.id === s.id),
+    );
+    historyList.value = [...localOnly, ...sessions];
+  } catch (error) {
+    // 服务端不可达时保留当前列表（可能为空）
+    console.warn('[loadSessionList] 拉取会话列表失败：', error);
+  }
+};
 
 /** 当前会话 */
 const currentSession = ref<SessionRecord>();
@@ -425,7 +464,7 @@ const handleStop = () => {
  * @param text 用户输入内容
  */
 const handleSend = async (text: string) => {
-  const sessionId = currentSessionId.value || 'main';
+  const sessionId = currentSessionId.value || 'default';
 
   // 确保当前会话已初始化
   if (!currentSession.value) {
@@ -682,6 +721,29 @@ const handleToggleSession = (id: string) => {
   loadSessionHistory(id);
 };
 
+/**
+ * 删除会话：调用服务端 clearSession，成功后从列表移除。
+ * 若删除的是当前激活会话，则重置会话状态（清空聊天区）。
+ */
+const handleDeleteSession = async (id: string) => {
+  try {
+    const ok = await clearSession(id);
+    if (!ok) {
+      console.warn('[handleDeleteSession] 删除会话失败，保留列表项：', id);
+      return;
+    }
+    historyList.value = historyList.value.filter((s) => s.id !== id);
+    selectedSessionIds.value = selectedSessionIds.value.filter((sid) => sid !== id);
+    if (currentSessionId.value === id) {
+      currentSession.value = undefined;
+      currentSessionId.value = undefined;
+      chatMessages.value = [];
+    }
+  } catch (error) {
+    console.warn('[handleDeleteSession] 删除会话异常，保留列表项：', id, error);
+  }
+};
+
 /** 全选状态 */
 const isCheckAllSession = ref<boolean>(false);
 /** 选择的会话 */
@@ -706,6 +768,56 @@ watch(
   }
 );
 
+/** 全选/取消全选：在「全选 / 部分选择 / 未选择」三种状态间切换 */
+const handleToggleSelectAll = (checked: boolean) => {
+  if (checked) {
+    // 勾选全选：当前列表全部选中
+    selectedSessionIds.value = historyList.value.map((s) => s.id);
+  } else {
+    // 取消全选：清空当前选择
+    selectedSessionIds.value = [];
+  }
+};
+
+/**
+ * 批量删除会话：逐个调用服务端 clearSession，成功后统一从列表移除。
+ * 若其中有当前激活会话，则重置会话状态（清空聊天区）。
+ */
+const handleBatchDelete = async () => {
+  if (selectedSessionIds.value.length === 0) return;
+  if (!window.confirm(t('history.batchDeleteConfirm'))) return;
+
+  const ids = [...selectedSessionIds.value];
+  const remain: string[] = [];
+  let failed = false;
+  for (const id of ids) {
+    try {
+      const ok = await clearSession(id);
+      if (!ok) {
+        failed = true;
+        remain.push(id);
+      }
+    } catch (error) {
+      failed = true;
+      remain.push(id);
+      console.warn('[handleBatchDelete] 删除会话异常：', id, error);
+    }
+  }
+
+  const deleted = ids.filter((id) => !remain.includes(id));
+  if (deleted.length > 0) historyList.value = historyList.value.filter((s) => !deleted.includes(s.id));
+  if (currentSessionId.value && deleted.includes(currentSessionId.value)) {
+    currentSession.value = undefined;
+    currentSessionId.value = undefined;
+    chatMessages.value = [];
+  }
+  selectedSessionIds.value = remain;
+
+  if (failed && remain.length > 0) {
+    console.warn('[handleBatchDelete] 部分会话删除失败，已保留：', remain);
+  }
+};
+
 const headerToolsMenuRef = ref<InstanceType<typeof Menu>>();
 const openHeaderMenu = (event: Event) => {
   headerToolsMenuRef.value?.toggle(event);
@@ -720,10 +832,11 @@ const headerMenuModel = computed(() =>
   })),
 );
 
-// 首屏加载默认会话(main)的历史消息，获取合并后的列表渲染到 ChatBox
-loadSessionHistory('main');
-// 挂载后从服务端加载角色配置（头像 + 名字）
+// 首屏加载默认会话(default)的历史消息，获取合并后的列表渲染到 ChatBox
+loadSessionHistory('default');
+// 挂载后从服务端加载角色配置（头像 + 名字）与会话列表
 onMounted(() => {
   loadCharacter();
+  loadSessionList();
 });
 </script>

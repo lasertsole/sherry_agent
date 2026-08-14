@@ -32,6 +32,9 @@
     "vue-router": "^5.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@eslint/json": "^2.0.1",
+    "@eslint/markdown": "^8.0.3",
     "@nuxtjs/color-mode": "^4.0.1",
     "@playwright/test": "^1.62.1",
     "@primevue/nuxt-module": "^4.5.0",
@@ -40,9 +43,14 @@
     "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/coverage-v8": "^4.1.10",
     "@vue/test-utils": "^2.4.11",
+    "eslint": "^10.8.1",
+    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-vue": "^10.10.0",
+    "globals": "^17.11.0",
     "happy-dom": "^20.11.2",
     "sass": "^1.102.0",
     "sass-loader": "^17.0.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10",
     "vue-tsc": "^3.3.9"
   }

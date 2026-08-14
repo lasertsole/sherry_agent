@@ -60,11 +60,11 @@ afterEach(() => {
 });
 
 describe('resolveWsBaseUrl via useWs connection URL', () => {
-  it('connects to ws://host:port/sessions/ws?session_id=main', () => {
+  it('connects to ws://host:port/sessions/ws?session_id=default', () => {
     useWs();
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(FakeWebSocket.instances[0].url).toBe(
-      'ws://localhost:8080/sessions/ws?session_id=main',
+      'ws://localhost:8080/sessions/ws?session_id=default',
     );
   });
 

@@ -262,7 +262,7 @@ app.vue (根)
 
 WebSocket 单例，用于实时服务端推送通知：
 
-- 连接地址 `{wsBase}/sessions/ws?session_id=main`
+- 连接地址 `{wsBase}/sessions/ws?session_id=default`
 - 断线自动重连（5 秒延迟）
 - 通过 mitt 发射事件：`ws:connected`、`ws:disconnected`、`ws:notification`、`ws:message`
 - 从 `VITE_API_BACK_URL` 环境变量解析 WS URL

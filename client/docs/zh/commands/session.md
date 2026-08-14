@@ -41,7 +41,7 @@ await invoke('session_clear', {
 import { invoke } from '@tauri-apps/api/core';
 
 await invoke('session_clear', {
-  request: { session_id: 'main' },
+  request: { session_id: 'default' },
 });
 console.log('会话已清除');
 ```
@@ -98,7 +98,7 @@ import type { HistoryMessage } from '@/types/backend/HistoryMessage';
 
 // 获取最近 10 轮对话
 const messages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'main', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 },
 });
 
 // 渲染聊天 UI
@@ -108,6 +108,6 @@ messages.forEach(msg => {
 
 // 获取全部历史
 const allMessages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'main', last_turn_count: null },
+  request: { session_id: 'default', last_turn_count: null },
 });
 ```

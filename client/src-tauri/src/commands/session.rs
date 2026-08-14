@@ -85,7 +85,7 @@ pub struct HistoryMessage {
 /// import { invoke } from '@tauri-apps/api/core';
 ///
 /// await invoke('session_clear', {
-///   request: { session_id: 'main' },
+///   request: { session_id: 'default' },
 /// });
 /// ```
 #[tauri::command]
@@ -131,12 +131,12 @@ pub async fn session_clear(
 ///
 /// // Get last 10 turns
 /// const messages = await invoke<HistoryMessage[]>('session_history', {
-///   request: { session_id: 'main', last_turn_count: 10 },
+///   request: { session_id: 'default', last_turn_count: 10 },
 /// });
 ///
 /// // Get all history
 /// const allMessages = await invoke<HistoryMessage[]>('session_history', {
-///   request: { session_id: 'main', last_turn_count: null },
+///   request: { session_id: 'default', last_turn_count: null },
 /// });
 /// ```
 #[tauri::command]
@@ -197,9 +197,9 @@ mod tests {
 
     #[test]
     fn clear_session_request_deserializes() {
-        let json = r#"{"session_id":"main"}"#;
+        let json = r#"{"session_id":"default"}"#;
         let req: ClearSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.session_id, "main");
+        assert_eq!(req.session_id, "default");
     }
 
     #[test]

@@ -13,34 +13,23 @@
         v-model="modelList"
         :value="props.historyRecord.id"
         @click.stop />
-      <div class="truncate">{{ props.historyRecord?.title }}</div>
+      <div class="truncate">
+        {{ props.historyRecord?.title || t('history.newSession') }}
+      </div>
+    </div>
+    <!-- 会话 ID（session_id） -->
+    <div class="truncate mt-1 text-[10px] text-gray-600 dark:text-gray-400">
+      {{ props.historyRecord.id }}
     </div>
     <!-- 创建时间 & 操作 -->
     <div class="flex justify-between mt-3 text-xs">
       <span>{{ t('history.createdAt', { time: props.historyRecord?.createTime }) }}</span>
-      <span></span>
-      <span
-        class="pi pi-ellipsis-h md:hidden"
-        aria-haspopup="true"
-        aria-controls="header_tools"
-        @click.stop="openHeaderMenu"></span>
-      <Menu
-        class="md:hidden"
-        ref="mainenuRef"
-        :id="`session_item_${props.historyRecord.id}`"
-        :model="menuItems"
-        :popup="true"></Menu>
-      <div class="hidden md:flex gap-3">
-        <span class="pi pi-trash"></span>
-        <span class="pi pi-pen-to-square"></span>
-      </div>
+      <span class="pi pi-trash cursor-pointer hover:text-red-500" @click.stop="handleDelete"></span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-// 组件
-import { Menu } from 'primevue';
 // 方法/类型
 import type { SessionRecord } from '../type';
 import { useI18n } from 'vue-i18n';
@@ -57,21 +46,13 @@ const props = defineProps<Props>();
 
 const emits = defineEmits<{
   chooseSession: [id: string];
+  deleteSession: [id: string];
 }>();
 
-interface MenuItem {
-  label: string;
-  icon: string;
-}
-
-/** 操作菜单 */
-const menuItems = ref<MenuItem[]>([
-  { label: t('history.editTitle'), icon: 'pi pi-pen-to-square' },
-  { label: t('history.deleteSession'), icon: 'pi pi-trash' }
-]);
-
-const mainenuRef = ref<InstanceType<typeof Menu>>();
-const openHeaderMenu = (event: Event) => {
-  mainenuRef.value?.toggle(event);
+/** 删除会话：确认后向父组件发出 deleteSession 事件 */
+const handleDelete = () => {
+  if (window.confirm(t('history.deleteConfirm'))) {
+    emits('deleteSession', props.historyRecord.id);
+  }
 };
 </script>

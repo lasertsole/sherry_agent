@@ -23,7 +23,7 @@ console.log(`Running ${info.name} v${info.version}`);
 
 // Command with parameters
 const history = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'main', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 },
 });
 ```
 
@@ -55,7 +55,7 @@ becomes the key in the invoke call:
 // Rust: fn session_clear(request: ClearSessionRequest)
 // TypeScript:
 await invoke('session_clear', {
-  request: { session_id: 'main' }  // <-- "request" matches the Rust parameter name
+  request: { session_id: 'default' }  // <-- "request" matches the Rust parameter name
 });
 ```
 
@@ -84,7 +84,7 @@ import { sendChatMessage, clearSession, checkHealth } from '~/composables/bridge
 
 // Works in both Tauri desktop and browser dev mode
 await sendChatMessage(
-  { session_id: 'main', text: 'Hello!', image_base64_list: [] },
+  { session_id: 'default', text: 'Hello!', image_base64_list: [] },
   (chunk) => appendToChat(chunk),
 );
 ```

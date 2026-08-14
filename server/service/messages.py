@@ -12,6 +12,7 @@ from ..DAO import clear_session as clear_session_DAO
 from context_engine.curator import reset_idle_for_seconds
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
+from context_engine import get_session_ids
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
 from langgraph.types import Command
 from config.character import ASSISTANT_NAME
@@ -405,6 +406,16 @@ async def resume_agent(
 def get_history_by_turn_page(session_id: str, min_turn_num: int, turn_page_size: int, turn_page_num: int) -> list[dict[str, Any]]:
     return _get_history_by_turn_page(session_id, min_turn_num, turn_page_size, turn_page_num)
 """End history retrieval logic"""
+
+"""Session list retrieval logic"""
+def get_session_list() -> list[dict[str, Any]]:
+    """Enumerate all distinct sessions, newest activity first.
+
+    Returns a list of
+    ``{"session_id": str, "last_time": str, "title": str}`` dicts.
+    """
+    return get_session_ids()
+"""End session list retrieval logic"""
 
 """Clear session history logic"""
 async def clear_session(session_id: str):

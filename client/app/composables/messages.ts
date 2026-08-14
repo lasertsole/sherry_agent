@@ -1,5 +1,6 @@
 import type { MultiModalMessage } from "@/types/message";
 import type { Response } from "@/types/response";
+import type { SessionRecord } from "@/pages/home/type";
 import { streamChatMessage, type OnChunkCallback, type OnHitlCallback, type StreamController } from './bridge';
 import {
     cacheMessages,
@@ -94,6 +95,37 @@ export async function clearSession(session_id: string): Promise<boolean> {
         return true;
     } catch (error) {
         return false;
+    }
+}
+
+/**
+ * 从服务端拉取全部会话列表，按最近活动倒序。
+ *
+ * 对应服务端 GET /sessions（server/trigger/http/messages.py），返回
+ * ``[{session_id, last_time, title}]``。这里映射为前端的 ``SessionRecord``。
+ *
+ * @returns {Promise<SessionRecord[]>} 会话记录数组；请求失败时返回空数组
+ */
+export async function getSessionList(): Promise<SessionRecord[]> {
+    try {
+        const res: Response = await fetchApi({
+            url: '/sessions',
+            method: 'get',
+        });
+        // 服务端 /sessions 直接返回数组，而非 { data: [...] } 包装对象。
+        // 这里做兼容：若响应本身就是数组则直接用，否则退化读取 res.data。
+        const rows: Array<{ session_id: string; last_time: string; title: string }> =
+            Array.isArray(res)
+                ? (res as unknown as Array<{ session_id: string; last_time: string; title: string }>)
+                : (res.data || []);
+        return rows.map((row) => ({
+            id: row.session_id,
+            title: row.title ?? row.session_id,
+            createTime: row.last_time,
+        }));
+    } catch (error) {
+        // 请求失败时返回空列表，避免阻断会话列表加载
+        return [];
     }
 }
 

@@ -18,7 +18,7 @@
  *
  * ```json
  * {
- *   "session_id": "main",
+ *   "session_id": "default",
  *   "text": "Hello, how are you?",
  *   "image_base64_list": [],
  *   "image_path_list": []

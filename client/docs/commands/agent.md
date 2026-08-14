@@ -56,7 +56,7 @@ import type { ChatChunk, ChatRequest } from '@/types/backend/ChatRequest';
 // Simple text chat
 const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
-    session_id: 'main',
+    session_id: 'default',
     text: 'Hello, how are you?',
     image_base64_list: [],
   },
@@ -69,7 +69,7 @@ console.log(fullResponse);
 // Multi-modal chat with images
 const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
-    session_id: 'main',
+    session_id: 'default',
     text: 'Describe this image',
     image_base64_list: [base64ImageData],
   },
@@ -121,7 +121,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 // Stop generation for the current session
 await invoke('agent_stop', {
-  request: { session_id: 'main' },
+  request: { session_id: 'default' },
 });
 ```
 

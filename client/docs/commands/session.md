@@ -42,7 +42,7 @@ await invoke('session_clear', {
 import { invoke } from '@tauri-apps/api/core';
 
 await invoke('session_clear', {
-  request: { session_id: 'main' },
+  request: { session_id: 'default' },
 });
 console.log('Session cleared');
 ```
@@ -100,7 +100,7 @@ import type { HistoryMessage } from '@/types/backend/HistoryMessage';
 
 // Get last 10 turns
 const messages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'main', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 },
 });
 
 // Render chat UI
@@ -110,6 +110,6 @@ messages.forEach(msg => {
 
 // Get all history
 const allMessages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'main', last_turn_count: null },
+  request: { session_id: 'default', last_turn_count: null },
 });
 ```

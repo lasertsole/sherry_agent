@@ -36,7 +36,7 @@ use uuid::Uuid;
 ///
 /// ```json
 /// {
-///   "session_id": "main",
+///   "session_id": "default",
 ///   "text": "Hello, how are you?",
 ///   "image_base64_list": [],
 ///   "image_path_list": []
@@ -126,7 +126,7 @@ pub struct StopRequest {
 /// // Simple text chat
 /// const chunks = await invoke<ChatChunk[]>('agent_chat', {
 ///   request: {
-///     session_id: 'main',
+///     session_id: 'default',
 ///     text: 'Hello!',
 ///     image_base64_list: [],
 ///   },
@@ -135,7 +135,7 @@ pub struct StopRequest {
 /// // Multi-modal chat with images
 /// const chunks = await invoke<ChatChunk[]>('agent_chat', {
 ///   request: {
-///     session_id: 'main',
+///     session_id: 'default',
 ///     text: 'Describe this image',
 ///     image_base64_list: [base64ImageData],
 ///   },
@@ -238,7 +238,7 @@ pub async fn agent_chat(
 /// # Frontend Example
 ///
 /// ```typescript
-/// await invoke('agent_stop', { request: { session_id: 'main' } });
+/// await invoke('agent_stop', { request: { session_id: 'default' } });
 /// ```
 #[tauri::command]
 pub async fn agent_stop(
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn chat_request_round_trip() {
         let original = ChatRequest {
-            session_id: "main".into(),
+            session_id: "default".into(),
             text: Some("How's the weather?".into()),
             image_base64_list: vec![],
             image_path_list: vec![],

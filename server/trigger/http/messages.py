@@ -1,6 +1,17 @@
 from loguru import logger
 from server.trigger.core import app
-from server.service import clear_session, get_history_by_turn_page as _get_history_by_turn_page
+from server.service import clear_session, get_history_by_turn_page as _get_history_by_turn_page, get_session_list as _get_session_list
+
+@app.get("/sessions")
+async def get_sessions_handler(request):
+    """
+    Enumerate all distinct sessions, newest activity first.
+
+    Returns a list of {"session_id", "last_time", "title"} dicts.
+    """
+    session_list = _get_session_list()
+    logger.debug(f"Enumerated sessions: count={len(session_list)}")
+    return session_list
 
 @app.delete("/sessions")
 async def clear_session_handler(request):
