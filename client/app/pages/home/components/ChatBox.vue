@@ -7,12 +7,12 @@
     <div
       v-for="group in turnGroups"
       :key="group[0].id"
-      :class="['flex flex-col', { 'gap-3': turnSpacingClass(group) }]">
+      :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(group) }]">
       <div
         v-for="message in group"
         :key="message.id"
         :class="[
-          'flex justify-start gap-3',
+          'flex justify-start gap-3 min-w-0',
           { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
           { 'text-left': message.role === CHAT_ROLE.AI }
         ]">
@@ -28,7 +28,11 @@
           :class="['pi pi-user', { hidden: isConsecutive(message.id) }]"></span>
       </div>
       <!-- 消息主体 -->
-      <div :class="['flex flex-col max-w-[60%]', message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start']">
+      <div
+        :class="[
+          'flex flex-col max-w-[calc(100%_-_52px)] min-w-0',
+          message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start'
+        ]">
         <!-- 用户/AI 时间 -->
         <div
           v-if="message.role !== CHAT_ROLE.TOOL"
@@ -47,18 +51,45 @@
         <!-- 工具调用卡片 -->
         <div
           v-if="message.role === CHAT_ROLE.TOOL"
-          class="flex items-center gap-2 px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300">
-          <span class="pi pi-hammer text-xs"></span>
-          <span class="font-medium">{{ message.toolName }}</span>
-          <span
-            v-if="message.toolStatus === 'running'"
-            class="pi pi-spin pi-spinner text-xs text-blue-500"></span>
-          <span
-            v-else-if="message.toolStatus === 'failed'"
-            class="pi pi-times text-xs text-red-500"></span>
-          <span
-            v-else
-            class="pi pi-check text-xs text-green-500"></span>
+          class="flex flex-col gap-2 w-full px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300 overflow-x-auto">
+          <button
+            type="button"
+            class="flex items-center gap-2 w-full text-left cursor-pointer select-none"
+            @click="toggleToolCard(message.id)">
+            <span class="pi pi-hammer text-xs"></span>
+            <span class="font-medium">{{ message.toolName }}</span>
+            <span
+              v-if="message.toolStatus === 'running'"
+              class="pi pi-spin pi-spinner text-xs text-blue-500"></span>
+            <span
+              v-else-if="message.toolStatus === 'failed' || message.toolStatus === 'error'"
+              class="pi pi-times text-xs text-red-500"></span>
+            <span
+              v-else
+              class="pi pi-check text-xs text-green-500"></span>
+            <span
+              v-if="isToolMessage(message)"
+              :class="['pi pi-chevron-down text-xs ml-auto transition-transform duration-200', { 'rotate-180': expandedToolCards.has(message.id) }]"></span>
+          </button>
+          <!-- 展开详情：参数 + 结果（执行中也允许展开查看实时参数/进度） -->
+          <div
+            v-if="expandedToolCards.has(message.id)"
+            class="flex flex-col gap-2 border-t border-solid border-gray-200 dark:border-gray-600 pt-2">
+            <div v-if="message.toolArgs && Object.keys(message.toolArgs).length">
+              <div class="text-xs font-semibold mb-1">{{ t('chatBox.toolArgs') }}</div>
+              <pre class="text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600">{{ formatToolArgs(message.toolArgs) }}</pre>
+            </div>
+            <div v-if="message.toolResult">
+              <div class="text-xs font-semibold mb-1">{{ t('chatBox.toolResult') }}</div>
+              <pre class="text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600">{{ message.toolResult }}</pre>
+            </div>
+            <div v-if="message.toolStatus === 'running' && !message.toolResult" class="flex items-center gap-2 text-xs text-blue-500 dark:text-blue-400">
+              <span class="pi pi-spin pi-spinner text-xs"></span>{{ t('chatBox.toolRunning') }}
+            </div>
+            <div v-else-if="!message.toolResult && !(message.toolArgs && Object.keys(message.toolArgs).length)" class="text-xs text-gray-400 dark:text-gray-500">
+              {{ t('chatBox.toolNoOutput') }}
+            </div>
+          </div>
         </div>
         <!-- 对话内容气泡 -->
         <div
@@ -332,4 +363,32 @@ const safeHtml = computed(() => (content: string) => {
     ADD_ATTR: ['target']
   });
 });
+
+// ── 工具调用卡片展开/收起 ────────────────────────────────
+
+/** 已展开的工具卡片消息 id 集合（默认收起） */
+const expandedToolCards = reactive(new Set<number>());
+
+/** 切换某张工具卡片的展开/收起状态 */
+const toggleToolCard = (id: number) => {
+  if (expandedToolCards.has(id)) {
+    expandedToolCards.delete(id);
+  } else {
+    expandedToolCards.add(id);
+  }
+};
+
+/** 该消息是否为工具调用卡片（工具卡始终可展开，执行中也能查看实时参数/进度） */
+const isToolMessage = (message: MessageItem): boolean => {
+  return message.role === CHAT_ROLE.TOOL && !!message.toolName;
+};
+
+/** 将工具参数对象格式化为可读的 JSON 文本 */
+const formatToolArgs = (args: Record<string, unknown>): string => {
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch {
+    return String(args);
+  }
+};
 </script>

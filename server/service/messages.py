@@ -1,6 +1,7 @@
 import time
 import base64
 import asyncio
+import json
 from loguru import logger
 from agent import built_agent
 from typing import AsyncGenerator, Any
@@ -13,8 +14,40 @@ from context_engine.curator import reset_idle_for_seconds
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from context_engine import get_session_ids
-from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
+from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk, ToolMessage
 from langgraph.types import Command
+
+
+# Stash of pending tool args, keyed by tool_call_id. Populated at tool_start
+# time and consumed when the matching ToolMessage arrives in "updates" mode.
+_pending_args: dict[str, dict] = {}
+
+
+def _normalize_args(args) -> dict:
+    """Normalize ToolCall.args (dict OR JSON string) into a plain dict."""
+    if isinstance(args, str):
+        try:
+            return json.loads(args)
+        except Exception:
+            return {"raw": args}
+    if not isinstance(args, dict):
+        return {"raw": str(args)}
+    return args
+
+
+def _normalize_text(content) -> str:
+    """Normalize ToolMessage.content (str OR list of content blocks) into str."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(block.get("text", ""))
+        return "\n".join(parts)
+    return str(content)
 
 
 async def _get_agent_history_list(session_id: str)-> list[BaseMessage]:
@@ -151,6 +184,34 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
                 mode: str = chunk[0]
                 data: Any = chunk[1]
+                if mode == "updates":
+                    for node_name, state_update in data.items():
+                        if node_name != "tools":
+                            continue
+                        msgs = state_update.get("messages", [])
+                        for tm in msgs:
+                            if not isinstance(tm, ToolMessage):
+                                continue
+                            tool_id = tm.tool_call_id
+                            name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                            args = _pending_args.pop(tool_id, {})
+                            yield {
+                                "type": "tool_result",
+                                "content": _normalize_text(tm.content),
+                                "tool_id": tool_id,
+                                "tool_name": name,
+                                "args": args,
+                                "error": bool(getattr(tm, "status", None) == "error"),
+                            }
+                            # Robust tool_end: emitted here on the REAL ToolMessage,
+                            # independent of whether the model emitted adjacent text.
+                            # Image/vision tools often produce only a tool call chunk
+                            # with no text, so the old messages-mode gating on
+                            # `msg_chunk.content` never fired, leaving the card
+                            # permanently "running" (the stuck-tool bug).
+                            yield {"type": "tool_end", "content": name}
+                            state_register_mem.set_state(session_id, "current_tool_id", "")
+                    continue
                 if mode != "messages":
                     continue
 
@@ -182,14 +243,19 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
                         if not repeat_flag:
                             tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                            _pending_args[tool_call["id"]] = _normalize_args(tool_call.get("args"))
                             ai_text += f"\n\n**Calling tool {tool_name}...**"
-                            yield {"type": "tool_start", "content": tool_name}
+                            yield {
+                                "type": "tool_start",
+                                "content": tool_name,
+                                "args": _pending_args[tool_call["id"]],
+                            }
 
-                    if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
-                        tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
-                        ai_text += f"\n\n**Tool {tool_name} completed.**\n\n"
-                        yield {"type": "tool_end", "content": tool_name}
-                        state_register_mem.set_state(session_id, "current_tool_id", "")
+                    # NOTE: tool_end is now emitted from the updates-mode "tools"
+                    # branch (on the real ToolMessage), so a tool that produces no
+                    # adjacent text still gets a completion signal. The old
+                    # messages-mode implementation gated on msg_chunk.content, which
+                    # is why image/vision tools (usually text-free) hung forever.
                     # End tool call output logic
 
                     # Conversation output logic
@@ -243,6 +309,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)
+        _pending_args.clear()
 
 """HITL interrupt detection — checks agent state for pending interrupts.
 
@@ -350,6 +417,30 @@ async def resume_agent(
 
             mode: str = chunk[0]
             data: Any = chunk[1]
+            if mode == "updates":
+                for node_name, state_update in data.items():
+                    if node_name != "tools":
+                        continue
+                    msgs = state_update.get("messages", [])
+                    for tm in msgs:
+                        if not isinstance(tm, ToolMessage):
+                            continue
+                        tool_id = tm.tool_call_id
+                        name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                        args = _pending_args.pop(tool_id, {})
+                        yield {
+                            "type": "tool_result",
+                            "content": _normalize_text(tm.content),
+                            "tool_id": tool_id,
+                            "tool_name": name,
+                            "args": args,
+                            "error": bool(getattr(tm, "status", None) == "error"),
+                        }
+                        # Robust tool_end — see note in async_generate. Guarantees a
+                        # completion signal even when the tool chunk carries no text.
+                        yield {"type": "tool_end", "content": name}
+                        state_register_mem.set_state(session_id, "current_tool_id", "")
+                continue
             if mode != "messages":
                 continue
 
@@ -374,12 +465,16 @@ async def resume_agent(
                                 repeat_flag = False
                     if not repeat_flag:
                         tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
-                        yield {"type": "tool_start", "content": tool_name}
+                        _pending_args[tool_call["id"]] = _normalize_args(tool_call.get("args"))
+                        yield {
+                            "type": "tool_start",
+                            "content": tool_name,
+                            "args": _pending_args[tool_call["id"]],
+                        }
 
-                if state_register_mem.get_state(session_id, "current_tool_id", "").strip() and msg_chunk.content is not None and msg_chunk.content:
-                    tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
-                    yield {"type": "tool_end", "content": tool_name}
-                    state_register_mem.set_state(session_id, "current_tool_id", "")
+                    # NOTE: tool_end handled in the updates-mode "tools" branch above
+                    # (mirrors async_generate). Removed the old messages-mode gating
+                    # on msg_chunk.content so text-free vision/image tools complete.
 
                 if len(msg_chunk.content) > 0:
                     yield {"type": "text", "content": msg_chunk.content}
@@ -402,6 +497,7 @@ async def resume_agent(
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)
+        _pending_args.clear()
 """End HITL resume"""
 
 """End response generation logic"""

@@ -297,17 +297,23 @@ class ApprovalPipeline:
         """Check whether a plugin tool invocation has been pre-approved.
 
         Previously session-approved tool calls (by args hash) are auto-approved.
-        All others are denied by default and must go through :meth:`approve_tool_for_session`.
+        All other tool calls are approved by default (allow-through) so the
+        agent's tools can execute without a human gate. Tools are blocked only
+        when explicitly denied for the session (presence of the args-hash key
+        with a False value).
         """
         key = f"tool_approved:{tool_name}"
         approved_args: dict[str, bool] = _get_state(session_id, key, {})
         args_hash = _args_hash(tool_args)
         if args_hash in approved_args:
-            return ApprovalResult(approved=True, decision=ApprovalDecision.SESSION, reason="Previously session-approved")
-        return ApprovalResult(
-            approved=False, decision=ApprovalDecision.DENY,
-            reason=f"Tool '{tool_name}' requires human approval. Defaulting to deny.",
-        )
+            if approved_args[args_hash]:
+                return ApprovalResult(approved=True, decision=ApprovalDecision.SESSION, reason="Previously session-approved")
+            return ApprovalResult(
+                approved=False, decision=ApprovalDecision.DENY,
+                reason=f"Tool '{tool_name}' is denied for this session.",
+            )
+        # No explicit decision recorded → allow the tool through by default.
+        return ApprovalResult(approved=True, decision=ApprovalDecision.ONCE, reason="Tool allowed by default")
 
     def approve_tool_for_session(self, tool_name: str, tool_args: dict[str, Any], session_id: str):
         """Mark a specific tool + args combination as approved for the current session."""

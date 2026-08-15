@@ -12,7 +12,11 @@
     "defaultUserName": "Me",
     "defaultAiName": "Sherry",
     "imageLoadFailed": "Image load failed",
-    "removeImage": "Remove image"
+    "removeImage": "Remove image",
+    "toolArgs": "Arguments",
+    "toolResult": "Result",
+    "toolNoOutput": "No output",
+  "toolRunning": "Running…"
   },
   "history": {
     "noSessions": "No conversations",
@@ -31,13 +35,13 @@
   "toolbar": {
     "newChat": "New Chat",
     "knowledgeBase": "Knowledge Base",
-    "uploadFile": "Upload File",
-    "file": "File",
     "uploadImage": "Upload Image",
     "image": "Image",
     "skills": "Skills",
     "systemConfig": "System Config",
-    "logs": "Logs"
+    "logs": "Logs",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
   },
   "skills": {
     "title": "Skill Manager",

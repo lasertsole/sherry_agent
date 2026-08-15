@@ -12,7 +12,11 @@
     "defaultUserName": "我",
     "defaultAiName": "橘雪莉",
     "imageLoadFailed": "图片加载失败",
-    "removeImage": "移除图片"
+    "removeImage": "移除图片",
+    "toolArgs": "调用参数",
+    "toolResult": "执行结果",
+    "toolNoOutput": "无输出",
+  "toolRunning": "执行中…"
   },
   "history": {
     "noSessions": "暂无会话记录",
@@ -31,13 +35,13 @@
   "toolbar": {
     "newChat": "新建对话",
     "knowledgeBase": "知识库",
-    "uploadFile": "上传文件",
-    "file": "文件",
     "uploadImage": "上传图片",
     "image": "图片",
     "skills": "技能",
     "systemConfig": "系统配置",
-    "logs": "日志"
+    "logs": "日志",
+    "collapseSidebar": "折叠侧边栏",
+    "expandSidebar": "展开侧边栏"
   },
   "skills": {
     "title": "技能管理",

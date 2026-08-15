@@ -2,12 +2,6 @@ import type { Tool } from './type';
 
 export const tools: Tool[] = [
   {
-    toolName: 'toolbar.file',
-    icon: 'pi pi-upload',
-    title: 'toolbar.uploadFile',
-    event: 'uploadFile'
-  },
-  {
     toolName: 'toolbar.image',
     icon: 'pi pi-image',
     title: 'toolbar.uploadImage',

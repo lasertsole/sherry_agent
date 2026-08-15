@@ -6,59 +6,72 @@
     <!-- lg：相对定位，显示宽度 360px -->
     <div
       :class="[
-        'flex flex-col px-4 relative h-full w-[280px] md:w-[280px] lg:w-[360px]',
-        'border-r border-solid border-gray-light bg-[#fff] dark:border-gray-dark dark:bg-[#2a2a36]'
+        'relative h-full overflow-hidden transition-all duration-300',
+        isSidebarCollapsed
+          ? 'w-0 border-r-0'
+          : 'w-[280px] md:w-[280px] lg:w-[360px] border-r border-solid border-gray-light bg-[#fff] dark:border-gray-dark dark:bg-[#2a2a36]'
       ]">
-      <!-- LOGO区域 -->
-      <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
-      <!-- 新建对话 -->
-      <Button
-        icon="pi pi-comment"
-        :label="t('toolbar.newChat')"
-        class="mt-3 mb-3"
-        @click="handleCreateSession"
-        size="small" />
-      <!-- 记录列表 -->
-      <div class="flex flex-col overflow-auto flex-1 gap-3">
-        <div
-          v-if="historyList.length === 0"
-          class="flex items-center justify-center h-full w-full text-[#868686]">
-          {{ t('history.noSessions') }}
-        </div>
-        <HistoryItem
-          v-for="(item, index) in historyList"
-          :key="item.id"
-          :history-record="item"
-          :is-active="currentSessionId === item.id"
-          @choose-session="handleToggleSession"
-          @delete-session="handleDeleteSession"
-          v-model:selectedList="selectedSessionIds" />
-      </div>
-      <div class="h-17 flex items-center justify-between">
-        <div class="flex items-center justify-center gap-1">
-          <Checkbox
-            :model-value="isCheckAllSession"
-            :indeterminate="isIndeterminate"
-            binary
-            @update:model-value="handleToggleSelectAll" />
-          <span>{{ t('history.selectAll') }}</span>
-        </div>
+      <!-- 内容固定宽度：折叠时由外层 overflow-hidden 整体裁切，内部元素不会被挤压换行 -->
+      <div
+        class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
+        <!-- LOGO区域 -->
+        <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
+        <!-- 新建对话 -->
         <Button
-          icon="pi pi-trash"
-          :label="t('history.batchDelete')"
-          :disabled="selectedSessionIds.length === 0"
-          @click="handleBatchDelete" />
+          icon="pi pi-comment"
+          :label="t('toolbar.newChat')"
+          class="mt-3 mb-3"
+          @click="handleCreateSession"
+          size="small" />
+        <!-- 记录列表 -->
+        <div class="flex flex-col overflow-auto flex-1 gap-3">
+          <div
+            v-if="historyList.length === 0"
+            class="flex items-center justify-center h-full w-full text-[#868686]">
+            {{ t('history.noSessions') }}
+          </div>
+          <HistoryItem
+            v-for="(item, index) in historyList"
+            :key="item.id"
+            :history-record="item"
+            :is-active="currentSessionId === item.id"
+            @choose-session="handleToggleSession"
+            @delete-session="handleDeleteSession"
+            v-model:selectedList="selectedSessionIds" />
+        </div>
+        <div class="h-17 flex items-center justify-between">
+          <div class="flex items-center justify-center gap-1">
+            <Checkbox
+              :model-value="isCheckAllSession"
+              :indeterminate="isIndeterminate"
+              binary
+              @update:model-value="handleToggleSelectAll" />
+            <span>{{ t('history.selectAll') }}</span>
+          </div>
+          <Button
+            icon="pi pi-trash"
+            :label="t('history.batchDelete')"
+            :disabled="selectedSessionIds.length === 0"
+            @click="handleBatchDelete" />
+        </div>
       </div>
     </div>
 
     <!-- 右侧-会话主体区域 -->
-    <div class="flex flex-col flex-1 h-full bg-white dark:bg-[#131619]">
-      <!-- 顶部工具栏 -->
+    <div class="relative flex flex-col flex-1 min-w-0 h-full bg-white dark:bg-[#131619]">
+      <!-- 顶部工具栏：flex 两端对齐。折叠/展开历史按钮靠左，其余功能按钮全部靠右。
+           按钮始终可见（折叠后侧边栏收起，此按钮仍停留在会话区左上角，可再次展开）。 -->
       <div
-        class="flex md:justify-end justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
-        <!-- 移动端展示 -->
-        <div class="md:hidden h-full flex items-center text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
-        <!-- 顶部工具栏 -->
+        class="flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
+        <!-- 左侧：折叠/展开历史侧边栏 -->
+        <Button
+          :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
+          :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+          :aria-label="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+          variant="text"
+          class="text-theme-main"
+          @click="toggleSidebar" />
+        <!-- 右侧：原有功能按钮区 -->
         <div class="flex items-center gap-3">
           <ModeSwitch />
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
@@ -203,6 +216,9 @@ const showConfigDialog = ref(false);
 /** 日志查看弹窗开关 */
 const showLogsDialog = ref(false);
 
+/** 左侧历史侧边栏是否折叠（默认展开） */
+const isSidebarCollapsed = ref(false);
+
 /**
  * 默认角色显示信息（内置：远野汉娜 / 橘雪莉 + 默认头像 URL，见 `defaultCharacter.ts`）。
  * 用于在会话尚未锁定角色快照时，作为 Dexie 锁定的兜底数据源。
@@ -334,6 +350,11 @@ const handleOperate = (type: string, event: string) => {
     default:
       return;
   }
+};
+
+/** 折叠/展开左侧历史侧边栏 */
+const toggleSidebar = () => {
+  isSidebarCollapsed.value = !isSidebarCollapsed.value;
 };
 
 /** 新增会话：生成随机 session_id，加入列表并路由到新会话页（KeepAlive 按 sid 缓存） */
