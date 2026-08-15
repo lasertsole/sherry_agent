@@ -57,6 +57,24 @@ export interface CachedCharacter {
   aiAvatar: string;
 }
 
+/**
+ * 缓存的会话列表条目（本地持久化的空会话占位）。
+ *
+ * 后端会话列表由消息表派生，创建空会话（尚未发消息）时服务端不存在对应记录；
+ * 为满足「新建对话后刷新仍保留」的离线场景，前端在 IndexedDB 中持久化这些占位条目，
+ * 与 `historyList` 的内存态对应，可在刷新 / 重启后恢复。
+ */
+export interface CachedSessionMeta {
+  /** 会话 ID */
+  id: string;
+  /** 会话标题（新建未命名会话的占位标题） */
+  title: string;
+  /** 创建时间（本地时间字符串，用于左侧列表展示） */
+  createTime: string;
+  /** 本地排序时间戳（用于按最新优先合并排序） */
+  updatedAt: number;
+}
+
 /** 全局待定 profile 在 character 表中的主键（非真实会话 ID）。 */
 export const GLOBAL_SESSION_KEY = '__global__';
 
@@ -81,6 +99,8 @@ class HistoryDb extends Dexie {
   messages!: Table<CachedMessage, number>;
   /** 按会话缓存的角色显示信息表（主键 session_id，含全局行 GLOBAL_SESSION_KEY） */
   character!: Table<CachedCharacter, string>;
+  /** 本地持久化的会话列表占位表（用于恢复刷新前新建但尚未发消息的空会话） */
+  sessions!: Table<CachedSessionMeta, string>;
 
   constructor() {
     super('ema-history-cache');
@@ -92,6 +112,10 @@ class HistoryDb extends Dexie {
     this.version(2).stores({
       // 按 session_id 主键缓存每个会话的头像/名字快照（含全局行）。
       character: 'session_id',
+    });
+    this.version(3).stores({
+      // 本地会话列表占位（主键为会话 id），新增表不破坏既有表结构。
+      sessions: 'id, updatedAt',
     });
   }
 }
@@ -182,4 +206,34 @@ export async function readCachedCharacter(sessionId: string): Promise<CachedChar
  */
 export async function clearCachedCharacter(sessionId: string): Promise<void> {
   await db.character.delete(sessionId);
+}
+
+/**
+ * 写入（缓存 / 覆盖）某个本地会话占位条目。
+ *
+ * 新建空会话（尚未发消息）时服务端无记录，靠此表在刷新/重开后仍保留。
+ *
+ * @param meta 会话占位条目（`id` 为会话 ID）
+ */
+export async function cacheSessionMeta(meta: CachedSessionMeta): Promise<void> {
+  await db.sessions.put(meta);
+}
+
+/**
+ * 读取本地缓存中的全部会话占位条目，并按 `updatedAt` 降序（最新优先）排列。
+ *
+ * @returns 本地缓存的会话占位数组
+ */
+export async function readCachedSessionMetaList(): Promise<CachedSessionMeta[]> {
+  const list = await db.sessions.toArray();
+  return list.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/**
+ * 删除本地缓存的某个会话占位条目（删除会话时同步清理；服务端已有记录时也无需保留占位）。
+ *
+ * @param sessionId 会话 ID
+ */
+export async function clearCachedSessionMeta(sessionId: string): Promise<void> {
+  await db.sessions.delete(sessionId);
 }

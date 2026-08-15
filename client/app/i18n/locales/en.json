@@ -2,6 +2,7 @@
   "chatInput": {
     "placeholder": "Type a message...",
     "thinking": "AI is thinking...",
+    "waitingApproval": "Waiting for approval...",
     "send": "Send",
     "stop": "Stop",
     "maxImages": "You can upload at most {count} images",

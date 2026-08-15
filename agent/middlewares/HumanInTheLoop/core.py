@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
+from langgraph.errors import GraphInterrupt
 from runtime.state_register import state_register_mem
 
 from .types import (
@@ -293,9 +294,13 @@ class HumanInTheLoop(AgentMiddleware):
                         else:
                             msg = decisions[0].get("message", "Rejected by user") if decisions else "No decision"
                             artificial_tool_messages.append(ToolMessage(
-                                content=f"User denied: {msg}. {BLOCKED_MESSAGE}",
-                                name=tool_name, tool_call_id=tool_call["id"], status="error",
-                            ))
+                            content=f"User denied: {msg}. {BLOCKED_MESSAGE}",
+                            name=tool_name, tool_call_id=tool_call["id"], status="error",
+                        ))
+                    except GraphInterrupt:
+                        # Real HITL interrupt: let LangGraph persist it so the
+                        # frontend approval dialog can fire. Do NOT swallow it.
+                        raise
                     except Exception:
                         artificial_tool_messages.append(ToolMessage(
                             content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
@@ -371,6 +376,10 @@ class HumanInTheLoop(AgentMiddleware):
                             content=f"Unexpected decision type. {BLOCKED_MESSAGE}",
                             name=tool_name, tool_call_id=tool_call["id"], status="error",
                         ))
+                except GraphInterrupt:
+                    # Real HITL interrupt: let LangGraph persist it so the
+                    # frontend approval dialog can fire. Do NOT swallow it.
+                    raise
                 except Exception:
                     artificial_tool_messages.append(ToolMessage(
                         content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",

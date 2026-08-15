@@ -1,7 +1,32 @@
 ﻿<template>
   <div class="flex flex-col flex-1 h-full bg-white dark:bg-[#131619]">
-    <!-- 聊天主体 / 空态（无消息时显示"开启新对话"） -->
-    <template v-if="chatMessages.length > 0">
+    <!-- 聊天主体 / 空态（有会话 sid 时始终显示聊天面板；仅无 sid 的根路径显示"开启新对话"） -->
+    <template v-if="sessionId">
+      <!-- HITL 审批卡片：非模态，置于历史消息区顶部（不遮最新会话），
+           占用独立位置不影响其余消息查看；可随内容自然撑开。 -->
+      <div
+        v-if="hitlRequest"
+        class="shrink-0 mx-2 mt-2 bg-white dark:bg-[#131619] rounded-lg border border-solid border-gray-light dark:border-gray-dark shadow-lg">
+        <div class="flex flex-col gap-3 p-3">
+          <div class="text-sm font-semibold">{{ t('hitl.title', 'Action Requires Approval') }}</div>
+          <div class="text-sm text-gray-500">{{ t('hitl.tool', 'Tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span></div>
+          <div v-if="hitlRequest?.description" class="text-sm whitespace-pre-wrap">{{ hitlRequest.description }}</div>
+          <div v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0" class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded-lg overflow-auto max-h-40">
+            <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
+          </div>
+          <div class="flex gap-2 justify-end">
+            <Button
+              :label="t('hitl.reject', 'Reject')"
+              icon="pi pi-times"
+              severity="danger"
+              @click="handleHitlDecision('reject')" />
+            <Button
+              :label="t('hitl.approve', 'Approve')"
+              icon="pi pi-check"
+              @click="handleHitlDecision('approve')" />
+          </div>
+        </div>
+      </div>
       <ChatBox
         :messages="chatMessages"
         :user-avatar="characterInfo.userAvatar"
@@ -30,33 +55,42 @@
           </div>
         </div>
       </template>
-      <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
-      <div class="flex flex-col h-40">
-        <!-- 聊天工具 -->
-        <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
-          <template class="hidden sm:block">
-            <Button
-              v-for="tool in tools"
-              :key="tool.event"
-              :icon="tool.icon"
-              :label="t(tool.toolName)"
-              @click="handleOperate('toolBar', tool.event)"
-              size="small"
-              variant="text" />
-          </template>
-          <template class="block sm:hidden">
-            <Button
-              v-for="tool in tools"
-              :key="tool.event"
-              :icon="tool.icon"
-              :aria-label="t(tool.toolName)"
-              @click="handleOperate('toolBar', tool.event)"
-              size="small"
-              variant="text" />
-          </template>
+      <!-- 聊天输入框区域（relative 定位父级，供其他悬浮元素使用） -->
+      <div class="relative">
+        <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
+        <div class="flex flex-col h-40">
+          <!-- 聊天工具 -->
+          <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
+            <template class="hidden sm:block">
+              <Button
+                v-for="tool in tools"
+                :key="tool.event"
+                :icon="tool.icon"
+                :label="t(tool.toolName)"
+                @click="handleOperate('toolBar', tool.event)"
+                size="small"
+                variant="text" />
+            </template>
+            <template class="block sm:hidden">
+              <Button
+                v-for="tool in tools"
+                :key="tool.event"
+                :icon="tool.icon"
+                :aria-label="t(tool.toolName)"
+                @click="handleOperate('toolBar', tool.event)"
+                size="small"
+                variant="text" />
+            </template>
+          </div>
+          <!-- 输入框：存在待审批的 HITL 请求时禁止输入/发送，并提示等待审批 -->
+          <ChatInputBox
+            v-model:draft="draft"
+            :sending="isSending"
+            :disabled="!!hitlRequest"
+            :disabled-text="t('chatInput.waitingApproval')"
+            @send="handleSend"
+            @stop="handleStop" />
         </div>
-        <!-- 输入框 -->
-        <ChatInputBox v-model:draft="draft" :sending="isSending" @send="handleSend" @stop="handleStop" />
       </div>
     </template>
     <!-- 空态：无消息时显示居中的"开启新对话"按钮 -->
@@ -70,35 +104,6 @@
         :label="t('toolbar.newChat')"
         @click="handleCreateSession" />
     </div>
-
-    <!-- HITL 审批弹窗 -->
-    <Dialog
-      v-model:visible="hitlRequest"
-      :header="t('hitl.title', 'Action Requires Approval')"
-      :modal="true"
-      :closable="false"
-      class="w-[90vw] md:w-[500px]">
-      <div class="flex flex-col gap-3">
-        <div class="text-sm text-gray-500">{{ t('hitl.tool', 'Tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span></div>
-        <div v-if="hitlRequest?.description" class="text-sm whitespace-pre-wrap">{{ hitlRequest.description }}</div>
-        <div v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0" class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded-lg overflow-auto max-h-40">
-          <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
-        </div>
-      </div>
-      <template #footer>
-        <div class="flex gap-2 justify-end">
-          <Button
-            :label="t('hitl.reject', 'Reject')"
-            icon="pi pi-times"
-            severity="danger"
-            @click="handleHitlDecision('reject')" />
-          <Button
-            :label="t('hitl.approve', 'Approve')"
-            icon="pi pi-check"
-            @click="handleHitlDecision('approve')" />
-        </div>
-      </template>
-    </Dialog>
   </div>
 </template>
 
@@ -112,10 +117,10 @@ import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem, HitlRequestData } from '../type.ts';
 import { CHAT_ROLE } from '../type.ts';
 import type { CachedCharacter, CachedMessage } from '@/composables/db';
-import { DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter } from '@/composables/db';
+import { DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter, cacheSessionMeta } from '@/composables/db';
 import { tools } from '../config';
-import type { AgentChunkType, HitlResponse } from '@/composables/bridge';
-import { get_history_by_turn_page, postAgentStream, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
+import { resumeHitl, type AgentChunkType } from '@/composables/bridge';
+import { get_history_by_turn_page, getPendingInterrupt, postAgentStream, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
 import { on, off } from '@/composables/mitt';
 
 // 图片预览
@@ -355,25 +360,195 @@ const handleHitlRequest = (data: HitlRequestData) => {
   hitlRequest.value = data;
 };
 
-/** 用户审批/拒绝 HITL 请求 */
+/** 正在进行中的 HITL resume 控制器（single-flight：同一会话只允许一个在跑） */
+let activeHitlController: { closed: boolean; abort: () => void } | null = null;
+
+/**
+ * 用户审批/拒绝 HITL 请求。
+ *
+ * 决策不再依赖「实时发送消息时挂载在 `streamChatMessage` 返回的 closure 上的
+ * `sendHitlResponse`」——那条闭包只在 `!done && socket.readyState === OPEN` 时可用，
+ * 页面刷新/切换会话/浏览器重开后 socket 关闭、controller 为 null，审批会静默 no-op。
+ * 这里改为独立 `resumeHitl`：直接新开一条 WS 到后端 `/sessions/agent/ws`，
+ * 发送 `hitl_response` 帧即可从 LangGraph checkpoint 流式恢复 agent，从而
+ * 支持三层持久化（切 session、刷新、浏览器重开）后仍然可完成审批。
+ */
 const handleHitlDecision = (decision: 'approve' | 'reject', message: string = '') => {
-  if (!activeAgentController) return;
-  const sender = (activeAgentController as unknown as { sendHitlResponse?: (response: HitlResponse) => void }).sendHitlResponse;
-  if (sender) {
-    sender({ decision, message });
+  const sid = sessionId.value;
+  if (!sid) {
+    hitlRequest.value = null;
+    return;
   }
+  // single-flight：同会话已有其他 resume 在跑时直接忽略本次点击
+  if (activeHitlController && !activeHitlController.closed) return;
+
+  // 记录本次审批的轮次：resume 产出的新消息落到「当前最大轮次 + 1」
+  const turnNum =
+    chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
+
+  const onChunk = (content: string, type: AgentChunkType) => {
+    appendStreamChunk(sid, content, type, turnNum);
+  };
+
+  const { controller, promise } = resumeHitl(sid, decision, message, onChunk, handleHitlRequest);
+  activeHitlController = controller;
+
+  // 拒绝：该工具不会被执行，后端不会回发 tool_end，因此把当前仍处于 running 的
+  // 工具卡片标记为 failed（UI 由转圈 spinner 变为红色 ✗），避免永久停在加载中。
+  if (decision === 'reject') {
+    markRunningToolsFailed();
+  }
+
+  /**
+   * 清理本次 HITL 审批链路的悬挂状态。
+   *
+   * 关键：HITL interrupt 发生时，后端**不关闭**原始生成流的 WebSocket（等待 resume），
+   * 因此 `handleSend` 里 `postAgentStream` 返回的 promise 永久挂起，其 `onDone` 永不触发，
+   * `isSending` 停留在 `true`。此处审批完成后必须手动复位，否则输入框/生成按钮被永久锁死。
+   */
+  const finish = () => {
+    if (activeHitlController === controller) activeHitlController = null;
+    // 原始生成流已废弃：释放其 controller 槽位并复位发送状态
+    activeAgentController = null;
+    isSending.value = false;
+    // 若审批期间没有再触发新的 hitl_request，则关闭审批卡
+    if (hitlRequest.value) {
+      hitlRequest.value = null;
+    }
+  };
+  promise.then(finish).catch(() => {
+    // 出错时同样清理，保持输入可用；卡片的关闭由其他流程决定
+    if (activeHitlController === controller) activeHitlController = null;
+    activeAgentController = null;
+    // HITL resume 失败：进行中的工具未正常完成，标记为 failed（红 ✗）
+    markRunningToolsFailed();
+    isSending.value = false;
+  });
+
+  // 已响应本次审批，收起卡片（若 resume 中 agent 再次暂停会重新弹出）
   hitlRequest.value = null;
+};
+
+/**
+ * 尝试恢复「待审批」的 HITL 中断卡。
+ *
+ * 三层持久化场景（会话切换 / 页面刷新 / 浏览器重开 / 服务重启）下，`hitlRequest`
+ * 仅存于组件内存，重进会话时是空的。这里从后端 `/get_pending_interrupt`
+ * （从 LangGraph checkpoint 重推）查询该会话是否存在未决审批；存在则重新弹出卡片，
+ * 供用户再次批准/拒绝。
+ */
+const restorePendingHitl = async (sid: string) => {
+  if (!sid) return;
+  // 已有审批在进行或已有卡片则不重复拉起
+  if (hitlRequest.value || (activeHitlController && !activeHitlController.closed)) return;
+  const pending = await getPendingInterrupt(sid);
+  if (
+    pending &&
+    typeof pending === 'object' &&
+    !Array.isArray(pending) &&
+    typeof pending.tool_name === 'string'
+  ) {
+    hitlRequest.value = {
+      tool_name: pending.tool_name,
+      tool_args: pending.tool_args ?? {},
+      description: pending.description ?? '',
+      allowed_decisions: pending.allowed_decisions ?? [],
+    };
+  }
 };
 
 /** 停止当前 AI 回复生成（前端本地中止 + 通知后端止停） */
 const handleStop = () => {
   activeAgentController?.abort();
   activeAgentController = null;
+  // 若正在 HITL resume 流式恢复中，同样中止该 controller
+  // （其 abort 会向后端发 {type:'stop'}，令 answering=False 触发 CancelledError）
+  activeHitlController?.abort();
+  activeHitlController = null;
+  // 中止的回合未完成，把进行中的工具卡片标记为 failed（红 ✗）
+  markRunningToolsFailed();
+  // 中止后待审批卡已被本次审批处理过，无需重复展示
+  hitlRequest.value = null;
   isSending.value = false;
 };
 
 /** 输入框草稿（受控，经 defineModel 双向绑定到 inputBox.vue） */
 const draft = ref('');
+
+/**
+ * 将一段流式 chunk 按语义类型合并进 `chatMessages`（单一数据源）。
+ *
+ * 该函数是 `handleSend`（普通对话）与「HITL resume」两条路径共用的消息渲染逻辑：
+ * - text: 若同轮次末位是 AI 消息则追加，否则（末位是 TOOL / 跨轮次）新建 AI 消息
+ * - tool_start: 新建一条 TOOL 消息（status=running）
+ * - tool_end: 将最近一条同轮次 TOOL 消息标记为 done
+ *
+ * 通过 `turnNum` 限定范围，避免把与当前流式回合无关的历史消息误当目标。
+ *
+ * @param sid 会话 id
+ * @param content chunk 文本（text 时为正文，tool_start 时为工具名）
+ * @param type 语义类型
+ * @param turnNum 本回合轮次号（新消息写入该轮次）
+ */
+const appendStreamChunk = (sid: string, content: string, type: AgentChunkType, turnNum: number) => {
+  const last = chatMessages.value[chatMessages.value.length - 1];
+  if (type === 'text') {
+    if (last && last.role === CHAT_ROLE.AI && last.turn_num === turnNum) {
+      // 同轮次末位是 AI → 追加正文
+      last.content += content;
+    } else {
+      // 末位是 TOOL / 非本回合 → 新建一条 AI 消息承载
+      chatMessages.value.push({
+        session_id: sid,
+        role: CHAT_ROLE.AI,
+        content,
+        id: tempIdCounter++,
+        turn_num: turnNum,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } else if (type === 'tool_start') {
+    chatMessages.value.push({
+      session_id: sid,
+      role: CHAT_ROLE.TOOL,
+      content: '',
+      toolName: content,
+      toolStatus: 'running',
+      id: tempIdCounter++,
+      turn_num: turnNum,
+      timestamp: new Date().toISOString(),
+    });
+  } else if (type === 'tool_end') {
+    // 标记最近一条本回合 TOOL 消息为已完成
+    for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+      const row = chatMessages.value[i];
+      if (row.role === CHAT_ROLE.TOOL && row.turn_num === turnNum) {
+        row.toolStatus = 'done';
+        break;
+      }
+    }
+  }
+  // 触发响应式更新
+  chatMessages.value = [...chatMessages.value];
+};
+
+/**
+ * 把当前仍处于 running 的工具卡片统一标记为 failed（UI 转红色 ✗）。
+ *
+ * 用于「工具调用未正常完成」的所有路径：HITL 拒绝、用户中止、流式错误。
+ * 这些场景下后端都不会回发对应的 tool_end，卡片若不标记会永远停在转圈。
+ */
+const markRunningToolsFailed = () => {
+  let changed = false;
+  chatMessages.value = chatMessages.value.map((m) => {
+    if (m.role === CHAT_ROLE.TOOL && m.toolStatus === 'running') {
+      changed = true;
+      return { ...m, toolStatus: 'failed' as const };
+    }
+    return m;
+  });
+  if (!changed) chatMessages.value = [...chatMessages.value];
+};
 
 /**
  * 处理输入框发送：把用户消息加入列表，并通过流式请求（Tauri IPC 或浏览器 WebSocket）获取 AI 回复。
@@ -414,9 +589,6 @@ const handleSend = async (text: string) => {
     timestamp: new Date().toISOString()
   };
 
-  // 本轮所有 AI/TOOL 消息（用于流式回调中动态追加/更新）
-  const turnMsgs: MessageItem[] = [aiMsg];
-
   chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
 
   // 发送后清空待发送图片与输入区
@@ -426,53 +598,11 @@ const handleSend = async (text: string) => {
   isSending.value = true;
 
   /**
-   * 流式 chunk 回调：按 type 动态管理消息分段。
-   *
-   * - text: 追加到最后一条 AI 消息；若最后一条是 TOOL 消息则新建 AI 消息
-   * - tool_start: 新建一条 TOOL 消息（status=running）
-   * - tool_end: 将最后一条 TOOL 消息标记为 done
+   * 流式 chunk 回调：复用共享的 `appendStreamChunk` 按语义类型动态管理消息分段
+   * （text/tool_start/tool_end），与 HITL resume 路径共用同一套渲染逻辑。
    */
   const onStreamChunk = (content: string, type: AgentChunkType) => {
-    if (type === 'text') {
-      const last = turnMsgs[turnMsgs.length - 1];
-      if (last && last.role === CHAT_ROLE.AI) {
-        last.content += content;
-      } else {
-        const newAi: MessageItem = {
-          session_id: sid,
-          role: CHAT_ROLE.AI,
-          content,
-          id: tempIdCounter++,
-          turn_num: turnNum,
-          timestamp: new Date().toISOString()
-        };
-        turnMsgs.push(newAi);
-        chatMessages.value = [...chatMessages.value, newAi];
-      }
-    } else if (type === 'tool_start') {
-      const toolMsg: MessageItem = {
-        session_id: sid,
-        role: CHAT_ROLE.TOOL,
-        content: '',
-        toolName: content,
-        toolStatus: 'running',
-        id: tempIdCounter++,
-        turn_num: turnNum,
-        timestamp: new Date().toISOString()
-      };
-      turnMsgs.push(toolMsg);
-      chatMessages.value = [...chatMessages.value, toolMsg];
-    } else if (type === 'tool_end') {
-      // 标记最近的 TOOL 消息为已完成
-      for (let i = turnMsgs.length - 1; i >= 0; i--) {
-        if (turnMsgs[i].role === CHAT_ROLE.TOOL) {
-          turnMsgs[i].toolStatus = 'done';
-          break;
-        }
-      }
-    }
-    // 触发响应式更新
-    chatMessages.value = [...chatMessages.value];
+    appendStreamChunk(sid, content, type, turnNum);
   };
 
   try {
@@ -490,6 +620,8 @@ const handleSend = async (text: string) => {
       (err) => {
         activeAgentController = null;
         aiMsg.content = t('errors.replyFailed', { reason: String(err) });
+        // 流式出错：进行中的工具调用未正常完成，标记为 failed（红 ✗）
+        markRunningToolsFailed();
         isSending.value = false;
       },
       handleHitlRequest,
@@ -593,6 +725,11 @@ const handleCreateSession = () => {
   router.push({ name: 'home-sid', params: { sid: newSessionId } });
   // 新会话：立即用当前全局 profile 创建并锁定角色快照，保证头像/名字正确显示
   ensureSessionCharacter(newSessionId);
+  // 持久化占位会话（与 home/index.vue 行为一致），保证工具栏/空态新建后刷新仍保留
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const createTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  cacheSessionMeta({ id: newSessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
 };
 
 // 首屏加载当前会话的历史消息，获取合并后的列表渲染到 ChatBox
@@ -603,6 +740,8 @@ watch(
     // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
     ensureSessionCharacter(sid);
     loadSessionHistory(sid);
+    // 恢复三层持久化场景下可能仍待审批的 HITL 中断卡（切 session / 刷新 / 重开 / 服务重启）
+    restorePendingHitl(sid);
   },
   { immediate: true },
 );
