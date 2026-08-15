@@ -72,18 +72,15 @@
       "identity": "신원 정보",
       "soul": "인격·영혼",
       "user": "사용자 정보",
-      "character": "캐릭터 설정",
-      "language": "언어 설정"
+      "character": "캐릭터 설정"
     },
     "desc": {
       "agents": "Agent 핵심 규칙：대화 흐름, 보안, 모듈 색인",
       "identity": "Agent 신원：이름, 이모지, 아바타",
       "soul": "Agent 인격, 어조, 성격",
-      "user": "사용자 정보 및 선호도",
-      "language": "표시 언어를 선택하세요"
+      "user": "사용자 정보 및 선호도"
     },
     "language": {
-      "label": "표시 언어",
       "zh": "简体中文",
       "en": "English",
       "ja": "日本語",

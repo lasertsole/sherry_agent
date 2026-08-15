@@ -73,15 +73,29 @@ export default defineNuxtConfig({
   },
 
   i18n: {
-    strategy: 'prefix_except_default',
-    defaultLocale: 'zh',
+    // 关键：'no_prefix' 策略。Nuxt i18n 在 module 层据此把 __I18N_ROUTING__ 置为 false，
+    // 从而跳过 route-locale-detect 中间件（不再在每个导航上用 route 推断的 locale 强制覆盖
+    // composer.locale，也不再按 cookie 改写 URL）。在这之前用 prefix_except_default 时，
+    // 每次刷新/导航中间件 loadAndSetLocale(detectLocale(route)) 会把无前缀的 /home/:id
+    // 判定为 defaultLocale(zh) 并覆盖 locale，导致「刷新后国际化失效」；且 cookie=en 与
+    // 无前缀路径不匹配时会重定向到 /en/home/:id（该路由不存在）。no_prefix 下 URL 永无前缀、
+    // 语言完全交给 vue-i18n 的 locale（配合下方 detectBrowserLanguage: false + app.vue
+    // onMounted 自行读 cookie 恢复），刷新后语言稳定且不跳转。
+    strategy: 'no_prefix',
+    // 语言匹配优先级：cookie(用户偏好) > 浏览器语言匹配合法 locale
+    // (zh/en/ja/ko) > 默认英文。因此 defaultLocale 设为 'en'。
+    defaultLocale: 'en',
     langDir: '../app/i18n/locales',
     locales: [
       { code: 'zh', name: '简体中文', file: 'zh.json' },
       { code: 'en', name: 'English', file: 'en.json' },
       { code: 'ja', name: '日本語', file: 'ja.json' },
       { code: 'ko', name: '한국어', file: 'ko.json' }
-    ]
+    ],
+    // 彻底关闭 Nuxt i18n 的浏览器语言自动检测/重定向。结合 'no_prefix' 策略，语言状态完全由
+    // vue-i18n 的 locale 管理，由 app.vue onMounted 读取 i18n_locale cookie（或浏览器语言，
+    // fallback zh）自行恢复。这样刷新后语言稳定、URL 永无前缀、绝不重定向改写地址。
+    detectBrowserLanguage: false
   },
 
   ignore: ['**/src-tauri/**'],

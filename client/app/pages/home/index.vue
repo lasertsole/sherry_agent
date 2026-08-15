@@ -62,6 +62,31 @@
         <div class="flex items-center gap-3">
           <ModeSwitch />
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
+            <!-- 语言切换：从系统配置-语言设置移至顶部工具栏，直接读写 vue-i18n locale。
+                 地球图标（pi-globe）让不同语言用户都能直观识别这是语言切换控件。 -->
+            <Select
+              :model-value="locale"
+              :options="languageOptions"
+              option-label="name"
+              option-value="code"
+              class="w-40"
+              size="small"
+              aria-label="Language / 语言"
+              @update:model-value="onLanguageChange">
+              <template #value="slotProps">
+                <span v-if="slotProps.value" class="flex items-center gap-1.5">
+                  <i class="pi pi-globe" />
+                  <span>{{ t(`config.language.${slotProps.value}`) }}</span>
+                </span>
+                <span v-else class="flex items-center gap-1.5">
+                  <i class="pi pi-globe" />
+                  <span>{{ t('config.language.zh') }}</span>
+                </span>
+              </template>
+              <template #option="slotProps">
+                <span>{{ t(`config.language.${slotProps.option.code}`) }}</span>
+              </template>
+            </Select>
             <Button
               :icon="tool.icon"
               v-for="tool in headerTools"
@@ -109,8 +134,46 @@ import { headerTools } from './config';
 import { emit } from '@/composables/mitt';
 import { getSessionList, clearSession, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
 
-const { t } = useI18n();
+const { t, locale, setLocale } = useI18n();
 
+/** 语言切换选项：复用系统配置里的语言名（各 locale 中对应自语言名） */
+const languageOptions = computed(() => [
+  { name: t('config.language.zh'), code: 'zh' },
+  { name: t('config.language.en'), code: 'en' },
+  { name: t('config.language.ja'), code: 'ja' },
+  { name: t('config.language.ko'), code: 'ko' },
+]);
+
+/**
+ * 语言切换处理器：通过 nuxt-i18n 的 `setLocale` 切换。在 `no_prefix` 策略下
+ * `setLocale` 内部的 `navigate()` 会早退，**不会触发路由导航**，因此
+ * `/home/:id` 这类会话视图的 URL 保持稳定。
+ *
+ * `setLocale` 同时完成两件事：
+ * - 加载目标 locale 的语言包（`mergeLocaleMessage`），避免渲染原始 key
+ * - 写入偏好 cookie（`i18n_redirected`）持久化，刷新后可恢复所选语言
+ *
+ *（相比直接 `locale.value = code` + 手动写 cookie，`setLocale` 是唯一能保证
+ *  语言包被加载的路径，否则首次/切换时 `$t` 返回原始 key。）
+ */
+async function onLanguageChange(code: string) {
+  await setLocale(code as 'zh' | 'en' | 'ja' | 'ko');
+  persistLocalePreference(code as 'zh' | 'en' | 'ja' | 'ko');
+}
+
+/**
+ * 持久化语言偏好 cookie（key: i18n_redirected）。
+ *
+ * 背景：nuxt.config.ts 设了 `detectBrowserLanguage: false` 后，模块把检测配置归一化为 `{}`，
+ * 导致 `setCookieLocale` 因 `detectConfig.useCookie` 为 falsy 而变成空操作——**模块绝不写 cookie**。
+ * 因此 `setLocale` 只能即时切换，无法持久化。要满足「浏览器刷新/重开仍是偏好语言」，必须
+ * 由我们手动写入偏好 cookie，并在 app.vue 初载时优先读取它（与 app.vue 的读取逻辑配合同套 key）。
+ */
+function persistLocalePreference(code: 'zh' | 'en' | 'ja' | 'ko') {
+  if (import.meta.server) return;
+  const pref = useCookie('i18n_redirected');
+  pref.value = code;
+}
 const router = useRouter();
 const route = useRoute();
 const localePath = useLocalePath();
