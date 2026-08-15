@@ -1,4 +1,6 @@
+.playwright-mcp
 src/sessions/
+src/images/
 .venv
 __pycache__
 .env
@@ -16,3 +18,4 @@ skills/auto
 static/
 sessions/**/*.md
 .idea/
+temp

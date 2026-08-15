@@ -503,8 +503,18 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
     hitlRequest.value = null;
     return;
   }
-  // single-flight：同会话已有其他 resume 在跑时直接忽略本次点击
-  if (activeHitlController && !activeHitlController.closed) return;
+  // single-flight 只用于「同一待审批项」防重复提交，绝不能静默丢弃新决策。
+  // 顺序 HITL（连续多个危险工具依次需要审批）时，上一个 resume 的 WS 仍处于
+  // 流式恢复中（closed=false），此时若直接 return 会导致后续点「批准/撤回」完全无反应。
+  // 正确做法：先中止/释放上一个仍在跑的 controller 槽位，再为本决策新开一条
+  // resume WS——保证每次点击都必然有一条真实通道送出 hitl_response，绝无静默 no-op。
+  const stale = activeHitlController && !activeHitlController.closed;
+  if (stale) {
+    // 中止旧链路的流式恢复（其 abort 会向后端发 {type:'stop'}），并释放其槽位，
+    // 避免它一旦在稍后 resolve 时把已换新的 activeHitlController 误清空。
+    activeHitlController.abort();
+    activeHitlController = null;
+  }
 
   // 记录本次审批的轮次：resume 产出的新消息落到「当前最大轮次 + 1」
   const turnNum =
