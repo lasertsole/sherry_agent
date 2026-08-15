@@ -40,9 +40,6 @@ const history = await invoke<HistoryMessage[]>('session_history', {
 | `system_prompt_read` | system_prompt | 读取所有提示词文件 |
 | `system_prompt_write` | system_prompt | 覆写提示词文件 |
 | `system_prompt_update` | system_prompt | 增量更新提示词文件 |
-| `character_read` | character | 读取角色配置 |
-| `character_write` | character | 覆写角色配置 |
-| `character_update` | character | 增量更新角色配置 |
 | `system_info` | system | 获取应用元数据 |
 | `system_health` | system | 健康检查 |
 

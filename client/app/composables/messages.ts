@@ -11,6 +11,18 @@ import {
 } from './db';
 
 /**
+ * 删除会话时的「中止流式生成」事件名。
+ *
+ * 当一个会话被删除但该会话的 `[sid].vue` 仍被 KeepAlive 缓存（尤其非激活会话），
+ * 其 WebSocket 流式生成可能仍在后台运行、持续向已删除的聊天状态推送内容。
+ * 删除侧（home/index.vue）通过 mitt 广播本事件（负载为会话 id），
+ * 对应的 `[sid].vue` 实例监听并 abort 其 AbortController 以停止流式生成。
+ *
+ * 该事件全程仅前端内存内广播，不触发任何服务端调用、不引入新依赖。
+ */
+export const SESSION_ABORT_STREAM_EVENT = 'session:abort-stream';
+
+/**
  * 请求历史对话记录（本地 Dexie 缓存优先）。
  *
  * 每次请求会：

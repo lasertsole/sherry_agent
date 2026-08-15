@@ -1,13 +1,5 @@
 <template>
   <div class="w-full h-full flex text-theme-main">
-    <!-- 隐藏的图片文件选择框（由工具栏「图片」按钮触发） -->
-    <input
-      ref="imageFileInputRef"
-      type="file"
-      accept="image/*"
-      multiple
-      class="hidden"
-      @change="onImageSelected" />
     <!-- 左侧-历史记录区域 -->
     <!-- 移动端：固定定位，默认隐藏，通过按钮切换 -->
     <!-- md：固定定位，显示宽度 280px -->
@@ -18,7 +10,7 @@
         'border-r border-solid border-gray-light bg-[#fff] dark:border-gray-dark dark:bg-[#2a2a36]'
       ]">
       <!-- LOGO区域 -->
-      <div class="flex items-center h-15 text-xl">🍊{{ characterInfo.aiName }}</div>
+      <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
       <!-- 新建对话 -->
       <Button
         icon="pi pi-comment"
@@ -65,24 +57,10 @@
       <div
         class="flex md:justify-end justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
         <!-- 移动端展示 -->
-        <div class="md:hidden h-full flex items-center text-xl">🍊{{ characterInfo.aiName }}</div>
+        <div class="md:hidden h-full flex items-center text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
         <!-- 顶部工具栏 -->
         <div class="flex items-center gap-3">
           <ModeSwitch />
-          <Button
-            icon="pi pi-cog"
-            class="md:hidden"
-            @click="openHeaderMenu"
-            variant="text"
-            type="button"
-            aria-haspopup="true"
-            aria-controls="header_tools" />
-          <Menu
-            class="md:hidden"
-            ref="headerToolsMenuRef"
-            id="header_tools"
-            :model="headerMenuModel"
-            :popup="true"></Menu>
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
             <Button
               :icon="tool.icon"
@@ -95,75 +73,15 @@
           </div>
         </div>
       </div>
-      <!-- 聊天主体 / 空态（session 栏为空时显示"开启新对话"） -->
-      <template v-if="historyList.length > 0">
-        <ChatBox
-          :messages="chatMessages"
-          :user-avatar="characterInfo.userAvatar"
-          :ai-avatar="characterInfo.aiAvatar"
-          :user-name="characterInfo.userName"
-          :ai-name="characterInfo.aiName" />
-        <!-- 图片预览区（独立于输入框上方，避免挤压 h-40 输入框导致发送按钮上移 / ✕ 按钮被裁剪） -->
-        <template v-if="selectedImages.length > 0">
-          <div class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-            <div
-              v-for="(img, idx) in selectedImages"
-              :key="idx"
-              class="relative shrink-0 group">
-              <img
-                :src="`data:image/*;base64,${img.base64}`"
-                :alt="img.name"
-                class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
-                @click="openPreview(`data:image/*;base64,${img.base64}`)" />
-              <button
-                type="button"
-                :title="t('chatBox.removeImage')"
-                class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-                @click="removeImage(idx)">
-                ✕
-              </button>
-            </div>
-          </div>
-        </template>
-        <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
-        <div class="flex flex-col h-40">
-          <!-- 聊天工具 -->
-          <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
-            <template class="hidden sm:block">
-              <Button
-                v-for="tool in tools"
-                :key="tool.event"
-                :icon="tool.icon"
-                :label="t(tool.toolName)"
-                @click="handleOperate('toolBar', tool.event)"
-                size="small"
-                variant="text" />
-            </template>
-            <template class="block sm:hidden">
-              <Button
-                v-for="tool in tools"
-                :key="tool.event"
-                :icon="tool.icon"
-                :aria-label="t(tool.toolName)"
-                @click="handleOperate('toolBar', tool.event)"
-                size="small"
-                variant="text" />
-            </template>
-          </div>
-          <!-- 输入框 -->
-          <ChatInputBox :sending="isSending" @send="handleSend" @stop="handleStop" />
-        </div>
-      </template>
-      <!-- 空态：无会话时显示居中的"开启新对话"按钮 -->
-      <div v-else class="flex-1 flex flex-col items-center justify-center gap-4">
-        <div class="flex flex-col items-center gap-2">
-          <span class="pi pi-comments text-4xl text-[#9CA3AF]"></span>
-          <p class="text-base font-medium text-[#6B7280] dark:text-[#9CA3AF]">{{ t('history.noSessions') }}</p>
-        </div>
-        <Button
-          icon="pi pi-plus"
-          :label="t('toolbar.newChat')"
-          @click="handleCreateSession" />
+      <!-- 会话主体：每个会话由 [sid].vue 渲染。以 route.params.sid 作为 page-key，
+           每个会话获得独立的 KeepAlive 缓存槽，切换时原样恢复其草稿/滚动/流式/HITL 状态。
+           `max` 上限：超过 N 个缓存槽时，KeepAlive 会按 LRU 淘汰最久未访问的槽，
+           防止删除的非激活会话（其 page-key 不再被路由引用，但槽仍驻留内存）导致无界增长。 -->
+      <div class="flex-1 min-h-0">
+        <NuxtPage
+          :page-key="(route) => String(route.params.sid ?? 'root')"
+          :keepalive="{ max: KEEP_ALIVE_MAX }"
+        />
       </div>
     </div>
 
@@ -172,35 +90,6 @@
 
     <!-- 系统配置弹窗 -->
     <ConfigDialog v-model="showConfigDialog" @saved="loadCharacter" />
-
-    <!-- HITL 审批弹窗 -->
-    <Dialog
-      v-model:visible="hitlRequest"
-      :header="t('hitl.title', 'Action Requires Approval')"
-      :modal="true"
-      :closable="false"
-      class="w-[90vw] md:w-[500px]">
-      <div class="flex flex-col gap-3">
-        <div class="text-sm text-gray-500">{{ t('hitl.tool', 'Tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span></div>
-        <div v-if="hitlRequest?.description" class="text-sm whitespace-pre-wrap">{{ hitlRequest.description }}</div>
-        <div v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0" class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded-lg overflow-auto max-h-40">
-          <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
-        </div>
-      </div>
-      <template #footer>
-        <div class="flex gap-2 justify-end">
-          <Button
-            :label="t('hitl.reject', 'Reject')"
-            icon="pi pi-times"
-            severity="danger"
-            @click="handleHitlDecision('reject')" />
-          <Button
-            :label="t('hitl.approve', 'Approve')"
-            icon="pi pi-check"
-            @click="handleHitlDecision('approve')" />
-        </div>
-      </template>
-    </Dialog>
   </div>
 </template>
 
@@ -208,25 +97,35 @@
 // components
 import HistoryItem from './components/HistoryItem.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
-import ChatBox from './components/ChatBox.vue';
 import SkillsDialog from './components/SkillsDialog.vue';
 import ConfigDialog from './components/ConfigDialog.vue';
 // function
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { SessionRecord, MessageItem, HitlRequestData } from './type.ts';
-import { CHAT_ROLE } from './type.ts';
-import type { CachedCharacter, CachedMessage } from '@/composables/db';
+import type { SessionRecord } from './type.ts';
+import type { CachedCharacter } from '@/composables/db';
 import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter, clearCachedCharacter } from '@/composables/db';
-import { tools, headerTools } from './config';
-import { Menu } from 'primevue';
-import type { ChatRequest, AgentChunkType, HitlResponse } from '@/composables/bridge';
-import { getSessionList, clearSession } from '@/composables/messages';
-
-// 图片预览
-const { openPreview } = useImagePreview();
+import { headerTools } from './config';
+import { emit } from '@/composables/mitt';
+import { getSessionList, clearSession, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
 
 const { t } = useI18n();
+
+const router = useRouter();
+const route = useRoute();
+const localePath = useLocalePath();
+
+/**
+ * KeepAlive 缓存槽上限（LRU）。
+ *
+ * 删除**非激活**会话时：服务端 `clearSession` + Dexie 角色快照都会清理，
+ * 但该会话的 KeepAlive 缓存槽不会被显式移除（只有删除的是当前激活会话时，
+ * 才会因 `router.push('/home')` 离开 `[sid].vue` 路由而随之销毁）。
+ * 这些残留槽持续驻留内存，若不设上限只会无界累积。
+ * `max` 令 KeepAlive 在缓存槽超过此数时，按 LRU 淘汰最久未访问的会话，
+ * 从根本上防止内存增长失控（不影响按 sid 恢复的语义，被淘汰会话下次访问会重建）。
+ */
+const KEEP_ALIVE_MAX = 20;
 
 /** 技能查看弹窗开关 */
 const showSkillsDialog = ref(false);
@@ -235,18 +134,9 @@ const showSkillsDialog = ref(false);
 const showConfigDialog = ref(false);
 
 /**
- * 角色显示信息（来源为本地 Dexie 按会话缓存的快照，见 `db.ts` 的 `CachedCharacter`）。
- * - `userAvatar` / `aiAvatar` 为 base64 data URL（用户自定义）或 `/avatar/xxx.jpg` 相对 URL（内置默认），`<img>` 均可直接渲染。
- * - 每次切换/新建会话时从对应会话快照（或全局待定 profile）刷新，旧会话保留各自快照。
+ * 默认角色显示信息（内置：远野汉娜 / 橘雪莉 + 默认头像 URL，见 `defaultCharacter.ts`）。
+ * 用于在会话尚未锁定角色快照时，作为 Dexie 锁定的兜底数据源。
  */
-const characterInfo = ref<{ userName: string; userAvatar: string; aiName: string; aiAvatar: string }>({
-  userName: DEFAULT_CACHED_CHARACTER.userName,
-  userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
-  aiName: DEFAULT_CACHED_CHARACTER.aiName,
-  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
-});
-
-/** 默认角色显示信息（内置：远野汉娜 / 橘雪莉 + 默认头像 URL，见 `defaultCharacter.ts`） */
 const defaultCharacter = (): { userName: string; userAvatar: string; aiName: string; aiAvatar: string } => ({
   userName: DEFAULT_CACHED_CHARACTER.userName,
   userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
@@ -255,26 +145,12 @@ const defaultCharacter = (): { userName: string; userAvatar: string; aiName: str
 });
 
 /**
- * 将一份角色快照映射为 `characterInfo`（空消息段回退到内置默认值）。
- */
-const applyCharacterSnapshot = (snap?: Pick<CachedCharacter, 'userName' | 'userAvatar' | 'aiName' | 'aiAvatar'>) => {
-  const defaultInfo = defaultCharacter();
-  characterInfo.value = snap
-    ? {
-        userName: snap.userName?.trim() ? snap.userName : defaultInfo.userName,
-        userAvatar: snap.userAvatar ?? defaultInfo.userAvatar,
-        aiName: snap.aiName?.trim() ? snap.aiName : defaultInfo.aiName,
-        aiAvatar: snap.aiAvatar ?? defaultInfo.aiAvatar,
-      }
-    : defaultInfo;
-};
-
-/**
- * 确保指定会话已锁定自己的角色快照，并把 `characterInfo` 更新为该会话的显示信息。
+ * 确保指定会话已锁定自己的角色快照。
  *
  * 命名逻辑：系统配置-角色配置编辑的是「全局待定 profile」（`GLOBAL_SESSION_KEY` 行）。
  * 每个会话在首次打开时，把当时的全局 profile 拷贝并锁定到自己的 `session_id` 行；
  * 之后全局更新（改头像/名字）不再作用于已锁定快照的旧会话，仅新会话会取到最新全局值。
+ * 锁定结果由 [sid].vue 通过 `readCachedCharacter(sessionId)` 消费。
  *
  * @param sessionId 会话 ID
  */
@@ -284,9 +160,8 @@ const ensureSessionCharacter = async (sessionId: string) => {
       readCachedCharacter(GLOBAL_SESSION_KEY),
       readCachedCharacter(sessionId),
     ]);
-    // 会话已有快照（旧会话锁定的头像/名字）→ 直接用快照，不受全局变更影响。
+    // 会话已有快照（旧会话锁定的头像/名字）→ 保持现状，不覆盖旧会话快照。
     if (sessionSnap) {
-      applyCharacterSnapshot(sessionSnap);
       return;
     }
     // 会话尚无快照（新建或从未打开过的会话）→ 用全局 profile 快照并锁定。
@@ -295,9 +170,8 @@ const ensureSessionCharacter = async (sessionId: string) => {
     const base = globalSnap ?? defaultCharacter();
     const locked: CachedCharacter = { ...base, session_id: sessionId };
     await cacheCharacter(locked);
-    applyCharacterSnapshot(locked);
   } catch (error) {
-    // Dexie 读写异常时保留当前显示，不阻塞聊天。
+    // Dexie 读写异常时不阻塞聊天。
     console.warn('[ensureSessionCharacter] 读取角色快照失败：', error);
   }
 };
@@ -336,402 +210,25 @@ const loadSessionList = async () => {
   }
 };
 
-/** 当前会话 */
-const currentSession = ref<SessionRecord>();
+/** 当前会话 id（用于侧边栏高亮 + NuxtPage 的 KeepAlive key） */
 const currentSessionId = ref<string>();
 
-/**
- * 当前会话要渲染的消息列表 —— 单一数据源。
- *
- * 历史上直接对 `currentSession.value` 做整体赋值（`= {...}`），导致
- * 「loadSessionHistory 的迟到结果覆盖用户刚发送的本地消息」的竞态，表现为
- * 发送后列表被清空。现在所有追加/合并都只操作这个数组，不再整体重建会话对象。
- */
-const chatMessages = ref<MessageItem[]>([]);
-
-/**
- * 将后端返回的 content 归一化为纯文本字符串。
- *
- * 后端 messages 表的 content 存在两种形态：
- * 1. 多模态结构化数组：`[{ type: 'text', text: '...' }, { type: 'image', ... }]`
- * 2. 纯文本字符串：`'...'`
- *
- * ChatBox 通过 markdown-it 渲染 content，其只接受字符串（传入数组会抛
- * `Error: Input data should be a String`，导致整个消息列表渲染中断）。
- * 这里把数组形式拆解为纯文本字符串（丢弃非文本的分段，仅拼接 text 字段），
- * 保证渲染安全且内容连续。
- */
-const normalizeContent = (content: unknown): string => {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part: unknown) =>
-        typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string'
-          ? (part as { text: string }).text
-          : '',
-      )
-      .join('');
-  }
-  // 其它形态（null / 数字 / 对象等）统一兜底为空字符串
-  return '';
-};
-
-/**
- * 将后端返回的历史消息行（CachedMessage[]）转为聊天列表所需的 MessageItem[]。
- * 结构与后端 messages 表一致，仅对可能为空的字段做兜底，保证 ChatBox 渲染安全。
- */
-const toMessageItems = (rows: CachedMessage[]): MessageItem[] =>
-  rows.map(row => ({
-    session_id: row.session_id,
-    role: row.role as CHAT_ROLE,
-    content: normalizeContent(row.content),
-    // 透传图片数组：用户消息为 base64，AI 消息为持久化文件路径，交由 ChatBox 区分渲染
-    images: row.images ?? undefined,
-    id: row.id,
-    turn_num: row.turn_num,
-    timestamp: row.timestamp ?? '',
-    // 透传工具字段（历史消息中 role=tool 的行会有值）
-    toolName: row.tool_name ?? undefined,
-    toolStatus: (row.tool_status as 'running' | 'done') ?? undefined,
-  }));
-
-/**
- * 加载指定会话的历史消息（本地缓存优先，后台合并服务端增量），
- * 合并进 `chatMessages`（按 id 去重），供 ChatBox 渲染。
- *
- * 修复：不再整体重建 `currentSession.value`（那会覆盖用户已发送的本地消息，
- * 导致「发送后列表被清空」）。只把历史行合并进单一列表，已存在的消息保留。
- */
-const loadSessionHistory = async (sessionId: string) => {
-  currentSessionId.value = sessionId;
-
-  const rows = await get_history_by_turn_page(sessionId, 0, 10, 1);
-  const historyItems = toMessageItems(rows);
-
-  // 合并去重：已存在的 id 保留本地版本（含发送后尚未持久化的临时消息 id 为负值），
-  // 服务端真实 id 的原样补入。整体按 turn_num 升序保证顺序稳定。
-  //
-  // 竞态修复：发送后尚未持久化的临时消息 id 为负值（handleSend 用 --tempIdCounter），
-  // 而当服务端稍后返回同一消息的真实正 id 行时，二者的 id 不同，按 id 去重会同时保留
-  // 「临时负 id 副本」和「服务端正 id 行」，造成同一消息渲染两次。
-  //
-  // 因此对每个本地负 id 临时副本，直接在服务端历史行里按
-  // 「同会话 + 同 turn_num + 同 role + 同 content」精确匹配其正 id 真身；
-  // 命中则用服务端行替换（丢弃临时副本）。注意不能仅按 (session, turn, role) 归并查找
-  // —— 同一轮次内可能出现多条同 role 的行（例如一次 AI 回合内的工具调用 + 最终回复，
-  // add_messages 把整批写进同一个 turn_num），归并键会丢失其中若干行。逐行精确匹配
-  // content 可保证不会跨行误替换。
-  const mergedById = new Map<number, MessageItem>();
-  const serverRowFor = (m: MessageItem) =>
-    historyItems.find(
-      (h) =>
-        h.id >= 0 &&
-        h.session_id === m.session_id &&
-        h.turn_num === m.turn_num &&
-        h.role === m.role &&
-        h.content === m.content,
-    );
-  for (const m of chatMessages.value) {
-    // 本地临时负 id 行：若服务端已返回同一逻辑消息的正 id 行，则跳过（用服务端行）。
-    if (m.id < 0) {
-      const serverRow = serverRowFor(m);
-      // 命中：用服务端正 id 行替换临时副本，后续循环加入；此处占位以免重复
-      if (serverRow) {
-        mergedById.set(serverRow.id, serverRow);
-        continue;
-      }
-    }
-    mergedById.set(m.id, m);
-  }
-  for (const h of historyItems) {
-    // 仅当本地没有同 id 的消息时才补入，避免覆盖流式过程中已更新的内容
-    if (!mergedById.has(h.id)) mergedById.set(h.id, h);
-  }
-  // 按 turn_num 升序排序；同轮次内按 id 升序（与后端 messages 表
-  // "ORDER BY turn_num ASC, id ASC" 一致）。此前用 id 降序会把同一轮次内
-  // （用户消息 + AI 回复共享同一 turn_num）的插入顺序颠倒，导致刷新后
-  // AI 回复跑到用户消息上面、最后一条 AI 回复不在最底部。
-  chatMessages.value = [...mergedById.values()].sort(
-    (a, b) => a.turn_num - b.turn_num || a.id - b.id,
-  );
-
-  // 若当前会话对象未初始化，补一个最小结构（消息已由 chatMessages 单独承载）
-  if (!currentSession.value) {
-    currentSession.value = { id: sessionId, title: t('history.newSession'), createTime: '' } as SessionRecord;
-  } else {
-    currentSession.value.id = sessionId;
-  }
-};
-
-/** 是否处于 AI 回复生成中 */
-const isSending = ref(false);
-/** 当前进行中的流式请求控制器（用于停止生成） */
-let activeAgentController: AbortController | null = null;
-/** 自增 id 计数器（用于本地临时消息，避免与真实 id 冲突） */
-let tempIdCounter = 0;
-
-/** HITL 审批请求（当 agent 暂停等待人工审批时设置） */
-const hitlRequest = ref<HitlRequestData | null>(null);
-
-/** 处理 HITL 审批请求：显示审批弹窗 */
-const handleHitlRequest = (data: HitlRequestData) => {
-  hitlRequest.value = data;
-};
-
-/** 用户审批/拒绝 HITL 请求 */
-const handleHitlDecision = (decision: 'approve' | 'reject', message: string = '') => {
-  if (!activeAgentController) return;
-  const sender = (activeAgentController as any).sendHitlResponse as
-    | ((response: HitlResponse) => void) | null;
-  if (sender) {
-    sender({ decision, message });
-  }
-  hitlRequest.value = null;
-};
-
-/** 停止当前 AI 回复生成（前端本地中止 + 通知后端止停） */
-const handleStop = () => {
-  activeAgentController?.abort();
-  activeAgentController = null;
-  isSending.value = false;
-};
-
-/**
- * 处理输入框发送：把用户消息加入列表，并通过流式请求（Tauri IPC 或浏览器 WebSocket）获取 AI 回复。
- *
- * 流式回复动态分段：后端按 chunk type（text / tool_start / tool_end）区分对话文本
- * 与工具调用，前端据此实时创建/更新独立的消息气泡——对话一个框、工具调用一个框。
- *
- * @param text 用户输入内容
- */
-const handleSend = async (text: string) => {
-  const sessionId = currentSessionId.value || 'default';
-
-  // 确保当前会话已初始化
-  if (!currentSession.value) {
-    currentSession.value = { id: sessionId, title: t('history.newSession'), createTime: '' } as SessionRecord;
-    currentSessionId.value = sessionId;
-  }
-
-  // 计算下一轮次号：取当前消息中最大 turn_num + 1，而非按数组长度。
-  const turnNum =
-    chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
-
-  // 携带本次待发送的图片（发送时取走并清空待发送列表）
-  const imageBase64List = selectedImages.value.map((img) => img.base64);
-
-  // 追加用户消息（本地即时显示）
-  const userMsg: MessageItem = {
-    session_id: sessionId,
-    role: CHAT_ROLE.USER,
-    content: text,
-    images: imageBase64List,
-    id: --tempIdCounter,
-    turn_num: turnNum,
-    timestamp: new Date().toISOString()
-  };
-
-  // 初始 AI 占位消息（内容随流式块逐步填充）
-  const aiMsg: MessageItem = {
-    session_id: sessionId,
-    role: CHAT_ROLE.AI,
-    content: '',
-    id: --tempIdCounter,
-    turn_num: turnNum,
-    timestamp: new Date().toISOString()
-  };
-
-  // 本轮所有 AI/TOOL 消息（用于流式回调中动态追加/更新）
-  const turnMsgs: MessageItem[] = [aiMsg];
-
-  chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
-
-  // 发送后清空待发送图片与输入区
-  selectedImages.value = [];
-
-  isSending.value = true;
-
-  /**
-   * 流式 chunk 回调：按 type 动态管理消息分段。
-   *
-   * - text: 追加到最后一条 AI 消息；若最后一条是 TOOL 消息则新建 AI 消息
-   * - tool_start: 新建一条 TOOL 消息（status=running）
-   * - tool_end: 将最后一条 TOOL 消息标记为 done
-   */
-  const onStreamChunk = (content: string, type: AgentChunkType) => {
-    if (type === 'text') {
-      const last = turnMsgs[turnMsgs.length - 1];
-      if (last && last.role === CHAT_ROLE.AI) {
-        last.content += content;
-      } else {
-        const newAi: MessageItem = {
-          session_id: sessionId,
-          role: CHAT_ROLE.AI,
-          content,
-          id: --tempIdCounter,
-          turn_num: turnNum,
-          timestamp: new Date().toISOString()
-        };
-        turnMsgs.push(newAi);
-        chatMessages.value = [...chatMessages.value, newAi];
-      }
-    } else if (type === 'tool_start') {
-      const toolMsg: MessageItem = {
-        session_id: sessionId,
-        role: CHAT_ROLE.TOOL,
-        content: '',
-        toolName: content,
-        toolStatus: 'running',
-        id: --tempIdCounter,
-        turn_num: turnNum,
-        timestamp: new Date().toISOString()
-      };
-      turnMsgs.push(toolMsg);
-      chatMessages.value = [...chatMessages.value, toolMsg];
-    } else if (type === 'tool_end') {
-      // 标记最近的 TOOL 消息为已完成
-      for (let i = turnMsgs.length - 1; i >= 0; i--) {
-        if (turnMsgs[i].role === CHAT_ROLE.TOOL) {
-          turnMsgs[i].toolStatus = 'done';
-          break;
-        }
-      }
-    }
-    // 触发响应式更新
-    chatMessages.value = [...chatMessages.value];
-  };
-
-  try {
-    const req: ChatRequest = { text };
-    if (imageBase64List.length > 0) req.image_base64_list = imageBase64List;
-    activeAgentController = postAgentStream(
-      sessionId,
-      req,
-      onStreamChunk,
-      () => {
-        // 流正常结束，解锁输入框
-        activeAgentController = null;
-        isSending.value = false;
-      },
-      (err) => {
-        activeAgentController = null;
-        aiMsg.content = t('errors.replyFailed', { reason: String(err) });
-        isSending.value = false;
-      },
-      handleHitlRequest,
-    );
-  } catch (e) {
-    // 同步抛错（罕见），此时流未启动，直接解锁
-    activeAgentController = null;
-    aiMsg.content = t('errors.sendFailed', { reason: String(e) });
-    isSending.value = false;
-  }
-};
-
-/**
- * 已选图片（base64 形式，随消息发送）。
- * 仅在「本地预览 + 发送」期间存在，发送/取消后清空。
- */
-const selectedImages = ref<{ base64: string; name: string }[]>([]);
-
-/** 单条消息允许附带的最大图片数量 */
-const MAX_SELECTED_IMAGES = 10;
-
-/** 隐藏的图片文件选择框 */
-const imageFileInput = useTemplateRef<HTMLInputElement>('imageFileInputRef');
-
-/** 读取图片文件为 DataURL（含 data:image/...;base64 前缀，需剥离前缀再发送） */
-const readImageFile = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
-/** 移除一张已选图片 */
-const removeImage = (index: number) => {
-  selectedImages.value.splice(index, 1);
-  selectedImages.value = [...selectedImages.value];
-};
-
-/** 触发系统图片文件选择 */
-const triggerImagePicker = () => {
-  imageFileInput.value?.click();
-};
-
-/** 图片选择回调：读取为 base64 并加入待发送列表（上限 MAX_SELECTED_IMAGES） */
-const onImageSelected = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  // 先拷贝为普通数组副本再重置 input.value。
-  // input.files 是「活」的 FileList —— 一旦把 value 置空，浏览器会立即清空该 FileList，
-  // 若此后才读取 files 会得到空数组，导致 selectedImages 永不入库、预览区不显示。
-  const files = Array.from(input.files ?? []);
-  input.value = ''; // 允许重复选择同一文件
-  if (files.length === 0) return;
-
-  // 数量上限：超出的部分直接截断并提示
-  const remaining = MAX_SELECTED_IMAGES - selectedImages.value.length;
-  if (remaining <= 0) {
-    alert(t('chatInput.maxImages', { count: MAX_SELECTED_IMAGES }));
-    return;
-  }
-  const accepted = files.slice(0, remaining);
-  if (files.length > remaining) {
-    alert(t('chatInput.maxImagesExceed', { count: MAX_SELECTED_IMAGES, extra: files.length - remaining }));
-  }
-
-  for (const file of accepted) {
-    if (!file.type.startsWith('image/')) continue;
-    try {
-      const dataUrl = await readImageFile(file);
-      // data:image/png;base64,xxxxx -> 仅保留 base64 部分
-      const base64 = dataUrl.split(',')[1] ?? '';
-      selectedImages.value.push({ base64, name: file.name });
-    } catch (e) {
-      console.warn('[onImageSelected] 读取图片失败：', file.name, e);
-    }
-  }
-  selectedImages.value = [...selectedImages.value];
-};
-
-/** 工具触发 */
+/** 工具触发（仅头部区域；工具栏/图片等已随会话主体迁入 [sid].vue） */
 const handleOperate = (type: string, event: string) => {
-  if (!event || !type) return;
-  // 头部区域
-  if (type === 'headerBar') {
-    switch (event) {
-      case 'knowledgeBase':
-        return;
-      case 'skills':
-        showSkillsDialog.value = true;
-        return;
-      case 'systemConfig':
-        showConfigDialog.value = true;
-        return;
-      default:
-        return;
-    }
-  } else {
-    // 工具栏
-    switch (event) {
-      case 'createSession':
-        handleCreateSession();
-        return;
-      case 'knowledgeBase':
-        return;
-      case 'uploadFile':
-        return;
-      case 'uploadImage':
-        triggerImagePicker();
-        return;
-      default:
-        return;
-    }
+  if (!event || type !== 'headerBar') return;
+  switch (event) {
+    case 'skills':
+      showSkillsDialog.value = true;
+      return;
+    case 'systemConfig':
+      showConfigDialog.value = true;
+      return;
+    default:
+      return;
   }
 };
 
-/** 新增会话：生成随机 session_id，创建新会话窗口并切换 */
+/** 新增会话：生成随机 session_id，加入列表并路由到新会话页（KeepAlive 按 sid 缓存） */
 const handleCreateSession = () => {
   const sessionId = crypto.randomUUID();
   const now = new Date();
@@ -743,32 +240,27 @@ const handleCreateSession = () => {
     createTime
   };
   historyList.value = [newSession, ...historyList.value];
-  currentSession.value = newSession;
   currentSessionId.value = sessionId;
-  chatMessages.value = [];
   // 新会话：立即用当前全局 profile 创建并锁定角色快照，保证头像/名字正确显示
   ensureSessionCharacter(sessionId);
+  router.push(localePath(`/home/${sessionId}`));
 };
 
 /**
- * 会话切换：先清空当前渲染列表与会话对象，再加载新会话历史。
- *
- * 必须清空，否则 loadSessionHistory 是「合并」语义，会把上一个会话的消息
- * 混进新会话。清空后加载期间 ChatBox 短暂为空是可接受的（切换反馈）。
+ * 会话切换：路由到对应会话页。
+ * [sid].vue 由 KeepAlive 按 session_id 缓存，切换时原样恢复其草稿/滚动/流式状态。
  */
 const handleToggleSession = (id: string) => {
   if (currentSessionId.value === id) return;
-  currentSession.value = undefined;
-  chatMessages.value = [];
   currentSessionId.value = id;
-  loadSessionHistory(id);
   // 切换会话：加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
   ensureSessionCharacter(id);
+  router.push(localePath(`/home/${id}`));
 };
 
 /**
  * 删除会话：调用服务端 clearSession，成功后从列表移除。
- * 若删除的是当前激活会话，则重置会话状态（清空聊天区）。
+ * 若删除的是当前激活会话，则路由回首页空态（[sid].vue 实例由 KeepAlive 释放）。
  */
 const handleDeleteSession = async (id: string) => {
   try {
@@ -781,10 +273,12 @@ const handleDeleteSession = async (id: string) => {
     selectedSessionIds.value = selectedSessionIds.value.filter((sid) => sid !== id);
     // 同步清理该会话的角色快照缓存
     clearCachedCharacter(id);
+    // 该会话可能仍在流式生成（尤其是非激活会话，其 [sid].vue 仍被 KeepAlive 缓存且流未中止）。
+    // 广播中止事件，让对应的 [sid].vue 实例 abort 其 AbortController，避免删除后流仍在后台推块、污染聊天状态。
+    emit(SESSION_ABORT_STREAM_EVENT, id);
     if (currentSessionId.value === id) {
-      currentSession.value = undefined;
       currentSessionId.value = undefined;
-      chatMessages.value = [];
+      router.push(localePath('/home'));
     }
   } catch (error) {
     console.warn('[handleDeleteSession] 删除会话异常，保留列表项：', id, error);
@@ -828,7 +322,7 @@ const handleToggleSelectAll = (checked: boolean) => {
 
 /**
  * 批量删除会话：逐个调用服务端 clearSession，成功后统一从列表移除。
- * 若其中有当前激活会话，则重置会话状态（清空聊天区）。
+ * 若其中有当前激活会话，则路由回首页空态。
  */
 const handleBatchDelete = async () => {
   if (selectedSessionIds.value.length === 0) return;
@@ -856,11 +350,13 @@ const handleBatchDelete = async () => {
     historyList.value = historyList.value.filter((s) => !deleted.includes(s.id));
     // 同步清理被删会话的角色快照缓存
     for (const id of deleted) clearCachedCharacter(id);
+    // 被删会话可能仍在流式生成（KeepAlive 缓存内的非激活实例流未中止），
+    // 逐个广播中止事件，让对应 [sid].vue 实例 abort 其 AbortController。
+    for (const id of deleted) emit(SESSION_ABORT_STREAM_EVENT, id);
   }
   if (currentSessionId.value && deleted.includes(currentSessionId.value)) {
-    currentSession.value = undefined;
     currentSessionId.value = undefined;
-    chatMessages.value = [];
+    router.push(localePath('/home'));
   }
   selectedSessionIds.value = remain;
 
@@ -869,26 +365,28 @@ const handleBatchDelete = async () => {
   }
 };
 
-const headerToolsMenuRef = ref<InstanceType<typeof Menu>>();
-const openHeaderMenu = (event: Event) => {
-  headerToolsMenuRef.value?.toggle(event);
-};
-
-/** 移动端头部工具菜单（为每个工具绑定 command 回调，保证点击可用） */
-const headerMenuModel = computed(() =>
-  headerTools.map((tool) => ({
-    label: t(tool.title),
-    icon: tool.icon,
-    command: () => handleOperate('headerBar', tool.event),
-  })),
-);
-
-// 首屏加载默认会话(default)的历史消息，获取合并后的列表渲染到 ChatBox
-loadSessionHistory('default');
-// 首屏同时加载 default 会话的角色显示信息（头像 + 名字）
+// 首屏加载 default 会话的角色显示信息（头像 + 名字）
 ensureSessionCharacter('default');
 // 挂载后拉取会话列表（角色信息已由 ensureSessionCharacter 从本地 Dexie 加载）
 onMounted(() => {
   loadSessionList();
 });
+
+// 更强保障：以浏览器 URL 末尾的 session_id 作为激活态的「唯一事实来源」。
+// 用 immediate 监听 route.params.sid，同时覆盖三种场景：
+//   1) 刷新/直达 /home/{sid}：组件挂载时立即恢复高亮（此前 currentSessionId 初始为 undefined，
+//      不恢复则侧边栏无任何激活态背景）；
+//   2) 浏览器内导航（后退/前进/改 URL）：sid 变化时同步移动高亮，无需整页刷新；
+//   3) 时序竞态：无论 loadSessionList 列表返回先后，只要 URL 带 sid，就始终以它为激活项。
+const activeSessionId = computed(() => {
+  const sid = route.params.sid;
+  return typeof sid === 'string' && sid ? sid : undefined;
+});
+watch(activeSessionId, async (sid) => {
+  currentSessionId.value = sid;
+  if (sid) {
+    // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
+    await ensureSessionCharacter(sid);
+  }
+}, { immediate: true });
 </script>

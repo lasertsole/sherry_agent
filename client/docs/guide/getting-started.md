@@ -40,9 +40,6 @@ All command names use `snake_case` matching the Rust function names:
 | `system_prompt_read` | system_prompt | Read all prompt files |
 | `system_prompt_write` | system_prompt | Overwrite prompt files |
 | `system_prompt_update` | system_prompt | Merge-update prompt files |
-| `character_read` | character | Read character config |
-| `character_write` | character | Overwrite character config |
-| `character_update` | character | Merge-update character config |
 | `system_info` | system | Get app metadata |
 | `system_health` | system | Health check |
 

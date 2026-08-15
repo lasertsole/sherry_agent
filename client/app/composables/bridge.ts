@@ -13,7 +13,6 @@
 
 import type { HistoryMessage } from '~/types/backend/HistoryMessage';
 import type { PromptFileResponse } from '~/types/backend/PromptFileResponse';
-import type { CharacterResponse } from '~/types/backend/CharacterResponse';
 import type { HealthStatus } from '~/types/backend/HealthStatus';
 import { fetchApi } from './requestApi';
 
@@ -113,8 +112,12 @@ async function getListen() {
 
 // ── Agent chat (streaming) ───────────────────────────────
 
-/** Typed chunk callback: receives the text fragment and its semantic type. */
-export type OnChunkCallback = (content: string, type: AgentChunkType) => void;
+/**
+ * Typed chunk callback: receives the text fragment, its semantic type, and the
+ * session id the chunk belongs to. The session id lets the caller route chunks
+ * to the correct per-session ChatPage when multiple sessions stream concurrently.
+ */
+export type OnChunkCallback = (content: string, type: AgentChunkType, sessionId: string) => void;
 
 /** HITL interrupt callback: invoked when the agent pauses for human approval. */
 export type OnHitlCallback = (data: HitlInterruptData) => void;
@@ -127,7 +130,7 @@ export type OnHitlCallback = (data: HitlInterruptData) => void;
  * backend WebSocket (`/sessions/agent/ws`).
  *
  * @param request  The chat payload (session_id, text, images).
- * @param onChunk  Callback invoked for each text fragment with its type.
+ * @param onChunk  Callback invoked for each text fragment with its type and session id.
  * @returns        Resolves when the stream completes; rejects on error.
  */
 export async function sendChatMessage(
@@ -165,7 +168,7 @@ async function sendChatMessageTauri(
 
     // Listen for chunks
     listen<AgentStreamChunk>('agent:stream:chunk', (event) => {
-      onChunk(event.payload.content, event.payload.chunk_type ?? 'text');
+      onChunk(event.payload.content, event.payload.chunk_type ?? 'text', event.payload.session_id);
     }).then((fn) => { unlistenChunk = fn; });
 
     // Listen for stream end
@@ -224,7 +227,7 @@ export interface StreamController {
  * error or unexpected teardown.
  *
  * @param request  The chat payload.
- * @param onChunk  Called with each text fragment and its semantic type.
+ * @param onChunk  Called with each text fragment, its semantic type, and the session id.
  * @returns        `{ controller, promise }`.
  */
 export function streamChatMessage(
@@ -429,7 +432,7 @@ function sendChatMessageWs(
         return;
       }
       if (data.event === 'chunk') {
-        onChunk(data.content ?? '', data.type ?? 'text');
+        onChunk(data.content ?? '', data.type ?? 'text', data.session_id ?? sessionId);
       } else if (data.event === 'hitl_request') {
         // HITL 中断：agent 需人工审批，调用 onHitl 回调（无回调时静默忽略）
         if (onHitl && data.content) {
@@ -628,93 +631,6 @@ export async function updateSystemPrompt(
       method: 'put',
     });
   }
-}
-
-// ── Character ────────────────────────────────────────────
-
-type CharacterData = Record<string, Record<string, string>>;
-
-/**
- * Read character configuration.
- */
-export async function readCharacter(): Promise<CharacterData> {
-  if (isTauri()) {
-    const invoke = await getInvoke();
-    const resp = await invoke<CharacterResponse>('character_read');
-    return resp.character_data;
-  }
-  return fetchApi({ url: '/character', method: 'get' }) as unknown as Promise<CharacterData>;
-}
-
-/**
- * Overwrite character configuration.
- */
-export async function writeCharacter(data: CharacterData): Promise<void> {
-  if (isTauri()) {
-    const invoke = await getInvoke();
-    await invoke('character_write', { payload: { character_data: data } });
-  } else {
-    await fetchApi({
-      url: '/character',
-      opts: { character_data: data },
-      method: 'put',
-    });
-  }
-}
-
-/**
- * Partially update character configuration (merge).
- */
-export async function updateCharacter(data: CharacterData): Promise<void> {
-  if (isTauri()) {
-    const invoke = await getInvoke();
-    await invoke('character_update', { payload: { character_data: data } });
-  } else {
-    await fetchApi({
-      url: '/character',
-      opts: { character_data: data },
-      method: 'patch',
-    });
-  }
-}
-
-/**
- * Convert a File to a base64 data URL string (Tauri IPC helper).
- */
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-/**
- * Upload an avatar image and return the relative path (e.g. `avatar/xxx.png`).
- *
- * - **Tauri**: sends the base64 payload to the `upload_avatar` IPC command.
- * - **Browser**: POSTs raw image bytes to `/character/avatar`.
- */
-export async function uploadAvatar(file: File): Promise<string> {
-  if (isTauri()) {
-    const invoke = await getInvoke();
-    const base64 = await fileToBase64(file);
-    return invoke<string>('upload_avatar', { base64 });
-  }
-  const resp = await fetch(`${import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080'}/character/avatar`, {
-    method: 'POST',
-    headers: { 'Content-Type': file.type || 'image/png' },
-    body: await file.arrayBuffer(),
-  });
-  if (!resp.ok) {
-    throw new Error(`头像上传失败: HTTP ${resp.status}`);
-  }
-  const json = await resp.json();
-  if (!json || typeof json.path !== 'string') {
-    throw new Error('头像上传失败: 服务器返回格式异常');
-  }
-  return json.path;
 }
 
 /**

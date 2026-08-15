@@ -1,10 +1,10 @@
 {
-  "user": {
-    "name": "远野汉娜",
-    "avatar": "avatar/user.jpg"
-  },
-  "assistant": {
-    "name": "橘雪莉",
-    "avatar": "avatar/assistant.jpg"
-  }
+    "user": {
+        "name": "远野汉娜",
+        "avatar": "avatar/user.jpg"
+    },
+    "assistant": {
+        "name": "橘雪莉",
+        "avatar": "avatar/3511321a49634f4b95541065a54b429f.jpg"
+    }
 }

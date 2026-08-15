@@ -2,7 +2,7 @@ mod commands;
 mod services;
 mod utils;
 
-use commands::{agent, character, session, system, system_prompt};
+use commands::{agent, session, system, system_prompt};
 use services::python_bridge::PythonBridge;
 use services::python_process::PythonProcessManager;
 use utils::config::AppConfig;
@@ -53,11 +53,6 @@ pub fn run() {
             system_prompt::system_prompt_read,
             system_prompt::system_prompt_write,
             system_prompt::system_prompt_update,
-            // Character
-            character::character_read,
-            character::character_write,
-            character::character_update,
-            character::upload_avatar,
             // System
             system::system_info,
             system::system_health,

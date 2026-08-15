@@ -255,9 +255,6 @@ app.vue (根)
 | `readSystemPrompt()` | 读取所有系统提示词文件 |
 | `writeSystemPrompt(fileToContent)` | 覆盖系统提示词文件 |
 | `updateSystemPrompt(fileToContent)` | 合并更新系统提示词文件 |
-| `readCharacter()` | 读取角色配置 |
-| `writeCharacter(data)` | 覆盖角色配置 |
-| `updateCharacter(data)` | 合并更新角色配置 |
 | `checkHealth()` | 检查 Python 后端可达性 |
 
 ### WebSocket (ws.ts)
@@ -294,7 +291,6 @@ WebSocket 单例，用于实时服务端推送通知：
 src-tauri/src/
 ├── commands/          # IPC 命令处理器
 │   ├── agent.rs       # agent_chat, agent_stop
-│   ├── character.rs   # character_read/write/update
 │   ├── session.rs     # session_clear, session_history
 │   ├── system.rs      # system_info, system_health
 │   └── system_prompt.rs

@@ -256,9 +256,6 @@ app.vue (root)
 | `readSystemPrompt()` | 모든 시스템 프롬프트 파일 읽기 |
 | `writeSystemPrompt(fileToContent)` | 시스템 프롬프트 파일 덮어쓰기 |
 | `updateSystemPrompt(fileToContent)` | 시스템 프롬프트 파일 병합 업데이트 |
-| `readCharacter()` | 캐릭터 설정 읽기 |
-| `writeCharacter(data)` | 캐릭터 설정 덮어쓰기 |
-| `updateCharacter(data)` | 캐릭터 설정 병합 업데이트 |
 | `checkHealth()` | Python 백엔드 연결 가능 여부 확인 |
 
 ### WebSocket (ws.ts)
@@ -295,7 +292,6 @@ app.vue (root)
 src-tauri/src/
 ├── commands/          # IPC command handlers
 │   ├── agent.rs       # agent_chat, agent_stop
-│   ├── character.rs   # character_read/write/update
 │   ├── session.rs     # session_clear, session_history
 │   ├── system.rs      # system_info, system_health
 │   └── system_prompt.rs
