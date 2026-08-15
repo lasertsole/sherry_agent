@@ -1,6 +1,6 @@
 # Curator — 后台技能维护编排器
 
-[**English**](README) | **中文**
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 > **Curator** 是 EMA AI Agent 的后台技能维护系统，负责对 Agent 自动创建的技能进行生命周期管理、合并整合和清理。
 

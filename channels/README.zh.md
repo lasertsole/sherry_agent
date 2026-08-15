@@ -1,6 +1,6 @@
 # Channels
 
-[English](./README.md) | 中文版
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 ---
 

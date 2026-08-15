@@ -1,6 +1,6 @@
 # Human-In-The-Loop (HITL) Middleware
 
-[**中文文档**](README.zh.md) | **English**
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 A comprehensive human-in-the-loop middleware for the hermes-agent pipeline. Provides layered approval gates for command execution (hardline/dangerous), file writes, MCP tool calls, destructive slash commands, and peer pairing — all managed through a single middleware hook.
 

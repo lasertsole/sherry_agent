@@ -1,51 +1,51 @@
-# Curator — Background Skill Maintenance Orchestrator
+# Curator — 백그라운드 스킬 유지보수 오케스트레이터
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> **Curator** is the background skill maintenance system for the EMA AI Agent, responsible for lifecycle management, consolidation, and pruning of agent-created skills.
+> **Curator**는 EMA AI 에이전트의 백그라운드 스킬 유지보수 시스템으로, 에이전트가 생성한 스킬의 수명 주기 관리, 통합 및 정리를 담당합니다.
 
 ---
 
-## Table of Contents
+## 목차
 
-- [Overview](#overview)
-- [Core Responsibilities](#core-responsibilities)
-- [Architecture](#architecture)
-- [Trigger Mechanism](#trigger-mechanism)
-- [Lifecycle State Machine](#lifecycle-state-machine)
-- [Execution Flow](#execution-flow)
-- [Automatic Transition Rules](#automatic-transition-rules)
-- [LLM Consolidation](#llm-consolidation)
-- [Umbrella Skill Generation](#umbrella-skill-generation)
-- [Classification & Reconciliation](#classification--reconciliation)
-- [Usage Record System](#usage-record-system)
-- [Orphan Record Cleanup](#orphan-record-cleanup)
-- [Pin Mechanism](#pin-mechanism)
-- [Report System](#report-system)
-- [Configuration Reference](#configuration-reference)
-- [Curator State File](#curator-state-file)
-- [Invariants](#invariants)
-- [File Structure](#file-structure)
-
----
-
-## Overview
-
-Curator is an **inactivity-triggered** background task. When the Agent is idle and the last Curator run was more than `interval_hours` ago, `maybe_run_curator()` spawns a background review.
-
-It only operates on agent-created skills (under `skills/auto/`), **never touching built-in skills** (`skills/builtin/`). Stale and unused skills are **deleted** (removed from disk), with LLM consolidation optionally merging overlapping skills into umbrella skills before pruning.
+- [개요](#개요)
+- [핵심 책임](#핵심-책임)
+- [아키텍처](#아키텍처)
+- [트리거 메커니즘](#트리거-메커니즘)
+- [수명 주기 상태 머신](#수명-주기-상태-머신)
+- [실행 흐름](#실행-흐름)
+- [자동 전환 규칙](#자동-전환-규칙)
+- [LLM 통합](#llm-통합)
+- [우산 스킬 생성](#우산-스킬-생성)
+- [분류 및 조정](#분류-및-조정)
+- [사용 기록 시스템](#사용-기록-시스템)
+- [고아 레코드 정리](#고아-레코드-정리)
+- [핀 메커니즘](#핀-메커니즘)
+- [보고 시스템](#보고-시스템)
+- [구성 참조](#구성-참조)
+- [Curator 상태 파일](#curator-상태-파일)
+- [불변 조건](#불변-조건)
+- [파일 구조](#파일-구조)
 
 ---
 
-## Core Responsibilities
+## 개요
 
-1. **Automatic Lifecycle Transitions** — advance `active → stale` based on skill activity timestamps; delete skills that exceed the archive cutoff
-2. **Consolidation** (optional LLM pass) — merge overlapping narrow skills into class-level umbrella skills with automated content generation and file migration
-3. **Persistent State** — save run history in the `.curator_state` file
+Curator는 **비활성 트리거** 기반 백그라운드 작업입니다. 에이전트가 유휴 상태이고 마지막 Curator 실행이 `interval_hours` 이전이라면, `maybe_run_curator()`가 백그라운드 검토를 시작합니다.
+
+에이전트가 생성한 스킬(`skills/auto/` 아래)에만 작동하며, **내장 스킬**(`skills/builtin/`)은 절대 건드리지 않습니다. 오래되고 사용되지 않는 스킬은 **삭제**(디스크에서 제거)되며, 선택적으로 LLM 통합을 통해 겹치는 스킬을 우산 스킬로 병합한 후 정리할 수 있습니다.
 
 ---
 
-## Architecture
+## 핵심 책임
+
+1. **자동 수명 주기 전환** — 스킬 활동 타임스탬프를 기준으로 `active → stale`로 전환; 보관 기준을 초과한 스킬 삭제
+2. **통합**(선택적 LLM 패스) — 겹치는 좁은 스킬을 클래스 수준의 우산 스킬로 병합, 자동 콘텐츠 생성 및 파일 마이그레이션
+3. **영구 상태** — `.curator_state` 파일에 실행 기록 저장
+
+---
+
+## 아키텍처
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -77,9 +77,9 @@ It only operates on agent-created skills (under `skills/auto/`), **never touchin
 
 ---
 
-## Trigger Mechanism
+## 트리거 메커니즘
 
-Curator uses an **inactivity-triggered** pattern rather than a scheduled cron:
+Curator는 예약된 cron 대신 **비활성 트리거** 패턴을 사용합니다:
 
 ```
 maybe_run_curator(idle_for_seconds=..., on_summary=...)
@@ -93,16 +93,16 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
   └── idle_for_seconds < min_idle_hours * 3600 → skip
 ```
 
-| Parameter | Default | Description |
+| 매개변수 | 기본값 | 설명 |
 |-----------|---------|-------------|
-| `interval_hours` | 168 (7 days) | Minimum interval between Curator runs |
-| `min_idle_hours` | 2 | Agent must be idle for at least N hours |
+| `interval_hours` | 168 (7일) | Curator 실행 사이의 최소 간격 |
+| `min_idle_hours` | 2 | 에이전트는 최소 N시간 동안 유휴 상태여야 함 |
 
-If `last_run_at` has never been set, the first call to `should_run_now()` returns `True` and the review proceeds immediately (no deferred-first-run seeding).
+`last_run_at`이 한 번도 설정되지 않은 경우, `should_run_now()`에 대한 첫 호출은 `True`를 반환하고 검토가 즉시 진행됩니다(지연된 첫 실행 시딩 없음).
 
 ---
 
-## Lifecycle State Machine
+## 수명 주기 상태 머신
 
 ```
     active ──────(stale_after_days no activity)──────► stale
@@ -114,20 +114,20 @@ If `last_run_at` has never been set, the first call to `should_run_now()` return
       └──────────────────► deleted ◄─────────────────────┘
 ```
 
-| State | Meaning |
+| 상태 | 의미 |
 |-------|---------|
-| `active` | Skill is normally available |
-| `stale` | No activity for `stale_after_days`, marked as stale |
+| `active` | 스킬이 정상적으로 사용 가능한 상태 |
+| `stale` | `stale_after_days` 동안 활동이 없어 오래된 것으로 표시 |
 
-When a skill exceeds `archive_after_days` of inactivity, it is **deleted** (directory and usage record removed from disk). There is no intermediate `archived` state — deletion is irreversible.
+스킬이 `archive_after_days`의 무활동 기간을 초과하면 **삭제**됩니다(디렉터리와 사용 기록이 디스크에서 제거됨). 중간 `archived` 상태는 없으며 삭제는 되돌릴 수 없습니다.
 
-**Key constraints**:
-- Pinned skills are **never** auto-transitioned or deleted
-- Skills with `use_count == 0` created after the stale cutoff are **reactivated** if currently stale
+**핵심 제약 조건**:
+- 고정(pinned)된 스킬은 **절대** 자동 전환되거나 삭제되지 않습니다
+- 오래된 기준 이후 생성된 `use_count == 0` 스킬은 현재 stale 상태라면 **재활성화**됩니다
 
 ---
 
-## Execution Flow
+## 실행 흐름
 
 ### run_curator_review()
 
@@ -180,13 +180,13 @@ _run_llm_review(prompt)
   └── Return { final, summary, model, provider, tool_calls, error }
 ```
 
-The LLM may invoke `skill_manage` tools to create/modify/delete skills. These tool_calls are recorded and used for classification reconciliation.
+LLM은 `skill_manage` 도구를 호출하여 스킬을 생성/수정/삭제할 수 있습니다. 이러한 tool_calls는 기록되어 분류 조정에 사용됩니다.
 
 ---
 
-## Automatic Transition Rules
+## 자동 전환 규칙
 
-`apply_automatic_transitions()` evaluates each agent-created skill:
+`apply_automatic_transitions()`는 각 에이전트 생성 스킬을 평가합니다:
 
 ```
 For each agent-created skill:
@@ -207,24 +207,24 @@ For each agent-created skill:
         └── reactivate to active
 ```
 
-Where `anchor` = `last_activity_at` (or `created_at` if never active, or `now` as fallback).
+여기서 `anchor` = `last_activity_at`(활동이 없었으면 `created_at`, 또는 대체로 `now`).
 
-Time cutoffs:
-- `stale_cutoff = now - stale_after_days` (default 30 days)
-- `archive_cutoff = now - archive_after_days` (default 90 days)
+시간 기준:
+- `stale_cutoff = now - stale_after_days` (기본 30일)
+- `archive_cutoff = now - archive_after_days` (기본 90일)
 
 ---
 
-## LLM Consolidation
+## LLM 통합
 
-The LLM pass receives `CURATOR_REVIEW_PROMPT`, instructing it to merge narrow skills into class-level umbrella skills:
+LLM 패스는 `CURATOR_REVIEW_PROMPT`를 받아 좁은 스킬을 클래스 수준의 우산 스킬로 병합하도록 지시합니다:
 
-**Consolidation strategies**:
-- **a. Merge into existing umbrella** — add labeled sections, archive siblings
-- **b. Create new umbrella** — write class-level skill, archive siblings
-- **c. Demote to references** — move narrow content into umbrella's support directories, archive old skill
+**통합 전략**:
+- **a. 기존 우산에 병합** — 레이블이 있는 섹션 추가, 형제 스킬 보관
+- **b. 새 우산 생성** — 클래스 수준 스킬 작성, 형제 스킬 보관
+- **c. 참조로 격하** — 좁은 콘텐츠를 우산의 지원 디렉터리로 이동, 기존 스킬 보관
 
-**LLM output format** (YAML structured summary):
+**LLM 출력 형식** (YAML 구조화 요약):
 ```yaml
 consolidations:
   - from: old-skill-name
@@ -235,17 +235,17 @@ prunings:
     reason: why archived
 ```
 
-**Dry-run mode**: The LLM only outputs "actions it would take" without actually modifying the skill library. The `CURATOR_DRY_RUN_BANNER` prefix is added to the prompt.
+**Dry-run 모드**: LLM은 실제로 스킬 라이브러리를 수정하지 않고 "취할 조치"만 출력합니다. `CURATOR_DRY_RUN_BANNER` 접두사가 프롬프트에 추가됩니다.
 
 ---
 
-## Umbrella Skill Generation
+## 우산 스킬 생성
 
-When consolidation produces new umbrella skills, `_apply_consolidation()` orchestrates the full merge:
+통합이 새 우산 스킬을 생성하면 `_apply_consolidation()`가 전체 병합을 조정합니다:
 
 ### _generate_umbrella_skill()
 
-Creates a consolidated SKILL.md for each new umbrella skill via LLM:
+각 새 우산 스킬에 대해 LLM을 통해 통합된 SKILL.md를 생성합니다:
 
 ```
 _generate_umbrella_skill(umbrella, reasons, source_content, file_inventory)
@@ -265,9 +265,9 @@ _generate_umbrella_skill(umbrella, reasons, source_content, file_inventory)
   └── On failure → return fallback skeleton with concatenated source content
 ```
 
-### File Migration
+### 파일 마이그레이션
 
-After creating the umbrella skill, support files from source skills are migrated:
+우산 스킬을 생성한 후 소스 스킬의 지원 파일을 마이그레이션합니다:
 
 ```
 For each consolidation entry (from → into umbrella):
@@ -278,17 +278,17 @@ For each consolidation entry (from → into umbrella):
   └── Delete source skill (delete_skill with absorbed_into=into)
 ```
 
-### Pruning
+### 정리
 
-Skills listed in the `prunings` block that are not already part of a consolidation are simply deleted.
+`prunings` 블록에 나열된 스킬 중 이미 통합의 일부가 아닌 것은 단순히 삭제됩니다.
 
 ---
 
-## Classification & Reconciliation
+## 분류 및 조정
 
-After the LLM pass executes, some skills may have been removed. `classify.py` determines whether each removed skill was **consolidated** (merged into an umbrella) or **pruned** (simply deleted):
+LLM 패스가 실행된 후 일부 스킬이 제거될 수 있습니다. `classify.py`는 각 제거된 스킬이 **통합**(우산으로 병합)되었는지 **정리**(단순 삭제)되었는지 결정합니다:
 
-### Three-source Reconciliation
+### 3-소스 조정
 
 ```
 _reconcile_classification(removed, heuristic, model_block, destinations, absorbed_declarations)
@@ -312,18 +312,18 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
   └── Output: { consolidated: [...], pruned: [...] }
 ```
 
-**Heuristic audit** (`_classify_removed_skills`) inspects the LLM's `skill_manage` tool_calls:
-- Iterates tool_call arguments (file_path, content, new_string, etc.)
-- Searches for references to the removed skill name (including `-`/`_` variants)
-- Uses `_needle_in_path_component()` for path-aware matching on `file_path` fields
-- Uses word-boundary regex for content fields
-- If found → evidence that the skill was consolidated into the target umbrella
+**휴리스틱 감사**(`_classify_removed_skills`)는 LLM의 `skill_manage` tool_calls를 검사합니다:
+- tool_call 인수(file_path, content, new_string 등)를 반복
+- 제거된 스킬 이름(`-`/`_` 변형 포함)에 대한 참조 검색
+- `file_path` 필드에서 경로 인식 매칭을 위해 `_needle_in_path_component()` 사용
+- content 필드에 대해 단어 경계 정규식 사용
+- 발견되면 → 스킬이 대상 우산으로 통합되었음을 나타내는 증거
 
 ---
 
-## Usage Record System
+## 사용 기록 시스템
 
-Each agent-created skill has a corresponding JSON record file under `skills/auto/.usage/`:
+각 에이전트 생성 스킬은 `skills/auto/.usage/` 아래에 해당 JSON 기록 파일이 있습니다:
 
 ```json
 {
@@ -339,82 +339,82 @@ Each agent-created skill has a corresponding JSON record file under `skills/auto
 }
 ```
 
-| Field | Description |
+| 필드 | 설명 |
 |-------|-------------|
-| `use_count` | Number of times the skill was invoked |
-| `view_count` | Number of times the skill was viewed |
-| `patch_count` | Number of times the skill was modified |
-| `activity_count` | Sum of all the above counts |
-| `last_activity_at` | Timestamp of the last activity (null if never used) |
-| `created_at` | Timestamp when the record was created |
-| `_persisted` | Internal flag — `True` after `seed_record_if_missing()` writes the record |
+| `use_count` | 스킬이 호출된 횟수 |
+| `view_count` | 스킬이 조회된 횟수 |
+| `patch_count` | 스킬이 수정된 횟수 |
+| `activity_count` | 위 모든 카운트의 합계 |
+| `last_activity_at` | 마지막 활동 타임스탬프(사용된 적 없으면 null) |
+| `created_at` | 레코드가 생성된 시점의 타임스탬프 |
+| `_persisted` | 내부 플래그 — `seed_record_if_missing()`가 레코드를 기록한 후 `True` |
 
-`_default_record()` creates a new record with `use_count=0`, `activity_count=0`, and `last_activity_at=None`.
-
----
-
-## Orphan Record Cleanup
-
-`agent_created_report()` automatically calls `_cleanup_orphan_records()` to remove `.usage/` JSON files that have no corresponding skill directory. This keeps the usage store consistent with the actual skill directories on disk.
+`_default_record()`는 `use_count=0`, `activity_count=0`, `last_activity_at=None`인 새 레코드를 생성합니다.
 
 ---
 
-## Pin Mechanism
+## 고아 레코드 정리
 
-Pinned skills enjoy the highest level of protection:
-
-- **Dual determination**: `pinned=True` in usage record **OR** a `.pinned` marker file exists in the skill directory
-- **Protection effect**: bypass all automatic transitions (stale/deletion are never triggered); `_pinned_guard()` blocks any delete or state change
-- **Guard behavior**: `set_state()`, `delete_skill()`, and `_remove_skill()` all check `_pinned_guard()` before proceeding — if pinned, the operation is rejected with a warning
-
-There are no public `pin_skill()` / `unpin_skill()` functions in the current implementation. Pinning is managed externally (by setting the `pinned` field in the usage record or creating a `.pinned` marker file).
+`agent_created_report()`는 대응하는 스킬 디렉터리가 없는 `.usage/` JSON 파일을 제거하기 위해 자동으로 `_cleanup_orphan_records()`를 호출합니다. 이렇게 하면 사용 저장소가 디스크의 실제 스킬 디렉터리와 일관성을 유지합니다.
 
 ---
 
-## Report System
+## 핀 메커니즘
 
-Each run generates a detailed report saved under `logs/curator/{timestamp}/`:
+고정된 스킬은 가장 높은 수준의 보호를 받습니다:
 
-| File | Content |
+- **이중 판정**: 사용 기록의 `pinned=True` **또는** 스킬 디렉터리에 `.pinned` 마커 파일 존재
+- **보호 효과**: 모든 자동 전환(오래됨/삭제가 절대 트리거되지 않음)을 우회; `_pinned_guard()`는 모든 삭제 또는 상태 변경을 차단
+- **가드 동작**: `set_state()`, `delete_skill()`, `_remove_skill()` 모두 진행 전에 `_pinned_guard()`를 확인 — 고정된 경우 경고와 함께 작업이 거부됨
+
+현재 구현에는 공개 `pin_skill()` / `unpin_skill()` 함수가 없습니다. 고정은 외부에서 관리됩니다(사용 기록의 `pinned` 필드 설정 또는 `.pinned` 마커 파일 생성).
+
+---
+
+## 보고 시스템
+
+각 실행은 `logs/curator/{timestamp}/` 아래에 상세 보고서를 생성합니다:
+
+| 파일 | 내용 |
 |------|---------|
-| `run.json` | Full structured data (transition counts, classification results, tool_calls, LLM output, etc.) |
-| `REPORT.md` | Human-readable Markdown report |
+| `run.json` | 전체 구조화 데이터(전환 수, 분류 결과, tool_calls, LLM 출력 등) |
+| `REPORT.md` | 사람이 읽을 수 있는 Markdown 보고서 |
 
-**REPORT.md contains**:
-- Run metadata (model, provider, duration, skill count changes)
-- Auto-transition statistics
-- LLM consolidation statistics (consolidated / pruned)
-- Specific consolidation and pruning lists (up to 50 entries each)
-- Tool call counts by name
-- Auto summary text
-- LLM final summary text
-- Recovery notes
+**REPORT.md에는 다음이 포함**:
+- 실행 메타데이터(모델, 공급자, 기간, 스킬 수 변경)
+- 자동 전환 통계
+- LLM 통합 통계(통합됨 / 정리됨)
+- 특정 통합 및 정리 목록(각각 최대 50개 항목)
+- 이름별 도구 호출 수
+- 자동 요약 텍스트
+- LLM 최종 요약 텍스트
+- 복구 참고 사항
 
-**Recovery**:
-> **Note**: Since skills are deleted (not archived), recovery is only possible via version control or backup. There is no `restore_skill()` function in the current implementation.
+**복구**:
+> **참고**: 스킬이 삭제(아카이브 아님)되므로 복구는 버전 관리 또는 백업을 통해서만 가능합니다. 현재 구현에는 `restore_skill()` 함수가 없습니다.
 
 ---
 
-## Configuration Reference
+## 구성 참조
 
-Config file path: `curator.yaml` (at project root, alongside `ROOT_DIR`)
+구성 파일 경로: `curator.yaml` (프로젝트 루트, `ROOT_DIR` 옆)
 
-| Setting | Default | Description |
+| 설정 | 기본값 | 설명 |
 |---------|---------|-------------|
-| `enabled` | `true` | Whether Curator is enabled |
-| `interval_hours` | `168` (7 days) | Run interval |
-| `min_idle_hours` | `2` | Minimum idle time |
-| `stale_after_days` | `30` | Days before marking as stale |
-| `archive_after_days` | `90` | Days before deleting |
-| `consolidate` | `false` | Whether to enable LLM consolidation |
+| `enabled` | `true` | Curator 활성화 여부 |
+| `interval_hours` | `168` (7일) | 실행 간격 |
+| `min_idle_hours` | `2` | 최소 유휴 시간 |
+| `stale_after_days` | `30` | 오래된 것으로 표시하기 전 일수 |
+| `archive_after_days` | `90` | 삭제 전 일수 |
+| `consolidate` | `false` | LLM 통합 활성화 여부 |
 
-Config is loaded via `_load_config()` which reads `curator.yaml` using PyYAML. Each getter function (`is_enabled`, `get_interval_hours`, etc.) falls back to the constant defaults on parse errors.
+구성은 PyYAML을 사용하여 `curator.yaml`을 읽는 `_load_config()`를 통해 로드됩니다. 각 getter 함수(`is_enabled`, `get_interval_hours` 등)는 파싱 오류 시 상수 기본값으로 대체됩니다.
 
 ---
 
-## Curator State File
+## Curator 상태 파일
 
-Path: `skills/.curator_state`
+경로: `skills/.curator_state`
 
 ```json
 {
@@ -428,31 +428,31 @@ Path: `skills/.curator_state`
 }
 ```
 
-| Field | Description |
+| 필드 | 설명 |
 |-------|-------------|
-| `last_run_at` | ISO timestamp of the last run |
-| `last_run_duration_seconds` | Duration of the last run in seconds |
-| `last_run_summary` | Human-readable summary of the last run |
-| `last_run_summary_shown_at` | When the summary was last displayed |
-| `last_report_path` | Path to the last run's report directory |
-| `paused` | If `True`, Curator will not run |
-| `run_count` | Total number of runs completed |
+| `last_run_at` | 마지막 실행의 ISO 타임스탬프 |
+| `last_run_duration_seconds` | 마지막 실행 기간(초) |
+| `last_run_summary` | 마지막 실행의 사람이 읽을 수 있는 요약 |
+| `last_run_summary_shown_at` | 요약이 마지막으로 표시된 시점 |
+| `last_report_path` | 마지막 실행의 보고 디렉터리 경로 |
+| `paused` | `True`이면 Curator가 실행되지 않음 |
+| `run_count` | 완료된 총 실행 횟수 |
 
-State is loaded via `load_state()` (merges with `_default_state()`, preserving unknown keys starting with `_`) and saved via `save_state()` (atomic JSON write).
-
----
-
-## Invariants
-
-Curator adheres to the following strict invariants that must never be violated:
-
-1. **Only touch agent-created skills** (`skills/auto/`), never built-ins (`skills/builtin/`)
-2. **Pinned skills bypass all automatic transitions** — they are never marked stale or deleted
-3. **`_pinned_guard()` is the enforcement layer** — every destructive operation checks it
+상태는 `load_state()`(`_default_state()`와 병합, `_`로 시작하는 알 수 없는 키 보존)를 통해 로드되고 `save_state()`(원자적 JSON 쓰기)를 통해 저장됩니다.
 
 ---
 
-## File Structure
+## 불변 조건
+
+Curator는 절대 위반해서는 안 되는 다음의 엄격한 불변 조건을 준수합니다:
+
+1. **에이전트 생성 스킬만 처리**(`skills/auto/`), 내장(`skills/builtin/`)은 절대 아님
+2. **고정된 스킬은 모든 자동 전환을 우회** — 오래된 것으로 표시되거나 삭제되지 않음
+3. **`_pinned_guard()`는 집행 계층** — 모든 파괴적인 작업이 이를 확인
+
+---
+
+## 파일 구조
 
 ```
 curator/
@@ -468,7 +468,7 @@ curator/
 └── report.py             # Run report generation (run.json + REPORT.md + _build_rename_summary)
 ```
 
-**Runtime files**:
+**런타임 파일**:
 ```
 skills/
 ├── .curator_state              # Curator run state

@@ -1,6 +1,6 @@
 # EMA Cron — Scheduled Task Service
 
-[**中文文档**](README.zh.md) | **English**
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 A lightweight, file-based cron service module for scheduling and executing periodic, one-shot, and cron-expression-based agent tasks within the EMA AI Agent system.
 
