@@ -38,7 +38,7 @@ export interface ChatRequest {
 export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
-export type AgentChunkType = 'text' | 'tool_start' | 'tool_end';
+export type AgentChunkType = 'text' | 'tool_start' | 'tool_end' | 'tool_result';
 
 /** HITL interrupt payload sent by the server when the agent pauses for human approval. */
 export interface HitlInterruptData {
@@ -61,6 +61,11 @@ export interface AgentWsEvent {
   content?: string;
   /** Chunk type (only present on "chunk" events). Defaults to "text" for backwards compat. */
   type?: AgentChunkType;
+  /** Tool-call metadata (only present on "tool_result" chunks). */
+  tool_id?: string;
+  tool_name?: string;
+  args?: Record<string, unknown>;
+  error?: boolean;
 }
 
 /** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
@@ -71,8 +76,13 @@ interface AgentStreamChunk {
   session_id: string;
   content: string;
   is_final?: boolean;
-  /** Chunk type — "text" | "tool_start" | "tool_end". Defaults to "text". */
+  /** Chunk type — "text" | "tool_start" | "tool_end" | "tool_result". Defaults to "text". */
   chunk_type?: AgentChunkType;
+  /** Tool-call metadata (only present on "tool_result" chunks). */
+  tool_id?: string;
+  tool_name?: string;
+  args?: Record<string, unknown>;
+  error?: boolean;
 }
 interface AgentStreamEnd {
   session_id: string;
@@ -113,11 +123,17 @@ async function getListen() {
 // ── Agent chat (streaming) ───────────────────────────────
 
 /**
- * Typed chunk callback: receives the text fragment, its semantic type, and the
- * session id the chunk belongs to. The session id lets the caller route chunks
+ * Typed chunk callback: receives the text fragment, its semantic type, the
+ * session id the chunk belongs to, and optional tool-call metadata (present
+ * only on `tool_result` chunks). The session id lets the caller route chunks
  * to the correct per-session ChatPage when multiple sessions stream concurrently.
  */
-export type OnChunkCallback = (content: string, type: AgentChunkType, sessionId: string) => void;
+export type OnChunkCallback = (
+  content: string,
+  type: AgentChunkType,
+  sessionId: string,
+  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+) => void;
 
 /** HITL interrupt callback: invoked when the agent pauses for human approval. */
 export type OnHitlCallback = (data: HitlInterruptData) => void;
@@ -168,7 +184,13 @@ async function sendChatMessageTauri(
 
     // Listen for chunks
     listen<AgentStreamChunk>('agent:stream:chunk', (event) => {
-      onChunk(event.payload.content, event.payload.chunk_type ?? 'text', event.payload.session_id);
+      const p = event.payload;
+      onChunk(p.content, p.chunk_type ?? 'text', p.session_id, {
+        tool_id: p.tool_id,
+        tool_name: p.tool_name,
+        args: p.args,
+        error: p.error,
+      });
     }).then((fn) => { unlistenChunk = fn; });
 
     // Listen for stream end
@@ -432,7 +454,12 @@ function sendChatMessageWs(
         return;
       }
       if (data.event === 'chunk') {
-        onChunk(data.content ?? '', data.type ?? 'text', data.session_id ?? sessionId);
+        onChunk(data.content ?? '', data.type ?? 'text', data.session_id ?? sessionId, {
+          tool_id: data.tool_id,
+          tool_name: data.tool_name,
+          args: data.args,
+          error: data.error,
+        });
       } else if (data.event === 'hitl_request') {
         // HITL 中断：agent 需人工审批，调用 onHitl 回调（无回调时静默忽略）
         if (onHitl && data.content) {
@@ -578,7 +605,12 @@ export function resumeHitl(
         return;
       }
       if (data.event === 'chunk') {
-        onChunk(data.content ?? '', data.type ?? 'text', data.session_id ?? sessionId);
+        onChunk(data.content ?? '', data.type ?? 'text', data.session_id ?? sessionId, {
+          tool_id: data.tool_id,
+          tool_name: data.tool_name,
+          args: data.args,
+          error: data.error,
+        });
       } else if (data.event === 'hitl_request') {
         // 顺序 HITL：恢复后的执行再次暂停，转发给调用方重新显示审批卡
         if (onHitl && data.content) {

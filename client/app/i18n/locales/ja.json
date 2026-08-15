@@ -11,7 +11,11 @@
     "defaultUserName": "わたし",
     "defaultAiName": "シェリー",
     "imageLoadFailed": "画像の読み込みに失敗しました",
-    "removeImage": "画像を削除"
+    "removeImage": "画像を削除",
+    "toolArgs": "引数",
+    "toolResult": "実行結果",
+    "toolNoOutput": "出力なし",
+    "toolRunning": "実行中…"
   },
   "history": {
     "noSessions": "会話履歴がありません",
@@ -30,13 +34,13 @@
   "toolbar": {
     "newChat": "新しい会話",
     "knowledgeBase": "ナレッジベース",
-    "uploadFile": "ファイルをアップロード",
-    "file": "ファイル",
     "uploadImage": "画像をアップロード",
     "image": "画像",
     "skills": "スキル",
     "systemConfig": "システム設定",
-    "logs": "ログ"
+    "logs": "ログ",
+    "collapseSidebar": "サイドバーを折りたたむ",
+    "expandSidebar": "サイドバーを展開"
   },
   "skills": {
     "title": "スキル管理",

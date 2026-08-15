@@ -81,9 +81,18 @@
                 size="small"
                 variant="text" />
             </template>
+            <!-- 隐藏的图片文件选择框：由工具栏图片按钮通过 triggerImagePicker() 触发 -->
+            <input
+              ref="imageFileInputRef"
+              type="file"
+              accept="image/*"
+              multiple
+              class="hidden"
+              @change="onImageSelected" />
           </div>
           <!-- 输入框：存在待审批的 HITL 请求时禁止输入/发送，并提示等待审批 -->
           <ChatInputBox
+            ref="chatInputBoxRef"
             v-model:draft="draft"
             :sending="isSending"
             :disabled="!!hitlRequest"
@@ -280,20 +289,89 @@ const normalizeContent = (content: unknown): string => {
  * 将后端返回的历史消息行（CachedMessage[]）转为聊天列表所需的 MessageItem[]。
  * 结构与后端 messages 表一致，仅对可能为空的字段做兜底，保证 ChatBox 渲染安全。
  */
-const toMessageItems = (rows: CachedMessage[]): MessageItem[] =>
-  rows.map(row => ({
-    session_id: row.session_id,
-    role: row.role as CHAT_ROLE,
-    content: normalizeContent(row.content),
-    // 透传图片数组：用户消息为 base64，AI 消息为持久化文件路径，交由 ChatBox 区分渲染
-    images: row.images ?? undefined,
-    id: row.id,
-    turn_num: row.turn_num,
-    timestamp: row.timestamp ?? '',
-    // 透传工具字段（历史消息中 role=tool 的行会有值）
-    toolName: row.tool_name ?? undefined,
-    toolStatus: (row.tool_status as 'running' | 'done') ?? undefined,
-  }));
+const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
+  /**
+   * 工具调用的实际参数（args）并不存在 role=tool 的行上，
+   * 而是落在与之配对的前驱 role=ai 行（其 tool_calls 列已持久化为 JSON）。
+   *
+   * 因此这里先对全部 ai 行做一次扫描，把每个 tool call id 对应的
+   * { name, args } 索引起来，再在 tool 行上按 tool_call_id 精确配对取回。
+   *
+   * tool_calls 的原始形态：
+   *  - 来自后端历史接口时已是解析后的对象数组 [ { id, name, args, type } ]；
+   *  - 来自本地 Dexie 缓存时可能仍是 JSON 字符串，故做一次安全解析。
+   */
+  const toolCallById = new Map<
+    string,
+    { name?: string; args?: Record<string, unknown> }
+  >();
+  for (const row of rows) {
+    if (row.role !== CHAT_ROLE.AI) continue;
+    let calls: unknown = row.tool_calls;
+    if (typeof calls === 'string') {
+      try {
+        calls = JSON.parse(calls);
+      } catch {
+        calls = null;
+      }
+    }
+    if (!Array.isArray(calls)) continue;
+    for (const call of calls) {
+      if (typeof call !== 'object' || call === null) continue;
+      const c = call as { id?: unknown; name?: unknown; args?: unknown };
+      if (typeof c.id !== 'string' || !c.id) continue;
+      toolCallById.set(c.id, {
+        name: typeof c.name === 'string' ? c.name : undefined,
+        args:
+          typeof c.args === 'object' && c.args !== null
+            ? (c.args as Record<string, unknown>)
+            : undefined,
+      });
+    }
+  }
+
+  return rows.map(row => {
+    // role=tool 的行：按 tool_call_id 在 ai 行索引中提取 args，补齐名称与结果
+    if (row.role === CHAT_ROLE.TOOL && typeof row.tool_call_id === 'string') {
+      const callInfo = toolCallById.get(row.tool_call_id);
+      const rawStatus = row.tool_status ?? 'success';
+      // 后端 tool_status 存的是 success/failed/error，前端展示层统一为 done/failed/error
+      const toolStatus: MessageItem['toolStatus'] =
+        rawStatus === 'success'
+          ? 'done'
+          : (rawStatus as MessageItem['toolStatus']);
+      return {
+        session_id: row.session_id,
+        role: CHAT_ROLE.TOOL,
+        content: normalizeContent(row.content),
+        images: row.images ?? undefined,
+        id: row.id,
+        turn_num: row.turn_num,
+        timestamp: row.timestamp ?? '',
+        // 名称优先取配对 ai 行的 tool call 名（tool_name 列也可能缺失）
+        toolName: callInfo?.name ?? row.tool_name ?? undefined,
+        toolStatus,
+        // 从配对 ai 行取回真实执行参数
+        toolArgs: callInfo?.args,
+        toolResult: normalizeContent(row.content),
+      };
+    }
+
+    return {
+      session_id: row.session_id,
+      role: row.role as CHAT_ROLE,
+      content: normalizeContent(row.content),
+      // 透传图片数组：用户消息为 base64，AI 消息为持久化文件路径，交由 ChatBox 区分渲染
+      images: row.images ?? undefined,
+      id: row.id,
+      turn_num: row.turn_num,
+      timestamp: row.timestamp ?? '',
+      // 透传工具字段（历史消息中 role=tool 的行会有值）
+      toolName: row.tool_name ?? undefined,
+      toolStatus: (row.tool_status as 'running' | 'done') ?? undefined,
+    };
+  });
+};
 
 /**
  * 加载指定会话的历史消息（本地缓存优先，后台合并服务端增量），
@@ -392,6 +470,10 @@ const handleAbortStreamOnDelete = (deletedSid: unknown) => {
     activeAgentController = null;
     isSending.value = false;
   }
+  // 会话已删除：清空本实例在 KeepAlive 缓存槽中残留的历史缓存/草稿浏览态
+  // （删除非激活会话时槽位未必立即释放，随槽驻留的历史必须主动清除，
+  //   使历史严格跟随会话删除，避免手动重访该 sid 时看到已删除会话的残留）。
+  chatInputBoxRef.value?.clearHistory?.();
 };
 
 /** HITL 审批请求（当 agent 暂停等待人工审批时设置） */
@@ -428,8 +510,13 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
   const turnNum =
     chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
 
-  const onChunk = (content: string, type: AgentChunkType) => {
-    appendStreamChunk(sid, content, type, turnNum);
+  const onChunk = (
+    content: string,
+    type: AgentChunkType,
+    _sessionId: string,
+    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+  ) => {
+    appendStreamChunk(sid, content, type, turnNum, meta);
   };
 
   const { controller, promise } = resumeHitl(sid, decision, message, onChunk, handleHitlRequest);
@@ -518,21 +605,36 @@ const handleStop = () => {
 const draft = ref('');
 
 /**
+ * 输入框组件实例引用：会话被删除（前端广播 `SESSION_ABORT_STREAM_EVENT`）时，
+ * 调用其 `clearHistory()` 清空本会话在 KeepAlive 缓存槽中残留的历史缓存，
+ * 使历史严格跟随会话删除而清除（即使该槽位尚未被 LRU 淘汰）。
+ */
+const chatInputBoxRef = useTemplateRef<InstanceType<typeof ChatInputBox>>('chatInputBoxRef');
+
+/**
  * 将一段流式 chunk 按语义类型合并进 `chatMessages`（单一数据源）。
  *
  * 该函数是 `handleSend`（普通对话）与「HITL resume」两条路径共用的消息渲染逻辑：
  * - text: 若同轮次末位是 AI 消息则追加，否则（末位是 TOOL / 跨轮次）新建 AI 消息
  * - tool_start: 新建一条 TOOL 消息（status=running）
  * - tool_end: 将最近一条同轮次 TOOL 消息标记为 done
+ * - tool_result: 将最近一条同轮次 TOOL 消息填充参数与结果文本，并按 error 标记状态
  *
  * 通过 `turnNum` 限定范围，避免把与当前流式回合无关的历史消息误当目标。
  *
  * @param sid 会话 id
- * @param content chunk 文本（text 时为正文，tool_start 时为工具名）
+ * @param content chunk 文本（text 时为正文，tool_start 时为工具名，tool_result 时为结果文本）
  * @param type 语义类型
  * @param turnNum 本回合轮次号（新消息写入该轮次）
+ * @param meta 工具调用元数据（仅 tool_result 时有值：tool_id/tool_name/args/error）
  */
-const appendStreamChunk = (sid: string, content: string, type: AgentChunkType, turnNum: number) => {
+const appendStreamChunk = (
+  sid: string,
+  content: string,
+  type: AgentChunkType,
+  turnNum: number,
+  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+) => {
   const last = chatMessages.value[chatMessages.value.length - 1];
   if (type === 'text') {
     if (last && last.role === CHAT_ROLE.AI && last.turn_num === turnNum) {
@@ -556,6 +658,8 @@ const appendStreamChunk = (sid: string, content: string, type: AgentChunkType, t
       content: '',
       toolName: content,
       toolStatus: 'running',
+      // 参数在 tool_start 时即随 meta 下发，执行中即可实时查看调用参数
+      toolArgs: meta?.args ?? undefined,
       id: tempIdCounter++,
       turn_num: turnNum,
       timestamp: new Date().toISOString(),
@@ -566,6 +670,18 @@ const appendStreamChunk = (sid: string, content: string, type: AgentChunkType, t
       const row = chatMessages.value[i];
       if (row.role === CHAT_ROLE.TOOL && row.turn_num === turnNum) {
         row.toolStatus = 'done';
+        break;
+      }
+    }
+  } else if (type === 'tool_result') {
+    // 填充最近一条本回合 TOOL 消息的参数与结果文本，并按 error 标记状态
+    for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+      const row = chatMessages.value[i];
+      if (row.role === CHAT_ROLE.TOOL && row.turn_num === turnNum) {
+        if (meta?.tool_name) row.toolName = meta.tool_name;
+        if (meta?.args) row.toolArgs = meta.args;
+        row.toolResult = content;
+        row.toolStatus = meta?.error ? 'error' : 'done';
         break;
       }
     }
@@ -643,8 +759,13 @@ const handleSend = async (text: string) => {
    * 流式 chunk 回调：复用共享的 `appendStreamChunk` 按语义类型动态管理消息分段
    * （text/tool_start/tool_end），与 HITL resume 路径共用同一套渲染逻辑。
    */
-  const onStreamChunk = (content: string, type: AgentChunkType) => {
-    appendStreamChunk(sid, content, type, turnNum);
+  const onStreamChunk = (
+    content: string,
+    type: AgentChunkType,
+    _sessionId: string,
+    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+  ) => {
+    appendStreamChunk(sid, content, type, turnNum, meta);
   };
 
   try {
@@ -750,8 +871,6 @@ const handleOperate = (type: string, event: string) => {
   switch (event) {
     case 'createSession':
       handleCreateSession();
-      return;
-    case 'uploadFile':
       return;
     case 'uploadImage':
       triggerImagePicker();

@@ -43,8 +43,7 @@ async def _run_stream(
     try:
         async for chunk in source:
             await _send_ws(websocket, {
-                "event": "chunk", "session_id": session_id,
-                "type": chunk["type"], "content": chunk["content"],
+                "event": "chunk", "session_id": session_id, **chunk,
             })
 
         # After the stream ends, check if the agent paused for HITL approval.

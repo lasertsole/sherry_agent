@@ -11,7 +11,11 @@
     "defaultUserName": "나",
     "defaultAiName": "셰리",
     "imageLoadFailed": "이미지 로드 실패",
-    "removeImage": "이미지 제거"
+    "removeImage": "이미지 제거",
+    "toolArgs": "인자",
+    "toolResult": "실행 결과",
+    "toolNoOutput": "출력 없음",
+    "toolRunning": "실행 중…"
   },
   "history": {
     "noSessions": "대화 기록이 없습니다",
@@ -30,13 +34,13 @@
   "toolbar": {
     "newChat": "새 대화",
     "knowledgeBase": "지식 베이스",
-    "uploadFile": "파일 업로드",
-    "file": "파일",
     "uploadImage": "이미지 업로드",
     "image": "이미지",
     "skills": "스킬",
     "systemConfig": "시스템 설정",
-    "logs": "로그"
+    "logs": "로그",
+    "collapseSidebar": "사이드바 접기",
+    "expandSidebar": "사이드바 펼치기"
   },
   "skills": {
     "title": "스킬 관리",

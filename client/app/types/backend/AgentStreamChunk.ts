@@ -25,6 +25,7 @@ message_id: string,
  */
 content: string, 
 /**
- * Chunk type: "text" (conversational), "tool_start" (tool begins), "tool_end" (tool completes).
+ * Chunk type: "text" (conversational), "tool_start" (tool begins), "tool_end" (tool completes),
+ * "tool_result" (tool execution result).
  */
 chunk_type: string, };
