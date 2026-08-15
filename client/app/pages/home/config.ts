@@ -29,6 +29,13 @@ export const headerTools: Tool[] = [
     title: 'toolbar.systemConfig',
     event: 'systemConfig',
     label: 'toolbar.systemConfig'
+  },
+  {
+    toolName: 'toolbar.logs',
+    icon: 'pi pi-terminal',
+    title: 'toolbar.logs',
+    event: 'logs',
+    label: 'toolbar.logs'
   }
 ];
 

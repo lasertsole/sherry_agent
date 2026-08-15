@@ -35,7 +35,8 @@
     "uploadImage": "Upload Image",
     "image": "Image",
     "skills": "Skills",
-    "systemConfig": "System Config"
+    "systemConfig": "System Config",
+    "logs": "Logs"
   },
   "skills": {
     "title": "Skill Manager",
@@ -47,6 +48,24 @@
       "auto": "Auto",
       "thirdParty": "Third-Party"
     }
+  },
+  "logs": {
+    "title": "Log Viewer",
+    "tabs": {
+      "frontend": "Client",
+      "backend": "Server"
+    },
+    "file": "Select log file",
+    "live": "Live",
+    "pause": "Pause",
+    "refresh": "Refresh",
+    "clear": "Clear",
+    "autoScroll": "Auto-scroll",
+    "connected": "Connected",
+    "connecting": "Connecting...",
+    "empty": "No logs",
+    "liveDisabledHint": "Live view is only available for the currently running server log",
+    "currentFile": "Currently running log"
   },
   "errors": {
     "replyFailed": "(Reply failed: {reason})",

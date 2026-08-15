@@ -58,7 +58,7 @@ async def read_skill_handler(request, path_params):
     full_path = ROOT_DIR / skill_path
     if not full_path.exists() or not full_path.is_file():
         logger.warning(f"Skill file not found: {skill_path}")
-        return {"error": "Skill file not found"}, 404
+        return {"error": "Skill file not found"}, {}, 404
 
     content = full_path.read_text(encoding="utf-8")
     meta = parse_frontmatter(content)

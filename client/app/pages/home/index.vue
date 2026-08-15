@@ -115,6 +115,9 @@
 
     <!-- 系统配置弹窗 -->
     <ConfigDialog v-model="showConfigDialog" @saved="loadCharacter" />
+
+    <!-- 日志查看弹窗 -->
+    <LogsDialog v-model="showLogsDialog" />
   </div>
 </template>
 
@@ -124,6 +127,7 @@ import HistoryItem from './components/HistoryItem.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
 import SkillsDialog from './components/SkillsDialog.vue';
 import ConfigDialog from './components/ConfigDialog.vue';
+import LogsDialog from './components/LogsDialog.vue';
 // function
 import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -195,6 +199,9 @@ const showSkillsDialog = ref(false);
 
 /** 系统配置弹窗开关 */
 const showConfigDialog = ref(false);
+
+/** 日志查看弹窗开关 */
+const showLogsDialog = ref(false);
 
 /**
  * 默认角色显示信息（内置：远野汉娜 / 橘雪莉 + 默认头像 URL，见 `defaultCharacter.ts`）。
@@ -285,6 +292,9 @@ const handleOperate = (type: string, event: string) => {
       return;
     case 'systemConfig':
       showConfigDialog.value = true;
+      return;
+    case 'logs':
+      showLogsDialog.value = true;
       return;
     default:
       return;
