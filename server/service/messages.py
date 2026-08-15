@@ -20,6 +20,8 @@ from langgraph.types import Command
 # Stash of pending tool args, keyed by tool_call_id. Populated at tool_start
 # time and consumed when the matching ToolMessage arrives in "updates" mode.
 _pending_args: dict[str, dict] = {}
+# Raw JSON-fragment buffer per tool_id, accumulated until it parses to a dict.
+_pending_raw: dict[str, list[str]] = {}
 
 
 def _normalize_args(args) -> dict:
@@ -32,6 +34,50 @@ def _normalize_args(args) -> dict:
     if not isinstance(args, dict):
         return {"raw": str(args)}
     return args
+
+
+def _accumulate_pending_args(tool_id: str | None, raw_args) -> None:
+    """Accumulate streamed ToolCall args fragments into the pending arg-bag.
+
+    LangChain streams tool calls as a sequence of chunks: the first chunk carries
+    the tool `id` with empty args, and subsequent (id-less) chunks carry the args
+    as progressively-appended *partial JSON string fragments*. The old code waited
+    for the first fragment to carry complete args, left the bag empty, so
+    tool_start/tool_result both carried {} on the wire (and only after a page
+    rebuild from the checkpointed final ToolCall did args appear).
+
+    Buffering strategy:
+    - A `str` fragment is APPENDED to a per-tool_id raw buffer; we then try to
+      parse the whole buffer as JSON. As soon as it forms a non-empty dict the
+      buffer is atomically parsed into the bag.
+    - A `dict` value (the final complete ToolCall exposed via AIMessageChunk
+      `.tool_calls`) is authoritative: it replaces both the bag value and the raw
+      buffer immediately.
+    - `None` / non-dict-non-str scalars are ignored.
+    """
+    if tool_id is None:
+        return
+    buf: list[str] = _pending_raw.setdefault(tool_id, [])
+
+    if isinstance(raw_args, dict):
+        if raw_args:
+            _pending_args[tool_id] = raw_args
+            _pending_raw[tool_id] = []
+        return
+
+    if isinstance(raw_args, str):
+        buf.append(raw_args)
+        joined = "".join(buf)
+        try:
+            parsed = json.loads(joined)
+        except Exception:
+            return
+        if isinstance(parsed, dict) and parsed:
+            _pending_args[tool_id] = parsed
+            _pending_raw[tool_id] = []
+        return
+
+    return
 
 
 def _normalize_text(content) -> str:
@@ -225,6 +271,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                         msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
                     if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
                         repeat_flag: bool = True  # Prevent duplicate tool call output
+                        tool_id: str | None = None  # current tool call id (unknown for dict-typed access)
                         if len(tool_calls) > 0:
                             tool_call = tool_calls[0]
 
@@ -233,18 +280,50 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                                     state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
 
                             if tool_call["id"]:
-                                if tool_call["id"].strip() or tool_call["id"].strip() != state_register_mem.get_state(session_id, "current_tool_id"):
-                                    state_register_mem.set_state(session_id,"current_tool_id", tool_call['id'])
+                                tool_id = tool_call["id"]
+                                if tool_id.strip() or tool_id.strip() != state_register_mem.get_state(session_id, "current_tool_id"):
+                                    state_register_mem.set_state(session_id,"current_tool_id", tool_id)
                                     repeat_flag = False
+
+                        # Continuously refresh the pending arg-bag from the most
+                        # complete ToolCall chunk. Tool calling is streamed as a
+                        # sequence of fragments: the first chunk carries empty
+                        # args, and later chunks progressively accumulate the full
+                        # JSON. Capturing args only on the first fragment leaves
+                        # _pending_args permanently empty, so tool_start/tool_result
+                        # both carry {} on the wire (the tool bubble shows no args
+                        # until the page is rebuilt from the checkpointed final
+                        # ToolCall after refresh).
+                        #
+                        # This refresh runs on EVERY chunk (not just repeat_flag),
+                        # so the accumulated dict from the final fragment supersedes
+                        # the initial empty capture. A complete args dict always
+                        # supersedes an earlier partial JSON string; we never let a
+                        # later string fragment clobber an already-complete dict.
+                        # Streamed tool-call args are fragmented: the first chunk
+                        # carries the id with empty args, later (id-less) chunks
+                        # carry partial-JSON string fragments. Accumulate them onto
+                        # the effective tool id (persisted in state register) so the
+                        # bag is populated by the time tool_start/tool_result emit.
+                        eff_tool_id: str | None = tool_id or state_register_mem.get_state(session_id, "current_tool_id", "").strip() or None
+                        # IMPORTANT: the args fragment MUST come from tool_call_chunks
+                        # (the complete ordered partial-JSON stream, including the
+                        # leading `{`), NOT from the `tool_calls` ToolCall dict whose
+                        # args is an empty `{}` on the first chunk. Reading the dict
+                        # loses the opening brace, so the accumulated string can never
+                        # form valid JSON and tool_start/tool_result stay args={}.
+                        _arg_frag: str | None = None
+                        if msg_chunk.tool_call_chunks and len(msg_chunk.tool_call_chunks) > 0:
+                            _arg_frag = msg_chunk.tool_call_chunks[0].get("args")
+                        _accumulate_pending_args(eff_tool_id, _arg_frag)
 
                         if not repeat_flag:
                             tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
-                            _pending_args[tool_call["id"]] = _normalize_args(tool_call.get("args"))
                             ai_text += f"\n\n**Calling tool {tool_name}...**"
                             yield {
                                 "type": "tool_start",
                                 "content": tool_name,
-                                "args": _pending_args[tool_call["id"]],
+                                "args": _pending_args.get(tool_id or "", {}),
                             }
 
                     # NOTE: tool_end is now emitted from the updates-mode "tools"
@@ -450,23 +529,34 @@ async def resume_agent(
                 tool_calls = msg_chunk.tool_calls if msg_chunk.tool_calls and len(msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
                 if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
                     repeat_flag = True
+                    tool_id: str | None = None  # current tool call id
                     if len(tool_calls) > 0:
                         tool_call = tool_calls[0]
                         if tool_call["name"]:
                             if tool_call["name"].strip() or tool_call["name"].strip() != state_register_mem.get_state(session_id, "current_tool_name"):
                                 state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
                         if tool_call["id"]:
-                            if tool_call["id"].strip() or tool_call["id"].strip() != state_register_mem.get_state(session_id, "current_tool_id"):
-                                state_register_mem.set_state(session_id, "current_tool_id", tool_call['id'])
+                            tool_id = tool_call["id"]
+                            if tool_id.strip() or tool_id.strip() != state_register_mem.get_state(session_id, "current_tool_id"):
+                                state_register_mem.set_state(session_id, "current_tool_id", tool_id)
                                 repeat_flag = False
-                    if not repeat_flag:
-                        tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
-                        _pending_args[tool_call["id"]] = _normalize_args(tool_call.get("args"))
-                        yield {
-                            "type": "tool_start",
-                            "content": tool_name,
-                            "args": _pending_args[tool_call["id"]],
-                        }
+                        # Same streaming-args fix as async_generate: read the partial
+                        # JSON args fragment from tool_call_chunks (which includes the
+                        # leading `{`) rather than the `tool_calls` dict (empty `{}` on
+                        # the first chunk) so the accumulated buffer forms valid JSON.
+                        eff_tool_id: str | None = tool_id or state_register_mem.get_state(session_id, "current_tool_id", "").strip() or None
+                        _arg_frag = None
+                        if msg_chunk.tool_call_chunks and len(msg_chunk.tool_call_chunks) > 0:
+                            _arg_frag = msg_chunk.tool_call_chunks[0].get("args")
+                        _accumulate_pending_args(eff_tool_id, _arg_frag)
+
+                        if not repeat_flag:
+                            tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                            yield {
+                                "type": "tool_start",
+                                "content": tool_name,
+                                "args": _pending_args.get(tool_id or "", {}),
+                            }
 
                     # NOTE: tool_end handled in the updates-mode "tools" branch above
                     # (mirrors async_generate). Removed the old messages-mode gating
