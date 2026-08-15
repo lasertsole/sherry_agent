@@ -111,7 +111,7 @@
 // components
 import ChatBox from '../components/ChatBox.vue';
 // function
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem, HitlRequestData } from '../type.ts';
@@ -132,6 +132,45 @@ const router = useRouter();
 
 /** 当前会话 ID（来自路由参数 [sid]） */
 const sessionId = computed(() => String(route.params.sid ?? ''));
+
+/**
+ * 本实例「冻结」的会话 ID：每个 [sid].vue 实例由 KeepAlive 按 page-key（=sid）独立缓存，
+ * 一个实例固定只属于一个 sid，不会在切换会话时被复用。
+ *
+ * 为什么不能只靠 `sessionId`：`useRoute()` 返回的是全局共享的 reactive route 单例，
+ * 被**所有**缓存实例引用。当浏览器从 sidA 切到 sidB 时，`route.params.sid` 全局变成 'sidB'，
+ * 于是 sidA 实例（即便已被 KeepAlive 缓存、处于非激活态）的 `sessionId` computed 也会跟着
+ * 重新计算成 'sidB'。任何依赖 `sessionId` 的事件处理器（如按 sid 比对是否命中删除广播）
+ * 都会因此误判。故在本实例创建时把 sid 冻结成常量 `mySid`，凡「本实例到底属于谁」的判断
+ * 一律用它，杜绝跨实例串扰。
+ */
+const mySid = String(route.params.sid ?? '');
+
+/**
+ * 本实例是否处于「激活」态（KeepAlive 缓存中处于隐藏状态时为 false）。
+ * KeepAlive 缓存**不会暂停**被缓存实例的响应式 watch/effect —— 切换到 sidB 时，
+ * 所有非激活实例的全局 `route` 变化仍会触发它们的 `watch(sessionId)`。
+ * 用该标志区分「本实例此刻是否正被显示」，配合 `mySidLoaded` 实现：
+ *  - 切走（非激活）→ 保留内存状态，绝不执行破坏性清空；
+ *  - 切回（重新激活）→ 已加载过则原样恢复（草稿/滚动/流式/HITL），不再重载。
+ */
+const isActive = ref(false);
+onActivated(() => {
+  isActive.value = true;
+  // 返回本会话时刷新可能仍待审批的 HITL 卡（幂等：已有卡/进行中则早退）
+  if (mySid) restorePendingHitl(mySid);
+});
+onDeactivated(() => {
+  isActive.value = false;
+});
+
+/**
+ * 本实例是否已为「自己的会话（mySid）」加载过历史。
+ * 首个 KeepAlive 缓存实例只在**首次**挂载时加载一次历史；之后再切回本会话题时
+ * （sessionId 又从别的 sid 变回 mySid）只需原样恢复内存态，不重复清空加载，
+ * 从而保住未持久化的草稿、滚动位置与仍在后台流式的消息。
+ */
+let mySidLoaded = false;
 
 /**
  * 角色显示信息（来源为本地 Dexie 按会话缓存的快照，见 `db.ts` 的 `CachedCharacter`）。
@@ -344,7 +383,10 @@ let tempIdCounter = -1000000;
  * 并以首个入参（会话 id）与本实例 `sessionId` 比对，确保只中止本方会话。
  */
 const handleAbortStreamOnDelete = (deletedSid: unknown) => {
-  if (deletedSid !== sessionId.value) return;
+  // 用冻结的本实例 `mySid` 比对，而非直播的 `sessionId`：后者读全局 route，
+  // 在实例被 KeepAlive 缓存（切到其它会话）时会变成别人的 sid，导致本会话被删时比对不中、
+  // 后台流无法中止。
+  if (deletedSid !== mySid) return;
   if (activeAgentController) {
     activeAgentController.abort();
     activeAgentController = null;
@@ -732,16 +774,73 @@ const handleCreateSession = () => {
   cacheSessionMeta({ id: newSessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
 };
 
+/** 为本实例加载指定会话的历史（清空本地状态后重建）。仅供新会话/异常兜底路径调用。 */
+const doLoadFor = (sid: string) => {
+  // 切换/首载新 sid 时，先清空所有会话语义下的本地状态，再加载本会话自己的历史。
+  // 若切换前 chatMessages 还留着上个会话的消息，即便用 loadSessionHistory 按 id 去重
+  // merge，新旧会话消息也会混在一起，导致「切到新会话却显示旧会话内容」。
+  chatMessages.value = [];
+  isSending.value = false;
+  // 放弃上个会话残留的进行中请求控制器（其流已随会话切换而失效/后继不可用）
+  activeAgentController = null;
+  activeHitlController?.abort();
+  activeHitlController = null;
+  // 上个会话的待审批卡 / 输入草稿 / 已选图片都不应带到新会话
+  hitlRequest.value = null;
+  draft.value = '';
+  selectedImages.value = [];
+  // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
+  ensureSessionCharacter(sid);
+  loadSessionHistory(sid);
+  // 恢复三层持久化场景下可能仍待审批的 HITL 中断卡（切 session / 刷新 / 重开 / 服务重启）
+  restorePendingHitl(sid);
+  mySidLoaded = true;
+};
+
 // 首屏加载当前会话的历史消息，获取合并后的列表渲染到 ChatBox
 watch(
   sessionId,
   (sid) => {
     if (!sid) return;
-    // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
-    ensureSessionCharacter(sid);
-    loadSessionHistory(sid);
-    // 恢复三层持久化场景下可能仍待审批的 HITL 中断卡（切 session / 刷新 / 重开 / 服务重启）
-    restorePendingHitl(sid);
+
+    // 1) 首次（尚未为 mySid 加载过历史）：只加载本实例自己的会话历史。
+    //    本 `[sid].vue` 实例在创建时已把 sid 冻结为 mySid，只属于这一个会话，
+    //    因此首载也只加载 mySid —— 绝不加载任何其它会话的内容。
+    //    注意 `immediate: true` 在 setup 同步阶段触发时 isActive 仍为 false（onActivated
+    //    尚未跑），故不能依赖 isActive 判断首载，须用 mySidLoaded 兜底。
+    if (!mySidLoaded) {
+      doLoadFor(mySid);
+      return;
+    }
+
+    // 2) 本实例已被 KeepAlive 缓存且处于非激活态（用户已切到其它会话）：
+    //    `route.params.sid`（全局 route 单例）已变成别人的值，导致本 sessionId 重算成他人 id。
+    //    但该实例自己的内存状态（chatMessages/草稿/滚动/流式 activeAgentController/HITL 卡）
+    //    必须原样保留，等切回时恢复 —— 直接早退，绝不执行破坏性清空。否则切走再切回时
+    //    对话框/流式状态会全被清掉（对话框无了 / 后台流被中止）。
+    if (!isActive.value) return;
+
+    // 3) 激活且已加载过、且切回的就是本会话（sessionId 变回 mySid）：
+    //    原样恢复内存态，不重复清空加载，自然保住在后台继续流式的消息、草稿与滚动位置。
+    //    —— 加固：若内存态被污染（存在其它会话的消息，例如此前被（4）误写过）或为空，
+    //    则重新加载本会话历史，保证切回展示的一定是本会话自己的内容。否则只做幂等刷新。
+    if (sid === mySid) {
+      const polluted = chatMessages.value.some((m) => m.session_id && m.session_id !== mySid);
+      if (chatMessages.value.length === 0 || polluted) {
+        doLoadFor(mySid);
+      } else {
+        ensureSessionCharacter(mySid);
+        restorePendingHitl(mySid);
+      }
+      return;
+    }
+
+    // 4) 激活但 sessionId 不是本会话：这通常是「切走瞬间」的 watcher 先于
+    //    onDeactivated 触发（route 已变成别人、isActive 尚未置 false）。
+    //    绝不能把它当成新会话去 `doLoadFor(sid)` —— 那样会把别人的消息写进本实例
+    //    的内存态，导致切回时（3）展示出错误的会话内容。此处应原样保留本地状态，
+    //    等 onDeactivated 置 isActive=false；切回时由（3）负责恢复/兜底重载。
+    return;
   },
   { immediate: true },
 );
