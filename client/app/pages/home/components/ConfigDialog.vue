@@ -58,6 +58,8 @@
           </TabPanel>
           <TabPanel :header="t('config.tabs.character')">
             <div class="flex flex-col gap-5">
+              <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
+
               <!-- AI 角色配置 -->
               <div class="flex flex-col gap-2">
                 <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{ t('config.role.assistant') }}</span>
@@ -135,7 +137,13 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { readSystemPrompt, writeSystemPrompt, readCharacter, updateCharacter, uploadAvatar } from '@/composables/bridge';
+import { readSystemPrompt, writeSystemPrompt } from '@/composables/bridge';
+import {
+  GLOBAL_SESSION_KEY,
+  DEFAULT_CACHED_CHARACTER,
+  readCachedCharacter,
+  cacheCharacter,
+} from '@/composables/db';
 
 const { t, locale, setLocale } = useI18n();
 
@@ -175,20 +183,36 @@ const editContent = ref<Record<string, string>>({});
 const originalContent = ref<Record<string, string>>({});
 
 // ── 角色配置状态 ─────────────────────────────────────────
-const backendBaseUrl = (import.meta.env.VITE_API_BACK_URL as string) || 'http://localhost:8080';
+// 角色头像/名字完全由前端本地保存：写入 Dexie 的全局待定 profile（GLOBAL_SESSION_KEY 行）。
+// 头像可为 base64 data URL（`data:image/...;base64,...`，用户自定义）或 `/avatar/xxx.jpg`
+// 相对 URL（内置默认）；两者 `<img>` 均可直接渲染。
+// 保存只更新全局 profile，不触碰各会话已锁定的快照 → 仅新会话取到新值。
 
-const charUser = ref<{ name: string; avatar: string }>({ name: '', avatar: '' });
-const charAssistant = ref<{ name: string; avatar: string }>({ name: '', avatar: '' });
+const charUser = ref<{ name: string; avatar: string }>({
+  name: DEFAULT_CACHED_CHARACTER.userName,
+  avatar: DEFAULT_CACHED_CHARACTER.userAvatar,
+});
+const charAssistant = ref<{ name: string; avatar: string }>({
+  name: DEFAULT_CACHED_CHARACTER.aiName,
+  avatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+});
 const originalChar = ref<{ user: { name: string; avatar: string }; assistant: { name: string; avatar: string } }>({
-  user: { name: '', avatar: '' },
-  assistant: { name: '', avatar: '' },
+  user: { name: DEFAULT_CACHED_CHARACTER.userName, avatar: DEFAULT_CACHED_CHARACTER.userAvatar },
+  assistant: { name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar },
 });
 
-const resolveStaticUrl = (path?: string) =>
-  path ? `${backendBaseUrl.replace(/\/+$/, '')}/static/${path.replace(/^\/+/, '')}` : '';
+// 头像已是完整图片地址（base64 data URL 或 /avatar/xxx.jpg 相对 URL），直接渲染（无需拼接 static/ 路径）
+const userAvatarUrl = computed(() => charUser.value.avatar);
+const assistantAvatarUrl = computed(() => charAssistant.value.avatar);
 
-const userAvatarUrl = computed(() => resolveStaticUrl(charUser.value.avatar));
-const assistantAvatarUrl = computed(() => resolveStaticUrl(charAssistant.value.avatar));
+/** 将上传的图片文件读取为 base64 data URL */
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 
 const canSave = computed(() => {
   if (loading.value || saving.value) return false;
@@ -201,15 +225,14 @@ const canSave = computed(() => {
   return promptsValid && charValid;
 });
 
-// ── 头像上传处理 ─────────────────────────────────────────
+// ── 头像上传处理（本地转 base64，不调用后端） ──────────
 const onUserAvatarSelect = async (event: { files: File[] }) => {
   const file = event.files?.[0];
   if (!file) return;
   try {
-    const path = await uploadAvatar(file);
-    charUser.value.avatar = path;
+    charUser.value.avatar = await readFileAsDataUrl(file);
   } catch (e) {
-    console.error('[ConfigDialog] Avatar upload failed (user):', e);
+    console.error('[ConfigDialog] Avatar read failed (user):', e);
   }
 };
 
@@ -217,17 +240,16 @@ const onAssistAvatarSelect = async (event: { files: File[] }) => {
   const file = event.files?.[0];
   if (!file) return;
   try {
-    const path = await uploadAvatar(file);
-    charAssistant.value.avatar = path;
+    charAssistant.value.avatar = await readFileAsDataUrl(file);
   } catch (e) {
-    console.error('[ConfigDialog] Avatar upload failed (assistant):', e);
+    console.error('[ConfigDialog] Avatar read failed (assistant):', e);
   }
 };
 
 const loadContent = async () => {
   loading.value = true;
   try {
-    const [promptData, charData] = await Promise.all([readSystemPrompt(), readCharacter()]);
+    const [promptData, charData] = await Promise.all([readSystemPrompt(), readCachedCharacter(GLOBAL_SESSION_KEY)]);
 
     const content: Record<string, string> = {};
     for (const tab of tabs) {
@@ -236,13 +258,18 @@ const loadContent = async () => {
     editContent.value = { ...content };
     originalContent.value = { ...content };
 
-    const user = charData?.user ?? {};
-    const assistant = charData?.assistant ?? {};
-    charUser.value = { name: user.name || '', avatar: user.avatar || '' };
-    charAssistant.value = { name: assistant.name || '', avatar: assistant.avatar || '' };
+    // 从本地 Dexie 全局 profile 读取角色配置（无记录时回退到内置默认值：远野汉娜/橘雪莉 + 默认头像）
+    charUser.value = {
+      name: charData?.userName?.trim() ? charData.userName : DEFAULT_CACHED_CHARACTER.userName,
+      avatar: charData?.userAvatar ?? DEFAULT_CACHED_CHARACTER.userAvatar,
+    };
+    charAssistant.value = {
+      name: charData?.aiName?.trim() ? charData.aiName : DEFAULT_CACHED_CHARACTER.aiName,
+      avatar: charData?.aiAvatar ?? DEFAULT_CACHED_CHARACTER.aiAvatar,
+    };
     originalChar.value = {
-      user: { name: user.name || '', avatar: user.avatar || '' },
-      assistant: { name: assistant.name || '', avatar: assistant.avatar || '' },
+      user: { name: charUser.value.name, avatar: charUser.value.avatar },
+      assistant: { name: charAssistant.value.name, avatar: charAssistant.value.avatar },
     };
   } catch (e) {
     console.error('[ConfigDialog] Failed to load content:', e);
@@ -265,28 +292,33 @@ const handleSave = async () => {
       await writeSystemPrompt(fileToContent);
     }
 
-    // 角色配置：仅在 name 或 avatar 有变更时提交更新（完整提交该 role）
-    const charUpdate: Record<string, Record<string, string>> = {};
-    if (
-      charUser.value.name.trim().length > 0 &&
-      (charUser.value.name !== originalChar.value.user.name || charUser.value.avatar !== originalChar.value.user.avatar)
-    ) {
-      charUpdate.user = {
-        name: charUser.value.name,
-        avatar: charUser.value.avatar,
+    // 角色配置：仅当 name 或 avatar 有变更时，把变更写入本地 Dexie 全局 profile。
+    // 该写入只影响全局 profile，不触碰各会话已锁定的快照 → 只影响新会话。
+    const userChanged =
+      charUser.value.name !== originalChar.value.user.name || charUser.value.avatar !== originalChar.value.user.avatar;
+    const assistantChanged =
+      charAssistant.value.name !== originalChar.value.assistant.name ||
+      charAssistant.value.avatar !== originalChar.value.assistant.avatar;
+    if (userChanged || assistantChanged) {
+      const existing = (await readCachedCharacter(GLOBAL_SESSION_KEY)) ?? {
+        session_id: GLOBAL_SESSION_KEY,
+        userName: '',
+        userAvatar: '',
+        aiName: '',
+        aiAvatar: '',
       };
-    }
-    if (
-      charAssistant.value.name.trim().length > 0 &&
-      (charAssistant.value.name !== originalChar.value.assistant.name || charAssistant.value.avatar !== originalChar.value.assistant.avatar)
-    ) {
-      charUpdate.assistant = {
-        name: charAssistant.value.name,
-        avatar: charAssistant.value.avatar,
+      await cacheCharacter({
+        session_id: GLOBAL_SESSION_KEY,
+        userName: userChanged ? charUser.value.name : existing.userName,
+        userAvatar: userChanged ? charUser.value.avatar : existing.userAvatar,
+        aiName: assistantChanged ? charAssistant.value.name : existing.aiName,
+        aiAvatar: assistantChanged ? charAssistant.value.avatar : existing.aiAvatar,
+      });
+      // 保存成功后再同步 originalChar 作为下一次 diff 基线
+      originalChar.value = {
+        user: { name: charUser.value.name, avatar: charUser.value.avatar },
+        assistant: { name: charAssistant.value.name, avatar: charAssistant.value.avatar },
       };
-    }
-    if (Object.keys(charUpdate).length > 0) {
-      await updateCharacter(charUpdate);
     }
 
     emits('saved');

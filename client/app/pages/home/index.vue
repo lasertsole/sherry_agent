@@ -216,10 +216,10 @@ import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord, MessageItem, HitlRequestData } from './type.ts';
 import { CHAT_ROLE } from './type.ts';
-import type { CachedMessage } from '@/composables/db';
+import type { CachedCharacter, CachedMessage } from '@/composables/db';
+import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter, clearCachedCharacter } from '@/composables/db';
 import { tools, headerTools } from './config';
 import { Menu } from 'primevue';
-import { readCharacter } from '@/composables/bridge';
 import type { ChatRequest, AgentChunkType, HitlResponse } from '@/composables/bridge';
 import { getSessionList, clearSession } from '@/composables/messages';
 
@@ -235,39 +235,80 @@ const showSkillsDialog = ref(false);
 const showConfigDialog = ref(false);
 
 /**
- * 角色显示信息（来自服务端 character.json）
- * - user.avatar / assistant.avatar 为相对 `static/` 的路径，拼接 base URL 得到完整图片地址
+ * 角色显示信息（来源为本地 Dexie 按会话缓存的快照，见 `db.ts` 的 `CachedCharacter`）。
+ * - `userAvatar` / `aiAvatar` 为 base64 data URL（用户自定义）或 `/avatar/xxx.jpg` 相对 URL（内置默认），`<img>` 均可直接渲染。
+ * - 每次切换/新建会话时从对应会话快照（或全局待定 profile）刷新，旧会话保留各自快照。
  */
-const backendBaseUrl = ref<string>(import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080');
 const characterInfo = ref<{ userName: string; userAvatar: string; aiName: string; aiAvatar: string }>({
-  userName: t('chatBox.defaultUserName'),
-  userAvatar: '',
-  aiName: t('chatBox.defaultAiName'),
-  aiAvatar: ''
+  userName: DEFAULT_CACHED_CHARACTER.userName,
+  userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
+  aiName: DEFAULT_CACHED_CHARACTER.aiName,
+  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
 });
 
-/** 解析角色配置：把 `avatar/xxx.jpg` 形式的路径拼接成完整静态资源 URL */
-const resolveCharacter = (data?: Record<string, Record<string, string>>) => {
-  const base = (backendBaseUrl.value || '').replace(/\/+$/, '');
-  const user = data?.user ?? {};
-  const assistant = data?.assistant ?? {};
-  const resolveUrl = (path?: string) => (path ? `${base}/static/${path.replace(/^\/+/, '')}` : '');
-  characterInfo.value = {
-    userName: user.name || t('chatBox.defaultUserName'),
-    userAvatar: resolveUrl(user.avatar),
-    aiName: assistant.name || t('chatBox.defaultAiName'),
-    aiAvatar: resolveUrl(assistant.avatar)
-  };
+/** 默认角色显示信息（内置：远野汉娜 / 橘雪莉 + 默认头像 URL，见 `defaultCharacter.ts`） */
+const defaultCharacter = (): { userName: string; userAvatar: string; aiName: string; aiAvatar: string } => ({
+  userName: DEFAULT_CACHED_CHARACTER.userName,
+  userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
+  aiName: DEFAULT_CACHED_CHARACTER.aiName,
+  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+});
+
+/**
+ * 将一份角色快照映射为 `characterInfo`（空消息段回退到内置默认值）。
+ */
+const applyCharacterSnapshot = (snap?: Pick<CachedCharacter, 'userName' | 'userAvatar' | 'aiName' | 'aiAvatar'>) => {
+  const defaultInfo = defaultCharacter();
+  characterInfo.value = snap
+    ? {
+        userName: snap.userName?.trim() ? snap.userName : defaultInfo.userName,
+        userAvatar: snap.userAvatar ?? defaultInfo.userAvatar,
+        aiName: snap.aiName?.trim() ? snap.aiName : defaultInfo.aiName,
+        aiAvatar: snap.aiAvatar ?? defaultInfo.aiAvatar,
+      }
+    : defaultInfo;
 };
 
-/** 从服务端加载角色配置（头像 + 名字） */
-const loadCharacter = async () => {
+/**
+ * 确保指定会话已锁定自己的角色快照，并把 `characterInfo` 更新为该会话的显示信息。
+ *
+ * 命名逻辑：系统配置-角色配置编辑的是「全局待定 profile」（`GLOBAL_SESSION_KEY` 行）。
+ * 每个会话在首次打开时，把当时的全局 profile 拷贝并锁定到自己的 `session_id` 行；
+ * 之后全局更新（改头像/名字）不再作用于已锁定快照的旧会话，仅新会话会取到最新全局值。
+ *
+ * @param sessionId 会话 ID
+ */
+const ensureSessionCharacter = async (sessionId: string) => {
   try {
-    const data = (await readCharacter()) as Record<string, Record<string, string>>;
-    resolveCharacter(data);
+    const [globalSnap, sessionSnap] = await Promise.all([
+      readCachedCharacter(GLOBAL_SESSION_KEY),
+      readCachedCharacter(sessionId),
+    ]);
+    // 会话已有快照（旧会话锁定的头像/名字）→ 直接用快照，不受全局变更影响。
+    if (sessionSnap) {
+      applyCharacterSnapshot(sessionSnap);
+      return;
+    }
+    // 会话尚无快照（新建或从未打开过的会话）→ 用全局 profile 快照并锁定。
+    // 注意：`base` 可能是全局行（含 session_id=GLOBAL_SESSION_KEY），
+    // 必须用 `...base` 之后显式覆盖 session_id，避免把真实会话的 key 写进全局行。
+    const base = globalSnap ?? defaultCharacter();
+    const locked: CachedCharacter = { ...base, session_id: sessionId };
+    await cacheCharacter(locked);
+    applyCharacterSnapshot(locked);
   } catch (error) {
-    // 服务端不可达时保留默认头像与名字
-    console.warn('[loadCharacter] 获取角色配置失败，保留默认头像：', error);
+    // Dexie 读写异常时保留当前显示，不阻塞聊天。
+    console.warn('[ensureSessionCharacter] 读取角色快照失败：', error);
+  }
+};
+
+/**
+ * 系统配置保存后的回调：当前会话继续保留其已锁定的旧快照 → 显示不变；
+ * 仅重读当前会话快照以确认渲染（新会话打开时才取最新全局值）。
+ */
+const loadCharacter = async () => {
+  if (currentSessionId.value) {
+    await ensureSessionCharacter(currentSessionId.value);
   }
 };
 
@@ -705,6 +746,8 @@ const handleCreateSession = () => {
   currentSession.value = newSession;
   currentSessionId.value = sessionId;
   chatMessages.value = [];
+  // 新会话：立即用当前全局 profile 创建并锁定角色快照，保证头像/名字正确显示
+  ensureSessionCharacter(sessionId);
 };
 
 /**
@@ -719,6 +762,8 @@ const handleToggleSession = (id: string) => {
   chatMessages.value = [];
   currentSessionId.value = id;
   loadSessionHistory(id);
+  // 切换会话：加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
+  ensureSessionCharacter(id);
 };
 
 /**
@@ -734,6 +779,8 @@ const handleDeleteSession = async (id: string) => {
     }
     historyList.value = historyList.value.filter((s) => s.id !== id);
     selectedSessionIds.value = selectedSessionIds.value.filter((sid) => sid !== id);
+    // 同步清理该会话的角色快照缓存
+    clearCachedCharacter(id);
     if (currentSessionId.value === id) {
       currentSession.value = undefined;
       currentSessionId.value = undefined;
@@ -805,7 +852,11 @@ const handleBatchDelete = async () => {
   }
 
   const deleted = ids.filter((id) => !remain.includes(id));
-  if (deleted.length > 0) historyList.value = historyList.value.filter((s) => !deleted.includes(s.id));
+  if (deleted.length > 0) {
+    historyList.value = historyList.value.filter((s) => !deleted.includes(s.id));
+    // 同步清理被删会话的角色快照缓存
+    for (const id of deleted) clearCachedCharacter(id);
+  }
   if (currentSessionId.value && deleted.includes(currentSessionId.value)) {
     currentSession.value = undefined;
     currentSessionId.value = undefined;
@@ -834,9 +885,10 @@ const headerMenuModel = computed(() =>
 
 // 首屏加载默认会话(default)的历史消息，获取合并后的列表渲染到 ChatBox
 loadSessionHistory('default');
-// 挂载后从服务端加载角色配置（头像 + 名字）与会话列表
+// 首屏同时加载 default 会话的角色显示信息（头像 + 名字）
+ensureSessionCharacter('default');
+// 挂载后拉取会话列表（角色信息已由 ensureSessionCharacter 从本地 Dexie 加载）
 onMounted(() => {
-  loadCharacter();
   loadSessionList();
 });
 </script>

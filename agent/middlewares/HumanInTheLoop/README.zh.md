@@ -1,6 +1,6 @@
 # Human-In-The-Loop (HITL) 中间件
 
-**English** | [**中文文档**](README.zh.md)
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 hermes-agent 管道的完整人机回环中间件。提供多层审批门控，涵盖命令执行（硬线/危险检测）、文件写入、MCP 工具调用、破坏性斜杠命令和平台用户许可——全部通过单一中间件钩子管理。
 

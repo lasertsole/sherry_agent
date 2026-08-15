@@ -1,6 +1,6 @@
 # Future Subagent — Python 子 Agent 系统
 
-中文 | **[English](./README.md)**
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 > Python 实现的多层子 Agent 系统，与现有 `agent/tools/subagent/`（Commander/Worker 模式）共存。全部 7 个实施阶段 + 健壮性补全 v3 增强 + Bug 修复 + OpenClaw 对齐 + 深度对齐 + 接线修复已完成。203 测试通过。
 

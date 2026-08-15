@@ -95,7 +95,8 @@
       "aiName": "AI 名称",
       "userRole": "用户角色",
       "userName": "用户名称",
-      "avatar": "头像"
+      "avatar": "头像",
+      "charNote": "修改头像与名字仅在新建会话后生效，旧会话不受影响。"
     }
   }
 }

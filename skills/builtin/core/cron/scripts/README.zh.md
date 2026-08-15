@@ -1,6 +1,6 @@
 # EMA Cron — 定时任务服务
 
-[**English**](README.md) | **中文文档**
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 EMA AI Agent 系统内的轻量级、基于文件的定时任务模块，支持周期任务、一次性任务和标准 Cron 表达式任务。
 

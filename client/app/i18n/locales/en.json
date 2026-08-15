@@ -95,7 +95,8 @@
       "aiName": "AI Name",
       "userRole": "User Role",
       "userName": "User Name",
-      "avatar": "Avatar"
+      "avatar": "Avatar",
+      "charNote": "Changes to the avatar and name only take effect in new sessions; existing sessions are not affected."
     }
   }
 }

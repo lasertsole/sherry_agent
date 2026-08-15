@@ -1,6 +1,6 @@
 # Agent Middlewares — Agent 中间件系统
 
-**中文** | [**English**](README.md)
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 > **Agent Middlewares** 是 EMA AI Agent 的中间件层，位于 Agent 核心执行流程的关键节点，通过 LangChain 的 AOP 风格中间件框架，在模型推理的**前、中、后**阶段负责**上下文增强**、**对话压缩**、**记忆管理**、**工具调用安全**、**消息标准化**、**心跳监控**和**多模态转码**。
 

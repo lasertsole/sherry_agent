@@ -1,5 +1,7 @@
 # client
 
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
+
 ## 概述
 
 `client` 是 EMA AI Agent 的前端，定位为**流式 SPA 桌面客户端**。
