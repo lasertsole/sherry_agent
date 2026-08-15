@@ -35,7 +35,8 @@
     "uploadImage": "上传图片",
     "image": "图片",
     "skills": "技能",
-    "systemConfig": "系统配置"
+    "systemConfig": "系统配置",
+    "logs": "日志"
   },
   "skills": {
     "title": "技能管理",
@@ -47,6 +48,24 @@
       "auto": "自动",
       "thirdParty": "第三方"
     }
+  },
+  "logs": {
+    "title": "日志查看",
+    "tabs": {
+      "frontend": "客户端",
+      "backend": "服务端"
+    },
+    "file": "选择日志文件",
+    "live": "实时",
+    "pause": "暂停",
+    "refresh": "刷新",
+    "clear": "清空",
+    "autoScroll": "自动滚动",
+    "connected": "已连接",
+    "connecting": "连接中...",
+    "empty": "暂无日志",
+    "liveDisabledHint": "仅当前运行中的服务端日志支持实时查看",
+    "currentFile": "当前运行日志"
   },
   "errors": {
     "replyFailed": "（回复失败：{reason}）",

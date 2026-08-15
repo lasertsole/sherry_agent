@@ -35,7 +35,8 @@
     "uploadImage": "이미지 업로드",
     "image": "이미지",
     "skills": "스킬",
-    "systemConfig": "시스템 설정"
+    "systemConfig": "시스템 설정",
+    "logs": "로그"
   },
   "skills": {
     "title": "스킬 관리",
@@ -47,6 +48,24 @@
       "auto": "자동",
       "thirdParty": "타사"
     }
+  },
+  "logs": {
+    "title": "로그 뷰어",
+    "tabs": {
+      "frontend": "클라이언트",
+      "backend": "서버"
+    },
+    "file": "로그 파일 선택",
+    "live": "실시간",
+    "pause": "일시정지",
+    "refresh": "새로고침",
+    "clear": "지우기",
+    "autoScroll": "자동 스크롤",
+    "connected": "연결됨",
+    "connecting": "연결 중...",
+    "empty": "로그가 없습니다",
+    "liveDisabledHint": "실시간 보기는 현재 실행 중인 서버 로그에서만 사용할 수 있습니다",
+    "currentFile": "현재 실행 중인 로그"
   },
   "errors": {
     "replyFailed": "（회신 실패：{reason}）",

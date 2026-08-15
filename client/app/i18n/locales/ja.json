@@ -35,7 +35,8 @@
     "uploadImage": "画像をアップロード",
     "image": "画像",
     "skills": "スキル",
-    "systemConfig": "システム設定"
+    "systemConfig": "システム設定",
+    "logs": "ログ"
   },
   "skills": {
     "title": "スキル管理",
@@ -47,6 +48,24 @@
       "auto": "自動",
       "thirdParty": "第三者の"
     }
+  },
+  "logs": {
+    "title": "ログビューア",
+    "tabs": {
+      "frontend": "クライアント",
+      "backend": "サーバー"
+    },
+    "file": "ログファイルを選択",
+    "live": "リアルタイム",
+    "pause": "一時停止",
+    "refresh": "更新",
+    "clear": "クリア",
+    "autoScroll": "自動スクロール",
+    "connected": "接続済み",
+    "connecting": "接続中...",
+    "empty": "ログがありません",
+    "liveDisabledHint": "リアルタイム表示は現在実行中のサーバーログのみ利用できます",
+    "currentFile": "現在実行中のログ"
   },
   "errors": {
     "replyFailed": "（返信に失敗：{reason}）",
