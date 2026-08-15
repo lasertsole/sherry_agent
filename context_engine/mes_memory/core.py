@@ -4,7 +4,6 @@ import sqlite3
 import threading
 from typing import Any
 from loguru import logger
-from config import ASSISTANT_NAME, USER_NAME
 from pub_func import contains_cjk, count_cjk
 from .store import get_db, get_messages_by_lastest_n_turns
 
@@ -52,7 +51,7 @@ def retrieve_history_by_last_n_prompt(session_id: str, n: int = 5) -> str:
                 else:
                     user_text = query
 
-        res_list.append(f"<turn>\n{USER_NAME}: {user_text}\n\n{ASSISTANT_NAME}: {ai_text}\n</turn>")
+        res_list.append(f"<turn>\nuser: {user_text}\n\nagent: {ai_text}\n</turn>")
 
     return (
         f"===== The following is the content of the last {n} turns (from oldest to newest, timestamp format: YYYYMMDDHHmmss) =====\n\n"

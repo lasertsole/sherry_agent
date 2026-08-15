@@ -14,7 +14,6 @@ from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from context_engine import get_session_ids
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk
 from langgraph.types import Command
-from config.character import ASSISTANT_NAME
 
 
 async def _get_agent_history_list(session_id: str)-> list[BaseMessage]:
@@ -323,15 +322,20 @@ async def resume_agent(
     agent = await built_agent()
     config = build_agent_config(session_id)
 
-    resume_value: dict[str, Any] = {"decisions": [{"type": decision, "message": message}]}
+    # Inject session_id into the resume value. On a normal turn it arrives via the
+    # graph input dict (see _get_generator), but Command(resume=...) merges only the
+    # resume value into state — without session_id here, MultimodalProcessor's
+    # _before_agent_impl would raise "Not pass session_id" on resume.
+    resume_value: dict[str, Any] = {
+        "session_id": session_id,
+        "decisions": [{"type": decision, "message": message}],
+    }
     if decision == "edit" and edited_args is not None:
         resume_value["decisions"][0]["edited_action"] = {"args": edited_args}
 
     state_register_mem.set_state(session_id, "answering", True)
 
     try:
-        yield {"type": "text", "content": f"{ASSISTANT_NAME}:"}
-
         async for chunk in agent.astream(
             Command(resume=resume_value),
             config=config,

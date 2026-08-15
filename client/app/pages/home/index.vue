@@ -133,7 +133,7 @@ import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from './type.ts';
 import type { CachedCharacter } from '@/composables/db';
-import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter, clearCachedCharacter } from '@/composables/db';
+import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter, clearCachedCharacter, cacheSessionMeta, readCachedSessionMetaList, clearCachedSessionMeta } from '@/composables/db';
 import { headerTools } from './config';
 import { emit } from '@/composables/mitt';
 import { getSessionList, clearSession, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
@@ -269,14 +269,49 @@ const historyList = ref<SessionRecord[]>([]);
 const loadSessionList = async () => {
   try {
     const sessions = await getSessionList();
-    // 保留本地新建但服务端尚不存在的会话（如刚点「新建对话」还没发消息）
-    const localOnly = historyList.value.filter(
+    // 合并本地新建但服务端尚不存在的会话（IndexedDB 占位，刷新后仍能恢复）：
+    // 1) 读取 IndexedDB 中持久化的占位会话（新建空会话尚未发消息）；
+    // 2) 服务端已有记录（发过消息）的会话直接从内存列表保留，并顺手清除其占位；
+    // 3) 内存 `historyList` 中的本地项（本次会话新建但尚未写入 IndexedDB，兜底）。
+    let localPlaceholders = historyList.value.filter(
       (s) => !sessions.some((row) => row.id === s.id),
     );
-    historyList.value = [...localOnly, ...sessions];
+    const serverIds = new Set(sessions.map((row) => row.id));
+    // 服务端已有记录的会话，删除其本地占位（已晋升为真实服务端会话）。
+    const placeholders = await readCachedSessionMetaList();
+    for (const p of placeholders) {
+      if (serverIds.has(p.id)) {
+        clearCachedSessionMeta(p.id);
+      }
+    }
+    // 合并：IndexedDB 占位（刷新恢复） + 内存本地项（本次会话兜底），去重。
+    const localById = new Map<string, SessionRecord>();
+    for (const p of placeholders) {
+      localById.set(p.id, { id: p.id, title: p.title, createTime: p.createTime });
+    }
+    for (const s of localPlaceholders) {
+      if (!localById.has(s.id)) localById.set(s.id, s);
+    }
+    localPlaceholders = Array.from(localById.values());
+    // 占位会话按最新优先（createTime 倒序，字符串格式 YYYY-MM-DD HH:mm 可字典序比较）。
+    localPlaceholders.sort((a, b) => (b.createTime < a.createTime ? -1 : 1));
+    historyList.value = [...localPlaceholders, ...sessions];
   } catch (error) {
-    // 服务端不可达时保留当前列表（可能为空）
+    // 服务端不可达时：本次会话内存态保留，并尝试从 IndexedDB 恢复已持久化的占位会话
     console.warn('[loadSessionList] 拉取会话列表失败：', error);
+    try {
+      const placeholders = await readCachedSessionMetaList();
+      const localById = new Map<string, SessionRecord>();
+      for (const p of placeholders) {
+        localById.set(p.id, { id: p.id, title: p.title, createTime: p.createTime });
+      }
+      for (const s of historyList.value) {
+        if (!localById.has(s.id)) localById.set(s.id, s);
+      }
+      historyList.value = Array.from(localById.values());
+    } catch (cacheErr) {
+      console.warn('[loadSessionList] 恢复本地占位会话失败：', cacheErr);
+    }
   }
 };
 
@@ -316,6 +351,9 @@ const handleCreateSession = () => {
   currentSessionId.value = sessionId;
   // 新会话：立即用当前全局 profile 创建并锁定角色快照，保证头像/名字正确显示
   ensureSessionCharacter(sessionId);
+  // 持久化占位会话（新建即写入 IndexedDB），保证刷新/重开后该空会话仍保留在列表
+  // （服务端会话列表由消息表派生，未发消息前无记录，只能靠本地占位恢复）。
+  cacheSessionMeta({ id: sessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
   router.push(localePath(`/home/${sessionId}`));
 };
 
@@ -346,6 +384,8 @@ const handleDeleteSession = async (id: string) => {
     selectedSessionIds.value = selectedSessionIds.value.filter((sid) => sid !== id);
     // 同步清理该会话的角色快照缓存
     clearCachedCharacter(id);
+    // 同步清理本地占位会话缓存（IndexedDB），避免删除后仍残留占位
+    clearCachedSessionMeta(id);
     // 该会话可能仍在流式生成（尤其是非激活会话，其 [sid].vue 仍被 KeepAlive 缓存且流未中止）。
     // 广播中止事件，让对应的 [sid].vue 实例 abort 其 AbortController，避免删除后流仍在后台推块、污染聊天状态。
     emit(SESSION_ABORT_STREAM_EVENT, id);

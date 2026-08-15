@@ -1,7 +1,7 @@
 import type { MultiModalMessage } from "@/types/message";
 import type { Response } from "@/types/response";
 import type { SessionRecord } from "@/pages/home/type";
-import { streamChatMessage, type OnChunkCallback, type OnHitlCallback, type StreamController } from './bridge';
+import { streamChatMessage, type OnChunkCallback, type OnHitlCallback, type StreamController, type HitlInterruptData } from './bridge';
 import {
     cacheMessages,
     cachedMaxTurnNum,
@@ -139,6 +139,48 @@ export async function getSessionList(): Promise<SessionRecord[]> {
         // 请求失败时返回空列表，避免阻断会话列表加载
         return [];
     }
+}
+
+/**
+ * 查询指定会话是否存在「待人工审批」的 HITL 中断。
+ *
+ * 对应服务端 GET /get_pending_interrupt（server/trigger/http/messages.py）。
+ * 服务端从 LangGraph checkpoint 重推 `{tool_name, tool_args, description, allowed_decisions}`，
+ * 无中断时返回 null。用于在会话切换/页面刷新/浏览器重开/服务重启后
+ * 重新拉起待审批的批准卡片。
+ *
+ * @param session_id 会话ID
+ * @returns 待审批的 HITL 中断数据；无中断或请求失败时返回 null
+ */
+export async function getPendingInterrupt(
+  session_id: string,
+): Promise<HitlInterruptData | null> {
+  try {
+    const res: Response = await fetchApi({
+      url: '/get_pending_interrupt',
+      opts: { session_id },
+      method: 'get',
+    });
+    if (res == null) return null;
+    // 服务端直接返回中断对象（或 null），不做 { data } 包装；此处做兼容。
+    const data = (res as unknown as { data?: unknown }).data ?? res;
+    // 兼容兜底：服务端可能以 text/plain 返回字面量字符串 "None"（Python None），
+    // ofetch 不会对其做 JSON 解析，此时 data 是一段 truthy 的字符串，必须视为「无中断」，
+    // 否则会误弹出一个 tool_name 全空的失效 HITL 卡（尤其空会话一进来就触发）。
+    if (
+      data == null ||
+      typeof data !== 'object' ||
+      Array.isArray(data) ||
+      data['None'] === true
+    ) {
+      return null;
+    }
+    return data as HitlInterruptData;
+  } catch (error) {
+    // 请求失败（会话可能已清空/后端未起）时静默视为无中断，不阻断聊天。
+    console.warn('[getPendingInterrupt] 查询待审批中断失败：', error);
+    return null;
+  }
 }
 
 /**

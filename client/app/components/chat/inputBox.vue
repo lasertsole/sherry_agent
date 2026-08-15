@@ -6,9 +6,9 @@
         <div
             class="inputBox"
             contenteditable="true"
-            :contenteditable="!sending"
-            :aria-disabled="sending"
-            :placeholder="sending ? t('chatInput.thinking') : t('chatInput.placeholder')"
+            :contenteditable="!sending && !disabled"
+            :aria-disabled="sending || disabled"
+            :placeholder="placeholderText"
             ref="inputDom"
             @input.stop="inputFunc($event)"
             @keydown.enter.stop.prevent="handleKeyEnter($event)"
@@ -19,7 +19,7 @@
             v-if="!sending"
             :label="t('chatInput.send')"
             class="send"
-            :disabled="!sendingAllowed"
+            :disabled="!sendingAllowed || disabled"
             @click="handleSend"
         />
         <Button
@@ -42,10 +42,16 @@ const { t } = useI18n();
 /** 是否处于 AI 回复生成中（由父组件控制，防止重复发送） */
 const props = withDefaults(defineProps<Props>(), {
   sending: false,
+  disabled: false,
+  disabledText: '',
 });
 
 interface Props {
   sending?: boolean;
+  /** 是否禁止输入（如存在待审批的 HITL 请求时，阻断手动输入/发送） */
+  disabled?: boolean;
+  /** 禁用状态下显示的 placeholder 文案（如"等待审批…"） */
+  disabledText?: string;
 }
 
 const emit = defineEmits<{
@@ -68,6 +74,13 @@ const draft = defineModel<string>('draft', { default: '' });
 
 /** 是否允许发送（非空且非生成中） */
 const sendingAllowed = computed(() => !isEmpty(draft.value));
+
+/** 输入区占位文案：生成中→"思考中"，禁用→传入的审批提示，否则默认提示 */
+const placeholderText = computed(() => {
+  if (props.sending) return t('chatInput.thinking');
+  if (props.disabled) return props.disabledText || t('chatInput.placeholder');
+  return t('chatInput.placeholder');
+});
 
 /** 输入回调：剥离 contenteditable 的标签，仅保留纯文本用于校验 */
 function inputFunc(event: Event): void {
@@ -95,7 +108,7 @@ function handleKeyEnter(event: KeyboardEvent): void {
 
 /** 发送：校验→清空输入区→向上抛出文本 */
 function handleSend(): void {
-  if (!sendingAllowed.value || props.sending) return;
+  if (!sendingAllowed.value || props.sending || props.disabled) return;
   const text = draft.value;
   if (isEmpty(text)) return;
 

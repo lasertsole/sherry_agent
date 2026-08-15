@@ -45,8 +45,8 @@ export interface MessageItem {
   timestamp: string;
   /** 工具名称（仅 role=TOOL 时有值，标识是哪个工具调用） */
   toolName?: string;
-  /** 工具状态：running=调用中, done=已完成（仅 role=TOOL 时有值） */
-  toolStatus?: 'running' | 'done';
+  /** 工具状态：running=调用中, done=已完成, failed=被拒绝/失败（仅 role=TOOL 时有值） */
+  toolStatus?: 'running' | 'done' | 'failed';
 }
 
 /** 角色 */

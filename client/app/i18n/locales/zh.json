@@ -2,6 +2,7 @@
   "chatInput": {
     "placeholder": "请输入内容...",
     "thinking": "AI 正在思考中...",
+    "waitingApproval": "等待审批...",
     "send": "发送",
     "stop": "停止",
     "maxImages": "最多只能上传 {count} 张图片",

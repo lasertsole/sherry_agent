@@ -54,6 +54,9 @@
             v-if="message.toolStatus === 'running'"
             class="pi pi-spin pi-spinner text-xs text-blue-500"></span>
           <span
+            v-else-if="message.toolStatus === 'failed'"
+            class="pi pi-times text-xs text-red-500"></span>
+          <span
             v-else
             class="pi pi-check text-xs text-green-500"></span>
         </div>
