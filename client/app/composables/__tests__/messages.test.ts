@@ -210,8 +210,8 @@ describe('postAgentStream', () => {
     ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' }) });
     ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'lo', type: 'text' }) });
     expect(onData).toHaveBeenCalledTimes(2);
-    expect(onData).toHaveBeenNthCalledWith(1, 'hel', 'text');
-    expect(onData).toHaveBeenNthCalledWith(2, 'lo', 'text');
+    expect(onData).toHaveBeenNthCalledWith(1, 'hel', 'text', 's1');
+    expect(onData).toHaveBeenNthCalledWith(2, 'lo', 'text', 's1');
 
     ws.onmessage?.({ data: JSON.stringify({ event: 'done', session_id: 's1', content: '' }) });
     await promise;

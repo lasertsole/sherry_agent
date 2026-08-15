@@ -81,10 +81,10 @@ describe('sendChatMessage (browser WebSocket) — typed chunks', () => {
     ws.frame({ event: 'chunk', session_id: 's1', content: 'web_search', type: 'tool_end' });
     ws.frame({ event: 'chunk', session_id: 's1', content: ' result', type: 'text' });
 
-    expect(onChunk).toHaveBeenNthCalledWith(1, 'hello', 'text');
-    expect(onChunk).toHaveBeenNthCalledWith(2, 'web_search', 'tool_start');
-    expect(onChunk).toHaveBeenNthCalledWith(3, 'web_search', 'tool_end');
-    expect(onChunk).toHaveBeenNthCalledWith(4, ' result', 'text');
+    expect(onChunk).toHaveBeenNthCalledWith(1, 'hello', 'text', 's1');
+    expect(onChunk).toHaveBeenNthCalledWith(2, 'web_search', 'tool_start', 's1');
+    expect(onChunk).toHaveBeenNthCalledWith(3, 'web_search', 'tool_end', 's1');
+    expect(onChunk).toHaveBeenNthCalledWith(4, ' result', 'text', 's1');
 
     ws.frame({ event: 'done', session_id: 's1', content: '' });
     await promise;
@@ -101,7 +101,7 @@ describe('sendChatMessage (browser WebSocket) — typed chunks', () => {
     ws.open();
 
     ws.frame({ event: 'chunk', session_id: 's1', content: 'legacy' });
-    expect(onChunk).toHaveBeenCalledWith('legacy', 'text');
+    expect(onChunk).toHaveBeenCalledWith('legacy', 'text', 's1');
 
     ws.frame({ event: 'done', session_id: 's1', content: '' });
     await promise;

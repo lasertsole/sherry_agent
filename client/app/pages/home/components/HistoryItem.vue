@@ -3,7 +3,7 @@
     :class="[
       'p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white',
       'dark:bg-[#2a2a36]/[0.6] dark:border-[#555] md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]',
-      { 'text-white bg-[#e4efff] dark:bg-[#c1d6e5]': props.isActive }
+      { 'text-theme-main bg-[#c1d6e5]! ': props.isActive }
     ]"
     @click="emits('chooseSession', props.historyRecord.id)">
     <!-- 标题 -->

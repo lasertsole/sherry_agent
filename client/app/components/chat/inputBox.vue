@@ -33,7 +33,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, type ShallowRef } from 'vue';
+import { computed, onMounted, watch, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
 
@@ -58,11 +58,16 @@ const emit = defineEmits<{
 /** 输入区 DOM */
 const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
 
-/** 当前输入内容（纯文本，便于校验是否为空） */
-const textContent = ref('');
+/**
+ * 受控草稿内容（由父组件通过 `v-model:draft` 双向绑定）。
+ *
+ * 父组件（per-session ChatPage）在切换会话时会把该会话的草稿写回，
+ * 从而在 KeepAlive 缓存下保留每个会话未发送的输入内容。
+ */
+const draft = defineModel<string>('draft', { default: '' });
 
 /** 是否允许发送（非空且非生成中） */
-const sendingAllowed = computed(() => !isEmpty(textContent.value));
+const sendingAllowed = computed(() => !isEmpty(draft.value));
 
 /** 输入回调：剥离 contenteditable 的标签，仅保留纯文本用于校验 */
 function inputFunc(event: Event): void {
@@ -76,9 +81,9 @@ function inputFunc(event: Event): void {
   // 仅剩空行/换行时，清空内部内容避免残留 <br>
   if (isEmpty(text) || text.trim() === '') {
     target.innerHTML = '';
-    textContent.value = '';
+    draft.value = '';
   } else {
-    textContent.value = text.trim();
+    draft.value = text.trim();
   }
 }
 
@@ -91,7 +96,7 @@ function handleKeyEnter(event: KeyboardEvent): void {
 /** 发送：校验→清空输入区→向上抛出文本 */
 function handleSend(): void {
   if (!sendingAllowed.value || props.sending) return;
-  const text = textContent.value;
+  const text = draft.value;
   if (isEmpty(text)) return;
 
   clearInput();
@@ -101,8 +106,27 @@ function handleSend(): void {
 /** 清空输入区 */
 function clearInput(): void {
   if (inputDom.value) inputDom.value.innerHTML = '';
-  textContent.value = '';
+  draft.value = '';
 }
+
+/**
+ * 将外部草稿同步到 contenteditable 输入区。
+ *
+ * 父组件在切换会话（KeepAlive 恢复）时调用，把该会话缓存的草稿文本
+ * 渲染回输入框。仅在输入区为空时写入，避免覆盖用户正在输入的内容。
+ */
+function syncDraftToDom(): void {
+  if (!inputDom.value) return;
+  if (draft.value && inputDom.value.textContent !== draft.value) {
+    inputDom.value.textContent = draft.value;
+  }
+}
+
+// 父组件通过 v-model:draft 写入草稿时，同步到输入区 DOM
+watch(draft, () => syncDraftToDom());
+
+// 组件挂载后同步一次（KeepAlive 恢复时也会触发 onMounted）
+onMounted(() => syncDraftToDom());
 </script>
 
 <style lang="scss" scoped>

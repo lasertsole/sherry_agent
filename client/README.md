@@ -256,9 +256,6 @@ The `bridge.ts` composable provides a unified API that works in both Tauri deskt
 | `readSystemPrompt()` | Read all system prompt files |
 | `writeSystemPrompt(fileToContent)` | Overwrite system prompt files |
 | `updateSystemPrompt(fileToContent)` | Merge-update system prompt files |
-| `readCharacter()` | Read character configuration |
-| `writeCharacter(data)` | Overwrite character configuration |
-| `updateCharacter(data)` | Merge-update character configuration |
 | `checkHealth()` | Check Python backend reachability |
 
 ### WebSocket (ws.ts)
@@ -295,7 +292,6 @@ A 300+ line SCSS mixin library providing utilities for layout, shapes, scrollbar
 src-tauri/src/
 ├── commands/          # IPC command handlers
 │   ├── agent.rs       # agent_chat, agent_stop
-│   ├── character.rs   # character_read/write/update
 │   ├── session.rs     # session_clear, session_history
 │   ├── system.rs      # system_info, system_health
 │   └── system_prompt.rs

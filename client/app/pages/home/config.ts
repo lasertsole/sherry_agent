@@ -24,13 +24,6 @@ export const headerTools: Tool[] = [
     label: 'toolbar.skills'
   },
   {
-    toolName: 'toolbar.configKnowledgeBase',
-    icon: 'pi pi-file-edit',
-    title: 'toolbar.configKnowledgeBase',
-    event: 'knowledgeBase',
-    label: 'toolbar.configKnowledgeBase'
-  },
-  {
     toolName: 'toolbar.systemConfig',
     icon: 'pi pi-sliders-h',
     title: 'toolbar.systemConfig',

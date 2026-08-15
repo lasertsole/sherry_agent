@@ -256,9 +256,6 @@ app.vue (root)
 | `readSystemPrompt()` | すべてのシステムプロンプトファイルを読み取り |
 | `writeSystemPrompt(fileToContent)` | システムプロンプトファイルを上書き |
 | `updateSystemPrompt(fileToContent)` | システムプロンプトファイルをマージ更新 |
-| `readCharacter()` | キャラクター設定を読み取り |
-| `writeCharacter(data)` | キャラクター設定を上書き |
-| `updateCharacter(data)` | キャラクター設定をマージ更新 |
 | `checkHealth()` | Python バックエンドへの接続可能性を確認 |
 
 ### WebSocket (ws.ts)
@@ -295,7 +292,6 @@ app.vue (root)
 src-tauri/src/
 ├── commands/          # IPC command handlers
 │   ├── agent.rs       # agent_chat, agent_stop
-│   ├── character.rs   # character_read/write/update
 │   ├── session.rs     # session_clear, session_history
 │   ├── system.rs      # system_info, system_health
 │   └── system_prompt.rs

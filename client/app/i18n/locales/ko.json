@@ -9,7 +9,7 @@
   },
   "chatBox": {
     "defaultUserName": "나",
-    "defaultAiName": "橘雪莉",
+    "defaultAiName": "셰리",
     "imageLoadFailed": "이미지 로드 실패",
     "removeImage": "이미지 제거"
   },
@@ -35,7 +35,6 @@
     "uploadImage": "이미지 업로드",
     "image": "이미지",
     "skills": "스킬",
-    "configKnowledgeBase": "지식 베이스 구성",
     "systemConfig": "시스템 설정"
   },
   "skills": {

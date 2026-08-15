@@ -101,26 +101,6 @@ export type PromptFileResponse = {
 
 ---
 
-## Character Types
-
-### CharacterPayload
-
-```typescript
-export type CharacterPayload = {
-  character_data: Record<string, Record<string, string>>;
-};
-```
-
-### CharacterResponse
-
-```typescript
-export type CharacterResponse = {
-  character_data: Record<string, Record<string, string>>;
-};
-```
-
----
-
 ## System Types
 
 ### AppInfo

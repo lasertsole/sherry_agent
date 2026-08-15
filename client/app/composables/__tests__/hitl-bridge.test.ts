@@ -224,11 +224,11 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
     const ws = await awaitSocket();
 
     ws.frame({ event: 'chunk', session_id: 's1', content: '你好', type: 'text' });
-    expect(onChunk).toHaveBeenCalledWith('你好', 'text');
+    expect(onChunk).toHaveBeenCalledWith('你好', 'text', 's1');
 
     ws.frame({ event: 'chunk', session_id: 's1', content: '' });
     // Missing `type` defaults to 'text'; empty content is still delivered.
-    expect(onChunk).toHaveBeenCalledWith('', 'text');
+    expect(onChunk).toHaveBeenCalledWith('', 'text', 's1');
     expect(onChunk).toHaveBeenCalledTimes(2);
     void promise;
   });
@@ -246,7 +246,7 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
     ws.frame({ event: 'done', session_id: 's1' });
 
     await expect(promise).resolves.toBeUndefined();
-    expect(onChunk).toHaveBeenCalledWith('final', 'text');
+    expect(onChunk).toHaveBeenCalledWith('final', 'text', 's1');
   });
 });
 

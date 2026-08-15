@@ -1,7 +1,9 @@
 <template>
+  <!-- [scrollbar-gutter:stable]：始终为 (经典) 滚动条预留槽位，
+       避免无/有滚动条切换（如空态"开启新对话" → 消息变多）时内容左右跳动 -->
   <div
     ref="scrollContainerRef"
-    class="flex flex-col gap-6 flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4">
+    class="flex flex-col gap-6 flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]">
     <div
       v-for="group in turnGroups"
       :key="group[0].id"

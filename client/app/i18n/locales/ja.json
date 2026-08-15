@@ -9,7 +9,7 @@
   },
   "chatBox": {
     "defaultUserName": "わたし",
-    "defaultAiName": "橘雪莉",
+    "defaultAiName": "シェリー",
     "imageLoadFailed": "画像の読み込みに失敗しました",
     "removeImage": "画像を削除"
   },
@@ -35,7 +35,6 @@
     "uploadImage": "画像をアップロード",
     "image": "画像",
     "skills": "スキル",
-    "configKnowledgeBase": "ナレッジベースを設定",
     "systemConfig": "システム設定"
   },
   "skills": {

@@ -109,8 +109,8 @@ describe('sendChatMessage (browser WebSocket)', () => {
 
     ws.frame({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' });
     ws.frame({ event: 'chunk', session_id: 's1', content: 'lo', type: 'text' });
-    expect(onChunk).toHaveBeenNthCalledWith(1, 'hel', 'text');
-    expect(onChunk).toHaveBeenNthCalledWith(2, 'lo', 'text');
+    expect(onChunk).toHaveBeenNthCalledWith(1, 'hel', 'text', 's1');
+    expect(onChunk).toHaveBeenNthCalledWith(2, 'lo', 'text', 's1');
 
     ws.frame({ event: 'done', session_id: 's1', content: '' });
     await promise;
@@ -257,36 +257,6 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     expect(mocks.fetchApi).toHaveBeenCalledWith({
       url: '/system_prompt',
       opts: { file_to_content: { 'SOUL.md': 'y' } },
-      method: 'put',
-    });
-  });
-
-  it('readCharacter calls GET /character and returns the Response', async () => {
-    const resp = { code: 200, data: { name: { value: 'S' } } };
-    mocks.fetchApi.mockResolvedValue(resp);
-    await expect(bridge.readCharacter()).resolves.toEqual(resp);
-    expect(mocks.fetchApi).toHaveBeenCalledWith({
-      url: '/character',
-      method: 'get',
-    });
-  });
-
-  it('writeCharacter calls PUT /character', async () => {
-    mocks.fetchApi.mockResolvedValue({ code: 200 });
-    await bridge.writeCharacter({ name: { value: 'S' } });
-    expect(mocks.fetchApi).toHaveBeenCalledWith({
-      url: '/character',
-      opts: { character_data: { name: { value: 'S' } } },
-      method: 'put',
-    });
-  });
-
-  it('updateCharacter calls PUT /character with merge payload', async () => {
-    mocks.fetchApi.mockResolvedValue({ code: 200 });
-    await bridge.updateCharacter({ trait: { value: 'cold' } });
-    expect(mocks.fetchApi).toHaveBeenCalledWith({
-      url: '/character',
-      opts: { character_data: { trait: { value: 'cold' } } },
       method: 'put',
     });
   });
