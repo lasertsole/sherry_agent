@@ -271,7 +271,7 @@ class StateSchema(AgentState):
 async def _create_nudge_agent(system_prompt: str):
     from agent import get_agent_tools
     from models import build_main_llm
-    from agent.middlewares import ToolGuardrails, IterationBudget
+    from agent.middlewares import ToolCallNormalize, ToolGuardrails, IterationBudget
     from agent.tools.xp_graph import build_xp_graph_tool
 
     # Exclude xp_graph_tool to prevent recursive extract() calls.
@@ -286,7 +286,12 @@ async def _create_nudge_agent(system_prompt: str):
         model=main_llm,
         state_schema=StateSchema,
         system_prompt=system_prompt,
-        middleware=[_NudgeLimitTool(), ToolGuardrails(), IterationBudget()],
+        # ToolCallNormalize strips orphaned ToolMessages (e.g. those produced by
+        # a HITL reject) before building the LLM input, preventing the LangChain
+        # 400 "Messages with role 'tool' must be a response to a preceding message".
+        # `tools` excludes xp_graph_tool to prevent recursive extract() calls —
+        # nudge persists XpGraph data via _persist_nudge_xpgraph() instead.
+        middleware=[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()],
         tools=nudge_tools
     )
 

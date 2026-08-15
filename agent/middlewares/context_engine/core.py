@@ -243,6 +243,15 @@ class ContextEngineHook(AgentMiddleware):
         last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
         format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
 
+        # Sanitize the full message list before feeding any nudge sub-agent. The
+        # persist path above already sanitizes its slice; the nudge agents build
+        # their own LLM input from the raw `messages` list, so any orphaned
+        # ToolMessage (e.g. produced by a HITL reject) would be passed straight
+        # to the LLM and trigger a LangChain 400
+        # ("Messages with role 'tool' must be a response to a preceding message").
+        # Stripping orphans here keeps the nudge path consistent with persist.
+        nudge_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(messages)
+
         # Run persistence concurrently with nudge. Nudge is fire-and-forget
         # (wrapped with timeout) so it never blocks the main agent.
         async def _persist() -> None:
@@ -252,16 +261,16 @@ class ContextEngineHook(AgentMiddleware):
             try:
                 if need_memory and need_skill:
                     await asyncio.wait_for(
-                        _nudge_combined(session_id, system_prompt, messages), timeout=120.0
+                        _nudge_combined(session_id, system_prompt, nudge_messages), timeout=120.0
                     )
                 else:
                     if need_memory:
                         await asyncio.wait_for(
-                            _nudge_memory(session_id, system_prompt, messages), timeout=60.0
+                            _nudge_memory(session_id, system_prompt, nudge_messages), timeout=60.0
                         )
                     if need_skill:
                         await asyncio.wait_for(
-                            _nudge_skill(session_id, system_prompt, messages), timeout=120.0
+                            _nudge_skill(session_id, system_prompt, nudge_messages), timeout=120.0
                         )
             except asyncio.TimeoutError:
                 logger.warning("nudge timed out for session [{}], skipping", session_id)
