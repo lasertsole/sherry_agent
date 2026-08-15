@@ -40,22 +40,6 @@
                 style="height: 72vh; min-height: 72vh; max-height: 72vh; overflow: auto" />
             </div>
           </TabPanel>
-          <TabPanel :header="t('config.tabs.language')">
-            <div class="flex flex-col gap-5">
-              <div class="flex flex-col gap-2">
-                <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{ t('config.language.label') }}</span>
-                <div class="flex items-center gap-3">
-                  <Select
-                    :model-value="selectedLocale"
-                    :options="languageOptions"
-                    option-label="name"
-                    option-value="code"
-                    class="w-full md:w-64"
-                    @update:model-value="(value: string) => (selectedLocale = value)" />
-                </div>
-              </div>
-            </div>
-          </TabPanel>
           <TabPanel :header="t('config.tabs.character')">
             <div class="flex flex-col gap-5">
               <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
@@ -145,19 +129,7 @@ import {
   cacheCharacter,
 } from '@/composables/db';
 
-const { t, locale, setLocale } = useI18n();
-
-const languageOptions = [
-  { name: t('config.language.zh'), code: 'zh' },
-  { name: t('config.language.en'), code: 'en' },
-  { name: t('config.language.ja'), code: 'ja' },
-  { name: t('config.language.ko'), code: 'ko' },
-];
-
-const selectedLocale = computed({
-  get: () => locale.value,
-  set: (value: string) => setLocale(value),
-});
+const { t } = useI18n();
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();

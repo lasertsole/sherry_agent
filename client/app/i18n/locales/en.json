@@ -72,18 +72,15 @@
       "identity": "Identity",
       "soul": "Soul",
       "user": "User Profile",
-      "character": "Character Setup",
-      "language": "Language"
+      "character": "Character Setup"
     },
     "desc": {
       "agents": "Agent core rules: conversation flow, security, module index",
       "identity": "Agent identity: name, emoji, avatar",
       "soul": "Agent personality, tone, character",
-      "user": "User info and preferences",
-      "language": "Choose the UI display language"
+      "user": "User info and preferences"
     },
     "language": {
-      "label": "Display Language",
       "zh": "简体中文",
       "en": "English",
       "ja": "日本語",
