@@ -1,3 +1,5 @@
+import asyncio
+
 from server.trigger.core import app
 from loguru import logger
 from context_engine.curator import reset_idle_for_seconds
@@ -19,7 +21,9 @@ async def run_curator_handler(request):
     auto-run loop is zeroed to avoid an immediate duplicate auto-trigger.
     """
     try:
-        result = run_curator_review()
+        # run_curator_review 是同步阻塞调用（含 LLM 调用），必须放到线程池执行，
+        # 避免阻塞 asyncio 事件循环、拖慢其他并发请求。
+        result = await asyncio.to_thread(run_curator_review)
         logger.debug(f"Curator force-run completed: {result}")
         # LLM 层失败时未抛出异常，而是通过结果里的 error 字段标记。
         # 必须显式识别，否则前端会误报「维护完成」。
