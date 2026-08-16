@@ -18,10 +18,25 @@ def _skill_record_path(name: str) -> Path:
 
 
 def _skill_dir(name: str) -> Path | None:
+    """Resolve a skill directory by its leaf name, recursing into category subdirs.
+
+    Skills under ``skills/auto/`` use a two-level layout::
+
+        skills/auto/<category>/<skill>/SKILL.md
+
+    The name is the leaf dir (e.g. ``docker``).  A flat ``AUTO_SKILLS_DIR / name``
+    lookup misses nested skills, so we walk ``**/SKILL.md`` and match by parent dir
+    name (mirrors ``skill_manage._find_skill``).
+    """
     from context_engine.curator.constants import AUTO_SKILLS_DIR
     candidate = AUTO_SKILLS_DIR / name
     if candidate.is_dir() and (candidate / "SKILL.md").exists():
         return candidate
+    if not AUTO_SKILLS_DIR.exists():
+        return None
+    for skill_md in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
+        if skill_md.parent.name == name:
+            return skill_md.parent
     return None
 
 
@@ -124,19 +139,66 @@ def agent_created_report() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not AUTO_SKILLS_DIR.exists():
         return rows
-    for entry in sorted(AUTO_SKILLS_DIR.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("."):
+    # Walk recursively: skills live at depth 2 (skills/auto/<category>/<skill>/SKILL.md).
+    # A flat iterdir() only sees category dirs and misses every nested skill.
+    for skill_md in sorted(AUTO_SKILLS_DIR.glob("**/SKILL.md"), key=lambda p: p.parent.name.lower()):
+        entry = skill_md.parent
+        if entry.name.startswith("."):
             continue
-        if not (entry / "SKILL.md").exists():
-            continue
-        rec = load_record(entry.name)
-        rec["name"] = entry.name
+        name = entry.name
+        rec = load_record(name)
+        rec["name"] = name
         rec["description"] = _read_skill_description(entry)
-        rec["pinned"] = is_pinned(entry.name)
+        rec["pinned"] = is_pinned(name)
         rec["_persisted"] = rec.get("_persisted", False)
         rows.append(rec)
     _cleanup_orphan_records({r["name"] for r in rows})
+    _cleanup_orphan_dirs()
     return rows
+
+
+def _iter_empty_dirs(root: Path) -> list[Path]:
+    """Collect directories that contain no files recursively, bottom-up.
+
+    A directory is “empty” when no file exists anywhere beneath it. ``.usage``
+    and any dot-prefixed dirs are hidden config and always excluded. Returns
+    child-most empty dirs first so parents are post-processed safely.
+    """
+    empty: list[Path] = []
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return empty
+    for child in children:
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        empty.extend(_iter_empty_dirs(child))
+    # A dir with no regular files at all (even after recursing) is empty.
+    if not any(p.is_file() for p in root.iterdir() if not p.name.startswith(".")):
+        empty.append(root)
+    return empty
+
+
+def _cleanup_orphan_dirs() -> None:
+    """Remove orphaned empty directories under ``skills/auto/``.
+
+    Complements ``_cleanup_orphan_records``: that removes usage JSONs pointing
+    at missing skills; this removes the reverse — placeholder/leftover skill
+    dirs that contain no ``SKILL.md`` and not even any file (e.g. ``media``,
+    ``multimodal``). Dot-dirs (``.usage``) and anything with content are never
+    touched. Runs on a best-effort basis; a stale/malformed tree may prevent
+    deletion, which is safer than over-removal.
+    """
+    from context_engine.curator.constants import AUTO_SKILLS_DIR
+
+    if not AUTO_SKILLS_DIR.exists():
+        return
+    for d in _iter_empty_dirs(AUTO_SKILLS_DIR):
+        try:
+            d.rmdir()
+            logger.debug("Curator removed orphan empty dir: {}", d.name)
+        except OSError:
+            pass
 
 
 def _cleanup_orphan_records(live_names: set[str]) -> None:

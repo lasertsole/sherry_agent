@@ -51,7 +51,11 @@
     "tabs": {
       "builtin": "Built-in",
       "auto": "Auto",
-      "thirdParty": "Third-Party"
+      "thirdParty": "Third-Party",
+      "runCurator": "Skill maintenance",
+      "curatorDone": "Skill maintenance complete:",
+      "curatorTransitions": "auto transitions",
+      "curatorFailed": "Skill maintenance failed, check server logs"
     }
   },
   "logs": {

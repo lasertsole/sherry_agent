@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from loguru import logger
 from typing import Any, Callable
 from datetime import datetime, timezone
@@ -7,6 +8,27 @@ from context_engine.curator.state import load_state, save_state
 from context_engine.curator.config import get_consolidate, get_min_idle_hours
 from context_engine.curator.report import _build_rename_summary, _write_run_report
 from context_engine.curator.transitions import should_run_now, apply_automatic_transitions
+
+
+def _resolve_skill_dir(name: str) -> Path | None:
+    """Resolve a skill directory by leaf name, recursing into category subdirs.
+
+    Skills under ``skills/auto/`` live at depth 2
+    (``skills/auto/<category>/<skill>/SKILL.md``), so a flat
+    ``AUTO_SKILLS_DIR / name`` lookup misses nested skills.  Walk ``**/SKILL.md``
+    and match by parent dir name (mirrors ``skill_manage._find_skill``).
+    """
+    from context_engine.curator.constants import AUTO_SKILLS_DIR
+
+    candidate = AUTO_SKILLS_DIR / name
+    if candidate.is_dir() and (candidate / "SKILL.md").exists():
+        return candidate
+    if not AUTO_SKILLS_DIR.exists():
+        return None
+    for skill_md in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
+        if skill_md.parent.name == name:
+            return skill_md.parent
+    return None
 
 
 CURATOR_REVIEW_PROMPT = (
@@ -325,7 +347,6 @@ def _refresh_all_cached_system_prompts() -> None:
 def _apply_consolidation(llm_final: str) -> None:
     from context_engine.curator.classify import _parse_structured_summary
     from context_engine.curator.usage import delete_skill, seed_record_if_missing
-    from context_engine.curator.constants import AUTO_SKILLS_DIR
     from agent.tools.skill_tools.skill_manage import _create_skill, _write_file
 
     parsed = _parse_structured_summary(llm_final)
@@ -341,16 +362,16 @@ def _apply_consolidation(llm_final: str) -> None:
             umbrella_names.add(into)
 
     for umbrella in sorted(umbrella_names):
-        skill_dir = AUTO_SKILLS_DIR / umbrella
-        if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+        skill_dir = _resolve_skill_dir(umbrella)
+        if skill_dir is not None:
             continue
         merged_skills = [e for e in consolidations if e.get("into", "").strip() == umbrella]
 
         source_blocks: list[str] = []
         for entry in merged_skills:
             src_name = entry.get("from", "").strip()
-            src_dir = AUTO_SKILLS_DIR / src_name
-            src_md = src_dir / "SKILL.md" if src_dir.is_dir() else None
+            src_dir = _resolve_skill_dir(src_name)
+            src_md = src_dir / "SKILL.md" if src_dir is not None else None
             if src_md and src_md.exists():
                 src_text = src_md.read_text(encoding="utf-8")
                 source_blocks.append(f"### {src_name}\n\n{src_text}")
@@ -363,7 +384,9 @@ def _apply_consolidation(llm_final: str) -> None:
         file_inventory_lines: list[str] = []
         for entry in merged_skills:
             src_name = entry.get("from", "").strip()
-            src_dir = AUTO_SKILLS_DIR / src_name
+            src_dir = _resolve_skill_dir(src_name)
+            if src_dir is None:
+                continue
             for subdir in ("references", "templates", "scripts", "assets"):
                 src_sub = src_dir / subdir
                 if not src_sub.is_dir():
@@ -386,7 +409,9 @@ def _apply_consolidation(llm_final: str) -> None:
 
         for entry in merged_skills:
             src_name = entry.get("from", "").strip()
-            src_dir = AUTO_SKILLS_DIR / src_name
+            src_dir = _resolve_skill_dir(src_name)
+            if src_dir is None:
+                continue
             for subdir in ("references", "templates", "scripts", "assets"):
                 src_sub = src_dir / subdir
                 if not src_sub.is_dir():

@@ -50,7 +50,11 @@
     "tabs": {
       "builtin": "내장",
       "auto": "자동",
-      "thirdParty": "타사"
+      "thirdParty": "타사",
+      "runCurator": "스킬 유지보수",
+      "curatorDone": "스킬 유지보수 완료：",
+      "curatorTransitions": "개 자동 변경",
+      "curatorFailed": "스킬 유지보수 실패. 서버 로그를 확인하세요"
     }
   },
   "logs": {

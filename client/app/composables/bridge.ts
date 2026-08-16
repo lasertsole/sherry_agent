@@ -813,9 +813,18 @@ export async function updateSystemPrompt(
 
 /**
  * List all skills (builtin, auto, third_party).
+ *
+ * `fetchApi` resolves through Nuxt's `useFetch`, which dedupe/caches GET
+ * requests by URL. A timestamp query param acts as a cache-buster so that
+ * repeated calls after a curator run (or any lifecycle change) always hit the
+ * network and return fresh data instead of a stale cached snapshot.
  */
 export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
-  return fetchApi({ url: '/skills', method: 'get' }) as unknown as Promise<{ skills: SkillInfo[] }>;
+  return fetchApi({
+    url: '/skills',
+    opts: { _ts: Date.now() },
+    method: 'get',
+  }) as unknown as Promise<{ skills: SkillInfo[] }>;
 }
 
 /**
@@ -824,6 +833,41 @@ export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
 export async function readSkill(location: string): Promise<SkillDetail> {
   const cleanPath = location.replace(/^\.\//, '');
   return fetchApi({ url: `/skills/${cleanPath}`, method: 'get' }) as unknown as Promise<SkillDetail>;
+}
+
+/** Auto-transition counters returned by `run_curator_review` (e.g. marked_stale/archived/reactivated/checked/seeded). */
+export interface CuratorAutoTransitions {
+  marked_stale: number;
+  archived: number;
+  reactivated: number;
+  checked: number;
+  seeded: number;
+}
+
+/** Mirrors the result object returned by `context_engine/curator/orchestrator.run_curator_review`. */
+export interface CuratorRunResult {
+  started_at: string;
+  auto_transitions: CuratorAutoTransitions;
+  /** Human-readable run summary (e.g. "no changes"). */
+  summary_so_far: string;
+}
+
+/** Response of `POST /curator/run`. */
+export interface CuratorRunResponse {
+  success: boolean;
+  result?: CuratorRunResult;
+  error?: string;
+}
+
+/**
+ * Force-trigger a curator review/maintenance run against the auto-learned
+ * skills. Calls `run_curator_review` on the backend (the forced entry point,
+ * not the idle-scheduled `maybe_run_curator`), so it always executes.
+ *
+ * @returns `{ success, result, error }` from the backend.
+ */
+export async function runCuratorReview(): Promise<CuratorRunResponse> {
+  return fetchApi({ url: '/curator/run', method: 'post' }) as unknown as Promise<CuratorRunResponse>;
 }
 
 // ── Health ───────────────────────────────────────────────

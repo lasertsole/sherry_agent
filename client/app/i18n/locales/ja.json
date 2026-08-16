@@ -50,7 +50,11 @@
     "tabs": {
       "builtin": "組み込み",
       "auto": "自動",
-      "thirdParty": "第三者の"
+      "thirdParty": "第三者の",
+      "runCurator": "スキルメンテナンス",
+      "curatorDone": "スキルメンテナンス完了：",
+      "curatorTransitions": "件の自動変更",
+      "curatorFailed": "スキルメンテナンスに失敗しました。サーバーログを確認してください"
     }
   },
   "logs": {

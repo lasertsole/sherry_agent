@@ -21,6 +21,17 @@
             size="small"
             @click="activeCategory = cat.key" />
         </div>
+        <div v-if="activeCategory === 'auto'" class="flex items-center gap-3">
+          <Button
+            :label="t('skills.tabs.runCurator')"
+            :loading="curatorRunning"
+            :disabled="curatorRunning"
+            icon="pi pi-refresh"
+            size="small"
+            @click="runCurator" />
+          <span v-if="curatorResult" class="text-xs text-gray-500 dark:text-gray-400">{{ curatorResult }}</span>
+          <span v-else-if="curatorError" class="text-xs text-red-500 dark:text-red-400">{{ curatorError }}</span>
+        </div>
         <div class="flex gap-3" style="min-height: 60vh;">
           <div class="w-64 shrink-0 overflow-auto flex flex-col gap-1 pr-1" style="max-height: 72vh;">
             <div
@@ -77,7 +88,8 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { listSkills, readSkill } from '@/composables/bridge';
+import dayjs from 'dayjs';
+import { listSkills, readSkill, runCuratorReview } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail } from '@/composables/bridge';
 
 const { t } = useI18n();
@@ -102,6 +114,9 @@ const allSkills = ref<SkillInfo[]>([]);
 const activeCategory = ref<'builtin' | 'auto' | 'third_party'>('builtin');
 const selectedSkill = ref<SkillInfo | null>(null);
 const skillDetail = ref<SkillDetail | null>(null);
+const curatorRunning = ref(false);
+const curatorResult = ref('');
+const curatorError = ref('');
 
 const groupedSkills = computed(() => {
   const groups: Record<string, SkillInfo[]> = { builtin: [], auto: [], third_party: [] };
@@ -155,9 +170,38 @@ const selectSkill = async (skill: SkillInfo) => {
   }
 };
 
+const runCurator = async () => {
+  if (curatorRunning.value) return;
+  curatorRunning.value = true;
+  curatorResult.value = '';
+  curatorError.value = '';
+  try {
+    const resp = await runCuratorReview();
+    if (resp.success && resp.result) {
+      const r = resp.result;
+      const total = Object.values(r.auto_transitions).reduce((sum, n) => sum + n, 0);
+      const startedAt = dayjs(r.started_at).isValid()
+        ? dayjs(r.started_at).format('YYYY-MM-DD HH:mm')
+        : r.started_at;
+      curatorResult.value = `${t('skills.tabs.curatorDone')} ${startedAt} · ${total} ${t('skills.tabs.curatorTransitions')}${r.summary_so_far ? ` · ${r.summary_so_far}` : ''}`;
+    } else {
+      curatorError.value = resp.error || t('skills.tabs.curatorFailed');
+    }
+  } catch (e) {
+    console.error('[SkillsDialog] Curator run failed:', e);
+    curatorError.value = t('skills.tabs.curatorFailed');
+  } finally {
+    curatorRunning.value = false;
+  }
+  loadSkills();
+};
+
 const onHide = () => {
   selectedSkill.value = null;
   skillDetail.value = null;
   activeCategory.value = 'builtin';
+  curatorRunning.value = false;
+  curatorResult.value = '';
+  curatorError.value = '';
 };
 </script>

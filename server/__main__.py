@@ -2,8 +2,8 @@ import os
 import sys
 import nest_asyncio
 from logs import init_logger
-from config import STATIC_DIR, SRC_DIR
 from dotenv import load_dotenv
+from config import STATIC_DIR, SRC_DIR
 from config import API_HOST, API_PORT, ENV_PATH
 
 # Fix UnicodeEncodeError for emoji in Windows GBK terminal

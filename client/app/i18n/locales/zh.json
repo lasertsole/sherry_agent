@@ -51,7 +51,11 @@
     "tabs": {
       "builtin": "内置",
       "auto": "自动",
-      "thirdParty": "第三方"
+      "thirdParty": "第三方",
+      "runCurator": "技能维护",
+      "curatorDone": "技能维护完成：",
+      "curatorTransitions": "个自动变更",
+      "curatorFailed": "技能维护失败，请查看服务端日志"
     }
   },
   "logs": {
