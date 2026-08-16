@@ -3,7 +3,7 @@
     v-model:visible="visible"
     :header="t('extend.channelSettings.title', { name: channel?.display_name ?? channel?.name ?? '' })"
     :modal="true"
-    :closable="true"
+    :closable="false"
     class="w-[95vw] sm:w-[480px]"
     @show="init">
     <div class="flex flex-col gap-1">

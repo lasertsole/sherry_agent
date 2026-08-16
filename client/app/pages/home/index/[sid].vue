@@ -126,7 +126,17 @@ import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem, HitlRequestData } from '../type.ts';
 import { CHAT_ROLE } from '../type.ts';
 import type { CachedCharacter, CachedMessage } from '@/composables/db';
-import { DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter, cacheSessionMeta } from '@/composables/db';
+import {
+  DEFAULT_CACHED_CHARACTER,
+  cacheCharacter,
+  readCachedCharacter,
+  cacheSessionMeta,
+  saveDraftTurn,
+  readDraftTurns,
+  clearDraftTurn,
+  clearDraftSession,
+  type DraftTurn,
+} from '@/composables/db';
 import { tools } from '../config';
 import { resumeHitl, type AgentChunkType } from '@/composables/bridge';
 import { get_history_by_turn_page, getPendingInterrupt, postAgentStream, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
@@ -423,10 +433,41 @@ const loadSessionHistory = async (sessionId: string) => {
     // 仅当本地没有同 id 的消息时才补入，避免覆盖流式过程中已更新的内容
     if (!mergedById.has(h.id)) mergedById.set(h.id, h);
   }
+
+  // —— 草稿水合 ——
+  // 读取该会话在 IndexedDB 中的未完成草稿轮（error/stop/HITL-reject 等未落库的轮次，
+  // 以及服务端尚未把 onDone 结果写回时正在流式生成的轮次）。
+  //
+  // 每条草稿消息保留其「本地负临时 id」与「正 turn_num」。由于正 turn_num 与实时消息
+  // 同号，草稿行会自然排在同轮次已提交消息之后（见末段排序），不会像旧的负轮次方案
+  // 那样飘到已提交轮之前。且按 (session, turn, role, content) 与服务端/本地集合精确
+  // 匹配——若同一逻辑消息已被服务端落库（serverRowFor 命中）或已存在于本地集合，
+  // 则跳过该草稿行，避免同轮次内草稿与实时消息渲染重复。
+  const drafts = await readDraftTurns(sessionId);
+  for (const draft of drafts) {
+    for (const dm of draft.messages) {
+      if (dm.session_id !== sessionId) continue; // 防御：只水合本会话
+      // 草稿行在本地集合 / 服务端历史中是否已存在（按逻辑键匹配）
+      const alreadyLocal = [...mergedById.values()].some(
+        (m) =>
+          m.turn_num === dm.turn_num &&
+          m.role === dm.role &&
+          m.content === dm.content,
+      );
+      if (alreadyLocal) continue;
+      mergedById.set(dm.id, dm);
+    }
+  }
+
   // 按 turn_num 升序排序；同轮次内按 id 升序（与后端 messages 表
   // "ORDER BY turn_num ASC, id ASC" 一致）。此前用 id 降序会把同一轮次内
   // （用户消息 + AI 回复共享同一 turn_num）的插入顺序颠倒，导致刷新后
   // AI 回复跑到用户消息上面、最后一条 AI 回复不在最底部。
+  //
+  // 草稿行使用与实时消息相同的正 turn_num + 负临时 id：对已提交轮次，草稿 id 为负、
+  // 该轮真实消息 id 为正，同轮内按 id 升序（负 < 正）草稿排前者 —— 但同一逻辑消息
+  // 已被上方「跳过」逻辑剔除，能被水合进来的草稿都是尚未落库的失败轮次，因此不会
+  // 与实际渲染冲突。
   chatMessages.value = [...mergedById.values()].sort(
     (a, b) => a.turn_num - b.turn_num || a.id - b.id,
   );
@@ -474,6 +515,9 @@ const handleAbortStreamOnDelete = (deletedSid: unknown) => {
   // （删除非激活会话时槽位未必立即释放，随槽驻留的历史必须主动清除，
   //   使历史严格跟随会话删除，避免手动重访该 sid 时看到已删除会话的残留）。
   chatInputBoxRef.value?.clearHistory?.();
+  // 会话已删除：清除本会话在 IndexedDB 中的全部进行中草稿轮，防止孤儿草稿
+  // 在重建同 id 会话后错误重水合（Draft 表仍带原会话已删除内容）。
+  void clearDraftSession(mySid);
 };
 
 /** HITL 审批请求（当 agent 暂停等待人工审批时设置） */
@@ -520,6 +564,10 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
   const turnNum =
     chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
 
+  // 登记本次 resume 轮次的草稿（与 handleSend 一致），使 appendStreamChunk 能实时落盘；
+  // resume 流正常结束时对账移除，拒绝/失败时保留草稿缓存失败阶段内容。
+  trackDraftTurn(sid, turnNum);
+
   const onChunk = (
     content: string,
     type: AgentChunkType,
@@ -536,6 +584,8 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
   // 工具卡片标记为 failed（UI 由转圈 spinner 变为红色 ✗），避免永久停在加载中。
   if (decision === 'reject') {
     markRunningToolsFailed();
+    // 拒绝不会触发后端回包，立即把含 failed 状态的草稿落盘，保证刷新后失败进度可见
+    void writeDraftTurn(sid, turnNum);
   }
 
   /**
@@ -555,14 +605,25 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
       hitlRequest.value = null;
     }
   };
-  promise.then(finish).catch(() => {
-    // 出错时同样清理，保持输入可用；卡片的关闭由其他流程决定
-    if (activeHitlController === controller) activeHitlController = null;
-    activeAgentController = null;
-    // HITL resume 失败：进行中的工具未正常完成，标记为 failed（红 ✗）
-    markRunningToolsFailed();
-    isSending.value = false;
-  });
+  promise
+    .then(() => {
+      // 正常完成：先落最终草稿再对账移除（与 handleSend onDone 一致）
+      return commitDraftTurn(sid, turnNum).then(() => {
+        untrackDraftTurn(sid, turnNum);
+        finish();
+        void loadSessionHistory(sid);
+      });
+    })
+    .catch(() => {
+      // 出错时同样清理，保持输入可用；卡片的关闭由其他流程决定
+      if (activeHitlController === controller) activeHitlController = null;
+      activeAgentController = null;
+      // HITL resume 失败：进行中的工具未正常完成，标记为 failed（红 ✗）
+      markRunningToolsFailed();
+      // 保留草稿：把失败前已完成阶段缓存下来
+      void writeDraftTurn(sid, turnNum);
+      isSending.value = false;
+    });
 
   // 已响应本次审批，收起卡片（若 resume 中 agent 再次暂停会重新弹出）
   hitlRequest.value = null;
@@ -606,6 +667,12 @@ const handleStop = () => {
   activeHitlController = null;
   // 中止的回合未完成，把进行中的工具卡片标记为 failed（红 ✗）
   markRunningToolsFailed();
+  // 中止同样属于「未完成轮」：为当前会话所有活动草稿轮各落一版含失败状态的快照，
+  // 保证停止后刷新仍能看到已产出的寒暄/分析/前置工具阶段，而非整轮消失。
+  const sid = sessionId.value || 'default';
+  for (const turnNum of [...activeDraftTurns]) {
+    void writeDraftTurn(sid, turnNum);
+  }
   // 中止后待审批卡已被本次审批处理过，无需重复展示
   hitlRequest.value = null;
   isSending.value = false;
@@ -646,6 +713,9 @@ const appendStreamChunk = (
   meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
 ) => {
   const last = chatMessages.value[chatMessages.value.length - 1];
+  // 判定是否属于一条「活动草稿轮」（发送即 created，onDone/error/stop 后移除）。
+  // 命中时在尾部分层写入草稿：文本追加 200ms 去抖，离散 tool/首文本立即落盘。
+  const isActiveDraft = isDraftTurnActive(turnNum);
   if (type === 'text') {
     if (last && last.role === CHAT_ROLE.AI && last.turn_num === turnNum) {
       // 同轮次末位是 AI → 追加正文
@@ -661,6 +731,7 @@ const appendStreamChunk = (
         timestamp: new Date().toISOString(),
       });
     }
+    if (isActiveDraft) scheduleDraftWrite(sid, turnNum);
   } else if (type === 'tool_start') {
     chatMessages.value.push({
       session_id: sid,
@@ -674,6 +745,7 @@ const appendStreamChunk = (
       turn_num: turnNum,
       timestamp: new Date().toISOString(),
     });
+    if (isActiveDraft) void commitDraftTurn(sid, turnNum);
   } else if (type === 'tool_end') {
     // 标记最近一条本回合 TOOL 消息为已完成
     for (let i = chatMessages.value.length - 1; i >= 0; i--) {
@@ -683,6 +755,7 @@ const appendStreamChunk = (
         break;
       }
     }
+    if (isActiveDraft) void commitDraftTurn(sid, turnNum);
   } else if (type === 'tool_result') {
     // 填充最近一条本回合 TOOL 消息的参数与结果文本，并按 error 标记状态
     for (let i = chatMessages.value.length - 1; i >= 0; i--) {
@@ -695,6 +768,8 @@ const appendStreamChunk = (
         break;
       }
     }
+    // tool_result 是离散阶段，立即落盘（无论成功或 error 都保留前置内容）
+    if (isActiveDraft) void commitDraftTurn(sid, turnNum);
   }
   // 触发响应式更新
   chatMessages.value = [...chatMessages.value];
@@ -716,6 +791,127 @@ const markRunningToolsFailed = () => {
     return m;
   });
   if (!changed) chatMessages.value = [...chatMessages.value];
+};
+
+/**
+ * 进行中草稿的离散写频控制。
+ *
+ * 关键设计：草稿消息**沿用其所在的真实 `turn_num`**（与 `handleSend`/HITL resume 为消息
+ * 分配的正轮次一致），而非独立的负草稿轮次。原因有二：
+ *
+ * 1. **排序自然**：`loadSessionHistory` 按 `turn_num` 升序排序。草稿沿用真实 turn_num
+ *    即出现在其逻辑位置（in-flight/error 轮次之后紧挨的正确轮次），无需特殊处理。
+ * 2. **对账去重可行**：服务端只有在该轮 agent 完整成功返回时（`aafter_agent`）才会落库，
+ *    in-flight / error 的轮在服务端**完全没有行**，故草稿沿用该轮 turn_num 不会与已落库
+ *    消息重号；而对账时 `serverRowFor` 按「同 session + 同 turn_num + 同 role + 同 content」
+ *    精确匹配，恰好能用服务端正 id 行替换本地草稿的负临时 id 行，实现自然去重。
+ *
+ * 因此 `drafts` 表以 `[session_id + turn_num]` 为主键，同一轮反复覆盖写即「每步缓存」。
+ */
+
+/**
+ * 将当前 `chatMessages` 中属于指定轮次的全部消息，整体持久化为一张本地草稿。
+ *
+ * 仅保存 `turn_num === turnNum` 的消息，避免覆盖到与本次发送/本次 resume 无关的轮次。
+ *
+ * @param sid      会话 id
+ * @param turnNum  本轮次（流回调使用的真实 turn_num）
+ */
+const writeDraftTurn = async (sid: string, turnNum: number) => {
+  const rows = chatMessages.value.filter((m) => m.turn_num === turnNum);
+  if (rows.length === 0) return; // 本轮还没有任何消息，无需写空草稿
+  // 深拷贝，避免后续流式修改污染已落盘草稿
+  const snapshot = rows.map((m) =>
+    m.role === CHAT_ROLE.TOOL
+      ? {
+          ...m,
+          toolArgs: m.toolArgs ? JSON.parse(JSON.stringify(m.toolArgs)) : undefined,
+        }
+      : { ...m, images: m.images ? [...m.images] : undefined },
+  );
+  try {
+    await saveDraftTurn({ session_id: sid, turn_num: turnNum, messages: snapshot });
+  } catch (e) {
+    console.warn('[writeDraftTurn] 草稿写入失败：', sid, turnNum, e);
+  }
+};
+
+/** 文本追加草稿的 200ms 去抖计时器（key: `${sid}:${turnNum}`） */
+const draftDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * 排定一次「文本追加」的草稿写入（200ms trailing 去抖）。
+ *
+ * 高频率文本 chunk 不逐条落盘，改为去抖合并；离散阶段（send / tool 各阶段 / error /
+ * 首个文本 / 服务端完成）则由调用方走 `commitDraftTurn` 立即写入。
+ */
+const scheduleDraftWrite = (sid: string, turnNum: number) => {
+  const key = `${sid}:${turnNum}`;
+  const existing = draftDebounceTimers.get(key);
+  if (existing) clearTimeout(existing);
+  draftDebounceTimers.set(
+    key,
+    setTimeout(() => {
+      draftDebounceTimers.delete(key);
+      void writeDraftTurn(sid, turnNum);
+    }, 200),
+  );
+};
+
+/**
+ * 立即写入草稿（离散阶段调用）并取消该轮未决的文本去抖计时。
+ * 若该轮文字追加仍在排程中，先落一次当前快照再清除计时，避免重复写。
+ */
+const commitDraftTurn = async (sid: string, turnNum: number) => {
+  const key = `${sid}:${turnNum}`;
+  const pending = draftDebounceTimers.get(key);
+  if (pending) {
+    clearTimeout(pending);
+    draftDebounceTimers.delete(key);
+  }
+  await writeDraftTurn(sid, turnNum);
+};
+
+/**
+ * 清除某轮草稿并取消其未决去抖计时（服务端成功落库对账 / 清空会话时调用）。
+ */
+const removeDraftTurn = (sid: string, turnNum: number) => {
+  const key = `${sid}:${turnNum}`;
+  const pending = draftDebounceTimers.get(key);
+  if (pending) {
+    clearTimeout(pending);
+    draftDebounceTimers.delete(key);
+  }
+  void clearDraftTurn(sid, turnNum);
+};
+
+/**
+ * 正在进行流式生成的「活动轮次」集合（元素为真实 turn_num）。
+ *
+ * `handleSend` 与「HITL resume」发起流式时各 push 一个 turn_num；流正常结束/报错/中止/
+ * 拒绝时移除。`appendStreamChunk` 只有在 turn_num 属于该集合时才写草稿，避免对历史行
+ * 误触发写盘。
+ */
+const activeDraftTurns = new Set<number>();
+
+/** 登记一条活动的草稿轮次（发送时创建，完成后移除）。 */
+const trackDraftTurn = (sid: string, turnNum: number) => {
+  activeDraftTurns.add(turnNum);
+  // 首次创建即写一张草稿，保证「发送即缓存」的最快帧（用户消息 + 空 AI 占位）。
+  void writeDraftTurn(sid, turnNum);
+};
+
+/** 判定某轮是否处于活动草稿写盘态。 */
+const isDraftTurnActive = (turnNum: number): boolean => activeDraftTurns.has(turnNum);
+
+/**
+ * 移除某轮次的草稿登记。服务端成功落库后调用：清除草稿 + 取消未决去抖计时，
+ * 由调用方随后触发 `loadSessionHistory` 用服务端正 id 行替换本地负临时 id 行。
+ */
+const untrackDraftTurn = (sid: string, turnNum: number) => {
+  const had = activeDraftTurns.delete(turnNum);
+  removeDraftTurn(sid, turnNum);
+  void had; // keep ref for clarity
 };
 
 /**
@@ -765,6 +961,11 @@ const handleSend = async (text: string) => {
 
   isSending.value = true;
 
+  // 登记本轮为「活动草稿轮次」，使 appendStreamChunk 能据此落盘；
+  // 首次登记即写一版「发送即缓存」帧（用户消息 + 空 AI 占位）。
+  // 在流正常完成（onDone）时移除；报错/中止/拒绝时保留草稿缓存失败阶段内容。
+  trackDraftTurn(sid, turnNum);
+
   /**
    * 流式 chunk 回调：复用共享的 `appendStreamChunk` 按语义类型动态管理消息分段
    * （text/tool_start/tool_end），与 HITL resume 路径共用同一套渲染逻辑。
@@ -786,23 +987,35 @@ const handleSend = async (text: string) => {
       req,
       onStreamChunk,
       () => {
-        // 流正常结束，解锁输入框
-        activeAgentController = null;
-        isSending.value = false;
+        // 流正常结束：先落一版最终草稿（防止最后一刻的文本变更未被去抖写入），
+        // 再移除当前轮草稿登记并触发历史对账——服务端此时已将本轮落库为正 turn_num 消息，
+        // loadSessionHistory 会用端正 id 替换本地的负临时 id，从而去重。
+        void commitDraftTurn(sid, turnNum).then(() => {
+          untrackDraftTurn(sid, turnNum);
+          activeAgentController = null;
+          isSending.value = false;
+          void loadSessionHistory(sid);
+        });
       },
       (err) => {
+        // 流式出错：进行中的工具调用未正常完成，标记为 failed（红 ✗）。
+        // 草稿**保留**——把已完成的寒暄/分析/前置工具阶段内容缓存下来，
+        // 不因最终结果未输出而丢失，用户刷新后仍能看见失败前的进度。
         activeAgentController = null;
         aiMsg.content = t('errors.replyFailed', { reason: String(err) });
-        // 流式出错：进行中的工具调用未正常完成，标记为 failed（红 ✗）
         markRunningToolsFailed();
+        // 落一版含失败状态的草稿快照
+        void writeDraftTurn(sid, turnNum);
         isSending.value = false;
       },
       handleHitlRequest,
     );
   } catch (e) {
-    // 同步抛错（罕见），此时流未启动，直接解锁
+    // 同步抛错（罕见），此时流未启动，直接解锁。
+    // 同样保留草稿：用户消息 + 空 AI 占位 + 失败提示均已缓存。
     activeAgentController = null;
     aiMsg.content = t('errors.sendFailed', { reason: String(e) });
+    void writeDraftTurn(sid, turnNum);
     isSending.value = false;
   }
 };

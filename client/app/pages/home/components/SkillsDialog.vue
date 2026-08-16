@@ -22,13 +22,24 @@
             @click="activeCategory = cat.key" />
         </div>
         <div v-if="activeCategory === 'auto'" class="flex items-center gap-3">
-          <Button
-            :label="t('skills.tabs.runCurator')"
-            :loading="curatorRunning"
-            :disabled="curatorRunning"
-            icon="pi pi-refresh"
-            size="small"
-            @click="runCurator" />
+          <div class="flex items-center gap-1">
+            <Button
+              :label="t('skills.tabs.runCurator')"
+              :loading="curatorRunning"
+              :disabled="curatorRunning"
+              icon="pi pi-refresh"
+              size="small"
+              @click="runCurator" />
+            <Button
+              v-tooltip.right="t('skills.tabs.runCuratorHint')"
+              icon="pi pi-question-circle"
+              severity="secondary"
+              text
+              rounded
+              size="small"
+              :aria-label="t('skills.tabs.runCurator')"
+              class="p-button-icon-only" />
+          </div>
           <span v-if="curatorResult" class="text-xs text-gray-500 dark:text-gray-400">{{ curatorResult }}</span>
           <span v-else-if="curatorError" class="text-xs text-red-500 dark:text-red-400">{{ curatorError }}</span>
         </div>
