@@ -8,12 +8,12 @@
 
 ## 概述
 
-Channels 模块采用插件化架构，可以轻松添加新的聊天平台集成。每个通道都实现为继承自 `BaseChannel` 的类，通过消息总线与系统进行通信。通道实现以独立 Python 文件形式存放在 `plugins/channels/` 目录下（运行时通过 pkgutil 自动发现），而非本包内。
+Channels 模块采用插件化架构，可以轻松添加新的聊天平台集成。每个通道都实现为继承自 `BaseChannel` 的类，通过消息总线与系统进行通信。通道实现以独立目录（文件夹）形式存放在 `plugins/channels/` 目录下（运行时扫描含 `core.py` 的目录自动发现），而非本包内。
 
 ## 主要功能
 
 - **统一接口**：所有聊天平台共享通用的 `BaseChannel` 接口
-- **插件系统**：支持内置通道（`plugins/channels/` 下，通过 pkgutil 发现）和通过 entry points 注册的外部插件
+- **插件系统**：支持内置通道（`plugins/channels/` 下，扫描含 `core.py` 的目录发现）和通过 entry points 注册的外部插件
 - **消息路由**：自动路由入站和出站消息
 - **访问控制**：可配置的发件人白名单 (`allow_from`)；空列表拒绝所有
 - **异步处理**：基于 asyncio 构建，支持并发消息处理
@@ -62,8 +62,8 @@ channels/
 
 自动发现可用的通道：
 
-- `discover_channel_names()`：使用 pkgutil 扫描 `plugins/channels/` 下的 `.py` 模块
-- `load_channel_class(module_name)`：动态导入通道模块并查找第一个 `BaseChannel` 子类
+- `discover_channel_names()`：扫描 `plugins/channels/` 下的通道**目录**（子目录，而非单文件），仅识别含 `core.py` 的文件夹
+- `load_channel_class(module_name)`：动态导入通道目录的 `core.py` 并查找第一个 `BaseChannel` 子类
 - `discover_plugins()`：通过 `entry_points(group="channels")` 加载外部插件
 - `discover_all()`：合并内置和外部通道（内置优先 — 外部不能覆盖内置名称）
 
@@ -115,7 +115,16 @@ loop = channel_manager.get_event_loop()
 
 ### 实现新通道
 
-在 `plugins/channels/` 下创建新的 `.py` 文件：
+在 `plugins/channels/` 下创建一个新的**目录（文件夹）**，以通道名称命名，
+例如 `plugins/channels/my_channel/`。该目录只包含一个 `core.py`；真正的
+`BaseChannel` 子类必须定义在其中（或从这里重新导出）。无需 `__init__.py`：
+
+```text
+plugins/channels/
+├── config.json              # 通道配置
+└── my_channel/              # ← 通道目录，以通道名称命名
+    └── core.py              #  定义 / 导出 BaseChannel 子类
+```
 
 ```python
 from channels.base import BaseChannel
@@ -145,7 +154,8 @@ class MyChannel(BaseChannel):
         return {"enabled": False, "allow_from": ["*"]}
 ```
 
-注册中心会自动发现并加载该通道。
+注册中心会自动扫描 `plugins/channels/` 下的通道目录并动态导入每个目录的
+`core.py` 来加载该通道。
 
 ## 架构
 
@@ -165,7 +175,7 @@ class MyChannel(BaseChannel):
 │  (插件)       │   │  通道 (插件)   │   │  通道 (插件)   │
 │  plugins/     │   │               │   │               │
 │  channels/    │   │               │   │               │
-│  qq.py        │   │               │   │               │
+│  qq/          │   │               │   │               │
 └───────────────┘   └───────────────┘   └───────────────┘
          │                     │                     │
          └─────────────────────┼─────────────────────┘

@@ -1,11 +1,11 @@
 {
-  "qq":{
-    "enabled": false,
-    "allow_from": ["*"],
-    "app_id": "",
-    "receiver": "",
+  "qq": {
+    "enabled": true,
+    "allow_from": [
+      "*"
+    ],
     "secret": "",
-    "heartbeat": true,
-    "cron": true
+    "heartbeat": false,
+    "cron": false
   }
 }

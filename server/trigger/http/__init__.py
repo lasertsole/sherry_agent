@@ -6,3 +6,4 @@ import server.trigger.http.image
 import server.trigger.http.skills
 import server.trigger.http.logs
 import server.trigger.http.curator
+import server.trigger.http.channels

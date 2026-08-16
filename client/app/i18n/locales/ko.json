@@ -39,6 +39,7 @@
     "skills": "스킬",
     "systemConfig": "시스템 설정",
     "logs": "로그",
+    "extend": "확장",
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기"
   },
@@ -52,9 +53,38 @@
       "auto": "자동",
       "thirdParty": "타사",
       "runCurator": "스킬 유지보수",
+      "runCuratorHint": "자동(Auto) 학습된 스킬을 자동으로 검토하여 유사하거나 중복된 스킬을 병합하고, 오래 사용되지 않은 스킬을 표시·보관하여 스킬 라이브러리를 정돈합니다.",
       "curatorDone": "스킬 유지보수 완료：",
       "curatorTransitions": "개 자동 변경",
       "curatorFailed": "스킬 유지보수 실패. 서버 로그를 확인하세요"
+    }
+  },
+  "extend": {
+    "title": "확장",
+    "empty": "아직 내용이 없습니다",
+    "channelHint": "채널 데이터 소스 API는 계획 중입니다",
+    "enabled": "활성화",
+    "disabled": "비활성화",
+    "mcpHint": "MCP 서버가 아직 설정되지 않았습니다",
+    "channelSettings": {
+      "title": "{name} 설정",
+      "enabled": "채널 활성화",
+      "heartbeat": "하트비트",
+      "heartbeatHint": "유휴 시 대기 중인 작업 자동 확인",
+      "cron": "정기 작업",
+      "cronHint": "cron 표현식으로 주기적 작업 실행 허용",
+      "config": "채널 구성",
+      "configEmpty": "구성 항목 없음",
+      "configBool": "불리언 값",
+      "configPlain": "객체/배열은 JSON 텍스트로 편집",
+      "configLoadFailed": "채널 구성 로드 실패",
+      "save": "저장",
+      "cancel": "취소",
+      "saveFailed": "설정 저장에 실패했습니다"
+    },
+    "tabs": {
+      "channel": "채널",
+      "mcp": "MCP"
     }
   },
   "logs": {

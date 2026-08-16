@@ -828,6 +828,20 @@ export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
 }
 
 /**
+ * List all available channels.
+ *
+ * Mirrors `listSkills`: a timestamp query param busts Nuxt's `useFetch` GET
+ * cache so repeated calls always return fresh channel status.
+ */
+export async function listChannels(): Promise<{ channels: ChannelInfo[] }> {
+  return fetchApi({
+    url: '/channels',
+    opts: { _ts: Date.now() },
+    method: 'get',
+  }) as unknown as Promise<{ channels: ChannelInfo[] }>;
+}
+
+/**
  * Read a single skill's full SKILL.md content.
  */
 export async function readSkill(location: string): Promise<SkillDetail> {
@@ -906,6 +920,86 @@ export interface SkillInfo {
 
 export interface SkillDetail extends SkillInfo {
   content: string;
+}
+
+// ── Channels ─────────────────────────────────────────────
+
+export interface ChannelInfo {
+  name: string;
+  display_name: string;
+  enabled: boolean;
+  /** Persisted runtime toggle; gates scheduled heartbeat delivery (also needs a receiver). */
+  heartbeat: boolean;
+  /** Persisted runtime toggle for scheduled/cron behavior. */
+  cron: boolean;
+  icon: string;
+}
+
+/** Body for `updateChannel` — only the boolean toggles exposed by the settings UI. */
+export interface ChannelUpdate {
+  enabled?: boolean;
+  heartbeat?: boolean;
+  cron?: boolean;
+}
+
+/**
+ * Persist per-channel runtime toggles (enabled/heartbeat/cron) to the backend.
+ *
+ * No Tauri IPC command exists for channels yet, so unlike write flows that
+ * round-trip through Rust, channel writes go straight to the Python REST API
+ * in both modes (mirrors `listChannels`).
+ */
+export async function updateChannel(
+  channelName: string,
+  update: ChannelUpdate,
+): Promise<ChannelInfo> {
+  return fetchApi({
+    url: `/channels/${channelName}`,
+    opts: { ...update },
+    method: 'put',
+  }) as unknown as Promise<ChannelInfo>;
+}
+
+/**
+ * Free-form per-channel config dict, persisted to
+ * plugins/channels/<name>/config.json (e.g. { app_id, receiver } for QQ).
+ */
+export type ChannelConfig = Record<string, unknown>;
+
+/** Body/wrapper of `getChannelConfig`. */
+export interface ChannelConfigResponse {
+  channel_name: string;
+  config: ChannelConfig;
+}
+
+/**
+ * Read a channel's own config.json (plugins/channels/<name>/config.json),
+ * returned as a free-form key/value map so the settings UI can render/edit
+ * arbitrary fields (strings, numbers, booleans, lists).
+ */
+export async function getChannelConfig(
+  channelName: string,
+): Promise<ChannelConfigResponse> {
+  return fetchApi({
+    url: `/channels/${channelName}/config`,
+    opts: { _ts: Date.now() },
+    method: 'get',
+  }) as unknown as Promise<ChannelConfigResponse>;
+}
+
+/**
+ * Persist a channel's own config.json wholesale. The dict is stored verbatim,
+ * preserving each value's JSON type. Mirrors the PUT semantics of the backend.
+ */
+export async function updateChannelConfig(
+  channelName: string,
+  config: ChannelConfig,
+): Promise<ChannelConfigResponse> {
+  return fetchApi({
+    url: `/channels/${channelName}/config`,
+    opts: { ...config },
+    method: 'put',
+  }) as unknown as Promise<ChannelConfigResponse>;
 }
 
 // ── Logs ────────────────────────────────────────────────

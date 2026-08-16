@@ -8,12 +8,12 @@
 
 ## 개요
 
-channels 모듈은 새로운 채팅 플랫폼 통합을 쉽게 추가할 수 있는 플러그인 기반 아키텍처를 구현합니다. 각 채널은 `BaseChannel`을 확장하는 클래스로 구현되며 메시지 버스를 통해 시스템과 통신합니다. 채널 구현은 이 패키지 내부가 아니라 `plugins/channels/` 아래의 별도 Python 파일로 존재하며(런타임 시 pkgutil로 발견), 이 패키지 내부에는 없습니다.
+channels 모듈은 새로운 채팅 플랫폼 통합을 쉽게 추가할 수 있는 플러그인 기반 아키텍처를 구현합니다. 각 채널은 `BaseChannel`을 확장하는 클래스로 구현되며 메시지 버스를 통해 시스템과 통신합니다. 채널 구현은 이 패키지 내부가 아니라 `plugins/channels/` 아래의 별도 디렉터리로 존재하며(`core.py`가 포함된 폴더를 검색하여 런타임 시 발견), 이 패키지 내부에는 없습니다.
 
 ## 주요 기능
 
 - **통합 인터페이스**: 모든 채팅 플랫폼이 공통 `BaseChannel` 인터페이스를 공유합니다
-- **플러그인 시스템**: 내장 채널(`plugins/channels/` 아래, pkgutil로 발견)과 entry points를 통한 외부 플러그인을 모두 지원합니다
+- **플러그인 시스템**: 내장 채널(`plugins/channels/` 아래, `core.py`가 포함된 폴더 검색으로 발견)과 entry points를 통한 외부 플러그인을 모두 지원합니다
 - **메시지 라우팅**: 인바운드 및 아웃바운드 메시지 라우팅을 자동 처리합니다
 - **접근 제어**: 허용된 발신자에 대한 화이트리스트(`allow_from`)를 구성할 수 있습니다. 빈 목록은 모두 거부합니다
 - **비동기 처리**: asyncio 기반으로 동시 메시지 처리를 지원합니다
@@ -62,8 +62,8 @@ channels/
 
 사용 가능한 채널을 자동 발견합니다:
 
-- `discover_channel_names()`: pkgutil로 `plugins/channels/`의 `.py` 모듈을 검색
-- `load_channel_class(module_name)`: 채널 모듈을 동적으로 가져와 첫 번째 `BaseChannel` 하위 클래스를 찾음
+- `discover_channel_names()`: pkgutil 없이 `plugins/channels/`의 채널 **디렉터리**(하위 디렉터리, 단일 파일 아님)를 검색하며 `core.py`가 포함된 폴더만 인식
+- `load_channel_class(module_name)`: 채널 디렉터리의 `core.py`를 동적으로 가져와 첫 번째 `BaseChannel` 하위 클래스를 찾음
 - `discover_plugins()`: `entry_points(group="channels")`로 등록된 외부 플러그인 로드
 - `discover_all()`: 내장 및 외부 채널 병합 (내장 우선 — 외부가 내장 이름을 가릴 수 없음)
 
@@ -115,7 +115,17 @@ loop = channel_manager.get_event_loop()
 
 ### 새 채널 구현
 
-`plugins/channels/` 아래에 새 `.py` 파일을 만듭니다:
+`plugins/channels/` 아래에 채널 이름을 딴 새 **디렉터리(폴더)**를 만듭니다.
+예: `plugins/channels/my_channel/`. 이 폴더에는 `core.py`만 들어갑니다. 실제
+`BaseChannel` 하위 클래스는 여기에 정의하거나(또는 여기서 다시 내보내기)
+해야 합니다. `__init__.py`는 필요하지 않습니다:
+
+```text
+plugins/channels/
+├── config.json              # 채널 설정
+└── my_channel/              # ← 채널 폴더, 채널 이름을 따서 명명
+    └── core.py              #  BaseChannel 하위 클래스 정의 / 다시 내보내기
+```
 
 ```python
 from channels.base import BaseChannel
@@ -145,7 +155,7 @@ class MyChannel(BaseChannel):
         return {"enabled": False, "allow_from": ["*"]}
 ```
 
-레지스트리는 `plugins/channels/`를 검색하여 자동으로 채널을 발견하고 로드합니다.
+레지스트리는 `plugins/channels/` 아래의 채널 디렉터리를 검색하여 자동으로 채널을 발견하고 각 폴더의 `core.py`를 동적으로 가져와 로드합니다.
 
 ## 아키텍처
 
@@ -165,7 +175,7 @@ class MyChannel(BaseChannel):
 │  (플러그인)   │   │  채널 (플러그인) │   │  채널 (플러그인) │
 │  plugins/     │   │               │   │               │
 │  channels/    │   │               │   │               │
-│  qq.py        │   │               │   │               │
+│  qq/          │   │               │   │               │
 └───────────────┘   └───────────────┘   └───────────────┘
          │                     │                     │
          └─────────────────────┼─────────────────────┘

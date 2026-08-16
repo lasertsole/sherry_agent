@@ -39,6 +39,7 @@
     "skills": "スキル",
     "systemConfig": "システム設定",
     "logs": "ログ",
+    "extend": "拡張",
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開"
   },
@@ -52,9 +53,38 @@
       "auto": "自動",
       "thirdParty": "第三者の",
       "runCurator": "スキルメンテナンス",
+      "runCuratorHint": "オート（自動学習）スキルを自動的にレビューし、類似・重複したスキルを統合するとともに、長期間未使用のスキルをマーク・アーカイブして、スキルライブラリを整理します。",
       "curatorDone": "スキルメンテナンス完了：",
       "curatorTransitions": "件の自動変更",
       "curatorFailed": "スキルメンテナンスに失敗しました。サーバーログを確認してください"
+    }
+  },
+  "extend": {
+    "title": "拡張",
+    "empty": "まだコンテンツがありません",
+    "channelHint": "チャンネルのデータソース API は計画中です",
+    "enabled": "有効",
+    "disabled": "無効",
+    "mcpHint": "MCP サーバーはまだ設定されていません",
+    "channelSettings": {
+      "title": "{name} 設定",
+      "enabled": "チャンネルを有効化",
+      "heartbeat": "ハートビート",
+      "heartbeatHint": "アイドル時に保留タスクを自動チェック",
+      "cron": "定期タスク",
+      "cronHint": "cron 式による定期タスク実行を許可",
+      "config": "チャンネル設定",
+      "configEmpty": "設定項目なし",
+      "configBool": "ブール値",
+      "configPlain": "オブジェクト/配列は JSON テキストで編集",
+      "configLoadFailed": "チャンネル設定の読み込みに失敗",
+      "save": "保存",
+      "cancel": "キャンセル",
+      "saveFailed": "設定の保存に失敗しました"
+    },
+    "tabs": {
+      "channel": "チャンネル",
+      "mcp": "MCP"
     }
   },
   "logs": {

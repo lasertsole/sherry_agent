@@ -40,6 +40,7 @@
     "skills": "Skills",
     "systemConfig": "System Config",
     "logs": "Logs",
+    "extend": "Extend",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar"
   },
@@ -53,9 +54,38 @@
       "auto": "Auto",
       "thirdParty": "Third-Party",
       "runCurator": "Skill maintenance",
+      "runCuratorHint": "Automatically reviews auto-learned skills, merges similar or duplicate skills, and marks/archives long-unused skills to keep the skill library tidy.",
       "curatorDone": "Skill maintenance complete:",
       "curatorTransitions": "auto transitions",
       "curatorFailed": "Skill maintenance failed, check server logs"
+    }
+  },
+  "extend": {
+    "title": "Extend",
+    "empty": "Nothing here yet",
+    "channelHint": "Channel data source API is under planning",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "mcpHint": "No MCP servers configured",
+    "channelSettings": {
+      "title": "{name} Settings",
+      "enabled": "Enable Channel",
+      "heartbeat": "Heartbeat",
+      "heartbeatHint": "Automatically check pending tasks when idle",
+      "cron": "Scheduled Tasks",
+      "cronHint": "Allow tasks to run on a cron schedule",
+      "config": "Channel Config",
+      "configEmpty": "No config items",
+      "configBool": "Boolean value",
+      "configPlain": "Objects/arrays edited as JSON text",
+      "configLoadFailed": "Failed to load channel config",
+      "save": "Save",
+      "cancel": "Cancel",
+      "saveFailed": "Failed to save settings"
+    },
+    "tabs": {
+      "channel": "Channels",
+      "mcp": "MCP"
     }
   },
   "logs": {
