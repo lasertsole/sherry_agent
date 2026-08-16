@@ -850,6 +850,8 @@ export interface CuratorRunResult {
   auto_transitions: CuratorAutoTransitions;
   /** Human-readable run summary (e.g. "no changes"). */
   summary_so_far: string;
+  /** Present when the LLM consolidation pass failed (e.g. model not configured). */
+  error?: string;
 }
 
 /** Response of `POST /curator/run`. */

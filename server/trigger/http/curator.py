@@ -21,6 +21,11 @@ async def run_curator_handler(request):
     try:
         result = run_curator_review()
         logger.debug(f"Curator force-run completed: {result}")
+        # LLM 层失败时未抛出异常，而是通过结果里的 error 字段标记。
+        # 必须显式识别，否则前端会误报「维护完成」。
+        if result.get("error"):
+            logger.warning(f"Curator force-run LLM failed: {result['error']}")
+            return {"success": False, "error": result["error"], "result": result}
         return {"success": True, "result": result}
     except Exception as e:
         logger.exception("Curator force-run failed: {}", e)

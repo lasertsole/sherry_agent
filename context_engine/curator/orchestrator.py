@@ -236,11 +236,17 @@ def run_curator_review(
         except Exception:
             pass
 
-    return {
+    result: dict[str, Any] = {
         "started_at": start.isoformat(),
         "auto_transitions": counts,
         "summary_so_far": auto_summary,
     }
+    # LLM 层失败（未配置/调用异常）时，携带错误标记，供 HTTP handler 区分为
+    # success=False，避免前端误报「维护完成」。
+    if llm_meta.get("error"):
+        result["error"] = str(llm_meta["error"])
+        result["summary_so_far"] = f"{auto_summary}; llm: {llm_meta.get('summary') or 'error'}"
+    return result
 
 
 def maybe_run_curator(
