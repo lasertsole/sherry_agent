@@ -245,35 +245,68 @@ prunings:
 
 ### _generate_umbrella_skill()
 
-各新しいアンブレラスキルに対して、LLM を介して統合された SKILL.md を作成します:
+各新しいアンブレラスキルに対して、統合されたアンブレラスキルを作成します。この関数は**メイン**の
+`SKILL.md` コンテンツと、LLM が分割した任意の**サポートファイル**のマッピングの**両方**を返し、
+メインドキュメントを簡潔に保ちます:
 
 ```
 _generate_umbrella_skill(umbrella, reasons, source_content, file_inventory)
+  → (main_content: str, supporting_files: dict[path, content])
   │
   ├── Build LLM (build_main_llm, temperature=0.3)
   ├── System prompt: skill librarian creating umbrella skill
-  │     - Output ONLY SKILL.md content (YAML frontmatter + markdown body)
+  │     - Output one or more file blocks, each starting with a '<<<PATH>>>' header
+  │     - FIRST block MUST be '<<<SKILL.md>>>' (YAML frontmatter + markdown body)
+  │     - Extra blocks permitted UNDER allowed subdirectories:
+  │         references/, templates/, scripts/, assets/, examples/, resources/
+  │     - Keep SKILL.md under ~15k characters (it is loaded on every skill use)
+  │     - Offload bulky material into supporting blocks instead of inflating SKILL.md
+  │       (long API docs → references/, runnable demos → examples/, helper logic → scripts/)
+  │     - Reference each supporting file with a relative link + one-line description
   │     - frontmatter: name, description, created_by: curator
   │     - Synthesize & deduplicate overlapping instructions
-  │     - Organize with ## headings per concern area
-  │     - Include "## When to use" section
-  │     - Reference migrated support files with relative links
   │
   ├── User prompt: umbrella name + merge reasons + source skill content + file inventory
   │
-  ├── On success → return generated SKILL.md content
-  └── On failure → return fallback skeleton with concatenated source content
+  ├── Parse response via _parse_multifile_umbrella():
+  │     - Splits blocks on '<<<PATH>>>' headers deterministically
+  │     - SKILL.md block → main content; other allowed-subdir blocks → supporting_files
+  │     - Invalid paths / empty bodies are dropped with a warning
+  │     - No valid headers → whole response treated as SKILL.md (historical fallback)
+  │
+  ├── On success → return (main_content, supporting_files)
+  └── On failure/fallback → return (fallback skeleton SKILL.md, empty dict)
 ```
+
+**ファイルの永続化**(`_apply_consolidation`):
+
+**ハードな長さ制限** (`skill_manage` と共有):
+
+LLM が返した後、アンブレラ `SKILL.md` のメインコンテンツは
+`skill_manage.split_oversized_skill(main_content, _UMBRELLA_SKILL_CHAR_TARGET, supporting_files)`
+を通過します。これは `skill_manage` で通常のスキルを作成・編集する際に使われるのと同じ
+決定的なガードです。メインコンテンツが 15,000 文字の目標を超えると、関数は `## ` 見出しに沿って
+これを `references/partNN.md` 参照ファイルに分割し、各セクションを簡潔なスタブリンクに置き換えます —
+そのため `SKILL.md` は常に予算内に収まり、コンテンツの損失はゼロです。`## ` 見出しがない本文、または
+すでに予算内のコンテンツは、そのまま返されます。
+
+1. `_create_skill(umbrella, main_content)` がメインの SKILL.md を書き込みます。
+2. `supporting_files` の各項目は `_write_file(umbrella, path, content)` で書き込まれます
+   (パスは許可されたアンブレラのサブディレクトリに対して検証されます)。
+3. その後、ソースのサブディレクトリファイルが移行されます (LLM がすでに書き込んだファイルは、
+   合成コンテンツを上書きしないようにスキップされます)。
 
 ### ファイル移行
 
-アンブレラスキルを作成した後、ソーススキルのサポートファイルを移行します:
+アンブレラスキルを作成した後、ソーススキルのサポートファイルをアンブレラの対応するサブディレクトリへ移行します:
 
 ```
 For each consolidation entry (from → into umbrella):
   │
-  ├── For each support subdirectory (references/, templates/, scripts/, assets/):
+  ├── For each support subdirectory (references/, templates/, scripts/, assets/,
+  │     examples/, resources/):
   │     └── Copy each file into umbrella's corresponding subdirectory
+  │         (skip any path already written from supporting_files)
   │
   └── Delete source skill (delete_skill with absorbed_into=into)
 ```

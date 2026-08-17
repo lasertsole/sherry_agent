@@ -22,7 +22,7 @@ ALLOWED_FRONTMATTER_KEYS = {
     "license",
     "allowed-tools",
 }
-ALLOWED_RESOURCE_DIRS = {"scripts", "references", "assets"}
+ALLOWED_RESOURCE_DIRS = {"scripts", "references", "assets", "templates", "examples", "resources"}
 PLACEHOLDER_MARKERS = ("[todo", "todo:")
 
 
