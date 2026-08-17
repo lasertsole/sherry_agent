@@ -499,17 +499,30 @@ const serverPidsForDate = computed<ServerLogBucket[]>(() =>
 const serverSelectedDate = ref<string | null>(null);
 const serverSelectedPid = ref<string | null>(null);
 
-/** 日期列切换：重选日期并默认选中该日期下第一个 PID。 */
-const onServerDateChange = async () => {
+/** 日期列切换：记录所选日期，并默认选中该日期下第一个（PID 升序）PID。 */
+const onServerDateChange = async (date: string | null) => {
   stopLive();
-  const pids = serverPidsForDate.value;
+  serverSelectedDate.value = date;
+  serverSelectedPid.value = null;
+  if (date === null) {
+    lines.value = [];
+    return;
+  }
+  const pids = serverBuckets.value
+    .filter((b) => b.date === date)
+    .sort((a, b) => a.pid.localeCompare(b.pid));
   serverSelectedPid.value = pids[0]?.pid ?? null;
   if (pids[0]) await loadContent();
 };
 
-/** PID 列切换：直接读取该 PID 对应的真实文件。 */
-const onServerPidChange = async () => {
+/** PID 列切换：更新选中 PID 并读取该 PID 对应的真实文件。 */
+const onServerPidChange = async (pid: string | null) => {
   stopLive();
+  serverSelectedPid.value = pid;
+  if (pid === null) {
+    lines.value = [];
+    return;
+  }
   await loadContent();
 };
 
