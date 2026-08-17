@@ -444,9 +444,26 @@ const loadSessionHistory = async (sessionId: string) => {
   // 匹配——若同一逻辑消息已被服务端落库（serverRowFor 命中）或已存在于本地集合，
   // 则跳过该草稿行，避免同轮次内草稿与实时消息渲染重复。
   const drafts = await readDraftTurns(sessionId);
+  //
+  // 草稿「陈旧轮」判定：若同一 turn_num 在合并集合中已存在「服务端落库的正 id 行」，
+  // 且其中包含一条非流式中的最终 AI 结果（role=ai）——则说明该轮次已被服务端成功持久化，
+  // 这段草稿是该轮次被打断时的陈旧残留（例如 Test：手动 kill 后端让草稿保留「回复失败」标记，
+  // 随后后端自愈又把同一轮真实内容写回）。此时按 (turn, role, content) 逐条精确匹配会因
+  // 内容不同（失败标记 vs 真实回复）而漏过，导致失败标记/失败工具行与服务端真实行一同渲染，
+  // 造成同轮重复显示。正确做法：凡是该轮已落库了最终 AI 结果的草稿轮，整体跳过、不再水合。
+  //
+  // 仅以 role=ai 的服务端行为「已持久化最终结果」的锚点，是因为正常进行中的流式轮次服务端
+  // 只先写 human（正 id），AI 结果尚未落库，此时草稿 AI 行仍应水合渲染；只有 AI 已落库
+  // 才意味着该轮已实质完成、草稿必属陈旧。
+  const staleDraftTurns = new Set<number>();
+  for (const m of mergedById.values()) {
+    if (m.id >= 0 && m.role === 'ai') staleDraftTurns.add(m.turn_num);
+  }
   for (const draft of drafts) {
     for (const dm of draft.messages) {
       if (dm.session_id !== sessionId) continue; // 防御：只水合本会话
+      // 陈旧轮：该轮已由服务端持久化最终 AI 结果，整体丢弃草稿行
+      if (staleDraftTurns.has(dm.turn_num)) continue;
       // 草稿行在本地集合 / 服务端历史中是否已存在（按逻辑键匹配）
       const alreadyLocal = [...mergedById.values()].some(
         (m) =>
