@@ -245,35 +245,65 @@ prunings:
 
 ### _generate_umbrella_skill()
 
-通过 LLM 为每个新伞形技能生成合并后的 SKILL.md：
+通过 LLM 为每个新伞形技能生成合并后的技能。该函数返回**两部分**：主 `SKILL.md`
+内容 + 一张可选的**支持文件映射**（LLM 拆分出的子文件），让主文档保持精简：
 
 ```
 _generate_umbrella_skill(umbrella, reasons, source_content, file_inventory)
+  → (main_content: str, supporting_files: dict[path, content])
   │
   ├── 构建 LLM (build_main_llm, temperature=0.3)
   ├── 系统提示词：技能管理员创建伞形技能
-  │     - 仅输出 SKILL.md 内容（YAML frontmatter + markdown 正文）
+  │     - 输出一个或多个文件块，每块以 '<<<PATH>>>' 头行开始
+  │     - 首块必须为 '<<<SKILL.md>>>'（YAML frontmatter + markdown 正文）
+  │     - 额外块只允许放在受支持的子目录下：
+  │         references/, templates/, scripts/, assets/, examples/, resources/
+  │     - 保持 SKILL.md 在 ~15k 字符以内（每次使用技能都加载到 prompt）
+  │     - 将冗长材料拆分到子文件中（长 API 文档 → references/，可运行示例
+  │       → examples/，辅助逻辑 → scripts/），而非撑大 SKILL.md
+  │     - 使用相对链接 + 一句话说明引用每个支持文件
   │     - frontmatter：name, description, created_by: curator
   │     - 合成并去重：合并重叠指令，统一代码模式，去除冗余，保留所有独特技术
-  │     - 使用 ## 标题组织每个关注领域
-  │     - 包含 "## When to use" 段落
-  │     - 使用相对链接引用已迁移的支持文件
   │
   ├── 用户提示词：伞形名称 + 合并原因 + 源技能内容 + 文件清单
   │
-  ├── 成功 → 返回生成的 SKILL.md 内容
-  └── 失败 → 返回回退骨架（拼接源内容）
+  ├── 通过 _parse_multifile_umbrella() 解析 LLM 输出：
+  │     - 按 '<<<PATH>>>' 头行确定性切分块
+  │     - SKILL.md 块 → 主内容；其余允许子目录块 → supporting_files
+  │     - 非法路径 / 空内容块被丢弃并告警
+  │     - 无有效头行 → 整个响应视为 SKILL.md（历史回退行为）
+  │
+  ├── 成功 → 返回 (main_content, supporting_files)
+  └── 失败/回退 → 返回 (回退骨架 SKILL.md, 空 dict)
 ```
+
+**硬性长度限制**（与 `skill_manage` 共享）：
+
+LLM 返回后，伞形 `SKILL.md` 主内容会经
+`skill_manage.split_oversized_skill(main_content, _UMBRELLA_SKILL_CHAR_TARGET, supporting_files)`
+处理。这与通过 `skill_manage` 创建/编辑任何普通技能时使用的确定性保护逻辑相同。当主内容超过
+15,000 字符目标时，函数会沿 `## ` 标题将其拆分为 `references/partNN.md` 引用文件，并将每个
+章节替换为简洁的桩链接——从而保证 `SKILL.md` 始终在预算内且零内容丢失。不含 `## ` 标题的正文，
+或已在预算内的内容，会原样返回。
+
+**文件落盘**（`_apply_consolidation`）：
+
+1. `_create_skill(umbrella, main_content)` 写入主 SKILL.md。
+2. `supporting_files` 中的每一项通过 `_write_file(umbrella, path, content)` 写入
+   （路径针对受允许的伞形子目录校验）。
+3. 随后迁移源技能子目录文件（LLM 已写过的路径会跳过，避免覆盖合成内容）。
 
 ### 文件迁移
 
-创建伞形技能后，源技能的支持文件会被迁移：
+创建伞形技能后，源技能的支持文件会被迁移到伞形技能对应子目录：
 
 ```
 对每个合并条目 (from → into umbrella):
   │
-  ├── 对每个支持子目录 (references/, templates/, scripts/, assets/):
+  ├── 对每个支持子目录 (references/, templates/, scripts/, assets/,
+  │     examples/, resources/):
   │     └── 将每个文件复制到伞形技能的对应子目录
+  │         （跳过任何已从 supporting_files 写入的路径）
   │
   └── 删除源技能 (delete_skill with absorbed_into=into)
 ```

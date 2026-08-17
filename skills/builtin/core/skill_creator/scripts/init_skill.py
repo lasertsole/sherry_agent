@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import validate_call
 
 MAX_SKILL_NAME_LENGTH = 64
-ALLOWED_RESOURCES = {"scripts", "references", "assets"}
+ALLOWED_RESOURCES = {"scripts", "references", "assets", "templates", "examples", "resources"}
 
 SKILL_TEMPLATE = """---
 name: {skill_name}

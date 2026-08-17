@@ -267,25 +267,102 @@ def maybe_run_curator(
         return None
 
 
-def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: str, file_inventory: str = "") -> str:
+_UMBRELLA_FILE_DELIM = "<<<"  # file-path block delimiter; a line matching '<<<PATH>>>'
+_UMBRELLA_ALLOWED_SUBDIRS = ("references", "templates", "scripts", "assets", "examples", "resources")
+
+
+def _parse_multifile_umbrella(text: str) -> tuple[str, dict[str, str]]:
+    """Split an LLM response into (SKILL.md content, {subdir/path: content}).
+
+    The LLM is instructed to emit one or more blocks, each starting on its own
+    line with a ``<<<PATH>>>`` header (e.g. ``<<<SKILL.md>>>``,
+    ``<<<references/api.md>>>``, ``<<<examples/demo.py>>>``).  The header line is
+    removed and the rest of the block is its content.
+
+    Parsing is intentionally tolerant:
+    - If no valid block headers are found, the whole text is treated as SKILL.md
+      (degenerates to the historical single-string behavior).
+    - A block may be ``SKILL.md`` (canonical main file) or a path under one of the
+      allowed umbrella subdirectories.  Any other path (or an empty body) is
+      dropped with a warning.
+    - A leading/trailing ``` code fence around the whole response is stripped.
+    """
+    import re
+
+    text = text.strip()
+    text = text.removeprefix("```markdown").removeprefix("```md").removeprefix("```")
+    text = text.removesuffix("```").strip()
+
+    header_re = re.compile(rf"^{re.escape(_UMBRELLA_FILE_DELIM)}\s*([^\s]+?)\s*>+$", re.MULTILINE)
+    matches = list(header_re.finditer(text))
+    if not matches:
+        return text, {}
+
+    main: str = ""
+    files: dict[str, str] = {}
+    # Content before the first header shouldn't exist; ignore if it does.
+    for i, m in enumerate(matches):
+        start = m.end() + 1  # skip the newline after the header
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[start:end].strip("\n")
+        path = m.group(1).strip().lstrip("/")
+        if path == "SKILL.md":
+            main = body.strip()
+        elif path and path.split("/", 1)[0] in _UMBRELLA_ALLOWED_SUBDIRS and body.strip():
+            files[path] = body.strip()
+        else:
+            logger.debug("Curator: ignoring umbrella block with invalid path '{}'", path)
+    if not main:
+        main = text.strip()
+    return main, files
+
+
+def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: str, file_inventory: str = "") -> tuple[str, dict[str, str]]:
+    """Generate an umbrella SKILL.md plus optional supporting files.
+
+    Returns ``(main_content, supporting_files)`` where ``supporting_files`` maps
+    subdirectory paths (e.g. ``references/api.md``) to file content.  If the LLM
+    output cannot be split into blocks, ``supporting_files`` is empty and the
+    whole response is used as the main content (historical behavior).
+    """
+    from agent.tools.skill_tools.skill_manage import _UMBRELLA_SKILL_CHAR_TARGET, split_oversized_skill
     from langchain_core.messages import HumanMessage, SystemMessage
     from models import build_main_llm
 
     llm = build_main_llm(temperature=0.3)
+    allowed_subs = ", ".join(_UMBRELLA_ALLOWED_SUBDIRS)
     system_msg = (
         "You are a skill librarian. You are creating a consolidated umbrella skill by merging "
         "several related narrow skills into one comprehensive, well-organized skill.\n\n"
-        "Rules:\n"
-        "- Output ONLY the SKILL.md content (YAML frontmatter + markdown body).\n"
-        "- Do NOT wrap in code fences.\n"
-        "- The frontmatter must have: name, description, created_by: curator.\n"
+        "OUTPUT FORMAT (strict):\n"
+        f"- Output one or more file blocks. Each block must START on its own line with a "
+        f"'<<<PATH>>>' header (the '<<<' and '>>>' delimiters literally).\n"
+        f"- The FIRST block MUST be '<<<SKILL.md>>>' — the main skill document "
+        "(YAML frontmatter + markdown body).\n"
+        f"- You MAY add more blocks, each under an allowed supporting subdirectory: "
+        f"{allowed_subs}. Example: '<<<references/api.md>>>', '<<<examples/demo.py>>>', "
+        f"'<<<scripts/helper.sh>>>', '<<<resources/data.json>>>'.\n"
+        "- Do NOT wrap blocks in code fences.\n"
+        "- The frontmatter of SKILL.md must have: name, description, created_by: curator.\n\n"
+        "LENGTH BUDGET (important):\n"
+        f"- Keep SKILL.md itself concise and under ~{_UMBRELLA_SKILL_CHAR_TARGET:,} characters. "
+        "It is loaded into the agent's prompt every time the skill is used, so bloating it "
+        "wastes tokens.\n"
+        "- When the merged content would exceed that budget, OFFLOAD bulky material into "
+        "supporting subdirectory blocks instead of inflating SKILL.md: long reference/API "
+        "docs go to references/, worked runnable examples to examples/, helper logic to "
+        "scripts/, templates/data/tool configs to templates/ or resources/.\n"
+        "- SKILL.md should reference each supporting file with a relative link "
+        "(e.g. [api.md](references/api.md)) and a one-line description of when to read it.\n\n"
+        "SYNTHESIS RULES:\n"
         "- Synthesize and deduplicate: merge overlapping instructions, unify code patterns, "
         "remove redundancy, keep every unique technique.\n"
-        "- Organize with clear sections. Use ## headings for each concern area.\n"
-        "- Preserve all useful code examples, but consolidate similar ones.\n"
+        "- Organize SKILL.md with clear sections. Use ## headings for each concern area.\n"
+        "- Preserve all useful code examples, but consolidate similar ones (dedupe or move "
+        "to examples/ rather than repeating inline).\n"
         "- Include a '## When to use' section at the top.\n"
         "- Reference the supporting files that were migrated from the original skills "
-        "(under references/, templates/, scripts/) with relative links.\n"
+        f"(under references/, templates/, scripts/) with relative links.\n"
         "- Keep the result concise but complete — do NOT lose any substantive content."
     )
     user_msg = (
@@ -301,10 +378,10 @@ def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: 
             HumanMessage(content=user_msg),
         ])
         text = str(response.content).strip() if response and response.content else ""
-        text = text.removeprefix("```markdown").removeprefix("```md").removeprefix("```")
-        text = text.removesuffix("```").strip()
-        if text.startswith("---"):
-            return text + "\n"
+        main_content, supporting_files = _parse_multifile_umbrella(text)
+        if main_content:
+            main_content, supporting_files = split_oversized_skill(main_content, _UMBRELLA_SKILL_CHAR_TARGET, supporting_files)
+            return main_content, supporting_files
     except Exception as e:
         logger.warning("Curator LLM umbrella generation failed: {}", e)
     fallback = (
@@ -320,7 +397,7 @@ def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: 
         + source_content
         + "\n"
     )
-    return fallback
+    return fallback, {}
 
 
 def _refresh_all_cached_system_prompts() -> None:
@@ -402,8 +479,10 @@ def _apply_consolidation(llm_final: str) -> None:
                         file_inventory_lines.append(f"- {subdir}/{f.name} (from {src_name})")
 
         file_inventory = "\n".join(file_inventory_lines)
-        umbrella_content = _generate_umbrella_skill(umbrella, reasons, merged_content, file_inventory)
+        umbrella_content, supporting_files = _generate_umbrella_skill(umbrella, reasons, merged_content, file_inventory)
 
+        if umbrella_content.startswith("---"):
+            umbrella_content = umbrella_content + "\n"
         result = _create_skill(umbrella, umbrella_content)
         if result.get("success"):
             logger.info("Curator created umbrella skill: {}", umbrella)
@@ -413,20 +492,33 @@ def _apply_consolidation(llm_final: str) -> None:
 
         seed_record_if_missing(umbrella)
 
+        # Write supporting files the LLM split out of the main SKILL.md, then
+        # migrate any source subdirectory files (skip ones already written).
+        written = {p for p in supporting_files}
+        for file_path, file_content in supporting_files.items():
+            wr = _write_file(umbrella, file_path, file_content)
+            if wr.get("success"):
+                logger.debug("Curator wrote umbrella support file {}/{}", umbrella, file_path)
+            else:
+                logger.warning("Curator failed to write {}/{}: {}", umbrella, file_path, wr.get("error"))
+
         for entry in merged_skills:
             src_name = entry.get("from", "").strip()
             src_dir = _resolve_skill_dir(src_name)
             if src_dir is None:
                 continue
-            for subdir in ("references", "templates", "scripts", "assets"):
+            for subdir in ("references", "templates", "scripts", "assets", "examples", "resources"):
                 src_sub = src_dir / subdir
                 if not src_sub.is_dir():
                     continue
                 for f in src_sub.iterdir():
                     if not f.is_file():
                         continue
-                    file_content = f.read_text(encoding="utf-8")
                     file_path = f"{subdir}/{f.name}"
+                    if file_path in written:
+                        logger.debug("Curator: skip migrating {}/{} (umbrella support file already written)", src_name, file_path)
+                        continue
+                    file_content = f.read_text(encoding="utf-8")
                     wr = _write_file(umbrella, file_path, file_content)
                     if wr.get("success"):
                         logger.debug("Curator migrated {}/{} -> {}/{}", src_name, f.name, umbrella, f.name)
