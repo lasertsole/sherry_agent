@@ -131,6 +131,9 @@
 
     <!-- 日志查看弹窗 -->
     <LogsDialog v-model="showLogsDialog" />
+
+    <!-- 扩展弹窗（关联 / mcp） -->
+    <ExtendDialog v-model="showExtendDialog" />
   </div>
 </template>
 
@@ -141,6 +144,7 @@ import ModeSwitch from './components/ModeSwitch.vue';
 import SkillsDialog from './components/SkillsDialog.vue';
 import ConfigDialog from './components/ConfigDialog.vue';
 import LogsDialog from './components/LogsDialog.vue';
+import ExtendDialog from './components/ExtendDialog.vue';
 // function
 import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -215,6 +219,9 @@ const showConfigDialog = ref(false);
 
 /** 日志查看弹窗开关 */
 const showLogsDialog = ref(false);
+
+/** 扩展弹窗开关 */
+const showExtendDialog = ref(false);
 
 /** 左侧历史侧边栏是否折叠（默认展开） */
 const isSidebarCollapsed = ref(false);
@@ -346,6 +353,9 @@ const handleOperate = (type: string, event: string) => {
       return;
     case 'logs':
       showLogsDialog.value = true;
+      return;
+    case 'extend':
+      showExtendDialog.value = true;
       return;
     default:
       return;

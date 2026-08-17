@@ -8,12 +8,12 @@
 
 ## 概要
 
-channels モジュールはプラグインベースのアーキテクチャを実装しており、新しいチャットプラットフォーム統合を簡単に追加できます。各チャネルは `BaseChannel` を拡張するクラスとして実装され、メッセージバスを介してシステムと通信します。チャネルの実装はこのパッケージ内ではなく、`plugins/channels/` の下の個別の Python ファイルとして存在します（ランタイム時に pkgutil で検出されます）。
+channels モジュールはプラグインベースのアーキテクチャを実装しており、新しいチャットプラットフォーム統合を簡単に追加できます。各チャネルは `BaseChannel` を拡張するクラスとして実装され、メッセージバスを介してシステムと通信します。チャネルの実装はこのパッケージ内ではなく、`plugins/channels/` の下の個別のディレクトリとして存在します（`core.py` を含むフォルダをスキャンしてランタイム時に検出されます）。
 
 ## 主な機能
 
 - **統一インターフェース**: すべてのチャットプラットフォームが共通の `BaseChannel` インターフェースを共有します
-- **プラグインシステム**: 組み込みチャネル（`plugins/channels/` の下、pkgutil で検出）と entry points による外部プラグインの両方をサポートします
+- **プラグインシステム**: 組み込みチャネル（`plugins/channels/` の下、`core.py` を含むフォルダをスキャンして検出）と entry points による外部プラグインの両方をサポートします
 - **メッセージルーティング**: インバウンドおよびアウトバウンドメッセージのルーティングを自動処理します
 - **アクセス制御**: 許可された送信者のための設定可能なホワイトリスト（`allow_from`）。空のリストはすべてを拒否します
 - **非同期処理**: asyncio 上に構築され、同時メッセージ処理をサポートします
@@ -62,8 +62,8 @@ channels/
 
 利用可能なチャネルを自動検出します:
 
-- `discover_channel_names()`: pkgutil を使用して `plugins/channels/` の `.py` モジュールをスキャン
-- `load_channel_class(module_name)`: チャネルモジュールを動的にインポートし、最初の `BaseChannel` サブクラスを見つける
+- `discover_channel_names()`: pkgutil を使わずに `plugins/channels/` のチャネル**ディレクトリ**（サブディレクトリ、単一ファイルではありません）をスキャンし、`core.py` を含むフォルダのみ認識
+- `load_channel_class(module_name)`: チャネルディレクトリの `core.py` を動的にインポートし、最初の `BaseChannel` サブクラスを見つける
 - `discover_plugins()`: `entry_points(group="channels")` で登録された外部プラグインをロード
 - `discover_all()`: 組み込みチャネルと外部チャネルをマージ（組み込みが優先 — 外部は組み込み名を上書きできません）
 
@@ -115,7 +115,17 @@ loop = channel_manager.get_event_loop()
 
 ### 新しいチャネルの実装
 
-`plugins/channels/` の下に新しい `.py` ファイルを作成します:
+`plugins/channels/` の下に、チャネル名にちなんだ新しい**ディレクトリ（フォルダ）**を作成します。
+例: `plugins/channels/my_channel/`。このフォルダには `core.py` のみが含まれます。
+実際の `BaseChannel` サブクラスはここに定義するか、ここから再エクスポート
+する必要があります。`__init__.py` は不要です:
+
+```text
+plugins/channels/
+├── config.json              # チャネル設定
+└── my_channel/              # ← チャネルフォルダ、チャネル名にちなんで命名
+    └── core.py              #  BaseChannel サブクラスを定義 / 再エクスポート
+```
 
 ```python
 from channels.base import BaseChannel
@@ -145,7 +155,7 @@ class MyChannel(BaseChannel):
         return {"enabled": False, "allow_from": ["*"]}
 ```
 
-レジストリは `plugins/channels/` をスキャンしてチャネルを自動的に検出しロードします。
+レジストリは `plugins/channels/` の下のチャネルディレクトリをスキャンしてチャネルを自動的に検出し、各フォルダの `core.py` を動的にインポートしてロードします。
 
 ## アーキテクチャ
 
@@ -165,7 +175,7 @@ class MyChannel(BaseChannel):
 │  (プラグイン) │   │  チャネル     │   │  チャネル     │
 │  plugins/     │   │  (プラグイン) │   │  (プラグイン) │
 │  channels/    │   │               │   │               │
-│  qq.py        │   │               │   │               │
+│  qq/          │   │               │   │               │
 └───────────────┘   └───────────────┘   └───────────────┘
          │                     │                     │
          └─────────────────────┼─────────────────────┘

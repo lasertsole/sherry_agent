@@ -1,7 +1,9 @@
 """QQ channel implementation using botpy SDK."""
 
+import json
 import time
 import asyncio
+from pathlib import Path
 from loguru import logger
 from pydantic import Field
 from bus import MessageBus
@@ -61,6 +63,7 @@ class QQConfig(Base):
     secret: str = ""
     allow_from: list[str] = Field(default_factory=list)
     msg_format: Literal["plain", "markdown"] = "plain"
+    receiver: str = ""  # Default chat_id for proactive (heartbeat) delivery.
 
 
 class QQChannel(BaseChannel):
@@ -74,14 +77,41 @@ class QQChannel(BaseChannel):
         return QQConfig().model_dump(by_alias=True)
 
     def __init__(self, config: Any, bus: MessageBus):
-        if isinstance(config, dict):
-            config = QQConfig.model_validate(config)
-        super().__init__(config, bus)
-        self.config: QQConfig = config
+        config = self._merge_credentials(config)
+        if isinstance(config, QQConfig):
+            self.config = config
+        else:
+            self.config = QQConfig.model_validate(config)
+        super().__init__(self.config, bus)
         self._client: "botpy.Client | None" = None
         self._processed_ids: deque = deque(maxlen=1000)
         self._msg_seq: int = 1  # 消息序列号，避免被 QQ API 去重
         self._chat_type_cache: dict[str, str] = {}
+
+    @staticmethod
+    def _merge_credentials(config: Any) -> Any:
+        """Merge plugin-local credentials (app_id/receiver) from qq/config.json.
+
+        The generic toggles (enabled/allow_from/.../heartbeat/cron) live in
+        plugins/channels/config.json, while QQ credentials live in the
+        plugin's own plugins/channels/qq/config.json.
+        """
+        if not isinstance(config, dict):
+            return config
+        cred_path = Path(__file__).resolve().parent / "config.json"
+        try:
+            creds = json.loads(cred_path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("Failed to load {}", cred_path)
+            return config
+        if not isinstance(creds, dict):
+            return config
+        merged = dict(config)
+        for key in ("app_id", "receiver"):
+            value = creds.get(key)
+            if isinstance(value, str):
+                merged[key] = value
+        return merged
 
     async def start(self) -> None:
         """Start the QQ bot."""

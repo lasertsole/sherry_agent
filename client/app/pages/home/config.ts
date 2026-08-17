@@ -25,6 +25,13 @@ export const headerTools: Tool[] = [
     label: 'toolbar.systemConfig'
   },
   {
+    toolName: 'toolbar.extend',
+    icon: 'pi pi-th-large',
+    title: 'toolbar.extend',
+    event: 'extend',
+    label: 'toolbar.extend'
+  },
+  {
     toolName: 'toolbar.logs',
     icon: 'pi pi-terminal',
     title: 'toolbar.logs',

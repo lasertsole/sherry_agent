@@ -47,8 +47,22 @@ async def process_heartbeat_notify(agent_res: str) -> None:
     if channels_json.exists():
         channels_configs: dict[str, Any] = json.loads(channels_json.read_text())
         for name, config in channels_configs.items():
-            if config.get("heartbeat", False) and config.get("receiver", False):
-                res[name] = config["receiver"]
+            if not config.get("heartbeat", False):
+                continue
+            # The `receiver` (default chat_id) now lives in each plugin's own
+            # config file (plugins/channels/<name>/config.json), not the root block.
+            plugin_cfg: Path = PLUGINS_PATH / "channels" / name / "config.json"
+            receiver: str = ""
+            if plugin_cfg.exists():
+                try:
+                    receiver = json.loads(plugin_cfg.read_text()).get("receiver", "")
+                except Exception as e:
+                    logger.warning("Failed to read {}: {}", plugin_cfg, e)
+            elif config.get("receiver", False):
+                # Fallback: still honor a receiver defined in the root block.
+                receiver = config["receiver"]
+            if receiver:
+                res[name] = receiver
 
     for name, receiver in res.items():
         channel: BaseChannel = channel_manager.get_channel(name)

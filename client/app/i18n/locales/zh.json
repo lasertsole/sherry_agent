@@ -40,6 +40,7 @@
     "skills": "技能",
     "systemConfig": "系统配置",
     "logs": "日志",
+    "extend": "扩展",
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏"
   },
@@ -51,7 +52,36 @@
     "tabs": {
       "builtin": "内置",
       "auto": "自动",
-      "thirdParty": "第三方"
+      "thirdParty": "第三方",
+      "runCuratorHint": "自动审查自动学习（auto）技能，合并相似或重复的技能，并标记、归档长期未使用的技能，保持技能库整洁。"
+    }
+  },
+  "extend": {
+    "title": "扩展",
+    "empty": "暂无内容",
+    "channelHint": "频道数据源接口待规划",
+    "enabled": "启用",
+    "disabled": "禁用",
+    "mcpHint": "MCP 服务器尚无配置",
+    "channelSettings": {
+      "title": "{name} 设置",
+      "enabled": "启用频道",
+      "heartbeat": "心跳",
+      "heartbeatHint": "空闲时自动检查待办任务",
+      "cron": "定时任务",
+      "cronHint": "允许按 cron 表达式定时执行任务",
+      "config": "频道配置",
+      "configEmpty": "无配置项",
+      "configBool": "布尔值",
+      "configPlain": "对象/数组以 JSON 文本编辑",
+      "configLoadFailed": "加载频道配置失败",
+      "save": "保存",
+      "cancel": "取消",
+      "saveFailed": "保存设置失败"
+    },
+    "tabs": {
+      "channel": "频道",
+      "mcp": "MCP"
     }
   },
   "logs": {
