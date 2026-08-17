@@ -328,20 +328,20 @@ def _refresh_all_cached_system_prompts() -> None:
 
     After Curator consolidates/prunes skills the skill snapshot baked into
     each session's cached system_prompt is stale.  This forces a fresh
-    build_system_prompt() and writes it into both mem and db stores so the
+    build_system_prompt(session_id=sid) and writes it into both mem and db stores so the
     next turn picks up the new skill list immediately.
     """
     try:
         from runtime import state_register_mem, state_register_db
         from workspace.prompt_builder import build_system_prompt
 
-        new_prompt = build_system_prompt()
         session_ids = state_register_db.get_all_session_ids()
         if not session_ids:
             logger.info("Curator: no sessions to refresh system_prompt for")
             return
 
         for sid in session_ids:
+            new_prompt = build_system_prompt(session_id=sid)
             state_register_mem.set_state(sid, "system_prompt", new_prompt)
             state_register_db.set_state(sid, "system_prompt", new_prompt)
 

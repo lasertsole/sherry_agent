@@ -38,24 +38,29 @@ class TestListLogFiles:
     def test_missing_dir(self, tmp_path: Path):
         assert logs._list_log_files(tmp_path / "nope") == []
 
-    def test_filters_zip_and_dirs(self, log_dir: Path):
-        _write(log_dir / "info_2024-01-01_1234.log", "line1\nline2\n")
-        _write(log_dir / "error_2024-01-02_5678.log", "boom\n")
-        log_dir.joinpath("info_2024-01-03_9999.log.zip").write_text("dummy", encoding="utf-8")
-        # Ignore any subdirectory entirely.
-        (log_dir / "sub").mkdir()
-        (log_dir / "sub" / "info_2024-01-04_1111.log").write_text("x", encoding="utf-8")
+    def test_scans_type_subdirs_filters_zip_and_dirs(self, log_dir: Path):
+        # Logs live in per-type sub-directories (``info/`` / ``all/`` / ``error/``).
+        _write(log_dir / "info" / "info_2024-01-01_1234.log", "line1\nline2\n")
+        _write(log_dir / "all" / "all_2024-01-01_1234.log", "trace\n")
+        _write(log_dir / "error" / "error_2024-01-02_5678.log", "boom\n")
+        # Only unpacked ``.log`` files are considered.
+        log_dir.joinpath("info", "info_2024-01-03_9999.log.zip").write_text("dummy", encoding="utf-8")
+        # Ignore non-log directories and non-log files entirely.
+        (log_dir / "other").mkdir()
+        (log_dir / "other" / "info_2024-01-04_1111.log").write_text("x", encoding="utf-8")
+        (log_dir / "readme.txt").write_text("x", encoding="utf-8")
 
         files = logs._list_log_files(log_dir)
         names = {f["name"] for f in files}
         assert "info_2024-01-01_1234.log" in names
+        assert "all_2024-01-01_1234.log" in names
         assert "error_2024-01-02_5678.log" in names
         assert "info_2024-01-03_9999.log.zip" not in names
         assert not any(f["name"].startswith("info_2024-01-04") for f in files)
 
     def test_metadata_fields(self, log_dir: Path):
-        p = log_dir / "info_x.log"
-        p.write_text("abc\n", encoding="utf-8")
+        p = log_dir / "info" / "info_x.log"
+        _write(p, "abc\n")
         files = logs._list_log_files(log_dir)
         assert len(files) == 1
         f = files[0]
@@ -67,19 +72,30 @@ class TestListLogFiles:
         assert "T" in f["modified"]  # ISO-8601 contains date/time separator
 
     def test_is_error_flag(self, log_dir: Path):
-        _write(log_dir / "error_2024-01-01_1.log", "e\n")
-        # Files not starting with "error" must be flagged False.
-        _write(log_dir / "info_2024-01-01_1.log", "i\n")
+        # ``is_error`` is driven both by the ``error`` sub-directory and the
+        # ``error`` filename prefix.
+        _write(log_dir / "error" / "error_2024-01-01_1.log", "e\n")
+        _write(log_dir / "info" / "info_2024-01-01_1.log", "i\n")
+        # A file inside the ``error`` dir with a non-``error`` name is still an error log.
+        _write(log_dir / "error" / "anomalous_2024-01-02_2.log", "e2\n")
+        # Full logs in the ``all`` dir are never flagged as error, even when
+        # they carry an ``error``-suffixed name.
+        _write(log_dir / "all" / "all_2024-01-03_3.log", "trace\n")
+        _write(log_dir / "all" / "error_2024-01-03_3.log", "e3\n")
         files = logs._list_log_files(log_dir)
         by_name = {f["name"]: f["is_error"] for f in files}
         assert by_name["error_2024-01-01_1.log"] is True
         assert by_name["info_2024-01-01_1.log"] is False
+        assert by_name["anomalous_2024-01-02_2.log"] is True
+        assert by_name["all_2024-01-03_3.log"] is False
+        assert by_name["error_2024-01-03_3.log"] is True
 
     def test_sorted_newest_first(self, log_dir: Path):
-        old = log_dir / "a.log"
+        # Root-level and sub-directory files are merged and sorted together.
+        old = log_dir / "info" / "a.log"
         new = log_dir / "b.log"
-        old.write_text("old\n", encoding="utf-8")
-        new.write_text("new\n", encoding="utf-8")
+        _write(old, "old\n")
+        _write(new, "new\n")
         # Give "new" a later mtime to guarantee ordering.
         import time
         t_old = old.stat().st_mtime
@@ -90,18 +106,23 @@ class TestListLogFiles:
 
     def test_is_current_matches_running_pid(self, log_dir: Path):
         # A file whose embedded PID equals the running process must be flagged
-        # as current; any other PID must not.
+        # as current; any other PID must not. This holds for every log kind
+        # (info / all / error).
         pid = os.getpid()
-        _write(log_dir / f"info_2024-01-01_{pid}.log", "cur\n")
-        _write(log_dir / f"error_2024-01-01_{pid}.log", "cur-err\n")
-        _write(log_dir / "info_2024-01-01_999999.log", "old\n")
+        _write(log_dir / "info" / f"info_2024-01-01_{pid}.log", "cur\n")
+        _write(log_dir / "all" / f"all_2024-01-01_{pid}.log", "cur-all\n")
+        _write(log_dir / "error" / f"error_2024-01-01_{pid}.log", "cur-err\n")
+        _write(log_dir / "all" / "all_2024-01-01_999999.log", "old-all\n")
+        _write(log_dir / "info" / "info_2024-01-01_999999.log", "old\n")
         # Non-PID names never count as current.
-        _write(log_dir / "info_arbitrary.log", "x\n")
+        _write(log_dir / "info" / "info_arbitrary.log", "x\n")
 
         files = logs._list_log_files(log_dir)
         by_name = {f["name"]: f["is_current"] for f in files}
         assert by_name[f"info_2024-01-01_{pid}.log"] is True
+        assert by_name[f"all_2024-01-01_{pid}.log"] is True
         assert by_name[f"error_2024-01-01_{pid}.log"] is True
+        assert by_name["all_2024-01-01_999999.log"] is False
         assert by_name["info_2024-01-01_999999.log"] is False
         assert by_name["info_arbitrary.log"] is False
 
