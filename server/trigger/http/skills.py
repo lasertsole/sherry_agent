@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from server.trigger.core import app
 from loguru import logger
 from skills.loader import scan_skills, parse_frontmatter
@@ -49,6 +51,42 @@ async def list_skills_handler(request):
     return {"skills": result}
 
 
+_SKIP_DIRS = {"__pycache__", ".git", ".venv", "node_modules"}
+_SKIP_SUFFIXES = {".pyc", ".pyo"}
+
+
+def _build_skill_file_tree(skill_root: Path):
+    """Build a recursive tree of the skill directory (relative to `skill_root`).
+
+    Each returned node is ``{"path", "name", "type", "content"}`` where ``type``
+    is either ``"file"`` or ``"dir"``. Files carry their UTF-8 text content
+    (``read_text`` may raise on non-text binaries; those are skipped). Files at
+    the root level are sorted first, then directories, both alphabetically.
+    Cache/venv noise is excluded.
+    """
+    nodes: list[dict] = []
+
+    def walk(dir_path: Path, rel_prefix: str = "") -> None:
+        entries = sorted(dir_path.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        for entry in entries:
+            rel = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+            if entry.is_dir():
+                if entry.name in _SKIP_DIRS:
+                    continue
+                nodes.append({"path": rel, "name": entry.name, "type": "dir"})
+                walk(entry, rel)
+            elif entry.is_file() and entry.suffix not in _SKIP_SUFFIXES:
+                try:
+                    text = entry.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, OSError):
+                    logger.debug(f"Skipping non-text skill file: {entry}")
+                    continue
+                nodes.append({"path": rel, "name": entry.name, "type": "file", "content": text})
+
+    walk(skill_root)
+    return nodes
+
+
 @app.get("/skills/*skill_path")
 async def read_skill_handler(request, path_params):
     from pathlib import Path
@@ -63,12 +101,14 @@ async def read_skill_handler(request, path_params):
     content = full_path.read_text(encoding="utf-8")
     meta = parse_frontmatter(content)
     category = _get_category(f"./{skill_path}")
+    files = _build_skill_file_tree(full_path.parent)
 
-    logger.debug(f"Read skill: path={skill_path}, name={meta.get('name', '')}")
+    logger.debug(f"Read skill: path={skill_path}, name={meta.get('name', '')}, files={len(files)}")
     return {
         "name": str(meta.get("name", full_path.parent.name)),
         "description": str(meta.get("description", "")),
         "content": content,
         "category": category,
         "location": f"./{skill_path}",
+        "files": files,
     }

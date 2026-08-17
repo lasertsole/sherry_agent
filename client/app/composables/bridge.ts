@@ -872,8 +872,22 @@ export interface SkillInfo {
   category: 'builtin' | 'auto' | 'third_party';
 }
 
+/** A single node in a skill's on-disk directory structure (relative to the skill root). */
+export interface SkillFileNode {
+  /** Relative path from the skill root, e.g. `scripts/core.py` or `references/part01.md`. */
+  path: string;
+  /** Basename of the file/directory, e.g. `core.py`. */
+  name: string;
+  /** `file` for regular files, `dir` for directories. */
+  type: 'file' | 'dir';
+  /** UTF-8 text content — present only on `file` nodes. */
+  content?: string;
+}
+
 export interface SkillDetail extends SkillInfo {
   content: string;
+  /** Recursively-ordered directory structure under the skill's folder (SKILL.md + references/scripts/etc.). */
+  files?: SkillFileNode[];
 }
 
 // ── Channels ─────────────────────────────────────────────
