@@ -91,6 +91,12 @@
       "backend": "服务端"
     },
     "file": "选择日志文件",
+    "bucket": "选择日志日期",
+    "type": {
+      "all": "全部",
+      "log": "日志",
+      "error": "错误"
+    },
     "live": "实时",
     "pause": "暂停",
     "refresh": "刷新",

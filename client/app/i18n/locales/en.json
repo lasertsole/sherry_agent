@@ -91,6 +91,12 @@
       "backend": "Server"
     },
     "file": "Select log file",
+    "bucket": "Select log date",
+    "type": {
+      "all": "All",
+      "log": "Log",
+      "error": "Error"
+    },
     "live": "Live",
     "pause": "Pause",
     "refresh": "Refresh",
