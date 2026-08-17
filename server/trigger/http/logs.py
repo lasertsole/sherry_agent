@@ -11,18 +11,24 @@ from config import ROOT_DIR
 LOG_DIR = ROOT_DIR / "logs" / "output"
 
 
-# Matches loguru's file naming scheme: `info_{YYYY-MM-DD}_{pid}.log`.
-_LOG_FILENAME_RE = re.compile(r"^(?P<kind>info|error)_\d{4}-\d{2}-\d{2}_(?P<pid>\d+)\.log$")
+# Matches loguru's file naming scheme: `{kind}_{YYYY-MM-DD}_{pid}.log` where
+# kind is one of info / all / error.
+_LOG_FILENAME_RE = re.compile(r"^(?P<kind>info|all|error)_\d{4}-\d{2}-\d{2}_(?P<pid>\d+)\.log$")
 
 
 def _list_log_files(log_dir: Path) -> list[dict]:
     """Return metadata for every uncompressed ``.log`` file under ``log_dir``.
 
-    Only plain ``.log`` files are considered; ``.zip`` archives produced by
-    loguru's ``compression="zip"`` are excluded. Entries are sorted newest
-    first by modification time.
+    Logs are grouped into per-type sub-directories (``info/``, ``all/``,
+    ``error/``), so this scans those known type folders plus any ``.log``
+    files sitting directly in ``log_dir`` (backwards compatibility for
+    unusual layouts). Only plain ``.log`` files are considered; ``.zip``
+    archives produced by loguru's ``compression="zip"`` are excluded. Entries
+    are sorted newest first by modification time.
 
-    Each entry carries an ``is_current`` flag which is ``True`` for the log
+    Each entry carries an ``is_error`` flag derived from the ``error``
+    sub-directory name / filename prefix (``all/`` full logs are never flagged
+    as error), and an ``is_current`` flag which is ``True`` for the log
     written by the running backend process (identified by the PID embedded in
     the file name matching ``os.getpid()``). Only the current running log can
     be followed live over the WebSocket.
@@ -30,25 +36,39 @@ def _list_log_files(log_dir: Path) -> list[dict]:
     if not log_dir.is_dir():
         return []
 
+    # Only scan the known per-type sub-directories plus the root itself, so
+    # unrelated folders (``other/``, ``logs/`` etc.) are never picked up.
+    info_dir = log_dir / "info"
+    error_dir = log_dir / "error"
+    all_dir = log_dir / "all"
+    scan_roots = [
+        log_dir,
+        *([info_dir] if info_dir.is_dir() else []),
+        *([error_dir] if error_dir.is_dir() else []),
+        *([all_dir] if all_dir.is_dir() else []),
+    ]
+
     pid = os.getpid()
     files = []
-    for p in log_dir.iterdir():
-        if not p.is_file() or p.suffix != ".log":
-            continue
-        try:
-            stat = p.stat()
-        except OSError:
-            continue
-        match = _LOG_FILENAME_RE.match(p.name)
-        is_current = bool(match) and match.group("pid") == str(pid)
-        files.append({
-            "name": p.name,
-            "path": str(p),
-            "size": stat.st_size,
-            "modified": _format_mtime(stat.st_mtime),
-            "is_error": p.name.startswith("error"),
-            "is_current": is_current,
-        })
+    for root in scan_roots:
+        for p in root.iterdir():
+            if not p.is_file() or p.suffix != ".log":
+                continue
+            try:
+                stat = p.stat()
+            except OSError:
+                continue
+            match = _LOG_FILENAME_RE.match(p.name)
+            is_current = bool(match) and match.group("pid") == str(pid)
+            is_error = p.name.startswith("error") or p.parent.name == "error"
+            files.append({
+                "name": p.name,
+                "path": str(p),
+                "size": stat.st_size,
+                "modified": _format_mtime(stat.st_mtime),
+                "is_error": is_error,
+                "is_current": is_current,
+            })
 
     files.sort(key=lambda f: f["modified"], reverse=True)
     return files
