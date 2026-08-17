@@ -96,6 +96,7 @@
     },
     "file": "Select log file",
     "bucket": "Select log date",
+    "pid": "Select process PID",
     "type": {
       "all": "All",
       "log": "Log",

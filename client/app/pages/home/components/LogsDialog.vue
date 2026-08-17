@@ -115,7 +115,7 @@
       <!-- ===== 后端日志 Tab ===== -->
       <TabPanel :header="t('logs.tabs.backend')">
         <div class="flex flex-col gap-3">
-          <!-- 工具栏：类型大桶 + 按天分桶下拉（对等前端 tab 的「类型 → 日期」层级） -->
+          <!-- 工具栏：类型大桶 + 日期列 + PID 列（每行对应一个真实日志文件，日期+PID 定位） -->
           <div class="flex items-center gap-2 flex-wrap">
             <Select
               :model-value="serverSelectedType"
@@ -130,15 +130,24 @@
               </template>
             </Select>
             <Select
-              :model-value="serverSelectedBucket"
-              :options="serverBuckets"
-              option-value="name"
-              :option-label="(o: ServerLogBucket) => serverBucketLabel(o)"
+              :model-value="serverSelectedDate"
+              :options="serverDates"
               :placeholder="t('logs.bucket')"
-              class="w-64"
+              class="w-36"
               size="small"
               :loading="loadingFiles"
-              @update:model-value="onServerBucketChange">
+              @update:model-value="onServerDateChange" />
+            <Select
+              :model-value="serverSelectedPid"
+              :options="serverPidsForDate"
+              option-value="pid"
+              option-label="pid"
+              :placeholder="t('logs.pid')"
+              class="w-28"
+              size="small"
+              :loading="loadingFiles"
+              :disabled="!serverSelectedDate"
+              @update:model-value="onServerPidChange">
               <template #option="slotProps">
                 <div
                   :class="[
@@ -148,7 +157,7 @@
                       : ''
                   ]">
                   <span :class="slotProps.option.is_current ? 'font-medium' : ''">
-                    {{ serverBucketLabel(slotProps.option) }}
+                    PID {{ slotProps.option.pid }}
                   </span>
                   <i
                     v-if="slotProps.option.is_current"
@@ -469,19 +478,53 @@ interface ServerLogBucket extends ClientLogBucket {
   pid: string;
   /** 该桶日期（YYYY-MM-DD）。 */
   date: string;
-  /** 该日期在当前类型下的 PID 数量（>1 时需要展示 PID 以区分）。 */
-  pidCount: number;
 }
 
-/** 当前类型的按「日期 + PID」分桶（每个桶对应一个真实文件，最新在前）。 */
+/** 当前类型的按「日期 + PID」分桶（每个桶对应一个真实文件，最新在前）。数据源，派生日期/PID 两列。 */
 const serverBuckets = ref<ServerLogBucket[]>([]);
-const serverSelectedBucket = ref<string | null>(null);
+
+/** 日期列（第 2 列）：该类型下所有日期，降序。 */
+const serverDates = computed<string[]>(() => {
+  const set = new Set(serverBuckets.value.map((b) => b.date));
+  return [...set].sort((a, b) => b.localeCompare(a));
+});
+
+/** PID 列表（第 3 列）：选中日期下的分桶，按 PID 升序。 */
+const serverPidsForDate = computed<ServerLogBucket[]>(() =>
+  serverBuckets.value
+    .filter((b) => b.date === serverSelectedDate.value)
+    .sort((a, b) => a.pid.localeCompare(b.pid)),
+);
+
+const serverSelectedDate = ref<string | null>(null);
+const serverSelectedPid = ref<string | null>(null);
+
+/** 日期列切换：重选日期并默认选中该日期下第一个 PID。 */
+const onServerDateChange = async () => {
+  stopLive();
+  const pids = serverPidsForDate.value;
+  serverSelectedPid.value = pids[0]?.pid ?? null;
+  if (pids[0]) await loadContent();
+};
+
+/** PID 列切换：直接读取该 PID 对应的真实文件。 */
+const onServerPidChange = async () => {
+  stopLive();
+  await loadContent();
+};
+
+/** 当前解析出的分桶（由「日期 + PID」定位到具体真实文件），驱动路径与按钮状态。 */
+const resolvedServerBucket = computed<ServerLogBucket | null>(() =>
+  serverBuckets.value.find(
+    (b) => b.date === serverSelectedDate.value && b.pid === serverSelectedPid.value,
+  ) ?? null,
+);
+
+/** 当前选中分桶的文件名（唯一键），派生自日期 + PID。 */
+const serverSelectedBucket = computed<string | null>(() => resolvedServerBucket.value?.name ?? null);
 
 /** 当前选中分桶是否为「今天」（只有它可实时推送）。 */
-const serverSelectedBucketIsCurrent = computed<boolean>(() => {
-  const b = serverBuckets.value.find((x) => x.name === serverSelectedBucket.value);
-  return !!b?.is_current;
-});
+const serverSelectedBucketIsCurrent = computed<boolean>(() => !!resolvedServerBucket.value?.is_current);
 
 /** 类型切换：重算该类型下分桶，默认选中最新「今天」。 */
 const onServerTypeChange = async (type: ClientLogType) => {
@@ -491,19 +534,13 @@ const onServerTypeChange = async (type: ClientLogType) => {
 };
 
 /** 按「日期 + PID」分桶：把该类型的每个真实日志文件都作为一个分桶（每个桶一个 PID），
- *  同一天多 PID 不再互相折叠。桶 `name` 用文件名作唯一键，展示名为日期（多 PID 时追加 PID）。 */
+ *  同一天多 PID 不再互相折叠。桶 `name` 用文件名作唯一键，作为「日期 + PID」两列的底层数据源。 */
 const buildServerBucketsForType = (type: ClientLogType): ServerLogBucket[] => {
   // 该类型下所有真实文件，按文件名分组计数同日期 PID 数量。
   const files = logFiles.value.filter((f) => {
     const m = f.name.match(LOG_FILENAME_RE);
     return !!m?.groups && kindToType(m.groups['kind']) === type;
   });
-  const pidCountByDate = new Map<string, number>();
-  for (const f of files) {
-    const m = f.name.match(LOG_FILENAME_RE)!;
-    const date = m.groups!['date'];
-    pidCountByDate.set(date, (pidCountByDate.get(date) ?? 0) + 1);
-  }
   const buckets: ServerLogBucket[] = files.map((f) => {
     const m = f.name.match(LOG_FILENAME_RE)!;
     const date = m.groups!['date'];
@@ -516,7 +553,6 @@ const buildServerBucketsForType = (type: ClientLogType): ServerLogBucket[] => {
       path: f.path,
       pid: m.groups!['pid'],
       date,
-      pidCount: pidCountByDate.get(date) ?? 1,
       tsStart: dayStart,
       tsEnd: dayStart + 24 * 60 * 60 * 1000,
       count: 1,
@@ -532,23 +568,21 @@ const buildServerBucketsForType = (type: ClientLogType): ServerLogBucket[] => {
   return buckets;
 };
 
-/** 分桶展示名：日期 + (同一天多 PID 时追加 ` · PID xxx` 以区分)。 */
-const serverBucketLabel = (b: ServerLogBucket): string =>
-  b.pidCount > 1 ? `${b.date} · PID ${b.pid}` : b.date;
-
-/** 加载该类型的分桶列表：每个后端日志文件一个分桶（含自身路径），默认选中最新的「今天」。 */
+/** 加载该类型的分桶列表：每个后端日志文件一个分桶（含自身路径），
+ *  默认选中最新「今天」文件并据此设定「日期 + PID」两列初值。 */
 const loadServerBucketsForType = async (type: ClientLogType) => {
   loadingFiles.value = true;
   try {
     const buckets = buildServerBucketsForType(type);
     serverBuckets.value = buckets;
     if (buckets.length > 0) {
-      serverSelectedBucket.value = buckets[0].name;
-      serverSelectedFilePath.value = buckets[0].path;
+      // 默认选中第一个（buildServerBucketsForType 已把「今天」排最前，最新在前）
+      serverSelectedDate.value = buckets[0].date;
+      serverSelectedPid.value = buckets[0].pid;
       await loadContent();
     } else {
-      serverSelectedBucket.value = null;
-      serverSelectedFilePath.value = null;
+      serverSelectedDate.value = null;
+      serverSelectedPid.value = null;
       lines.value = [];
     }
   } catch (e) {
@@ -559,21 +593,12 @@ const loadServerBucketsForType = async (type: ClientLogType) => {
   }
 };
 
-/** 当前选中分桶的文件路径（用于读取/实时）。由 loadServerBucketsForType 与分桶一并响应式更新。 */
-const serverSelectedFilePath = ref<string | null>(null);
+/** 当前选中分桶的文件路径（用于读取/实时），由「日期 + PID」解析。 */
+const serverSelectedFilePath = computed<string | null>(() => resolvedServerBucket.value?.path ?? null);
 
 /** 实时流是否应接受该条日志（仅当前类型；all = 全部）。 */
 const frameMatchesSelectedType = (level: string): boolean =>
   serverSelectedType.value === 'all' || levelToType(level) === serverSelectedType.value;
-
-/** 分桶切换：停止实时流并重新加载内容（直接用该桶自身的文件路径，不做跨 PID 折叠）。 */
-const onServerBucketChange = async (name: string) => {
-  stopLive();
-  serverSelectedBucket.value = name;
-  const bucket = serverBuckets.value.find((x) => x.name === name);
-  serverSelectedFilePath.value = bucket?.path ?? null;
-  await loadContent();
-};
 
 const consoleRef = ref<HTMLElement | null>(null);
 let streamHandle: { close: () => void } | null = null;
@@ -723,8 +748,8 @@ const onHide = () => {
   lines.value = [];
   logFiles.value = [];
   serverBuckets.value = [];
-  serverSelectedBucket.value = null;
-  serverSelectedFilePath.value = null;
+  serverSelectedDate.value = null;
+  serverSelectedPid.value = null;
   serverSelectedType.value = 'all';
   logTypes.value = [];
   buckets.value = [];
