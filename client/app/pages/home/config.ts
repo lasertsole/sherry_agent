@@ -18,6 +18,13 @@ export const headerTools: Tool[] = [
     label: 'toolbar.skills'
   },
   {
+    toolName: 'toolbar.knowledgeGraph',
+    icon: 'pi pi-sitemap',
+    title: 'toolbar.knowledgeGraph',
+    event: 'knowledgeGraph',
+    label: 'toolbar.knowledgeGraph'
+  },
+  {
     toolName: 'toolbar.systemConfig',
     icon: 'pi pi-sliders-h',
     title: 'toolbar.systemConfig',
@@ -26,7 +33,7 @@ export const headerTools: Tool[] = [
   },
   {
     toolName: 'toolbar.extend',
-    icon: 'pi pi-th-large',
+    icon: 'puzzle-icon',
     title: 'toolbar.extend',
     event: 'extend',
     label: 'toolbar.extend'

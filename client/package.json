@@ -19,6 +19,7 @@
     "@primevue/themes": "^4.5.0",
     "@tauri-apps/api": "^2.11.1",
     "@types/lodash-es": "^4.17.12",
+    "cropperjs": "^1.6.2",
     "dayjs": "^1.11.21",
     "dexie": "^4.4.4",
     "dompurify": "^3.4.13",

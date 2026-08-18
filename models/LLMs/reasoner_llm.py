@@ -4,7 +4,7 @@ from pathlib import Path
 from config import ENV_PATH
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
-from langchain_core.runnables import ConfigurableField
+from models.LLMs.reasoning_normalizer import NormalizingChatModel
 
 # Locate current directory
 current_dir = Path(__file__).parent.resolve()
@@ -31,8 +31,5 @@ model_config:dict[str, Any] = {
 
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
 def build_reasoner_model():
-    return init_chat_model(**model_config).configurable_fields(
-        temperature=ConfigurableField(
-            id="temperature",
-        )
-    )
+    model = init_chat_model(**model_config)
+    return NormalizingChatModel(inner=model)

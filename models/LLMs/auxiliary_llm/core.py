@@ -34,10 +34,11 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.runnables import ConfigurableField, Runnable, RunnableLambda
+from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from config import ENV_PATH
+from models.LLMs.reasoning_normalizer import NormalizingChatModel
 
 
 # ---------------------------------------------------------------------------
@@ -90,9 +91,8 @@ def build_auxiliary_llm(temperature: float | None = None):
         }
         _model_config = {k: v for k, v in _model_config.items() if v is not None and v != ""}
 
-        model = init_chat_model(**_model_config).configurable_fields(
-            temperature=ConfigurableField(id="temperature"),
-        )
+        model = init_chat_model(**_model_config)
+        model = NormalizingChatModel(inner=model)
 
     else:
         # ---------- Local (GGUF) branch ----------
@@ -202,9 +202,21 @@ def build_auxiliary_llm(temperature: float | None = None):
                     choice = response["choices"][0]
                     message = choice["message"]
                     content = message.get("content", "")
+                    reason = message.get("reasoning_content")
+                    if reason is None:
+                        reason = message.get("reasoning")
                 finally:
                     self._release_client()
-                return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
+                ai_kwargs: Dict[str, Any] = {}
+                if isinstance(reason, str) and reason:
+                    ai_kwargs.setdefault("reasoning_content", reason)
+                return ChatResult(
+                    generations=[
+                        ChatGeneration(
+                            message=AIMessage(content=content, additional_kwargs=ai_kwargs)
+                        )
+                    ]
+                )
 
             def bind_tools(
                 self,
@@ -297,7 +309,9 @@ def build_auxiliary_llm(temperature: float | None = None):
                         msgs.insert(0, SystemMessage(content=tool_prompt))
 
                     result = self._generate(msgs)
-                    content = result.generations[0].message.content or ""
+                    source_msg = result.generations[0].message
+                    content = source_msg.content or ""
+                    source_reasoning = source_msg.additional_kwargs.get("reasoning_content")
 
                     # ── Parse tool call from response ──
                     parsed_tool_calls = []
@@ -326,9 +340,13 @@ def build_auxiliary_llm(temperature: float | None = None):
                         except json.JSONDecodeError:
                             pass
 
+                    tool_kwargs: Dict[str, Any] = {}
+                    if isinstance(source_reasoning, str) and source_reasoning:
+                        tool_kwargs.setdefault("reasoning_content", source_reasoning)
                     return AIMessage(
                         content=content,
                         tool_calls=parsed_tool_calls if parsed_tool_calls else None,
+                        additional_kwargs=tool_kwargs,
                     )
 
                 return RunnableLambda(_invoke_with_tools)
@@ -384,8 +402,7 @@ def build_auxiliary_llm(temperature: float | None = None):
             def lc_attributes(self) -> Mapping[str, Any]:
                 return self._identifying_params
 
-        model = LocalLlamaChatModel().configurable_fields(
-            temperature=ConfigurableField(id="temperature"),
-        )
+        model = LocalLlamaChatModel()
+        model = NormalizingChatModel(inner=model)
 
     return model

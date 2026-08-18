@@ -16,7 +16,8 @@
     "toolArgs": "Arguments",
     "toolResult": "Result",
     "toolNoOutput": "No output",
-  "toolRunning": "Running…"
+  "toolRunning": "Running…",
+  "thinking": "Thinking"
   },
   "history": {
     "noSessions": "No conversations",
@@ -38,21 +39,35 @@
     "uploadImage": "Upload Image",
     "image": "Image",
     "skills": "Skills",
+    "knowledgeGraph": "Knowledge Graph",
     "systemConfig": "System Config",
     "logs": "Logs",
     "extend": "Extend",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar"
   },
+  "knowledgeGraph": {
+    "back": "Back",
+    "placeholder": "Knowledge Graph feature under development…"
+  },
   "skills": {
     "title": "Skill Manager",
     "empty": "No skills in this category",
     "selectHint": "Select a skill on the left to view details",
     "readonly": "Read-only",
+    "uploading": "Uploading…",
+    "uploadSuccess": "Skill uploaded, inactive by default",
+    "uploadFailed": "Upload failed",
+    "activate": "Activate",
+    "deactivate": "Deactivate",
+    "activateFailed": "Failed to update activation",
+    "toggleFailed": "Toggle failed",
     "tabs": {
       "builtin": "Built-in",
       "auto": "Auto",
       "thirdParty": "Third-Party",
+      "uploadSkill": "Upload Skill",
+      "uploadSkillHint": "Choose a local SKILL.md to upload as a third-party skill",
       "runCurator": "Skill maintenance",
       "runCuratorHint": "Automatically reviews auto-learned skills, merges similar or duplicate skills, and marks/archives long-unused skills to keep the skill library tidy.",
       "curatorDone": "Skill maintenance complete:",
@@ -158,6 +173,23 @@
       "userName": "User Name",
       "avatar": "Avatar",
       "charNote": "Changes to the avatar and name only take effect in new sessions; existing sessions are not affected."
+    },
+    "crop": {
+      "title": "Crop Avatar",
+      "confirm": "Confirm",
+      "zoomIn": "Zoom In",
+      "zoomOut": "Zoom Out",
+      "rotate": "Rotate",
+      "preview": "Crop Preview"
+    },
+    "background": {
+      "title": "Background Image",
+      "upload": "Upload Background",
+      "clear": "Clear Background",
+      "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
+      "opacity": "Overlay Strength",
+      "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
+      "cropTitle": "Crop Background"
     }
   }
 }

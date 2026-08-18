@@ -23,6 +23,7 @@ logs/*.log
 *.db-wal
 workspace/
 skills/auto
+skills/plugins/*.state.json
 **/wiki/
 skills/skills_snapshot.json
 .omo/

@@ -97,7 +97,10 @@ async function useFetchBaseApi({
     // onRequest相当于请求拦截
     onRequest({ request, options }) {
       // 设置请求头（GET请求不需要Content-Type）
-      if (method !== 'get') {
+      // 注意：multipart/form-data 不能手动设置 Content-Type，否则会覆盖掉
+      // fetch/ofetch 自动生成的 boundary，导致后端解析失败（boundary is not found）。
+      // 正确做法是交给浏览器自动生成 Content-Type（含 boundary）。
+      if (method !== 'get' && contentType !== 'multipart/form-data') {
         options.headers.set('Content-Type', contentType);
       }
       for (const [key, value] of Object.entries(headeropts)) {

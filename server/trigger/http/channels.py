@@ -50,15 +50,39 @@ def _save_channel_config(config_path: Path, data: dict) -> bool:
 
 
 def _channel_icon_url(name: str) -> str:
-    """Build an absolute icon URL for a channel, or '' if no icon exists."""
+    """Build an absolute icon URL for a channel, or '' if no icon exists.
+
+    Resolution order — always resolves to at most ONE file, even when the
+    icon dir holds many images:
+      1. Explicit ``icon`` key in plugins/channels/<name>/config.json
+         (e.g. ``"icon": "qq_128.png"``) — the most controllable choice and
+         the way to pin a specific file out of several candidates.
+      2. Convention file ``<name>_icon_128.<ext>``.
+      3. Lexicographically first file in the icon dir (deterministic fallback
+         so a multi-icon directory can never resolve ambiguously).
+    """
     icon_dir = PLUGINS_PATH / "channels" / name / "icon"
     if not icon_dir.is_dir():
         return ""
+
+    # 1) Explicit per-channel config wins; only the basename is used so the
+    #    optional value cannot break out of the icon dir.
+    try:
+        explicit = _load_channel_local_config(name).get("icon")
+        if isinstance(explicit, str) and explicit:
+            candidate = icon_dir / Path(explicit).name
+            if candidate.is_file():
+                return f"http://{API_HOST}:{API_PORT}/channels/{name}/icon/{candidate.name}"
+    except Exception:
+        pass
+
+    # 2) Canonical convention file.
     for ext in ("png", "jpg", "jpeg", "webp", "svg", "gif"):
         candidate = icon_dir / f"{name}_icon_128.{ext}"
         if candidate.is_file():
             return f"http://{API_HOST}:{API_PORT}/channels/{name}/icon/{candidate.name}"
-    # Fall back to any file inside the icon dir
+
+    # 3) Deterministic fallback: first file by lexicographic order.
     try:
         for entry in sorted(icon_dir.iterdir()):
             if entry.is_file():

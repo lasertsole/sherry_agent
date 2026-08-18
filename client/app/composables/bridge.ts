@@ -38,7 +38,7 @@ export interface ChatRequest {
 export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
-export type AgentChunkType = 'text' | 'tool_start' | 'tool_end' | 'tool_result';
+export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';
 
 /** HITL interrupt payload sent by the server when the agent pauses for human approval. */
 export interface HitlInterruptData {
@@ -76,7 +76,7 @@ interface AgentStreamChunk {
   session_id: string;
   content: string;
   is_final?: boolean;
-  /** Chunk type — "text" | "tool_start" | "tool_end" | "tool_result". Defaults to "text". */
+  /** Chunk type — "text" | "reasoning" | "tool_start" | "tool_end" | "tool_result". Defaults to "text". */
   chunk_type?: AgentChunkType;
   /** Tool-call metadata (only present on "tool_result" chunks). */
   tool_id?: string;
@@ -84,6 +84,7 @@ interface AgentStreamChunk {
   args?: Record<string, unknown>;
   error?: boolean;
 }
+
 interface AgentStreamEnd {
   session_id: string;
   content: string;
@@ -847,6 +848,48 @@ export async function listChannels(): Promise<{ channels: ChannelInfo[] }> {
 export async function readSkill(location: string): Promise<SkillDetail> {
   const cleanPath = location.replace(/^\.\//, '');
   return fetchApi({ url: `/skills/${cleanPath}`, method: 'get' }) as unknown as Promise<SkillDetail>;
+}
+
+/**
+ * Upload a third-party skill from a local SKILL.md file.
+ *
+ * Sends the file as `multipart/form-data` (field `file`) plus an optional
+ * `name` field derived from the file's base name without extension. The
+ * uploaded skill is inactive by default.
+ *
+ * @param file The local SKILL.md file to upload.
+ * @returns `{ success, message?, name?, warnings? }` from the backend. When
+ *   `warnings` is non-empty the upload was accepted (CAUTION scan verdict) but
+ *   the security scanner flagged concerns that should be surfaced to the user.
+ */
+export async function uploadSkill(
+  file: File,
+): Promise<{ success: boolean; message?: string; name?: string; warnings?: string[] }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const baseName = file.name.replace(/\.[^.]+$/, '');
+  formData.append('name', baseName);
+  return fetchApi({
+    url: '/skills/upload',
+    opts: formData,
+    method: 'post',
+    contentType: 'multipart/form-data',
+  }) as unknown as Promise<{ success: boolean; message?: string; name?: string; warnings?: string[] }>;
+}
+
+/**
+ * Toggle whether a skill is active.
+ *
+ * @param name The skill name to toggle.
+ * @param active The desired activation state.
+ * @returns `{ success, message? }` from the backend.
+ */
+export async function setSkillActive(name: string, active: boolean): Promise<{ success: boolean; message?: string }> {
+  return fetchApi({
+    url: '/skills/toggle',
+    opts: { name, active },
+    method: 'post',
+  }) as unknown as Promise<{ success: boolean; message?: string }>;
 }
 
 /** Auto-transition counters returned by `run_curator_review` (e.g. marked_stale/archived/reactivated/checked/seeded). */

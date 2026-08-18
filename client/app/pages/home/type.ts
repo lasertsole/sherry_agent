@@ -51,6 +51,8 @@ export interface MessageItem {
   toolArgs?: Record<string, unknown>;
   /** 工具执行结果文本（仅 role=TOOL 且收到 tool_result 时有值） */
   toolResult?: string;
+  /** 模型思考/推理过程（仅 role=AI 有值；流式时逐块拼接，历史回填时一次完整写入） */
+  reasoning?: string | null;
 }
 
 /** 角色 */

@@ -342,6 +342,17 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                         res: str = msg_chunk.content
                         ai_text += res
                         yield {"type": "text", "content": res}
+
+                    # Model reasoning output logic
+                    # DeepSeek-R1 and similar reasoning models stream their
+                    # chain-of-thought via `additional_kwargs['reasoning_content']`
+                    # (NOT inline content). Surfaces as a dedicated "reasoning"
+                    # chunk so the client can render a collapsible thinking block
+                    # on the same message as the final answer.
+                    _reasoning = msg_chunk.additional_kwargs.get("reasoning_content", "") if getattr(msg_chunk, "additional_kwargs", None) else ""
+                    if _reasoning and len(_reasoning) > 0:
+                        yield {"type": "reasoning", "content": _reasoning}
+                    # End model reasoning output logic
                     # End conversation output logic
 
         else:
@@ -568,6 +579,13 @@ async def resume_agent(
 
                 if len(msg_chunk.content) > 0:
                     yield {"type": "text", "content": msg_chunk.content}
+
+                # Surface DeepSeek thinking-mode chain-of-thought. langchain-deepseek
+                # streams reasoning_content into additional_kwargs on AIMessageChunk.
+                # Mirrors async_generate so a HITL resume shows reasoning too.
+                _reasoning = msg_chunk.additional_kwargs.get("reasoning_content", "")
+                if _reasoning:
+                    yield {"type": "reasoning", "content": _reasoning}
 
         elapsed = time.time() - start_time
         logger.debug(

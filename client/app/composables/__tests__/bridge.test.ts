@@ -109,8 +109,52 @@ describe('sendChatMessage (browser WebSocket)', () => {
 
     ws.frame({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' });
     ws.frame({ event: 'chunk', session_id: 's1', content: 'lo', type: 'text' });
-    expect(onChunk).toHaveBeenNthCalledWith(1, 'hel', 'text', 's1');
-    expect(onChunk).toHaveBeenNthCalledWith(2, 'lo', 'text', 's1');
+    const metaEmpty = { tool_id: undefined, tool_name: undefined, args: undefined, error: undefined };
+    expect(onChunk).toHaveBeenNthCalledWith(1, 'hel', 'text', 's1', metaEmpty);
+    expect(onChunk).toHaveBeenNthCalledWith(2, 'lo', 'text', 's1', metaEmpty);
+
+    ws.frame({ event: 'done', session_id: 's1', content: '' });
+    await promise;
+    expect(ws.closed).toBe(true);
+  });
+
+  it('streams DeepSeek thinking-mode reasoning chunks and interleaves with text', async () => {
+    const onChunk = vi.fn();
+    const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi' }, onChunk);
+
+    const ws = FakeWebSocket.instances[0];
+    expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
+    ws.open();
+
+    // Simulate a full thinking-mode turn: multi-part reasoning, then text,
+    // then a tool call, then a second reasoning pass, then final text.
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'Let me think', type: 'reasoning' });
+    ws.frame({ event: 'chunk', session_id: 's1', content: ' harder...', type: 'reasoning' });
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'Sure', type: 'text' });
+    ws.frame({
+      event: 'chunk',
+      session_id: 's1',
+      content: '',
+      type: 'tool_start',
+      tool_id: 't1',
+      tool_name: 'web_search',
+    });
+    // Second thinking pass after the tool result.
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'Now I know.', type: 'reasoning' });
+    ws.frame({ event: 'chunk', session_id: 's1', content: ' I can answer.', type: 'text' });
+
+    const metaEmpty = { tool_id: undefined, tool_name: undefined, args: undefined, error: undefined };
+    expect(onChunk).toHaveBeenNthCalledWith(1, 'Let me think', 'reasoning', 's1', metaEmpty);
+    expect(onChunk).toHaveBeenNthCalledWith(2, ' harder...', 'reasoning', 's1', metaEmpty);
+    expect(onChunk).toHaveBeenNthCalledWith(3, 'Sure', 'text', 's1', metaEmpty);
+    expect(onChunk).toHaveBeenNthCalledWith(4, '', 'tool_start', 's1', {
+      tool_id: 't1',
+      tool_name: 'web_search',
+      args: undefined,
+      error: undefined,
+    });
+    expect(onChunk).toHaveBeenNthCalledWith(5, 'Now I know.', 'reasoning', 's1', metaEmpty);
+    expect(onChunk).toHaveBeenNthCalledWith(6, ' I can answer.', 'text', 's1', metaEmpty);
 
     ws.frame({ event: 'done', session_id: 's1', content: '' });
     await promise;

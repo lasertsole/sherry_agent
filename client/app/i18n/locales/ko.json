@@ -15,7 +15,8 @@
     "toolArgs": "인자",
     "toolResult": "실행 결과",
     "toolNoOutput": "출력 없음",
-    "toolRunning": "실행 중…"
+    "toolRunning": "실행 중…",
+    "thinking": "생각"
   },
   "history": {
     "noSessions": "대화 기록이 없습니다",
@@ -37,21 +38,31 @@
     "uploadImage": "이미지 업로드",
     "image": "이미지",
     "skills": "스킬",
+    "knowledgeGraph": "지식 그래프",
     "systemConfig": "시스템 설정",
     "logs": "로그",
     "extend": "확장",
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기"
   },
+  "knowledgeGraph": {
+    "back": "뒤로",
+    "placeholder": "지식 그래프 기능 개발 중…"
+  },
   "skills": {
     "title": "스킬 관리",
     "empty": "이 카테고리에 스킬이 없습니다",
     "selectHint": "왼쪽에서 스킬을 선택해 세부 정보를 확인하세요",
     "readonly": "읽기 전용",
+    "uploading": "업로드 중…",
+    "uploadSuccess": "스킬 업로드 성공. 기본적으로 비활성화되어 있습니다",
+    "uploadFailed": "업로드 실패",
     "tabs": {
       "builtin": "내장",
       "auto": "자동",
       "thirdParty": "타사",
+      "uploadSkill": "스킬 업로드",
+      "uploadSkillHint": "로컬 SKILL.md를 선택하여 타사 스킬로 업로드",
       "runCurator": "스킬 유지보수",
       "runCuratorHint": "자동(Auto) 학습된 스킬을 자동으로 검토하여 유사하거나 중복된 스킬을 병합하고, 오래 사용되지 않은 스킬을 표시·보관하여 스킬 라이브러리를 정돈합니다.",
       "curatorDone": "스킬 유지보수 완료：",
@@ -156,6 +167,15 @@
       "userName": "사용자 이름",
       "avatar": "아바타",
       "charNote": "아바타와 이름 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다."
+    },
+    "background": {
+      "title": "배경 이미지",
+      "upload": "배경 업로드",
+      "clear": "배경 지우기",
+      "bothThemes": "배경 이미지는 라이트/다크 테마 모두에서 표시됩니다. 아래 슬라이더로 오버레이 강도를 조정하세요.",
+      "opacity": "오버레이 강도",
+      "opacityHint": "라이트 테마는 흰색, 다크 테마는 검은색 오버레이를 덮습니다. 오른쪽으로 갈수록 사진이 순백/순흑으로 바래다 완전히 가려집니다.",
+      "cropTitle": "배경 자르기"
     }
   }
 }

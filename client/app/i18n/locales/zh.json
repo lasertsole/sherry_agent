@@ -16,7 +16,8 @@
     "toolArgs": "调用参数",
     "toolResult": "执行结果",
     "toolNoOutput": "无输出",
-  "toolRunning": "执行中…"
+  "toolRunning": "执行中…",
+  "thinking": "思考过程"
   },
   "history": {
     "noSessions": "暂无会话记录",
@@ -38,21 +39,35 @@
     "uploadImage": "上传图片",
     "image": "图片",
     "skills": "技能",
+    "knowledgeGraph": "知识图谱",
     "systemConfig": "系统配置",
     "logs": "日志",
     "extend": "扩展",
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏"
   },
+  "knowledgeGraph": {
+    "back": "返回",
+    "placeholder": "知识图谱功能开发中…"
+  },
   "skills": {
     "title": "技能管理",
     "empty": "该分类下暂无技能",
     "selectHint": "请选择左侧技能查看详情",
     "readonly": "只读",
+    "uploading": "上传中…",
+    "uploadSuccess": "技能上传成功，默认未激活",
+    "uploadFailed": "上传失败",
+    "activate": "激活",
+    "deactivate": "停用",
+    "activateFailed": "更新激活状态失败",
+    "toggleFailed": "切换失败",
     "tabs": {
       "builtin": "内置",
       "auto": "自动",
       "thirdParty": "第三方",
+      "uploadSkill": "上传技能",
+      "uploadSkillHint": "从本地选择 SKILL.md 文件上传为第三方技能",
       "runCurator": "技能维护",
       "runCuratorHint": "自动审查自动学习（auto）技能，合并相似或重复的技能，并标记、归档长期未使用的技能，保持技能库整洁。",
       "curatorDone": "技能维护完成：",
@@ -158,6 +173,23 @@
       "userName": "用户名称",
       "avatar": "头像",
       "charNote": "修改头像与名字仅在新建会话后生效，旧会话不受影响。"
+    },
+    "crop": {
+      "title": "裁剪头像",
+      "confirm": "确定",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "rotate": "旋转",
+      "preview": "裁剪预览"
+    },
+    "background": {
+      "title": "背景图片",
+      "upload": "上传背景",
+      "clear": "清除背景",
+      "bothThemes": "背景图片在浅色/深色主题下均会显示；通过下方滑块调整遮罩强度。",
+      "opacity": "遮罩强度",
+      "opacityHint": "浅色主题叠加白色遮罩、深色主题叠加黑色遮罩：越靠右照片越被冲淡成纯白/纯黑，直至完全遮蔽。",
+      "cropTitle": "裁剪背景"
     }
   }
 }

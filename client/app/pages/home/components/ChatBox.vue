@@ -48,6 +48,33 @@
             formatCompactTimeString(message.timestamp)
           }}</span>
         </div>
+        <!-- 模型思考/推理块（折叠） -->
+        <div
+          v-if="message.role === CHAT_ROLE.AI && message.reasoning"
+          :class="[
+            'w-fit mb-1 text-sm transition-colors duration-200',
+            { 'rounded-xl': isConsecutive(message.id) }
+          ]">
+          <button
+            type="button"
+            :class="[
+              'flex items-center gap-2 w-full text-left cursor-pointer select-none px-3 py-1.5 text-xs font-medium rounded-md border border-solid transition-colors duration-200',
+              expandedThinking.has(message.id)
+                ? 'bg-gray-50 dark:bg-gray-800/60 border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400'
+                : 'bg-gray-50/60 dark:bg-gray-800/30 border-gray-100 dark:border-gray-700/60 text-[#6B7280] dark:text-[#9CA3AF]'
+            ]"
+            @click="toggleThinking(message.id)">
+            <span class="pi pi-brain text-xs"></span>
+            <span>{{ t('chatBox.thinking') }}</span>
+            <span
+              :class="['pi pi-chevron-down text-xs ml-auto transition-transform duration-200', { 'rotate-180': expandedThinking.has(message.id) }]"></span>
+          </button>
+          <div
+            v-if="expandedThinking.has(message.id)"
+            class="mt-1 px-3 py-2 text-xs whitespace-pre-wrap break-words leading-relaxed text-gray-500 dark:text-gray-400 border-l-2 border-solid border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/30 rounded-r-md">
+            {{ message.reasoning }}
+          </div>
+        </div>
         <!-- 工具调用卡片 -->
         <div
           v-if="message.role === CHAT_ROLE.TOOL"
@@ -375,6 +402,20 @@ const toggleToolCard = (id: number) => {
     expandedToolCards.delete(id);
   } else {
     expandedToolCards.add(id);
+  }
+};
+
+// ── 模型思考/推理块展开/收起 ─────────────────────────────
+
+/** 已展开的思考块消息 id 集合（默认收起） */
+const expandedThinking = reactive(new Set<number>());
+
+/** 切换某条消息思考块的展开/收起状态 */
+const toggleThinking = (id: number) => {
+  if (expandedThinking.has(id)) {
+    expandedThinking.delete(id);
+  } else {
+    expandedThinking.add(id);
   }
 };
 

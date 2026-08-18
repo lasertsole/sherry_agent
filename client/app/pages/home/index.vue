@@ -1,5 +1,14 @@
 <template>
-  <div class="w-full h-full flex text-theme-main">
+  <div
+    class="relative w-full h-full flex text-theme-main"
+    :style="chatBackgroundStyle">
+    <!-- 背景遮罩层：浅色=白/深色=黑，opacity 由「背景图片」tab 的 slider 控制，
+         越满照片越被冲淡成纯白/纯黑直至完全遮蔽。置于内容之下（pointer-events-none
+         不拦截交互），且背景图蒙在根容器背景上，下方内容仍在上层可选择。 -->
+    <div
+      v-if="backgroundOpacity > 0"
+      class="absolute inset-0 pointer-events-none"
+      :style="chatBackgroundOverlayStyle" />
     <!-- 左侧-历史记录区域 -->
     <!-- 移动端：固定定位，默认隐藏，通过按钮切换 -->
     <!-- md：固定定位，显示宽度 280px -->
@@ -9,11 +18,10 @@
         'relative h-full overflow-hidden transition-all duration-300',
         isSidebarCollapsed
           ? 'w-0 border-r-0'
-          : 'w-[280px] md:w-[280px] lg:w-[360px] border-r border-solid border-gray-light bg-[#fff] dark:border-gray-dark dark:bg-[#2a2a36]'
+          : 'w-[280px] md:w-[280px] lg:w-[360px] border-r border-solid border-gray-light bg-transparent dark:border-gray-dark dark:bg-transparent'
       ]">
       <!-- 内容固定宽度：折叠时由外层 overflow-hidden 整体裁切，内部元素不会被挤压换行 -->
-      <div
-        class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
+      <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
         <!-- LOGO区域 -->
         <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
         <!-- 新建对话 -->
@@ -58,7 +66,7 @@
     </div>
 
     <!-- 右侧-会话主体区域 -->
-    <div class="relative flex flex-col flex-1 min-w-0 h-full bg-white dark:bg-[#131619]">
+    <div class="relative flex flex-col flex-1 min-w-0 h-full bg-transparent dark:bg-transparent">
       <!-- 顶部工具栏：flex 两端对齐。折叠/展开历史按钮靠左，其余功能按钮全部靠右。
            按钮始终可见（折叠后侧边栏收起，此按钮仍停留在会话区左上角，可再次展开）。 -->
       <div
@@ -87,11 +95,15 @@
               aria-label="Language / 语言"
               @update:model-value="onLanguageChange">
               <template #value="slotProps">
-                <span v-if="slotProps.value" class="flex items-center gap-1.5">
+                <span
+                  v-if="slotProps.value"
+                  class="flex items-center gap-1.5">
                   <i class="pi pi-globe" />
                   <span>{{ t(`config.language.${slotProps.value}`) }}</span>
                 </span>
-                <span v-else class="flex items-center gap-1.5">
+                <span
+                  v-else
+                  class="flex items-center gap-1.5">
                   <i class="pi pi-globe" />
                   <span>{{ t('config.language.zh') }}</span>
                 </span>
@@ -117,9 +129,8 @@
            防止删除的非激活会话（其 page-key 不再被路由引用，但槽仍驻留内存）导致无界增长。 -->
       <div class="flex-1 min-h-0">
         <NuxtPage
-          :page-key="(route) => String(route.params.sid ?? 'root')"
-          :keepalive="{ max: KEEP_ALIVE_MAX }"
-        />
+          :page-key="route => String(route.params.sid ?? 'root')"
+          :keepalive="{ max: KEEP_ALIVE_MAX }" />
       </div>
     </div>
 
@@ -127,7 +138,9 @@
     <SkillsDialog v-model="showSkillsDialog" />
 
     <!-- 系统配置弹窗 -->
-    <ConfigDialog v-model="showConfigDialog" @saved="loadCharacter" />
+    <ConfigDialog
+      v-model="showConfigDialog"
+      @saved="loadCharacter" />
 
     <!-- 日志查看弹窗 -->
     <LogsDialog v-model="showLogsDialog" />
@@ -150,19 +163,36 @@ import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from './type.ts';
 import type { CachedCharacter } from '@/composables/db';
-import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter, clearCachedCharacter, cacheSessionMeta, readCachedSessionMetaList, clearCachedSessionMeta } from '@/composables/db';
+import {
+  GLOBAL_SESSION_KEY,
+  DEFAULT_CACHED_CHARACTER,
+  cacheCharacter,
+  readCachedCharacter,
+  clearCachedCharacter,
+  cacheSessionMeta,
+  readCachedSessionMetaList,
+  clearCachedSessionMeta
+} from '@/composables/db';
 import { headerTools } from './config';
 import { emit } from '@/composables/mitt';
 import { getSessionList, clearSession, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
 
 const { t, locale, setLocale } = useI18n();
 
+/** 全局聊天区背景图：绑定到根容器（铺满整个窗口，含左侧会话列表） */
+const {
+  backgroundOpacity,
+  chatBackgroundStyle,
+  chatBackgroundOverlayStyle,
+  loadBackground
+} = useChatBackground();
+
 /** 语言切换选项：复用系统配置里的语言名（各 locale 中对应自语言名） */
 const languageOptions = computed(() => [
   { name: t('config.language.zh'), code: 'zh' },
   { name: t('config.language.en'), code: 'en' },
   { name: t('config.language.ja'), code: 'ja' },
-  { name: t('config.language.ko'), code: 'ko' },
+  { name: t('config.language.ko'), code: 'ko' }
 ]);
 
 /**
@@ -234,7 +264,7 @@ const defaultCharacter = (): { userName: string; userAvatar: string; aiName: str
   userName: DEFAULT_CACHED_CHARACTER.userName,
   userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
   aiName: DEFAULT_CACHED_CHARACTER.aiName,
-  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar
 });
 
 /**
@@ -251,7 +281,7 @@ const ensureSessionCharacter = async (sessionId: string) => {
   try {
     const [globalSnap, sessionSnap] = await Promise.all([
       readCachedCharacter(GLOBAL_SESSION_KEY),
-      readCachedCharacter(sessionId),
+      readCachedCharacter(sessionId)
     ]);
     // 会话已有快照（旧会话锁定的头像/名字）→ 保持现状，不覆盖旧会话快照。
     if (sessionSnap) {
@@ -296,10 +326,8 @@ const loadSessionList = async () => {
     // 1) 读取 IndexedDB 中持久化的占位会话（新建空会话尚未发消息）；
     // 2) 服务端已有记录（发过消息）的会话直接从内存列表保留，并顺手清除其占位；
     // 3) 内存 `historyList` 中的本地项（本次会话新建但尚未写入 IndexedDB，兜底）。
-    let localPlaceholders = historyList.value.filter(
-      (s) => !sessions.some((row) => row.id === s.id),
-    );
-    const serverIds = new Set(sessions.map((row) => row.id));
+    let localPlaceholders = historyList.value.filter(s => !sessions.some(row => row.id === s.id));
+    const serverIds = new Set(sessions.map(row => row.id));
     // 服务端已有记录的会话，删除其本地占位（已晋升为真实服务端会话）。
     const placeholders = await readCachedSessionMetaList();
     for (const p of placeholders) {
@@ -347,6 +375,9 @@ const handleOperate = (type: string, event: string) => {
   switch (event) {
     case 'skills':
       showSkillsDialog.value = true;
+      return;
+    case 'knowledgeGraph':
+      router.push(localePath('/knowledge-graph'));
       return;
     case 'systemConfig':
       showConfigDialog.value = true;
@@ -411,8 +442,8 @@ const handleDeleteSession = async (id: string) => {
       console.warn('[handleDeleteSession] 删除会话失败，保留列表项：', id);
       return;
     }
-    historyList.value = historyList.value.filter((s) => s.id !== id);
-    selectedSessionIds.value = selectedSessionIds.value.filter((sid) => sid !== id);
+    historyList.value = historyList.value.filter(s => s.id !== id);
+    selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id);
     // 同步清理该会话的角色快照缓存
     clearCachedCharacter(id);
     // 同步清理本地占位会话缓存（IndexedDB），避免删除后仍残留占位
@@ -457,7 +488,7 @@ watch(
 const handleToggleSelectAll = (checked: boolean) => {
   if (checked) {
     // 勾选全选：当前列表全部选中
-    selectedSessionIds.value = historyList.value.map((s) => s.id);
+    selectedSessionIds.value = historyList.value.map(s => s.id);
   } else {
     // 取消全选：清空当前选择
     selectedSessionIds.value = [];
@@ -489,9 +520,9 @@ const handleBatchDelete = async () => {
     }
   }
 
-  const deleted = ids.filter((id) => !remain.includes(id));
+  const deleted = ids.filter(id => !remain.includes(id));
   if (deleted.length > 0) {
-    historyList.value = historyList.value.filter((s) => !deleted.includes(s.id));
+    historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
     // 同步清理被删会话的角色快照缓存
     for (const id of deleted) clearCachedCharacter(id);
     // 被删会话可能仍在流式生成（KeepAlive 缓存内的非激活实例流未中止），
@@ -513,6 +544,7 @@ const handleBatchDelete = async () => {
 ensureSessionCharacter('default');
 // 挂载后拉取会话列表（角色信息已由 ensureSessionCharacter 从本地 Dexie 加载）
 onMounted(() => {
+  loadBackground();
   loadSessionList();
 });
 
@@ -526,11 +558,15 @@ const activeSessionId = computed(() => {
   const sid = route.params.sid;
   return typeof sid === 'string' && sid ? sid : undefined;
 });
-watch(activeSessionId, async (sid) => {
-  currentSessionId.value = sid;
-  if (sid) {
-    // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
-    await ensureSessionCharacter(sid);
-  }
-}, { immediate: true });
+watch(
+  activeSessionId,
+  async sid => {
+    currentSessionId.value = sid;
+    if (sid) {
+      // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
+      await ensureSessionCharacter(sid);
+    }
+  },
+  { immediate: true }
+);
 </script>

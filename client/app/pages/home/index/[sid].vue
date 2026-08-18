@@ -1,5 +1,5 @@
 ﻿<template>
-  <div class="flex flex-col flex-1 h-full bg-white dark:bg-[#131619]">
+  <div class="flex flex-col flex-1 h-full bg-transparent dark:bg-transparent">
     <!-- 聊天主体 / 空态（有会话 sid 时始终显示聊天面板；仅无 sid 的根路径显示"开启新对话"） -->
     <template v-if="sessionId">
       <!-- HITL 审批卡片：非模态，置于历史消息区顶部（不遮最新会话），
@@ -9,9 +9,17 @@
         class="shrink-0 mx-2 mt-2 bg-white dark:bg-[#131619] rounded-lg border border-solid border-gray-light dark:border-gray-dark shadow-lg">
         <div class="flex flex-col gap-3 p-3">
           <div class="text-sm font-semibold">{{ t('hitl.title', 'Action Requires Approval') }}</div>
-          <div class="text-sm text-gray-500">{{ t('hitl.tool', 'Tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span></div>
-          <div v-if="hitlRequest?.description" class="text-sm whitespace-pre-wrap">{{ hitlRequest.description }}</div>
-          <div v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0" class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded-lg overflow-auto max-h-40">
+          <div class="text-sm text-gray-500">
+            {{ t('hitl.tool', 'Tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span>
+          </div>
+          <div
+            v-if="hitlRequest?.description"
+            class="text-sm whitespace-pre-wrap">
+            {{ hitlRequest.description }}
+          </div>
+          <div
+            v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0"
+            class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded-lg overflow-auto max-h-40">
             <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
           </div>
           <div class="flex gap-2 justify-end">
@@ -35,7 +43,8 @@
         :ai-name="characterInfo.aiName" />
       <!-- 图片预览区（独立于输入框上方，避免挤压 h-40 输入框导致发送按钮上移 / ✕ 按钮被裁剪） -->
       <template v-if="selectedImages.length > 0">
-        <div class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+        <div
+          class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
           <div
             v-for="(img, idx) in selectedImages"
             :key="idx"
@@ -103,7 +112,9 @@
       </div>
     </template>
     <!-- 空态：无消息时显示居中的"开启新对话"按钮 -->
-    <div v-else class="flex-1 flex flex-col items-center justify-center gap-4">
+    <div
+      v-else
+      class="flex-1 flex flex-col items-center justify-center gap-4">
       <div class="flex flex-col items-center gap-2">
         <span class="pi pi-comments text-4xl text-[#9CA3AF]"></span>
         <p class="text-base font-medium text-[#6B7280] dark:text-[#9CA3AF]">{{ t('history.noSessions') }}</p>
@@ -135,11 +146,16 @@ import {
   readDraftTurns,
   clearDraftTurn,
   clearDraftSession,
-  type DraftTurn,
+  type DraftTurn
 } from '@/composables/db';
 import { tools } from '../config';
 import { resumeHitl, type AgentChunkType } from '@/composables/bridge';
-import { get_history_by_turn_page, getPendingInterrupt, postAgentStream, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
+import {
+  get_history_by_turn_page,
+  getPendingInterrupt,
+  postAgentStream,
+  SESSION_ABORT_STREAM_EVENT
+} from '@/composables/messages';
 import { on, off } from '@/composables/mitt';
 
 // 图片预览
@@ -200,7 +216,7 @@ const characterInfo = ref<{ userName: string; userAvatar: string; aiName: string
   userName: DEFAULT_CACHED_CHARACTER.userName,
   userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
   aiName: DEFAULT_CACHED_CHARACTER.aiName,
-  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar
 });
 
 /** 默认角色显示信息（内置：远野汉娜 / 橘雪莉 + 默认头像 URL，见 `defaultCharacter.ts`） */
@@ -208,8 +224,13 @@ const defaultCharacter = (): { userName: string; userAvatar: string; aiName: str
   userName: DEFAULT_CACHED_CHARACTER.userName,
   userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
   aiName: DEFAULT_CACHED_CHARACTER.aiName,
-  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar
 });
+
+// ── 聊天区背景图（由 home/index.vue 根容器统一渲染） ────────
+// 背景图是全局配置，绑定在 home/index.vue 的根容器（铺满整个窗口，含左侧会话列表），
+// 由共享单例 useChatBackground 在保存后即时更新，本页无需再加载/渲染背景图。
+// 本页根 div 已在 template 中设为 bg-transparent（浅色主题），让根容器的背景图透出。
 
 /**
  * 将一份角色快照映射为 `characterInfo`（空消息段回退到内置默认值）。
@@ -221,7 +242,7 @@ const applyCharacterSnapshot = (snap?: Pick<CachedCharacter, 'userName' | 'userA
         userName: snap.userName?.trim() ? snap.userName : defaultInfo.userName,
         userAvatar: snap.userAvatar ?? defaultInfo.userAvatar,
         aiName: snap.aiName?.trim() ? snap.aiName : defaultInfo.aiName,
-        aiAvatar: snap.aiAvatar ?? defaultInfo.aiAvatar,
+        aiAvatar: snap.aiAvatar ?? defaultInfo.aiAvatar
       }
     : defaultInfo;
 };
@@ -239,7 +260,7 @@ const ensureSessionCharacter = async (sessionId: string) => {
   try {
     const [globalSnap, sessionSnap] = await Promise.all([
       readCachedCharacter('__global__'),
-      readCachedCharacter(sessionId),
+      readCachedCharacter(sessionId)
     ]);
     // 会话已有快照（旧会话锁定的头像/名字）→ 直接用快照，不受全局变更影响。
     if (sessionSnap) {
@@ -287,7 +308,7 @@ const normalizeContent = (content: unknown): string => {
       .map((part: unknown) =>
         typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string'
           ? (part as { text: string }).text
-          : '',
+          : ''
       )
       .join('');
   }
@@ -311,10 +332,7 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
    *  - 来自后端历史接口时已是解析后的对象数组 [ { id, name, args, type } ]；
    *  - 来自本地 Dexie 缓存时可能仍是 JSON 字符串，故做一次安全解析。
    */
-  const toolCallById = new Map<
-    string,
-    { name?: string; args?: Record<string, unknown> }
-  >();
+  const toolCallById = new Map<string, { name?: string; args?: Record<string, unknown> }>();
   for (const row of rows) {
     if (row.role !== CHAT_ROLE.AI) continue;
     let calls: unknown = row.tool_calls;
@@ -332,10 +350,7 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
       if (typeof c.id !== 'string' || !c.id) continue;
       toolCallById.set(c.id, {
         name: typeof c.name === 'string' ? c.name : undefined,
-        args:
-          typeof c.args === 'object' && c.args !== null
-            ? (c.args as Record<string, unknown>)
-            : undefined,
+        args: typeof c.args === 'object' && c.args !== null ? (c.args as Record<string, unknown>) : undefined
       });
     }
   }
@@ -347,9 +362,7 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
       const rawStatus = row.tool_status ?? 'success';
       // 后端 tool_status 存的是 success/failed/error，前端展示层统一为 done/failed/error
       const toolStatus: MessageItem['toolStatus'] =
-        rawStatus === 'success'
-          ? 'done'
-          : (rawStatus as MessageItem['toolStatus']);
+        rawStatus === 'success' ? 'done' : (rawStatus as MessageItem['toolStatus']);
       return {
         session_id: row.session_id,
         role: CHAT_ROLE.TOOL,
@@ -363,7 +376,7 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
         toolStatus,
         // 从配对 ai 行取回真实执行参数
         toolArgs: callInfo?.args,
-        toolResult: normalizeContent(row.content),
+        toolResult: normalizeContent(row.content)
       };
     }
 
@@ -379,6 +392,8 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
       // 透传工具字段（历史消息中 role=tool 的行会有值）
       toolName: row.tool_name ?? undefined,
       toolStatus: (row.tool_status as 'running' | 'done') ?? undefined,
+      // 透传模型思考/推理过程（后端 messages 表的 reasoning 字段，仅在 AI 行有值）
+      reasoning: row.reasoning ?? null
     };
   });
 };
@@ -410,12 +425,12 @@ const loadSessionHistory = async (sessionId: string) => {
   const mergedById = new Map<number, MessageItem>();
   const serverRowFor = (m: MessageItem) =>
     historyItems.find(
-      (h) =>
+      h =>
         h.id >= 0 &&
         h.session_id === m.session_id &&
         h.turn_num === m.turn_num &&
         h.role === m.role &&
-        h.content === m.content,
+        h.content === m.content
     );
   for (const m of chatMessages.value) {
     // 本地临时负 id 行：若服务端已返回同一逻辑消息的正 id 行，则跳过（用服务端行）。
@@ -466,10 +481,7 @@ const loadSessionHistory = async (sessionId: string) => {
       if (staleDraftTurns.has(dm.turn_num)) continue;
       // 草稿行在本地集合 / 服务端历史中是否已存在（按逻辑键匹配）
       const alreadyLocal = [...mergedById.values()].some(
-        (m) =>
-          m.turn_num === dm.turn_num &&
-          m.role === dm.role &&
-          m.content === dm.content,
+        m => m.turn_num === dm.turn_num && m.role === dm.role && m.content === dm.content
       );
       if (alreadyLocal) continue;
       mergedById.set(dm.id, dm);
@@ -485,9 +497,7 @@ const loadSessionHistory = async (sessionId: string) => {
   // 该轮真实消息 id 为正，同轮内按 id 升序（负 < 正）草稿排前者 —— 但同一逻辑消息
   // 已被上方「跳过」逻辑剔除，能被水合进来的草稿都是尚未落库的失败轮次，因此不会
   // 与实际渲染冲突。
-  chatMessages.value = [...mergedById.values()].sort(
-    (a, b) => a.turn_num - b.turn_num || a.id - b.id,
-  );
+  chatMessages.value = [...mergedById.values()].sort((a, b) => a.turn_num - b.turn_num || a.id - b.id);
 };
 
 /** 是否处于 AI 回复生成中 */
@@ -578,8 +588,7 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
   }
 
   // 记录本次审批的轮次：resume 产出的新消息落到「当前最大轮次 + 1」
-  const turnNum =
-    chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
+  const turnNum = chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
 
   // 登记本次 resume 轮次的草稿（与 handleSend 一致），使 appendStreamChunk 能实时落盘；
   // resume 流正常结束时对账移除，拒绝/失败时保留草稿缓存失败阶段内容。
@@ -589,7 +598,7 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
     content: string,
     type: AgentChunkType,
     _sessionId: string,
-    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
   ) => {
     appendStreamChunk(sid, content, type, turnNum, meta);
   };
@@ -659,17 +668,12 @@ const restorePendingHitl = async (sid: string) => {
   // 已有审批在进行或已有卡片则不重复拉起
   if (hitlRequest.value || (activeHitlController && !activeHitlController.closed)) return;
   const pending = await getPendingInterrupt(sid);
-  if (
-    pending &&
-    typeof pending === 'object' &&
-    !Array.isArray(pending) &&
-    typeof pending.tool_name === 'string'
-  ) {
+  if (pending && typeof pending === 'object' && !Array.isArray(pending) && typeof pending.tool_name === 'string') {
     hitlRequest.value = {
       tool_name: pending.tool_name,
       tool_args: pending.tool_args ?? {},
       description: pending.description ?? '',
-      allowed_decisions: pending.allowed_decisions ?? [],
+      allowed_decisions: pending.allowed_decisions ?? []
     };
   }
 };
@@ -727,7 +731,7 @@ const appendStreamChunk = (
   content: string,
   type: AgentChunkType,
   turnNum: number,
-  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
 ) => {
   const last = chatMessages.value[chatMessages.value.length - 1];
   // 判定是否属于一条「活动草稿轮」（发送即 created，onDone/error/stop 后移除）。
@@ -745,9 +749,30 @@ const appendStreamChunk = (
         content,
         id: tempIdCounter++,
         turn_num: turnNum,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
+    if (isActiveDraft) scheduleDraftWrite(sid, turnNum);
+  } else if (type === 'reasoning') {
+    // 模型思考块：同轮次末位 AI 消息上的 reasoning 字段逐块拼接，不干扰正文累积。
+    // 末位是 TOOL/非本回合时新建一条 AI 占位消息承载（正文可能稍后才到）。
+    let target: MessageItem;
+    if (last && last.role === CHAT_ROLE.AI && last.turn_num === turnNum) {
+      target = last;
+    } else {
+      target = {
+        session_id: sid,
+        role: CHAT_ROLE.AI,
+        content: '',
+        id: tempIdCounter++,
+        turn_num: turnNum,
+        timestamp: new Date().toISOString()
+      };
+      chatMessages.value.push(target);
+    }
+    target.reasoning = (target.reasoning ?? '') + content;
+    // 思考块是离散阶段，去抖直觉上可用，但思考内容需随流实时落盘以支持刷新恢复，
+    // 与正文共用文本追加的去抖路径即可（思考块通常不会如正文那般高频细分）。
     if (isActiveDraft) scheduleDraftWrite(sid, turnNum);
   } else if (type === 'tool_start') {
     chatMessages.value.push({
@@ -760,7 +785,7 @@ const appendStreamChunk = (
       toolArgs: meta?.args ?? undefined,
       id: tempIdCounter++,
       turn_num: turnNum,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
     if (isActiveDraft) void commitDraftTurn(sid, turnNum);
   } else if (type === 'tool_end') {
@@ -800,7 +825,7 @@ const appendStreamChunk = (
  */
 const markRunningToolsFailed = () => {
   let changed = false;
-  chatMessages.value = chatMessages.value.map((m) => {
+  chatMessages.value = chatMessages.value.map(m => {
     if (m.role === CHAT_ROLE.TOOL && m.toolStatus === 'running') {
       changed = true;
       return { ...m, toolStatus: 'failed' as const };
@@ -835,16 +860,16 @@ const markRunningToolsFailed = () => {
  * @param turnNum  本轮次（流回调使用的真实 turn_num）
  */
 const writeDraftTurn = async (sid: string, turnNum: number) => {
-  const rows = chatMessages.value.filter((m) => m.turn_num === turnNum);
+  const rows = chatMessages.value.filter(m => m.turn_num === turnNum);
   if (rows.length === 0) return; // 本轮还没有任何消息，无需写空草稿
   // 深拷贝，避免后续流式修改污染已落盘草稿
-  const snapshot = rows.map((m) =>
+  const snapshot = rows.map(m =>
     m.role === CHAT_ROLE.TOOL
       ? {
           ...m,
-          toolArgs: m.toolArgs ? JSON.parse(JSON.stringify(m.toolArgs)) : undefined,
+          toolArgs: m.toolArgs ? JSON.parse(JSON.stringify(m.toolArgs)) : undefined
         }
-      : { ...m, images: m.images ? [...m.images] : undefined },
+      : { ...m, images: m.images ? [...m.images] : undefined }
   );
   try {
     await saveDraftTurn({ session_id: sid, turn_num: turnNum, messages: snapshot });
@@ -871,7 +896,7 @@ const scheduleDraftWrite = (sid: string, turnNum: number) => {
     setTimeout(() => {
       draftDebounceTimers.delete(key);
       void writeDraftTurn(sid, turnNum);
-    }, 200),
+    }, 200)
   );
 };
 
@@ -943,11 +968,10 @@ const handleSend = async (text: string) => {
   const sid = sessionId.value || 'default';
 
   // 计算下一轮次号：取当前消息中最大 turn_num + 1，而非按数组长度。
-  const turnNum =
-    chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
+  const turnNum = chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
 
   // 携带本次待发送的图片（发送时取走并清空待发送列表）
-  const imageBase64List = selectedImages.value.map((img) => img.base64);
+  const imageBase64List = selectedImages.value.map(img => img.base64);
 
   // 追加用户消息（本地即时显示）
   const userMsg: MessageItem = {
@@ -991,7 +1015,7 @@ const handleSend = async (text: string) => {
     content: string,
     type: AgentChunkType,
     _sessionId: string,
-    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
   ) => {
     appendStreamChunk(sid, content, type, turnNum, meta);
   };
@@ -1014,7 +1038,7 @@ const handleSend = async (text: string) => {
           void loadSessionHistory(sid);
         });
       },
-      (err) => {
+      err => {
         // 流式出错：进行中的工具调用未正常完成，标记为 failed（红 ✗）。
         // 草稿**保留**——把已完成的寒暄/分析/前置工具阶段内容缓存下来，
         // 不因最终结果未输出而丢失，用户刷新后仍能看见失败前的进度。
@@ -1025,7 +1049,7 @@ const handleSend = async (text: string) => {
         void writeDraftTurn(sid, turnNum);
         isSending.value = false;
       },
-      handleHitlRequest,
+      handleHitlRequest
     );
   } catch (e) {
     // 同步抛错（罕见），此时流未启动，直接解锁。
@@ -1159,7 +1183,7 @@ const doLoadFor = (sid: string) => {
 // 首屏加载当前会话的历史消息，获取合并后的列表渲染到 ChatBox
 watch(
   sessionId,
-  (sid) => {
+  sid => {
     if (!sid) return;
 
     // 1) 首次（尚未为 mySid 加载过历史）：只加载本实例自己的会话历史。
@@ -1184,7 +1208,7 @@ watch(
     //    —— 加固：若内存态被污染（存在其它会话的消息，例如此前被（4）误写过）或为空，
     //    则重新加载本会话历史，保证切回展示的一定是本会话自己的内容。否则只做幂等刷新。
     if (sid === mySid) {
-      const polluted = chatMessages.value.some((m) => m.session_id && m.session_id !== mySid);
+      const polluted = chatMessages.value.some(m => m.session_id && m.session_id !== mySid);
       if (chatMessages.value.length === 0 || polluted) {
         doLoadFor(mySid);
       } else {
@@ -1201,7 +1225,7 @@ watch(
     //    等 onDeactivated 置 isActive=false；切回时由（3）负责恢复/兜底重载。
     return;
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 // 挂载后确保角色信息已加载（KeepAlive 恢复时 immediate 已触发过，此处兜底）
