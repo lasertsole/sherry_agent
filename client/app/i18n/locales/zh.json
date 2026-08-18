@@ -43,6 +43,7 @@
     "systemConfig": "系统配置",
     "logs": "日志",
     "extend": "扩展",
+    "settingsMenu": "菜单",
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏"
   },

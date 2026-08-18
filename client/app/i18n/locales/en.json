@@ -43,6 +43,7 @@
     "systemConfig": "System Config",
     "logs": "Logs",
     "extend": "Extend",
+    "settingsMenu": "Menu",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar"
   },

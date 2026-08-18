@@ -42,6 +42,7 @@
     "systemConfig": "시스템 설정",
     "logs": "로그",
     "extend": "확장",
+    "settingsMenu": "메뉴",
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기"
   },

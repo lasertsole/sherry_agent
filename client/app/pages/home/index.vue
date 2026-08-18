@@ -112,17 +112,47 @@
                 <span>{{ t(`config.language.${slotProps.option.code}`) }}</span>
               </template>
             </Select>
+            <!-- 日志入口：保留在顶部（无对应九宫格图标，不并入设置菜单） -->
             <Button
-              :icon="tool.icon"
-              v-for="tool in headerTools"
-              :key="tool.event"
-              :title="t(tool.title)"
-              @click="handleOperate('headerBar', tool.event)"
-              :label="t(tool.toolName)"
-              variant="text" />
+              icon="pi pi-history"
+              :title="t('toolbar.logs')"
+              :aria-label="t('toolbar.logs')"
+              variant="text"
+              @click="handleOperate('headerBar', 'logs')" />
+            <!-- 设置菜单入口：三条横线按钮。其余功能（技能/知识图谱/系统配置/扩展）
+                 全部从顶部移入此按钮弹幕出的大 dialog 九宫格。 -->
+            <Button
+              icon="pi pi-bars"
+              :title="t('toolbar.settingsMenu')"
+              :aria-label="t('toolbar.settingsMenu')"
+              variant="text"
+              @click="isSettingsMenuOpen = true" />
           </div>
         </div>
       </div>
+
+      <!-- 设置菜单：大 dialog 居中显示，内含九宫格。每个功能为正方形区块，
+           上方大图标 + 下方功能名。点击某项直接触发对应功能（弹窗/路由跳转）。 -->
+      <Dialog
+        v-model:visible="isSettingsMenuOpen"
+        :header="t('toolbar.settingsMenu')"
+        :modal="true"
+        :closable="true"
+        class="w-[min(90vw,720px)]">
+        <div class="grid grid-cols-3 gap-4">
+          <button
+            v-for="tool in headerTools"
+            :key="tool.event"
+            type="button"
+            class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+            :title="t(tool.title)"
+            @click="handleMenuSelect(tool.event)">
+            <i
+              :class="[tool.icon, 'text-4xl! text-theme-main']" />
+            <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
+          </button>
+        </div>
+      </Dialog>
       <!-- 会话主体：每个会话由 [sid].vue 渲染。以 route.params.sid 作为 page-key，
            每个会话获得独立的 KeepAlive 缓存槽，切换时原样恢复其草稿/滚动/流式/HITL 状态。
            `max` 上限：超过 N 个缓存槽时，KeepAlive 会按 LRU 淘汰最久未访问的槽，
@@ -252,6 +282,9 @@ const showLogsDialog = ref(false);
 
 /** 扩展弹窗开关 */
 const showExtendDialog = ref(false);
+
+/** 设置菜单（九宫格）是否展开 */
+const isSettingsMenuOpen = ref(false);
 
 /** 左侧历史侧边栏是否折叠（默认展开） */
 const isSidebarCollapsed = ref(false);
@@ -391,6 +424,15 @@ const handleOperate = (type: string, event: string) => {
     default:
       return;
   }
+};
+
+/**
+ * 设置菜单（九宫格）项点击处理：先触发对应工具事件，再收起菜单。
+ * knowledgeGraph 是路由跳转，其余为弹窗，统一复用 handleOperate 的事件分发。
+ */
+const handleMenuSelect = (event: string) => {
+  isSettingsMenuOpen.value = false;
+  handleOperate('headerBar', event);
 };
 
 /** 折叠/展开左侧历史侧边栏 */

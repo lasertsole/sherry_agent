@@ -42,6 +42,7 @@
     "systemConfig": "システム設定",
     "logs": "ログ",
     "extend": "拡張",
+    "settingsMenu": "メニュー",
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開"
   },

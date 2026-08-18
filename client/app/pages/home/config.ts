@@ -37,13 +37,6 @@ export const headerTools: Tool[] = [
     title: 'toolbar.extend',
     event: 'extend',
     label: 'toolbar.extend'
-  },
-  {
-    toolName: 'toolbar.logs',
-    icon: 'pi pi-terminal',
-    title: 'toolbar.logs',
-    event: 'logs',
-    label: 'toolbar.logs'
   }
 ];
 
