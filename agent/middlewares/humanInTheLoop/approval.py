@@ -94,7 +94,7 @@ class ApprovalPipeline:
     5. Session allowlist — per-session approved patterns
     6. Dangerous pattern detection — escalate dangerous commands to human approval
 
-    The pipeline is called from :class:`~agent.middlewares.humanInTheLoop.core.humanInTheLoop`
+    The pipeline is called from :class:`~agent.middlewares.humanInTheLoop.core.HumanInTheLoop`
     middleware. After a human decision, :meth:`_apply_decision` persists the choice
     back to the allowlists.
     """

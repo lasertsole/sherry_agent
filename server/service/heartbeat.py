@@ -7,6 +7,7 @@ from models import build_main_llm
 from type.bus import OutboundMessage
 from langchain.agents import create_agent
 from workspace import CORE_SYSTEM_FILE_NAMES
+from workspace.file_sync import ensure_workspace_system_files
 from channels import BaseChannel, channel_manager
 from langgraph.graph.state import CompiledStateGraph
 from workspace.prompt_builder import build_system_prompt
@@ -17,6 +18,9 @@ tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool
 
 async def process_heartbeat_task(task: str) -> str:
     try:
+        # Lazy-ensure the core persona files exist before building the prompt.
+        ensure_workspace_system_files()
+
         # Get graph-memory system prompt
         main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
 

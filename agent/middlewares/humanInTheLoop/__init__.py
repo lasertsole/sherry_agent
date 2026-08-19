@@ -5,9 +5,9 @@ gates, and the main :class:`humanInTheLoop` middleware class.
 
 Typical usage::
 
-    from agent.middlewares.humanInTheLoop import humanInTheLoop, HITLConfig
+    from agent.middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 
-    middleware = humanInTheLoop(HITLConfig(mode=ApprovalMode.SMART))
+    middleware = HumanInTheLoop(HITLConfig(mode=ApprovalMode.SMART))
 """
 
 from .types import (

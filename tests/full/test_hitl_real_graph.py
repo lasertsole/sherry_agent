@@ -154,7 +154,7 @@ def test_terminal_interrupt_propagates_and_persists_pending_task():
         "The GraphInterrupt is being swallowed somewhere upstream."
     )
     task = tasks[0]
-    assert task.name == "humanInTheLoop.after_model"
+    assert task.name == "HumanInTheLoop.after_model"
     interrupt_payload = task.interrupts[0].value if task.interrupts else None
     assert interrupt_payload, "Pending task should carry a HITLRequest interrupt value"
     assert interrupt_payload.get("action_requests"), (

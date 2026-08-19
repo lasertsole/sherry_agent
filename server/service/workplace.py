@@ -1,8 +1,12 @@
 from config import WORKSPACE_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
+from workspace.file_sync import ensure_workspace_system_files
 
 def read_system_prompt_file()-> dict[str, str]:
     """Read system prompt files"""
+    # Lazy-ensure the persona files exist before reading (they may be deleted from
+    # workspace/ root and copied in from template/ on first use).
+    ensure_workspace_system_files()
     file_to_content: dict[str, str] = {}
 
     for file_name in ALL_SYSTEM_FILE_NAMES:

@@ -1,10 +1,16 @@
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).parent
 ROOT_DIR = ROOT_DIR / ".."
 ROOT_DIR = ROOT_DIR.resolve()
 
 ENV_PATH = ROOT_DIR / ".env"
+# Load environment variables early so the workspace template language below is
+# read from the .env file (idempotent; existing environment variables win).
+load_dotenv(ENV_PATH, override=False)
 
 INTERPRETER_PATH = ROOT_DIR / ".venv/Scripts/python"
 CONTEXT_ENGINE_PATH = ROOT_DIR / "context_engine"
@@ -34,10 +40,11 @@ MEMORY_INDEX_DIR = MEMORY_DIR / "index"
 KNOWLEDGE_INDEX_DIR = KNOWLEDGE_DIR / "index"
 
 # i18n workspace templates (locale code -> subdirectory under WORKSPACE_TEMPLATE_DIR).
-# Kept in sync with the client locales: zh (default), en, ja, ko.
+# Kept in sync with the client locales: en (default), zh, ja, ko.
 WORKSPACE_TEMPLATE_LANGS: tuple[str, ...] = ("zh", "en", "ja", "ko")
 # Fallback language used when a requested locale has no template directory.
-DEFAULT_WORKSPACE_TEMPLATE_LANG = "zh"
+# Configurable via the WORKSPACE_TEMPLATE_LANG environment variable (.env).
+DEFAULT_WORKSPACE_TEMPLATE_LANG = os.getenv("WORKSPACE_TEMPLATE_LANG", "en").strip().lower()
 
 
 def resolve_workspace_template_lang(lang: str | None = None) -> str:

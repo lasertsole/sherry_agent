@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool
 from config import TEMP_DIR, WORKSPACE_DIR
 from agent.codeact.core import CodeActState
 from workspace import CORE_SYSTEM_FILE_NAMES
+from workspace.file_sync import ensure_workspace_system_files
 from models.LLMs.main_llm import build_main_llm
 from agent.tools.subagent.type import SubAgentOutput
 from langgraph.prebuilt.tool_node import InjectedState
@@ -41,6 +42,8 @@ def _build_worker_prompt() -> str:
     skill_paths:str = get_skills_text(selected_skill_names = None, exclude_auth_skills=True) # Exclude high-permission skills
     skill_paths = f"{skill_paths}\n\n{skill_guide_text}"
 
+    # Lazy-ensure the core persona files exist before reading them.
+    ensure_workspace_system_files()
     file_paths: list[str] = []
 
     # Ensure core files are always included

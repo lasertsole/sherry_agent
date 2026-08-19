@@ -5,6 +5,7 @@ from typing import cast
 from skills.loader import get_skills_text
 from config import WORKSPACE_DIR, TEMP_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
+from workspace.file_sync import ensure_workspace_system_files
 
 MAX_FILE_CHARS: int = 20_000
 
@@ -33,6 +34,10 @@ def _read_static_files(selected_file_names: list[str] | None) -> list[str]:
     Used for caching under ``state_register_db`` key ``workspace``. Dynamic
     content (memory_store) is intentionally excluded so it stays fresh.
     """
+    # Lazy-ensure the persona system files exist before reading them. Only the
+    # missing ones are copied in from the language template directory; existing
+    # user-authored files are never overwritten.
+    ensure_workspace_system_files()
     if selected_file_names is not None:
         return [_read_text(WORKSPACE_DIR / f) for f in selected_file_names]
     return [_read_text(WORKSPACE_DIR / f) for f in ALL_SYSTEM_FILE_NAMES]

@@ -343,9 +343,7 @@ class Summarization(SummarizationMiddleware):
         system_prompt: str | None = None
         if self._need_update_system_prompt:
             from agent.tools import memory_store
-            from skills import build_skills_snapshot
             memory_store.load_from_disk()
-            build_skills_snapshot()
             system_prompt = build_system_prompt(session_id=session_id)
             state_register_mem.set_state(session_id, "system_prompt", system_prompt)
             state_register_db.set_state(session_id, "system_prompt", system_prompt)

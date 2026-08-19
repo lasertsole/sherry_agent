@@ -83,7 +83,7 @@ class TestSubPaths:
 
     def test_default_workspace_template_lang(self):
         from config.path import DEFAULT_WORKSPACE_TEMPLATE_LANG
-        assert DEFAULT_WORKSPACE_TEMPLATE_LANG == "zh"
+        assert DEFAULT_WORKSPACE_TEMPLATE_LANG == "en"
 
     def test_heartbeat_template_path(self):
         from config.path import WORKSPACE_TEMPLATE_DIR, HEARTBEAT_TEMPLATE_PATH
