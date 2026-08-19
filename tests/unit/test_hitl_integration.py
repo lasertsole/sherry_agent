@@ -4,7 +4,7 @@ Covers:
 - ``detection``     — hardline + dangerous command pattern matching
 - ``approval``      — 6-layer approval pipeline, smart approval, tool approval
 - ``gates``         — write gate, interrupt manager, MCP, kanban, pairing, slash confirm
-- ``core``          — HumanInTheLoop middleware orchestration + hooks
+- ``core``          — humanInTheLoop middleware orchestration + hooks
 - server contract  — ``get_pending_interrupt`` / ``resume_agent``
 """
 
@@ -18,7 +18,7 @@ import pytest
 
 from runtime.state_register import state_register_mem
 
-from agent.middlewares.HumanInTheLoop import (
+from agent.middlewares.humanInTheLoop import (
     ApprovalDecision,
     ApprovalMode,
     ApprovalResult,
@@ -345,13 +345,13 @@ def test_check_command_with_approval_no_prompt_defaults_deny(tmp_path, unit_test
 
 
 def test_extract_pattern_two_words():
-    from agent.middlewares.HumanInTheLoop.approval import _extract_pattern
+    from agent.middlewares.humanInTheLoop.approval import _extract_pattern
     assert _extract_pattern("git push --force origin main") == "git push*"
     assert _extract_pattern("ls") == "ls*"
 
 
 def test_args_hash_is_deterministic():
-    from agent.middlewares.HumanInTheLoop.approval import _args_hash
+    from agent.middlewares.humanInTheLoop.approval import _args_hash
     a = _args_hash({"b": 1, "a": 2})
     b = _args_hash({"a": 2, "b": 1})
     c = _args_hash({"b": 1, "a": 2})
@@ -440,14 +440,14 @@ def test_approval_hook_fired_on_check(tmp_path, unit_test_config):
     pipeline = ApprovalPipeline(cfg, MagicMock())
     calls = []
     pipeline.check_command("git push --force origin main", "sess-hooks")
-    # internal dispatcher is wired through HumanInTheLoop, so validate at middleware level
+    # internal dispatcher is wired through humanInTheLoop, so validate at middleware level
     hits = [c for c in calls]
     assert hits == []
 
 
 def test_hooks_dispatcher_calls_all_and_swallows(tmp_path, unit_test_config):
     """Hooks that raise must not break the approval pipeline."""
-    from agent.middlewares.HumanInTheLoop.core import HumanInTheLoop as HITL
+    from agent.middlewares.humanInTheLoop.core import HumanInTheLoop as HITL
     mw = HITL(HITLConfig())
 
     called = []
@@ -572,7 +572,7 @@ def test_mcp_consent_fail_closed(unit_test_config):
 
 
 def test_kanban_triage_blocked_until_limit(unit_test_config):
-    from agent.middlewares.HumanInTheLoop.types import TriageStatus
+    from agent.middlewares.humanInTheLoop.types import TriageStatus
     assert hasattr(TriageStatus, "TODO")
     assert hasattr(TriageStatus, "BLOCKED")
     assert hasattr(TriageStatus, "TRIAGE")
@@ -627,7 +627,7 @@ def test_slash_confirm_enabled_denies(unit_test_config):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# core: HumanInTheLoop middleware
+# core: humanInTheLoop middleware
 # ────────────────────────────────────────────────────────────────────────────
 
 

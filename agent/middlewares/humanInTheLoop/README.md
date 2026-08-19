@@ -203,7 +203,7 @@ All configuration is passed through the `HITLConfig` dataclass (defined in `type
 ### Example
 
 ```python
-from agent.middlewares.HumanInTheLoop import HumanInTheLoop, HITLConfig, ApprovalMode
+from agent.middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig, ApprovalMode
 
 middleware = HumanInTheLoop(HITLConfig(
     mode=ApprovalMode.SMART,
