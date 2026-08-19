@@ -1,13 +1,13 @@
 """Human-In-The-Loop middleware for the hermes-agent.
 
 Exports all public components — types, detectors, approval pipeline,
-gates, and the main :class:`HumanInTheLoop` middleware class.
+gates, and the main :class:`humanInTheLoop` middleware class.
 
 Typical usage::
 
-    from agent.middlewares.HumanInTheLoop import HumanInTheLoop, HITLConfig
+    from agent.middlewares.humanInTheLoop import humanInTheLoop, HITLConfig
 
-    middleware = HumanInTheLoop(HITLConfig(mode=ApprovalMode.SMART))
+    middleware = humanInTheLoop(HITLConfig(mode=ApprovalMode.SMART))
 """
 
 from .types import (

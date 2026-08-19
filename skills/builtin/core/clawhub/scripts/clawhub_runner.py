@@ -243,6 +243,13 @@ def run_clawhub_command(command: list[str]) -> dict[str, Any]:
         }
         if success and command and command[0].lower() in _MUTATING_COMMANDS:
             payload["scan"] = _scan_plugin_skills()
+            # New third-party skills are now on disk under skills/plugins/ —
+            # rebuild the skills snapshot so the loaded skill roster reflects them.
+            try:
+                from skills import build_skills_snapshot
+                build_skills_snapshot()
+            except Exception:  # noqa: BLE001 - snapshot failure must not break install
+                logger.warning("Failed to rebuild skills snapshot after clawhub install/update.")
         return payload
     except subprocess.TimeoutExpired:
         return {

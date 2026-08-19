@@ -203,7 +203,7 @@ LLM 출력 → after_model
 ### 예시
 
 ```python
-from agent.middlewares.HumanInTheLoop import HumanInTheLoop, HITLConfig, ApprovalMode
+from agent.middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig, ApprovalMode
 
 middleware = HumanInTheLoop(HITLConfig(
     mode=ApprovalMode.SMART,

@@ -403,7 +403,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
 """HITL interrupt detection — checks agent state for pending interrupts.
 
-When the HumanInTheLoop middleware calls ``interrupt()``, the agent stream
+When the humanInTheLoop middleware calls ``interrupt()``, the agent stream
 ends and the interrupt payload is stored in the graph state's ``tasks``.
 This function inspects the state and returns the interrupt request so
 the WebSocket layer can forward it to the client for human approval.

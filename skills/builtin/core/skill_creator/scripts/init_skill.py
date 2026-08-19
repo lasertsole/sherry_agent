@@ -385,6 +385,14 @@ def main():
     result = init_skill(skill_name, path, resources, args.examples)
 
     if result:
+        # A new skill directory is now on disk — rebuild the skills snapshot so
+        # the loaded skill roster reflects it. Best-effort; a snapshot failure
+        # must never cause the skill-creation to appear to have failed.
+        try:
+            from skills import build_skills_snapshot
+            build_skills_snapshot()
+        except Exception:  # noqa: BLE001
+            print("[WARN] Skill created, but failed to refresh skills snapshot.")
         sys.exit(0)
     else:
         sys.exit(1)

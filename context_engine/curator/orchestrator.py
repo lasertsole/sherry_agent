@@ -412,6 +412,13 @@ def _refresh_all_cached_system_prompts() -> None:
         from runtime import state_register_mem, state_register_db
         from workspace.prompt_builder import build_system_prompt
 
+        # Rebuild skills_snapshot.json from disk FIRST so the subsequent
+        # build_system_prompt(){scan_skills(use_cache=True)} cache-hit path
+        # returns the freshly-consolidated/pruned skill list instead of the
+        # stale snapshot (and so the on-disk file itself is kept in sync).
+        from skills import build_skills_snapshot
+        build_skills_snapshot()
+
         session_ids = state_register_db.get_all_session_ids()
         if not session_ids:
             logger.info("Curator: no sessions to refresh system_prompt for")

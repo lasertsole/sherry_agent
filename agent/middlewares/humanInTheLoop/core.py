@@ -1,4 +1,4 @@
-"""HumanInTheLoop middleware — orchestrates all HITL layers via middleware hooks.
+"""humanInTheLoop middleware — orchestrates all HITL layers via middleware hooks.
 
 Delegates to:
 - ``detection.py``  — hardline + dangerous pattern matching

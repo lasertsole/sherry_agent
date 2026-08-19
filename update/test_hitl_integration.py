@@ -1,4 +1,4 @@
-"""Unit tests for HumanInTheLoop middleware integration.
+"""Unit tests for humanInTheLoop middleware integration.
 
 Tests cover:
 1. HITLConfig defaults and fields
@@ -10,7 +10,7 @@ Tests cover:
 7. SlashConfirm destructive action gating
 8. Detection functions (hardline + dangerous patterns)
 9. Server service function existence (get_pending_interrupt, resume_agent)
-10. Agent core middleware registration (HumanInTheLoop in built_agent)
+10. Agent core middleware registration (humanInTheLoop in built_agent)
 """
 
 import pytest
@@ -35,13 +35,13 @@ def hitl_modules():
     import types as pytypes
 
     base = Path(__file__).resolve().parent.parent.parent / "agent"
-    hitl_base = base / "middlewares" / "HumanInTheLoop"
+    hitl_base = base / "middlewares" / "humanInTheLoop"
 
     # Create stub packages so relative imports resolve
     for pkg_name, pkg_path in [
         ("agent", base),
         ("agent.middlewares", base / "middlewares"),
-        ("agent.middlewares.HumanInTheLoop", hitl_base),
+        ("agent.middlewares.humanInTheLoop", hitl_base),
     ]:
         if pkg_name not in sys.modules:
             mod = pytypes.ModuleType(pkg_name)
@@ -62,7 +62,7 @@ def hitl_modules():
     modules = {}
     for name in ("types", "detection", "approval", "gates", "core"):
         mod_path = hitl_base / f"{name}.py"
-        full_name = f"agent.middlewares.HumanInTheLoop.{name}"
+        full_name = f"agent.middlewares.humanInTheLoop.{name}"
         spec = importlib.util.spec_from_file_location(full_name, mod_path)
         mod = importlib.util.module_from_spec(spec)
         sys.modules[full_name] = mod
@@ -434,28 +434,28 @@ class TestMCPElicitationConsent:
 # ── Test Agent Core Middleware Registration ───────────────────────────
 
 class TestAgentCoreMiddlewareRegistration:
-    """Test that HumanInTheLoop is registered in the agent middleware list."""
+    """Test that humanInTheLoop is registered in the agent middleware list."""
 
     def test_human_in_the_loop_in_core_source(self):
-        """Verify HumanInTheLoop is imported and used in agent/core.py."""
+        """Verify humanInTheLoop is imported and used in agent/core.py."""
         core_path = Path(__file__).resolve().parent.parent.parent / "agent" / "core.py"
         source = core_path.read_text(encoding="utf-8")
-        assert "HumanInTheLoop" in source
-        assert "HumanInTheLoop()" in source
+        assert "humanInTheLoop" in source
+        assert "humanInTheLoop()" in source
 
     def test_human_in_the_loop_in_middleware_init(self):
-        """Verify HumanInTheLoop is exported from agent/middlewares/__init__.py."""
+        """Verify humanInTheLoop is exported from agent/middlewares/__init__.py."""
         init_path = Path(__file__).resolve().parent.parent.parent / "agent" / "middlewares" / "__init__.py"
         source = init_path.read_text(encoding="utf-8")
-        assert "HumanInTheLoop" in source
+        assert "humanInTheLoop" in source
 
     def test_hitl_middleware_before_summarization(self):
-        """Verify HumanInTheLoop is placed before Summarization in the middleware list."""
+        """Verify humanInTheLoop is placed before Summarization in the middleware list."""
         core_path = Path(__file__).resolve().parent.parent.parent / "agent" / "core.py"
         source = core_path.read_text(encoding="utf-8")
-        hitl_pos = source.index("HumanInTheLoop()")
+        hitl_pos = source.index("humanInTheLoop()")
         summ_pos = source.index("Summarization(")
-        assert hitl_pos < summ_pos, "HumanInTheLoop should be before Summarization in middleware list"
+        assert hitl_pos < summ_pos, "humanInTheLoop should be before Summarization in middleware list"
 
 
 # ── Test Server Service Function Existence ────────────────────────────
