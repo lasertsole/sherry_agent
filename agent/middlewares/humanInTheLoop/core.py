@@ -41,6 +41,18 @@ class HumanInTheLoop(AgentMiddleware):
     - ``abefore_agent``: reset per-turn state
     """
 
+    @property
+    def name(self) -> str:
+        """Override the LangChain node-name convention to the lower-case identifier.
+
+        ``AgentMiddleware.name`` defaults to ``self.__class__.__name__``
+        (``"HumanInTheLoop"``). The graph builder uses ``{middleware.name}.after_model``
+        to name the after-model routing node, so this override keeps the Node name
+        aligned with the lower-case ``humanInTheLoop`` directory/import rename without
+        abandoning PEP-8 UpperCamelCase class naming.
+        """
+        return "humanInTheLoop"
+
     def __init__(self, config: HITLConfig | None = None):
         """Initialise the HITL middleware with an optional custom config.
 
