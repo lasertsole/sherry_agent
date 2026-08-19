@@ -4,7 +4,7 @@
     :header="t('skills.title')"
     :modal="true"
     :closable="true"
-    class="w-[95vw] md:w-[1400px]"
+    class="w-[95vw] md:w-[1600px]"
     @show="loadSkills"
     @hide="onHide">
     <div class="flex flex-col gap-3">
@@ -22,26 +22,58 @@
             @click="activeCategory = cat.key" />
         </div>
         <div class="flex gap-3" style="min-height: 60vh;">
-          <div class="w-64 shrink-0 flex flex-col gap-1 pr-1">
-            <div v-if="activeCategory === 'auto'" class="flex items-center gap-2 pb-1">
-              <Button
-                :label="t('skills.tabs.runCurator')"
-                :loading="curatorRunning"
-                :disabled="curatorRunning"
-                icon="pi pi-refresh"
-                size="small"
-                @click="runCurator" />
-              <Button
-                v-tooltip.right="t('skills.tabs.runCuratorHint')"
-                icon="pi pi-question-circle"
-                severity="secondary"
-                text
-                rounded
-                size="small"
-                :aria-label="t('skills.tabs.runCurator')"
-                class="p-button-icon-only" />
-              <span v-if="curatorResult" class="text-xs text-gray-500 dark:text-gray-400">{{ curatorResult }}</span>
-              <span v-else-if="curatorError" class="text-xs text-red-500 dark:text-red-400">{{ curatorError }}</span>
+          <div class="w-72 shrink-0 flex flex-col gap-1 pr-1">
+            <div v-if="activeCategory === 'auto'" class="flex flex-col gap-2 pb-2">
+              <div class="flex items-center gap-2">
+                <Button
+                  :label="t('skills.tabs.runCurator')"
+                  :loading="curatorRunning"
+                  :disabled="curatorRunning"
+                  icon="pi pi-refresh"
+                  size="small"
+                  class="shrink-0"
+                  style="flex-shrink: 0;"
+                  @click="runCurator" />
+                <Button
+                  v-tooltip.right="t('skills.tabs.runCuratorHint')"
+                  icon="pi pi-question-circle"
+                  severity="secondary"
+                  text
+                  rounded
+                  size="small"
+                  :aria-label="t('skills.tabs.runCurator')"
+                  class="p-button-icon-only" />
+              </div>
+              <div v-if="curatorResult || curatorError" class="flex items-center gap-1">
+                <span v-if="curatorResult" class="text-xs text-gray-500 dark:text-gray-400">{{ curatorResult }}</span>
+                <span v-else-if="curatorError" class="text-xs text-red-500 dark:text-red-400">{{ curatorError }}</span>
+              </div>
+              <div class="self-center w-full flex flex-col gap-1 bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700">
+                <label class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('skills.tabs.autoMaintenanceInterval') }}（{{ t('skills.tabs.autoMaintenanceIntervalUnit') }}）
+                </label>
+                <SelectButton
+                  v-model="autoIntervalDays"
+                  :options="autoIntervalOptions"
+                  optionLabel="label"
+                  optionValue="value"
+                  :allowEmpty="true"
+                  :disabled="intervalSaving"
+                  size="small"
+                  class="self-center w-fit [&>button]:px-1.5 [&>button]:py-0 [&>button]:text-xs [&>button]:min-w-8 [&>button]:mr-1 last:[&>button]:mr-0 [&>button]:rounded-md"
+                  @change="onAutoIntervalChange" />
+                <div class="flex items-center gap-1">
+                  <span class="text-xs text-gray-400 dark:text-gray-500">
+                    {{ t('skills.tabs.lastMaintenance') }}:
+                  </span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ lastMaintenanceDisplay }}
+                  </span>
+                </div>
+                <span v-if="intervalMessage" class="text-xs" :class="intervalError ? 'text-red-500 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
+                  {{ intervalMessage }}
+                </span>
+              </div>
             </div>
             <div v-if="activeCategory === 'third_party'" class="flex flex-col gap-1 pb-1">
               <div class="flex items-center gap-2">
@@ -128,7 +160,7 @@
               <div class="flex flex-1 overflow-hidden border-t border-gray-200 dark:border-gray-700">
                 <div
                   v-if="skillTree.length"
-                  class="w-56 shrink-0 overflow-auto border-r border-gray-200 dark:border-gray-700 py-2"
+                  class="w-64 shrink-0 overflow-auto border-r border-gray-200 dark:border-gray-700 py-2"
                   style="max-height: 72vh;">
                   <div
                     v-for="row in skillTree"
@@ -172,7 +204,7 @@
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
-import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive } from '@/composables/bridge';
+import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 
 const { t } = useI18n();
@@ -200,6 +232,21 @@ const skillDetail = ref<SkillDetail | null>(null);
 const curatorRunning = ref(false);
 const curatorResult = ref('');
 const curatorError = ref('');
+const autoIntervalDays = ref<number | null>(null);
+// Options use explicit { label, value } so PrimeVue renders the label as a
+// String (ToggleButton's onLabel/offLabel demand String) while keeping the
+// bound value numeric (autoIntervalDays is `number | null`).
+const autoIntervalOptions = [
+  { label: '1', value: 1 },
+  { label: '2', value: 2 },
+  { label: '3', value: 3 },
+  { label: '4', value: 4 },
+  { label: '5', value: 5 },
+];
+const lastMaintenance = ref<string | null>(null);
+const intervalSaving = ref(false);
+const intervalMessage = ref('');
+const intervalError = ref(false);
 const uploading = ref(false);
 const uploadStatus = ref('');
 const uploadError = ref('');
@@ -219,6 +266,12 @@ const groupedSkills = computed(() => {
 });
 
 const currentSkills = computed(() => groupedSkills.value[activeCategory.value] ?? []);
+
+const lastMaintenanceDisplay = computed(() => {
+  if (!lastMaintenance.value) return t('skills.tabs.lastMaintenanceNone');
+  const parsed = dayjs(lastMaintenance.value);
+  return parsed.isValid() ? parsed.format('YYYY-MM-DD HH:mm') : lastMaintenance.value;
+});
 
 const isReadonly = (category: string) => category === 'builtin' || category === 'auto';
 
@@ -323,10 +376,61 @@ const loadSkills = async () => {
   try {
     const resp = await listSkills();
     allSkills.value = resp.skills ?? [];
+    // Refresh curator settings (interval override + last maintenance) alongside skills.
+    await loadCuratorSettings();
   } catch (e) {
     console.error('[SkillsDialog] Failed to load skills:', e);
   } finally {
     loading.value = false;
+  }
+};
+
+const loadCuratorSettings = async () => {
+  try {
+    const resp = await getCuratorSettings();
+    if (resp.success) {
+      autoIntervalDays.value = resp.auto_interval_days;
+      lastMaintenance.value = resp.last_maintenance_at;
+      intervalMessage.value = '';
+      intervalError.value = false;
+    } else {
+      intervalMessage.value = resp.error || t('skills.tabs.autoMaintenanceLoadFailed');
+      intervalError.value = true;
+    }
+  } catch (e) {
+    console.error('[SkillsDialog] Failed to load curator settings:', e);
+    intervalMessage.value = t('skills.tabs.autoMaintenanceLoadFailed');
+    intervalError.value = true;
+  }
+};
+
+const onAutoIntervalChange = async (event: { value: number | null; originalEvent: Event }) => {
+  if (intervalSaving.value) return;
+  const value = event.value ?? null;
+  intervalSaving.value = true;
+  intervalMessage.value = '';
+  intervalError.value = false;
+  try {
+    // Selection is limited to 1-5 by the button group; null (deselect) clears
+    // the override, falling back to the curator.yaml default.
+    const resp = await setCuratorSettings(value);
+    if (resp.success) {
+      // Reload to reflect backend-normalized state (e.g. server-clamped value).
+      await loadCuratorSettings();
+      intervalMessage.value = value === null
+        ? t('skills.tabs.autoMaintenanceResetDone')
+        : t('skills.tabs.autoMaintenanceSaved');
+      intervalError.value = false;
+    } else {
+      intervalMessage.value = resp.error || t('skills.tabs.autoMaintenanceSaveFailed');
+      intervalError.value = true;
+    }
+  } catch (e) {
+    console.error('[SkillsDialog] Failed to update curator interval:', e);
+    intervalMessage.value = t('skills.tabs.autoMaintenanceSaveFailed');
+    intervalError.value = true;
+  } finally {
+    intervalSaving.value = false;
   }
 };
 
@@ -406,10 +510,7 @@ const runCurator = async () => {
     if (resp.success && resp.result) {
       const r = resp.result;
       const total = Object.values(r.auto_transitions).reduce((sum, n) => sum + n, 0);
-      const startedAt = dayjs(r.started_at).isValid()
-        ? dayjs(r.started_at).format('YYYY-MM-DD HH:mm')
-        : r.started_at;
-      curatorResult.value = `${t('skills.tabs.curatorDone')} ${startedAt} · ${total} ${t('skills.tabs.curatorTransitions')}${r.summary_so_far ? ` · ${r.summary_so_far}` : ''}`;
+      curatorResult.value = `${t('skills.tabs.curatorDone')} ${total} ${t('skills.tabs.curatorTransitions')}${r.summary_so_far ? ` · ${r.summary_so_far}` : ''}`;
     } else {
       curatorError.value = resp.error || t('skills.tabs.curatorFailed');
     }
@@ -431,6 +532,11 @@ const onHide = () => {
   curatorRunning.value = false;
   curatorResult.value = '';
   curatorError.value = '';
+  autoIntervalDays.value = null;
+  lastMaintenance.value = null;
+  intervalSaving.value = false;
+  intervalMessage.value = '';
+  intervalError.value = false;
   uploading.value = false;
   uploadStatus.value = '';
   uploadError.value = '';
@@ -438,3 +544,4 @@ const onHide = () => {
   toggleError.value = '';
 };
 </script>
+

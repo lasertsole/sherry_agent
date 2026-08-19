@@ -73,7 +73,16 @@
       "runCuratorHint": "自动审查自动学习（auto）技能，合并相似或重复的技能，并标记、归档长期未使用的技能，保持技能库整洁。",
       "curatorDone": "技能维护完成：",
       "curatorTransitions": "个自动变更",
-      "curatorFailed": "技能维护失败，请查看服务端日志"
+      "curatorFailed": "技能维护失败，请查看服务端日志",
+      "autoMaintenanceInterval": "自动技能维护间隔",
+      "autoMaintenanceIntervalUnit": "天",
+      "autoMaintenanceSaved": "已保存",
+      "autoMaintenanceSaveFailed": "保存失败",
+      "autoMaintenanceResetDone": "已恢复为默认间隔",
+      "autoMaintenanceLoadFailed": "读取设置失败",
+      "lastMaintenance": "最后一次维护时间",
+      "lastMaintenanceNone": "尚未执行过技能维护",
+      "loadSettings": "加载"
     }
   },
   "extend": {

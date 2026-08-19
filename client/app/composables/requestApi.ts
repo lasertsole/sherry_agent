@@ -86,6 +86,10 @@ async function useFetchBaseApi({
   };
   
   const {data} = await useFetch(requestURL, {
+    // Use a unique key on every call so Nuxt's useAsyncData/useFetch cache is never
+    // reused across calls. Without this, a second GET (e.g. reloading curator settings
+    // right after a PUT) returns the stale cached payload instead of hitting the server.
+    key: `${requestURL}:${method}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     method,
     // ofetch库会自动识别请求地址，对于url已包含域名的请求不会再拼接baseURL
     baseURL: import.meta.env.VITE_API_BACK_URL,

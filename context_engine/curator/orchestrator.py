@@ -141,6 +141,8 @@ def run_curator_review(
     if not dry_run:
         state["last_run_at"] = start.isoformat()
         state["run_count"] = int(state.get("run_count", 0)) + 1
+        # Surface the last maintenance time to the client (manual or auto run).
+        state["last_maintenance_at"] = start.isoformat()
     prefix = "dry-run auto: " if dry_run else "auto: "
     state["last_run_summary"] = f"{prefix}{auto_summary}"
     save_state(state)

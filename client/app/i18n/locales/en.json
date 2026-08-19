@@ -73,7 +73,16 @@
       "runCuratorHint": "Automatically reviews auto-learned skills, merges similar or duplicate skills, and marks/archives long-unused skills to keep the skill library tidy.",
       "curatorDone": "Skill maintenance complete:",
       "curatorTransitions": "auto transitions",
-      "curatorFailed": "Skill maintenance failed, check server logs"
+      "curatorFailed": "Skill maintenance failed, check server logs",
+      "autoMaintenanceInterval": "Auto maintenance interval",
+      "autoMaintenanceIntervalUnit": "days",
+      "autoMaintenanceSaved": "Saved",
+      "autoMaintenanceSaveFailed": "Save failed",
+      "autoMaintenanceResetDone": "Restored to default interval",
+      "autoMaintenanceLoadFailed": "Failed to load settings",
+      "lastMaintenance": "Last maintenance",
+      "lastMaintenanceNone": "No maintenance performed yet",
+      "loadSettings": "Load"
     }
   },
   "extend": {

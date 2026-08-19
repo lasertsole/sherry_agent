@@ -929,6 +929,55 @@ export async function runCuratorReview(): Promise<CuratorRunResponse> {
   return fetchApi({ url: '/curator/run', method: 'post' }) as unknown as Promise<CuratorRunResponse>;
 }
 
+/** Settings returned by `GET /curator/settings`. */
+export interface CuratorSettings {
+  success: boolean;
+  /** Auto-maintenance interval override in days, null when unset (falls back to `interval_hours`). */
+  auto_interval_days: number | null;
+  /** Configured maintenance interval in hours (from curator.yaml). */
+  interval_hours: number;
+  /** ISO timestamp of the last curator run, null when never run. */
+  last_run_at: string | null;
+  /** ISO timestamp of the last maintenance, null when never run. */
+  last_maintenance_at: string | null;
+  error?: string;
+}
+
+/** Response of `PUT /curator/settings`. */
+export interface CuratorSettingsUpdateResponse {
+  success: boolean;
+  /** The stored override (null = back to curator.yaml default). */
+  auto_interval_days: number | null;
+  /** Effective interval in hours (override days x 24, or curator.yaml default). */
+  interval_hours: number;
+  /** ISO timestamp of the last maintenance, null when never run. */
+  last_maintenance_at: string | null;
+  error?: string;
+}
+
+/**
+ * Read the curator auto-maintenance settings.
+ *
+ * @returns `{ success, auto_interval_days, interval_hours, last_run_at, last_maintenance_at }`.
+ */
+export async function getCuratorSettings(): Promise<CuratorSettings> {
+  return fetchApi({ url: '/curator/settings', method: 'get' }) as unknown as Promise<CuratorSettings>;
+}
+
+/**
+ * Override the curator auto-maintenance interval.
+ *
+ * @param days Days between auto-maintenance runs (1-7), or null to use the curator.yaml default.
+ * @returns `{ success, auto_interval_days, interval_hours, last_maintenance_at }`.
+ */
+export async function setCuratorSettings(days: number | null): Promise<CuratorSettingsUpdateResponse> {
+  return fetchApi({
+    url: '/curator/settings',
+    opts: { auto_interval_days: days },
+    method: 'put',
+  }) as unknown as Promise<CuratorSettingsUpdateResponse>;
+}
+
 // ── Health ───────────────────────────────────────────────
 
 /**

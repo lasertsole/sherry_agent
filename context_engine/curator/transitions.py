@@ -7,7 +7,7 @@ from context_engine.curator.config import (
     get_stale_after_days,
     get_archive_after_days,
     is_enabled,
-    get_interval_hours,
+    get_effective_interval_hours,
 )
 from context_engine.curator.state import load_state, save_state, is_paused
 from context_engine.curator.usage import (
@@ -34,7 +34,7 @@ def should_run_now(now: datetime | None = None) -> bool:
         now = datetime.now(timezone.utc)
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
-    interval = timedelta(hours=get_interval_hours())
+    interval = timedelta(hours=get_effective_interval_hours())
     return (now - last) >= interval
 
 
