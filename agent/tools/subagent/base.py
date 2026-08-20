@@ -11,6 +11,7 @@ from skills.loader import get_skills_text
 from config import TEMP_DIR, WORKSPACE_DIR
 from typing import Any, Callable, Awaitable
 from workspace import CORE_SYSTEM_FILE_NAMES
+from workspace.file_sync import ensure_workspace_system_files
 from models.LLMs.main_llm import build_main_llm
 from langgraph.graph.state import CompiledStateGraph
 
@@ -127,6 +128,8 @@ class SubagentManager:
         skill_paths:str = get_skills_text(selected_skill_names = None, exclude_auth_skills=True) # Exclude high-permission skills
         skill_paths = f"{skill_paths}\n\n{skill_guide_text}"
 
+        # Lazy-ensure the core persona files exist before reading them.
+        ensure_workspace_system_files()
         file_paths: list[str] = []
 
         # Ensure core files are always included
@@ -263,7 +266,7 @@ class SubagentManager:
                     # Personalize the result to match the character persona
                     messages = [SystemMessage(
                         content=
-                        build_system_prompt()
+                        build_system_prompt(session_id=msg.session_id)
                         + '\n\nPlease convey the results to the user in a tone that matches the character persona.'
                     ), HumanMessage(content=msg.content)]
 

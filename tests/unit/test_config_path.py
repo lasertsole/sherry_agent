@@ -77,6 +77,18 @@ class TestSubPaths:
         from config.path import WORKSPACE_DIR, WORKSPACE_TEMPLATE_DIR
         assert WORKSPACE_TEMPLATE_DIR == WORKSPACE_DIR / "template"
 
+    def test_workspace_template_langs(self):
+        from config.path import WORKSPACE_TEMPLATE_LANGS
+        assert WORKSPACE_TEMPLATE_LANGS == ("zh", "en", "ja", "ko")
+
+    def test_default_workspace_template_lang(self):
+        from config.path import DEFAULT_WORKSPACE_TEMPLATE_LANG
+        assert DEFAULT_WORKSPACE_TEMPLATE_LANG == "en"
+
+    def test_heartbeat_template_path(self):
+        from config.path import WORKSPACE_TEMPLATE_DIR, HEARTBEAT_TEMPLATE_PATH
+        assert HEARTBEAT_TEMPLATE_PATH == WORKSPACE_TEMPLATE_DIR / "HEARTBEAT.md"
+
     def test_knowledge_dir(self):
         from config.path import WORKSPACE_DIR, KNOWLEDGE_DIR
         assert KNOWLEDGE_DIR == WORKSPACE_DIR / "knowledge"
@@ -96,3 +108,50 @@ class TestSubPaths:
     def test_knowledge_index_dir(self):
         from config.path import KNOWLEDGE_DIR, KNOWLEDGE_INDEX_DIR
         assert KNOWLEDGE_INDEX_DIR == KNOWLEDGE_DIR / "index"
+
+
+class TestTemplateLangResolution:
+    """Test workspace template language resolution with fallback."""
+
+    def test_resolve_returns_default_when_none(self):
+        from config.path import (
+            DEFAULT_WORKSPACE_TEMPLATE_LANG,
+            resolve_workspace_template_lang,
+        )
+        assert resolve_workspace_template_lang() == DEFAULT_WORKSPACE_TEMPLATE_LANG
+
+    def test_resolve_valid_lang(self, tmp_path, monkeypatch):
+        from config.path import resolve_workspace_template_lang
+        # Create an existing lang dir
+        (tmp_path / "en").mkdir()
+        monkeypatch.setattr("config.path.DEFAULT_WORKSPACE_TEMPLATE_LANG", "zh")
+        monkeypatch.setattr("config.path.WORKSPACE_TEMPLATE_DIR", tmp_path)
+        assert resolve_workspace_template_lang("en") == "en"
+
+    def test_resolve_falls_back_when_dir_missing(self, tmp_path, monkeypatch):
+        from config.path import (
+            DEFAULT_WORKSPACE_TEMPLATE_LANG,
+            resolve_workspace_template_lang,
+        )
+        # lang dir does not exist -> fall back to default
+        monkeypatch.setattr("config.path.DEFAULT_WORKSPACE_TEMPLATE_LANG", "zh")
+        monkeypatch.setattr("config.path.WORKSPACE_TEMPLATE_DIR", tmp_path)
+        assert resolve_workspace_template_lang("fr") == "zh"
+
+    def test_resolve_dir_appends_lang(self, tmp_path, monkeypatch):
+        from config.path import (
+            WORKSPACE_TEMPLATE_DIR,
+            resolve_workspace_template_dir,
+        )
+        (tmp_path / "en").mkdir()
+        monkeypatch.setattr("config.path.WORKSPACE_TEMPLATE_DIR", tmp_path)
+        assert resolve_workspace_template_dir("en") == tmp_path / "en"
+
+    def test_resolve_dir_falls_back_to_default(self, tmp_path, monkeypatch):
+        from config.path import (
+            DEFAULT_WORKSPACE_TEMPLATE_LANG,
+            resolve_workspace_template_dir,
+        )
+        monkeypatch.setattr("config.path.DEFAULT_WORKSPACE_TEMPLATE_LANG", "zh")
+        monkeypatch.setattr("config.path.WORKSPACE_TEMPLATE_DIR", tmp_path)
+        assert resolve_workspace_template_dir("fr") == tmp_path / "zh"

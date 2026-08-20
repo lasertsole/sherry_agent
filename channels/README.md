@@ -1,6 +1,6 @@
 # Channels
 
-[中文版](./README.zh.md) | English
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 ---
 
@@ -8,12 +8,12 @@ This module provides a unified interface for integrating with various chat platf
 
 ## Overview
 
-The channels module implements a plugin-based architecture that allows easy addition of new chat platform integrations. Each channel is implemented as a class that extends `BaseChannel` and communicates with the system through a message bus. Channel implementations live as separate Python files under `plugins/channels/` (discovered at runtime via pkgutil), not within this package.
+The channels module implements a plugin-based architecture that allows easy addition of new chat platform integrations. Each channel is implemented as a class that extends `BaseChannel` and communicates with the system through a message bus. Channel implementations live as separate folders (directories) under `plugins/channels/` (discovered at runtime by scanning for a `core.py`), not within this package.
 
 ## Main Features
 
 - **Unified Interface**: All chat platforms share a common `BaseChannel` interface
-- **Plugin System**: Support for both built-in channels (under `plugins/channels/`, discovered via pkgutil) and external plugins via entry points
+- **Plugin System**: Support for both built-in channels (under `plugins/channels/`, discovered by scanning for a `core.py`) and external plugins via entry points
 - **Message Routing**: Automatic routing of inbound and outbound messages
 - **Access Control**: Configurable whitelist for permitted senders (`allow_from`); empty list denies all
 - **Asynchronous**: Built on asyncio for concurrent message handling
@@ -62,8 +62,8 @@ Coordinates all enabled channels:
 
 Auto-discovers available channels:
 
-- `discover_channel_names()`: Scans `plugins/channels/` using pkgutil for `.py` modules
-- `load_channel_class(module_name)`: Dynamically imports a channel module and finds the first `BaseChannel` subclass
+- `discover_channel_names()`: Scans `plugins/channels/` for channel **folders** (subdirectories, not single files) that contain a `core.py`
+- `load_channel_class(module_name)`: Dynamically imports a channel folder's `core.py` and finds the first `BaseChannel` subclass
 - `discover_plugins()`: Loads external plugins registered via `entry_points(group="channels")`
 - `discover_all()`: Merges built-in and external channels (built-in takes priority — external cannot shadow built-in names)
 
@@ -115,7 +115,17 @@ loop = channel_manager.get_event_loop()
 
 ### Implementing a New Channel
 
-Create a new `.py` file under `plugins/channels/`:
+Create a new **folder** (directory) under `plugins/channels/` named after
+the channel, e.g. `plugins/channels/my_channel/`. The folder contains only a
+`core.py`; the actual `BaseChannel` subclass must be defined in (or re-exported
+from) it. No `__init__.py` is required:
+
+```text
+plugins/channels/
+├── config.json              # Channel configuration
+└── my_channel/              # ← Channel folder, named after the channel
+    └── core.py              #  Defines / re-exports the BaseChannel subclass
+```
 
 ```python
 from channels.base import BaseChannel
@@ -145,7 +155,9 @@ class MyChannel(BaseChannel):
         return {"enabled": False, "allow_from": ["*"]}
 ```
 
-The registry will automatically discover and load the channel by scanning `plugins/channels/`.
+The registry will automatically discover and load the channel by scanning the
+channel folders under `plugins/channels/` and dynamically importing each
+folder's `core.py`.
 
 ## Architecture
 
@@ -165,7 +177,7 @@ The registry will automatically discover and load the channel by scanning `plugi
 │  (plugin)     │   │  Channel      │   │  Channel      │
 │  plugins/     │   │  (plugin)     │   │  (plugin)     │
 │  channels/    │   │               │   │               │
-│  qq.py        │   │               │   │               │
+│  qq/          │   │               │   │               │
 └───────────────┘   └───────────────┘   └───────────────┘
          │                     │                     │
          └─────────────────────┼─────────────────────┘

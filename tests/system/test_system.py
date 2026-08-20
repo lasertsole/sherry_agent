@@ -85,7 +85,7 @@ class TestMessageBusE2E:
             sender_id="subagent",
             chat_id="direct",
             content="Task completed: story written",
-            session_id="main",
+            session_id="default",
             metadata={
                 "injected_event": "subagent_result",
                 "subagent_task_id": "12345",
@@ -96,7 +96,7 @@ class TestMessageBusE2E:
         consumed = await bus.consume_inbound()
         assert consumed.sender_id == "subagent"
         assert consumed.metadata["injected_event"] == "subagent_result"
-        assert consumed.session_id == "main"
+        assert consumed.session_id == "default"
 
     async def test_concurrent_publish_consume(self, bus):
         """Multiple concurrent producers and consumers."""

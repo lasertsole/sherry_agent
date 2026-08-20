@@ -19,9 +19,125 @@ _MAX_NAME_LENGTH: int = 64
 _MAX_DESCRIPTION_LENGTH: int = 1024
 _MAX_SKILL_CONTENT_CHARS = 100_000   # ~36k tokens at 2.75 chars/token
 _VALID_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*$')
-# Subdirectories allowed for write_file/remove_file
-_ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets"}
+# Subdirectories allowed for write_file/remove_file (umbrella skill standard dirs)
+_ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets", "examples", "resources"}
+# Target max length (chars) for an umbrella SKILL.md main body. Above this the
+# curator is instructed to offload bulky content into references/examples/etc.
+_UMBRELLA_SKILL_CHAR_TARGET = 15_000
 _MAX_SKILL_FILE_BYTES = 1_048_576    # 1 MiB per supporting file
+
+
+def split_oversized_skill(
+    main_content: str,
+    target: int = _UMBRELLA_SKILL_CHAR_TARGET,
+    supporting_files: dict[str, str] | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Forcibly trim ``main_content`` so its markdown body stays under ``target`` chars.
+
+    This is the hard guarantee behind the soft 15k prompt hint.  If ``main_content``
+    exceeds ``target``, we deterministically split its markdown body along ``##``
+    section boundaries into ``references/partNN.md`` files, replacing each moved
+    section with a short ``## <title>`` stub + a relative link so nothing
+    substantive is lost and the returned SKILL.md stays under budget.
+
+    Pure function — performs no IO.  Callers are responsible for persisting the
+    returned ``references/partNN.md`` entries (e.g. ``_create_skill`` / ``_edit_skill``
+    write them to disk; the curator merges them with its own multi-file/written-set
+    logic before persisting).
+
+    Edge cases:
+      - ``len(main_content) <= target`` → returned unchanged (with ``supporting_files``
+        merged defensively as a copy).
+      - Body has no ``## `` headings → returned unchanged; there is no meaningful
+        split, so content is preserved as-is (intentional degradation).
+
+    YAML frontmatter is always preserved; only the markdown body is reorganized.
+
+    Args:
+        main_content: Full SKILL.md text (frontmatter + markdown body).
+        target: Max character budget for the returned main content. Defaults to the
+            shared umbrella/ordinary skill budget (15_000).
+        supporting_files: Optional pre-existing supporting files map (path → content).
+            Merged in (never clobbering authored entries) with the split parts.
+
+    Returns:
+        ``(slim, merged_files)`` where ``merged_files`` maps subdirectory paths
+        (e.g. ``references/part01.md``) to file content.
+    """
+    files = dict(supporting_files or {})
+
+    if len(main_content) <= target:
+        return main_content, files
+
+    # Split frontmatter from the markdown body.
+    parts = main_content.split("---", 2)
+    frontmatter = ""
+    body = main_content
+    if len(parts) >= 3:
+        frontmatter = "---" + parts[1] + "---"
+        body = parts[2]
+    if not re.search(r"^##\s", body, re.MULTILINE):
+        # No sections to reorganize: leave as-is; we can't split meaningfully.
+        return main_content, files
+
+    # Split body at '## ' headings (keep the heading line with its content block).
+    # Everything before the first '## ' (e.g. lead-in paragraphs) stays in SKILL.md.
+    section_spans = list(re.finditer(r"^##\s", body, re.MULTILINE))
+    lead_end = section_spans[0].start()
+    preamble = body[:lead_end].strip().rstrip("\n")
+    sections: list[tuple[str, str]] = []
+    for i, span in enumerate(section_spans):
+        start = span.start()
+        end = section_spans[i + 1].start() if i + 1 < len(section_spans) else len(body)
+        block = body[start:end].rstrip()
+        m = re.match(r"^##\s+(.+)", block)
+        title = m.group(1).strip() if m else block.strip().lstrip("#").strip() or "Section"
+        sections.append((title, block))
+
+    # Greedily pack sections into ~target-per file, emitting references/partNN.md.
+    overflow_files: dict[str, str] = {}
+    pending: list[str] = []
+    pending_len = 0
+    for _title, block in sections:
+        if pending and pending_len + len(block) > target and pending_len > 0:
+            file_path = f"references/part{len(overflow_files) + 1:02d}.md"
+            overflow_files[file_path] = "\n\n".join(pending)
+            pending = []
+            pending_len = 0
+        pending.append(block)
+        pending_len += len(block)
+    if pending:
+        file_path = f"references/part{len(overflow_files) + 1:02d}.md"
+        overflow_files[file_path] = "\n\n".join(pending)
+
+    # Rebuild SKILL.md with stub headings + links, keeping it under the target.
+    stub_blocks: list[str] = []
+    if preamble:
+        stub_blocks.append(preamble)
+    for idx, (file_path, _content) in enumerate(overflow_files.items(), start=1):
+        # Recover the titles packed into this file for the stub headings.
+        file_sections = [
+            m.group(1).strip() if (m := re.match(r"^##\s+(.+)", seg)) else seg.strip().lstrip("#").strip()
+            for seg in _content.split("\n\n## ")
+        ]
+        heading = file_sections[0] if file_sections else f"Part {idx}"
+        stub_blocks.append(
+            f"## {heading}\n\n"
+            f"- Full details moved to [{file_path}]({file_path})\n"
+            f"- **When to read**: inline overview of `{heading}` lives here; refer to the "
+            f"linked file for the complete instructions before acting on this area."
+        )
+
+    slim = frontmatter + ("\n\n" if frontmatter else "") + "\n\n".join(stub_blocks)
+    slim = slim.strip() + "\n"
+
+    # Merge the forcibly-split files into supporting_files (do not clobber an
+    # authored file under the identical path).
+    for path, content in overflow_files.items():
+        if path not in files:
+            files[path] = content
+    return slim, files
+
 
 class SkillManageSchema(BaseModel):
     """Schema for skill_manage tool arguments."""
@@ -274,6 +390,26 @@ def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -
             logger.error("Failed to remove temporary file %s during atomic write", temp_path, exc_info=True)
         raise
 
+
+def _write_split_files(skill_dir: Path, split_files: dict[str, str]) -> None:
+    """Persist force-split ``references/partNN.md`` files inside ``skill_dir``.
+
+    Each entry from ``split_oversized_skill`` (path relative to the skill dir,
+    e.g. ``references/part01.md``) is validated and written atomically.  Empty
+    maps (nothing was split) are a safe no-op.
+
+    Args:
+        skill_dir: Directory of the target skill.
+        split_files: Map of relative subdir path → file content.
+    """
+    for rel_path, content in split_files.items():
+        rel_str = rel_path.replace("\\", "/")
+        err = _validate_file_path(rel_str)
+        if err:
+            logger.warning("Skip invalid split file '{}' in skill '{}': {}", rel_str, skill_dir.name, err)
+            continue
+        _atomic_write_text(skill_dir / Path(*rel_path.split("/")), content)
+
 def _resolve_skill_target(skill_dir: Path, file_path: str) -> tuple[Path | None, str | None]:
     """Resolve a supporting-file path and ensure it stays within the skill directory."""
     target = skill_dir / file_path
@@ -474,9 +610,14 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
     skill_dir = _resolve_skill_dir(name, category)
     skill_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write SKILL.md atomically
+    # Enforce the shared char budget: if content overshoots target, split the
+    # markdown body along ## sections into references/partNN.md (no content loss),
+    # then persist those split parts alongside the slimmed SKILL.md.
+    slim, split_files = split_oversized_skill(content)
+    _write_split_files(skill_dir, split_files)
+
     skill_md = skill_dir / "SKILL.md"
-    _atomic_write_text(skill_md, content)
+    _atomic_write_text(skill_md, slim)
 
     result = {
         "success": True,
@@ -513,9 +654,14 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
             return {"success": False, "error": outside_err}
         return {"success": False, "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'"}
 
-    skill_md = skill_dir / "SKILL.md"
+    # Enforce the shared char budget: if content overshoots target, split the
+    # markdown body along ## sections into references/partNN.md (no content loss),
+    # then persist those split parts alongside the slimmed SKILL.md.
+    slim, split_files = split_oversized_skill(content)
+    _write_split_files(skill_dir, split_files)
 
-    _atomic_write_text(skill_md, content)
+    skill_md = skill_dir / "SKILL.md"
+    _atomic_write_text(skill_md, slim)
 
     return {
         "success": True,

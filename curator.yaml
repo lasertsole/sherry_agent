@@ -17,7 +17,7 @@ stale_after_days: 30
 archive_after_days: 90
 
 # Whether to enable LLM consolidation pass (merge narrow skills into umbrellas)
-consolidate: false
+consolidate: true
 
 # Whether to clean up usage records for built-in skills
 prune_builtins: true

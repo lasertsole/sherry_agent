@@ -1,4 +1,5 @@
 from loguru import  logger
+import torch
 from funasr import AutoModel
 from config import MODELS_DIR
 from pydantic import validate_call
@@ -6,13 +7,18 @@ from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
 model_dir = MODELS_DIR / "STT_model"
 
+# Pick a usable device: prefer CUDA when available, otherwise fall back to CPU
+# (the original hard-coded "cuda:0" crashes on GPU-less machines).
+_device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
+logger.info(f"STT_model device: {_device}")
+
 model = AutoModel(
     model = (model_dir / "model_weight").as_posix(),
     trust_remote_code = True,
     remote_code = (model_dir /"core.py").as_posix(),
     vad_model = "fsmn-vad",
     vad_kwargs = {"max_single_segment_time": 30000},
-    device = "cuda:0",
+    device = _device,
 )
 
 @validate_call

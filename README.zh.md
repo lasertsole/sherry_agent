@@ -4,7 +4,7 @@
 ![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 
-[**English**](README.md) | 中文文档
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 > **一个基于 LangGraph 与多模态技术的深度角色扮演 AI Agent。**
 
@@ -36,7 +36,7 @@ EMA AI Agent 是一个高度拟人化、具备长期记忆与复杂推理能力�
 
 ### 3. 🌐 多渠道接入 (Multi-Channel)
 - **Web 界面**：基于 Streamlit 构建的现代化聊天 UI，支持多模态输入（图片、语音）
-- **下一代客户端** ([client_future](client_future/README.zh.md))：基于 Tauri 2 + Nuxt 4 的桌面/移动 SPA 客户端，正在开发中
+- **下一代客户端** ([client](client/README.zh.md))：基于 Tauri 2 + Nuxt 4 的桌面/移动 SPA 客户端
 - **QQ 机器人**：通过插件系统集成 QQ 频道适配器（`plugins/channels/`）
 - **消息总线**：内部采用异步消息队列 [MessageBus](bus/core.py) 解耦输入输出通道
 
@@ -113,12 +113,7 @@ EMA_AI_agent/
 │   ├── manager.py          # 通道生命周期管理器
 │   └── registry.py         # 通道注册
 │
-├── client/                 # Streamlit 前端入口
-│   ├── api/                # API 客户端层
-│   ├── core.py             # Streamlit 应用入口
-│   └── utils/              # 前端工具函数
-│
-├── client_future/          # 下一代客户端（Tauri 2 + Nuxt 4）
+├── client/                 # 下一代客户端（Tauri 2 + Nuxt 4）
 │   ├── app/                # Nuxt 4 SPA 源码
 │   │   ├── app.vue         # 根组件入口
 │   │   ├── pages/          # 页面组件
@@ -268,9 +263,9 @@ EMA_AI_agent/
 | **Subagent 系统** | 层级式任务分解、并行执行与经验蒸馏 | [中文](agent/tools/subagent/README.zh.md) · [英文](agent/tools/subagent/README.md) |
 | **中间件** | Agent 生命周期中间件管道 | [中文](agent/middlewares/README.zh.md) · [英文](agent/middlewares/README.md) |
 | **Channels** | 通道接口与适配器系统 | [中文](channels/README.zh.md) · [英文](channels/README.md) |
-| **下一代客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [中文](client_future/README.zh.md) · [英文](client_future/README.md) |
+| **下一代客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [中文](client/README.zh.md) · [英文](client/README.md) |
 | **Cron 服务** | 定时/周期 Agent 任务执行 | [中文](skills/builtin/core/cron/scripts/README.zh.md) · [英文](skills/builtin/core/cron/scripts/README.md) |
-| **Heartbeat 服务** | 周期性唤醒任务检查 | [中文](skills/builtin/core/heartbeat/README.zh.md) · [英文](skills/builtin/core/heartbeat/README.md) |** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [中文](client_future/README.zh.md) · [英文](client_future/README.md) |
+| **Heartbeat 服务** | 周期性唤醒任务检查 | [中文](skills/builtin/core/heartbeat/README.zh.md) · [英文](skills/builtin/core/heartbeat/README.md) |
 | **Channels** | 通道接口与适配器系统 | [中文](channels/README.zh.md) · [英文](channels/README.md) |
 
 ---
@@ -319,7 +314,6 @@ chmod +x start.sh
 
 ```bash
 python -m server              # 启动后端服务
-streamlit run client/core.py  # 启动前端界面
 ```
 
 ---

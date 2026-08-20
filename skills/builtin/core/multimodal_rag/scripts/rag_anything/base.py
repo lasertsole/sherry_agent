@@ -7,6 +7,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from lightrag import LightRAG
+from .snkv_storage import register
 from config.path import SRC_DIR
 from lightrag.utils import EmbeddingFunc
 from models.reranker_model import reranker_model
@@ -66,6 +67,9 @@ async def get_lightrag() -> LightRAG:
     """获取 LightRAG 单例实例"""
     working_dir: str = (SRC_DIR / "rag" / "store").resolve().as_posix()
 
+    # Register the vendored SNKV storage backends (must run BEFORE LightRAG()).
+    register()
+
     _lightRAG = LightRAG(
         working_dir=working_dir,
         llm_model_func=_llm_model_func,
@@ -75,6 +79,10 @@ async def get_lightrag() -> LightRAG:
             func=_embedding_func,
         ),
         rerank_model_func=_rerank_model_func,
+        kv_storage="SNKVKVStorage",
+        vector_storage="SNKVVectorStorage",
+        graph_storage="SNKVGraphStorage",
+        doc_status_storage="SNKVDocStatusStorage",
     )
 
     await _lightRAG.initialize_storages()

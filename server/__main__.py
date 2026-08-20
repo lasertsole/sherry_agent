@@ -2,8 +2,8 @@ import os
 import sys
 import nest_asyncio
 from logs import init_logger
-from config import STATIC_DIR
 from dotenv import load_dotenv
+from config import STATIC_DIR, SRC_DIR
 from config import API_HOST, API_PORT, ENV_PATH
 
 # Fix UnicodeEncodeError for emoji in Windows GBK terminal
@@ -42,6 +42,32 @@ if __name__ == "__main__":
     app.serve_directory(
         route="/static",  # URL prefix accessed by the client.
         directory_path=os.path.join(os.getcwd(), STATIC_DIR.absolute().as_posix())
+    )
+
+    # Ensure the /images upload directory exists before serving it statically.
+    images_dir = SRC_DIR / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    app.serve_directory(
+        route="/images",
+        directory_path=os.path.join(os.getcwd(), str(images_dir))
+    )
+
+    # Ensure the /audio and /video upload directories exist before serving them statically.
+    audio_dir = SRC_DIR / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    app.serve_directory(
+        route="/audio",
+        directory_path=os.path.join(os.getcwd(), str(audio_dir))
+    )
+
+    video_dir = SRC_DIR / "video"
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    app.serve_directory(
+        route="/video",
+        directory_path=os.path.join(os.getcwd(), str(video_dir))
     )
 
     app.start(host=API_HOST, port=API_PORT)

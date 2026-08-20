@@ -63,6 +63,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "reasoning": None,
                 "reasoning_content": None,
                 "images": None,
+                "audios": None,
+                "videos": None,
             })
         elif m.type == "human":
             additional_kwargs:dict[str, str] = getattr(m, "additional_kwargs", {})
@@ -74,6 +76,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
 
             # Persist any media file paths declared by the multimodal processor.
             images: list[str] = additional_kwargs.get("images", []) or []
+            audios: list[str] = additional_kwargs.get("audios", []) or []
+            videos: list[str] = additional_kwargs.get("videos", []) or []
 
             insert_rows.append({
                 "session_id": session_id,
@@ -89,6 +93,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "reasoning": None,
                 "reasoning_content": None,
                 "images": json.dumps(images, ensure_ascii=False) if images else None,
+                "audios": json.dumps(audios, ensure_ascii=False) if audios else None,
+                "videos": json.dumps(videos, ensure_ascii=False) if videos else None,
             })
         elif m.type == "tool":
             # Tool message: carry tool metadata (call id, name, execution status).
@@ -106,6 +112,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "reasoning_content": None,
                 "timestamp": base_timestamp,
                 "images": None,
+                "audios": None,
+                "videos": None,
             })
 
     # Bulk-insert all accumulated rows in a single transaction.
@@ -123,7 +131,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             finish_reason,
             reasoning,
             reasoning_content,
-            images
+            images,
+            audios,
+            videos
         ) VALUES (
             :session_id,
             :turn_num,
@@ -137,7 +147,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             :finish_reason,
             :reasoning,
             :reasoning_content,
-            :images
+            :images,
+            :audios,
+            :videos
         )
     """, insert_rows)
 
@@ -186,6 +198,10 @@ def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scop
                 row["tool_calls"] = json.loads(row["tool_calls"])
             if isinstance(row["images"], str):
                 row["images"] = json.loads(row["images"])
+            if isinstance(row["audios"], str):
+                row["audios"] = json.loads(row["audios"])
+            if isinstance(row["videos"], str):
+                row["videos"] = json.loads(row["videos"])
             result.append(row)
 
         return result
@@ -247,6 +263,10 @@ def get_history_by_turn_page(
                 row["tool_calls"] = json.loads(row["tool_calls"])
             if isinstance(row["images"], str):
                 row["images"] = json.loads(row["images"])
+            if isinstance(row["audios"], str):
+                row["audios"] = json.loads(row["audios"])
+            if isinstance(row["videos"], str):
+                row["videos"] = json.loads(row["videos"])
             result.append(row)
 
         return result
@@ -258,3 +278,115 @@ def get_messages_by_lastest_n_turns(session_id: str, last_n: int = 5) -> list[di
     Delegates to paginated history with page 1 and the desired page size.
     """
     return get_history_by_turn_page(session_id, min_turn_num=1, turn_page_size=last_n, turn_page_num=1)
+
+
+def delete_messages_by_session(session_id: str) -> int:
+    """Delete all messages belonging to a session from the SQLite store.
+
+    The FTS5 triggers on the ``messages`` table (see ``store/db.py``) purge the
+    matching rows from both FTS indexes automatically, so no FTS cleanup is
+    needed here.
+
+    Args:
+        session_id: The session whose message rows should be removed.
+
+    Returns:
+        The number of rows deleted.
+    """
+    with _db:
+        cur = _db.execute(
+            "DELETE FROM messages WHERE session_id = ?",
+            (session_id,)
+        )
+    return cur.rowcount
+
+
+def _decode_title_content(raw_content: str | None) -> str:
+    """Decode a stored content cell into plain text suitable as a session title.
+
+    Stored content is ``json.dumps(...)`` — a JSON-encoded string. It may be a
+    plain text string, or a multimodal structured array like
+    ``[{"type":"text","text":"..."},{"type":"image",...}]``. This extractor
+    returns the first text segment (trimmed), or a fallback when nothing usable.
+    """
+    try:
+        decoded = json.loads(raw_content) if raw_content else None
+    except (json.JSONDecodeError, TypeError):
+        decoded = raw_content
+    if isinstance(decoded, str):
+        return decoded.strip()
+    if isinstance(decoded, list):
+        for part in decoded:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                return part["text"].strip()
+    return ""
+
+
+def _is_top_level_session(session_id: str) -> bool:
+    """Return True for a top-level (user-facing) session.
+
+    Subagent sessions carry a reserved prefix and must NOT be surfaced in the
+    user's session list:
+    - ``commander-<master_session_id>`` — the hierarchy Commander agent.
+    - ``worker-<commander_session_id>-<task_id>`` — a task Worker agent.
+    See ``agent/tools/subagent/base.py`` and
+    ``agent/tools/subagent/commander/tools/worker/core.py`` for construction.
+    """
+    return not (session_id.startswith("commander-") or session_id.startswith("worker-"))
+
+
+def get_session_ids() -> list[dict]:
+    """Enumerate all distinct top-level sessions from the messages table.
+
+    Returns one row per session, ordered by most recent activity first:
+
+        [{
+            "session_id": str,
+            "last_time":   str,   # newest message timestamp (YYYYMMDDHHmmss)
+            "title":       str,   # derived from the latest human message; "" when no usable text
+        }, ...]
+
+    Subagent sessions (``commander-*`` / ``worker-*``) are excluded, so only
+    user-facing conversations are listed.
+
+    ``last_time`` is the newest message's ``timestamp`` text (the same
+    ``YYYYMMDDHHmmss`` format used across the store).
+    """
+    with _db:
+        rows = _db.execute("""
+            SELECT m.session_id, m.last_time
+            FROM (
+                SELECT session_id, MAX(timestamp) AS last_time
+                FROM messages
+                GROUP BY session_id
+            ) m
+            ORDER BY m.last_time DESC
+        """).fetchall()
+
+    result: list[dict] = []
+    for row in rows:
+        session_id = str(row["session_id"])
+        # Skip subagent (commander/worker) sessions.
+        if not _is_top_level_session(session_id):
+            continue
+        # Derive a title from the latest human message of the session
+        # (the user's most recent question).
+        # An empty title means that human message had no usable text; the
+        # client renders an i18n placeholder (e.g. "新会话") in that case
+        # instead of leaking the raw session_id.
+        title: str = ""
+        with _db:
+            last_msg = _db.execute("""
+                SELECT content FROM messages
+                WHERE session_id = ? AND role = 'human'
+                ORDER BY turn_num DESC, id DESC
+                LIMIT 1
+            """, (session_id,)).fetchone()
+        if last_msg is not None:
+            title = _decode_title_content(last_msg["content"] if last_msg["content"] is not None else None)
+        result.append({
+            "session_id": session_id,
+            "last_time": str(row["last_time"]),
+            "title": title,
+        })
+    return result

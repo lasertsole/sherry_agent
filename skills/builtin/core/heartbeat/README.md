@@ -1,6 +1,6 @@
 # Heartbeat — Periodic Task Check Service
 
-[**中文文档**](README.zh.md) | **English**
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 > **Heartbeat** is EMA AI Agent's periodic wake-up service that regularly checks `HEARTBEAT.md` for pending tasks and automatically executes and notifies.
 

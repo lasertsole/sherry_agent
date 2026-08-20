@@ -1,0 +1,195 @@
+{
+  "chatInput": {
+    "placeholder": "メッセージを入力してください...",
+    "thinking": "AI が考えています...",
+    "send": "送信",
+    "stop": "停止",
+    "maxImages": "最大 {count} 枚の画像をアップロードできます",
+    "maxImagesExceed": "最大 {count} 枚の画像をアップロードできます。{extra} 枚超過しています"
+  },
+  "chatBox": {
+    "defaultUserName": "わたし",
+    "defaultAiName": "シェリー",
+    "imageLoadFailed": "画像の読み込みに失敗しました",
+    "removeImage": "画像を削除",
+    "toolArgs": "引数",
+    "toolResult": "実行結果",
+    "toolNoOutput": "出力なし",
+    "toolRunning": "実行中…",
+    "thinking": "思考"
+  },
+  "history": {
+    "noSessions": "会話履歴がありません",
+    "selectAll": "すべて選択",
+    "batchDelete": "会話を一括削除",
+    "batchDeleteConfirm": "選択した会話を一括削除してもよろしいですか？この操作は元に戻せません。",
+    "createdAt": "作成日時：{time}",
+    "editTitle": "タイトルを編集",
+    "deleteSession": "会話を削除",
+    "deleteConfirm": "この会話を削除してもよろしいですか？この操作は元に戻せません。",
+    "confirmDelete": "削除",
+    "cancelDelete": "キャンセル",
+    "exampleTitle": "サンプル会話",
+    "newSession": "新しい会話"
+  },
+  "toolbar": {
+    "newChat": "新しい会話",
+    "knowledgeBase": "ナレッジベース",
+    "uploadImage": "画像をアップロード",
+    "image": "画像",
+    "skills": "スキル",
+    "knowledgeGraph": "ナレッジグラフ",
+    "systemConfig": "システム設定",
+    "logs": "ログ",
+    "extend": "拡張",
+    "settingsMenu": "メニュー",
+    "collapseSidebar": "サイドバーを折りたたむ",
+    "expandSidebar": "サイドバーを展開"
+  },
+  "knowledgeGraph": {
+    "back": "戻る",
+    "placeholder": "ナレッジグラフ機能は開発中です…",
+    "loading": "読み込み中…",
+    "empty": "ナレッジグラフのデータがありません",
+    "loadError": "読み込みに失敗しました",
+    "refresh": "更新"
+  },
+  "skills": {
+    "title": "スキル管理",
+    "empty": "このカテゴリにはスキルがありません",
+    "selectHint": "左側のスキルを選択して詳細を表示",
+    "readonly": "読み取り専用",
+    "uploading": "アップロード中…",
+    "uploadSuccess": "スキルのアップロードに成功しました。デフォルトでは無効です",
+    "uploadFailed": "アップロードに失敗しました",
+    "tabs": {
+      "builtin": "組み込み",
+      "auto": "自動",
+      "thirdParty": "第三者の",
+      "uploadSkill": "スキルをアップロード",
+      "uploadSkillHint": "ローカルの SKILL.md を選択してサードパーティスキルとしてアップロード",
+      "runCurator": "スキルメンテナンス",
+      "runCuratorHint": "オート（自動学習）スキルを自動的にレビューし、類似・重複したスキルを統合するとともに、長期間未使用のスキルをマーク・アーカイブして、スキルライブラリを整理します。",
+      "curatorDone": "スキルメンテナンス完了：",
+      "curatorTransitions": "件の自動変更",
+      "curatorFailed": "スキルメンテナンスに失敗しました。サーバーログを確認してください",
+      "autoMaintenanceInterval": "自動メンテナンス間隔",
+      "autoMaintenanceIntervalUnit": "日",
+      "autoMaintenanceSaved": "保存しました",
+      "autoMaintenanceSaveFailed": "保存に失敗しました",
+      "autoMaintenanceResetDone": "既定の間隔に戻しました",
+      "autoMaintenanceLoadFailed": "設定の読み込みに失敗しました",
+      "lastMaintenance": "最終メンテナンス時刻",
+      "lastMaintenanceNone": "まだスキルメンテナンスを実行していません",
+      "loadSettings": "読み込み"
+    }
+  },
+  "extend": {
+    "title": "拡張",
+    "empty": "まだコンテンツがありません",
+    "channelHint": "チャンネルのデータソース API は計画中です",
+    "enabled": "有効",
+    "disabled": "無効",
+    "mcpHint": "MCP サーバーはまだ設定されていません",
+    "channelSettings": {
+      "title": "{name} 設定",
+      "enabled": "チャンネルを有効化",
+      "heartbeat": "ハートビート",
+      "heartbeatHint": "アイドル時に保留タスクを自動チェック",
+      "cron": "定期タスク",
+      "cronHint": "cron 式による定期タスク実行を許可",
+      "config": "チャンネル設定",
+      "configEmpty": "設定項目なし",
+      "configBool": "ブール値",
+      "configPlain": "オブジェクト/配列は JSON テキストで編集",
+      "configLoadFailed": "チャンネル設定の読み込みに失敗",
+      "save": "保存",
+      "cancel": "キャンセル",
+      "saveFailed": "設定の保存に失敗しました"
+    },
+    "tabs": {
+      "channel": "チャンネル",
+      "mcp": "MCP"
+    }
+  },
+  "logs": {
+    "title": "ログビューア",
+    "tabs": {
+      "frontend": "クライアント",
+      "backend": "サーバー"
+    },
+    "file": "ログファイルを選択",
+    "bucket": "ログ日付を選択",
+    "type": {
+      "all": "すべて",
+      "log": "ログ",
+      "error": "エラー"
+    },
+    "live": "リアルタイム",
+    "pause": "一時停止",
+    "refresh": "更新",
+    "clear": "クリア",
+    "autoScroll": "自動スクロール",
+    "connected": "接続済み",
+    "connecting": "接続中...",
+    "empty": "ログがありません",
+    "liveDisabledHint": "リアルタイム表示は現在実行中のサーバーログのみ利用できます",
+    "currentFile": "現在実行中のログ"
+  },
+  "errors": {
+    "replyFailed": "（返信に失敗：{reason}）",
+    "sendFailed": "（送信に失敗：{reason}）"
+  },
+  "imagePreview": {
+    "hint": "スクロールでズーム ・ ドラッグで移動 ・ ESC または空白クリックで閉じる"
+  },
+  "hitl": {
+    "title": "操作の承認が必要です",
+    "tool": "ツール",
+    "description": "説明",
+    "reject": "拒否",
+    "approve": "承認"
+  },
+  "config": {
+    "title": "システム設定",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "uploadAvatar": "アバターをアップロード",
+    "tabs": {
+      "agents": "コアルール",
+      "identity": "身元情報",
+      "soul": "人格・魂",
+      "user": "ユーザー情報",
+      "character": "キャラクター設定"
+    },
+    "desc": {
+      "agents": "Agent コアルール：会話フロー、セキュリティ、モジュール一覧",
+      "identity": "Agent 身元：名前、絵文字、アバター",
+      "soul": "Agent 人格、トーン、性格",
+      "user": "ユーザー情報と好み"
+    },
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "role": {
+      "assistant": "AI ロール",
+      "aiName": "AI 名前",
+      "userRole": "ユーザーロール",
+      "userName": "ユーザー名",
+      "avatar": "アバター",
+      "charNote": "アバターと名前の変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。"
+    },
+    "background": {
+      "title": "背景画像",
+      "upload": "背景をアップロード",
+      "clear": "背景をクリア",
+      "bothThemes": "背景画像はライト/ダークテーマの両方で表示されます。下のスライダーでオーバーレイの強さを調整します。",
+      "opacity": "オーバーレイの強さ",
+      "opacityHint": "ライトテーマでは白、ダークテーマでは黒のオーバーレイを重ねます。右に行くほど写真が真っ白/真っ黒に薄れ、完全に覆われます。",
+      "cropTitle": "背景をトリミング"
+    }
+  }
+}

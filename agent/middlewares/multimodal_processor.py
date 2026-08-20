@@ -1,7 +1,9 @@
 import io
 import time
 import base64
+import urllib.request
 from PIL import Image
+from pathlib import Path
 from typing import Any
 from loguru import logger
 from config import SRC_DIR
@@ -62,6 +64,50 @@ def _infer_extension(data: bytes, kind: str) -> str:
         if data[: len(signature)] == signature:
             return ext
     return fallback
+
+
+def _download_url_to_temp(url: str, session_id: str, kind: str) -> str | None:
+    """Download a media URL to a local temp file under the session folder.
+
+    Returns the absolute file path (posix-style) on success, or None on failure.
+    """
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 (EMA_AI_agent)"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        if not data:
+            logger.error(f"Media download returned empty body: {url}")
+            return None
+
+        temp_dir = SRC_DIR / session_id / "mutil_temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        ext = _infer_extension(data, kind)
+        temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
+        temp_path = temp_path.resolve()
+        temp_path.write_bytes(data)
+        logger.debug(f"Media downloaded from URL: {url} -> {temp_path.as_posix()} (extension={ext})")
+        return temp_path.as_posix()
+    except Exception as e:
+        logger.error(f"Media download failed for {url}: {e}")
+        return None
+
+
+def _unwrap_media_bytes(item: Any) -> bytes | None:
+    """Extract raw bytes from a media content item.
+
+    Handles both shapes produced by _get_content_list / callers:
+      - {"bytes": <bytes>}  (bytes passed directly as a dict wrapper)
+      - raw <bytes>         (bytes passed directly)
+    """
+    media_bytes = item.get("audio_bytes") or item.get("video_bytes") or item
+    if isinstance(media_bytes, dict):
+        media_bytes = media_bytes.get("bytes")
+    if not isinstance(media_bytes, (bytes, bytearray)):
+        logger.error(f"Invalid media bytes payload: {type(media_bytes).__name__}")
+        return None
+    return bytes(media_bytes)
 
 
 from langgraph.runtime import Runtime
@@ -174,40 +220,46 @@ class MultimodalProcessor(AgentMiddleware):
                     url: str = item.get("audio_url", {}).get("url", "")
                     # Check if it's a URL (exclude data: scheme)
                     if is_url(url):
-                        audio_path_list.append(url)
+                        # Download the uploaded audio to a local file so the
+                        # speech_to_text skill receives a readable local path.
+                        local_path = _download_url_to_temp(url, session_id, "audio")
+                        if local_path is not None:
+                            audio_path_list.append(local_path)
 
                 elif item.get("type") == "audio_bytes":
-                    audio_bytes: bytes = item.get("audio_bytes")
-                    if audio_bytes is None:
-                        logger.error("Audio bytes is None!")
+                    media_bytes = _unwrap_media_bytes(item)
+                    if media_bytes is None:
                         continue
 
                     temp_dir = SRC_DIR / session_id / "mutil_temp"
                     temp_dir.mkdir(parents=True, exist_ok=True)
-                    ext = _infer_extension(audio_bytes, "audio")
+                    ext = _infer_extension(media_bytes, "audio")
                     temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
                     temp_path = temp_path.resolve()
-                    temp_path.write_bytes(audio_bytes)
+                    temp_path.write_bytes(media_bytes)
                     logger.debug(f"Audio cached successfully! (extension={ext})")
                     audio_path_list.append(temp_path.as_posix())
 
                 elif item.get("type") == "video_url":
                     url: str = item.get("video_url", {}).get("url", "")
                     if is_url(url):
-                        video_path_list.append(url)
+                        # Download the uploaded video to a local file so the
+                        # video_text_to_text skill receives a readable local path.
+                        local_path = _download_url_to_temp(url, session_id, "video")
+                        if local_path is not None:
+                            video_path_list.append(local_path)
 
                 elif item.get("type") == "video_bytes":
-                    video_bytes: bytes = item.get("video_bytes")
-                    if video_bytes is None:
-                        logger.error("Video bytes is None!")
+                    media_bytes = _unwrap_media_bytes(item)
+                    if media_bytes is None:
                         continue
 
                     temp_dir = SRC_DIR / session_id / "mutil_temp"
                     temp_dir.mkdir(parents=True, exist_ok=True)
-                    ext = _infer_extension(video_bytes, "video")
+                    ext = _infer_extension(media_bytes, "video")
                     temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
                     temp_path = temp_path.resolve()
-                    temp_path.write_bytes(video_bytes)
+                    temp_path.write_bytes(media_bytes)
                     logger.debug(f"Video cached successfully! (extension={ext})")
                     video_path_list.append(temp_path.as_posix())
 
@@ -227,9 +279,14 @@ class MultimodalProcessor(AgentMiddleware):
 
         # Persist the list of media file paths into additional_kwargs so the
         # context engine can save them to the messages table for history rendering.
-        if len(media_path_list) > 0:
+        if len(media_path_list) > 0 or len(audio_path_list) > 0 or len(video_path_list) > 0:
             additional_kwargs: dict[str, Any] = dict(getattr(last_mes, "additional_kwargs", {}) or {})
-            additional_kwargs["images"] = media_path_list
+            if len(media_path_list) > 0:
+                additional_kwargs["images"] = media_path_list
+            if len(audio_path_list) > 0:
+                additional_kwargs["audios"] = audio_path_list
+            if len(video_path_list) > 0:
+                additional_kwargs["videos"] = video_path_list
             last_mes.additional_kwargs = additional_kwargs
 
         # Strip image_url blocks from history messages (DeepSeek and similar models don't support image_url format)

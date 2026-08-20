@@ -1,6 +1,17 @@
 from loguru import logger
 from server.trigger.core import app
-from server.service import clear_session, get_history_by_turn_page as _get_history_by_turn_page
+from server.service import clear_session, get_history_by_turn_page as _get_history_by_turn_page, get_session_list as _get_session_list, get_pending_interrupt as _get_pending_interrupt
+
+@app.get("/sessions")
+async def get_sessions_handler(request):
+    """
+    Enumerate all distinct sessions, newest activity first.
+
+    Returns a list of {"session_id", "last_time", "title"} dicts.
+    """
+    session_list = _get_session_list()
+    logger.debug(f"Enumerated sessions: count={len(session_list)}")
+    return session_list
 
 @app.delete("/sessions")
 async def clear_session_handler(request):
@@ -43,3 +54,30 @@ async def get_history_by_turn_page(request):
         raise ValueError("turn_page_num is required")
 
     return _get_history_by_turn_page(session_id, min_turn_num, turn_page_size, turn_page_num)
+
+@app.get("/get_pending_interrupt")
+async def get_pending_interrupt_handler(request):
+    """
+    Return the pending HITL interrupt payload for a session, or ``null`` if none.
+
+    This lets the client restore an in-flight approval card after a session
+    switch, page refresh, or browser restart — the interrupt is re-derived
+    from the persisted LangGraph checkpoint rather than only pushed over an
+    active WebSocket stream.
+
+    Query parameters:
+        session_id (str, required): Session ID to inspect.
+
+    Returns one of:
+        {"tool_name": str, "tool_args": dict, "description": str, "allowed_decisions": list[str]}
+        null
+    """
+    query_params = request.query_params
+
+    session_id: str | None = query_params.get("session_id", None)
+    logger.debug(f"Reading pending HITL interrupt: session_id={session_id}")
+
+    if not session_id:
+        raise ValueError("session_id is required")
+
+    return await _get_pending_interrupt(session_id)

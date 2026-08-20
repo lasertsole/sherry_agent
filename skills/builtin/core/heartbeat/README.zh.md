@@ -1,6 +1,6 @@
 # Heartbeat — 定时任务检查服务
 
-[**English**](README.md) | **中文文档**
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 > **Heartbeat** 是 EMA AI Agent 的定时心跳服务，定期唤醒 Agent 检查 `HEARTBEAT.md` 中是否有待处理任务，并自动执行与通知。
 

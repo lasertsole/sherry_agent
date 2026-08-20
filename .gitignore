@@ -1,17 +1,36 @@
-src/sessions/
+# Tools
+.playwright-mcp
+
+# Env / deps
 .venv
 __pycache__
 .env
 models/
+model_weight/
+
+# Runtime data (src/, temp/, cron) — regenerated every run, never commit
+src/
+temp
+cron_jobs.json
+skills/.curator_state
+
+# Logs
 logs/output
+logs/curator
+logs/*.log
+
+# RAG runtime artifacts — lightrag's default working_dir is ./rag_storage,
+# which resolves relative to the cwd; ignore any stray occurrence.
+**/rag_storage
 *.db
 *.db-shm
 *.db-wal
-model_weight/
 workspace/
 skills/auto
+skills/plugins/*.state.json
 **/wiki/
 skills/skills_snapshot.json
 .omo/
 static/
 sessions/**/*.md
+.idea/

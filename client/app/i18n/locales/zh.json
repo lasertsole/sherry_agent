@@ -1,0 +1,221 @@
+{
+  "chatInput": {
+    "placeholder": "请输入内容...",
+    "thinking": "AI 正在思考中...",
+    "waitingApproval": "等待审批...",
+    "send": "发送",
+    "stop": "停止",
+    "maxImages": "最多只能上传 {count} 张图片",
+    "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张",
+    "maxAudios": "最多只能上传 {count} 段音频",
+    "maxAudiosExceed": "最多只能上传 {count} 段音频，已超出 {extra} 段",
+    "maxVideos": "最多只能上传 {count} 段视频",
+    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
+  },
+  "chatBox": {
+    "defaultUserName": "我",
+    "defaultAiName": "橘雪莉",
+    "imageLoadFailed": "图片加载失败",
+    "removeImage": "移除图片",
+    "audioLoadFailed": "音频加载失败",
+    "videoLoadFailed": "视频加载失败",
+    "removeAudio": "移除音频",
+    "removeVideo": "移除视频",
+    "toolArgs": "调用参数",
+    "toolResult": "执行结果",
+    "toolNoOutput": "无输出",
+  "toolRunning": "执行中…",
+  "thinking": "思考过程"
+  },
+  "history": {
+    "noSessions": "暂无会话记录",
+    "selectAll": "全选",
+    "batchDelete": "批量删除对话",
+    "batchDeleteConfirm": "确定要批量删除选中的对话吗？此操作不可恢复。",
+    "createdAt": "创建时间：{time}",
+    "editTitle": "修改标题",
+    "deleteSession": "删除会话",
+    "deleteConfirm": "确定要删除该会话吗？此操作不可恢复。",
+    "confirmDelete": "删除",
+    "cancelDelete": "取消",
+    "exampleTitle": "示例会话",
+    "newSession": "新会话"
+  },
+  "toolbar": {
+    "newChat": "新建对话",
+    "knowledgeBase": "知识库",
+    "uploadImage": "上传图片",
+    "image": "图片",
+    "audio": "音频",
+    "uploadAudio": "上传音频",
+    "video": "视频",
+    "uploadVideo": "上传视频",
+    "skills": "技能",
+    "knowledgeGraph": "知识图谱",
+    "systemConfig": "系统配置",
+    "logs": "日志",
+    "extend": "扩展",
+    "settingsMenu": "菜单",
+    "collapseSidebar": "折叠侧边栏",
+    "expandSidebar": "展开侧边栏"
+  },
+  "knowledgeGraph": {
+    "back": "返回",
+    "placeholder": "知识图谱功能开发中…",
+    "loading": "加载中…",
+    "empty": "暂无知识图谱数据",
+    "loadError": "加载失败",
+    "refresh": "刷新"
+  },
+  "skills": {
+    "title": "技能管理",
+    "empty": "该分类下暂无技能",
+    "selectHint": "请选择左侧技能查看详情",
+    "readonly": "只读",
+    "uploading": "上传中…",
+    "uploadSuccess": "技能上传成功，默认未激活",
+    "uploadFailed": "上传失败",
+    "activate": "激活",
+    "deactivate": "停用",
+    "activateFailed": "更新激活状态失败",
+    "toggleFailed": "切换失败",
+    "tabs": {
+      "builtin": "内置",
+      "auto": "自动",
+      "thirdParty": "第三方",
+      "uploadSkill": "上传技能",
+      "uploadSkillHint": "从本地选择 SKILL.md 文件上传为第三方技能",
+      "runCurator": "技能维护",
+      "runCuratorHint": "自动审查自动学习（auto）技能，合并相似或重复的技能，并标记、归档长期未使用的技能，保持技能库整洁。",
+      "curatorDone": "技能维护完成：",
+      "curatorTransitions": "个自动变更",
+      "curatorFailed": "技能维护失败，请查看服务端日志",
+      "autoMaintenanceInterval": "自动技能维护间隔",
+      "autoMaintenanceIntervalUnit": "天",
+      "autoMaintenanceSaved": "已保存",
+      "autoMaintenanceSaveFailed": "保存失败",
+      "autoMaintenanceResetDone": "已恢复为默认间隔",
+      "autoMaintenanceLoadFailed": "读取设置失败",
+      "lastMaintenance": "最后一次维护时间",
+      "lastMaintenanceNone": "尚未执行过技能维护",
+      "loadSettings": "加载"
+    }
+  },
+  "extend": {
+    "title": "扩展",
+    "empty": "暂无内容",
+    "channelHint": "频道数据源接口待规划",
+    "enabled": "启用",
+    "disabled": "禁用",
+    "mcpHint": "MCP 服务器尚无配置",
+    "channelSettings": {
+      "title": "{name} 设置",
+      "enabled": "启用频道",
+      "heartbeat": "心跳",
+      "heartbeatHint": "空闲时自动检查待办任务",
+      "cron": "定时任务",
+      "cronHint": "允许按 cron 表达式定时执行任务",
+      "config": "频道配置",
+      "configEmpty": "无配置项",
+      "configBool": "布尔值",
+      "configPlain": "对象/数组以 JSON 文本编辑",
+      "configLoadFailed": "加载频道配置失败",
+      "save": "保存",
+      "cancel": "取消",
+      "saveFailed": "保存设置失败"
+    },
+    "tabs": {
+      "channel": "频道",
+      "mcp": "MCP"
+    }
+  },
+  "logs": {
+    "title": "日志查看",
+    "tabs": {
+      "frontend": "客户端",
+      "backend": "服务端"
+    },
+    "file": "选择日志文件",
+    "bucket": "选择日志日期",
+    "pid": "选择进程 PID",
+    "type": {
+      "all": "全部",
+      "log": "日志",
+      "error": "错误"
+    },
+    "live": "实时",
+    "pause": "暂停",
+    "refresh": "刷新",
+    "clear": "清空",
+    "autoScroll": "自动滚动",
+    "connected": "已连接",
+    "connecting": "连接中...",
+    "empty": "暂无日志",
+    "liveDisabledHint": "仅当前运行中的服务端日志支持实时查看",
+    "currentFile": "当前运行日志"
+  },
+  "errors": {
+    "replyFailed": "（回复失败：{reason}）",
+    "sendFailed": "（发送失败：{reason}）"
+  },
+  "imagePreview": {
+    "hint": "滚动缩放 · 拖拽移动 · ESC 或点击空白关闭"
+  },
+  "hitl": {
+    "title": "操作需要审批",
+    "tool": "工具",
+    "description": "描述",
+    "reject": "拒绝",
+    "approve": "批准"
+  },
+  "config": {
+    "title": "系统配置",
+    "save": "保存",
+    "cancel": "取消",
+    "uploadAvatar": "上传头像",
+    "tabs": {
+      "agents": "核心规则",
+      "identity": "身份信息",
+      "soul": "人格灵魂",
+      "user": "用户信息",
+      "character": "角色配置"
+    },
+    "desc": {
+      "agents": "Agent核心规则：会话流程、安全、模块索引",
+      "identity": "Agent身份：名字、emoji、头像",
+      "soul": "Agent人格、语气、性格",
+      "user": "用户信息和偏好"
+    },
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "role": {
+      "assistant": "AI 角色",
+      "aiName": "AI 名称",
+      "userRole": "用户角色",
+      "userName": "用户名称",
+      "avatar": "头像",
+      "charNote": "修改头像与名字仅在新建会话后生效，旧会话不受影响。"
+    },
+    "crop": {
+      "title": "裁剪头像",
+      "confirm": "确定",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "rotate": "旋转",
+      "preview": "裁剪预览"
+    },
+    "background": {
+      "title": "背景图片",
+      "upload": "上传背景",
+      "clear": "清除背景",
+      "bothThemes": "背景图片在浅色/深色主题下均会显示；通过下方滑块调整遮罩强度。",
+      "opacity": "遮罩强度",
+      "opacityHint": "浅色主题叠加白色遮罩、深色主题叠加黑色遮罩：越靠右照片越被冲淡成纯白/纯黑，直至完全遮蔽。",
+      "cropTitle": "裁剪背景"
+    }
+  }
+}

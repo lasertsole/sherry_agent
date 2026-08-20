@@ -41,7 +41,7 @@ class ContextEngineHook(AgentMiddleware):
             system_prompt = state_register_db.get_state(session_id, "system_prompt", None)
 
             if system_prompt is None:
-                system_prompt = build_system_prompt()
+                system_prompt = build_system_prompt(session_id=session_id)
                 state_register_db.set_state(session_id, "system_prompt", system_prompt)
 
             state_register_mem.set_state(session_id, "system_prompt", system_prompt)
@@ -240,18 +240,27 @@ class ContextEngineHook(AgentMiddleware):
         last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
         format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
 
+        # Sanitize the full message list before feeding any nudge sub-agent. The
+        # persist path above already sanitizes its slice; the nudge agents build
+        # their own LLM input from the raw `messages` list, so any orphaned
+        # ToolMessage (e.g. produced by a HITL reject) would be passed straight
+        # to the LLM and trigger a LangChain 400
+        # ("Messages with role 'tool' must be a response to a preceding message").
+        # Stripping orphans here keeps the nudge path consistent with persist.
+        nudge_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(messages)
+
         # Run persistence and nudge concurrently
         async def _persist() -> None:
             await add_messages(session_id=session_id, messages=format_last_turn_messages)
 
         async def _nudge() -> None:
             if need_memory and need_skill:
-                await _nudge_combined(session_id, system_prompt, messages)
+                await _nudge_combined(session_id, system_prompt, nudge_messages)
             else:
                 if need_memory:
-                    await _nudge_memory(session_id, system_prompt, messages)
+                    await _nudge_memory(session_id, system_prompt, nudge_messages)
                 if need_skill:
-                    await _nudge_skill(session_id, system_prompt, messages)
+                    await _nudge_skill(session_id, system_prompt, nudge_messages)
 
         await asyncio.gather(_persist(), _nudge())
 

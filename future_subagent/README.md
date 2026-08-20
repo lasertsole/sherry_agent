@@ -1,6 +1,6 @@
 # Future Subagent — Python Subagent System
 
-**[中文文档](./README.zh.md)** | English
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
 > A Python implementation of a multi-level subagent system, coexisting with the existing `agent/tools/subagent/` (Commander/Worker pattern). All 7 implementation phases + robustness-plan-v3 enhancements + bug fixes + OpenClaw alignment + depth alignment + wiring fixes are complete. 203 tests pass.
 

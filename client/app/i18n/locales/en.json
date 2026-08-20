@@ -1,0 +1,221 @@
+{
+  "chatInput": {
+    "placeholder": "Type a message...",
+    "thinking": "AI is thinking...",
+    "waitingApproval": "Waiting for approval...",
+    "send": "Send",
+    "stop": "Stop",
+    "maxImages": "You can upload at most {count} images",
+    "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",
+    "maxAudios": "You can upload at most {count} audio files",
+    "maxAudiosExceed": "You can upload at most {count} audio files, {extra} over the limit",
+    "maxVideos": "You can upload at most {count} video files",
+    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
+  },
+  "chatBox": {
+    "defaultUserName": "Me",
+    "defaultAiName": "Sherry",
+    "imageLoadFailed": "Image load failed",
+    "removeImage": "Remove image",
+    "audioLoadFailed": "Audio load failed",
+    "videoLoadFailed": "Video load failed",
+    "removeAudio": "Remove audio",
+    "removeVideo": "Remove video",
+    "toolArgs": "Arguments",
+    "toolResult": "Result",
+    "toolNoOutput": "No output",
+  "toolRunning": "Running…",
+  "thinking": "Thinking"
+  },
+  "history": {
+    "noSessions": "No conversations",
+    "selectAll": "Select All",
+    "batchDelete": "Delete Conversations",
+    "batchDeleteConfirm": "Are you sure you want to delete the selected conversations? This action cannot be undone.",
+    "createdAt": "Created: {time}",
+    "editTitle": "Edit Title",
+    "deleteSession": "Delete Conversation",
+    "deleteConfirm": "Are you sure you want to delete this conversation? This action cannot be undone.",
+    "confirmDelete": "Delete",
+    "cancelDelete": "Cancel",
+    "exampleTitle": "Example Conversation",
+    "newSession": "New Session"
+  },
+  "toolbar": {
+    "newChat": "New Chat",
+    "knowledgeBase": "Knowledge Base",
+    "uploadImage": "Upload Image",
+    "image": "Image",
+    "audio": "Audio",
+    "uploadAudio": "Upload Audio",
+    "video": "Video",
+    "uploadVideo": "Upload Video",
+    "skills": "Skills",
+    "knowledgeGraph": "Knowledge Graph",
+    "systemConfig": "System Config",
+    "logs": "Logs",
+    "extend": "Extend",
+    "settingsMenu": "Menu",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
+  },
+  "knowledgeGraph": {
+    "back": "Back",
+    "placeholder": "Knowledge Graph feature under development…",
+    "loading": "Loading…",
+    "empty": "No knowledge graph data",
+    "loadError": "Failed to load",
+    "refresh": "Refresh"
+  },
+  "skills": {
+    "title": "Skill Manager",
+    "empty": "No skills in this category",
+    "selectHint": "Select a skill on the left to view details",
+    "readonly": "Read-only",
+    "uploading": "Uploading…",
+    "uploadSuccess": "Skill uploaded, inactive by default",
+    "uploadFailed": "Upload failed",
+    "activate": "Activate",
+    "deactivate": "Deactivate",
+    "activateFailed": "Failed to update activation",
+    "toggleFailed": "Toggle failed",
+    "tabs": {
+      "builtin": "Built-in",
+      "auto": "Auto",
+      "thirdParty": "Third-Party",
+      "uploadSkill": "Upload Skill",
+      "uploadSkillHint": "Choose a local SKILL.md to upload as a third-party skill",
+      "runCurator": "Skill maintenance",
+      "runCuratorHint": "Automatically reviews auto-learned skills, merges similar or duplicate skills, and marks/archives long-unused skills to keep the skill library tidy.",
+      "curatorDone": "Skill maintenance complete:",
+      "curatorTransitions": "auto transitions",
+      "curatorFailed": "Skill maintenance failed, check server logs",
+      "autoMaintenanceInterval": "Auto maintenance interval",
+      "autoMaintenanceIntervalUnit": "days",
+      "autoMaintenanceSaved": "Saved",
+      "autoMaintenanceSaveFailed": "Save failed",
+      "autoMaintenanceResetDone": "Restored to default interval",
+      "autoMaintenanceLoadFailed": "Failed to load settings",
+      "lastMaintenance": "Last maintenance",
+      "lastMaintenanceNone": "No maintenance performed yet",
+      "loadSettings": "Load"
+    }
+  },
+  "extend": {
+    "title": "Extend",
+    "empty": "Nothing here yet",
+    "channelHint": "Channel data source API is under planning",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "mcpHint": "No MCP servers configured",
+    "channelSettings": {
+      "title": "{name} Settings",
+      "enabled": "Enable Channel",
+      "heartbeat": "Heartbeat",
+      "heartbeatHint": "Automatically check pending tasks when idle",
+      "cron": "Scheduled Tasks",
+      "cronHint": "Allow tasks to run on a cron schedule",
+      "config": "Channel Config",
+      "configEmpty": "No config items",
+      "configBool": "Boolean value",
+      "configPlain": "Objects/arrays edited as JSON text",
+      "configLoadFailed": "Failed to load channel config",
+      "save": "Save",
+      "cancel": "Cancel",
+      "saveFailed": "Failed to save settings"
+    },
+    "tabs": {
+      "channel": "Channels",
+      "mcp": "MCP"
+    }
+  },
+  "logs": {
+    "title": "Log Viewer",
+    "tabs": {
+      "frontend": "Client",
+      "backend": "Server"
+    },
+    "file": "Select log file",
+    "bucket": "Select log date",
+    "pid": "Select process PID",
+    "type": {
+      "all": "All",
+      "log": "Log",
+      "error": "Error"
+    },
+    "live": "Live",
+    "pause": "Pause",
+    "refresh": "Refresh",
+    "clear": "Clear",
+    "autoScroll": "Auto-scroll",
+    "connected": "Connected",
+    "connecting": "Connecting...",
+    "empty": "No logs",
+    "liveDisabledHint": "Live view is only available for the currently running server log",
+    "currentFile": "Currently running log"
+  },
+  "errors": {
+    "replyFailed": "(Reply failed: {reason})",
+    "sendFailed": "(Send failed: {reason})"
+  },
+  "imagePreview": {
+    "hint": "Scroll to zoom · Drag to move · ESC or click blank to close"
+  },
+  "hitl": {
+    "title": "Action Requires Approval",
+    "tool": "Tool",
+    "description": "Description",
+    "reject": "Reject",
+    "approve": "Approve"
+  },
+  "config": {
+    "title": "System Config",
+    "save": "Save",
+    "cancel": "Cancel",
+    "uploadAvatar": "Upload Avatar",
+    "tabs": {
+      "agents": "Core Rules",
+      "identity": "Identity",
+      "soul": "Soul",
+      "user": "User Profile",
+      "character": "Character Setup"
+    },
+    "desc": {
+      "agents": "Agent core rules: conversation flow, security, module index",
+      "identity": "Agent identity: name, emoji, avatar",
+      "soul": "Agent personality, tone, character",
+      "user": "User info and preferences"
+    },
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "role": {
+      "assistant": "AI Role",
+      "aiName": "AI Name",
+      "userRole": "User Role",
+      "userName": "User Name",
+      "avatar": "Avatar",
+      "charNote": "Changes to the avatar and name only take effect in new sessions; existing sessions are not affected."
+    },
+    "crop": {
+      "title": "Crop Avatar",
+      "confirm": "Confirm",
+      "zoomIn": "Zoom In",
+      "zoomOut": "Zoom Out",
+      "rotate": "Rotate",
+      "preview": "Crop Preview"
+    },
+    "background": {
+      "title": "Background Image",
+      "upload": "Upload Background",
+      "clear": "Clear Background",
+      "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
+      "opacity": "Overlay Strength",
+      "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
+      "cropTitle": "Crop Background"
+    }
+  }
+}

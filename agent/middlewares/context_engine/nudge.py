@@ -229,7 +229,7 @@ class StateSchema(AgentState):
 async def _create_nudge_agent(system_prompt: str):
     from agent import get_agent_tools
     from models import build_main_llm
-    from agent.middlewares import ToolGuardrails, IterationBudget
+    from agent.middlewares import ToolCallNormalize, ToolGuardrails, IterationBudget
 
 
     main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
@@ -237,7 +237,10 @@ async def _create_nudge_agent(system_prompt: str):
         model=main_llm,
         state_schema=StateSchema,
         system_prompt=system_prompt,
-        middleware=[_NudgeLimitTool(), ToolGuardrails(), IterationBudget()],
+        # ToolCallNormalize strips orphaned ToolMessages (e.g. those produced by
+        # a HITL reject) before building the LLM input, preventing the LangChain
+        # 400 "Messages with role 'tool' must be a response to a preceding message".
+        middleware=[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()],
         tools=get_agent_tools()
     )
 
