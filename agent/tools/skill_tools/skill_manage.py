@@ -846,7 +846,11 @@ class SkillManage(BaseTool):
         "Pinned skills are protected from deletion only — skill_manage(action='delete') "
         "will refuse for pinned skills. "
         "Patches and edits go through on pinned skills so you can still improve them as "
-        "pitfalls come up; pin only guards against irrecoverable loss."
+        "pitfalls come up; pin only guards against irrecoverable loss.\n"
+        "Fixed skills are protected from ALL changes — edit, patch, delete, write_file "
+        "and remove_file all refuse for fixed skills. Unfix a skill first if you need "
+        "to modify it. Fixed also keeps the skill excluded from the curator's "
+        "consolidation/removal."
     )
     args_schema: Type[BaseModel] = SkillManageSchema
     metadata: dict = {"idempotent": False, "nudge": True}
@@ -871,32 +875,36 @@ class SkillManage(BaseTool):
                 return "content is required for 'create'. Provide the full SKILL.md text (frontmatter + body)."
             result = _create_skill(name, content, category)
 
-        elif action == "edit":
-            if not content:
-                return "content is required for 'edit'. Provide the full updated SKILL.md text."
-            result = _edit_skill(name, content)
-
-        elif action == "patch":
-            if not old_string:
-                return "old_string is required for 'patch'. Provide the text to find."
-            if new_string is None:
-                return "new_string is required for 'patch'. Use empty string to delete matched text."
-            result = _patch_skill(name, old_string, new_string, file_path, replace_all)
-
-        elif action == "delete":
-            result = _delete_skill(name, absorbed_into=absorbed_into)
-
-        elif action == "write_file":
-            if not file_path:
-                return "file_path is required for 'write_file'. Example: 'references/api-guide.md'"
-            if file_content is None:
-                return "file_content is required for 'write_file'."
-            result = _write_file(name, file_path, file_content)
-
-        elif action == "remove_file":
-            if not file_path:
-                return "file_path is required for 'remove_file'."
-            result = _remove_file(name, file_path)
+        elif action in {"edit", "patch", "delete", "write_file", "remove_file"}:
+            # Fixed skills are protected from ALL skill_manager mutations. This is
+            # stronger than `pinned` (which only guards deletion/archival). A fixed
+            # skill may only be changed by unfixing it first.
+            from context_engine.curator.usage import _fixed_guard
+            fixed_err = _fixed_guard(name)
+            if fixed_err:
+                result = {"success": False, "error": fixed_err}
+            elif action == "edit":
+                if not content:
+                    return "content is required for 'edit'. Provide the full updated SKILL.md text."
+                result = _edit_skill(name, content)
+            elif action == "patch":
+                if not old_string:
+                    return "old_string is required for 'patch'. Provide the text to find."
+                if new_string is None:
+                    return "new_string is required for 'patch'. Use empty string to delete matched text."
+                result = _patch_skill(name, old_string, new_string, file_path, replace_all)
+            elif action == "delete":
+                result = _delete_skill(name, absorbed_into=absorbed_into)
+            elif action == "write_file":
+                if not file_path:
+                    return "file_path is required for 'write_file'. Example: 'references/api-guide.md'"
+                if file_content is None:
+                    return "file_content is required for 'write_file'."
+                result = _write_file(name, file_path, file_content)
+            else:  # remove_file
+                if not file_path:
+                    return "file_path is required for 'remove_file'."
+                result = _remove_file(name, file_path)
 
         else:
             result = {"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file"}

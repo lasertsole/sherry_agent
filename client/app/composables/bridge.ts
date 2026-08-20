@@ -989,6 +989,63 @@ export async function setSkillActive(name: string, active: boolean): Promise<{ s
   }) as unknown as Promise<{ success: boolean; message?: string }>;
 }
 
+/** Response of `POST /skills/fixed`. */
+export interface SetSkillFixedResponse {
+  success: boolean;
+  /** The skill name the flag was applied to. */
+  name?: string;
+  /** Whether the skill directory still exists on disk. */
+  exists?: boolean;
+  /** Current fixed state (true = protected from curator + skill_manager edits). */
+  fixed?: boolean;
+  /** Current pinned state. */
+  pinned?: boolean;
+  message?: string;
+}
+
+/**
+ * Set or clear the 'fixed' flag on an auto skill.
+ *
+ * Fixed skills are excluded from curator maintenance (never merged/removed)
+ * AND protected from `skill_manager` edits.
+ *
+ * @param name The auto skill name.
+ * @param fixed Desired fixed state.
+ * @returns `{ success, name?, exists?, fixed?, pinned?, message? }` from the backend.
+ */
+export async function setSkillFixed(name: string, fixed: boolean): Promise<SetSkillFixedResponse> {
+  return fetchApi({
+    url: '/skills/fixed',
+    opts: { name, fixed },
+    method: 'post',
+  }) as unknown as Promise<SetSkillFixedResponse>;
+}
+
+/** Response of `POST /skills/delete`. */
+export interface DeleteSkillResponse {
+  success: boolean;
+  name?: string;
+  message?: string;
+}
+
+/**
+ * Delete an auto skill from disk.
+ *
+ * This is an irreversible operation — the client MUST show a confirmation
+ * dialog before calling this. Pinned or fixed skills are rejected by the
+ * backend (`delete_skill`).
+ *
+ * @param name The auto skill name to delete.
+ * @returns `{ success, name?, message? }` from the backend.
+ */
+export async function deleteSkill(name: string): Promise<DeleteSkillResponse> {
+  return fetchApi({
+    url: '/skills/delete',
+    opts: { name },
+    method: 'post',
+  }) as unknown as Promise<DeleteSkillResponse>;
+}
+
 /** Auto-transition counters returned by `run_curator_review` (e.g. marked_stale/archived/reactivated/checked/seeded). */
 export interface CuratorAutoTransitions {
   marked_stale: number;
@@ -1105,6 +1162,10 @@ export interface SkillInfo {
   description: string;
   location: string;
   category: 'builtin' | 'auto' | 'third_party';
+  /** Whether the skill is excluded from curator maintenance (never merged/removed). */
+  pinned?: boolean;
+  /** Whether the skill is also protected from `skill_manager` edits (stronger than pinned). */
+  fixed?: boolean;
 }
 
 /** A single node in a skill's on-disk directory structure (relative to the skill root). */

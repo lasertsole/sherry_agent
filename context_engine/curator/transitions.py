@@ -49,7 +49,7 @@ def apply_automatic_transitions(now: datetime | None = None) -> dict[str, int]:
     for row in agent_created_report():
         counts["checked"] += 1
         name = row["name"]
-        if row.get("pinned"):
+        if row.get("pinned") or row.get("fixed"):
             continue
 
         if not row.get("_persisted", True):

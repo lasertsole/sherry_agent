@@ -19,6 +19,13 @@ from agent.tools.skill_tools.skill_manage import (
     _VALID_NAME_RE,
     _MAX_SKILL_CONTENT_CHARS,
 )
+from context_engine.curator.usage import (
+    delete_skill,
+    is_fixed,
+    is_pinned,
+    set_fixed,
+    _skill_dir,
+)
 
 
 # Canonical mapping between the on-disk top-level skill directories under
@@ -60,6 +67,10 @@ async def list_skills_handler(request):
             "description": s["description"],
             "location": s["location"],
             "category": _get_category(s["location"]),
+            # Pin/fix state is surfaced so the client can render the correct
+            # controls (fixed skills can't be deleted; pinned/fixed are shown).
+            "pinned": is_pinned(s["name"]),
+            "fixed": is_fixed(s["name"]),
         })
     result.sort(key=lambda x: (x["category"], x["name"]))
     logger.debug(f"Listed skills: count={len(result)}")
@@ -419,3 +430,114 @@ async def toggle_skill_handler(request):
         headers={"Content-Type": "application/json"},
         description='{"success": true}',
     )
+
+
+# =============================================================================
+# Auto-skill fixes / deletion (fixed 固定 + delete 删除)
+# =============================================================================
+#
+# These endpoints operate on agent-created (auto) skills. The "fixed" flag is
+# managed via `context_engine.curator.usage.set_fixed`, which persists it both
+# to the skill's usage record and to a `.fixed` marker file. Fixed skills are:
+#   - excluded from curator maintenance (never merged / removed)
+#   - protected from `skill_manager` edits (see skill_manage.py mutation guard)
+#
+# Deleting an auto skill is fixed-aware: `delete_skill` rejects any skill that
+# is pinned or fixed, and resolves nested `skills/auto/<category>/<skill>/`
+# paths via `_skill_dir`.
+
+
+def _json_response(status_code: int, payload: dict[str, object]) -> Response:
+    return Response(
+        status_code=status_code,
+        headers={"Content-Type": "application/json"},
+        description=json.dumps(payload, ensure_ascii=False),
+    )
+
+
+def _fixed_skill_payload(name: str) -> dict[str, object]:
+    """Build the fix/pin state + existence flags for a skill name."""
+    skill_dir = _skill_dir(name)
+    return {
+        "success": True,
+        "name": name,
+        "exists": skill_dir is not None,
+        "fixed": is_fixed(name),
+        "pinned": is_pinned(name),
+    }
+
+
+@app.post("/skills/fixed")
+async def set_fixed_handler(request):
+    """Set or clear the 'fixed' flag on an auto skill.
+
+    Accepts a JSON body: {"name": string, "fixed": bool}. Fixed skills are
+    excluded from curator maintenance and protected from `skill_manager`
+    edits, but remain visible and usable.
+    """
+    try:
+        body = request.json()
+    except Exception:
+        body = None
+
+    if not isinstance(body, dict):
+        return _json_response(400, {"success": False, "message": "Invalid JSON body"})
+
+    name = body.get("name")
+    fixed = body.get("fixed")
+
+    if not isinstance(name, str) or not name.strip():
+        return _json_response(400, {"success": False, "message": "Missing or invalid 'name'"})
+    name = name.strip()
+
+    if not isinstance(fixed, bool):
+        return _json_response(400, {"success": False, "message": "Missing or invalid 'fixed' (must be boolean)"})
+
+    err = _validate_skill_name(name)
+    if err:
+        return _json_response(400, {"success": False, "message": err})
+
+    if _skill_dir(name) is None:
+        return _json_response(404, {"success": False, "message": f"Skill '{name}' not found"})
+
+    ok, msg = set_fixed(name, fixed)
+    logger.info(f"Skill fixed set: name={name}, fixed={fixed}, ok={ok} msg={msg}")
+    if not ok:
+        return _json_response(400, {"success": False, "message": msg})
+    return _json_response(200, _fixed_skill_payload(name))
+
+
+@app.post("/skills/delete")
+async def delete_auto_skill_handler(request):
+    """Delete an auto skill from disk.
+
+    Accepts a JSON body: {"name": string}. The user-facing client MUST show a
+    confirmation dialog before invoking this endpoint, since deletion is
+    irreversible. Pinned or fixed skills are rejected by `delete_skill`.
+    """
+    try:
+        body = request.json()
+    except Exception:
+        body = None
+
+    if not isinstance(body, dict):
+        return _json_response(400, {"success": False, "message": "Invalid JSON body"})
+
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return _json_response(400, {"success": False, "message": "Missing or invalid 'name'"})
+    name = name.strip()
+
+    err = _validate_skill_name(name)
+    if err:
+        return _json_response(400, {"success": False, "message": err})
+
+    ok, msg = delete_skill(name)
+    logger.info(f"Auto skill delete: name={name}, ok={ok} msg={msg}")
+    if not ok:
+        return _json_response(400, {"success": False, "message": msg})
+
+    # Rebuild the skills snapshot so the deleted skill disappears from the
+    # agent's effective skill prompt.
+    _rebuild_snapshot()
+    return _json_response(200, {"success": True, "name": name})

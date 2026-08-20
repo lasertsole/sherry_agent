@@ -40,7 +40,8 @@ CURATOR_REVIEW_PROMPT = (
     "1. DO NOT touch bundled or built-in skills.\n"
     "2. DO NOT delete any skill. Archiving is the maximum destructive action.\n"
     "3. DO NOT touch pinned skills.\n"
-    "4. DO NOT use usage counters as sole reason to skip consolidation.\n\n"
+    "4. DO NOT touch fixed skills.\n"
+    "5. DO NOT use usage counters as sole reason to skip consolidation.\n\n"
     "Consolidation strategies:\n"
     "a. MERGE INTO EXISTING UMBRELLA — patch it to add labeled sections, archive siblings.\n"
     "b. CREATE NEW UMBRELLA — write class-level skill, archive siblings.\n"
@@ -70,7 +71,7 @@ CURATOR_DRY_RUN_BANNER = (
 
 def _render_candidate_list() -> str:
     rows = agent_created_report()
-    rows = [r for r in rows if not r.get("pinned")]
+    rows = [r for r in rows if not r.get("pinned") and not r.get("fixed")]
     if not rows:
         return "No agent-created skills to review."
     lines = [f"Agent-created skills ({len(rows)}):\n"]
