@@ -24,8 +24,9 @@
     "toolArgs": "Arguments",
     "toolResult": "Result",
     "toolNoOutput": "No output",
-  "toolRunning": "Running…",
-  "thinking": "Thinking"
+    "toolRunning": "Running…",
+    "thinking": "Thinking",
+    "modelMeta": "{input} in · {output} out tokens"
   },
   "history": {
     "noSessions": "No conversations",
@@ -52,6 +53,7 @@
     "uploadVideo": "Upload Video",
     "skills": "Skills",
     "knowledgeGraph": "Knowledge Graph",
+    "stats": "Statistics",
     "systemConfig": "System Config",
     "persona": "AI Persona",
     "logs": "Logs",
@@ -59,115 +61,6 @@
     "settingsMenu": "Menu",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar"
-  },
-  "knowledgeGraph": {
-    "back": "Back",
-    "placeholder": "Knowledge Graph feature under development…",
-    "loading": "Loading…",
-    "empty": "No knowledge graph data",
-    "loadError": "Failed to load",
-    "refresh": "Refresh"
-  },
-  "skills": {
-    "title": "Skill Manager",
-    "empty": "No skills in this category",
-    "selectHint": "Select a skill on the left to view details",
-    "readonly": "Read-only",
-    "uploading": "Uploading…",
-    "uploadSuccess": "Skill uploaded, inactive by default",
-    "uploadFailed": "Upload failed",
-    "activate": "Activate",
-    "deactivate": "Deactivate",
-    "activateFailed": "Failed to update activation",
-    "toggleFailed": "Toggle failed",
-    "tabs": {
-      "builtin": "Built-in",
-      "auto": "Auto",
-      "thirdParty": "Third-Party",
-      "uploadSkill": "Upload Skill",
-      "uploadSkillHint": "Choose a local SKILL.md to upload as a third-party skill",
-      "runCurator": "Skill maintenance",
-      "runCuratorHint": "Automatically reviews auto-learned skills, merges similar or duplicate skills, and marks/archives long-unused skills to keep the skill library tidy.",
-      "curatorDone": "Skill maintenance complete:",
-      "curatorTransitions": "auto transitions",
-      "curatorFailed": "Skill maintenance failed, check server logs",
-      "autoMaintenanceInterval": "Auto maintenance interval",
-      "autoMaintenanceIntervalUnit": "days",
-      "autoMaintenanceSaved": "Saved",
-      "autoMaintenanceSaveFailed": "Save failed",
-      "autoMaintenanceResetDone": "Restored to default interval",
-      "autoMaintenanceLoadFailed": "Failed to load settings",
-      "lastMaintenance": "Last maintenance",
-      "lastMaintenanceNone": "No maintenance performed yet",
-      "loadSettings": "Load"
-    }
-  },
-  "extend": {
-    "title": "Extend",
-    "empty": "Nothing here yet",
-    "channelHint": "Channel data source API is under planning",
-    "enabled": "Enabled",
-    "disabled": "Disabled",
-    "mcpHint": "No MCP servers configured",
-    "channelSettings": {
-      "title": "{name} Settings",
-      "enabled": "Enable Channel",
-      "heartbeat": "Heartbeat",
-      "heartbeatHint": "Automatically check pending tasks when idle",
-      "cron": "Scheduled Tasks",
-      "cronHint": "Allow tasks to run on a cron schedule",
-      "config": "Channel Config",
-      "configEmpty": "No config items",
-      "configBool": "Boolean value",
-      "configPlain": "Objects/arrays edited as JSON text",
-      "configLoadFailed": "Failed to load channel config",
-      "save": "Save",
-      "cancel": "Cancel",
-      "saveFailed": "Failed to save settings"
-    },
-    "tabs": {
-      "channel": "Channels",
-      "mcp": "MCP"
-    }
-  },
-  "logs": {
-    "title": "Log Viewer",
-    "tabs": {
-      "frontend": "Client",
-      "backend": "Server"
-    },
-    "file": "Select log file",
-    "bucket": "Select log date",
-    "pid": "Select process PID",
-    "type": {
-      "all": "All",
-      "log": "Log",
-      "error": "Error"
-    },
-    "live": "Live",
-    "pause": "Pause",
-    "refresh": "Refresh",
-    "clear": "Clear",
-    "autoScroll": "Auto-scroll",
-    "connected": "Connected",
-    "connecting": "Connecting...",
-    "empty": "No logs",
-    "liveDisabledHint": "Live view is only available for the currently running server log",
-    "currentFile": "Currently running log"
-  },
-  "errors": {
-    "replyFailed": "(Reply failed: {reason})",
-    "sendFailed": "(Send failed: {reason})"
-  },
-  "imagePreview": {
-    "hint": "Scroll to zoom · Drag to move · ESC or click blank to close"
-  },
-  "hitl": {
-    "title": "Action Requires Approval",
-    "tool": "Tool",
-    "description": "Description",
-    "reject": "Reject",
-    "approve": "Approve"
   },
   "config": {
     "title": "System Config",

@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from .db import get_db
-from typing import Annotated
+from typing import Annotated, Any
 from datetime import datetime
 from pydantic import Field, validate_call
 from langchain_core.messages import BaseMessage
@@ -49,6 +49,20 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     for m in messages:
         # AI message: keep content and optional tool_calls (JSON-encoded).
         if m.type == "ai":
+            # Extract model + token usage metadata for frontend display. Both
+            # are optional: some providers omit them, so every lookup is
+            # guarded and defaults to None.
+            response_metadata: dict[str, Any] = getattr(m, "response_metadata", None) or {}
+            model_name: str | None = response_metadata.get("model_name") or response_metadata.get("model")
+            usage_metadata: dict[str, Any] | None = getattr(m, "usage_metadata", None)
+            input_tokens: int | None = None
+            output_tokens: int | None = None
+            if usage_metadata:
+                if usage_metadata.get("input_tokens") is not None:
+                    input_tokens = int(usage_metadata["input_tokens"])
+                if usage_metadata.get("output_tokens") is not None:
+                    output_tokens = int(usage_metadata["output_tokens"])
+
             insert_rows.append({
                 "session_id": session_id,
                 "turn_num": current_turn,
@@ -65,6 +79,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "images": None,
                 "audios": None,
                 "videos": None,
+                "model_name": model_name,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
             })
         elif m.type == "human":
             additional_kwargs:dict[str, str] = getattr(m, "additional_kwargs", {})
@@ -95,6 +112,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "images": json.dumps(images, ensure_ascii=False) if images else None,
                 "audios": json.dumps(audios, ensure_ascii=False) if audios else None,
                 "videos": json.dumps(videos, ensure_ascii=False) if videos else None,
+                "model_name": None,
+                "input_tokens": None,
+                "output_tokens": None,
             })
         elif m.type == "tool":
             # Tool message: carry tool metadata (call id, name, execution status).
@@ -114,6 +134,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "images": None,
                 "audios": None,
                 "videos": None,
+                "model_name": None,
+                "input_tokens": None,
+                "output_tokens": None,
             })
 
     # Bulk-insert all accumulated rows in a single transaction.
@@ -133,7 +156,10 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             reasoning_content,
             images,
             audios,
-            videos
+            videos,
+            model_name,
+            input_tokens,
+            output_tokens
         ) VALUES (
             :session_id,
             :turn_num,
@@ -149,7 +175,10 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             :reasoning_content,
             :images,
             :audios,
-            :videos
+            :videos,
+            :model_name,
+            :input_tokens,
+            :output_tokens
         )
     """, insert_rows)
 

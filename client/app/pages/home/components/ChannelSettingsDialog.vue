@@ -1,3 +1,128 @@
+<i18n lang="json">
+{
+  "en": {
+    "extend": {
+      "channelSettings": {
+        "title": "{name} Settings",
+        "enabled": "Enable Channel",
+        "heartbeat": "Heartbeat",
+        "heartbeatHint": "Automatically check pending tasks when idle",
+        "cron": "Scheduled Tasks",
+        "cronHint": "Allow tasks to run on a cron schedule",
+        "config": "Channel Config",
+        "configEmpty": "No config items",
+        "configBool": "Boolean value",
+        "configPlain": "Objects/arrays edited as JSON text",
+        "configLoadFailed": "Failed to load channel config",
+        "save": "Save",
+        "cancel": "Cancel",
+        "saveFailed": "Failed to save settings"
+      },
+      "tabs": {
+        "channel": "Channels",
+        "mcp": "MCP"
+      },
+      "title": "Extend",
+      "empty": "Nothing here yet",
+      "channelHint": "Channel data source API is under planning",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "mcpHint": "No MCP servers configured"
+    }
+  },
+  "ja": {
+    "extend": {
+      "channelSettings": {
+        "title": "{name} 設定",
+        "enabled": "チャンネルを有効化",
+        "heartbeat": "ハートビート",
+        "heartbeatHint": "アイドル時に保留タスクを自動チェック",
+        "cron": "定期タスク",
+        "cronHint": "cron 式による定期タスク実行を許可",
+        "config": "チャンネル設定",
+        "configEmpty": "設定項目なし",
+        "configBool": "ブール値",
+        "configPlain": "オブジェクト/配列は JSON テキストで編集",
+        "configLoadFailed": "チャンネル設定の読み込みに失敗",
+        "save": "保存",
+        "cancel": "キャンセル",
+        "saveFailed": "設定の保存に失敗しました"
+      },
+      "tabs": {
+        "channel": "チャンネル",
+        "mcp": "MCP"
+      },
+      "title": "拡張",
+      "empty": "まだコンテンツがありません",
+      "channelHint": "チャンネルのデータソース API は計画中です",
+      "enabled": "有効",
+      "disabled": "無効",
+      "mcpHint": "MCP サーバーはまだ設定されていません"
+    }
+  },
+  "ko": {
+    "extend": {
+      "channelSettings": {
+        "title": "{name} 설정",
+        "enabled": "채널 활성화",
+        "heartbeat": "하트비트",
+        "heartbeatHint": "유휴 시 대기 중인 작업 자동 확인",
+        "cron": "정기 작업",
+        "cronHint": "cron 표현식으로 주기적 작업 실행 허용",
+        "config": "채널 구성",
+        "configEmpty": "구성 항목 없음",
+        "configBool": "불리언 값",
+        "configPlain": "객체/배열은 JSON 텍스트로 편집",
+        "configLoadFailed": "채널 구성 로드 실패",
+        "save": "저장",
+        "cancel": "취소",
+        "saveFailed": "설정 저장에 실패했습니다"
+      },
+      "tabs": {
+        "channel": "채널",
+        "mcp": "MCP"
+      },
+      "title": "확장",
+      "empty": "아직 내용이 없습니다",
+      "channelHint": "채널 데이터 소스 API는 계획 중입니다",
+      "enabled": "활성화",
+      "disabled": "비활성화",
+      "mcpHint": "MCP 서버가 아직 설정되지 않았습니다"
+    }
+  },
+  "zh": {
+    "extend": {
+      "channelSettings": {
+        "title": "{name} 设置",
+        "enabled": "启用频道",
+        "heartbeat": "心跳",
+        "heartbeatHint": "空闲时自动检查待办任务",
+        "cron": "定时任务",
+        "cronHint": "允许按 cron 表达式定时执行任务",
+        "config": "频道配置",
+        "configEmpty": "无配置项",
+        "configBool": "布尔值",
+        "configPlain": "对象/数组以 JSON 文本编辑",
+        "configLoadFailed": "加载频道配置失败",
+        "save": "保存",
+        "cancel": "取消",
+        "saveFailed": "保存设置失败"
+      },
+      "tabs": {
+        "channel": "频道",
+        "mcp": "MCP"
+      },
+      "title": "扩展",
+      "empty": "暂无内容",
+      "channelHint": "频道数据源接口待规划",
+      "enabled": "启用",
+      "disabled": "禁用",
+      "mcpHint": "MCP 服务器尚无配置"
+    }
+  }
+}
+</i18n>
+
 <template>
   <Dialog
     v-model:visible="visible"
@@ -102,7 +227,7 @@ import { useI18n } from 'vue-i18n';
 import { updateChannel, getChannelConfig, updateChannelConfig } from '@/composables/bridge';
 import type { ChannelInfo, ChannelConfig } from '@/composables/bridge';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{
   modelValue: boolean;

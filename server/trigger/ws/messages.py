@@ -40,8 +40,14 @@ async def _run_stream(
     finished, errored, or was cancelled via ``task.cancel()``.
     """
     start_time = time.time()
+    meta: dict[str, Any] = {}
     try:
         async for chunk in source:
+            if chunk.get("type") == "meta":
+                # Model metadata travels to the client on the done frame, not
+                # as a regular chunk.
+                meta = {k: v for k, v in chunk.items() if k != "type"}
+                continue
             await _send_ws(websocket, {
                 "event": "chunk", "session_id": session_id, **chunk,
             })
@@ -60,6 +66,9 @@ async def _run_stream(
         else:
             await _send_ws(websocket, {
                 "event": "done", "session_id": session_id, "content": "",
+                "model_name": meta.get("model_name", ""),
+                "input_tokens": meta.get("input_tokens", 0),
+                "output_tokens": meta.get("output_tokens", 0),
             })
     except asyncio.CancelledError:
         # asyncio.Task.cancel() landed; the generator already yields

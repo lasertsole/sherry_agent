@@ -1,3 +1,64 @@
+<i18n lang="json">
+{
+  "en": {
+    "extend": {
+      "title": "Extend",
+      "empty": "Nothing here yet",
+      "channelHint": "Channel data source API is under planning",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "mcpHint": "No MCP servers configured",
+      "tabs": {
+        "channel": "Channels",
+        "mcp": "MCP"
+      }
+    }
+  },
+  "ja": {
+    "extend": {
+      "title": "拡張",
+      "empty": "まだコンテンツがありません",
+      "channelHint": "チャンネルのデータソース API は計画中です",
+      "enabled": "有効",
+      "disabled": "無効",
+      "mcpHint": "MCP サーバーはまだ設定されていません",
+      "tabs": {
+        "channel": "チャンネル",
+        "mcp": "MCP"
+      }
+    }
+  },
+  "ko": {
+    "extend": {
+      "title": "확장",
+      "empty": "아직 내용이 없습니다",
+      "channelHint": "채널 데이터 소스 API는 계획 중입니다",
+      "enabled": "활성화",
+      "disabled": "비활성화",
+      "mcpHint": "MCP 서버가 아직 설정되지 않았습니다",
+      "tabs": {
+        "channel": "채널",
+        "mcp": "MCP"
+      }
+    }
+  },
+  "zh": {
+    "extend": {
+      "title": "扩展",
+      "empty": "暂无内容",
+      "channelHint": "频道数据源接口待规划",
+      "enabled": "启用",
+      "disabled": "禁用",
+      "mcpHint": "MCP 服务器尚无配置",
+      "tabs": {
+        "channel": "频道",
+        "mcp": "MCP"
+      }
+    }
+  }
+}
+</i18n>
+
 <template>
   <Dialog
     v-model:visible="visible"
@@ -94,7 +155,7 @@ import { listChannels } from '@/composables/bridge';
 import type { ChannelInfo } from '@/composables/bridge';
 import ChannelSettingsDialog from './ChannelSettingsDialog.vue';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();

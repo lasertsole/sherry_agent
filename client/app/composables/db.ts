@@ -36,6 +36,12 @@ export interface CachedMessage {
   finish_reason: string | null;
   reasoning: string | null;
   reasoning_content: string | null;
+  /** 模型名称（来自后端历史行的 model_name） */
+  model_name: string | null;
+  /** 输入 token 数（来自后端历史行的 input_tokens） */
+  input_tokens: number | null;
+  /** 输出 token 数（来自后端历史行的 output_tokens） */
+  output_tokens: number | null;
 }
 
 /**
@@ -178,6 +184,17 @@ class HistoryDb extends Dexie {
     this.version(5).stores({
       // 全局背景图（主键 session_id=GLOBAL_SESSION_KEY），新增表不破坏既有表结构�?
       background: 'session_id'
+    });
+    this.version(6).stores({
+      // 结构不变，仅 messages 表新增 model_name/input_tokens/output_tokens 列，
+      // 旧行缺省为 null，读取时按 undefined 处理即可。
+      messages: 'id, [session_id+turn_num], session_id'
+    }).upgrade((tx) => {
+      return tx.table('messages').toCollection().modify((msg) => {
+        if (msg.model_name === undefined) msg.model_name = null;
+        if (msg.input_tokens === undefined) msg.input_tokens = null;
+        if (msg.output_tokens === undefined) msg.output_tokens = null;
+      });
     });
   }
 }

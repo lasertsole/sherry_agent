@@ -46,8 +46,8 @@ afterEach(() => {
 
 describe('get_history_by_turn_page', () => {
   const rows: CachedMessage[] = [
-    { id: 1, turn_num: 1, session_id: 's1', role: 'human', content: 'hi', timestamp: null, tool_call_id: null, tool_calls: null, tool_status: null, tool_name: null, finish_reason: null, reasoning: null, reasoning_content: null },
-    { id: 2, turn_num: 2, session_id: 's1', role: 'ai', content: 'hello', timestamp: null, tool_call_id: null, tool_calls: null, tool_status: null, tool_name: null, finish_reason: null, reasoning: null, reasoning_content: null },
+    { id: 1, turn_num: 1, session_id: 's1', role: 'human', content: 'hi', timestamp: null, tool_call_id: null, tool_calls: null, tool_status: null, tool_name: null, finish_reason: null, reasoning: null, reasoning_content: null, images: null, audios: null, videos: null, model_name: null, input_tokens: null, output_tokens: null },
+    { id: 2, turn_num: 2, session_id: 's1', role: 'ai', content: 'hello', timestamp: null, tool_call_id: null, tool_calls: null, tool_status: null, tool_name: null, finish_reason: null, reasoning: null, reasoning_content: null, images: null, audios: null, videos: null, model_name: null, input_tokens: null, output_tokens: null },
   ];
 
   it('returns cached + fetched merged data (deduped by id)', async () => {
@@ -220,7 +220,7 @@ describe('postAgentStream', () => {
 
   it('sends the request body with the given session id/text', async () => {
     const done = new Promise<void>((resolve, reject) => {
-      postAgentStream('s7', { text: 'ping' }, () => {}, resolve, reject);
+      postAgentStream('s7', { text: 'ping' }, () => {}, () => resolve(), reject);
     });
     const ws = sockets[0];
     ws.open();

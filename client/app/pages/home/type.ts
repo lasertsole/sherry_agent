@@ -63,6 +63,12 @@ export interface MessageItem {
   toolResult?: string;
   /** 模型思考/推理过程（仅 role=AI 有值；流式时逐块拼接，历史回填时一次完整写入） */
   reasoning?: string | null;
+  /** 模型名称（仅 role=AI 有值；来自后端 done 帧 / 历史行的 model_name） */
+  modelName?: string;
+  /** 输入 token 数（仅 role=AI 有值；来自后端 done 帧 / 历史行的 input_tokens） */
+  inputTokens?: number;
+  /** 输出 token 数（仅 role=AI 有值；来自后端 done 帧 / 历史行的 output_tokens） */
+  outputTokens?: number;
 }
 
 /** 角色 */

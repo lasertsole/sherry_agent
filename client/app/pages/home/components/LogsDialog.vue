@@ -1,3 +1,116 @@
+<i18n lang="json">
+{
+  "en": {
+    "logs": {
+      "title": "Log Viewer",
+      "tabs": {
+        "frontend": "Client",
+        "backend": "Server"
+      },
+      "file": "Select log file",
+      "bucket": "Select log date",
+      "pid": "Select process PID",
+      "type": {
+        "all": "All",
+        "log": "Log",
+        "error": "Error"
+      },
+      "live": "Live",
+      "pause": "Pause",
+      "refresh": "Refresh",
+      "clear": "Clear",
+      "autoScroll": "Auto-scroll",
+      "connected": "Connected",
+      "connecting": "Connecting...",
+      "empty": "No logs",
+      "liveDisabledHint": "Live view is only available for the currently running server log",
+      "currentFile": "Currently running log"
+    }
+  },
+  "ja": {
+    "logs": {
+      "title": "ログビューア",
+      "tabs": {
+        "frontend": "クライアント",
+        "backend": "サーバー"
+      },
+      "file": "ログファイルを選択",
+      "bucket": "ログ日付を選択",
+      "pid": "プロセス PID を選択",
+      "type": {
+        "all": "すべて",
+        "log": "ログ",
+        "error": "エラー"
+      },
+      "live": "リアルタイム",
+      "pause": "一時停止",
+      "refresh": "更新",
+      "clear": "クリア",
+      "autoScroll": "自動スクロール",
+      "connected": "接続済み",
+      "connecting": "接続中...",
+      "empty": "ログがありません",
+      "liveDisabledHint": "リアルタイム表示は現在実行中のサーバーログのみ利用できます",
+      "currentFile": "現在実行中のログ"
+    }
+  },
+  "ko": {
+    "logs": {
+      "title": "로그 뷰어",
+      "tabs": {
+        "frontend": "클라이언트",
+        "backend": "서버"
+      },
+      "file": "로그 파일 선택",
+      "bucket": "로그 날짜 선택",
+      "pid": "프로세스 PID 선택",
+      "type": {
+        "all": "전체",
+        "log": "로그",
+        "error": "오류"
+      },
+      "live": "실시간",
+      "pause": "일시정지",
+      "refresh": "새로고침",
+      "clear": "지우기",
+      "autoScroll": "자동 스크롤",
+      "connected": "연결됨",
+      "connecting": "연결 중...",
+      "empty": "로그가 없습니다",
+      "liveDisabledHint": "실시간 보기는 현재 실행 중인 서버 로그에서만 사용할 수 있습니다",
+      "currentFile": "현재 실행 중인 로그"
+    }
+  },
+  "zh": {
+    "logs": {
+      "title": "日志查看",
+      "tabs": {
+        "frontend": "客户端",
+        "backend": "服务端"
+      },
+      "file": "选择日志文件",
+      "bucket": "选择日志日期",
+      "pid": "选择进程 PID",
+      "type": {
+        "all": "全部",
+        "log": "日志",
+        "error": "错误"
+      },
+      "live": "实时",
+      "pause": "暂停",
+      "refresh": "刷新",
+      "clear": "清空",
+      "autoScroll": "自动滚动",
+      "connected": "已连接",
+      "connecting": "连接中...",
+      "empty": "暂无日志",
+      "liveDisabledHint": "仅当前运行中的服务端日志支持实时查看",
+      "currentFile": "当前运行日志"
+    }
+  }
+}
+</i18n>
+
 <template>
   <Dialog
     v-model:visible="visible"
@@ -252,7 +365,7 @@ import {
   type ClientLogType,
 } from '@/composables/clientLog';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();

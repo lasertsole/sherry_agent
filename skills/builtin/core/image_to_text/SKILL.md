@@ -1,17 +1,19 @@
 ---
 name: image_to_text
-description: Parse an image from a file path to obtain a description, enabling non-multimodal LLMs to have vision capabilities.
+description: Recognize and describe the content of an image. Accepts either a local file path OR a URL (http/https). Use this whenever the user uploads or refers to an image and expects you to see/analyze it — even if the image is provided as a URL, not a local path. Enables non-multimodal LLMs to have vision capabilities.
 ---
 
-**Parse a regular image:**
+**Recognize an image (local file path OR URL):**
 
-```python
-from skills.builtin.core.image_to_text.scripts import itt
+The `image_path` argument accepts BOTH a local absolute file path AND an http/https URL. If the user uploaded an image, the middleware message tells you its exact location — pass that value directly to `image_path`.
 
-if __name__ == '__main__':
-    user_text: str = "{placeholder}"  # <- replace with the absolute path of the input image
-    image_path: str = "{placeholder}"  # <- input the user's question about the image
+Use the **`terminal` tool** to run the skill script (the `python_repl` tool cannot import skill modules because its builtins are restricted). Run:
 
-    res = itt(image_path=image_path, user_text=user_text)
-    print(res)
+```bash
+python -c "from skills.builtin.core.image_to_text.scripts import itt; print(itt(image_path='{replace with the image location}', user_text='{replace with the user question about the image}'))"
 ```
+
+- `image_path`: the image's local path or URL given in the middleware message.
+- `user_text`: the user's question/instruction about the image.
+
+**Priority:** When the user uploads or asks you to look at an image, you MUST run this skill script and actually recognize the image — do not answer with a generic response without looking at it. The printed output is the ground-truth recognition result.

@@ -74,6 +74,12 @@ export interface AgentWsEvent {
   tool_name?: string;
   args?: Record<string, unknown>;
   error?: boolean;
+  /** 模型名称（仅 done 帧携带；来自后端 model_name） */
+  model_name?: string;
+  /** 输入 token 数（仅 done 帧携带；来自后端 input_tokens） */
+  input_tokens?: number;
+  /** 输出 token 数（仅 done 帧携带；来自后端 output_tokens） */
+  output_tokens?: number;
 }
 
 /** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
@@ -146,6 +152,13 @@ export type OnChunkCallback = (
 
 /** HITL interrupt callback: invoked when the agent pauses for human approval. */
 export type OnHitlCallback = (data: HitlInterruptData) => void;
+
+/** 流结束回调：携带可选的模型元数据（model_name/input_tokens/output_tokens，来自 done 帧）。 */
+export type OnDoneCallback = (meta?: {
+  modelName?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}) => void;
 
 /**
  * Send a chat message and receive streaming chunks.
@@ -265,6 +278,7 @@ export function streamChatMessage(
   request: ChatRequest,
   onChunk: OnChunkCallback,
   onHitl?: OnHitlCallback,
+  onDone?: OnDoneCallback,
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -276,7 +290,7 @@ export function streamChatMessage(
       promise,
     };
   }
-  return sendChatMessageWs(request, onChunk, onHitl);
+  return sendChatMessageWs(request, onChunk, onHitl, onDone);
 }
 
 /**
@@ -385,6 +399,7 @@ function sendChatMessageWs(
   request: ChatRequest,
   onChunk: OnChunkCallback,
   onHitl?: OnHitlCallback,
+  onDone?: OnDoneCallback,
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -547,6 +562,12 @@ function sendChatMessageWs(
           done = true;
           closeSocket();
           release();
+          // 携带模型元数据（model_name/input_tokens/output_tokens）通知流结束回调
+          onDone?.({
+            modelName: data.model_name ?? undefined,
+            inputTokens: data.input_tokens ?? undefined,
+            outputTokens: data.output_tokens ?? undefined,
+          });
         }
       } else if (data.event === 'error') {
         if (!done) {

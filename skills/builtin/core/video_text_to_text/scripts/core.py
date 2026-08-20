@@ -87,7 +87,8 @@ def vtt(video_path: str, query: str = "")-> str:
         warn_mes: str = (f"[warn] Primary video path failed: {e}, Video format may not be supported,"
                        f" try extracting video frames as input for the VLM model.")
         logger.warning(warn_mes)
-        return  warn_mes
+        # Auto-fallback: primary path failed → extract frames locally and recognize as images
+        return vtt_fackback(video_path=video_path, query=query)
 
 @validate_call
 def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:

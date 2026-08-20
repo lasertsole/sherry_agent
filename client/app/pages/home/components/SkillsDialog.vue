@@ -1,3 +1,152 @@
+<i18n lang="json">
+{
+  "en": {
+    "skills": {
+      "title": "Skill Manager",
+      "empty": "No skills in this category",
+      "selectHint": "Select a skill on the left to view details",
+      "readonly": "Read-only",
+      "uploading": "Uploading…",
+      "uploadSuccess": "Skill uploaded, inactive by default",
+      "uploadFailed": "Upload failed",
+      "activate": "Activate",
+      "deactivate": "Deactivate",
+      "activateFailed": "Failed to update activation",
+      "toggleFailed": "Toggle failed",
+      "tabs": {
+        "builtin": "Built-in",
+        "auto": "Auto",
+        "thirdParty": "Third-Party",
+        "uploadSkill": "Upload Skill",
+        "uploadSkillHint": "Choose a local SKILL.md to upload as a third-party skill",
+        "runCurator": "Skill maintenance",
+        "runCuratorHint": "Automatically reviews auto-learned skills, merges similar or duplicate skills, and marks/archives long-unused skills to keep the skill library tidy.",
+        "curatorDone": "Skill maintenance complete:",
+        "curatorTransitions": "auto transitions",
+        "curatorFailed": "Skill maintenance failed, check server logs",
+        "autoMaintenanceInterval": "Auto maintenance interval",
+        "autoMaintenanceIntervalUnit": "days",
+        "autoMaintenanceSaved": "Saved",
+        "autoMaintenanceSaveFailed": "Save failed",
+        "autoMaintenanceResetDone": "Restored to default interval",
+        "autoMaintenanceLoadFailed": "Failed to load settings",
+        "lastMaintenance": "Last maintenance",
+        "lastMaintenanceNone": "No maintenance performed yet",
+        "loadSettings": "Load"
+      }
+    }
+  },
+  "ja": {
+    "skills": {
+      "title": "スキル管理",
+      "empty": "このカテゴリにはスキルがありません",
+      "selectHint": "左側のスキルを選択して詳細を表示",
+      "readonly": "読み取り専用",
+      "uploading": "アップロード中…",
+      "uploadSuccess": "スキルのアップロードに成功しました。デフォルトでは無効です",
+      "uploadFailed": "アップロードに失敗しました",
+      "activate": "アクティブ化",
+      "deactivate": "無効化",
+      "activateFailed": "アクティブ化状態の更新に失敗しました",
+      "toggleFailed": "切り替えに失敗しました",
+      "tabs": {
+        "builtin": "組み込み",
+        "auto": "自動",
+        "thirdParty": "第三者の",
+        "uploadSkill": "スキルをアップロード",
+        "uploadSkillHint": "ローカルの SKILL.md を選択してサードパーティスキルとしてアップロード",
+        "runCurator": "スキルメンテナンス",
+        "runCuratorHint": "オート（自動学習）スキルを自動的にレビューし、類似・重複したスキルを統合するとともに、長期間未使用のスキルをマーク・アーカイブして、スキルライブラリを整理します。",
+        "curatorDone": "スキルメンテナンス完了：",
+        "curatorTransitions": "件の自動変更",
+        "curatorFailed": "スキルメンテナンスに失敗しました。サーバーログを確認してください",
+        "autoMaintenanceInterval": "自動メンテナンス間隔",
+        "autoMaintenanceIntervalUnit": "日",
+        "autoMaintenanceSaved": "保存しました",
+        "autoMaintenanceSaveFailed": "保存に失敗しました",
+        "autoMaintenanceResetDone": "既定の間隔に戻しました",
+        "autoMaintenanceLoadFailed": "設定の読み込みに失敗しました",
+        "lastMaintenance": "最終メンテナンス時刻",
+        "lastMaintenanceNone": "まだスキルメンテナンスを実行していません",
+        "loadSettings": "読み込み"
+      }
+    }
+  },
+  "ko": {
+    "skills": {
+      "title": "스킬 관리",
+      "empty": "이 카테고리에 스킬이 없습니다",
+      "selectHint": "왼쪽에서 스킬을 선택해 세부 정보를 확인하세요",
+      "readonly": "읽기 전용",
+      "uploading": "업로드 중…",
+      "uploadSuccess": "스킬 업로드 성공. 기본적으로 비활성화되어 있습니다",
+      "uploadFailed": "업로드 실패",
+      "activate": "활성화",
+      "deactivate": "비활성화",
+      "activateFailed": "활성화 상태 업데이트 실패",
+      "toggleFailed": "전환 실패",
+      "tabs": {
+        "builtin": "내장",
+        "auto": "자동",
+        "thirdParty": "타사",
+        "uploadSkill": "스킬 업로드",
+        "uploadSkillHint": "로컬 SKILL.md를 선택하여 타사 스킬로 업로드",
+        "runCurator": "스킬 유지보수",
+        "runCuratorHint": "자동(Auto) 학습된 스킬을 자동으로 검토하여 유사하거나 중복된 스킬을 병합하고, 오래 사용되지 않은 스킬을 표시·보관하여 스킬 라이브러리를 정돈합니다.",
+        "curatorDone": "스킬 유지보수 완료：",
+        "curatorTransitions": "개 자동 변경",
+        "curatorFailed": "스킬 유지보수 실패. 서버 로그를 확인하세요",
+        "autoMaintenanceInterval": "자동 유지보수 간격",
+        "autoMaintenanceIntervalUnit": "일",
+        "autoMaintenanceSaved": "저장되었습니다",
+        "autoMaintenanceSaveFailed": "저장 실패",
+        "autoMaintenanceResetDone": "기본 간격으로 복원되었습니다",
+        "autoMaintenanceLoadFailed": "설정을 불러오지 못했습니다",
+        "lastMaintenance": "마지막 유지보수 시간",
+        "lastMaintenanceNone": "아직 스킬 유지보수를 실행하지 않았습니다",
+        "loadSettings": "불러오기"
+      }
+    }
+  },
+  "zh": {
+    "skills": {
+      "title": "技能管理",
+      "empty": "该分类下暂无技能",
+      "selectHint": "请选择左侧技能查看详情",
+      "readonly": "只读",
+      "uploading": "上传中…",
+      "uploadSuccess": "技能上传成功，默认未激活",
+      "uploadFailed": "上传失败",
+      "activate": "激活",
+      "deactivate": "停用",
+      "activateFailed": "更新激活状态失败",
+      "toggleFailed": "切换失败",
+      "tabs": {
+        "builtin": "内置",
+        "auto": "自动",
+        "thirdParty": "第三方",
+        "uploadSkill": "上传技能",
+        "uploadSkillHint": "从本地选择 SKILL.md 文件上传为第三方技能",
+        "runCurator": "技能维护",
+        "runCuratorHint": "自动审查自动学习（auto）技能，合并相似或重复的技能，并标记、归档长期未使用的技能，保持技能库整洁。",
+        "curatorDone": "技能维护完成：",
+        "curatorTransitions": "个自动变更",
+        "curatorFailed": "技能维护失败，请查看服务端日志",
+        "autoMaintenanceInterval": "自动技能维护间隔",
+        "autoMaintenanceIntervalUnit": "天",
+        "autoMaintenanceSaved": "已保存",
+        "autoMaintenanceSaveFailed": "保存失败",
+        "autoMaintenanceResetDone": "已恢复为默认间隔",
+        "autoMaintenanceLoadFailed": "读取设置失败",
+        "lastMaintenance": "最后一次维护时间",
+        "lastMaintenanceNone": "尚未执行过技能维护",
+        "loadSettings": "加载"
+      }
+    }
+  }
+}
+</i18n>
+
 <template>
   <Dialog
     v-model:visible="visible"
@@ -207,7 +356,7 @@ import dayjs from 'dayjs';
 import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();

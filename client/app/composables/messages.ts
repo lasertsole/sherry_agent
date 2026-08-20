@@ -1,7 +1,7 @@
 import type { MultiModalMessage } from "@/types/message";
 import type { Response } from "@/types/response";
 import type { SessionRecord } from "@/pages/home/type";
-import { streamChatMessage, type OnChunkCallback, type OnHitlCallback, type StreamController, type HitlInterruptData } from './bridge';
+import { streamChatMessage, type OnChunkCallback, type OnDoneCallback, type OnHitlCallback, type StreamController, type HitlInterruptData } from './bridge';
 import {
     cacheMessages,
     cachedMaxTurnNum,
@@ -201,7 +201,7 @@ export function postAgentStream(
     session_id: string,
     multi_modal_message: MultiModalMessage,
     onData: OnChunkCallback,
-    onDone?: () => void,
+    onDone?: OnDoneCallback,
     onError?: (err: unknown) => void,
     onHitl?: OnHitlCallback,
 ): AbortController {
@@ -220,6 +220,7 @@ export function postAgentStream(
         },
         onData,
         onHitl,
+        onDone,
     );
     stopFn = () => stream.abort();
     hitlSender = stream.sendHitlResponse ?? null;

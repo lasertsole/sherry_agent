@@ -227,7 +227,7 @@ import { on, off } from '@/composables/mitt';
 // 图片预览
 const { openPreview } = useImagePreview();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'local' });
 const route = useRoute();
 const router = useRouter();
 
@@ -462,7 +462,11 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
       toolName: row.tool_name ?? undefined,
       toolStatus: (row.tool_status as 'running' | 'done') ?? undefined,
       // 透传模型思考/推理过程（后端 messages 表的 reasoning 字段，仅在 AI 行有值）
-      reasoning: row.reasoning ?? null
+      reasoning: row.reasoning ?? null,
+      // 透传模型元数据（后端 messages 表的 model_name/input_tokens/output_tokens，仅在 AI 行有值）
+      modelName: row.model_name ?? undefined,
+      inputTokens: row.input_tokens ?? undefined,
+      outputTokens: row.output_tokens ?? undefined
     };
   });
 };
@@ -931,15 +935,12 @@ const markRunningToolsFailed = () => {
 const writeDraftTurn = async (sid: string, turnNum: number) => {
   const rows = chatMessages.value.filter(m => m.turn_num === turnNum);
   if (rows.length === 0) return; // 本轮还没有任何消息，无需写空草稿
-  // 深拷贝，避免后续流式修改污染已落盘草稿
-  const snapshot = rows.map(m =>
-    m.role === CHAT_ROLE.TOOL
-      ? {
-          ...m,
-          toolArgs: m.toolArgs ? JSON.parse(JSON.stringify(m.toolArgs)) : undefined
-        }
-      : { ...m, images: m.images ? [...m.images] : undefined }
-  );
+  // 深拷贝：chatMessages 是 Vue ref，元素经 ref 解包后为响应式 Proxy。
+  // 若仅浅展开/局部深拷，嵌套的 images/audios/videos/toolArgs 仍是 Proxy 引用，
+  // Dexie put() 走 IndexedDB 结构化克隆时会抛 DataCloneError → 草稿写入失败。
+  // MessageItem 仅含 JSON 兼容字段（无 Date/Function/Blob），整体 JSON 往返深拷贝最稳妥，
+  // 同时避免后续流式修改污染已落盘草稿。
+  const snapshot = rows.map(m => JSON.parse(JSON.stringify(m)));
   try {
     await saveDraftTurn({ session_id: sid, turn_num: turnNum, messages: snapshot });
   } catch (e) {
@@ -1105,10 +1106,22 @@ const handleSend = async (text: string) => {
       sid,
       req,
       onStreamChunk,
-      () => {
+      (meta) => {
         // 流正常结束：先落一版最终草稿（防止最后一刻的文本变更未被去抖写入），
         // 再移除当前轮草稿登记并触发历史对账——服务端此时已将本轮落库为正 turn_num 消息，
         // loadSessionHistory 会用端正 id 替换本地的负临时 id，从而去重。
+        // 同时把 done 帧携带的模型元数据（modelName/inputTokens/outputTokens）挂到本轮 AI 消息上。
+        if (meta) {
+          const ai = chatMessages.value.find(
+            m => m.role === CHAT_ROLE.AI && m.turn_num === turnNum
+          );
+          if (ai) {
+            if (meta.modelName !== undefined) ai.modelName = meta.modelName;
+            if (meta.inputTokens !== undefined) ai.inputTokens = meta.inputTokens;
+            if (meta.outputTokens !== undefined) ai.outputTokens = meta.outputTokens;
+            chatMessages.value = [...chatMessages.value];
+          }
+        }
         void commitDraftTurn(sid, turnNum).then(() => {
           untrackDraftTurn(sid, turnNum);
           activeAgentController = null;
@@ -1462,3 +1475,60 @@ onUnmounted(() => {
   off(SESSION_ABORT_STREAM_EVENT, handleAbortStreamOnDelete);
 });
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "hitl": {
+      "title": "操作需要审批",
+      "tool": "工具",
+      "description": "描述",
+      "reject": "拒绝",
+      "approve": "批准"
+    },
+    "errors": {
+      "replyFailed": "（回复失败：{reason}）",
+      "sendFailed": "（发送失败：{reason}）"
+    }
+  },
+  "en": {
+    "hitl": {
+      "title": "Action Requires Approval",
+      "tool": "Tool",
+      "description": "Description",
+      "reject": "Reject",
+      "approve": "Approve"
+    },
+    "errors": {
+      "replyFailed": "(Reply failed: {reason})",
+      "sendFailed": "(Send failed: {reason})"
+    }
+  },
+  "ja": {
+    "hitl": {
+      "title": "操作の承認が必要です",
+      "tool": "ツール",
+      "description": "説明",
+      "reject": "拒否",
+      "approve": "承認"
+    },
+    "errors": {
+      "replyFailed": "（返信に失敗：{reason}）",
+      "sendFailed": "（送信に失敗：{reason}）"
+    }
+  },
+  "ko": {
+    "hitl": {
+      "title": "작업 승인이 필요합니다",
+      "tool": "도구",
+      "description": "설명",
+      "reject": "거부",
+      "approve": "승인"
+    },
+    "errors": {
+      "replyFailed": "（회신 실패：{reason}）",
+      "sendFailed": "（전송 실패：{reason}）"
+    }
+  }
+}
+</i18n>

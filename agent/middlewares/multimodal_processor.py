@@ -295,14 +295,47 @@ class MultimodalProcessor(AgentMiddleware):
         if text_dict is None:
             text_dict = {"type": "text", "text": ""}
 
+        # Attach the media hints directly into the HumanMessage's text block
+        # (NOT a SystemMessage). The user explicitly required this HumanMessage
+        # approach — the previous version steered the model this way. Mentioning
+        # the media location here lets the model know it must invoke the native
+        # image_to_text TOOL to actually "see" the image, since DeepSeek has no
+        # native vision ability. The persistence layer (add_messages) stores the
+        # HumanMessage, so the hint remains visible for reasoning within this turn.
         if len(image_path_list) > 0:
-            text_dict["text"] += f"[System: The user uploaded {len(image_path_list)} image(s). Location: {','.join(image_path_list)}. If you need to view the image(s), use the image_to_text skill.]"
-
+            text_dict["text"] += (
+                f"\n[Uploaded media] The user uploaded {len(image_path_list)} image(s). "
+                f"Location: {','.join(image_path_list)}. "
+                "You MUST use skill discovery to recognize this/these image(s): call the "
+                "skill_view tool with name 'image_to_text' to read its SKILL.md. Then follow "
+                "the skill's script instructions exactly (it tells you how to run the "
+                "image_to_text recognition logic via the terminal tool). "
+                "DeepSeek has no native vision ability, so do NOT answer based on guesswork — "
+                "the recognition result reported by the skill script is the ground truth "
+                "you must base your reply on."
+            )
         if len(audio_path_list) > 0:
-            text_dict["text"] += f"[System: The user uploaded {len(audio_path_list)} audio(s). Location: {','.join(audio_path_list)}. If you need to view the audio(s), use the speech_to_text skill.]"
-
+            text_dict["text"] += (
+                f"\n[Uploaded media] The user uploaded {len(audio_path_list)} audio(s). "
+                f"Location: {','.join(audio_path_list)}. "
+                "You MUST use skill discovery to transcribe this/these audio(s): call the "
+                "skill_view tool with name 'speech_to_text' to read its SKILL.md. Then follow "
+                "the skill's script instructions exactly (it tells you how to run the "
+                "speech_to_text recognition logic via the terminal tool). "
+                "Do NOT answer based on guesswork — the transcription result reported by the "
+                "skill script is the ground truth you must base your reply on."
+            )
         if len(video_path_list) > 0:
-            text_dict["text"] += f"[System: The user uploaded {len(video_path_list)} video(s). Location: {','.join(video_path_list)}. If you need to view the video(s), use the video_text_to_text skill.]"
+            text_dict["text"] += (
+                f"\n[Uploaded media] The user uploaded {len(video_path_list)} video(s). "
+                f"Location: {','.join(video_path_list)}. "
+                "You MUST use skill discovery to process this/these video(s): call the "
+                "skill_view tool with name 'video_text_to_text' to read its SKILL.md. Then follow "
+                "the skill's script instructions exactly (it tells you how to run the "
+                "video_text_to_text recognition logic via the terminal tool). "
+                "Do NOT answer based on guesswork — the recognition result reported by the "
+                "skill script is the ground truth you must base your reply on."
+            )
 
         last_mes.content = [text_dict]
 

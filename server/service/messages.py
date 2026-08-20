@@ -224,6 +224,12 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
     generator = None
 
+    # Rolling model metadata accumulators, updated as chunks stream by. The
+    # first chunk carries the model name; only the final chunk carries usage.
+    meta_model_name: str | None = None
+    meta_input_tokens: int | None = None
+    meta_output_tokens: int | None = None
+
     try:
         if is_stream:
             # Stream directly from the context-assembled agent
@@ -276,6 +282,24 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                     continue
 
                 if isinstance(msg_chunk, AIMessageChunk):
+                    # Capture model + token usage metadata. The first chunk
+                    # carries the model name; only the final chunk carries
+                    # usage. Every lookup is guarded so a missing field NEVER
+                    # breaks the stream.
+                    try:
+                        _resp_meta = getattr(msg_chunk, "response_metadata", None) or {}
+                        _model_name = _resp_meta.get("model_name") or _resp_meta.get("model")
+                        if _model_name:
+                            meta_model_name = _model_name
+                        _usage = getattr(msg_chunk, "usage_metadata", None)
+                        if _usage:
+                            if _usage.get("input_tokens") is not None:
+                                meta_input_tokens = int(_usage["input_tokens"])
+                            if _usage.get("output_tokens") is not None:
+                                meta_output_tokens = int(_usage["output_tokens"])
+                    except (KeyError, TypeError, AttributeError):
+                        pass
+
                     # Tool call output logic
                     tool_calls: list[ToolCall] | list[ToolCallChunk] = msg_chunk.tool_calls if msg_chunk.tool_calls and len(
                         msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
@@ -367,6 +391,25 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             res: str = result["messages"][-1].content
             ai_text += res
             yield {"type": "text", "content": res}
+            # Non-stream: read model + token metadata from the final message.
+            try:
+                last_msg = result["messages"][-1]
+                _resp_meta = getattr(last_msg, "response_metadata", None) or {}
+                _model_name = _resp_meta.get("model_name") or _resp_meta.get("model")
+                if _model_name:
+                    meta_model_name = _model_name
+                _usage = getattr(last_msg, "usage_metadata", None)
+                if _usage:
+                    if _usage.get("input_tokens") is not None:
+                        meta_input_tokens = int(_usage["input_tokens"])
+                    if _usage.get("output_tokens") is not None:
+                        meta_output_tokens = int(_usage["output_tokens"])
+            except (KeyError, TypeError, AttributeError):
+                pass
+
+        # Normal completion: surface the rolling model metadata as a final
+        # "meta" chunk. Only yielded here — never on the exception paths below.
+        yield {"type": "meta", "content": "", "model_name": meta_model_name or "", "input_tokens": meta_input_tokens or 0, "output_tokens": meta_output_tokens or 0}
 
         elapsed = time.time() - start_time
         logger.debug(

@@ -2,21 +2,31 @@
   "chatInput": {
     "placeholder": "메시지를 입력하세요...",
     "thinking": "AI가 생각하고 있습니다...",
+    "waitingApproval": "승인 대기 중...",
     "send": "보내기",
     "stop": "중지",
     "maxImages": "최대 {count}개의 이미지를 업로드할 수 있습니다",
-    "maxImagesExceed": "최대 {count}개의 이미지를 업로드할 수 있습니다. {extra}개를 초과했습니다"
+    "maxImagesExceed": "최대 {count}개의 이미지를 업로드할 수 있습니다. {extra}개를 초과했습니다",
+    "maxAudios": "최대 {count}개의 음성을 업로드할 수 있습니다",
+    "maxAudiosExceed": "최대 {count}개의 음성을 업로드할 수 있습니다. {extra}개를 초과했습니다",
+    "maxVideos": "최대 {count}개의 비디오를 업로드할 수 있습니다",
+    "maxVideosExceed": "최대 {count}개의 비디오를 업로드할 수 있습니다. {extra}개를 초과했습니다"
   },
   "chatBox": {
     "defaultUserName": "나",
     "defaultAiName": "셰리",
     "imageLoadFailed": "이미지 로드 실패",
     "removeImage": "이미지 제거",
+    "audioLoadFailed": "오디오 로드 실패",
+    "videoLoadFailed": "비디오 로드 실패",
+    "removeAudio": "오디오 제거",
+    "removeVideo": "비디오 제거",
     "toolArgs": "인자",
     "toolResult": "실행 결과",
     "toolNoOutput": "출력 없음",
     "toolRunning": "실행 중…",
-    "thinking": "생각"
+    "thinking": "생각",
+    "modelMeta": "입력 {input} · 출력 {output} tokens"
   },
   "history": {
     "noSessions": "대화 기록이 없습니다",
@@ -37,8 +47,13 @@
     "knowledgeBase": "지식 베이스",
     "uploadImage": "이미지 업로드",
     "image": "이미지",
+    "audio": "오디오",
+    "uploadAudio": "오디오 업로드",
+    "video": "비디오",
+    "uploadVideo": "비디오 업로드",
     "skills": "스킬",
     "knowledgeGraph": "지식 그래프",
+    "stats": "통계",
     "systemConfig": "시스템 설정",
     "persona": "AI 페르소나",
     "logs": "로그",
@@ -46,110 +61,6 @@
     "settingsMenu": "메뉴",
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기"
-  },
-  "knowledgeGraph": {
-    "back": "뒤로",
-    "placeholder": "지식 그래프 기능 개발 중…",
-    "loading": "불러오는 중…",
-    "empty": "지식 그래프 데이터가 없습니다",
-    "loadError": "불러오기 실패",
-    "refresh": "새로고침"
-  },
-  "skills": {
-    "title": "스킬 관리",
-    "empty": "이 카테고리에 스킬이 없습니다",
-    "selectHint": "왼쪽에서 스킬을 선택해 세부 정보를 확인하세요",
-    "readonly": "읽기 전용",
-    "uploading": "업로드 중…",
-    "uploadSuccess": "스킬 업로드 성공. 기본적으로 비활성화되어 있습니다",
-    "uploadFailed": "업로드 실패",
-    "tabs": {
-      "builtin": "내장",
-      "auto": "자동",
-      "thirdParty": "타사",
-      "uploadSkill": "스킬 업로드",
-      "uploadSkillHint": "로컬 SKILL.md를 선택하여 타사 스킬로 업로드",
-      "runCurator": "스킬 유지보수",
-      "runCuratorHint": "자동(Auto) 학습된 스킬을 자동으로 검토하여 유사하거나 중복된 스킬을 병합하고, 오래 사용되지 않은 스킬을 표시·보관하여 스킬 라이브러리를 정돈합니다.",
-      "curatorDone": "스킬 유지보수 완료：",
-      "curatorTransitions": "개 자동 변경",
-      "curatorFailed": "스킬 유지보수 실패. 서버 로그를 확인하세요",
-      "autoMaintenanceInterval": "자동 유지보수 간격",
-      "autoMaintenanceIntervalUnit": "일",
-      "autoMaintenanceSaved": "저장되었습니다",
-      "autoMaintenanceSaveFailed": "저장 실패",
-      "autoMaintenanceResetDone": "기본 간격으로 복원되었습니다",
-      "autoMaintenanceLoadFailed": "설정을 불러오지 못했습니다",
-      "lastMaintenance": "마지막 유지보수 시간",
-      "lastMaintenanceNone": "아직 스킬 유지보수를 실행하지 않았습니다",
-      "loadSettings": "불러오기"
-    }
-  },
-  "extend": {
-    "title": "확장",
-    "empty": "아직 내용이 없습니다",
-    "channelHint": "채널 데이터 소스 API는 계획 중입니다",
-    "enabled": "활성화",
-    "disabled": "비활성화",
-    "mcpHint": "MCP 서버가 아직 설정되지 않았습니다",
-    "channelSettings": {
-      "title": "{name} 설정",
-      "enabled": "채널 활성화",
-      "heartbeat": "하트비트",
-      "heartbeatHint": "유휴 시 대기 중인 작업 자동 확인",
-      "cron": "정기 작업",
-      "cronHint": "cron 표현식으로 주기적 작업 실행 허용",
-      "config": "채널 구성",
-      "configEmpty": "구성 항목 없음",
-      "configBool": "불리언 값",
-      "configPlain": "객체/배열은 JSON 텍스트로 편집",
-      "configLoadFailed": "채널 구성 로드 실패",
-      "save": "저장",
-      "cancel": "취소",
-      "saveFailed": "설정 저장에 실패했습니다"
-    },
-    "tabs": {
-      "channel": "채널",
-      "mcp": "MCP"
-    }
-  },
-  "logs": {
-    "title": "로그 뷰어",
-    "tabs": {
-      "frontend": "클라이언트",
-      "backend": "서버"
-    },
-    "file": "로그 파일 선택",
-    "bucket": "로그 날짜 선택",
-    "type": {
-      "all": "전체",
-      "log": "로그",
-      "error": "오류"
-    },
-    "live": "실시간",
-    "pause": "일시정지",
-    "refresh": "새로고침",
-    "clear": "지우기",
-    "autoScroll": "자동 스크롤",
-    "connected": "연결됨",
-    "connecting": "연결 중...",
-    "empty": "로그가 없습니다",
-    "liveDisabledHint": "실시간 보기는 현재 실행 중인 서버 로그에서만 사용할 수 있습니다",
-    "currentFile": "현재 실행 중인 로그"
-  },
-  "errors": {
-    "replyFailed": "（회신 실패：{reason}）",
-    "sendFailed": "（전송 실패：{reason}）"
-  },
-  "imagePreview": {
-    "hint": "스크롤로 확대 · 드래그로 이동 · ESC 또는 빈 곳 클릭으로 닫기"
-  },
-  "hitl": {
-    "title": "작업 승인이 필요합니다",
-    "tool": "도구",
-    "description": "설명",
-    "reject": "거부",
-    "approve": "승인"
   },
   "config": {
     "title": "시스템 설정",
@@ -185,6 +96,14 @@
       "userName": "사용자 이름",
       "avatar": "아바타",
       "charNote": "아바타와 이름 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다."
+    },
+    "crop": {
+      "title": "아바타 자르기",
+      "confirm": "확인",
+      "zoomIn": "확대",
+      "zoomOut": "축소",
+      "rotate": "회전",
+      "preview": "자르기 미리보기"
     },
     "background": {
       "title": "배경 이미지",

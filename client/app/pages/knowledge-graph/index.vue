@@ -1,3 +1,48 @@
+<i18n lang="json">
+{
+  "en": {
+    "knowledgeGraph": {
+      "back": "Back",
+      "placeholder": "Knowledge Graph feature under development…",
+      "loading": "Loading…",
+      "empty": "No knowledge graph data",
+      "loadError": "Failed to load",
+      "refresh": "Refresh"
+    }
+  },
+  "ja": {
+    "knowledgeGraph": {
+      "back": "戻る",
+      "placeholder": "ナレッジグラフ機能は開発中です…",
+      "loading": "読み込み中…",
+      "empty": "ナレッジグラフのデータがありません",
+      "loadError": "読み込みに失敗しました",
+      "refresh": "更新"
+    }
+  },
+  "ko": {
+    "knowledgeGraph": {
+      "back": "뒤로",
+      "placeholder": "지식 그래프 기능 개발 중…",
+      "loading": "불러오는 중…",
+      "empty": "지식 그래프 데이터가 없습니다",
+      "loadError": "불러오기 실패",
+      "refresh": "새로고침"
+    }
+  },
+  "zh": {
+    "knowledgeGraph": {
+      "back": "返回",
+      "placeholder": "知识图谱功能开发中…",
+      "loading": "加载中…",
+      "empty": "暂无知识图谱数据",
+      "loadError": "加载失败",
+      "refresh": "刷新"
+    }
+  }
+}
+</i18n>
+
 <template>
   <div class="flex flex-col h-full bg-[#f8f9fa] dark:bg-[#131619]">
     <!-- 顶部标题栏 -->
@@ -70,7 +115,7 @@ import { Graph } from '@antv/g6';
 import type { GraphData } from '@antv/g6';
 import { fetchApi } from '~/composables/requestApi';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'local' });
 const localePath = useLocalePath();
 const router = useRouter();
 

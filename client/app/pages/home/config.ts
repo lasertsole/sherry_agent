@@ -37,11 +37,25 @@ export const headerTools: Tool[] = [
     label: 'toolbar.knowledgeGraph'
   },
   {
+    toolName: 'toolbar.stats',
+    icon: 'pi pi-chart-bar',
+    title: 'toolbar.stats',
+    event: 'stats',
+    label: 'toolbar.stats'
+  },
+  {
     toolName: 'toolbar.systemConfig',
     icon: 'pi pi-sliders-h',
     title: 'toolbar.systemConfig',
     event: 'systemConfig',
     label: 'toolbar.systemConfig'
+  },
+  {
+    toolName: 'toolbar.persona',
+    icon: 'pi pi-user',
+    title: 'toolbar.persona',
+    event: 'persona',
+    label: 'toolbar.persona'
   },
   {
     toolName: 'toolbar.extend',

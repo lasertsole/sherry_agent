@@ -11,7 +11,7 @@ def _migrate(db: sqlite3.Connection) -> None:
     cur = db.execute("SELECT MAX(v) as v FROM _migrations").fetchone()[0]
     if cur is None:
         cur = 0
-    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb, add_images_column, add_audio_video_columns]
+    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb, add_images_column, add_audio_video_columns, add_model_token_columns]
     for i in range(cur, len(steps)):
         steps[i](db)
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
@@ -91,6 +91,30 @@ def add_audio_video_columns(db: sqlite3.Connection) -> None:
         pass
     try:
         db.execute("ALTER TABLE messages ADD COLUMN videos TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
+
+def add_model_token_columns(db: sqlite3.Connection) -> None:
+    """Add `model_name`, `input_tokens`, and `output_tokens` columns.
+
+    Persist which model produced each AI message plus its token usage so the
+    frontend can display them. This is a one-time additive migration for
+    databases created before these columns existed; try/except ignores the
+    error raised when they are already present.
+    """
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN model_name TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN input_tokens INTEGER")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN output_tokens INTEGER")
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass

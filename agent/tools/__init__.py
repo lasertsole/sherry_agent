@@ -33,7 +33,7 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool]] = [
     build_skill_manage_tool,
     build_skill_list_tool,
     build_skill_view_tool,
-    build_message_search_tool
+    build_message_search_tool,
 ]
 
 def build_main_tools() -> list[BaseTool]:

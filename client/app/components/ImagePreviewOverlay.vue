@@ -20,12 +20,29 @@
   </Teleport>
 </template>
 
+<i18n lang="json">
+{
+  "en": {
+    "hint": "Scroll to zoom · Drag to move · ESC or click blank to close"
+  },
+  "ja": {
+    "hint": "スクロールでズーム ・ ドラッグで移動 ・ ESC または空白クリックで閉じる"
+  },
+  "ko": {
+    "hint": "스크롤로 확대 · 드래그로 이동 · ESC 또는 빈 곳 클릭으로 닫기"
+  },
+  "zh": {
+    "hint": "滚动缩放 · 拖拽移动 · ESC 或点击空白关闭"
+  }
+}
+</i18n>
+
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 
 const { isPreviewVisible, previewSrc, closePreview } = useImagePreview();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'local' });
 
 const scale = ref(1);
 const translateX = ref(0);

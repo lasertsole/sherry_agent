@@ -176,6 +176,19 @@
             </div>
           </template>
         </div>
+        <!-- 模型元数据（模型名 + token 用量，仅 AI 消息且字段存在时展示） -->
+        <div
+          v-if="message.role === CHAT_ROLE.AI && (message.modelName || message.inputTokens !== undefined || message.outputTokens !== undefined)"
+          class="mt-1 text-xs text-[#9CA3AF] dark:text-[#6B7280]">
+          <template v-if="message.modelName">{{ message.modelName }}</template>
+          <template v-if="message.inputTokens !== undefined || message.outputTokens !== undefined">
+            <template v-if="message.modelName"> · </template>
+            {{ t('chatBox.modelMeta', {
+              input: message.inputTokens ?? 0,
+              output: message.outputTokens ?? 0
+            }) }}
+          </template>
+        </div>
       </div>
     </div>
     </div>

@@ -24,8 +24,9 @@
     "toolArgs": "调用参数",
     "toolResult": "执行结果",
     "toolNoOutput": "无输出",
-  "toolRunning": "执行中…",
-  "thinking": "思考过程"
+    "toolRunning": "执行中…",
+    "thinking": "思考过程",
+    "modelMeta": "输入 {input} · 输出 {output} tokens"
   },
   "history": {
     "noSessions": "暂无会话记录",
@@ -52,6 +53,7 @@
     "uploadVideo": "上传视频",
     "skills": "技能",
     "knowledgeGraph": "知识图谱",
+    "stats": "统计",
     "systemConfig": "系统配置",
     "persona": "AI人格",
     "logs": "日志",
@@ -59,115 +61,6 @@
     "settingsMenu": "菜单",
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏"
-  },
-  "knowledgeGraph": {
-    "back": "返回",
-    "placeholder": "知识图谱功能开发中…",
-    "loading": "加载中…",
-    "empty": "暂无知识图谱数据",
-    "loadError": "加载失败",
-    "refresh": "刷新"
-  },
-  "skills": {
-    "title": "技能管理",
-    "empty": "该分类下暂无技能",
-    "selectHint": "请选择左侧技能查看详情",
-    "readonly": "只读",
-    "uploading": "上传中…",
-    "uploadSuccess": "技能上传成功，默认未激活",
-    "uploadFailed": "上传失败",
-    "activate": "激活",
-    "deactivate": "停用",
-    "activateFailed": "更新激活状态失败",
-    "toggleFailed": "切换失败",
-    "tabs": {
-      "builtin": "内置",
-      "auto": "自动",
-      "thirdParty": "第三方",
-      "uploadSkill": "上传技能",
-      "uploadSkillHint": "从本地选择 SKILL.md 文件上传为第三方技能",
-      "runCurator": "技能维护",
-      "runCuratorHint": "自动审查自动学习（auto）技能，合并相似或重复的技能，并标记、归档长期未使用的技能，保持技能库整洁。",
-      "curatorDone": "技能维护完成：",
-      "curatorTransitions": "个自动变更",
-      "curatorFailed": "技能维护失败，请查看服务端日志",
-      "autoMaintenanceInterval": "自动技能维护间隔",
-      "autoMaintenanceIntervalUnit": "天",
-      "autoMaintenanceSaved": "已保存",
-      "autoMaintenanceSaveFailed": "保存失败",
-      "autoMaintenanceResetDone": "已恢复为默认间隔",
-      "autoMaintenanceLoadFailed": "读取设置失败",
-      "lastMaintenance": "最后一次维护时间",
-      "lastMaintenanceNone": "尚未执行过技能维护",
-      "loadSettings": "加载"
-    }
-  },
-  "extend": {
-    "title": "扩展",
-    "empty": "暂无内容",
-    "channelHint": "频道数据源接口待规划",
-    "enabled": "启用",
-    "disabled": "禁用",
-    "mcpHint": "MCP 服务器尚无配置",
-    "channelSettings": {
-      "title": "{name} 设置",
-      "enabled": "启用频道",
-      "heartbeat": "心跳",
-      "heartbeatHint": "空闲时自动检查待办任务",
-      "cron": "定时任务",
-      "cronHint": "允许按 cron 表达式定时执行任务",
-      "config": "频道配置",
-      "configEmpty": "无配置项",
-      "configBool": "布尔值",
-      "configPlain": "对象/数组以 JSON 文本编辑",
-      "configLoadFailed": "加载频道配置失败",
-      "save": "保存",
-      "cancel": "取消",
-      "saveFailed": "保存设置失败"
-    },
-    "tabs": {
-      "channel": "频道",
-      "mcp": "MCP"
-    }
-  },
-  "logs": {
-    "title": "日志查看",
-    "tabs": {
-      "frontend": "客户端",
-      "backend": "服务端"
-    },
-    "file": "选择日志文件",
-    "bucket": "选择日志日期",
-    "pid": "选择进程 PID",
-    "type": {
-      "all": "全部",
-      "log": "日志",
-      "error": "错误"
-    },
-    "live": "实时",
-    "pause": "暂停",
-    "refresh": "刷新",
-    "clear": "清空",
-    "autoScroll": "自动滚动",
-    "connected": "已连接",
-    "connecting": "连接中...",
-    "empty": "暂无日志",
-    "liveDisabledHint": "仅当前运行中的服务端日志支持实时查看",
-    "currentFile": "当前运行日志"
-  },
-  "errors": {
-    "replyFailed": "（回复失败：{reason}）",
-    "sendFailed": "（发送失败：{reason}）"
-  },
-  "imagePreview": {
-    "hint": "滚动缩放 · 拖拽移动 · ESC 或点击空白关闭"
-  },
-  "hitl": {
-    "title": "操作需要审批",
-    "tool": "工具",
-    "description": "描述",
-    "reject": "拒绝",
-    "approve": "批准"
   },
   "config": {
     "title": "系统配置",
