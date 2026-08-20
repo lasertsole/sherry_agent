@@ -18,6 +18,10 @@ skills/.curator_state
 logs/output
 logs/curator
 logs/*.log
+
+# RAG runtime artifacts — lightrag's default working_dir is ./rag_storage,
+# which resolves relative to the cwd; ignore any stray occurrence.
+**/rag_storage
 *.db
 *.db-shm
 *.db-wal

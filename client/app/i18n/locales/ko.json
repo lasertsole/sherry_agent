@@ -48,7 +48,11 @@
   },
   "knowledgeGraph": {
     "back": "뒤로",
-    "placeholder": "지식 그래프 기능 개발 중…"
+    "placeholder": "지식 그래프 기능 개발 중…",
+    "loading": "불러오는 중…",
+    "empty": "지식 그래프 데이터가 없습니다",
+    "loadError": "불러오기 실패",
+    "refresh": "새로고침"
   },
   "skills": {
     "title": "스킬 관리",
@@ -68,7 +72,16 @@
       "runCuratorHint": "자동(Auto) 학습된 스킬을 자동으로 검토하여 유사하거나 중복된 스킬을 병합하고, 오래 사용되지 않은 스킬을 표시·보관하여 스킬 라이브러리를 정돈합니다.",
       "curatorDone": "스킬 유지보수 완료：",
       "curatorTransitions": "개 자동 변경",
-      "curatorFailed": "스킬 유지보수 실패. 서버 로그를 확인하세요"
+      "curatorFailed": "스킬 유지보수 실패. 서버 로그를 확인하세요",
+      "autoMaintenanceInterval": "자동 유지보수 간격",
+      "autoMaintenanceIntervalUnit": "일",
+      "autoMaintenanceSaved": "저장되었습니다",
+      "autoMaintenanceSaveFailed": "저장 실패",
+      "autoMaintenanceResetDone": "기본 간격으로 복원되었습니다",
+      "autoMaintenanceLoadFailed": "설정을 불러오지 못했습니다",
+      "lastMaintenance": "마지막 유지보수 시간",
+      "lastMaintenanceNone": "아직 스킬 유지보수를 실행하지 않았습니다",
+      "loadSettings": "불러오기"
     }
   },
   "extend": {

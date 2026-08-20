@@ -37,6 +37,16 @@ export interface MessageItem {
    *  AI 消息：持久化后的绝对文件路径（如 C:/.../src/<session_id>/media/<ts>.png，
    *  需经后端 /media?session_id=<sid>&filename=<basename> 转成可访问 URL 渲染）。 */
   images?: string[];
+  /** 消息携带的音频。
+   *  用户消息：原始 base64（不含 data: 前缀，需本地以 data:audio/*;base64, 前缀渲染）；
+   *  AI 消息：持久化后的绝对文件路径（如 C:/.../src/<session_id>/media/<ts>.mp3，
+   *  需经后端 /media?session_id=<sid>&filename=<basename> 转成可访问 URL 渲染）。 */
+  audios?: string[];
+  /** 消息携带的视频。
+   *  用户消息：原始 base64（不含 data: 前缀，需本地以 data:video/*;base64, 前缀渲染）；
+   *  AI 消息：持久化后的绝对文件路径（如 C:/.../src/<session_id>/media/<ts>.mp4，
+   *  需经后端 /media?session_id=<sid>&filename=<basename> 转成可访问 URL 渲染）。 */
+  videos?: string[];
   /** 消息id */
   id: number;
   /** 会话轮次 */

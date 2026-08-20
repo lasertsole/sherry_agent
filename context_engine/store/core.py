@@ -63,6 +63,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "reasoning": None,
                 "reasoning_content": None,
                 "images": None,
+                "audios": None,
+                "videos": None,
             })
         elif m.type == "human":
             additional_kwargs:dict[str, str] = getattr(m, "additional_kwargs", {})
@@ -74,6 +76,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
 
             # Persist any media file paths declared by the multimodal processor.
             images: list[str] = additional_kwargs.get("images", []) or []
+            audios: list[str] = additional_kwargs.get("audios", []) or []
+            videos: list[str] = additional_kwargs.get("videos", []) or []
 
             insert_rows.append({
                 "session_id": session_id,
@@ -89,6 +93,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "reasoning": None,
                 "reasoning_content": None,
                 "images": json.dumps(images, ensure_ascii=False) if images else None,
+                "audios": json.dumps(audios, ensure_ascii=False) if audios else None,
+                "videos": json.dumps(videos, ensure_ascii=False) if videos else None,
             })
         elif m.type == "tool":
             # Tool message: carry tool metadata (call id, name, execution status).
@@ -106,6 +112,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "reasoning_content": None,
                 "timestamp": base_timestamp,
                 "images": None,
+                "audios": None,
+                "videos": None,
             })
 
     # Bulk-insert all accumulated rows in a single transaction.
@@ -123,7 +131,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             finish_reason,
             reasoning,
             reasoning_content,
-            images
+            images,
+            audios,
+            videos
         ) VALUES (
             :session_id,
             :turn_num,
@@ -137,7 +147,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             :finish_reason,
             :reasoning,
             :reasoning_content,
-            :images
+            :images,
+            :audios,
+            :videos
         )
     """, insert_rows)
 
@@ -186,6 +198,10 @@ def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scop
                 row["tool_calls"] = json.loads(row["tool_calls"])
             if isinstance(row["images"], str):
                 row["images"] = json.loads(row["images"])
+            if isinstance(row["audios"], str):
+                row["audios"] = json.loads(row["audios"])
+            if isinstance(row["videos"], str):
+                row["videos"] = json.loads(row["videos"])
             result.append(row)
 
         return result
@@ -247,6 +263,10 @@ def get_history_by_turn_page(
                 row["tool_calls"] = json.loads(row["tool_calls"])
             if isinstance(row["images"], str):
                 row["images"] = json.loads(row["images"])
+            if isinstance(row["audios"], str):
+                row["audios"] = json.loads(row["audios"])
+            if isinstance(row["videos"], str):
+                row["videos"] = json.loads(row["videos"])
             result.append(row)
 
         return result

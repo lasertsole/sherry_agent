@@ -48,7 +48,11 @@
   },
   "knowledgeGraph": {
     "back": "戻る",
-    "placeholder": "ナレッジグラフ機能は開発中です…"
+    "placeholder": "ナレッジグラフ機能は開発中です…",
+    "loading": "読み込み中…",
+    "empty": "ナレッジグラフのデータがありません",
+    "loadError": "読み込みに失敗しました",
+    "refresh": "更新"
   },
   "skills": {
     "title": "スキル管理",
@@ -68,7 +72,16 @@
       "runCuratorHint": "オート（自動学習）スキルを自動的にレビューし、類似・重複したスキルを統合するとともに、長期間未使用のスキルをマーク・アーカイブして、スキルライブラリを整理します。",
       "curatorDone": "スキルメンテナンス完了：",
       "curatorTransitions": "件の自動変更",
-      "curatorFailed": "スキルメンテナンスに失敗しました。サーバーログを確認してください"
+      "curatorFailed": "スキルメンテナンスに失敗しました。サーバーログを確認してください",
+      "autoMaintenanceInterval": "自動メンテナンス間隔",
+      "autoMaintenanceIntervalUnit": "日",
+      "autoMaintenanceSaved": "保存しました",
+      "autoMaintenanceSaveFailed": "保存に失敗しました",
+      "autoMaintenanceResetDone": "既定の間隔に戻しました",
+      "autoMaintenanceLoadFailed": "設定の読み込みに失敗しました",
+      "lastMaintenance": "最終メンテナンス時刻",
+      "lastMaintenanceNone": "まだスキルメンテナンスを実行していません",
+      "loadSettings": "読み込み"
     }
   },
   "extend": {

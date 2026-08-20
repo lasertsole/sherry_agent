@@ -24,7 +24,9 @@ By default the scan runs with LLM semantic analysis enabled (``use_llm=True``
 / without ``--no-llm``), which sends analyzer-eligible skill contents to the
 configured OpenAI-compatible provider. Disable it with the
 ``SKILL_SCANNER_LLM=0`` env flag to get a static-only scan. The model provider
-is wired to the same credentials the app already uses for its own main LLM:
+is wired to the same credentials the app already uses for its auxiliary LLM
+(the lightweight model tier for simple supporting tasks, so the main model's
+quota is untouched):
 
 * ``SKILL_SCANNER_LLM`` (default ``1``) — enable/disable LLM semantic analysis.
   Leave ``0`` unless your provider supports LangChain's ``json_schema``
@@ -32,12 +34,13 @@ is wired to the same credentials the app already uses for its own main LLM:
 * ``SKILLSPECTOR_PROVIDER`` (default ``openai``) — SkillSpector provider.
 * ``SKILLSPECTOR_MODEL`` — SkillSpector model override.
 * ``OPENAI_BASE_URL``/``OPENAI_API_KEY`` — forwarded from the app's own
-  ``MAIN_LLM_API_BASE``/``MAIN_LLM_API_KEY`` (OpenAI-compatible endpoint, e.g.
-  DeepSeek) unless already set in the environment.
+  ``AUXILIARY_LLM_API_BASE``/``AUXILIARY_LLM_API_KEY``/``AUXILIARY_LLM_API_NAME``
+  (OpenAI-compatible endpoint, e.g. DeepSeek) unless already set in the
+  environment.
 
 Known limitation (DeepSeek)
 ---------------------------
-The app's default ``MAIN_LLM_*`` provider is DeepSeek. SkillSpector's LLM
+The app's default ``AUXILIARY_LLM_*`` provider is DeepSeek. SkillSpector's LLM
 analyzers hardwire ``with_structured_output(self.response_schema)`` without a
 ``method`` argument, which LangChain resolves to ``response_format =
 {"type": "json_schema", "strict": true}`` — a format DeepSeek rejects with
@@ -100,8 +103,10 @@ def _llm_env() -> dict[str, str]:
     The CLI reads ``SKILLSPECTOR_PROVIDER`` / ``SKILLSPECTOR_MODEL`` /
     ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` from its own subprocess env. To
     avoid duplicating credentials, these are derived from the app's
-    ``MAIN_LLM_*`` settings (the same DeepSeek/OpenAI-compatible endpoint the
-    app already calls) unless the caller pre-set them explicitly.
+    ``AUXILIARY_LLM_*`` settings (the lightweight model tier used for simple
+    auxiliary tasks) unless the caller pre-set them explicitly. The auxiliary
+    LLM is a deliberate choice: skill scanning is a low-stakes supporting task,
+    so it should not consume the main model's quota.
 
     Returns an empty dict when LLM analysis is disabled so the subprocess runs
     static-only (never leaks env vars or sends contents to a provider).
@@ -111,15 +116,15 @@ def _llm_env() -> dict[str, str]:
     env = {
         "SKILLSPECTOR_PROVIDER": "openai",
         "OPENAI_BASE_URL": os.environ.get(
-            "MAIN_LLM_API_BASE", os.environ.get("OPENAI_BASE_URL", "")
+            "AUXILIARY_LLM_API_BASE", os.environ.get("OPENAI_BASE_URL", "")
         ),
         "OPENAI_API_KEY": os.environ.get(
-            "MAIN_LLM_API_KEY", os.environ.get("OPENAI_API_KEY", "")
+            "AUXILIARY_LLM_API_KEY", os.environ.get("OPENAI_API_KEY", "")
         ),
     }
     model = (
         os.environ.get("SKILLSPECTOR_MODEL")
-        or os.environ.get("MAIN_LLM_NAME")
+        or os.environ.get("AUXILIARY_LLM_API_NAME")
         or ""
     )
     if model:
@@ -132,7 +137,7 @@ def _llm_env() -> dict[str, str]:
             env[key] = explicit
     if not env.get("OPENAI_BASE_URL") or not env.get("OPENAI_API_KEY"):
         logger.warning(
-            "SkillSpector LLM analysis requested but MAIN_LLM_API_BASE/KEY "
+            "SkillSpector LLM analysis requested but AUXILIARY_LLM_API_BASE/KEY "
             + "are missing; static-only scan will run for the subprocess"
         )
         return {}

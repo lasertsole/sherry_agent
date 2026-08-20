@@ -215,6 +215,8 @@ export function postAgentStream(
             session_id,
             text: multi_modal_message.text ?? '',
             image_base64_list: multi_modal_message.image_base64_list,
+            audio_bytes_list: multi_modal_message.audio_bytes_list,
+            video_bytes_list: multi_modal_message.video_bytes_list,
         },
         onData,
         onHitl,

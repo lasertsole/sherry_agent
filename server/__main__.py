@@ -53,4 +53,21 @@ if __name__ == "__main__":
         directory_path=os.path.join(os.getcwd(), str(images_dir))
     )
 
+    # Ensure the /audio and /video upload directories exist before serving them statically.
+    audio_dir = SRC_DIR / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    app.serve_directory(
+        route="/audio",
+        directory_path=os.path.join(os.getcwd(), str(audio_dir))
+    )
+
+    video_dir = SRC_DIR / "video"
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    app.serve_directory(
+        route="/video",
+        directory_path=os.path.join(os.getcwd(), str(video_dir))
+    )
+
     app.start(host=API_HOST, port=API_PORT)

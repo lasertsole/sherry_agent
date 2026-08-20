@@ -40,6 +40,37 @@ impl PythonErrorResponse {
     }
 }
 
+// ── Media upload kind ──────────────────────────────────────
+
+/// The kind of media being uploaded, mapping to a backend upload endpoint
+/// and its default `Content-Type` header.
+#[derive(Debug, Clone, Copy)]
+pub enum UploadKind {
+    Image,
+    Audio,
+    Video,
+}
+
+impl UploadKind {
+    /// Backend upload route, e.g. `/images/upload`.
+    fn endpoint(&self) -> &'static str {
+        match self {
+            UploadKind::Image => "/images/upload",
+            UploadKind::Audio => "/audio/upload",
+            UploadKind::Video => "/video/upload",
+        }
+    }
+
+    /// Default `Content-Type` used for raw byte uploads.
+    fn default_content_type(&self) -> &'static str {
+        match self {
+            UploadKind::Image => "image/png",
+            UploadKind::Audio => "audio/mpeg",
+            UploadKind::Video => "video/mp4",
+        }
+    }
+}
+
 // ── Bridge ────────────────────────────────────────────────
 
 /// HTTP bridge to the Python backend.
@@ -92,17 +123,25 @@ impl PythonBridge {
         Err(AppError::Backend(format!("HTTP {status}: {message}")))
     }
 
-    /// Upload each base64-encoded image to the backend `/images/upload`
-    /// endpoint, returning the corresponding list of absolute HTTP URLs
+    /// Upload each base64-encoded media item to the backend
+    /// (`/images/upload`, `/audio/upload` or `/video/upload` depending on
+    /// [`UploadKind`]), returning the corresponding list of absolute HTTP URLs
     /// (same order).
     ///
-    /// The backend stores raw bytes and serves them from `/images/{filename}`.
-    /// Returns URLs to place in `image_path_list`.
-    pub async fn upload_images(&self, base64_list: &[String]) -> AppResult<Vec<String>> {
+    /// The backend stores raw bytes and serves them from the matching
+    /// `/images|audio|video/{filename}` route. Returns URLs to place in the
+    /// corresponding `*_path_list` field.
+    pub async fn upload_media(
+        &self,
+        kind: UploadKind,
+        base64_list: &[String],
+    ) -> AppResult<Vec<String>> {
         if base64_list.is_empty() {
             return Ok(Vec::new());
         }
 
+        let endpoint = kind.endpoint();
+        let content_type = kind.default_content_type();
         let mut urls = Vec::with_capacity(base64_list.len());
 
         for b64 in base64_list {
@@ -118,8 +157,8 @@ impl PythonBridge {
 
             let resp = self
                 .client
-                .post(self.url("/images/upload"))
-                .header("Content-Type", "image/png")
+                .post(self.url(endpoint))
+                .header("Content-Type", content_type)
                 .body(bytes)
                 .send()
                 .await?;
@@ -135,11 +174,11 @@ impl PythonBridge {
                 .map(String::from)
                 .ok_or_else(|| AppError::Backend("missing 'url' in upload response".into()))?;
 
-            tracing::debug!(image_url = %url, "image uploaded");
+            tracing::debug!(media_url = %url, "media uploaded");
             urls.push(url);
         }
 
-        tracing::info!(count = urls.len(), "uploaded images to backend");
+        tracing::info!(count = urls.len(), "uploaded media to backend");
         Ok(urls)
     }
 

@@ -29,6 +29,14 @@ export interface ChatRequest {
   image_base64_list?: string[];
   /** 图片 URL 列表（浏览器模式使用，来自 /images/upload 上传后返回的 HTTP URL） */
   image_path_list?: string[];
+  /** 音频 base64 列表（Tauri 模式使用；浏览器模式下会自动上传转为 audio_path_list） */
+  audio_bytes_list?: string[];
+  /** 音频 URL 列表（浏览器模式使用，来自 /audio/upload 上传后返回的 HTTP URL） */
+  audio_path_list?: string[];
+  /** 视频 base64 列表（Tauri 模式使用；浏览器模式下会自动上传转为 video_path_list） */
+  video_bytes_list?: string[];
+  /** 视频 URL 列表（浏览器模式使用，来自 /video/upload 上传后返回的 HTTP URL） */
+  video_path_list?: string[];
 }
 
 /**
@@ -286,21 +294,55 @@ export function streamChatMessage(
  * @param onChunk  Called with each text fragment.
  * @returns        `{ controller, promise }` — `promise` resolves on completion.
  */
+/** Media kind — drives the upload endpoint path and the default MIME/content-type. */
+export type UploadMediaKind = 'image' | 'audio' | 'video';
+
+/** Per-kind upload endpoint suffix (POST `${baseURL}/${endpoint}`). */
+const KIND_ENDPOINT: Record<UploadMediaKind, string> = {
+  image: '/images/upload',
+  audio: '/audio/upload',
+  video: '/video/upload',
+};
+
+/** Wildcard MIME (e.g. `image/`, `audio/`, `video/`) to parse a `data:...;base64,` prefix. */
+const KIND_MIME_PREFIX: Record<UploadMediaKind, string> = {
+  image: 'image/',
+  audio: 'audio/',
+  video: 'video/',
+};
+
+/** Fallback content-type when the payload carries no `data:` prefix. */
+const KIND_DEFAULT_CONTENT_TYPE: Record<UploadMediaKind, string> = {
+  image: 'image/png',
+  audio: 'audio/webm',
+  video: 'video/mp4',
+};
+
+/** Human-readable kind label used in error messages. */
+const KIND_LABEL: Record<UploadMediaKind, string> = {
+  image: '图片',
+  audio: '音频',
+  video: '视频',
+};
+
 /**
- * 将 base64 图片上传到后端 /images/upload 并返回 URL 列表。
+ * 将 base64 媒体（图片/音频/视频）上传到后端对应的 `/images|/audio|/video/upload`
+ * 端点并返回 URL 列表。
  *
- * @param base64List  base64 编码的图片字符串列表（可能带 data:...;base64, 前缀）
- * @param baseURL     后端 HTTP 基地址
- * @returns           上传后的图片 URL 数组（与输入同序）
+ * @param kind       媒体类型（image | audio | video），决定上传端点与 MIME 解析规则
+ * @param base64List base64 编码的字符串列表（可能带 data:<mime>;base64, 前缀）
+ * @param baseURL    后端 HTTP 基地址
+ * @returns          上传后的 URL 数组（与输入同序）
  */
-async function uploadImagesToUrls(base64List: string[], baseURL: string): Promise<string[]> {
+async function uploadBase64ToUrls(kind: UploadMediaKind, base64List: string[], baseURL: string): Promise<string[]> {
+  const label = KIND_LABEL[kind];
   const urls: string[] = [];
   for (const base64 of base64List) {
-    let contentType = 'image/png';
+    let contentType = KIND_DEFAULT_CONTENT_TYPE[kind];
     let pureBase64 = base64;
 
-    // 若带有 data:image/xxx;base64, 前缀，则剥离并提取 MIME 类型
-    const match = pureBase64.match(/^data:(image\/[\w+-]+);base64,(.+)$/);
+    // 若带有 data:<mime>;base64, 前缀，则剥离并提取 MIME 类型
+    const match = pureBase64.match(new RegExp(`^data:(${KIND_MIME_PREFIX[kind]}[\w.+-]+);base64,(.+)$`));
     if (match) {
       contentType = match[1];
       pureBase64 = match[2];
@@ -310,28 +352,28 @@ async function uploadImagesToUrls(base64List: string[], baseURL: string): Promis
 
     let resp: Response;
     try {
-      resp = await fetch(`${baseURL}/images/upload`, {
+      resp = await fetch(`${baseURL}${KIND_ENDPOINT[kind]}`, {
         method: 'POST',
         headers: { 'Content-Type': contentType },
         body: bytes,
       });
     } catch (e) {
-      throw new Error(`图片上传网络错误: ${e}`);
+      throw new Error(`${label}上传网络错误: ${e}`);
     }
 
     if (!resp.ok) {
-      throw new Error(`图片上传失败: HTTP ${resp.status}`);
+      throw new Error(`${label}上传失败: HTTP ${resp.status}`);
     }
 
     let json: { success?: boolean; url?: string; filename?: string };
     try {
       json = await resp.json();
     } catch {
-      throw new Error('图片上传失败: 服务器返回非 JSON 响应');
+      throw new Error(`${label}上传失败: 服务器返回非 JSON 响应`);
     }
 
     if (!json.success || !json.url) {
-      throw new Error(`图片上传失败: ${JSON.stringify(json)}`);
+      throw new Error(`${label}上传失败: ${JSON.stringify(json)}`);
     }
 
     urls.push(json.url);
@@ -411,11 +453,41 @@ function sendChatMessageWs(
     const imageList = request.image_base64_list;
     if (imageList && imageList.length > 0) {
       try {
-        imageUrls = await uploadImagesToUrls(imageList, baseURL);
+        imageUrls = await uploadBase64ToUrls('image', imageList, baseURL);
       } catch (e) {
         if (!done) {
           done = true;
           release(`图片上传失败: ${e}`);
+        }
+        return;
+      }
+    }
+
+    // 将 base64 音频上传到后端 /audio/upload，获取 HTTP URL
+    let audioUrls: string[] = [];
+    const audioList = request.audio_bytes_list;
+    if (audioList && audioList.length > 0) {
+      try {
+        audioUrls = await uploadBase64ToUrls('audio', audioList, baseURL);
+      } catch (e) {
+        if (!done) {
+          done = true;
+          release(`音频上传失败: ${e}`);
+        }
+        return;
+      }
+    }
+
+    // 将 base64 视频上传到后端 /video/upload，获取 HTTP URL
+    let videoUrls: string[] = [];
+    const videoList = request.video_bytes_list;
+    if (videoList && videoList.length > 0) {
+      try {
+        videoUrls = await uploadBase64ToUrls('video', videoList, baseURL);
+      } catch (e) {
+        if (!done) {
+          done = true;
+          release(`视频上传失败: ${e}`);
         }
         return;
       }
@@ -442,6 +514,10 @@ function sendChatMessageWs(
             text: request.text || '',
             image_base64_list: [],
             image_path_list: imageUrls,
+            audio_bytes_list: [],
+            audio_path_list: audioUrls,
+            video_bytes_list: [],
+            video_path_list: videoUrls,
           },
         }),
       );

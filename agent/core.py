@@ -40,12 +40,52 @@ _tools.append(subagent_tool)
 def get_agent_tools()-> list[BaseTool]:
     return _tools
 
+# Cache of compiled agents, keyed by the asyncio event loop that they were
+# built on. Each entry holds a fresh main_llm whose internal openai.AsyncOpenAI
+# -> httpx.AsyncClient transport pool is bound to that specific loop.
+#
+# Why loop-keyed: the previous module-level `_agent: CompiledStateGraph | None`
+# singleton embedded ONE loop-bound httpx transport pool and reused it across WS
+# turns (and across the subagent daemon thread). Connections in that stale pool
+# silently died mid-request on the WS server, surfacing as
+# openai.APITimeoutError("Request timed out") at ~17s even though the SDK's
+# default 600s deadline had not elapsed (the request is killed by the dead
+# pooled connection, not a normal timeout). Verified by a standalone stream with
+# the exact same payload (12KB system prompt + full tools schema) that COMPLETED
+# IN 8.0s on a fresh in-loop client, while the cached-pool WS path failed.
+#
+# Keying by loop gives identical behaviour to calling build_main_llm() fresh for
+# the current loop (the codebase-wide convention), but still reuses the compiled
+# graph for subsequent requests on the same loop to avoid rebuilding it.
 _agent: CompiledStateGraph | None = None
+_agent_loop = None
+
 async def built_agent(
     temperature: float = 0.8,
+    force_rebuild: bool = False,
 )-> CompiledStateGraph:
-    global _agent
-    if _agent is None:
+    global _agent, _agent_loop
+    import asyncio
+    current_loop = asyncio.get_running_loop()
+
+    # Rebuild whenever the loop changes, on first call, or when explicitly
+    # requested (force_rebuild). Each rebuild constructs a fresh main_llm ->
+    # httpx client bound to the CURRENT loop.
+    #
+    # Why force_rebuild: the WS server needs a FRESH transport pool every turn.
+    # Over many turns on a single event loop the long-lived pooled TCP connection
+    # goes stale — DeepSeek's edge reaps an idle keep-alive connection (~15-17s)
+    # and the next streaming POST on it dies mid-request, surfacing as
+    # ``openai.APITimeoutError("Request timed out")`` far under the SDK deadline.
+    # Provably: the exact same payload (12KB system prompt + full tools schema)
+    # streams in 8.0s on a fresh in-loop client, while a cached-pool WS call dies
+    # at ~16.78s. Closing the pool (AsyncOpenAI.close()) does NOT help — it
+    # permanently destroys the client ("Cannot send a request, as the client has
+    # been closed"), so rebuilding the graph (hence a fresh client) per turn is
+    # the only clean way to reproduce the fresh-client condition. The SQLite
+    # checkpointer persists session state independently of the graph object, so a
+    # rebuild is safe and cheap relative to the 15-20s LLM call.
+    if _agent is None or _agent_loop is not current_loop or force_rebuild:
         checkpointer: ThreadSafeAsyncSqliteSaver = await build_async_sqlite_checkpointer()
 
         # create table before using
@@ -82,5 +122,6 @@ async def built_agent(
                 ),
             ],
         )
+        _agent_loop = current_loop
 
     return _agent

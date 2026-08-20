@@ -14,7 +14,7 @@ if str(project_root) not in sys.path:
 from config import TEMP_DIR
 from models import VTTT_model
 
-MIN_DURATION_SEC = 5.0
+MIN_DURATION_SEC = 0.0
 MAX_DURATION_SEC = 60.0
 
 

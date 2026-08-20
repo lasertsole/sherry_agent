@@ -10,7 +10,7 @@
 //! for the complete event lifecycle.
 
 use super::events::*;
-use crate::services::python_bridge::PythonBridge;
+use crate::services::python_bridge::{PythonBridge, UploadKind};
 use crate::utils::error::FrontendError;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -29,8 +29,12 @@ use uuid::Uuid;
 /// | `text` | `string \| null` | No | Text message content |
 /// | `image_base64_list` | `string[]` | No | Base64-encoded image data (uploaded to backend before WS call) |
 /// | `image_path_list` | `string[]` | No | HTTP image URLs already uploaded to the backend |
+/// | `audio_base64_list` | `string[]` | No | Base64-encoded audio data (uploaded to backend before WS call) |
+/// | `audio_path_list` | `string[]` | No | HTTP audio URLs already uploaded to the backend |
+/// | `video_base64_list` | `string[]` | No | Base64-encoded video data (uploaded to backend before WS call) |
+/// | `video_path_list` | `string[]` | No | HTTP video URLs already uploaded to the backend |
 ///
-/// At least one of `text` or `image_base64_list` should be provided.
+/// At least one of `text` or the media lists should be provided.
 ///
 /// # Example
 ///
@@ -39,7 +43,11 @@ use uuid::Uuid;
 ///   "session_id": "default",
 ///   "text": "Hello, how are you?",
 ///   "image_base64_list": [],
-///   "image_path_list": []
+///   "image_path_list": [],
+///   "audio_base64_list": [],
+///   "audio_path_list": [],
+///   "video_base64_list": [],
+///   "video_path_list": []
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -55,6 +63,18 @@ pub struct ChatRequest {
     /// Optional list of HTTP image URLs already uploaded to the backend.
     #[serde(default)]
     pub image_path_list: Vec<String>,
+    /// Optional list of base64-encoded audio for multi-modal input.
+    #[serde(default)]
+    pub audio_base64_list: Vec<String>,
+    /// Optional list of HTTP audio URLs already uploaded to the backend.
+    #[serde(default)]
+    pub audio_path_list: Vec<String>,
+    /// Optional list of base64-encoded video for multi-modal input.
+    #[serde(default)]
+    pub video_base64_list: Vec<String>,
+    /// Optional list of HTTP video URLs already uploaded to the backend.
+    #[serde(default)]
+    pub video_path_list: Vec<String>,
 }
 
 /// A single streaming chunk returned by the agent.
@@ -152,9 +172,18 @@ pub async fn agent_chat(
     let message_id = Uuid::new_v4().to_string();
     let session_id = request.session_id.clone();
 
-    // 1. Upload any base64 images to the backend over HTTP, converting them
-    //    to lightweight image URLs so the WebSocket text frame stays small.
-    let image_urls = bridge.upload_images(&request.image_base64_list).await?;
+    // 1. Upload any base64 images/audio/video to the backend over HTTP,
+    //    converting them to lightweight URLs so the WebSocket text frame stays
+    //    small.
+    let image_urls = bridge
+        .upload_media(UploadKind::Image, &request.image_base64_list)
+        .await?;
+    let audio_urls = bridge
+        .upload_media(UploadKind::Audio, &request.audio_base64_list)
+        .await?;
+    let video_urls = bridge
+        .upload_media(UploadKind::Video, &request.video_base64_list)
+        .await?;
 
     // 2. Emit stream start event (only after upload succeeds)
     let _ = app.emit(
@@ -165,13 +194,17 @@ pub async fn agent_chat(
         },
     );
 
-    // 3. Build Python backend request body with image URLs (not base64)
+    // 3. Build Python backend request body with media URLs (not base64)
     let body = serde_json::json!({
         "session_id": &request.session_id,
         "multi_modal_message": {
             "text": request.text.unwrap_or_default(),
             "image_base64_list": [],
             "image_path_list": image_urls,
+            "audio_base64_list": [],
+            "audio_path_list": audio_urls,
+            "video_base64_list": [],
+            "video_path_list": video_urls,
         }
     });
 
@@ -318,6 +351,10 @@ mod tests {
             text: Some("How's the weather?".into()),
             image_base64_list: vec![],
             image_path_list: vec![],
+            audio_base64_list: vec![],
+            audio_path_list: vec![],
+            video_base64_list: vec![],
+            video_path_list: vec![],
         };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: ChatRequest = serde_json::from_str(&json).unwrap();

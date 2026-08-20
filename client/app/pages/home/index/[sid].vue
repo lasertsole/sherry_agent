@@ -64,6 +64,55 @@
           </div>
         </div>
       </template>
+      <!-- 音频预览区（独立于输入框上方，与图片预览区同级） -->
+      <template v-if="selectedAudios.length > 0">
+        <div
+          class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+          <div
+            v-for="(audio, idx) in selectedAudios"
+            :key="idx"
+            class="relative shrink-0 group">
+            <div
+              class="flex items-center gap-2 px-3 py-2 rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-gray-800">
+              <span class="pi pi-volume-down text-xs text-[#6B7280]"></span>
+              <span class="text-xs font-medium text-[#111827] dark:text-[#E5E7EB] max-w-32 truncate">{{
+                audio.name
+              }}</span>
+            </div>
+            <button
+              type="button"
+              :title="t('chatBox.removeAudio')"
+              class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
+              @click="removeAudio(idx)">
+              ✕
+            </button>
+          </div>
+        </div>
+      </template>
+      <!-- 视频预览区（独立于输入框上方，与图片/音频预览区同级） -->
+      <template v-if="selectedVideos.length > 0">
+        <div
+          class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+          <div
+            v-for="(video, idx) in selectedVideos"
+            :key="idx"
+            class="relative shrink-0 group">
+            <video
+              :src="`data:video/*;base64,${video.base64}`"
+              class="w-32 h-20 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark"
+              muted
+              playsinline
+              preload="metadata" />
+            <button
+              type="button"
+              :title="t('chatBox.removeVideo')"
+              class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
+              @click="removeVideo(idx)">
+              ✕
+            </button>
+          </div>
+        </div>
+      </template>
       <!-- 聊天输入框区域（relative 定位父级，供其他悬浮元素使用） -->
       <div class="relative">
         <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
@@ -98,6 +147,22 @@
               multiple
               class="hidden"
               @change="onImageSelected" />
+            <!-- 隐藏的音频文件选择框：由工具栏音频按钮通过 triggerAudioPicker() 触发 -->
+            <input
+              ref="audioFileInputRef"
+              type="file"
+              accept="audio/*"
+              multiple
+              class="hidden"
+              @change="onAudioSelected" />
+            <!-- 隐藏的视频文件选择框：由工具栏视频按钮通过 triggerVideoPicker() 触发 -->
+            <input
+              ref="videoFileInputRef"
+              type="file"
+              accept="video/*"
+              multiple
+              class="hidden"
+              @change="onVideoSelected" />
           </div>
           <!-- 输入框：存在待审批的 HITL 请求时禁止输入/发送，并提示等待审批 -->
           <ChatInputBox
@@ -135,6 +200,7 @@ import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watc
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem, HitlRequestData } from '../type.ts';
+import type { MultiModalMessage } from '@/types/message';
 import { CHAT_ROLE } from '../type.ts';
 import type { CachedCharacter, CachedMessage } from '@/composables/db';
 import {
@@ -386,6 +452,9 @@ const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
       content: normalizeContent(row.content),
       // 透传图片数组：用户消息为 base64，AI 消息为持久化文件路径，交由 ChatBox 区分渲染
       images: row.images ?? undefined,
+      // 透传音频/视频数组（与图片同级：用户消息为 base64，AI 消息为持久化文件路径）
+      audios: row.audios ?? undefined,
+      videos: row.videos ?? undefined,
       id: row.id,
       turn_num: row.turn_num,
       timestamp: row.timestamp ?? '',
@@ -972,6 +1041,9 @@ const handleSend = async (text: string) => {
 
   // 携带本次待发送的图片（发送时取走并清空待发送列表）
   const imageBase64List = selectedImages.value.map(img => img.base64);
+  // 携带本次待发送的音频/视频（发送时取走并清空待发送列表）
+  const audioBytesList = selectedAudios.value.map(a => a.base64);
+  const videoBytesList = selectedVideos.value.map(v => v.base64);
 
   // 追加用户消息（本地即时显示）
   const userMsg: MessageItem = {
@@ -979,6 +1051,8 @@ const handleSend = async (text: string) => {
     role: CHAT_ROLE.USER,
     content: text,
     images: imageBase64List,
+    audios: audioBytesList,
+    videos: videoBytesList,
     id: tempIdCounter++,
     turn_num: turnNum,
     timestamp: new Date().toISOString()
@@ -996,8 +1070,10 @@ const handleSend = async (text: string) => {
 
   chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
 
-  // 发送后清空待发送图片与输入区
+  // 发送后清空待发送图片/音频/视频与输入区
   selectedImages.value = [];
+  selectedAudios.value = [];
+  selectedVideos.value = [];
   draft.value = '';
 
   isSending.value = true;
@@ -1021,8 +1097,10 @@ const handleSend = async (text: string) => {
   };
 
   try {
-    const req = { text };
+    const req: MultiModalMessage = { text };
     if (imageBase64List.length > 0) req.image_base64_list = imageBase64List;
+    if (audioBytesList.length > 0) req.audio_bytes_list = audioBytesList;
+    if (videoBytesList.length > 0) req.video_bytes_list = videoBytesList;
     activeAgentController = postAgentStream(
       sid,
       req,
@@ -1128,6 +1206,138 @@ const onImageSelected = async (event: Event) => {
   selectedImages.value = [...selectedImages.value];
 };
 
+/**
+ * 已选音频（base64 形式，随消息发送）。
+ * 仅在「本地预览 + 发送」期间存在，发送/取消后清空。
+ */
+const selectedAudios = ref<{ base64: string; name: string }[]>([]);
+
+/** 单条消息允许附带的最大音频数量 */
+const MAX_SELECTED_AUDIOS = 5;
+
+/** 隐藏的音频文件选择框 */
+const audioFileInput = useTemplateRef<HTMLInputElement>('audioFileInputRef');
+
+/** 读取音频文件为 DataURL（含 data:audio/...;base64 前缀，需剥离前缀再发送） */
+const readAudioFile = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+/** 移除一个已选音频 */
+const removeAudio = (index: number) => {
+  selectedAudios.value.splice(index, 1);
+  selectedAudios.value = [...selectedAudios.value];
+};
+
+/** 触发系统音频文件选择 */
+const triggerAudioPicker = () => {
+  audioFileInput.value?.click();
+};
+
+/** 音频选择回调：读取为 base64 并加入待发送列表（上限 MAX_SELECTED_AUDIOS） */
+const onAudioSelected = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  // 先拷贝为普通数组副本再重置 input.value。
+  // input.files 是「活」的 FileList —— 一旦把 value 置空，浏览器会立即清空该 FileList，
+  // 若此后才读取 files 会得到空数组，导致 selectedAudios 永不入库、预览区不显示。
+  const files = Array.from(input.files ?? []);
+  input.value = ''; // 允许重复选择同一文件
+  if (files.length === 0) return;
+
+  // 数量上限：超出的部分直接截断并提示
+  const remaining = MAX_SELECTED_AUDIOS - selectedAudios.value.length;
+  if (remaining <= 0) {
+    alert(t('chatInput.maxAudios', { count: MAX_SELECTED_AUDIOS }));
+    return;
+  }
+  const accepted = files.slice(0, remaining);
+  if (files.length > remaining) {
+    alert(t('chatInput.maxAudiosExceed', { count: MAX_SELECTED_AUDIOS, extra: files.length - remaining }));
+  }
+
+  for (const file of accepted) {
+    if (!file.type.startsWith('audio/')) continue;
+    try {
+      const dataUrl = await readAudioFile(file);
+      // data:audio/mpeg;base64,xxxxx -> 仅保留 base64 部分
+      const base64 = dataUrl.split(',')[1] ?? '';
+      selectedAudios.value.push({ base64, name: file.name });
+    } catch (e) {
+      console.warn('[onAudioSelected] 读取音频失败：', file.name, e);
+    }
+  }
+  selectedAudios.value = [...selectedAudios.value];
+};
+
+/**
+ * 已选视频（base64 形式，随消息发送）。
+ * 仅在「本地预览 + 发送」期间存在，发送/取消后清空。
+ */
+const selectedVideos = ref<{ base64: string; name: string }[]>([]);
+
+/** 单条消息允许附带的最大视频数量 */
+const MAX_SELECTED_VIDEOS = 3;
+
+/** 隐藏的视频文件选择框 */
+const videoFileInput = useTemplateRef<HTMLInputElement>('videoFileInputRef');
+
+/** 读取视频文件为 DataURL（含 data:video/...;base64 前缀，需剥离前缀再发送） */
+const readVideoFile = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+/** 移除一个已选视频 */
+const removeVideo = (index: number) => {
+  selectedVideos.value.splice(index, 1);
+  selectedVideos.value = [...selectedVideos.value];
+};
+
+/** 触发系统视频文件选择 */
+const triggerVideoPicker = () => {
+  videoFileInput.value?.click();
+};
+
+/** 视频选择回调：读取为 base64 并加入待发送列表（上限 MAX_SELECTED_VIDEOS） */
+const onVideoSelected = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  // 先拷贝为普通数组副本再重置 input.value（Safari 异步处理，见 onImageSelected）。
+  const files = Array.from(input.files ?? []);
+  input.value = ''; // 允许重复选择同一文件
+  if (files.length === 0) return;
+
+  // 数量上限：超出的部分直接截断并提示
+  const remaining = MAX_SELECTED_VIDEOS - selectedVideos.value.length;
+  if (remaining <= 0) {
+    alert(t('chatInput.maxVideos', { count: MAX_SELECTED_VIDEOS }));
+    return;
+  }
+  const accepted = files.slice(0, remaining);
+  if (files.length > remaining) {
+    alert(t('chatInput.maxVideosExceed', { count: MAX_SELECTED_VIDEOS, extra: files.length - remaining }));
+  }
+
+  for (const file of accepted) {
+    if (!file.type.startsWith('video/')) continue;
+    try {
+      const dataUrl = await readVideoFile(file);
+      // data:video/mp4;base64,xxxxx -> 仅保留 base64 部分
+      const base64 = dataUrl.split(',')[1] ?? '';
+      selectedVideos.value.push({ base64, name: file.name });
+    } catch (e) {
+      console.warn('[onVideoSelected] 读取视频失败：', file.name, e);
+    }
+  }
+  selectedVideos.value = [...selectedVideos.value];
+};
+
 /** 工具触发 */
 const handleOperate = (type: string, event: string) => {
   if (!event || !type) return;
@@ -1138,6 +1348,12 @@ const handleOperate = (type: string, event: string) => {
       return;
     case 'uploadImage':
       triggerImagePicker();
+      return;
+    case 'uploadAudio':
+      triggerAudioPicker();
+      return;
+    case 'uploadVideo':
+      triggerVideoPicker();
       return;
     default:
       return;
@@ -1172,6 +1388,8 @@ const doLoadFor = (sid: string) => {
   hitlRequest.value = null;
   draft.value = '';
   selectedImages.value = [];
+  selectedAudios.value = [];
+  selectedVideos.value = [];
   // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
   ensureSessionCharacter(sid);
   loadSessionHistory(sid);

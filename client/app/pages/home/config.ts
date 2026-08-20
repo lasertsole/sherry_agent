@@ -6,6 +6,18 @@ export const tools: Tool[] = [
     icon: 'pi pi-image',
     title: 'toolbar.uploadImage',
     event: 'uploadImage'
+  },
+  {
+    toolName: 'toolbar.audio',
+    icon: 'pi pi-microphone',
+    title: 'toolbar.uploadAudio',
+    event: 'uploadAudio'
+  },
+  {
+    toolName: 'toolbar.video',
+    icon: 'pi pi-video',
+    title: 'toolbar.uploadVideo',
+    event: 'uploadVideo'
   }
 ];
 

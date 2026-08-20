@@ -6,13 +6,21 @@
     "send": "发送",
     "stop": "停止",
     "maxImages": "最多只能上传 {count} 张图片",
-    "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张"
+    "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张",
+    "maxAudios": "最多只能上传 {count} 段音频",
+    "maxAudiosExceed": "最多只能上传 {count} 段音频，已超出 {extra} 段",
+    "maxVideos": "最多只能上传 {count} 段视频",
+    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
   },
   "chatBox": {
     "defaultUserName": "我",
     "defaultAiName": "橘雪莉",
     "imageLoadFailed": "图片加载失败",
     "removeImage": "移除图片",
+    "audioLoadFailed": "音频加载失败",
+    "videoLoadFailed": "视频加载失败",
+    "removeAudio": "移除音频",
+    "removeVideo": "移除视频",
     "toolArgs": "调用参数",
     "toolResult": "执行结果",
     "toolNoOutput": "无输出",
@@ -38,6 +46,10 @@
     "knowledgeBase": "知识库",
     "uploadImage": "上传图片",
     "image": "图片",
+    "audio": "音频",
+    "uploadAudio": "上传音频",
+    "video": "视频",
+    "uploadVideo": "上传视频",
     "skills": "技能",
     "knowledgeGraph": "知识图谱",
     "systemConfig": "系统配置",
@@ -49,7 +61,11 @@
   },
   "knowledgeGraph": {
     "back": "返回",
-    "placeholder": "知识图谱功能开发中…"
+    "placeholder": "知识图谱功能开发中…",
+    "loading": "加载中…",
+    "empty": "暂无知识图谱数据",
+    "loadError": "加载失败",
+    "refresh": "刷新"
   },
   "skills": {
     "title": "技能管理",

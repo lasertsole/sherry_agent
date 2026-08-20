@@ -151,6 +151,30 @@
               </template>
             </div>
           </template>
+          <!-- 音频附件 -->
+          <template v-if="messageAudios(message).length">
+            <div class="flex flex-col gap-2 mt-2 min-w-[200px] max-w-full">
+              <audio
+                v-for="(src, i) in messageAudios(message)"
+                :key="i"
+                :src="resolveAudioSrc(message, src)"
+                controls
+                preload="metadata"
+                class="w-full max-w-[280px] rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60" />
+            </div>
+          </template>
+          <!-- 视频附件 -->
+          <template v-if="messageVideos(message).length">
+            <div class="flex flex-col gap-2 mt-2 max-w-full">
+              <video
+                v-for="(src, i) in messageVideos(message)"
+                :key="i"
+                :src="resolveVideoSrc(message, src)"
+                controls
+                preload="metadata"
+                class="max-w-[280px] max-h-56 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-black" />
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -365,6 +389,43 @@ const messageImages = (message: MessageItem): string[] => {
   const explicit = message.images ?? [];
   return explicit.length > 0 ? explicit : extractContentImageUrls(message.content);
 };
+
+/**
+ * 将消息里的音频/视频条目解析为可播放的 src。
+ * 语义与 `resolveImageSrc` 完全一致（用户消息 → 本地 base64；AI 消息 → /media 文件路径）：
+ *  - 用户消息：原始 base64（不含 data: 前缀）→ 本地拼成 data:audio/*;base64,<data>
+ *    或 data:video/*;base64,<data>
+ *  - AI 消息：持久化的绝对文件路径 → 走后端 /media，取 basename 拼接 URL
+ *  - 绝对 http(s):// URL 直接透传
+ */
+const resolveMediaSrc = (message: MessageItem, entry: string, mimePrefix: string): string => {
+  const s = (entry ?? '').trim();
+  if (!s) return '';
+  // 绝对 URL（http/https）直接透传：中间件注入的媒体地址以 http(s):// 开头
+  if (/^https?:\/\//i.test(s)) return s;
+  const isFilePath =
+    s.includes('\\') ||
+    /\.(mp3|wav|ogg|m4a|aac|flac|mp4|webm|mov|avi|mkv|m4v)$/i.test(s);
+  if (isFilePath) {
+    // AI 消息：走 /media 拉取；文件可能带任意目录前缀，取其 basename
+    const filename = s.split(/[\\/]/).pop() || '';
+    return `${backendBaseUrl}/media?session_id=${encodeURIComponent(message.session_id ?? '')}&filename=${encodeURIComponent(filename)}`;
+  }
+  // 用户消息：本地 base64（data:<mimePrefix>;base64,<data>）
+  return `data:${mimePrefix};base64,${s}`;
+};
+
+/** 解析音频 src（mime 前缀 audio/*） */
+const resolveAudioSrc = (message: MessageItem, entry: string): string =>
+  resolveMediaSrc(message, entry, 'audio/*');
+
+/** 解析视频 src（mime 前缀 video/*） */
+const resolveVideoSrc = (message: MessageItem, entry: string): string =>
+  resolveMediaSrc(message, entry, 'video/*');
+
+/** 该消息携带的音频/视频条目 */
+const messageAudios = (message: MessageItem): string[] => message.audios ?? [];
+const messageVideos = (message: MessageItem): string[] => message.videos ?? [];
 
 /**
  * 已加载失败的图片 src 集合（如历史消息指向的 /media 文件在磁盘已不存在 → 404）。

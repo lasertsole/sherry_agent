@@ -11,7 +11,7 @@ def _migrate(db: sqlite3.Connection) -> None:
     cur = db.execute("SELECT MAX(v) as v FROM _migrations").fetchone()[0]
     if cur is None:
         cur = 0
-    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb, add_images_column]
+    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb, add_images_column, add_audio_video_columns]
     for i in range(cur, len(steps)):
         steps[i](db)
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
@@ -55,7 +55,9 @@ def build_messages_tb(db: sqlite3.Connection) -> None:
         finish_reason TEXT,
         reasoning TEXT,
         reasoning_content TEXT,
-        images TEXT
+        images TEXT,
+        audios TEXT,
+        videos TEXT
     );
     
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp);
@@ -70,6 +72,25 @@ def add_images_column(db: sqlite3.Connection) -> None:
     """
     try:
         db.execute("ALTER TABLE messages ADD COLUMN images TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
+
+def add_audio_video_columns(db: sqlite3.Connection) -> None:
+    """Add `audios` and `videos` columns to the messages table.
+
+    Both are JSON-encoded lists (base64 for user messages, persistent file
+    paths for AI messages), mirroring the existing `images` column. This is a
+    one-time additive migration for databases created before these columns
+    existed; try/except ignores the error raised when they already present.
+    """
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN audios TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN videos TEXT")
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass

@@ -27,6 +27,8 @@ export interface CachedMessage {
   /** 图片数组（与后端消息行一致，历史接口已把 JSON 解析为数组）�?
    *  用户消息�?base64（无 data: 前缀），AI 消息为持久化后的绝对文件路径�?*/
   images: string[] | null;
+  audios: string[] | null;
+  videos: string[] | null;
   tool_call_id: string | null;
   tool_calls: string | null;
   tool_status: string | null;

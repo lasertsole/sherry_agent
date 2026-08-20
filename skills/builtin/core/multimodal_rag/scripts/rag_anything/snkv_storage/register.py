@@ -6,13 +6,21 @@ Usage (before creating any LightRAG instance):
     register()
 
     rag = LightRAG(
-        working_dir="./rag_storage",
+        working_dir="C:/absolute/path/to/rag/store",  # MUST be absolute (see note)
         kv_storage="SNKVKVStorage",
         vector_storage="SNKVVectorStorage",
         graph_storage="SNKVGraphStorage",
         doc_status_storage="SNKVDocStatusStorage",
         ...
     )
+
+.. note::
+   ``working_dir`` defaults to ``./rag_storage`` in lightrag and is resolved
+   relative to the **current working directory** — so a relative value (e.g.
+   ``./rag_storage``) scatters the RAG data into whatever directory the
+   process launches from. **Always pass an absolute path.** The production
+   entry points use ``SRC_DIR / "rag" / "store"`` (absolute) so the store
+   reliably lands under ``src/rag/store``.
 """
 from __future__ import annotations
 

@@ -6,13 +6,21 @@
     "send": "Send",
     "stop": "Stop",
     "maxImages": "You can upload at most {count} images",
-    "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit"
+    "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",
+    "maxAudios": "You can upload at most {count} audio files",
+    "maxAudiosExceed": "You can upload at most {count} audio files, {extra} over the limit",
+    "maxVideos": "You can upload at most {count} video files",
+    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
   },
   "chatBox": {
     "defaultUserName": "Me",
     "defaultAiName": "Sherry",
     "imageLoadFailed": "Image load failed",
     "removeImage": "Remove image",
+    "audioLoadFailed": "Audio load failed",
+    "videoLoadFailed": "Video load failed",
+    "removeAudio": "Remove audio",
+    "removeVideo": "Remove video",
     "toolArgs": "Arguments",
     "toolResult": "Result",
     "toolNoOutput": "No output",
@@ -38,6 +46,10 @@
     "knowledgeBase": "Knowledge Base",
     "uploadImage": "Upload Image",
     "image": "Image",
+    "audio": "Audio",
+    "uploadAudio": "Upload Audio",
+    "video": "Video",
+    "uploadVideo": "Upload Video",
     "skills": "Skills",
     "knowledgeGraph": "Knowledge Graph",
     "systemConfig": "System Config",
@@ -49,7 +61,11 @@
   },
   "knowledgeGraph": {
     "back": "Back",
-    "placeholder": "Knowledge Graph feature under development…"
+    "placeholder": "Knowledge Graph feature under development…",
+    "loading": "Loading…",
+    "empty": "No knowledge graph data",
+    "loadError": "Failed to load",
+    "refresh": "Refresh"
   },
   "skills": {
     "title": "Skill Manager",

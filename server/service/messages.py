@@ -169,8 +169,14 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
         f"Building agent: session_id={session_id}"
     )
 
-    # Create the agent
-    agent = await built_agent()
+    # Rebuild the agent every turn with a FRESH main_llm -> httpx transport
+    # pool. Reusing a long-lived pooled connection across WS turns goes stale
+    # (DeepSeek's edge reaps an idle keep-alive connection ~15-17s) and the next
+    # streaming POST dies mid-request as openai.APITimeoutError. Provably: the
+    # same large payload streams in 8.0s on a fresh client but dies at ~16.78s on
+    # the cached pool. The SQLite checkpointer persists session state
+    # independently of the graph object, so this rebuild is safe.
+    agent = await built_agent(force_rebuild=True)
 
     # Prepare the content_list
     content_list:list[dict[str, str]] = _get_content_list(multi_modal_message)
@@ -395,6 +401,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                 await generator.aclose()
             except Exception:
                 pass  # GeneratorExit is expected and harmless
+        # There is no pool to "release" here: the stale keep-alive connection
+        # (which dies mid-request as openai.APITimeoutError) is handled by
+        # rebuilding the graph with a FRESH main_llm -> httpx client at the START
+        # of each turn (see the built_agent(force_rebuild=True) call above).
+        # Closing the embedded AsyncOpenAI here would permanently kill it
+        # ("Cannot send a request, as the client has been closed"), so we never
+        # close it mid-lifecycle.
         # Reset tool tracking state
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
@@ -480,7 +493,7 @@ async def resume_agent(
         f"Agent resume started: session_id={session_id}, decision={decision}"
     )
 
-    agent = await built_agent()
+    agent = await built_agent(force_rebuild=True)
     config = build_agent_config(session_id)
 
     # Inject session_id into the resume value. On a normal turn it arrives via the
@@ -602,6 +615,11 @@ async def resume_agent(
         logger.exception(e)
         raise e
     finally:
+        # No pool-close here: closing the embedded AsyncOpenAI permanently kills
+        # it ("Cannot send a request, as the client has been closed"). The stale
+        # keep-alive connection problem is prevented by rebuilding the graph with
+        # a fresh main_llm -> httpx client at the start of each turn via
+        # built_agent(force_rebuild=True).
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)

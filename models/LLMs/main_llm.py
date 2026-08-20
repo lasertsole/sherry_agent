@@ -31,6 +31,8 @@ model_config:dict[str, Any] = {
     "base_url": api_base,
     "temperature": 0,
     "max_retries": 2,
+    "timeout": 120,              # Explicit bounded window for each LLM request (seconds)
+    "stream_chunk_timeout": 60,  # Max idle gap between streamed chunks before aborting
     "profile": {"max_input_tokens": max_tokens},  # Set model context window size
 }
 if enable_thinking:
