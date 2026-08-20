@@ -67,9 +67,14 @@ def _infer_extension(data: bytes, kind: str) -> str:
 
 
 def _download_url_to_temp(url: str, session_id: str, kind: str) -> str | None:
-    """Download a media URL to a local temp file under the session folder.
+    """Download a media URL into the session folder, persisting a durable copy.
 
-    Returns the absolute file path (posix-style) on success, or None on failure.
+    Writes two copies so the media stays reachable after mutil_temp is
+    garbage-collected:
+      - <SRC_DIR>/<session_id>/mutil_temp/<ts><ext>   (short-lived, skills read)
+      - <SRC_DIR>/<session_id>/media/<ts><ext>        (durable, /media endpoint)
+
+    Returns the persistent media/ path (posix-style) on success, or None on failure.
     """
     try:
         req = urllib.request.Request(
@@ -81,14 +86,24 @@ def _download_url_to_temp(url: str, session_id: str, kind: str) -> str | None:
             logger.error(f"Media download returned empty body: {url}")
             return None
 
+        ext = _infer_extension(data, kind)
+        timestamp = str(int(time.time() * 1000))
+
         temp_dir = SRC_DIR / session_id / "mutil_temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        ext = _infer_extension(data, kind)
-        temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
-        temp_path = temp_path.resolve()
+        temp_path = (temp_dir / f"{timestamp}{ext}").resolve()
         temp_path.write_bytes(data)
-        logger.debug(f"Media downloaded from URL: {url} -> {temp_path.as_posix()} (extension={ext})")
-        return temp_path.as_posix()
+
+        media_dir = SRC_DIR / session_id / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        media_path = (media_dir / f"{timestamp}{ext}").resolve()
+        media_path.write_bytes(data)
+
+        logger.debug(
+            f"Media downloaded from URL: {url} -> {media_path.as_posix()} "
+            f"(temp={temp_path.as_posix()}, extension={ext})"
+        )
+        return media_path.as_posix()
     except Exception as e:
         logger.error(f"Media download failed for {url}: {e}")
         return None
@@ -234,11 +249,18 @@ class MultimodalProcessor(AgentMiddleware):
                     temp_dir = SRC_DIR / session_id / "mutil_temp"
                     temp_dir.mkdir(parents=True, exist_ok=True)
                     ext = _infer_extension(media_bytes, "audio")
-                    temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
-                    temp_path = temp_path.resolve()
+                    timestamp = str(int(time.time() * 1000))
+                    temp_path = (temp_dir / f"{timestamp}{ext}").resolve()
                     temp_path.write_bytes(media_bytes)
-                    logger.debug(f"Audio cached successfully! (extension={ext})")
-                    audio_path_list.append(temp_path.as_posix())
+                    # Persist a durable copy into the session's media/ folder so the
+                    # audio survives mutil_temp garbage-collection and can be served
+                    # by the /media endpoint (consistent with the image branch).
+                    media_dir = SRC_DIR / session_id / "media"
+                    media_dir.mkdir(parents=True, exist_ok=True)
+                    media_path = (media_dir / f"{timestamp}{ext}").resolve()
+                    media_path.write_bytes(media_bytes)
+                    logger.debug(f"Audio cached successfully! (temp={temp_path.as_posix()}, persistent={media_path.as_posix()}, extension={ext})")
+                    audio_path_list.append(media_path.as_posix())
 
                 elif item.get("type") == "video_url":
                     url: str = item.get("video_url", {}).get("url", "")
@@ -257,11 +279,18 @@ class MultimodalProcessor(AgentMiddleware):
                     temp_dir = SRC_DIR / session_id / "mutil_temp"
                     temp_dir.mkdir(parents=True, exist_ok=True)
                     ext = _infer_extension(media_bytes, "video")
-                    temp_path = temp_dir / f"{str(int(time.time() * 1000))}{ext}"
-                    temp_path = temp_path.resolve()
+                    timestamp = str(int(time.time() * 1000))
+                    temp_path = (temp_dir / f"{timestamp}{ext}").resolve()
                     temp_path.write_bytes(media_bytes)
-                    logger.debug(f"Video cached successfully! (extension={ext})")
-                    video_path_list.append(temp_path.as_posix())
+                    # Persist a durable copy into the session's media/ folder so the
+                    # video survives mutil_temp garbage-collection and can be served
+                    # by the /media endpoint (consistent with the image branch).
+                    media_dir = SRC_DIR / session_id / "media"
+                    media_dir.mkdir(parents=True, exist_ok=True)
+                    media_path = (media_dir / f"{timestamp}{ext}").resolve()
+                    media_path.write_bytes(media_bytes)
+                    logger.debug(f"Video cached successfully! (temp={temp_path.as_posix()}, persistent={media_path.as_posix()}, extension={ext})")
+                    video_path_list.append(media_path.as_posix())
 
         if text_dict is None:
             text_dict = {"type": "text", "text": ""}

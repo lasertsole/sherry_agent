@@ -2,7 +2,7 @@
 import json
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-from typing import Optional, Type, override
+from typing import Type, override
 from agent.tools.pub_base import resolve_path
 from langchain_core.callbacks import CallbackManagerForToolRun
 
@@ -114,7 +114,7 @@ class ReadFileTool(BaseTool):
         file_path: str,
         offset: int = 1,
         limit: int = 500,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return self._core(file_path, offset, limit)
 
@@ -124,7 +124,7 @@ class ReadFileTool(BaseTool):
         file_path: str,
         offset: int = 1,
         limit: int = 500,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return self._core(file_path, offset, limit)
 

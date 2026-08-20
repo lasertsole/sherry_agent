@@ -1,6 +1,6 @@
 """write file tool with project root restriction and autopep8 formatting for .py files."""
 import asyncio
-from typing import Optional, override
+from typing import override
 from pathlib import Path
 from config import ROOT_DIR
 
@@ -51,7 +51,7 @@ class FormattedWriteFileTool(WriteFileTool):
         file_path: str,
         text: str,
         append: bool = False,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return self._core(file_path, text, append)
 
@@ -61,7 +61,7 @@ class FormattedWriteFileTool(WriteFileTool):
         file_path: str,
         text: str,
         append: bool = False,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return await asyncio.to_thread(self._core, file_path, text, append)
 

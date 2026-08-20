@@ -53,6 +53,7 @@
     "skills": "Skills",
     "knowledgeGraph": "Knowledge Graph",
     "systemConfig": "System Config",
+    "persona": "AI Persona",
     "logs": "Logs",
     "extend": "Extend",
     "settingsMenu": "Menu",
@@ -170,6 +171,9 @@
   },
   "config": {
     "title": "System Config",
+    "persona": {
+      "title": "AI Persona"
+    },
     "save": "Save",
     "cancel": "Cancel",
     "uploadAvatar": "Upload Avatar",
@@ -215,7 +219,9 @@
       "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
       "opacity": "Overlay Strength",
       "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
-      "cropTitle": "Crop Background"
+      "cropTitle": "Crop Background",
+      "current": "Background image set",
+      "noFileChosen": "Select an image file"
     }
   }
 }

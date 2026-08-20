@@ -1,25 +1,24 @@
 import re
 import json
-from typing import Any, Dict, List, Optional, Set
-
+from typing import Any
 from context_engine.curator.helpers import _needle_in_path_component
 
 
 def _classify_removed_skills(
-    removed: List[str],
-    added: List[str],
-    after_names: Set[str],
-    tool_calls: List[Dict[str, Any]],
-) -> Dict[str, List[Dict[str, Any]]]:
-    consolidated: List[Dict[str, Any]] = []
-    pruned: List[Dict[str, Any]] = []
+    removed: list[str],
+    added: list[str],
+    after_names: set[str],
+    tool_calls: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    consolidated: list[dict[str, Any]] = []
+    pruned: list[dict[str, Any]] = []
 
-    parsed_calls: List[Dict[str, Any]] = []
+    parsed_calls: list[dict[str, Any]] = []
     for tc in tool_calls or []:
         if not isinstance(tc, dict) or tc.get("name") != "skill_manage":
             continue
         raw = tc.get("arguments") or ""
-        args: Dict[str, Any] = {}
+        args: dict[str, Any] = {}
         if isinstance(raw, dict):
             args = raw
         elif isinstance(raw, str):
@@ -35,8 +34,8 @@ def _classify_removed_skills(
     for name in removed:
         if not name:
             continue
-        into: Optional[str] = None
-        evidence: Optional[str] = None
+        into: str | None = None
+        evidence: str | None = None
         needles = {name, name.replace("-", "_"), name.replace("_", "-")}
 
         for args in parsed_calls:
@@ -45,7 +44,7 @@ def _classify_removed_skills(
                 continue
             if target not in destinations:
                 continue
-            haystacks: List[tuple[str, str]] = []
+            haystacks: list[tuple[str, str]] = []
             for key in ("file_path", "file_content", "content", "new_string", "_raw"):
                 v = args.get(key)
                 if isinstance(v, str):
@@ -77,8 +76,8 @@ def _classify_removed_skills(
     return {"consolidated": consolidated, "pruned": pruned}
 
 
-def _parse_structured_summary(llm_final: str) -> Dict[str, List[Dict[str, str]]]:
-    empty: Dict[str, List[Dict[str, str]]] = {"consolidations": [], "prunings": []}
+def _parse_structured_summary(llm_final: str) -> dict[str, list[dict[str, str]]]:
+    empty: dict[str, list[dict[str, str]]] = {"consolidations": [], "prunings": []}
     if not llm_final or not isinstance(llm_final, str):
         return empty
     match = re.search(r"```ya?ml\s*\n(.*?)\n```", llm_final, re.DOTALL | re.IGNORECASE)
@@ -92,7 +91,7 @@ def _parse_structured_summary(llm_final: str) -> Dict[str, List[Dict[str, str]]]
     if not isinstance(data, dict):
         return empty
 
-    out: Dict[str, List[Dict[str, str]]] = {"consolidations": [], "prunings": []}
+    out: dict[str, list[dict[str, str]]] = {"consolidations": [], "prunings": []}
     for entry in data.get("consolidations") or []:
         if not isinstance(entry, dict):
             continue
@@ -110,13 +109,13 @@ def _parse_structured_summary(llm_final: str) -> Dict[str, List[Dict[str, str]]]
     return out
 
 
-def _extract_absorbed_into_declarations(tool_calls: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    out: Dict[str, Dict[str, Any]] = {}
+def _extract_absorbed_into_declarations(tool_calls: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
     for tc in tool_calls or []:
         if not isinstance(tc, dict) or tc.get("name") != "skill_manage":
             continue
         raw = tc.get("arguments") or ""
-        args: Dict[str, Any] = {}
+        args: dict[str, Any] = {}
         if isinstance(raw, dict):
             args = raw
         elif isinstance(raw, str):
@@ -137,19 +136,19 @@ def _extract_absorbed_into_declarations(tool_calls: List[Dict[str, Any]]) -> Dic
 
 
 def _reconcile_classification(
-    removed: List[str],
-    heuristic: Dict[str, List[Dict[str, Any]]],
-    model_block: Dict[str, List[Dict[str, str]]],
-    destinations: Set[str],
-    absorbed_declarations: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, List[Dict[str, Any]]]:
+    removed: list[str],
+    heuristic: dict[str, list[dict[str, Any]]],
+    model_block: dict[str, list[dict[str, str]]],
+    destinations: set[str],
+    absorbed_declarations: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     heur_cons = {e["name"]: e for e in heuristic.get("consolidated", [])}
     model_cons = {e["from"]: e for e in model_block.get("consolidations", [])}
     model_pruned = {e["name"]: e for e in model_block.get("prunings", [])}
     declared = absorbed_declarations or {}
 
-    consolidated: List[Dict[str, Any]] = []
-    pruned: List[Dict[str, Any]] = []
+    consolidated: list[dict[str, Any]] = []
+    pruned: list[dict[str, Any]] = []
 
     for name in removed:
         mc = model_cons.get(name)
@@ -160,7 +159,7 @@ def _reconcile_classification(
         if dec is not None:
             into_claim = dec.get("into", "")
             if into_claim and into_claim in destinations:
-                entry: Dict[str, Any] = {"name": name, "into": into_claim, "source": "absorbed_into (model-declared at delete)", "reason": (mc.get("reason") or "") if mc else ""}
+                entry: dict[str, Any] = {"name": name, "into": into_claim, "source": "absorbed_into (model-declared at delete)", "reason": (mc.get("reason") or "") if mc else ""}
                 if hc and hc.get("evidence"):
                     entry["evidence"] = hc["evidence"]
                 consolidated.append(entry)

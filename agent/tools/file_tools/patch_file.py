@@ -10,11 +10,10 @@ actual indentation pattern.
 """
 import json
 import difflib
+from typing import Type, override
 from difflib import SequenceMatcher
-from langchain_core.tools import BaseTool
-from typing import Optional, Type, override
 from pydantic import BaseModel, Field
-from langchain_core.callbacks import CallbackManagerForToolRun
+from langchain_core.tools import BaseTool
 from agent.tools.pub_base import resolve_path, fuzzy_find_and_replace
 
 # ── Diff helper ──────────────────────────────────────────────────────────
@@ -152,7 +151,6 @@ class PatchFileTool(BaseTool):
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         return self._core(file_path, old_string, new_string, replace_all)
 
@@ -163,7 +161,6 @@ class PatchFileTool(BaseTool):
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         return self._core(file_path, old_string, new_string, replace_all)
 

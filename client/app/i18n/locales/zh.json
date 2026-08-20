@@ -53,6 +53,7 @@
     "skills": "技能",
     "knowledgeGraph": "知识图谱",
     "systemConfig": "系统配置",
+    "persona": "AI人格",
     "logs": "日志",
     "extend": "扩展",
     "settingsMenu": "菜单",
@@ -170,6 +171,9 @@
   },
   "config": {
     "title": "系统配置",
+    "persona": {
+      "title": "AI人格"
+    },
     "save": "保存",
     "cancel": "取消",
     "uploadAvatar": "上传头像",
@@ -215,7 +219,9 @@
       "bothThemes": "背景图片在浅色/深色主题下均会显示；通过下方滑块调整遮罩强度。",
       "opacity": "遮罩强度",
       "opacityHint": "浅色主题叠加白色遮罩、深色主题叠加黑色遮罩：越靠右照片越被冲淡成纯白/纯黑，直至完全遮蔽。",
-      "cropTitle": "裁剪背景"
+      "cropTitle": "裁剪背景",
+      "current": "已设置背景图",
+      "noFileChosen": "可选择新图片文件"
     }
   }
 }

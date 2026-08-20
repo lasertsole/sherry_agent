@@ -40,6 +40,7 @@
     "skills": "スキル",
     "knowledgeGraph": "ナレッジグラフ",
     "systemConfig": "システム設定",
+    "persona": "AI人格",
     "logs": "ログ",
     "extend": "拡張",
     "settingsMenu": "メニュー",
@@ -152,6 +153,9 @@
   },
   "config": {
     "title": "システム設定",
+    "persona": {
+      "title": "AI人格"
+    },
     "save": "保存",
     "cancel": "キャンセル",
     "uploadAvatar": "アバターをアップロード",
@@ -189,7 +193,9 @@
       "bothThemes": "背景画像はライト/ダークテーマの両方で表示されます。下のスライダーでオーバーレイの強さを調整します。",
       "opacity": "オーバーレイの強さ",
       "opacityHint": "ライトテーマでは白、ダークテーマでは黒のオーバーレイを重ねます。右に行くほど写真が真っ白/真っ黒に薄れ、完全に覆われます。",
-      "cropTitle": "背景をトリミング"
+      "cropTitle": "背景をトリミング",
+      "current": "背景画像が設定されています",
+      "noFileChosen": "画像ファイルを選択"
     }
   }
 }

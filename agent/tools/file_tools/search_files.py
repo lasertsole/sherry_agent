@@ -11,7 +11,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Optional, Type, override
+from typing import Type, override
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -207,7 +207,7 @@ class SearchFilesTool(BaseTool):
         limit: int = 50,
         offset: int = 0,
         context: int = 0,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return self._core(pattern, target, path, file_glob, limit, offset, context)
 
@@ -221,7 +221,7 @@ class SearchFilesTool(BaseTool):
         limit: int = 50,
         offset: int = 0,
         context: int = 0,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return self._core(pattern, target, path, file_glob, limit, offset, context)
 

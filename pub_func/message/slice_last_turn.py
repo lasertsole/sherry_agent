@@ -1,11 +1,11 @@
 import json
-from typing import List, TypedDict
+from typing import TypedDict
 from pub_func.message.estimate_msg_tokens import estimate_msg_tokens
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage
 
 
 class SliceLastNTurn(TypedDict):
-    messages: List[BaseMessage]
+    messages: list[BaseMessage]
     tokens: int
     dropped: int
 
@@ -36,7 +36,7 @@ def _truncate_msg(msg: BaseMessage)-> BaseMessage:
     return msg.model_copy(deep=True, update={"content": truncated_text})
 
 # ─── Take the last complete user turn ────────────────────────
-def slice_last_turn(messages: List[BaseMessage]) -> SliceLastNTurn:
+def slice_last_turn(messages: list[BaseMessage]) -> SliceLastNTurn:
     """
         From the last role=user to the end, kept intact.
         tool_use/tool_result pairs are naturally preserved.
@@ -44,7 +44,7 @@ def slice_last_turn(messages: List[BaseMessage]) -> SliceLastNTurn:
     """
     return slice_last_n_turn(messages, 1)
 
-def slice_last_n_turn(messages: List[BaseMessage], n: int)-> SliceLastNTurn:
+def slice_last_n_turn(messages: list[BaseMessage], n: int)-> SliceLastNTurn:
     if messages is None or len(messages)==0:
         return { "messages": [], "tokens": 0, "dropped": 0 }
 
@@ -62,7 +62,7 @@ def slice_last_n_turn(messages: List[BaseMessage], n: int)-> SliceLastNTurn:
     if last_user_idx < 0:
         last_user_idx = 0
 
-    kept: List[BaseMessage] = messages[last_user_idx:]
+    kept: list[BaseMessage] = messages[last_user_idx:]
     dropped = last_user_idx
 
     kept = [_truncate_msg(msg) for msg in kept]

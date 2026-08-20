@@ -15,33 +15,6 @@
       </div>
       <template v-else>
         <TabView v-model:activeIndex="activeTab">
-          <TabPanel
-            v-for="tab in tabs"
-            :key="tab.file"
-            :header="t(tab.i18nKey)">
-            <div class="flex flex-col gap-2">
-              <div class="flex items-center justify-between">
-                <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(tab.i18nDescKey) }}</span>
-                <span
-                  :class="[
-                    'text-xs',
-                    (editContent[tab.file]?.length ?? 0) > MAX_CHARS
-                      ? 'text-red-500'
-                      : (editContent[tab.file]?.length ?? 0) > MAX_CHARS * 0.9
-                        ? 'text-orange-500'
-                        : 'text-gray-400'
-                  ]">
-                  {{ editContent[tab.file]?.length ?? 0 }} / {{ MAX_CHARS }}
-                </span>
-              </div>
-              <Textarea
-                v-model="editContent[tab.file]"
-                rows="12"
-                class="w-full font-mono text-sm"
-                :maxlength="MAX_CHARS"
-                style="height: 72vh; min-height: 72vh; max-height: 72vh; overflow: auto" />
-            </div>
-          </TabPanel>
           <TabPanel :header="t('config.tabs.character')">
             <div class="flex flex-col gap-5">
               <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
@@ -157,7 +130,15 @@
                   accept="image/*"
                   customUpload
                   :auto="false"
-                  @select="onBackgroundSelect" />
+                  @select="onBackgroundSelect">
+                  <!-- filelabel 默认在未选文件时显示浏览器原生 "No file chosen"，用本地化文案替代：
+                       已选文件 → 显示文件名；已设置背景 → 提示已有背景；否则 → 提示请选择图片 -->
+                  <template #filelabel="{ files }">
+                    <span class="text-xs text-gray-400">
+                      {{ fileLabelText(Array.isArray(files) ? files : []) }}
+                    </span>
+                  </template>
+                </FileUpload>
               </div>
 
               <!-- 遮罩透明度：浅色=白色遮罩 / 深色=黑色遮罩；越向左照片越清晰，越向右越被冲淡直至纯白/纯黑遮蔽 -->
@@ -213,7 +194,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { readSystemPrompt, writeSystemPrompt } from '@/composables/bridge';
 import {
   GLOBAL_SESSION_KEY,
   DEFAULT_CACHED_CHARACTER,
@@ -236,20 +216,9 @@ const visible = computed({
   set: v => emits('update:modelValue', v)
 });
 
-const MAX_CHARS = 2000;
-
-const tabs = [
-  { file: 'AGENTS.md', i18nKey: 'config.tabs.agents', i18nDescKey: 'config.desc.agents' },
-  { file: 'IDENTITY.md', i18nKey: 'config.tabs.identity', i18nDescKey: 'config.desc.identity' },
-  { file: 'SOUL.md', i18nKey: 'config.tabs.soul', i18nDescKey: 'config.desc.soul' },
-  { file: 'USER.md', i18nKey: 'config.tabs.user', i18nDescKey: 'config.desc.user' }
-] as const;
-
 const activeTab = ref(0);
 const loading = ref(false);
 const saving = ref(false);
-const editContent = ref<Record<string, string>>({});
-const originalContent = ref<Record<string, string>>({});
 
 // ── 角色配置状态 ─────────────────────────────────────────
 // 角色头像/名字完全由前端本地保存：写入 Dexie 的全局待定 profile（GLOBAL_SESSION_KEY 行）。
@@ -285,11 +254,13 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 
 const canSave = computed(() => {
   if (loading.value || saving.value) return false;
-  const promptsValid = tabs.every(
-    tab => (editContent.value[tab.file]?.length ?? 0) <= MAX_CHARS && (editContent.value[tab.file]?.length ?? 0) > 0
-  );
-  const charValid = charUser.value.name.trim().length > 0 && charAssistant.value.name.trim().length > 0;
-  return promptsValid && charValid;
+  // 0: 角色配置；1: 背景
+  if (activeTab.value === 0) {
+    // 角色配置 Tab：两个角色名须非空
+    return charUser.value.name.trim().length > 0 && charAssistant.value.name.trim().length > 0;
+  }
+  // 背景 Tab：无需额外校验（角色名与背景无关，改动是独立保存的）
+  return true;
 });
 
 // ── 图片裁剪处理（复用 AvatarCropDialog：头像 1:1，背景适配电脑屏幕） ──
@@ -412,17 +383,20 @@ const onBackgroundSelect = (event: { files: File[] }) => {
   openCrop('background', file);
 };
 
+/**
+ * 背景 FileUpload 的本地化文案（`#filelabel` slot，替代浏览器原生 "No file chosen"）：
+ * 已选文件 → 显示文件名；已设置背景 → 提示已有背景；否则 → 提示可上传新背景。
+ */
+const fileLabelText = (files: File[]): string => {
+  if (files.length > 0) return files[0].name;
+  if (backgroundUrl.value) return t('config.background.current');
+  return t('config.background.noFileChosen');
+};
+
 const loadContent = async () => {
   loading.value = true;
   try {
-    const [promptData, charData] = await Promise.all([readSystemPrompt(), readCachedCharacter(GLOBAL_SESSION_KEY)]);
-
-    const content: Record<string, string> = {};
-    for (const tab of tabs) {
-      content[tab.file] = promptData[tab.file] ?? '';
-    }
-    editContent.value = { ...content };
-    originalContent.value = { ...content };
+    const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
 
     // 从本地 Dexie 全局 profile 读取角色配置（无记录时回退到内置默认值：远野汉娜/橘雪莉 + 默认头像）
     charUser.value = {
@@ -453,17 +427,6 @@ const loadContent = async () => {
 const handleSave = async () => {
   saving.value = true;
   try {
-    const fileToContent: Record<string, string> = {};
-    for (const tab of tabs) {
-      const content = editContent.value[tab.file] ?? '';
-      if (content !== (originalContent.value[tab.file] ?? '')) {
-        fileToContent[tab.file] = content;
-      }
-    }
-    if (Object.keys(fileToContent).length > 0) {
-      await writeSystemPrompt(fileToContent);
-    }
-
     // 角色配置：仅当 name 或 avatar 有变更时，把变更写入本地 Dexie 全局 profile。
     // 该写入只影响全局 profile，不触碰各会话已锁定的快照 → 只影响新会话。
     const userChanged =
