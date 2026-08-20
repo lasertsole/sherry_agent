@@ -16,6 +16,6 @@ DEFAULT_CONSOLIDATE = False
 
 # UI-configurable auto-maintenance interval override (in days). The client allows
 # only 1..5 days; anything outside this range is rejected and the file-based
-# `interval_hours` (default 7 days) is used.
+# `interval_hours` (default 5 days) is used.
 DEFAULT_INTERVAL_OVERRIDE_MIN_DAYS = 1
 DEFAULT_INTERVAL_OVERRIDE_MAX_DAYS = 5

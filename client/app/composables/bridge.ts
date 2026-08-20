@@ -1043,7 +1043,7 @@ export async function getCuratorSettings(): Promise<CuratorSettings> {
 /**
  * Override the curator auto-maintenance interval.
  *
- * @param days Days between auto-maintenance runs (1-7), or null to use the curator.yaml default.
+ * @param days Days between auto-maintenance runs (1-5), or null to use the curator.yaml default.
  * @returns `{ success, auto_interval_days, interval_hours, last_maintenance_at }`.
  */
 export async function setCuratorSettings(days: number | null): Promise<CuratorSettingsUpdateResponse> {

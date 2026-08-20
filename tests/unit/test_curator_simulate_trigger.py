@@ -50,10 +50,10 @@ def isolated_state(tmp_path):
 
 @pytest.fixture
 def with_elapsed_interval(isolated_state):
-    """Seed state so the time gate has elapsed (last run 8 days ago; default 168h).
+    """Seed state so the time gate has elapsed (last run 8 days ago; default 120h).
 
     ``maybe_run_curator`` uses the real clock for ``should_run_now()`` (it cannot
-    inject ``now``), so we back-date ``last_run_at`` below the default 7-day
+    inject ``now``), so we back-date ``last_run_at`` below the default 5-day
     interval. Mimics ``test_should_run_over_interval_runs``.
     """
     now = datetime.now(timezone.utc)

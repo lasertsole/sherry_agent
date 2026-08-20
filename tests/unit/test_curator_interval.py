@@ -137,7 +137,7 @@ def test_invalid_types_reset_to_none(isolated_state):
 # --- effective interval hours ------------------------------------------------
 
 def test_effective_hours_uses_override(isolated_state):
-    """A valid override (2d) overrides the default 7d/168h."""
+    """A valid override (2d) overrides the default 5d/120h."""
     set_interval_override_days(2)
     assert get_effective_interval_hours() == 48
 
@@ -165,14 +165,14 @@ def test_should_run_missing_last_run_runs(isolated_state):
 def test_should_run_within_interval_no_run(isolated_state):
     """Now is less than the effective interval since last run -> no trigger."""
     now = datetime.now(timezone.utc)
-    curator_state.save_state({"last_run_at": (now - timedelta(hours=24)).isoformat()})  # default 168h
+    curator_state.save_state({"last_run_at": (now - timedelta(hours=24)).isoformat()})  # default 120h
     assert should_run_now(now=now) is False
 
 
 def test_should_run_over_interval_runs(isolated_state):
     """Now exceeds the effective (default) interval -> trigger."""
     now = datetime.now(timezone.utc)
-    curator_state.save_state({"last_run_at": (now - timedelta(days=8)).isoformat()})  # > 7 days
+    curator_state.save_state({"last_run_at": (now - timedelta(days=8)).isoformat()})  # > 5 days
     assert should_run_now(now=now) is True
 
 

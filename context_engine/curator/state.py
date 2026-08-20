@@ -14,8 +14,8 @@ def _default_state() -> dict[str, Any]:
         "last_report_path": None,
         "paused": False,
         "run_count": 0,
-        # UI-configurable auto-maintenance interval (days, 1..7). None = fall
-        # back to `curator.yaml`'s `interval_hours` (default 7 days).
+        # UI-configurable auto-maintenance interval (days, 1..5). None = fall
+        # back to `curator.yaml`'s `interval_hours` (default 5 days).
         "auto_interval_days": None,
         # ISO timestamp of the last maintenance run (manual or auto). Mirrors
         # `last_run_at` but is surfaced to the client as "last maintenance time".
