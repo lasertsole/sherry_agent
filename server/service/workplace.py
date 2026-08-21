@@ -1,3 +1,4 @@
+from config.path import resolve_workspace_template_dir
 from config import WORKSPACE_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
@@ -50,3 +51,20 @@ def update_system_prompt_file(file_to_content: dict[str, str])->None:
         existing[file_name] = content
 
     write_system_prompt_file(existing)
+
+def read_system_prompt_template(lang: str | None = None)-> dict[str, str]:
+    """Read system prompt template files for ``lang`` (default for the user's preferred language).
+
+    Reads the persona template files from ``workspace/template/<lang>/`` and returns a
+    ``file_name -> content`` map. Returns only files that exist in the resolved template dir.
+    """
+    template_dir = resolve_workspace_template_dir(lang)
+    file_to_content: dict[str, str] = {}
+
+    for file_name in ALL_SYSTEM_FILE_NAMES:
+        file_path = template_dir / file_name
+        if file_path.is_file():
+            with open(file_path, "r", encoding="utf-8") as file:
+                file_to_content[file_name] = file.read()
+
+    return file_to_content

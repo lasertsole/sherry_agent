@@ -34,6 +34,7 @@
     "batchDelete": "批量删除对话",
     "batchDeleteConfirm": "确定要批量删除选中的对话吗？此操作不可恢复。",
     "createdAt": "创建时间：{time}",
+    "dateFormat": "YYYY-MM-DD HH:mm",
     "editTitle": "修改标题",
     "deleteSession": "删除会话",
     "deleteConfirm": "确定要删除该会话吗？此操作不可恢复。",
@@ -56,6 +57,7 @@
     "stats": "统计",
     "systemConfig": "系统配置",
     "persona": "AI人格",
+    "memory": "记忆",
     "logs": "日志",
     "extend": "扩展",
     "settingsMenu": "菜单",
@@ -65,8 +67,16 @@
   "config": {
     "title": "系统配置",
     "persona": {
-      "title": "AI人格"
+      "title": "AI人格",
+      "restoreDefault": "恢复默认"
     },
+    "memory": {
+        "title": "记忆",
+        "addEntry": "添加条目",
+        "deleteEntry": "删除条目",
+        "empty": "暂无条目，请在下方添加。",
+        "effectiveHint": "提示：修改后仅在系统压缩或重启时生效。"
+      },
     "save": "保存",
     "cancel": "取消",
     "uploadAvatar": "上传头像",
@@ -75,13 +85,18 @@
       "identity": "身份信息",
       "soul": "人格灵魂",
       "user": "用户信息",
-      "character": "角色配置"
+      "character": "角色配置",
+      "env": "环境配置",
+      "memoryAgent": "记忆·Agent",
+      "memoryUser": "记忆·用户"
     },
     "desc": {
       "agents": "Agent核心规则：会话流程、安全、模块索引",
       "identity": "Agent身份：名字、emoji、头像",
       "soul": "Agent人格、语气、性格",
-      "user": "用户信息和偏好"
+      "user": "用户信息和偏好",
+      "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
+      "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）"
     },
     "language": {
       "zh": "简体中文",
@@ -95,7 +110,8 @@
       "userRole": "用户角色",
       "userName": "用户名称",
       "avatar": "头像",
-      "charNote": "修改头像与名字仅在新建会话后生效，旧会话不受影响。"
+      "charNote": "修改头像与名字仅在新建会话后生效，旧会话不受影响。",
+      "noFileChosen": "可选择新的头像图片"
     },
     "crop": {
       "title": "裁剪头像",
@@ -115,6 +131,17 @@
       "cropTitle": "裁剪背景",
       "current": "已设置背景图",
       "noFileChosen": "可选择新图片文件"
+    },
+    "env": {
+      "title": "环境配置",
+      "loadError": "环境配置加载失败，请检查后端服务是否已启动。",
+      "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
+      "saveSuccess": "环境配置已保存，重启后端服务后生效。",
+      "section": "分组",
+      "key": "Key",
+      "value": "值",
+      "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
+      "noEnvFile": "未找到 .env 文件。"
     }
   }
 }

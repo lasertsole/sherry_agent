@@ -401,7 +401,12 @@ Pinned skills enjoy the highest level of protection:
 - **Protection effect**: bypass all automatic transitions (stale/deletion are never triggered); `_pinned_guard()` blocks any delete or state change
 - **Guard behavior**: `set_state()`, `delete_skill()`, and `_remove_skill()` all check `_pinned_guard()` before proceeding — if pinned, the operation is rejected with a warning
 
-There are no public `pin_skill()` / `unpin_skill()` functions in the current implementation. Pinning is managed externally (by setting the `pinned` field in the usage record or creating a `.pinned` marker file).
+Public API:
+
+- `pin_skill(name) -> (bool, str)` — sets `pinned: True` in the usage record and persists it. The skill must already exist on disk under `skills/auto/`. Returns `(True, desc)` on success or `(False, error)` if the skill directory is missing.
+- `unpin_skill(name) -> (bool, str)` — clears the `pinned` flag in the usage record (if present) and removes any `.pinned` marker file from the skill directory. Nested skills under `skills/auto/<category>/<skill>/` are resolved via `_skill_dir`, mirroring `is_pinned`.
+
+Pinning can be managed through these public functions, through the HTTP API (`POST /skills/pin`), or externally by setting the `pinned` field in the usage record or creating a `.pinned` marker file.
 
 ---
 

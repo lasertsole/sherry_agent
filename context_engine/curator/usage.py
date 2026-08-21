@@ -110,6 +110,50 @@ def _pinned_guard(name: str) -> str | None:
     return None
 
 
+def pin_skill(name: str) -> tuple[bool, str]:
+    """Pin a skill so the curator never merges or removes it.
+
+    Pinning is recorded in the skill's usage record (``pinned: True``), which
+    ``is_pinned`` / ``_pinned_guard`` both honor. The skill must already exist
+    on disk under ``skills/auto/``.
+    """
+    sd = _skill_dir(name)
+    if sd is None:
+        return False, f"Skill directory not found: {name}"
+    rec = load_record(name)
+    rec["pinned"] = True
+    rec["_persisted"] = True
+    save_record(name, rec)
+    logger.info(f"Curator pinned skill: {name}")
+    return True, f"Pinned {name}"
+
+
+def unpin_skill(name: str) -> tuple[bool, str]:
+    """Unpin a skill, allowing the curator to merge or remove it again.
+
+    Clears the ``pinned`` flag in the skill's usage record (if present) and
+    removes any ``.pinned`` marker file inside the skill directory. Nested
+    skills under ``skills/auto/<category>/<skill>/`` are resolved via
+    ``_skill_dir``, mirroring ``is_pinned``.
+    """
+    sd = _skill_dir(name)
+    if sd is None:
+        return False, f"Skill directory not found: {name}"
+    rec = load_record(name)
+    if rec.get("pinned") or rec.get("_persisted"):
+        rec["pinned"] = False
+        rec["_persisted"] = True
+        save_record(name, rec)
+    marker = sd / PINNED_FILE
+    if marker.exists():
+        try:
+            marker.unlink()
+        except Exception as e:
+            return False, f"Failed to remove .pinned marker: {e}"
+    logger.info(f"Curator unpinned skill: {name}")
+    return True, f"Unpinned {name}"
+
+
 def _remove_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
     return delete_skill(name, absorbed_into=absorbed_into)
 

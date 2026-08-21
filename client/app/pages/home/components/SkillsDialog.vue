@@ -34,6 +34,8 @@
         "lastMaintenanceNone": "No maintenance performed yet",
         "loadSettings": "Load","pinned": "Pinned",
         "pinHint": "Pinned skills are excluded from curator merging/removal",
+        "pin": "Pin skill",
+        "unpin": "Unpin skill",
         "deleteTitle": "Delete skill",
         "deleteConfirm": "Are you sure you want to delete the skill \"{name}\"? This action cannot be undone.",
         "delete": "Delete",
@@ -77,6 +79,8 @@
         "lastMaintenanceNone": "まだスキルメンテナンスを実行していません",
         "loadSettings": "読み込み","pinned": "ピン留め",
         "pinHint": "ピン留めされたスキルは、キュレーターによる統合・削除の対象から除外されます",
+        "pin": "スキルをピン留め",
+        "unpin": "スキルのピン留めを解除",
         "deleteTitle": "スキルの削除",
         "deleteConfirm": "スキル「{name}」を削除しますか？この操作は元に戻せません。",
         "delete": "削除",
@@ -120,6 +124,8 @@
         "lastMaintenanceNone": "아직 스킬 유지보수를 실행하지 않았습니다",
         "loadSettings": "불러오기","pinned": "고정됨",
         "pinHint": "고정된 스킬은 큐레이터의 병합·삭제 대상에서 제외됩니다",
+        "pin": "스킬 고정",
+        "unpin": "스킬 고정 해제",
         "deleteTitle": "스킬 삭제",
         "deleteConfirm": "스킬 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
         "delete": "삭제",
@@ -163,6 +169,8 @@
         "lastMaintenanceNone": "尚未执行过技能维护",
         "loadSettings": "加载","pinned": "已固定",
         "pinHint": "已固定的技能将从技能维护的合并/移除中排除",
+        "pin": "固定技能",
+        "unpin": "取消固定技能",
         "deleteTitle": "删除技能",
         "deleteConfirm": "确定要删除技能“{name}”吗？此操作无法撤销。",
         "delete": "删除",
@@ -293,7 +301,7 @@
                 :class="[
                   'px-3 py-1.5 rounded-lg cursor-pointer text-xs leading-snug break-all border border-transparent',
                   selectedSkill?.location === skill.location
-                    ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-200 dark:border-primary-700'
+                    ? 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                     : 'hover:bg-gray-50 dark:hover:bg-gray-800'
                 ]"
                 @click="selectSkill(skill)"
@@ -313,6 +321,15 @@
                       size="small"
                       @update:model-value="toggleActive(skill as SkillInfo & { active?: boolean }, $event as boolean)" />
                     <template v-if="activeCategory === 'auto'">
+                      <Button
+                        v-tooltip.top="skill.pinned ? t('skills.tabs.unpin') : t('skills.tabs.pin')"
+                        :icon="skill.pinned ? 'pi pi-paperclip' : 'pi pi-paperclip'"
+                        :severity="skill.pinned ? 'warn' : 'secondary'"
+                        size="small"
+                        :data-testid="`pin-skill-${skill.name}`"
+                        class="p-button-icon-only"
+                        :aria-label="skill.pinned ? t('skills.tabs.unpin') : t('skills.tabs.pin')"
+                        @click.stop="togglePin(skill, !!skill.pinned)" />
                       <Button
                         v-tooltip.top="t('skills.tabs.delete')"
                         :disabled="!!skill.pinned"
@@ -366,7 +383,7 @@
                     :class="[
                       'text-xs',
                       selectedFile?.path === row.node.path
-                        ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-300'
+                        ? 'bg-gray-100 dark:bg-gray-700/50 text-gray-700 dark:text-gray-200'
                         : 'hover:bg-gray-100 dark:hover:bg-gray-700/50'
                     ]"
                     :style="{ paddingLeft: 4 + row.depth * 16 + 'px' }"
@@ -427,7 +444,7 @@
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
-import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings, deleteSkill } from '@/composables/bridge';
+import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings, deleteSkill, pinSkill } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -704,6 +721,24 @@ const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: bool
   } catch (e) {
     console.error('[SkillsDialog] Toggle failed:', e);
     skill.active = prev;
+    toggleError.value = t('skills.toggleFailed');
+  }
+};
+
+const togglePin = async (skill: SkillInfo, current: boolean) => {
+  const next = !current;
+  const prev = skill.pinned;
+  skill.pinned = next;
+  toggleError.value = '';
+  try {
+    const resp = await pinSkill(skill.name, next);
+    if (!resp.success) {
+      skill.pinned = prev;
+      toggleError.value = resp.message || t('skills.toggleFailed');
+    }
+  } catch (e) {
+    console.error('[SkillsDialog] Pin toggle failed:', e);
+    skill.pinned = prev;
     toggleError.value = t('skills.toggleFailed');
   }
 };

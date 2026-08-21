@@ -1,6 +1,6 @@
 from server.trigger.core import app
 from loguru import logger
-from server.service import (read_system_prompt_file, write_system_prompt_file, update_system_prompt_file)
+from server.service import (read_system_prompt_file, write_system_prompt_file, update_system_prompt_file, read_system_prompt_template)
 
 @app.get("/system_prompt")
 async def read_system_prompt_handler(request)-> dict[str, str]:
@@ -10,6 +10,19 @@ async def read_system_prompt_handler(request)-> dict[str, str]:
     logger.debug("Reading system prompt")
 
     return read_system_prompt_file()
+
+
+@app.get("/system_prompt/template")
+async def read_system_prompt_template_handler(request)-> dict[str, str]:
+    """
+    Read system prompt template files for a given language (default: user's preferred language).
+    """
+    query_params = request.query_params or {}
+    lang: str | None = query_params.get("lang", None)
+    lang = lang.strip().lower() if lang else None
+    logger.debug(f"Reading system prompt template: lang={lang}")
+
+    return read_system_prompt_template(lang)
 
 
 @app.put("/system_prompt")

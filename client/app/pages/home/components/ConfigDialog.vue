@@ -46,7 +46,15 @@
                       accept="image/*"
                       customUpload
                       :auto="false"
-                      @select="onAssistAvatarSelect" />
+                      @select="onAssistAvatarSelect">
+                      <!-- filelabel 默认在未选文件时显示浏览器原生 "No file chosen"，用本地化文案替代：
+                           已选文件 → 显示文件名；否则 → 提示可上传新头像 -->
+                      <template #filelabel="{ files }">
+                        <span class="text-xs text-gray-400">
+                          {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                        </span>
+                      </template>
+                    </FileUpload>
                   </div>
                 </div>
               </div>
@@ -80,7 +88,15 @@
                       accept="image/*"
                       customUpload
                       :auto="false"
-                      @select="onUserAvatarSelect" />
+                      @select="onUserAvatarSelect">
+                      <!-- filelabel 默认在未选文件时显示浏览器原生 "No file chosen"，用本地化文案替代：
+                           已选文件 → 显示文件名；否则 → 提示可上传新头像 -->
+                      <template #filelabel="{ files }">
+                        <span class="text-xs text-gray-400">
+                          {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                        </span>
+                      </template>
+                    </FileUpload>
                   </div>
                 </div>
               </div>
@@ -161,6 +177,49 @@
               </div>
             </div>
           </TabPanel>
+
+          <!-- 环境配置 Tab：读取/编辑项目根目录 .env，按前缀分组，仅允许修改已存在的 key
+               加载由下方 setup 作用域 watch 驱动（@show 是事件上下文，getCurrentInstance() 为 null，
+               Nuxt useFetch 不会真正发请求） -->
+          <TabPanel :header="t('config.tabs.env')">
+            <div class="flex flex-col gap-4">
+              <p
+                class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.env.restartHint') }}
+              </p>
+
+              <div v-if="envLoadError" class="flex">
+                <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
+              </div>
+
+              <template v-else-if="envGroups.length === 0">
+                <p class="m-0 text-sm text-gray-400">{{ t('config.env.noEnvFile') }}</p>
+              </template>
+
+              <template v-else>
+                <div
+                  v-for="group in envGroups"
+                  :key="group.name"
+                  class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+                  <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    {{ group.name }}
+                  </p>
+                  <div
+                    v-for="entry in group.entries"
+                    :key="entry.key"
+                    class="flex flex-col gap-1">
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                    <InputText
+                      v-model="entry.value"
+                      :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
+                      class="w-full font-mono text-xs"
+                      autocomplete="off"
+                      spellcheck="false" />
+                  </div>
+                </div>
+              </template>
+            </div>
+          </TabPanel>
         </TabView>
       </template>
     </div>
@@ -192,7 +251,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   GLOBAL_SESSION_KEY,
@@ -202,6 +261,8 @@ import {
   readBackgroundConfig
 } from '@/composables/db';
 import AvatarCropDialog from './AvatarCropDialog.vue';
+import type { EnvGroup } from '@/composables/env';
+import { readEnvConfig, writeEnvConfig } from '@/composables/env';
 
 /** 全局聊天区背景单例：setBackground 同步更新响应式状态并持久化，保存后立即生效 */
 const { backgroundOpacity, setBackground } = useChatBackground();
@@ -219,6 +280,84 @@ const visible = computed({
 const activeTab = ref(0);
 const loading = ref(false);
 const saving = ref(false);
+
+// ── 环境配置状态（.env）──────────────────────────────────
+// 仅加载时快照一次；编辑直接改 envGroups 内 entry.value，保存时与快照 diff 出变更写回后端。
+const envGroups = ref<EnvGroup[]>([]);
+const originalEnvValues = ref<Record<string, string>>({});
+const envLoadError = ref('');
+
+/** 是否已加载过环境配置（避免重复 GET） */
+const envLoaded = ref(false);
+
+/** 计算是否有环境配置变更（用于 canSave 与保存判断） */
+const envHasChanges = computed(() =>
+  envGroups.value.some(group =>
+    group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key])
+  )
+);
+
+/** 打开环境 Tab 时懒加载 .env 配置（后端 /env GET） */
+const loadEnvConfig = async () => {
+  if (envLoaded.value) return;
+  envLoaded.value = true;
+  envLoadError.value = '';
+  try {
+    const payload = await readEnvConfig();
+    envGroups.value = payload.groups || [];
+    const snap: Record<string, string> = {};
+    for (const g of envGroups.value) {
+      for (const e of g.entries) snap[e.key] = e.value;
+    }
+    originalEnvValues.value = snap;
+  } catch (e) {
+    console.error('[ConfigDialog] Failed to load env config:', e);
+    envLoadError.value = t('config.env.loadError');
+    envLoaded.value = false;
+  }
+};
+
+/** 将环境变更写回后端（.env PUT），成功返回 true */
+const persistEnvChanges = async (): Promise<boolean> => {
+  const changes: Record<string, string> = {};
+  for (const g of envGroups.value) {
+    for (const e of g.entries) {
+      if (e.value !== originalEnvValues.value[e.key]) changes[e.key] = e.value;
+    }
+  }
+  if (Object.keys(changes).length === 0) return true;
+  const ok = await writeEnvConfig(changes);
+  if (ok) {
+    // 同步快照，作为下次 diff 基线
+    for (const g of envGroups.value) {
+      for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
+    }
+  }
+  return ok;
+};
+
+/** 每次对话框隐藏（取消或保存）时重置环境 Tab：下次打开重新加载 */
+const resetEnvState = () => {
+  envGroups.value = [];
+  originalEnvValues.value = {};
+  envLoadError.value = '';
+  envLoaded.value = false;
+};
+
+// ── 环境配置加载触发器（setup 作用域）──────────────────
+// 之前用 PrimeVue TabPanel 的 @show 事件调用 loadEnvConfig：事件回调是非 setup 上下文，
+// getCurrentInstance() 为 null，导致 Nuxt useFetch(server:true) 在纯 SPA 下不发请求、
+// data 恒为 undefined → 触发 || { groups: [] } 兜底，渲染成误导性的“未找到 .env 文件”。
+// 改为在 setup 作用域 watch 对话框可见性 + 环境 Tab(activeTab===2)，回调在 setup 上下文执行，
+// getCurrentInstance() 存活 → useFetch 真正发出 GET /env，加载真实 .env 分组。
+watch(
+  [() => props.modelValue, activeTab],
+  ([dialogVisible, tab]) => {
+    if (dialogVisible && tab === 2) void loadEnvConfig();
+  },
+  // 对话框由 v-model 控制从隐藏→显示，无需 initial 触发；隐藏时 resetEnvState 已重置 envLoaded
+  { flush: 'post' }
+);
 
 // ── 角色配置状态 ─────────────────────────────────────────
 // 角色头像/名字完全由前端本地保存：写入 Dexie 的全局待定 profile（GLOBAL_SESSION_KEY 行）。
@@ -254,12 +393,13 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 
 const canSave = computed(() => {
   if (loading.value || saving.value) return false;
-  // 0: 角色配置；1: 背景
+  // Tab 2：环境配置；仅在有变更时可保存
+  if (activeTab.value === 2) return envHasChanges.value;
+  // Tab 0：角色配置——两个角色名须非空
   if (activeTab.value === 0) {
-    // 角色配置 Tab：两个角色名须非空
     return charUser.value.name.trim().length > 0 && charAssistant.value.name.trim().length > 0;
   }
-  // 背景 Tab：无需额外校验（角色名与背景无关，改动是独立保存的）
+  // Tab 1：背景——无需额外校验
   return true;
 });
 
@@ -393,6 +533,15 @@ const fileLabelText = (files: File[]): string => {
   return t('config.background.noFileChosen');
 };
 
+/**
+ * 头像 FileUpload 的本地化文案（`#filelabel` slot，替代浏览器原生 "No file chosen"）：
+ * 已选文件 → 显示文件名；否则 → 提示可上传新头像。
+ */
+const avatarFileLabel = (files: File[]): string => {
+  if (files.length > 0) return files[0].name;
+  return t('config.role.noFileChosen');
+};
+
 const loadContent = async () => {
   loading.value = true;
   try {
@@ -465,6 +614,16 @@ const handleSave = async () => {
       originalBackgroundUrl.value = backgroundUrl.value;
     }
 
+    // 环境配置：若当前在 env Tab 且有变更，则写回后端 .env。保存失败则中止，不关闭对话框。
+    if (activeTab.value === 2 && envHasChanges.value) {
+      const ok = await persistEnvChanges();
+      if (!ok) {
+        envLoadError.value = t('config.env.saveFailed');
+        return;
+      }
+    }
+
+    // 关闭对话框后丢弃环境编辑态（onHide 中 resetEnvState），保证下次打开重新读 .env
     emits('saved');
     visible.value = false;
   } catch (e) {
@@ -477,5 +636,7 @@ const handleSave = async () => {
 const onHide = () => {
   activeTab.value = 0;
   backgroundOpacityValue.value = backgroundOpacity.value;
+  // 环境配置改动仅在成功保存后保留；取消/非 env tab 关闭一律丢弃 → 下次打开重新载入
+  resetEnvState();
 };
 </script>

@@ -22,6 +22,8 @@ from agent.tools.skill_tools.skill_manage import (
 from context_engine.curator.usage import (
     delete_skill,
     is_pinned,
+    pin_skill,
+    unpin_skill,
     _skill_dir,
 )
 
@@ -480,3 +482,56 @@ async def delete_auto_skill_handler(request):
     # agent's effective skill prompt.
     _rebuild_snapshot()
     return _json_response(200, {"success": True, "name": name})
+
+
+# =============================================================================
+# Auto-skill pin / unpin
+# =============================================================================
+#
+# Pinning is curator-aware: pinned skills bypass all automatic transitions and
+# are rejected by `delete_skill`. The endpoint toggles the `pinned` flag in the
+# usage record via `pin_skill` / `unpin_skill`, mirroring the delete handler's
+# name validation and snapshot rebuild.
+
+
+@app.post("/skills/pin")
+async def pin_auto_skill_handler(request):
+    """Pin or unpin an auto skill.
+
+    Accepts a JSON body: {"name": string, "pinned": bool}. When `pinned` is
+    true the skill is pinned (curator will never merge or remove it); when
+    false it is unpinned. The skill must already exist under `skills/auto/`.
+    """
+    try:
+        body = request.json()
+    except Exception:
+        body = None
+
+    if not isinstance(body, dict):
+        return _json_response(400, {"success": False, "message": "Invalid JSON body"})
+
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return _json_response(400, {"success": False, "message": "Missing or invalid 'name'"})
+    name = name.strip()
+
+    pinned = body.get("pinned")
+    if not isinstance(pinned, bool):
+        return _json_response(
+            400,
+            {"success": False, "message": "Missing or invalid 'pinned' (must be boolean)"},
+        )
+
+    err = _validate_skill_name(name)
+    if err:
+        return _json_response(400, {"success": False, "message": err})
+
+    ok, msg = pin_skill(name) if pinned else unpin_skill(name)
+    logger.info(f"Auto skill pin: name={name}, pinned={pinned}, ok={ok} msg={msg}")
+    if not ok:
+        return _json_response(400, {"success": False, "message": msg})
+
+    # Rebuild the skills snapshot so the agent's effective skill prompt reflects
+    # the new pinned state.
+    _rebuild_snapshot()
+    return _json_response(200, {"success": True, "name": name, "pinned": pinned})

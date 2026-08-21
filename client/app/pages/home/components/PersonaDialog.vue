@@ -16,25 +16,36 @@
         <TabView v-model:activeIndex="activeTab">
           <TabPanel
             v-for="tab in tabs"
-            :key="tab.file"
+            :key="tab.key"
             :header="t(tab.i18nKey)">
             <div class="flex flex-col gap-2">
               <div class="flex items-center justify-between">
                 <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(tab.i18nDescKey) }}</span>
-                <span
-                  :class="[
-                    'text-xs',
-                    (editContent[tab.file]?.length ?? 0) > MAX_CHARS
-                      ? 'text-red-500'
-                      : (editContent[tab.file]?.length ?? 0) > MAX_CHARS * 0.9
-                        ? 'text-orange-500'
-                        : 'text-gray-400'
-                  ]">
-                  {{ editContent[tab.file]?.length ?? 0 }} / {{ MAX_CHARS }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <Button
+                    :label="t('config.persona.restoreDefault')"
+                    icon="pi pi-refresh"
+                    severity="secondary"
+                    text
+                    size="small"
+                    :loading="restoring"
+                    :disabled="restoring"
+                    @click="restoreDefault(tab)" />
+                  <span
+                    :class="[
+                      'text-xs',
+                      (editContent[tab.key]?.length ?? 0) > MAX_CHARS
+                        ? 'text-red-500'
+                        : (editContent[tab.key]?.length ?? 0) > MAX_CHARS * 0.9
+                          ? 'text-orange-500'
+                          : 'text-gray-400'
+                    ]">
+                    {{ editContent[tab.key]?.length ?? 0 }} / {{ MAX_CHARS }}
+                  </span>
+                </div>
               </div>
               <Textarea
-                v-model="editContent[tab.file]"
+                v-model="editContent[tab.key]"
                 rows="12"
                 class="w-full font-mono text-sm"
                 :maxlength="MAX_CHARS"
@@ -65,9 +76,11 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { readSystemPrompt, writeSystemPrompt } from '@/composables/bridge';
+import { readSystemPrompt, writeSystemPrompt, readSystemPromptTemplate } from '@/composables/bridge';
 
 const { t } = useI18n();
+
+const locale = useI18n().locale;
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -79,26 +92,49 @@ const visible = computed({
 
 const MAX_CHARS = 2000;
 
-const tabs = [
-  { file: 'AGENTS.md', i18nKey: 'config.tabs.agents', i18nDescKey: 'config.desc.agents' },
-  { file: 'IDENTITY.md', i18nKey: 'config.tabs.identity', i18nDescKey: 'config.desc.identity' },
-  { file: 'SOUL.md', i18nKey: 'config.tabs.soul', i18nDescKey: 'config.desc.soul' },
-  { file: 'USER.md', i18nKey: 'config.tabs.user', i18nDescKey: 'config.desc.user' }
+interface PersonaTab {
+  /** Unique key for the tab; the same basename may exist across layers. */
+  key: string;
+  /** Actual filename sent to the backend (e.g. 'AGENTS.md'). */
+  file: string;
+  i18nKey: string;
+  i18nDescKey: string;
+  /** Read function that returns a file->content map for this tab's group. */
+  readFn: () => Promise<Record<string, string>>;
+  /** Write function that persists only the given changed files. */
+  writeFn: (fileToContent: Record<string, string>) => Promise<void>;
+}
+
+const tabs: PersonaTab[] = [
+  { key: 'AGENTS.md', file: 'AGENTS.md', i18nKey: 'config.tabs.agents', i18nDescKey: 'config.desc.agents', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
+  { key: 'IDENTITY.md', file: 'IDENTITY.md', i18nKey: 'config.tabs.identity', i18nDescKey: 'config.desc.identity', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
+  { key: 'SOUL.md', file: 'SOUL.md', i18nKey: 'config.tabs.soul', i18nDescKey: 'config.desc.soul', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
+  { key: 'USER.md', file: 'USER.md', i18nKey: 'config.tabs.user', i18nDescKey: 'config.desc.user', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
 ] as const;
 
 const activeTab = ref(0);
 const loading = ref(false);
 const saving = ref(false);
+const restoring = ref(false);
 const editContent = ref<Record<string, string>>({});
 const originalContent = ref<Record<string, string>>({});
 
 const loadContent = async () => {
   loading.value = true;
   try {
-    const promptData = await readSystemPrompt();
-    const content: Record<string, string> = {};
+    // Group tabs by their read function so each group is fetched once.
+    const byReadFn = new Map<PersonaTab['readFn'], PersonaTab[]>();
     for (const tab of tabs) {
-      content[tab.file] = promptData[tab.file] ?? '';
+      const list = byReadFn.get(tab.readFn) ?? [];
+      list.push(tab);
+      byReadFn.set(tab.readFn, list);
+    }
+    const content: Record<string, string> = {};
+    for (const [readFn, groupTabs] of byReadFn) {
+      const data = await readFn();
+      for (const tab of groupTabs) {
+        content[tab.key] = data[tab.file] ?? '';
+      }
     }
     editContent.value = { ...content };
     originalContent.value = { ...content };
@@ -111,24 +147,40 @@ const loadContent = async () => {
 
 const canSave = computed(() => {
   if (loading.value || saving.value) return false;
-  const file = tabs[activeTab.value]?.file;
-  if (!file) return false;
-  const len = editContent.value[file]?.length ?? 0;
+  const tab = tabs[activeTab.value];
+  if (!tab) return false;
+  const len = editContent.value[tab.key]?.length ?? 0;
   return len > 0 && len <= MAX_CHARS;
 });
+
+const restoreDefault = async (tab: PersonaTab) => {
+  restoring.value = true;
+  try {
+    const content = await readSystemPromptTemplate(locale.value);
+    editContent.value[tab.key] = content[tab.file] ?? '';
+  } catch (e) {
+    console.error('[PersonaDialog] Failed to restore default:', e);
+  } finally {
+    restoring.value = false;
+  }
+};
 
 const handleSave = async () => {
   saving.value = true;
   try {
-    const fileToContent: Record<string, string> = {};
+    // Collect changed files and persist them. All tabs share the same write
+    // function, but grouping keeps the structure reusable (single save call).
+    const byWriteFn = new Map<PersonaTab['writeFn'], Record<string, string>>();
     for (const tab of tabs) {
-      const content = editContent.value[tab.file] ?? '';
-      if (content !== (originalContent.value[tab.file] ?? '')) {
-        fileToContent[tab.file] = content;
+      const content = editContent.value[tab.key] ?? '';
+      if (content !== (originalContent.value[tab.key] ?? '')) {
+        const map = byWriteFn.get(tab.writeFn) ?? {};
+        map[tab.file] = content;
+        byWriteFn.set(tab.writeFn, map);
       }
     }
-    if (Object.keys(fileToContent).length > 0) {
-      await writeSystemPrompt(fileToContent);
+    for (const [writeFn, fileToContent] of byWriteFn) {
+      await writeFn(fileToContent);
     }
     emits('saved');
     visible.value = false;

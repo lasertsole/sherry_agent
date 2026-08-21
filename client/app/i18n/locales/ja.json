@@ -34,6 +34,7 @@
     "batchDelete": "会話を一括削除",
     "batchDeleteConfirm": "選択した会話を一括削除してもよろしいですか？この操作は元に戻せません。",
     "createdAt": "作成日時：{time}",
+    "dateFormat": "YYYY/MM/DD HH:mm",
     "editTitle": "タイトルを編集",
     "deleteSession": "会話を削除",
     "deleteConfirm": "この会話を削除してもよろしいですか？この操作は元に戻せません。",
@@ -56,6 +57,7 @@
     "stats": "統計",
     "systemConfig": "システム設定",
     "persona": "AI人格",
+    "memory": "記憶",
     "logs": "ログ",
     "extend": "拡張",
     "settingsMenu": "メニュー",
@@ -65,8 +67,16 @@
   "config": {
     "title": "システム設定",
     "persona": {
-      "title": "AI人格"
+      "title": "AI人格",
+      "restoreDefault": "デフォルトに戻す"
     },
+    "memory": {
+        "title": "記憶",
+        "addEntry": "項目を追加",
+        "deleteEntry": "項目を削除",
+        "empty": "項目はまだありません。下から追加してください。",
+        "effectiveHint": "注意：変更は圧縮時または再起動時にのみ反映されます。"
+      },
     "save": "保存",
     "cancel": "キャンセル",
     "uploadAvatar": "アバターをアップロード",
@@ -75,13 +85,18 @@
       "identity": "身元情報",
       "soul": "人格・魂",
       "user": "ユーザー情報",
-      "character": "キャラクター設定"
+      "character": "キャラクター設定",
+      "env": "環境設定",
+      "memoryAgent": "記憶・Agent",
+      "memoryUser": "記憶・ユーザー"
     },
     "desc": {
       "agents": "Agent コアルール：会話フロー、セキュリティ、モジュール一覧",
       "identity": "Agent 身元：名前、絵文字、アバター",
       "soul": "Agent 人格、トーン、性格",
-      "user": "ユーザー情報と好み"
+      "user": "ユーザー情報と好み",
+      "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
+      "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）"
     },
     "language": {
       "zh": "简体中文",
@@ -95,7 +110,8 @@
       "userRole": "ユーザーロール",
       "userName": "ユーザー名",
       "avatar": "アバター",
-      "charNote": "アバターと名前の変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。"
+      "charNote": "アバターと名前の変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。",
+      "noFileChosen": "新しいアバター画像を選択できます"
     },
     "crop": {
       "title": "アバターをトリミング",
@@ -115,6 +131,17 @@
       "cropTitle": "背景をトリミング",
       "current": "背景画像が設定されています",
       "noFileChosen": "画像ファイルを選択"
+    },
+    "env": {
+      "title": "環境設定",
+      "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+      "saveFailed": "環境設定の保存に失敗しました。",
+      "saveSuccess": "環境設定を保存しました。反映するにはバックエンドを再起動してください。",
+      "section": "セクション",
+      "key": "キー",
+      "value": "値",
+      "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
+      "noEnvFile": ".env ファイルが見つかりません。"
     }
   }
 }

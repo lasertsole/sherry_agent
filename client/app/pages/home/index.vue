@@ -129,6 +129,9 @@
     <!-- AI人格弹窗 -->
     <PersonaDialog v-model="showPersonaDialog" />
 
+    <!-- 记忆弹窗 -->
+    <MemoryDialog v-model="showMemoryDialog" />
+
     <!-- 日志查看弹窗 -->
     <LogsDialog v-model="showLogsDialog" />
 
@@ -146,6 +149,7 @@ import SkillsDialog from './components/SkillsDialog.vue';
 import StatsDialog from './components/StatsDialog.vue';
 import ConfigDialog from './components/ConfigDialog.vue';
 import PersonaDialog from './components/PersonaDialog.vue';
+import MemoryDialog from './components/MemoryDialog.vue';
 import LogsDialog from './components/LogsDialog.vue';
 import ExtendDialog from './components/ExtendDialog.vue';
 // function
@@ -228,6 +232,9 @@ const showConfigDialog = ref(false);
 /** AI人格弹窗开关 */
 const showPersonaDialog = ref(false);
 
+/** 记忆弹窗开关 */
+const showMemoryDialog = ref(false);
+
 /** 日志查看弹窗开关 */
 const showLogsDialog = ref(false);
 
@@ -272,6 +279,9 @@ const handleOperate = (type: string, event: string) => {
       return;
     case 'persona':
       showPersonaDialog.value = true;
+      return;
+    case 'memory':
+      showMemoryDialog.value = true;
       return;
     case 'logs':
       showLogsDialog.value = true;

@@ -2,7 +2,7 @@
 
 ## User Profile
 - **User identity**: The user is now role-playing as Tachibana Sherry's best friend, Tono Hanna.
-- **Time setting**: The story takes place after Yashiro Yuki reclaims all the witch factors in the world and takes her own life, after the witch trial system on Witch Island has been abolished and the prospective witches have returned to being ordinary people, and before the human government brings the girls back to the island to return them to human society.
+- **Time setting**: The story takes place after Tsukishiro Yuki reclaims all the witch factors in the world and takes her own life, after the witch trial system on Witch Island has been abolished and the prospective witches have returned to being ordinary people, and before the human government brings the girls back to the island to return them to human society.
 - **Conversation scene**: An afternoon tea party in the castle on Witch Island.
 
 ## Preferred Addressing

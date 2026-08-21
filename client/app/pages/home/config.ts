@@ -58,6 +58,13 @@ export const headerTools: Tool[] = [
     label: 'toolbar.persona'
   },
   {
+    toolName: 'toolbar.memory',
+    icon: 'pi pi-database',
+    title: 'toolbar.memory',
+    event: 'memory',
+    label: 'toolbar.memory'
+  },
+  {
     toolName: 'toolbar.extend',
     icon: 'puzzle-icon',
     title: 'toolbar.extend',

@@ -874,6 +874,29 @@ export async function readSystemPrompt(): Promise<Record<string, string>> {
 }
 
 /**
+ * Read the persona template files for a given language (e.g. restore-default).
+ *
+ * The templates live under `workspace/template/<lang>/`. When `lang` is omitted
+ * the backend falls back to the user's preferred workspace template language.
+ */
+export async function readSystemPromptTemplate(
+  lang?: string,
+): Promise<Record<string, string>> {
+  if (isTauri()) {
+    const invoke = await getInvoke();
+    const resp = await invoke<PromptFileResponse>('system_prompt_read_template', {
+      payload: { lang: lang ?? null },
+    });
+    return resp.file_to_content;
+  }
+  return fetchApi({
+    url: '/system_prompt/template',
+    opts: { lang: lang ?? undefined },
+    method: 'get',
+  }) as unknown as Promise<Record<string, string>>;
+}
+
+/**
  * Overwrite system prompt files (full replacement).
  */
 export async function writeSystemPrompt(
@@ -903,6 +926,47 @@ export async function updateSystemPrompt(
   } else {
     await fetchApi({
       url: '/system_prompt',
+      opts: { file_to_content: fileToContent },
+      method: 'put',
+    });
+  }
+}
+
+// ── Long-term Memory ────────────────────────────────────
+
+/**
+ * Read all long-term memory files (workspace/memory/*).
+ *
+ * Note: `fetchApi` resolves through Nuxt's `useFetch`, which dedupe/caches GET
+ * requests by URL. A timestamp query param acts as a cache-buster so calls
+ * inside event handlers still hit the network and return fresh content.
+ */
+export async function readMemory(): Promise<Record<string, string>> {
+  if (isTauri()) {
+    const invoke = await getInvoke();
+    const resp = await invoke<PromptFileResponse>('memory_read');
+    return resp.file_to_content;
+  }
+  return fetchApi({
+    url: '/memory',
+    opts: { _ts: Date.now() },
+    method: 'get',
+  }) as unknown as Promise<Record<string, string>>;
+}
+
+/**
+ * Overwrite long-term memory files (full replacement).
+ * Only provided files are overwritten; others are left unchanged.
+ */
+export async function writeMemory(
+  fileToContent: Record<string, string>,
+): Promise<void> {
+  if (isTauri()) {
+    const invoke = await getInvoke();
+    await invoke('memory_write', { payload: { file_to_content: fileToContent } });
+  } else {
+    await fetchApi({
+      url: '/memory',
       opts: { file_to_content: fileToContent },
       method: 'put',
     });
@@ -1012,6 +1076,33 @@ export async function deleteSkill(name: string): Promise<DeleteSkillResponse> {
     opts: { name },
     method: 'post',
   }) as unknown as Promise<DeleteSkillResponse>;
+}
+
+/** Response of `POST /skills/pin`. */
+export interface PinSkillResponse {
+  success: boolean;
+  name?: string;
+  pinned?: boolean;
+  message?: string;
+}
+
+/**
+ * Pin or unpin an auto skill.
+ *
+ * Pinned skills are excluded from curator merging/removal and rejected by the
+ * backend `delete_skill`. When `pinned` is `true` the skill is protected; when
+ * `false` it is returned to normal curator lifecycle.
+ *
+ * @param name The auto skill name to pin/unpin.
+ * @param pinned `true` to pin, `false` to unpin.
+ * @returns `{ success, name?, pinned?, message? }` from the backend.
+ */
+export async function pinSkill(name: string, pinned: boolean): Promise<PinSkillResponse> {
+  return fetchApi({
+    url: '/skills/pin',
+    opts: { name, pinned },
+    method: 'post',
+  }) as unknown as Promise<PinSkillResponse>;
 }
 
 /** Auto-transition counters returned by `run_curator_review` (e.g. marked_stale/archived/reactivated/checked/seeded). */
