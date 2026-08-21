@@ -4,7 +4,6 @@ CURATOR_STATE_FILE = SKILLS_DIR / ".curator_state"
 CURATOR_LOGS_DIR = ROOT_DIR / "logs" / "curator"
 USAGE_DIR = AUTO_SKILLS_DIR / ".usage"
 PINNED_FILE = ".pinned"
-FIXED_FILE = ".fixed"
 
 STATE_ACTIVE = "active"
 STATE_STALE = "stale"

@@ -13,11 +13,51 @@ contain a ``core.py`` — no ``__init__.py`` is required. Flat single-file modul
 """
 
 import os
+import sys
+import shutil
 import importlib
+import subprocess
 import importlib.util
+from pathlib import Path
 from loguru import logger
 from channels.base import BaseChannel
 from config.path import PLUGINS_PATH
+
+
+def _ensure_deps(plugin_dir: Path, plugin_name: str) -> bool:
+    """Install plugin-local requirements.txt if present.
+    Uses *uv* when available (consistent with the project toolchain), otherwise
+    falls back to ``python -m pip``.  Installation is idempotent -- already
+    satisfied packages are skipped by pip/uv.
+
+    Returns ``True`` if deps are ready (or no requirements.txt found).
+    """
+    req_file = plugin_dir / "requirements.txt"
+    if not req_file.is_file():
+        return True
+
+    if shutil.which("uv"):
+        cmd = ["uv", "pip", "install", "-q", "-r", str(req_file)]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)]
+
+    logger.info("Installing dependencies for channel '{}'...", plugin_name)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        logger.error("Timed out installing dependencies for channel '{}'", plugin_name)
+        return False
+
+    if result.returncode != 0:
+        logger.error(
+            "Failed to install dependencies for channel '{}':\n{}",
+            plugin_name, result.stderr.strip(),
+        )
+        return False
+
+    importlib.invalidate_caches()
+    logger.info("Dependencies for channel '{}' ready", plugin_name)
+    return True
 
 
 def discover_channel_names() -> list[str]:
@@ -44,6 +84,11 @@ def load_channel_class(module_name: str) -> type[BaseChannel]:
     if not core_path.is_file():
         raise ImportError(
             f"No channel plugins/channels/{module_name}/core.py"
+        )
+
+    if not _ensure_deps(channel_dir / module_name, module_name):
+        raise ImportError(
+            f"Failed to install dependencies for channel {module_name}"
         )
 
     spec = importlib.util.spec_from_file_location(

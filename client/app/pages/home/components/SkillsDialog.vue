@@ -32,20 +32,14 @@
         "autoMaintenanceLoadFailed": "Failed to load settings",
         "lastMaintenance": "Last maintenance",
         "lastMaintenanceNone": "No maintenance performed yet",
-        "loadSettings": "Load",
-        "fixed": "Fixed",
-        "fixedHint": "Fixed skills are excluded from curator merging/removal and protected from skill_manager edits",
-        "pinned": "Pinned",
+        "loadSettings": "Load","pinned": "Pinned",
         "pinHint": "Pinned skills are excluded from curator merging/removal",
-        "setFixed": "Fix",
-        "unsetFixed": "Unfix",
         "deleteTitle": "Delete skill",
         "deleteConfirm": "Are you sure you want to delete the skill \"{name}\"? This action cannot be undone.",
         "delete": "Delete",
         "cancel": "Cancel",
         "deleteSuccess": "Skill deleted",
         "deleteFailed": "Failed to delete skill",
-        "fixFailed": "Failed to update fix state"
       }
     }
   },
@@ -81,20 +75,14 @@
         "autoMaintenanceLoadFailed": "設定の読み込みに失敗しました",
         "lastMaintenance": "最終メンテナンス時刻",
         "lastMaintenanceNone": "まだスキルメンテナンスを実行していません",
-        "loadSettings": "読み込み",
-        "fixed": "固定",
-        "fixedHint": "固定されたスキルは、キュレーターによる統合・削除の対象から除外され、skill_manager による編集からも保護されます",
-        "pinned": "ピン留め",
+        "loadSettings": "読み込み","pinned": "ピン留め",
         "pinHint": "ピン留めされたスキルは、キュレーターによる統合・削除の対象から除外されます",
-        "setFixed": "固定",
-        "unsetFixed": "固定解除",
         "deleteTitle": "スキルの削除",
         "deleteConfirm": "スキル「{name}」を削除しますか？この操作は元に戻せません。",
         "delete": "削除",
         "cancel": "キャンセル",
         "deleteSuccess": "スキルを削除しました",
         "deleteFailed": "スキルの削除に失敗しました",
-        "fixFailed": "固定状態の更新に失敗しました"
       }
     }
   },
@@ -130,20 +118,14 @@
         "autoMaintenanceLoadFailed": "설정을 불러오지 못했습니다",
         "lastMaintenance": "마지막 유지보수 시간",
         "lastMaintenanceNone": "아직 스킬 유지보수를 실행하지 않았습니다",
-        "loadSettings": "불러오기",
-        "fixed": "고정",
-        "fixedHint": "고정된 스킬은 큐레이터의 병합·삭제 대상에서 제외되며, skill_manager 편집으로부터도 보호됩니다",
-        "pinned": "고정됨",
+        "loadSettings": "불러오기","pinned": "고정됨",
         "pinHint": "고정된 스킬은 큐레이터의 병합·삭제 대상에서 제외됩니다",
-        "setFixed": "고정",
-        "unsetFixed": "고정 해제",
         "deleteTitle": "스킬 삭제",
         "deleteConfirm": "스킬 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
         "delete": "삭제",
         "cancel": "취소",
         "deleteSuccess": "스킬이 삭제되었습니다",
         "deleteFailed": "스킬 삭제에 실패했습니다",
-        "fixFailed": "고정 상태 업데이트에 실패했습니다"
       }
     }
   },
@@ -179,20 +161,14 @@
         "autoMaintenanceLoadFailed": "读取设置失败",
         "lastMaintenance": "最后一次维护时间",
         "lastMaintenanceNone": "尚未执行过技能维护",
-        "loadSettings": "加载",
-        "fixed": "固定",
-        "fixedHint": "固定后的技能将从技能维护的合并/移除中排除，并受保护不被 skill_manager 修改",
-        "pinned": "已固定",
+        "loadSettings": "加载","pinned": "已固定",
         "pinHint": "已固定的技能将从技能维护的合并/移除中排除",
-        "setFixed": "固定",
-        "unsetFixed": "取消固定",
         "deleteTitle": "删除技能",
         "deleteConfirm": "确定要删除技能“{name}”吗？此操作无法撤销。",
         "delete": "删除",
         "cancel": "取消",
         "deleteSuccess": "技能已删除",
         "deleteFailed": "删除技能失败",
-        "fixFailed": "更新固定状态失败"
       }
     }
   }
@@ -248,9 +224,6 @@
               <div v-if="curatorResult || curatorError" class="flex items-center gap-1">
                 <span v-if="curatorResult" class="text-xs text-gray-500 dark:text-gray-400">{{ curatorResult }}</span>
                 <span v-else-if="curatorError" class="text-xs text-red-500 dark:text-red-400">{{ curatorError }}</span>
-              </div>
-              <div v-if="fixError" class="flex items-center gap-1">
-                <span class="text-xs text-red-500 dark:text-red-400">{{ fixError }}</span>
               </div>
               <div class="self-center w-full flex flex-col gap-1 bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700">
                 <label class="text-xs text-gray-500 dark:text-gray-400">
@@ -329,11 +302,7 @@
                   <span class="min-w-0 break-all">
                     {{ skill.name }}
                     <i
-                      v-if="skill.fixed"
-                      v-tooltip.right="t('skills.tabs.fixedHint')"
-                      class="pi pi-lock text-primary-500 dark:text-primary-300 ml-1" />
-                    <i
-                      v-else-if="skill.pinned"
+                      v-if="skill.pinned"
                       v-tooltip.right="t('skills.tabs.pinHint')"
                       class="pi pi-paperclip text-gray-400 dark:text-gray-500 ml-1" />
                   </span>
@@ -345,15 +314,8 @@
                       @update:model-value="toggleActive(skill as SkillInfo & { active?: boolean }, $event as boolean)" />
                     <template v-if="activeCategory === 'auto'">
                       <Button
-                        v-tooltip.top="t('skills.tabs.fixedHint')"
-                        :label="skill.fixed ? t('skills.tabs.unsetFixed') : t('skills.tabs.setFixed')"
-                        :severity="skill.fixed ? 'primary' : 'secondary'"
-                        size="small"
-                        :data-testid="`fix-toggle-${skill.name}`"
-                        @click.stop="toggleFixed(skill, !skill.fixed)" />
-                      <Button
                         v-tooltip.top="t('skills.tabs.delete')"
-                        :disabled="!!skill.fixed"
+                        :disabled="!!skill.pinned"
                         icon="pi pi-trash"
                         severity="danger"
                         size="small"
@@ -465,7 +427,7 @@
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
-import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings, setSkillFixed, deleteSkill } from '@/composables/bridge';
+import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings, deleteSkill } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -515,7 +477,6 @@ const uploadWarnings = ref<string[]>([]);
 const toggleError = ref('');
 const fileInputKey = ref(0);
 const fileInput = ref<HTMLInputElement | null>(null);
-const fixError = ref('');
 const deleteTarget = ref<SkillInfo | null>(null);
 const deleteConfirmVisible = ref(false);
 const deleteSaving = ref(false);
@@ -747,23 +708,6 @@ const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: bool
   }
 };
 
-const toggleFixed = async (skill: SkillInfo, value: boolean) => {
-  const prev = skill.fixed ?? false;
-  skill.fixed = value;
-  fixError.value = '';
-  try {
-    const resp = await setSkillFixed(skill.name, value);
-    if (!resp.success) {
-      skill.fixed = prev;
-      fixError.value = resp.message || t('skills.tabs.fixFailed');
-    }
-  } catch (e) {
-    console.error('[SkillsDialog] Toggle fix failed:', e);
-    skill.fixed = prev;
-    fixError.value = t('skills.tabs.fixFailed');
-  }
-};
-
 const confirmDelete = (skill: SkillInfo) => {
   deleteTarget.value = skill;
   deleteError.value = '';
@@ -859,7 +803,6 @@ const onHide = () => {
   uploadError.value = '';
   uploadWarnings.value = [];
   toggleError.value = '';
-  fixError.value = '';
   deleteTarget.value = null;
   deleteConfirmVisible.value = false;
   deleteSaving.value = false;

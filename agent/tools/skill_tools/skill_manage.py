@@ -846,11 +846,7 @@ class SkillManage(BaseTool):
         "Pinned skills are protected from deletion only — skill_manage(action='delete') "
         "will refuse for pinned skills. "
         "Patches and edits go through on pinned skills so you can still improve them as "
-        "pitfalls come up; pin only guards against irrecoverable loss.\n"
-        "Fixed skills are protected from ALL changes — edit, patch, delete, write_file "
-        "and remove_file all refuse for fixed skills. Unfix a skill first if you need "
-        "to modify it. Fixed also keeps the skill excluded from the curator's "
-        "consolidation/removal."
+        "pitfalls come up; pin only guards against irrecoverable loss."
     )
     args_schema: Type[BaseModel] = SkillManageSchema
     metadata: dict = {"idempotent": False, "nudge": True}
@@ -876,14 +872,7 @@ class SkillManage(BaseTool):
             result = _create_skill(name, content, category)
 
         elif action in {"edit", "patch", "delete", "write_file", "remove_file"}:
-            # Fixed skills are protected from ALL skill_manager mutations. This is
-            # stronger than `pinned` (which only guards deletion/archival). A fixed
-            # skill may only be changed by unfixing it first.
-            from context_engine.curator.usage import _fixed_guard
-            fixed_err = _fixed_guard(name)
-            if fixed_err:
-                result = {"success": False, "error": fixed_err}
-            elif action == "edit":
+            if action == "edit":
                 if not content:
                     return "content is required for 'edit'. Provide the full updated SKILL.md text."
                 result = _edit_skill(name, content)

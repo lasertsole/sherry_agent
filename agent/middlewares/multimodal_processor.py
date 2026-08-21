@@ -299,7 +299,7 @@ class MultimodalProcessor(AgentMiddleware):
         # (NOT a SystemMessage). The user explicitly required this HumanMessage
         # approach — the previous version steered the model this way. Mentioning
         # the media location here lets the model know it must invoke the native
-        # image_to_text TOOL to actually "see" the image, since DeepSeek has no
+        # image_to_text TOOL to actually "see" the image, since current model has no
         # native vision ability. The persistence layer (add_messages) stores the
         # HumanMessage, so the hint remains visible for reasoning within this turn.
         if len(image_path_list) > 0:
@@ -310,7 +310,7 @@ class MultimodalProcessor(AgentMiddleware):
                 "skill_view tool with name 'image_to_text' to read its SKILL.md. Then follow "
                 "the skill's script instructions exactly (it tells you how to run the "
                 "image_to_text recognition logic via the terminal tool). "
-                "DeepSeek has no native vision ability, so do NOT answer based on guesswork — "
+                "current model has no native vision ability, so do NOT answer based on guesswork — "
                 "the recognition result reported by the skill script is the ground truth "
                 "you must base your reply on."
             )
@@ -351,7 +351,7 @@ class MultimodalProcessor(AgentMiddleware):
                 additional_kwargs["videos"] = video_path_list
             last_mes.additional_kwargs = additional_kwargs
 
-        # Strip image_url blocks from history messages (DeepSeek and similar models don't support image_url format)
+        # Strip image_url blocks from history messages
         for mes in state_mes_list[:-1]:
             if not isinstance(mes, HumanMessage):
                 continue

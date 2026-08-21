@@ -116,7 +116,7 @@ class QQChannel(BaseChannel):
     async def start(self) -> None:
         """Start the QQ bot."""
         if not QQ_AVAILABLE:
-            logger.error("QQ SDK not installed. Run: pip install qq-botpy")
+            logger.error("QQ SDK not installed. Check plugins/channels/qq/requirements.txt")
             return
 
         if not self.config.app_id or not self.config.secret:

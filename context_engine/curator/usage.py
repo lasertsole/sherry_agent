@@ -8,7 +8,6 @@ from loguru import logger
 from context_engine.curator.constants import (
     USAGE_DIR,
     PINNED_FILE,
-    FIXED_FILE,
     STATE_ACTIVE,
 )
 from context_engine.curator.helpers import _ensure_dir, _read_skill_description
@@ -46,7 +45,6 @@ def _default_record(name: str) -> dict[str, Any]:
         "name": name,
         "state": STATE_ACTIVE,
         "pinned": False,
-        "fixed": False,
         "use_count": 0,
         "view_count": 0,
         "patch_count": 0,
@@ -85,7 +83,7 @@ def seed_record_if_missing(name: str) -> bool:
 
 
 def set_state(name: str, state: str) -> None:
-    err = _pinned_guard(name) or _fixed_guard(name)
+    err = _pinned_guard(name)
     if err:
         logger.warning(err)
         return
@@ -112,51 +110,12 @@ def _pinned_guard(name: str) -> str | None:
     return None
 
 
-def is_fixed(name: str) -> bool:
-    """Return whether a skill is 'fixed' (protected from curator AND skill_manager modifications)."""
-    rec = load_record(name)
-    if rec.get("fixed"):
-        return True
-    sd = _skill_dir(name)
-    return sd is not None and (sd / FIXED_FILE).exists()
-
-
-def _fixed_guard(name: str) -> str | None:
-    if is_fixed(name):
-        return (
-            f"Skill '{name}' is fixed and cannot be modified, deleted, or archived. "
-            f"Unfix it first if you want to change it."
-        )
-    return None
-
-
-def set_fixed(name: str, fixed: bool) -> tuple[bool, str]:
-    """Set or clear the 'fixed' flag on a skill, mirroring the pin mechanism.
-
-    Uses dual determination (matching ``is_fixed`` / pin semantics): the usage
-    record ``fixed`` field AND a ``.fixed`` marker file in the skill directory.
-    The marker file keeps the skill protected even if the usage record is lost.
-    """
-    rec = load_record(name)
-    rec["fixed"] = bool(fixed)
-    rec["_persisted"] = True
-    save_record(name, rec)
-    sd = _skill_dir(name)
-    if sd is not None:
-        marker = sd / FIXED_FILE
-        if fixed:
-            marker.write_text("", encoding="utf-8")
-        elif marker.exists():
-            marker.unlink()
-    return True, f"Skill '{name}' fixed={bool(fixed)}"
-
-
 def _remove_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
     return delete_skill(name, absorbed_into=absorbed_into)
 
 
 def delete_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
-    err = _pinned_guard(name) or _fixed_guard(name)
+    err = _pinned_guard(name)
     if err:
         return False, err
     sd = _skill_dir(name)
@@ -191,7 +150,6 @@ def agent_created_report() -> list[dict[str, Any]]:
         rec["name"] = name
         rec["description"] = _read_skill_description(entry)
         rec["pinned"] = is_pinned(name)
-        rec["fixed"] = is_fixed(name)
         rec["_persisted"] = rec.get("_persisted", False)
         rows.append(rec)
     _cleanup_orphan_records({r["name"] for r in rows})
