@@ -135,6 +135,9 @@
     <!-- 心跳任务弹窗 -->
     <HeartbeatDialog v-model="showHeartbeatDialog" />
 
+    <!-- 定时任务弹窗 -->
+    <CronDialog v-model="showCronDialog" />
+
     <!-- 日志查看弹窗 -->
     <LogsDialog v-model="showLogsDialog" />
 
@@ -154,6 +157,7 @@ import ConfigDialog from './components/ConfigDialog.vue';
 import PersonaDialog from './components/PersonaDialog.vue';
 import MemoryDialog from './components/MemoryDialog.vue';
 import HeartbeatDialog from './components/HeartbeatDialog.vue';
+import CronDialog from './components/CronDialog.vue';
 import LogsDialog from './components/LogsDialog.vue';
 import ExtendDialog from './components/ExtendDialog.vue';
 // function
@@ -242,6 +246,9 @@ const showMemoryDialog = ref(false);
 /** 心跳任务弹窗开关 */
 const showHeartbeatDialog = ref(false);
 
+/** 定时任务弹窗开关 */
+const showCronDialog = ref(false);
+
 /** 日志查看弹窗开关 */
 const showLogsDialog = ref(false);
 
@@ -292,6 +299,9 @@ const handleOperate = (type: string, event: string) => {
       return;
     case 'heartbeat':
       showHeartbeatDialog.value = true;
+      return;
+    case 'cron':
+      showCronDialog.value = true;
       return;
     case 'logs':
       showLogsDialog.value = true;

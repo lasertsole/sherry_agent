@@ -72,6 +72,13 @@ export const headerTools: Tool[] = [
     label: 'toolbar.heartbeat'
   },
   {
+    toolName: 'toolbar.cron',
+    icon: 'pi pi-clock',
+    title: 'toolbar.cron',
+    event: 'cron',
+    label: 'toolbar.cron'
+  },
+  {
     toolName: 'toolbar.extend',
     icon: 'puzzle-icon',
     title: 'toolbar.extend',
