@@ -1,13 +1,18 @@
 <i18n lang="json">
 {
-  "en": {
+    "en": {
     "knowledgeGraph": {
       "back": "Back",
       "placeholder": "Knowledge Graph feature under development…",
       "loading": "Loading…",
       "empty": "No knowledge graph data",
       "loadError": "Failed to load",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "upload": "Upload",
+      "uploading": "Uploading…",
+      "uploadAccept": "PDF, Word or text",
+      "uploadSuccess": "Uploaded and graph updated",
+      "uploadError": "Upload failed"
     }
   },
   "ja": {
@@ -17,7 +22,12 @@
       "loading": "読み込み中…",
       "empty": "ナレッジグラフのデータがありません",
       "loadError": "読み込みに失敗しました",
-      "refresh": "更新"
+      "refresh": "更新",
+      "upload": "アップロード",
+      "uploading": "アップロード中…",
+      "uploadAccept": "PDF・Word・テキスト",
+      "uploadSuccess": "アップロードしてグラフを更新しました",
+      "uploadError": "アップロードに失敗しました"
     }
   },
   "ko": {
@@ -27,7 +37,12 @@
       "loading": "불러오는 중…",
       "empty": "지식 그래프 데이터가 없습니다",
       "loadError": "불러오기 실패",
-      "refresh": "새로고침"
+      "refresh": "새로고침",
+      "upload": "업로드",
+      "uploading": "업로드 중…",
+      "uploadAccept": "PDF·Word·텍스트",
+      "uploadSuccess": "업로드 후 그래프가 갱신되었습니다",
+      "uploadError": "업로드에 실패했습니다"
     }
   },
   "zh": {
@@ -37,7 +52,12 @@
       "loading": "加载中…",
       "empty": "暂无知识图谱数据",
       "loadError": "加载失败",
-      "refresh": "刷新"
+      "refresh": "刷新",
+      "upload": "上传",
+      "uploading": "上传中…",
+      "uploadAccept": "PDF、Word 或文本文件",
+      "uploadSuccess": "上传完成，图谱已更新",
+      "uploadError": "上传失败"
     }
   }
 }
@@ -57,7 +77,22 @@
       <span class="text-base font-semibold text-gray-900 dark:text-gray-100">
         {{ t('toolbar.knowledgeGraph') }}
       </span>
-      <div class="ml-auto">
+      <div class="ml-auto flex items-center gap-2">
+        <Button
+          icon="pi pi-upload"
+          :label="t('knowledgeGraph.upload')"
+          text
+          rounded
+          :loading="uploading"
+          :aria-label="t('knowledgeGraph.upload')"
+          @click="triggerUpload" />
+        <input
+          ref="fileInputRef"
+          type="file"
+          multiple
+          accept=".pdf,.docx,.txt,.md"
+          class="hidden"
+          @change="onFileSelected" />
         <Button
           icon="pi pi-refresh"
           text
@@ -71,6 +106,16 @@
     <!-- 图谱渲染区 -->
     <div class="relative flex-1 w-full h-full overflow-hidden">
       <div ref="containerRef" class="w-full h-full" />
+
+      <!-- 上传结果提示 -->
+      <div
+        v-if="uploadMessage"
+        class="absolute top-3 right-3 z-10 max-w-xs px-3 py-2 text-xs rounded-md shadow-md
+               bg-white dark:bg-[#1a1d21] text-gray-700 dark:text-gray-200
+               border border-gray-light dark:border-gray-dark">
+        <i class="pi pi-info-circle mr-1 text-blue-500" />
+        {{ uploadMessage }}
+      </div>
 
       <!-- 加载中 -->
       <div
@@ -203,6 +248,11 @@ const graphRef = shallowRef<Graph | null>(null);
 const loading = ref(false);
 const empty = ref(false);
 const error = ref(false);
+
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const uploading = ref(false);
+/** 上传后的提示文本（成功/失败），为空时不展示 */
+const uploadMessage = ref('');
 
 const colorMode = useColorMode();
 
@@ -340,6 +390,67 @@ const renderGraph = (data: MappedGraphData) => {
 
   graphRef.value = graph;
   graph.render();
+};
+
+/** 允许上传的文件后缀（与后端 _ALLOWED_EXT 保持一致） */
+const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md'];
+
+/** 校验单个文件后缀是否被允许 */
+const isAllowedFile = (name: string): boolean => {
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+  return ALLOWED_EXTENSIONS.includes(ext);
+};
+
+/** 点击上传按钮 → 弹出文件选择框 */
+const triggerUpload = () => {
+  fileInputRef.value?.click();
+};
+
+/** 文件选择后触发上传 */
+const onFileSelected = (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = '';
+  if (files.length === 0) return;
+  uploadFiles(files);
+};
+
+/** 上传文件到后端并重新加载图谱 */
+const uploadFiles = async (files: File[]) => {
+  if (uploading.value) return;
+
+  const invalid = files.find(f => !isAllowedFile(f.name));
+  if (invalid) {
+    uploadMessage.value = t('knowledgeGraph.uploadError');
+    return;
+  }
+
+  uploading.value = true;
+  uploadMessage.value = '';
+  try {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append('files', file);
+    }
+    const payload = (await fetchApi({
+      url: '/knowledge-graph/upload',
+      method: 'post',
+      contentType: 'multipart/form-data',
+      opts: formData
+    })) as unknown as { success?: boolean; message?: string };
+
+    if (payload?.success) {
+      uploadMessage.value = t('knowledgeGraph.uploadSuccess');
+      loadGraph();
+    } else {
+      uploadMessage.value = payload?.message ?? t('knowledgeGraph.uploadError');
+    }
+  } catch (e) {
+    console.error('[KnowledgeGraph] Failed to upload:', e);
+    uploadMessage.value = t('knowledgeGraph.uploadError');
+  } finally {
+    uploading.value = false;
+  }
 };
 
 /** 拉取并渲染知识图谱 */

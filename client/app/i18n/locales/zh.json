@@ -58,6 +58,7 @@
     "systemConfig": "系统配置",
     "persona": "AI人格",
     "memory": "记忆",
+    "heartbeat": "心跳",
     "logs": "日志",
     "extend": "扩展",
     "settingsMenu": "菜单",
@@ -76,6 +77,19 @@
         "deleteEntry": "删除条目",
         "empty": "暂无条目，请在下方添加。",
         "effectiveHint": "提示：修改后仅在系统压缩或重启时生效。"
+      },
+    "heartbeat": {
+        "title": "心跳任务",
+        "addTask": "添加任务",
+        "empty": "暂无待办任务。可在下方添加，留空将跳过心跳。",
+        "effectiveHint": "此文件每30分钟被检查一次。请在下方添加希望 Agent 定期处理的任务。若仅剩标题/注释（没有任务），则将跳过心跳。",
+        "activeTitle": "活动任务",
+        "completedTitle": "已完成",
+        "deleteTask": "删除任务",
+        "complete": "完成任务",
+        "reactivate": "重新激活",
+        "activeEmpty": "暂无活动任务。请在下方添加新任务。",
+        "completedEmpty": "暂无已完成任务。"
       },
     "save": "保存",
     "cancel": "取消",

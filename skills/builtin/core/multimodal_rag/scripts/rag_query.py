@@ -28,6 +28,18 @@ project_root: Path = current_file.parents[5]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+# `graph_rag` is a sibling package under this same `scripts/` directory, but
+# only reachable under its short, bare absolute import identity when `scripts/`
+# itself is on sys.path (see graph_rag/__init__.py for the same setup).
+# Without this, importing this module as `skills.builtin.core.multimodal_rag.
+# scripts.rag_query` (e.g. from a server handler that first imports
+# `...scripts.graph_rag`) fails with `ModuleNotFoundError: No module named
+# 'graph_rag'`, because only the project root — not `scripts/` — is on the path
+# at that moment.
+scripts_dir: Path = current_file.parent
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
+
 # Import graph_rag FIRST: its __init__ aliases bare `lightrag` onto the
 # vendored copy before raganything (which imports `from lightrag import ...`
 # at module load) is pulled in transitively via graph_rag.core.

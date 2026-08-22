@@ -58,6 +58,7 @@
     "systemConfig": "System Config",
     "persona": "AI Persona",
     "memory": "Memory",
+    "heartbeat": "Heartbeat",
     "logs": "Logs",
     "extend": "Extend",
     "settingsMenu": "Menu",
@@ -76,6 +77,19 @@
         "deleteEntry": "Delete entry",
         "empty": "No entries yet. Add one below.",
         "effectiveHint": "Note: Changes only take effect after compression or restart."
+      },
+    "heartbeat": {
+        "title": "Heartbeat Tasks",
+        "addTask": "Add task",
+        "empty": "No pending tasks. Add one below or leave blank to skip the heartbeat.",
+        "effectiveHint": "This file is checked every 30 minutes. Add tasks below for the agent to work on periodically. If no tasks remain (only the headers and comments), the heartbeat is skipped.",
+        "activeTitle": "Active Tasks",
+        "completedTitle": "Completed",
+        "deleteTask": "Delete task",
+        "complete": "Complete",
+        "reactivate": "Reactivate",
+        "activeEmpty": "No active tasks. Add new tasks below.",
+        "completedEmpty": "No completed tasks yet."
       },
     "save": "Save",
     "cancel": "Cancel",

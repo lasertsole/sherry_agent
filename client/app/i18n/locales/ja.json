@@ -58,6 +58,7 @@
     "systemConfig": "システム設定",
     "persona": "AI人格",
     "memory": "記憶",
+    "heartbeat": "ハートビート",
     "logs": "ログ",
     "extend": "拡張",
     "settingsMenu": "メニュー",
@@ -76,6 +77,19 @@
         "deleteEntry": "項目を削除",
         "empty": "項目はまだありません。下から追加してください。",
         "effectiveHint": "注意：変更は圧縮時または再起動時にのみ反映されます。"
+      },
+    "heartbeat": {
+        "title": "ハートビートタスク",
+        "addTask": "タスクを追加",
+        "empty": "保留中のタスクはありません。下に追加するか、空のままにするとハートビートをスキップします。",
+        "effectiveHint": "このファイルは30分ごとにチェックされます。Agentが定期的に処理してほしいタスクを下に追加してください。見出し/コメントのみ（タスクがない）場合はハートビートをスキップします。",
+        "activeTitle": "アクティブなタスク",
+        "completedTitle": "完了済み",
+        "deleteTask": "タスクを削除",
+        "complete": "完了にする",
+        "reactivate": "再アクティブ化",
+        "activeEmpty": "アクティブなタスクはありません。下に新しいタスクを追加してください。",
+        "completedEmpty": "完了済みのタスクはまだありません。"
       },
     "save": "保存",
     "cancel": "キャンセル",

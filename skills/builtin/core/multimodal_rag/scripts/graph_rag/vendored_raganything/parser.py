@@ -808,9 +808,24 @@ class MineruParser(Parser):
             # Log the command being executed
             cls.logger.info(f"Executing mineru command: {' '.join(cmd)}")
 
-            env = None
+            # Always build an explicit env for the subprocess so we can
+            # guarantee NO_PROXY covers loopback. MinerU's CLI spawns a local
+            # API server (127.0.0.1) and probes /health with an httpx client
+            # that honors Windows system proxy settings (read from the registry
+            # via urllib.request.getproxies()). If a system proxy is configured,
+            # that loopback probe is routed through it and the proxy answers
+            # 502 Bad Gateway, failing MinerU before it even parses the file.
+            env = os.environ.copy()
+            existing_no_proxy = env.get("NO_PROXY") or env.get("no_proxy") or ""
+            loopback_no_proxy = "127.0.0.1,localhost,::1"
+            merged_no_proxy = (
+                loopback_no_proxy
+                if not existing_no_proxy
+                else existing_no_proxy + "," + loopback_no_proxy
+            )
+            env["NO_PROXY"] = merged_no_proxy
+            env["no_proxy"] = merged_no_proxy
             if custom_env:
-                env = os.environ.copy()
                 env.update(custom_env)
 
             subprocess_kwargs = {

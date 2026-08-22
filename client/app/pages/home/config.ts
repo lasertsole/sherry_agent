@@ -65,6 +65,13 @@ export const headerTools: Tool[] = [
     label: 'toolbar.memory'
   },
   {
+    toolName: 'toolbar.heartbeat',
+    icon: 'pi pi-heart',
+    title: 'toolbar.heartbeat',
+    event: 'heartbeat',
+    label: 'toolbar.heartbeat'
+  },
+  {
     toolName: 'toolbar.extend',
     icon: 'puzzle-icon',
     title: 'toolbar.extend',

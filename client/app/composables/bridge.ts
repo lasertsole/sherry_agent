@@ -973,6 +973,40 @@ export async function writeMemory(
   }
 }
 
+// ── Heartbeat ────────────────────────────────────
+
+/**
+ * Read the heartbeat file (`workspace/HEARTBEAT.md`).
+ *
+ * Unlike memory, heartbeat deliberately skips Rust/Tauri and always goes
+ * through `fetchApi` in both modes (there is no Rust command for heartbeat).
+ * `fetchApi` resolves through Nuxt's `useFetch`, which dedupe/caches GET
+ * requests by URL. A timestamp query param acts as a cache-buster so calls
+ * inside event handlers still hit the network and return fresh content.
+ */
+export async function readHeartbeat(): Promise<Record<string, string>> {
+  return fetchApi({
+    url: '/heartbeat',
+    opts: { _ts: Date.now() },
+    method: 'get',
+  }) as unknown as Promise<Record<string, string>>;
+}
+
+/**
+ * Overwrite the heartbeat file (`workspace/HEARTBEAT.md`, full replacement).
+ * Always uses `fetchApi` in both modes — no Rust/Tauri command exists for
+ * heartbeat.
+ */
+export async function writeHeartbeat(
+  fileToContent: Record<string, string>,
+): Promise<void> {
+  await fetchApi({
+    url: '/heartbeat',
+    opts: { file_to_content: fileToContent },
+    method: 'put',
+  });
+}
+
 /**
  * List all skills (builtin, auto, third_party).
  *
