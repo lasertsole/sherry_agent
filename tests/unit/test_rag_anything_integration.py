@@ -1,7 +1,7 @@
 """Integration test: ragAnything works on top of SNKV-backed LightRAG.
 
 ``raganything`` (the pip package) wraps a LightRAG instance underneath; our
-vendored ``rag_anything.core.get_rag_anything()`` builds that LightRAG via
+vendored ``graph_rag.core.get_rag_anything()`` builds that LightRAG via
 ``get_lightrag()`` which now uses the SNKV storage backends.  This test patched
 the heavy model-download/init paths and asserts the resulting RAGAnything wields
 an SNKV-backed LightRAG.
@@ -22,11 +22,24 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-_CORE = "skills.builtin.core.multimodal_rag.scripts.rag_anything.core"
-_PKG_TOP = "skills.builtin.core.multimodal_rag.scripts.rag_anything"
+# Put the multimodal_rag skill's ``scripts/`` dir on sys.path so the short,
+# canonical ``graph_rag`` module name resolves (matching the runtime entry
+# scripts).  The vendored lightrag uses short absolute imports internally, so
+# the deep dotted ``skills...`` path would create a second module identity with
+# divergent registries -- deliberately avoided here.
+SCRIPTS_DIR = (
+    REPO_ROOT / "skills" / "builtin" / "core" / "multimodal_rag" / "scripts"
+)
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
-from lightrag import LightRAG  # noqa: E402
-from lightrag.utils import EmbeddingFunc  # noqa: E402
+_CORE = "graph_rag.core"
+_PKG_TOP = "graph_rag"
+_PKG = "graph_rag.vendored_lightrag.kg"
+_LR = "graph_rag.vendored_lightrag"
+
+from graph_rag.vendored_lightrag import LightRAG  # noqa: E402
+from graph_rag.vendored_lightrag.utils import EmbeddingFunc  # noqa: E402
 
 
 async def _stub_llm(prompt, system_prompt=None, history_messages=None, **kwargs):
@@ -40,14 +53,10 @@ async def _stub_embed(texts):
 def _build_snkv_lightrag(working_dir: str) -> LightRAG:
     """Build a LightRAG configured with the SNKV backends.
 
-    Mimics ``get_lightrag()``: importing the vendored package, then registering
-    the SNKV classes in ``lightrag.kg`` before constructing the LightRAG.
-    """
+    Mimics ``get_lightrag()``: importing the vendored package is enough — the
+    SNKV backends are native to the vendored ``lightrag.kg`` (baked directly
+    into its registries, no runtime ``register()`` injection).    """
     importlib.import_module(_PKG_TOP)
-
-    _register = importlib.import_module(f"{_PKG_TOP}.snkv_storage.register")
-    _register._REGISTERED = False
-    _register.register()
 
     return LightRAG(
         working_dir=working_dir,
@@ -67,7 +76,7 @@ async def test_rag_anything_receives_snkv_backed_lightrag(tmp_path):
     """get_rag_anything() wires the SNKV-backed LightRAG into RAGAnything."""
     core = importlib.import_module(_CORE)
 
-    # Real LightRAG built with SNKV backends (registered on package import).
+    # Real LightRAG built with SNKV backends (native to the vendored LightRAG).
     working_dir = (tmp_path / "work").as_posix()
     real_lightrag = _build_snkv_lightrag(working_dir)
 

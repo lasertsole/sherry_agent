@@ -2,7 +2,7 @@
 
 Serves the LightRAG knowledge graph (stored in SNKV SQLite) to the client's
 knowledge-graph page. The graph is produced by the multimodal_rag skill and read
-through the shared LightRAG singleton exposed by ``rag_anything.get_lightrag``.
+through the shared LightRAG singleton exposed by ``graph_rag.get_lightrag``.
 
 Endpoint:
     GET /knowledge-graph?node_label=*&max_depth=3&max_nodes=1000
@@ -35,7 +35,7 @@ async def knowledge_graph_handler(request):
         max_nodes = 1000
 
     try:
-        from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_lightrag
+        from skills.builtin.core.multimodal_rag.scripts.graph_rag import get_lightrag
 
         lightrag = await get_lightrag()
         graph = await lightrag.get_knowledge_graph(

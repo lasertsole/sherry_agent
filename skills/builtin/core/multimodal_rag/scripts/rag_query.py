@@ -1,5 +1,5 @@
 """
-rag_query.py — Query the rag_anything-anything knowledge graph
+rag_query.py — Query the graph_rag-anything knowledge graph
 
 Usage:
     python rag_query.py "<query_string>"
@@ -23,17 +23,20 @@ except AttributeError:
 
 # Dynamically add project root to sys.path
 current_file = Path(__file__).resolve()
-# skills/core/rag_anything/scripts/rag_query.py -> parents[4] = project root
-project_root: Path = current_file.parents[4]
+# skills/builtin/core/multimodal_rag/scripts/rag_query.py -> parents[5] = project root
+project_root: Path = current_file.parents[5]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+# Import graph_rag FIRST: its __init__ aliases bare `lightrag` onto the
+# vendored copy before raganything (which imports `from lightrag import ...`
+# at module load) is pulled in transitively via graph_rag.core.
+from graph_rag import get_rag_anything
 from raganything import RAGAnything
-from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_rag_anything
 
 @validate_call
 async def query(question: str) -> str:
-    """Query the rag_anything-anything knowledge graph"""
+    """Query the graph_rag-anything knowledge graph"""
     try:
         rag: RAGAnything = await get_rag_anything()
         res = await rag.aquery(question)

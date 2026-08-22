@@ -17,8 +17,11 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from config import SRC_DIR
+# Import graph_rag FIRST: its __init__ aliases bare `lightrag` onto the
+# vendored copy before raganything (which imports `from lightrag import ...`
+# at module load) is pulled in transitively via graph_rag.core.
+from graph_rag import get_rag_anything
 from raganything import RAGAnything
-from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_rag_anything
 
 logger.remove()
 logger.add(sys.stderr, level="INFO")
@@ -43,7 +46,7 @@ async def main() -> None:
         try:
             await rag.process_document_complete(
                 file_path=doc,
-                output_dir=SRC_DIR / "rag" / "rag_anything" / CLASSIFY / "output",
+                output_dir=SRC_DIR / "rag" / "graph_rag" / CLASSIFY / "output",
                 parse_method="auto",
             )
             logger.info(f"OK: {p.name}")

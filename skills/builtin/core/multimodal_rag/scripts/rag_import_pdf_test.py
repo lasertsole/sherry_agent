@@ -25,11 +25,11 @@ from config import SRC_DIR
 logger.remove()
 logger.add(sys.stderr, level="INFO")
 
-from skills.builtin.core.multimodal_rag.scripts.rag_anything import get_rag_anything
+from graph_rag import get_rag_anything
 
 DOCS = [
-    r"C:\app\code\project\EMA_AI_agent\src\rag\rag_anything\multiformat_test\output\01_company.pdf",
-    r"C:\app\code\project\EMA_AI_agent\src\rag\rag_anything\multiformat_test\output\02_market.pdf",
+    r"C:\app\code\project\EMA_AI_agent\src\rag\graph_rag\multiformat_test\output\01_company.pdf",
+    r"C:\app\code\project\EMA_AI_agent\src\rag\graph_rag\multiformat_test\output\02_market.pdf",
 ]
 CLASSIFY = "multiformat_test"
 
@@ -46,7 +46,7 @@ async def main() -> None:
         try:
             await rag.process_document_complete(
                 file_path=doc,
-                output_dir=SRC_DIR / "rag" / "rag_anything" / CLASSIFY / "output",
+                output_dir=SRC_DIR / "rag" / "graph_rag" / CLASSIFY / "output",
                 parse_method="auto",
                 backend="pipeline",
             )

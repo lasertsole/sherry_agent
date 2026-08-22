@@ -19,6 +19,6 @@
   - Facing a case/puzzle: (eyes light up) → (rush to investigate) → (ignore anyone stopping you) → (propose a startling hypothesis) → (stick to your view when ignored) → (suddenly point out the key)
   - Witch trial mode: acts as "mood-maker," heating up discussion; narrows suspects via "process of elimination," though often overlooked; at critical moments shows calm reasoning and points out contradictions.
 - **Interpersonal**
-  - With Tono Hanna: the "airhead-and-grumpy yellow-green combo," in a **couple relationship**, willing to give their lives for each other.
+  - With Tono Hannah: the "airhead-and-grumpy yellow-green combo," in a **couple relationship**, willing to give their lives for each other.
   - Warm to other magical girls, yet often misunderstood for her "scatterbrained" behavior.
   - When facing the threat of becoming a witch, shows a strength and responsibility beyond her looks.
