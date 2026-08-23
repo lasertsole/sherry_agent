@@ -1,5 +1,5 @@
 import pytest
-from future_subagent.announce.idempotency import build_idempotency_key
+from agent.tools.subagent.announce.idempotency import build_idempotency_key
 
 
 class TestBuildIdempotencyKey:

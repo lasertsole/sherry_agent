@@ -12,10 +12,10 @@ import asyncio
 from pathlib import Path
 from loguru import logger
 
-from future_subagent.spawn.core import spawn_subagent_direct, SpawnResult
-from future_subagent.types.spawn import SpawnMode, ContextMode
-from future_subagent.registry import get_run
-from future_subagent.registry import memory as registry_memory
+from agent.tools.subagent.spawn.core import spawn_subagent_direct, SpawnResult
+from agent.tools.subagent.types.spawn import SpawnMode, ContextMode
+from agent.tools.subagent.registry import get_run
+from agent.tools.subagent.registry import memory as registry_memory
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ from future_subagent.registry import memory as registry_memory
 @pytest.fixture(autouse=True)
 def _clean_registry():
     """Ensure a clean registry before each test."""
-    from future_subagent.registry import clear as clear_registry
+    from agent.tools.subagent.registry import clear as clear_registry
     clear_registry()
     yield
     clear_registry()
@@ -38,7 +38,7 @@ async def _poll_run(
 
     Raises TimeoutError if the run doesn't complete within *timeout* seconds.
     """
-    from future_subagent.types.registry import ExecutionStatus
+    from agent.tools.subagent.types.registry import ExecutionStatus
 
     deadline = asyncio.get_event_loop().time() + timeout
     last_status = None
@@ -85,7 +85,7 @@ async def test_spawn_direct_simple_task():
 
     # Poll for completion
     run = await _poll_run(result.run_id, timeout=120.0)
-    from future_subagent.types.registry import RunOutcomeStatus
+    from agent.tools.subagent.types.registry import RunOutcomeStatus
 
     assert run.execution.outcome is not None
     assert run.execution.outcome.status == RunOutcomeStatus.OK, (
@@ -139,7 +139,7 @@ async def test_spawn_direct_complex_multi_step_task():
 
     # Poll for completion
     run = await _poll_run(result.run_id, timeout=300.0)
-    from future_subagent.types.registry import RunOutcomeStatus
+    from agent.tools.subagent.types.registry import RunOutcomeStatus
 
     assert run.execution.outcome is not None, "Execution outcome is missing"
 
@@ -158,7 +158,7 @@ async def test_spawn_direct_complex_multi_step_task():
                        run.execution.outcome.status.value,
                        run.execution.outcome.error)
         # If timeout, that's OK—the pipeline worked, agent just ran long
-        from future_subagent.types.registry import ExecutionStatus
+        from agent.tools.subagent.types.registry import ExecutionStatus
         assert run.execution.status == ExecutionStatus.TERMINAL, (
             f"Run should be TERMINAL, got {run.execution.status}"
         )
@@ -190,7 +190,7 @@ async def test_spawn_direct_custom_tools_disabled():
 
     assert result.status == "accepted"
     run = await _poll_run(result.run_id, timeout=120.0)
-    from future_subagent.types.registry import RunOutcomeStatus
+    from agent.tools.subagent.types.registry import RunOutcomeStatus
 
     assert run.execution.outcome is not None
     # Agent may either gracefully report "tool not available" or error
@@ -245,7 +245,7 @@ async def test_spawn_direct_concurrent_tasks():
     for r in results:
         try:
             run = await _poll_run(r.run_id, timeout=180.0)
-            from future_subagent.types.registry import RunOutcomeStatus
+            from agent.tools.subagent.types.registry import RunOutcomeStatus
             if run.execution.outcome and run.execution.outcome.status == RunOutcomeStatus.OK:
                 completed += 1
                 logger.info("  ✓ run {} OK: {!r}", r.run_id[:8],

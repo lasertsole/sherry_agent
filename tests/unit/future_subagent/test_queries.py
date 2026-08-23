@@ -1,12 +1,12 @@
 import pytest
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.registry.queries import (
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.registry.queries import (
     list_runs_for_requester,
     list_descendant_runs,
     count_active_runs_for_session,
     get_run_by_child_session_key,
 )
-from future_subagent.types.registry import SubagentRunRecord, ExecutionStatus
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionStatus
 
 
 @pytest.fixture(autouse=True)

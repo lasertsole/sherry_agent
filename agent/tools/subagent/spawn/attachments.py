@@ -114,9 +114,9 @@ async def materialize_subagent_attachments(
         child_workspace = TEMP_DIR
 
     attachment_uuid = str(uuid.uuid4())[:8]  # short UUID for readability in paths
-    root_dir = child_workspace / "attachments"
+    root_dir = child_workspace / ".openclaw" / "attachments"
     abs_dir = root_dir / attachment_uuid
-    rel_dir = f"attachments/{attachment_uuid}"
+    rel_dir = f".openclaw/attachments/{attachment_uuid}"
 
     manifest_entries: list[dict] = []
     total_bytes = 0

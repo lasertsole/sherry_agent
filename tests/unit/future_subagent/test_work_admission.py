@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from future_subagent.registry.work_admission import (
+from agent.tools.subagent.registry.work_admission import (
     is_gateway_draining,
     set_draining,
     run_with_work_admission,

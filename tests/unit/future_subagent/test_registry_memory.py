@@ -1,7 +1,7 @@
 import pytest
-from future_subagent.registry.memory import get, set_run, delete, update, snapshot, size, clear, find_by_child_session_key
-from future_subagent.types.registry import SubagentRunRecord, ExecutionStatus
-from future_subagent.types.spawn import SpawnMode
+from agent.tools.subagent.registry.memory import get, set_run, delete, update, snapshot, size, clear, find_by_child_session_key
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionStatus
+from agent.tools.subagent.types.spawn import SpawnMode
 
 
 @pytest.fixture(autouse=True)

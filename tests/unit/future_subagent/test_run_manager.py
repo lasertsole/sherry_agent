@@ -1,8 +1,8 @@
 import pytest
-from future_subagent.registry.run_manager import register_run, mark_run_paused_after_yield, mark_run_running, complete_run
-from future_subagent.registry.memory import get, clear
-from future_subagent.types.registry import ExecutionStatus, RunOutcome, RunOutcomeStatus
-from future_subagent.types.spawn import SpawnMode
+from agent.tools.subagent.registry.run_manager import register_run, mark_run_paused_after_yield, mark_run_running, complete_run
+from agent.tools.subagent.registry.memory import get, clear
+from agent.tools.subagent.types.registry import ExecutionStatus, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.types.spawn import SpawnMode
 
 
 @pytest.fixture(autouse=True)
@@ -46,11 +46,11 @@ class TestRegisterRun:
             task="test",
             depth=0,
         )
-        from future_subagent.types.capability import SubagentSessionRole
+        from agent.tools.subagent.types.capability import SubagentSessionRole
         assert run.role == SubagentSessionRole.MAIN
 
     def test_depth_at_max_is_leaf(self):
-        from future_subagent.config import get_config
+        from agent.tools.subagent.config import get_config
         config = get_config()
         run = register_run(
             child_session_key="agent:main:subagent:abc",
@@ -58,7 +58,7 @@ class TestRegisterRun:
             task="test",
             depth=config.max_spawn_depth,
         )
-        from future_subagent.types.capability import SubagentSessionRole
+        from agent.tools.subagent.types.capability import SubagentSessionRole
         assert run.role == SubagentSessionRole.LEAF
 
     def test_session_mode_delivery_not_required(self):
@@ -68,7 +68,7 @@ class TestRegisterRun:
             task="test",
             spawn_mode=SpawnMode.SESSION,
         )
-        from future_subagent.types.registry import DeliveryStatus
+        from agent.tools.subagent.types.registry import DeliveryStatus
         assert run.delivery.status == DeliveryStatus.NOT_REQUIRED
 
     def test_run_mode_delivery_pending(self):
@@ -78,7 +78,7 @@ class TestRegisterRun:
             task="test",
             spawn_mode=SpawnMode.RUN,
         )
-        from future_subagent.types.registry import DeliveryStatus
+        from agent.tools.subagent.types.registry import DeliveryStatus
         assert run.delivery.status == DeliveryStatus.PENDING
 
 

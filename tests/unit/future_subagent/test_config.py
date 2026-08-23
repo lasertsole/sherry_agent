@@ -1,5 +1,5 @@
 import pytest
-from future_subagent.config import SubagentConfig, get_config, set_config
+from agent.tools.subagent.config import SubagentConfig, get_config, set_config
 
 
 class TestSubagentConfig:

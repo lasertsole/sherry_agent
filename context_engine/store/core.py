@@ -354,14 +354,16 @@ def _decode_title_content(raw_content: str | None) -> str:
 def _is_top_level_session(session_id: str) -> bool:
     """Return True for a top-level (user-facing) session.
 
-    Subagent sessions carry a reserved prefix and must NOT be surfaced in the
-    user's session list:
-    - ``commander-<master_session_id>`` — the hierarchy Commander agent.
-    - ``worker-<commander_session_id>-<task_id>`` — a task Worker agent.
-    See ``agent/tools/subagent/base.py`` and
-    ``agent/tools/subagent/commander/tools/worker/core.py`` for construction.
+    Subagent sessions are namespaced under a reserved
+    ``agent:<agent_id>:subagent:`` prefix hierarchy and must NOT be surfaced in
+    the user's session list. Every key in that hierarchy (top-level child,
+    grandchild, etc.) carries the ``:subagent:`` segment, e.g.:
+    - ``agent:main:subagent:<uuid>``                  — a top-level child agent.
+    - ``agent:main:subagent:<uuid>:subagent:<uuid>``  — a nested grandchild.
+    See ``agent/tools/subagent/spawn/core.py::child_session_key`` for
+    construction.
     """
-    return not (session_id.startswith("commander-") or session_id.startswith("worker-"))
+    return ":subagent:" not in session_id
 
 
 def get_session_ids() -> list[dict]:
@@ -375,8 +377,8 @@ def get_session_ids() -> list[dict]:
             "title":       str,   # derived from the latest human message; "" when no usable text
         }, ...]
 
-    Subagent sessions (``commander-*`` / ``worker-*``) are excluded, so only
-    user-facing conversations are listed.
+    Subagent sessions (keyed with an ``agent:<agent_id>:subagent:`` prefix
+    hierarchy) are excluded, so only user-facing conversations are listed.
 
     ``last_time`` is the newest message's ``timestamp`` text (the same
     ``YYYYMMDDHHmmss`` format used across the store).

@@ -1,12 +1,12 @@
 import pytest
-from future_subagent.announce.idempotency import build_idempotency_key
-from future_subagent.announce.output import (
+from agent.tools.subagent.announce.idempotency import build_idempotency_key
+from agent.tools.subagent.announce.output import (
     build_child_completion_findings,
     build_compact_announce_stats_line,
 )
-from future_subagent.announce.dispatch import AnnounceDispatchType, resolve_dispatch_type
-from future_subagent.announce.origin import resolve_announce_origin
-from future_subagent.types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionState, CompletionState
+from agent.tools.subagent.announce.dispatch import AnnounceDispatchType, resolve_dispatch_type
+from agent.tools.subagent.announce.origin import resolve_announce_origin
+from agent.tools.subagent.types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionState, CompletionState
 
 
 class TestIdempotency:
@@ -64,6 +64,6 @@ class TestOrigin:
     def test_resolve_origin(self):
         run = SubagentRunRecord(run_id="r1", child_session_key="child", requester_session_key="parent", task="t", agent_id="main")
         origin = resolve_announce_origin(run)
-        assert origin["child_session_key"] == "child"
-        assert origin["requester_session_key"] == "parent"
-        assert origin["agent_id"] == "main"
+        assert origin.child_session_key == "child"
+        assert origin.requester_session_key == "parent"
+        assert origin.agent_id == "main"

@@ -133,6 +133,49 @@ export interface DraftTurn {
   messages: MessageItem[];
 }
 
+/**
+ * 缓存的子任务（subagent）运行记录�?
+ *
+ * 由后端 `/subagents/ws` WebSocket 实时推送（事件 `subagent_spawned` /
+ * `subagent_ended`），并在首次加载 / 会话切换 / WS 重连后通过
+ * `GET /subagents/runs` 拉取补齐（间隙填充）�?字段与后端
+ * `server/trigger/http/subagent.py` 的 `_PUBLIC_FIELDS` 保持一致�?
+ *
+ * 主键为 `run_id`；`requester_session_key` 用于在前端「后台任务」里高亮
+ * 当前会话派生�?子任务�?
+ */
+export interface CachedSubagentRun {
+  run_id: string;
+  child_session_key: string | null;
+  requester_session_key: string | null;
+  task: string | null;
+  task_name: string | null;
+  label: string | null;
+  spawn_mode: string | null;
+  context_mode: string | null;
+  agent_id: string | null;
+  depth: number | null;
+  role: string | null;
+  control_scope: string | null;
+  generation: number | null;
+  swarm_group_id: string | null;
+  swarm_run_state: string | null;
+  ended_reason: string | null;
+  pause_reason: string | null;
+  execution:
+    | { status?: string | null; outcome?: string | null; started_at?: string | null; completed_at?: string | null }
+    | null;
+  completion:
+    | {
+        required?: boolean | null;
+        owner_session_key?: string | null;
+        result_text?: string | null;
+        captured_at?: string | null;
+      }
+    | null;
+  delivery: { status?: string | null; attempt_count?: number | null; delivered_at?: string | null } | null;
+}
+
 /** 全局待定 profile �?character 表中的主键（非真实会�?ID）�?*/
 export const GLOBAL_SESSION_KEY = '__global__';
 
@@ -160,6 +203,8 @@ class HistoryDb extends Dexie {
   drafts!: Table<DraftTurn, [string, number]>;
   /** 用户上传的聊天区背景图表（主键 session_id，固定为全局行 {@link GLOBAL_SESSION_KEY}） */
   background!: Table<CachedBackground, string>;
+  /** 缓存的子任务运行记录表（主键 run_id，见 {@link CachedSubagentRun}） */
+  subagentRuns!: Table<CachedSubagentRun, string>;
 
   constructor() {
     super('ema-history-cache');
@@ -195,6 +240,10 @@ class HistoryDb extends Dexie {
         if (msg.input_tokens === undefined) msg.input_tokens = null;
         if (msg.output_tokens === undefined) msg.output_tokens = null;
       });
+    });
+    this.version(7).stores({
+      // 子任务运行记录缓存（主键 run_id），新增表不破坏既有表结构�?
+      subagentRuns: 'run_id'
     });
   }
 }
@@ -397,4 +446,46 @@ export async function readBackgroundConfig(): Promise<
     backgroundUrl: row.backgroundUrl,
     backgroundOpacity: row.backgroundOpacity ?? 0
   };
+}
+
+/**
+ * 将一条（或多条）子任务运行记录写入本地缓存（按 `run_id` 去重，同样支持覆盖）�?
+ *
+ * 来自 `/subagents/ws` 的实时事件以及 `GET /subagents/runs` 的间隙填充都会调用
+ * 本函数，使 IndexedDB 成为后台任务列表的权威本地数据源�?
+ *
+ * @param runs 待缓存的子任务运行记录（单条或数组均可）
+ */
+export async function cacheSubagentRuns(runs: CachedSubagentRun[]): Promise<void> {
+  if (!runs || runs.length === 0) return;
+  await db.subagentRuns.bulkPut(runs);
+}
+
+/**
+ * 读取本地缓存中的全部子任务运行记录，按运行发起时间倒序（最新优先）排列�?
+ *
+ * 返回结果用每条的 `run_id` 隐含的先后关系（后端 run_id 单调递增）做倒序，
+ * 以便 UI 直接从缓存渲染非实时的任务列表�?
+ *
+ * @returns 本地缓存的子任务运行记录数组（空数组表示无记录）
+ */
+export async function readCachedSubagentRuns(): Promise<CachedSubagentRun[]> {
+  const list = await db.subagentRuns.toArray();
+  // run_id 为后端递增序号，数值化后倒序即最新优先
+  return list.sort((a, b) => {
+    const an = Number(a.run_id);
+    const bn = Number(b.run_id);
+    if (Number.isFinite(an) && Number.isFinite(bn)) return bn - an;
+    // 非纯数字回退到字面量比较（字典序倒序）
+    return String(b.run_id) < String(a.run_id) ? -1 : 1;
+  });
+}
+
+/**
+ * 清除本地缓存中的全部子任务运行记录�?
+ *
+ * 后端数据被清空（如重建仓库）时，前端据此清理旧缓存，避免渲染僵尸记录�?
+ */
+export async function clearCachedSubagentRuns(): Promise<void> {
+  await db.subagentRuns.clear();
 }

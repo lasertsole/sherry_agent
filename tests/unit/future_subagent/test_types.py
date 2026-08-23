@@ -1,7 +1,7 @@
 import pytest
 import time
-from future_subagent.types.spawn import SpawnMode, ContextMode
-from future_subagent.types.registry import (
+from agent.tools.subagent.types.spawn import SpawnMode, ContextMode
+from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
     CompletionState,
@@ -11,9 +11,9 @@ from future_subagent.types.registry import (
     DeliveryStatus,
     RunOutcomeStatus,
 )
-from future_subagent.types.lifecycle import LifecycleEndedReason, LifecycleEndedOutcome
-from future_subagent.types.delivery import DeliveryContext
-from future_subagent.types.capability import SubagentSessionRole, ControlScope
+from agent.tools.subagent.types.lifecycle import LifecycleEndedReason, LifecycleEndedOutcome
+from agent.tools.subagent.types.delivery import DeliveryContext
+from agent.tools.subagent.types.capability import SubagentSessionRole, ControlScope
 
 
 class TestSpawnEnums:

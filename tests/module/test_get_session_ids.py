@@ -5,7 +5,7 @@ Verifies the session-list enumeration logic against a real SQLite database:
 - Title derivation uses the **latest human** message (not any other role).
 - An empty/no-usable-text title stays ``""`` (the client renders an i18n
   placeholder rather than leaking the raw session_id).
-- Subagent sessions (``commander-*`` / ``worker-*``) are excluded.
+- Subagent sessions (``agent:<agent_id>:subagent:`` hierarchy) are excluded.
 - Rows are ordered newest-activity first.
 """
 
@@ -162,13 +162,13 @@ class TestGetSessionIds:
         assert result[0]["title"] == "describe this image"
 
     def test_subagent_sessions_excluded(self, sid_db, patch_db):
-        """commander-* / worker-* sessions must not appear in the list."""
+        """agent:...:subagent:... sessions must not appear in the list."""
         from context_engine.store.core import get_session_ids
 
         ins = sid_db["insert"]
         ins("main-user-session", 1, "human", json.dumps("hi", ensure_ascii=False), "20260101100000")
-        ins("commander-master-1", 1, "human", json.dumps("sub", ensure_ascii=False), "20260101110000")
-        ins("worker-cmd-2-42", 1, "human", json.dumps("sub2", ensure_ascii=False), "20260101120000")
+        ins("agent:main:subagent::abc123", 1, "human", json.dumps("sub", ensure_ascii=False), "20260101110000")
+        ins("agent:main:subagent::mother:subagent::child42", 1, "human", json.dumps("sub2", ensure_ascii=False), "20260101120000")
 
         result = get_session_ids()
         sessions = {r["session_id"] for r in result}

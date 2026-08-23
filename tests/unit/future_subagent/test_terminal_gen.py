@@ -1,5 +1,5 @@
 import pytest
-from future_subagent.registry.terminal_gen import TerminalGenerationTracker, get_terminal_gen_tracker
+from agent.tools.subagent.registry.terminal_gen import TerminalGenerationTracker, get_terminal_gen_tracker
 
 
 class TestTerminalGenerationTracker:

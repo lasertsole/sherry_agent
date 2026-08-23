@@ -43,6 +43,45 @@
     "exampleTitle": "示例会话",
     "newSession": "新会话"
   },
+  "sidebar": {
+    "tabSessions": "会话",
+    "tabTasks": "后台任务",
+    "tasksLoading": "正在加载任务…",
+    "noTasks": "暂无后台任务",
+    "tasksUpdatedAt": "更新于 {time}",
+    "tasksAgoSeconds": "{sec} 秒前",
+    "statusRunning": "运行中",
+    "statusInterrupted": "已中断",
+    "statusPending": "待配送",
+    "statusInProgress": "配送中",
+    "statusDelivered": "已送达",
+    "statusDone": "已完成",
+    "statusError": "出错",
+    "statusTimeout": "超时",
+    "statusKilled": "已终止",
+    "statusUnknown": "未知",
+    "roleRoot": "主任务",
+    "roleChild": "子任务",
+    "parentSession": "调用方 Session"
+  },
+  "flow": {
+    "title": "实时流程图",
+    "toggle": "切换流程图",
+    "empty": "暂无子 Agent 运行",
+    "loading": "加载中…",
+    "error": "加载失败",
+    "collapse": "收起",
+    "expand": "展开",
+    "close": "关闭",
+    "sessionRoot": "会话 / 根",
+    "status": {
+      "running": "运行中",
+      "completed": "已完成",
+      "failed": "失败",
+      "pending": "待处理",
+      "unknown": "未知"
+    }
+  },
   "toolbar": {
     "newChat": "新建对话",
     "knowledgeBase": "知识库",

@@ -1,10 +1,10 @@
 import pytest
-from future_subagent.hooks.progress import (
+from agent.tools.subagent.hooks.progress import (
     fire_spawned_hook,
     fire_progress_hook,
     fire_ended_hook,
 )
-from future_subagent.types.registry import SubagentRunRecord
+from agent.tools.subagent.types.registry import SubagentRunRecord
 
 
 def _make_run(**overrides) -> SubagentRunRecord:

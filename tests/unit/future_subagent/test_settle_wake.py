@@ -1,12 +1,12 @@
 import pytest
 import asyncio
-from future_subagent.registry.settle_wake import (
+from agent.tools.subagent.registry.settle_wake import (
     SettleWakeState,
     RequesterSettleWakeBatch,
     get_settle_wake_batch,
 )
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
 
 
 @pytest.fixture(autouse=True)

@@ -1,6 +1,6 @@
-"""Bridge package: expose future_subagent's 7 session-control tools to the main agent.
+"""Runtime-injected subagent tools for the main agent.
 
-This package re-wraps ``future_subagent``'s LLM tools (``sessions_spawn``,
+These 7 tools expose the subagent system's LLM interfaces (``sessions_spawn``,
 ``sessions_yield``, ``sessions_send``, ``sessions_kill``, ``sessions_steer``,
 ``agents_list``, ``subagents_list``) so that ``session_id`` is injected at
 **runtime** via LangGraph's ``InjectedState("session_id")`` instead of being
@@ -8,23 +8,17 @@ bound at build time.
 
 Design notes
 ------------
-* We deliberately do **not** modify any ``future_subagent`` internals. The
-  original tools require ``session_id`` as a constructor field
-  (``build_*_tool(session_id=...)``). The main agent, however, registers
-  tools through ``_MAIN_TOOLS_BUILDERS`` with zero-argument builders
-  (``Callable[[], BaseTool]``) and must look up each session on the fly.
-* Every import of ``future_subagent`` internals happens **inside** the
-  function bodies (lazy import). This is mandatory to break the circular
-  import cycle::
-
-      future_subagent/spawn/core.py
-          └─> from agent.tools import build_main_tools   (lazy)
-                  └─> agent/tools/__init__.py
-                          └─> agent/tools/future_subagent/__init__.py
-                                  └─> future_subagent/...  ⚠ cycle at import time
-
-  Deferring the ``future_subagent`` import until invocation keeps module
-  import time acyclic.
+* The main agent registers tools through ``_MAIN_TOOLS_BUILDERS`` with
+  zero-argument builders (``Callable[[], BaseTool | list[BaseTool]]``). Each
+  builder may be called by *different* sessions (main, and recursively spawned
+  subagents), so ``session_id`` must be looked up on the fly per invocation
+  rather than captured at build time. ``InjectedState("session_id")`` does
+  exactly that.
+* Every library internal import below is relative, keeping the package
+  self-contained and acyclic at import time.
+* These runtime tools are the *authoritative* set for the main agent; the
+  build-time variants in ``sessions_spawn.py`` etc. remain available for
+  programmatic/bind-time use.
 """
 
 from typing import Annotated, Literal
@@ -42,7 +36,7 @@ def _session_key(session_id: str) -> str:
 
 
 @tool("sessions_spawn")
-async def sessions_spawn_tool(
+async def sessions_spawn_runtime_tool(
     task: str,
     session_id: SessionId = "",
     task_name: str | None = None,
@@ -59,9 +53,8 @@ async def sessions_spawn_tool(
     The subagent runs independently; results are delivered on completion.
     Use for complex or time-consuming tasks that can run on their own.
     """
-    # Lazy import to avoid the circular dependency future_subagent <-> agent.tools
-    from future_subagent.spawn import spawn_subagent_direct
-    from future_subagent.types.spawn import ContextMode, SpawnMode
+    from ..spawn import spawn_subagent_direct
+    from ..types.spawn import ContextMode, SpawnMode
 
     requester_session_key = _session_key(session_id)
 
@@ -99,7 +92,7 @@ async def sessions_spawn_tool(
 
 
 @tool("sessions_yield")
-async def sessions_yield_tool(
+async def sessions_yield_runtime_tool(
     session_id: SessionId = "",
     reason: str | None = None,
     timeout_seconds: float = 300.0,
@@ -110,13 +103,9 @@ async def sessions_yield_tool(
     delivered. Use after spawning subagents when you want their results
     before continuing.
     """
-    from future_subagent.registry import (
-        get_yield_event,
-        register_yield_event,
-        remove_yield_event,
-    )
-    from future_subagent.registry.queries import list_runs_for_requester
-    from future_subagent.types.registry import ExecutionStatus
+    from ..registry import register_yield_event, remove_yield_event
+    from ..registry.queries import list_runs_for_requester
+    from ..types.registry import ExecutionStatus
 
     import asyncio
 
@@ -144,7 +133,7 @@ async def sessions_yield_tool(
 
 
 @tool("sessions_send")
-async def sessions_send_tool(
+async def sessions_send_runtime_tool(
     target_session_key: str,
     message: str,
     session_id: SessionId = "",
@@ -154,9 +143,9 @@ async def sessions_send_tool(
 
     Use to communicate with spawned subagents or other active sessions.
     """
-    from future_subagent.control.controller import can_control_run
-    from future_subagent.control.send import send_subagent_message
-    from future_subagent.registry.queries import get_run_by_child_session_key
+    from ..control.controller import can_control_run
+    from ..control.send import send_subagent_message
+    from ..registry.queries import get_run_by_child_session_key
 
     requester_key = _session_key(session_id)
 
@@ -178,7 +167,7 @@ async def sessions_send_tool(
 
 
 @tool("sessions_kill")
-async def sessions_kill_tool(
+async def sessions_kill_runtime_tool(
     run_id: str,
     session_id: SessionId = "",
     cascade: bool = True,
@@ -189,7 +178,7 @@ async def sessions_kill_tool(
     Cancels its execution and marks it as killed. Optionally cascade to kill
     all descendant subagents as well.
     """
-    from future_subagent.control import kill_subagent_run_with_cascade
+    from ..control import kill_subagent_run_with_cascade
 
     requester_session_key = _session_key(session_id)
     killed = await kill_subagent_run_with_cascade(
@@ -207,7 +196,7 @@ async def sessions_kill_tool(
 
 
 @tool("sessions_steer")
-async def sessions_steer_tool(
+async def sessions_steer_runtime_tool(
     run_id: str,
     new_task: str | None = None,
     new_instructions: str | None = None,
@@ -218,7 +207,7 @@ async def sessions_steer_tool(
     executing. Provide either ``new_task`` to fully replace the task or
     ``new_instructions`` to add guidance.
     """
-    from future_subagent.control import steer_subagent_run
+    from ..control import steer_subagent_run
 
     if not new_task and not new_instructions:
         return "Error: Must provide at least one of new_task or new_instructions."
@@ -234,9 +223,9 @@ async def sessions_steer_tool(
 
 
 @tool("agents_list")
-async def agents_list_tool() -> str:
+async def agents_list_runtime_tool() -> str:
     """List available agent IDs that can be used as targets for sessions_spawn."""
-    from future_subagent.config import get_config
+    from ..config import get_config
 
     config = get_config()
     allow_agents = config.allow_agents
@@ -247,11 +236,11 @@ async def agents_list_tool() -> str:
 
 
 @tool("subagents_list")
-async def subagents_list_tool(
+async def subagents_list_runtime_tool(
     session_id: SessionId = "",
 ) -> str:
     """List active and recent subagent runs for the current session."""
-    from future_subagent.control import build_subagent_list
+    from ..control import build_subagent_list
 
     session_key = _session_key(session_id)
     info = build_subagent_list(session_key)
@@ -277,19 +266,23 @@ async def subagents_list_tool(
     return "\n".join(lines)
 
 
-_FUTURE_SUBAGENT_TOOLS: list[BaseTool] = [
-    sessions_spawn_tool,
-    sessions_yield_tool,
-    sessions_send_tool,
-    sessions_kill_tool,
-    sessions_steer_tool,
-    agents_list_tool,
-    subagents_list_tool,
+_SUBAGENT_RUNTIME_TOOLS: list[BaseTool] = [
+    sessions_spawn_runtime_tool,
+    sessions_yield_runtime_tool,
+    sessions_send_runtime_tool,
+    sessions_kill_runtime_tool,
+    sessions_steer_runtime_tool,
+    agents_list_runtime_tool,
+    subagents_list_runtime_tool,
 ]
 
 
-def build_future_subagent_tools() -> list[BaseTool]:
-    """Build and return the 7 future_subagent bridge tools."""
-    for t in _FUTURE_SUBAGENT_TOOLS:
+def build_subagent_runtime_tools() -> list[BaseTool]:
+    """Build and return the 7 runtime-injected subagent tools.
+
+    Meant to be registered in ``_MAIN_TOOLS_BUILDERS``. ``session_id`` is
+    injected per-invocation from the current LangGraph state.
+    """
+    for t in _SUBAGENT_RUNTIME_TOOLS:
         t.handle_tool_error = True
-    return list(_FUTURE_SUBAGENT_TOOLS)
+    return list(_SUBAGENT_RUNTIME_TOOLS)

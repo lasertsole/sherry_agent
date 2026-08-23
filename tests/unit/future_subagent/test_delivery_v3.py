@@ -1,7 +1,7 @@
 import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
-from future_subagent.announce.delivery import (
+from agent.tools.subagent.announce.delivery import (
     deliver_subagent_announcement,
     _is_already_delivered,
     _mark_delivered,
@@ -12,8 +12,8 @@ from future_subagent.announce.delivery import (
     _delivered_keys,
     _delivery_mirror,
 )
-from future_subagent.announce.idempotency import build_idempotency_key
-from future_subagent.types.registry import (
+from agent.tools.subagent.announce.idempotency import build_idempotency_key
+from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
     ExecutionStatus,
@@ -23,14 +23,14 @@ from future_subagent.types.registry import (
     RunOutcome,
     RunOutcomeStatus,
 )
-from future_subagent.types.delivery import DeliveryContext
+from agent.tools.subagent.types.delivery import DeliveryContext
 
 
 @pytest.fixture(autouse=True)
 def _clean():
     _delivered_keys.clear()
     _delivery_mirror.clear()
-    from future_subagent.registry.memory import clear
+    from agent.tools.subagent.registry.memory import clear
     clear()
     yield
     _delivered_keys.clear()
@@ -104,7 +104,7 @@ class TestBuildDeliveryContext:
 
     def test_subagent_to_subagent(self):
         run = _make_run()
-        with patch("future_subagent.announce.origin.resolve_announce_origin") as mock_origin:
+        with patch("agent.tools.subagent.announce.origin.resolve_announce_origin") as mock_origin:
             mock_origin.return_value = MagicMock(is_requester_subagent=True)
             ctx = _build_delivery_context(run)
             assert ctx.is_requester_subagent is True
@@ -122,21 +122,14 @@ class TestDeliverInternalInjection:
             run_id="r1",
             is_requester_subagent=True,
         )
-        mock_bus_instance = AsyncMock()
-        import bus
-        old = getattr(bus, "MessageBus", None)
-        bus.MessageBus = MagicMock(return_value=mock_bus_instance)
-        try:
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
             await _deliver_internal_injection(ctx)
-            mock_bus_instance.publish_inbound.assert_called_once()
-            msg = mock_bus_instance.publish_inbound.call_args[0][0]
+            mock_bus.publish_internal.assert_called_once()
+            msg = mock_bus.publish_internal.call_args[0][0]
             assert msg.metadata["internal"] is True
             assert "Subagent Internal" in msg.content
-        finally:
-            if old is not None:
-                bus.MessageBus = old
-            else:
-                delattr(bus, "MessageBus")
 
 
 class TestDeliverCompletionMessage:
@@ -152,21 +145,14 @@ class TestDeliverCompletionMessage:
             run_id="r1",
             is_requester_subagent=False,
         )
-        mock_bus_instance = AsyncMock()
-        import bus
-        old = getattr(bus, "MessageBus", None)
-        bus.MessageBus = MagicMock(return_value=mock_bus_instance)
-        try:
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
             await _deliver_completion_message(ctx)
-            msg = mock_bus_instance.publish_inbound.call_args[0][0]
+            msg = mock_bus.publish_internal.call_args[0][0]
             assert "Subagent Task" in msg.content
             assert "review" in msg.content
             assert "internal" not in msg.metadata
-        finally:
-            if old is not None:
-                bus.MessageBus = old
-            else:
-                delattr(bus, "MessageBus")
 
     @pytest.mark.asyncio
     async def test_completion_message_killed(self):
@@ -178,19 +164,12 @@ class TestDeliverCompletionMessage:
             run_id="r1",
             is_requester_subagent=False,
         )
-        mock_bus_instance = AsyncMock()
-        import bus
-        old = getattr(bus, "MessageBus", None)
-        bus.MessageBus = MagicMock(return_value=mock_bus_instance)
-        try:
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
             await _deliver_completion_message(ctx)
-            msg = mock_bus_instance.publish_inbound.call_args[0][0]
+            msg = mock_bus.publish_internal.call_args[0][0]
             assert "killed" in msg.content
-        finally:
-            if old is not None:
-                bus.MessageBus = old
-            else:
-                delattr(bus, "MessageBus")
 
     @pytest.mark.asyncio
     async def test_completion_message_error(self):
@@ -202,19 +181,12 @@ class TestDeliverCompletionMessage:
             run_id="r1",
             is_requester_subagent=False,
         )
-        mock_bus_instance = AsyncMock()
-        import bus
-        old = getattr(bus, "MessageBus", None)
-        bus.MessageBus = MagicMock(return_value=mock_bus_instance)
-        try:
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
             await _deliver_completion_message(ctx)
-            msg = mock_bus_instance.publish_inbound.call_args[0][0]
+            msg = mock_bus.publish_internal.call_args[0][0]
             assert "crash" in msg.content
-        finally:
-            if old is not None:
-                bus.MessageBus = old
-            else:
-                delattr(bus, "MessageBus")
 
 
 class TestDeliverSubagentAnnouncement:
@@ -238,7 +210,7 @@ class TestDeliverSubagentAnnouncement:
             completion=CompletionState(required=False),
             delivery=CompletionDeliveryState(status=DeliveryStatus.NOT_REQUIRED),
         )
-        from future_subagent.registry.memory import set_run
+        from agent.tools.subagent.registry.memory import set_run
         set_run(run)
         result = await deliver_subagent_announcement(run)
         assert result.success is True

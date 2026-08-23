@@ -1,6 +1,6 @@
 import pytest
-from future_subagent.spawn.gateway_dispatch import resolve_least_privilege_scopes
-from future_subagent.types.capability import SubagentSessionRole
+from agent.tools.subagent.spawn.gateway_dispatch import resolve_least_privilege_scopes
+from agent.tools.subagent.types.capability import SubagentSessionRole
 
 
 class TestResolveLeastPrivilegeScopes:

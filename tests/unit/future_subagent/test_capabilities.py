@@ -1,11 +1,11 @@
 import pytest
-from future_subagent.capabilities.core import (
+from agent.tools.subagent.capabilities.core import (
     resolve_subagent_capabilities,
     is_subagent_session,
     can_spawn_children,
     extract_depth_from_session_key,
 )
-from future_subagent.types.capability import SubagentSessionRole, ControlScope
+from agent.tools.subagent.types.capability import SubagentSessionRole, ControlScope
 
 
 class TestResolveCapabilities:

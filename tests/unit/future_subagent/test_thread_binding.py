@@ -1,5 +1,5 @@
 import pytest
-from future_subagent.spawn.thread_binding import (
+from agent.tools.subagent.spawn.thread_binding import (
     ThreadBindingConfig,
     ThreadBindingInfo,
     ThreadBindingResult,
@@ -8,7 +8,7 @@ from future_subagent.spawn.thread_binding import (
     refresh_thread_binding,
     resolve_thread_binding_policy,
 )
-from future_subagent.types.spawn import SpawnMode
+from agent.tools.subagent.types.spawn import SpawnMode
 
 
 class TestThreadBindingConfig:

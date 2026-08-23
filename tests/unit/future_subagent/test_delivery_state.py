@@ -1,5 +1,5 @@
 import pytest
-from future_subagent.registry.delivery_state import (
+from agent.tools.subagent.registry.delivery_state import (
     is_delivery_pending,
     is_delivery_delivered,
     is_delivery_failed,
@@ -14,8 +14,8 @@ from future_subagent.registry.delivery_state import (
     mark_delivery_discarded,
     get_delivery_attempt_count,
 )
-from future_subagent.registry.memory import set_run, get, clear
-from future_subagent.types.registry import SubagentRunRecord, DeliveryStatus
+from agent.tools.subagent.registry.memory import set_run, get, clear
+from agent.tools.subagent.types.registry import SubagentRunRecord, DeliveryStatus
 
 
 @pytest.fixture(autouse=True)

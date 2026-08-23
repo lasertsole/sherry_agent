@@ -43,6 +43,45 @@
     "exampleTitle": "Example Conversation",
     "newSession": "New Session"
   },
+  "sidebar": {
+    "tabSessions": "Chats",
+    "tabTasks": "Background Tasks",
+    "tasksLoading": "Loading tasks...",
+    "noTasks": "No background tasks yet",
+    "tasksUpdatedAt": "Updated {time}",
+    "tasksAgoSeconds": "{sec}s ago",
+    "statusRunning": "Running",
+    "statusInterrupted": "Interrupted",
+    "statusPending": "Pending",
+    "statusInProgress": "Delivering",
+    "statusDelivered": "Delivered",
+    "statusDone": "Done",
+    "statusError": "Error",
+    "statusTimeout": "Timeout",
+    "statusKilled": "Killed",
+    "statusUnknown": "Unknown",
+    "roleRoot": "Root",
+    "roleChild": "Task",
+    "parentSession": "Caller Session"
+  },
+  "flow": {
+    "title": "Live Flow",
+    "toggle": "Toggle flow",
+    "empty": "No sub-agent runs yet",
+    "loading": "Loading…",
+    "error": "Failed to load",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "close": "Close",
+    "sessionRoot": "Session / Root",
+    "status": {
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "pending": "Pending",
+      "unknown": "Unknown"
+    }
+  },
   "toolbar": {
     "newChat": "New Chat",
     "knowledgeBase": "Knowledge Base",

@@ -1,7 +1,7 @@
 import pytest
 import asyncio
-from future_subagent.swarm.fifo import SwarmFifoQueue
-from future_subagent.swarm.collector import (
+from agent.tools.subagent.swarm.fifo import SwarmFifoQueue
+from agent.tools.subagent.swarm.collector import (
     configure_swarm_group,
     get_group_config,
     reserve_swarm_run,
@@ -9,17 +9,17 @@ from future_subagent.swarm.collector import (
     complete_swarm_run,
     build_structured_output_prompt,
 )
-from future_subagent.types.swarm import SwarmMode, SwarmRunState, SwarmGroupConfig
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.types.swarm import SwarmMode, SwarmRunState, SwarmGroupConfig
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
 
 
 @pytest.fixture(autouse=True)
 def _clean():
     clear()
-    from future_subagent.swarm import collector as _collector
+    from agent.tools.subagent.swarm import collector as _collector
     _collector._group_configs.clear()
-    from future_subagent.swarm.fifo import get_fifo
+    from agent.tools.subagent.swarm.fifo import get_fifo
     get_fifo()._queues.clear()
     yield
     clear()
@@ -217,7 +217,7 @@ class TestCompleteSwarmRun:
         await activate_swarm_run(run2.run_id)
 
         await complete_swarm_run(run1.run_id, RunOutcome(status=RunOutcomeStatus.OK), "done")
-        from future_subagent.registry import get_run as _get
+        from agent.tools.subagent.registry import get_run as _get
         run2_refreshed = _get(run2.run_id)
         assert run2_refreshed.swarm_run_state == SwarmRunState.ACTIVE.value
 

@@ -18,7 +18,6 @@ import uuid
 import asyncio
 from loguru import logger
 from typing import Literal
-from agent.tools import build_main_tools
 from ..config import get_config
 from ..types.spawn import SpawnMode, ContextMode
 from ..types.capability import SubagentSessionRole
@@ -350,6 +349,7 @@ async def spawn_subagent_direct(
         logger.warning("Spawned run {} appears orphaned at creation: {}", run.run_id, orphan_reason)
 
     # --- Phase 11: Launch background execution ---
+    from agent.tools import build_main_tools
     bg_task = asyncio.create_task(
         _execute_subagent(
             run=run,
@@ -577,6 +577,7 @@ async def _build_child_agent(
     from models import build_main_llm, build_auxiliary_llm
     from agent.checkpointer import build_async_sqlite_checkpointer
     from agent.middlewares import IterationBudget, ToolGuardrails, ToolCallNormalize, Summarization, HeartbeatStaleness
+    from agent.tools import build_main_tools
 
     base_tools = tools if tools is not None else build_main_tools()
     filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)

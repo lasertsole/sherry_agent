@@ -15,3 +15,4 @@ import server.trigger.http.env
 import server.trigger.http.memory
 import server.trigger.http.heartbeat
 import server.trigger.http.cron
+import server.trigger.http.subagent

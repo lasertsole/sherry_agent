@@ -1,7 +1,7 @@
 import pytest
-from future_subagent.control.list import is_subagent_run_visible_to_session, build_subagent_list
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.types.registry import SubagentRunRecord, ExecutionState, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.control.list import is_subagent_run_visible_to_session, build_subagent_list
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionState, RunOutcome, RunOutcomeStatus
 
 
 @pytest.fixture(autouse=True)

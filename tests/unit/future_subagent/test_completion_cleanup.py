@@ -1,9 +1,9 @@
 import pytest
-from future_subagent.registry.completion import should_update_run_outcome, resolve_finalized_task_state, resolve_lifecycle_outcome
-from future_subagent.registry.cleanup import resolve_cleanup_completion_reason, resolve_deferred_cleanup_decision
-from future_subagent.types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionState, DeliveryStatus, CompletionDeliveryState
-from future_subagent.types.lifecycle import LifecycleEndedReason
-from future_subagent.types.spawn import SpawnMode
+from agent.tools.subagent.registry.completion import should_update_run_outcome, resolve_finalized_task_state, resolve_lifecycle_outcome
+from agent.tools.subagent.registry.cleanup import resolve_cleanup_completion_reason, resolve_deferred_cleanup_decision
+from agent.tools.subagent.types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionState, DeliveryStatus, CompletionDeliveryState
+from agent.tools.subagent.types.lifecycle import LifecycleEndedReason
+from agent.tools.subagent.types.spawn import SpawnMode
 
 
 class TestCompletion:

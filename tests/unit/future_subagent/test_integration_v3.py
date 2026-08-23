@@ -14,8 +14,8 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from future_subagent.types.swarm import SwarmGroupConfig, SwarmRunState
-from future_subagent.types.registry import (
+from agent.tools.subagent.types.swarm import SwarmGroupConfig, SwarmRunState
+from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
     ExecutionStatus,
@@ -27,39 +27,39 @@ from future_subagent.types.registry import (
     KillReconciliationState,
     ThreadBindingInfo,
 )
-from future_subagent.types.spawn import SpawnMode
-from future_subagent.types.capability import SubagentSessionRole
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.registry.terminal_gen import TerminalGenerationTracker
-from future_subagent.registry.settle_wake import RequesterSettleWakeBatch, SettleWakeState
-from future_subagent.registry.work_admission import set_draining, _root_work_tasks
-from future_subagent.swarm.collector import (
+from agent.tools.subagent.types.spawn import SpawnMode
+from agent.tools.subagent.types.capability import SubagentSessionRole
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.registry.terminal_gen import TerminalGenerationTracker
+from agent.tools.subagent.registry.settle_wake import RequesterSettleWakeBatch, SettleWakeState
+from agent.tools.subagent.registry.work_admission import set_draining, _root_work_tasks
+from agent.tools.subagent.swarm.collector import (
     configure_swarm_group,
     reserve_swarm_run,
     activate_swarm_run,
     complete_swarm_run,
     build_structured_output_prompt,
 )
-from future_subagent.swarm.fifo import SwarmFifoQueue
-from future_subagent.spawn.thread_binding import (
+from agent.tools.subagent.swarm.fifo import SwarmFifoQueue
+from agent.tools.subagent.spawn.thread_binding import (
     bind_thread_for_subagent_spawn,
     resolve_thread_binding_policy,
     ThreadBindingConfig,
 )
-from future_subagent.spawn.runtime_isolation import resolve_runtime_isolation, validate_runtime_isolation
-from future_subagent.spawn.origin_routing import resolve_requester_origin_for_child
-from future_subagent.spawn.gateway_dispatch import resolve_least_privilege_scopes
-from future_subagent.control.kill import resolve_kill_target_state
-from future_subagent.control.list import is_subagent_run_visible_to_session
-from future_subagent.announce.idempotency import build_idempotency_key
-from future_subagent.announce.output import build_child_completion_findings
-from future_subagent.registry.lifecycle import (
+from agent.tools.subagent.spawn.runtime_isolation import resolve_runtime_isolation, validate_runtime_isolation
+from agent.tools.subagent.spawn.origin_routing import resolve_requester_origin_for_child
+from agent.tools.subagent.spawn.gateway_dispatch import resolve_least_privilege_scopes
+from agent.tools.subagent.control.kill import resolve_kill_target_state
+from agent.tools.subagent.control.list import is_subagent_run_visible_to_session
+from agent.tools.subagent.announce.idempotency import build_idempotency_key
+from agent.tools.subagent.announce.output import build_child_completion_findings
+from agent.tools.subagent.registry.lifecycle import (
     _should_suspend_pending_final_delivery,
     _should_retain_attachments,
     _arbitrate_kill_vs_completion,
 )
-from future_subagent.orphan.recovery import evaluate_recovery_gate, reclassify_legacy_timeout
-from future_subagent.hooks.progress import (
+from agent.tools.subagent.orphan.recovery import evaluate_recovery_gate, reclassify_legacy_timeout
+from agent.tools.subagent.hooks.progress import (
     fire_spawned_hook,
     fire_ended_hook,
 )
@@ -68,13 +68,13 @@ from future_subagent.hooks.progress import (
 @pytest.fixture(autouse=True)
 def _clean():
     clear()
-    from future_subagent.swarm import collector as _collector
+    from agent.tools.subagent.swarm import collector as _collector
     _collector._group_configs.clear()
-    from future_subagent.swarm.fifo import get_fifo
+    from agent.tools.subagent.swarm.fifo import get_fifo
     get_fifo()._queues.clear()
     set_draining(False)
     _root_work_tasks.clear()
-    from future_subagent.hooks import progress as _progress
+    from agent.tools.subagent.hooks import progress as _progress
     _progress._spawned_hooks.clear()
     _progress._progress_hooks.clear()
     _progress._ended_hooks.clear()
@@ -121,7 +121,7 @@ class TestSwarmCollectFullFlow:
         assert r2.swarm_run_state == SwarmRunState.RESERVED.value
 
         await complete_swarm_run(run1.run_id, RunOutcome(status=RunOutcomeStatus.OK))
-        from future_subagent.registry import get_run
+        from agent.tools.subagent.registry import get_run
         r2_after = get_run(run2.run_id)
         assert r2_after.swarm_run_state == SwarmRunState.ACTIVE.value
 
@@ -149,7 +149,7 @@ class TestThreadBindingSpawnIntegration:
     def test_binding_info_stored_in_record(self):
         result = bind_thread_for_subagent_spawn("agent:main:future_subagent:child1")
         info = result.binding_info
-        from future_subagent.types.registry import ThreadBindingInfo as RegistryThreadBindingInfo
+        from agent.tools.subagent.types.registry import ThreadBindingInfo as RegistryThreadBindingInfo
         registry_info = RegistryThreadBindingInfo(
             thread_id=info.thread_id,
             bound_at=info.bound_at,
@@ -424,7 +424,7 @@ class TestProgressHooksFullLifecycle:
         async def on_ended(run):
             events.append(("ended", run.run_id))
 
-        from future_subagent.hooks import progress as _progress
+        from agent.tools.subagent.hooks import progress as _progress
         _progress._spawned_hooks.append(on_spawned)
         _progress._progress_hooks.append(on_progress)
         _progress._ended_hooks.append(on_ended)
@@ -434,7 +434,7 @@ class TestProgressHooksFullLifecycle:
             task="test",
         )
         await fire_spawned_hook(run)
-        from future_subagent.hooks.progress import fire_progress_hook
+        from agent.tools.subagent.hooks.progress import fire_progress_hook
         await fire_progress_hook(run, "50% done")
         await fire_ended_hook(run)
 
@@ -454,7 +454,7 @@ class TestProgressHooksFullLifecycle:
         async def good_hook(run):
             events.append("ok")
 
-        from future_subagent.hooks import progress as _progress
+        from agent.tools.subagent.hooks import progress as _progress
         _progress._spawned_hooks.append(bad_hook)
         _progress._spawned_hooks.append(good_hook)
         await fire_spawned_hook(SubagentRunRecord(

@@ -1,5 +1,5 @@
 import pytest
-from future_subagent.spawn.origin_routing import (
+from agent.tools.subagent.spawn.origin_routing import (
     ChildSessionOrigin,
     resolve_requester_origin_for_child,
 )

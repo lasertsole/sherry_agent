@@ -1,22 +1,22 @@
 import pytest
 import asyncio
-from future_subagent.spawn.depth import get_subagent_depth, validate_spawn_depth, validate_concurrent_children
-from future_subagent.spawn.target_policy import validate_target_policy, is_target_allowed
-from future_subagent.spawn.plan import resolve_run_timeout_seconds, split_model_ref
-from future_subagent.spawn.task_name import normalize_subagent_task_name
-from future_subagent.spawn.system_prompt import build_subagent_system_prompt
-from future_subagent.spawn.initial_message import build_subagent_initial_user_message
-from future_subagent.spawn.inherited_tool_policy import apply_tool_policy, normalize_tool_denylist, DEFAULT_SUBAGENT_BLOCKED_TOOLS
-from future_subagent.spawn.context import prepare_spawned_context
-from future_subagent.spawn.attachments import (
+from agent.tools.subagent.spawn.depth import get_subagent_depth, validate_spawn_depth, validate_concurrent_children
+from agent.tools.subagent.spawn.target_policy import validate_target_policy, is_target_allowed
+from agent.tools.subagent.spawn.plan import resolve_run_timeout_seconds, split_model_ref
+from agent.tools.subagent.spawn.task_name import normalize_subagent_task_name
+from agent.tools.subagent.spawn.system_prompt import build_subagent_system_prompt
+from agent.tools.subagent.spawn.initial_message import build_subagent_initial_user_message
+from agent.tools.subagent.spawn.inherited_tool_policy import apply_tool_policy, normalize_tool_denylist, DEFAULT_SUBAGENT_BLOCKED_TOOLS
+from agent.tools.subagent.spawn.context import prepare_spawned_context
+from agent.tools.subagent.spawn.attachments import (
     validate_attachment_name,
     sanitize_mount_path,
     decode_attachment_content,
     materialize_subagent_attachments,
     AttachmentError,
 )
-from future_subagent.types.spawn import ContextMode
-from future_subagent.types.capability import SubagentSessionRole
+from agent.tools.subagent.types.spawn import ContextMode
+from agent.tools.subagent.types.capability import SubagentSessionRole
 
 
 class TestDepth:
@@ -31,7 +31,7 @@ class TestDepth:
         assert ok
 
     def test_validate_spawn_depth_exceeded(self):
-        from future_subagent.config import get_config
+        from agent.tools.subagent.config import get_config
         ok, reason = validate_spawn_depth(get_config().max_spawn_depth)
         assert not ok
         assert "exceeds" in reason
@@ -41,7 +41,7 @@ class TestDepth:
         assert ok
 
     def test_validate_concurrent_children_exceeded(self):
-        from future_subagent.config import get_config
+        from agent.tools.subagent.config import get_config
         ok, reason = validate_concurrent_children(get_config().max_children_per_agent)
         assert not ok
 
@@ -309,7 +309,7 @@ class TestSpawnSubagentDirect:
 
     @pytest.fixture(autouse=True)
     def _cleanup_registry(self):
-        from future_subagent.registry import clear as clear_registry
+        from agent.tools.subagent.registry import clear as clear_registry
         clear_registry()
         yield
         clear_registry()
@@ -319,12 +319,12 @@ class TestSpawnSubagentDirect:
         from unittest.mock import AsyncMock, patch
         async def fake_execute(**kwargs):
             pass
-        with patch("future_subagent.spawn.core._execute_subagent", new=AsyncMock(side_effect=fake_execute)):
+        with patch("agent.tools.subagent.spawn.core._execute_subagent", new=AsyncMock(side_effect=fake_execute)):
             yield
 
     @pytest.mark.asyncio
     async def test_empty_task_returns_error(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
 
         result = await spawn_subagent_direct(
             task="",
@@ -335,7 +335,7 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_whitespace_task_returns_error(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
 
         result = await spawn_subagent_direct(
             task="   ",
@@ -345,7 +345,7 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_basic_spawn_accepted(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
 
         result = await spawn_subagent_direct(
             task="Do something",
@@ -358,8 +358,8 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_spawn_registers_run_in_registry(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
-        from future_subagent.registry import get_run
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.registry import get_run
 
         result = await spawn_subagent_direct(
             task="Do something",
@@ -374,8 +374,8 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_spawn_with_task_name(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
-        from future_subagent.registry import get_run
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.registry import get_run
 
         result = await spawn_subagent_direct(
             task="Do something",
@@ -388,8 +388,8 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_spawn_with_label_and_thinking(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
-        from future_subagent.registry import get_run
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.registry import get_run
 
         result = await spawn_subagent_direct(
             task="Do something",
@@ -404,8 +404,8 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_spawn_depth_tracker(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
-        from future_subagent.registry import get_run
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.registry import get_run
 
         parent_key = "agent:main:session:depth_test"
         result = await spawn_subagent_direct(
@@ -418,7 +418,7 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_spawn_exceeds_max_depth(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
 
         deep_key = "agent:main:subagent:a:subagent:b:subagent:c"
         result = await spawn_subagent_direct(
@@ -430,8 +430,8 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_spawn_orchestrator_removes_subagent_tools(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
-        from future_subagent.registry import get_run
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.registry import get_run
 
         result = await spawn_subagent_direct(
             task="Do something",
@@ -445,7 +445,7 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_to_result_dict(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
 
         result = await spawn_subagent_direct(
             task="Do something",
@@ -459,7 +459,7 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_error_result_to_dict(self):
-        from future_subagent.spawn.core import SpawnResult
+        from agent.tools.subagent.spawn.core import SpawnResult
 
         r = SpawnResult(status="error", error="something went wrong")
         d = r.to_dict()
@@ -470,9 +470,9 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_fork_context_mode(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
-        from future_subagent.registry import get_run
-        from future_subagent.types.spawn import ContextMode
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.registry import get_run
+        from agent.tools.subagent.types.spawn import ContextMode
 
         result = await spawn_subagent_direct(
             task="Do something",
@@ -485,9 +485,9 @@ class TestSpawnSubagentDirect:
 
     @pytest.mark.asyncio
     async def test_concurrent_children_limit(self):
-        from future_subagent.spawn.core import spawn_subagent_direct
-        from future_subagent.config import get_config, set_config
-        from future_subagent.registry import clear as clear_registry
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.config import get_config, set_config
+        from agent.tools.subagent.registry import clear as clear_registry
 
         orig_config = get_config()
         try:
@@ -498,8 +498,8 @@ class TestSpawnSubagentDirect:
             set_config(limited_config)
             clear_registry()
 
-            from future_subagent.registry import register_run
-            from future_subagent.types.registry import ExecutionStatus
+            from agent.tools.subagent.registry import register_run
+            from agent.tools.subagent.types.registry import ExecutionStatus
 
             for i in range(2):
                 fake_run = register_run(

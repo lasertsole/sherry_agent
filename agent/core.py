@@ -6,7 +6,7 @@ from langgraph.graph.state import CompiledStateGraph
 from models import build_main_llm, build_auxiliary_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
-from agent.tools import memory_store, build_main_tools, build_subagent_tool
+from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
                           IterationBudget, HeartbeatStaleness)
@@ -34,8 +34,6 @@ memory_store.load_from_disk()
 
 # Build tool list
 _tools: list[BaseTool] = build_main_tools()
-subagent_tool = build_subagent_tool()
-_tools.append(subagent_tool)
 
 def get_agent_tools()-> list[BaseTool]:
     return _tools

@@ -1,6 +1,6 @@
 import pytest
-from future_subagent.session.metrics import get_subagent_session_runtime_ms, resolve_subagent_session_status
-from future_subagent.types.registry import SubagentRunRecord, ExecutionState, ExecutionStatus
+from agent.tools.subagent.session.metrics import get_subagent_session_runtime_ms, resolve_subagent_session_status
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionState, ExecutionStatus
 
 
 class TestMetrics:

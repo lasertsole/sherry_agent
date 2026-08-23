@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from future_subagent.orphan.recovery import (
+from agent.tools.subagent.orphan.recovery import (
     evaluate_recovery_gate,
     scan_orphaned_sessions,
     reclassify_legacy_timeout,
@@ -8,8 +8,8 @@ from future_subagent.orphan.recovery import (
     recovery_attempts_persisted,
     _MAX_RECOVERY_ATTEMPTS,
 )
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.types.registry import (
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
     ExecutionStatus,
@@ -22,7 +22,7 @@ from future_subagent.types.registry import (
 def _clean():
     clear()
     recovery_attempts_persisted.clear()
-    from future_subagent.orphan.recovery import _recovery_tasks
+    from agent.tools.subagent.orphan.recovery import _recovery_tasks
     for t in _recovery_tasks.values():
         if not t.done():
             t.cancel()

@@ -1,4 +1,4 @@
-"""conftest for tests/unit/future_subagent/: auto-load the future_subagent module alias."""
+"""conftest for tests/unit/future_subagent/: auto-load the agent.tools.subagent module alias."""
 
 import sys
 import types as stdlib_types
@@ -18,6 +18,22 @@ def _setup_subagent_alias():
     ]:
         if mod_name not in sys.modules:
             sys.modules[mod_name] = stdlib_types.ModuleType(mod_name)
+
+    # Point the stubbed `agent.tools` at the real package directory so that
+    # `agent.tools.subagent` resolves to the REAL library (not a stub), while
+    # avoiding the heavy `agent/__init__.py` / `agent/tools/__init__.py` imports.
+    from pathlib import Path
+    sys.modules["agent.tools"].__path__ = [str(Path(__file__).resolve().parents[3] / "agent" / "tools")]
+
+    # Give the stubbed `config` module the attributes that agent.tools.subagent's
+    # import chain needs (e.g. `agent/tools/subagent/spawn/attachments.py` does
+    # `from config import ROOT_DIR, TEMP_DIR`). Without these, importing
+    # agent.tools.subagent under pytest fails because the stub is an empty module.
+    cfg = sys.modules["config"]
+    if not hasattr(cfg, "ROOT_DIR"):
+        cfg.ROOT_DIR = Path(__file__).resolve().parents[3]
+    if not hasattr(cfg, "TEMP_DIR"):
+        cfg.TEMP_DIR = cfg.ROOT_DIR / "temp"
 
     sys.modules["agent"].tools = sys.modules["agent.tools"]
     sys.modules["agent.tools"].build_main_tools = lambda: []
@@ -57,7 +73,7 @@ def _setup_subagent_alias():
         sys.modules["runtime"].clear_all_register_sessions = lambda: None
 
     import importlib
-    fs = importlib.import_module("future_subagent")
+    fs = importlib.import_module("agent.tools.subagent")
     sys.modules["future_subagent"] = fs
 
 

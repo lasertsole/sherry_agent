@@ -10,8 +10,8 @@ import pytest
 import uuid
 from pathlib import Path
 
-from future_subagent.spawn.core import _execute_subagent
-from future_subagent.types.registry import (
+from agent.tools.subagent.spawn.core import _execute_subagent
+from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
     CompletionState,
@@ -20,10 +20,10 @@ from future_subagent.types.registry import (
     DeliveryStatus,
     RunOutcomeStatus,
 )
-from future_subagent.types.spawn import SpawnMode, ContextMode
-from future_subagent.types.capability import SubagentSessionRole, ControlScope
-from future_subagent.registry import clear as clear_registry, get_run
-from future_subagent.registry import memory as registry_memory
+from agent.tools.subagent.types.spawn import SpawnMode, ContextMode
+from agent.tools.subagent.types.capability import SubagentSessionRole, ControlScope
+from agent.tools.subagent.registry import clear as clear_registry, get_run
+from agent.tools.subagent.registry import memory as registry_memory
 
 
 @pytest.fixture(autouse=True)

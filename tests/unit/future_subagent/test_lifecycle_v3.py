@@ -1,12 +1,12 @@
 import pytest
 import time
-from future_subagent.registry.lifecycle import (
+from agent.tools.subagent.registry.lifecycle import (
     _should_suspend_pending_final_delivery,
     _should_retain_attachments,
     _arbitrate_kill_vs_completion,
     _mark_terminal_owner,
 )
-from future_subagent.types.registry import (
+from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
     ExecutionStatus,
@@ -17,7 +17,7 @@ from future_subagent.types.registry import (
     RunOutcomeStatus,
     KillReconciliationState,
 )
-from future_subagent.types.spawn import SpawnMode
+from agent.tools.subagent.types.spawn import SpawnMode
 
 
 def _make_run(**overrides) -> SubagentRunRecord:

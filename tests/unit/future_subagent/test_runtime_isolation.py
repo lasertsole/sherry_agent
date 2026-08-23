@@ -1,5 +1,5 @@
 import pytest
-from future_subagent.spawn.runtime_isolation import (
+from agent.tools.subagent.spawn.runtime_isolation import (
     RuntimeIsolationConfig,
     resolve_runtime_isolation,
     validate_runtime_isolation,

@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from future_subagent.hooks.base import (
+from agent.tools.subagent.hooks.base import (
     SubagentStartEvent,
     SubagentStopEvent,
     register_start_hook,

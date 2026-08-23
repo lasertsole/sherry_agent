@@ -1,13 +1,13 @@
 import pytest
-from future_subagent.registry.helpers import (
+from agent.tools.subagent.registry.helpers import (
     cap_frozen_result_text,
     resolve_announce_retry_delay_seconds,
     is_live_unended_run,
     has_run_ended,
     reconcile_orphaned_run,
 )
-from future_subagent.types.registry import SubagentRunRecord, ExecutionState, ExecutionStatus, RunOutcome, RunOutcomeStatus
-from future_subagent.registry.memory import clear
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionState, ExecutionStatus, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.registry.memory import clear
 
 
 @pytest.fixture(autouse=True)

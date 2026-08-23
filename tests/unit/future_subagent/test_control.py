@@ -1,8 +1,8 @@
 import pytest
-from future_subagent.control.controller import resolve_controller, list_controlled_runs, is_run_controllable_by
-from future_subagent.control.list import build_subagent_list
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.types.registry import SubagentRunRecord, ExecutionState, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.control.controller import resolve_controller, list_controlled_runs, is_run_controllable_by
+from agent.tools.subagent.control.list import build_subagent_list
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionState, RunOutcome, RunOutcomeStatus
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +70,7 @@ class TestBuildSubagentList:
         assert len(result["active"]) == 2
 
     def test_with_completed_runs(self):
-        from future_subagent.registry.run_manager import complete_run
+        from agent.tools.subagent.registry.run_manager import complete_run
         run = _make_run("r1", "parent1")
         complete_run(run.run_id, RunOutcome(status=RunOutcomeStatus.OK), "done")
         result = build_subagent_list("parent1")

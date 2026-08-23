@@ -1,10 +1,10 @@
 import pytest
-from future_subagent.control.kill import (
+from agent.tools.subagent.control.kill import (
     resolve_kill_target_state,
     list_killable_children,
 )
-from future_subagent.registry.memory import set_run, clear
-from future_subagent.types.registry import (
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
     ExecutionStatus,
