@@ -33,14 +33,6 @@
         <!-- 右侧：原有功能按钮区 -->
         <div class="flex items-center gap-3">
           <ModeSwitch />
-          <!-- 子 Agent 实时流程图开关 -->
-          <Button
-            icon="pi pi-sitemap"
-            :title="t('flow.toggle')"
-            :aria-label="t('flow.toggle')"
-            variant="text"
-            :class="isFlowPanelVisible ? 'text-theme-main' : ''"
-            @click="toggleFlowPanel" />
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
             <!-- 语言切换：从系统配置-语言设置移至顶部工具栏，直接读写 vue-i18n locale。
                  地球图标（pi-globe）让不同语言用户都能直观识别这是语言切换控件。 -->
@@ -133,25 +125,8 @@
            防止删除的非激活会话（其 page-key 不再被路由引用，但槽仍驻留内存）导致无界增长。 -->
       <div class="flex-1 min-h-0">
         <NuxtPage
-          :page-key="route => String(route.params.sid ?? 'root')"
+          :page-key="resolvePageKey"
           :keepalive="{ max: KEEP_ALIVE_MAX }" />
-      </div>
-    </div>
-
-    <!-- 右侧-子 Agent 实时流程图面板：可折叠/关闭，随会话切换实时更新 -->
-    <div
-      v-if="isFlowPanelVisible"
-      :class="[
-        'relative h-full overflow-hidden transition-all duration-300 border-l border-solid border-gray-light dark:border-gray-dark',
-        isFlowCollapsed ? 'w-0 border-l-0' : 'w-[320px] md:w-[360px]'
-      ]">
-      <div class="w-[320px] md:w-[360px] h-full">
-        <SubagentFlowGraph
-          v-model:collapsed="isFlowCollapsed"
-          v-model:current-session-id="currentSessionId"
-          v-model:visible="isFlowPanelVisible"
-          :selected-run-id="flowSelectedRunId" />
-      </div>
     </div>
 
     <!-- 技能查看弹窗 -->
@@ -187,6 +162,7 @@
 
     <!-- 扩展弹窗（关联 / mcp） -->
     <ExtendDialog v-model="showExtendDialog" />
+    </div>
   </div>
 </template>
 
@@ -195,7 +171,6 @@
 import SessionSidebar from './components/SessionSidebar.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
-import SubagentFlowGraph from './components/SubagentFlowGraph.vue';
 import SkillsDialog from './components/SkillsDialog.vue';
 import StatsDialog from './components/StatsDialog.vue';
 import ConfigDialog from './components/ConfigDialog.vue';
@@ -207,9 +182,8 @@ import LogsDialog from './components/LogsDialog.vue';
 import ExtendDialog from './components/ExtendDialog.vue';
 import NotificationDialog from './components/NotificationDialog.vue';
 // function
-import { computed, onMounted, onBeforeUnmount } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { on, off } from '@/composables/mitt';
 import { headerTools } from './config';
 
 const { t, locale, setLocale } = useI18n();
@@ -275,6 +249,16 @@ const localePath = useLocalePath();
  */
 const KEEP_ALIVE_MAX = 20;
 
+/**
+ * 计算某个路由对应的 KeepAlive page-key。
+ * tasks 独立页使用独立槽位，避免与聊天页的 KeepAlive 状态相互覆盖；
+ * 其余路由（聊天页 / 首页）统一以会话 id 作为 key。
+ */
+const resolvePageKey = (route: { path: string; params: Record<string, unknown> }) => {
+  const sid = String(route.params.sid ?? 'root');
+  return route.path.includes('/tasks/') ? `tasks-${sid}` : sid;
+};
+
 /** 技能查看弹窗开关 */
 const showSkillsDialog = ref(false);
 
@@ -313,15 +297,6 @@ const isSettingsMenuOpen = ref(false);
 
 /** 左侧历史侧边栏是否折叠（默认展开） */
 const isSidebarCollapsed = ref(false);
-
-/** 右侧子 Agent 实时流程图面板是否可见（默认隐藏） */
-const isFlowPanelVisible = ref(false);
-
-/** 右侧子 Agent 实时流程图面板是否折叠（默认展开） */
-const isFlowCollapsed = ref(false);
-
-/** 右侧子 Agent 实时流程图面板中选中的 run id（用于高亮 + 作为根展示其全部后代） */
-const flowSelectedRunId = ref<string | null>(null);
 
 /**
  * 系统配置保存后的回调：当前会话继续保留其已锁定的旧快照 → 显示不变；
@@ -393,30 +368,8 @@ const toggleSidebar = () => {
   isSidebarCollapsed.value = !isSidebarCollapsed.value;
 };
 
-/** 切换右侧子 Agent 实时流程图面板的显示/隐藏 */
-const toggleFlowPanel = () => {
-  isFlowPanelVisible.value = !isFlowPanelVisible.value;
-  // 关闭面板时清空选中，重新打开时从全量树开始
-  if (!isFlowPanelVisible.value) {
-    flowSelectedRunId.value = null;
-  }
-};
-
-/** 打开右侧子 Agent 实时流程图面板（由 SessionSidebar 任务项点击触发），并选中该 run */
-const openFlowPanel = (runId?: string) => {
-  flowSelectedRunId.value = runId ?? null;
-  isFlowPanelVisible.value = true;
-  isFlowCollapsed.value = false;
-};
-
 // 挂载后加载全局聊天区背景图（会话列表拉取已在 SessionSidebar 组件内完成）
 onMounted(() => {
   loadBackground();
-  // 监听「打开流程图」事件：侧边栏任务项点击时展开右侧面板
-  on('subagent:open-flow', openFlowPanel);
-});
-
-onBeforeUnmount(() => {
-  off('subagent:open-flow', openFlowPanel);
 });
 </script>

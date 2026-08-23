@@ -49,6 +49,9 @@
     "tasksLoading": "正在加载任务…",
     "noTasks": "暂无后台任务",
     "tasksUpdatedAt": "更新于 {time}",
+    "tasksSelectAll": "全选",
+    "tasksBatchDelete": "批量删除任务",
+    "tasksBatchDeleteConfirm": "确定要批量删除选中的任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "运行中",
     "statusInterrupted": "已中断",
@@ -62,7 +65,17 @@
     "statusUnknown": "未知",
     "roleRoot": "主任务",
     "roleChild": "子任务",
-    "parentSession": "调用方 Session"
+    "parentSession": "调用方 Session",
+    "callingSession": "调用会话",
+    "startTime": "开始时间",
+    "endTime": "结束时间",
+    "backToSession": "返回会话",
+    "backToSessionPrompt": "跳转到发起该任务的会话",
+    "refreshGraph": "刷新",
+    "refreshGraphPrompt": "重新拉取并重绘运行图"
+  },
+  "taskViewer": {
+    "viewTasks": "查看后台任务"
   },
   "flow": {
     "title": "实时流程图",
@@ -81,6 +94,28 @@
       "pending": "待处理",
       "unknown": "未知"
     }
+  },
+  "taskDetail": {
+    "title": "任务详情",
+    "placeholder": "点击上方树状图中的节点查看任务详情",
+    "taskName": "任务名",
+    "taskDesc": "任务描述",
+    "status": "状态",
+    "role": "角色",
+    "depth": "深度",
+    "agentId": "Agent",
+    "spawnMode": "生成方式",
+    "parentSession": "调用方 Session",
+    "startedAt": "开始时间",
+    "endedAt": "结束时间",
+    "endedReason": "结束原因",
+    "outcome": "执行结果",
+    "outcomeStatus": "结果状态",
+    "error": "错误信息",
+    "resultText": "返回内容",
+    "delivery": "配送状态",
+    "noError": "无",
+    "noResult": "暂无"
   },
   "toolbar": {
     "newChat": "新建对话",

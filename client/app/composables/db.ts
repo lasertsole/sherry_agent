@@ -482,6 +482,19 @@ export async function readCachedSubagentRuns(): Promise<CachedSubagentRun[]> {
 }
 
 /**
+ * 从本地缓存中删除指定 `run_id` 的子任务运行记录�?
+ *
+ * 用于「后台任务」批量删除：先后端删除了子树（根 + 后代），
+ * 前端据此删除 Dexie/IndexedDB 中的对应记录，彻底清干净缓存�?
+ *
+ * @param runIds 待删除的 run_id 数组（含根节点及其所有后代）
+ */
+export async function deleteCachedSubagentRuns(runIds: string[]): Promise<void> {
+  if (!runIds || runIds.length === 0) return;
+  await db.subagentRuns.bulkDelete(runIds);
+}
+
+/**
  * 清除本地缓存中的全部子任务运行记录�?
  *
  * 后端数据被清空（如重建仓库）时，前端据此清理旧缓存，避免渲染僵尸记录�?

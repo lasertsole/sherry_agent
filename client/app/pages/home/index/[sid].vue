@@ -1,7 +1,24 @@
 ﻿<template>
   <div class="flex flex-col flex-1 h-full bg-transparent dark:bg-transparent">
-    <!-- 聊天主体 / 空态（有会话 sid 时始终显示聊天面板；仅无 sid 的根路径显示"开启新对话"） -->
-    <template v-if="sessionId">
+    <!-- 聊天主体 / 空态（有会话 sid 时显示聊天面板或后台任务列表页；仅无 sid 的根路径显示"开启新对话"）。
+        聊天区与后台任务视图在 sid 存在时**常驻挂载**，仅用 v-show 切换显隐，
+        从而同 session 点击后台任务时只切换焦点（focusRun），不重挂载 SubagentTasksView、
+        不触发 initTasks/HTTP 重拉取、不重建 G6 图。 -->
+    <div v-if="sessionId" class="flex flex-col flex-1 h-full min-h-0">
+      <div v-show="viewMode === 'chat'" class="flex-1 flex flex-col min-h-0">
+      <!-- 「查看后台任务」跳转栏：仅当当前会话存在后台任务（运行中/已完成）时显示，
+           点击跳转到独立任务页 /home/tasks/{sid}（而非右侧 viewMode='tasks' 内嵌视图），
+           便于在大视口查看该会话完整任务的执行链。 -->
+      <div
+        v-if="taskRuns.length > 0"
+        class="shrink-0 mx-2 mt-2 flex items-center gap-2 bg-white dark:bg-[#131619] rounded-lg border border-solid border-gray-light dark:border-gray-dark shadow-sm px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a1d21] transition-colors select-none"
+        @click="router.push(localePath(`/home/tasks/${sessionId}`))">
+        <i class="pi pi-sitemap text-sm text-theme-main"></i>
+        <span class="flex-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+          {{ t('taskViewer.viewTasks') }}
+        </span>
+        <i class="pi pi-angle-right text-xs text-gray-400"></i>
+      </div>
       <!-- HITL 审批卡片：非模态，置于历史消息区顶部（不遮最新会话），
            占用独立位置不影响其余消息查看；可随内容自然撑开。 -->
       <div
@@ -175,8 +192,14 @@
             @stop="handleStop" />
         </div>
       </div>
-    </template>
-    <!-- 空态：无消息时显示居中的"开启新对话"按钮 -->
+      </div>
+    <!-- 后台任务列表页：sid 存在时常驻挂载（v-show 切换显隐，不重挂载/不重拉取），
+        同 session 点击仅由 focusRun 切换焦点并就地高亮根图节点。 -->
+    <SubagentTasksView
+      v-show="viewMode === 'tasks'"
+      :initial-run-id="targetRunId" />
+    </div>
+    <!-- 空态（仅无 sid 的根路径）：无消息时显示居中的"开启新对话"按钮 -->
     <div
       v-else
       class="flex-1 flex flex-col items-center justify-center gap-4">
@@ -223,6 +246,8 @@ import {
   SESSION_ABORT_STREAM_EVENT
 } from '@/composables/messages';
 import { on, off } from '@/composables/mitt';
+import { useSubagentTasks } from '@/composables/useSubagentTasks';
+import SubagentTasksView from '../components/SubagentTasksView.vue';
 
 // 图片预览
 const { openPreview } = useImagePreview();
@@ -230,6 +255,7 @@ const { openPreview } = useImagePreview();
 const { t } = useI18n({ useScope: 'local' });
 const route = useRoute();
 const router = useRouter();
+const localePath = useLocalePath();
 
 /** 当前会话 ID（来自路由参数 [sid]） */
 const sessionId = computed(() => String(route.params.sid ?? ''));
@@ -248,6 +274,28 @@ const sessionId = computed(() => String(route.params.sid ?? ''));
 const mySid = String(route.params.sid ?? '');
 
 /**
+ * 右侧展示模式：'chat'（聊天区）| 'tasks'（后台任务列表页）。
+ * 这是本实例的普通 ref，仅控制右侧区域渲染内容，不影响 KeepAlive 缓存 / page-key 机制。
+ */
+const viewMode = ref<'chat' | 'tasks'>('chat');
+/** 点击侧边栏任务项时携带的 run_id，用于任务列表页定位/展开/高亮该运行。 */
+const targetRunId = ref<string | undefined>(undefined);
+
+const { taskRuns, initTasks, setTasksTabActive } = useSubagentTasks();
+
+/** 收到「展示后台任务」事件：切换到任务列表页，并记录要定位的 run_id（若有）。 */
+const onShowTasks = (runId?: string) => {
+  targetRunId.value = runId;
+  viewMode.value = 'tasks';
+};
+
+/** 收到「展示聊天」事件：恢复聊天区，并同步侧边栏标签态。 */
+const onShowChat = () => {
+  viewMode.value = 'chat';
+  setTasksTabActive(false);
+};
+
+/**
  * 本实例是否处于「激活」态（KeepAlive 缓存中处于隐藏状态时为 false）。
  * KeepAlive 缓存**不会暂停**被缓存实例的响应式 watch/effect —— 切换到 sidB 时，
  * 所有非激活实例的全局 `route` 变化仍会触发它们的 `watch(sessionId)`。
@@ -260,6 +308,9 @@ onActivated(() => {
   isActive.value = true;
   // 返回本会话时刷新可能仍待审批的 HITL 卡（幂等：已有卡/进行中则早退）
   if (mySid) restorePendingHitl(mySid);
+  // 预取本会话的后台任务（幂等：仅当会话切换或列表为空时真正拉取），
+  // 供「查看后台任务」跳转栏据此判定是否显示（无任务则不显示）。
+  if (mySid) initTasks(mySid);
 });
 onDeactivated(() => {
   isActive.value = false;
@@ -1037,6 +1088,9 @@ const untrackDraftTurn = (sid: string, turnNum: number) => {
 const handleSend = async (text: string) => {
   const sid = sessionId.value || 'default';
 
+  // 用户发送消息时确保右侧回到聊天区（若此前停留在后台任务列表页）
+  setTasksTabActive(false);
+
   // 计算下一轮次号：取当前消息中最大 turn_num + 1，而非按数组长度。
   const turnNum = chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
 
@@ -1468,11 +1522,16 @@ onMounted(() => {
   // 该会话可能处于非激活状态仍被 KeepAlive 缓存且流未中止；删除时由
   // home/index.vue 广播，这里据此中止本实例的 AbortController。
   on(SESSION_ABORT_STREAM_EVENT, handleAbortStreamOnDelete);
+  // 订阅「后台任务」展示/聊天切换事件（由侧边栏广播）
+  on('subagent:show-tasks', onShowTasks);
+  on('subagent:show-chat', onShowChat);
 });
 
 // 组件卸载（KeepAlive 缓存槽被淘汰/销毁）时移除监听，避免泄漏
 onUnmounted(() => {
   off(SESSION_ABORT_STREAM_EVENT, handleAbortStreamOnDelete);
+  off('subagent:show-tasks', onShowTasks);
+  off('subagent:show-chat', onShowChat);
 });
 </script>
 

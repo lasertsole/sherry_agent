@@ -49,6 +49,9 @@
     "tasksLoading": "Loading tasks...",
     "noTasks": "No background tasks yet",
     "tasksUpdatedAt": "Updated {time}",
+    "tasksSelectAll": "Select all",
+    "tasksBatchDelete": "Batch delete tasks",
+    "tasksBatchDeleteConfirm": "Delete the selected tasks? Their root and all child tasks will be permanently cleared. This cannot be undone.",
     "tasksAgoSeconds": "{sec}s ago",
     "statusRunning": "Running",
     "statusInterrupted": "Interrupted",
@@ -62,7 +65,17 @@
     "statusUnknown": "Unknown",
     "roleRoot": "Root",
     "roleChild": "Task",
-    "parentSession": "Caller Session"
+    "parentSession": "Caller Session",
+    "callingSession": "Calling Session",
+    "startTime": "Start Time",
+    "endTime": "End Time",
+    "backToSession": "Back to session",
+    "backToSessionPrompt": "Jump to the session that spawned this task",
+    "refreshGraph": "Refresh",
+    "refreshGraphPrompt": "Refetch and redraw the run graph"
+  },
+  "taskViewer": {
+    "viewTasks": "View Background Tasks"
   },
   "flow": {
     "title": "Live Flow",
@@ -81,6 +94,28 @@
       "pending": "Pending",
       "unknown": "Unknown"
     }
+  },
+  "taskDetail": {
+    "title": "Task Details",
+    "placeholder": "Click a node in the tree above to view task details",
+    "taskName": "Task",
+    "taskDesc": "Description",
+    "status": "Status",
+    "role": "Role",
+    "depth": "Depth",
+    "agentId": "Agent",
+    "spawnMode": "Spawn Mode",
+    "parentSession": "Parent Session",
+    "startedAt": "Started At",
+    "endedAt": "Ended At",
+    "endedReason": "End Reason",
+    "outcome": "Outcome",
+    "outcomeStatus": "Outcome Status",
+    "error": "Error",
+    "resultText": "Result",
+    "delivery": "Delivery",
+    "noError": "None",
+    "noResult": "N/A"
   },
   "toolbar": {
     "newChat": "New Chat",

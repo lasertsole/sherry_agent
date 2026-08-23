@@ -1,0 +1,67 @@
+- main [ref=f4e3]:
+  - generic [ref=f4e4]:
+    - generic [ref=f4e6]:
+      - generic [ref=f4e7]: 🍊橘雪莉
+      - generic [ref=f4e8]:
+        - button "会话" [ref=f4e9] [cursor=pointer]
+        - button "后台任务" [active] [ref=f4e10] [cursor=pointer]
+      - generic [ref=f4e11]:
+        - generic [ref=f4e12] [cursor=pointer]:
+          - generic [ref=f4e13]:
+            - generic [ref=f4e14]: 未知
+            - generic [ref=f4e15]: 子任务#1
+          - generic [ref=f4e16]: 运行-深度1 (leaf)
+          - generic [ref=f4e17]: "调用方 Session: cae654b2-4521-4e51-863e-3d9e9c07c749"
+          - generic [ref=f4e18]: demo result
+        - generic [ref=f4e19] [cursor=pointer]:
+          - generic [ref=f4e20]:
+            - generic [ref=f4e21]: 未知
+            - generic [ref=f4e22]: 子任务#1
+          - generic [ref=f4e23]: 运行-深度1 (orchestrator)
+          - generic [ref=f4e24]: "调用方 Session: cae654b2-4521-4e51-863e-3d9e9c07c749"
+      - generic [ref=f4e25]: 更新于 19 秒前
+    - generic [ref=f4e27]:
+      - generic [ref=f4e28]:
+        - button "折叠侧边栏" [ref=f4e29] [cursor=pointer]:
+          - generic [ref=f4e30]: 
+        - generic [ref=f4e31]:
+          - generic [ref=f4e32]:
+            - switch [ref=f4e33] [cursor=pointer]
+            - generic [ref=f4e34] [cursor=pointer]: 
+          - generic [ref=f4e37]: 
+          - generic [ref=f4e38]:
+            - combobox "Language / 语言" [ref=f4e40] [cursor=pointer]:
+              - generic [ref=f4e41]:
+                - generic [ref=f4e42]: 
+                - generic [ref=f4e43]: 简体中文
+            - button "通知" [ref=f4e48] [cursor=pointer]:
+              - generic [ref=f4e49]: 
+            - button "日志" [ref=f4e50] [cursor=pointer]:
+              - generic [ref=f4e51]: 
+            - button "菜单" [ref=f4e52] [cursor=pointer]:
+              - generic [ref=f4e53]: 
+      - generic [ref=f4e56]:
+        - generic [ref=f4e57]:
+          - button "返回聊天" [ref=f4e58] [cursor=pointer]:
+            - generic [ref=f4e59]: 
+          - generic [ref=f4e61]: 后台任务
+          - generic [ref=f4e62]: 更新于 19 秒前
+        - generic [ref=f4e64]:
+          - 'button " 运行-深度1 (leaf) 子任务#1 · 调用方 Session: cae654b2-4521-4e51-863e-3d9e9c07c749 未知" [ref=f4e66] [cursor=pointer]':
+            - generic [ref=f4e67]: 
+            - generic [ref=f4e68]:
+              - generic [ref=f4e69]: 运行-深度1 (leaf)
+              - generic [ref=f4e70]:
+                - generic [ref=f4e71]: 子任务#1
+                - generic [ref=f4e72]: ·
+                - generic [ref=f4e73]: "调用方 Session: cae654b2-4521-4e51-863e-3d9e9c07c749"
+            - generic [ref=f4e74]: 未知
+          - 'button " 运行-深度1 (orchestrator) 子任务#1 · 调用方 Session: cae654b2-4521-4e51-863e-3d9e9c07c749 未知" [ref=f4e76] [cursor=pointer]':
+            - generic [ref=f4e77]: 
+            - generic [ref=f4e78]:
+              - generic [ref=f4e79]: 运行-深度1 (orchestrator)
+              - generic [ref=f4e80]:
+                - generic [ref=f4e81]: 子任务#1
+                - generic [ref=f4e82]: ·
+                - generic [ref=f4e83]: "调用方 Session: cae654b2-4521-4e51-863e-3d9e9c07c749"
+            - generic [ref=f4e84]: 未知

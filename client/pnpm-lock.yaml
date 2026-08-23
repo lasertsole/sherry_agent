@@ -120,6 +120,9 @@ importers:
       sass-loader:
         specifier: ^17.0.0
         version: 17.0.0(sass@1.102.0)
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
       typescript-eslint:
         specifier: ^8.67.0
         version: 8.67.0(eslint@10.8.1(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.2)

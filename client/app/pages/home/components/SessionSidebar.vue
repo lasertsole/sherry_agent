@@ -36,9 +36,9 @@
           @click="switchTab('tasks')">
           {{ t('sidebar.tabTasks') }}
           <span
-            v-if="runningTaskCount > 0"
+            v-if="allRunningTaskCount > 0"
             class="inline-flex items-center justify-center min-w-4 h-4 px-1 rounded-full text-[11px] leading-none text-white bg-red-500">
-            {{ runningTaskCount }}
+            {{ allRunningTaskCount }}
           </span>
         </button>
       </div>
@@ -94,40 +94,67 @@
             <i class="pi pi-spin pi-spinner mr-2" />{{ t('sidebar.tasksLoading') }}
           </div>
           <div
-            v-else-if="taskRuns.length === 0"
+            v-else-if="rootTaskRuns.length === 0"
             class="flex items-center justify-center h-full w-full text-[#868686]">
             {{ t('sidebar.noTasks') }}
           </div>
-          <div
+          <template
             v-else
-            v-for="run in taskRuns"
-            :key="run.run_id"
-            class="rounded-lg border border-solid border-gray-light dark:border-gray-dark p-2.5 flex flex-col gap-1.5 cursor-pointer hover:border-theme-main transition-colors"
-            @click="openFlowGraph(run)">
-            <div class="flex items-center justify-between gap-2">
-              <span
-                class="flex-none inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full leading-none"
-                :class="badgeClass(run)">
-                <i v-if="isRunning(run)" class="pi pi-spin pi-spinner text-[10px]" />
-                {{ statusLabel(run) }}
-              </span>
-              <span class="flex-none text-[11px] text-[#868686]">{{ roleLabel(run) }}</span>
+            v-for="group in groupedRootTaskRuns"
+            :key="group.sessionId">
+            <div
+              class="flex items-center gap-2 pt-1.5 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-[#868686]">
+              <span class="flex-none text-[#b0b0b0]">{{ t('sidebar.callingSession') }}:</span>
+              <span class="truncate break-all">{{ group.sessionId }}</span>
+              <span class="ml-auto flex-none text-[#868686]">({{ group.runs.length }})</span>
             </div>
-            <div class="text-[13px] leading-snug line-clamp-2 break-words">{{ runLabel(run) }}</div>
-            <div class="text-[11px] leading-snug text-[#868686] break-all">
-              <span class="text-[#b0b0b0]">{{ t('sidebar.parentSession') }}: </span>{{ parentSessionLabel(run) }}
-            </div>
-            <template v-if="run.completion && run.completion.result_text">
-              <div class="text-[11px] leading-snug text-[#868686] line-clamp-3 break-words border-t border-solid border-gray-100 dark:border-gray-700 pt-1">
-                {{ run.completion.result_text }}
+            <div
+              v-for="run in group.runs"
+              :key="run.run_id"
+              class="p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white dark:bg-[#2a2a36]/[0.6] dark:border-[#555] flex flex-col gap-1.5 md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]"
+              :class="{ 'text-theme-main bg-[#c1d6e5]!': focusedRunId === run.run_id }"
+              @click="showTasksView(run)">
+              <div class="flex items-center gap-2">
+                <Checkbox
+                  :model-value="selectedRunIds.has(run.run_id)"
+                  binary
+                  class="flex-none"
+                  @update:model-value="handleToggleTask(run.run_id)"
+                  @click.stop />
+                <span
+                  v-if="statusLabel(run) !== t('sidebar.statusUnknown')"
+                  class="ml-auto flex-none inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full leading-none"
+                  :class="badgeClass(run)">
+                  <i v-if="isRunning(run)" class="pi pi-spin pi-spinner text-[10px]" />
+                  {{ statusLabel(run) }}
+                </span>
               </div>
-            </template>
-          </div>
+              <div class="text-[13px] leading-snug line-clamp-2 break-words">{{ run.label || run.task_name || '-' }}</div>
+              <div class="text-[11px] leading-snug text-[#868686] break-all">
+                <span class="text-[#b0b0b0]">{{ t('sidebar.startTime') }}: </span>{{ formatTime(run.execution.started_at) }}
+                <span class="mx-1.5 text-[#b0b0b0]">/</span>
+                <span class="text-[#b0b0b0]">{{ t('sidebar.endTime') }}: </span>{{ formatTime(run.execution.ended_at) }}
+              </div>
+            </div>
+          </template>
         </div>
         <div
-          v-if="taskRuns.length > 0"
-          class="h-10 flex items-center justify-center text-[#868686]">
-          <span class="text-[11px]">{{ t('sidebar.tasksUpdatedAt', { time: lastUpdatedText }) }}</span>
+          v-if="rootTaskRuns.length > 0"
+          class="h-17 flex items-center justify-between">
+          <div class="flex items-center justify-center gap-1">
+            <Checkbox
+              :model-value="allSelected"
+              :indeterminate="someSelected"
+              binary
+              @update:model-value="toggleSelectAllTasks()" />
+            <span>{{ t('sidebar.tasksSelectAll') }}</span>
+          </div>
+          <Button
+            icon="pi pi-trash"
+            :label="t('sidebar.tasksBatchDelete')"
+            :disabled="selectedRunIds.size === 0 || deletingRunIds.size > 0"
+            :loading="deletingRunIds.size > 0"
+            @click="handleBatchDeleteTasks" />
         </div>
       </template>
     </div>
@@ -201,26 +228,58 @@ import {
   clearCachedCharacter,
   cacheSessionMeta,
   readCachedSessionMetaList,
-  clearCachedSessionMeta,
-  cacheSubagentRuns,
-  readCachedSubagentRuns,
-  type CachedSubagentRun
+  clearCachedSessionMeta
 } from '@/composables/db';
 import { emit, on, off } from '@/composables/mitt';
 import { getSessionList, clearSession, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
-import { fetchSubagentRuns, type SubagentRun } from '@/composables/bridge';
-import { useSubagentWs } from '@/composables/ws';
+import type { SubagentRun } from '@/composables/bridge';
+import { useSubagentTasks } from '@/composables/useSubagentTasks';
+import dayjs from 'dayjs';
 
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 const localePath = useLocalePath();
 
+// 后台任务共享状态（模块级单例，与右侧完整任务列表页共用同一份响应式数据）
+const {
+  taskRuns,
+  allTaskRuns,
+  rootTaskRuns,
+  groupedRootTaskRuns,
+  taskLoading,
+  runningTaskCount,
+  allRunningTaskCount,
+  lastUpdatedText,
+  selectedRunIds,
+  deletingRunIds,
+  allSelected,
+  someSelected,
+  isRunning,
+  badgeClass,
+  statusLabel,
+  parentSessionLabel,
+  initTasks,
+  setTasksTabActive,
+  focusRun,
+  focusedRunId,
+  loadTaskRuns,
+  toggleTaskSelection,
+  toggleSelectAllTasks,
+  deleteSelectedTasks
+} = useSubagentTasks();
+
 /** 是否折叠（由父组件通过 v-model:collapsed 控制，折叠/展开按钮在父组件工具栏） */
 const collapsed = defineModel<boolean>('collapsed', { default: false });
 
 /** 当前会话 id（由父组件 v-model:current-session-id 双向同步，父组件用于加载角色快照） */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');
+
+/** 渲染执行时间：epoch 毫秒 → 本地可读字符串；空值/非法值显示占位符 '-' */
+function formatTime(ms: number | null | undefined): string {
+  if (ms == null || Number.isNaN(Number(ms))) return '-';
+  return dayjs(Number(ms)).format('YYYY-MM-DD HH:mm:ss');
+}
 
 /** 历史会话 */
 const historyList = ref<SessionRecord[]>([]);
@@ -318,6 +377,9 @@ const handleCreateSession = () => {
   currentSessionId.value = sessionId;
   // 新会话：立即用当前全局 profile 创建并锁定角色快照，保证头像/名字正确显示
   ensureSessionCharacter(sessionId);
+  // 切回「会话」展示态：通知右侧 [sid].vue 恢复聊天区
+  emit('subagent:show-chat');
+  setTasksTabActive(false);
   // 持久化占位会话（新建即写入 IndexedDB），保证刷新/重开后该空会话仍保留在列表
   // （服务端会话列表由消息表派生，未发消息前无记录，只能靠本地占位恢复）。
   cacheSessionMeta({ id: sessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
@@ -333,6 +395,9 @@ const handleToggleSession = (id: string) => {
   currentSessionId.value = id;
   // 切换会话：加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
   ensureSessionCharacter(id);
+  // 切回「会话」展示态：通知右侧 [sid].vue 恢复聊天区
+  emit('subagent:show-chat');
+  setTasksTabActive(false);
   router.push(localePath(`/home/${id}`));
 };
 
@@ -423,15 +488,17 @@ const handleBatchDelete = async () => {
 
 // 首屏加载 default 会话的角色显示信息（头像 + 名字）
 ensureSessionCharacter('default');
-// 挂载后拉取会话列表 + 建立后台任务实时订阅（角色信息已由 ensureSessionCharacter 从本地 Dexie 加载）
+// 挂载后拉取会话列表 + 初始化后台任务（WS 订阅为模块级单例，幂等；角色信息已由 ensureSessionCharacter 从本地 Dexie 加载）
+// 收到「展示聊天」事件（新建会话/切换会话/后台任务「返回会话」）时，
+// 切回「会话」标签，确保会话列表可见并高亮目标 session box。
+const onShowChatSwitchTab = () => switchTab('sessions');
 onMounted(() => {
   loadSessionList();
-  setupSubagentWs();
+  initTasks(activeSessionId.value);
+  on('subagent:show-chat', onShowChatSwitchTab);
 });
-
-// 卸载时移除后台任务 Real-Time 订阅（WS 连接为模块级单例，交给后续组件复用，不在此关闭）
 onUnmounted(() => {
-  teardownSubagentSubscribe();
+  off('subagent:show-chat', onShowChatSwitchTab);
 });
 
 /* ------------------------------------------------------------------ */
@@ -440,270 +507,65 @@ onUnmounted(() => {
 /** 侧边栏当前激活的标签页：'sessions'（会话）| 'tasks'（后台任务） */
 const activeTab = ref<'sessions' | 'tasks'>('sessions');
 
-/** 子 Agent 运行记录列表 */
-const taskRuns = ref<SubagentRun[]>([]);
-/** 后台任务加载中 */
-const taskLoading = ref(false);
-/** 上次成功拉取时间戳（毫秒） */
-const lastTasksFetchedAt = ref<number>(0);
-/** 是否曾接收过「后台任务」实时消息（避免首屏/重连时重复全量拉取） */
-const subagentWsReady = ref(false);
-
-/** 处于运行态的驻留子 Agent 数量（用于标签页红点角标）。 */
-const runningTaskCount = computed(() => {
-  return taskRuns.value.filter(run => isRunning(run)).length;
-});
-
-/** 切换标签页；切到「后台任务」时若尚无任何记录则首次加载（Dexie 先行 + 服务端补齐） */
+/**
+ * 切换标签页（仅切换侧边栏左侧展示的列表 + 后台任务的加载态，**不**切换右侧视图）。
+ * 右侧视图只在点击具体「会话 Box」（handleToggleSession / handleCreateSession）或
+ * 「后台任务 Box」（showTasksView）时才随之切换。
+ * - 切到「后台任务」：标记后台任务处于展示态，令 WS 就绪时拉取全量任务数据供列表展示。
+ * - 切到「会话」：解除该标记。
+ */
 const switchTab = (tab: 'sessions' | 'tasks') => {
   activeTab.value = tab;
-  if (tab === 'tasks' && taskRuns.value.length === 0) {
-    loadTaskRuns();
+  if (tab === 'tasks') {
+    setTasksTabActive(true);
+    void loadTaskRuns();
+  } else {
+    setTasksTabActive(false);
   }
-};
-
-/** 是否为运行中（RUNNING / INTERRUPTED 视为尚未结束） */
-const isRunning = (run: SubagentRun): boolean => {
-  const status = run?.execution?.status;
-  return status === 'RUNNING' || status === 'INTERRUPTED';
 };
 
 /**
- * 将后端形状的 SubagentRun 规整为 Dexie 缓存形状 CachedSubagentRun。
- * 两者字段名一致，仅可空性/嵌套可选度不同，这里做一次性兜底，避免写入缓存时携带 undefined。
+ * 点击任务项：切换到「后台任务」展示态，并定位/展开/高亮该 run。
+ * 有激活会话（route 带 sid）时，发出 subagent:show-tasks 事件，由 [sid].vue 内嵌视图接收并置为任务展示态；
+ * 无激活会话（根路径 /home，[sid].vue 未挂载，事件无人接收）时，直接聚焦该 run（模块级单例状态跨路由保留）
+ * 并导航到独立任务页 /home/tasks/{父会话}——该页始终挂载 SubagentTasksView，可从单例状态读到已聚焦的 run。
  */
-const toCachedSubagentRun = (run: SubagentRun): CachedSubagentRun => ({
-  run_id: run.run_id,
-  child_session_key: run.child_session_key ?? null,
-  requester_session_key: run.requester_session_key ?? null,
-  task: run.task ?? null,
-  task_name: run.task_name ?? null,
-  label: run.label ?? null,
-  spawn_mode: run.spawn_mode ?? null,
-  context_mode: run.context_mode ?? null,
-  agent_id: run.agent_id ?? null,
-  depth: run.depth ?? null,
-  role: run.role ?? null,
-  control_scope: run.control_scope ?? null,
-  generation: run.generation ?? null,
-  swarm_group_id: run.swarm_group_id ?? null,
-  swarm_run_state: run.swarm_run_state ?? null,
-  ended_reason: run.ended_reason ?? null,
-  pause_reason: run.pause_reason ?? null,
-  execution: run.execution
-    ? {
-        status: run.execution.status ?? null,
-        outcome: run.execution.outcome?.status ?? null,
-        started_at: run.execution.started_at != null ? String(run.execution.started_at) : null,
-        completed_at: run.execution.ended_at != null ? String(run.execution.ended_at) : null
-      }
-    : null,
-  completion: run.completion
-    ? {
-        required: run.completion.required ?? null,
-        owner_session_key: null,
-        result_text: run.completion.result_text ?? null,
-        captured_at: run.completion.captured_at != null ? String(run.completion.captured_at) : null
-      }
-    : null,
-  delivery: run.delivery
-    ? {
-        status: run.delivery.status ?? null,
-        attempt_count: run.delivery.attempt_count ?? null,
-        delivered_at: run.delivery.delivered_at != null ? String(run.delivery.delivered_at) : null
-      }
-    : null
-});
-
-/** 从 Dexie 缓存形状还原为 UI 展示形状 SubagentRun。 */
-const toSubagentRun = (c: CachedSubagentRun): SubagentRun => ({
-  run_id: c.run_id,
-  task_run_id: null,
-  child_session_key: c.child_session_key ?? '',
-  requester_session_key: c.requester_session_key ?? '',
-  task: c.task ?? '',
-  task_name: c.task_name ?? undefined,
-  label: c.label ?? undefined,
-  spawn_mode: c.spawn_mode ?? undefined,
-  context_mode: c.context_mode ?? undefined,
-  agent_id: c.agent_id ?? undefined,
-  depth: c.depth ?? undefined,
-  role: c.role ?? undefined,
-  control_scope: c.control_scope ?? undefined,
-  generation: c.generation ?? undefined,
-  swarm_group_id: c.swarm_group_id ?? undefined,
-  swarm_run_state: c.swarm_run_state ?? undefined,
-  ended_reason: c.ended_reason ?? undefined,
-  pause_reason: c.pause_reason ?? undefined,
-  execution: {
-    status: c.execution?.status ?? 'UNKNOWN',
-    started_at: c.execution?.started_at != null ? Number(c.execution.started_at) : null,
-    ended_at: c.execution?.completed_at != null ? Number(c.execution.completed_at) : null,
-    outcome: c.execution?.outcome
-      ? { status: c.execution.outcome, error: null }
-      : { status: 'PENDING', error: null },
-    transcript_target: undefined
-  },
-  completion: {
-    required: c.completion?.required ?? false,
-    result_text: c.completion?.result_text ?? null,
-    captured_at: c.completion?.captured_at != null ? Number(c.completion.captured_at) : null
-  },
-  delivery: {
-    status: c.delivery?.status ?? 'PENDING',
-    payload: undefined,
-    attempt_count: c.delivery?.attempt_count ?? 0,
-    last_error: undefined,
-    last_attempt_at: undefined,
-    suspended_at: undefined,
-    discard_reason: undefined,
-    delivered_at: c.delivery?.delivered_at != null ? Number(c.delivery.delivered_at) : undefined
+const showTasksView = (run: SubagentRun) => {
+  activeTab.value = 'tasks';
+  // 记录当前聚焦/打开的 run，用于侧边栏任务 box 的激活态高亮（与会话列表项一致）
+  focusRun(run.run_id);
+  const sid = route.params.sid;
+  if (typeof sid === 'string' && sid) {
+    // 有激活会话：走内嵌视图事件流（由 [sid].vue 的 onShowTasks 把 viewMode 切为 'tasks'）
+    emit('subagent:show-tasks', run.run_id);
+    setTasksTabActive(true);
+  } else {
+    // 无激活会话：聚焦 + 导航到独立任务页（跨会话任务树的父会话）
+    const parentSid = run.requester_session_key;
+    router.push(localePath(`/home/tasks/${parentSid || 'default'}`));
   }
-});
+};
 
-/** 仅保留缓存中属于当前会话（或其后代）的运行记录。 */
-const filterBySession = (runs: CachedSubagentRun[], sid: string): SubagentRun[] =>
-  runs
-    .filter(
-      c =>
-        c.requester_session_key === sid ||
-        c.child_session_key === sid ||
-        c.requester_session_key === activeSessionId.value
-    )
-    .map(toSubagentRun);
+/**
+ * 切换单个任务的选中态（仅由任务卡片内的复选框触发）。
+ * 卡片本体点击改为 showTasksView（打开任务详情页），避免遮挡打开逻辑。
+ */
+const handleToggleTask = (runId: string) => {
+  if (deletingRunIds.value.has(runId)) return;
+  toggleTaskSelection(runId);
+};
 
-/** 刷新 taskRuns：先立即回显本地缓存（离线可用），再异步拉取后端补齐间隙。 */
-const loadTaskRuns = async () => {
-  const sid = activeSessionId.value;
-  if (!sid) return;
-  taskLoading.value = true;
-  // 1) 本地缓存先行：读 IndexedDB 立即渲染，保证刷新/首屏不空窗
+/** 批量删除当前选中的任务（各任务连同其整棵子树一并彻底清空前后端缓存）。 */
+const handleBatchDeleteTasks = async () => {
+  if (selectedRunIds.value.size === 0) return;
+  if (!window.confirm(t('sidebar.tasksBatchDeleteConfirm'))) return;
   try {
-    const cached = await readCachedSubagentRuns();
-    taskRuns.value = filterBySession(cached, sid);
-  } catch (e) {
-    console.warn('[SessionSidebar] 读取本地子任务缓存失败，回退服务端：', e);
-  }
-  // 2) 服务端间隙补齐：拉取整棵运行树并写入 Dexie，弥补 WS 断线期间丢失的事件
-  try {
-    const runs = await fetchSubagentRuns(sid, 'descendants');
-    await cacheSubagentRuns(runs.map(toCachedSubagentRun));
-    taskRuns.value = filterBySession(await readCachedSubagentRuns(), sid);
-    lastTasksFetchedAt.value = Date.now();
-  } catch (e) {
-    // 网络失败：保留 Dexie 缓存兜底，不把列表清空，避免首屏抖动
-    console.error('[SessionSidebar] 拉取子 Agent 运行记录失败（以本地缓存兜底）', e);
-  } finally {
-    taskLoading.value = false;
+    const removed = await deleteSelectedTasks();
+    if (removed > 0) emit('subagent:refresh-tasks');
+  } catch (error) {
+    console.error('[SessionSidebar] 批量删除后台任务失败：', error);
   }
 };
-
-/** 从 Dexie 缓存重建列表（WS 事件 / 切会话 / 重连后的本地即时更新）。 */
-const refreshFromCache = async (sid?: string) => {
-  const target = sid ?? activeSessionId.value;
-  if (!target) return;
-  try {
-    const cached = await readCachedSubagentRuns();
-    taskRuns.value = filterBySession(cached, target);
-  } catch {
-    // 缓存读取失败忽略，交由下一次 loadTaskRuns 兜底
-  }
-};
-
-/** 建立 /subagents/ws 连接并订阅实时事件，使后台任务列表增量、实时。 */
-const setupSubagentWs = () => {
-  useSubagentWs({
-    onReconnect: () => {
-      // 重连成功后服务端会补发 ready，届时再拉一次全量补齐
-      subagentWsReady.value = false;
-    }
-  });
-
-  on('ws:subagent_spawned', (payload: unknown) => {
-    const run = payload as SubagentRun;
-    if (!run?.run_id) return;
-    void cacheSubagentRuns([toCachedSubagentRun(run)]).then(() => refreshFromCache());
-  });
-
-  on('ws:subagent_ended', (payload: unknown) => {
-    const run = payload as SubagentRun;
-    if (!run?.run_id) return;
-    // 结束后覆盖写回完整状态（含 outcome / delivery），供展示最终结果
-    void cacheSubagentRuns([toCachedSubagentRun(run)]).then(() => refreshFromCache());
-  });
-
-  // ready：服务端已就绪，象征性地触发一次全量补齐（弥补连接建立前漏掉的事件）
-  on('ws:subagents:ready', () => {
-    subagentWsReady.value = true;
-    if (activeTab.value === 'tasks') loadTaskRuns();
-  });
-};
-
-/** 组件卸载前移除 mitt 订阅并把 WS 连接交给全局单例续命（无需关闭）。 */
-const teardownSubagentSubscribe = () => {
-  off('ws:subagent_spawned');
-  off('ws:subagent_ended');
-  off('ws:subagents:ready');
-};
-
-/** 运行记录的状态徽章样式（按 ExecutionStatus / RunOutcomeStatus 上色） */
-const badgeClass = (run: SubagentRun): string => {
-  const exec = run?.execution?.status;
-  if (exec === 'RUNNING') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
-  if (exec === 'INTERRUPTED') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
-  const outcome = run?.execution?.outcome?.status;
-  if (outcome === 'OK') return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300';
-  if (outcome === 'ERROR') return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
-  if (outcome === 'TIMEOUT' || outcome === 'KILLED')
-    return 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300';
-  return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
-};
-
-/** 状态文案（优先运行态，其次配送态，最后结果态） */
-const statusLabel = (run: SubagentRun): string => {
-  const exec = run?.execution?.status;
-  if (exec === 'RUNNING') return t('sidebar.statusRunning');
-  if (exec === 'INTERRUPTED') return t('sidebar.statusInterrupted');
-  const delivery = run?.delivery?.status;
-  if (delivery === 'PENDING') return t('sidebar.statusPending');
-  if (delivery === 'IN_PROGRESS') return t('sidebar.statusInProgress');
-  if (delivery === 'DELIVERED') return t('sidebar.statusDelivered');
-  const outcome = run?.execution?.outcome?.status;
-  if (outcome === 'OK') return t('sidebar.statusDone');
-  if (outcome === 'ERROR') return t('sidebar.statusError');
-  if (outcome === 'TIMEOUT') return t('sidebar.statusTimeout');
-  if (outcome === 'KILLED') return t('sidebar.statusKilled');
-  return t('sidebar.statusUnknown');
-};
-
-/** 角色标签：root / 直属子任务 等 */
-const roleLabel = (run: SubagentRun): string => {
-  const depth = run?.depth ?? 0;
-  if (depth <= 0) return t('sidebar.roleRoot');
-  return `${t('sidebar.roleChild')}#${depth}`;
-};
-
-/** 运行条目主标题：优先 label/task_name，其次 task 文本 */
-const runLabel = (run: SubagentRun): string => {
-  return run?.label || run?.task_name || run?.task || run?.run_id || '-';
-};
-
-/** 调用方会话：展示发起该子任务的父 session_id（requester_session_key） */
-const parentSessionLabel = (run: SubagentRun): string => {
-  return run?.requester_session_key || '-';
-};
-
-/** 点击任务项：通知父组件打开右侧子 Agent 实时流程图面板，并携带该 run 的 id 用于高亮/重根 */
-const openFlowGraph = (run: SubagentRun) => {
-  emit('subagent:open-flow', run.run_id);
-};
-
-/** 上次更新时间文案（秒级） */
-const lastUpdatedText = computed(() => {
-  if (!lastTasksFetchedAt.value) return '';
-  const sec = Math.max(0, Math.floor((Date.now() - lastTasksFetchedAt.value) / 1000));
-  return t('sidebar.tasksAgoSeconds', { sec });
-});
 
 // 更强保障：以浏览器 URL 末尾的 session_id 作为激活态的「唯一事实来源」。
 // 用 immediate 监听 route.params.sid，同时覆盖三种场景：

@@ -919,6 +919,63 @@ export async function fetchSubagentRuns(
 }
 
 /**
+ * Fetch a single sub-agent run plus its entire descendant subtree (background tasks).
+ *
+ * Used to perform a scoped refresh of only the currently focused task tree box,
+ * instead of re-fetching the whole session.
+ *
+ * In Tauri mode this calls the matching IPC command; in browser mode it hits
+ * the Python `GET /subagents/runs?run_id=...` endpoint directly.
+ *
+ * @param runId The root run whose subtree (including itself) should be returned.
+ */
+export async function fetchSubagentRunSubtree(runId: string): Promise<SubagentRun[]> {
+  if (isTauri()) {
+    const invoke = await getInvoke();
+    const resp = await invoke<{ runs: SubagentRun[] }>('subagent_runs', {
+      request: { run_id: runId },
+    });
+    return resp.runs ?? [];
+  }
+  const res: Response = await fetchApi({
+    url: '/subagents/runs',
+    opts: { run_id: runId },
+    method: 'get',
+  });
+  const resp = (res as unknown as { runs?: SubagentRun[] }).runs ?? [];
+  return Array.isArray(resp) ? resp : [];
+}
+
+/**
+ * Delete a sub-agent run and its entire descendant subtree (background tasks).
+ *
+ * Permanently removes the root run plus all of its descendants from the
+ * backend registry (in-memory + SQLite) and clears its attachments dir.
+ *
+ * In Tauri mode this calls the matching IPC command; in browser mode it hits
+ * the Python `DELETE /subagents/runs` endpoint directly.
+ *
+ * @param runId The root run id whose subtree should be removed.
+ * @returns The number of runs removed from the backend.
+ */
+export async function deleteSubagentRunSubtree(runId: string): Promise<number> {
+  if (isTauri()) {
+    const invoke = await getInvoke();
+    const resp = await invoke<{ success: boolean; removed: number }>('subagent_run_delete', {
+      request: { run_id: runId },
+    });
+    return resp?.removed ?? 0;
+  }
+  const res: Response = await fetchApi({
+    url: '/subagents/runs',
+    opts: { run_id: runId },
+    method: 'delete',
+  });
+  const resp = (res as unknown as { success?: boolean; removed?: number }) ?? {};
+  return typeof resp.removed === 'number' ? resp.removed : 0;
+}
+
+/**
  * Retrieve conversation history.
  */
 export async function getHistory(

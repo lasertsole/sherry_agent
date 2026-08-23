@@ -1,30 +1,5 @@
 <template>
   <div class="flex flex-col h-full w-full bg-[#f8f9fa] dark:bg-[#131619]">
-    <!-- 面板头部：标题 + 折叠/关闭 -->
-    <div
-      class="shrink-0 h-14 flex items-center gap-2 px-4 border-b border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21]">
-      <i class="pi pi-sitemap text-theme-main" />
-      <span class="text-base font-semibold text-gray-900 dark:text-gray-100">
-        {{ t('flow.title') }}
-      </span>
-      <div class="ml-auto flex items-center gap-1">
-        <Button
-          :icon="collapsed ? 'pi pi-angle-double-left' : 'pi pi-angle-double-right'"
-          :title="collapsed ? t('flow.expand') : t('flow.collapse')"
-          :aria-label="collapsed ? t('flow.expand') : t('flow.collapse')"
-          variant="text"
-          rounded
-          @click="toggleCollapsed" />
-        <Button
-          icon="pi pi-times"
-          :title="t('flow.close')"
-          :aria-label="t('flow.close')"
-          variant="text"
-          rounded
-          @click="closePanel" />
-      </div>
-    </div>
-
     <!-- 图谱渲染区 -->
     <div class="relative flex-1 w-full h-full overflow-hidden">
       <div ref="containerRef" class="w-full h-full" />
@@ -63,28 +38,31 @@
 <script lang="ts" setup>
 import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Graph } from '@antv/g6';
-import type { GraphData } from '@antv/g6';
+import { Graph, NodeEvent } from '@antv/g6';
+import type { GraphData, IElementEvent } from '@antv/g6';
 import { on, off } from '@/composables/mitt';
 import { fetchSubagentRuns, type SubagentRun } from '@/composables/bridge';
 import { useSubagentWs } from '@/composables/ws';
 
 const { t } = useI18n();
 
-/** 是否折叠（由父组件 v-model:collapsed 控制） */
-const collapsed = defineModel<boolean>('collapsed', { default: false });
-
 /** 当前会话 id（由父组件 v-model:current-session-id 双向同步） */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');
-
-/** 关闭面板（由父组件 v-model:visible 控制） */
-const visible = defineModel<boolean>('visible', { default: true });
 
 /** 选中的 run id（由父组件 :selected-run-id 传入，用于高亮 + 作为根展示其全部后代） */
 const selectedRunId = defineModel<string | undefined>('selectedRunId');
 
+/** 选中的完整 run 对象（由父组件 v-model:selected-run 传入，供下方详情面板展示） */
+const selectedRun = defineModel<SubagentRun | undefined>('selectedRun');
+
+/** 供下方详情面板使用的导航提示（点击节点时由本组件外抛） */
+const emit = defineEmits<{
+  (e: 'node-select', run: SubagentRun | undefined): void;
+}>();
+
 const containerRef = ref<HTMLDivElement | null>(null);
 const graphRef = shallowRef<Graph | null>(null);
+const resizeObserverRef = shallowRef<ResizeObserver | null>(null);
 const loading = ref(false);
 const empty = ref(false);
 const error = ref(false);
@@ -92,20 +70,17 @@ const error = ref(false);
 /** 内部权威数据源：run_id → SubagentRun（由 fetch + WS 增量累积） */
 const runStore = new Map<string, SubagentRun>();
 
+/**
+ * 可选：外部指定要展示的运行集（如侧边栏点击聚焦某任务后，仅展示该任务的子任务子树）。
+ * 当该 prop 有值时（且非空），图谱只渲染这里给定的 run，忽略内部 runStore 的整棵会话树；
+ * 无值时回退为渲染 runStore 的完整运行树（未聚焦时的「总树状图」行为）。
+ */
+const displayRuns = defineModel<SubagentRun[] | undefined>('displayRuns');
+
 const colorMode = useColorMode();
 
 /** 当前是否为深色主题 */
 const isDark = () => colorMode.value === 'dark';
-
-/** 折叠/展开面板 */
-const toggleCollapsed = () => {
-  collapsed.value = !collapsed.value;
-};
-
-/** 关闭面板 */
-const closePanel = () => {
-  visible.value = false;
-};
 
 /** 运行状态 → 节点颜色（浅色主题） */
 const statusColorLight = (status: string): string => {
@@ -162,22 +137,42 @@ const nodeLabel = (run: SubagentRun): string => {
 };
 
 /**
- * 将运行记录列表映射为 G6 图数据（树形：requester → child）。
+ * 将运行记录列表映射为 G6 图数据（树形）。
+ * 父子关联（SubagentRun 无 parent_run_id）：父 run 的 child_session_key = K，
+ * 则所有 requester_session_key === K 的 run 都是其直接子任务。由此逐层派生边。
  * @param runs 运行记录列表
- * @param highlightId 需要高亮的节点 id（选中 run），无则不高亮
+ * 计算单个 run 的节点基础样式（按运行状态着色）。
+ * 选中高亮不在此处理，改由 G6 的 selected state 就地应用（见 ensureGraph 的 node.state 配置），
+ * 从而避免点击节点时重建整图 / 重跑布局。
+ * @param run 运行记录
  */
-const mapToGraphData = (runs: SubagentRun[], highlightId?: string): GraphData => {
+const nodeStyle = (run: SubagentRun) => {
+  return {
+    fill: isDark() ? '#1a1d21' : '#ffffff',
+    stroke: statusColor(run?.execution?.status ?? ''),
+    lineWidth: 2,
+    size: 32
+  };
+};
+
+/**
+ * 将运行集映射为 G6 GraphData。
+ * @param runs 待展示的运行集
+ */
+const mapToGraphData = (runs: SubagentRun[]): GraphData => {
   const nodes: GraphData['nodes'] = [];
   const edges: GraphData['edges'] = [];
   const seen = new Set<string>();
+  // child_session_key → run_id：用于把子任务的 requester_session_key 反查到父 run
+  const childSessionKeyToRunId = new Map<string, string>();
 
   for (const run of runs) {
     const id = run.run_id;
     if (!id || seen.has(id)) continue;
     seen.add(id);
+    if (run.child_session_key) childSessionKeyToRunId.set(run.child_session_key, id);
 
     const status = statusKey(run);
-    const isHighlight = highlightId !== undefined && id === highlightId;
     nodes.push({
       id,
       label: nodeLabel(run),
@@ -186,81 +181,62 @@ const mapToGraphData = (runs: SubagentRun[], highlightId?: string): GraphData =>
         depth: run.depth ?? 0,
         role: run.role ?? null
       },
+      style: nodeStyle(run)
+    });
+  }
+
+  // 边：父 run → 子 run。子 run 的 requester_session_key 对应父 run 的 child_session_key，
+  // 通过反查表找到父 run_id；找不到（requester 是会话根、不在节点集内）则跳过，避免 G6 "Node not found"。
+  for (const run of runs) {
+    const id = run.run_id;
+    if (!id || !seen.has(id)) continue;
+    const parentId = childSessionKeyToRunId.get(run.requester_session_key);
+    if (!parentId || parentId === id) continue;
+    edges.push({
+      id: `${parentId}->${id}`,
+      source: parentId,
+      target: id,
       style: {
-        fill: isHighlight
-          ? (isDark() ? '#1e3a5f' : '#dbeafe')
-          : (isDark() ? '#1a1d21' : '#ffffff'),
-        stroke: isHighlight
-          ? (isDark() ? '#60a5fa' : '#2563eb')
-          : statusColor(run?.execution?.status ?? ''),
-        lineWidth: isHighlight ? 4 : 2,
-        size: isHighlight ? 40 : 32
+        stroke: isDark() ? '#4b5563' : '#9ca3af',
+        lineWidth: 1.5,
+        endArrow: true
       }
     });
-
-    // 边：requester_session_key → child_session_key
-    // requester 是会话 sid 时表示该 run 是树的根（来源不在 nodes 集合内，无父节点），不建边，
-    // 否则 G6 会因找不到 source 节点而抛 "Node not found" 异常导致整个图加载失败
-    const source = run.requester_session_key;
-    if (source && source !== id && seen.has(source)) {
-      edges.push({
-        id: `${source}->${id}`,
-        source,
-        target: id,
-        style: {
-          stroke: isDark() ? '#4b5563' : '#9ca3af',
-          lineWidth: 1.5,
-          endArrow: true
-        }
-      });
-    }
   }
 
   return { nodes, edges };
 };
 
 /**
- * 从 runStore 中计算以 selectedId 为根的完整后代子树（含 selectedId 自身）。
- * 祖先节点被排除；边方向保持 requester → child 不变。
+ * 从展示数据源派生 GraphData。
+ * - 当外部通过 displayRuns 指定了运行集（侧边栏聚焦某任务）时：此时以该任务的子树为「权威范围」，
+ *   图谱只渲染这批 run，避免把同会话的其它无关兄弟任务也画进来。
+ * - 未指定 displayRuns 时：渲染 runStore 的完整运行树（默认「总树状图」）。
+ * 高亮（selected state）由 ensureGraph / applyHighlight 就地管理，不参与数据派生。
  */
-const computeSubtree = (selectedId: string): SubagentRun[] => {
-  const result: SubagentRun[] = [];
-  const visited = new Set<string>();
-  const queue: string[] = [selectedId];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    const run = runStore.get(current);
-    if (!run) continue;
-    result.push(run);
-    // 收集以 current 为 requester 的所有后代
-    for (const [childId, childRun] of runStore) {
-      if (childRun.requester_session_key === current && !visited.has(childId)) {
-        queue.push(childId);
-      }
-    }
-  }
-
-  return result;
-};
-
-/** 根据当前选中状态从 runStore 派生展示数据 */
 const deriveDisplayData = (): GraphData => {
-  const selected = selectedRunId.value;
-  if (selected && runStore.has(selected)) {
-    return mapToGraphData(computeSubtree(selected), selected);
-  }
-  return mapToGraphData(Array.from(runStore.values()));
+  const sourceRuns = displayRuns.value?.length
+    ? displayRuns.value
+    : Array.from(runStore.values());
+  return mapToGraphData(sourceRuns);
 };
 
-/** 构建 G6 图配置并渲染 */
-const renderGraph = (data: GraphData) => {
+/**
+ * 构建 G6 图配置并渲染（仅在尚无实例或图结构发生实质性变化时调用）。
+ * 结构变化（首次加载 / WS 引起新增节点）会重建数据并重新执行布局；
+ * 单纯的选中高亮切换应调用 applyHighlight()，避免整图重建与重排。
+ */
+const ensureGraph = async (data: GraphData) => {
   if (!containerRef.value) return;
 
-  graphRef.value?.destroy();
-  graphRef.value = null;
+  // 已有实例：节点/边集合整体变化（首次加载之外的全部场景：task box 切换 / session 切换 / WS 增量）。
+  // 不能在已有实例上 setData 引入全新节点后再重跑 d3-force layout()——
+  // G6 v5 该路径下 before-layout 触发但 after-layout 永不触发，力导向模拟永不收敛，
+  // 全新节点坐标全程停留在 [0,0]，互相堆叠（已端到端复现确认）。
+  // 因此销毁实例并按新的权威数据重建，确保 d3-force 依据新拓扑完整初始化每个节点位置。
+  if (graphRef.value) {
+    destroyGraph();
+  }
 
   const dark = isDark();
   const background = dark ? '#131619' : '#f8f9fa';
@@ -280,6 +256,14 @@ const renderGraph = (data: GraphData) => {
         labelFontSize: 11,
         labelPlacement: 'bottom',
         labelOffsetY: 6
+      },
+      state: {
+        selected: {
+          fill: dark ? '#1e3a5f' : '#dbeafe',
+          stroke: dark ? '#60a5fa' : '#2563eb',
+          lineWidth: 4,
+          size: 40
+        }
       }
     },
     edge: {
@@ -304,8 +288,83 @@ const renderGraph = (data: GraphData) => {
     }
   });
 
+  // 点击节点：选中并联动下方详情面板
+  // G6 v5 的 node:click 事件中 evt.target 已由 forceCanvas 事件转发层的
+  // eventTargetOf() 解析为节点元素本身（其 id 即 run_id），无论点中节点主体
+  // 还是其 label 子形状都一样。因此用 targetType 判定命中节点后取 evt.target.id 即可。
+  graph.on(NodeEvent.CLICK, (evt: IElementEvent) => {
+    // G6 的 node:click 会解析 evt.target 为节点元素（id 即 run_id），点击 label 子形状时同样命中节点本体
+    const id = evt.targetType === 'node' ? evt.target.id : undefined;
+    if (!id) return;
+    // 优先从实际渲染数据源解析 run：焦点子树（displayRuns）可能是跨会话的，
+    // 其节点 id 未必存在于仅含当前会话 descendants 的 runStore 中；故二者都查。
+    const run = displayRuns.value?.length
+      ? displayRuns.value.find((r) => r.run_id === id)
+      : runStore.get(id);
+    if (run) {
+      selectedRunId.value = id;
+      selectedRun.value = run;
+      emit('node-select', run);
+    }
+  });
+
   graphRef.value = graph;
-  graph.render();
+  await graph.render();
+  // 容器尺寸变化时同步 G6 canvas 宽高（保持 100% 跟随父容器）。
+  // G6 v5 无参 resize() 并非稳定支持，需显式传入容器像素尺寸，canvas 才会真正跟随缩放。
+  resizeObserverRef.value?.disconnect();
+  resizeObserverRef.value = new ResizeObserver(() => {
+    if (graphRef.value && containerRef.value) {
+      try {
+        const { clientWidth, clientHeight } = containerRef.value;
+        graphRef.value.resize(clientWidth || 1, clientHeight || 1);
+      } catch {
+        /* canvas 尚未就绪，忽略 */
+      }
+    }
+  });
+  if (containerRef.value) resizeObserverRef.value.observe(containerRef.value);
+  // 首次渲染后重放既有选中（若存在），使高亮即时可见
+  if (selectedRunId.value) {
+    try {
+      await graph.setElementState(selectedRunId.value, ['selected']);
+    } catch {
+      /* 选中节点不在新数据内，忽略 */
+    }
+  }
+};
+
+/** 销毁当前图实例（用于更换会话/清空数据时释放） */
+const destroyGraph = () => {
+  resizeObserverRef.value?.disconnect();
+  resizeObserverRef.value = null;
+  graphRef.value?.destroy();
+  graphRef.value = null;
+};
+
+/**
+ * 选中高亮切换：就地应用 G6 的 selected state，不销毁实例、不重跑布局。
+ * 依赖 ensureGraph 中配置的 node.state.selected 样式，点击节点后仅改变该节点状态即可即时高亮。
+ * @param prev 上一个选中节点 id（撤销高亮），可为空
+ * @param next 新选中的节点 id（点亮），可为空
+ */
+const applyHighlight = async (prev?: string, next?: string) => {
+  const graph = graphRef.value;
+  if (!graph) return;
+  if (prev && prev !== next) {
+    try {
+      await graph.setElementState(prev, []);
+    } catch {
+      /* 节点可能已不在当前展示范围，忽略 */
+    }
+  }
+  if (next) {
+    try {
+      await graph.setElementState(next, ['selected']);
+    } catch {
+      /* 节点可能尚未渲染，忽略（后续 render 时会据 selectedRunId 补齐） */
+    }
+  }
 };
 
 /** 拉取并渲染子 Agent 运行树（写入 runStore 后按选中状态派生展示） */
@@ -323,16 +382,14 @@ const loadFlow = async () => {
     }
     if (runStore.size === 0) {
       empty.value = true;
-      graphRef.value?.destroy();
-      graphRef.value = null;
+      destroyGraph();
       return;
     }
-    renderGraph(deriveDisplayData());
+    ensureGraph(deriveDisplayData());
   } catch (e) {
     console.error('[SubagentFlowGraph] 拉取子 Agent 运行树失败：', e);
     error.value = true;
-    graphRef.value?.destroy();
-    graphRef.value = null;
+    destroyGraph();
   } finally {
     loading.value = false;
   }
@@ -347,8 +404,8 @@ const applyIncremental = (run: SubagentRun) => {
   // 写入权威数据源
   runStore.set(run.run_id, run);
 
-  // 从 runStore 派生展示数据（选中态下自动过滤到选中 run 的后代子树）
-  renderGraph(deriveDisplayData());
+  // 从 runStore 派生展示数据（始终渲染完整运行树，仅高亮当前选中）
+  ensureGraph(deriveDisplayData());
 };
 
 /** 建立 /subagents/ws 订阅（复用模块级单例，不新建连接） */
@@ -394,16 +451,31 @@ watch(
   () => currentSessionId.value,
   () => {
     selectedRunId.value = undefined;
-    if (visible.value) loadFlow();
+    selectedRun.value = undefined;
+    loadFlow();
   }
 );
 
-/** 选中 run 变化时按新选中根重渲染（null → 全量树） */
+/**
+ * 外部展示范围变化（侧边栏聚焦切换：displayRuns 在全树/某任务子树间切换）。
+ * 节点/边的集合与结构随之变化，需重建数据并重新布局；高亮由 applyHighlight 就地更新。
+ */
+watch(
+  () => displayRuns.value,
+  () => {
+    if (!empty.value && !error.value && graphRef.value) {
+      ensureGraph(deriveDisplayData());
+    }
+  },
+  { deep: true }
+);
+
+/** 选中 run 变化时只就地更新高亮（selected state），不重建整图、不重排布局 */
 watch(
   () => selectedRunId.value,
-  () => {
-    if (visible.value && !empty.value && !error.value && runStore.size > 0) {
-      renderGraph(deriveDisplayData());
+  (next, prev) => {
+    if (!empty.value && !error.value && graphRef.value) {
+      applyHighlight(prev, next);
     }
   }
 );
@@ -415,7 +487,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   teardownSubagentSubscribe();
-  graphRef.value?.destroy();
-  graphRef.value = null;
+  destroyGraph();
 });
 </script>
