@@ -20,7 +20,35 @@ from typing import Any, Callable, Coroutine, Literal
 from workspace.prompt_builder import build_system_prompt
 from .types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
+from runtime import relation_register
+
 cron_store_path: Path = ROOT_DIR / "cron_jobs.json"
+
+# The browser WebSocket client connects as `session_id=default`
+# (client/app/composables/ws.ts), so pushes target that session so the UI
+# refreshes live when a cron job completes.
+CRON_WS_SESSION_ID: str = "default"
+
+async def _push_cron_notification(job: CronJob) -> None:
+    """Push a `notification` WS event after a cron job completes so the
+    browser's notification bell/dialog is updated live.
+
+    Mirrors the subagent notification payload shape
+    (server/trigger/subagent/core.py): `{"event": "notification", "content": ...}`.
+    The content is prefixed with `cron:` so the client can attribute the source,
+    and it carries the job name plus outcome (ok/error). Best-effort: failures
+    are logged and never break the flow.
+    """
+    try:
+        websocket = relation_register.get_websocket_by_session_id(CRON_WS_SESSION_ID)
+        if websocket is None:
+            return
+        status: str = job.state.last_status or "ok"
+        content: str = f"cron: {job.name} [{status}]"
+        res: dict[str, Any] = {"event": "notification", "content": content}
+        await websocket.send_text(json.dumps(res))
+    except Exception as e:
+        logger.error("Cron: failed to push notification: %s", e)
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -274,6 +302,9 @@ class CronService:
             job.state.last_status = "error"
             job.state.last_error = str(e)
             logger.error("Cron: job %s failed: %s", job.name, e)
+
+        # Notify the bell: a cron job just completed (ok or error).
+        await _push_cron_notification(job)
 
         end_ms = _now_ms()
         job.state.last_run_at_ms = start_ms

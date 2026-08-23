@@ -61,6 +61,7 @@
     "heartbeat": "心跳",
     "cron": "定时任务",
     "logs": "日志",
+    "notification": "通知",
     "extend": "扩展",
     "settingsMenu": "菜单",
     "collapseSidebar": "折叠侧边栏",

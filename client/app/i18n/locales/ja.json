@@ -61,6 +61,7 @@
     "heartbeat": "ハートビート",
     "cron": "クーロンタスク",
     "logs": "ログ",
+    "notification": "通知",
     "extend": "拡張",
     "settingsMenu": "メニュー",
     "collapseSidebar": "サイドバーを折りたたむ",

@@ -61,6 +61,7 @@
     "heartbeat": "Heartbeat",
     "cron": "Cron Tasks",
     "logs": "Logs",
+    "notification": "Notifications",
     "extend": "Extend",
     "settingsMenu": "Menu",
     "collapseSidebar": "Collapse sidebar",

@@ -41,6 +41,24 @@ async def push_heartbeat_updated() -> None:
     except Exception as e:
         logger.warning("Failed to push heartbeat:updated: {}", e)
 
+async def push_heartbeat_notification(result_content: str) -> None:
+    """Push a `notification` WS event after a heartbeat task completes so the
+    browser's notification bell/dialog is updated live.
+
+    Mirrors the subagent notification payload shape
+    (server/trigger/subagent/core.py): `{"event": "notification", "content": ...}`.
+    The content is prefixed with `heartbeat:` so the client can attribute the
+    source. Best-effort: failures are logged and never break the flow.
+    """
+    try:
+        websocket = relation_register.get_websocket_by_session_id(HEARTBEAT_WS_SESSION_ID)
+        if websocket is None:
+            return
+        res: dict[str, Any] = {"event": "notification", "content": f"heartbeat: {result_content}"}
+        await websocket.send_text(json.dumps(res))
+    except Exception as e:
+        logger.warning("Failed to push heartbeat notification: {}", e)
+
 async def process_heartbeat_task(task: str) -> str:
     try:
         # Lazy-ensure the core persona files exist before building the prompt.
@@ -73,6 +91,8 @@ async def process_heartbeat_task(task: str) -> str:
         # match, so passing the full active line matches itself.
         await _mark_executed_tasks_completed(task)
         await push_heartbeat_updated()
+        # Notify the bell: a heartbeat task just completed.
+        await push_heartbeat_notification(agent_res)
 
         return agent_res
     except Exception as e:

@@ -61,6 +61,7 @@
     "heartbeat": "하트비트",
     "cron": "크론 작업",
     "logs": "로그",
+    "notification": "알림",
     "extend": "확장",
     "settingsMenu": "메뉴",
     "collapseSidebar": "사이드바 접기",

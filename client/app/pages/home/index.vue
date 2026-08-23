@@ -70,6 +70,21 @@
               :aria-label="t('toolbar.logs')"
               variant="text"
               @click="handleOperate('headerBar', 'logs')" />
+            <!-- 通知入口：🔔 bell 图标 + 未读/合并计数红色徽标。点击打开通知弹窗并清除未读。 -->
+            <div class="relative flex items-center">
+              <Button
+                icon="pi pi-bell"
+                :title="t('toolbar.notification')"
+                :aria-label="t('toolbar.notification')"
+                variant="text"
+                @click="handleOperate('headerBar', 'notification')" />
+              <span
+                v-if="notificationUnread > 0"
+                class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
+                :title="t('toolbar.notification')">
+                {{ notificationUnread > 99 ? '99+' : notificationUnread }}
+              </span>
+            </div>
             <!-- 设置菜单入口：三条横线按钮。其余功能（技能/知识图谱/系统配置/扩展）
                  全部从顶部移入此按钮弹幕出的大 dialog 九宫格。 -->
             <Button
@@ -141,6 +156,11 @@
     <!-- 日志查看弹窗 -->
     <LogsDialog v-model="showLogsDialog" />
 
+    <!-- 通知查看弹窗（监听 ws:notification，合并连续相同通知，未读数经 changed 上报） -->
+    <NotificationDialog
+      v-model="showNotificationDialog"
+      @changed="(n: number) => (notificationUnread = n)" />
+
     <!-- 扩展弹窗（关联 / mcp） -->
     <ExtendDialog v-model="showExtendDialog" />
   </div>
@@ -160,6 +180,7 @@ import HeartbeatDialog from './components/HeartbeatDialog.vue';
 import CronDialog from './components/CronDialog.vue';
 import LogsDialog from './components/LogsDialog.vue';
 import ExtendDialog from './components/ExtendDialog.vue';
+import NotificationDialog from './components/NotificationDialog.vue';
 // function
 import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -255,6 +276,12 @@ const showLogsDialog = ref(false);
 /** 扩展弹窗开关 */
 const showExtendDialog = ref(false);
 
+/** 通知查看弹窗开关 */
+const showNotificationDialog = ref(false);
+
+/** 通知徽标未读数（由 NotificationDialog 上报） */
+const notificationUnread = ref(0);
+
 /** 设置菜单（九宫格）是否展开 */
 const isSettingsMenuOpen = ref(false);
 
@@ -305,6 +332,9 @@ const handleOperate = (type: string, event: string) => {
       return;
     case 'logs':
       showLogsDialog.value = true;
+      return;
+    case 'notification':
+      showNotificationDialog.value = true;
       return;
     case 'extend':
       showExtendDialog.value = true;

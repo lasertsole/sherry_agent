@@ -1,8 +1,12 @@
 """QQ channel implementation using botpy SDK."""
 
+import sys
 import json
 import time
+import shutil
 import asyncio
+import importlib
+import subprocess
 from pathlib import Path
 from loguru import logger
 from pydantic import Field
@@ -27,6 +31,128 @@ except ImportError:
 
 if TYPE_CHECKING:
     from botpy.message import C2CMessage, GroupMessage
+
+
+# Failure-cooldown state for the runtime dep-install fallback (below).  An
+# external restart loop / health check that keeps calling start() would
+# otherwise re-run `uv pip install` + the import-retry loop on every call
+# while the dependency remains genuinely unavailable.  After N consecutive
+# failures we stop attempting for _COOLDOWN_WINDOW seconds and surface the
+# manual-install guidance instead.
+_COOLDOWN_THRESHOLD = 3      # consecutive failures before suppressing retries
+_COOLDOWN_WINDOW = 60        # seconds to stay in cooldown once tripped
+_consecutive_install_failures = 0
+_cooldown_until = 0.0
+
+
+def _in_cooldown() -> bool:
+    """Return True if repeated install failures have tripped the cooldown."""
+    return time.monotonic() < _cooldown_until
+
+
+def _record_install_failure() -> None:
+    """Bump the consecutive-failure counter and arm the cooldown timer."""
+    global _consecutive_install_failures, _cooldown_until
+    _consecutive_install_failures += 1
+    if _consecutive_install_failures >= _COOLDOWN_THRESHOLD:
+        _cooldown_until = time.monotonic() + _COOLDOWN_WINDOW
+        logger.error(
+            "QQ dep auto-install failed {} times in a row; suppressing further attempts for {}s. "
+            "Install manually:\n  uv pip install -r plugins/channels/qq/requirements.txt",
+            _consecutive_install_failures, _COOLDOWN_WINDOW,
+        )
+
+
+def _reset_cooldown() -> None:
+    """Clear failure tracking after a successful install/import."""
+    global _consecutive_install_failures, _cooldown_until
+    _consecutive_install_failures = 0
+    _cooldown_until = 0.0
+
+
+def _install_deps() -> bool:
+    """Install plugin-local requirements.txt (qq-botpy) into the running env.
+
+    Uses ``uv`` when available (consistent with the project toolchain),
+    otherwise falls back to ``sys.executable -m pip``.  Installation is
+    idempotent -- already-satisfied packages are skipped.  Returns ``True``
+    once the dependencies are importable, ``False`` otherwise.
+
+    After ``_COOLDOWN_THRESHOLD`` consecutive failures the install is skipped
+    for ``_COOLDOWN_WINDOW`` seconds (see cooldown helpers above), so a
+    persistent outage doesn't trigger a hot loop of subprocess installs.
+    """
+    if _in_cooldown():
+        logger.warning("QQ dep auto-install suppressed (in cooldown); install manually")
+        return False
+
+    req_file = Path(__file__).resolve().parent / "requirements.txt"
+    if not req_file.is_file():
+        logger.warning("No requirements.txt for QQ channel: {}", req_file)
+        return False
+
+    if shutil.which("uv"):
+        cmd = ["uv", "pip", "install", "-q", "-r", str(req_file)]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)]
+
+    logger.info("Installing QQ dependencies ({}): ...", req_file.name)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        logger.error("Timed out installing QQ dependencies from {}", req_file)
+        _record_install_failure()
+        return False
+
+    if result.returncode != 0:
+        logger.error(
+            "Failed to install QQ dependencies ({}): {}", req_file,
+            (result.stderr or result.stdout or "").strip(),
+        )
+        _record_install_failure()
+        return False
+
+    # A pip subprocess may not be visible to the freshly-created importers,
+    # so clear the module resolution cache before re-importing.
+    importlib.invalidate_caches()
+    _reset_cooldown()
+    logger.info("QQ dependency install succeeded")
+    return True
+
+
+def _try_import_botpy() -> bool:
+    """(Re)import the botpy SDK into globals. Returns True when importable.
+
+    Retries a few times: on Windows, antivirus real-time scanning can briefly
+    lock freshly-installed files, making a just-installed package unimportable
+    for a few hundred milliseconds even though uv reported success.  We catch
+    ``Exception`` (not just ``ImportError``) because such a lock surfaces as an
+    ``OSError``/``PermissionError``, which otherwise would bubble out of here
+    and crash ``start()``.
+    """
+    global botpy, C2CMessage, GroupMessage
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        importlib.invalidate_caches()
+        try:
+            import botpy as _botpy
+            from botpy.message import C2CMessage as _c2c
+            from botpy.message import GroupMessage as _group
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.3)
+            continue
+        botpy = _botpy
+        C2CMessage = _c2c
+        GroupMessage = _group
+        return True
+    # Final failure: surface the *real* underlying error once for debugging.
+    logger.error("QQ SDK import failed after retries: %r", last_exc)
+    botpy = None
+    C2CMessage = None
+    GroupMessage = None
+    return False
 
 
 def _make_bot_class(channel: "QQChannel") -> "type[botpy.Client]":
@@ -116,8 +242,22 @@ class QQChannel(BaseChannel):
     async def start(self) -> None:
         """Start the QQ bot."""
         if not QQ_AVAILABLE:
-            logger.error("QQ SDK not installed. Check plugins/channels/qq/requirements.txt")
-            return
+            # First import failed at load time -- try to install the SDK on
+            # the fly (enable channel -> auto-download deps), then re-import.
+            logger.warning("QQ SDK not installed. Attempting to auto-install dependencies...")
+            if _install_deps() and _try_import_botpy():
+                logger.info("QQ SDK installed and imported successfully")
+            else:
+                # Installed but still unimportable (or install/suppressed by
+                # cooldown) -- count it so a genuinely broken install doesn't
+                # hot-loop on every start() call.
+                _record_install_failure()
+                logger.error(
+                    "QQ SDK not available. Install the dependency manually:\n"
+                    "  uv pip install -r plugins/channels/qq/requirements.txt\n"
+                    "  # or: python -m pip install -r plugins/channels/qq/requirements.txt"
+                )
+                return
 
         if not self.config.app_id or not self.config.secret:
             logger.error("QQ app_id and secret not configured")
