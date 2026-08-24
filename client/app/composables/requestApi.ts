@@ -92,7 +92,9 @@ async function useFetchBaseApi({
     key: `${requestURL}:${method}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     method,
     // ofetch库会自动识别请求地址，对于url已包含域名的请求不会再拼接baseURL
-    baseURL: import.meta.env.VITE_API_BACK_URL,
+    // 与 ws.ts / bridge.ts 的流式路径保持一致的回退：当 VITE_API_BACK_URL 未配置时
+    // 兜底到本地后端地址，避免请求退化为相对路径而命中 Nuxt dev server 返回 HTML 外壳。
+    baseURL: import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080',
     ...params,
     server,
     watch,
