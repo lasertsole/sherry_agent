@@ -8,6 +8,74 @@ import types
 import contextlib
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Restricted execution environment for eval_sandbox
+#
+# NOTE: This is an in-process *best-effort* hardening, NOT a fully robust
+# sandbox. Production should run model code in a real subprocess/container
+# sandbox (e.g. langchain-sandbox). The restrictions below close the obvious
+# escape vectors: full ``__builtins__`` exposure, ``import``, file I/O,
+# meta-programming, and the classic pure-Python ``__subclasses__()`` -> os
+# introspection escape.
+# ---------------------------------------------------------------------------
+
+# Builtin names that pose an escape / side-effect risk. Anything else is kept
+# so generated code behaves as before in the common case (arithmetic,
+# collections, iteration, string formatting, output via print, ...).
+_SANDBOX_FORBIDDEN_BUILTIN_NAMES = frozenset({
+    "__import__",              # import -> os, subprocess, etc.
+    "open",                    # arbitrary file read/write
+    "eval", "exec", "compile", # meta code execution
+    "breakpoint",              # debugger -> interactive shell
+    "input",                   # blocking / interactive
+    "exit", "quit",            # interpreter shutdown
+    "getattr", "setattr",      # generic attribute smuggling (dunder via string)
+    "globals", "locals", "vars",  # host state leak
+    "help",                    # pager / interactive
+    "memoryview",              # unnecessary surface
+})
+
+# Dunder attribute names that enable the classic pure-Python sandbox escape
+# (``object.__subclasses__()`` -> os). Any attribute access to these is
+# rejected up front by AST inspection. ``__getattribute__`` is included so
+# ``obj.__getattribute__('__subclasses__')`` cannot smuggle past the gate.
+_SANDBOX_FORBIDDEN_DUNDER_ATTRS = frozenset({
+    "__class__", "__subclasses__", "__globals__", "__code__",
+    "__bases__", "__mro__", "__import__", "__reduce__", "__func__",
+    "__closure__", "__getattribute__",
+})
+
+# Sanitized globals dict: derived from real builtins minus the forbidden set.
+# ``__builtins__`` is explicitly set to this SAME filtered dict so CPython's
+# ``exec``/``eval`` do NOT re-inject the full ``builtins`` module underneath
+# our back (which would nullify the whole whitelist).
+SAFE_BUILTINS: dict[str, Any] = {
+    name: getattr(builtins, name)
+    for name in dir(builtins)
+    if name not in _SANDBOX_FORBIDDEN_BUILTIN_NAMES
+}
+SAFE_BUILTINS["__builtins__"] = SAFE_BUILTINS
+
+
+def _assert_safe_ast(tree: ast.AST) -> None:
+    """Raise if code uses forbidden escapes (import / dangerous dunders / names).
+
+    Rejects:
+      - ``import`` / ``from ... import ...`` statements
+      - attribute access to dangerous dunders (``obj.__subclasses__`` ...)
+      - any *direct* reference to a forbidden builtin name (``open``, ``eval``,
+        ``exec``, ``compile``, ...), so these fail with a clear message instead
+        of a bare ``NameError`` and cannot recur if one is later re-added.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            raise ValueError("import is not allowed in the restricted environment")
+        if isinstance(node, ast.Attribute) and node.attr in _SANDBOX_FORBIDDEN_DUNDER_ATTRS:
+            raise ValueError(f"attribute access to '{node.attr}' is not allowed")
+        if isinstance(node, ast.Name) and node.id in _SANDBOX_FORBIDDEN_BUILTIN_NAMES:
+            raise ValueError(f"name '{node.id}' is not allowed in the restricted environment")
+
+
 BACKTICK_PATTERN = r"(?:^|\n)```(?:.*?\n)?(.*?)(?:```(?:\n|$))"
 
 
@@ -44,6 +112,7 @@ def eval_sandbox(code: str, _locals: dict[str, Any]) -> tuple[str, dict[str, Any
 
     try:
         need_eval = False
+        parsed = None
         try:
             parsed = ast.parse(code.strip(), mode="exec")
             if (
@@ -61,17 +130,21 @@ def eval_sandbox(code: str, _locals: dict[str, Any]) -> tuple[str, dict[str, Any
                 if func_name and func_name in _locals and not func_name in dir(builtins):
                     need_eval = True
         except SyntaxError:
-            pass
+            parsed = None
+
+        # Reject forbidden escapes (import / dangerous dunders) before running.
+        if parsed is not None:
+            _assert_safe_ast(parsed)
 
         if need_eval:
-            result = eval(code.strip(), builtins.__dict__, _locals)
+            result = eval(code.strip(), SAFE_BUILTINS, _locals)
             if result is None:
                 result = "<tool returned None>"
             else:
                 result = repr(result)
         else:
             with contextlib.redirect_stdout(io.StringIO()) as f:
-                exec(code, builtins.__dict__, _locals)
+                exec(code, SAFE_BUILTINS, _locals)
             result = f.getvalue()
             if not result:
                 # 检查是否有新定义的变量（非函数、非模块）作为可能的工具返回值

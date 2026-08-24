@@ -34,3 +34,18 @@ skills/skills_snapshot.json
 static/
 sessions/**/*.md
 .idea/
+.vscode/
+
+# Automated task/page snapshots (browser automation runtime state)
+tasks-*.yml
+
+# Vendored binary dependencies — never commit wheels
+*.whl
+
+# Model weight binaries — downloaded per machine, not source
+*.bin
+*.onnx
+*.safetensors
+*.pt
+*.pth
+*.ckpt

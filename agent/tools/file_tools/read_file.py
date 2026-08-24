@@ -3,7 +3,7 @@ import json
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from typing import Type, override
-from agent.tools.pub_base import resolve_path
+from agent.tools.pub_base import resolve_path, PathOutOfBoundsError
 from langchain_core.callbacks import CallbackManagerForToolRun
 
 
@@ -57,7 +57,10 @@ class ReadFileTool(BaseTool):
     # ── shared core ────────────────────────────────────────────────────────
 
     def _core(self, file_path: str, offset: int = 1, limit: int = 500) -> str:
-        resolved = resolve_path(file_path)
+        try:
+            resolved = resolve_path(file_path)
+        except PathOutOfBoundsError:
+            return json.dumps({"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False)
 
         if not resolved.exists():
             return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)

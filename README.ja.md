@@ -133,25 +133,22 @@ EMA_AI_agent/
 ├── config/                 # 集中型設定
 │   ├── path.py             # ファイルパス設定
 │   ├── schema.py           # 設定スキーマモデル
-│   ├── character.py        # キャラクタープロフィール設定
 │   └── num.py              # 数値/チューニングパラメータ
 │
 ├── context_engine/         # メモリエンジン
 │   ├── core.py             # メッセージ検索＆検索 API
 │   └── store/              # 短期セッションメッセージメモリ（SQLite + FTS5）
 │
-├── future/                 # 実験的 / 今後の機能
-│
 ├── logs/                   # ログシステム
 │   ├── logger.py           # ログ設定
 │   └── output/             # ログ出力ディレクトリ
 │
 ├── models/                 # モデルラッパー
-│   ├── chat_model.py       # チャットモデル（LangChain BaseChatModel）
 │   ├── LLMs/               # LLM モデル設定
-│   │   ├── auxiliary_llm.py    # 軽量チャットモデル
+│   │   ├── auxiliary_llm/       # 軽量チャットモデル
 │   │   ├── main_llm.py         # プライマリチャットモデル
-│   │   └── reasoner_llm.py     # 思考連鎖推論モデル
+│   │   ├── reasoner_llm.py     # 思考連鎖推論モデル
+│   │   └── reasoning_normalizer.py # プロバイダ間で reasoning_content を正規化
 │   ├── VTTT_model.py       # ビデオ-テキスト-テキストモデル
 │   ├── ITTT_model.py       # 画像-テキストモデル
 │   ├── STT_model/          # 音声-テキストモデル
@@ -162,6 +159,10 @@ EMA_AI_agent/
 ├── plugins/                # プラグインシステム
 │   ├── channels/           # チャネルプラグイン（QQ ボットなど）
 │   └── mcp_server/         # MCP サーバー設定
+│
+├── providers/              # LLM プロバイダ仕様＆レジストリ
+│   ├── registry.py         # 対応プロバイダすべての ProviderSpec エントリ
+│   └── __init__.py         # プロバイダレジストリのエクスポート
 │
 ├── pub_func/               # 共通ユーティリティ関数
 │   ├── format/             # テキスト整形ユーティリティ
@@ -186,10 +187,6 @@ EMA_AI_agent/
 │       ├── channels/       # 受信チャネルトリガー
 │       ├── http/           # HTTP エンドポイントトリガー
 │       └── subagent/       # サブエージェント結果トリガー
-│
-├── sessions/               # セッション管理
-│   ├── main/               # アクティブセッションストア
-│   └── store.py            # セッション CRUD 操作
 │
 ├── skills/                 # スキルライブラリ（SKILL.md 定義ファイル）
 │   ├── loader.py           # スキル自動発見＆登録

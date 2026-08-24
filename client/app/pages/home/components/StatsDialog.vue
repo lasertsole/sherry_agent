@@ -80,11 +80,10 @@
 
       <!-- 图表渲染区 -->
       <div class="relative w-full overflow-hidden" style="height: 56vh;">
-        <v-chart
+        <GChart
           v-if="!loading && !empty && !error"
           class="w-full h-full"
-          :option="chartOption"
-          autoresize />
+          :options="chartOption" />
 
         <!-- 加载中 -->
         <div
@@ -126,14 +125,9 @@
 <script lang="ts" setup>
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { use } from 'echarts/core';
-import { BarChart } from 'echarts/charts';
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
-import VChart from 'vue-echarts';
+import type { G2Spec } from '@antv/g2';
+import GChart from './GChart.vue';
 import { fetchApi } from '~/composables/requestApi';
-
-use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -233,8 +227,8 @@ const mapStatsData = (payload: StatsResponse): DayUsage[] => {
   }));
 };
 
-/** 构建 echarts 堆叠柱状图配置 */
-const chartOption = computed(() => {
+/** 构建 G2 堆叠柱状图配置 */
+const chartOption = computed<G2Spec>(() => {
   const dark = isDark();
   const axisLabelColor = dark ? '#9ca3af' : '#6b7280';
   const axisLineColor = dark ? '#3f4650' : '#d1d5db';
@@ -254,57 +248,56 @@ const chartOption = computed(() => {
     }
   }
 
-  const xLabels = days.value.map(day => day.date);
-
-  // 每个模型一个堆叠系列，值为该模型当日 input+output 之和
-  const series = modelNames.map((modelName, index) => ({
-    name: modelName,
-    type: 'bar' as const,
-    stack: 'total',
-    emphasis: { focus: 'series' as const },
-    itemStyle: { color: modelColor(index) },
-    data: days.value.map(day => {
+  // 长表数据：每行 = 某日某模型的 input+output 之和
+  const data: { date: string; model: string; tokens: number }[] = [];
+  for (const day of days.value) {
+    for (const modelName of modelNames) {
       const usage = day.byModel.find(u => u.model_name === modelName);
-      return usage ? usage.input_tokens + usage.output_tokens : 0;
-    })
-  }));
+      data.push({
+        date: day.date,
+        model: modelName,
+        tokens: usage ? usage.input_tokens + usage.output_tokens : 0
+      });
+    }
+  }
 
   return {
-    backgroundColor: 'transparent',
+    type: 'interval',
+    autoFit: true,
+    data,
+    encode: { x: 'date', y: 'tokens', color: 'model' },
+    transform: [{ type: 'stackY' }],
+    scale: {
+      color: {
+        domain: modelNames,
+        range: modelNames.map((_, index) => modelColor(index))
+      }
+    },
+    theme: {
+      type: dark ? 'classicDark' : 'classic',
+      view: { viewFill: 'transparent' },
+      axis: {
+        labelFill: axisLabelColor,
+        lineStroke: axisLineColor,
+        gridStroke: splitLineColor
+      },
+      legendCategory: { itemLabelFill: legendTextColor }
+    },
     tooltip: {
-      trigger: 'axis' as const,
-      axisPointer: { type: 'shadow' as const },
-      backgroundColor: tooltipBg,
-      borderColor: tooltipBorder,
-      textStyle: { color: tooltipText }
+      title: 'date',
+      items: [
+        {
+          channel: 'y',
+          name: 'tokens',
+          valueFormatter: (d: number) => String(d)
+        }
+      ]
     },
-    legend: {
-      data: modelNames,
-      textStyle: { color: legendTextColor },
-      top: 8
+    axis: {
+      x: { labelFill: axisLabelColor, lineStroke: axisLineColor, tick: false },
+      y: { labelFill: axisLabelColor, gridStroke: splitLineColor, title: 'token' }
     },
-    grid: {
-      left: 16,
-      right: 16,
-      top: 48,
-      bottom: 8,
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category' as const,
-      data: xLabels,
-      axisLabel: { color: axisLabelColor },
-      axisLine: { lineStyle: { color: axisLineColor } },
-      axisTick: { show: false }
-    },
-    yAxis: {
-      type: 'value' as const,
-      name: 'token',
-      nameTextStyle: { color: axisLabelColor },
-      axisLabel: { color: axisLabelColor },
-      splitLine: { lineStyle: { color: splitLineColor } }
-    },
-    series
+    legend: { color: { position: 'top', itemLabelFill: legendTextColor } }
   };
 });
 

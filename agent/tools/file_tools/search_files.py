@@ -17,7 +17,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from agent.tools.pub_base import is_text_file, resolve_path, should_skip_dir
+from agent.tools.pub_base import is_text_file, resolve_path, PathOutOfBoundsError, should_skip_dir
 
 
 # ── Content search (grep-like) ───────────────────────────────────────────
@@ -183,7 +183,10 @@ class SearchFilesTool(BaseTool):
         offset: int = 0,
         context: int = 0,
     ) -> str:
-        resolved = resolve_path(path)
+        try:
+            resolved = resolve_path(path)
+        except PathOutOfBoundsError:
+            return json.dumps({"error": f"Path outside project root not allowed: {path}"}, ensure_ascii=False)
 
         if not resolved.exists():
             return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)

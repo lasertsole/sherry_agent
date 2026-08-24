@@ -44,7 +44,7 @@ if str(scripts_dir) not in sys.path:
 # vendored copy before raganything (which imports `from lightrag import ...`
 # at module load) is pulled in transitively via graph_rag.core.
 from graph_rag import get_rag_anything
-from raganything import RAGAnything
+from graph_rag.vendored_raganything import RAGAnything
 
 @validate_call
 async def query(question: str) -> str:

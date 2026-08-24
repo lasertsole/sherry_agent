@@ -1,4 +1,4 @@
-from .path_utils import resolve_path
+from .path_utils import resolve_path, PathOutOfBoundsError
 from .file_utils import is_text_file, should_skip_dir
 from .text_matcher import fuzzy_find_and_replace, format_no_match_hint
 from .skill_usage import bump_patch, forget, mark_agent_created
@@ -15,6 +15,7 @@ from .skill_utils import (
 
 __all__ = [
     "resolve_path",
+    "PathOutOfBoundsError",
     "is_text_file",
     "should_skip_dir",
     "fuzzy_find_and_replace",

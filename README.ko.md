@@ -133,25 +133,22 @@ EMA_AI_agent/
 ├── config/                 # 중앙 집중식 설정
 │   ├── path.py             # 파일 경로 설정
 │   ├── schema.py           # 설정 스키마 모델
-│   ├── character.py        # 캐릭터 프로필 설정
 │   └── num.py              # 숫자/튜닝 파라미터
 │
 ├── context_engine/         # 메모리 엔진
 │   ├── core.py             # 메시지 검색 및 검색 API
 │   └── store/              # 단기 세션 메시지 메모리 (SQLite + FTS5)
 │
-├── future/                 # 실험적 / 향후 기능
-│
 ├── logs/                   # 로깅 시스템
 │   ├── logger.py           # 로그 설정
 │   └── output/             # 로그 출력 디렉터리
 │
 ├── models/                 # 모델 래퍼
-│   ├── chat_model.py       # 챗 모델 (LangChain BaseChatModel)
 │   ├── LLMs/               # LLM 모델 설정
-│   │   ├── auxiliary_llm.py    # 경량 챗 모델
+│   │   ├── auxiliary_llm/       # 경량 챗 모델
 │   │   ├── main_llm.py         # 기본 챗 모델
-│   │   └── reasoner_llm.py     # 추론(reasoning) 모델
+│   │   ├── reasoner_llm.py     # 추론(reasoning) 모델
+│   │   └── reasoning_normalizer.py # 프로바이더 간 reasoning_content 정규화
 │   ├── VTTT_model.py       # 비디오-텍스트-텍스트 모델
 │   ├── ITTT_model.py        # 이미지-텍스트 모델
 │   ├── STT_model/          # 음성-텍스트 모델
@@ -162,6 +159,10 @@ EMA_AI_agent/
 ├── plugins/                # 플러그인 시스템
 │   ├── channels/           # 채널 플러그인 (QQ 봇 등)
 │   └── mcp_server/         # MCP 서버 설정
+│
+├── providers/              # LLM 프로바이더 사양 및 레지스트리
+│   ├── registry.py         # 지원되는 모든 프로바이더의 ProviderSpec 항목
+│   └── __init__.py         # 프로바이더 레지스트리 내보내기
 │
 ├── pub_func/               # 공통 유틸리티 함수
 │   ├── format/             # 텍스트 포맷 유틸리티
@@ -186,10 +187,6 @@ EMA_AI_agent/
 │       ├── channels/       # 인바운드 채널 트리거
 │       ├── http/           # HTTP 엔드포인트 트리거
 │       └── subagent/       # 서브에이전트 결과 트리거
-│
-├── sessions/               # 세션 관리
-│   ├── main/               # 활성 세션 저장소
-│   └── store.py            # 세션 CRUD 연산
 │
 ├── skills/                 # 기술 라이브러리 (SKILL.md 정의 파일)
 │   ├── loader.py           # 기술 자동 발견 및 등록

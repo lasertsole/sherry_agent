@@ -14,7 +14,7 @@ from typing import Type, override
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-from agent.tools.pub_base import resolve_path, fuzzy_find_and_replace
+from agent.tools.pub_base import resolve_path, PathOutOfBoundsError, fuzzy_find_and_replace
 
 # ── Diff helper ──────────────────────────────────────────────────────────
 
@@ -98,7 +98,10 @@ class PatchFileTool(BaseTool):
         new_string: str,
         replace_all: bool = False,
     ) -> str:
-        resolved = resolve_path(file_path)
+        try:
+            resolved = resolve_path(file_path)
+        except PathOutOfBoundsError:
+            return json.dumps({"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False)
 
         if not resolved.exists():
             return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)

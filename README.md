@@ -133,25 +133,22 @@ EMA_AI_agent/
 ├── config/                 # Centralized configuration
 │   ├── path.py             # File path configuration
 │   ├── schema.py           # Configuration schema models
-│   ├── character.py        # Character profile configuration
 │   └── num.py              # Numeric/tuning parameters
 │
 ├── context_engine/         # Memory engine
 │   ├── core.py             # Message retrieval & search APIs
 │   └── store/              # Short-term session message memory (SQLite + FTS5)
 │
-├── future/                 # Experimental / upcoming features
-│
 ├── logs/                   # Logging system
 │   ├── logger.py           # Log configuration
 │   └── output/             # Log output directory
 │
 ├── models/                 # Model wrappers
-│   ├── chat_model.py       # Chat model (LangChain BaseChatModel)
 │   ├── LLMs/               # LLM model configs
-│   │   ├── auxiliary_llm.py    # Lightweight chat model
+│   │   ├── auxiliary_llm/       # Lightweight chat model
 │   │   ├── main_llm.py         # Primary chat model
-│   │   └── reasoner_llm.py     # Chain-of-thought reasoning model
+│   │   ├── reasoner_llm.py     # Chain-of-thought reasoning model
+│   │   └── reasoning_normalizer.py # Normalizes reasoning_content across providers
 │   ├── VTTT_model.py       # Video-Text-to-Text model
 │   ├── ITTT_model.py        # Image-to-Text model
 │   ├── STT_model/          # Speech-to-Text model
@@ -162,6 +159,10 @@ EMA_AI_agent/
 ├── plugins/                # Plugin system
 │   ├── channels/           # Channel plugins (QQ bot, etc.)
 │   └── mcp_server/         # MCP server configurations
+│
+├── providers/              # LLM provider specifications & registry
+│   ├── registry.py         # ProviderSpec entries for all supported providers
+│   └── __init__.py         # Provider registry exports
 │
 ├── pub_func/               # Common utility functions
 │   ├── format/             # Text formatting utilities
@@ -186,10 +187,6 @@ EMA_AI_agent/
 │       ├── channels/       # Incoming channel triggers
 │       ├── http/           # HTTP endpoint triggers
 │       └── subagent/       # Subagent result triggers
-│
-├── sessions/               # Session management
-│   ├── main/               # Active session store
-│   └── store.py            # Session CRUD operations
 │
 ├── skills/                 # Skill library (SKILL.md definition files)
 │   ├── loader.py           # Skill autodiscovery & registration

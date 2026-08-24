@@ -131,25 +131,22 @@ EMA_AI_agent/
 ├── config/                 # 集中配置
 │   ├── path.py             # 文件路径配置
 │   ├── schema.py           # 配置模式定义
-│   ├── character.py        # 角色配置
 │   └── num.py              # 数值/调参配置
 │
 ├── context_engine/         # 记忆引擎
 │   ├── core.py             # 消息检索与搜索 API
 │   └── store/              # 短期会话消息记忆（SQLite + FTS5）
 │
-├── future/                 # 实验性/即将推出的功能
-│
 ├── logs/                   # 日志系统
 │   ├── logger.py           # 日志配置
 │   └── output/             # 日志输出目录
 │
 ├── models/                 # 模型封装
-│   ├── chat_model.py       # 聊天模型（LangChain BaseChatModel）
 │   ├── LLMs/               # LLM 模型配置
-│   │   ├── auxiliary_llm.py    # 轻量聊天模型
+│   │   ├── auxiliary_llm/       # 轻量聊天模型
 │   │   ├── main_llm.py         # 主聊天模型
-│   │   └── reasoner_llm.py     # 思维链推理模型
+│   │   ├── reasoner_llm.py     # 思维链推理模型
+│   │   └── reasoning_normalizer.py # 跨提供方统一 reasoning_content 字段
 │   ├── VTTT_model.py       # 视频转文本模型
 │   ├── ITTT_model.py        # 图片转文本模型
 │   ├── STT_model/          # 语音转文本模型
@@ -160,6 +157,10 @@ EMA_AI_agent/
 ├── plugins/                # 插件系统
 │   ├── channels/           # 通道插件（QQ 机器人等）
 │   └── mcp_server/         # MCP 服务器配置
+│
+├── providers/              # LLM 提供方规范与注册表
+│   ├── registry.py         # 全部受支持提供方的 ProviderSpec 条目
+│   └── __init__.py         # 提供方注册表导出
 │
 ├── pub_func/               # 公用工具函数
 │   ├── format/             # 文本格式化工具
@@ -184,10 +185,6 @@ EMA_AI_agent/
 │       ├── channels/       # 入站通道触发器
 │       ├── http/           # HTTP 端点触发器
 │       └── subagent/       # 子代理结果触发器
-│
-├── sessions/               # 会话管理
-│   ├── main/               # 活跃会话存储
-│   └── store.py            # 会话 CRUD 操作
 │
 ├── skills/                 # 技能库（SKILL.md 定义文件）
 │   ├── loader.py           # 技能自动发现与注册

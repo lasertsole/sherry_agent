@@ -33,7 +33,7 @@ from config import SRC_DIR
 # vendored copy before raganything (which imports `from lightrag import ...`
 # at module load) is pulled in transitively via graph_rag.core.
 from graph_rag import get_rag_anything
-from raganything import RAGAnything
+from graph_rag.vendored_raganything import RAGAnything
 
 @validate_call
 async def folder_index(input_folder_path: str, classify_folder: str) -> str:
