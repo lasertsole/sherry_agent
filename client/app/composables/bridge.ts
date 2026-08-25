@@ -182,6 +182,7 @@ export async function sendChatMessage(
 async function sendChatMessageTauri(
   request: ChatRequest,
   onChunk: OnChunkCallback,
+  onDone?: OnDoneCallback,
 ): Promise<void> {
   const invoke = await getInvoke();
   const listen = await getListen();
@@ -218,6 +219,7 @@ async function sendChatMessageTauri(
     // Listen for stream end
     listen<AgentStreamEnd>('agent:stream:end', () => {
       cleanup();
+      onDone?.();
       resolve();
     }).then((fn) => { unlistenEnd = fn; });
 
@@ -284,7 +286,7 @@ export function streamChatMessage(
   promise: Promise<void>;
 } {
   if (isTauri()) {
-    const promise = sendChatMessageTauri(request, onChunk);
+    const promise = sendChatMessageTauri(request, onChunk, onDone);
     return {
       controller: { closed: false, abort: () => void stopChatMessage(request.session_id || 'default') },
       promise,

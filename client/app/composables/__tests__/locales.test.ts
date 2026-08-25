@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import zh from '../locales/zh.json';
-import en from '../locales/en.json';
-import ja from '../locales/ja.json';
-import ko from '../locales/ko.json';
+import zh from '../../i18n/locales/zh.json';
+import en from '../../i18n/locales/en.json';
+import ja from '../../i18n/locales/ja.json';
+import ko from '../../i18n/locales/ko.json';
 
 type Dict = { [key: string]: unknown };
 

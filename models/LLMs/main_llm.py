@@ -4,6 +4,7 @@ from config import ENV_PATH
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
+from models.LLMs.reasoning_payload import build_reasoning_kwargs
 
 # Load environment variables
 load_dotenv(ENV_PATH, override = True)
@@ -15,14 +16,20 @@ max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
 if max_tokens:
     max_tokens = int(max_tokens)
 
-# DeepSeek thinking mode for deepseek-chat (V3.2+) is OFF by default
-# (matching the non-reasoning behaviour users expect from deepseek-chat).
-# Set MAIN_LLM_ENABLE_THINKING=true in .env to opt in. When enabled, the mode
-# is carried via extra_body so langchain's ChatDeepSeek threads it directly into
-# the API request body. Thinking mode supports tool calls; the chain-of-thought
-# surfaces on AIMessageChunk.additional_kwargs["reasoning_content"] and is
-# streamed to the client as {"type": "reasoning"} by server/service/messages.py.
+# Reasoning/thinking mode is OFF by default (matching the non-reasoning
+# behaviour users expect from the main LLM). Set MAIN_LLM_ENABLE_THINKING=true
+# in .env to opt in. When enabled, build_reasoning_kwargs maps the switch to the
+# correct reasoning payload for the configured MAIN_LLM_PROVIDER:
+#   deepseek                         -> extra_body {thinking: enabled} (V3.2+ chat API)
+#   openai + compatible gateways     -> reasoning_effort (o-series / gpt-5 only)
+#   anthropic                        -> thinking + budget_tokens (claude-3-7/4/opus/sonnet only)
+#   all other providers / non-reasoning models -> no-op (never a 400 crash)
+# Reasoning supports tool calls; the chain-of-thought surfaces on
+# AIMessageChunk.additional_kwargs["reasoning_content"] and is streamed to the
+# client as {"type": "reasoning"} by server/service/messages.py (see
+# reasoning_normalizer.py).
 enable_thinking = os.getenv("MAIN_LLM_ENABLE_THINKING", "").strip().lower() == "true"
+reasoning_effort = os.getenv("MAIN_LLM_REASONING_EFFORT")
 
 model_config:dict[str, Any] = {
     "model_provider": model_provider,
@@ -35,8 +42,14 @@ model_config:dict[str, Any] = {
     "stream_chunk_timeout": 60,  # Max idle gap between streamed chunks before aborting
     "profile": {"max_input_tokens": max_tokens},  # Set model context window size
 }
-if enable_thinking:
-    model_config["extra_body"] = {"thinking": {"type": "enabled"}}
+# Map the universal switch to the provider-correct reasoning payload. Returns
+# {} (no-op) for providers/models that don't accept one, so it never crashes.
+model_config.update(build_reasoning_kwargs(
+    provider=model_provider,
+    model_name=api_name,
+    enabled=enable_thinking,
+    reasoning_effort=reasoning_effort,
+))
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
 
 def build_main_llm(temperature: float | None = None):

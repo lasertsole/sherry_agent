@@ -103,6 +103,10 @@ describe('sendChatMessage (browser WebSocket)', () => {
           text: 'hi',
           image_base64_list: [],
           image_path_list: ['http://localhost:8080/uploads/img1.png'],
+          audio_bytes_list: [],
+          audio_path_list: [],
+          video_bytes_list: [],
+          video_path_list: [],
         },
       }),
     ]);
@@ -168,7 +172,15 @@ describe('sendChatMessage (browser WebSocket)', () => {
     expect(ws.sent[0]).toBe(
       JSON.stringify({
         session_id: 's9',
-        multi_modal_message: { text: '', image_base64_list: [], image_path_list: [] },
+        multi_modal_message: {
+          text: '',
+          image_base64_list: [],
+          image_path_list: [],
+          audio_bytes_list: [],
+          audio_path_list: [],
+          video_bytes_list: [],
+          video_path_list: [],
+        },
       }),
     );
     ws.frame({ event: 'done', session_id: 's9', content: '' });

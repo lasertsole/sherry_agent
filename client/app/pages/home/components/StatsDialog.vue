@@ -238,7 +238,9 @@ const chartOption = computed<G2Spec>(() => {
   const tooltipBorder = dark ? '#3f4650' : '#d1d5db';
   const tooltipText = dark ? '#e5e7eb' : '#1f2937';
 
-  // 收集所有出现的模型名（保持出现顺序）
+  // 收集所有出现的模型名（保持出现顺序）。若没有任何模型数据，days 可能
+  // 非空但 modelNames 为空——空 scale 会让 G2 图例布局（computeCategoryLegendSize）
+  // 读取未初始化的 items 而崩溃，这里直接兜底为空规范。
   const modelNames: string[] = [];
   for (const day of days.value) {
     for (const usage of day.byModel) {
@@ -247,6 +249,7 @@ const chartOption = computed<G2Spec>(() => {
       }
     }
   }
+  if (modelNames.length === 0) return { type: 'interval', data: [] } as G2Spec;
 
   // 长表数据：每行 = 某日某模型的 input+output 之和
   const data: { date: string; model: string; tokens: number }[] = [];
@@ -280,8 +283,7 @@ const chartOption = computed<G2Spec>(() => {
         labelFill: axisLabelColor,
         lineStroke: axisLineColor,
         gridStroke: splitLineColor
-      },
-      legendCategory: { itemLabelFill: legendTextColor }
+      }
     },
     tooltip: {
       title: 'date',
@@ -295,9 +297,18 @@ const chartOption = computed<G2Spec>(() => {
     },
     axis: {
       x: { labelFill: axisLabelColor, lineStroke: axisLineColor, tick: false },
-      y: { labelFill: axisLabelColor, gridStroke: splitLineColor, title: 'token' }
+      y: { labelFill: axisLabelColor, gridStroke: splitLineColor, title: 'token', grid: true }
     },
-    legend: { color: { position: 'top', itemLabelFill: legendTextColor } }
+    style: {
+      minHeight: 6,
+      radiusTopLeft: 4,
+      radiusTopRight: 4,
+      stroke: axisLineColor,
+      lineWidth: 1
+    },
+    legend: {
+      color: { position: 'top', itemLabelFill: legendTextColor, itemSpacing: [8, 4, 4] }
+    }
   };
 });
 
@@ -315,6 +326,14 @@ const loadStats = async () => {
     const response = payload as StatsResponse;
     const mapped = mapStatsData(response);
     if (mapped.length === 0) {
+      empty.value = true;
+      days.value = [];
+      return;
+    }
+    // 没有任何模型用量（days 非空但所有 by_model 均为空）→ 视为空态，避免
+    // 空 scale 触发 G2 图例布局崩溃（computeCategoryLegendSize 读取 undefined）。
+    const hasModelData = mapped.some(day => day.byModel.length > 0);
+    if (!hasModelData) {
       empty.value = true;
       days.value = [];
       return;

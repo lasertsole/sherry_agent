@@ -224,11 +224,21 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
     const ws = await awaitSocket();
 
     ws.frame({ event: 'chunk', session_id: 's1', content: '你好', type: 'text' });
-    expect(onChunk).toHaveBeenCalledWith('你好', 'text', 's1');
+    expect(onChunk).toHaveBeenCalledWith('你好', 'text', 's1', {
+      tool_id: undefined,
+      tool_name: undefined,
+      args: undefined,
+      error: undefined,
+    });
 
     ws.frame({ event: 'chunk', session_id: 's1', content: '' });
     // Missing `type` defaults to 'text'; empty content is still delivered.
-    expect(onChunk).toHaveBeenCalledWith('', 'text', 's1');
+    expect(onChunk).toHaveBeenCalledWith('', 'text', 's1', {
+      tool_id: undefined,
+      tool_name: undefined,
+      args: undefined,
+      error: undefined,
+    });
     expect(onChunk).toHaveBeenCalledTimes(2);
     void promise;
   });
@@ -246,7 +256,12 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
     ws.frame({ event: 'done', session_id: 's1' });
 
     await expect(promise).resolves.toBeUndefined();
-    expect(onChunk).toHaveBeenCalledWith('final', 'text', 's1');
+    expect(onChunk).toHaveBeenCalledWith('final', 'text', 's1', {
+      tool_id: undefined,
+      tool_name: undefined,
+      args: undefined,
+      error: undefined,
+    });
   });
 });
 
@@ -343,8 +358,16 @@ describe('HITL resilience (edge cases)', () => {
     // Only the initial chat payload + the stop frame are sent; no hitl_response.
     expect(ws.sent).toEqual([
       JSON.stringify({
-        session_id: 's1',
-        multi_modal_message: { text: 'hi', image_base64_list: [], image_path_list: [] },
+      session_id: 's1',
+      multi_modal_message: {
+        text: 'hi',
+        image_base64_list: [],
+        image_path_list: [],
+        audio_bytes_list: [],
+        audio_path_list: [],
+        video_bytes_list: [],
+        video_path_list: [],
+      },
       }),
       JSON.stringify({ type: 'stop', session_id: 's1' }),
     ]);

@@ -5,7 +5,7 @@
 .venv
 __pycache__
 .env
-models/
+# models/
 model_weight/
 
 # Runtime data (src/, temp/, cron) — regenerated every run, never commit

@@ -233,7 +233,8 @@ export function postAgentStream(
 
     promise
         .then(() => {
-            onDone?.();
+            // onDone 由 streamChatMessage 在流正常结束时统一触发（携带模型元数据），
+            // 此处不再重复调用，避免在浏览器 WS 模式下被回调两次。
         })
         .catch((err) => {
             // 主动中止（abort/stop）不算业务错误，不触发 onError
