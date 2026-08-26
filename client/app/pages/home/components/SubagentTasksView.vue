@@ -99,7 +99,11 @@ const {
   focusRun,
   initTasks,
   setTasksTabActive,
-  refreshFocusedSubtree
+  refreshFocusedSubtree,
+  // 与 orphaned-run 过滤共享一套会话存在性判定（避免两端各自拉取、各自归一化不一致）
+  normalizeSessionKey,
+  loadSubagentValidSessions,
+  validSessionIds
 } = useSubagentTasks();
 
 /** 当前会话 id（供流程图拉取该会话的运行树） */
@@ -136,14 +140,25 @@ const selectedRun = computed<SubagentRun | undefined>({
 });
 
 /** 「返回会话」的目标 session_id：
- *  优先取当前聚焦子树根（深度1 task）的 requester_session_key（发起它的父会话）；
- *  未聚焦（默认全量列表，跨多会话的深度1任务）时回退为当前 route 的 sid。 */
+ *  优先取当前聚焦子树根（深度1 task）的 requester_session_key（发起它的父会话），
+ *  归一化为 bare UUID，并仅当该会话在（服务端权威/本地占位的）实时会话列表中真实存在时才返回，
+ *  从而避免「返回会话」跳到已被销毁/不存在的会话（stale/orphaned run 的 ghost 按钮）；
+ *  未聚焦（默认全量列表，跨多会话的深度1任务）时回退为当前 route 的 sid。
+ *  存在性判定复用 composable 共享的 validSessionIds/normalizeSessionKey。
+ *  注意：目标会话不存在（orphaned run，调用方会话已销毁）时返回 undefined，从而隐藏按钮，
+ *  但该 run 的任务 box 仍在列表中展示——遵循「孤儿 run 要显示，但不能有返回会话」的约束。 */
 const backToSessionSid = computed(() => {
+  // 目标始终基于当前 route 的 sid（bare UUID），导航用归一化键
+  const fallback = normalizeSessionKey(currentSessionId.value);
+  let candidate: string | null | undefined;
   if (focusedRunId.value && focusedSubtreeRuns.value.length > 0) {
     const root = focusedSubtreeRuns.value[0];
-    if (root?.requester_session_key) return root.requester_session_key;
+    candidate = normalizeSessionKey(root?.requester_session_key);
   }
-  return currentSessionId.value;
+  const target = candidate || fallback;
+  // 仅当目标会话在实时会话列表中真实存在时才展示/启用「返回会话」
+  if (!target || !validSessionIds.value.has(target)) return undefined;
+  return target;
 });
 
 /** 跳到调用方 Session 的聊天页：
@@ -177,6 +192,9 @@ const handleRefresh = () => {
 
 onMounted(() => {
   initTasks(currentSessionId.value);
+  // 预载「存在会话」集合，用于「返回会话」目标的存在性校验（隐藏 ghost 按钮）
+  // 复用 composable 共享加载器（initTasks 内已触发，此处幂等预留，兼顾仅本视图挂载的场景）
+  void loadSubagentValidSessions();
   on('subagent:show-tasks', onShowTasks);
   // 首次进入时若带 initialRunId，则定位/展开对应 run（状态被提升到单例，重挂载后保留）
   focusRun(props.initialRunId);

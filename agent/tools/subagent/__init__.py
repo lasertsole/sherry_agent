@@ -30,6 +30,7 @@ from .config import SubagentConfig, get_config, set_config
 from .registry import init_registry, persist_runs_to_disk
 from .spawn import spawn_subagent_direct, SpawnResult
 from .announce import run_subagent_announce_flow
+from .delegate import DelegatedTaskHandle, delegate_task
 
 
 def build_sessions_spawn_tool(session_id: str = ""):
@@ -101,6 +102,8 @@ __all__ = [
     "spawn_subagent_direct",
     "SpawnResult",
     "run_subagent_announce_flow",
+    "delegate_task",
+    "DelegatedTaskHandle",
     "build_sessions_spawn_tool",
     "build_sessions_yield_tool",
     "build_sessions_send_tool",

@@ -48,6 +48,57 @@ from ..hooks.progress import fire_spawned_hook, fire_progress_hook, fire_ended_h
 _VALID_AGENT_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+def _extract_result_text(agent_result: dict[str, object] | None) -> str | None:
+    """Extract the final assistant answer from a child agent's invocation result.
+
+    The last message in the returned state is frequently an ``AIMessage`` with
+    empty content (containing only ``tool_calls``) or a ``ToolMessage`` — both
+    carry tool output rather than the subagent's final answer. This walks the
+    message list *backwards* to the last message that contains substantive text,
+    flattening multimodal content-block lists into plain text.
+
+    Args:
+        agent_result: The raw result dict returned by ``CompiledStateGraph.ainvoke``.
+
+    Returns:
+        The extracted result text, or ``None`` if no substantive text is found.
+    """
+    if not agent_result or not isinstance(agent_result, dict):
+        return None
+
+    messages = agent_result.get("messages") or []
+    if not messages:
+        return None
+
+    for msg in reversed(messages):
+        content = getattr(msg, "content", None)
+        if not content:
+            continue
+        if isinstance(content, str):
+            if content.strip():
+                return content
+            continue
+        if isinstance(content, list):
+            # Multimodal content-block list — extract and concat text items
+            texts: list[str] = []
+            for item in content:
+                if isinstance(item, str) and item.strip():
+                    texts.append(item)
+                elif isinstance(item, dict) and item.get("type") == "text":
+                    t = item.get("text", "")
+                    if str(t).strip():
+                        texts.append(str(t))
+            if texts:
+                return "\n".join(texts)
+            continue
+        # Fallback: any other non-empty content is treated as result text
+        text = str(content).strip()
+        if text:
+            return text
+
+    return None
+
+
 class SpawnResult:
     """Outcome of a spawn request — accepted, forbidden, or error.
 
@@ -474,11 +525,12 @@ async def _execute_subagent(
             timeout=timeout_seconds,
         )
 
-        # Extract the last assistant message as the result text
-        if agent_result and "messages" in agent_result:
-            last_msg = agent_result["messages"][-1] if agent_result["messages"] else None
-            if last_msg and hasattr(last_msg, "content"):
-                result_text = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
+        # Extract the last substantive assistant text as the result text.
+        # The last message in the returned state is frequently an AIMessage with
+        # empty content (only tool_calls) or a ToolMessage — both carry tool output,
+        # not the final answer. Walk backwards to the last assistant message that
+        # contains real text, flattening multimodal content-block lists.
+        result_text = _extract_result_text(agent_result)
 
         # Validate structured output against the provided JSON Schema (swarm mode)
         if output_schema and result_text:
@@ -610,7 +662,6 @@ async def _build_child_agent(
             Summarization(
                 model=auxiliary_llm,
                 trigger=[
-                    ("fraction", 0.5),
                     ("messages", 40),
                     ("tokens", 30000)
                 ],

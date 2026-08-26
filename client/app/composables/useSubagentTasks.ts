@@ -39,6 +39,52 @@ const deletingRunIds = ref<Set<string>>(new Set());
 /** 当前「后台任务」是否处于展示态（侧边栏 tasks 或右侧任务视图激活时为 true） */
 const tasksTabActive = ref(false);
 
+/* 会话键前缀：后端把子任务归属到调用方会话时使用带前缀的 key，展示/Nav 需要归一化为 bare UUID */
+const SESSION_KEY_PREFIXES = ['agent:main:session:', 'agent:subagent:'];
+
+/** 归一化会话键：strip 前缀得到 bare UUID；无前缀的键（已为 bare/'/'-'/默认）原样返回。 */
+function normalizeSessionKey(key: string | null | undefined): string | null {
+  if (!key) return null;
+  for (const prefix of SESSION_KEY_PREFIXES) {
+    if (key.startsWith(prefix)) {
+      const bare = key.slice(prefix.length);
+      return bare || null;
+    }
+  }
+  return key;
+}
+
+/** 当前「仍存在的会话」bare UUID 集合。
+ *  数据源：服务端 `/sessions` 权威列表 + 本地 Dexie 会话占位；由 loadSubagentValidSessions() 填充。
+ *  用途：SubagentTasksView 校验一条 run 的「返回会话」目标是否真实存在——不存在则隐藏该按钮。 */
+const subagentValidSessionIds = ref<Set<string>>(new Set());
+/** 是否已加载过（避免每次切换会话重复拉取会话列表）。 */
+let subagentSessionsLoaded = false;
+
+/**
+ * 拉取并缓存「仍存在的会话」集合。
+ * 供 SubagentTasksView 的「返回会话」存在性校验：requester_session_key 归一化后不在该集合中的
+ * orphaned run，其任务 box 照常展示，但「返回会话」按钮被隐藏。
+ * 幂等：只会真正拉取一次（除非跨窗口状态清空，可显式重新调用）。
+ */
+async function loadSubagentValidSessions(): Promise<void> {
+  if (subagentSessionsLoaded) return;
+  const { getSessionList } = await import('@/composables/messages');
+  const { readCachedSessionMetaList } = await import('@/composables/db');
+  try {
+    const sessions = await getSessionList();
+    const placeholders = await readCachedSessionMetaList();
+    const set = new Set<string>();
+    for (const s of sessions) if (s.id) set.add(s.id);
+    for (const p of placeholders) if (p.id) set.add(p.id);
+    subagentValidSessionIds.value = set;
+    subagentSessionsLoaded = true;
+  } catch (error) {
+    // 拉取失败不阻断 UI：等价于「无法确认目标会话」，按钮按无有效目标隐藏即可。
+    console.warn('[useSubagentTasks] 拉取会话列表失败，无法校验「返回会话」目标：', error);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* 任务视图展开/流程图状态（提升到单例，跨 chat↔tasks 切换保活）        */
 /* ------------------------------------------------------------------ */
@@ -307,8 +353,12 @@ const runningTaskCount = computed(() => taskRuns.value.filter(run => isRunning(r
 /** 处于运行态的全部子 Agent 数量（用于「后台任务」标签页红点角标，跨所有会话）。 */
 const allRunningTaskCount = computed(() => allTaskRuns.value.filter(run => isRunning(run)).length);
 
-/** 后台任务 tab 展示列表：仅「第一层直属任务」（depth === 1，即各会话直接派生的子任务），跨所有会话。 */
-const rootTaskRuns = computed(() => allTaskRuns.value.filter(run => run?.depth === 1));
+/** 后台任务 tab 展示列表：仅「第一层直属任务」（depth === 1，即各会话直接派生的子任务），跨所有会话。
+ *  orphaned run（调用方会话已被销毁的 stale 缓存）**仍展示**；其「返回会话」由
+ *  SubagentTasksView 基于 wouldExistSession 校验，不存在时隐藏按钮（但任务 box 保留）。 */
+const rootTaskRuns = computed(() =>
+  allTaskRuns.value.filter(run => run?.depth === 1),
+);
 
 /** 定义「按调用方会话聚类」后的后台任务分组结构：每组一个 calling session_id + 该 group 下的第一层任务。 */
 export interface TaskSessionGroup {
@@ -483,6 +533,8 @@ export function useSubagentTasks() {
    */
   function initTasks(sid?: string): void {
     setupSubagentWs();
+    // 拉取「仍存在会话」集合，为 orphaned run 过滤做好准备（幂等）
+    void loadSubagentValidSessions();
     const target = resolveSid(sid);
     if (target && lastLoadedSessionId !== target) {
       lastLoadedSessionId = target;
@@ -717,6 +769,10 @@ export function useSubagentTasks() {
     // 底层复用（供 SubagentTasksView 等做内部处理）
     loadTaskRuns,
     refreshFromCache,
-    toSubagentRun
+    toSubagentRun,
+    // 会话键归一化 + 有效会话集合（供「返回会话」按钮校验 + orphaned run 过滤复用）
+    normalizeSessionKey,
+    loadSubagentValidSessions,
+    validSessionIds: subagentValidSessionIds
   };
 }

@@ -71,6 +71,15 @@ const error = ref(false);
 const runStore = new Map<string, SubagentRun>();
 
 /**
+ * 请求序号：用于丢弃「迟到的旧响应」。
+ * loadFlow 会被 onMounted / watch(currentSessionId) / ws:subagents:ready /
+ * watch(colorMode) 等多个路径触发，快速切换会话/tab 时会并发多个 async 拉取；
+ * 若无防护，旧会话的响应（可能为空）会晚到并覆盖新会话正在展示的运行树，
+ * 导致间歇性显示「暂无子 Agent 运行」。每次 loadFlow 递增该序号，仅接受最新一次。
+ */
+let loadFlowSeq = 0;
+
+/**
  * 可选：外部指定要展示的运行集（如侧边栏点击聚焦某任务后，仅展示该任务的子任务子树）。
  * 当该 prop 有值时（且非空），图谱只渲染这里给定的 run，忽略内部 runStore 的整棵会话树；
  * 无值时回退为渲染 runStore 的完整运行树（未聚焦时的「总树状图」行为）。
@@ -371,11 +380,16 @@ const applyHighlight = async (prev?: string, next?: string) => {
 const loadFlow = async () => {
   const sid = currentSessionId.value;
   if (!sid) return;
+  // 本次请求的序号：任何旧请求在 await 返回后若发现新一轮 loadFlow 已开始，
+  // 或当前会话已切换，则直接丢弃其结果，防止旧数据覆盖新会话（间歇性空态根因）。
+  const seq = ++loadFlowSeq;
   loading.value = true;
   error.value = false;
   empty.value = false;
   try {
     const runs = await fetchSubagentRuns(sid, 'descendants');
+    // 竞态守卫：已有更新的 loadFlow 发起，或会话已变，丢弃本次结果
+    if (seq !== loadFlowSeq || sid !== currentSessionId.value) return;
     runStore.clear();
     for (const run of runs) {
       if (run?.run_id) runStore.set(run.run_id, run);
@@ -387,11 +401,13 @@ const loadFlow = async () => {
     }
     ensureGraph(deriveDisplayData());
   } catch (e) {
+    // 竞态守卫同样适用于错误分支：被更新的请求取代时，不污染当前状态
+    if (seq !== loadFlowSeq || sid !== currentSessionId.value) return;
     console.error('[SubagentFlowGraph] 拉取子 Agent 运行树失败：', e);
     error.value = true;
     destroyGraph();
   } finally {
-    loading.value = false;
+    if (seq === loadFlowSeq) loading.value = false;
   }
 };
 

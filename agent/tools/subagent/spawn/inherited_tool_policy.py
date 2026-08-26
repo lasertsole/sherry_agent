@@ -23,7 +23,17 @@ def apply_tool_policy(
     tool_deny: list[str] | None,
     blocked_tools: list[str] | None = None,
 ) -> list:
-    """Apply tool policy: deny-list takes priority, allow-list limits scope, and high-risk tools are blocked by default."""
+    """Apply tool policy.
+
+    - ``tool_deny`` is the **authoritative** deny-list when explicitly provided. The
+      caller controls which tools are blocked, and may intentionally omit a normally
+      high-risk tool (e.g. the ORCHESTRATOR role unblocking ``sessions_spawn`` /
+      ``sessions_yield`` to enable recursive orchestration).
+    - ``tool_allow`` (when non-empty) further limits scope to only the listed tools.
+    - ``default_blocked`` is a **fallback only** when the caller does not provide any
+      explicit deny-list (``tool_deny is None`` or empty) — a safety net against
+      recursive spawning / privilege escalation.
+    """
     deny_set = set(normalize_tool_denylist(tool_deny))
     allow_set = set(normalize_tool_allowlist(tool_allow))
 
@@ -31,9 +41,11 @@ def apply_tool_policy(
     if blocked_tools:
         deny_set.update(blocked_tools)
 
-    # Always block high-risk tools to prevent sub-agent abuse (recursive spawn, privilege escalation)
-    default_blocked = ["sessions_spawn", "sessions_yield", "skill_manage", "memory"]
-    deny_set.update(default_blocked)
+    # Fallback high-risk block — ONLY when the caller gave no explicit deny-list.
+    # When tool_deny is provided it is authoritative; the caller may have intentionally
+    # omitted a default-blocked tool (ORCHESTRATOR unblocks spawn/yield to recurse).
+    if not tool_deny:
+        deny_set.update(DEFAULT_SUBAGENT_BLOCKED_TOOLS)
 
     result = []
     for tool in all_tools:

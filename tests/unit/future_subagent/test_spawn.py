@@ -165,6 +165,47 @@ class TestInheritedToolPolicy:
         assert len(result) == 1
         assert result[0].name == "read"
 
+    def test_explicit_deny_is_authoritative_unblocks_spawn_for_orchestrator(self):
+        """Regression: ORCHESTRATOR passes an explicit deny-list omitting
+        spawn/yield so it can recurse. An explicit tool_deny must be
+        authoritative and NOT have default_blocked re-applied on top."""
+        class FakeTool:
+            def __init__(self, name):
+                self.name = name
+        tools = [
+            FakeTool("read"),
+            FakeTool("sessions_spawn"),
+            FakeTool("sessions_yield"),
+            FakeTool("sessions_send"),
+            FakeTool("skill_manage"),
+            FakeTool("memory"),
+        ]
+        # Mirrors core.py ORCHESTRATOR branch: spawn/yield removed from deny,
+        # but skill_manage/memory still explicitly blocked.
+        orchestrator_deny = [
+            t for t in DEFAULT_SUBAGENT_BLOCKED_TOOLS
+            if t not in ("sessions_spawn", "sessions_yield")
+        ]
+        result = apply_tool_policy(tools, [], orchestrator_deny)
+        names = [t.name for t in result]
+        assert "sessions_spawn" in names         # unblocked → recursion allowed
+        assert "sessions_yield" in names         # unblocked → can yield
+        assert "sessions_send" in names          # unaffected bidirectional comm
+        assert "skill_manage" not in names       # still blocked
+        assert "memory" not in names             # still blocked
+
+    def test_empty_deny_falls_back_to_default_blocked(self):
+        """When no explicit deny-list is given, default-blocked tools are applied."""
+        class FakeTool:
+            def __init__(self, name):
+                self.name = name
+        tools = [FakeTool("read"), FakeTool("sessions_spawn"), FakeTool("memory")]
+        result = apply_tool_policy(tools, [], [])
+        names = [t.name for t in result]
+        assert "sessions_spawn" not in names
+        assert "memory" not in names
+        assert "read" in names
+
 
 class TestSpawnContext:
     @pytest.mark.asyncio

@@ -72,6 +72,37 @@ def _setup_subagent_alias():
     if not hasattr(sys.modules["runtime"], "clear_all_register_sessions"):
         sys.modules["runtime"].clear_all_register_sessions = lambda: None
 
+    # `agent.tools.subagent.delegate` does `from skills.loader import
+    # get_skills_text, scan_skills` at module scope. The stubbed `skills` is an
+    # empty module, so a real submodule can't be imported. Inject a stub
+    # `skills.loader` module exposing configurable, deterministic functions so
+    # the import chain resolves and tests can assert on injection behavior.
+    _skills_loader = stdlib_types.ModuleType("skills.loader")
+
+    def _scan_skills_stub(use_cache: bool = True) -> list[dict]:
+        return [
+            {"name": "web_search"},
+            {"name": "code_interpreter"},
+            {"name": "skill_creator"},
+            {"name": "clawhub"},
+        ]
+
+    def _get_skills_text_stub(
+        selected_skill_names: list[str] | None = None,
+        *,
+        exclude_auth_skills: bool = False,
+    ) -> str:
+        if not selected_skill_names:
+            return ""
+        names = sorted(selected_skill_names)
+        if exclude_auth_skills:
+            names = [n for n in names if n not in ("clawhub", "skill_creator")]
+        return "<skills>\n" + "\n".join(f"  <skill name=\"{n}\"/>" for n in names) + "\n</skills>"
+
+    _skills_loader.scan_skills = _scan_skills_stub
+    _skills_loader.get_skills_text = _get_skills_text_stub
+    sys.modules["skills.loader"] = _skills_loader
+
     import importlib
     fs = importlib.import_module("agent.tools.subagent")
     sys.modules["future_subagent"] = fs
