@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 from agent.tools.subagent.announce.delivery import (
@@ -41,7 +41,7 @@ def _clean():
 def _make_run(**overrides) -> SubagentRunRecord:
     defaults = dict(
         run_id="r1",
-        child_session_key="agent:main:future_subagent:abc",
+        child_session_key="agent:main:subagent:abc",
         requester_session_key="agent:main:session:p1",
         task="test task",
         label="worker-1",
@@ -87,7 +87,7 @@ class TestCheckDeliveryMirror:
 
     def test_different_run_not_mirror(self):
         run1 = _make_run(run_id="r1")
-        run2 = _make_run(run_id="r2", child_session_key="agent:main:future_subagent:different")
+        run2 = _make_run(run_id="r2", child_session_key="agent:main:subagent:different")
         _check_delivery_mirror(run1)
         assert _check_delivery_mirror(run2) is False
 
@@ -97,7 +97,7 @@ class TestBuildDeliveryContext:
         run = _make_run()
         ctx = _build_delivery_context(run)
         assert ctx.requester_session_key == "agent:main:session:p1"
-        assert ctx.child_session_key == "agent:main:future_subagent:abc"
+        assert ctx.child_session_key == "agent:main:subagent:abc"
         assert ctx.task == "test task"
         assert ctx.result_text == "All done"
         assert ctx.run_id == "r1"
@@ -114,8 +114,8 @@ class TestDeliverInternalInjection:
     @pytest.mark.asyncio
     async def test_internal_injection_format(self):
         ctx = DeliveryContext(
-            requester_session_key="agent:main:future_subagent:parent",
-            child_session_key="agent:main:future_subagent:child",
+            requester_session_key="agent:main:subagent:parent",
+            child_session_key="agent:main:subagent:child",
             task="test",
             result_text="summary",
             outcome=RunOutcome(status=RunOutcomeStatus.OK),
@@ -137,7 +137,7 @@ class TestDeliverCompletionMessage:
     async def test_completion_message_format(self):
         ctx = DeliveryContext(
             requester_session_key="agent:main:session:user1",
-            child_session_key="agent:main:future_subagent:child",
+            child_session_key="agent:main:subagent:child",
             child_label="worker-1",
             task="test",
             result_text="All done",
@@ -158,7 +158,7 @@ class TestDeliverCompletionMessage:
     async def test_completion_message_killed(self):
         ctx = DeliveryContext(
             requester_session_key="agent:main:session:user1",
-            child_session_key="agent:main:future_subagent:child",
+            child_session_key="agent:main:subagent:child",
             task="test",
             outcome=RunOutcome(status=RunOutcomeStatus.KILLED),
             run_id="r1",
@@ -175,7 +175,7 @@ class TestDeliverCompletionMessage:
     async def test_completion_message_error(self):
         ctx = DeliveryContext(
             requester_session_key="agent:main:session:user1",
-            child_session_key="agent:main:future_subagent:child",
+            child_session_key="agent:main:subagent:child",
             task="test",
             outcome=RunOutcome(status=RunOutcomeStatus.ERROR, error="crash"),
             run_id="r1",

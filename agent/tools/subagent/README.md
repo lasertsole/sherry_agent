@@ -145,7 +145,7 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 │  threading.Lock-protected dict[str, SubagentRunRecord]  │
 │  ↓ periodic snapshot                             │
 │  SQLite (registry/store_sqlite.py)              │
-│  future_subagent/data/subagent_registry.db      │
+│  agent/tools/subagent/data/subagent_registry.db │
 │  Table: subagent_runs(run_id PK, data JSON)     │
 └─────────────────────────────────────────────────┘
 ```
@@ -574,8 +574,8 @@ Injects new instructions into a running child Agent. The run transitions to INTE
 The Hook mechanism allows external code to listen for child Agent lifecycle events:
 
 ```python
-from future_subagent.hooks.base import register_start_hook, register_stop_hook
-from future_subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
+from agent.tools.subagent.hooks.base import register_start_hook, register_stop_hook
+from agent.tools.subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
 
 async def on_start(event: SubagentStartEvent):
     print(f"Subagent started: {event.child_session_key}")
@@ -600,7 +600,7 @@ Hooks execute sequentially in registration order; exceptions are swallowed and d
 
 ### 11. Coexistence with the Existing System
 
-| Dimension | Existing subagent (`agent/tools/subagent/`) | New subagent (`future_subagent/`) |
+| Dimension | Existing subagent (`agent/tools/subagent/`) | New subagent (`agent/tools/subagent/`) |
 |-----------|---------------------------------------------|---------------------------|
 | Tool names | `subagent` | `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list` |
 | Manager | `SubagentManager` (singleton) | `SubagentRegistry` (dict + SQLite) |

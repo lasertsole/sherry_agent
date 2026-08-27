@@ -1,4 +1,4 @@
-"""Multi-level future_subagent system for concurrent task execution and result delivery.
+"""Multi-level subagent system for concurrent task execution and result delivery.
 
 Core pipeline:
 - Spawn: validate → register → build child agent → execute as background asyncio.Task
@@ -6,7 +6,7 @@ Core pipeline:
 - Registry: in-memory + SQLite persisted run records, three state machines
 
 Usage:
-    from future_subagent import build_sessions_spawn_tool, init_registry
+    from agent.tools.subagent import build_sessions_spawn_tool, init_registry
 """
 
 from .types import (

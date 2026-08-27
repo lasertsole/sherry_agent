@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 import asyncio
 from agent.tools.subagent.spawn.depth import get_subagent_depth, validate_spawn_depth, validate_concurrent_children
 from agent.tools.subagent.spawn.target_policy import validate_target_policy, is_target_allowed
@@ -262,6 +262,28 @@ class TestMountPathSanitization:
     def test_strip_leading_slash(self):
         assert sanitize_mount_path("/workspace") == "workspace"
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "a/..",    # traversal nested inside a valid-looking path
+            "a/../b",  # traversal in middle of path
+            "....",    # '..' as substring of a longer run of dots
+            "a/....",  # '..' nested inside dots + slash
+            "../",     # trailing slash after traversal
+            "a/../../b",  # multi-level traversal
+            "sub dir", # forbidden space
+            "a\\b",    # backslash separator (runs on win32, forbid anyway)
+        ],
+    )
+    def test_reject_all_traversal_and_forbidden(self, bad):
+        # These must ALL be rejected: mount_path must never resolve outside abs_dir.
+        with pytest.raises(AttachmentError):
+            sanitize_mount_path(bad)
+
+    def test_dot_resolves_to_attack_dir_root(self):
+        # A lone '.' collapses to the attachment dir root itself (safe, confined)
+        assert sanitize_mount_path(".") == "."
+
 
 class TestDecodeContent:
     def test_utf8(self):
@@ -343,6 +365,51 @@ class TestMaterializeAttachments:
         attachments = [{"name": "../evil.txt", "content": "hack"}]
         result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path)
         assert result.status == "error"
+
+    @pytest.mark.asyncio
+    async def test_reject_mount_path_traversal(self, tmp_path):
+        # Even a mount_path nested inside a valid-looking path must not escape.
+        attachments = [{"name": "evil.txt", "content": "hack", "mount_path": "sub/.."}]
+        result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path)
+        assert result.status == "error"
+
+    @pytest.mark.asyncio
+    async def test_no_file_leaks_outside_attack_dir(self, tmp_path):
+        from pathlib import Path
+        # Mount path '.' collapses to the attack dir root; the file must land
+        # inside ab_dir and nowhere else in the workspace.
+        marker = tmp_path / "MARKER"
+        marker.write_text("keep")
+        attachments = [{"name": "f.txt", "content": "hi", "mount_path": "."}]
+        result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path)
+        assert result.status == "ok"
+        assert result.abs_dir is not None
+        abs_dir = Path(result.abs_dir)
+        assert (abs_dir / "f.txt").exists()
+        # f.txt must not exist anywhere else under the workspace
+        leaks = [str(p) for p in tmp_path.rglob("f.txt") if abs_dir not in p.parents]
+        assert leaks == []
+
+    @pytest.mark.asyncio
+    async def test_prompt_suffix_has_rel_dir_and_bytes(self, tmp_path):
+        from pathlib import Path
+        attachments = [
+            {"name": "a.txt", "content": "hello"},
+            {"name": "b.txt", "content": "world !"},
+        ]
+        result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path)
+        assert result.status == "ok"
+        suffix = result.system_prompt_suffix
+        # byte count matches decoded content lengths (5 + 7 = 12)
+        assert "2 file(s)" in suffix
+        assert "12 bytes" in suffix
+        # rel_dir must be referenced so the child knows where files live
+        assert result.abs_dir is not None
+        assert result.rel_dir is not None
+        assert result.rel_dir in suffix
+        assert result.rel_dir.startswith(".openclaw/attachments/")
+        # the dir actually exists on disk
+        assert Path(result.abs_dir).is_dir()
 
 
 class TestSpawnSubagentDirect:
@@ -544,7 +611,7 @@ class TestSpawnSubagentDirect:
 
             for i in range(2):
                 fake_run = register_run(
-                    child_session_key=f"agent:main:future_subagent:fake{i}",
+                    child_session_key=f"agent:main:subagent:fake{i}",
                     requester_session_key="agent:main:session:limit_test",
                     task=f"Fake task {i}",
                     depth=1,

@@ -6,7 +6,7 @@ from .types.spawn import ContextMode
 
 
 class SubagentConfig(BaseModel):
-    """Global configuration for the future_subagent subsystem, covering spawn limits, timeouts, delivery tuning, and attachments."""
+    """Global configuration for the subagent subsystem, covering spawn limits, timeouts, delivery tuning, and attachments."""
     max_spawn_depth: int = 3
     max_children_per_agent: int = 5
     run_timeout_seconds: float = 300.0

@@ -23,6 +23,8 @@ const dbMocks = vi.hoisted(() => ({
   cacheSubagentRuns: vi.fn(async () => undefined),
   readCachedSubagentRuns: vi.fn(async () => []),
   deleteCachedSubagentRuns: vi.fn(async () => undefined),
+  // loadSubagentValidSessions() 动态 import 用到；默认空列表即可（会话存在性由各用例自己覆盖）
+  readCachedSessionMetaList: vi.fn(async () => []),
 }));
 
 const mittMocks = vi.hoisted(() => ({

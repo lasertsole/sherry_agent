@@ -17,6 +17,7 @@ A composable middleware pipeline for LLM agent execution — message management,
   - [Summarization](#summarization)
   - [ToolCallNormalize](#toolcallnormalize)
   - [ToolGuardrails](#toolguardrails)
+  - [OutputRepetitionGuard](#outputrepetitionguard)
   - [IterationBudget](#iterationbudget)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [MultimodalProcessor](#multimodalprocessor)
@@ -61,6 +62,7 @@ The full pipeline for the **main agent** executes in this order (each wraps the 
 │  Summarization                (outermost — prune first) │
 │  ToolCallNormalize            (repair broken tool calls)│
 │  ToolGuardrails               (detect loops, halt)      │
+│  OutputRepetitionGuard        (detect text-output loops)│
 │  IterationBudget              (hard iteration cap)      │
 │  HeartbeatStaleness           (heartbeat timeout)       │
 │  MultimodalProcessor          (media handling)          │
@@ -166,6 +168,65 @@ Detects and prevents **infinite tool-call loops**, **repeated failure patterns**
   }
 }
 ```
+
+---
+
+### OutputRepetitionGuard
+
+**File:** `output_repetition_guard.py`  
+**Class:** `OutputRepetitionGuard` (extends `AgentMiddleware`)  
+**Hooks:** `abefore_agent`, `wrap_model_call`, `awrap_model_call`
+
+Detects and prevents **text-output death loops** — repeated paragraphs, sentences, phrases, and character runs — over successive LLM calls. It is a complementary guardrail to `ToolGuardrails` (which stops tool-call loops): `OutputRepetitionGuard` stops the agent from emitting the same *text* endlessly.
+
+**Escalation Tiers:**
+
+| Tier | Condition | Action |
+|---|---|---|
+| `warn` | Identical (or near-identical, above `internal_repeat_ratio`) output repeats ≥ `warn_after` times | Injects a nudge `SystemMessage` telling the model to STOP repeating and instead take new action |
+| `halt` | Identical output repeats ≥ `max_identical_outputs` times | Returns a **terminal `AIMessage`** ending the turn. Subsequent model calls replay this terminal message instead of invoking the LLM |
+
+**Detection Signals:**
+
+- **Sentence / line repetition:** per-turn duplicate ratio computed over sentences/lines. If the duplicate ratio in a single output ≥ `internal_repeat_ratio` (default `0.6`) and the line count ≥ `internal_min_lines`, the output is flagged as internally repetitive.
+- **Character runs:** any run of identical characters (whitespace, digits, letters) of length ≥ `_CHAR_RUN_MIN` (`8`) flags the output.
+- **Phrase back-to-back repetition:** a sentence or line that is immediately followed by itself (exact duplicate) is counted as a repeated phrase.
+- **Cross-call identity:** the visible output (after stripping inline reasoning) is hashed and compared across consecutive model calls within the same session.
+
+**Reasoning handling:**
+
+- Reasoning chain text (`reasoning_content` / `ReasoningText` blocks) is tracked **independently** from visible output so repeated reasoning does not falsely trigger a halt, and visible repetition is not confounded by reasoning noise.
+- Inline `<think>` / `<reasoning>` blocks are stripped from the visible output before comparison.
+
+**Session state:**
+
+All per-session counters are stored under six **top-level keys** in `state_register_mem` (not nested): `output_repetition_history`, `output_repetition_warn_count`, `output_repetition_internal_warned`, `output_repetition_halted`, `output_repetition_reasoning_history`, `output_repetition_reasoning_warned`. They are exposed as `SESSION_STATE_KEYS`.
+
+- `abefore_agent` resets the per-turn counters/output buffers at the **start of each new turn** so cross-call detection starts fresh.
+- Cleanup of a **subagent's** session state happens at **destruction time** in `agent/tools/subagent/spawn/core.py` (`_execute_subagent`'s `finally` block): it iterates `SESSION_STATE_KEYS` and calls `delete_state(child_session_key, key)` for each. This deliberately uses `delete_state` — **not** `clear_session` — so the other middlewares' top-level keys in the same session bucket (`heartbeat_*`, `iteration_budget`, `summarization`, etc.) are left untouched.
+
+**Configuration:** (all passed to the constructor)
+
+```json
+{
+  "output_repetition_guard": {
+    "warn_after": 2,
+    "max_identical_outputs": 3,
+    "internal_repeat_ratio": 0.6,
+    "internal_min_lines": 3
+  }
+}
+```
+
+**Example:**
+
+```python
+from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
+
+guard = OutputRepetitionGuard(warn_after=2, max_identical_outputs=3)
+```
+
+> **Note:** `OutputRepetitionGuard` is not (yet) re-exported from `agent.middlewares`. Import it directly from its module: `from agent.middlewares.output_repetition_guard import OutputRepetitionGuard`.
 
 ---
 
@@ -380,6 +441,7 @@ state_register_mem (session "abc123") = {
     "summarization": { "current_summary": "..." },
     "tool_call_normalize": { "last_names": [...] },
     "tool_guardrails": { "tool_calls": [...], "block_count": 3 },
+    "output_repetition": { "last_hash": "...", "identical_count": 2 },
     "iteration_budget": { "count": 5 },
     "heartbeat_iter": 3,
     "heartbeat_tool": "web_search",
@@ -407,11 +469,13 @@ from agent.middlewares import (
     MultimodalProcessor,
     ContextEngineHook,
 )
+from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
 
 middlewares = [
     Summarization(session_id="session_001"),
     ToolCallNormalize(session_id="session_001"),
     ToolGuardrails(config=ToolCallGuardrailConfig(warn_threshold=4, block_threshold=3, halt_threshold=3)),
+    OutputRepetitionGuard(warn_after=2, max_identical_outputs=3),
     IterationBudget(session_id="session_001", max_iterations=10),
     # HeartbeatStaleness — worker agents only
     MultimodalProcessor(session_id="session_001"),
@@ -431,6 +495,11 @@ middleware:
     warn_threshold: 4
     block_threshold: 3
     halt_threshold: 3
+  output_repetition_guard:
+    warn_after: 2
+    max_identical_outputs: 3
+    internal_repeat_ratio: 0.6
+    internal_min_lines: 3
   iteration_budget:
     max_iterations: 10
   heartbeat_staleness:
@@ -465,6 +534,9 @@ ToolCallNormalize.awrap_before_agent(state)
 ToolGuardrails.awrap_before_agent(state)
     │  inject warning if loop detected
     ▼
+OutputRepetitionGuard.abefore_agent(state)
+    │  reset per-turn repetition counters
+    ▼
 IterationBudget.awrap_before_agent(state)
     │  inject "answer immediately" if over budget
     ▼
@@ -482,6 +554,9 @@ ContextEngineHook.awrap_before_agent(state)
 │  Returns: assistant message (text + tool_calls)│
 └──────────────────────────────────────────────┘
     │
+    ▼
+OutputRepetitionGuard.wrap_model_call / awrap_model_call
+    │  detect text repetition, escalate warn → halt
     ▼
 ContextEngineHook.awrap_after_agent(state)
     │  persist to MesMemory, run nudge, knowledge graph maintenance
@@ -603,6 +678,7 @@ agent/middlewares/
 ├── summarization.py              # Summarization
 ├── tool_call_normalize.py        # ToolCallNormalize
 ├── tool_guardrails.py            # ToolGuardrails
+├── output_repetition_guard.py   # OutputRepetitionGuard
 ├── iteration_budget.py           # IterationBudget
 ├── heartbeat_staleness.py        # HeartbeatStaleness
 ├── multimodal_processor.py       # MultimodalProcessor

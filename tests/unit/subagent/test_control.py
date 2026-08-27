@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from agent.tools.subagent.control.controller import resolve_controller, list_controlled_runs, is_run_controllable_by
 from agent.tools.subagent.control.list import build_subagent_list
 from agent.tools.subagent.registry.memory import set_run, clear
@@ -13,7 +13,7 @@ def _clean():
 
 
 def _make_run(run_id, requester, child_key=None, depth=1, label=None):
-    child_key = child_key or f"agent:main:future_subagent:{run_id}"
+    child_key = child_key or f"agent:main:subagent:{run_id}"
     r = SubagentRunRecord(
         run_id=run_id,
         child_session_key=child_key,
@@ -28,8 +28,8 @@ def _make_run(run_id, requester, child_key=None, depth=1, label=None):
 
 class TestResolveController:
     def test_found(self):
-        _make_run("r1", "parent1", "agent:main:future_subagent:child1")
-        controller = resolve_controller("agent:main:future_subagent:child1")
+        _make_run("r1", "parent1", "agent:main:subagent:child1")
+        controller = resolve_controller("agent:main:subagent:child1")
         assert controller == "parent1"
 
     def test_not_found(self):

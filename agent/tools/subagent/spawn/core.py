@@ -552,6 +552,26 @@ async def _execute_subagent(
 
     # --- Lifecycle cleanup (always runs, even on cancellation) ---
     finally:
+        # Release this child's per-session OutputRepetitionGuard state. The guard
+        # writes its top-level keys (output_repetition_history, ..._halted, etc.)
+        # into ``state_register_mem`` under the child's unique session key. If we
+        # left them behind they would accumulate in memory each time a subagent
+        # is spawned and destroyed. ``clear_session`` is deliberately NOT used
+        # here: it would wipe the entire session bucket and clobber the other
+        # middlewares' top-level state (heartbeat_killed, summarization, tool
+        # guardrails, iteration budget, ...). We delete exactly the 6 keys this
+        # middleware owns, scoped to the child's own bucket via ``delete_state``.
+        try:
+            from agent.middlewares.output_repetition_guard import SESSION_STATE_KEYS
+            from runtime import state_register_mem
+            for _key in SESSION_STATE_KEYS:
+                state_register_mem.delete_state(run.child_session_key, _key)
+        except Exception:
+            logger.exception(
+                "Failed to release OutputRepetitionGuard state for session {}",
+                run.child_session_key,
+            )
+
         from ..registry import remove_task
         remove_task(run.run_id)
 
@@ -610,6 +630,7 @@ async def _build_child_agent(
       - **Summarization** — condenses conversation when tokens/messages exceed threshold.
       - **IterationBudget(60)** — caps the agent to 60 reasoning/tool-call iterations.
       - **ToolGuardrails** — validates tool calls before dispatch.
+      - **OutputRepetitionGuard** — stops the agent from emitting the same text endlessly.
       - **ToolCallNormalize** — normalises tool call format across LLM providers.
       - **HeartbeatStaleness** — detects and recovers from stalled agent loops.
 
@@ -629,6 +650,7 @@ async def _build_child_agent(
     from models import build_main_llm, build_auxiliary_llm
     from agent.checkpointer import build_async_sqlite_checkpointer
     from agent.middlewares import IterationBudget, ToolGuardrails, ToolCallNormalize, Summarization, HeartbeatStaleness
+    from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
     from agent.tools import build_main_tools
 
     base_tools = tools if tools is not None else build_main_tools()
@@ -669,6 +691,16 @@ async def _build_child_agent(
             ),
             IterationBudget(60),
             ToolGuardrails(),
+            # Non-streaming interception: children run via ``child_agent.ainvoke(...)``
+            # (this module's ``_execute_subagent``), so there are no intermediate tokens
+            # already emitted to any client. ``OutputRepetitionGuard`` intercepts the
+            # complete model result through ``wrap_model_call``/``_wrap_model_call_post``
+            # BEFORE it is returned to the caller — the replacement AIMessage fully
+            # overrides repetitive output prior to ``_extract_result_text``. State dedupe
+            # and escalation counters are isolated per ``child_session_key``
+            # ("agent:...:subagent:<uuid>"). No service-layer (Layer C) stream wiring is
+            # needed here; Layer C only guards the parent's relay loop.
+            OutputRepetitionGuard(),
             ToolCallNormalize(),
             HeartbeatStaleness()
         ],

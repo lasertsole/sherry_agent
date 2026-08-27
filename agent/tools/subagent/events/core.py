@@ -1,7 +1,7 @@
-"""Core event bus for future_subagent internal messaging.
+"""Core event bus for the subagent subsystem internal messaging.
 
 Replaces the project-wide MessageBus dependency with a dedicated async queue
-owned entirely by the future_subagent system.
+owned entirely by the subagent system.
 """
 
 from __future__ import annotations

@@ -14,6 +14,7 @@
   - [ContextEngineHook](#contextenginehook)
   - [Summarization](#summarization)
   - [ToolGuardrails](#toolguardrails)
+  - [OutputRepetitionGuard](#outputrepetitionguard)
   - [ToolCallNormalize](#toolcallnormalize)
   - [IterationBudget](#iterationbudget)
   - [HeartbeatStaleness](#heartbeatstaleness)
@@ -42,6 +43,7 @@ Agent Middlewares 基于 LangChain 的中间件体系（`AgentMiddleware` / `Sum
 | `Summarization` | 模型调用前 | 对话历史过长时压缩上下文窗口，触发用户偏好提取 |
 | `ToolCallNormalize` | Agent 推理前 | 修复工具调用/结果配对不一致、缺少参数等问题 |
 | `ToolGuardrails` | 每次工具调用前 (via `awrap_tool_call`) | 三级防护：warn/block/halt，检测并阻止工具调用循环 |
+| `OutputRepetitionGuard` | 每次模型调用后 (via `wrap_model_call`) | 检测并阻止文本输出重复（句子/短语/字符连续重复、跨调用重复），warn→halt 递进防护 |
 | `IterationBudget` | 工具返回后 | 限制每轮 LLM-工具迭代次数上限，超出后强制生成最终答案 |
 | `HeartbeatStaleness` | Agent 推理前后 + 每次工具/模型调用 | 监控 Worker Agent 心跳，检测无进展后终止（仅 Worker Agent 使用） |
 | `MultimodalProcessor` | Agent 推理前 & 推理后 | 将 base64 图片解码为临时文件供模型消费；推理后清理过期临时文件 |
@@ -54,10 +56,11 @@ Agent Middlewares 基于 LangChain 的中间件体系（`AgentMiddleware` / `Sum
 3. **偏好提取** — 在压缩时同步触发用户偏好提取，将偏好写入长期 memory store
 4. **自动持久化** — 每轮推理结束后通过 `asyncio.create_task` 自动将对话写入 MesMemory
 5. **工具循环防护** — 自动检测并阻止同一工具在单轮内被反复调用
-6. **工具调用标准化** — 修复工具调用/结果配对不一致，清理孤立消息
-7. **心跳超时监控** — 定期检测 Worker Agent 是否有进展，无进展时自动终止，防止僵尸 Agent 占用资源
-8. **知识图谱维护** — 每轮推理后调用知识图谱的 `after_turn()` 进行周期性维护
-9. **多模态图片处理** — 将 base64 编码的图片解码为临时文件，推理后自动清理
+6. **文本输出循环防护** — 自动检测模型重复输出同一段文本（句子/短语/字符连续重复、跨调用重复），递进式 warn→halt 阻止
+7. **工具调用标准化** — 修复工具调用/结果配对不一致，清理孤立消息
+8. **心跳超时监控** — 定期检测 Worker Agent 是否有进展，无进展时自动终止，防止僵尸 Agent 占用资源
+9. **知识图谱维护** — 每轮推理后调用知识图谱的 `after_turn()` 进行周期性维护
+10. **多模态图片处理** — 将 base64 编码的图片解码为临时文件，推理后自动清理
 
 ---
 
@@ -97,6 +100,9 @@ Agent 执行流水线：
 │        └─ memory_store.load_from_disk()  (nudge 后)           │
 │                                                              │
 │  ③ LLM 推理                                                  │
+│     ├─ wrap_model_call(handler) → OutputRepetitionGuard       │
+│     │  └─ 模型调用后检测文本重复                                 │
+│     │     └─ warn（注入提醒）→ halt（返回终止消息）           │
 │     ├─ awrap_tool_call(request, handler) → ToolGuardrails     │
 │     ├─ awrap_tool_call(request, handler) → HeartbeatStaleness │
 │     │  └─ 跟踪当前工具，若已 killed 则抛 HeartbeatTimeoutError│
@@ -128,6 +134,7 @@ Agent 执行流水线：
 2. abefore_model
    └─ Summarization         —→  上下文压缩 + 偏好提取
 3. LLM 模型调用
+   ├─ wrap_model_call(OutputRepetitionGuard) —→  文本重复检测（每次调用后）
    ├─ awrap_tool_call(ToolGuardrails)   —→  循环检测（每次调用）
    ├─ awrap_tool_call(HeartbeatStaleness) —→  心跳超时检查（每次调用）
    └─ awrap_after_tool(IterationBudget) —→  迭代计数（每次工具返回）
@@ -386,6 +393,62 @@ guardrails = ToolGuardrails(config=config)
 
 ---
 
+### OutputRepetitionGuard
+
+**文件：** `output_repetition_guard.py`
+
+**类：** `OutputRepetitionGuard(AgentMiddleware)`
+
+检测并阻止**文本输出死亡循环**——连续多次模型调用输出重复的段落、句子、短语和连续字符。它是 `ToolGuardrails` 的互补防护：`ToolGuardrails` 阻止工具调用循环，而 `OutputRepetitionGuard` 阻止模型无限地输出同一段文本。
+
+**递进式防护等级：**
+
+| 级别 | 触发条件 | 行为 |
+|------|---------|------|
+| **Warn**（提醒） | 相同（或相似度高于 `internal_repeat_ratio`）输出重复 ≥ `warn_after` 次 | 注入 nudge `SystemMessage`，提示模型停止重复并采取新动作 |
+| **Halt**（终止） | 相同输出重复 ≥ `max_identical_outputs` 次 | 返回**终止性 `AIMessage`**，结束本轮。后续模型调用直接复放该终止消息，不再触发 LLM |
+
+**检测信号：**
+
+- **句子/行重复：** 计算单条输出内句子/行的重复比例，若 ≥ `internal_repeat_ratio`（默认 `0.6`）且行数 ≥ `internal_min_lines`，则判定为内部重复输出。
+- **连续字符：** 输出中存在长度 ≥ `_CHAR_RUN_MIN`（`8`）的连续相同字符（空白、数字、字母）即判定异常。
+- **短语紧邻重复：** 某句子/行与其后紧邻的一行完全相同（精确重复），计为重复短语。
+- **跨调用一致性：** 将可见输出（剥离内联推理后）哈希后，在同一会话内跨连续模型调用比较。
+
+**推理文本处理：**
+
+- 推理链文本（`reasoning_content` / `ReasoningText` 块）与可见输出**独立跟踪**，避免推理重复误触发终止，也避免可见输出被推理噪声干扰。
+- 内联 `<think>` / `<reasoning>` 块在比较前从可见输出中剥离。
+
+**会话状态：**
+
+所有按会话计的计数器位于 `state_register_mem` 中的 `output_repetition` 命名空间。状态在每次 `abefore_agent`（即每轮开始）时重置，检测结果不会跨轮泄漏。
+
+**配置：**（全部通过构造函数传入）
+
+```python
+from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
+
+guard = OutputRepetitionGuard(
+    warn_after=2,            # 第 2 次重复：警告
+    max_identical_outputs=3, # 第 3 次重复：终止
+    internal_repeat_ratio=0.6,  # 内部重复比例阈值
+    internal_min_lines=3,       # 参与内部重复检测的最小行数
+)
+```
+
+**与 ToolGuardrails 的区别：**
+
+| 关注点 | ToolGuardrails | OutputRepetitionGuard |
+|--------|-----------------|------------------------|
+| 防护对象 | **工具调用**循环 | **文本输出**循环 |
+| 挂载点 | `awrap_tool_call` | `wrap_model_call` / `awrap_model_call` |
+| 级别 | warn → block → halt | warn → halt |
+
+> **注意：** `OutputRepetitionGuard` 尚未从 `agent.middlewares` 重新导出，需从模块直接导入：`from agent.middlewares.output_repetition_guard import OutputRepetitionGuard`。
+
+---
+
 ### ToolCallNormalize
 
 **文件：** `tool_call_normalize.py`
@@ -618,15 +681,15 @@ processor = MultimodalProcessor(session_id="session_001")
 
 ## 对比
 
-| 特性 | Summarization | ToolCallNormalize | ToolGuardrails | IterationBudget | HeartbeatStaleness | MultimodalProcessor | ContextEngineHook |
-|------|---------------|-------------------|----------------|-----------------|--------------------|---------------------|-------------------|
-| **基类** | `SummarizationMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` |
-| **触发时机** | 模型调用前 | Agent 前 | 每次工具调用（`awrap_tool_call`） | 工具返回后（`awrap_after_tool`） | Agent 前后 + 每次模型/工具调用 | Agent 前后 | Agent 前后 |
-| **核心操作** | 压缩 + 偏好提取 | 消息配对修复 | 三级防护（warn/block/halt） | 迭代计数 + 强制结束 | 心跳监控 + 超时终止 | 图片解码 + 临时文件清理 | 上下文增强 + 持久化 + 知识图谱维护 |
-| **阻塞性** | 同步阻塞 | 同步 | 同步 | 同步 | 异步定时器 | 同步 | 异步非阻塞（after 部分） |
-| **依赖** | MesMemory、`memory_store` | `sanitize_tool_use_result_pairing` | 无 | 无 | `timer_call_register`、`state_register_mem` | PIL (Pillow) | Context Engine、知识图谱 |
-| **频率** | 仅上下文过长时 | 每轮 Agent 推理 | 每次工具调用 | 每次工具返回 | 定时器周期 | 每轮 Agent 推理 | 每轮 Agent 推理 |
-| **适用范围** | 主 Agent | 主 Agent | 主 Agent | 主 Agent | **仅 Worker Agent** | 主 Agent | 主 Agent |
+| 特性 | Summarization | ToolCallNormalize | ToolGuardrails | OutputRepetitionGuard | IterationBudget | HeartbeatStaleness | MultimodalProcessor | ContextEngineHook |
+|------|---------------|-------------------|----------------|------------------------|-----------------|--------------------|---------------------|-------------------|
+| **基类** | `SummarizationMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` | `AgentMiddleware` |
+| **触发时机** | 模型调用前 | Agent 前 | 每次工具调用（`awrap_tool_call`） | 每次模型调用后（`wrap_model_call`） | 工具返回后（`awrap_after_tool`） | Agent 前后 + 每次模型/工具调用 | Agent 前后 | Agent 前后 |
+| **核心操作** | 压缩 + 偏好提取 | 消息配对修复 | 三级防护（warn/block/halt） | 文本重复检测（warn→halt） | 迭代计数 + 强制结束 | 心跳监控 + 超时终止 | 图片解码 + 临时文件清理 | 上下文增强 + 持久化 + 知识图谱维护 |
+| **阻塞性** | 同步阻塞 | 同步 | 同步 | 同步 | 同步 | 异步定时器 | 同步 | 异步非阻塞（after 部分） |
+| **依赖** | MesMemory、`memory_store` | `sanitize_tool_use_result_pairing` | 无 | 无 | 无 | `timer_call_register`、`state_register_mem` | PIL (Pillow) | Context Engine、知识图谱 |
+| **频率** | 仅上下文过长时 | 每轮 Agent 推理 | 每次工具调用 | 每次模型调用 | 每次工具返回 | 定时器周期 | 每轮 Agent 推理 | 每轮 Agent 推理 |
+| **适用范围** | 主 Agent | 主 Agent | 主 Agent | 主 Agent | 主 Agent | **仅 Worker Agent** | 主 Agent | 主 Agent |
 
 ---
 
@@ -745,12 +808,12 @@ sequenceDiagram
 
 ## 生命周期
 
-| 阶段 | Summarization | ToolCallNormalize | ToolGuardrails | IterationBudget | HeartbeatStaleness | MultimodalProcessor | ContextEngineHook |
-|------|---------------|-------------------|----------------|-----------------|--------------------|---------------------|-------------------|
-| **Before Agent** | — | 修复工具配对，移除孤立消息 | 重置调用计数器 | 注入"立即回答"提示（预算超限时） | 重置计数器，启动心跳定时器 | 查找 image_url → base64 解码 → 写入临时文件 → 替换内容块 | 剥离系统消息 → 提取查询 → 构造增强 → 前置拼接 |
-| **Before Model** | 克隆 → 剥离系统消息 → 压缩 → 插回 → nudge | — | 注入警告 SystemMessage（检测到循环时） | — | — | — | — |
-| **LLM 推理（每次模型调用）** | — | — | — | — | 递增迭代计数器；若 killed 则抛 HeartbeatTimeoutError | — | — |
-| **LLM 推理（每次工具调用）** | — | — | 三级判定（warn/block/halt） | — | 记录当前工具；若 killed 则抛 HeartbeatTimeoutError | — | — |
+| 阶段 | Summarization | ToolCallNormalize | ToolGuardrails | OutputRepetitionGuard | IterationBudget | HeartbeatStaleness | MultimodalProcessor | ContextEngineHook |
+|------|---------------|-------------------|----------------|------------------------|-----------------|--------------------|---------------------|-------------------|
+| **Before Agent** | — | 修复工具配对，移除孤立消息 | 重置调用计数器 | 重置本轮输入循环计数器 | 注入"立即回答"提示（预算超限时） | 重置计数器，启动心跳定时器 | 查找 image_url → base64 解码 → 写入临时文件 → 替换内容块 | 剥离系统消息 → 提取查询 → 构造增强 → 前置拼接 |
+| **Before Model** | 克隆 → 剥离系统消息 → 压缩 → 插回 → nudge | — | 注入警告 SystemMessage（检测到循环时） | — | — | — | — | — |
+| **每次模型调用后** | — | — | — | 检测文本重复（连续字符/短语/句子/跨调用）→ warn → halt | — | 递增迭代计数器；若 killed 则抛 HeartbeatTimeoutError | — | — |
+| **每次工具调用** | — | — | 三级判定（warn/block/halt） | — | — | 记录当前工具；若 killed 则抛 HeartbeatTimeoutError | — | — |
 | **After Tool** | — | — | 注册工具执行结果 | 自增迭代计数器 | 清除当前工具标记 | — | — |
 | **After Agent** | 存储摘要结果 | 更新 last_names 跟踪 | — | — | 停止心跳定时器 | 扫描 mutil_temp → 删除超 7 天文件 | 提取最后一轮 → 清理工具配对 → 还原输入 → 异步持久化 → 知识图谱维护 |
 
@@ -885,6 +948,22 @@ ToolGuardrails 和 IterationBudget 构成了工具调用的安全防护：
        正常结果
 ```
 
+**文本输出侧的多层防护：** `ToolGuardrails` / `IterationBudget` 管理**工具调用循环**，而 `OutputRepetitionGuard` 负责**模型文本输出循环**，两者共同构成对 Agent 推理循环的完整防护：
+
+```
+模型输出抵达
+    │
+    ▼
+┌─ OutputRepetitionGuard ────────┐
+│ 内部重复检测（句子/行/连续字符）  │──标记 + 注入提醒
+│ 跨调用重复检测（哈希比对）       │
+│ 重复次数 ≥ warn_after？         │──warn→ 注入 SystemMessage
+│ 重复次数 ≥ max_identical_outputs？│──halt→ 返回终止 AIMessage
+└───────────┬───────────────────┘
+            ▼
+   正常文本输出 / 终止消息
+```
+
 ---
 
 ## 数据模型
@@ -981,10 +1060,10 @@ SRC_DIR/mutil_temp/{timestamp}.{fmt}
 
 ## 配置
 
-| 配置项 | ContextEngineHook | Summarization | ToolGuardrails | ToolCallNormalize | IterationBudget | HeartbeatStaleness | MultimodalProcessor |
-|--------|-------------------|---------------|-----------------|-------------------|-----------------|--------------------|---------------------|
-| **会话 ID** | `session_id`（构造函数） | `session_id`（构造函数） | `session_id`（构造函数） | `session_id`（构造函数） | `session_id`（构造函数） | — | `session_id`（构造函数） |
-| **主要参数** | — | 通过 `**kwargs` 转发给父类 | `threshold=int`（默认 5） | — | `max_iterations=int`（默认 25） | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20` | — |
+| 配置项 | ContextEngineHook | Summarization | ToolGuardrails | ToolCallNormalize | OutputRepetitionGuard | IterationBudget | HeartbeatStaleness | MultimodalProcessor |
+|--------|-------------------|---------------|-----------------|-------------------|------------------------|-----------------|--------------------|---------------------|
+| **会话 ID** | `session_id`（构造函数） | `session_id`（构造函数） | `session_id`（构造函数） | `session_id`（构造函数） | — | `session_id`（构造函数） | — | `session_id`（构造函数） |
+| **主要参数** | — | 通过 `**kwargs` 转发给父类 | `threshold=int`（默认 5） | — | `warn_after=2`、`max_identical_outputs=3`、`internal_repeat_ratio=0.6`、`internal_min_lines=3` | `max_iterations=int`（默认 25） | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20` | — |
 | **环境变量** | — | — | — | — | — | — | — |
 | **临时目录** | — | — | — | — | — | — | `SRC_DIR/mutil_temp/` |
 | **TTL** | — | — | — | — | — | — | 7 天 |
@@ -1009,12 +1088,14 @@ from agent.middlewares import (
     HeartbeatStaleness,
     MultimodalProcessor,
 )
+from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
 
 # 主 Agent 中间件链
 middlewares = [
     Summarization(session_id="session_001"),
     ToolCallNormalize(session_id="session_001"),
     ToolGuardrails(session_id="session_001", warn_threshold=3, block_threshold=6, halt_threshold=9),
+    OutputRepetitionGuard(warn_after=2, max_identical_outputs=3),
     IterationBudget(session_id="session_001", max_iterations=25),
     MultimodalProcessor(session_id="session_001"),
     ContextEngineHook(session_id="session_001"),
@@ -1025,6 +1106,7 @@ worker_middlewares = [
     Summarization(session_id="worker_001"),
     ToolCallNormalize(session_id="worker_001"),
     ToolGuardrails(session_id="worker_001"),
+    OutputRepetitionGuard(warn_after=2, max_identical_outputs=3),
     IterationBudget(session_id="worker_001", max_iterations=25),
     HeartbeatStaleness(heartbeat_interval_minutes=1, stale_cycles_idle=7, stale_cycles_in_tool=20),
     MultimodalProcessor(session_id="worker_001"),
@@ -1078,6 +1160,23 @@ await guardrails.abefore_agent(state, runtime)
 result = await guardrails.awrap_tool_call(request, handler)
 # → 三级防护：warn（注入警告）→ block（返回 error）→ halt（强制终止 Agent）
 ```
+
+### 独立使用 OutputRepetitionGuard
+
+```python
+from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
+
+guard = OutputRepetitionGuard(warn_after=2, max_identical_outputs=3)
+
+# 每轮开始时重置重复计数器：
+await guard.abefore_agent(state, runtime)
+
+# 包装模型调用（在输出之后检测）：
+result = await guard.awrap_model_call(request, handler)
+# → 检测到文本重复时：warn（注入 nudge SystemMessage）→ halt（返回终止 AIMessage，不再调用 LLM）
+```
+
+> **注意：** `OutputRepetitionGuard` 尚未从 `agent.middlewares` 重新导出，需从模块直接导入：`from agent.middlewares.output_repetition_guard import OutputRepetitionGuard`。
 
 ### 独立使用 HeartbeatStaleness
 
@@ -1173,6 +1272,14 @@ Summarization 中间件在处理前克隆消息列表，以避免对原始 `stat
 
 修复一个 bug：`Register.clear_all_register_sessions` 方法可能触发 `__init__` 重新执行，导致 `_states` 字典被重置为空，所有内存状态丢失。`_initialized` 守卫确保单例的 `__init__` 只执行一次。
 
+### Q12: `OutputRepetitionGuard` 为什么能独立运行而不依赖 `state_register_mem`？
+
+它既能在传统会话状态上运行（有 `session_id` 时），也能作为独立包装器运行（无 `session_id` 时）。两者都使用 `wrap_model_call` / `awrap_model_call` 钩子在**模型输出之后**进行检测，因此能捕获每一次文本输出，而不仅是工具调用。
+
+### Q13: 输出重复多久会被判定为循环？
+
+文本重复判定是**递进式**的：`warn_after`（默认 2）触发温和提醒，`max_identical_outputs`（默认 3）触发强制终止。同一会话内连续输出高度重复（哈希相同或内部重复比例 ≥ `internal_repeat_ratio`）才会触发，而推理链文本（`reasoning_content`）被独立跟踪，不会误伤。
+
 ---
 
 ## 技术栈
@@ -1191,7 +1298,8 @@ Summarization 中间件在处理前克隆消息列表，以避免对原始 `stat
 | **心跳定时器** | `timer_call_register` — 后台事件循环，不阻塞主 Agent |
 | **工具函数** | `textwrap.dedent`（增强 prompt 格式化） |
 | **图片处理** | PIL (Pillow) — base64 解码 + 文件写入 |
-| **工具调用安全** | 自定义 `awrap_tool_call` 包装（限流 + 心跳监控） |
+| **工具调用安全** | 自定义 `awrap_tool_call` 包装（`ToolGuardrails` 三级防护 + `IterationBudget` 上限 + 心跳监控） |
+| **文本输出防循环** | `OutputRepetitionGuard` `wrap_model_call` 包装（内部/跨调用重复检测，warn→halt 递进防护） |
 | **消息标准化** | `sanitize_tool_use_result_pairing`（全量列表重写） |
 | **配置** | 构造函数参数（主 Agent Builder） |
 | **临时文件管理** | `SRC_DIR/mutil_temp/`，7 天 TTL 清理 |

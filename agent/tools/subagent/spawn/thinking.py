@@ -1,6 +1,6 @@
 """Thinking-level inheritance and override resolution for sub-agents.
 
-Three-layer precedence: explicit override → requester's future_subagent setting →
+Three-layer precedence: explicit override → requester's subagent setting →
 target agent's default.
 """
 

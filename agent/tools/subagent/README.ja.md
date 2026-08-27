@@ -145,7 +145,7 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 │  threading.Lock で保護された dict[str, SubagentRunRecord]  │
 │  ↓ 定期スナップショット                            │
 │  SQLite (registry/store_sqlite.py)              │
-│  future_subagent/data/subagent_registry.db      │
+│  agent/tools/subagent/data/subagent_registry.db │
 │  Table: subagent_runs(run_id PK, data JSON)     │
 └─────────────────────────────────────────────────┘
 ```
@@ -574,8 +574,8 @@ Recent:
 フック機構により、外部コードが子エージェントのライフサイクルイベントをリッスンできます:
 
 ```python
-from future_subagent.hooks.base import register_start_hook, register_stop_hook
-from future_subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
+from agent.tools.subagent.hooks.base import register_start_hook, register_stop_hook
+from agent.tools.subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
 
 async def on_start(event: SubagentStartEvent):
     print(f"Subagent started: {event.child_session_key}")
@@ -602,7 +602,7 @@ register_delivery_target_hook(on_delivery_target)
 
 このシステムは既存の `agent/tools/subagent/`（Commander/Worker パターン）と同位で共存します。
 
-| 属性 | 旧 `agent/tools/subagent/` | 新 `future_subagent/` |
+| 属性 | 旧 `agent/tools/subagent/` | 新 `agent/tools/subagent/` |
 |----------|------------------------------|---------------------------|
 | 言語 | TypeScript | Python |
 | スポーンモデル | "Spawn Tool" パターン | "Async Direct" パターン |

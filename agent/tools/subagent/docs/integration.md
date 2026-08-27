@@ -23,8 +23,8 @@ SubagentManager (singleton)
 
 | 组件 | 路径 | 用途 |
 |------|------|------|
-| EventBus | `future_subagent/events/core.py` | 自有异步事件总线 |
-| InboundMessage | `future_subagent/events/core.py` | 自有入站消息模型 |
+| EventBus | `agent/tools/subagent/events/core.py` | 自有异步事件总线 |
+| InboundMessage | `agent/tools/subagent/events/core.py` | 自有入站消息模型 |
 | Register | `runtime/` | 运行时状态注册 |
 | build_commander | `agent/tools/subagent/commander/core.py` | 构建 Commander agent |
 | codeact_agent | `agent/codeact/` | Worker agent |
@@ -40,7 +40,7 @@ SubagentManager (singleton)
 在 `agent/tools/__init__.py` 中添加新工具 builder:
 
 ```python
-from future_subagent import (
+from agent.tools.subagent import (
     build_sessions_spawn_tool,
     build_sessions_yield_tool,
     build_sessions_send_tool,
@@ -68,13 +68,13 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool]] = [
 新 subagent 系统需要在 `agent/core.py` 中初始化:
 
 ```python
-from future_subagent.registry.sweeper import start_sweeper
-from future_subagent.registry.state import init_registry
+from agent.tools.subagent.registry.sweeper import start_sweeper
+from agent.tools.subagent.registry.state import init_registry
 
 async def built_agent(temperature=0.8):
     # ... 现有初始化 ...
 
-    # 初始化新 future_subagent 系统
+    # 初始化新的 subagent 系统
     await init_registry()          # 加载 SQLite 持久化数据
     await start_sweeper()          # 启动后台扫描器
 ```
@@ -156,7 +156,7 @@ async def deliver_subagent_announcement(ctx: DeliveryContext) -> None:
         # 子→用户：完整 completion message
         msg = InboundMessage(
             channel="system",
-            sender_id="future_subagent",
+            sender_id="subagent",
             chat_id="direct",
             content=formatted_result,
             session_id=ctx.requester_session_key,
@@ -227,9 +227,9 @@ subagent:
 
 读取方式:
 ```python
-from future_subagent.config import SubagentConfig
+from agent.tools.subagent.config import SubagentConfig
 
 config = SubagentConfig()  # 默认值
 # 或从项目配置加载:
-# config = SubagentConfig(**load_config().get("future_subagent", {}))
+# config = SubagentConfig(**load_config().get("subagent", {}))
 ```

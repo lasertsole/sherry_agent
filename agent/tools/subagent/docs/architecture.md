@@ -33,7 +33,7 @@ Parent Agent (LangGraph CompiledStateGraph)
 ## 目录结构与模块职责
 
 ```
-future_subagent/
+agent/tools/subagent/
 ├── types/                     数据模型与枚举定义
 │   ├── spawn.py               SpawnMode, ContextMode 枚举
 │   ├── registry.py            SubagentRunRecord 及子状态模型（含 completion_owner_session_key/output_schema/scopes/spawned_by/spawned_cwd/inherited_tool_policy_version）
@@ -216,7 +216,7 @@ registered → cleanup_handled → cleanup_completed_at
   工具名: "subagent"
    投递: MessageBus
 
-新系统 (future_subagent/):
+新系统 (agent/tools/subagent/):
    SubagentRegistry → Spawn → Announce
    工具名: "sessions_spawn", "sessions_yield", "sessions_send",
            "sessions_kill", "sessions_steer", "agents_list", "subagents_list"

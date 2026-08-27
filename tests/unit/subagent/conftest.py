@@ -1,12 +1,16 @@
-"""conftest for tests/unit/future_subagent/: auto-load the agent.tools.subagent module alias."""
+"""conftest for tests/unit/subagent/: auto-load the agent.tools.subagent module alias."""
 
 import sys
 import types as stdlib_types
 from unittest.mock import MagicMock, AsyncMock
 
 
+_SUBMODULE_LOADED = False
+
+
 def _setup_subagent_alias():
-    if "future_subagent" in sys.modules:
+    global _SUBMODULE_LOADED
+    if _SUBMODULE_LOADED:
         return
 
     for mod_name in [
@@ -104,8 +108,9 @@ def _setup_subagent_alias():
     sys.modules["skills.loader"] = _skills_loader
 
     import importlib
-    fs = importlib.import_module("agent.tools.subagent")
-    sys.modules["future_subagent"] = fs
+    importlib.import_module("agent.tools.subagent")
+
+    _SUBMODULE_LOADED = True
 
 
 _setup_subagent_alias()

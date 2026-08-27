@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 import time
 from agent.tools.subagent.registry.lifecycle import (
     _should_suspend_pending_final_delivery,
@@ -23,7 +23,7 @@ from agent.tools.subagent.types.spawn import SpawnMode
 def _make_run(**overrides) -> SubagentRunRecord:
     defaults = dict(
         run_id="r1",
-        child_session_key="agent:main:future_subagent:abc",
+        child_session_key="agent:main:subagent:abc",
         requester_session_key="agent:main:session:p1",
         task="test",
     )

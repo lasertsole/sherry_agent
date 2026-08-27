@@ -1,4 +1,4 @@
-"""Integration tests for robustness-plan-v3 features across phases.
+﻿"""Integration tests for robustness-plan-v3 features across phases.
 
 Tests end-to-end flows that span multiple modules:
 - Swarm collect → spawn → complete → announce
@@ -140,14 +140,14 @@ class TestThreadBindingSpawnIntegration:
         result = resolve_thread_binding_policy(
             agent_id="main",
             spawn_mode=SpawnMode.SESSION,
-            child_session_key="agent:main:future_subagent:child1",
+            child_session_key="agent:main:subagent:child1",
         )
         assert result.bound is True
         assert result.binding_info is not None
-        assert result.binding_info.delivery_origin == "agent:main:future_subagent:child1"
+        assert result.binding_info.delivery_origin == "agent:main:subagent:child1"
 
     def test_binding_info_stored_in_record(self):
-        result = bind_thread_for_subagent_spawn("agent:main:future_subagent:child1")
+        result = bind_thread_for_subagent_spawn("agent:main:subagent:child1")
         info = result.binding_info
         from agent.tools.subagent.types.registry import ThreadBindingInfo as RegistryThreadBindingInfo
         registry_info = RegistryThreadBindingInfo(
@@ -158,7 +158,7 @@ class TestThreadBindingSpawnIntegration:
         )
         run = SubagentRunRecord(
             run_id="r1",
-            child_session_key="agent:main:future_subagent:child1",
+            child_session_key="agent:main:subagent:child1",
             requester_session_key="agent:main:session:p1",
             task="test",
             thread_binding_info=registry_info,
@@ -170,12 +170,12 @@ class TestThreadBindingSpawnIntegration:
         result = resolve_thread_binding_policy(
             agent_id="main",
             spawn_mode=SpawnMode.RUN,
-            child_session_key="agent:main:future_subagent:child1",
+            child_session_key="agent:main:subagent:child1",
         )
         assert result.bound is False
         run = SubagentRunRecord(
             run_id="r1",
-            child_session_key="agent:main:future_subagent:child1",
+            child_session_key="agent:main:subagent:child1",
             requester_session_key="agent:main:session:p1",
             task="test",
             thread_binding_info=None,
@@ -293,8 +293,8 @@ class TestDeliveryDualPathIntegration:
     def test_sub_to_sub_findings_format(self):
         run = SubagentRunRecord(
             run_id="r1",
-            child_session_key="agent:main:future_subagent:child",
-            requester_session_key="agent:main:future_subagent:parent",
+            child_session_key="agent:main:subagent:child",
+            requester_session_key="agent:main:subagent:parent",
             task="build",
             label="builder",
             execution=ExecutionState(outcome=RunOutcome(status=RunOutcomeStatus.OK)),
@@ -307,7 +307,7 @@ class TestDeliveryDualPathIntegration:
     def test_sub_to_user_findings_format(self):
         run = SubagentRunRecord(
             run_id="r1",
-            child_session_key="agent:main:future_subagent:child",
+            child_session_key="agent:main:subagent:child",
             requester_session_key="agent:main:session:user1",
             task="build",
             label="builder",

@@ -10,6 +10,7 @@ from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
                           IterationBudget, HeartbeatStaleness)
+from .middlewares.output_repetition_guard import OutputRepetitionGuard
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .smart_tool_node import patch_tool_node
 
@@ -106,6 +107,7 @@ async def built_agent(
                 MultimodalProcessor(),
                 IterationBudget(90),
                 ToolGuardrails(),
+                OutputRepetitionGuard(),
                 ToolCallNormalize(),
                 HeartbeatStaleness(),
                 HumanInTheLoop(HITLConfig()),

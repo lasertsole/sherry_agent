@@ -1,4 +1,4 @@
-"""Types sub-package: all data models and enum definitions for the future_subagent system."""
+"""Types sub-package: all data models and enum definitions for the subagent system."""
 
 from .spawn import SpawnMode, ContextMode
 from .registry import (

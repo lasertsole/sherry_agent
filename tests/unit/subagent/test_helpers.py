@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from agent.tools.subagent.registry.helpers import (
     cap_frozen_result_text,
     resolve_announce_retry_delay_seconds,
@@ -20,7 +20,7 @@ def _clean():
 def _make_run(**overrides):
     defaults = dict(
         run_id="r1",
-        child_session_key="agent:main:future_subagent:abc",
+        child_session_key="agent:main:subagent:abc",
         requester_session_key="agent:main:session:p1",
         task="test",
     )

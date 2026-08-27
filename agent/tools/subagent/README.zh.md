@@ -144,7 +144,7 @@ Registry 是整个系统的状态中枢，维护所有子 Agent 运行记录的�
 │  threading.Lock 保护的 dict[str, SubagentRunRecord]  │
 │  ↓ 定期快照                                      │
 │  SQLite (registry/store_sqlite.py)              │
-│  future_subagent/data/subagent_registry.db      │
+│  agent/tools/subagent/data/subagent_registry.db │
 │  表: subagent_runs(run_id PK, data JSON)        │
 └─────────────────────────────────────────────────┘
 ```
@@ -573,8 +573,8 @@ Recent:
 Hook 机制允许外部代码监听子 Agent 的生命周期事件：
 
 ```python
-from future_subagent.hooks.base import register_start_hook, register_stop_hook
-from future_subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
+from agent.tools.subagent.hooks.base import register_start_hook, register_stop_hook
+from agent.tools.subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
 
 async def on_start(event: SubagentStartEvent):
     print(f"Subagent started: {event.child_session_key}")
@@ -599,7 +599,7 @@ Hook 按注册顺序串行执行，异常被吞咽不中断流程。
 
 ### 十一、与现有系统的共存
 
-| 维度 | 现有 subagent (`agent/tools/subagent/`) | 新 subagent (`future_subagent/`) |
+| 维度 | 现有 subagent (`agent/tools/subagent/`) | 新 subagent (`agent/tools/subagent/`) |
 |------|---------------------------------------|---------------------------|
 | 工具名 | `subagent` | `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list` |
 | 管理器 | `SubagentManager` (singleton) | `SubagentRegistry` (dict + SQLite) |

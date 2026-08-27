@@ -1,4 +1,4 @@
-"""Event bus for future_subagent internal messaging.
+"""Event bus for the subagent subsystem internal messaging.
 
 Provides a lightweight InboundMessage dataclass and a shared EventBus
 (async Queue) that decouples subagent result delivery, session cleanup,

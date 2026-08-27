@@ -145,7 +145,7 @@ Registry는 전체 시스템의 상태 허브로, 모든 자식 에이전트 실
 │  threading.Lock 보호 dict[str, SubagentRunRecord] │
 │  ↓ 주기적 스냅샷                                 │
 │  SQLite (registry/store_sqlite.py)              │
-│  future_subagent/data/subagent_registry.db      │
+│  agent/tools/subagent/data/subagent_registry.db │
 │  테이블: subagent_runs(run_id PK, data JSON)     │
 └─────────────────────────────────────────────────┘
 ```
@@ -574,8 +574,8 @@ Recent:
 훅 메커니즘은 외부 코드가 자식 에이전트 라이프사이클 이벤트를 들을 수 있게 합니다:
 
 ```python
-from future_subagent.hooks.base import register_start_hook, register_stop_hook
-from future_subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
+from agent.tools.subagent.hooks.base import register_start_hook, register_stop_hook
+from agent.tools.subagent.hooks.progress import register_spawned_hook, register_ended_hook, register_delivery_target_hook
 
 async def on_start(event: SubagentStartEvent):
     print(f"Subagent started: {event.child_session_key}")
@@ -600,7 +600,7 @@ register_delivery_target_hook(on_delivery_target)
 
 ### 11. 기존 시스템과의 공존
 
-| 차원 | 기존 subagent (`agent/tools/subagent/`) | 새 subagent (`future_subagent/`) |
+| 차원 | 기존 subagent (`agent/tools/subagent/`) | 새 subagent (`agent/tools/subagent/`) |
 |-----------|---------------------------------------------|---------------------------|
 | 도구 이름 | `subagent` | `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list` |
 | 관리자 | `SubagentManager` (싱글턴) | `SubagentRegistry` (dict + SQLite) |
