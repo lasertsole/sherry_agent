@@ -1,9 +1,7 @@
 """Subagent system startup hook.
 
-The sub-agent library now owns both its own EventBus and the delivery
-consumer (``agent.tools.subagent.events.bridge._consume_loop``). The old
-``subagent_manager.set_consumer(...)`` / ``start_service()`` pattern was
-removed during the future_subagent → agent.tools.subagent migration; result
+The sub-agent library owns both its own EventBus and the delivery
+consumer (``agent.tools.subagent.events.bridge._consume_loop``). Result
 delivery is pushed directly to sessions by the bridge's single consumer.
 
 This module only schedules once-at-startup registration (

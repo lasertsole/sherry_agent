@@ -871,6 +871,7 @@ const appendStreamChunk = (
         session_id: sid,
         role: CHAT_ROLE.AI,
         content,
+        reasoning: '',
         id: tempIdCounter++,
         turn_num: turnNum,
         timestamp: new Date().toISOString()
@@ -888,6 +889,7 @@ const appendStreamChunk = (
         session_id: sid,
         role: CHAT_ROLE.AI,
         content: '',
+        reasoning: '',
         id: tempIdCounter++,
         turn_num: turnNum,
         timestamp: new Date().toISOString()
@@ -1118,6 +1120,7 @@ const handleSend = async (text: string) => {
     session_id: sid,
     role: CHAT_ROLE.AI,
     content: '',
+    reasoning: '',
     id: tempIdCounter++,
     turn_num: turnNum,
     timestamp: new Date().toISOString()

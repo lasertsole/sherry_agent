@@ -26,18 +26,6 @@ _pending_args: dict[str, dict] = {}
 _pending_raw: dict[str, list[str]] = {}
 
 
-def _normalize_args(args) -> dict:
-    """Normalize ToolCall.args (dict OR JSON string) into a plain dict."""
-    if isinstance(args, str):
-        try:
-            return json.loads(args)
-        except Exception:
-            return {"raw": args}
-    if not isinstance(args, dict):
-        return {"raw": str(args)}
-    return args
-
-
 def _accumulate_pending_args(tool_id: str | None, raw_args) -> None:
     """Accumulate streamed ToolCall args fragments into the pending arg-bag.
 

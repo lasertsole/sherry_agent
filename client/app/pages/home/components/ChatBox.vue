@@ -48,13 +48,10 @@
             formatCompactTimeString(message.timestamp)
           }}</span>
         </div>
-        <!-- 模型思考/推理块（折叠） -->
+        <!-- 模型思考/推理块（折叠）：仅当 AI 消息且含 reasoning 时才渲染 -->
         <div
           v-if="message.role === CHAT_ROLE.AI && message.reasoning"
-          :class="[
-            'w-fit mb-1 text-sm transition-colors duration-200',
-            { 'rounded-xl': isConsecutive(message.id) }
-          ]">
+          :class="['w-fit mb-1 text-sm transition-colors duration-200', { 'rounded-xl': isConsecutive(message.id) }]">
           <button
             type="button"
             :class="[
@@ -240,14 +237,22 @@ const isToolCallMsg = (msg: MessageItem) =>
   (msg as unknown as { tool_calls?: unknown[] }).tool_calls?.length;
 const filteredMessages = computed(() => {
   return props.messages.filter((item: MessageItem) => {
-    // 隐藏「AI 空占位」消息：发送后 AI 尚未产出任何内容（也无工具调用）时，
+    // 隐藏「AI 空占位」消息：发送后 AI 尚未产出任何内容（也无工具调用、也无思考内容）时，
     // 不渲染这个只有名字+空白框的占位气泡，避免「橘雪莉」看起来贴在白框里。
-    if (item.role === CHAT_ROLE.AI && !item.content.trim()) {
+    // 但持有 reasoning 的空正文消息要放行：思考气泡以它为宿主，否则模型思考块会随
+    // 空占位一起被过滤，导致思考气泡永远渲染不出来。
+    if (
+      item.role === CHAT_ROLE.AI &&
+      !item.content.trim() &&
+      !item.reasoning
+    ) {
       return false;
     }
     return true;
   });
 });
+
+// [DIAG-CHATBOX] 探针已移除 —— reasoning 渲染链路已验证（root cause 为 i/span 选择器不匹配）。
 
 /**
  * 判断一条消息是否应渲染为「连续消息」（不显示头像、紧凑间距、直角紧贴气泡）。

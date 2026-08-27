@@ -2,42 +2,20 @@
 
 > 每做出一个影响架构的决策，记录在此。新 agent 接手时必读。
 
-## 决策 1: 独立新建而非替换
-
-**日期**: 2026-07-15
-
-**背景**: 项目已有 `agent/tools/subagent/`（Commander+Worker 模式，302行 `SubagentManager`），需决定是替换还是新建。
-
-**决策**: 在 `future_subagent/` 根目录独立新建，与现有 subagent 共存。
-
-**理由**:
-- 现有 subagent 有经验知识图谱闭环（draft→distill→ingest→recall），新系统暂不包含
-- 两套工具命名不同（现有 `subagent` vs 新 `sessions_spawn` 等），无冲突
-- 独立新建可渐进迁移，不破坏现有功能
-
----
-
 ## 决策 2: 自有 EventBus 替代项目 MessageBus 依赖
 
 **日期**: 2026-07-29
 
-**背景**: `future_subagent/` 原通过 `type.bus.InboundMessage` + `MessageBus.publish_inbound()` 投递结果，与项目全局 MessageBus 耦合。
-
-**决策**: 在 `future_subagent/events/core.py` 自有 `EventBus`（async Queue） + `InboundMessage` dataclass，接口为 `publish_internal()`。
+**背景**: subagent 系统使用自有 `EventBus`（async Queue） + `InboundMessage` dataclass，接口为 `publish_internal()`，与项目全局 MessageBus 解耦。
 
 **理由**:
-- `future_subagent` 应与项目 MessageBus 解耦，避免后续改造双向依赖
+- subagent 应与项目 MessageBus 解耦，避免后续改造双向依赖
 - 自有事件总线接口可独立演进，不影响全局消息通道
 - 消除对 `type.bus` 和 `bus/` 模块的导入依赖
 
 **影响**:
-- `announce/delivery.py`、`control/send.py`、`session/cleanup.py` 导入从 `from bus import ...; from type.bus import ...` 改为 `from ..events import InboundMessage, get_event_bus`
-- 调用从 `bus.publish_inbound(msg)` 改为 `get_event_bus().publish_internal(msg)`
-- 文档同步更新
-
-## 决策 2b: (已废弃) 复用 MessageBus — 2026-07-15 原始决策
-
-> 原计划复用 `MessageBus.publish_inbound()`，2026-07-29 重构为自有 EventBus。保留此记录供历史追溯。
+- `announce/delivery.py`、`control/send.py`、`session/cleanup.py` 导入 `from ..events import InboundMessage, get_event_bus`
+- 调用使用 `get_event_bus().publish_internal(msg)`
 
 ---
 
