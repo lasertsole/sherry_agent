@@ -1,631 +1,3 @@
-# RepetitionGuardWrapper — 变更重建指南
-
-> 本文档记录了将 `OutputRepetitionGuard` 中间件 + `check_stream_repetition` 散调用
-> 替换为统一的 `RepetitionGuardWrapper` 包装器的全部代码变更。
->
-> **使用方式**：按照以下步骤，基于旧代码（变更前状态）和本文档，即可完整重建新代码。
-> 无需参考任何新代码文件。
-
----
-
-## 目录
-
-1. [新建文件：`agent/repetition_guard_wrapper.py`](#1-新建文件agentrepetition_guard_wrapperpy)
-2. [新建文件：`tests/unit/test_repetition_guard_wrapper.py`](#2-新建文件testsunittest_repetition_guard_wrapperpy)
-3. [修改文件：`agent/__init__.py`](#3-修改文件agent__init__py)
-4. [修改文件：`agent/core.py`](#4-修改文件agentcorepy)
-5. [修改文件：`server/service/messages.py`](#5-修改文件serverservicemessagespy)
-6. [验证步骤](#6-验证步骤)
-
----
-
-## 1. 新建文件：`agent/repetition_guard_wrapper.py`
-
-**完整文件内容如下，直接创建：**
-
-```python
-"""RepetitionGuardWrapper — wraps a CompiledStateGraph agent with comprehensive
-output repetition detection at the Runnable / stream level.
-
-This wrapper implements **ALL** the interception functionality of the
-``OutputRepetitionGuard`` middleware, operating at the stream level instead of
-the middleware level:
-
-1. **Stream-level internal repetition detection** (sentence, char-run, phrase)
-   — runs on accumulated visible text as chunks arrive, cutting the repetitive
-   tail *before* it reaches the client.
-
-2. **Cross-call identical output detection** — runs at model-call boundaries
-   (detected by stream node transitions), comparing the accumulated text of
-   each model call against a rolling hash history.
-
-3. **Reasoning text repetition detection** — tracks ``reasoning_content``
-   independently from visible output, with its own history and warn flags.
-
-4. **HALT escalation** — when cross-call repetition exceeds the threshold,
-   yields a halt message and cancels the underlying stream.
-
-5. **WARN escalation** — yields a warning message (for cross-call) or cuts the
-   current call's remaining text (for internal repetition).
-
-6. **Per-turn state reset** — clears all repetition state at the start of each
-   ``astream`` / ``ainvoke`` call, mirroring the middleware's ``before_agent``.
-
-7. **Non-streaming (``ainvoke``) post-hoc detection** — runs the full detection
-   suite on the final ``AIMessage`` of the result.
-
-8. **HALT short-circuit** — when ``_HALTED_KEY`` is already set (e.g. by the
-   middleware backstop), subsequent model calls yield a halt message instead of
-   forwarding repetitive text.
-
-When using this wrapper as the **sole** guardian, remove
-``OutputRepetitionGuard`` from the agent's middleware list to avoid
-double-counting in the cross-call history.  If both are active, the
-``_INTERNAL_WARNED_KEY`` dedupe gate prevents double-warning, but the
-cross-call hash history may accumulate duplicate entries.
-
-Integration (in ``agent/core.py``)::
-
-    from .repetition_guard_wrapper import RepetitionGuardWrapper
-
-    _agent = create_agent(...)
-    _agent = RepetitionGuardWrapper(_agent)   # wrap here
-    return _agent
-
-And in ``server/service/messages.py``, remove the manual
-``check_stream_repetition`` calls — the wrapper handles stream-level
-interception transparently.
-"""
-
-from __future__ import annotations
-
-from typing import Any, AsyncGenerator
-
-from loguru import logger
-from langchain_core.messages import AIMessage, AIMessageChunk
-from langgraph.graph.state import CompiledStateGraph
-
-from runtime import state_register_mem
-from agent.middlewares.output_repetition_guard import (
-    OutputRepetitionGuard,
-    SESSION_STATE_KEYS,
-    _HISTORY_KEY,
-    _WARN_COUNT_KEY,
-    _INTERNAL_WARNED_KEY,
-    _HALTED_KEY,
-    _REASONING_HISTORY_KEY,
-    _REASONING_WARNED_KEY,
-    _MAX_HISTORY,
-    _TAIL_CHARS,
-    _MIN_CONTENT_LENGTH,
-    _CHAR_RUN_MIN,
-    _STREAM_WARNING,
-    _REASONING_KEYS,
-)
-
-# Reasoning keys used to extract reasoning text from ``additional_kwargs``.
-# Re-exported from the middleware module so the wrapper and middleware stay
-# in sync.
-__all__ = [
-    "RepetitionGuardWrapper",
-    "SESSION_STATE_KEYS",
-]
-
-
-class RepetitionGuardWrapper:
-    """Wraps a ``CompiledStateGraph`` with stream-level repetition interception.
-
-    Parameters
-    ----------
-    inner : CompiledStateGraph
-        The compiled agent graph to wrap.
-    max_identical_outputs : int
-        Maximum consecutive identical model outputs before a hard stop.
-        Default **3**.
-    warn_after : int
-        Consecutive identical outputs before a warning is appended.
-        Default **2**.
-    internal_repeat_ratio : float
-        Duplicate ratio above which a single output is internally repetitive.
-        Default **0.6**.
-    internal_min_lines : int
-        Minimum segments before sentence-level detection fires.
-        Default **6**.
-    char_run_min : int
-        Minimum consecutive identical non-whitespace characters.
-        Default **8**.
-    """
-
-    def __init__(
-        self,
-        inner: CompiledStateGraph,
-        max_identical_outputs: int = 3,
-        warn_after: int = 2,
-        internal_repeat_ratio: float = 0.6,
-        internal_min_lines: int = 6,
-        char_run_min: int = _CHAR_RUN_MIN,
-    ):
-        self._inner = inner
-        self._guard = OutputRepetitionGuard(
-            max_identical_outputs=max_identical_outputs,
-            warn_after=warn_after,
-            internal_repeat_ratio=internal_repeat_ratio,
-            internal_min_lines=internal_min_lines,
-            char_run_min=char_run_min,
-        )
-
-    # ------------------------------------------------------------------
-    # Session helpers
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _extract_session_id(input_: Any, config: Any) -> str:
-        """Extract ``session_id`` from the input dict, ``Command.resume``,
-        or ``config['configurable']``.
-
-        Raises ``RuntimeError`` if it cannot be found.
-        """
-        # 1. Plain dict input (normal astream / ainvoke path)
-        if isinstance(input_, dict):
-            sid = input_.get("session_id", "")
-            if sid.strip():
-                return sid
-
-        # 2. Command(resume=...) — HITL resume path
-        try:
-            from langgraph.types import Command
-
-            if isinstance(input_, Command):
-                resume = getattr(input_, "resume", None)
-                if isinstance(resume, dict):
-                    sid = resume.get("session_id", "")
-                    if sid.strip():
-                        return sid
-        except Exception:
-            pass
-
-        # 3. config configurable fallback
-        try:
-            cfg = config or {}
-            if isinstance(cfg, dict):
-                conf = cfg.get("configurable", {})
-                if isinstance(conf, dict):
-                    sid = conf.get("session_id", "")
-                    if sid.strip():
-                        return sid
-        except Exception:
-            pass
-
-        raise RuntimeError(
-            "RepetitionGuardWrapper: session_id is required but not found "
-            "in input, Command.resume, or config.configurable"
-        )
-
-    # ------------------------------------------------------------------
-    # Stream-mode detection
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _can_intercept(stream_mode: Any) -> bool:
-        """Return ``True`` when ``stream_mode`` includes ``"messages"``."""
-        if stream_mode is None:
-            return False
-        if isinstance(stream_mode, str):
-            return stream_mode == "messages"
-        if isinstance(stream_mode, (list, tuple)):
-            return "messages" in stream_mode
-        return False
-
-    # ------------------------------------------------------------------
-    # Chunk builders
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _text_chunk(
-        content: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> tuple[str, tuple[AIMessageChunk, dict[str, Any]]]:
-        """Build a ``("messages", (AIMessageChunk, metadata))`` chunk."""
-        return (
-            "messages",
-            (
-                AIMessageChunk(content=content),
-                metadata or {"langgraph_node": "model"},
-            ),
-        )
-
-    @staticmethod
-    def _halt_message() -> str:
-        """The HALT message text yielded when repetition forces a stop."""
-        return (
-            "[Output Repetition Guard] Output repetition was detected. "
-            "I must stop here. Please summarize what has been accomplished "
-            "and what remains to be done."
-        )
-
-    @staticmethod
-    def _halted_short_circuit_message() -> str:
-        """Message yielded when ``_HALTED_KEY`` is already set."""
-        return (
-            "[Output Repetition Guard] Output repetition was detected "
-            "earlier this turn. I must stop here."
-        )
-
-    # ------------------------------------------------------------------
-    # Boundary detection (cross-call + internal)
-    # ------------------------------------------------------------------
-    def _on_model_call_end(
-        self,
-        session_id: str,
-        call_text: str,
-        call_reasoning: str,
-    ) -> tuple[str | None, bool]:
-        """Run cross-call + internal detection at a model-call boundary.
-
-        Returns ``(warning_text, is_halt)``.  When ``warning_text`` is
-        ``None``, no escalation applies.  When ``is_halt`` is ``True``, the
-        caller should cancel the stream.
-        """
-        # ---- visible output ----
-        if len(call_text) >= _MIN_CONTENT_LENGTH:
-            r = self._guard._check_text_repetition(
-                session_id,
-                call_text,
-                call_text,
-                _HISTORY_KEY,
-                _INTERNAL_WARNED_KEY,
-                "output",
-            )
-            if r is not None:
-                is_halt = state_register_mem.get_state(
-                    session_id, _HALTED_KEY, False
-                )
-                return (r.content, is_halt)
-
-        # ---- reasoning (independent history) ----
-        if len(call_reasoning) >= _MIN_CONTENT_LENGTH:
-            r = self._guard._check_text_repetition(
-                session_id,
-                call_reasoning,
-                call_text,
-                _REASONING_HISTORY_KEY,
-                _REASONING_WARNED_KEY,
-                "reasoning",
-            )
-            if r is not None:
-                is_halt = state_register_mem.get_state(
-                    session_id, _HALTED_KEY, False
-                )
-                return (r.content, is_halt)
-
-        return (None, False)
-
-    # ------------------------------------------------------------------
-    # Non-streaming post-hoc check
-    # ------------------------------------------------------------------
-    def _post_hoc_check(
-        self,
-        session_id: str,
-        ai_msg: AIMessage,
-    ) -> AIMessage | None:
-        """Post-hoc detection on a complete ``AIMessage`` (for ``ainvoke``).
-
-        Mirrors ``OutputRepetitionGuard._wrap_model_call_post`` but operates
-        on a standalone message instead of a middleware ``ModelRequest``.
-        """
-        # Skip if model is making tool calls
-        tool_calls = getattr(ai_msg, "tool_calls", None)
-        if tool_calls:
-            return None
-
-        content = str(ai_msg.content or "").strip()
-        reasoning = OutputRepetitionGuard._extract_reasoning(ai_msg)
-
-        # Fall back to inline <think>…</think> style reasoning
-        if not reasoning:
-            reasoning = OutputRepetitionGuard._extract_inline_reasoning(content)
-            if reasoning:
-                content = OutputRepetitionGuard._strip_inline_reasoning(content)
-
-        # Halted short-circuit
-        if state_register_mem.get_state(session_id, _HALTED_KEY, False):
-            return AIMessage(content=self._halted_short_circuit_message())
-
-        # Visible output
-        if len(content) >= _MIN_CONTENT_LENGTH:
-            r = self._guard._check_text_repetition(
-                session_id,
-                content,
-                content,
-                _HISTORY_KEY,
-                _INTERNAL_WARNED_KEY,
-                "output",
-            )
-            if r is not None:
-                return r
-
-        # Reasoning
-        if len(reasoning) >= _MIN_CONTENT_LENGTH:
-            r = self._guard._check_text_repetition(
-                session_id,
-                reasoning,
-                content,
-                _REASONING_HISTORY_KEY,
-                _REASONING_WARNED_KEY,
-                "reasoning",
-            )
-            if r is not None:
-                return r
-
-        return None
-
-    # ------------------------------------------------------------------
-    # Streaming interception (astream)
-    # ------------------------------------------------------------------
-    async def astream(self, *args, **kwargs) -> AsyncGenerator[tuple, None]:
-        """Intercepted streaming with comprehensive repetition detection.
-
-        Accepts the same arguments as ``CompiledStateGraph.astream`` and
-        yields the same ``(mode, data)`` chunk format.  When repetition is
-        detected, a warning chunk is yielded and subsequent text from the
-        current (or all) model call(s) is suppressed.
-        """
-        input_ = args[0] if args else kwargs.get("input")
-        config = args[1] if len(args) > 1 else kwargs.get("config")
-        stream_mode = kwargs.get("stream_mode")
-
-        session_id = self._extract_session_id(input_, config)
-
-        # Per-turn state reset (mirrors middleware before_agent)
-        self._guard._before_agent_impl({"session_id": session_id})
-
-        # If stream_mode doesn't include "messages", pass through without
-        # interception — we can only detect repetition on message chunks.
-        if not self._can_intercept(stream_mode):
-            async for chunk in self._inner.astream(*args, **kwargs):
-                yield chunk
-            return
-
-        # State machine for tracking model-call boundaries
-        in_model_call = False
-        call_text = ""
-        call_reasoning = ""
-        call_cut = False  # whether current call's visible text was cut
-
-        generator = self._inner.astream(*args, **kwargs)
-
-        try:
-            async for chunk in generator:
-                # Guard against unexpected chunk shapes
-                if not isinstance(chunk, (tuple, list)) or len(chunk) < 2:
-                    yield chunk
-                    continue
-
-                mode = chunk[0]
-                data = chunk[1]
-
-                # ====================================================
-                # "updates" mode — model call boundary
-                # ====================================================
-                if mode == "updates":
-                    if in_model_call:
-                        warning, is_halt = self._on_model_call_end(
-                            session_id, call_text, call_reasoning
-                        )
-                        # Reset state BEFORE yielding/breaking so the
-                        # end-of-stream block doesn't re-process this call.
-                        in_model_call = False
-                        call_text = ""
-                        call_reasoning = ""
-                        call_cut = False
-                        if warning is not None:
-                            yield self._text_chunk(warning)
-                            if is_halt:
-                                logger.warning(
-                                    "[RepetitionGuardWrapper] session={} "
-                                    "cross-call HALT — cancelling stream",
-                                    session_id,
-                                )
-                                break
-
-                    yield chunk
-                    continue
-
-                # ====================================================
-                # non-"messages" mode — pass through
-                # ====================================================
-                if mode != "messages":
-                    yield chunk
-                    continue
-
-                # data is (message_chunk, metadata_dict)
-                if not isinstance(data, (tuple, list)) or len(data) < 2:
-                    yield chunk
-                    continue
-
-                msg_chunk: Any = data[0]
-                metadata: dict = data[1] if isinstance(data[1], dict) else {}
-                node = metadata.get("langgraph_node")
-
-                # --------------------------------------------------
-                # Non-model node -> boundary if we were in a call
-                # --------------------------------------------------
-                if node != "model":
-                    if in_model_call:
-                        warning, is_halt = self._on_model_call_end(
-                            session_id, call_text, call_reasoning
-                        )
-                        # Reset state BEFORE yielding/breaking so the
-                        # end-of-stream block doesn't re-process this call.
-                        in_model_call = False
-                        call_text = ""
-                        call_reasoning = ""
-                        call_cut = False
-                        if warning is not None:
-                            yield self._text_chunk(warning)
-                            if is_halt:
-                                logger.warning(
-                                    "[RepetitionGuardWrapper] session={} "
-                                    "cross-call HALT — cancelling stream",
-                                    session_id,
-                                )
-                                break
-                    yield chunk
-                    continue
-
-                # --------------------------------------------------
-                # Model node — we're inside a model call
-                # --------------------------------------------------
-                in_model_call = True
-
-                # HALT short-circuit: if the halt flag is already set
-                # (e.g. by the middleware backstop), yield halt messages
-                # instead of forwarding repetitive text.
-                if state_register_mem.get_state(session_id, _HALTED_KEY, False):
-                    yield self._text_chunk(
-                        self._halted_short_circuit_message(), metadata
-                    )
-                    continue
-
-                if not isinstance(msg_chunk, AIMessageChunk):
-                    yield chunk
-                    continue
-
-                # Skip chunks that carry tool calls (text-output guard only)
-                has_tool_calls = bool(
-                    getattr(msg_chunk, "tool_calls", None)
-                    or getattr(msg_chunk, "tool_call_chunks", None)
-                )
-
-                # Extract text content and reasoning
-                content = str(msg_chunk.content or "")
-                reasoning = ""
-                ak = getattr(msg_chunk, "additional_kwargs", None)
-                if ak and isinstance(ak, dict):
-                    for rk in _REASONING_KEYS:
-                        rv = str(ak.get(rk, "") or "")
-                        if rv:
-                            reasoning = rv
-                            break
-
-                # ---- accumulate + stream-level internal detection ----
-                if content and not call_cut and not has_tool_calls:
-                    call_text += content
-                    if len(call_text) >= _MIN_CONTENT_LENGTH:
-                        try:
-                            if self._guard._detect_internal_repetition(call_text):
-                                already = state_register_mem.get_state(
-                                    session_id, _INTERNAL_WARNED_KEY, False
-                                )
-                                if not already:
-                                    state_register_mem.set_state(
-                                        session_id, _INTERNAL_WARNED_KEY, True
-                                    )
-                                    logger.debug(
-                                        "[RepetitionGuardWrapper] session={} "
-                                        "stream internal repetition — cutting",
-                                        session_id,
-                                    )
-                                    yield self._text_chunk(
-                                        _STREAM_WARNING, metadata
-                                    )
-                                    call_cut = True
-                        except Exception:
-                            logger.exception(
-                                "[RepetitionGuardWrapper] internal detection "
-                                "error (non-fatal)"
-                            )
-
-                # ---- accumulate reasoning (checked at boundary) ----
-                if reasoning:
-                    call_reasoning += reasoning
-
-                # ---- forward chunk ----
-                # When text is cut, skip subsequent text-bearing chunks from
-                # the current model call.  Reasoning-only chunks (empty
-                # content) are still forwarded so the thinking stream stays
-                # intact for the client.
-                if call_cut and content and not has_tool_calls:
-                    continue  # suppress repetitive text
-                yield chunk
-
-            # ---- end of stream: process the last model call ----
-            if in_model_call:
-                warning, is_halt = self._on_model_call_end(
-                    session_id, call_text, call_reasoning
-                )
-                if warning is not None:
-                    yield self._text_chunk(warning)
-
-        finally:
-            if generator is not None:
-                try:
-                    await generator.aclose()
-                except Exception:
-                    pass
-
-    # ------------------------------------------------------------------
-    # Non-streaming (ainvoke)
-    # ------------------------------------------------------------------
-    async def ainvoke(self, *args, **kwargs) -> Any:
-        """Intercepted non-streaming with post-hoc repetition detection.
-
-        Resets per-turn state, delegates to the inner agent, then inspects
-        the final ``AIMessage`` of the result.  If repetition is detected,
-        the last message is replaced with the guard's warning/halt message.
-        """
-        input_ = args[0] if args else kwargs.get("input")
-        config = args[1] if len(args) > 1 else kwargs.get("config")
-
-        session_id = self._extract_session_id(input_, config)
-
-        # Per-turn state reset
-        self._guard._before_agent_impl({"session_id": session_id})
-
-        result = await self._inner.ainvoke(*args, **kwargs)
-
-        # Post-hoc detection on the last AIMessage
-        if isinstance(result, dict) and "messages" in result:
-            messages = result["messages"]
-            if messages:
-                last_msg = messages[-1]
-                if isinstance(last_msg, AIMessage):
-                    try:
-                        replacement = self._post_hoc_check(session_id, last_msg)
-                        if replacement is not None:
-                            result["messages"][-1] = replacement
-                    except Exception:
-                        logger.exception(
-                            "[RepetitionGuardWrapper] post-hoc detection "
-                            "error (non-fatal)"
-                        )
-
-        return result
-
-    # ------------------------------------------------------------------
-    # Transparent delegation
-    # ------------------------------------------------------------------
-    def __getattr__(self, name: str) -> Any:
-        """Delegate any unknown attribute access to the inner agent.
-
-        This ensures that methods like ``aget_state``, ``aupdate_state``,
-        ``aget_state_history``, etc. are transparently forwarded.
-        """
-        return getattr(self._inner, name)
-
-    # ------------------------------------------------------------------
-    # Convenience accessors
-    # ------------------------------------------------------------------
-    @property
-    def inner(self) -> CompiledStateGraph:
-        """The wrapped inner agent graph."""
-        return self._inner
-```
-
----
-
-## 2. 新建文件：`tests/unit/test_repetition_guard_wrapper.py`
-
-**完整文件内容如下，直接创建：**
-
-```python
 """Unit tests for agent/repetition_guard_wrapper.py — RepetitionGuardWrapper.
 
 Covers ALL OutputRepetitionGuard interception functionality at the wrapper level:
@@ -1640,288 +1012,148 @@ class TestNonModelMessages:
         )
         out = _collect_stream(wrapper)
         assert _has_warning(out)
-```
-
----
-
-## 3. 修改文件：`agent/__init__.py`
-
-### 变更说明
-
-将原有的直接导入（`from .core import built_agent` 等）替换为延迟 `__getattr__` 导入机制，
-避免在测试收集阶段或仅需子模块时触发 `codeact -> langchain factory -> langgraph prebuilt`
-这一重依赖链。同时新增 `RepetitionGuardWrapper` 导出。
-
-### 旧代码（变更前）
-
-```python
-# 原始 __init__.py 直接导入，类似：
-from .codeact import codeact_agent
-from .core import built_agent, get_agent_tools
-from .checkpointer import build_async_sqlite_checkpointer
-# ... 其他直接导入
-```
-
-### 新代码（替换为）
-
-```python
-"""Lazy imports for the agent package.
-
-Using ``__getattr__`` avoids triggering heavy dependency chains
-(codeact -> langchain factory -> langgraph prebuilt) during test
-collection or when only a specific submodule is needed.
-"""
-
-__all__ = [
-    "codeact_agent",
-    "built_agent",
-    "get_agent_tools",
-    "build_async_sqlite_checkpointer",
-    "RepetitionGuardWrapper",
-]
 
 
-def __getattr__(name: str):
-    if name == "codeact_agent":
-        from .codeact import codeact_agent
-        return codeact_agent
-    if name in ("built_agent", "get_agent_tools"):
-        from . import core
-        return getattr(core, name)
-    if name == "build_async_sqlite_checkpointer":
-        from .checkpointer import build_async_sqlite_checkpointer
-        return build_async_sqlite_checkpointer
-    if name == "RepetitionGuardWrapper":
-        from .repetition_guard_wrapper import RepetitionGuardWrapper
-        return RepetitionGuardWrapper
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-```
+# ======================================================================
+# 18. Phantom-stream guard
+# ======================================================================
 
----
+class TestPhantomStreamGuard:
+    """Model text arriving before ANY "updates" chunk cannot be live
+    output of the middleware-equipped graph on a fresh dict-input run.
+    With ``phantom_stream_guard=True`` it is dropped (loudly logged)
+    instead of tripping the repetition cut that historically suppressed
+    the REAL reply behind it (user saw only the 145-char warning)."""
 
-## 4. 修改文件：`agent/core.py`
+    def test_flag_off_phantom_forwarded(self, fresh_state):
+        """Default (off): legacy behavior — phantom text passes through."""
+        text = "Phantom model text before any updates chunk."
+        chunks = [msg_chunk(text)]
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
+        out = _collect_stream(wrapper)
+        assert _text_parts(out) == text
+        assert not _has_warning(out)
 
-### 变更说明
+    def test_flag_off_repetitive_phantom_still_cuts(self, fresh_state):
+        """Legacy failure-mode proof: without the guard, a repetitive
+        phantom trips the cut and yields the warning (the historical bug)."""
+        chunks = [msg_chunk("x" * 30)]
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
+        out = _collect_stream(wrapper)
+        assert _has_warning(out)
 
-1. **删除** `OutputRepetitionGuard` 的导入
-2. **新增** `RepetitionGuardWrapper` 的导入
-3. **从 middleware 列表中移除** `OutputRepetitionGuard()`（避免与 wrapper 双重计数）
-4. **在 `create_agent(...)` 返回后用 `RepetitionGuardWrapper` 包装**
-
-### 变更 1：导入部分
-
-**旧代码：**
-
-```python
-from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
-                           IterationBudget, HeartbeatStaleness)
-from .middlewares.output_repetition_guard import OutputRepetitionGuard
-from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
-from .smart_tool_node import patch_tool_node
-```
-
-**新代码：**
-
-```python
-from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
-                           IterationBudget, HeartbeatStaleness)
-from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
-from .smart_tool_node import patch_tool_node
-from .repetition_guard_wrapper import RepetitionGuardWrapper
-```
-
-### 变更 2：middleware 列表 + 包装
-
-**旧代码：**
-
-```python
-        _agent =  create_agent(
-            model = main_llm.bind(temperature=temperature),
-            state_schema = StateSchema,
-            checkpointer = checkpointer,
-            tools = get_agent_tools(),
-            middleware = [
-                ContextEngineHook(),
-                MultimodalProcessor(),
-                IterationBudget(90),
-                ToolGuardrails(),
-                OutputRepetitionGuard(),
-                ToolCallNormalize(),
-                HeartbeatStaleness(),
-                HumanInTheLoop(HITLConfig()),
-                Summarization(
-                    need_update_system_prompt=True,
-                    model=auxiliary_llm,
-                    trigger=[
-                        ("tokens", int(main_llm_max_tokens / 2))
-                    ],
-                    keep=("messages", 10),
-
-                ),
-            ],
+    def test_phantom_dropped(self, fresh_state):
+        """Guard ON: pre-update model text is dropped, not forwarded, and
+        never touches the guard's detection state."""
+        phantom = "Garbage model text arriving before any update!!"
+        chunks = [msg_chunk(phantom)]
+        wrapper = RepetitionGuardWrapper(
+            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
         )
-        _agent_loop = current_loop
+        out = _collect_stream(wrapper)
+        assert _text_parts(out) == ""
+        assert not _has_warning(out)
+        # phantom never reached detection state
+        hist = fresh_state.get_state("s1", _HISTORY_KEY, [])
+        assert hist == []
 
-    return _agent
-```
-
-**新代码：**
-
-```python
-        # Build the agent
-        _agent =  create_agent(
-            model = main_llm.bind(temperature=temperature),
-            state_schema = StateSchema,
-            checkpointer = checkpointer,
-            tools = get_agent_tools(),
-            middleware = [
-                ContextEngineHook(),
-                MultimodalProcessor(),
-                IterationBudget(90),
-                ToolGuardrails(),
-                ToolCallNormalize(),
-                HeartbeatStaleness(),
-                HumanInTheLoop(HITLConfig()),
-                Summarization(
-                    need_update_system_prompt=True,
-                    model=auxiliary_llm,
-                    trigger=[
-                        ("tokens", int(main_llm_max_tokens / 2))
-                    ],
-                    keep=("messages", 10),
-
-                ),
-            ],
+    def test_multiple_phantom_chunks_dropped(self, fresh_state):
+        chunks = [
+            msg_chunk("First phantom chunk before updates!!"),
+            msg_chunk("Second phantom chunk before updates!"),
+        ]
+        wrapper = RepetitionGuardWrapper(
+            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
         )
-        # Wrap with RepetitionGuardWrapper for stream-level repetition
-        # detection (replaces both the OutputRepetitionGuard middleware and
-        # the check_stream_repetition calls in messages.py).
-        _agent = RepetitionGuardWrapper(_agent)
-        _agent_loop = current_loop
+        out = _collect_stream(wrapper)
+        assert _text_parts(out) == ""
 
-    return _agent
-```
+    def test_guard_on_repetitive_phantom_no_warning(self, fresh_state):
+        """With the guard, the same repetitive phantom yields NO warning —
+        it is dropped before accumulation/detection ever sees it."""
+        chunks = [msg_chunk("x" * 30)]
+        wrapper = RepetitionGuardWrapper(
+            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
+        )
+        out = _collect_stream(wrapper)
+        assert not _has_warning(out)
+        assert _text_parts(out) == ""
 
-**关键差异：**
+    def test_real_reply_survives_after_phantom(self, fresh_state):
+        """THE regression case: a phantom must NOT arm call_cut; the real
+        reply that follows updates must reach the client."""
+        reply = "A perfectly normal and varied reply about many topics."
+        chunks = [
+            msg_chunk("x" * 30),  # repetitive phantom (would trip detection)
+            update_chunk("MultimodalProcessor.before_agent"),
+            msg_chunk(reply),
+            update_chunk("model", [AIMessage(content=reply)]),
+        ]
+        wrapper = RepetitionGuardWrapper(
+            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
+        )
+        out = _collect_stream(wrapper)
+        assert "x" * 30 not in _text_parts(out)  # phantom dropped
+        assert reply in _text_parts(out)  # real reply survives
+        assert not _has_warning(out)  # no false 145-char warning
 
-- `OutputRepetitionGuard()` 从 `middleware` 列表中删除
-- `create_agent(...)` 返回值赋给 `_agent` 后，立即 `_agent = RepetitionGuardWrapper(_agent)` 包装
+    def test_updates_first_normal_flow(self, fresh_state):
+        """Guard ON + healthy updates-first stream: text flows normally."""
+        reply = "Normal varied answer once the graph has started."
+        chunks = [
+            update_chunk("MultimodalProcessor.before_agent"),
+            msg_chunk(reply),
+        ]
+        wrapper = RepetitionGuardWrapper(
+            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
+        )
+        out = _collect_stream(wrapper)
+        assert reply in _text_parts(out)
+        assert not _has_warning(out)
 
----
+    def test_command_resume_exempt(self, fresh_state):
+        """Command(resume) streams may legitimately start with messages
+        (the interrupted node re-executes) — the guard must NOT drop
+        them."""
+        from langgraph.types import Command
 
-## 5. 修改文件：`server/service/messages.py`
+        cmd = Command(resume={"session_id": "cmd-session"})
+        text = "Resume answer text that legitimately precedes updates."
+        chunks = [msg_chunk(text)]
+        wrapper = RepetitionGuardWrapper(
+            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
+        )
 
-### 变更说明
+        async def _run():
+            out = []
+            async for chunk in wrapper.astream(
+                cmd, config={}, stream_mode=["messages", "updates"]
+            ):
+                out.append(chunk)
+            return out
 
-1. **删除** `check_stream_repetition` 的导入
-2. **删除** `async_generate` 函数中的 `check_stream_repetition` 调用（约第 366 行）
-3. **删除** resume 路径中的 `check_stream_repetition` 调用（约第 644 行）
+        out = asyncio.run(_run())
+        assert _text_parts(out) == text
 
-wrapper 已在 `astream` 层透明处理流级重复检测，`messages.py` 不再需要手动调用。
-
-### 变更 1：导入部分
-
-**旧代码：**
-
-```python
-from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
-from agent.middlewares.output_repetition_guard import check_stream_repetition
-from context_engine import get_history_by_turn_page as _get_history_by_turn_page
-```
-
-**新代码：**
-
-```python
-from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
-from context_engine import get_history_by_turn_page as _get_history_by_turn_page
-```
-
-### 变更 2：`async_generate` 函数中的调用点
-
-**旧代码：**
-
-```python
-                    # Conversation output logic
-                    if len(msg_chunk.content) > 0:
-                        res: str = msg_chunk.content
-                        ai_text += res
-                        # Stream-level (Layer C) repetition interception. The
-                        # middleware backstop is post-hoc (per model call), so the
-                        # repetitive tail is cut BEFORE it reaches the client.
-                        guard_warning: str | None = check_stream_repetition(session_id, ai_text)
-                        if guard_warning is not None:
-                            yield {"type": "text", "content": guard_warning}
-                            break
-                        yield {"type": "text", "content": res}
-```
-
-**新代码：**
-
-```python
-                    # Conversation output logic
-                    if len(msg_chunk.content) > 0:
-                        res: str = msg_chunk.content
-                        ai_text += res
-                        yield {"type": "text", "content": res}
-```
-
-### 变更 3：resume 路径中的调用点
-
-**旧代码：**
-
-```python
-                if len(msg_chunk.content) > 0:
-                    res: str = msg_chunk.content
-                    # Stream-level (Layer C) repetition interception. Mirrors
-                    # async_generate: accumulate the visible model text and, when
-                    # a repetitive pattern is detected, yield the warning chunk and
-                    # cut the rest of the stream instead of forwarding it.
-                    ai_text_stream += res
-                    guard_warning: str | None = check_stream_repetition(session_id, ai_text_stream)
-                    if guard_warning is not None:
-                        yield {"type": "text", "content": guard_warning}
-                        break
-                    yield {"type": "text", "content": res}
-```
-
-**新代码：**
-
-```python
-                if len(msg_chunk.content) > 0:
-                    res: str = msg_chunk.content
-                    ai_text_stream += res
-                    yield {"type": "text", "content": res}
-```
-
----
-
-## 6. 验证步骤
-
-完成以上所有变更后，运行以下命令验证：
-
-```bash
-# 运行 wrapper 测试（应全部 43 项通过）
-python -m pytest tests/unit/test_repetition_guard_wrapper.py -v --tb=short
-
-# 验证修改的文件语法正确
-python -c "import ast; ast.parse(open('agent/core.py', encoding='utf-8').read()); print('core.py OK')"
-python -c "import ast; ast.parse(open('server/service/messages.py', encoding='utf-8').read()); print('messages.py OK')"
-
-# 确认 messages.py 中不再引用 check_stream_repetition
-# (应返回无匹配)
-```
-
-### 注意事项
-
-- `tests/unit/test_output_repetition_guard.py`（旧中间件测试）由于 `langgraph.runtime`
-  缺少 `ExecutionInfo` / `ServerInfo` 的版本不兼容问题，在隔离运行时会 import 失败。
-  这是 **变更前就存在的问题**，与本次变更无关。新测试文件
-  `test_repetition_guard_wrapper.py` 通过 stub 模块绕过了此问题。
-- `agent/__init__.py` 改为延迟导入后，旧的 `from agent import built_agent` 等用法
-  仍然正常工作（`__getattr__` 在首次访问时触发导入）。
-- `OutputRepetitionGuard` 中间件类本身（`agent/middlewares/output_repetition_guard.py`）
-  **不做任何修改** — wrapper 复用其检测方法（`_detect_internal_repetition`、
-  `_check_text_repetition`、`_before_agent_impl` 等）和状态键常量。
-- `check_stream_repetition` 函数和 `_STREAM_GUARD` 实例仍保留在
-  `output_repetition_guard.py` 中，只是不再被 `messages.py` 调用。如果确认无其他
-  引用方，可以后续清理。
+    def test_empty_content_phantom_forwarded(self, fresh_state):
+        """Only text-bearing pre-update chunks are dropped; empty model
+        chunks (role-only) pass through harmlessly."""
+        chunks = [
+            msg_chunk(""),
+            update_chunk("MultimodalProcessor.before_agent"),
+            msg_chunk("Normal text after updates arrives just fine."),
+        ]
+        wrapper = RepetitionGuardWrapper(
+            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
+        )
+        out = _collect_stream(wrapper)
+        assert "Normal text after updates arrives just fine." in _text_parts(out)
+        # the empty chunk was forwarded as-is
+        raw_msgs = [d for m, d in out if m == "messages"]
+        assert any(
+            isinstance(d, (tuple, list))
+            and len(d) >= 2
+            and isinstance(d[0], AIMessageChunk)
+            and d[0].content == ""
+            for d in raw_msgs
+        )

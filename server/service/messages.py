@@ -14,7 +14,6 @@ from pub_func import build_agent_config, is_url
 from ..DAO import clear_session as clear_session_DAO
 from context_engine.curator import reset_idle_for_seconds
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
-from agent.middlewares.output_repetition_guard import check_stream_repetition
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk, ToolMessage
 
@@ -360,13 +359,6 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                     if len(msg_chunk.content) > 0:
                         res: str = msg_chunk.content
                         ai_text += res
-                        # Stream-level (Layer C) repetition interception. The
-                        # middleware backstop is post-hoc (per model call), so the
-                        # repetitive tail is cut BEFORE it reaches the client.
-                        guard_warning: str | None = check_stream_repetition(session_id, ai_text)
-                        if guard_warning is not None:
-                            yield {"type": "text", "content": guard_warning}
-                            break
                         yield {"type": "text", "content": res}
 
                     # Model reasoning output logic
@@ -636,15 +628,7 @@ async def resume_agent(
 
                 if len(msg_chunk.content) > 0:
                     res: str = msg_chunk.content
-                    # Stream-level (Layer C) repetition interception. Mirrors
-                    # async_generate: accumulate the visible model text and, when
-                    # a repetitive pattern is detected, yield the warning chunk and
-                    # cut the rest of the stream instead of forwarding it.
                     ai_text_stream += res
-                    guard_warning: str | None = check_stream_repetition(session_id, ai_text_stream)
-                    if guard_warning is not None:
-                        yield {"type": "text", "content": guard_warning}
-                        break
                     yield {"type": "text", "content": res}
 
                 # Surface DeepSeek thinking-mode chain-of-thought. langchain-deepseek

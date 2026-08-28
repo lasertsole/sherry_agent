@@ -2,7 +2,7 @@ import shutil
 from pathlib import Path
 from loguru import logger
 from config import SESSIONS_DIR
-from runtime import clear_all_register_sessions, state_register_db
+from runtime import clear_all_register_sessions
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
 
 def _session_folder(session_id: str) -> str:
@@ -33,14 +33,5 @@ async def clear_session(session_id: str) -> None:
     if path.exists() and path.is_dir():
         shutil.rmtree(path)
 
-    # (4) In-memory register sessions (e.g. StateRegisterMeM).
-    clear_all_register_sessions(session_id)
-
-    # (5) state_register_db — delete every keyed variable for this session.
-    try:
-        states = state_register_db.get_all_states(session_id)
-        for key in states:
-            _ = state_register_db.delete_state(session_id, key)
-        logger.debug(f"Cleared {len(states)} state_register_db variable(s) for session_id={session_id}")
-    except Exception:
-        logger.exception(f"Failed to clear state_register_db for session_id={session_id}")
+    # (4) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
+    clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)

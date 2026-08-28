@@ -10,9 +10,9 @@ from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
                           IterationBudget, HeartbeatStaleness)
-from .middlewares.output_repetition_guard import OutputRepetitionGuard
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .smart_tool_node import patch_tool_node
+from .repetition_guard_wrapper import RepetitionGuardWrapper
 
 # # 只有幂等的工具才能并行执行，非幂等串行执行
 # patch_tool_node()
@@ -107,7 +107,6 @@ async def built_agent(
                 MultimodalProcessor(),
                 IterationBudget(90),
                 ToolGuardrails(),
-                OutputRepetitionGuard(),
                 ToolCallNormalize(),
                 HeartbeatStaleness(),
                 HumanInTheLoop(HITLConfig()),
@@ -122,6 +121,15 @@ async def built_agent(
                 ),
             ],
         )
+        # Wrap with RepetitionGuardWrapper for stream-level repetition
+        # detection (replaces both the OutputRepetitionGuard middleware and
+        # the check_stream_repetition calls in messages.py).
+        # phantom_stream_guard=True: the middleware-equipped graph ALWAYS
+        # emits before_agent "updates" before any model text on fresh
+        # dict-input runs — pre-update model text is physically impossible
+        # stream output and historically triggered a false repetition cut
+        # that suppressed the real reply.
+        _agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
         _agent_loop = current_loop
 
     return _agent
