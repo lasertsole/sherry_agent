@@ -1,6 +1,7 @@
 ---
 name: clawhub
 description: Search and install agent skills from ClawHub, the public skill registry.
+scope: main_only
 ---
 
 # ClawHub

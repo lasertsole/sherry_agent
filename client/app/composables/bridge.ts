@@ -1204,9 +1204,10 @@ export async function updateSystemPrompt(
 /**
  * Read all long-term memory files (workspace/memory/*).
  *
- * Note: `fetchApi` resolves through Nuxt's `useFetch`, which dedupe/caches GET
- * requests by URL. A timestamp query param acts as a cache-buster so calls
- * inside event handlers still hit the network and return fresh content.
+ * Note: `fetchApi` resolves through ofetch's `$fetch`, which does not cache or
+ * dedupe requests. The timestamp query param is a legacy cache-buster from the
+ * previous `useFetch`-based implementation and is now harmless (kept so the
+ * backend URL shape is unchanged).
  */
 export async function readMemory(): Promise<Record<string, string>> {
   if (isTauri()) {
@@ -1247,9 +1248,9 @@ export async function writeMemory(
  *
  * Unlike memory, heartbeat deliberately skips Rust/Tauri and always goes
  * through `fetchApi` in both modes (there is no Rust command for heartbeat).
- * `fetchApi` resolves through Nuxt's `useFetch`, which dedupe/caches GET
- * requests by URL. A timestamp query param acts as a cache-buster so calls
- * inside event handlers still hit the network and return fresh content.
+ * `fetchApi` resolves through ofetch's `$fetch`, which does not cache or
+ * dedupe requests; the timestamp query param is a legacy cache-buster from
+ * the previous `useFetch`-based implementation and is now harmless.
  */
 export async function readHeartbeat(): Promise<Record<string, string>> {
   return fetchApi({
@@ -1345,9 +1346,10 @@ export interface CronActionResponse {
 /**
  * List cron jobs.
  *
- * `fetchApi` resolves through Nuxt's `useFetch`, which dedupe/caches GET
- * requests by URL — a timestamp query param busts the cache so repeated calls
- * after add/edit/run always return fresh job state.
+ * `fetchApi` resolves through ofetch's `$fetch`, which does not cache or
+ * dedupe requests; the timestamp query param is a legacy cache-buster from
+ * the previous `useFetch`-based implementation and is now harmless (repeated
+ * calls after add/edit/run always return fresh job state regardless).
  *
  * @param includeDisabled Whether to include jobs whose `enabled` flag is false.
  */
@@ -1457,10 +1459,10 @@ export async function deleteCronJob(id: string): Promise<CronActionResponse> {
 /**
  * List all skills (builtin, auto, third_party).
  *
- * `fetchApi` resolves through Nuxt's `useFetch`, which dedupe/caches GET
- * requests by URL. A timestamp query param acts as a cache-buster so that
- * repeated calls after a curator run (or any lifecycle change) always hit the
- * network and return fresh data instead of a stale cached snapshot.
+ * `fetchApi` resolves through ofetch's `$fetch`, which does not cache or
+ * dedupe requests; the timestamp query param is a legacy cache-buster from
+ * the previous `useFetch`-based implementation and is now harmless (repeated
+ * calls after a curator run or any lifecycle change always return fresh data).
  */
 export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
   return fetchApi({
@@ -1473,8 +1475,9 @@ export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
 /**
  * List all available channels.
  *
- * Mirrors `listSkills`: a timestamp query param busts Nuxt's `useFetch` GET
- * cache so repeated calls always return fresh channel status.
+ * Mirrors `listSkills`: the timestamp query param is a legacy cache-buster
+ * from the previous `useFetch`-based implementation and is now harmless
+ * (repeated calls always return fresh channel status either way).
  */
 export async function listChannels(): Promise<{ channels: ChannelInfo[] }> {
   return fetchApi({

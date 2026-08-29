@@ -12,6 +12,8 @@ from agent.tools.pub_base import (
     parse_frontmatter,
     iter_skill_index_files,
     skill_matches_platform,
+    skill_visible_to,
+    normalize_skill_scope,
     EXCLUDED_SKILL_DIRS,
 )
 
@@ -82,7 +84,7 @@ def _get_category_from_path(skill_path) -> str | None:
     return None
 
 
-def _skill_view(name: str, file_path: str | None = None) -> str:
+def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "main") -> str:
     try:
         lookup_error = _skill_lookup_path_error(name)
         if lookup_error:
@@ -220,6 +222,24 @@ def _skill_view(name: str, file_path: str | None = None) -> str:
                 {
                     "success": False,
                     "error": f"Skill '{name}' is not supported on this platform.",
+                },
+                ensure_ascii=False,
+            )
+
+        # Scope visibility: a subagent caller (metadata["caller_scope"] ==
+        # "subagent", stamped by the spawn tool policy) may not view skills
+        # whose frontmatter scope is "main_only". The scope comes from the
+        # target SKILL.md frontmatter parsed above — the skill may not appear
+        # in the scan snapshot at all. Main callers (default) are unaffected.
+        skill_scope = normalize_skill_scope(frontmatter.get("scope"))
+        if not skill_visible_to({"scope": skill_scope}, caller_scope):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": (
+                        f"Skill '{name}' is not visible to this caller "
+                        f"(scope: {skill_scope})."
+                    ),
                 },
                 ensure_ascii=False,
             )
@@ -428,7 +448,13 @@ class SkillView(BaseTool):
 
     @override
     def _run(self, name: str, file_path: str | None = None) -> str:
-        return _skill_view(name, file_path)
+        metadata = getattr(self, "metadata", None)
+        caller_scope = (
+            metadata.get("caller_scope", "main")
+            if isinstance(metadata, dict)
+            else "main"
+        )
+        return _skill_view(name, file_path, caller_scope=caller_scope)
 
     @override
     async def _arun(self, name: str, file_path: str | None = None) -> str:

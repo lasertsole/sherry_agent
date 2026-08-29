@@ -112,6 +112,44 @@ def skill_matches_platform(frontmatter: dict[str, Any]) -> bool:
             return True
     return False
 
+# ── Skill scope visibility ────────────────────────────────────────────────
+
+#: Allowed values for the ``scope:`` frontmatter field.
+VALID_SKILL_SCOPES = frozenset(("all", "main_only", "subagent_only"))
+
+
+def normalize_skill_scope(raw: Any) -> str:
+    """Normalize a ``scope:`` frontmatter value.
+
+    Returns the value when it is one of :data:`VALID_SKILL_SCOPES`, otherwise
+    ``"all"`` (the backward-compatible default for absent/invalid values).
+    """
+    if raw is None:
+        return "all"
+    value = str(raw).strip().lower()
+    return value if value in VALID_SKILL_SCOPES else "all"
+
+
+def skill_visible_to(skill: dict[str, Any], caller_scope: str) -> bool:
+    """Return True when *skill* is visible to a caller with *caller_scope*.
+
+    Visibility contract (shared with skills/loader.py and the subagent tool
+    policy):
+
+    - ``caller_scope == "main"`` sees skills whose scope != ``subagent_only``.
+    - ``caller_scope == "subagent"`` sees skills whose scope != ``main_only``.
+    - Unknown caller scopes degrade to ``"main"``; a skill with an absent or
+      invalid ``scope`` defaults to ``"all"`` (visible to every caller).
+    """
+    scope = normalize_skill_scope(skill.get("scope") if isinstance(skill, dict) else None)
+    caller = str(caller_scope or "").strip().lower()
+    if caller not in ("main", "subagent"):
+        caller = "main"
+    if caller == "subagent":
+        return scope != "main_only"
+    return scope != "subagent_only"
+
+
 # Storage prefix: all skill config vars are stored under skills.config.*
 # in config.yaml.  Skill authors declare logical keys (e.g. "wiki.path");
 # the system adds this prefix for storage and strips it for display.

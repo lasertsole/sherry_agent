@@ -99,10 +99,34 @@ class TestSkillInjection:
             load_skills=["clawhub", "skill_creator", "web_search"],
             run_in_background=True,
         )
-        # Auth skills silently excluded; web_search still injected.
+        # main_only-scoped skills (clawhub/skill_creator) are silently
+        # excluded via their `scope:` frontmatter; web_search still injected.
         assert "clawhub" not in seen["task"]
         assert "skill_creator" not in seen["task"]
         assert "web_search" in seen["task"]
+
+
+class TestValidateLoadSkills:
+    """Direct coverage for the scope-based drop in _validate_load_skills."""
+
+    def test_main_only_scope_dropped(self):
+        # skill_creator/clawhub are `scope: main_only` in the skills.loader
+        # stub; a subagent caller must not resolve them.
+        resolved = delegate._validate_load_skills(["skill_creator", "web_search"])
+        assert resolved == ["web_search"]
+
+    def test_all_main_only_resolves_empty(self):
+        assert delegate._validate_load_skills(["clawhub", "skill_creator"]) == []
+
+    def test_unknown_names_dropped_and_warned(self, caplog):
+        with caplog.at_level("WARNING", logger="agent.tools.subagent.delegate"):
+            resolved = delegate._validate_load_skills(["nope", "web_search"])
+        assert resolved == ["web_search"]
+        assert "unknown skill" in caplog.text
+
+    def test_empty_and_none(self):
+        assert delegate._validate_load_skills(None) == []
+        assert delegate._validate_load_skills([]) == []
 
     def test_no_skills_leaves_task_untouched(self, monkeypatch):
         seen = {}

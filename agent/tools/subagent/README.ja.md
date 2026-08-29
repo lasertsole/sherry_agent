@@ -62,7 +62,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── Attachment materialization to disk (attachments.py)
   │     │     with safety checks: path traversal, size limits, file count
   │     ├── Tool policy: DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn,
-  │     │   sessions_yield, skill_manage, memory]
+  │     │   sessions_yield] (+ memory/skill_manage/sessions_kill/sessions_steer
+  │     │   blocked via metadata scope=main_only tags)
   │     │   ORCHESTRATOR role auto-unblocks sessions_spawn and sessions_yield
   │     ├── Context mode: ISOLATED (empty context) or FORK (copy parent
   │     │       transcript via agent.aget_state() — Decision 9)
@@ -427,7 +428,7 @@ depth N:  LEAF（depth == max_spawn_depth）
 **深さの計算**: `requester_session_key` から親の深さを抽出し、子の深さ = 親の深さ + 1。セッションキー形式 `"agent:{id}:subagent:{uuid}"` 内の `:subagent:` の出現回数が深さに等しくなります。
 
 **ツールポリシーの結合**:
-- LEAF ロールは `DEFAULT_SUBAGENT_BLOCKED_TOOLS`（`sessions_spawn`、`sessions_yield`、`skill_manage`、`memory`）によって完全に制限され、`sessions_spawn` を呼び出せません
+- LEAF ロールは `DEFAULT_SUBAGENT_BLOCKED_TOOLS`（`sessions_spawn`、`sessions_yield`）および metadata `scope="main_only"` ツール（`memory`、`skill_manage`、`sessions_kill`、`sessions_steer`）によって完全に制限され、`sessions_spawn` を呼び出せません
 - ORCHESTRATOR ロールは `sessions_spawn` と `sessions_yield` を自動的にブロック解除し、再帰スポーンを可能にします
 - これにより、ネスト深さのハード制約を回避できないことが保証されます
 

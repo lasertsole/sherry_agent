@@ -6,7 +6,8 @@ from unittest.mock import patch
 from agent.tools.pub_base.skill_utils import (
     parse_frontmatter, skill_matches_platform, extract_skill_description,
     iter_skill_index_files, parse_qualified_name, is_valid_namespace,
-    sort_skills, PLATFORM_MAP, EXCLUDED_SKILL_DIRS,
+    sort_skills, skill_visible_to, normalize_skill_scope,
+    VALID_SKILL_SCOPES, PLATFORM_MAP, EXCLUDED_SKILL_DIRS,
 )
 
 
@@ -170,3 +171,54 @@ class TestSortSkills:
 
     def test_empty_list(self):
         assert sort_skills([]) == []
+
+
+class TestNormalizeSkillScope:
+    def test_valid_values_pass_through(self):
+        for scope in ("all", "main_only", "subagent_only"):
+            assert normalize_skill_scope(scope) == scope
+
+    def test_absent_defaults_to_all(self):
+        assert normalize_skill_scope(None) == "all"
+
+    def test_invalid_falls_back_to_all(self):
+        assert normalize_skill_scope("banana") == "all"
+        assert normalize_skill_scope("") == "all"
+        assert normalize_skill_scope(["main_only"]) == "all"
+        assert normalize_skill_scope(123) == "all"
+
+    def test_whitespace_and_case_normalized(self):
+        assert normalize_skill_scope("  Main_Only  ") == "main_only"
+
+
+class TestSkillVisibleTo:
+    """Truth table for the shared scope visibility contract."""
+
+    @pytest.mark.parametrize("scope", ["all", None, "banana", ""])
+    def test_all_scope_visible_to_both(self, scope):
+        skill = {} if scope is None else {"scope": scope}
+        assert skill_visible_to(skill, "main") is True
+        assert skill_visible_to(skill, "subagent") is True
+
+    def test_main_only_hidden_from_subagent(self):
+        skill = {"scope": "main_only"}
+        assert skill_visible_to(skill, "subagent") is False
+        assert skill_visible_to(skill, "main") is True
+
+    def test_subagent_only_hidden_from_main(self):
+        skill = {"scope": "subagent_only"}
+        assert skill_visible_to(skill, "main") is False
+        assert skill_visible_to(skill, "subagent") is True
+
+    def test_unknown_caller_scope_treated_as_main(self):
+        assert skill_visible_to({"scope": "subagent_only"}, "nonsense") is False
+        assert skill_visible_to({"scope": "subagent_only"}, "") is False
+        assert skill_visible_to({"scope": "subagent_only"}, None) is False
+        assert skill_visible_to({"scope": "main_only"}, "nonsense") is True
+
+    def test_non_dict_skill_treated_as_default_scope(self):
+        assert skill_visible_to(None, "main") is True
+        assert skill_visible_to(None, "subagent") is True
+
+    def test_valid_scopes_constant(self):
+        assert VALID_SKILL_SCOPES == frozenset({"all", "main_only", "subagent_only"})

@@ -67,6 +67,8 @@ async def list_skills_handler(request):
             "description": s["description"],
             "location": s["location"],
             "category": _get_category(s["location"]),
+            # Visibility scope from the SKILL.md frontmatter (default "all").
+            "scope": s.get("scope", "all"),
             # Pin/fix state is surfaced so the client can render the correct
             # controls (fixed skills can't be deleted; pinned/fixed are shown).
             "pinned": is_pinned(s["name"]),

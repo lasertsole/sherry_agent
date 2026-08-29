@@ -62,7 +62,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── Attachment materialization to disk (attachments.py)
   │     │     with safety checks: path traversal, size limits, file count
   │     ├── Tool policy: DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn,
-  │     │   sessions_yield, skill_manage, memory]
+  │     │   sessions_yield] (+ memory/skill_manage/sessions_kill/sessions_steer
+  │     │   blocked via metadata scope=main_only tags)
   │     │   ORCHESTRATOR role auto-unblocks sessions_spawn and sessions_yield
   │     ├── Context mode: ISOLATED (empty context) or FORK (copy parent
   │     │       transcript via agent.aget_state() — Decision 9)
@@ -427,7 +428,7 @@ Default `max_spawn_depth = 3`, forming a three-level tree: MAIN → ORCHESTRATOR
 **Depth Calculation**: Extract parent depth from `requester_session_key`; child depth = parent depth + 1. The number of `:subagent:` occurrences in the session key format `"agent:{id}:subagent:{uuid}"` equals the depth.
 
 **Tool Policy Coupling**:
-- LEAF role is fully restricted by `DEFAULT_SUBAGENT_BLOCKED_TOOLS` (`sessions_spawn`, `sessions_yield`, `skill_manage`, `memory`), cannot invoke `sessions_spawn`
+- LEAF role is fully restricted by `DEFAULT_SUBAGENT_BLOCKED_TOOLS` (`sessions_spawn`, `sessions_yield`) plus metadata `scope="main_only"` tools (`memory`, `skill_manage`, `sessions_kill`, `sessions_steer`), cannot invoke `sessions_spawn`
 - ORCHESTRATOR role auto-unblocks `sessions_spawn` and `sessions_yield`, enabling recursive spawning
 - This ensures the hard constraint on nesting depth cannot be bypassed
 

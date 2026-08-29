@@ -40,8 +40,8 @@
 
 #### 1.2 主页 — 会话侧边栏 (`app/pages/home/`)
 
-- [ ] 会话列表：挂载时从后端 API 获取，展示在侧边栏
-- [ ] 会话 CRUD：新建（通过后端）、删除、重命名
+- [x] 会话列表：挂载时从后端 API 获取，展示在侧边栏
+- [x] 会话 CRUD：新建（本地占位，首条消息后落地后端）、删除、重命名
 - [x] 会话切换：点击侧边栏会话项 → 加载对应消息
 - [x] 响应式侧边栏：移动端（浮层）vs 桌面端（固定）
 - [x] 批量操作：多选会话、批量删除
@@ -75,9 +75,9 @@
 
 #### 1.6 本地状态管理 (`app/stores/`)
 
-- [ ] Pinia store 管理会话列表（当前会话、CRUD 操作）
-- [ ] Pinia store 管理消息列表（当前会话的消息、流式状态）
-- [ ] Pinia store 管理 UI 状态（侧边栏展开、工具菜单、主题）
+- [x] 会话列表状态管理（当前会话、CRUD 操作）—— composables + Dexie IndexedDB 实现（未用 Pinia）
+- [x] 消息列表状态管理（当前会话的消息、流式状态）—— composables + Dexie 实现（消息缓存 + 流式草稿落盘，未用 Pinia）
+- [x] Pinia store 管理 UI 状态（侧边栏展开、工具菜单、主题）—— 侧边栏折叠持久化 localStorage（pinia-plugin-persistedstate）、主题持久化走 @nuxtjs/color-mode（cookie）、菜单为瞬态
 - [x] Dexie.js (IndexedDB) 离线缓存：会话列表和最近消息
 - [x] 同步策略：先读 IndexedDB 展示 → 再向后端拉最新 → 更新缓存
 

@@ -61,7 +61,19 @@ export default defineNuxtConfig({
   },
 
   // 导入第三方模块
-  modules: ['@nuxtjs/i18n', '@nuxtjs/color-mode', '@primevue/nuxt-module'],
+  modules: [
+    '@nuxtjs/i18n',
+    '@nuxtjs/color-mode',
+    '@primevue/nuxt-module',
+    '@pinia/nuxt',
+    'pinia-plugin-persistedstate/nuxt'
+  ],
+
+  // pinia-plugin-persistedstate 全局配置：统一持久化到 localStorage
+  // （浏览器刷新与 Tauri 应用重开均可恢复状态）
+  piniaPluginPersistedstate: {
+    storage: 'localStorage'
+  },
 
   primevue: {
     options: {

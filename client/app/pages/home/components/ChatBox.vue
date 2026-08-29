@@ -346,11 +346,25 @@ const turnSpacingClass = (group: MessageItem[]): boolean =>
 /** 聊天列表滚动容器（最外层 overflow-auto div），用于自动滚到底部 */
 const scrollContainerRef = useTemplateRef<HTMLDivElement>('scrollContainerRef');
 
+/** 「底部附近」判定阈值（px）：距底部不超过该值视为仍在跟随最新消息 */
+const NEAR_BOTTOM_THRESHOLD = 80;
+
+/**
+ * 判定用户当前是否处于列表底部附近。
+ *
+ * 在 DOM 更新前测量（watch 默认 pre flush），读到的是本次变化渲染前的滚动状态。
+ */
+const isNearBottom = (): boolean => {
+  const el = scrollContainerRef.value;
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_THRESHOLD;
+};
+
 /**
  * 将聊天列表滚动到底部（新消息可见）。
  *
  * 必须在 DOM 更新后（nextTick）再取 scrollHeight，否则测量到的是旧高度，
- * 会导致滚不到最新消息底部。父组件 home/index.vue 在每次流式块到达时都会
+ * 会导致滚不到最新消息底部。父组件 home/index/[sid].vue 在每次流式块到达时都会
  * 重新赋值 messages 数组（新引用），因此 watch 引用变化即可覆盖「首屏加载」、
  * 「发送消息」与「AI 每回复一块」三种场景。
  */
@@ -363,8 +377,21 @@ const scrollToBottom = () => {
   });
 };
 
-// 消息列表任一变化（含流式逐块追加）后均保持在底部
-watch(() => props.messages, () => scrollToBottom());
+/**
+ * 消息列表变化后的滚动策略：
+ * - 新增了 user 消息（发送消息 / 加载历史会话）：始终滚到底部；
+ * - 其余变化（AI 流式逐块追加、工具事件等）：仅当用户仍在底部附近时跟随，
+ *   避免用户向上回看历史时被流式输出强行拽回底部。
+ */
+watch(
+  () => props.messages,
+  (msgs, oldMsgs) => {
+    const added = (msgs ?? []).slice(oldMsgs?.length ?? 0);
+    if (added.some((m) => m.role === CHAT_ROLE.USER) || isNearBottom()) {
+      scrollToBottom();
+    }
+  }
+);
 
 // 组件挂载（首屏打开）后滚到底部，让最新消息可见
 onMounted(() => scrollToBottom());

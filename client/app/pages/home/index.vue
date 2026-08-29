@@ -292,11 +292,13 @@ const showNotificationDialog = ref(false);
 /** 通知徽标未读数（由 NotificationDialog 上报） */
 const notificationUnread = ref(0);
 
-/** 设置菜单（九宫格）是否展开 */
-const isSettingsMenuOpen = ref(false);
+/** UI 全局 store（侧边栏折叠 / 设置菜单 / 主题统一入口） */
+const uiStore = useUiStore();
+/** 设置菜单（九宫格）是否展开（瞬态，不持久化） */
+const { settingsMenuOpen: isSettingsMenuOpen } = storeToRefs(uiStore);
 
-/** 左侧历史侧边栏是否折叠（默认展开） */
-const isSidebarCollapsed = ref(false);
+/** 左侧历史侧边栏是否折叠（默认展开；持久化到 localStorage，刷新后恢复） */
+const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /**
  * 系统配置保存后的回调：当前会话继续保留其已锁定的旧快照 → 显示不变；

@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import override
 from config import ROOT_DIR, SKILLS_DIR
 from langchain_core.tools import BaseTool
-from agent.tools.pub_base import sort_skills
+from agent.tools.pub_base import sort_skills, skill_visible_to
 
 
 relative_path = SKILLS_DIR.relative_to(ROOT_DIR)
@@ -46,6 +46,18 @@ class SkillList(BaseTool):
                     },
                     ensure_ascii=False,
                 )
+
+            # Scope visibility: subagent-stamped tool instances carry
+            # metadata["caller_scope"] = "subagent" (set by the spawn tool
+            # policy); they must not see skills scoped "main_only". Absent
+            # metadata (main agent) defaults to "main" — unchanged behavior.
+            metadata = getattr(self, "metadata", None)
+            caller_scope = (
+                metadata.get("caller_scope", "main")
+                if isinstance(metadata, dict)
+                else "main"
+            )
+            all_skills = [s for s in all_skills if skill_visible_to(s, caller_scope)]
 
             # Filter by category if specified
             if category:

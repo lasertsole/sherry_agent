@@ -7,13 +7,11 @@
  */
 import { vi } from 'vitest';
 
-// `requestApi.ts` calls Nuxt's auto-imported `useFetch(request, opts)` and
-// expects it to return `{ data: Ref<Response> }`. Tests can override this
-// global per-file via `vi.stubGlobal('useFetch', mock)`.
-(globalThis as any).useFetch = vi.fn().mockReturnValue({
-  data: { value: null },
-  error: { value: null },
-});
+// `requestApi.ts` calls ofetch's global `$fetch(request, opts)` and expects it
+// to resolve with the parsed response body (rejecting only on unrecoverable
+// errors, which requestApi catches internally). Tests can override this
+// global per-file via `vi.stubGlobal('$fetch', mock)`.
+(globalThis as any).$fetch = vi.fn().mockResolvedValue(null);
 
 // Composables under `app/composables/` (messages, workspace, bridge, ...)
 // call `fetchApi` as a *Nuxt auto-import* (there is no explicit import in the
@@ -22,6 +20,4 @@ import { vi } from 'vitest';
 // `import { fetchApi } from '../requestApi'` would fail for the explicit
 // importer (requestApi.test.ts) — so keep that explicit import path working
 // by leaving `import ... from '../requestApi'` inside test files untouched.
-(globalThis as any).fetchApi = vi.fn(() =>
-  Promise.resolve({ code: 200, data: null }),
-);
+(globalThis as any).fetchApi = vi.fn(() => Promise.resolve({ code: 200, data: null }));

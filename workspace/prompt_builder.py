@@ -51,7 +51,9 @@ def build_system_prompt(
     # --- Skill block ---------------------------------------------------
     # Compose the skill prompt from the selected skills (or all of them when
     # None). A one-line skill guide is always appended to orient the agent.
-    skill_paths: str = get_skills_text(selected_skill_names)
+    # caller_scope="main": the main agent sees every skill except those
+    # frontmatter-scoped "subagent_only".
+    skill_paths: str = get_skills_text(selected_skill_names, caller_scope="main")
     skill_paths = f"{skill_paths}\n\n{skill_guide_text}"
 
     # --- Workspace persona block --------------------------------------

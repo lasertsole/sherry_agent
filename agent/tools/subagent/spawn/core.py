@@ -642,7 +642,9 @@ async def _build_child_agent(
         system_prompt: System prompt for the child agent.
         tools: Tool list; ``None`` falls back to :func:`build_main_tools`.
         tool_allow: Explicit allow-list (empty = no restriction beyond deny-list).
-        tool_deny: Explicit deny-list (always includes :data:`DEFAULT_SUBAGENT_BLOCKED_TOOLS`).
+        tool_deny: Explicit deny-list (an empty list is authoritative — it means the
+            caller intentionally unblocked the defaults, e.g. ORCHESTRATOR spawn/yield;
+            main_only metadata tools are dropped regardless).
         role: :class:`SubagentSessionRole` — determines LLM selection.
         model_override: Optional model name string to override the default LLM.
 

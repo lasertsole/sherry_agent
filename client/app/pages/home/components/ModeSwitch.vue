@@ -17,12 +17,14 @@
 <script setup lang="ts">
 /** 颜色主题 */
 const colorMode = useColorMode();
+/** UI 全局 store（主题切换统一写入口） */
+const uiStore = useUiStore();
 /** 当前模式 */
 const currentMode = ref<string>(colorMode.preference);
 
 /** 切换主题 */
 const handleSwitch = (value: string) => {
   currentMode.value = value;
-  colorMode.preference = value;
+  uiStore.setTheme(value);
 };
 </script>

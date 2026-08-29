@@ -10,6 +10,9 @@ from .skill_utils import (
     parse_frontmatter,
     iter_skill_index_files,
     skill_matches_platform,
+    skill_visible_to,
+    normalize_skill_scope,
+    VALID_SKILL_SCOPES,
     EXCLUDED_SKILL_DIRS,
 )
 
@@ -30,5 +33,8 @@ __all__ = [
     "parse_frontmatter",
     "iter_skill_index_files",
     "skill_matches_platform",
+    "skill_visible_to",
+    "normalize_skill_scope",
+    "VALID_SKILL_SCOPES",
     "EXCLUDED_SKILL_DIRS",
 ]

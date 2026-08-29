@@ -517,6 +517,17 @@ def _validate_frontmatter(content: str) -> str | None:
         return "Frontmatter must include 'description' field."
     if len(str(parsed["description"])) > _MAX_DESCRIPTION_LENGTH:
         return f"Description exceeds {_MAX_DESCRIPTION_LENGTH} characters."
+    if "scope" in parsed:
+        # Visibility scope: controls whether main agent and/or subagents see
+        # this skill (see agent/tools/pub_base/skill_utils.skill_visible_to).
+        # Absent scope defaults to "all"; other fields pass through unvalidated.
+        scope_value = parsed["scope"]
+        scope = str(scope_value).strip().lower() if scope_value is not None else ""
+        if scope not in ("all", "main_only", "subagent_only"):
+            return (
+                f"Invalid scope '{scope_value}'. Must be one of: "
+                "all, main_only, subagent_only."
+            )
 
     body = content[end_match.end() + 3:].strip()
     if not body:
@@ -959,4 +970,8 @@ class SkillManage(BaseTool):
 def build_skill_manage_tool()-> SkillManage:
     tool: SkillManage = SkillManage()
     tool.handle_tool_error = True
+    # Tool-metadata visibility tag (shared contract): skill_manage is a
+    # main-only tool — the spawn tool policy reads metadata["scope"] to keep
+    # it away from subagents. Merged with the class-level defaults.
+    tool.metadata = {**tool.metadata, "scope": "main_only"}
     return tool

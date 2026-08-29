@@ -40,8 +40,8 @@ The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy St
 
 #### 1.2 Home Page — Session Sidebar (`app/pages/home/`)
 
-- [ ] Session list: fetch from backend API at mount, display in sidebar
-- [ ] Session CRUD: create new session (via backend), delete/rename session
+- [x] Session list: fetch from backend API at mount, display in sidebar
+- [x] Session CRUD: create new session (local placeholder, lands on backend after first message), delete/rename session
 - [x] Session switching: click session in sidebar → load its messages
 - [x] Responsive sidebar: mobile (overlay) vs desktop (fixed)
 - [x] Batch operations: multi-select sessions, batch delete
@@ -75,9 +75,9 @@ The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy St
 
 #### 1.6 Local State Management (`app/stores/`)
 
-- [ ] Pinia store for session list (active session, CRUD operations)
-- [ ] Pinia store for message list (messages of active session, streaming state)
-- [ ] Pinia store for UI state (sidebar open, tools menu, theme)
+- [x] Session list state (active session, CRUD operations) — composables + Dexie IndexedDB (Pinia not used)
+- [x] Message list state (messages of active session, streaming state) — composables + Dexie (message cache + streaming draft persistence, Pinia not used)
+- [x] Pinia store for UI state (sidebar open, tools menu, theme) — sidebar persisted via localStorage (pinia-plugin-persistedstate), theme via @nuxtjs/color-mode (cookie), menu transient
 - [x] Dexie.js (IndexedDB) offline cache for session list and recent messages
 - [x] Sync strategy: load from IndexedDB first → fetch latest from backend → update cache
 

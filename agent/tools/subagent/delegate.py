@@ -7,7 +7,8 @@ developer-friendly synchronous entry point that:
   fall back to :class:`~agent.tools.subagent.config.SubagentConfig`).
 * Validates ``load_skills`` against the *actual* skill set discovered by
   :func:`skills.loader.scan_skills`, warning (not failing) on unknown names,
-  and refuses to inject high-risk auth skills.
+  and refuses to inject skills whose frontmatter scope is ``main_only``
+  (subagent-invisible skills, e.g. the high-risk auth skills).
 * Injects the selected skills into the child's task text as an
   ``<available_skills>`` XML block so the sub-agent is actively steered toward
   the available capabilities.
@@ -187,20 +188,29 @@ def _await_outside_loop(
 # skill injection
 # ---------------------------------------------------------------------------
 
-_AUTH_SKILLS = ("clawhub", "skill_creator")
-
 
 def _validate_load_skills(load_skills: list[str] | None) -> list[str]:
     """Validate requested skills against the real skill set.
 
-    Returns the list of skill names that actually exist and are not auth
-    skills. Unknown names are warned about and dropped; auth skills are
-    silently excluded — never fatal.
+    Returns the list of skill names that actually exist and are visible to a
+    subagent caller. Unknown names are warned about and dropped; skills whose
+    frontmatter scope is ``main_only`` are silently excluded — never fatal.
+    (Scope contract: agent/tools/pub_base/skill_utils.py::skill_visible_to.)
     """
     if not load_skills:
         return []
-    known = {s["name"] for s in scan_skills()}
-    resolved = [name for name in load_skills if name in known and name not in _AUTH_SKILLS]
+    known = {s["name"]: s for s in scan_skills()}
+    resolved: list[str] = []
+    for name in load_skills:
+        entry = known.get(name)
+        if entry is None:
+            continue
+        scope = str(entry.get("scope") or "").strip().lower()
+        if scope == "main_only":
+            # main_only skills are invisible to subagent callers; excluded
+            # silently, mirroring the previous auth-skill behavior.
+            continue
+        resolved.append(name)
     unknown = [name for name in load_skills if name not in known]
     if unknown:
         logger.warning(
@@ -216,7 +226,7 @@ def _inject_skills(task: str, load_skills: list[str] | None) -> str:
     resolved = _validate_load_skills(load_skills)
     if not resolved:
         return task
-    skills_xml = get_skills_text(selected_skill_names=resolved, exclude_auth_skills=True)
+    skills_xml = get_skills_text(selected_skill_names=resolved, caller_scope="subagent")
     if not skills_xml:
         return task
     return f"{task}\n\n---\nSelected skills available for this task:\n{skills_xml}\n"
@@ -332,9 +342,10 @@ def delegate_task(
             normally pass a stable per-task handle such as
             ``f"sub-agent-{hash(task)[:8]}"``.
         load_skills: List of skill names to activate for this sub-agent, or
-            ``None`` (no skill injection). High-risk auth skills are excluded.
-            Unknown names are warned and dropped. See module docstring for the
-            required decision flow (pass ``[]`` ONLY when nothing matches).
+            ``None`` (no skill injection). Skills whose frontmatter scope is
+            ``main_only`` are excluded. Unknown names are warned and dropped.
+            See module docstring for the required decision flow (pass ``[]``
+            ONLY when nothing matches).
         run_in_background: If ``True`` (default), spawn fire-and-forget and
             return a pollable :class:`DelegatedTaskHandle` immediately. If
             ``False``, block the calling thread until the child reaches a

@@ -83,24 +83,36 @@ def _setup_subagent_alias():
     # the import chain resolves and tests can assert on injection behavior.
     _skills_loader = stdlib_types.ModuleType("skills.loader")
 
+    # Scope data mirrors the real frontmatter: clawhub/skill_creator are
+    # `scope: main_only`, so delegate scope-validation drops them for
+    # subagent callers (replaces the old hardcoded _AUTH_SKILLS mechanism).
+    _SKILL_SCOPES = {
+        "web_search": "all",
+        "code_interpreter": "all",
+        "skill_creator": "main_only",
+        "clawhub": "main_only",
+    }
+
     def _scan_skills_stub(use_cache: bool = True) -> list[dict]:
         return [
-            {"name": "web_search"},
-            {"name": "code_interpreter"},
-            {"name": "skill_creator"},
-            {"name": "clawhub"},
+            {"name": "web_search", "scope": "all"},
+            {"name": "code_interpreter", "scope": "all"},
+            {"name": "skill_creator", "scope": "main_only"},
+            {"name": "clawhub", "scope": "main_only"},
         ]
 
     def _get_skills_text_stub(
         selected_skill_names: list[str] | None = None,
         *,
-        exclude_auth_skills: bool = False,
+        caller_scope: str = "main",
     ) -> str:
         if not selected_skill_names:
             return ""
-        names = sorted(selected_skill_names)
-        if exclude_auth_skills:
-            names = [n for n in names if n not in ("clawhub", "skill_creator")]
+        names = [
+            n
+            for n in sorted(selected_skill_names)
+            if not (caller_scope == "subagent" and _SKILL_SCOPES.get(n) == "main_only")
+        ]
         return "<skills>\n" + "\n".join(f"  <skill name=\"{n}\"/>" for n in names) + "\n</skills>"
 
     _skills_loader.scan_skills = _scan_skills_stub

@@ -62,7 +62,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── 첨부 파일 디스크 실체화 (attachments.py)
   │     │     안전 검사 포함: 경로 우회, 크기 제한, 파일 수
   │     ├── 도구 정책: DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn,
-  │     │   sessions_yield, skill_manage, memory]
+  │     │   sessions_yield] (+ memory/skill_manage/sessions_kill/sessions_steer
+  │     │   blocked via metadata scope=main_only tags)
   │     │   ORCHESTRATOR 역할은 sessions_spawn과 sessions_yield 자동 해제
   │     ├── 컨텍스트 모드: ISOLATED (빈 컨텍스트) 또는 FORK (부모
   │     │       전사 복사 via agent.aget_state() — 결정 9)
@@ -427,7 +428,7 @@ depth N:  LEAF (depth == max_spawn_depth)
 **깊이 계산**: `requester_session_key`에서 부모 깊이를 추출합니다. 세션 키 형식 `"agent:{id}:subagent:{uuid}"`에서 `:subagent:`가 나타나는 수가 깊이입니다.
 
 **도구 정책 연동**:
-- LEAF 역할은 `DEFAULT_SUBAGENT_BLOCKED_TOOLS` (`sessions_spawn`, `sessions_yield`, `skill_manage`, `memory`)로 완전히 제한되어 `sessions_spawn` 호출 불가
+- LEAF 역할은 `DEFAULT_SUBAGENT_BLOCKED_TOOLS` (`sessions_spawn`, `sessions_yield`) 및 metadata `scope="main_only"` 도구 (`memory`, `skill_manage`, `sessions_kill`, `sessions_steer`)로 완전히 제한되어 `sessions_spawn` 호출 불가
 - ORCHESTRATOR 역할은 `sessions_spawn`과 `sessions_yield` 자동 해제, 재귀 생성 활성화
 - 이를 통해 중첩 깊이에 대한 하드 제약을 우회할 수 없음을 보장
 

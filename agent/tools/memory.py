@@ -582,7 +582,10 @@ class MemoryTool(BaseTool):
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state."
     )
     args_schema: Type[BaseModel] = MemoryActionSchema
-    metadata: dict = {"idempotent": True, "nudge": True}
+    # scope="main_only": usable ONLY by the main agent; subagents can never get
+    # this tool (enforced non-overridably by
+    # agent/tools/subagent/spawn/inherited_tool_policy.apply_tool_policy).
+    metadata: dict = {"idempotent": True, "nudge": True, "scope": "main_only"}
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)

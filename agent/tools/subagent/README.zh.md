@@ -62,7 +62,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── 附件物化到磁盘 (attachments.py)
   │     │     安全校验：路径遍历防护、大小限制、数量限制
   │     ├── 工具策略：DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn,
-  │     │   sessions_yield, skill_manage, memory]
+  │     │   sessions_yield] (+ memory/skill_manage/sessions_kill/sessions_steer
+  │     │   blocked via metadata scope=main_only tags)
   │     │   ORCHESTRATOR 角色自动解锁 sessions_spawn 和 sessions_yield
   │     ├── 上下文模式：ISOLATED（空上下文）或 FORK（通过
   │     │       agent.aget_state() 复制父对话历史 — 决策 9）
@@ -426,7 +427,7 @@ depth N:  LEAF (depth == max_spawn_depth)
 **深度计算**：从 `requester_session_key` 中提取父深度，子深度 = 父深度 + 1。Session key 格式 `"agent:{id}:subagent:{uuid}"` 中 `:subagent:` 的出现次数即为深度。
 
 **工具策略联动**：
-- LEAF 角色被 `DEFAULT_SUBAGENT_BLOCKED_TOOLS`（`sessions_spawn`、`sessions_yield`、`skill_manage`、`memory`）完全限制，无法调用 `sessions_spawn`
+- LEAF 角色被 `DEFAULT_SUBAGENT_BLOCKED_TOOLS`（`sessions_spawn`、`sessions_yield`）及 metadata `scope="main_only"` 工具（`memory`、`skill_manage`、`sessions_kill`、`sessions_steer`）完全限制，无法调用 `sessions_spawn`
 - ORCHESTRATOR 角色自动解锁 `sessions_spawn` 和 `sessions_yield`，可递归 spawn
 - 这确保了嵌套深度的硬约束不会被绕过
 

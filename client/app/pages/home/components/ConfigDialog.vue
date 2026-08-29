@@ -246,7 +246,7 @@
     :aspect-ratio="cropAspectRatio"
     :output-width="cropOutput.width"
     :output-height="cropOutput.height"
-    :header="cropTitle"
+    :header="cropVisible ? cropTitle : ''"
     @cropped="onCropConfirmed" />
 </template>
 

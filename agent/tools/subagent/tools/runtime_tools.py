@@ -266,6 +266,14 @@ async def subagents_list_runtime_tool(
     return "\n".join(lines)
 
 
+# Scope visibility tags: sessions_kill / sessions_steer are usable ONLY by the
+# main agent. ``metadata["scope"] = "main_only"`` is enforced non-overridably by
+# ``spawn.inherited_tool_policy.apply_tool_policy`` — subagents can never
+# receive these tools, regardless of allow/deny lists or ORCHESTRATOR unblock.
+sessions_kill_runtime_tool.metadata = {"scope": "main_only"}
+sessions_steer_runtime_tool.metadata = {"scope": "main_only"}
+
+
 _SUBAGENT_RUNTIME_TOOLS: list[BaseTool] = [
     sessions_spawn_runtime_tool,
     sessions_yield_runtime_tool,
