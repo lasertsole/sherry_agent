@@ -1,4 +1,10 @@
 {
+  "a11y": {
+    "skipToMain": "메인 콘텐츠로 건너뛰기",
+    "previewImage": "이미지 미리보기",
+    "toggleTheme": "테마 전환",
+    "deleteSession": "세션 삭제"
+  },
   "chatInput": {
     "placeholder": "메시지를 입력하세요...",
     "thinking": "AI가 생각하고 있습니다...",

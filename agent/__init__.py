@@ -1,12 +1,11 @@
 """Lazy imports for the agent package.
 
 Using ``__getattr__`` avoids triggering heavy dependency chains
-(codeact -> langchain factory -> langgraph prebuilt) during test
+(langchain factory -> langgraph prebuilt) during test
 collection or when only a specific submodule is needed.
 """
 
 __all__ = [
-    "codeact_agent",
     "built_agent",
     "get_agent_tools",
     "build_async_sqlite_checkpointer",
@@ -15,9 +14,6 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name == "codeact_agent":
-        from .codeact import codeact_agent
-        return codeact_agent
     if name in ("built_agent", "get_agent_tools"):
         from . import core
         return getattr(core, name)

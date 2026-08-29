@@ -69,6 +69,35 @@
   ul {
     list-style: none;
   }
+
+  /* 键盘焦点可见性：亮/暗模式统一的焦点轮廓（Tab 导航时清晰可辨） */
+  :focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* 跳转主内容链接：默认移出视口顶部隐藏，键盘聚焦时滑入左上角 */
+  .skip-link {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+    padding: 0.5rem 1rem;
+    background: #ffffff;
+    color: #1a1a1a;
+    transform: translateY(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .skip-link:focus {
+    transform: translateY(0);
+  }
+
+  html.dark .skip-link {
+    background: #1a1a1a;
+    color: #ffffff;
+  }
 }
 
 /* ==========================================================================

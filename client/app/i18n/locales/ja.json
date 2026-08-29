@@ -1,4 +1,10 @@
 {
+  "a11y": {
+    "skipToMain": "メインコンテンツへスキップ",
+    "previewImage": "画像をプレビュー",
+    "toggleTheme": "テーマを切り替え",
+    "deleteSession": "セッションを削除"
+  },
   "chatInput": {
     "placeholder": "メッセージを入力してください...",
     "thinking": "AI が考えています...",

@@ -95,7 +95,11 @@
               v-for="ch in channels"
               :key="ch.name"
               class="flex flex-col items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:border-primary transition-colors cursor-pointer"
-              @click="openSettings(ch)">
+              role="button"
+              tabindex="0"
+              @click="openSettings(ch)"
+              @keydown.enter.prevent="openSettings(ch)"
+              @keydown.space.prevent="openSettings(ch)">
               <div class="relative">
                 <img
                   v-if="ch.icon"

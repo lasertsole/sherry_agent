@@ -27,7 +27,6 @@ SubagentManager (singleton)
 | InboundMessage | `agent/tools/subagent/events/core.py` | 自有入站消息模型 |
 | Register | `runtime/` | 运行时状态注册 |
 | build_commander | `agent/tools/subagent/commander/core.py` | 构建 Commander agent |
-| codeact_agent | `agent/codeact/` | Worker agent |
 | build_agent_config | `pub_func/` | 构建 agent 配置 |
 | ThreadSafeAsyncSqliteSaver | `agent/checkpointer/` | SQLite checkpointer |
 | StateSchema | `agent/core.py` | Agent state schema（含 session_id） |

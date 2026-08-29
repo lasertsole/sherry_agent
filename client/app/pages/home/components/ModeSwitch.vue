@@ -9,12 +9,19 @@
       <i :class="['!text-xs pi', { 'pi-moon': checked, 'pi-sun': !checked }]"></i>
     </template>
   </ToggleSwitch>
-  <i
-    :class="['block sm:hidden pi', { 'pi-moon': currentMode === 'dark', 'pi-sun': currentMode === 'light' }]"
-    @click="handleSwitch(currentMode === 'dark' ? 'light' : 'dark')"></i>
+  <button
+    type="button"
+    class="block sm:hidden cursor-pointer"
+    :aria-label="t('a11y.toggleTheme')"
+    @click="handleSwitch(currentMode === 'dark' ? 'light' : 'dark')">
+    <i :class="['pi', { 'pi-moon': currentMode === 'dark', 'pi-sun': currentMode === 'light' }]"></i>
+  </button>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 /** 颜色主题 */
 const colorMode = useColorMode();
 /** UI 全局 store（主题切换统一写入口） */

@@ -304,7 +304,12 @@
                     ? 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                     : 'hover:bg-gray-50 dark:hover:bg-gray-800'
                 ]"
+                role="button"
+                tabindex="0"
+                :aria-pressed="selectedSkill?.location === skill.location"
                 @click="selectSkill(skill)"
+                @keydown.enter.prevent="selectSkill(skill)"
+                @keydown.space.prevent="selectSkill(skill)"
                 :title="skill.name">
                 <div class="flex items-center justify-between gap-2">
                   <span class="min-w-0 break-all">

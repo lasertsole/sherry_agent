@@ -6,66 +6,85 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> **LangGraph とマルチモーダル技術で構築されたディープ・ロールプレイング AI エージェント。**
+> **LangChain/LangGraph とマルチモーダル技術で構築されたディープ・ロールプレイング AI エージェント。**
 
 ## ✨ はじめに
 
-EMA AI Agent は、長期記憶と複雑な推論能力を備えた高度に擬人化された AI エージェントシステムです。単なるチャットボットではなく、独立した**ペルソナ**、動的な**スキル記憶グラフ（Skill Memory Graph）**、スケジュールタスクやバックグラウンドのサブエージェントによる能動的な行動を持つバーチャルコンパニオンです。
+EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に擬人化された AI エージェントシステムです。単なるチャットボットではなく、独立した **ペルソナ**、動的な **スキルシステム**、そして定時タスクとバックグラウンドサブエージェントによる能動的な行動を備えたバーチャルコンパニオンです。
 
-エージェントのキャラクター **Sherry** は、親密度に応じて切り替わる二重人格の対比（優しい/冷たい）を備えた探偵の少女です。システム全体は、セッションをまたいで蓄積される記憶を持つ、没入感のある持続的なロールプレイングをサポートするよう設計されています。
+エージェントのキャラクター **Sherry（橘シェリー）** は自称少女探偵。外見は常に明るく元気いっぱい、その内面は冷静で切れ者です。システム全体は、記憶がセッションを越えて蓄積していく没入型の持続的ロールプレイをサポートするよう設計されています。
 
 ---
 
 ## 🚀 主な機能
 
-### 1. 🧠 ディープメモリシステム（コンテキストエンジン＋経験グラフ）
-- **二重メモリアーキテクチャ**: 短期セッションメモリ（[MesMemory](context_engine/README.md)）＋長期経験知識グラフ
-- **経験グラフ**: タスク実行から高シグナルで再利用可能な経験を抽出し、構造化されたノードとエッジに変換する蒸留優先の知識グラフ
-- **多役割知識ベース**: メインエージェント＋コマンダーが共有する戦略レベルグラフ（`default`）、ワーカー用の運用レベルグラフ（`worker`）
-- **二重回顧**: 精密（ベクトル/FTS5 → コミュニティ拡張 → PPR）＋一般化（コミュニティベクトル → 代表者）による再ランキング付き検索
-- **コミュニティ検出と要約**: Leiden アルゴリズムがグラフを分割し、効率的な長期検索のための要約を生成
-- **永続ストレージ**: SQLite + FTS5 + ベクトル埋め込み、セッションをまたぐ知識継承をサポート
-- ▶️ _アーキテクチャ、データモデル、API の詳細は[コンテキストエンジン README](context_engine/README.md)と経験グラフのドキュメントを参照_
+### 1. 🧠 階層型メモリシステム（Context Engine）
+- **短期セッションメモリ**（[MesMemory](context_engine/README.md)）：human/ai/tool のすべてのメッセージを SQLite（WAL モード）に永続化し、FTS5 インデックスを自動作成——中国語全文検索用の trigram トークナイザーテーブルも含みます
+- **履歴取得**：直近 N ターン、ページング履歴、ターン範囲指定のクエリをプロンプトコンテキストとして整形
+- **セッションチェックポイント**：スレッドセーフな非同期 SQLite チェックポインター（`langgraph-checkpoint-sqlite`）がエージェント状態を再起動をまたいで永続化し、古いチェックポイントは自動クリーンアップ
+- **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮
+- **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
+- ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
 
 ### 2. 🛠️ 動的スキルシステム
-- **SKILL.md 標準**: 標準化された Markdown 形式で定義されたスキル — エージェントが自律的に読み取り、新しい能力を学習可能
-- **ツール呼び出し**: 組み込みのウェブ検索、ファイル I/O、コード実行（Python Repl）、ターミナルコマンド、メッセージ検索など
-- **サブエージェント**: 複雑で時間のかかるタスクをバックグラウンドで並列実行し、メッセージバス経由で非同期結果を取得
-- **経験フィードバックループ**: サブエージェントが draft ツールで発見を記録 → タスク完了後に経験を蒸留 → 経験グラフに取り込み → 将来のタスクへ回顧・注入
-- ▶️ _ライフサイクル、コマンダーアーキテクチャ、蒸留パイプライン、API ドキュメントは[サブエージェントシステム README](agent/tools/subagent/README.md)を参照_
-- **ツールタイムアウト**: Python REPL、ターミナル、ウェブ検索ツールはそれぞれ独立した設定可能なタイムアウトを持ち、期限切れ時に自動終了
-- ▶️ _ミドルウェアパイプラインは[ミドルウェア README](agent/middlewares/README.md)を参照_
+- **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーが `skills/` 配下のすべての `SKILL.md` を自動検出します
+- **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`code_wiki`、`llm_wiki`
+- **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
+- **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
+- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理
+- **ツールタイムアウト**：ツール呼び出しは `TOOL_CALL_TIMEOUT_MINUTES`（デフォルト 5）で制限され、デッドロックを防止
+- ▶️ _ミドルウェアパイプライン（ガードレール、反復予算、HITL、正規化、要約、マルチモーダル処理）の詳細は [Middlewares README](agent/middlewares/README.md) を参照_
 
-### 3. 🌐 マルチチャネルアクセス
-- **ウェブ UI**: Streamlit で構築されたモダンなチャットインターフェース、マルチモーダル入力（画像、音声）をサポート
-- **次世代クライアント**（[client](client/)）: Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント
-- **QQ ボット**: プラグインシステム（`plugins/channels/`）を介した QQ チャネルアダプタ
-- **メッセージバス**: 内部非同期メッセージキュー（[MessageBus](bus/core.py)）が入出力チャネルを分離
+### 3. 🤖 マルチレベルサブエージェントシステム
+- **7 つのランタイムツール**：`sessions_spawn`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
+- **階層ロール**：深度制限付きネスト（デフォルト最大 3 深度）、MAIN → ORCHESTRATOR → LEAF ロールと最小権限のツールスコープ
+- **コンテキストモード**：ISOLATED（新しいコンテキスト）または FORK（親トランスクリプトのコピー）、ファイル添付にも対応
+- **信頼性の高い配信**：結果は冪等チェックと指数バックオフリトライを備えた EventBus announce パイプラインで返却
+- **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーがタイムアウトを強制
+- **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
+- ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
 
-### 4. 👁️ マルチモーダル対話
-- **視覚理解**: ユーザーがアップロードした画像を認識・分析する Image-to-Text（VL）モデルをサポート
+### 4. 🌐 マルチチャンネルアクセス
+- **Robyn バックエンド**（[server/](server/)）：非同期 HTTP API + WebSocket（`/sessions/ws`）、`127.0.0.1:8080` でリッスンし、アップロードされたメディアを `/static`、`/images`、`/audio`、`/video` で配信
+- **デスクトップクライアント**（[client/](client/)）：Tauri 2 + Nuxt 4（Vue 3 + TypeScript）SPA。システムトレイ、グローバルショートカット、オフライン履歴キャッシュ（Dexie/IndexedDB）、ダーク/ライトモード、i18n に対応
+- **QQ ボット**：プラグインシステムによる QQ チャンネルアダプター（[plugins/channels/qq/](plugins/channels/qq/)）
+- **メッセージバス**（[bus/core.py](bus/core.py)）：内部非同期キューがチャンネルとエージェントコアを分離
 
-### 5. ⏰ スケジュール＆能動的行動
-- **Cron サービス**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）: 定期・一回・cron 式ベースのエージェントタスクをスケジュール
-- **ハートビートサービス**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）: HEARTBEAT.md の保留タスクを定期的にチェックし、アイドル時間に自動実行する周期的なウェイクアップ
+### 5. 👁️ マルチモーダルインタラクション
+- **画像理解（ITTT）**：Image-to-Text ビジョンモデルによるユーザー画像の認識・分析
+- **動画理解（VTTT）**：Video-Text-to-Text モデルによる動画コンテンツの分析
+- **音声認識（STT）**：FunASR ベースのローカル音声認識
+- **Text-to-Image（TTI）**：`text_to_image` スキルによるテキストからの画像生成
+- **ドキュメント解析**：MinerU ベースのマルチモーダルドキュメント取り込み（ナレッジグラフ RAG パイプライン向け）
+
+### 6. ⏰ 定時実行と能動的行動
+- **Cron サービス**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：一回限り（`at`）、間隔（`every`）、cron 式（`cron`、croniter + タイムゾーン）の 3 種類のエージェントタスクをスケジュール。JSON ジョブストアに永続化し、実行履歴とチャンネル配信に対応
+- **Heartbeat サービス**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：定期的なウェイクアップ（デフォルト 30 分）で `HEARTBEAT.md` の未完了タスクを確認し、LLM が skip/run を判断、結果は通知ゲートを通過
 
 ---
 
 ## 🏗️ 技術スタック
 
-**Python 3.13** をベースに、以下のコア技術を使用:
+**Python 3.13**（依存関係管理は [uv](https://docs.astral.sh/uv/)）上に構築され、以下のコア技術を使用しています：
 
 | モジュール | 技術 |
 | :----- | :--------- |
-| **エージェントフレームワーク** | LangChain 1.3+、langchain-classic、LangGraph |
-| **ベクトル＆検索** | FAISS、LightRAG、Sentence Transformers、BGE/BAAI Embedding シリーズ |
-| **データベース** | SQLite（FTS5 全文検索）、LanceDB |
-| **グラフアルゴリズム** | igraph + Leiden Algorithm（コミュニティ検出）、PageRank |
-| **ウェブサーバー** | Robyn + FastAPI（二重非同期サーバー） |
-| **フロントエンド UI** | Streamlit、Tauri 2 + Nuxt 4（次世代クライアント） |
-| **LLM サポート** | DeepSeek、OpenAI、Ollama（ローカルモデル）、langchain-deepseek |
+| **エージェントフレームワーク** | LangChain 1.3+（`create_agent` + ミドルウェア）、LangGraph コンパイル済みグラフ |
+| **チェックポイント** | langgraph-checkpoint-sqlite（スレッドセーフ非同期 SQLite セーバー） |
+| **Web サーバー** | Robyn（HTTP + WebSocket + 静的ホスティング） |
+| **データベース** | SQLite（aiosqlite、FTS5 全文検索、WAL モード） |
+| **グラフ RAG** | ベンダード LightRAG + RAG-Anything（multimodal_rag スキル）、`snkv[vector]` ストレージ |
+| **ローカル推論** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT モデル）、FunASR（STT） |
+| **ドキュメント解析** | mineru-vl-utils |
+| **Web 検索** | langchain-tavily（Tavily API） |
+| **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-community + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
+| **構造化出力** | instructor、json_repair |
+| **MCP** | langchain-mcp-adapters（`plugins/mcp_server/` でサーバーを設定） |
 | **タスクスケジューリング** | croniter、asyncio |
-| **非同期メッセージング** | asyncio.Queue（MessageBus） |
+| **非同期メッセージング** | asyncio キュー（MessageBus、EventBus） |
+| **メディア処理** | OpenCV（headless）、Pillow、websockets / websocket-client |
+| **デスクトップクライアント** | Tauri 2 + Nuxt 4（Vue 3、TypeScript、pnpm） |
+| **ロギング** | loguru（オプションで LangSmith トレーシング） |
 
 ---
 
@@ -73,178 +92,138 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた高度に擬�
 
 ```text
 EMA_AI_agent/
-├── agent/                  # エージェントコアロジック＆ミドルウェア
-│   ├── core.py             # メインエージェントループ（LangGraph コンパイルグラフ）
-│   ├── checkpointer/       # セッション状態チェックポイント
-│   ├── codeact/            # CodeAct エージェント（コード対話実行）
-│   │   ├── core.py         # CodeAct ループ＆ツールオーケストレーション
-│   │   └── utils.py        # CodeAct ユーティリティ
-│   ├── middlewares/        # ミドルウェアパイプライン
-│   │   ├── summarization.py         # 会話要約
-│   │   ├── tool_call_normalize.py   # ツール呼び出し正規化＆ルーティング
-│   │   ├── tool_guardrails.py       # ツール安全ガードレール
-│   │   ├── iteration_budget.py      # ターン予算制限
-│   │   ├── multimodal_processor.py  # ビジョン入力処理
-│   │   ├── heartbeat_staleness.py   # ハートビート鮮度チェック
-│   │   └── context_engine/          # コンテキストエンジンフック
-│   ├── tools/              # エージェントアクセス可能ツール
-│   │   ├── subagent/       # サブエージェントシステム（階層的タスク分解）
-│   │   │   ├── base.py     # SubagentManager（シングルトンオーケストレータ＋蒸留）
-│   │   │   ├── core.py     # Subagent spawn ツール（@tool）
-│   │   │   ├── draft.py    # draft ツール — 実行中に主要発見を記録
-│   │   │   ├── distiller.py # タスク後の経験蒸留
-│   │   │   ├── commander/  # LangGraph ベースのコマンダーエージェント
-│   │   │   ├── templates/  # 結果発表テンプレート
-│   │   │   └── type.py     # SubAgentOutput データモデル
-│   │   ├── file_tools/     # ファイル I/O ツール（読み取り、書き込み、パッチ、検索）
-│   │   ├── skill_tools/    # スキル管理ツール（一覧、表示、管理）
-│   │   ├── pub_base/       # 共有ツールユーティリティ＆インフラ
-│   │   ├── mcp_plugin.py   # MCP プラグインツール
-│   │   ├── web_search.py   # ウェブ検索ツール
-│   │   ├── python_repl.py  # Python コード実行（タイムアウト付きサブプロセス）
-│   │   ├── terminal.py     # ターミナルコマンド実行（サンドボックス、タイムアウト付き）
-│   │   ├── memory.py       # メモリ検査ツール
-│   │   └── message_search.py # 会話検索ツール
-│   └── utils/              # エージェント補助ユーティリティ
+├── agent/                  # エージェントコアロジック
+│   ├── core.py             # メインエージェントループ（LangChain create_agent → LangGraph グラフ）
+│   ├── smart_tool_node.py  # ツールノードパッチ（冪等ツールの並列実行）
+│   ├── repetition_guard_wrapper.py # ストリーム出力の繰り返しガード
+│   ├── checkpointer/       # スレッドセーフ非同期 SQLite チェックポインター
+│   ├── middlewares/        # ミドルウェアパイプライン（要約、ガードレール、HITL など）
+│   └── tools/              # エージェント利用可能なツール
+│       ├── subagent/       # マルチレベルサブエージェントシステム（spawn/registry/swarm など）
+│       ├── file_tools/     # ファイル I/O ツール（読み・書き・パッチ・検索）
+│       ├── skill_tools/    # スキル管理ツール（一覧・閲覧・管理）
+│       ├── pub_base/       # 共有ツールユーティリティと基盤
+│       ├── mcp_plugin.py   # MCP ツール統合
+│       ├── web_search.py   # Web 検索ツール（Tavily）
+│       ├── python_repl.py  # Python コード実行
+│       ├── terminal.py     # ターミナルコマンド実行
+│       ├── memory.py       # メモリ閲覧ツール
+│       └── message_search.py # 会話 FTS5 検索ツール
 │
 ├── bus/                    # メッセージバス（非同期キュー）
-│   └── core.py             # MessageBus — 受信/送信キュー＆イベント
+│   └── core.py             # MessageBus —— インバウンド/アウトバウンドキュー
 │
-├── channels/               # チャネルインターフェース定義
-│   ├── base.py             # 抽象チャネルベース
-│   ├── manager.py          # チャネルライフサイクルマネージャ
-│   └── registry.py         # チャネル登録
+├── channels/               # チャンネルインターフェース定義
+│   ├── base.py             # 抽象チャンネル基底クラス
+│   ├── manager.py          # チャンネルライフサイクルマネージャー
+│   └── registry.py         # チャンネル登録
 │
-├── client/                 # 次世代クライアント（Tauri 2 + Nuxt 4）
-│   ├── app/                # Nuxt 4 SPA ソース
-│   │   ├── app.vue         # ルートコンポーネントエントリ
-│   │   ├── pages/          # ページコンポーネント
-│   │   ├── layouts/        # レイアウトコンポーネント
-│   │   ├── composables/    # Vue 3 コンポーザブルロジック
-│   │   ├── assets/         # CSS＆設定アセット
-│   │   ├── nuxt.config.ts  # Nuxt 4 設定
-│   │   └── package.json    # 依存関係マニフェスト
+├── client/                 # デスクトップクライアント（Tauri 2 + Nuxt 4、pnpm）
+│   ├── app/                # Nuxt 4 SPA ソース（Vue 3）
 │   ├── src-tauri/          # Tauri 2 ネイティブシェル（Rust）
-│   │   ├── src/            # Rust ソース
-│   │   ├── Cargo.toml      # Rust 依存関係
-│   │   └── tauri.conf.json # Tauri 2 設定
-│   └── README.md           # 英語ドキュメント
+│   └── README.md           # クライアントドキュメント
 │
-├── config/                 # 集中型設定
+├── config/                 # 集中設定
+│   ├── __init__.py         # API ホスト/ポート（127.0.0.1:8080）
 │   ├── path.py             # ファイルパス設定
 │   ├── schema.py           # 設定スキーマモデル
 │   └── num.py              # 数値/チューニングパラメータ
 │
-├── context_engine/         # メモリエンジン
-│   ├── core.py             # メッセージ検索＆検索 API
-│   └── store/              # 短期セッションメッセージメモリ（SQLite + FTS5）
+├── context_engine/         # メモリエンジン（MesMemory）
+│   ├── core.py             # 履歴取得と FTS5 検索 API
+│   ├── store/              # セッションメッセージストア（SQLite + FTS5、WAL）
+│   └── curator/            # 自動スキルキュレーション
 │
-├── logs/                   # ログシステム
-│   ├── logger.py           # ログ設定
+├── logs/                   # ロギングシステム
+│   ├── logger.py           # ログ設定（loguru）
 │   └── output/             # ログ出力ディレクトリ
 │
-├── models/                 # モデルラッパー
-│   ├── LLMs/               # LLM モデル設定
-│   │   ├── auxiliary_llm/       # 軽量チャットモデル
-│   │   ├── main_llm.py         # プライマリチャットモデル
-│   │   ├── reasoner_llm.py     # 思考連鎖推論モデル
-│   │   └── reasoning_normalizer.py # プロバイダ間で reasoning_content を正規化
-│   ├── VTTT_model.py       # ビデオ-テキスト-テキストモデル
-│   ├── ITTT_model.py       # 画像-テキストモデル
-│   ├── STT_model/          # 音声-テキストモデル
-│   ├── embed_model/        # テキスト埋め込みモデル
-│   ├── reranker_model/     # クロスエンコーダ再ランカー
-│   └── extract_model/      # エンティティ抽出モデル
+├── models/                 # モデルラッパーと重み
+│   ├── LLMs/               # LLM 設定（main_llm.py、reasoner_llm.py、auxiliary_llm/、reasoning_* プロバイダー対応）
+│   ├── ITTT_model/         # Image-to-Text モデル（クラウド API またはローカル GGUF）
+│   ├── VTTT_model/         # Video-Text-to-Text モデル（クラウド API またはローカル GGUF）
+│   ├── STT_model/          # Speech-to-Text モデル（FunASR）
+│   ├── embed_model/        # 埋め込みモデル（ローカル bge-m3 GGUF またはクラウド API）
+│   ├── reranker_model/     # リランカーモデル（ローカル GGUF またはクラウド API）
+│   └── extract_model/      # エンティティ抽出モデル（サードパーティ重み）
 │
 ├── plugins/                # プラグインシステム
-│   ├── channels/           # チャネルプラグイン（QQ ボットなど）
+│   ├── channels/           # チャンネルプラグイン（QQ ボットアダプター）
 │   └── mcp_server/         # MCP サーバー設定
 │
-├── providers/              # LLM プロバイダ仕様＆レジストリ
-│   ├── registry.py         # 対応プロバイダすべての ProviderSpec エントリ
-│   └── __init__.py         # プロバイダレジストリのエクスポート
+├── providers/              # LLM プロバイダー仕様とレジストリ
+│   └── registry.py         # 20 以上のプロバイダーの ProviderSpec
 │
 ├── pub_func/               # 共通ユーティリティ関数
-│   ├── format/             # テキスト整形ユーティリティ
+│   ├── format/             # テキストフォーマットユーティリティ
 │   ├── media/              # メディア処理ユーティリティ
 │   ├── message/            # メッセージ処理ユーティリティ
-│   └── validator/          # 入力検証ユーティリティ
+│   └── validator/          # 入力バリデーションユーティリティ
 │
-├── runtime/                # ランタイム状態＆ユーティリティ
-│   ├── core.py             # コアランタイムライフサイクル
-│   ├── _callback_executor.py   # 非同期コールバック実行器
-│   ├── count_call_register.py   # 使用量/統計カウンタ
-│   ├── relation_register.py    # 関係/親密度トラッキング
-│   ├── state_register.py   # 状態レジストリ
-│   └── timer_call_register.py   # タイマーレジストリ
+├── runtime/                # ランタイム状態とユーティリティ
+│   ├── core.py             # シングルトン Register 基底 + セッション単位のクリーンアップ
+│   ├── relation_register.py # セッション/socket 関係レジストリ
+│   ├── state_register.py   # ステートレジストリ
+│   ├── count_call_register.py # 使用量/統計カウンター
+│   ├── timer_call_register.py # タイマーレジストリ
+│   └── _callback_executor.py # 非同期コールバック実行器
 │
-├── server/                 # Robyn バックエンドサービス＆API ルート
-│   ├── __main__.py         # サーバーエントリポイント
+├── scripts/                # ユーティリティスクリプト（現在ソースファイルなし）
+│
+├── server/                 # Robyn バックエンドサービス
+│   ├── __main__.py         # サーバーエントリーポイント（python -m server）
 │   ├── DAO/                # データアクセスオブジェクト
-│   ├── service/            # ビジネスロジックサービス
-│   └── trigger/            # トリガーマネージャ
-│       ├── core.py         # トリガーマネージャ
-│       ├── channels/       # 受信チャネルトリガー
+│   ├── service/            # ビジネスロジックサービス（skill_scanner.py を含む）
+│   └── trigger/            # ルートとハンドラーの登録
 │       ├── http/           # HTTP エンドポイントトリガー
+│       ├── ws/             # WebSocket トリガー
+│       ├── channels/       # チャンネル受信トリガー
 │       └── subagent/       # サブエージェント結果トリガー
 │
 ├── skills/                 # スキルライブラリ（SKILL.md 定義ファイル）
-│   ├── loader.py           # スキル自動発見＆登録
-│   ├── skills_snapshot.py  # スキルプロンプトスナップショット生成
-│   ├── skills_snapshot.json # キャッシュされたスキルプロンプトスナップショット
-│   ├── auto/               # 自動学習スキル
-│   ├── plugins/            # プラグイン提供スキル
-│   └── builtin/            # 組み込みスキル実装
-│       └── core/           # コア組み込みスキル
-│           ├── web_search/     # ウェブ検索＆スクレイプ
-│           ├── cron/           # Cron スケジュールタスクスキル
-│           ├── heartbeat/      # ハートビート定期チェックスキル
-│           ├── image_to_text/  # 画像理解
-│           ├── speech_to_text/ # 音声認識
-│           ├── video_text_to_text/ # ビデオ理解
-│           ├── multimodal_rag/ # RAG ベース知識検索
-│           ├── clawhub/        # GitHub リポジトリクローナー
-│           └── skill_creator/  # 新スキル自動生成
+│   ├── loader.py           # スキル自動検出と登録
+│   ├── skills_snapshot.py  # スキルプロンプトスナップショットの構築
+│   ├── auto/               # 自動学習スキル（curator が管理）
+│   ├── plugins/            # サードパーティアップロードスキル（デフォルトで非アクティブ）
+│   └── builtin/            # 内蔵スキル
+│       ├── core/           # cron、heartbeat、clawhub、skill_creator、image_to_text、
+│       │                   # speech_to_text、video_text_to_text、multimodal_rag
+│       ├── text_to_image/  # Text-to-Image スキル
+│       ├── code_wiki/      # コードベース wiki 生成スキル
+│       └── llm_wiki/       # Markdown ナレッジベーススキル
 │
 ├── src/                    # ランタイムデータディレクトリ
 │   ├── checkpoints/        # セッションチェックポイント
 │   ├── data/               # データストレージ
-│   ├── sessions/           # セッションランタイムストア
-│   └── store/              # データストア
-│
-├── static/                 # 静的アセット
-│   ├── avatar/             # キャラクターアバター画像
-│   └── images/             # その他の画像
+│   ├── store/              # データストア
+│   ├── rag/                # RAG インデックス出力
+│   └── images/ audio/ video/ # アップロードメディア（静的配信）
 │
 ├── temp/                   # 一時ファイル
 │
-├── tests/                  # テストスイート
+├── tests/                  # テストスイート（pytest）
 │
 ├── type/                   # 共有データモデル
 │   ├── message.py          # MultiModalMessage、Chat など
 │   ├── bus.py              # メッセージバスデータモデル
 │   └── client.py           # クライアントデータモデル
 │
-├── workspace/              # キャラクタープロフィール＆動作定義
-│   ├── IDENTITY.md         # 名前、年齢、興味、関係
+├── workspace/              # キャラクタープロファイルと行動定義
+│   ├── IDENTITY.md         # 名前、年齢、興味、人間関係
 │   ├── SOUL.md             # 性格の対比、話し方
-│   ├── AGENTS.md           # ツール使用優先度、安全境界
-│   ├── USER.md             # ユーザー固有の対話優先度＆既知の事実
-│   ├── HEARTBEAT.md        # ハートビートサービス用の保留タスク
-│   ├── character.json      # キャラクター設定
-│   ├── prompt_builder.py   # プロフィール-プロンプトビルダー
-│   ├── template/           # プロンプトテンプレート
+│   ├── AGENTS.md           # ツール使用の優先順位、安全境界
+│   ├── USER.md             # ユーザー固有の対話設定
+│   ├── HEARTBEAT.md        # Heartbeat サービスの未完了タスク
+│   ├── character.json      # キャラクター設定（JSON）
+│   ├── prompt_builder.py   # プロファイルからプロンプトを構築
+│   ├── file_sync.py        # ワークスペーステンプレートの遅延同期（言語別）
+│   ├── template/           # ペルソナテンプレート（en / zh / ja / ko）
 │   └── memory/             # 長期記憶ストレージ
 │
-├── .env                    # 環境変数（API キー、モデルパス）
 ├── .env.example            # 環境変数テンプレート
 ├── pyproject.toml          # Python 依存関係（uv 管理）
-├── uv.lock                 # uv 用ロックファイル
-├── start.sh                # ワンクリック起動スクリプト
-├── introduce.md            # プロジェクト紹介（EN）
-├── introduce.zh.md         # プロジェクト紹介（ZH）
-├── TODOList.md             # 開発ロードマップ（EN）
-├── TODOList.zh.md          # 開発ロードマップ（ZH）
+├── uv.lock                 # uv ロックファイル
+├── start.sh                # バックエンド起動スクリプト
 └── cron_jobs.json          # Cron ジョブスケジュールデータ
 ```
 
@@ -252,97 +231,123 @@ EMA_AI_agent/
 
 ## 📚 サブモジュールドキュメント
 
-各主要サブシステムには独自の詳細 README があります:
+各主要サブシステムには詳細な README があります：
 
 | サブモジュール | 説明 | ドキュメント |
 |-----------|-------------|---------------|
-| **コンテキストエンジン** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **サブエージェントシステム** | 階層的タスク分解、並列実行＆経験蒸留 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
+| **Context Engine** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
+| **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
-| **チャネル** | チャネルインターフェース＆アダプタシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
-| **次世代クライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) |
-| **Cron サービス** | スケジュール/定期エージェントタスク実行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
-| **ハートビートサービス** | 定期的ウェイクアップタスクチェック | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
-
----
+| **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
+| **デスクトップクライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) |
+| **Cron サービス** | 定時/周期的エージェントタスク実行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
+| **Heartbeat サービス** | 定期ウェイクアップタスクチェック | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
 
 ## ⚡ クイックスタート
 
 ### 1. 前提条件
-**Python 3.13+** がインストールされていることを確認してください。
+- **Python 3.13+**
+- **[uv](https://docs.astral.sh/uv/)** —— 依存関係マネージャー。`.venv` は uv が自動的に作成・管理するため、仮想環境を手動で作成する必要はありません。
 
 ```bash
-git clone https://github.com/your-repo/EMA_AI_agent.git
+git clone <your-repo-url>
 cd EMA_AI_agent
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-uv sync
+uv sync   # .venv を作成し、uv.lock の依存関係を正確にインストール
 ```
 
-### 2. モデルのダウンロード
-初回実行時、システムは**Hugging Face**から自動的に Embedding モデルと Reranker モデルを `models/embed_model` と `models/reranker_model` にダウンロードします。注意:
-
-- **ネットワーク**: huggingface.co にアクセスできることを確認してください（中国のユーザーはプロキシまたはミラーが必要な場合があります）。
-- **待ち時間**: モデルの重みは大きいです（数百 MB 〜数 GB）。ダウンロード時間は接続速度に依存します。
-- **中断時の再開**: ダウンロードが中断された場合は、対応するディレクトリを削除して再起動すると再ダウンロードされます。
-
-> モデルを手動でダウンロードしてディレクトリに配置すれば、自動ダウンロードをスキップできます。
-
-### 3. 環境変数の設定
-`.env` の例をコピーし、API キー（DeepSeek、OpenAI など）とモデルパスを記入します。
+### 2. 環境変数の設定
+`.env` テンプレートをコピーし、少なくともメインチャットモデルと Tavily キーを設定してください：
 
 ```bash
 cp .env.example .env
-# .env を編集して MAIN_LLM_API_KEY、モデルパスなどを設定
 ```
 
-### 4. サービスの起動
-提供された `start.sh` スクリプトを使用して、ローカル Ollama モデル、バックエンド、フロントエンド UI を一度に起動します。
+| 変数 | 必須 | 説明 |
+| :------- | :------- | :---------- |
+| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | メインチャットモデル（JSON 出力とツール呼び出しに対応必須） |
+| `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 汎用推論スイッチ。プロバイダーごとにマッピング（DeepSeek / OpenAI / GLM / Anthropic） |
+| `TAVILY_API_KEY` | Web 検索利用時は必須 | Web 検索ツールを有効化 |
+| `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
+| `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替） |
+| `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
+| `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
+| `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector セキュリティスキャンのスイッチ（デフォルトで有効） |
+| `TOOL_CALL_TIMEOUT_MINUTES` / `LOG_LEVEL` | — | ツールタイムアウト（5 分）とログレベル（INFO） |
+| `WORKSPACE_TEMPLATE_LANG` | — | ペルソナテンプレートの言語：`en` / `zh` / `ja` / `ko`（初回使用時に遅延コピー） |
+| `LANGSMITH_*` | — | オプションの LangSmith トレーシング |
+
+### 3. モデルに関する注意（HuggingFace 自動ダウンロード）
+**ローカル GGUF** モードに設定されたモデルは、初回使用時に Hugging Face から `models/<model>/model_weight/` へ自動ダウンロードされます。手動ダウンロードは不要です：
+
+- **埋め込みモデル**：`EMBEDDING_MODEL_LOCAL=true`（デフォルト）の場合、ローカルの `bge-m3` Q8_0 GGUF を初回実行時に自動ダウンロードします。
+- **リランカーモデル**：`.env` テンプレートのデフォルトは**クラウド API**（`RERANKER_MODEL_LOCAL=false`、OpenAI 互換の `bge-reranker-v2-m3`）。`true` に設定するとローカル GGUF リランカー（約 636 MB、自動ダウンロード）に切り替わります。
+- **ITTT / VTTT / Auxiliary LLM**：テンプレートのデフォルトはクラウド API。`*_MODEL_LOCAL=true` でローカル GGUF モデルに切り替え可能（同様に自動ダウンロード）。
+
+> 初回ダウンロードには huggingface.co へのアクセスが必要です（中国本土のユーザーはプロキシやミラーが必要な場合があります）。ダウンロードが中断された場合は次回起動時に再開されます。`models/<model>/model_weight/` を削除すると再ダウンロードを強制できます。
+
+### 4. バックエンドの起動
+`start.sh` は uv 管理の `.venv` をアクティブ化し、Robyn バックエンドを起動します（Ollama やフロントエンドは起動しません）：
 
 ```bash
 chmod +x start.sh
-./start.sh
+./start.sh          # .venv/Scripts/python -m server --fast --disable-openapi を実行
 ```
 
-### 5. （オプション）手動起動
-
-各コンポーネントを個別に起動することもできます:
+手動起動（同等）：
 
 ```bash
-python -m server  # バックエンド起動
+uv run python -m server
 ```
+
+バックエンドは **http://127.0.0.1:8080** でリッスンし、WebSocket エンドポイントは `/sessions/ws` です。
+
+### 5. （オプション）デスクトップクライアント
+Tauri 2 + Nuxt 4 クライアントは [client/](client/) にあります。Node.js 18+、pnpm、Rust が必要です：
+
+```bash
+cd client
+pnpm install
+pnpm dev          # ブラウザモード、開発サーバー http://localhost:3000
+pnpm tauri dev    # ネイティブデスクトップモード
+```
+
+クライアントはデフォルトで `http://127.0.0.1:8080` の Python バックエンドに接続します（`client/.env` の `VITE_API_BACK_URL` で変更可能）。詳細は[クライアント README](client/README.md) を参照。
 
 ---
 
-## 📝 キャラクタープロフィールの例
+## 📝 キャラクタープロファイルの例
 
-エージェントの動作は `workspace/` 配下の Markdown ファイルによって決定されます:
+エージェントの動作は `workspace/` 配下のファイルによって駆動されます：
 
-- **IDENTITY.md**: 名前、年齢、興味、関係などを定義
-- **SOUL.md**: 性格の対比、話し方、行動ロジックを定義
-- **AGENTS.md**: ツール使用優先度、安全境界、倫理ガイドラインを定義
-- **USER.md**: ユーザー固有の対話優先度と既知の事実を保存
-- **HEARTBEAT.md**: ハートビートスケジュールサービス用の保留タスク一覧
-- **character.json**: 構造化されたキャラクター設定（JSON）
+- **IDENTITY.md**：名前、年齢、興味、人間関係などを定義。
+- **SOUL.md**：性格の対比、話し方、行動ロジックを定義。
+- **AGENTS.md**：ツール使用の優先順位、安全境界、倫理ガイドラインを定義。
+- **USER.md**：ユーザー固有の対話設定や既知情報を保存。
+- **HEARTBEAT.md**：Heartbeat 定時サービスの未完了タスクを列挙。
+- **character.json**：構造化されたキャラクター設定（JSON）。
+- **prompt_builder.py**：プロファイルファイルからシステムプロンプトを構築。
+- **file_sync.py**：不足しているペルソナファイルを `workspace/template/<lang>/`（`WORKSPACE_TEMPLATE_LANG` で選択）から遅延コピー。ユーザーの編集を上書きすることはありません。
 
 ---
 
 ## 🤝 コントリビューション
 
-Issues と Pull Requests を歓迎します！新しいスキルを追加するには:
+Issue と Pull Request を歓迎します！新しいスキルの追加方法：
 
-1. `skills/` の下にフォルダを作成します。
-2. スキルの使用方法と手順を説明する `SKILL.md` を書きます。
-3. エージェントを再起動すると、新しいスキルを自動的に発見してロードします。
+1. `skills/` 配下にフォルダを作成（サードパーティスキルは `skills/plugins/`）。
+2. YAML フロントマター（`name`、`description`、オプションの `scope`）を持つ `SKILL.md` に、スキルの使い方と手順を記述。
+3. エージェントを再起動 —— ローダーがすべての `SKILL.md` を自動検出し、モデルに公開します。（実行中のエージェントに内蔵の `skill_creator` スキルで生成させることもできます。）
+
+`skills/plugins/` 配下のサードパーティスキルは SkillSpector でスキャンされ、明示的に有効化されるまで非アクティブのままです。
 
 ---
 
-連絡先: QQ 3132225629
+連絡先：QQ 3132225629
 
 ## 📄 ライセンス
 
-このプロジェクトは MIT ライセンスの下でライセンスされています。
+このプロジェクトは MIT ライセンスの下で公開されています。
 
 ---
 
-> **💡 ヒント**: このプロジェクトは、高度な AI エージェントとディープロールプレイングの探求に触発されました。
+> **💡 Tips**：このプロジェクトは、高度な AI エージェントとディープ・ロールプレイングの探求からインスピレーションを得ています。

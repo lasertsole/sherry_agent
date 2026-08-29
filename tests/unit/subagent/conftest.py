@@ -14,7 +14,7 @@ def _setup_subagent_alias():
         return
 
     for mod_name in [
-        "agent", "agent.tools", "agent.core", "agent.codeact",
+        "agent", "agent.tools", "agent.core",
         "agent.checkpointer", "agent.middlewares",
         "bus", "bus.core", "type", "type.bus", "type.message",
         "pub_func", "models", "sessions", "runtime", "config",

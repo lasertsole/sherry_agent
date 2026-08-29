@@ -1,4 +1,10 @@
 {
+  "a11y": {
+    "skipToMain": "Skip to main content",
+    "previewImage": "Preview image",
+    "toggleTheme": "Toggle theme",
+    "deleteSession": "Delete session"
+  },
   "chatInput": {
     "placeholder": "Type a message...",
     "thinking": "AI is thinking...",

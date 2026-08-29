@@ -1,4 +1,10 @@
 {
+  "a11y": {
+    "skipToMain": "跳到主内容",
+    "previewImage": "预览图片",
+    "toggleTheme": "切换主题",
+    "deleteSession": "删除会话"
+  },
   "chatInput": {
     "placeholder": "请输入内容...",
     "thinking": "AI 正在思考中...",

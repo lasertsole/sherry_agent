@@ -161,7 +161,12 @@
                   v-if="!failedImageSources.has(resolveImageSrc(message, src))"
                   :src="resolveImageSrc(message, src)"
                   class="w-24 h-24 object-cover rounded-lg border border-solid border-gray-200 cursor-pointer hover:opacity-80 transition-opacity duration-200"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="t('a11y.previewImage')"
                   @click="openPreview(resolveImageSrc(message, src))"
+                  @keydown.enter.prevent="openPreview(resolveImageSrc(message, src))"
+                  @keydown.space.prevent="openPreview(resolveImageSrc(message, src))"
                   @error="onImageError($event, resolveImageSrc(message, src))" />
                 <div
                   v-else

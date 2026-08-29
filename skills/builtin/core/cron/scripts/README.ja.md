@@ -2,149 +2,267 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent システム内で、定期的・一時的・cron 式ベースのエージェントタスクを予約・実行するための軽量なファイルベースの cron サービスモジュールです。
+EMA AI Agent システム向けの軽量なファイルベース cron サービスです。一回限りのタスク、固定間隔タスク、cron 式タスクをスケジュール・実行します。ジョブはプロジェクトルートの `cron_jobs.json` に永続化され、専用のバックグラウンドサービスによって実行され、その結果はメッセージバスを通じて有効なチャネルへ配信されます。
 
 ## 機能
 
-- 3 種類のスケジュールタイプ: `at`（一時）、`every`（間隔）、`cron`（cron 式）
-- ファイルベースの永続ストレージ（`jobs.json`）、外部変更時の自動リロード
-- ミリ秒精度のタイマー駆動実行
-- ジョブごとの実行履歴（直近 20 件を保持）
-- 保護されたシステムジョブ（API 経由では削除不可）
-- cron 式のタイムゾーンサポート
-- 外部チャネルへのメッセージ配信設定（例: QQ、WhatsApp）
+- 3 種類のスケジュールタイプ: `at`（一回限り）、`every`（固定間隔）、`cron`（cron 式、`croniter` 使用）
+- `cron_jobs.json`（プロジェクトルート）によるファイル永続化、外部変更時の自動リロード
+- 専用のバックグラウンドサービススレッド（独自の asyncio イベントループを持つ）; 自己再武装するタイマーが最も早い実行時刻のジョブに合わせて正確に起床
+- ジョブ実行は専用エージェントを起動（メイン LLM + システムプロンプト + Python REPL / ファイル読み込み / ファイル書き込みツール）
+- 結果は `MessageBus` のインバウンドキューを通じてチャネルへ配信され、ブラウザ UI にはベストエフォートで WebSocket `notification` イベントを送信
+- ジョブごとの実行ログを JSON Lines 形式で `logs/output/cron/<job_id>.log` に追記
+- 保護されたシステムジョブ（`payload.kind == "system_event"`）は削除不可
+- cron 式のタイムゾーンサポート（`zoneinfo` による IANA タイムゾーン名）
+- REST API（Robyn）: `GET/POST/PUT/DELETE /cron`、`POST /cron/trigger`、`POST /cron/enable` — デスクトップクライアント向け
 
 ## モジュール構成
 
 ```
-cron/
-├── __init__.py    # 公開エクスポート: CronService, cron_service, types
-├── core.py        # コア実装: CronService、ジョブ実行、タイマーループ
-├── types.py       # データモデル: CronSchedule, CronPayload, CronJob など
-├── jobs.json      # 永続ジョブストア（自動管理）
-└── README.md      # このファイル
+skills/builtin/core/cron/
+├── __init__.py
+├── SKILL.md             # エージェントスキル定義（add / list / remove / set_context のレシピ）
+└── scripts/
+    ├── __init__.py      # 公開エクスポート: CronService, cron_service, Cron, cron, types
+    ├── base.py          # CronService シングルトン、cron_jobs.json 入出力、タイマーループ、ジョブ実行
+    ├── core.py          # Cron ファサード（エージェント向け）: add_job / list_jobs / remove_job / set_context
+    ├── types.py         # データモデル: CronSchedule, CronPayload, CronRunRecord, CronJobState, CronJob, CronStore
+    └── README.md        # このファイル
 ```
 
-## 型リファレンス
+このスキルディレクトリ外の関連コード:
 
-### CronSchedule
+- [`server/trigger/http/cron.py`](../../../../../server/trigger/http/cron.py) — `cron_service` をラップする REST エンドポイント
+- [`../SKILL.md`](../SKILL.md) — エージェントによるスキルスクリプトの呼び出し方法
+- `cron_jobs.json` — プロジェクトルートのジョブストア（`config.ROOT_DIR / "cron_jobs.json"`）
+- `logs/output/cron/` — ジョブごとの実行ログ
 
-ジョブを実行するタイミングを定義します。
+## 動作の仕組み
 
-| フィールド | 型   | 説明 |
-|-----------|--------|-------------|
-| `kind`    | `"at" \| "every" \| "cron"` | スケジュールタイプ |
-| `at_ms`   | `int \| None` | "at" 用のミリ秒単位の Unix タイムスタンプ |
-| `every_ms`| `int \| None` | "every" 用のミリ秒単位の間隔 |
-| `expr`    | `str \| None` | "cron" 用の cron 式、例: `"0 9 * * *"` |
-| `tz`      | `str \| None` | タイムゾーン、例: `"Asia/Shanghai"`。"cron" のみ |
+1. **サービス起動**: `skills.builtin.core.cron.scripts` をインポートすると（スキルスクリプトと HTTP ルートの両方で発生）、`cron-service` という名前のデーモンスレッド（`_start_cron_service_thread`）が起動します。このスレッドは専用の asyncio イベントループを作成し、`cron_service.start()` を実行した後ループし続けます。`CronService.add_job()` / `register_system_job()` も、サービスが未起動の場合は自動的に起動します。
+2. **タイマーループ**: `_arm_timer()` は有効なジョブの中で最も早い `nextRunAtMs` までの `asyncio` スリープを 1 回スケジュールします。その後 `_on_timer()` がストアを再ロード（外部変更を取得）し、`nextRunAtMs <= now` の有効なジョブをすべて実行して、ストアを保存し、タイマーを再武装します。
+3. **実行**（`_execute_job`）: `set_on_job` で登録されたコールバック（`_on_cron_job`）がジョブを実行します。ジョブの `lastStatus` / `lastError` を記録し、WS 通知を送信し、実行ログを 1 行追記します。一回限り（`at`）のジョブはその後削除（`deleteAfterRun` 時）または無効化され、定期ジョブは次回実行時刻を再計算します。
 
-### CronPayload
+**結果の配信**（`base.py` の `_on_cron_job`）:
 
-ジョブが実行されたときのアクションを定義します。
+1. `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])` で新しいエージェントを構築し、ジョブの `payload.message` を `HumanMessage` として実行します。
+2. エージェントの最終メッセージを `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)` としてメッセージバスにパブリッシュします。
+3. チャネルのインバウンドコンシューマ（`server/trigger/channels/core.py`）が有効なチャネルごとにそのメッセージを処理し、生成された返信を `channel.send(OutboundMessage(...))` で設定された `chat_id` へ配信します。
+4. それとは別に、`_push_cron_notification` がセッション `default`（`CRON_WS_SESSION_ID`）の WebSocket へ `{"event": "notification", "content": "cron: <job name> [<status>]"}` を送信し、ブラウザ UI の通知ベルをリアルタイムに更新します。ベストエフォート: 失敗はログに記録されるだけでフローを中断しません。
 
-| フィールド | 型            | 説明 |
-|-----------|-----------------|-------------|
-| `kind`    | `"system_event" \| "agent_turn"` | ペイロードタイプ |
-| `message` | `str`           | エージェントに送るプロンプトメッセージ |
-| `deliver` | `bool`          | 結果を外部チャネルに配信するか |
-| `channel` | `str \| None`   | チャネル名（例: `"whatsapp"`、`"qq"`） |
-| `to`      | `str \| None`   | 受信者識別子 |
+> 注意: `deliver` フィールドはジョブに保存され API でも公開されますが、現在の実行パス（`_on_cron_job`）はその値に関係なく結果をバスへパブリッシュします。メッセージが実際にユーザーに届くかどうかは、有効なチャネルに依存します（`plugins/channels/config.json` を参照）。
 
-### CronJob
+## ジョブストア（`cron_jobs.json`）
 
-完全なジョブ定義です。
+ジョブはプロジェクトルートの `cron_jobs.json` に永続化されます。ファイルはサービス起動時にロードされ、更新時刻（mtime）が変わるたびに自動的に再ロードされます。ファイルを直接編集してジョブを一括追加・変更でき、変更は次のタイマーティックで反映されます。
 
-| フィールド          | 型            | 説明 |
-|---------------------|-----------------|-------------|
-| `id`                | `str`           | 一意のジョブ ID（自動生成） |
-| `name`              | `str`           | 人間が読める名前 |
-| `enabled`           | `bool`          | ジョブがアクティブか |
-| `schedule`          | `CronSchedule`  | スケジュール定義 |
-| `payload`           | `CronPayload`   | アクション定義 |
-| `delete_after_run`  | `bool`          | 一時実行後に自動削除するか |
+ディスク上のフィールドは camelCase です（`base.py` の `_save_store` / `_load_store`）。最上位は `version`（int）と `jobs`（配列）です。ジョブの例:
+
+```json
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "a1b2c3d4",
+      "name": "daily_digest",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "atMs": null,
+        "everyMs": null,
+        "expr": "0 9 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      "payload": {
+        "kind": "agent_turn",
+        "message": "Summarize today's schedule and important events",
+        "deliver": false,
+        "channel": null,
+        "to": null
+      },
+      "state": {
+        "nextRunAtMs": 1756000000000,
+        "lastRunAtMs": null,
+        "lastStatus": null,
+        "lastError": null
+      },
+      "createdAtMs": 1755000000000,
+      "updatedAtMs": 1755000000000,
+      "deleteAfterRun": false
+    }
+  ]
+}
+```
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `id` | `str` | 一意なジョブ ID（`uuid4` の先頭 8 文字） |
+| `name` | `str` | 人間が読める名前 |
+| `enabled` | `bool` | 有効かどうか（デフォルト `true`） |
+| `schedule` | `object` | 実行タイミング: 下記参照 |
+| `payload` | `object` | 実行内容: 下記参照 |
+| `state` | `object` | 実行時状態: 下記参照 |
+| `createdAtMs` | `int` | 作成タイムスタンプ（ミリ秒） |
+| `updatedAtMs` | `int` | 最終更新タイムスタンプ（ミリ秒） |
+| `deleteAfterRun` | `bool` | 一回限りの実行後にジョブを削除するか（デフォルト `false`） |
+
+**`schedule`**
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `kind` | `"at" \| "every" \| "cron"` | スケジュールタイプ |
+| `atMs` | `int \| null` | Unix タイムスタンプ（ミリ秒） — `kind: "at"` 用 |
+| `everyMs` | `int \| null` | 間隔（ミリ秒） — `kind: "every"` 用 |
+| `expr` | `str \| null` | cron 式、例: `"0 9 * * *"` — `kind: "cron"` 用 |
+| `tz` | `str \| null` | IANA タイムゾーン、例: `"Asia/Shanghai"` — `kind: "cron"` とのみ併用可能 |
+
+**`payload`**
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `kind` | `"agent_turn" \| "system_event"` | ペイロードタイプ（デフォルト `"agent_turn"`; サービスや API から追加されるジョブは常に `agent_turn`） |
+| `message` | `str` | エージェントへ送るプロンプトメッセージ |
+| `deliver` | `bool` | 配信フラグ（デフォルト `false`; 上記の注意を参照 — 現在の実行パスでは参照されません） |
+| `channel` | `str \| null` | チャネル名、例: `"qq"` |
+| `to` | `str \| null` | 受信者識別子（`chat_id` として使用） |
+
+**`state`**
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `nextRunAtMs` | `int \| null` | 次回の予定実行時刻（ミリ秒）; 無効・期限切れジョブは `null` |
+| `lastRunAtMs` | `int \| null` | 最終実行の開始時刻（ミリ秒） |
+| `lastStatus` | `"ok" \| "error" \| "skipped" \| null` | 最終実行の結果 |
+| `lastError` | `str \| null` | 最後のエラーメッセージ |
+
+Python 側の対応モデル（`types.py`）は snake_case を使用します（`at_ms`、`every_ms`、`next_run_at_ms`、`last_run_at_ms`、`last_status`、`last_error`、`created_at_ms`、`updated_at_ms`、`delete_after_run`）。`CronRunRecord` はエクスポートされていますが現在未使用です。
 
 ## 公開 API
 
-### `CronService`（`cron_service` によるシングルトン）
+### エージェントスキルコマンド（`Cron` ファサード、`core.py` の `cron` シングルトン）
+
+以下は [`../SKILL.md`](../SKILL.md) を通じてエージェントに公開されるコマンドです。`from skills.builtin.core.cron.scripts import cron` として使用します:
+
+| コマンド | 説明 |
+|---------|------|
+| `cron.set_context(channel, chat_id)` | セッションコンテキストを設定（両方必須・非空）。以降に追加するジョブの配信先になります |
+| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True)` | ジョブを追加。`every_seconds` / `cron_expr` / `at`（ISO 日時）のいずれか 1 つが必須。事前の `set_context` が必要。`tz` は `cron_expr` とのみ併用可（デフォルト `"UTC"`）; タイムゾーン情報のない `at` は UTC として扱われ、`at` ジョブには `delete_after_run=True` が設定されます。`name` のデフォルトは `message` の先頭 30 文字 |
+| `cron.list_jobs()` | 人間が読める形式の一覧: スケジュール時刻、システムジョブの用途と保護フラグ、前回/次回の実行時刻 |
+| `cron.remove_job(job_id)` | ジョブを削除。保護されたシステムジョブには丁寧なエラーメッセージを返します |
+
+### `CronService`（Python API、`base.py` の `cron_service` シングルトン）
 
 | メソッド | 説明 |
-|--------|-------------|
-| `start()` | cron サービスを開始 |
-| `stop()` | cron サービスを停止 |
-| `list_jobs(include_disabled=False)` | すべてのジョブを一覧表示 |
-| `add_job(name, schedule, message, ...)` | 新しいジョブを追加 |
-| `register_system_job(job)` | 保護されたシステムジョブを登録 |
-| `remove_job(job_id)` | ジョブを削除 |
-| `enable_job(job_id, enabled=True)` | ジョブを有効/無効化 |
-| `run_job(job_id, force=False)` | ジョブを手動トリガー |
-| `get_job(job_id)` | ジョブの詳細を取得 |
-| `status()` | サービスの状態を取得 |
+|---------|------|
+| `await start()` | ストアをロードし、次回実行時刻を再計算して保存し、タイマーを武装 |
+| `stop()` | サービスを停止しタイマータスクをキャンセル |
+| `set_on_job(callback)` | 非同期実行コールバックを登録（インポート時に `_on_cron_job` に接続済み） |
+| `list_jobs(include_disabled=False)` | 次回実行時刻でソートしてジョブを一覧表示; `include_disabled=True` の場合のみ無効なジョブを含む |
+| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | ジョブを追加（`payload.kind` は常に `"agent_turn"`）; サービスを自動起動; `CronJob` を返す |
+| `register_system_job(job)` | `id` をキーにシステムジョブを冪等に（再）登録（現在リポジトリ内に呼び出し元なし） |
+| `remove_job(job_id)` | `"removed"`、`"protected"`（`payload.kind == "system_event"`）、`"not_found"` のいずれかを返す |
+| `enable_job(job_id, enabled=True)` | 有効/無効化; `nextRunAtMs` を再計算またはクリア |
+| `await run_job(job_id, force=False)` | 即時実行; 無効なジョブは `force=True` がない限りスキップ |
+| `get_job(job_id)` | ID でジョブを取得、なければ `None` |
+| `status()` | `{"enabled": bool, "jobs": int, "next_wake_at_ms": int \| None}` を返す |
+
+### HTTP REST API（`server/trigger/http/cron.py`、バックエンド `http://127.0.0.1:8080`）
+
+| エンドポイント | 説明 |
+|--------------|------|
+| `GET /cron?include_disabled=false` | ジョブ一覧（camelCase JSON） |
+| `POST /cron` | 作成: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run"}` |
+| `PUT /cron` | 更新: 削除 + 再追加として適用され、`id` と `createdAtMs` は保持される |
+| `POST /cron/trigger` | 即時実行: `{"id", "force"}`（無効かつ `force` なしの場合は 400） |
+| `POST /cron/enable` | 有効/無効化: `{"id", "enabled"}` |
+| `DELETE /cron` | 削除: `{"id"}`; 保護されたシステムジョブは `403` |
 
 ## 使用例
 
+エージェントスキルスクリプト（[`../SKILL.md`](../SKILL.md) 参照）:
+
 ```python
-from cron import cron_service, CronSchedule
+from loguru import logger
+from skills.builtin.core.cron.scripts import cron
 
-# サービスを開始
-await cron_service.start()
+# ジョブを追加する前に、セッションコンテキストを一度設定する必要があります
+cron.set_context(channel="qq", chat_id="group_123456")
 
-# 一時ジョブ: 指定時間に実行
-cron_service.add_job(
-    name="morning_greeting",
-    schedule=CronSchedule(kind="at", at_ms=1700000000000),
-    message="Say good morning to the user",
-    deliver=True,
-    channel="qq",
-    to="group_123456",
-    delete_after_run=True,
+# cron 式ジョブ: 毎日上海時間 9 時
+res = cron.add_job(
+    name="daily_digest",
+    message="Summarize today's schedule and important events",
+    cron_expr="0 9 * * *",
+    tz="Asia/Shanghai",
+)
+logger.info(res)
+
+# 固定間隔ジョブ: 30 分ごと
+res = cron.add_job(
+    message="Check today's weather and remind user to bring an umbrella if needed",
+    every_seconds=30 * 60,
 )
 
-# 間隔ジョブ: 30 分ごとに実行
-cron_service.add_job(
+# 一回限りのジョブ: 明示的な ISO 日時
+res = cron.add_job(message="Say good morning to the user", at="2026-02-12T10:30:00")
+
+logger.info(cron.list_jobs())
+# cron.remove_job("a1b2c3d4")
+```
+
+Python API:
+
+```python
+from skills.builtin.core.cron.scripts import cron_service, CronSchedule
+
+# サービスは初回使用時に自動起動します。明示的な start は任意です
+await cron_service.start()
+
+job = cron_service.add_job(
     name="weather_update",
     schedule=CronSchedule(kind="every", every_ms=30 * 60 * 1000),
     message="Check today's weather and remind user to bring an umbrella if needed",
 )
 
-# Cron ジョブ: 上海時間で毎日午前 9 時に実行
-cron_service.add_job(
-    name="daily_digest",
-    schedule=CronSchedule(kind="cron", expr="0 9 * * *", tz="Asia/Shanghai"),
-    message="Summarize today's schedule and important events",
-)
-
-# すべてのジョブを一覧表示
 jobs = cron_service.list_jobs()
-for j in jobs:
-    print(f"{j.name}: next run at {j.state.next_run_at_ms}")
+print([j.name for j in jobs])
 
-# ジョブを手動トリガー
-await cron_service.run_job("job_id_here", force=True)
-
-# ジョブを削除
-cron_service.remove_job("job_id_here")
+await cron_service.run_job(job.id, force=True)   # 手動トリガー
+cron_service.remove_job(job.id)                   # "removed" | "protected" | "not_found"
 ```
 
-## ジョブの永続性
+HTTP:
 
-すべてのジョブは `jobs.json` に永続化されます。ファイルはサービス開始時に自動ロードされ、外部変更が検出された場合（ファイルの更新時刻を比較することにより）自動リロードされます。`jobs.json` を直接編集してジョブを一括追加・変更できます — サービスは次の tick で変更を反映します。
+```bash
+curl http://127.0.0.1:8080/cron
+curl -X POST http://127.0.0.1:8080/cron -H "Content-Type: application/json" \
+  -d '{"name": "daily_digest", "message": "Summarize today", "schedule": {"kind": "cron", "expr": "0 9 * * *", "tz": "Asia/Shanghai"}}'
+curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/json" -d '{"id": "a1b2c3d4", "force": true}'
+```
 
-## スケジュールのセマンティクス
+## スケジューリングの意味論
 
 | 種類 | 動作 |
-|------|----------|
-| `at` | 指定されたタイムスタンプで 1 回実行。実行後は無効化（`delete_after_run=True` の場合削除） |
-| `every` | 各完了から固定の `every_ms` 間隔で再実行 |
-| `cron` | `croniter` を使用し、指定されたタイムゾーンで cron 式から次の実行時刻を計算 |
+|------|------|
+| `at` | `atMs` に指定された時刻に 1 回だけ発火。計算時点でタイムスタンプが過去の場合、`nextRunAtMs` は `null` になりジョブは実行されません。実行後は削除（`deleteAfterRun=true`）または無効化（`enabled=false`、`nextRunAtMs=null`）されます |
+| `every` | 次回実行 = 現在時刻 + `everyMs`。実行のたびに再計算されます |
+| `cron` | `croniter` が式から次回実行時刻を計算。基準時刻は `tz` 指定があればそのタイムゾーンで、なければシステムのローカルタイムゾーンで評価されます |
+
+バリデーション: `tz` は `kind: "cron"` の場合のみ指定可能。不明な IANA タイムゾーン名は拒否されます（`ValueError`）。サービス層とファサード層の両方で同様です。
+
+## 保護されたシステムジョブ
+
+`payload.kind == "system_event"` のジョブは保護されています: `CronService.remove_job()` は削除を拒否し（`"protected"`、HTTP `DELETE /cron` は `403`）、スキル層はさらに `dream` という名前のジョブを認識し、長期記憶のための Dream 記憶統合ジョブとして説明します。`add_job`（Python・スキル・HTTP いずれも）で追加されるジョブは常に `agent_turn` です。`system_event` ジョブは `register_system_job()` または `cron_jobs.json` の直接編集によってのみ作成されます。
 
 ## 依存関係
 
-- `croniter` — cron 式のパース
+- `croniter>=6.2.2` — cron 式のパース
 - Python `zoneinfo` — タイムゾーンサポート
+- `config/` に cron 固有の設定項目は存在せず、cron 関連の環境変数もありません
 
 ## 注意事項
 
-- 一時（`at`）ジョブは実行後、デフォルトで**無効化**（削除ではない）されます。自動削除するには `delete_after_run=True` を設定してください。
-- システムジョブ（`payload.kind == "system_event"`）は保護されており、`remove_job()` では削除できません。
-- cron サービスは asyncio イベントループに依存します — `await cron_service.start()` を呼び出す時、アプリケーションがイベントループを実行していることを確認してください。
+- 実行履歴: 実行のたびに `logs/output/cron/<job_id>.log` へ 1 行の JSON が追記されます（`timestamp`、`job_id`、`job_name`、`start_time`、`end_time`、`duration_ms`、`status`、`error`、`message`）。メモリ上の実行履歴はありません（`CronRunRecord` は未使用のレガシーです）。
+- `cron_jobs.json` への外部変更はファイルの更新時刻で検出され、次のタイマーティックで反映されます。ストアは実行のたびに再保存されます。
+- サービスは `cron-service` デーモンスレッド上の独立したイベントループで動作し、メインサーバーのループとは独立しています。`run_job()` と `start()` は実行中のイベントループから await する必要があります。
+- WebSocket 通知はセッション `"default"`（ブラウザクライアントのセッション）宛てのため、クライアント接続中のみデスクトップ通知が届きます。

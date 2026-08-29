@@ -5,7 +5,11 @@
       'dark:bg-[#2a2a36]/[0.6] dark:border-[#555] md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]',
       { 'text-theme-main bg-[#c1d6e5]! ': props.isActive }
     ]"
-    @click="emits('chooseSession', props.historyRecord.id)">
+    @click="emits('chooseSession', props.historyRecord.id)"
+    role="button"
+    tabindex="0"
+    @keydown.enter.prevent="emits('chooseSession', props.historyRecord.id)"
+    @keydown.space.prevent="emits('chooseSession', props.historyRecord.id)">
     <!-- 标题 -->
     <div class="flex gap-1 items-center">
       <Checkbox
@@ -32,11 +36,13 @@
         {{ props.historyRecord?.title || t('history.newSession') }}
       </div>
       <!-- 重命名入口：铅笔图标，点击进入内联编辑 -->
-      <span
+      <button
         v-if="!isEditing"
-        class="pi pi-pencil cursor-pointer hover:text-blue-500 shrink-0"
+        type="button"
+        class="cursor-pointer hover:text-blue-500 shrink-0"
+        :aria-label="t('history.editTitle')"
         :title="t('history.editTitle')"
-        @click.stop="startEdit"></span>
+        @click.stop="startEdit"><i class="pi pi-pencil"></i></button>
     </div>
     <!-- 会话 ID（session_id） -->
     <div class="truncate mt-1 text-[10px] text-gray-600 dark:text-gray-400">
@@ -45,7 +51,11 @@
     <!-- 创建时间 & 操作 -->
     <div class="flex justify-between mt-3 text-xs">
       <span>{{ t('history.createdAt', { time: formattedCreateTime }) }}</span>
-      <span class="pi pi-trash cursor-pointer hover:text-red-500" @click.stop="handleDelete"></span>
+      <button
+        type="button"
+        class="cursor-pointer hover:text-red-500"
+        :aria-label="t('a11y.deleteSession')"
+        @click.stop="handleDelete"><i class="pi pi-trash"></i></button>
     </div>
   </div>
 </template>

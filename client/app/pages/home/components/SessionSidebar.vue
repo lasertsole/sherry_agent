@@ -55,7 +55,12 @@
         <!-- 筛选开关：默认折叠，收起时不显示任何搜索框（样式沿用 ChatBox 折叠块的 chevron+rotate 模式） -->
         <div
           class="flex items-center mb-2 cursor-pointer select-none text-xs text-[#868686]"
-          @click="showSessionFilters = !showSessionFilters">
+          role="button"
+          tabindex="0"
+          :aria-expanded="showSessionFilters"
+          @click="showSessionFilters = !showSessionFilters"
+          @keydown.enter.prevent="showSessionFilters = !showSessionFilters"
+          @keydown.space.prevent="showSessionFilters = !showSessionFilters">
           <span>{{ t('history.filterToggle') }}</span>
           <i
             :class="[
@@ -149,7 +154,11 @@
               :key="run.run_id"
               class="p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white dark:bg-[#2a2a36]/[0.6] dark:border-[#555] flex flex-col gap-1.5 md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]"
               :class="{ 'text-theme-main bg-[#c1d6e5]!': focusedRunId === run.run_id }"
-              @click="showTasksView(run)">
+              role="button"
+              tabindex="0"
+              @click="showTasksView(run)"
+              @keydown.enter.prevent="showTasksView(run)"
+              @keydown.space.prevent="showTasksView(run)">
               <div class="flex items-center gap-2">
                 <Checkbox
                   :model-value="selectedRunIds.has(run.run_id)"

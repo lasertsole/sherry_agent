@@ -12,7 +12,11 @@
       <div
         v-if="taskRuns.length > 0"
         class="shrink-0 mx-2 mt-2 flex items-center gap-2 bg-white dark:bg-[#131619] rounded-lg border border-solid border-gray-light dark:border-gray-dark shadow-sm px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a1d21] transition-colors select-none"
-        @click="router.push(localePath(`/home/tasks/${sessionId}`))">
+        role="button"
+        tabindex="0"
+        @click="router.push(localePath(`/home/tasks/${sessionId}`))"
+        @keydown.enter.prevent="router.push(localePath(`/home/tasks/${sessionId}`))"
+        @keydown.space.prevent="router.push(localePath(`/home/tasks/${sessionId}`))">
         <i class="pi pi-sitemap text-sm text-theme-main"></i>
         <span class="flex-1 text-sm font-medium text-gray-900 dark:text-gray-100">
           {{ t('taskViewer.viewTasks') }}
@@ -70,7 +74,12 @@
               :src="`data:image/*;base64,${img.base64}`"
               :alt="img.name"
               class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
-              @click="openPreview(`data:image/*;base64,${img.base64}`)" />
+              role="button"
+              tabindex="0"
+              :aria-label="t('a11y.previewImage')"
+              @click="openPreview(`data:image/*;base64,${img.base64}`)"
+              @keydown.enter.prevent="openPreview(`data:image/*;base64,${img.base64}`)"
+              @keydown.space.prevent="openPreview(`data:image/*;base64,${img.base64}`)" />
             <button
               type="button"
               :title="t('chatBox.removeImage')"
