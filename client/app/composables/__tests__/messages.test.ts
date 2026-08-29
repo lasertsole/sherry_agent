@@ -274,17 +274,30 @@ describe('postAgentStream', () => {
     expect(onError).toHaveBeenCalled();
   });
 
-  it('calls onError on socket error', async () => {
-    const onError = vi.fn();
-    const promise = new Promise<void>((resolve) => {
+  it('calls onError on socket error (重连预算耗尽后)', async () => {
+    // 新契约：pre-chunk 断流 → bridge 进入指数退避重连（1s/2s/4s），
+    // 预算耗尽才以 StreamInterruptedError 结束并派发 onError（旧版是立即回调）。
+    vi.useFakeTimers();
+    try {
+      const onError = vi.fn();
       postAgentStream('s1', { text: 'x' }, () => {}, () => {}, onError);
-      setTimeout(resolve, 20);
-    });
-    const ws = sockets[0];
-    ws.open();
-    ws.onerror?.({});
-    await promise;
-    expect(onError).toHaveBeenCalled();
+      const ws = sockets[0];
+      ws.open();
+      ws.onerror?.({});
+      for (let i = 0; i < 3; i++) {
+        await vi.advanceTimersByTimeAsync(1000 * 2 ** i);
+        // 每次重连出的新 socket 继续失败，驱动重连预算耗尽
+        const retry = sockets[sockets.length - 1];
+        retry.onerror?.({});
+      }
+      // flush microtasks：release → promise.catch → onError 派发
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onError).toHaveBeenCalledTimes(1);
+      // [sid].vue 消费该语义：StreamInterruptedError → 中断提示 + 延迟对账
+      expect(onError.mock.calls[0][0]).toMatchObject({ name: 'StreamInterruptedError' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not call onError when the request is aborted', async () => {

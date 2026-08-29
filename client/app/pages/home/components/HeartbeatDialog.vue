@@ -145,7 +145,7 @@ import { readHeartbeat, writeHeartbeat } from '@/composables/bridge';
 import { on, off } from '@/composables/mitt';
 import type { Handler } from 'mitt';
 
-const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -355,3 +355,64 @@ const handleSave = async () => {
   }
 };
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "heartbeat": {
+        "title": "心跳任务",
+        "addTask": "添加任务",
+        "effectiveHint": "此文件每30分钟被检查一次。请在下方添加希望 Agent 定期处理的任务。若仅剩标题/注释（没有任务），则将跳过心跳。",
+        "activeEmpty": "暂无活动任务。请在下方添加新任务。",
+        "completedEmpty": "暂无已完成任务。",
+        "deleteTask": "删除任务",
+        "complete": "完成任务",
+        "reactivate": "重新激活"
+      }
+    }
+  },
+  "en": {
+    "config": {
+      "heartbeat": {
+        "title": "Heartbeat Tasks",
+        "addTask": "Add task",
+        "effectiveHint": "This file is checked every 30 minutes. Add tasks below for the agent to work on periodically. If no tasks remain (only the headers and comments), the heartbeat is skipped.",
+        "activeEmpty": "No active tasks. Add new tasks below.",
+        "completedEmpty": "No completed tasks yet.",
+        "deleteTask": "Delete task",
+        "complete": "Complete",
+        "reactivate": "Reactivate"
+      }
+    }
+  },
+  "ja": {
+    "config": {
+      "heartbeat": {
+        "title": "ハートビートタスク",
+        "addTask": "タスクを追加",
+        "effectiveHint": "このファイルは30分ごとにチェックされます。Agentが定期的に処理してほしいタスクを下に追加してください。見出し/コメントのみ（タスクがない）場合はハートビートをスキップします。",
+        "activeEmpty": "アクティブなタスクはありません。下に新しいタスクを追加してください。",
+        "completedEmpty": "完了済みのタスクはまだありません。",
+        "deleteTask": "タスクを削除",
+        "complete": "完了にする",
+        "reactivate": "再アクティブ化"
+      }
+    }
+  },
+  "ko": {
+    "config": {
+      "heartbeat": {
+        "title": "하트비트 작업",
+        "addTask": "작업 추가",
+        "effectiveHint": "이 파일은 30분마다 확인됩니다. 에이전트가 주기적으로 처리하길 원하는 작업을 아래에 추가하세요. 헤더/주석만 남고 작업이 없으면 하트비트를 건너뜁니다.",
+        "activeEmpty": "활성 작업이 없습니다. 아래에서 새 작업을 추가하세요.",
+        "completedEmpty": "완료된 작업이 아직 없습니다.",
+        "deleteTask": "작업 삭제",
+        "complete": "완료로 이동",
+        "reactivate": "다시 활성화"
+      }
+    }
+  }
+}
+</i18n>

@@ -69,6 +69,23 @@ def _accumulate_pending_args(tool_id: str | None, raw_args) -> None:
     return
 
 
+def _reasoning_delta(msg_chunk: BaseMessage) -> str:
+    """Return the streamed reasoning delta carried on a message chunk.
+
+    The reasoning normalizer (``models/LLMs/reasoning_normalizer.py``)
+    guarantees every streamed chunk carries only its per-chunk DELTA under
+    ``additional_kwargs["reasoning_content"]`` (provider alias keys folded in).
+    The client APPENDS every ``{"type": "reasoning"}`` chunk it receives, so
+    the value must be forwarded verbatim — cumulative values would duplicate
+    the thinking text on the client, and langchain's own chunk aggregation
+    concatenates string additional_kwargs values, so deltas also reconstruct
+    the complete chain-of-thought on the final aggregated message (what gets
+    checkpointed and persisted to the messages store).
+    """
+    kws: dict[str, Any] = getattr(msg_chunk, "additional_kwargs", None) or {}
+    return kws.get("reasoning_content", "") or ""
+
+
 def _normalize_text(content) -> str:
     """Normalize ToolMessage.content (str OR list of content blocks) into str."""
     if isinstance(content, str):
@@ -362,12 +379,16 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                         yield {"type": "text", "content": res}
 
                     # Model reasoning output logic
-                    # DeepSeek-R1 and similar reasoning models stream their
-                    # chain-of-thought via `additional_kwargs['reasoning_content']`
-                    # (NOT inline content). Surfaces as a dedicated "reasoning"
-                    # chunk so the client can render a collapsible thinking block
-                    # on the same message as the final answer.
-                    _reasoning = msg_chunk.additional_kwargs.get("reasoning_content", "") if getattr(msg_chunk, "additional_kwargs", None) else ""
+                    # Reasoning models (DeepSeek thinking, GLM thinking, R1...)
+                    # stream their chain-of-thought via
+                    # `additional_kwargs['reasoning_content']` (NOT inline content).
+                    # The normalizer guarantees per-chunk DELTAS on that key, so
+                    # the value is forwarded verbatim — the client appends each
+                    # "reasoning" chunk, and chunk aggregation reconstructs the
+                    # complete CoT on the final message. Surfaces as a dedicated
+                    # "reasoning" chunk so the client can render a collapsible
+                    # thinking block on the same message as the final answer.
+                    _reasoning = _reasoning_delta(msg_chunk)
                     if _reasoning and len(_reasoning) > 0:
                         yield {"type": "reasoning", "content": _reasoning}
                     # End model reasoning output logic
@@ -631,10 +652,11 @@ async def resume_agent(
                     ai_text_stream += res
                     yield {"type": "text", "content": res}
 
-                # Surface DeepSeek thinking-mode chain-of-thought. langchain-deepseek
-                # streams reasoning_content into additional_kwargs on AIMessageChunk.
-                # Mirrors async_generate so a HITL resume shows reasoning too.
-                _reasoning = msg_chunk.additional_kwargs.get("reasoning_content", "")
+                # Surface thinking-mode chain-of-thought (DeepSeek / GLM / R1...).
+                # The normalizer guarantees per-chunk DELTAS on
+                # additional_kwargs["reasoning_content"] — forward verbatim,
+                # mirroring async_generate so a HITL resume shows reasoning too.
+                _reasoning = _reasoning_delta(msg_chunk)
                 if _reasoning:
                     yield {"type": "reasoning", "content": _reasoning}
 

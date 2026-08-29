@@ -603,7 +603,7 @@ async def _execute_subagent(
                     return
 
         from ..registry.lifecycle import complete_subagent_run
-        await complete_subagent_run(run.run_id, outcome, result_text)
+        await complete_subagent_run(run.run_id, outcome, result_text, expected_generation=run.generation)
 
         try:
             await fire_ended_hook(run)
@@ -633,6 +633,10 @@ async def _build_child_agent(
       - **OutputRepetitionGuard** — stops the agent from emitting the same text endlessly.
       - **ToolCallNormalize** — normalises tool call format across LLM providers.
       - **HeartbeatStaleness** — detects and recovers from stalled agent loops.
+
+    The returned agent is additionally wrapped in
+    :class:`RepetitionGuardWrapper` (``phantom_stream_guard=True``),
+    mirroring the main agent in ``agent/core.py``.
 
     Args:
         system_prompt: System prompt for the child agent.
@@ -705,6 +709,23 @@ async def _build_child_agent(
             HeartbeatStaleness()
         ],
     )
+
+    # Wrap with RepetitionGuardWrapper, mirroring the main agent
+    # (``agent/core.py``). The wrapper adds stream-level interception
+    # (``astream``) plus an ``ainvoke`` post-hoc backstop on the final
+    # AIMessage. ``phantom_stream_guard=True`` is safe here for the same
+    # reason as the main agent: this middleware-equipped graph always
+    # emits before_agent "updates" (e.g. OutputRepetitionGuard.abefore_agent)
+    # before any model text on fresh dict-input runs.
+    # The ``OutputRepetitionGuard`` middleware above is intentionally KEPT:
+    # children run via ``child_agent.ainvoke(...)``, where the wrapper only
+    # inspects the final message, so per-call interception (breaking
+    # repetitive tool-call loops mid-flight) still depends on the middleware.
+    # The shared ``_INTERNAL_WARNED_KEY`` dedupe gate prevents double
+    # warnings, and the wrapper's per-turn state reset bounds any
+    # cross-call history duplication.
+    from agent.repetition_guard_wrapper import RepetitionGuardWrapper
+    child_agent = RepetitionGuardWrapper(child_agent, phantom_stream_guard=True)
 
     return child_agent
 

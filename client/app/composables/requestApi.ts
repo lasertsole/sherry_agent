@@ -1,5 +1,6 @@
 import type { NitroFetchRequest } from 'nitropack';
 import type { Response } from "~/types/response";
+import { sendRequestErrorToast } from './toast';
 
 interface Params {
     url: NitroFetchRequest;
@@ -85,6 +86,13 @@ async function useFetchBaseApi({
     params.body = opts;
   };
   
+  // 网络/HTTP 失败标志位：ofetch 的 retry:3 会对每次失败重试都触发
+  // onRequestError/onResponseError 回调，若在回调内直接弹 toast 会重复弹多次。
+  // 故回调里只记录标志位，在 useFetch 结束后统一判定一次（单次 toast）。
+  let networkFailed = false;
+  let httpFailed = false;
+  let lastStatus: number | null = null;
+
   const {data} = await useFetch(requestURL, {
     // Use a unique key on every call so Nuxt's useAsyncData/useFetch cache is never
     // reused across calls. Without this, a second GET (e.g. reloading curator settings
@@ -122,12 +130,19 @@ async function useFetchBaseApi({
     },
 
     onRequestError({ request, options, error }) {
-      // Handle the request errors
+      // 网络层失败（DNS 解析失败/连接被拒/断网等，请求从未到达服务器）。
+      // 只记录标志位；toast 由 useFetch 结束后统一判定弹出（retry 期间会多次进入此回调）。
+      networkFailed = true;
     },
     
     // onResponse相当于响应拦截
     onResponse({ response }) {
       // 处理响应数据
+      // 本次尝试收到了响应（无论状态码）：重置此前尝试累积的失败标志位。
+      // 语义：若最终一次尝试成功，则之前重试期间的 networkFailed/httpFailed 不再生效，
+      // useFetch 结束后的判定不会弹出错误 toast。
+      networkFailed = false;
+      httpFailed = false;
       if(import.meta.client) {
         // 如果返回值有token，则更新本地token
         let token : string | null = response.headers.get("token");
@@ -140,9 +155,19 @@ async function useFetchBaseApi({
     },
 
     onResponseError({ request, response, options }) {
-      // Handle the response errors
+      // HTTP 级失败（4xx/5xx）：记录标志位与最终状态码；toast 由 useFetch 结束后统一判定。
+      // 注意每次失败重试都会进入此回调，且 onResponse（先触发）会重置标志位，
+      // 故最终一次尝试失败时标志位仍会正确落为 true。
+      httpFailed = true;
+      lastStatus = response?.status ?? null;
     }
   });
+
+  // 重试穷尽仍失败 → 弹一次全局错误 toast（网络错误；或 HTTP 错误且未拿到成功数据）。
+  // 这里是单次判定点：回调内的标志位不会直接触发 toast，避免 retry:3 重复弹窗。
+  if (import.meta.client && (networkFailed || (httpFailed && !data.value))) {
+    sendRequestErrorToast(`${requestURL}${lastStatus !== null ? ` (HTTP ${lastStatus})` : ''}`);
+  }
 
   return data.value as Response;
 };

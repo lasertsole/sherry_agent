@@ -85,6 +85,21 @@ export interface CachedSessionMeta {
 }
 
 /**
+ * 会话自定义标题覆盖层：独立于 sessions 占位符表，避免会话提升（promotion）时被清除
+ *
+ * 服务端会话标题由「最后一句用户消息」在读取时派生（无服务端标题存储），
+ * 用户在左侧列表内联重命名后，把自定义标题写到这里，加载列表时覆盖派生标题。
+ */
+export interface SessionTitleOverride {
+  /** 会话 ID */
+  id: string;
+  /** 用户自定义的标题 */
+  title: string;
+  /** 最后一次重命名的时间戳（Date.now()） */
+  updatedAt: number;
+}
+
+/**
  * 用户上传的聊天区背景图（浅色/深色主题下均显示）�?
  *
  * 全局唯一行（主键 {@link GLOBAL_SESSION_KEY}），存一份 base64 data URL，
@@ -205,6 +220,8 @@ class HistoryDb extends Dexie {
   background!: Table<CachedBackground, string>;
   /** 缓存的子任务运行记录表（主键 run_id，见 {@link CachedSubagentRun}） */
   subagentRuns!: Table<CachedSubagentRun, string>;
+  /** 会话自定义标题覆盖层表（主键会话 id，见 {@link SessionTitleOverride}） */
+  sessionTitles!: Table<SessionTitleOverride, string>;
 
   constructor() {
     super('ema-history-cache');
@@ -242,8 +259,14 @@ class HistoryDb extends Dexie {
       });
     });
     this.version(7).stores({
-      // 子任务运行记录缓存（主键 run_id），新增表不破坏既有表结构�?
+      // 子任务运行记录缓存（主键 run_id），新增表不破坏既有表结构。
       subagentRuns: 'run_id'
+    });
+    this.version(8).stores({
+      // 会话自定义标题覆盖层（主键为会话 id），新增表不破坏既有表结构。
+      // 独立于 sessions 占位表：占位表在会话晋升为服务端会话时会被清除，
+      // 自定义标题必须跨晋升保留。
+      sessionTitles: 'id'
     });
   }
 }
@@ -361,6 +384,38 @@ export async function readCachedSessionMetaList(): Promise<CachedSessionMeta[]> 
  */
 export async function clearCachedSessionMeta(sessionId: string): Promise<void> {
   await db.sessions.delete(sessionId);
+}
+
+/**
+ * 写入（覆盖）某个会话的自定义标题覆盖层
+ *
+ * 用户在左侧列表内联重命名会话时调用：自定义标题独立持久化到 `sessionTitles` 表，
+ * 加载列表时覆盖服务端派生标题（最后一句用户消息），并可被关键字筛选命中。
+ *
+ * @param id    会话 ID
+ * @param title 自定义标题
+ */
+export async function saveSessionTitleOverride(id: string, title: string): Promise<void> {
+  await db.sessionTitles.put({ id, title, updatedAt: Date.now() });
+}
+
+/**
+ * 读取全部会话的自定义标题覆盖层
+ *
+ * @returns `会话 ID → 自定义标题` 的映射（无任何重命名记录时为空 Map）
+ */
+export async function readSessionTitleOverrides(): Promise<Map<string, string>> {
+  const rows = await db.sessionTitles.toArray();
+  return new Map(rows.map(r => [r.id, r.title]));
+}
+
+/**
+ * 删除某个会话的自定义标题覆盖层（删除会话时同步清理）
+ *
+ * @param id 会话 ID
+ */
+export async function clearSessionTitleOverride(id: string): Promise<void> {
+  await db.sessionTitles.delete(id);
 }
 
 /**

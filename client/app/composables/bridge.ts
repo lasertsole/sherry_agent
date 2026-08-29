@@ -15,6 +15,7 @@ import type { HistoryMessage } from '~/types/backend/HistoryMessage';
 import type { PromptFileResponse } from '~/types/backend/PromptFileResponse';
 import type { HealthStatus } from '~/types/backend/HealthStatus';
 import { fetchApi } from './requestApi';
+import { emit } from './mitt';
 
 /**
  * Chat 请求体 —— 供 sendChatMessage / handleSend 使用。
@@ -81,6 +82,43 @@ export interface AgentWsEvent {
   /** 输出 token 数（仅 done 帧携带；来自后端 output_tokens） */
   output_tokens?: number;
 }
+
+/**
+ * 流被网络中断（WebSocket 重连失败耗尽重试）时 reject 的错误。
+ * `midStream` 为 true 表示断流发生在本轮**已产出首个 chunk 之后**——
+ * 此时任何内容都已上屏，绝不能重发（见 handleSend Case B 注释），
+ * 只能由 UI 侧标记失败并触发历史对账兜底。
+ */
+export class StreamInterruptedError extends Error {
+  constructor(
+    message: string,
+    /** true = 断流时已收到过 chunk（本轮内容已上屏）；false = 首 chunk 前的纯连接失败 */
+    readonly midStream: boolean,
+  ) {
+    super(message);
+    this.name = 'StreamInterruptedError';
+  }
+}
+
+/**
+ * 浏览器模式 WebSocket 断流重连的最大尝试次数。
+ * 每次失败后按指数退避（1000 * 2^(attempt-1) ms）重试，
+ * 超过该上限仍失败则抛出 {@link StreamInterruptedError}。
+ * 后端会在每次连接时取消该会话的活动任务并将本轮在 agent 图完成时才落库，
+ * 因此「首 chunk 前」的重连重发是安全的（见 `server/trigger/ws/messages.py:171-183`）。
+ */
+export const WS_RECONNECT_MAX_ATTEMPTS = 3;
+
+/**
+ * 指数退避：第 `attempt`（1 起）次重连的等待毫秒数。
+ * @example wsReconnectDelayMs(1) === 1000; wsReconnectDelayMs(2) === 2000; wsReconnectDelayMs(3) === 4000
+ */
+export function wsReconnectDelayMs(attempt: number): number {
+  return 1000 * 2 ** (attempt - 1);
+}
+
+/** mitt 事件名——WebSocket 流连接丢失（断流）。载荷为本次断流的会话 ID。 */
+export const WS_CONN_LOSS_EVENT = 'ws:conn-loss';
 
 /** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
 interface AgentStreamStart {
@@ -412,7 +450,37 @@ function sendChatMessageWs(
 
   let socket: WebSocket | null = null;
   let done: boolean = false;
-  let release: (err?: string) => void = () => {};
+  /** 是否已收到过 chunk——用于区分 Case A（首 chunk 前断流）与 Case B（中途断流）。 */
+  let receivedChunk: boolean = false;
+  /** 当前已发起的连接/重连次数（首连 0，重连 1..WS_RECONNECT_MAX_ATTEMPTS）。 */
+  let attempt: number = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 是否已调度重连——浏览器失败时 onerror 与 onclose 会先后触发，用该标志去重，避免一次断连消耗两次尝试预算。 */
+  let reconnectScheduled: boolean = false;
+  let release: (err?: unknown) => void = () => {};
+
+  // 组装聊天载荷的单一辅助函数：首次连接与 Case A 断流重连共用同一份载荷，
+  // 保证不因重建 WebSocket 而丢字段。
+  const buildChatPayload = (imageUrls: string[], audioUrls: string[], videoUrls: string[]) =>
+    JSON.stringify({
+      session_id: sessionId,
+      multi_modal_message: {
+        text: request.text || '',
+        image_base64_list: [],
+        image_path_list: imageUrls,
+        audio_bytes_list: [],
+        audio_path_list: audioUrls,
+        video_bytes_list: [],
+        video_path_list: videoUrls,
+      },
+    });
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
 
   const closeSocket = () => {
     const s = socket;
@@ -435,6 +503,7 @@ function sendChatMessageWs(
     abort: () => {
       if (done) return;
       done = true;
+      clearReconnectTimer();
       if (socket) {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: 'stop', session_id: sessionId }));
@@ -459,9 +528,10 @@ function sendChatMessageWs(
   };
 
   const promise = new Promise<void>(async (resolve, reject) => {
-    release = (err?: string) => {
+    release = (err?: unknown) => {
+      // 用户主动 abort 后 promise 保持挂起（与既有行为一致）
       if (done && err === 'aborted') return;
-      if (err) reject(new Error(err));
+      if (err) reject(err instanceof Error ? err : new Error(String(err)));
       else resolve();
     };
 
@@ -513,87 +583,114 @@ function sendChatMessageWs(
     // 上传期间被中止，不再建立 WebSocket
     if (done) return;
 
-    try {
-      socket = new WebSocket(url);
-    } catch (e) {
-      if (!done) {
-        done = true;
-        release(String(e));
-      }
-      return;
-    }
-
-    socket.onopen = () => {
-      socket?.send(
-        JSON.stringify({
-          session_id: sessionId,
-          multi_modal_message: {
-            text: request.text || '',
-            image_base64_list: [],
-            image_path_list: imageUrls,
-            audio_bytes_list: [],
-            audio_path_list: audioUrls,
-            video_bytes_list: [],
-            video_path_list: videoUrls,
-          },
-        }),
-      );
-    };
-
-    socket.onmessage = (event) => {
-      let data: AgentWsEvent;
-      try {
-        data = JSON.parse(event.data as string) as AgentWsEvent;
-      } catch {
-        return;
-      }
-      if (data.event === 'chunk') {
-        onChunk(data.content ?? '', data.type ?? 'text', data.session_id ?? sessionId, {
-          tool_id: data.tool_id,
-          tool_name: data.tool_name,
-          args: data.args,
-          error: data.error,
-        });
-      } else if (data.event === 'hitl_request') {
-        // HITL 中断：agent 需人工审批，调用 onHitl 回调（无回调时静默忽略）
-        if (onHitl && data.content) {
-          onHitl(data.content as unknown as HitlInterruptData);
-        }
-      } else if (data.event === 'done') {
-        if (!done) {
-          done = true;
-          closeSocket();
-          release();
-          // 携带模型元数据（model_name/input_tokens/output_tokens）通知流结束回调
-          onDone?.({
-            modelName: data.model_name ?? undefined,
-            inputTokens: data.input_tokens ?? undefined,
-            outputTokens: data.output_tokens ?? undefined,
-          });
-        }
-      } else if (data.event === 'error') {
-        if (!done) {
-          done = true;
-          closeSocket();
-          release(data.content || 'WebSocket stream error');
-        }
-      }
-    };
-
-    socket.onerror = () => {
-      if (!done) {
+    // 连接丢失（onerror/onclose 且在 done 前触发）时的统一处理。
+    // - Case B（已收到 chunk）：本轮内容已上屏。后端会在每次新连接时取消该会话的活动
+    //   任务（`server/trigger/ws/messages.py:171-183`）——此刻重发会丢失已流出的尾部，
+    //   因此**绝不重发**，直接中止并抛 StreamInterruptedError，由 UI 触发历史对账兜底。
+    // - Case A（尚未收到 chunk）：后端仅在 agent 图完成时才持久化该轮消息，新连接会取消
+    //   未启动的任务，故可安全重连并重发同一载荷（指数退避，最多 WS_RECONNECT_MAX_ATTEMPTS 次）。
+    const handleConnectionLoss = () => {
+      // reconnectScheduled 去重：onerror 触发后 onclose 必然跟随，二者只处理一次
+      if (done || reconnectScheduled) return;
+      clearReconnectTimer();
+      if (receivedChunk) {
+        // Case B
         done = true;
         closeSocket();
-        release('WebSocket connection error');
+        emit('ws:conn-loss', { sessionId, midStream: true });
+        release(new StreamInterruptedError('WebSocket closed after streaming began', true));
+        return;
       }
+      // Case A
+      if (attempt >= WS_RECONNECT_MAX_ATTEMPTS) {
+        done = true;
+        closeSocket();
+        emit('ws:conn-loss', { sessionId, midStream: false });
+        emit('stream:reconnect:failed', { sessionId });
+        release(new StreamInterruptedError('WebSocket connection error', false));
+        return;
+      }
+      attempt += 1;
+      emit('ws:conn-loss', { sessionId, midStream: false });
+      emit('stream:reconnecting', { sessionId, attempt, maxAttempts: WS_RECONNECT_MAX_ATTEMPTS });
+      reconnectScheduled = true;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        reconnectScheduled = false;
+        if (done) return;
+        connect();
+      }, wsReconnectDelayMs(attempt));
     };
 
-    socket.onclose = () => {
-      if (!done) {
-        done = true;
-        release('WebSocket closed before stream completion');
+    const connect = () => {
+      if (done) return;
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(url);
+      } catch (e) {
+        if (!done) handleConnectionLoss();
+        return;
       }
+      socket = ws;
+
+      ws.onopen = () => {
+        if (done) {
+          ws.close();
+          return;
+        }
+        // 重连成功（非首连）：通知 UI 收起「重连中」横幅
+        if (attempt > 0) emit('stream:reconnected', { sessionId });
+        ws.send(buildChatPayload(imageUrls, audioUrls, videoUrls));
+      };
+
+      ws.onmessage = (event) => {
+        let data: AgentWsEvent;
+        try {
+          data = JSON.parse(event.data as string) as AgentWsEvent;
+        } catch {
+          return;
+        }
+        if (data.event === 'chunk') {
+          receivedChunk = true;
+          onChunk(data.content ?? '', data.type ?? 'text', data.session_id ?? sessionId, {
+            tool_id: data.tool_id,
+            tool_name: data.tool_name,
+            args: data.args,
+            error: data.error,
+          });
+        } else if (data.event === 'hitl_request') {
+          // HITL 中断：agent 需人工审批，调用 onHitl 回调（无回调时静默忽略）
+          if (onHitl && data.content) {
+            onHitl(data.content as unknown as HitlInterruptData);
+          }
+        } else if (data.event === 'done') {
+          if (!done) {
+            done = true;
+            clearReconnectTimer();
+            closeSocket();
+            release();
+            // 携带模型元数据（model_name/input_tokens/output_tokens）通知流结束回调
+            onDone?.({
+              modelName: data.model_name ?? undefined,
+              inputTokens: data.input_tokens ?? undefined,
+              outputTokens: data.output_tokens ?? undefined,
+            });
+          }
+        } else if (data.event === 'error') {
+          if (!done) {
+            done = true;
+            clearReconnectTimer();
+            closeSocket();
+            release(data.content || 'WebSocket stream error');
+          }
+        }
+      };
+
+      ws.onerror = () => handleConnectionLoss();
+      ws.onclose = () => handleConnectionLoss();
     };
+
+    connect();
   });
 
   return { controller, promise };
@@ -975,6 +1072,38 @@ export async function deleteSubagentRunSubtree(runId: string): Promise<number> {
   });
   const resp = (res as unknown as { success?: boolean; removed?: number }) ?? {};
   return typeof resp.removed === 'number' ? resp.removed : 0;
+}
+
+/**
+ * Steer (redirect / resume) a running sub-agent run (background tasks).
+ *
+ * Cancels the run's current execution and re-dispatches the child agent on the
+ * SAME checkpointer thread with the new direction injected (generation +1), so
+ * the child continues from its persisted conversation state. Works for
+ * RUNNING/INTERRUPTED runs; an empty payload simply resumes an interrupted
+ * run. Also revives a run orphaned by a backend restart (zombie RUNNING).
+ *
+ * Browser/Tauri webview mode hits the Python `POST /subagents/steer` endpoint
+ * directly (backend sends `Access-Control-Allow-Origin: *`, so no dedicated
+ * Tauri IPC command is required).
+ *
+ * @param runId The run to steer.
+ * @param payload New task and/or additional instructions; both optional.
+ * @returns The updated run record, or null when the backend rejected the steer
+ *          (terminal/collector state, rate-limited, control denied) or the
+ *          request failed.
+ */
+export async function steerSubagentRun(
+  runId: string,
+  payload: { new_task?: string; new_instructions?: string } = {},
+): Promise<SubagentRun | null> {
+  const res: Response = await fetchApi({
+    url: '/subagents/steer',
+    opts: { run_id: runId, ...payload },
+    method: 'post',
+  });
+  const resp = (res as unknown as { run?: SubagentRun }) ?? {};
+  return resp.run ?? null;
 }
 
 /**

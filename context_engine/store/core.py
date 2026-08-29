@@ -63,6 +63,17 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 if usage_metadata.get("output_tokens") is not None:
                     output_tokens = int(usage_metadata["output_tokens"])
 
+            # Persist the chain-of-thought so the client can re-render the
+            # collapsible thinking bubble after a reload. Reasoning models
+            # (DeepSeek thinking, GLM thinking, R1...) carry the complete CoT
+            # on the final aggregated message under
+            # additional_kwargs["reasoning_content"] (the reasoning normalizer
+            # emits per-chunk deltas, which langchain's chunk aggregation
+            # concatenates back into the full text). The client history
+            # mapping reads the `reasoning` column.
+            ai_additional_kwargs: dict[str, Any] = getattr(m, "additional_kwargs", None) or {}
+            reasoning_text: str | None = ai_additional_kwargs.get("reasoning_content") or None
+
             insert_rows.append({
                 "session_id": session_id,
                 "turn_num": current_turn,
@@ -74,7 +85,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 "tool_name": None,
                 "timestamp": base_timestamp,
                 "finish_reason": None,
-                "reasoning": None,
+                "reasoning": reasoning_text,
                 "reasoning_content": None,
                 "images": None,
                 "audios": None,

@@ -8,6 +8,8 @@ export interface SessionRecord {
   id: string;
   /** 消息 */
   messages?: MessageItem[];
+  /** 是否被用户编辑命名过：编辑后标题不再跟随最后一句用户消息，展示为高亮色 */
+  renamed?: boolean;
 }
 
 /** 工具栏工具 */

@@ -131,7 +131,7 @@ function joinFileBody(file: string, entries: string[]): string {
   return `${fileTitle(file)}${ENTRY_DELIMITER}${body}`;
 }
 
-const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -271,3 +271,52 @@ const handleSave = async () => {
   }
 };
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "memory": {
+        "title": "记忆",
+        "addEntry": "添加条目",
+        "deleteEntry": "删除条目",
+        "empty": "暂无条目，请在下方添加。",
+        "effectiveHint": "提示：修改后仅在系统压缩或重启时生效。"
+      }
+    }
+  },
+  "en": {
+    "config": {
+      "memory": {
+        "title": "Memory",
+        "addEntry": "Add entry",
+        "deleteEntry": "Delete entry",
+        "empty": "No entries yet. Add one below.",
+        "effectiveHint": "Note: Changes only take effect after compression or restart."
+      }
+    }
+  },
+  "ja": {
+    "config": {
+      "memory": {
+        "title": "記憶",
+        "addEntry": "項目を追加",
+        "deleteEntry": "項目を削除",
+        "empty": "項目はまだありません。下から追加してください。",
+        "effectiveHint": "注意：変更は圧縮時または再起動時にのみ反映されます。"
+      }
+    }
+  },
+  "ko": {
+    "config": {
+      "memory": {
+        "title": "메모리",
+        "addEntry": "항목 추가",
+        "deleteEntry": "항목 삭제",
+        "empty": "항목이 없습니다. 아래에서 추가하세요.",
+        "effectiveHint": "참고: 변경 사항은 압축 또는 재시작 시에만 적용됩니다."
+      }
+    }
+  }
+}
+</i18n>

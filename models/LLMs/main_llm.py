@@ -4,7 +4,8 @@ from config import ENV_PATH
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
-from models.LLMs.reasoning_payload import build_reasoning_kwargs
+from models.LLMs.reasoning_openai import ReasoningChatOpenAI
+from models.LLMs.reasoning_payload import build_reasoning_kwargs, is_zhipu_reasoning_model
 
 # Load environment variables
 load_dotenv(ENV_PATH, override = True)
@@ -22,6 +23,7 @@ if max_tokens:
 # correct reasoning payload for the configured MAIN_LLM_PROVIDER:
 #   deepseek                         -> extra_body {thinking: enabled} (V3.2+ chat API)
 #   openai + compatible gateways     -> reasoning_effort (o-series / gpt-5 only)
+#   openai/zhipu + GLM (glm-4.5+)    -> extra_body {thinking: enabled} (bigmodel v4 API)
 #   anthropic                        -> thinking + budget_tokens (claude-3-7/4/opus/sonnet only)
 #   all other providers / non-reasoning models -> no-op (never a 400 crash)
 # Reasoning supports tool calls; the chain-of-thought surfaces on
@@ -52,6 +54,22 @@ model_config.update(build_reasoning_kwargs(
 ))
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
 
+def _build_inner_chat_model():
+    """Construct the inner chat model for ``build_main_llm``.
+
+    GLM (Zhipu bigmodel) via the generic ``openai`` provider must use
+    ``ReasoningChatOpenAI``: vanilla ``ChatOpenAI`` drops ``delta.reasoning_content``
+    during streaming conversion (langchain-openai does not extract it), which
+    silently kills the whole reasoning pipeline even when the thinking payload
+    is sent correctly. For every other provider ``init_chat_model`` stays the
+    single source of truth.
+    """
+    if model_provider == "openai" and api_name and is_zhipu_reasoning_model(api_name):
+        kwargs = {k: v for k, v in model_config.items() if k != "model_provider"}
+        return ReasoningChatOpenAI(**kwargs)
+    return init_chat_model(**model_config)
+
+
 def build_main_llm(temperature: float | None = None):
     """Create a fresh LLM instance bound to the current event loop.
 
@@ -66,7 +84,7 @@ def build_main_llm(temperature: float | None = None):
     thread) to get a fresh instance whose transport pool is correctly
     bound to the *current* event loop.
     """
-    model = init_chat_model(**model_config)
+    model = _build_inner_chat_model()
     model = NormalizingChatModel(inner=model)
     if temperature is not None:
         model = model.bind(temperature=temperature)

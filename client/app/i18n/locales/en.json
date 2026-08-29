@@ -17,8 +17,6 @@
     "defaultAiName": "Sherry",
     "imageLoadFailed": "Image load failed",
     "removeImage": "Remove image",
-    "audioLoadFailed": "Audio load failed",
-    "videoLoadFailed": "Video load failed",
     "removeAudio": "Remove audio",
     "removeVideo": "Remove video",
     "toolArgs": "Arguments",
@@ -26,7 +24,18 @@
     "toolNoOutput": "No output",
     "toolRunning": "Running…",
     "thinking": "Thinking",
-    "modelMeta": "{input} in · {output} out tokens"
+    "modelMeta": "{input} in · {output} out tokens",
+    "copy": "Copy",
+    "copied": "Copied"
+  },
+  "errors": {
+    "requestFailed": "Request failed"
+  },
+  "connection": {
+    "reconnecting": "Connection lost, reconnecting… (attempt {attempt}/{max})",
+    "offline": "Network offline",
+    "backendDown": "Backend service unreachable",
+    "backOnline": "Connection restored"
   },
   "history": {
     "noSessions": "No conversations",
@@ -35,13 +44,15 @@
     "batchDeleteConfirm": "Are you sure you want to delete the selected conversations? This action cannot be undone.",
     "createdAt": "Created: {time}",
     "dateFormat": "MM/DD/YYYY HH:mm",
-    "editTitle": "Edit Title",
-    "deleteSession": "Delete Conversation",
     "deleteConfirm": "Are you sure you want to delete this conversation? This action cannot be undone.",
-    "confirmDelete": "Delete",
-    "cancelDelete": "Cancel",
-    "exampleTitle": "Example Conversation",
-    "newSession": "New Session"
+    "newSession": "New Session",
+    "searchPlaceholder": "Search sessions by title…",
+    "dateRange": "Filter by date range",
+    "clearFilter": "Clear filters",
+    "noSearchResults": "No matching sessions",
+    "filterToggle": "Filter",
+    "editTitle": "Rename session",
+    "titlePlaceholder": "Enter new title"
   },
   "sidebar": {
     "tabSessions": "Chats",
@@ -65,7 +76,6 @@
     "statusUnknown": "Unknown",
     "roleRoot": "Root",
     "roleChild": "Task",
-    "parentSession": "Caller Session",
     "callingSession": "Calling Session",
     "startTime": "Start Time",
     "endTime": "End Time",
@@ -73,49 +83,6 @@
     "backToSessionPrompt": "Jump to the session that spawned this task",
     "refreshGraph": "Refresh",
     "refreshGraphPrompt": "Refetch and redraw the run graph"
-  },
-  "taskViewer": {
-    "viewTasks": "View Background Tasks"
-  },
-  "flow": {
-    "title": "Live Flow",
-    "toggle": "Toggle flow",
-    "empty": "No sub-agent runs yet",
-    "loading": "Loading…",
-    "error": "Failed to load",
-    "collapse": "Collapse",
-    "expand": "Expand",
-    "close": "Close",
-    "sessionRoot": "Session / Root",
-    "status": {
-      "running": "Running",
-      "completed": "Completed",
-      "failed": "Failed",
-      "pending": "Pending",
-      "unknown": "Unknown"
-    }
-  },
-  "taskDetail": {
-    "title": "Task Details",
-    "placeholder": "Click a node in the tree above to view task details",
-    "taskName": "Task",
-    "taskDesc": "Description",
-    "status": "Status",
-    "role": "Role",
-    "depth": "Depth",
-    "agentId": "Agent",
-    "spawnMode": "Spawn Mode",
-    "parentSession": "Parent Session",
-    "startedAt": "Started At",
-    "endedAt": "Ended At",
-    "endedReason": "End Reason",
-    "outcome": "Outcome",
-    "outcomeStatus": "Outcome Status",
-    "error": "Error",
-    "resultText": "Result",
-    "delivery": "Delivery",
-    "noError": "None",
-    "noResult": "N/A"
   },
   "toolbar": {
     "newChat": "New Chat",
@@ -142,70 +109,8 @@
     "expandSidebar": "Expand sidebar"
   },
   "config": {
-    "title": "System Config",
-    "persona": {
-      "title": "AI Persona",
-      "restoreDefault": "Restore Default"
-    },
-    "memory": {
-        "title": "Memory",
-        "addEntry": "Add entry",
-        "deleteEntry": "Delete entry",
-        "empty": "No entries yet. Add one below.",
-        "effectiveHint": "Note: Changes only take effect after compression or restart."
-      },
-    "heartbeat": {
-        "title": "Heartbeat Tasks",
-        "addTask": "Add task",
-        "empty": "No pending tasks. Add one below or leave blank to skip the heartbeat.",
-        "effectiveHint": "This file is checked every 30 minutes. Add tasks below for the agent to work on periodically. If no tasks remain (only the headers and comments), the heartbeat is skipped.",
-        "activeTitle": "Active Tasks",
-        "completedTitle": "Completed",
-        "deleteTask": "Delete task",
-        "complete": "Complete",
-        "reactivate": "Reactivate",
-        "activeEmpty": "No active tasks. Add new tasks below.",
-        "completedEmpty": "No completed tasks yet."
-      },
-    "cron": {
-        "title": "Cron Tasks",
-        "addJob": "New task",
-        "empty": "No cron tasks yet. Click \"New task\" to add one.",
-        "run": "Run",
-        "edit": "Edit",
-        "delete": "Delete",
-        "addTitle": "New Cron Task",
-        "editTitle": "Edit Cron Task",
-        "name": "Task name",
-        "namePlaceholder": "e.g. Daily good-morning greeting",
-        "scheduleType": "Schedule type",
-        "typeAt": "Specific time",
-        "typeEvery": "Repeat every",
-        "typeCron": "Cron expression",
-        "atTime": "Execution time",
-        "everyInterval": "Interval",
-        "intervalValue": "Value",
-        "cronExpr": "Cron expression",
-        "message": "Task message",
-        "messagePlaceholder": "Enter the task content to execute",
-        "deliver": "Push to channel",
-        "channel": "Channel",
-        "channelPlaceholder": "e.g. default",
-        "to": "Recipient / group",
-        "toPlaceholder": "Optional",
-        "deleteAfterRun": "Delete after run",
-        "nextRun": "Next run",
-        "lastStatus": "Last status",
-        "descAt": "Run at {time}",
-        "descAtEmpty": "No time set",
-        "everySeconds": "Every {n} seconds",
-        "everyMinutes": "Every {n} minutes",
-        "everyHours": "Every {n} hours",
-        "everyDays": "Every {n} days"
-      },
     "save": "Save",
     "cancel": "Cancel",
-    "uploadAvatar": "Upload Avatar",
     "tabs": {
       "agents": "Core Rules",
       "identity": "Identity",
@@ -230,15 +135,6 @@
       "ja": "日本語",
       "ko": "한국어"
     },
-    "role": {
-      "assistant": "AI Role",
-      "aiName": "AI Name",
-      "userRole": "User Role",
-      "userName": "User Name",
-      "avatar": "Avatar",
-      "charNote": "Changes to the avatar and name only take effect in new sessions; existing sessions are not affected.",
-      "noFileChosen": "Select an avatar image file"
-    },
     "crop": {
       "title": "Crop Avatar",
       "confirm": "Confirm",
@@ -246,28 +142,6 @@
       "zoomOut": "Zoom Out",
       "rotate": "Rotate",
       "preview": "Crop Preview"
-    },
-    "background": {
-      "title": "Background Image",
-      "upload": "Upload Background",
-      "clear": "Clear Background",
-      "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
-      "opacity": "Overlay Strength",
-      "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
-      "cropTitle": "Crop Background",
-      "current": "Background image set",
-      "noFileChosen": "Select an image file"
-    },
-    "env": {
-      "title": "Environment",
-      "loadError": "Failed to load environment config. Please check the backend service.",
-      "saveFailed": "Failed to save environment config.",
-      "saveSuccess": "Environment config saved. Restart the backend for it to take effect.",
-      "section": "Section",
-      "key": "Key",
-      "value": "Value",
-      "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
-      "noEnvFile": "No .env file found."
     }
   }
 }

@@ -19,8 +19,21 @@ Why it exists
 
     * On full generation, any ``reasoning*`` key on the returned ``AIMessage``
       is normalized into ``additional_kwargs["reasoning_content"]``.
-    * On streaming, ``reasoning*`` content from each ``AIMessageChunk`` is
-      merged cumulatively into ``additional_kwargs["reasoning_content"]``.
+    * On streaming, each ``AIMessageChunk``'s ``reasoning*`` DELTA is renamed
+      into ``additional_kwargs["reasoning_content"]`` verbatim (no
+      accumulation).
+
+Streaming delta contract (why chunks must carry deltas, not cumulative text)
+    LangChain aggregates streamed chunks via ``AIMessageChunk.__add__``, whose
+    ``merge_dicts`` helper CONCATENATES string ``additional_kwargs`` values
+    (``merged[k] += v``). With per-chunk deltas that concatenation reconstructs
+    the complete chain-of-thought on the aggregated final message — exactly how
+    ``langchain_deepseek.ChatDeepSeek`` behaves natively. Writing cumulative
+    values per chunk instead would make the aggregation concatenate every
+    prefix, producing an O(n²)-duplicated blob on the final message (and on any
+    consumer that accumulates per-chunk values, e.g. the stream-level
+    repetition guard). Downstream consumers of the raw stream (the client)
+    append each ``{"type": "reasoning"}`` chunk, which also requires deltas.
 
 It is a genuine ``BaseChatModel`` (so ``langchain.agents.create_agent`` and the
 ``.with_structured_output`` / ``.bind_tools`` mechanisms keep working) that
@@ -134,11 +147,10 @@ class NormalizingChatModel(BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        accumulated: str = ""
         for chunk in self.inner._stream(
             messages, stop=stop, run_manager=run_manager, **kwargs
         ):
-            accumulated = self._absorb_reasoning_chunk(chunk, accumulated)
+            self._normalize_chunk_reasoning(chunk)
             yield chunk
 
     async def _astream(
@@ -148,25 +160,20 @@ class NormalizingChatModel(BaseChatModel):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        accumulated: str = ""
         async for chunk in self.inner._astream(
             messages, stop=stop, run_manager=run_manager, **kwargs
         ):
-            accumulated = self._absorb_reasoning_chunk(chunk, accumulated)
+            self._normalize_chunk_reasoning(chunk)
             yield chunk
 
-    def _absorb_reasoning_chunk(
-        self,
-        chunk: ChatGenerationChunk,
-        accumulated: str,
-    ) -> str:
-        """Merge a streamed reasoning delta into the canonical key.
+    def _normalize_chunk_reasoning(self, chunk: ChatGenerationChunk) -> None:
+        """Rename a streamed reasoning DELTA onto the canonical key, verbatim.
 
-        Reasoning providers stream chain-of-thought incrementally. Each chunk's
-        ``reasoning*`` delta is appended to the running total, which is written
-        to ``additional_kwargs["reasoning_content"]`` *in anticipation* — the
-        final chunk thus carries the complete chain-of-thought for consumers
-        that only inspect the last message.
+        See the module docstring ("Streaming delta contract") for why chunks
+        must carry per-chunk deltas rather than accumulated text: chunk
+        aggregation concatenates string ``additional_kwargs`` values, so deltas
+        reconstruct the full chain-of-thought on the final message while
+        cumulative values would O(n²)-duplicate it.
         """
         msg = chunk.message
         kws = msg.additional_kwargs or {}
@@ -176,13 +183,12 @@ class NormalizingChatModel(BaseChatModel):
             if isinstance(val, str) and val:
                 delta = val
                 break
-        if delta:
-            accumulated += delta
-            for key in _REASONING_KEYS:
-                kws.pop(key, None)
-            kws["reasoning_content"] = accumulated
-            msg.additional_kwargs = kws
-        return accumulated
+        if not delta:
+            return
+        for key in _REASONING_KEYS:
+            kws.pop(key, None)
+        kws["reasoning_content"] = delta
+        msg.additional_kwargs = kws
 
     # -- Tool / structured-output delegation ---------------------------------
     def bind_tools(

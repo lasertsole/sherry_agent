@@ -20,8 +20,8 @@
           {{ t('config.cron.empty') }}
         </div>
 
-        <!-- Add / New job -->
-        <div v-else class="flex justify-end">
+        <!-- Add / New job (always visible, even when list is empty) -->
+        <div class="flex justify-end">
           <Button
             :label="t('config.cron.addJob')"
             icon="pi pi-plus"
@@ -231,7 +231,7 @@ import {
   type CronSchedule,
 } from '@/composables/bridge';
 
-const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
@@ -483,3 +483,168 @@ async function loadJobs() {
   }
 }
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "cron": {
+        "title": "定时任务",
+        "addJob": "新建任务",
+        "empty": "暂无定时任务。点击「新建任务」添加。",
+        "run": "运行",
+        "edit": "编辑",
+        "delete": "删除",
+        "addTitle": "新建定时任务",
+        "editTitle": "编辑定时任务",
+        "name": "任务名称",
+        "namePlaceholder": "例如：每日早安问候",
+        "scheduleType": "调度方式",
+        "typeAt": "指定时刻",
+        "typeEvery": "每隔多久",
+        "typeCron": "Cron 表达式",
+        "atTime": "执行时刻",
+        "everyInterval": "执行间隔",
+        "intervalValue": "数值",
+        "cronExpr": "Cron 表达式",
+        "message": "任务消息",
+        "messagePlaceholder": "请输入要执行的任务内容",
+        "deliver": "推送到渠道",
+        "channel": "渠道名称",
+        "channelPlaceholder": "例如：default",
+        "to": "接收人/群",
+        "toPlaceholder": "可选",
+        "deleteAfterRun": "运行后自动删除",
+        "nextRun": "下次运行",
+        "lastStatus": "上次状态",
+        "descAt": "在 {time} 执行",
+        "descAtEmpty": "未设定时刻",
+        "everySeconds": "每 {n} 秒",
+        "everyMinutes": "每 {n} 分钟",
+        "everyHours": "每 {n} 小时",
+        "everyDays": "每 {n} 天"
+      }
+    }
+  },
+  "en": {
+    "config": {
+      "cron": {
+        "title": "Cron Tasks",
+        "addJob": "New task",
+        "empty": "No cron tasks yet. Click \"New task\" to add one.",
+        "run": "Run",
+        "edit": "Edit",
+        "delete": "Delete",
+        "addTitle": "New Cron Task",
+        "editTitle": "Edit Cron Task",
+        "name": "Task name",
+        "namePlaceholder": "e.g. Daily good-morning greeting",
+        "scheduleType": "Schedule type",
+        "typeAt": "Specific time",
+        "typeEvery": "Repeat every",
+        "typeCron": "Cron expression",
+        "atTime": "Execution time",
+        "everyInterval": "Interval",
+        "intervalValue": "Value",
+        "cronExpr": "Cron expression",
+        "message": "Task message",
+        "messagePlaceholder": "Enter the task content to execute",
+        "deliver": "Push to channel",
+        "channel": "Channel",
+        "channelPlaceholder": "e.g. default",
+        "to": "Recipient / group",
+        "toPlaceholder": "Optional",
+        "deleteAfterRun": "Delete after run",
+        "nextRun": "Next run",
+        "lastStatus": "Last status",
+        "descAt": "Run at {time}",
+        "descAtEmpty": "No time set",
+        "everySeconds": "Every {n} seconds",
+        "everyMinutes": "Every {n} minutes",
+        "everyHours": "Every {n} hours",
+        "everyDays": "Every {n} days"
+      }
+    }
+  },
+  "ja": {
+    "config": {
+      "cron": {
+        "title": "クーロンタスク",
+        "addJob": "新規タスク",
+        "empty": "クーロンタスクはまだありません。「新規タスク」をクリックして追加してください。",
+        "run": "実行",
+        "edit": "編集",
+        "delete": "削除",
+        "addTitle": "新しいクーロンタスク",
+        "editTitle": "クーロンタスクを編集",
+        "name": "タスク名",
+        "namePlaceholder": "例：毎朝の挨拶",
+        "scheduleType": "スケジュール方式",
+        "typeAt": "指定時刻",
+        "typeEvery": "間隔で繰り返し",
+        "typeCron": "Cron 式",
+        "atTime": "実行時刻",
+        "everyInterval": "実行間隔",
+        "intervalValue": "値",
+        "cronExpr": "Cron 式",
+        "message": "タスク内容",
+        "messagePlaceholder": "実行するタスクの内容を入力",
+        "deliver": "チャネルへ配信",
+        "channel": "チャネル名",
+        "channelPlaceholder": "例：default",
+        "to": "受信者 / グループ",
+        "toPlaceholder": "任意",
+        "deleteAfterRun": "実行後に自動削除",
+        "nextRun": "次回実行",
+        "lastStatus": "前回の状態",
+        "descAt": "{time} に実行",
+        "descAtEmpty": "時刻が未設定",
+        "everySeconds": "{n} 秒ごと",
+        "everyMinutes": "{n} 分ごと",
+        "everyHours": "{n} 時間ごと",
+        "everyDays": "{n} 日ごと"
+      }
+    }
+  },
+  "ko": {
+    "config": {
+      "cron": {
+        "title": "크론 작업",
+        "addJob": "새 작업",
+        "empty": "크론 작업이 없습니다. \"새 작업\"을 클릭하여 추가하세요.",
+        "run": "실행",
+        "edit": "편집",
+        "delete": "삭제",
+        "addTitle": "새 크론 작업",
+        "editTitle": "크론 작업 편집",
+        "name": "작업 이름",
+        "namePlaceholder": "예: 매일 아침 인사",
+        "scheduleType": "스케줄 방식",
+        "typeAt": "지정 시각",
+        "typeEvery": "간격 반복",
+        "typeCron": "Cron 표현식",
+        "atTime": "실행 시각",
+        "everyInterval": "실행 간격",
+        "intervalValue": "값",
+        "cronExpr": "Cron 표현식",
+        "message": "작업 내용",
+        "messagePlaceholder": "실행할 작업 내용을 입력하세요",
+        "deliver": "채널로 전송",
+        "channel": "채널 이름",
+        "channelPlaceholder": "예: default",
+        "to": "수신자 / 그룹",
+        "toPlaceholder": "선택 사항",
+        "deleteAfterRun": "실행 후 자동 삭제",
+        "nextRun": "다음 실행",
+        "lastStatus": "마지막 상태",
+        "descAt": "{time}에 실행",
+        "descAtEmpty": "시각 미설정",
+        "everySeconds": "매 {n}초",
+        "everyMinutes": "매 {n}분",
+        "everyHours": "매 {n}시간",
+        "everyDays": "매 {n}일"
+      }
+    }
+  }
+}
+</i18n>

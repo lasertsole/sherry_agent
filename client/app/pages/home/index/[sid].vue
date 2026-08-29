@@ -132,6 +132,18 @@
       </template>
       <!-- 聊天输入框区域（relative 定位父级，供其他悬浮元素使用） -->
       <div class="relative">
+        <!-- WS 流重连横幅：sendChatMessageWs 进入指数退避重连时展示（浏览器模式）；
+             覆盖在工具栏行上，成功重连/重连失败后自动消失 -->
+        <Transition name="reconn-fade">
+          <div
+            v-if="reconnectState"
+            class="absolute top-0 left-0 right-0 z-20 flex items-center justify-center gap-2 py-1.5 px-3 text-xs font-medium bg-amber-400/90 text-gray-900 shadow-sm"
+            role="status"
+            aria-live="polite">
+            <i class="pi pi-sync" aria-hidden="true"></i>
+            <span>{{ t('connection.reconnecting', { attempt: reconnectState.attempt, max: reconnectState.max }) }}</span>
+          </div>
+        </Transition>
         <!-- 聊天输入框区域（固定 h-40，发送按钮位置稳定） -->
         <div class="flex flex-col h-40">
           <!-- 聊天工具 -->
@@ -238,7 +250,7 @@ import {
   type DraftTurn
 } from '@/composables/db';
 import { tools } from '../config';
-import { resumeHitl, type AgentChunkType } from '@/composables/bridge';
+import { resumeHitl, StreamInterruptedError, type AgentChunkType } from '@/composables/bridge';
 import {
   get_history_by_turn_page,
   getPendingInterrupt,
@@ -628,6 +640,43 @@ const loadSessionHistory = async (sessionId: string) => {
 const isSending = ref(false);
 /** 当前进行中的流式请求控制器（用于停止生成） */
 let activeAgentController: AbortController | null = null;
+
+/**
+ * WS 流重连状态横幅：null = 未在重连；否则展示「重连中（第 attempt/max 次）」。
+ * 数据源为 bridge 的 sendChatMessageWs 在指数退避重连期间广播的 mitt 事件
+ * （stream:reconnecting / stream:reconnected / stream:reconnect:failed）。
+ */
+const reconnectState = ref<{ attempt: number; max: number } | null>(null);
+
+/** 重连事件仅驱动本会话的横幅（路由可能同时缓存多个会话实例） */
+const onStreamReconnecting = (payload?: { sessionId?: string; attempt?: number; maxAttempts?: number }) => {
+  const current = sessionId.value || 'default';
+  if (payload?.sessionId && payload.sessionId !== current) return;
+  reconnectState.value = { attempt: payload?.attempt ?? 1, max: payload?.maxAttempts ?? 3 };
+};
+const onStreamReconnected = () => {
+  reconnectState.value = null;
+};
+const onStreamReconnectFailed = () => {
+  reconnectState.value = null;
+};
+
+/**
+ * 流中断后的延迟对账：后端在 agent 图完成时才落库本轮消息，中断瞬间服务端可能
+ * 仍在继续生成。等 25 秒后拉一次历史（loadSessionHistory 自带正/负 id 去重），
+ * 用服务端正 turn_num 记录替换本地负临时 id 行，回收中断前已生成的内容。
+ * 仅当届时仍停留在同一会话且未在发送中时执行；重复中断会重置定时器（一次性语义）。
+ */
+let postInterruptTimer: ReturnType<typeof setTimeout> | null = null;
+const schedulePostInterruptReconcile = (sid: string) => {
+  if (postInterruptTimer) clearTimeout(postInterruptTimer);
+  postInterruptTimer = setTimeout(() => {
+    postInterruptTimer = null;
+    if (sessionId.value === sid && !isSending.value) {
+      void loadSessionHistory(sid);
+    }
+  }, 25_000);
+};
 /**
  * 自增 id 计数器（用于本地临时消息，避免与真实 id 冲突）。
  *
@@ -1191,6 +1240,19 @@ const handleSend = async (text: string) => {
         // 草稿**保留**——把已完成的寒暄/分析/前置工具阶段内容缓存下来，
         // 不因最终结果未输出而丢失，用户刷新后仍能看见失败前的进度。
         activeAgentController = null;
+        if (err instanceof StreamInterruptedError) {
+          // 网络断流（重连预算耗尽后的最终失败）：内容可能已部分上屏，
+          // 绝不用失败文案覆盖已有正文；仅 AI 正文为空时给出中断提示。
+          // 草稿保留 + 25s 后一次性对账服务端落库结果（服务端可能仍在生成）。
+          if (!aiMsg.content) {
+            aiMsg.content = t('errors.streamInterrupted');
+          }
+          markRunningToolsFailed();
+          void writeDraftTurn(sid, turnNum);
+          isSending.value = false;
+          schedulePostInterruptReconcile(sid);
+          return;
+        }
         aiMsg.content = t('errors.replyFailed', { reason: String(err) });
         markRunningToolsFailed();
         // 落一版含失败状态的草稿快照
@@ -1528,6 +1590,10 @@ onMounted(() => {
   // 订阅「后台任务」展示/聊天切换事件（由侧边栏广播）
   on('subagent:show-tasks', onShowTasks);
   on('subagent:show-chat', onShowChat);
+  // 订阅 WS 流重连事件（由 bridge.sendChatMessageWs 广播，驱动重连横幅）
+  on('stream:reconnecting', onStreamReconnecting);
+  on('stream:reconnected', onStreamReconnected);
+  on('stream:reconnect:failed', onStreamReconnectFailed);
 });
 
 // 组件卸载（KeepAlive 缓存槽被淘汰/销毁）时移除监听，避免泄漏
@@ -1535,6 +1601,14 @@ onUnmounted(() => {
   off(SESSION_ABORT_STREAM_EVENT, handleAbortStreamOnDelete);
   off('subagent:show-tasks', onShowTasks);
   off('subagent:show-chat', onShowChat);
+  off('stream:reconnecting', onStreamReconnecting);
+  off('stream:reconnected', onStreamReconnected);
+  off('stream:reconnect:failed', onStreamReconnectFailed);
+  // 取消挂起的「断流后延迟对账」定时器
+  if (postInterruptTimer) {
+    clearTimeout(postInterruptTimer);
+    postInterruptTimer = null;
+  }
 });
 </script>
 
@@ -1550,7 +1624,11 @@ onUnmounted(() => {
     },
     "errors": {
       "replyFailed": "（回复失败：{reason}）",
-      "sendFailed": "（发送失败：{reason}）"
+      "sendFailed": "（发送失败：{reason}）",
+      "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步"
+    },
+    "taskViewer": {
+      "viewTasks": "查看后台任务"
     }
   },
   "en": {
@@ -1563,7 +1641,11 @@ onUnmounted(() => {
     },
     "errors": {
       "replyFailed": "(Reply failed: {reason})",
-      "sendFailed": "(Send failed: {reason})"
+      "sendFailed": "(Send failed: {reason})",
+      "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly."
+    },
+    "taskViewer": {
+      "viewTasks": "View Background Tasks"
     }
   },
   "ja": {
@@ -1576,7 +1658,11 @@ onUnmounted(() => {
     },
     "errors": {
       "replyFailed": "（返信に失敗：{reason}）",
-      "sendFailed": "（送信に失敗：{reason}）"
+      "sendFailed": "（送信に失敗：{reason}）",
+      "streamInterrupted": "接続が中断されました。返信はバックグラウンドで完了している可能性があります。まもなく自動同期されます。"
+    },
+    "taskViewer": {
+      "viewTasks": "バックグラウンドタスクを表示"
     }
   },
   "ko": {
@@ -1589,8 +1675,24 @@ onUnmounted(() => {
     },
     "errors": {
       "replyFailed": "（회신 실패：{reason}）",
-      "sendFailed": "（전송 실패：{reason}）"
+      "sendFailed": "（전송 실패：{reason}）",
+      "streamInterrupted": "연결이 끊겼습니다. 답장은 백그라운드에서 완료되었을 수 있으며 곧 자동 동기화됩니다."
+    },
+    "taskViewer": {
+      "viewTasks": "백그라운드 작업 보기"
     }
   }
 }
 </i18n>
+
+<style scoped>
+/* WS 流重连横幅淡入/淡出（配合 <Transition name="reconn-fade">） */
+.reconn-fade-enter-active,
+.reconn-fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+.reconn-fade-enter-from,
+.reconn-fade-leave-to {
+  opacity: 0;
+}
+</style>

@@ -78,9 +78,7 @@ import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { readSystemPrompt, writeSystemPrompt, readSystemPromptTemplate } from '@/composables/bridge';
 
-const { t } = useI18n();
-
-const locale = useI18n().locale;
+const { t, locale } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -191,3 +189,40 @@ const handleSave = async () => {
   }
 };
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "persona": {
+        "title": "AI人格",
+        "restoreDefault": "恢复默认"
+      }
+    }
+  },
+  "en": {
+    "config": {
+      "persona": {
+        "title": "AI Persona",
+        "restoreDefault": "Restore Default"
+      }
+    }
+  },
+  "ja": {
+    "config": {
+      "persona": {
+        "title": "AI人格",
+        "restoreDefault": "デフォルトに戻す"
+      }
+    }
+  },
+  "ko": {
+    "config": {
+      "persona": {
+        "title": "AI 페르소나",
+        "restoreDefault": "기본값 복원"
+      }
+    }
+  }
+}
+</i18n>

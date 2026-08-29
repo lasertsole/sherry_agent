@@ -12,6 +12,7 @@ from ..types.capability import ControlScope
 from ..registry import (
     get_run,
     set_run,
+    update_run,
     cancel_task,
     register_task,
     replace_run_after_steer,
@@ -65,6 +66,12 @@ async def steer_subagent_run(
 
     save_kill_reconciliation(run_id)
 
+    # Suppress announce/cleanup for the pre-steer generation BEFORE cancelling: the
+    # cancelled generation's KILLED completion must not announce stale findings or
+    # schedule cleanup that would reap the steered generation. Cleared below when the
+    # restarted generation is dispatched (so its own completion announces normally).
+    update_run(run_id, suppress_announce_reason="steer-restart")
+
     cancel_task(run_id)
 
     settled = await _abort_settle_wait(run_id, timeout=_ABORT_SETTLE_TIMEOUT)
@@ -75,6 +82,11 @@ async def steer_subagent_run(
     if updated is None:
         logger.error("steer_subagent_run: replace_run_after_steer failed for {}", run_id)
         return run
+
+    # Register the new generation with the terminal tracker so a late completion
+    # callback from the cancelled generation is rejected as stale.
+    from ..registry.terminal_gen import get_terminal_gen_tracker
+    get_terminal_gen_tracker().register_expected(run_id, updated.generation)
 
     frozen_fallback = None
     if run.completion and run.completion.result_text:
@@ -87,8 +99,8 @@ async def steer_subagent_run(
         updated = updated.model_copy(update={"task": new_task})
     if frozen_fallback:
         # Preserve the previous generation's output as context for the steered run
-        from ..registry.memory import update as update_run
-        update_run(updated.run_id, completion=updated.completion.model_copy(update={
+        from ..registry.memory import update as _memory_update
+        _memory_update(updated.run_id, completion=updated.completion.model_copy(update={
             "result_text": f"[FROZEN FALLBACK from previous generation]\n{frozen_fallback}",
         }))
         updated = get_run(updated.run_id) or updated
@@ -200,7 +212,7 @@ async def _execute_steered_subagent(
         remove_task(run.run_id)
 
         from ..registry.lifecycle import complete_subagent_run
-        await complete_subagent_run(run.run_id, outcome, result_text)
+        await complete_subagent_run(run.run_id, outcome, result_text, expected_generation=run.generation)
 
 
 def _build_steer_message(new_task: str | None, new_instructions: str | None, original_run: SubagentRunRecord) -> str:

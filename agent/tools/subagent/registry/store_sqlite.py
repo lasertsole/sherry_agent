@@ -100,6 +100,31 @@ async def upsert_run_to_sqlite(run: SubagentRunRecord) -> None:
         await db.commit()
 
 
+def upsert_run_sync(run: SubagentRunRecord) -> None:
+    """Synchronously upsert a single run record.
+
+    Mirrors ``save_settle_wake_state``: uses stdlib sqlite3 so that sync write
+    paths (register_run / complete_run) can persist without a running event
+    loop. Failures are logged and swallowed — memory remains the source of
+    truth; SQLite is a best-effort restart-recovery mirror.
+    """
+    import sqlite3
+    _DB_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        conn = sqlite3.connect(str(_DB_PATH))
+        try:
+            conn.execute(_CREATE_TABLE_SQL)
+            conn.execute(
+                "INSERT OR REPLACE INTO subagent_runs (run_id, data) VALUES (?, ?)",
+                (run.run_id, _serialize_run(run)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("Failed to sync-upsert run {} to SQLite: {}", run.run_id, e)
+
+
 async def delete_run_from_sqlite(run_id: str) -> None:
     """Delete a single run record from SQLite by run_id."""
     await ensure_db()

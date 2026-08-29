@@ -55,7 +55,7 @@ def register_run(
     expects_completion_message: bool = True,
     wake_on_descendant_settle: bool = False,
 ) -> SubagentRunRecord:
-    """Register a new sub-agent run in memory with the given parameters."""
+    """Register a new sub-agent run in memory and SQLite with the given parameters."""
     config = get_config()
     role, control_scope = _resolve_role(depth, config.max_spawn_depth)
     completion_required = spawn_mode == SpawnMode.RUN
@@ -104,6 +104,8 @@ def register_run(
     )
 
     memory.set_run(run)
+    # Persist immediately so a restart can restore this run (register-time state).
+    store_sqlite.upsert_run_sync(run)
     logger.info(
         "Registered subagent run: run_id={}, child={}, requester={}, depth={}, role={}, controller={}",
         run.run_id, child_session_key, requester_session_key, depth, role, run.controller_session_key,
@@ -151,7 +153,7 @@ def complete_run(
     outcome: RunOutcome,
     result_text: str | None = None,
 ) -> SubagentRunRecord | None:
-    """Mark a run as TERMINAL with the given outcome and optional result text.
+    """Mark a run as TERMINAL (memory + SQLite) with the given outcome and optional result text.
 
     If the run is already terminal, this is a no-op.
     """
@@ -185,6 +187,8 @@ def complete_run(
         "archive_at": archive_at,
     })
     memory.set_run(updated)
+    # Persist the terminal state so a restart restores the run with its outcome.
+    store_sqlite.upsert_run_sync(updated)
     return updated
 
 

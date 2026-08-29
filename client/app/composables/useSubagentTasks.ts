@@ -574,7 +574,13 @@ export function useSubagentTasks() {
     taskLoading.value = true;
     try {
       const runs = await fetchSubagentRunSubtree(rootId);
-      if (!runs.length) return;
+      if (!runs.length) {
+        // run 已不存在（清理/删除/过期）：退出聚焦并回退到会话级全量视图，避免卡死在空图上
+        focusedRunId.value = undefined;
+        selectedRunId.value = undefined;
+        refresh(resolveSid());
+        return;
+      }
       // 将子树记录写回 Dexie（后续 WS / 其它会话视图也能拿到最新状态）
       await cacheSubagentRuns(runs.map(toCachedSubagentRun));
       // 重建列表（读全量缓存 → 同步 allTaskRuns，由 focusedSubtreeRuns 派生重算）
@@ -582,6 +588,10 @@ export function useSubagentTasks() {
       lastTasksFetchedAt.value = Date.now();
     } catch (e) {
       console.error('[useSubagentTasks] 刷新聚焦 task box 子树失败：', e);
+      // 后端异常（含 run-not-found / 网络层失败）：同样退出聚焦回退全量，避免 UI 卡死在失效 run 上
+      focusedRunId.value = undefined;
+      selectedRunId.value = undefined;
+      refresh(resolveSid());
     } finally {
       taskLoading.value = false;
     }

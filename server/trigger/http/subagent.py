@@ -21,8 +21,11 @@ from agent.tools.subagent.registry import (
     get_run,
     list_descendant_runs,
     remove_run,
+    set_run,
 )
+from agent.tools.subagent.registry.store_sqlite import load_runs_from_sqlite
 from agent.tools.subagent.registry.helpers import safe_remove_attachments_dir
+from agent.tools.subagent.control.steer import steer_subagent_run
 from agent.tools.subagent import delegate_task
 
 # Fields that are safe / useful to surface to the UI. Everything else (paths,
@@ -128,7 +131,20 @@ async def get_subagent_runs_handler(request):
     if run_id:
         root = get_run(run_id)
         if root is None:
-            raise ValueError(f"sub-agent run '{run_id}' not found")
+            # SQLite 兜底：内存暂缺但磁盘仍有时回补内存，避免误判为"已删除"
+            # （restore_runs_from_disk 仅启动时一次性执行，不覆盖运行期偶发缺失）。
+            runs_on_disk = await load_runs_from_sqlite()
+            root = runs_on_disk.get(run_id)
+            if root is not None:
+                logger.warning(
+                    f"Sub-agent run '{run_id}' missing in memory but found on disk; restored to registry"
+                )
+                set_run(root)
+        if root is None:
+            # run 确已不存在（已清理/删除/过期）是 GET 的正常业务状态：
+            # 返回结构化空结果，前端据此回退会话级全量刷新，而非 500。
+            logger.info(f"Sub-agent run '{run_id}' not found; returning empty result")
+            return {"runs": []}
         # Root + all of its descendants. list_descendant_runs uses the root's
         # child_session_key as the requester key so it returns only descendants;
         # the root itself is not included, hence we prepend it.
@@ -292,4 +308,80 @@ async def delete_subagent_run_handler(request):
 
     logger.info(f"Sub-agent run subtree removed: run_id={run_id}, removed={removed}")
     return _ok({"success": True, "removed": removed})
+
+
+@app.post("/subagents/steer")
+async def steer_subagent_handler(request):
+    """Steer (redirect / resume) a running sub-agent run.
+
+    Body (JSON):
+        run_id (str, required): The run to steer.
+        new_task (str, optional): Replacement task description.
+        new_instructions (str, optional): Additional instructions appended to
+            the steer message. Both optional — an empty payload resumes an
+            interrupted run with its original task unchanged.
+
+    Semantics: cancels the run's current asyncio task, increments generation,
+    rebuilds the child agent, and re-invokes it on the SAME checkpointer thread
+    (child_session_key) with a [STEER] message — the child continues from its
+    persisted conversation state. Also revives a RUNNING run whose in-flight
+    task died with a backend restart (zombie RUNNING), since steering an
+    orphan only needs a task-less re-dispatch.
+
+    Returns:
+        - 200: ``{"run": {SubagentRunRecord...}}`` with the steered record
+          (generation already incremented, status RUNNING).
+        - 400: invalid body / run not in a steerable state (RUNNING or
+          INTERRUPTED), collector runs excluded.
+        - 404: run does not exist in memory or SQLite.
+    """
+    body = _read_body(request)
+    if body is None:
+        return _bad_request("Invalid JSON body")
+
+    run_id = body.get("run_id")
+    if not run_id or not isinstance(run_id, str) or not run_id.strip():
+        return _bad_request("Missing or invalid 'run_id'")
+
+    new_task = body.get("new_task")
+    new_instructions = body.get("new_instructions")
+    for field_name, field_value in (("new_task", new_task), ("new_instructions", new_instructions)):
+        if field_value is not None and (not isinstance(field_value, str) or not field_value.strip()):
+            return _bad_request(f"Invalid '{field_name}' (non-empty string or null required)")
+
+    run = get_run(run_id)
+    if run is None:
+        # SQLite 兜底（与 GET 一致）：重启后内存缺失但磁盘仍有 run 时回补，
+        # 让 steer 也能接管跨进程"僵尸 RUNNING"的 run。
+        runs_on_disk = await load_runs_from_sqlite()
+        run = runs_on_disk.get(run_id)
+        if run is not None:
+            logger.warning(
+                f"Sub-agent run '{run_id}' missing in memory but found on disk; restored to registry (steer)"
+            )
+            set_run(run)
+    if run is None:
+        return _not_found(f"Sub-agent run '{run_id}' not found")
+
+    try:
+        steered = await steer_subagent_run(
+            run_id=run_id,
+            new_task=new_task,
+            new_instructions=new_instructions,
+        )
+    except Exception as exc:
+        logger.exception(f"POST /subagents/steer dispatch error for run {run_id}: {exc}")
+        return _to_text_response(500, {"success": False, "message": str(exc)})
+
+    if steered is None:
+        # steer_subagent_run returns None for: terminal status, collector run,
+        # rate-limited, or control denied (not-found already handled above).
+        # 400 (not 409) on purpose: ofetch retries 409s on the client side.
+        logger.warning(f"POST /subagents/steer rejected for run {run_id} (not steerable or rate-limited)")
+        return _bad_request(
+            f"Sub-agent run '{run_id}' is not steerable (terminal/collector state, rate-limited, or control denied)"
+        )
+
+    logger.info(f"Sub-agent run steered via HTTP: run_id={run_id}, generation={steered.generation}")
+    return _ok({"run": _serialize_run(steered)})
 

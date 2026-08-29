@@ -17,8 +17,6 @@
     "defaultAiName": "シェリー",
     "imageLoadFailed": "画像の読み込みに失敗しました",
     "removeImage": "画像を削除",
-    "audioLoadFailed": "音声の読み込みに失敗しました",
-    "videoLoadFailed": "動画の読み込みに失敗しました",
     "removeAudio": "音声を削除",
     "removeVideo": "動画を削除",
     "toolArgs": "引数",
@@ -26,7 +24,18 @@
     "toolNoOutput": "出力なし",
     "toolRunning": "実行中…",
     "thinking": "思考",
-    "modelMeta": "入力 {input} · 出力 {output} tokens"
+    "modelMeta": "入力 {input} · 出力 {output} tokens",
+    "copy": "コピー",
+    "copied": "コピーしました"
+  },
+  "errors": {
+    "requestFailed": "リクエストに失敗しました"
+  },
+  "connection": {
+    "reconnecting": "接続が切断されました。再接続中…（{attempt}/{max} 回目）",
+    "offline": "ネットワークが切断されました",
+    "backendDown": "バックエンドサービスに接続できません",
+    "backOnline": "接続が復帰しました"
   },
   "history": {
     "noSessions": "会話履歴がありません",
@@ -35,13 +44,15 @@
     "batchDeleteConfirm": "選択した会話を一括削除してもよろしいですか？この操作は元に戻せません。",
     "createdAt": "作成日時：{time}",
     "dateFormat": "YYYY/MM/DD HH:mm",
-    "editTitle": "タイトルを編集",
-    "deleteSession": "会話を削除",
     "deleteConfirm": "この会話を削除してもよろしいですか？この操作は元に戻せません。",
-    "confirmDelete": "削除",
-    "cancelDelete": "キャンセル",
-    "exampleTitle": "サンプル会話",
-    "newSession": "新しい会話"
+    "newSession": "新しい会話",
+    "searchPlaceholder": "セッションタイトルを検索…",
+    "dateRange": "日付範囲で絞り込み",
+    "clearFilter": "フィルターをクリア",
+    "noSearchResults": "一致するセッションがありません",
+    "filterToggle": "絞り込み",
+    "editTitle": "セッション名を変更",
+    "titlePlaceholder": "新しいタイトルを入力"
   },
   "sidebar": {
     "tabSessions": "会話",
@@ -65,7 +76,6 @@
     "statusUnknown": "不明",
     "roleRoot": "ルート",
     "roleChild": "タスク",
-    "parentSession": "呼び出し元セッション",
     "callingSession": "呼び出し中セッション",
     "startTime": "開始時刻",
     "endTime": "終了時刻",
@@ -73,49 +83,6 @@
     "backToSessionPrompt": "このタスクを開始したセッションに移動",
     "refreshGraph": "再読み込み",
     "refreshGraphPrompt": "実行グラフを再取得して再描画"
-  },
-  "taskViewer": {
-    "viewTasks": "バックグラウンドタスクを表示"
-  },
-  "flow": {
-    "title": "ライブフロー",
-    "toggle": "フローの切り替え",
-    "empty": "サブエージェントの実行はまだありません",
-    "loading": "読み込み中...",
-    "error": "読み込みに失敗しました",
-    "collapse": "折りたたむ",
-    "expand": "展開",
-    "close": "閉じる",
-    "sessionRoot": "セッション / ルート",
-    "status": {
-      "running": "実行中",
-      "completed": "完了",
-      "failed": "失敗",
-      "pending": "待機中",
-      "unknown": "不明"
-    }
-  },
-  "taskDetail": {
-    "title": "タスク詳細",
-    "placeholder": "上のツリーでノードをクリックするとタスク詳細を表示します",
-    "taskName": "タスク",
-    "taskDesc": "説明",
-    "status": "ステータス",
-    "role": "ロール",
-    "depth": "深さ",
-    "agentId": "エージェント",
-    "spawnMode": "生成モード",
-    "parentSession": "親セッション",
-    "startedAt": "開始時刻",
-    "endedAt": "終了時刻",
-    "endedReason": "終了理由",
-    "outcome": "結果",
-    "outcomeStatus": "結果ステータス",
-    "error": "エラー",
-    "resultText": "結果",
-    "delivery": "配信",
-    "noError": "なし",
-    "noResult": "該当なし"
   },
   "toolbar": {
     "newChat": "新しい会話",
@@ -142,70 +109,8 @@
     "expandSidebar": "サイドバーを展開"
   },
   "config": {
-    "title": "システム設定",
-    "persona": {
-      "title": "AI人格",
-      "restoreDefault": "デフォルトに戻す"
-    },
-    "memory": {
-        "title": "記憶",
-        "addEntry": "項目を追加",
-        "deleteEntry": "項目を削除",
-        "empty": "項目はまだありません。下から追加してください。",
-        "effectiveHint": "注意：変更は圧縮時または再起動時にのみ反映されます。"
-      },
-    "heartbeat": {
-        "title": "ハートビートタスク",
-        "addTask": "タスクを追加",
-        "empty": "保留中のタスクはありません。下に追加するか、空のままにするとハートビートをスキップします。",
-        "effectiveHint": "このファイルは30分ごとにチェックされます。Agentが定期的に処理してほしいタスクを下に追加してください。見出し/コメントのみ（タスクがない）場合はハートビートをスキップします。",
-        "activeTitle": "アクティブなタスク",
-        "completedTitle": "完了済み",
-        "deleteTask": "タスクを削除",
-        "complete": "完了にする",
-        "reactivate": "再アクティブ化",
-        "activeEmpty": "アクティブなタスクはありません。下に新しいタスクを追加してください。",
-        "completedEmpty": "完了済みのタスクはまだありません。"
-      },
-    "cron": {
-        "title": "クーロンタスク",
-        "addJob": "新規タスク",
-        "empty": "クーロンタスクはまだありません。「新規タスク」をクリックして追加してください。",
-        "run": "実行",
-        "edit": "編集",
-        "delete": "削除",
-        "addTitle": "新しいクーロンタスク",
-        "editTitle": "クーロンタスクを編集",
-        "name": "タスク名",
-        "namePlaceholder": "例：毎朝の挨拶",
-        "scheduleType": "スケジュール方式",
-        "typeAt": "指定時刻",
-        "typeEvery": "間隔で繰り返し",
-        "typeCron": "Cron 式",
-        "atTime": "実行時刻",
-        "everyInterval": "実行間隔",
-        "intervalValue": "値",
-        "cronExpr": "Cron 式",
-        "message": "タスク内容",
-        "messagePlaceholder": "実行するタスクの内容を入力",
-        "deliver": "チャネルへ配信",
-        "channel": "チャネル名",
-        "channelPlaceholder": "例：default",
-        "to": "受信者 / グループ",
-        "toPlaceholder": "任意",
-        "deleteAfterRun": "実行後に自動削除",
-        "nextRun": "次回実行",
-        "lastStatus": "前回の状態",
-        "descAt": "{time} に実行",
-        "descAtEmpty": "時刻が未設定",
-        "everySeconds": "{n} 秒ごと",
-        "everyMinutes": "{n} 分ごと",
-        "everyHours": "{n} 時間ごと",
-        "everyDays": "{n} 日ごと"
-      },
     "save": "保存",
     "cancel": "キャンセル",
-    "uploadAvatar": "アバターをアップロード",
     "tabs": {
       "agents": "コアルール",
       "identity": "身元情報",
@@ -230,15 +135,6 @@
       "ja": "日本語",
       "ko": "한국어"
     },
-    "role": {
-      "assistant": "AI ロール",
-      "aiName": "AI 名前",
-      "userRole": "ユーザーロール",
-      "userName": "ユーザー名",
-      "avatar": "アバター",
-      "charNote": "アバターと名前の変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。",
-      "noFileChosen": "新しいアバター画像を選択できます"
-    },
     "crop": {
       "title": "アバターをトリミング",
       "confirm": "確定",
@@ -246,28 +142,6 @@
       "zoomOut": "縮小",
       "rotate": "回転",
       "preview": "トリミングプレビュー"
-    },
-    "background": {
-      "title": "背景画像",
-      "upload": "背景をアップロード",
-      "clear": "背景をクリア",
-      "bothThemes": "背景画像はライト/ダークテーマの両方で表示されます。下のスライダーでオーバーレイの強さを調整します。",
-      "opacity": "オーバーレイの強さ",
-      "opacityHint": "ライトテーマでは白、ダークテーマでは黒のオーバーレイを重ねます。右に行くほど写真が真っ白/真っ黒に薄れ、完全に覆われます。",
-      "cropTitle": "背景をトリミング",
-      "current": "背景画像が設定されています",
-      "noFileChosen": "画像ファイルを選択"
-    },
-    "env": {
-      "title": "環境設定",
-      "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
-      "saveFailed": "環境設定の保存に失敗しました。",
-      "saveSuccess": "環境設定を保存しました。反映するにはバックエンドを再起動してください。",
-      "section": "セクション",
-      "key": "キー",
-      "value": "値",
-      "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
-      "noEnvFile": ".env ファイルが見つかりません。"
     }
   }
 }

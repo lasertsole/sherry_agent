@@ -45,7 +45,7 @@ The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy St
 - [x] Session switching: click session in sidebar → load its messages
 - [x] Responsive sidebar: mobile (overlay) vs desktop (fixed)
 - [x] Batch operations: multi-select sessions, batch delete
-- [ ] Search/filter sessions (by title or date range)
+- [x] Search/filter sessions (by title or date range)
 
 #### 1.3 Chat View — Message Display (`app/pages/home/`)
 
@@ -55,7 +55,7 @@ The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy St
 - [x] Scroll-to-bottom on new messages
 - [x] Loading/streaming indicator during AI response
 - [x] Support multimodal messages: text + images
-- [ ] Copy message text button
+- [x] Copy message text button
 
 #### 1.4 Chat Input (`app/components/chat/inputBox.vue`)
 
@@ -64,14 +64,14 @@ The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy St
 - [x] Stop generation button during streaming
 - [x] Image upload (multipart/form-data via `requestApi.ts`)
 - [ ] File upload attachment
-- [ ] Knowledge base toggle / context mode selector
+- [x] Knowledge base toggle
 
 #### 1.5 Streaming & SSE Integration
 
 - [x] Consume SSE / chunked JSON response from Python backend `/chat/stream` endpoint
 - [x] Incrementally update message bubble content as chunks arrive
 - [x] Handle stream cancellation (abort fetch + notify backend)
-- [ ] Handle reconnection on network error
+- [x] Handle reconnection on network error
 
 #### 1.6 Local State Management (`app/stores/`)
 
@@ -83,7 +83,7 @@ The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy St
 
 #### 1.7 Internationalization (`app/i18n/`)
 
-- [ ] i18n JSON files: zh.json (done — skeleton only), en.json, ja.json
+- [x] i18n JSON files: zh.json, en.json, ja.json
 - [x] Translate all UI text (sidebar, input, buttons, tooltips, empty states)
 - [x] Ensure i18n locale switching works seamlessly
 
@@ -96,7 +96,7 @@ The Tauri 2 + Nuxt 4 frontend project under `client/` has replaced the legacy St
 
 #### 1.9 Polish & Testing
 
-- [ ] Error handling UI: toast notifications for API errors, network offline
+- [x] Error handling UI: toast notifications for API errors, network offline
 - [x] Loading skeleton / spinner components
 - [ ] Responsive layout tested on mobile, tablet, desktop
 - [x] Dark mode consistency (tailwind `dark:` classes across all components)

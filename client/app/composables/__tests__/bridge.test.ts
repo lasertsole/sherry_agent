@@ -196,19 +196,73 @@ describe('sendChatMessage (browser WebSocket)', () => {
     expect(ws.closed).toBe(true);
   });
 
-  it('rejects on socket error before done', async () => {
-    const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
-    const ws = FakeWebSocket.instances[0];
-    ws.error();
-    await expect(promise).rejects.toThrow('WebSocket connection error');
-    expect(ws.closed).toBe(true);
+  it('rejects with StreamInterruptedError after exhausting reconnect on socket error before done', async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
+      // 首个连接失败 -> Case A：进入指数退避重连（旧行为是立即以 'WebSocket connection error' reject）
+      let ws = FakeWebSocket.instances[0];
+      ws.error();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      // 依次推进退避延时，触发重连；每轮新连接再失败，直至重试预算耗尽
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      await vi.advanceTimersByTimeAsync(1000); // wsReconnectDelayMs(1)
+      ws.error();
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      await vi.advanceTimersByTimeAsync(2000); // wsReconnectDelayMs(2)
+      ws.error();
+      expect(FakeWebSocket.instances).toHaveLength(3);
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      await vi.advanceTimersByTimeAsync(4000); // wsReconnectDelayMs(3)
+      // 达到 WS_RECONNECT_MAX_ATTEMPTS（3）后仍失败 => StreamInterruptedError(midStream=false)
+      ws.error();
+      await expect(promise).rejects.toMatchObject({
+        name: 'StreamInterruptedError',
+        midStream: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('rejects when the socket closes before completion', async () => {
-    const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
+  it('rejects with StreamInterruptedError after reconnect budget is used when the socket closes before completion', async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
+      let ws = FakeWebSocket.instances[0];
+      // pre-chunk 断开属 Case A（未产出 chunk），可安全重试重发
+      ws.closeFromServer();
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      await vi.advanceTimersByTimeAsync(1000);
+      ws.closeFromServer();
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      await vi.advanceTimersByTimeAsync(2000);
+      ws.closeFromServer();
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      await vi.advanceTimersByTimeAsync(4000);
+      // 重试穷尽后 reject（不再抛旧的 'WebSocket closed before stream completion'）
+      ws.closeFromServer();
+      await expect(promise).rejects.toMatchObject({ name: 'StreamInterruptedError' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects immediately with midStream error when the socket closes after chunks (never resends)', async () => {
+    // Case B：已收到 chunk 后断流 —— 内容已上屏，重发会导致重复内容，必须立即失败
+    const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi' }, () => {});
     const ws = FakeWebSocket.instances[0];
+    ws.open();
+    ws.frame({ event: 'chunk', session_id: 's1', content: 'partial', type: 'text' });
     ws.closeFromServer();
-    await expect(promise).rejects.toThrow('WebSocket closed before stream completion');
+    await expect(promise).rejects.toMatchObject({
+      name: 'StreamInterruptedError',
+      midStream: true,
+    });
+    // 绝不重连/重发：仍然只有最初那一个 socket，且只发送过一次载荷
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(ws.sent).toHaveLength(1);
   });
 });
 

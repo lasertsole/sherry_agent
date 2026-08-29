@@ -13,6 +13,12 @@ format:
 * Anthropic (``ChatAnthropic``) exposes ``thinking`` + ``budget_tokens`` as a
   first-class kwarg, but *only* on claude-3-7 / claude-4 / opus / sonnet
   reasoning models.
+* Zhipu GLM (glm-4.5+ / glm-4.6 / glm-5 series, incl. ``glm-*-flash`` variants)
+  served through OpenAI-compatible gateways (e.g. ``open.bigmodel.cn/api/paas/v4``)
+  exposes thinking via the DeepSeek-style request-body key
+  ``{"thinking": {"type": "enabled"}}`` and streams chain-of-thought back as
+  ``delta.reasoning_content``. Verified live (2026-08): ``glm-5.3-flash`` accepts
+  the param and returns ``reasoning_content`` / ``reasoning_tokens``.
 
 Why it exists
     Historically ``main_llm.py`` hardcoded the DeepSeek ``extra_body`` payload
@@ -51,6 +57,11 @@ _OPENAI_COMPATIBLE = {
 # Anthropic model prefixes that accept the ``thinking`` param.
 _ANTHROPIC_REASONING_PREFIXES = ("claude-3-7", "claude-4", "claude-opus", "claude-sonnet")
 
+# Zhipu GLM model prefixes that accept the ``thinking`` param on the bigmodel
+# OpenAI-compatible API. Legacy glm-4 / glm-4v families predate it and reject
+# the param with a 400, so they stay excluded.
+_ZHIPU_REASONING_PREFIXES = ("glm-4.5", "glm-4.6", "glm-5")
+
 # Reasoning token budget for Anthropic's ``thinking`` param. Must stay well under
 # the model's ``max_tokens`` or the API rejects the request.
 _DEFAULT_ANTHROPIC_BUDGET = 2000
@@ -78,6 +89,20 @@ def _is_anthropic_reasoning_model(model_name: str) -> bool:
     """Return True iff ``model_name`` accepts the ``thinking`` param."""
     name = model_name.lower()
     return name.startswith(_ANTHROPIC_REASONING_PREFIXES)
+
+
+def is_zhipu_reasoning_model(model_name: str) -> bool:
+    """Return True iff ``model_name`` is a GLM model that accepts ``thinking``.
+
+    Mirrors ``is_openai_reasoning_model``: any ``org/model`` prefix is stripped
+    so router-style names (e.g. ``zhipu/glm-4.6``) still match. Covers the
+    thinking-capable GLM series (glm-4.5+, glm-4.6, glm-5.x incl. flash
+    variants); legacy glm-4 / glm-4v families return False.
+    """
+    name = model_name.lower()
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    return name.startswith(_ZHIPU_REASONING_PREFIXES)
 
 
 def build_reasoning_kwargs(
@@ -121,6 +146,12 @@ def build_reasoning_kwargs(
     # first-class ``ChatOpenAI`` kwarg. Inject ONLY for reasoning models; other
     # models reject the param with a 400.
     if provider in _OPENAI_COMPATIBLE:
+        # Zhipu GLM through an OpenAI-compatible gateway (bigmodel v4 API): the
+        # DeepSeek-style request-body key ``thinking`` toggles chain-of-thought
+        # and the API streams ``delta.reasoning_content``. Inject ONLY for the
+        # thinking-capable GLM series; legacy glm-4 models reject it with a 400.
+        if model_name and is_zhipu_reasoning_model(model_name):
+            return {"extra_body": {"thinking": {"type": "enabled"}}}
         if model_name and is_openai_reasoning_model(model_name):
             effort = (reasoning_effort or "high").strip().lower()
             if effort in _VALID_REASONING_EFFORTS:
@@ -145,4 +176,4 @@ def build_reasoning_kwargs(
     return {}
 
 
-__all__ = ["build_reasoning_kwargs", "is_openai_reasoning_model"]
+__all__ = ["build_reasoning_kwargs", "is_openai_reasoning_model", "is_zhipu_reasoning_model"]

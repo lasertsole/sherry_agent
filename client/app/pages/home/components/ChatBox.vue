@@ -119,12 +119,35 @@
         <div
           v-else
           :class="[
-            'w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
+            'relative group w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
             message.role === CHAT_ROLE.USER
               ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* 右侧气泡：蓝色，左下角/右下角圆角定制 */
               : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* 左侧气泡：白色 */,
             { 'rounded-xl': isConsecutive(message.id) }
           ]">
+          <!-- 复制消息按钮：仅用户/AI 文本消息且正文非空时展示；悬停或键盘聚焦气泡时淡入 -->
+          <button
+            v-if="canCopyMessage(message)"
+            type="button"
+            :class="[
+              'absolute top-2 right-2 flex items-center justify-center w-7 h-7 rounded-full border border-solid cursor-pointer select-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-200',
+              message.role === CHAT_ROLE.USER
+                ? 'bg-blue-700/40 hover:bg-blue-600/50 border-white/20 text-blue-100 hover:text-white' /* 蓝色用户气泡上的悬浮按钮：半透明浅白 */
+                : 'bg-white/70 hover:bg-white border-gray-200 shadow-sm text-gray-400 hover:text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:hover:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200' /* 白色 AI 气泡上的悬浮按钮：浅灰 */
+            ]"
+            :aria-label="t('chatBox.copy')"
+            :title="copiedMessageId === message.id ? t('chatBox.copied') : t('chatBox.copy')"
+            @click="copyMessage(message)">
+            <span
+              :class="[
+                'pi text-xs',
+                copiedMessageId === message.id
+                  ? message.role === CHAT_ROLE.USER
+                    ? 'pi-check text-emerald-300'
+                    : 'pi-check text-green-600'
+                  : 'pi-copy'
+              ]"></span>
+          </button>
           <!-- eslint-disable-next-line vue/no-v-html -- safeHtml() 已内部净化（markdown-it + DOMPurify 白名单），此处 v-html 绑定的是净化后的安全 HTML -->
           <div v-html="safeHtml(message.content)"></div>
           <template v-if="messageImages(message).length">
@@ -511,4 +534,89 @@ const formatToolArgs = (args: Record<string, unknown>): string => {
     return String(args);
   }
 };
+
+// ── 复制消息正文 ─────────────────────────────────────────
+
+/** 当前正在显示「已复制 ✓」反馈的消息 id（同一时刻最多一个，避免多个气泡同时闪现） */
+const copiedMessageId = ref<number | null>(null);
+
+/** 复制反馈还原计时器句柄（重新点击或组件卸载时需清掉，防止旧计时器提前把新反馈抹掉） */
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 该消息是否展示复制按钮：仅用户/AI 文本消息，且正文非空（工具卡片与空消息不出现在复制逻辑里） */
+const canCopyMessage = (message: MessageItem): boolean => {
+  return (
+    (message.role === CHAT_ROLE.USER || message.role === CHAT_ROLE.AI) &&
+    !!message.content &&
+    message.content.trim().length > 0
+  );
+};
+
+/**
+ * 将文本写入剪贴板。
+ * 优先使用现代 Clipboard API（需 secure context），不可用或 reject 时
+ * 降级到「隐藏 textarea + document.execCommand('copy')」；全部失败返回 false，由调用方只做警告。
+ */
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Clipboard API 拒绝/异常 → 走下方降级方案
+    }
+  }
+  return fallbackCopyText(text);
+};
+
+/** 降级复制：隐藏 textarea + execCommand('copy')（老环境/非安全上下文兜底） */
+const fallbackCopyText = (text: string): boolean => {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  // 置于屏幕外且不可见，避免出现布局跳动或闪现
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  textarea.style.left = '-9999px';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    // execCommand 可能抛异常：保持 ok=false，视为复制失败
+  }
+  document.body.removeChild(textarea);
+  return ok;
+};
+
+/** 复制某条消息的原始 Markdown 正文；成功则短暂展示 ✓ 反馈（1500ms 后还原为复制图标） */
+const copyMessage = async (message: MessageItem) => {
+  // 清掉上一次的反馈计时器，保证连续点击时只有最新一次反馈生效
+  if (copyResetTimer) {
+    clearTimeout(copyResetTimer);
+    copyResetTimer = null;
+  }
+  const ok = await copyTextToClipboard(message.content ?? '');
+  if (ok) {
+    copiedMessageId.value = message.id;
+    copyResetTimer = setTimeout(() => {
+      copiedMessageId.value = null;
+      copyResetTimer = null;
+    }, 1500);
+  } else {
+    // 两条路径都失败：只告警，绝不向模板抛错/中断渲染
+    console.warn('[ChatBox] 复制消息正文失败，暂不支持剪贴板写入。');
+  }
+};
+
+// 组件卸载时清理待执行的反馈还原计时器
+onBeforeUnmount(() => {
+  if (copyResetTimer) {
+    clearTimeout(copyResetTimer);
+    copyResetTimer = null;
+  }
+});
 </script>

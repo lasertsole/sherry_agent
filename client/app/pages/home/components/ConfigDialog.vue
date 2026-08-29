@@ -267,7 +267,7 @@ import { readEnvConfig, writeEnvConfig } from '@/composables/env';
 /** 全局聊天区背景单例：setBackground 同步更新响应式状态并持久化，保存后立即生效 */
 const { backgroundOpacity, setBackground } = useChatBackground();
 
-const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -640,3 +640,132 @@ const onHide = () => {
   resetEnvState();
 };
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "title": "系统配置",
+      "uploadAvatar": "上传头像",
+      "role": {
+        "assistant": "AI 角色",
+        "aiName": "AI 名称",
+        "userRole": "用户角色",
+        "userName": "用户名称",
+        "charNote": "修改头像与名字仅在新建会话后生效，旧会话不受影响。",
+        "noFileChosen": "可选择新的头像图片"
+      },
+      "background": {
+        "title": "背景图片",
+        "upload": "上传背景",
+        "clear": "清除背景",
+        "bothThemes": "背景图片在浅色/深色主题下均会显示；通过下方滑块调整遮罩强度。",
+        "opacity": "遮罩强度",
+        "opacityHint": "浅色主题叠加白色遮罩、深色主题叠加黑色遮罩：越靠右照片越被冲淡成纯白/纯黑，直至完全遮蔽。",
+        "cropTitle": "裁剪背景",
+        "current": "已设置背景图",
+        "noFileChosen": "可选择新图片文件"
+      },
+      "env": {
+        "loadError": "环境配置加载失败，请检查后端服务是否已启动。",
+        "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
+        "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
+        "noEnvFile": "未找到 .env 文件。"
+      }
+    }
+  },
+  "en": {
+    "config": {
+      "title": "System Config",
+      "uploadAvatar": "Upload Avatar",
+      "role": {
+        "assistant": "AI Role",
+        "aiName": "AI Name",
+        "userRole": "User Role",
+        "userName": "User Name",
+        "charNote": "Changes to the avatar and name only take effect in new sessions; existing sessions are not affected.",
+        "noFileChosen": "Select an avatar image file"
+      },
+      "background": {
+        "title": "Background Image",
+        "upload": "Upload Background",
+        "clear": "Clear Background",
+        "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
+        "opacity": "Overlay Strength",
+        "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
+        "cropTitle": "Crop Background",
+        "current": "Background image set",
+        "noFileChosen": "Select an image file"
+      },
+      "env": {
+        "loadError": "Failed to load environment config. Please check the backend service.",
+        "saveFailed": "Failed to save environment config.",
+        "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
+        "noEnvFile": "No .env file found."
+      }
+    }
+  },
+  "ja": {
+    "config": {
+      "title": "システム設定",
+      "uploadAvatar": "アバターをアップロード",
+      "role": {
+        "assistant": "AI ロール",
+        "aiName": "AI 名前",
+        "userRole": "ユーザーロール",
+        "userName": "ユーザー名",
+        "charNote": "アバターと名前の変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。",
+        "noFileChosen": "新しいアバター画像を選択できます"
+      },
+      "background": {
+        "title": "背景画像",
+        "upload": "背景をアップロード",
+        "clear": "背景をクリア",
+        "bothThemes": "背景画像はライト/ダークテーマの両方で表示されます。下のスライダーでオーバーレイの強さを調整します。",
+        "opacity": "オーバーレイの強さ",
+        "opacityHint": "ライトテーマでは白、ダークテーマでは黒のオーバーレイを重ねます。右に行くほど写真が真っ白/真っ黒に薄れ、完全に覆われます。",
+        "cropTitle": "背景をトリミング",
+        "current": "背景画像が設定されています",
+        "noFileChosen": "画像ファイルを選択"
+      },
+      "env": {
+        "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+        "saveFailed": "環境設定の保存に失敗しました。",
+        "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
+        "noEnvFile": ".env ファイルが見つかりません。"
+      }
+    }
+  },
+  "ko": {
+    "config": {
+      "title": "시스템 설정",
+      "uploadAvatar": "아바타 업로드",
+      "role": {
+        "assistant": "AI 역할",
+        "aiName": "AI 이름",
+        "userRole": "사용자 역할",
+        "userName": "사용자 이름",
+        "charNote": "아바타와 이름 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다.",
+        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다"
+      },
+      "background": {
+        "title": "배경 이미지",
+        "upload": "배경 업로드",
+        "clear": "배경 지우기",
+        "bothThemes": "배경 이미지는 라이트/다크 테마 모두에서 표시됩니다. 아래 슬라이더로 오버레이 강도를 조정하세요.",
+        "opacity": "오버레이 강도",
+        "opacityHint": "라이트 테마는 흰색, 다크 테마는 검은색 오버레이를 덮습니다. 오른쪽으로 갈수록 사진이 순백/순흑으로 바래다 완전히 가려집니다.",
+        "cropTitle": "배경 자르기",
+        "current": "배경 이미지가 설정됨",
+        "noFileChosen": "이미지 파일을 선택하세요"
+      },
+      "env": {
+        "loadError": "환경 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+        "saveFailed": "환경 설정을 저장하지 못했습니다.",
+        "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
+        "noEnvFile": ".env 파일을 찾을 수 없습니다."
+      }
+    }
+  }
+}
+</i18n>

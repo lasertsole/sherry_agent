@@ -52,20 +52,56 @@
           class="mb-3"
           @click="handleCreateSession"
           size="small" />
+        <!-- 筛选开关：默认折叠，收起时不显示任何搜索框（样式沿用 ChatBox 折叠块的 chevron+rotate 模式） -->
+        <div
+          class="flex items-center mb-2 cursor-pointer select-none text-xs text-[#868686]"
+          @click="showSessionFilters = !showSessionFilters">
+          <span>{{ t('history.filterToggle') }}</span>
+          <i
+            :class="[
+              'pi pi-chevron-down text-xs ml-auto transition-transform duration-200',
+              { 'rotate-180': showSessionFilters }
+            ]" />
+        </div>
+        <!-- 筛选栏：标题关键字 + 创建日期范围（本地过滤，两条件 AND 生效，均可选） -->
+        <div
+          v-if="showSessionFilters"
+          class="flex flex-col gap-2 mb-3">
+          <InputText
+            v-model="searchKeyword"
+            class="w-full"
+            :placeholder="t('history.searchPlaceholder')" />
+          <Calendar
+            v-model="dateRange"
+            selectionMode="range"
+            showIcon
+            fluid
+            class="w-full"
+            :placeholder="t('history.dateRange')" />
+          <Button
+            v-if="hasActiveFilters"
+            icon="pi pi-filter-slash"
+            :label="t('history.clearFilter')"
+            size="small"
+            text
+            severity="secondary"
+            @click="clearFilters" />
+        </div>
         <!-- 记录列表 -->
         <div class="flex flex-col overflow-auto flex-1 gap-3">
           <div
-            v-if="historyList.length === 0"
+            v-if="filteredHistoryList.length === 0"
             class="flex items-center justify-center h-full w-full text-[#868686]">
-            {{ t('history.noSessions') }}
+            {{ hasActiveFilters ? t('history.noSearchResults') : t('history.noSessions') }}
           </div>
           <HistoryItem
-            v-for="(item, index) in historyList"
+            v-for="item in filteredHistoryList"
             :key="item.id"
             :history-record="item"
             :is-active="currentSessionId === item.id"
             @choose-session="handleToggleSession"
             @delete-session="handleDeleteSession"
+            @rename-session="handleRenameSession"
             v-model:selectedList="selectedSessionIds" />
         </div>
         <div class="h-17 flex items-center justify-between">
@@ -228,13 +264,17 @@ import {
   clearCachedCharacter,
   cacheSessionMeta,
   readCachedSessionMetaList,
-  clearCachedSessionMeta
+  clearCachedSessionMeta,
+  saveSessionTitleOverride,
+  readSessionTitleOverrides,
+  clearSessionTitleOverride
 } from '@/composables/db';
 import { emit, on, off } from '@/composables/mitt';
 import { getSessionList, clearSession, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
 import type { SubagentRun } from '@/composables/bridge';
 import { useSubagentTasks } from '@/composables/useSubagentTasks';
 import dayjs from 'dayjs';
+import { filterSessions } from '@/composables/sessionFilter';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -284,29 +324,52 @@ function formatTime(ms: number | null | undefined): string {
 /** 历史会话 */
 const historyList = ref<SessionRecord[]>([]);
 
-/** 全选状态 */
-const isCheckAllSession = ref<boolean>(false);
+/** 筛选栏展开状态：默认折叠，收起时不显示任何搜索框 */
+const showSessionFilters = ref(false);
+
+/** 筛选：标题关键字（空/空白视为未启用） */
+const searchKeyword = ref('');
+/** 筛选：创建日期范围（PrimeVue Calendar range 模式，null/空数组视为未启用） */
+const dateRange = ref<Date[] | null>(null);
+
+/**
+ * 筛选后的会话列表：关键字与创建日期范围同时生效（AND），纯客户端过滤不发请求；
+ * 两个条件均未启用时原样返回 historyList（同一引用，避免无谓的数组重建）。
+ */
+const filteredHistoryList = computed(() => filterSessions(historyList.value, searchKeyword.value, dateRange.value));
+
+/** 是否有任一筛选条件生效（控制「清除筛选」按钮与空态文案） */
+const hasActiveFilters = computed(() => {
+  if (searchKeyword.value.trim().length > 0) return true;
+  return Array.isArray(dateRange.value) && dateRange.value.some(d => d != null);
+});
+
+/** 清空筛选条件：重置关键字与日期范围 */
+const clearFilters = () => {
+  searchKeyword.value = '';
+  dateRange.value = null;
+};
+
 /** 选择的会话 */
 const selectedSessionIds = ref<string[]>([]);
-/** 会话选择状态 */
-const isIndeterminate = computed(() => {
-  if (selectedSessionIds.value.length > 0 && selectedSessionIds.value.length < historyList.value.length) {
-    return true;
-  } else {
-    return false;
-  }
-});
-/** 监听选择 */
-watch(
-  () => selectedSessionIds.value,
-  newVal => {
-    if (newVal.length === historyList.value.length) {
-      isCheckAllSession.value = true;
-    } else {
-      isCheckAllSession.value = false;
-    }
-  }
+/**
+ * 全选状态：以「筛选后可见」的会话为准——仅当所有可见项都被选中时勾选；
+ * 被筛选隐藏但仍在 selectedSessionIds 中的项不影响勾选态。
+ */
+const isCheckAllSession = computed(
+  () =>
+    filteredHistoryList.value.length > 0 &&
+    filteredHistoryList.value.every(s => selectedSessionIds.value.includes(s.id))
 );
+/**
+ * 会话选择状态（半选）：以「筛选后可见」的会话为准——
+ * 可见项中仅部分被选中时为半选；全部选中或全部未选中则不是。
+ */
+const isIndeterminate = computed(() => {
+  const visible = filteredHistoryList.value;
+  const selectedVisible = visible.filter(s => selectedSessionIds.value.includes(s.id)).length;
+  return selectedVisible > 0 && selectedVisible < visible.length;
+});
 
 /**
  * 从服务端拉取全部会话列表并填充左侧历史列表。
@@ -342,7 +405,11 @@ const loadSessionList = async () => {
     localPlaceholders = Array.from(localById.values());
     // 占位会话按最新优先（createTime 倒序，字符串格式 YYYY-MM-DD HH:mm 可字典序比较）。
     localPlaceholders.sort((a, b) => (b.createTime < a.createTime ? -1 : 1));
-    historyList.value = [...localPlaceholders, ...sessions];
+    // 合并后应用自定义标题覆盖层：被编辑命名的会话标题固定，不再跟随最后一句用户消息
+    const overrides = await readSessionTitleOverrides();
+    historyList.value = [...localPlaceholders, ...sessions].map(item =>
+      overrides.has(item.id) ? { ...item, title: overrides.get(item.id) ?? item.title, renamed: true } : item
+    );
   } catch (error) {
     // 服务端不可达时：本次会话内存态保留，并尝试从 IndexedDB 恢复已持久化的占位会话
     console.warn('[loadSessionList] 拉取会话列表失败：', error);
@@ -355,7 +422,11 @@ const loadSessionList = async () => {
       for (const s of historyList.value) {
         if (!localById.has(s.id)) localById.set(s.id, s);
       }
-      historyList.value = Array.from(localById.values());
+      // 应用自定义标题覆盖层：离线时重命名会话同样保持自定义标题
+      const overrides = await readSessionTitleOverrides();
+      historyList.value = Array.from(localById.values()).map(item =>
+        overrides.has(item.id) ? { ...item, title: overrides.get(item.id) ?? item.title, renamed: true } : item
+      );
     } catch (cacheErr) {
       console.warn('[loadSessionList] 恢复本地占位会话失败：', cacheErr);
     }
@@ -402,6 +473,19 @@ const handleToggleSession = (id: string) => {
 };
 
 /**
+ * 重命名会话：本地即时生效（可被搜索），并持久化覆盖层。
+ * 标题覆盖层独立存于 Dexie `sessionTitles` 表（不随占位会话晋升被清除），
+ * 下次 loadSessionList 时会覆盖服务端派生标题并标记 `renamed`（展示高亮色）。
+ */
+async function handleRenameSession(id: string, title: string) {
+  const item = historyList.value.find(s => s.id === id);
+  if (!item) return;
+  item.title = title;
+  item.renamed = true;
+  await saveSessionTitleOverride(id, title);
+}
+
+/**
  * 删除会话：调用服务端 clearSession，成功后从列表移除。
  * 若删除的是当前激活会话，则路由回首页空态（[sid].vue 实例由 KeepAlive 释放）。
  */
@@ -418,6 +502,8 @@ const handleDeleteSession = async (id: string) => {
     clearCachedCharacter(id);
     // 同步清理本地占位会话缓存（IndexedDB），避免删除后仍残留占位
     clearCachedSessionMeta(id);
+    // 同步清理自定义标题覆盖层（IndexedDB），避免删除后残留孤儿覆盖记录
+    await clearSessionTitleOverride(id);
     // 该会话可能仍在流式生成（尤其是非激活会话，其 [sid].vue 仍被 KeepAlive 缓存且流未中止）。
     // 广播中止事件，让对应的 [sid].vue 实例 abort 其 AbortController，避免删除后流仍在后台推块、污染聊天状态。
     emit(SESSION_ABORT_STREAM_EVENT, id);
@@ -430,14 +516,15 @@ const handleDeleteSession = async (id: string) => {
   }
 };
 
-/** 全选/取消全选：在「全选 / 部分选择 / 未选择」三种状态间切换 */
+/** 全选/取消全选：仅作用于「筛选后可见」的会话，隐藏（被筛掉）项的原有选中状态保持不变 */
 const handleToggleSelectAll = (checked: boolean) => {
+  const visibleIds = new Set(filteredHistoryList.value.map(s => s.id));
   if (checked) {
-    // 勾选全选：当前列表全部选中
-    selectedSessionIds.value = historyList.value.map(s => s.id);
+    // 勾选全选：选中当前可见（筛选后）的全部会话，保留隐藏项已有选择
+    selectedSessionIds.value = Array.from(new Set([...selectedSessionIds.value, ...visibleIds]));
   } else {
-    // 取消全选：清空当前选择
-    selectedSessionIds.value = [];
+    // 取消全选：仅取消当前可见项的选中
+    selectedSessionIds.value = selectedSessionIds.value.filter(id => !visibleIds.has(id));
   }
 };
 
@@ -471,6 +558,8 @@ const handleBatchDelete = async () => {
     historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
     // 同步清理被删会话的角色快照缓存
     for (const id of deleted) clearCachedCharacter(id);
+    // 同步清理被删会话的自定义标题覆盖层（IndexedDB），避免残留孤儿覆盖记录
+    for (const id of deleted) await clearSessionTitleOverride(id);
     // 被删会话可能仍在流式生成（KeepAlive 缓存内的非激活实例流未中止），
     // 逐个广播中止事件，让对应 [sid].vue 实例 abort 其 AbortController。
     for (const id of deleted) emit(SESSION_ABORT_STREAM_EVENT, id);
