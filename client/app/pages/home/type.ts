@@ -1,89 +1,90 @@
-/** 会话纪录 */
+/** Session record */
 export interface SessionRecord {
-  /** 标题 */
+  /** Title */
   title: string;
-  /** 创建时间 */
+  /** Creation time */
   createTime: string;
   /** id */
   id: string;
-  /** 消息 */
+  /** Messages */
   messages?: MessageItem[];
-  /** 是否被用户编辑命名过：编辑后标题不再跟随最后一句用户消息，展示为高亮色 */
+  /** Whether the user has renamed it via editing: after editing, the title no longer follows the
+   *  last user message and is displayed in a highlight color */
   renamed?: boolean;
 }
 
-/** 工具栏工具 */
+/** Toolbar tool */
 export interface Tool {
-  /** 工具名称 */
+  /** Tool name */
   toolName: string;
-  /** 图标 */
+  /** Icon */
   icon: string;
-  /** hover提示 */
+  /** Hover tooltip */
   title: string;
-  /** 触发事件提示 */
+  /** Event to trigger */
   event: string;
-  /** label--适配组件 */
+  /** label--for component adaptation */
   label?: string;
 }
 
-/** 消息 */
+/** Message */
 export interface MessageItem {
-  /** 会话id */
+  /** Session id */
   session_id: string;
-  /** 角色 */
+  /** Role */
   role: CHAT_ROLE;
-  /** 内容 */
+  /** Content */
   content: string;
-  /** 消息携带的图片。
-   *  用户消息：原始 base64（不含 data: 前缀，需本地以 data:image/*;base64, 前缀渲染）；
-   *  AI 消息：持久化后的绝对文件路径（如 C:/.../src/<session_id>/media/<ts>.png，
-   *  需经后端 /media?session_id=<sid>&filename=<basename> 转成可访问 URL 渲染）。 */
+  /** Images carried by the message.
+   *  User message: raw base64 (without the data: prefix; must be rendered locally with a data:image/*;base64, prefix);
+   *  AI message: persisted absolute file path (e.g. C:/.../src/<session_id>/media/<ts>.png,
+   *  which must go through the backend /media?session_id=<sid>&filename=<basename> to become a renderable URL). */
   images?: string[];
-  /** 消息携带的音频。
-   *  用户消息：原始 base64（不含 data: 前缀，需本地以 data:audio/*;base64, 前缀渲染）；
-   *  AI 消息：持久化后的绝对文件路径（如 C:/.../src/<session_id>/media/<ts>.mp3，
-   *  需经后端 /media?session_id=<sid>&filename=<basename> 转成可访问 URL 渲染）。 */
+  /** Audios carried by the message.
+   *  User message: raw base64 (without the data: prefix; must be rendered locally with a data:audio/*;base64, prefix);
+   *  AI message: persisted absolute file path (e.g. C:/.../src/<session_id>/media/<ts>.mp3,
+   *  which must go through the backend /media?session_id=<sid>&filename=<basename> to become a renderable URL). */
   audios?: string[];
-  /** 消息携带的视频。
-   *  用户消息：原始 base64（不含 data: 前缀，需本地以 data:video/*;base64, 前缀渲染）；
-   *  AI 消息：持久化后的绝对文件路径（如 C:/.../src/<session_id>/media/<ts>.mp4，
-   *  需经后端 /media?session_id=<sid>&filename=<basename> 转成可访问 URL 渲染）。 */
+  /** Videos carried by the message.
+   *  User message: raw base64 (without the data: prefix; must be rendered locally with a data:video/*;base64, prefix);
+   *  AI message: persisted absolute file path (e.g. C:/.../src/<session_id>/media/<ts>.mp4,
+   *  which must go through the backend /media?session_id=<sid>&filename=<basename> to become a renderable URL). */
   videos?: string[];
-  /** 消息id */
+  /** Message id */
   id: number;
-  /** 会话轮次 */
+  /** Conversation turn number */
   turn_num: number;
-  /** 时间戳 */
+  /** Timestamp */
   timestamp: string;
-  /** 工具名称（仅 role=TOOL 时有值，标识是哪个工具调用） */
+  /** Tool name (only set when role=TOOL; identifies which tool call) */
   toolName?: string;
-  /** 工具状态：running=调用中, done=已完成, failed=被拒绝/失败, error=执行出错（仅 role=TOOL 时有值） */
+  /** Tool status: running=calling, done=completed, failed=rejected/failed, error=execution error (only set when role=TOOL) */
   toolStatus?: 'running' | 'done' | 'failed' | 'error';
-  /** 工具调用参数（仅 role=TOOL 且收到 tool_result 时有值） */
+  /** Tool call arguments (only set when role=TOOL and a tool_result has been received) */
   toolArgs?: Record<string, unknown>;
-  /** 工具执行结果文本（仅 role=TOOL 且收到 tool_result 时有值） */
+  /** Tool execution result text (only set when role=TOOL and a tool_result has been received) */
   toolResult?: string;
-  /** 模型思考/推理过程（仅 role=AI 有值；流式时逐块拼接，历史回填时一次完整写入） */
+  /** Model thinking/reasoning process (only set for role=AI; appended chunk by chunk when streaming, written in full at once when backfilling history) */
   reasoning?: string | null;
-  /** 模型名称（仅 role=AI 有值；来自后端 done 帧 / 历史行的 model_name） */
+  /** Model name (only set for role=AI; from the backend done frame / history row's model_name) */
   modelName?: string;
-  /** 输入 token 数（仅 role=AI 有值；来自后端 done 帧 / 历史行的 input_tokens） */
+  /** Input token count (only set for role=AI; from the backend done frame / history row's input_tokens) */
   inputTokens?: number;
-  /** 输出 token 数（仅 role=AI 有值；来自后端 done 帧 / 历史行的 output_tokens） */
+  /** Output token count (only set for role=AI; from the backend done frame / history row's output_tokens) */
   outputTokens?: number;
 }
 
-/** 角色 */
+/** Role */
 export enum CHAT_ROLE {
   /** ai */
   AI = 'ai',
-  /** 工具 */
+  /** Tool */
   TOOL = 'tool',
-  /** 用户 */
+  /** User */
   USER = 'human'
 }
 
-/** HITL 审批请求（对应后端 HitlInterruptData） */
+/** HITL approval request (corresponds to the backend HitlInterruptData) */
 export interface HitlRequestData {
   tool_name: string;
   tool_args: Record<string, unknown>;

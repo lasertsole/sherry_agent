@@ -383,14 +383,14 @@ describe('HITL resilience (edge cases)', () => {
       const { controller, promise } = openStream();
       const ws = await awaitSocket();
 
-      // Server closes the socket (e.g. reconnect desired) → pre-chunk 断开属
-      // Case A：bridge 现在会进入指数退避重连而非立即 reject。
+      // Server closes the socket (e.g. reconnect desired) → a pre-chunk disconnect is
+      // Case A: the bridge now enters exponential-backoff reconnection instead of rejecting immediately.
       ws.closeFromServer();
       controller.sendHitlResponse?.({ decision: 'reject', message: '连接已断开' });
       // No hitl_response frame appended after the close.
       expect(ws.sent.every((f) => !f.includes('hitl_response'))).toBe(true);
 
-      // 耗尽重连预算（每个重连出的新 socket 继续失败）→ 最终以 StreamInterruptedError reject
+      // Exhaust the reconnect budget (each newly reconnected socket keeps failing) → eventually rejects with StreamInterruptedError
       for (let i = 0; i < 3; i++) {
         await vi.advanceTimersByTimeAsync(1000 * 2 ** i);
         FakeWebSocket.instances[FakeWebSocket.instances.length - 1].closeFromServer();

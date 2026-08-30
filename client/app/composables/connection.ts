@@ -1,5 +1,6 @@
 import { ref, type Ref } from 'vue';
 import { checkHealth } from '~/composables/bridge';
+import { resolveRuntimeT } from '~/composables/i18nRuntime';
 import { toastInfo, toastWarn } from '~/composables/toast';
 
 /**
@@ -66,18 +67,17 @@ const OFF_LINE_KEY = 'connection.offline';
 const BACKEND_DOWN_KEY = 'connection.backendDown';
 const BACK_ONLINE_KEY = 'connection.backOnline';
 
-/** 安全获取 i18n 翻译函数（非 Nuxt / 单测上下文回退为原样返回 key）。 */
+/**
+ * 安全获取 i18n 翻译。
+ *
+ * 委托 `resolveRuntimeT()`（i18nRuntime.ts）在 Nuxt 运行时解析真正的翻译函数
+ * （nuxt-i18n v10 的 `$i18n` 是不含 t 的 locale 状态代理，不能直接用）；
+ * 单测 / 非 Nuxt 上下文回退为原样返回 key。无论哪种情况都不抛出。
+ */
 function safeT(key: string): string {
   if (!isClient()) return key;
-  try {
-    const nuxtApp = useNuxtApp();
-    const $i18n = nuxtApp?.$i18n;
-    const t = $i18n?.global?.t;
-    if (typeof t === 'function') return t(key) as string;
-  } catch {
-    // i18n 不可用时回退为原始 key
-  }
-  return key;
+  const t = resolveRuntimeT();
+  return t ? t(key) : key;
 }
 
 /** 同步一次在线状态（浏览器环境）。 */

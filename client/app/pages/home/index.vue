@@ -162,11 +162,20 @@
 
     <!-- 扩展弹窗（关联 / mcp） -->
     <ExtendDialog v-model="showExtendDialog" />
+
+
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
+// 页面级错误捕获：本页所有后代组件（侧边栏/工具栏/各弹窗，以及无自带捕获的子路由页）
+// 的运行时错误 → logUtil 日志 + 全局 toast，return false 阻断向上冒泡
+// （03-errorCaptured工厂函数.md 工厂函数模式）
+import { useErrorCaptured } from '~/composables/errorCaptured';
+
+useErrorCaptured();
+
 // components
 import SessionSidebar from './components/SessionSidebar.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';

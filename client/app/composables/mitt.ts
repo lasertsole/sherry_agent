@@ -1,12 +1,13 @@
 import mitt from 'mitt';
 
 const emitter = mitt();
-export const emit = emitter.emit;// 触发事件方法 $emit
-export const on = emitter.on;// 监听事件方法 $on
-export const off = emitter.off;// 取消监听方法 $off
+export const emit = emitter.emit;// Emit-event method $emit
+export const on = emitter.on;// Listen-for-event method $on
+export const off = emitter.off;// Cancel-listening method $off
 
-// 仅开发环境暴露测试钩子：允许 Playwright 等工具直接向 mitt 总线注入事件（如 ws:notification）。
-// 生产构建（import.meta.env.DEV === false）下不注入任何全局变量。
+// Expose a test hook in development only: allows tools like Playwright to inject events directly
+// into the mitt bus (e.g. ws:notification). In production builds (import.meta.env.DEV === false),
+// no global variable is injected.
 if (import.meta.env.DEV) {
   (window as unknown as { __emitTest: typeof emit }).__emitTest = emit;
 }

@@ -35,7 +35,8 @@
     "copied": "복사됨"
   },
   "errors": {
-    "requestFailed": "요청 실패"
+    "requestFailed": "요청 실패",
+    "pageError": "페이지 오류"
   },
   "connection": {
     "reconnecting": "연결 끊김, 재연결 중… ({attempt}/{max}번째 시도)",

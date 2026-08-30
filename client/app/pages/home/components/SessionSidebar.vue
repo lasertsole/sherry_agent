@@ -121,7 +121,8 @@
           <Button
             icon="pi pi-trash"
             :label="t('history.batchDelete')"
-            :disabled="selectedSessionIds.length === 0"
+            :disabled="selectedSessionIds.length === 0 || batchDeleting"
+            :loading="batchDeleting"
             @click="handleBatchDelete" />
         </div>
       </template>
@@ -494,11 +495,19 @@ async function handleRenameSession(id: string, title: string) {
   await saveSessionTitleOverride(id, title);
 }
 
+/** 正在删除中的会话 id 集合（in-flight 防重入：同一会话的删除请求只发一次） */
+const deletingSessionIds = ref<Set<string>>(new Set());
+/** 批量删除会话进行中（in-flight 防重入） */
+const batchDeleting = ref(false);
+
 /**
  * 删除会话：调用服务端 clearSession，成功后从列表移除。
  * 若删除的是当前激活会话，则路由回首页空态（[sid].vue 实例由 KeepAlive 释放）。
+ * in-flight 防重入：删除进行中再次触发同一会话直接忽略（快速连点只发一次 DELETE）。
  */
 const handleDeleteSession = async (id: string) => {
+  if (deletingSessionIds.value.has(id)) return;
+  deletingSessionIds.value.add(id);
   try {
     const ok = await clearSession(id);
     if (!ok) {
@@ -522,6 +531,8 @@ const handleDeleteSession = async (id: string) => {
     }
   } catch (error) {
     console.warn('[handleDeleteSession] 删除会话异常，保留列表项：', id, error);
+  } finally {
+    deletingSessionIds.value.delete(id);
   }
 };
 
@@ -540,47 +551,53 @@ const handleToggleSelectAll = (checked: boolean) => {
 /**
  * 批量删除会话：逐个调用服务端 clearSession，成功后统一从列表移除。
  * 若其中有当前激活会话，则路由回首页空态。
+ * in-flight 防重入：批量删除进行中再次点击直接忽略（按钮同时禁用 + loading）。
  */
 const handleBatchDelete = async () => {
+  if (batchDeleting.value) return;
   if (selectedSessionIds.value.length === 0) return;
   if (!window.confirm(t('history.batchDeleteConfirm'))) return;
-
-  const ids = [...selectedSessionIds.value];
-  const remain: string[] = [];
-  let failed = false;
-  for (const id of ids) {
-    try {
-      const ok = await clearSession(id);
-      if (!ok) {
+  batchDeleting.value = true;
+  try {
+    const ids = [...selectedSessionIds.value];
+    const remain: string[] = [];
+    let failed = false;
+    for (const id of ids) {
+      try {
+        const ok = await clearSession(id);
+        if (!ok) {
+          failed = true;
+          remain.push(id);
+        }
+      } catch (error) {
         failed = true;
         remain.push(id);
+        console.warn('[handleBatchDelete] 删除会话异常：', id, error);
       }
-    } catch (error) {
-      failed = true;
-      remain.push(id);
-      console.warn('[handleBatchDelete] 删除会话异常：', id, error);
     }
-  }
 
-  const deleted = ids.filter(id => !remain.includes(id));
-  if (deleted.length > 0) {
-    historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
-    // 同步清理被删会话的角色快照缓存
-    for (const id of deleted) clearCachedCharacter(id);
-    // 同步清理被删会话的自定义标题覆盖层（IndexedDB），避免残留孤儿覆盖记录
-    for (const id of deleted) await clearSessionTitleOverride(id);
-    // 被删会话可能仍在流式生成（KeepAlive 缓存内的非激活实例流未中止），
-    // 逐个广播中止事件，让对应 [sid].vue 实例 abort 其 AbortController。
-    for (const id of deleted) emit(SESSION_ABORT_STREAM_EVENT, id);
-  }
-  if (currentSessionId.value && deleted.includes(currentSessionId.value)) {
-    currentSessionId.value = undefined;
-    router.push(localePath('/home'));
-  }
-  selectedSessionIds.value = remain;
+    const deleted = ids.filter(id => !remain.includes(id));
+    if (deleted.length > 0) {
+      historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
+      // 同步清理被删会话的角色快照缓存
+      for (const id of deleted) clearCachedCharacter(id);
+      // 同步清理被删会话的自定义标题覆盖层（IndexedDB），避免残留孤儿覆盖记录
+      for (const id of deleted) await clearSessionTitleOverride(id);
+      // 被删会话可能仍在流式生成（KeepAlive 缓存内的非激活实例流未中止），
+      // 逐个广播中止事件，让对应 [sid].vue 实例 abort 其 AbortController。
+      for (const id of deleted) emit(SESSION_ABORT_STREAM_EVENT, id);
+    }
+    if (currentSessionId.value && deleted.includes(currentSessionId.value)) {
+      currentSessionId.value = undefined;
+      router.push(localePath('/home'));
+    }
+    selectedSessionIds.value = remain;
 
-  if (failed && remain.length > 0) {
-    console.warn('[handleBatchDelete] 部分会话删除失败，已保留：', remain);
+    if (failed && remain.length > 0) {
+      console.warn('[handleBatchDelete] 部分会话删除失败，已保留：', remain);
+    }
+  } finally {
+    batchDeleting.value = false;
   }
 };
 

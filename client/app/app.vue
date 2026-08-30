@@ -40,6 +40,12 @@ const { setLocale, t } = useI18n();
 // requestApi / connection 等模块在非组件上下文（如请求拦截器）中弹 toast。
 registerToastApi(useToast());
 
+// 页面级错误捕获的**顶层兜底**（03-errorCaptured工厂函数.md §3.3 App 层捕获）：
+// 捕获 NuxtPage 之外的子组件（ImagePreviewOverlay / 连接横幅 / 布局等）错误。
+// 各页面自身已在 setup 中调用 useErrorCaptured() 按页捕获（return false 阻断冒泡，
+// 页面内错误不会到达这里）；errorCaptured.ts 的 toast 依赖本行的 registerToastApi。
+useErrorCaptured();
+
 // 网络 / 后端连通性监控（isOnline、backendStatus、startConnectionWatch 等）。
 const { isOnline, backendStatus, startConnectionWatch } = useConnection();
 

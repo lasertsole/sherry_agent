@@ -127,9 +127,6 @@ def resolve_path(file_path):
 
 # 🟡 中（Medium）— 代码质量 / 架构 / 正确性
 
-## 21. 缺失 `config/character.py`
-- README 项目结构列出 `config/character.py`（"Character profile configuration"），但磁盘上不存在。任何 `import config.character` 都会失败——死引用或缺失文件。
-
 ## 22. `skills/skills_snapshot.py:73` 双重 `os.path.join` 于已绝对路径
 ```python
 file_path: str = os.path.join(SKILLS_DIR, 'skills_snapshot.json')   # 第 70 行
@@ -166,11 +163,6 @@ from providers.registry import find_by_name     # 第 244 行 (get_api_base)
 
 ## 29. `bus/core.py:16-18` 单一全局队列，无按渠道路由
 - `MessageBus` 一个入站 + 一个出站 `asyncio.Queue`，所有渠道共享，路由在下游按 `msg.channel` 判断。高并发多渠道时是瓶颈且无法按渠道背压（当前规模可接受，中级优先）。
-
-## 30. 重复/死代码（`pub_func/`）
-- **`pub_func/string_to_unique_int.py`** 与 **`pub_func/rand_str_to_int.py`** — 两工具都做 string→int 哈希（SHA-256 前 8 字节 vs MD5 前 N hex），应合并。
-- **`pub_func/extract_text_from_content.py`** — 已定义但未在 `pub_func/__init__.py` 导出（死代码）。
-- **`pub_func/build_agent_config.py:15-16`** — `except ValueError` 永远不会触发（try 内无 `ValueError` 源），错误信息 `"session_id must be an integer"` 也错（实为字符串）。死 try/except。
 
 ## 31. `skills/loader.py` 循环导入变通 + 字符串路径检查
 - `scan_skills` 在函数内部做 `from .skills_snapshot import read_skills_snapshot`（循环导入变通）；`_is_third_party` 用字符串 `"./skills/plugins/"` 判断而非 `Path` 解析。
@@ -226,7 +218,7 @@ from providers.registry import find_by_name     # 第 244 行 (get_api_base)
 3. **加固路径处理**：`resolve_path` 拒绝/钳制 ROOT_DIR 外路径；`server/DAO/messages.py` 在 `shutil.rmtree` 前清洗 `session_id`。
 4. **数据层**：`context_engine/store/core.py` 回合编号改单事务（#5）；`_callback_executor.py` 取消 `call_later` handle（#7）；`async_sqlite_checkpointer.py` 用 `async with`（#10）；`bus/core.py` 限队列（#11）。
 5. **注册表并发**：为 `runtime/*_register.py` 与 `context_engine` 共享连接加锁并返回副本（#23/#24/#25）。
-6. **修复 `providers.registry` 悬空导入**（#28）与 `config/character.py` 缺失（#21）。
-7. **移 `agent/core.py` import 副作用**入 `init()`（#26）；**合并/删除 `pub_func` 重复与死代码**（#30）。
+6. **修复 `providers.registry` 悬空导入**（#28）。
+7. **移 `agent/core.py` import 副作用**入 `init()`（#26）。
 8. **重审 fail-open 扫描策略**（#20-②），并考虑为高风险工具增加确认闸门（#20-③）。
 9. 修复后重新审计，确认以上各域闭合。

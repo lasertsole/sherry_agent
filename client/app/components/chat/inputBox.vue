@@ -23,25 +23,26 @@
 
         <Button
             v-if="!sending"
+            v-debounce:click.500="handleSend"
             :label="t('chatInput.send')"
             class="send"
             :disabled="!sendingAllowed || disabled"
-            @click="handleSend"
         />
         <Button
             v-else
+            v-debounce:click.300="() => emit('stop')"
             :label="t('chatInput.stop')"
             class="send"
             severity="danger"
-            @click="emit('stop')"
         />
     </div>
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, watch, type ShallowRef } from 'vue';
+import { computed, onMounted, watch, ref, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
+import { vDebounce } from '~/directives/debounce';
 
 const { t } = useI18n();
 

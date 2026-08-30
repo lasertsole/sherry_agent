@@ -115,6 +115,7 @@
             :label="t('stats.refresh')"
             icon="pi pi-refresh"
             severity="secondary"
+            :loading="loading"
             @click="loadStats" />
         </div>
       </div>

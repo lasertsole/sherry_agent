@@ -40,6 +40,7 @@ from agent.middlewares.humanInTheLoop import (
     SlashConfirm,
     HumanInTheLoop,
 )
+from agent.middlewares.humanInTheLoop.approval import _args_hash
 
 
 pytestmark = pytest.mark.unit
@@ -408,10 +409,26 @@ def test_smart_approve_llm_exception(tmp_path, unit_test_config):
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def test_request_tool_approval_deny_by_default(tmp_path, unit_test_config):
+def test_request_tool_approval_allow_by_default(tmp_path, unit_test_config):
+    """No recorded decision → tool is allowed through by default (allow-through)."""
     cfg = HITLConfig()
     pipeline = ApprovalPipeline(cfg, MagicMock())
+    state_register_mem.delete_state("sess-tool1", "hitl:tool_approved:shell_exec")
     result = pipeline.request_tool_approval("shell_exec", {"cmd": "whoami"}, "sess-tool1")
+    assert result.approved is True
+    assert result.decision == ApprovalDecision.ONCE
+
+
+def test_request_tool_approval_explicit_deny(tmp_path, unit_test_config):
+    """Recorded args-hash with False value → tool denied for the session."""
+    cfg = HITLConfig()
+    pipeline = ApprovalPipeline(cfg, MagicMock())
+    session_id = "sess-tool-denied"
+    state_register_mem.delete_state(session_id, "hitl:tool_approved:shell_exec")
+    state_register_mem.set_state(
+        session_id, "hitl:tool_approved:shell_exec", {_args_hash({"cmd": "whoami"}): False}
+    )
+    result = pipeline.request_tool_approval("shell_exec", {"cmd": "whoami"}, session_id)
     assert result.approved is False
     assert result.decision == ApprovalDecision.DENY
 
@@ -425,9 +442,10 @@ def test_tool_approval_session_flow(tmp_path, unit_test_config):
     result = pipeline.request_tool_approval("shell_exec", {"cmd": "whoami"}, session_id)
     assert result.approved is True
     assert result.decision == ApprovalDecision.SESSION
-    # different args still require approval
+    # different args have no recorded decision → allowed by default
     result2 = pipeline.request_tool_approval("shell_exec", {"cmd": "ls"}, session_id)
-    assert result2.approved is False
+    assert result2.approved is True
+    assert result2.decision == ApprovalDecision.ONCE
 
 
 # ────────────────────────────────────────────────────────────────────────────

@@ -148,8 +148,8 @@
                   : 'pi-copy'
               ]"></span>
           </button>
-          <!-- eslint-disable-next-line vue/no-v-html -- safeHtml() 已内部净化（markdown-it + DOMPurify 白名单），此处 v-html 绑定的是净化后的安全 HTML -->
-          <div v-html="safeHtml(message.content)"></div>
+          <!-- v-safe-html 指令内部完成 markdown 渲染 + DOMPurify 白名单净化（app/directives/safeHtml.ts） -->
+          <div v-safe-html="message.content"></div>
           <template v-if="messageImages(message).length">
             <div class="flex flex-wrap gap-2 mt-2">
               <template
@@ -228,8 +228,7 @@ import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
 import { formatCompactTimeString } from '@/common/utils';
 import { useI18n } from 'vue-i18n';
-import MarkdownIt from 'markdown-it';
-import DOMPurify from 'dompurify';
+import { vSafeHtml } from '@/directives/safeHtml';
 
 const { t } = useI18n();
 
@@ -401,9 +400,6 @@ watch(
 // 组件挂载（首屏打开）后滚到底部，让最新消息可见
 onMounted(() => scrollToBottom());
 
-// 初始化 markdown-it
-const md = new MarkdownIt({ html: true, linkify: true });
-
 /** 后端 /media 端点根：从 VITE_API_BACK_URL 推导（去掉尾部斜杠） */
 const backendBaseUrl = ((import.meta.env.VITE_API_BACK_URL as string) ?? '').replace(/\/+$/, '');
 
@@ -512,18 +508,6 @@ const onImageError = (event: Event, src: string) => {
     failedImageSources.add(src);
   }
 };
-
-/** 解析 MD 并进行 XSS 净化 */
-const safeHtml = computed(() => (content: string) => {
-  // 先把 markdown 转为原始 html 字符串
-  const rawHtml = md.render(content);
-
-  // 使用 DOMPurify 清理所有危险的标签（如 script）和属性（如 onerror）
-  return DOMPurify.sanitize(rawHtml, {
-    // 选填配置：如果你希望点击链接在新窗口打开，可以保留 target="_blank"
-    ADD_ATTR: ['target']
-  });
-});
 
 // ── 工具调用卡片展开/收起 ────────────────────────────────
 

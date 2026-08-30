@@ -47,20 +47,26 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     expect(text).toContain('被保留');
   });
 
-  it('renders the tool_calls indicator block', () => {
-    // `tool_calls` is accessed with optional chaining in the component, so it is
-    // safe to pass even though `MessageItem` does not declare it.
+  it('renders the tool call card for TOOL messages', async () => {
+    // TOOL-role messages render a dedicated tool card (toolName + status icon);
+    // AI messages carrying a tool_calls field render no indicator block anymore.
     const wrapper = mount(ChatBox, {
       props: {
         messages: [
-          {
-            ...base({ id: 1, role: CHAT_ROLE.AI, content: 'doing something' }),
-            tool_calls: [{ id: 't1', name: 'web_search', arguments: '' }],
-          } as any,
+          base({
+            id: 1,
+            role: CHAT_ROLE.TOOL,
+            content: '',
+            toolName: 'web_search',
+            toolStatus: 'running',
+          }),
         ],
       },
     });
-    expect(wrapper.text()).toContain('正在调用工具web_search');
+    expect(wrapper.text()).toContain('web_search');
+    // Expanding the card reveals the live "running" hint (chatBox.toolRunning).
+    await wrapper.find('.pi-hammer').trigger('click');
+    expect(wrapper.text()).toContain('执行中…');
   });
 
   it('strips <script> tags from user content via markdown-it + DOMPurify', () => {

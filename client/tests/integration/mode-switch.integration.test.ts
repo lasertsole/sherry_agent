@@ -8,10 +8,15 @@ import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 type ColorModeApi = { preference: string };
 
 let colorModeApi: ColorModeApi;
+let uiStoreApi: { setTheme: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
   colorModeApi = { preference: 'light' };
   vi.stubGlobal('useColorMode', vi.fn(() => colorModeApi));
+  // Shadow setup.ts's generic useUiStore so tests can observe theme writes:
+  // current ModeSwitch routes all theme changes through uiStore.setTheme.
+  uiStoreApi = { setTheme: vi.fn() };
+  vi.stubGlobal('useUiStore', vi.fn(() => uiStoreApi));
 });
 
 describe('ModeSwitch.vue (integration, backend mocked)', () => {
@@ -28,7 +33,7 @@ describe('ModeSwitch.vue (integration, backend mocked)', () => {
     });
     await wrapper.find('i').trigger('click');
     // mobile click handler passes currentMode==='light' ? 'dark'
-    expect(colorModeApi.preference).toBe('dark');
+    expect(uiStoreApi.setTheme).toHaveBeenCalledWith('dark');
     expect(wrapper.find('i').classes()).toContain('pi-moon');
     expect(vi.mocked(globalThis.useColorMode)).toHaveBeenCalledTimes(1);
   });

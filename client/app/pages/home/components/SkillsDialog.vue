@@ -41,7 +41,7 @@
         "delete": "Delete",
         "cancel": "Cancel",
         "deleteSuccess": "Skill deleted",
-        "deleteFailed": "Failed to delete skill",
+        "deleteFailed": "Failed to delete skill"
       }
     }
   },
@@ -86,7 +86,7 @@
         "delete": "削除",
         "cancel": "キャンセル",
         "deleteSuccess": "スキルを削除しました",
-        "deleteFailed": "スキルの削除に失敗しました",
+        "deleteFailed": "スキルの削除に失敗しました"
       }
     }
   },
@@ -131,7 +131,7 @@
         "delete": "삭제",
         "cancel": "취소",
         "deleteSuccess": "스킬이 삭제되었습니다",
-        "deleteFailed": "스킬 삭제에 실패했습니다",
+        "deleteFailed": "스킬 삭제에 실패했습니다"
       }
     }
   },
@@ -176,7 +176,7 @@
         "delete": "删除",
         "cancel": "取消",
         "deleteSuccess": "技能已删除",
-        "deleteFailed": "删除技能失败",
+        "deleteFailed": "删除技能失败"
       }
     }
   }
@@ -307,7 +307,7 @@
                 role="button"
                 tabindex="0"
                 :aria-pressed="selectedSkill?.location === skill.location"
-                @click="selectSkill(skill)"
+                v-debounce:click.300="() => selectSkill(skill)"
                 @keydown.enter.prevent="selectSkill(skill)"
                 @keydown.space.prevent="selectSkill(skill)"
                 :title="skill.name">
@@ -323,6 +323,7 @@
                     <ToggleSwitch
                       v-if="activeCategory === 'third_party'"
                       :model-value="(skill as SkillInfo & { active?: boolean }).active ?? false"
+                      :disabled="togglingActiveIds.has(skill.name)"
                       size="small"
                       @update:model-value="toggleActive(skill as SkillInfo & { active?: boolean }, $event as boolean)" />
                     <template v-if="activeCategory === 'auto'">
@@ -451,6 +452,7 @@ import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
 import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings, deleteSkill, pinSkill } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
+import { vDebounce } from '~/directives/debounce';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -497,6 +499,9 @@ const uploadStatus = ref('');
 const uploadError = ref('');
 const uploadWarnings = ref<string[]>([]);
 const toggleError = ref('');
+// 进行中的固定/激活切换请求（按 skill.name 记录，防止双击重复触发）
+const pinningIds = ref<Set<string>>(new Set());
+const togglingActiveIds = ref<Set<string>>(new Set());
 const fileInputKey = ref(0);
 const fileInput = ref<HTMLInputElement | null>(null);
 const deleteTarget = ref<SkillInfo | null>(null);
@@ -714,6 +719,9 @@ const handleUpload = async (event: Event) => {
 };
 
 const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: boolean) => {
+  // 双击保护：该技能已有进行中的激活请求时直接忽略
+  if (togglingActiveIds.value.has(skill.name)) return;
+  togglingActiveIds.value = new Set(togglingActiveIds.value).add(skill.name);
   const prev = skill.active ?? false;
   skill.active = value;
   toggleError.value = '';
@@ -727,10 +735,16 @@ const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: bool
     console.error('[SkillsDialog] Toggle failed:', e);
     skill.active = prev;
     toggleError.value = t('skills.toggleFailed');
+  } finally {
+    togglingActiveIds.value = new Set(togglingActiveIds.value);
+    togglingActiveIds.value.delete(skill.name);
   }
 };
 
 const togglePin = async (skill: SkillInfo, current: boolean) => {
+  // 双击保护：该技能已有进行中的固定请求时直接忽略
+  if (pinningIds.value.has(skill.name)) return;
+  pinningIds.value = new Set(pinningIds.value).add(skill.name);
   const next = !current;
   const prev = skill.pinned;
   skill.pinned = next;
@@ -745,6 +759,9 @@ const togglePin = async (skill: SkillInfo, current: boolean) => {
     console.error('[SkillsDialog] Pin toggle failed:', e);
     skill.pinned = prev;
     toggleError.value = t('skills.toggleFailed');
+  } finally {
+    pinningIds.value = new Set(pinningIds.value);
+    pinningIds.value.delete(skill.name);
   }
 };
 

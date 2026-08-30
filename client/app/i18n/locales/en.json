@@ -35,7 +35,8 @@
     "copied": "Copied"
   },
   "errors": {
-    "requestFailed": "Request failed"
+    "requestFailed": "Request failed",
+    "pageError": "Page error"
   },
   "connection": {
     "reconnecting": "Connection lost, reconnecting… (attempt {attempt}/{max})",

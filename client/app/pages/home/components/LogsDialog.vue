@@ -286,13 +286,13 @@
               size="small"
               :disabled="!serverSelectedBucket || !serverSelectedBucketIsCurrent"
               :title="serverSelectedBucketIsCurrent ? '' : (t('logs.liveDisabledHint') as string)"
-              @click="toggleLive" />
+              v-debounce:click.500="toggleLive" />
             <Button
               icon="pi pi-refresh"
               :label="t('logs.refresh')"
               size="small"
               :disabled="!serverSelectedBucket"
-              @click="loadContent" />
+              v-debounce:click.300="loadContent" />
             <Button
               icon="pi pi-trash"
               :label="t('logs.clear')"
@@ -348,6 +348,7 @@
 <script lang="ts" setup>
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { vDebounce } from '~/directives/debounce';
 import { listLogFiles, readLogFile, openLogStream } from '@/composables/bridge';
 import type { LogFileInfo, LogStreamFrame } from '@/composables/bridge';
 import {

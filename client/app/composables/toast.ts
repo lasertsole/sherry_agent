@@ -1,5 +1,6 @@
 import type { ToastMessageOptions } from 'primevue/toast';
 import type { ToastServiceMethods } from 'primevue/toastservice';
+import { resolveRuntimeT } from '~/composables/i18nRuntime';
 
 /**
  * 全局 toast 通知层。
@@ -51,22 +52,16 @@ export function registerToastApi(api: ToastApi | null): void {
 }
 
 /**
- * 安全获取 i18n 翻译函数。
+ * 安全获取 i18n 翻译。
  *
- * 在 Nuxt 运行时可拿到 `$i18n.global.t`；在单测 / 非 Nuxt 上下文（可能无 useNuxtApp）
- * 下回退为原样返回 key。无论哪种情况都不抛出。
+ * 委托 `resolveRuntimeT()`（i18nRuntime.ts）在 Nuxt 运行时解析真正的翻译函数
+ * （nuxt-i18n v10 的 `$i18n` 是不含 t 的 locale 状态代理，不能直接用）；
+ * 单测 / 非 Nuxt 上下文回退为原样返回 key。无论哪种情况都不抛出。
  */
 function safeT(key: string): string {
   if (!isClient()) return key;
-  try {
-    const nuxtApp = useNuxtApp();
-    const $i18n = nuxtApp?.$i18n;
-    const t = $i18n?.global?.t;
-    if (typeof t === 'function') return t(key) as string;
-  } catch {
-    // i18n 不可用时回退为原始 key
-  }
-  return key;
+  const t = resolveRuntimeT();
+  return t ? t(key) : key;
 }
 
 /** 统一派发入口：未注册 / 非客户端时静默返回。 */

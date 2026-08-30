@@ -23,6 +23,11 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./app', import.meta.url)),
       '~~': fileURLToPath(new URL('./', import.meta.url)),
       '@@': fileURLToPath(new URL('./', import.meta.url)),
+      // `vue-i18n` is nested inside the Nuxt i18n plugin and is not top-level
+      // resolvable in this pnpm workspace (see vitest.config.ts for the unit
+      // suite's identity stub). SFCs import it explicitly, so alias it to a
+      // zh-locale-backed stub — integration tests assert rendered Chinese copy.
+      'vue-i18n': fileURLToPath(new URL('./tests/integration/stubs/vue-i18n.ts', import.meta.url)),
     },
   },
   test: {

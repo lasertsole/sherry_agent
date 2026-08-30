@@ -3,7 +3,7 @@ import tailwindcss from '@tailwindcss/vite';
 import Aura from '@primevue/themes/aura';
 import { definePreset } from '@primevue/themes';
 
-// 自定义黑色主题预设
+// Custom dark theme preset
 const NoirPreset = definePreset(Aura, {
   semantic: {
     primary: {
@@ -37,7 +37,7 @@ export default defineNuxtConfig({
     }
   },
 
-  // 不使用开发工具
+  // Do not use devtools
   devtools: { enabled: false },
   // Enable SSG
   ssr: false,
@@ -60,7 +60,7 @@ export default defineNuxtConfig({
     },
   },
 
-  // 导入第三方模块
+  // Import third-party modules
   modules: [
     '@nuxtjs/i18n',
     '@nuxtjs/color-mode',
@@ -69,8 +69,8 @@ export default defineNuxtConfig({
     'pinia-plugin-persistedstate/nuxt'
   ],
 
-  // pinia-plugin-persistedstate 全局配置：统一持久化到 localStorage
-  // （浏览器刷新与 Tauri 应用重开均可恢复状态）
+  // pinia-plugin-persistedstate global config: persist everything uniformly to localStorage
+  // (state is restored across browser refreshes and Tauri app restarts)
   piniaPluginPersistedstate: {
     storage: 'localStorage'
   },
@@ -80,7 +80,7 @@ export default defineNuxtConfig({
       theme: {
         preset: NoirPreset,
         options: {
-          // 配置暗黑模式的触发类名
+          // Configure the class name that triggers dark mode
           darkModeSelector: '.dark'
         }
       }
@@ -88,17 +88,19 @@ export default defineNuxtConfig({
   },
 
   i18n: {
-    // 关键：'no_prefix' 策略。Nuxt i18n 在 module 层据此把 __I18N_ROUTING__ 置为 false，
-    // 从而跳过 route-locale-detect 中间件（不再在每个导航上用 route 推断的 locale 强制覆盖
-    // composer.locale，也不再按 cookie 改写 URL）。在这之前用 prefix_except_default 时，
-    // 每次刷新/导航中间件 loadAndSetLocale(detectLocale(route)) 会把无前缀的 /home/:id
-    // 判定为 defaultLocale(zh) 并覆盖 locale，导致「刷新后国际化失效」；且 cookie=en 与
-    // 无前缀路径不匹配时会重定向到 /en/home/:id（该路由不存在）。no_prefix 下 URL 永无前缀、
-    // 语言完全交给 vue-i18n 的 locale（配合下方 detectBrowserLanguage: false + app.vue
-    // onMounted 自行读 cookie 恢复），刷新后语言稳定且不跳转。
+    // Key point: the 'no_prefix' strategy. Based on this, Nuxt i18n sets __I18N_ROUTING__ to false at the
+    // module level, thereby skipping the route-locale-detect middleware (it no longer force-overrides
+    // composer.locale with the route-inferred locale on every navigation, and no longer rewrites URLs by
+    // cookie). Before, with prefix_except_default, on every refresh/navigation the
+    // loadAndSetLocale(detectLocale(route)) middleware would treat the prefix-less /home/:id as
+    // defaultLocale(zh) and override the locale, causing "i18n to break after refresh"; moreover, when
+    // cookie=en did not match the prefix-less path, it would redirect to /en/home/:id (a route that does
+    // not exist). Under no_prefix the URL never carries a prefix and the language is fully delegated to
+    // vue-i18n's locale (together with detectBrowserLanguage: false below + app.vue onMounted reading the
+    // cookie itself to restore), so the language stays stable after refresh with no redirects.
     strategy: 'no_prefix',
-    // 语言匹配优先级：cookie(用户偏好) > 浏览器语言匹配合法 locale
-    // (zh/en/ja/ko) > 默认英文。因此 defaultLocale 设为 'en'。
+    // Language matching priority: cookie (user preference) > browser language matched against valid
+    // locales (zh/en/ja/ko) > English by default. Hence defaultLocale is set to 'en'.
     defaultLocale: 'en',
     langDir: '../app/i18n/locales',
     locales: [
@@ -107,17 +109,31 @@ export default defineNuxtConfig({
       { code: 'ja', name: '日本語', file: 'ja.json' },
       { code: 'ko', name: '한국어', file: 'ko.json' }
     ],
-    // 彻底关闭 Nuxt i18n 的浏览器语言自动检测/重定向。结合 'no_prefix' 策略，语言状态完全由
-    // vue-i18n 的 locale 管理，由 app.vue onMounted 读取 i18n_locale cookie（或浏览器语言，
-    // fallback zh）自行恢复。这样刷新后语言稳定、URL 永无前缀、绝不重定向改写地址。
+    // Fully disable Nuxt i18n's browser language auto-detection/redirect. Combined with the 'no_prefix'
+    // strategy, the language state is managed entirely by vue-i18n's locale, restored by app.vue
+    // onMounted reading the i18n_locale cookie (or the browser language, fallback zh). This keeps the
+    // language stable after refresh, the URL never prefixed, and no redirect ever rewrites the address.
     detectBrowserLanguage: false
   },
 
   ignore: ['**/src-tauri/**'],
   css:['~/assets/css/main.css', '~/assets/css/main.scss'],
 
+  // Global directives
+  vue: {
+    compilerOptions: {
+      // Enable directive transforms
+      isCustomElement: (tag) => tag.startsWith('p-')
+    }
+  },
+
+  // Auto import directives
+  imports: {
+    dirs: ['~/directives']
+  },
+
   routeRules: {
-    // 默认重定向至home页
+    // Redirect to the home page by default
     '/': {
       redirect: {
         to: '/home',

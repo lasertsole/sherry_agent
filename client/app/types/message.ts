@@ -1,4 +1,4 @@
-/** 工具调用参数 */
+/** Tool call arguments */
 export interface ToolCall {
   name: string;
   args: Record<string, unknown>;
@@ -6,7 +6,7 @@ export interface ToolCall {
   type: 'tool_call';
 }
 
-/** 使用量元数据 */
+/** Usage metadata */
 export interface UsageMetadata {
   input_tokens: number;
   output_tokens: number;
@@ -17,7 +17,7 @@ export interface UsageMetadata {
   output_token_details?: Record<string, unknown>;
 }
 
-/** 响应元数据 */
+/** Response metadata */
 export interface ResponseMetadata {
   finish_reason: string;
   model_name: string;
@@ -25,13 +25,13 @@ export interface ResponseMetadata {
   model_provider?: string;
 }
 
-/** 消息数据基类 */
+/** Message data base class */
 export interface MessageData {
   content: string;
   additional_kwargs: Record<string, unknown>;
 }
 
-/** 消息基类 */
+/** Message base class */
 export interface BaseMessage {
   type: string;
   data: MessageData;
@@ -39,7 +39,7 @@ export interface BaseMessage {
   id: string;
 }
 
-/** AI 消息 */
+/** AI message */
 export interface AiMessage extends BaseMessage {
   type: 'ai';
   data: MessageData & { response_metadata: ResponseMetadata };
@@ -48,45 +48,45 @@ export interface AiMessage extends BaseMessage {
   usage_metadata: UsageMetadata | undefined;
 }
 
-/** 人类消息 */
+/** Human message */
 export interface HumanMessage extends BaseMessage {
   type: 'human';
 }
 
-/** 工具调用结果消息 */
+/** Tool call result message */
 export interface ToolMessage extends BaseMessage {
   type: 'tool';
   tool_call_id: string;
-  /** 执行错误的堆栈信息 */
+  /** Stack trace of the execution error */
   artifact: unknown;
-  /** 状态: 'success' | 'error' */
+  /** Status: 'success' | 'error' */
   status: string;
 }
 
-/** 多模态消息体（对应 Python type/__init__.py MultiModalMessage） */
+/** Multimodal message body (corresponds to Python type/__init__.py MultiModalMessage) */
 export interface MultiModalMessage {
-  /** 文本内容 */
+  /** Text content */
   text: string;
-  /** 图片路径列表 */
+  /** Image path list */
   image_path_list?: string[];
-  /** 图片字节数据（base64 字符串） */
+  /** Image byte data (base64 string) */
   image_bytes_list?: string[];
-  /** 图片 base64 列表 */
+  /** Image base64 list */
   image_base64_list?: string[];
-  /** 音频路径列表 */
+  /** Audio path list */
   audio_path_list?: string[];
-  /** 音频字节数据（base64 字符串） */
+  /** Audio byte data (base64 string) */
   audio_bytes_list?: string[];
-  /** 视频路径列表 */
+  /** Video path list */
   video_path_list?: string[];
-  /** 视频字节数据（base64 字符串） */
+  /** Video byte data (base64 string) */
   video_bytes_list?: string[];
 }
 
-/** 对话消息联合类型 */
+/** Conversation message union type */
 export type ConversationMessage = AiMessage | HumanMessage | ToolMessage;
 
-/** 对话历史记录 */
+/** Conversation history record */
 export interface Conversation {
   id: string;
   messages: ConversationMessage[];

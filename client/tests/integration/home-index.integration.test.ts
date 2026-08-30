@@ -1,10 +1,37 @@
-import { describe, it, expect } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mount, flushPromises } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import homeIndex from '@/pages/home/index.vue';
 import HistoryItem from '@/pages/home/components/HistoryItem.vue';
 import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
-import ChatBox from '@/pages/home/components/ChatBox.vue';
+
+// Dexie has no IndexedDB to back it in happy-dom (probe: every operation rejects
+// with MissingAPIError), so keep the real module but neutralize the persistence
+// wrappers: they resolve empty and the fetchApi-seeded server rows become the
+// sole data source for SessionSidebar.loadSessionList.
+vi.mock('@/composables/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/db')>();
+  return {
+    ...actual,
+    readCachedMessages: async () => [],
+    cachedMaxTurnNum: async () => 0,
+    cacheMessages: async () => {},
+    clearCachedSession: async () => {},
+    readCachedCharacter: async () => undefined,
+    cacheCharacter: async () => {},
+    clearCachedCharacter: async () => {},
+    readCachedSessionMetaList: async () => [],
+    cacheSessionMeta: async () => {},
+    clearCachedSessionMeta: async () => {},
+    saveSessionTitleOverride: async () => {},
+    readSessionTitleOverrides: async () => new Map<string, string>(),
+    clearSessionTitleOverride: async () => {},
+    saveDraftTurn: async () => {},
+    readDraftTurns: async () => [],
+    clearDraftTurn: async () => {},
+    clearDraftSession: async () => {},
+  };
+});
 
 const primevueStub = {
   Checkbox: {
@@ -19,9 +46,20 @@ const primevueStub = {
   ChatInputBox: { template: '<div class="cib"></div>' },
 };
 
-// `get_history_by_turn_page` is a Nuxt auto-import pre-stubbed in setup.ts, so the
-// module-level call in index.vue is a no-op. Children are real components whose
-// heavy deps (PrimeVue/markdown) are stubbed above.
+// SessionSidebar loads sessions asynchronously through getSessionList() ->
+// fetchApi('/sessions'); the server answers with a bare array (see messages.ts
+// getSessionList). Seed one row so HistoryItem children actually render.
+// last_time must stay in the 14-digit compact format that
+// formatCompactTimeString parses.
+const seededFetchApi = vi.fn(async (opts?: { url?: string }) =>
+  opts?.url === '/sessions'
+    ? [{ session_id: 's1', last_time: '20260617104200', title: '第一次对话' }]
+    : { code: 200, data: null },
+);
+
+// `get_history_by_turn_page` is a Nuxt auto-import pre-stubbed in setup.ts, so
+// any stray reference is a no-op. Children are real components whose heavy deps
+// (PrimeVue/markdown) are stubbed above.
 function mountHome() {
   return mount(homeIndex, {
     global: { stubs: primevueStub },
@@ -29,14 +67,21 @@ function mountHome() {
 }
 
 describe('home/index.vue (integration, backend mocked)', () => {
-  it('composes the sidebar and chat regions with real leaf children', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetchApi', seededFetchApi);
+  });
+
+  it('composes the sidebar and chat regions with real leaf children', async () => {
     const wrapper = mountHome();
+    // Sessions arrive asynchronously: onMounted -> loadSessionList -> getSessionList.
+    await flushPromises();
+    await flushPromises();
     expect(wrapper.findComponent(HistoryItem).exists()).toBe(true);
     expect(wrapper.findComponent(ModeSwitch).exists()).toBe(true);
-    expect(wrapper.findComponent(ChatBox).exists()).toBe(true);
-    // handleCreateSession creates a new session on load with title "新会话".
-    expect(wrapper.text()).toContain('新会话');
-    // Branding present in sidebar and mobile header.
+    // The server row's title reaches the sidebar list. ChatBox itself now lives
+    // in [sid].vue behind the nested NuxtPage and no longer mounts on the shell.
+    expect(wrapper.text()).toContain('第一次对话');
+    // Branding present in the sidebar LOGO area.
     expect(wrapper.text()).toContain('🍊橘雪莉');
   });
 
@@ -49,13 +94,13 @@ describe('home/index.vue (integration, backend mocked)', () => {
 
   it('activates a history row when it is selected', async () => {
     const wrapper = mountHome();
+    await flushPromises();
+    await flushPromises();
     const row = wrapper.findComponent(HistoryItem).find('.p-3');
     await row.trigger('click');
     await nextTick();
     // chooseSession -> handleToggleSession sets currentSessionId -> is-active true.
     expect(wrapper.findComponent(HistoryItem).props('isActive')).toBe(true);
-    // The mobile sidebar overlay auto-closes on selection.
-    expect(wrapper.find('.fixed.inset-0').exists()).toBe(false);
   });
 
   it('keeps isIndeterminate false with a single fully- or not-selected session', () => {

@@ -41,6 +41,7 @@
               <div class="flex items-center gap-2 min-w-0">
                 <ToggleSwitch
                   :modelValue="job.enabled"
+                  :disabled="busyToggleIds.has(job.id)"
                   @change="toggleJob(job)" />
                 <span class="font-semibold text-sm truncate">{{ job.name }}</span>
               </div>
@@ -51,7 +52,7 @@
                   size="small"
                   severity="success"
                   text
-                  @click="runJob(job)" />
+                  v-debounce:click.500="() => runJob(job)" />
                 <Button
                   :label="t('config.cron.edit')"
                   icon="pi pi-pencil"
@@ -65,7 +66,7 @@
                   size="small"
                   severity="danger"
                   text
-                  @click="removeJob(job)" />
+                  v-debounce:click.500="() => removeJob(job)" />
               </div>
             </div>
             <div class="flex flex-col gap-0.5 text-xs text-gray-500 dark:text-gray-400">
@@ -230,6 +231,7 @@ import {
   type CronJob,
   type CronSchedule,
 } from '@/composables/bridge';
+import { vDebounce } from '~/directives/debounce';
 
   const { t } = useI18n({ useScope: 'local' });
 
@@ -244,6 +246,8 @@ const visible = computed({
 const loading = ref(false);
 const saving = ref(false);
 const jobs = ref<CronJob[]>([]);
+/** 启用/停用切换进行中的任务 id 集合（change 事件不走防抖指令，用此在途守卫防连点） */
+const busyToggleIds = ref<Set<string>>(new Set());
 
 // ── Add / Edit form state ─────────────────────────
 const editing = ref(false);
@@ -418,11 +422,16 @@ async function handleSaveJob() {
 
 // ── Job list actions ──────────────────────────────
 async function toggleJob(job: CronJob) {
+  if (busyToggleIds.value.has(job.id)) return;
+  busyToggleIds.value = new Set(busyToggleIds.value).add(job.id);
   try {
     await enableCronJob(job.id, !job.enabled);
     await loadJobs();
   } catch (e) {
     console.error('[CronDialog] Failed to toggle job:', e);
+  } finally {
+    busyToggleIds.value = new Set(busyToggleIds.value);
+    busyToggleIds.value.delete(job.id);
   }
 }
 

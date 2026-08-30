@@ -35,7 +35,8 @@
     "copied": "已复制"
   },
   "errors": {
-    "requestFailed": "请求失败"
+    "requestFailed": "请求失败",
+    "pageError": "页面错误"
   },
   "connection": {
     "reconnecting": "连接中断，正在重连…（第 {attempt}/{max} 次）",

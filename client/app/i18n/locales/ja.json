@@ -35,7 +35,8 @@
     "copied": "コピーしました"
   },
   "errors": {
-    "requestFailed": "リクエストに失敗しました"
+    "requestFailed": "リクエストに失敗しました",
+    "pageError": "ページエラー"
   },
   "connection": {
     "reconnecting": "接続が切断されました。再接続中…（{attempt}/{max} 回目）",

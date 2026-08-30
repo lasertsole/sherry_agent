@@ -16,11 +16,11 @@ interface Params {
 }
 
 /**
- * 替换路径变量
+ * Replace path variables
  *
- * @param { NitroFetchRequest } url 请求路径
- * @param { any } params 路径参数
- * @returns { NitroFetchRequest } 替换后的请求路径
+ * @param { NitroFetchRequest } url Request path
+ * @param { any } params Path parameters
+ * @returns { NitroFetchRequest } The request path after replacement
  */
 const replacePathVariables = (url: NitroFetchRequest, params: any = {}): NitroFetchRequest => {
   if (Object.keys(params).length === 0) {
@@ -43,7 +43,7 @@ const replacePathVariables = (url: NitroFetchRequest, params: any = {}): NitroFe
   return formattedURL;
 };
 
-// tus上传参数
+// tus upload parameters
 interface UploadParams {
   url: string;
   file: File;
@@ -53,15 +53,15 @@ interface UploadParams {
 }
 
 /**
- * 有服务器渲染功能的请求
- * @param { NitroFetchRequest } url 请求路径
- * @param { {[key: string]: any} | FormData } opts 请求参数
- * @param { 'get' | 'post' | 'put' | 'delete' } method 请求方法
- * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType 请求内容类型
- * @param { {[key: string]: any} } headeropts 请求头参数
- * @param { boolean } server 是否服务器渲染
- * @param { Array<()=>void> } watch 监测是否需要重新请求
- * @returns {Promise<Response>} 请求结果
+ * Request with server-side rendering support
+ * @param { NitroFetchRequest } url Request path
+ * @param { {[key: string]: any} | FormData } opts Request parameters
+ * @param { 'get' | 'post' | 'put' | 'delete' } method Request method
+ * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
+ * @param { {[key: string]: any} } headeropts Request header parameters
+ * @param { boolean } server Whether server-side rendering is used
+ * @param { Array<()=>void> } watch Watch for whether a re-request is needed
+ * @returns {Promise<Response>} Request result
  */
 async function requestBaseApi({
   url,
@@ -72,7 +72,7 @@ async function requestBaseApi({
 }: Params): Promise<Response> {
   const requestURL = replacePathVariables(url, opts);
 
-  // 设置请求参数
+  // Set up request parameters
   const params: any = {};
   if (contentType == 'application/json') {
     opts = { ...opts };
@@ -84,37 +84,43 @@ async function requestBaseApi({
     params.body = opts;
   }
 
-  // 网络/HTTP 失败标志位：ofetch 的 retry:3 会对每次失败重试都触发
-  // onRequestError/onResponseError 回调，若在回调内直接弹 toast 会重复弹多次。
-  // 故回调里只记录标志位，在请求结束后统一判定一次（单次 toast）。
+  // Network/HTTP failure flags: ofetch's retry:3 triggers the onRequestError/onResponseError
+  // callbacks on every failed attempt; toasting directly inside the callbacks would pop up
+  // duplicate toasts. Therefore the callbacks only record flags, and a single unified check
+  // happens after the request ends (one toast).
   let networkFailed = false;
   let httpFailed = false;
   let lastStatus: number | null = null;
 
-  // 使用 $fetch（而非 useFetch）：本包装器仅在挂载后（事件回调/组合式函数）被调用，
-  // useFetch 在此场景会触发 NUXT_E3003 警告（无法在 setup 中 await），且需靠每次生成
-  // 唯一 key 规避 useAsyncData 缓存。$fetch 即 useFetch 底层的 ofetch 实例，拦截器与
-  // retry 语义完全一致，却无缓存与 setup 时机约束。
-  // 注意 $fetch 失败会 throw，而原 useFetch 语义是 resolve(null)；为保持调用方按
-  // 空值处理的契约（外层 retryFetch 仅对显式抛错如路径参数缺失重试），此处捕获异常
-  // 并落为 null，失败信息由 onResponseError 标志位 + 统一 toast 表达。
+  // Use $fetch (not useFetch): this wrapper is only called after mount (event callbacks/composables),
+  // where useFetch would trigger the NUXT_E3003 warning (cannot await in setup) and would need a
+  // unique key per call to bypass the useAsyncData cache. $fetch is the underlying ofetch instance
+  // used by useFetch, with identical interceptor and retry semantics, but without cache or
+  // setup-timing constraints.
+  // Note that $fetch throws on failure, whereas the original useFetch semantics resolve(null); to
+  // preserve the caller contract of handling empty values (the outer retryFetch only retries on
+  // explicit throws such as missing path parameters), exceptions are caught here and turned into
+  // null; failure info is conveyed by the onResponseError flags + the unified toast.
   let data: Response | null;
   try {
     data = await $fetch<Response>(requestURL, {
       method,
-      // ofetch库会自动识别请求地址，对于url已包含域名的请求不会再拼接baseURL
-      // 与 ws.ts / bridge.ts 的流式路径保持一致的回退：当 VITE_API_BACK_URL 未配置时
-      // 兜底到本地后端地址，避免请求退化为相对路径而命中 Nuxt dev server 返回 HTML 外壳。
+      // The ofetch library auto-detects the request URL; for requests whose url already contains a
+      // domain, baseURL is not prepended.
+      // Fallback consistent with the streaming paths in ws.ts / bridge.ts: when VITE_API_BACK_URL is
+      // not configured, fall back to the local backend address to prevent requests from degrading
+      // into relative paths that hit the Nuxt dev server and return an HTML shell.
       baseURL: import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080',
       ...params,
       retry: 3,
       retryDelay: 2000,
-      // onRequest相当于请求拦截
+      // onRequest is equivalent to a request interceptor
       onRequest({ request, options }) {
-        // 设置请求头（GET请求不需要Content-Type）
-        // 注意：multipart/form-data 不能手动设置 Content-Type，否则会覆盖掉
-        // fetch/ofetch 自动生成的 boundary，导致后端解析失败（boundary is not found）。
-        // 正确做法是交给浏览器自动生成 Content-Type（含 boundary）。
+        // Set request headers (GET requests don't need Content-Type)
+        // Note: multipart/form-data must not have its Content-Type set manually, otherwise it would
+        // override the boundary auto-generated by fetch/ofetch and break backend parsing
+        // ("boundary is not found").
+        // The correct approach is to let the browser auto-generate the Content-Type (with boundary).
         if (method !== 'get' && contentType !== 'multipart/form-data') {
           options.headers.set('Content-Type', contentType);
         }
@@ -131,21 +137,24 @@ async function requestBaseApi({
       },
 
       onRequestError({ request, options, error }) {
-        // 网络层失败（DNS 解析失败/连接被拒/断网等，请求从未到达服务器）。
-        // 只记录标志位；toast 由请求结束后统一判定弹出（retry 期间会多次进入此回调）。
+        // Network-layer failure (DNS resolution failure/connection refused/offline, etc.; the request
+        // never reached the server).
+        // Only records the flag; the toast is shown by the unified check after the request ends
+        // (this callback is entered multiple times during retry).
         networkFailed = true;
       },
 
-      // onResponse相当于响应拦截
+      // onResponse is equivalent to a response interceptor
       onResponse({ response }) {
-        // 处理响应数据
-        // 本次尝试收到了响应（无论状态码）：重置此前尝试累积的失败标志位。
-        // 语义：若最终一次尝试成功，则之前重试期间的 networkFailed/httpFailed 不再生效，
-        // 请求结束后的判定不会弹出错误 toast。
+        // Handle response data
+        // This attempt received a response (regardless of status code): reset the failure flags
+        // accumulated by prior attempts.
+        // Semantics: if the final attempt succeeds, the networkFailed/httpFailed flags accumulated
+        // during earlier retries no longer apply, and the post-request check pops no error toast.
         networkFailed = false;
         httpFailed = false;
         if (import.meta.client) {
-          // 如果返回值有token，则更新本地token
+          // If the response contains a token, update the local token
           const token: string | null = response.headers.get('token');
           if (token) {
             localStorage.setItem('token', token);
@@ -156,20 +165,24 @@ async function requestBaseApi({
       },
 
       onResponseError({ request, response, options }) {
-        // HTTP 级失败（4xx/5xx）：记录标志位与最终状态码；toast 由请求结束后统一判定。
-        // 注意每次失败重试都会进入此回调，且 onResponse（先触发）会重置标志位，
-        // 故最终一次尝试失败时标志位仍会正确落为 true。
+        // HTTP-level failure (4xx/5xx): record the flag and the final status code; the toast is
+        // shown by the unified check after the request ends.
+        // Note this callback is entered on every failed retry, and onResponse (triggered first)
+        // resets the flags, so when the final attempt fails the flags still correctly end up true.
         httpFailed = true;
         lastStatus = response?.status ?? null;
       }
     });
   } catch {
-    // 对齐原 useFetch 语义：失败不向调用方抛出，落为 null 由调用方按空值处理。
+    // Aligned with the original useFetch semantics: failures are not thrown to the caller; they
+    // fall to null for the caller to handle as empty values.
     data = null;
   }
 
-  // 重试穷尽仍失败 → 弹一次全局错误 toast（网络错误；或 HTTP 错误且未拿到成功数据）。
-  // 这里是单次判定点：回调内的标志位不会直接触发 toast，避免 retry:3 重复弹窗。
+  // Retries exhausted and still failing → pop one global error toast (network error; or HTTP error
+  // with no successful data).
+  // This is the single decision point: the flags inside the callbacks never trigger a toast
+  // directly, avoiding duplicate toasts from retry:3.
   if (import.meta.client && (networkFailed || (httpFailed && !data))) {
     sendRequestErrorToast(`${requestURL}${lastStatus !== null ? ` (HTTP ${lastStatus})` : ''}`);
   }
@@ -178,12 +191,12 @@ async function requestBaseApi({
 }
 
 /**
- * 封装请求重试
+ * Wrap a request with retries
  *
- * @param { ()=>Promise<Response> } fetchFunc 请求函数
- * @param { number } retryMaxCount 最大重试次数
- * @param { number } retryDelay 每次重试的延迟时间,单位毫秒
- * @returns {Promise<Response>} 响应对象
+ * @param { ()=>Promise<Response> } fetchFunc Request function
+ * @param { number } retryMaxCount Maximum number of retries
+ * @param { number } retryDelay Delay between retries, in milliseconds
+ * @returns {Promise<Response>} The response object
  */
 function retryFetch(
   fetchFunc: () => Promise<Response>,
@@ -206,14 +219,14 @@ function retryFetch(
 }
 
 /**
- * 请求api
+ * Request API
  *
- * @param { NitroFetchRequest } url 请求路径
- * @param { [key: string]: any | FormData } opts 请求参数
- * @param { 'get' | 'post' | 'put' | 'delete' } method 请求方法
- * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType 请求内容类型
- * @param { [key: string]: any } headeropts 请求头参数
- * @returns {Promise<Response>} 请求结果
+ * @param { NitroFetchRequest } url Request path
+ * @param { [key: string]: any | FormData } opts Request parameters
+ * @param { 'get' | 'post' | 'put' | 'delete' } method Request method
+ * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
+ * @param { [key: string]: any } headeropts Request header parameters
+ * @returns {Promise<Response>} Request result
  */
 export async function fetchApi({
   url,

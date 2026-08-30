@@ -2,8 +2,7 @@
 
 Covers:
 - pub_func/cjk.py                       (contains_cjk, is_cjk_codepoint, count_cjk)
-- pub_func/string_to_unique_int.py      (string_to_unique_int)
-- pub_func/rand_str_to_int.py           (rand_str_to_int)
+- pub_func/string_to_int.py             (string_to_int, string_to_unique_int, rand_str_to_int)
 - pub_func/generate_tsid.py             (generate_tsid)
 - pub_func/process_sse_data.py          (process_sse_data)
 - pub_func/extract_text_from_content.py (extract_text_from_content)
@@ -13,8 +12,7 @@ import pytest
 from types import SimpleNamespace
 
 from pub_func.cjk import contains_cjk, is_cjk_codepoint, count_cjk
-from pub_func.string_to_unique_int import string_to_unique_int
-from pub_func.rand_str_to_int import rand_str_to_int
+from pub_func.string_to_int import string_to_int, string_to_unique_int, rand_str_to_int
 from pub_func.generate_tsid import generate_tsid
 from pub_func.process_sse_data import process_sse_data
 from pub_func.extract_text_from_content import extract_text_from_content
@@ -100,6 +98,33 @@ class TestRandStrToInt:
 
     def test_returns_int(self):
         assert isinstance(rand_str_to_int("x"), int)
+
+
+# --- string_to_int (canonical dispatcher) ---
+
+class TestStringToInt:
+    def test_sha256_matches_legacy_string_to_unique_int(self):
+        for s in ("", "abc", "hello", "中文"):
+            assert string_to_int(s, algorithm="sha256") == string_to_unique_int(s)
+
+    def test_md5_matches_legacy_rand_str_to_int(self):
+        for s in ("", "abc", "hello", "中文"):
+            for n in (1, 4, 8, 16):
+                assert string_to_int(s, algorithm="md5", slice_len=n) == rand_str_to_int(s, slice_len=n)
+
+    def test_unknown_algorithm_raises(self):
+        with pytest.raises(ValueError):
+            _ = string_to_int("abc", algorithm="crc32")
+
+    # Regression guards: these outputs are persisted (channel session ids,
+    # checkpointer thread ids) — the algorithms must never change.
+    def test_pinned_sha256_values(self):
+        assert string_to_unique_int("hello") == 3238736544897475342
+        assert string_to_unique_int("abc") == 13436514500253700074
+
+    def test_pinned_md5_values(self):
+        assert rand_str_to_int("hello") == 1564557354
+        assert rand_str_to_int("abc") == 2416005272
 
 
 # --- generate_tsid ---

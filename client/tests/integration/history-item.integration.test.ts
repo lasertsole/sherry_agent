@@ -6,7 +6,9 @@ import type { SessionRecord } from '@/pages/home/type';
 const record: SessionRecord = {
   id: 's1',
   title: '第一次对话',
-  createTime: '2026-06-17 10:42',
+  // The component formats createTime via formatCompactTimeString, which strictly
+  // requires the backend's 14-digit compact string (YYYYMMDDHHmmss).
+  createTime: '20260617104200',
 };
 
 // PrimeVue Menu is explicitly imported and renders via Teleport, which is
@@ -26,6 +28,8 @@ const mountItem = (props: Record<string, unknown>) =>
           template:
             '<button class="cb" @click="$emit(\'update:modelValue\', [...(modelValue || []), \'s1\'])">CB</button>',
         },
+        // Rendered when the row enters inline rename mode (startEdit).
+        InputText: { template: '<input class="it" />' },
       },
     },
   });
@@ -34,6 +38,9 @@ describe('HistoryItem.vue (integration, backend mocked)', () => {
   it('renders the session title and create time', () => {
     const wrapper = mountItem({ historyRecord: record, isActive: false });
     expect(wrapper.text()).toContain('第一次对话');
+    // createTime renders through t('history.createdAt') after formatCompactTimeString:
+    // zh "创建时间：{time}" + dateFormat 'YYYY-MM-DD HH:mm' -> 创建时间：2026-06-17 10:42
+    expect(wrapper.text()).toContain('创建时间：');
     expect(wrapper.text()).toContain('2026-06-17 10:42');
   });
 
@@ -49,10 +56,11 @@ describe('HistoryItem.vue (integration, backend mocked)', () => {
 
   it('uses isActive-prop styling for the active session', () => {
     const active = mountItem({ historyRecord: record, isActive: true });
-    expect(active.classes()).toContain('text-white');
+    // Active rows highlight via bg-[#c1d6e5]! (text-theme-main is already in the base class list).
+    expect(active.classes()).toContain('bg-[#c1d6e5]!');
 
     const inactive = mountItem({ historyRecord: record, isActive: false });
-    expect(inactive.classes()).not.toContain('text-white');
+    expect(inactive.classes()).not.toContain('bg-[#c1d6e5]!');
   });
 
   it('forwards defineModel selectedList updates back to the parent', async () => {
@@ -71,8 +79,8 @@ describe('HistoryItem.vue (integration, backend mocked)', () => {
 
   it('never emits chooseSession when the row action icon is clicked', async () => {
     const wrapper = mountItem({ historyRecord: record, isActive: false });
-    // .pi-ellipsis-h has @click.stop -> opens the Menu, not chooseSession.
-    await wrapper.find('.pi-ellipsis-h').trigger('click');
+    // .pi-pencil (rename entry) has @click.stop -> enters inline edit, not chooseSession.
+    await wrapper.find('.pi-pencil').trigger('click');
     expect(wrapper.emitted('chooseSession')).toBeFalsy();
   });
 });
