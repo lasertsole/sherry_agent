@@ -18,15 +18,19 @@ from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolCall, ToolCallChunk, ToolMessage
 
 
-# Stash of pending tool args, keyed by tool_call_id. Populated at tool_start
-# time and consumed when the matching ToolMessage arrives in "updates" mode.
-_pending_args: dict[str, dict] = {}
-# Raw JSON-fragment buffer per tool_id, accumulated until it parses to a dict.
-_pending_raw: dict[str, list[str]] = {}
+# Stash of pending tool args, keyed by [bare session id][tool_call_id] (the
+# bare-id convention matches the answering flag). Populated at tool_start time
+# and consumed when the matching ToolMessage arrives in "updates" mode.
+# Per-session so concurrent sessions on separate WS connections never see each
+# other's pending tool state.
+_pending_args: dict[str, dict[str, dict]] = {}
+# Raw JSON-fragment buffer per [bare session id][tool_id], accumulated until
+# it parses to a dict.
+_pending_raw: dict[str, dict[str, list[str]]] = {}
 
 
-def _accumulate_pending_args(tool_id: str | None, raw_args) -> None:
-    """Accumulate streamed ToolCall args fragments into the pending arg-bag.
+def _accumulate_pending_args(session_id: str, tool_id: str | None, raw_args) -> None:
+    """Accumulate streamed ToolCall args fragments into the session's arg-bag.
 
     LangChain streams tool calls as a sequence of chunks: the first chunk carries
     the tool `id` with empty args, and subsequent (id-less) chunks carry the args
@@ -46,12 +50,13 @@ def _accumulate_pending_args(tool_id: str | None, raw_args) -> None:
     """
     if tool_id is None:
         return
-    buf: list[str] = _pending_raw.setdefault(tool_id, [])
+    session_raw: dict[str, list[str]] = _pending_raw.setdefault(session_id, {})
+    buf: list[str] = session_raw.setdefault(tool_id, [])
 
     if isinstance(raw_args, dict):
         if raw_args:
-            _pending_args[tool_id] = raw_args
-            _pending_raw[tool_id] = []
+            _pending_args.setdefault(session_id, {})[tool_id] = raw_args
+            session_raw[tool_id] = []
         return
 
     if isinstance(raw_args, str):
@@ -62,11 +67,38 @@ def _accumulate_pending_args(tool_id: str | None, raw_args) -> None:
         except Exception:
             return
         if isinstance(parsed, dict) and parsed:
-            _pending_args[tool_id] = parsed
-            _pending_raw[tool_id] = []
+            _pending_args.setdefault(session_id, {})[tool_id] = parsed
+            session_raw[tool_id] = []
         return
 
     return
+
+
+def _get_pending_args(session_id: str, tool_id: str | None) -> dict:
+    """Read a tool's pending args for one session ({} when absent).
+
+    Mirrors the old ``_pending_args.get(tool_id or "", {})`` wire contract so
+    tool_start frames are unchanged.
+    """
+    return _pending_args.get(session_id, {}).get(tool_id or "", {})
+
+
+def _pop_pending_args(session_id: str, tool_id: str) -> dict:
+    """Consume a tool's pending args for one session ({} when absent).
+
+    Mirrors the old ``_pending_args.pop(tool_id, {})`` contract for the
+    tool_result frames (updates mode / HITL denial path).
+    """
+    return _pending_args.get(session_id, {}).pop(tool_id, {})
+
+
+def _clear_pending_args(session_id: str) -> None:
+    """Turn-end cleanup: drop ONLY this session's pending args.
+
+    Replaces the old process-global ``_pending_args.clear()`` which wiped
+    every session's state whenever any turn finished.
+    """
+    _pending_args.pop(session_id, None)
 
 
 def _reasoning_delta(msg_chunk: BaseMessage) -> str:
@@ -270,7 +302,7 @@ async def async_generate(
                                 continue
                             tool_id = tm.tool_call_id
                             name = state_register_mem.get_state(session_id, "current_tool_name", "")
-                            args = _pending_args.pop(tool_id, {})
+                            args = _pop_pending_args(session_id, tool_id)
                             yield {
                                 "type": "tool_result",
                                 "content": _normalize_text(tm.content),
@@ -396,7 +428,7 @@ async def async_generate(
                         _arg_frag: str | None = None
                         if msg_chunk.tool_call_chunks and len(msg_chunk.tool_call_chunks) > 0:
                             _arg_frag = msg_chunk.tool_call_chunks[0].get("args")
-                        _accumulate_pending_args(eff_tool_id, _arg_frag)
+                        _accumulate_pending_args(session_id, eff_tool_id, _arg_frag)
 
                         if not repeat_flag:
                             tool_name = state_register_mem.get_state(
@@ -406,7 +438,7 @@ async def async_generate(
                             yield {
                                 "type": "tool_start",
                                 "content": tool_name,
-                                "args": _pending_args.get(tool_id or "", {}),
+                                "args": _get_pending_args(session_id, tool_id),
                             }
 
                     # NOTE: tool_end is now emitted from the updates-mode "tools"
@@ -514,7 +546,7 @@ async def async_generate(
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)
-        _pending_args.clear()
+        _clear_pending_args(session_id)
 
 
 """HITL interrupt detection — checks agent state for pending interrupts.
@@ -646,7 +678,7 @@ async def resume_agent(
                             continue
                         tool_id = tm.tool_call_id
                         name = state_register_mem.get_state(session_id, "current_tool_name", "")
-                        args = _pending_args.pop(tool_id, {})
+                        args = _pop_pending_args(session_id, tool_id)
                         yield {
                             "type": "tool_result",
                             "content": _normalize_text(tm.content),
@@ -681,7 +713,7 @@ async def resume_agent(
                 and isinstance(_chunk_node, str)
                 and _chunk_node.endswith(".after_model")
             ):
-                _hitl_args = _pending_args.pop(msg_chunk.tool_call_id, {})
+                _hitl_args = _pop_pending_args(session_id, msg_chunk.tool_call_id)
                 yield {
                     "type": "tool_result",
                     "content": _normalize_text(msg_chunk.content),
@@ -747,7 +779,7 @@ async def resume_agent(
                         _arg_frag = None
                         if msg_chunk.tool_call_chunks and len(msg_chunk.tool_call_chunks) > 0:
                             _arg_frag = msg_chunk.tool_call_chunks[0].get("args")
-                        _accumulate_pending_args(eff_tool_id, _arg_frag)
+                        _accumulate_pending_args(session_id, eff_tool_id, _arg_frag)
 
                         if not repeat_flag:
                             tool_name = state_register_mem.get_state(
@@ -756,7 +788,7 @@ async def resume_agent(
                             yield {
                                 "type": "tool_start",
                                 "content": tool_name,
-                                "args": _pending_args.get(tool_id or "", {}),
+                                "args": _get_pending_args(session_id, tool_id),
                             }
 
                     # NOTE: tool_end handled in the updates-mode "tools" branch above
@@ -800,7 +832,7 @@ async def resume_agent(
         state_register_mem.set_state(session_id, "current_tool_name", "")
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)
-        _pending_args.clear()
+        _clear_pending_args(session_id)
 
 
 """End HITL resume"""
