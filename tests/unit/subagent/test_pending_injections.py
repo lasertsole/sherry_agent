@@ -149,3 +149,51 @@ async def test_list_pending_orders_by_created_at(tmp_path: Path):
 
     pending = await store.list_pending()
     assert [r.run_id for r in pending] == ["run-old", "run-new"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_distinct_enqueues_all_persisted(tmp_path: Path):
+    """F3 regression: 16 same-loop concurrent enqueues (distinct run_ids) → zero row loss.
+
+    Before the busy_timeout + once-only-init fix, the per-call _ensure_db
+    (fresh connection + PRAGMA journal_mode=WAL per enqueue) raised
+    OperationalError("database is locked") under this exact load and rows were
+    silently lost.
+    """
+    store = PendingInjectionStore(db_path=tmp_path / "pending.db")
+    injections = [_make_injection(run_id=f"run-{i:02d}", content=f"payload {i}") for i in range(16)]
+
+    results = await asyncio.gather(*(store.enqueue(inj) for inj in injections))
+
+    assert len(results) == 16
+    assert {r.run_id for r in results} == {inj.run_id for inj in injections}
+    pending = await store.list_pending()
+    assert len(pending) == 16
+    for inj in injections:
+        record = await store.get(inj.run_id)
+        assert record is not None, f"row for {inj.run_id} was lost"
+        assert record.content == inj.content
+        assert record.status == PendingInjectionStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_run_id_enqueues_yield_single_row(tmp_path: Path):
+    """F3 regression: same-loop concurrent enqueues of ONE run_id → exactly one row.
+
+    Idempotency must hold under concurrency: every caller gets the EXISTING
+    record back (first writer wins), and no duplicate rows appear.
+    """
+    store = PendingInjectionStore(db_path=tmp_path / "pending.db")
+
+    results = await asyncio.gather(*(store.enqueue(_make_injection()) for _ in range(16)))
+
+    assert len(results) == 16
+    assert all(r.run_id == "run-abc-123" for r in results)
+    # Every caller sees the SAME persisted record (duplicates never overwrite).
+    assert all(r.content == "subagent finished the task" for r in results)
+    assert all(r.created_at == results[0].created_at for r in results)
+    pending = await store.list_pending()
+    assert len(pending) == 1
+    row = await store.get("run-abc-123")
+    assert row is not None
+    assert row.content == "subagent finished the task"
