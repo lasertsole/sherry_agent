@@ -196,6 +196,16 @@ async def _start_announce_cleanup_flow(run: SubagentRunRecord) -> None:
             await run_subagent_announce_flow(run)
         except Exception as e:
             logger.error("Announce flow failed for run {}: {}", run.run_id, e)
+    elif _should_notify_failure(run):
+        # Task 9 (Q3) additive failure trigger: runs that skip the announce gate
+        # entirely (e.g. SESSION mode — completion not required) would otherwise
+        # end silently; notify the requester's WS session via the third path.
+        from ..announce.delivery import route_subagent_failure_notification
+
+        try:
+            await route_subagent_failure_notification(run)
+        except Exception as e:
+            logger.error("Failure notification failed for run {}: {}", run.run_id, e)
 
     settle_batch = get_settle_wake_batch()
     settle_batch.register_run_for_settle(run.run_id, run.requester_session_key)
@@ -283,6 +293,20 @@ def _should_suspend_pending_final_delivery(run: SubagentRunRecord) -> bool:
     if run.delivery.status != DeliveryStatus.PENDING:
         return False
     return True
+
+
+def _should_notify_failure(run: SubagentRunRecord) -> bool:
+    """Task 9 (Q3): True for failed/interrupted terminal runs whose completion never
+    reaches the announce gate (completion not required, e.g. SESSION mode) — they
+    would otherwise end silently. Deliberate suppressions are respected: the
+    elif chain only reaches this check when no suppression branch matched.
+    """
+    if run.suppress_announce_reason or run.suppress_completion_delivery:
+        return False
+    outcome = run.execution.outcome
+    if outcome is None or outcome.status == RunOutcomeStatus.OK:
+        return False
+    return not (run.expects_completion_message and run.completion.required)
 
 
 def _suspend_pending_final_delivery(run: SubagentRunRecord) -> None:

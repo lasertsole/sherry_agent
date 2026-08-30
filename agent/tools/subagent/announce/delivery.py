@@ -3,17 +3,27 @@
 Supports dual-path delivery: sub→sub internal injection vs sub→user completion
 message. Classifies errors as transient/permanent and applies appropriate retry
 schedules including compaction-retry for nested sub-agent scenarios.
+
+Task 9 adds a third, additive path: when a run announces to a main-agent WS
+session, the completion is also routed into the requester's turn pipeline
+(busy → task 6 steering queue, idle → task 8 auto-turn trigger). Channel
+sessions and non-session requesters keep the notification-bell status quo (Q2);
+consumed injections are never re-enqueued (Q4); failed runs follow the same
+routing (Q3). The third path is best-effort and log-only — it never awaits a
+turn/model call and never alters the dual-path result.
 """
 
 import asyncio
 import re
 import time
 from loguru import logger
-from ..types.registry import SubagentRunRecord, RunOutcome
+from langchain_core.messages import HumanMessage
+from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus
 from ..types.delivery import DeliveryContext
 from ..config import get_config
 from .idempotency import build_idempotency_key
 from .dispatch import AnnounceDeliveryResult, run_announce_dispatch
+from .completion_message import STATUS_COMPLETED, STATUS_FAILED, build_completion_message
 
 _delivered_keys: set[str] = set()  # In-memory idempotency tracking
 _delivery_mirror: dict[str, str] = {}  # Content-based deduplication mirror
@@ -106,6 +116,139 @@ def resolve_compaction_retry_delay_ms(attempt: int) -> float:
     return _COMPACTION_RETRY_DELAYS_MS[-1] / 1000.0
 
 
+# ── Task 9: third delivery path (WS turn-input injection) ───────────────────
+# Additive to the dual-path dispatch: completed runs announcing to a main-agent
+# WS session also get their completion routed into the requester's turn
+# pipeline. All third-party touches below are lazy imports: module-level
+# imports of the registry package or the server service stack would either
+# break the announce import order (registry/__init__ ↔ announce cycle) or drag
+# in robyn/heavy deps. Every seam is monkeypatchable for tests.
+_AUTO_TURN_TRIGGERED = "triggered"  # AutoTurnOutcome value (str Enum); string compare avoids importing the server stack here
+
+_injection_store = None  # lazy PendingInjectionStore singleton (default registry db path)
+
+
+def _get_injection_store():
+    """Task 3 pending-injection store seam (lazy singleton; monkeypatched in tests)."""
+    global _injection_store
+    if _injection_store is None:
+        from ..registry.pending_injections import PendingInjectionStore
+
+        _injection_store = PendingInjectionStore()
+    return _injection_store
+
+
+def _detect_session_state(session_key: str):
+    """Task 5 busy/idle detector seam (sync; lazy import, monkeypatched in tests)."""
+    from ..registry.session_state import detect_state
+
+    return detect_state(session_key)
+
+
+def _get_bound_websocket(session_id: str):
+    """WS-binding seam (lazy): a live socket means a WS session; None means channel/unbound."""
+    from runtime.relation_register import relation_register
+
+    return relation_register.get_websocket_by_session_id(session_id)
+
+
+def _enqueue_steering(session_key: str, injection: HumanMessage):
+    """Task 6 steering-queue seam (lazy): memory append + SQLite persist in one step."""
+    from .steering_queue import enqueue_steering
+
+    return enqueue_steering(session_key, injection)
+
+
+def _trigger_auto_turn(session_key: str, injection: HumanMessage):
+    """Task 8 auto-turn trigger seam (lazy; fire-and-forget, never awaits the turn)."""
+    from server.service.auto_turn import maybe_trigger_auto_turn
+
+    return maybe_trigger_auto_turn(session_key, injection)
+
+
+def _resolve_builder_status(run: SubagentRunRecord) -> str:
+    """Map a registry outcome to the task 4 builder vocabulary (frozen: ok→completed, else failed)."""
+    outcome = run.execution.outcome
+    status = outcome.status if outcome is not None else RunOutcomeStatus.UNKNOWN
+    return STATUS_COMPLETED if status == RunOutcomeStatus.OK else STATUS_FAILED
+
+
+async def _route_completion_injection(run: SubagentRunRecord) -> None:
+    """Route one completion injection into the requester's turn pipeline (task 9 third path).
+
+    Guards (any miss short-circuits to the status quo): main-session key prefix;
+    live websocket binding (WS-only v1, Q2); run not already consumed (Q4, one
+    query + one if). Routing: busy → steering queue; idle → auto-turn trigger.
+    A not-triggered outcome or any exception falls back to the steering queue
+    (Q4: never drop). Never awaits a turn/model call.
+    """
+    raw = (run.requester_session_key or "").strip()
+    if not raw:
+        return
+    from ..registry.session_keys import normalize_session_key
+
+    bare = normalize_session_key(raw)
+    if not bare or bare == raw:
+        return  # child/swarm/unknown keys carry no main-session prefix — status quo
+    if _get_bound_websocket(bare) is None:
+        return  # no websocket (channel session or unbound) — notification-bell status quo (Q2)
+
+    from ..registry.pending_injections import PendingInjectionStatus
+
+    existing = await _get_injection_store().get(run.run_id)  # one query for the consumed marker
+    if existing is not None and existing.status == PendingInjectionStatus.CONSUMED:
+        logger.debug("Third path skipped for run {}: injection already consumed", run.run_id)
+        return  # Q4: the parent turn already consumed it — no double-inject
+
+    content = run.completion.result_text or ""
+    if len(content) > 4000:  # mirrors the user-facing completion message budget
+        content = content[:4000] + "\n... [truncated]"
+    injection = build_completion_message(run, content, _resolve_builder_status(run))
+
+    try:
+        state = _detect_session_state(bare)
+        if state.busy:
+            await _enqueue_steering(bare, injection)
+            return
+        result = await _trigger_auto_turn(bare, injection)
+        if getattr(result, "outcome", None) == _AUTO_TURN_TRIGGERED:
+            return
+    except Exception as exc:  # noqa: BLE001 - routing failure falls through to the persist fallback
+        logger.warning("Third-path routing failed for run {}: {}", run.run_id, exc)
+    try:
+        await _enqueue_steering(bare, injection)  # Q4: persist so the next turn consumes it
+    except Exception as exc:  # noqa: BLE001 - log-only by contract
+        logger.error("Third-path fallback enqueue failed for run {}: {}", run.run_id, exc)
+
+
+async def route_subagent_failure_notification(run: SubagentRunRecord) -> None:
+    """Task 9 (Q3) failure trigger for runs that never enter the standard announce flow.
+
+    SESSION-mode runs (completion not required) skip the announce gate in
+    registry/lifecycle.py entirely; this routes their failure outcome through
+    the same third path so the requester's WS session still receives
+    ``[subagent:{name} failed]``. Best-effort: exceptions are log-only.
+    """
+    try:
+        await _route_completion_injection(run)
+    except Exception as exc:  # noqa: BLE001 - log-only by contract
+        logger.warning("Failure notification skipped for run {}: {}", run.run_id, exc)
+
+
+async def _maybe_route_third_path(run: SubagentRunRecord, result: AnnounceDeliveryResult) -> None:
+    """Gate the third path behind a successful dual-path dispatch (task 9).
+
+    Thin wrapper called after the dual-path dispatch in deliver_subagent_announcement;
+    best-effort and log-only — it never alters the existing announce result.
+    """
+    if not getattr(result, "success", False):
+        return
+    try:
+        await _route_completion_injection(run)
+    except Exception as exc:  # noqa: BLE001 - third path must not break delivery
+        logger.warning("Third-path injection skipped for run {}: {}", run.run_id, exc)
+
+
 async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliveryResult:
     """Deliver a sub-agent's completion announcement with idempotency, suspension, and retry logic."""
     config = get_config()
@@ -161,6 +304,10 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
     result = await run_announce_dispatch(run, _deliver_with_retry)
 
     if result.success:
+        # Task 9 third path (additive): also route the completion injection into a
+        # main-agent WS session's turn pipeline. Best-effort and log-only — the
+        # dual-path result and bookkeeping below are never altered.
+        await _maybe_route_third_path(run, result)
         _mark_delivered(run)
         updated = mark_delivery_delivered(run)
         set_run(updated)
