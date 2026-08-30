@@ -2,7 +2,7 @@
 
 import time
 from loguru import logger
-from ..types.registry import SubagentRunRecord, ExecutionStatus, DeliveryStatus
+from ..types.registry import SubagentRunRecord, ExecutionStatus
 from ..config import SubagentConfig
 
 
@@ -20,7 +20,7 @@ def cap_frozen_result_text(text: str | None, max_bytes: int = 24000) -> str | No
 def resolve_announce_retry_delay_ms(attempt: int, base_ms: int = 1000) -> int:
     """Compute exponential backoff delay in milliseconds, capped at 8000 ms."""
     capped_ms = 8000
-    return min(base_ms * (2 ** attempt), capped_ms)
+    return min(base_ms * (2**attempt), capped_ms)
 
 
 def resolve_announce_retry_delay_seconds(attempt: int, base_ms: int = 1000) -> float:
@@ -73,6 +73,7 @@ def should_keep_child_link(run: SubagentRunRecord, recent_window_seconds: int = 
         return True
 
     from .queries import count_active_descendant_runs
+
     if count_active_descendant_runs(run.child_session_key) > 0:
         return True
 
@@ -104,26 +105,31 @@ def reconcile_orphaned_run(run: SubagentRunRecord) -> SubagentRunRecord | None:
         if not is_stale_unended_run(run):
             return None
 
-    updated = run.model_copy(update={
-        "execution": ExecutionState(
-            status=ExecutionStatus.TERMINAL,
-            started_at=run.execution.started_at,
-            ended_at=time.monotonic(),
-            outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT, error="orphaned"),
-        ),
-        "accumulated_runtime_ms": runtime_ms,
-        "ended_reason": "orphaned",
-    })
+    updated = run.model_copy(
+        update={
+            "execution": ExecutionState(
+                status=ExecutionStatus.TERMINAL,
+                started_at=run.execution.started_at,
+                ended_at=time.monotonic(),
+                outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT, error="orphaned"),
+            ),
+            "accumulated_runtime_ms": runtime_ms,
+            "ended_reason": "orphaned",
+        }
+    )
     logger.info("Reconciled orphaned run {}", run.run_id)
     return updated
 
 
-def safe_remove_attachments_dir(attachments_dir: str | None, attachments_root_dir: str | None = None) -> None:
+def safe_remove_attachments_dir(
+    attachments_dir: str | None, attachments_root_dir: str | None = None
+) -> None:
     """Safely remove an attachments directory, refusing paths outside the configured root."""
     if attachments_dir is None:
         return
     import shutil
     from pathlib import Path
+
     p = Path(attachments_dir).resolve()
     if not p.exists():
         return
@@ -134,7 +140,8 @@ def safe_remove_attachments_dir(attachments_dir: str | None, attachments_root_di
         except ValueError:
             logger.warning(
                 "Refusing to remove attachments dir {}: resolved path is not under root {}",
-                p, root,
+                p,
+                root,
             )
             return
     try:

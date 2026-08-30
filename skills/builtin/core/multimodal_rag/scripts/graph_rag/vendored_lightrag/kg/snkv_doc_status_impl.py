@@ -3,6 +3,7 @@
 Shares ``snkv.db`` with KV and graph storage via snkv_shared.
 Single column family ``doc_status``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -204,7 +205,9 @@ class SNKVDocStatusStorage(DocStatusStorage):
 
         return await self._ex().run_in_executor(self._shared.executor, _filter)
 
-    async def get_docs_by_statuses(self, statuses: list[DocStatus]) -> dict[str, DocProcessingStatus]:
+    async def get_docs_by_statuses(
+        self, statuses: list[DocStatus]
+    ) -> dict[str, DocProcessingStatus]:
         status_set = set(statuses)
 
         def _filter():
@@ -236,9 +239,7 @@ class SNKVDocStatusStorage(DocStatusStorage):
         def _paginate():
             all_docs = self._iter_all()
             if status_values is not None:
-                all_docs = [
-                    (i, d) for i, d in all_docs if d.status.value in status_values
-                ]
+                all_docs = [(i, d) for i, d in all_docs if d.status.value in status_values]
             reverse = sort_direction.lower() == "desc"
             if sort_field == "id":
                 all_docs.sort(key=lambda x: x[0], reverse=reverse)
@@ -261,9 +262,7 @@ class SNKVDocStatusStorage(DocStatusStorage):
 
         return await self._ex().run_in_executor(self._shared.executor, _find)
 
-    async def get_doc_by_file_basename(
-        self, basename: str
-    ) -> tuple[str, dict[str, Any]] | None:
+    async def get_doc_by_file_basename(self, basename: str) -> tuple[str, dict[str, Any]] | None:
         """Get (doc_id, doc_data) by canonical file basename.
 
         Storage only compares against the canonical ``file_path`` persisted by
@@ -284,9 +283,7 @@ class SNKVDocStatusStorage(DocStatusStorage):
 
         return await self._ex().run_in_executor(self._shared.executor, _find)
 
-    async def get_doc_by_content_hash(
-        self, content_hash: str
-    ) -> tuple[str, dict[str, Any]] | None:
+    async def get_doc_by_content_hash(self, content_hash: str) -> tuple[str, dict[str, Any]] | None:
         """Get (doc_id, doc_data) by the content_hash field of a full document."""
 
         def _find():

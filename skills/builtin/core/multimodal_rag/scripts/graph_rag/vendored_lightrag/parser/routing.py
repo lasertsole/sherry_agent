@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import fnmatch
 import os
@@ -114,9 +114,7 @@ def sanitize_process_options(options: Any) -> str:
     return "".join(ch for ch in str(options) if ch in SUPPORTED_PROCESS_OPTIONS)
 
 
-def validate_process_options(
-    options: str, *, label: str = "process options"
-) -> list[str]:
+def validate_process_options(options: str, *, label: str = "process options") -> list[str]:
     """Return a list of error messages for an options string; empty if valid."""
     errors: list[str] = []
     if not options:
@@ -301,9 +299,7 @@ def default_chunker_config() -> dict[str, Any]:
     config: dict[str, Any] = {
         "fixed_token": {
             "split_by_character": _env_optional_str("CHUNK_F_SPLIT_BY_CHARACTER"),
-            "split_by_character_only": _env_bool(
-                "CHUNK_F_SPLIT_BY_CHARACTER_ONLY", False
-            ),
+            "split_by_character_only": _env_bool("CHUNK_F_SPLIT_BY_CHARACTER_ONLY", False),
         },
         "recursive_character": {
             # Default separators include CJK sentence-ending punctuation
@@ -519,11 +515,7 @@ def _filename_hint_match(
     inner = m.group(1).strip()
     if inner.startswith("-") and not inner[1:].strip():
         return None
-    if (
-        "-" in inner
-        and not inner.startswith("-")
-        and not inner.partition("-")[2].strip()
-    ):
+    if "-" in inner and not inner.startswith("-") and not inner.partition("-")[2].strip():
         return None
     engine, options = split_engine_and_options(inner)
     if options:
@@ -623,10 +615,7 @@ def _validate_filename_hint_for_resolution(
             and endpoint_req
             and not parser_engine_endpoint_configured(engine)
         ):
-            errors.append(
-                f"filename hint {m.group(0)!r} requires {endpoint_req} "
-                "to be configured"
-            )
+            errors.append(f"filename hint {m.group(0)!r} requires {endpoint_req} to be configured")
 
     if errors:
         raise FilenameParserHintError(
@@ -727,9 +716,7 @@ def validate_parser_routing_config(parser_rules: str | None = None) -> None:
             errors.append(f"{label} has an empty suffix pattern")
             continue
         if "." in pattern:
-            errors.append(
-                f"{label} matches suffixes without dots; use 'pdf', not '*.pdf'"
-            )
+            errors.append(f"{label} matches suffixes without dots; use 'pdf', not '*.pdf'")
             continue
         if not engine_hint:
             errors.append(f"{label} has an empty parser engine")
@@ -753,9 +740,7 @@ def validate_parser_routing_config(parser_rules: str | None = None) -> None:
         if options_str:
             errors.extend(
                 f"{label}: {msg}"
-                for msg in validate_process_options(
-                    options_str, label="process options"
-                )
+                for msg in validate_process_options(options_str, label="process options")
             )
 
     if errors:

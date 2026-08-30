@@ -115,9 +115,10 @@ class TimedPythonREPLTool(PythonREPLTool):
     async def _arun(
         self,
         query: str,
-        run_manager: AsyncCallbackManagerForToolRun  | None= None,
+        run_manager: AsyncCallbackManagerForToolRun | None = None,
     ) -> str:
         import asyncio
+
         return await asyncio.to_thread(_run_with_timeout, query, PYTHON_REPL_TIMEOUT)
 
 

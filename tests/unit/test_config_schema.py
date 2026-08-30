@@ -1,12 +1,20 @@
 """Unit tests for config/schema.py — Pydantic configuration models."""
 
-import pytest
 from pathlib import Path
 from config.schema import (
-    Base, ChannelsConfig, AgentDefaults, AgentsConfig,
-    ProviderConfig, ProvidersConfig, HeartbeatConfig,
-    GatewayConfig, WebSearchConfig, WebToolsConfig,
-    ExecToolConfig, MCPServerConfig, ToolsConfig, Config,
+    ChannelsConfig,
+    AgentDefaults,
+    AgentsConfig,
+    ProviderConfig,
+    ProvidersConfig,
+    HeartbeatConfig,
+    GatewayConfig,
+    WebSearchConfig,
+    WebToolsConfig,
+    ExecToolConfig,
+    MCPServerConfig,
+    ToolsConfig,
+    Config,
 )
 
 
@@ -69,7 +77,9 @@ class TestAgentDefaults:
         d = AgentDefaults(memory_window=100)
         assert d.memory_window == 100
         dumped = d.model_dump()
-        assert "memory_window" not in dumped or d.model_config.get("exclude") or True  # Field has exclude=True
+        assert (
+            "memory_window" not in dumped or d.model_config.get("exclude") or True
+        )  # Field has exclude=True
 
     def test_should_warn_deprecated_memory_window_true(self):
         # When memory_window is set but context_window_tokens was not explicitly provided

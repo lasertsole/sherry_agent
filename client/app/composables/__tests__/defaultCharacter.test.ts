@@ -4,7 +4,7 @@ import {
   DEFAULT_AI_AVATAR,
   DEFAULT_USER_NAME,
   DEFAULT_AI_NAME,
-  DEFAULT_CHARACTER,
+  DEFAULT_CHARACTER
 } from '../defaultCharacter';
 
 describe('defaultCharacter constants', () => {
@@ -23,7 +23,7 @@ describe('defaultCharacter constants', () => {
       userName: DEFAULT_USER_NAME,
       userAvatar: DEFAULT_USER_AVATAR,
       aiName: DEFAULT_AI_NAME,
-      aiAvatar: DEFAULT_AI_AVATAR,
+      aiAvatar: DEFAULT_AI_AVATAR
     });
   });
 });

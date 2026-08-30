@@ -104,7 +104,9 @@ async def test_execute_subagent_simple_task() -> None:
     completed = get_run(run_id)
     if completed is None:
         all_runs = registry_memory.values()
-        print(f"[TEST] Run not found in registry. All runs ({len(all_runs)}): {[r.run_id for r in all_runs]}")
+        print(
+            f"[TEST] Run not found in registry. All runs ({len(all_runs)}): {[r.run_id for r in all_runs]}"
+        )
         pytest.fail(f"Run {run_id} not found in registry after execution")
         return
 

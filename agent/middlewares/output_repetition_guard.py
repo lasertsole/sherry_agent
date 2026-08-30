@@ -106,6 +106,7 @@ _THINK_PATTERNS = [
     re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL),
 ]
 
+
 class OutputRepetitionGuard(AgentMiddleware):
     """Detect and break text-output death loops.
 
@@ -132,7 +133,7 @@ class OutputRepetitionGuard(AgentMiddleware):
     """
 
     def __init__(
-            self,
+        self,
         max_identical_outputs: int = 3,
         warn_after: int = 2,
         internal_repeat_ratio: float = 0.6,
@@ -253,13 +254,13 @@ class OutputRepetitionGuard(AgentMiddleware):
             # to begin at index 0 (the string may have a non-looping prefix).
             limit = n - plen * min_repeats
             for start in range(min(plen, limit + 1)):
-                pattern = content[start:start + plen]
+                pattern = content[start : start + plen]
                 if not pattern.strip():
                     continue
                 # Greedy contiguous repetition count from this offset.
                 repeats = 1
                 pos = start + plen
-                while pos + plen <= n and content[pos:pos + plen] == pattern:
+                while pos + plen <= n and content[pos : pos + plen] == pattern:
                     repeats += 1
                     pos += plen
                 if repeats >= min_repeats:
@@ -356,9 +357,7 @@ class OutputRepetitionGuard(AgentMiddleware):
         ch = self._content_hash(text)
         # Rolling history of content hashes; ``consecutive`` is the length of
         # the run of hashes equal to the current one at the tail of the list.
-        history: list[str] = state_register_mem.get_state(
-            session_id, history_key, []
-        )
+        history: list[str] = state_register_mem.get_state(session_id, history_key, [])
 
         consecutive = 0
         for h in reversed(history):
@@ -383,7 +382,10 @@ class OutputRepetitionGuard(AgentMiddleware):
                 "[OutputRepetitionGuard] session={} cross-call "
                 "{} repetition detected (total_identical={}, max={}) "
                 "-- forcing halt",
-                session_id, label, total_identical, self.max_identical_outputs,
+                session_id,
+                label,
+                total_identical,
+                self.max_identical_outputs,
             )
             return AIMessage(
                 content=(
@@ -399,13 +401,14 @@ class OutputRepetitionGuard(AgentMiddleware):
             logger.debug(
                 "[OutputRepetitionGuard] session={} cross-call "
                 "{} repetition warning (total_identical={})",
-                session_id, label, total_identical,
+                session_id,
+                label,
+                total_identical,
             )
             # Keep the model's own text so we only *nudge*, never erase it.
             prefix = (content_prefix + "\n\n") if content_prefix else ""
             return AIMessage(
-                content=prefix
-                + f" [Output Repetition Guard] Detected {label} "
+                content=prefix + f" [Output Repetition Guard] Detected {label} "
                 f"repetition ({total_identical} times). Please change "
                 f"your approach or provide a final answer."
             )
@@ -416,18 +419,15 @@ class OutputRepetitionGuard(AgentMiddleware):
                 session_id, internal_warned_key, False
             )
             if not already_warned:
-                state_register_mem.set_state(
-                    session_id, internal_warned_key, True
-                )
+                state_register_mem.set_state(session_id, internal_warned_key, True)
                 logger.debug(
-                    "[OutputRepetitionGuard] session={} internal "
-                    "{} repetition detected -- warning",
-                    session_id, label,
+                    "[OutputRepetitionGuard] session={} internal {} repetition detected -- warning",
+                    session_id,
+                    label,
                 )
                 prefix = (content_prefix + "\n\n") if content_prefix else ""
                 return AIMessage(
-                content=prefix
-                    + f" [Output Repetition Guard] Your {label} "
+                    content=prefix + f" [Output Repetition Guard] Your {label} "
                     "contains highly repetitive patterns. Please avoid "
                     "repeating the same content and provide a concise answer."
                 )
@@ -469,14 +469,12 @@ class OutputRepetitionGuard(AgentMiddleware):
                 content = self._strip_inline_reasoning(content)
 
         # If already halted this turn, keep returning the halt message
-        halted: bool = state_register_mem.get_state(
-            session_id, _HALTED_KEY, False
-        )
+        halted: bool = state_register_mem.get_state(session_id, _HALTED_KEY, False)
         if halted:
             return AIMessage(
                 content=(
-                "[Output Repetition Guard] Output repetition was "
-                "detected earlier this turn. I must stop here."
+                    "[Output Repetition Guard] Output repetition was "
+                    "detected earlier this turn. I must stop here."
                 )
             )
 
@@ -484,8 +482,11 @@ class OutputRepetitionGuard(AgentMiddleware):
         # threshold to avoid false positives on short responses.
         if len(content) >= _MIN_CONTENT_LENGTH:
             r = self._check_text_repetition(
-                session_id, content, content,
-                _HISTORY_KEY, _INTERNAL_WARNED_KEY,
+                session_id,
+                content,
+                content,
+                _HISTORY_KEY,
+                _INTERNAL_WARNED_KEY,
                 "output",
             )
             if r is not None:
@@ -495,8 +496,11 @@ class OutputRepetitionGuard(AgentMiddleware):
         # content as the ``content_prefix`` so a warning keeps context.
         if len(reasoning) >= _MIN_CONTENT_LENGTH:
             r = self._check_text_repetition(
-                session_id, reasoning, content,
-                _REASONING_HISTORY_KEY, _REASONING_WARNED_KEY,
+                session_id,
+                reasoning,
+                content,
+                _REASONING_HISTORY_KEY,
+                _REASONING_WARNED_KEY,
                 "reasoning",
             )
 
@@ -520,9 +524,7 @@ class OutputRepetitionGuard(AgentMiddleware):
         state_register_mem.set_state(session_id, _REASONING_WARNED_KEY, False)
 
     @override
-    def before_agent(
-        self, state: AgentState, runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
+    def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         """Synchronous lifecycle hook: reset repetition state for this turn.
 
         Delegates to :func:`_before_agent_impl` and returns ``None``, leaving
@@ -631,16 +633,13 @@ def check_stream_repetition(session_id: str, accumulated_text: str) -> str | Non
     if not _STREAM_GUARD._detect_internal_repetition(accumulated_text):
         return None
 
-    already_warned: bool = state_register_mem.get_state(
-        session_id, _INTERNAL_WARNED_KEY, False
-    )
+    already_warned: bool = state_register_mem.get_state(session_id, _INTERNAL_WARNED_KEY, False)
     if already_warned:
         return None
 
     state_register_mem.set_state(session_id, _INTERNAL_WARNED_KEY, True)
     logger.debug(
-        "[OutputRepetitionGuard] session={} stream internal repetition "
-        "detected -- cutting output",
+        "[OutputRepetitionGuard] session={} stream internal repetition detected -- cutting output",
         session_id,
     )
     return _STREAM_WARNING

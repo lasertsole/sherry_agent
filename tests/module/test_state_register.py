@@ -1,8 +1,6 @@
 """Module tests for runtime/state_register.py — StateRegisterMeM and StateRegisterDB."""
 
-import json
 import pytest
-from pathlib import Path
 from runtime.core import Register
 from runtime.state_register import StateRegisterMeM
 

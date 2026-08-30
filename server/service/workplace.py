@@ -3,7 +3,8 @@ from config import WORKSPACE_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
 
-def read_system_prompt_file()-> dict[str, str]:
+
+def read_system_prompt_file() -> dict[str, str]:
     """Read system prompt files"""
     # Lazy-ensure the persona files exist before reading (they may be deleted from
     # workspace/ root and copied in from template/ on first use).
@@ -18,7 +19,8 @@ def read_system_prompt_file()-> dict[str, str]:
 
     return file_to_content
 
-def write_system_prompt_file(file_to_content: dict[str, str])->None:
+
+def write_system_prompt_file(file_to_content: dict[str, str]) -> None:
     """Write system prompt files"""
     for file_name, content in file_to_content.items():
         if file_name not in ALL_SYSTEM_FILE_NAMES:
@@ -34,7 +36,8 @@ def write_system_prompt_file(file_to_content: dict[str, str])->None:
         with open(file_path, "w", encoding="utf-8") as file:
             file.write(content)
 
-def update_system_prompt_file(file_to_content: dict[str, str])->None:
+
+def update_system_prompt_file(file_to_content: dict[str, str]) -> None:
     """Update system prompt files (only overwrite provided files, leave others unchanged)"""
     existing = read_system_prompt_file()
 
@@ -52,7 +55,8 @@ def update_system_prompt_file(file_to_content: dict[str, str])->None:
 
     write_system_prompt_file(existing)
 
-def read_system_prompt_template(lang: str | None = None)-> dict[str, str]:
+
+def read_system_prompt_template(lang: str | None = None) -> dict[str, str]:
     """Read system prompt template files for ``lang`` (default for the user's preferred language).
 
     Reads the persona template files from ``workspace/template/<lang>/`` and returns a

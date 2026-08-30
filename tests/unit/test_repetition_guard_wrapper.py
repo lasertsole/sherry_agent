@@ -24,7 +24,7 @@ import sys
 import types
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 # ---- llama_cpp stub (same as test_output_repetition_guard.py) ----
 _llama_stub = types.ModuleType("llama_cpp")
@@ -46,13 +46,21 @@ _la_stub.create_agent = lambda **kw: None
 sys.modules.setdefault("langchain.agents", _la_stub)
 
 _mw_stub = types.ModuleType("langchain.agents.middleware")
-_mw_stub.AgentMiddleware = type("AgentMiddleware", (), {
-    "__init__": lambda self, *a, **kw: None,
-})
+_mw_stub.AgentMiddleware = type(
+    "AgentMiddleware",
+    (),
+    {
+        "__init__": lambda self, *a, **kw: None,
+    },
+)
 _mw_stub.AgentState = dict
-_mw_stub.SummarizationMiddleware = type("SummarizationMiddleware", (), {
-    "__init__": lambda self, *a, **kw: None,
-})
+_mw_stub.SummarizationMiddleware = type(
+    "SummarizationMiddleware",
+    (),
+    {
+        "__init__": lambda self, *a, **kw: None,
+    },
+)
 sys.modules.setdefault("langchain.agents.middleware", _mw_stub)
 
 _mw_types_stub = types.ModuleType("langchain.agents.middleware.types")
@@ -67,6 +75,7 @@ sys.modules.setdefault("langchain.agents.middleware.types", _mw_types_stub)
 # ---- langgraph.runtime stub (add missing ExecutionInfo / ServerInfo) ----
 try:
     import langgraph.runtime as _lg_rt
+
     if not hasattr(_lg_rt, "ExecutionInfo"):
         _lg_rt.ExecutionInfo = type("ExecutionInfo", (), {})
     if not hasattr(_lg_rt, "ServerInfo"):
@@ -89,20 +98,19 @@ sys.modules.setdefault("agent.middlewares", _am_stub)
 # (monkeypatch.resolve_importpath accesses it through the package, not
 # sys.modules directly).
 import agent as _agent_pkg  # noqa: E402
+
 if not hasattr(_agent_pkg, "middlewares"):
     _agent_pkg.middlewares = _am_stub
 
 from runtime.core import Register
 from runtime.state_register import StateRegisterMeM
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from agent.middlewares.output_repetition_guard import (
     _HISTORY_KEY,
     _INTERNAL_WARNED_KEY,
     _HALTED_KEY,
     _REASONING_HISTORY_KEY,
-    _REASONING_WARNED_KEY,
-    _MIN_CONTENT_LENGTH,
     _STREAM_WARNING,
 )
 import agent.middlewares.output_repetition_guard as _org_module
@@ -113,6 +121,7 @@ from agent.repetition_guard_wrapper import RepetitionGuardWrapper
 # ======================================================================
 # Helpers
 # ======================================================================
+
 
 def msg_chunk(
     content: str,
@@ -223,6 +232,7 @@ def _has_warning(chunks: list) -> bool:
 # Fixtures
 # ======================================================================
 
+
 @pytest.fixture
 def fresh_state(monkeypatch):
     """Provide an isolated StateRegisterMeM patched into both the wrapper
@@ -240,6 +250,7 @@ def fresh_state(monkeypatch):
 # ======================================================================
 # 1. Passthrough
 # ======================================================================
+
 
 class TestPassthrough:
     """Normal, non-repetitive text passes through unchanged."""
@@ -275,6 +286,7 @@ class TestPassthrough:
 # ======================================================================
 # 2. Stream-level internal repetition
 # ======================================================================
+
 
 class TestInternalRepetitionStream:
     """Internal repetition detected mid-stream — text cut, warning yielded."""
@@ -349,6 +361,7 @@ class TestInternalRepetitionStream:
 # ======================================================================
 # 3. Cross-call repetition at model-call boundaries
 # ======================================================================
+
 
 class TestCrossCallRepetition:
     """Cross-call identical output detection at model-call boundaries."""
@@ -449,6 +462,7 @@ class TestCrossCallRepetition:
 # 4. Reasoning text repetition
 # ======================================================================
 
+
 class TestReasoningRepetition:
     """Reasoning text tracked independently from visible output."""
 
@@ -481,7 +495,7 @@ class TestReasoningRepetition:
             msg_chunk("Different visible output text here.", reasoning=short_reasoning),
         ]
         wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
-        out = _collect_stream(wrapper)
+        _collect_stream(wrapper)
         # Below _MIN_CONTENT_LENGTH -> not tracked
         assert fresh_state.get_state("s1", _REASONING_HISTORY_KEY, []) == []
 
@@ -489,6 +503,7 @@ class TestReasoningRepetition:
 # ======================================================================
 # 5. Per-turn state reset
 # ======================================================================
+
 
 class TestPerTurnReset:
     """State is cleared at the start of each astream/ainvoke call."""
@@ -504,8 +519,10 @@ class TestPerTurnReset:
         )
         _collect_stream(wrapper)
 
-        assert fresh_state.get_state("s1", _HISTORY_KEY, "X") == [] or \
-               len(fresh_state.get_state("s1", _HISTORY_KEY, [])) <= 1
+        assert (
+            fresh_state.get_state("s1", _HISTORY_KEY, "X") == []
+            or len(fresh_state.get_state("s1", _HISTORY_KEY, [])) <= 1
+        )
         # HALTED and INTERNAL_WARNED must be reset before the turn starts
         # (they may be set again during the turn, but only if repetition
         # actually occurs — which it won't for clean text).
@@ -519,9 +536,7 @@ class TestPerTurnReset:
         wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
 
         async def _run():
-            return await wrapper.ainvoke(
-                input={"session_id": "s1", "messages": []}, config={}
-            )
+            return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
         asyncio.run(_run())
         assert fresh_state.get_state("s1", _HALTED_KEY, False) is False
@@ -529,9 +544,7 @@ class TestPerTurnReset:
     def test_reset_allows_rearming(self, fresh_state):
         """After per-turn reset, a fresh repetitive stream warns again."""
         repetitive = "字" * 40
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=[msg_chunk(repetitive)])
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=[msg_chunk(repetitive)]))
         # First turn — warns
         out1 = _collect_stream(wrapper, session_id="s1")
         assert _has_warning(out1)
@@ -546,6 +559,7 @@ class TestPerTurnReset:
 # 6. Non-streaming (ainvoke) post-hoc detection
 # ======================================================================
 
+
 class TestNonStreamingPostHoc:
     """ainvoke path — post-hoc detection on the final AIMessage."""
 
@@ -558,9 +572,7 @@ class TestNonStreamingPostHoc:
         wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
 
         async def _run():
-            return await wrapper.ainvoke(
-                input={"session_id": "s1", "messages": []}, config={}
-            )
+            return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
         out = asyncio.run(_run())
         last = out["messages"][-1]
@@ -573,9 +585,7 @@ class TestNonStreamingPostHoc:
         wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
 
         async def _run():
-            return await wrapper.ainvoke(
-                input={"session_id": "s1", "messages": []}, config={}
-            )
+            return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
         out = asyncio.run(_run())
         assert out["messages"][-1].content == clean
@@ -590,9 +600,7 @@ class TestNonStreamingPostHoc:
         wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
 
         async def _run():
-            return await wrapper.ainvoke(
-                input={"session_id": "s1", "messages": []}, config={}
-            )
+            return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
         out = asyncio.run(_run())
         # Should pass through unchanged (tool_calls -> no detection)
@@ -605,9 +613,7 @@ class TestNonStreamingPostHoc:
         wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
 
         async def _run():
-            return await wrapper.ainvoke(
-                input={"session_id": "s1", "messages": []}, config={}
-            )
+            return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
         out = asyncio.run(_run())
         last = out["messages"][-1]
@@ -618,6 +624,7 @@ class TestNonStreamingPostHoc:
 # ======================================================================
 # 7. Tool-call chunks pass through
 # ======================================================================
+
 
 class TestToolCallPassthrough:
     """Tool-call chunks are forwarded unaffected by the guard."""
@@ -632,7 +639,8 @@ class TestToolCallPassthrough:
 
         # Tool call chunk should be in output
         tool_chunks = [
-            c for c in out
+            c
+            for c in out
             if c[0] == "messages"
             and isinstance(c[1][0], AIMessageChunk)
             and c[1][0].tool_call_chunks
@@ -644,6 +652,7 @@ class TestToolCallPassthrough:
 # ======================================================================
 # 8. HALT short-circuit
 # ======================================================================
+
 
 class TestHaltedShortCircuit:
     """When _HALTED_KEY is already set, model calls yield halt messages."""
@@ -695,13 +704,14 @@ class TestHaltedShortCircuit:
             warn_after=2,
             max_identical_outputs=3,
         )
-        out = _collect_stream(wrapper)
+        _collect_stream(wrapper)
         assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
 
 
 # ======================================================================
 # 9. Session isolation
 # ======================================================================
+
 
 class TestSessionIsolation:
     """Different sessions have independent repetition state."""
@@ -723,7 +733,7 @@ class TestSessionIsolation:
         assert _has_warning(out_a)
 
         # Session B — fresh state, no warning (only 2 calls, but B starts fresh)
-        out_b = _collect_stream(wrapper, session_id="sB")
+        _collect_stream(wrapper, session_id="sB")
         # B should also warn (same 2 identical calls, warn_after=2)
         # but its _HALTED_KEY should be independent
         assert fresh_state.get_state("sA", _HALTED_KEY, False) is False
@@ -733,6 +743,7 @@ class TestSessionIsolation:
 # ======================================================================
 # 10. Multiple model calls within one turn
 # ======================================================================
+
 
 class TestMultipleModelCalls:
     """model -> tool -> model -> tool -> model: cross-call works across calls."""
@@ -776,6 +787,7 @@ class TestMultipleModelCalls:
 # 11. Method delegation
 # ======================================================================
 
+
 class TestDelegation:
     """Unknown methods are delegated to the inner agent."""
 
@@ -809,6 +821,7 @@ class TestDelegation:
 # 12. Stream-mode passthrough
 # ======================================================================
 
+
 class TestStreamModePassthrough:
     """Non-"messages" stream_mode -> no interception, pass through."""
 
@@ -835,24 +848,25 @@ class TestStreamModePassthrough:
 # 13. Command resume input
 # ======================================================================
 
+
 class TestCommandResumeInput:
     """session_id extracted from Command.resume for HITL resume path."""
 
     def test_command_resume_session_id(self, fresh_state):
         from langgraph.types import Command
 
-        cmd = Command(resume={
-            "session_id": "cmd-session",
-            "decisions": [{"type": "approve"}],
-        })
+        cmd = Command(
+            resume={
+                "session_id": "cmd-session",
+                "decisions": [{"type": "approve"}],
+            }
+        )
         chunks = [msg_chunk("Normal clean response text here.")]
         wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
 
         async def _run():
             out = []
-            async for chunk in wrapper.astream(
-                cmd, config={}, stream_mode=["messages", "updates"]
-            ):
+            async for chunk in wrapper.astream(cmd, config={}, stream_mode=["messages", "updates"]):
                 out.append(chunk)
             return out
 
@@ -865,6 +879,7 @@ class TestCommandResumeInput:
 # ======================================================================
 # 14. Missing session_id
 # ======================================================================
+
 
 class TestMissingSessionId:
     """RuntimeError when session_id cannot be found."""
@@ -899,6 +914,7 @@ class TestMissingSessionId:
 # ======================================================================
 # 15. Configuration
 # ======================================================================
+
 
 class TestConfiguration:
     """Custom thresholds are respected."""
@@ -938,7 +954,7 @@ class TestConfiguration:
             warn_after=2,
             max_identical_outputs=5,
         )
-        out = _collect_stream(wrapper)
+        _collect_stream(wrapper)
         assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
 
     def test_custom_char_run_min(self, fresh_state):
@@ -957,6 +973,7 @@ class TestConfiguration:
 # ======================================================================
 # 16. End-of-stream boundary
 # ======================================================================
+
 
 class TestEndOfStreamBoundary:
     """If the stream ends mid-model-call, the boundary is still processed."""
@@ -983,6 +1000,7 @@ class TestEndOfStreamBoundary:
 # ======================================================================
 # 17. Non-model messages mode chunks
 # ======================================================================
+
 
 class TestNonModelMessages:
     """Chunks from non-model nodes (e.g. summarization) pass through."""
@@ -1018,6 +1036,7 @@ class TestNonModelMessages:
 # 18. Phantom-stream guard
 # ======================================================================
 
+
 class TestPhantomStreamGuard:
     """Model text arriving before ANY "updates" chunk cannot be live
     output of the middleware-equipped graph on a fresh dict-input run.
@@ -1047,9 +1066,7 @@ class TestPhantomStreamGuard:
         never touches the guard's detection state."""
         phantom = "Garbage model text arriving before any update!!"
         chunks = [msg_chunk(phantom)]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks), phantom_stream_guard=True)
         out = _collect_stream(wrapper)
         assert _text_parts(out) == ""
         assert not _has_warning(out)
@@ -1062,9 +1079,7 @@ class TestPhantomStreamGuard:
             msg_chunk("First phantom chunk before updates!!"),
             msg_chunk("Second phantom chunk before updates!"),
         ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks), phantom_stream_guard=True)
         out = _collect_stream(wrapper)
         assert _text_parts(out) == ""
 
@@ -1072,9 +1087,7 @@ class TestPhantomStreamGuard:
         """With the guard, the same repetitive phantom yields NO warning —
         it is dropped before accumulation/detection ever sees it."""
         chunks = [msg_chunk("x" * 30)]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks), phantom_stream_guard=True)
         out = _collect_stream(wrapper)
         assert not _has_warning(out)
         assert _text_parts(out) == ""
@@ -1089,9 +1102,7 @@ class TestPhantomStreamGuard:
             msg_chunk(reply),
             update_chunk("model", [AIMessage(content=reply)]),
         ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks), phantom_stream_guard=True)
         out = _collect_stream(wrapper)
         assert "x" * 30 not in _text_parts(out)  # phantom dropped
         assert reply in _text_parts(out)  # real reply survives
@@ -1104,9 +1115,7 @@ class TestPhantomStreamGuard:
             update_chunk("MultimodalProcessor.before_agent"),
             msg_chunk(reply),
         ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks), phantom_stream_guard=True)
         out = _collect_stream(wrapper)
         assert reply in _text_parts(out)
         assert not _has_warning(out)
@@ -1120,15 +1129,11 @@ class TestPhantomStreamGuard:
         cmd = Command(resume={"session_id": "cmd-session"})
         text = "Resume answer text that legitimately precedes updates."
         chunks = [msg_chunk(text)]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks), phantom_stream_guard=True)
 
         async def _run():
             out = []
-            async for chunk in wrapper.astream(
-                cmd, config={}, stream_mode=["messages", "updates"]
-            ):
+            async for chunk in wrapper.astream(cmd, config={}, stream_mode=["messages", "updates"]):
                 out.append(chunk)
             return out
 
@@ -1143,9 +1148,7 @@ class TestPhantomStreamGuard:
             update_chunk("MultimodalProcessor.before_agent"),
             msg_chunk("Normal text after updates arrives just fine."),
         ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks), phantom_stream_guard=True
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks), phantom_stream_guard=True)
         out = _collect_stream(wrapper)
         assert "Normal text after updates arrives just fine." in _text_parts(out)
         # the empty chunk was forwarded as-is

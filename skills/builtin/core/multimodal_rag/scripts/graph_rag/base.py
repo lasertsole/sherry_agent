@@ -38,6 +38,7 @@ async def _llm_model_func(
     response = await auxiliary_llm.ainvoke(messages)
     return response.content
 
+
 async def _embedding_func(texts: list[str]) -> np.ndarray:
     """将本地 embed_model 适配为 LightRAG 需要的格式"""
     embed_model = build_embed_model()
@@ -61,6 +62,7 @@ async def _rerank_model_func(
         }
         for r in results
     ]
+
 
 async def get_lightrag() -> LightRAG:
     """获取 LightRAG 单例实例"""

@@ -25,16 +25,94 @@ _NUDGE_MEMORY_THRESHOLD = 10
 _NUDGE_SKILL_THRESHOLD = 10
 
 
+def _reconcile_denials_for_persistence(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Re-attach denied tool calls so HITL denials survive persistence.
+
+    ``HumanInTheLoop.after_model`` strips rejected tool calls from the AIMessage
+    and appends the denial ``ToolMessage`` afterwards, which leaves the denial
+    orphaned (no AIMessage carries its ``tool_call_id`` anymore).
+    ``sanitize_tool_use_result_pairing`` drops orphaned ToolMessages, so the
+    rejection would be lost from MesMemory history.
+
+    This helper runs on the persistence slice only (never on graph state): for
+    every error-status ToolMessage whose ``tool_call_id`` no longer appears in
+    any AIMessage, the call is re-attached to the closest preceding AIMessage
+    (args are unrecoverable after the strip, so ``{}`` is used). The restored
+    pair then survives sanitization and is persisted as a normal tool row.
+    """
+    orphan_ids: set[str] = set()
+    for msg in messages:
+        if (
+            isinstance(msg, ToolMessage)
+            and getattr(msg, "status", "") == "error"
+            and getattr(msg, "content", "")
+        ):
+            tc_id = getattr(msg, "tool_call_id", None)
+            if isinstance(tc_id, str) and tc_id:
+                orphan_ids.add(tc_id)
+
+    if not orphan_ids:
+        return messages
+
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            for call in getattr(msg, "tool_calls", None) or []:
+                call_id = call.get("id") if isinstance(call, dict) else None
+                if isinstance(call_id, str):
+                    orphan_ids.discard(call_id)
+
+    if not orphan_ids:
+        return messages
+
+    out: list[BaseMessage] = []
+    n = len(messages)
+    for idx, msg in enumerate(messages):
+        if isinstance(msg, AIMessage):
+            # Peek at the following ToolMessage run (until the next AIMessage)
+            # WITHOUT consuming it — every message is still appended below.
+            attached: list[dict[str, Any]] = []
+            j = idx + 1
+            while j < n and not isinstance(messages[j], AIMessage):
+                t = messages[j]
+                if isinstance(t, ToolMessage):
+                    tc_id = getattr(t, "tool_call_id", None)
+                    if isinstance(tc_id, str) and tc_id in orphan_ids:
+                        attached.append(
+                            {
+                                "name": getattr(t, "name", None) or "unknown",
+                                "args": {},
+                                "id": tc_id,
+                                "type": "tool_call",
+                            }
+                        )
+                j += 1
+
+            if attached:
+                existing = [
+                    c for c in (getattr(msg, "tool_calls", None) or []) if isinstance(c, dict)
+                ]
+                existing_ids = {c.get("id") for c in existing}
+                merged = existing + [c for c in attached if c["id"] not in existing_ids]
+                msg = msg.model_copy(update={"tool_calls": merged})
+                for c in attached:
+                    orphan_ids.discard(c["id"])
+
+        out.append(msg)
+    return out
+
+
 class ContextEngineHook(AgentMiddleware):
     def __init__(self):
         super().__init__()
 
     @staticmethod
-    def _is_lock(session_id: str)-> bool:
-        return state_register_mem.get_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False) or state_register_mem.get_state(session_id, _NUDGE_SKILL_LOCK_KEY, False)
+    def _is_lock(session_id: str) -> bool:
+        return state_register_mem.get_state(
+            session_id, _NUDGE_MEMORY_LOCK_KEY, False
+        ) or state_register_mem.get_state(session_id, _NUDGE_SKILL_LOCK_KEY, False)
 
     @staticmethod
-    def _get_and_reload_system_prompt(session_id)-> str:
+    def _get_and_reload_system_prompt(session_id) -> str:
         system_prompt = state_register_mem.get_state(session_id, "system_prompt", None)
 
         if system_prompt is None:
@@ -78,7 +156,7 @@ class ContextEngineHook(AgentMiddleware):
                 )
             )
         )
-    
+
     # ------------------------------------------------------------------
     # Shared: tool call nudge counter (called by both sync and async)
     # ------------------------------------------------------------------
@@ -92,7 +170,9 @@ class ContextEngineHook(AgentMiddleware):
             return
 
         session_id = self._get_session_id_or_raise(request.state)
-        nudge_review_skill_count: int = state_register_db.get_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0) + 1
+        nudge_review_skill_count: int = (
+            state_register_db.get_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0) + 1
+        )
         state_register_db.set_state(session_id, _NUDGE_SKILL_COUNT_KEY, nudge_review_skill_count)
 
     @override
@@ -169,12 +249,8 @@ class ContextEngineHook(AgentMiddleware):
             )
             return None
 
-        need_nudge_review_memory: bool = (
-            nudge_review_memory_count >= _NUDGE_MEMORY_THRESHOLD
-        )
-        need_nudge_skill_memory: bool = (
-            nudge_review_skill_count >= _NUDGE_SKILL_THRESHOLD
-        )
+        need_nudge_review_memory: bool = nudge_review_memory_count >= _NUDGE_MEMORY_THRESHOLD
+        need_nudge_skill_memory: bool = nudge_review_skill_count >= _NUDGE_SKILL_THRESHOLD
 
         logger.debug(
             "nudge_review_memory_count is {}, need_nudge_review_memory is {}",
@@ -201,12 +277,16 @@ class ContextEngineHook(AgentMiddleware):
             if need_nudge_skill_memory:
                 state_register_db.set_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0)
 
-        return session_id, system_prompt, messages, need_nudge_review_memory, need_nudge_skill_memory
+        return (
+            session_id,
+            system_prompt,
+            messages,
+            need_nudge_review_memory,
+            need_nudge_skill_memory,
+        )
 
     @override
-    def after_agent(
-        self, state: StateT, runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
+    def after_agent(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         logger.debug("{} after_agent hook fired", type(self).__name__)
         result = self._after_agent_impl(state)
         if result is None:
@@ -238,7 +318,13 @@ class ContextEngineHook(AgentMiddleware):
         # Persist last turn messages to MesMemory
         all_messages: list[BaseMessage] = cast("list[BaseMessage]", state["messages"])
         last_turn_messages: list[BaseMessage] = slice_last_turn(all_messages)["messages"]
-        format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(last_turn_messages)
+        # HITL rejections leave the denial ToolMessage orphaned (after_model
+        # strips the rejected tool_call); re-pair it so it survives sanitization
+        # and is persisted. Persistence copies only — graph state is untouched.
+        last_turn_messages = _reconcile_denials_for_persistence(last_turn_messages)
+        format_last_turn_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(
+            last_turn_messages
+        )
 
         # Sanitize the full message list before feeding any nudge sub-agent. The
         # persist path above already sanitizes its slice; the nudge agents build

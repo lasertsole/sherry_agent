@@ -70,18 +70,26 @@ async def put_curator_settings_handler(request):
     elif isinstance(raw, bool) or not isinstance(raw, int):
         # Bool is an int subclass; reject it too. Only true integers (not
         # floats like 2.5, not strings like "") satisfy this branch.
-        return {
-            "success": False,
-            "error": (
-                "auto_interval_days must be a whole number "
-                f"between {_INTERVAL_MIN_DAYS} and {_INTERVAL_MAX_DAYS} (or null)"
-            ),
-        }, {}, 400
+        return (
+            {
+                "success": False,
+                "error": (
+                    "auto_interval_days must be a whole number "
+                    f"between {_INTERVAL_MIN_DAYS} and {_INTERVAL_MAX_DAYS} (or null)"
+                ),
+            },
+            {},
+            400,
+        )
     elif not (_INTERVAL_MIN_DAYS <= raw <= _INTERVAL_MAX_DAYS):
-        return {
-            "success": False,
-            "error": f"auto_interval_days must be between {_INTERVAL_MIN_DAYS} and {_INTERVAL_MAX_DAYS} days",
-        }, {}, 400
+        return (
+            {
+                "success": False,
+                "error": f"auto_interval_days must be between {_INTERVAL_MIN_DAYS} and {_INTERVAL_MAX_DAYS} days",
+            },
+            {},
+            400,
+        )
     else:
         days = raw
 

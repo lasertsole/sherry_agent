@@ -22,7 +22,7 @@
 
 ### ハイブリッドアーキテクチャ
 
-```
+```text
 +--------------------------------------------------------------+
 |                フロントエンド（Nuxt 4 SPA、app/）              |
 |  Vue 3 コンポーネント + composables + Pinia + mitt バス        |
@@ -51,7 +51,7 @@
 
 ### データフロー
 
-```
+```text
 ユーザー操作（Vue コンポーネント）
     -> bridge.ts（Tauri / ブラウザモードを自動判定）
         |
@@ -70,7 +70,7 @@
 
 ## ディレクトリ構成
 
-```
+```text
 client/
 ├── .env.example                   # 環境変数テンプレート（VITE_APP_NAME、VITE_API_BACK_URL）
 ├── eslint.config.mjs              # ESLint flat 設定
@@ -212,7 +212,7 @@ client/
 
 ### コンポーネント階層
 
-```
+```text
 app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元）
   └─ NuxtLayout（layouts/default.vue）
        └─ NuxtPage

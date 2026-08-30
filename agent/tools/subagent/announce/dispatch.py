@@ -61,7 +61,9 @@ async def run_announce_dispatch(
         except Exception as e:
             logger.warning(
                 "Dispatch strategy {} failed for run {}: {}",
-                strategy_name, run.run_id, e,
+                strategy_name,
+                run.run_id,
+                e,
             )
             continue
 

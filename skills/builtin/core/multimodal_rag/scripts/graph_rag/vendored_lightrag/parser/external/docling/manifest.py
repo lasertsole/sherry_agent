@@ -1,4 +1,4 @@
-﻿"""Helpers for building ``_manifest.json`` for docling raw bundles.
+"""Helpers for building ``_manifest.json`` for docling raw bundles.
 
 Wraps the generic :class:`Manifest` schema with docling-specific knowledge:
 

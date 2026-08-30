@@ -1,1 +1,1 @@
-from .core import SenseVoiceSmall
+from .core import SenseVoiceSmall as SenseVoiceSmall

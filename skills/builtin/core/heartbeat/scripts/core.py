@@ -26,7 +26,8 @@ def _section_content_indices(lines: list[str], heading_idx: int) -> tuple[int, l
             break
 
     content_indices = [
-        j for j in range(heading_idx + 1, next_heading_idx)
+        j
+        for j in range(heading_idx + 1, next_heading_idx)
         if lines[j].strip() and not lines[j].strip().startswith("<!--")
     ]
     return next_heading_idx, content_indices
@@ -41,6 +42,7 @@ def ensure_heartbeat_file_exists() -> None:
         print(f"Copied HEARTBEAT.md from template to {dst}")
     else:
         print("HEARTBEAT.md already exists")
+
 
 def add_task_to_heartbeat(task_text: str, index: int | None = None) -> str:
     """Add a task item under the ``## Active Tasks`` section in HEARTBEAT.md.
@@ -68,9 +70,7 @@ def add_task_to_heartbeat(task_text: str, index: int | None = None) -> str:
 
     if index is not None:
         if not (0 <= index <= len(content_indices)):
-            raise IndexError(
-                f"Index {index} out of range for {len(content_indices)} task lines"
-            )
+            raise IndexError(f"Index {index} out of range for {len(content_indices)} task lines")
         insert_at = content_indices[index]
     else:
         # Append: after the last content line, or just after the heading if empty
@@ -152,7 +152,9 @@ def remove_tasks_from_completed(task_text: str | list[str] | None = None) -> str
             indices_to_remove.extend(matched)
         indices_to_remove = list(dict.fromkeys(indices_to_remove))
     else:
-        indices_to_remove = [idx for idx in completed_contents if task_text.strip() in lines[idx].strip()]
+        indices_to_remove = [
+            idx for idx in completed_contents if task_text.strip() in lines[idx].strip()
+        ]
         if not indices_to_remove:
             error_text: str = f"No task matching '{task_text}' found in ## Completed"
             logger.error(error_text)

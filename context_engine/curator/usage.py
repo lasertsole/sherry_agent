@@ -29,6 +29,7 @@ def _skill_dir(name: str) -> Path | None:
     name (mirrors ``skill_manage._find_skill``).
     """
     from context_engine.curator.constants import AUTO_SKILLS_DIR
+
     candidate = AUTO_SKILLS_DIR / name
     if candidate.is_dir() and (candidate / "SKILL.md").exists():
         return candidate
@@ -180,12 +181,15 @@ def delete_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
 
 def agent_created_report() -> list[dict[str, Any]]:
     from context_engine.curator.constants import AUTO_SKILLS_DIR
+
     rows: list[dict[str, Any]] = []
     if not AUTO_SKILLS_DIR.exists():
         return rows
     # Walk recursively: skills live at depth 2 (skills/auto/<category>/<skill>/SKILL.md).
     # A flat iterdir() only sees category dirs and misses every nested skill.
-    for skill_md in sorted(AUTO_SKILLS_DIR.glob("**/SKILL.md"), key=lambda p: p.parent.name.lower()):
+    for skill_md in sorted(
+        AUTO_SKILLS_DIR.glob("**/SKILL.md"), key=lambda p: p.parent.name.lower()
+    ):
         entry = skill_md.parent
         if entry.name.startswith("."):
             continue

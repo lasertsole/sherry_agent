@@ -88,7 +88,9 @@ else:
     _mmproj_path = _MODEL_WEIGHT_DIR / _MMPROJ_FILENAME
 
     # Fallback: check auxiliary_llm's model_weight directory (may already exist)
-    _aux_model_weight = Path(__file__).parent.parent.resolve() / "LLMs" / "auxiliary_llm" / "model_weight"
+    _aux_model_weight = (
+        Path(__file__).parent.parent.resolve() / "LLMs" / "auxiliary_llm" / "model_weight"
+    )
     _fallback_gguf_path = _aux_model_weight / _GGUF_FILENAME
 
     # ------------------------------------------------------------------
@@ -97,7 +99,7 @@ else:
 
     def _resolve_model_path() -> str:
         """Return the local GGUF path, downloading from Hugging Face if needed.
-        
+
         Checks in order:
           1. ITTT_model/model_weight/
           2. auxiliary_llm/model_weight/ (copy to ITTT dir if found)
@@ -110,6 +112,7 @@ else:
         if _fallback_gguf_path.is_file():
             print(f"Copying GGUF from {_fallback_gguf_path} -> {_gguf_path} ...")
             import shutil
+
             _MODEL_WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(_fallback_gguf_path), str(_gguf_path))
             return str(_gguf_path)

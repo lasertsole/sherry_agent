@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Mock } from 'vitest';
+import type { ToastMessageOptions } from 'primevue/toast';
 import { defineComponent, h, ref } from 'vue';
 import { mount } from '@vue/test-utils';
 import { useErrorCaptured, type MsgRefType } from '../errorCaptured';
@@ -25,7 +27,7 @@ const BoomChild = defineComponent({
   setup() {
     throw new Error('boom-from-child');
   },
-  render: () => null,
+  render: () => null
 });
 
 /** Child component that throws a string */
@@ -34,7 +36,7 @@ const StringChild = defineComponent({
   setup() {
     throw 'plain-string-error';
   },
-  render: () => null,
+  render: () => null
 });
 
 /** Child component that throws a circular-reference object */
@@ -45,7 +47,7 @@ const CircularChild = defineComponent({
     circular.self = circular;
     throw circular;
   },
-  render: () => null,
+  render: () => null
 });
 
 /** Unnamed child component ($options.name is empty → 'unknown component') */
@@ -53,7 +55,7 @@ const AnonymousChild = defineComponent({
   setup() {
     throw new Error('anonymous-error');
   },
-  render: () => null,
+  render: () => null
 });
 
 /** Child component with only __name (simulates the compiled output of a `<script setup>` SFC) */
@@ -62,7 +64,7 @@ const SfcLikeChild = defineComponent({
   setup() {
     throw new Error('sfc-like-error');
   },
-  render: () => null,
+  render: () => null
 });
 
 /** Page shell: invokes the factory function and renders the child component */
@@ -71,25 +73,28 @@ function makePage(child: ReturnType<typeof defineComponent>, msgRef?: ReturnType
     setup(_, { slots }) {
       useErrorCaptured(msgRef);
       return () => h('div', slots.default?.());
-    },
+    }
   });
 }
 
-function mountWithChild(child: ReturnType<typeof defineComponent>, opts?: { errorHandler?: (...args: unknown[]) => void; msgRef?: ReturnType<typeof ref<MsgRefType | undefined>> }) {
+function mountWithChild(
+  child: ReturnType<typeof defineComponent>,
+  opts?: { errorHandler?: (...args: unknown[]) => void; msgRef?: ReturnType<typeof ref<MsgRefType | undefined>> }
+) {
   const Page = makePage(child, opts?.msgRef);
   return mount(Page, {
     slots: { default: () => h(child) },
-    global: opts?.errorHandler ? { config: { errorHandler: opts.errorHandler as never } } : undefined,
+    global: opts?.errorHandler ? { config: { errorHandler: opts.errorHandler as never } } : undefined
   });
 }
 
 describe('useErrorCaptured 工厂函数', () => {
-  let add: ReturnType<typeof vi.fn>;
+  let add: Mock<(message: ToastMessageOptions) => void>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     _setClientFlag(true);
-    add = vi.fn();
+    add = vi.fn<(message: ToastMessageOptions) => void>();
     registerToastApi({ add });
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -109,49 +114,34 @@ describe('useErrorCaptured 工厂函数', () => {
       expect.objectContaining({
         severity: 'error',
         summary: 'errors.pageError',
-        detail: 'boom-from-child',
-      }),
+        detail: 'boom-from-child'
+      })
     );
     // logUtil.e: `<component name> happened error...` + the normalized errMsg
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'BoomChild happened error...',
-      'boom-from-child',
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith('BoomChild happened error...', 'boom-from-child');
     // return false stops propagation: app.config.errorHandler is not triggered
     expect(appHandler).not.toHaveBeenCalled();
   });
 
   it('string 类型错误按原样标准化', () => {
     mountWithChild(StringChild);
-    expect(add).toHaveBeenCalledWith(
-      expect.objectContaining({ detail: 'plain-string-error' }),
-    );
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ detail: 'plain-string-error' }));
   });
 
   it('循环引用对象回退为 String(err)，且记录序列化失败日志', () => {
     mountWithChild(CircularChild);
-    expect(add).toHaveBeenCalledWith(
-      expect.objectContaining({ detail: '[object Object]' }),
-    );
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to serialize err'),
-    );
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ detail: '[object Object]' }));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to serialize err'));
   });
 
   it('无名子组件日志记为 unknown component', () => {
     mountWithChild(AnonymousChild);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'unknown component happened error...',
-      'anonymous-error',
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith('unknown component happened error...', 'anonymous-error');
   });
 
   it('仅有 __name 的 SFC 风格子组件回退取 __name 作为组件名', () => {
     mountWithChild(SfcLikeChild);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'SfcLikeProbe happened error...',
-      'sfc-like-error',
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith('SfcLikeProbe happened error...', 'sfc-like-error');
   });
 
   it('注入自定义 msgRef 时走 MsgRefType.open（文档接口约定），不再触发全局 toast', () => {
@@ -165,7 +155,7 @@ describe('useErrorCaptured 工厂函数', () => {
       message: 'boom-from-child',
       type: 'text',
       position: 'bottom',
-      duration: 1500,
+      duration: 1500
     });
     expect(add).not.toHaveBeenCalled();
     expect(appHandler).not.toHaveBeenCalled();

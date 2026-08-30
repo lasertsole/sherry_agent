@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+
 def has_traversal_component(path_str: str) -> bool:
     """Return True if *path_str* contains traversal components (e.g. ``..``
     or Windows dot-only names like ``...`` / ``....`` that resolve to parent).
@@ -9,6 +10,7 @@ def has_traversal_component(path_str: str) -> bool:
     """
     parts = Path(path_str).parts
     return any(re.compile(r"\.{2,}").fullmatch(p) for p in parts)
+
 
 def validate_within_dir(path: Path, root: Path) -> str | None:
     """Ensure *path* resolves to a location within *root*.

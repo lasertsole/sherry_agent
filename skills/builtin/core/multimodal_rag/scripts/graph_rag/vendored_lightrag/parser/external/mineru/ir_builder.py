@@ -1,4 +1,4 @@
-﻿"""MinerU IR builder: ``content_list.json`` (+ images/) → :class:`IRDoc`.
+"""MinerU IR builder: ``content_list.json`` (+ images/) → :class:`IRDoc`.
 
 Input contract: a ``*.mineru_raw/`` directory containing at least
 ``content_list.json``. Optional sibling resources (``images/``,
@@ -128,17 +128,11 @@ class MinerUIRBuilder:
         """
         content_list_path = raw_dir / "content_list.json"
         if not content_list_path.is_file():
-            raise FileNotFoundError(
-                f"MinerU raw bundle missing content_list.json at {raw_dir}"
-            )
+            raise FileNotFoundError(f"MinerU raw bundle missing content_list.json at {raw_dir}")
         content_list = json.loads(content_list_path.read_text(encoding="utf-8"))
         if not isinstance(content_list, list):
-            raise ValueError(
-                f"MinerU content_list.json malformed (not a JSON array) at {raw_dir}"
-            )
-        return self._normalize_content_list(
-            content_list, raw_dir, document_name=document_name
-        )
+            raise ValueError(f"MinerU content_list.json malformed (not a JSON array) at {raw_dir}")
+        return self._normalize_content_list(content_list, raw_dir, document_name=document_name)
 
     # ------------------------------------------------------------------
     # Core
@@ -217,8 +211,7 @@ class MinerUIRBuilder:
                 cb_bbox_positions = []
                 return
             positions = [
-                IRPosition(type="bbox", anchor=p)
-                for p in _sort_page_anchors(cb_page_set)
+                IRPosition(type="bbox", anchor=p) for p in _sort_page_anchors(cb_page_set)
             ] + list(cb_bbox_positions)
             blocks.append(
                 IRBlock(
@@ -478,11 +471,7 @@ class MinerUIRBuilder:
             # which MinerU supplied a separate ``header`` grid keeps that grid —
             # the writer renders it to a (span-less) ``<thead>`` rather than
             # silently dropping the recovered header.
-            if (
-                table_header is None
-                and isinstance(table_header_raw, list)
-                and table_header_raw
-            ):
+            if table_header is None and isinstance(table_header_raw, list) and table_header_raw:
                 table_header = _normalize_grid(table_header_raw)
         elif isinstance(table_header_raw, list) and table_header_raw:
             table_header = _normalize_grid(table_header_raw)
@@ -538,9 +527,7 @@ class MinerUIRBuilder:
                 asset = AssetSpec(
                     ref=ref,
                     suggested_name=suggested_name,
-                    source=local_path
-                    if local_path is not None and local_path.is_file()
-                    else None,
+                    source=local_path if local_path is not None and local_path.is_file() else None,
                 )
                 seen[ref] = suggested_name
 

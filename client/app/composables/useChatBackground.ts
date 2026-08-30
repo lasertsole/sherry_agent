@@ -2,41 +2,55 @@ import { computed, ref } from 'vue';
 import { readBackgroundConfig, saveBackground } from '@/composables/db';
 
 /**
- * 聊天区背景图共享单例（模块级响应式状态）。
+ * Shared singleton for the chat-area background image (module-level reactive state).
  *
- * 背景图是**全局**（非按会话）配置：用户在「系统设置 → 背景设置」上传，写入 Dexie 的
- * 全局唯一行（GLOBAL_SESSION_KEY）。为了让「保存后立即生效、无需刷新」，背景图状态必须
- * 是**真正的模块级单例**——`backgroundUrl`/`backgroundOpacity`/`backgroundLoaded` 声明在
- * 模块顶层（函数外），每次调用 `useChatBackground()` 都返回对**同一份** ref 的引用，
- * 而非各自的副本。
+ * The background image is a **global** (not per-session) setting: the user uploads it
+ * in "System Settings → Background Settings", which writes to Dexie's single global
+ * row (GLOBAL_SESSION_KEY). So that "saving takes effect immediately, without a
+ * refresh", the background state must be a **true module-level singleton** —
+ * `backgroundUrl`/`backgroundOpacity`/`backgroundLoaded` are declared at the module
+ * top level (outside the function); every call to `useChatBackground()` returns a
+ * reference to the **same** refs, not separate copies.
  *
- * 否则（若把 ref 声明在函数内）每次调用都会各自创建独立状态：`home/index.vue` 根容器绑定的
- * 与 `ConfigDialog.vue` 保存时修改的是两套互不相通的 ref，保存只会更新对话框自己的那份，
- * 根容器绑定不变 → 背景无法即时刷新，必须整页 reload 从 Dexie 重读才生效。这正是此前
- * 「保存后需刷新」bug 的根因。
+ * Otherwise (if the refs were declared inside the function), each call would create
+ * its own independent state: the ref bound by the `home/index.vue` root container and
+ * the ref modified when `ConfigDialog.vue` saves would be two isolated sets; saving
+ * would only update the dialog's own copy, the root container's binding would not
+ * change → the background would not refresh immediately, requiring a full page reload
+ * that re-reads from Dexie to take effect. This was exactly the root cause of the
+ * former "refresh required after saving" bug.
  *
- * 注意：`colorMode` 必须在函数内调用（`useColorMode()` 依赖 Nuxt setup 上下文），因此
- * `chatBackgroundStyle`/`chatBackgroundOverlayStyle` 这两个 computed 也要留在函数内——
- * 它们读取的 `backgroundUrl`/`backgroundOpacity` 是模块级共享的，两处调用各自持有
- * computed，但都反射同一份 ref，故仍能一致、即时地响应式更新。
+ * Note: `colorMode` must be called inside the function (`useColorMode()` depends on
+ * the Nuxt setup context), so the two computeds `chatBackgroundStyle`/
+ * `chatBackgroundOverlayStyle` must also stay inside the function — the
+ * `backgroundUrl`/`backgroundOpacity` they read are module-level shared; each call
+ * site holds its own computed, but both reflect the same refs, so they still update
+ * reactively, consistently and immediately.
  *
- * - `loadBackground()`：幂等，首次调用从 Dexie 读取并填充单例状态（组件 onMounted 调用）。
- * - `setBackground(url, opacity)`：同步更新单例状态 + 持久化到 Dexie，供 ConfigDialog
- *   保存时调用（写入后所有共享该单例的组件立即响应，无需刷新）。
- * - `setBackgroundOpacity(opacity)`：仅更新透明度 + 持久化（保留现有背景图）。
- * - `chatBackgroundStyle`：响应式样式对象，**浅色/深色主题下均**在有背景图时返回
- *   background-image（深色主题同样展示照片）。
- * - `chatBackgroundOverlayStyle`：响应式遮罩样式。浅色主题下为白色遮罩、深色主题下为
- *   黑色遮罩，`opacity` = slider 值/100 —— 值越大照片越被冲淡成纯白/纯黑，直到完全遮蔽。
+ * - `loadBackground()`: idempotent; the first call reads from Dexie and fills the
+ *   singleton state (called from components in onMounted).
+ * - `setBackground(url, opacity)`: updates the singleton state synchronously +
+ *   persists to Dexie; called by ConfigDialog on save (after writing, every component
+ *   sharing the singleton reacts immediately, no refresh needed).
+ * - `setBackgroundOpacity(opacity)`: updates only the opacity + persists (keeps the
+ *   current background image).
+ * - `chatBackgroundStyle`: reactive style object; returns a background-image in
+ *   **both light and dark themes** when a background image exists (the photo is shown
+ *   in dark mode too).
+ * - `chatBackgroundOverlayStyle`: reactive overlay style. White overlay in the light
+ *   theme, black in the dark theme, `opacity` = slider value/100 — the higher the
+ *   value, the more the photo is washed out toward pure white/pure black, until fully
+ *   obscured.
  */
 
-// ── 模块级共享状态（真正的单例）──
-// 所有 useChatBackground() 调用方共享这同一份 ref；setBackground 修改后全局即时生效。
+// ── Module-level shared state (the true singleton) ──
+// All useChatBackground() callers share these same refs; changes via setBackground
+// take effect globally and immediately.
 const backgroundUrl = ref('');
 const backgroundOpacity = ref(0);
 const backgroundLoaded = ref(false);
 
-/** 模块级幂等加载：首次读取 Dexie 填充单例状态 */
+/** Module-level idempotent load: reads Dexie on the first call and fills the singleton state */
 const loadBackground = async () => {
   if (backgroundLoaded.value) return;
   try {
@@ -51,8 +65,9 @@ const loadBackground = async () => {
 };
 
 /**
- * 模块级设置：同步更新共享单例状态 + 持久化到 Dexie。
- * 传入空字符串表示清除背景。持久化失败不抛出（前端本地缓存失败不应阻塞保存流程）。
+ * Module-level setter: updates the shared singleton state synchronously + persists to
+ * Dexie. Passing an empty string clears the background. Persistence failures do not
+ * throw (a local frontend cache failure must not block the save flow).
  */
 const setBackground = async (url: string, opacity: number = backgroundOpacity.value) => {
   backgroundUrl.value = url;
@@ -64,7 +79,7 @@ const setBackground = async (url: string, opacity: number = backgroundOpacity.va
   }
 };
 
-/** 模块级更新遮罩透明度（保留现有背景图），持久化到 Dexie */
+/** Module-level overlay-opacity update (keeps the current background image), persisted to Dexie */
 const setBackgroundOpacity = async (opacity: number) => {
   backgroundOpacity.value = opacity;
   try {
@@ -77,7 +92,7 @@ const setBackgroundOpacity = async (opacity: number) => {
 export function useChatBackground() {
   const colorMode = useColorMode();
 
-  /** 聊天区背景样式：浅色/深色主题下，有背景图时均应用 background-image */
+  /** Chat-area background style: applies background-image in both light/dark themes when a background image exists */
   const chatBackgroundStyle = computed(() => {
     if (!backgroundUrl.value) return undefined;
     return {
@@ -88,7 +103,7 @@ export function useChatBackground() {
     };
   });
 
-  /** 聊天区遮罩样式：浅色=白色 / 深色=黑色，opacity 随 slider 递增，「越满越白/越黑直至遮蔽」 */
+  /** Chat-area overlay style: light=white / dark=black, opacity grows with the slider — "the fuller it gets, the whiter/blacker until the photo is obscured" */
   const chatBackgroundOverlayStyle = computed(() => {
     const overlayColor = colorMode.value === 'light' ? '#ffffff' : '#000000';
     return {

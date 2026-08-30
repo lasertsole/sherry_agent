@@ -75,8 +75,6 @@ class TestRunWithWorkAdmission:
 
     @pytest.mark.asyncio
     async def test_exception_does_not_crash(self):
-        result = []
-
         async def bad_work():
             raise RuntimeError("test error")
 

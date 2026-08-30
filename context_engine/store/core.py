@@ -8,7 +8,8 @@ from langchain_core.messages import BaseMessage
 
 
 # Shared SQLite connection instance used by all store operations in this module.
-_db:sqlite3.Connection = get_db()
+_db: sqlite3.Connection = get_db()
+
 
 def get_max_turn_num(session_id: str) -> int:
     """Get the maximum turn_num recorded for a session.
@@ -16,10 +17,10 @@ def get_max_turn_num(session_id: str) -> int:
     Returns 0 when the session has no messages yet.
     """
     max_turn_num_row = _db.execute(
-        "SELECT MAX(turn_num) FROM messages WHERE session_id = ?",
-        (session_id,)
+        "SELECT MAX(turn_num) FROM messages WHERE session_id = ?", (session_id,)
     ).fetchone()
     return max_turn_num_row[0] if max_turn_num_row and max_turn_num_row[0] is not None else 0
+
 
 async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     """Persist a batch of LangChain messages as a new turn in the messages table.
@@ -32,12 +33,12 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
         messages: The LangChain BaseMessage list (human / ai / tool roles).
     """
     # Early exit when there is nothing to persist.
-    if messages is None or len(messages)==0:
+    if messages is None or len(messages) == 0:
         return
 
     # A turn here is a group of messages. Each add_messages call starts a new turn.
     current_turn: int = get_max_turn_num(session_id)
-    current_turn+=1
+    current_turn += 1
 
     # All messages in this batch share the same timestamp (YYYYMMDDHHmmss).
     base_timestamp: str = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -53,7 +54,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             # are optional: some providers omit them, so every lookup is
             # guarded and defaults to None.
             response_metadata: dict[str, Any] = getattr(m, "response_metadata", None) or {}
-            model_name: str | None = response_metadata.get("model_name") or response_metadata.get("model")
+            model_name: str | None = response_metadata.get("model_name") or response_metadata.get(
+                "model"
+            )
             usage_metadata: dict[str, Any] | None = getattr(m, "usage_metadata", None)
             input_tokens: int | None = None
             output_tokens: int | None = None
@@ -74,28 +77,30 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             ai_additional_kwargs: dict[str, Any] = getattr(m, "additional_kwargs", None) or {}
             reasoning_text: str | None = ai_additional_kwargs.get("reasoning_content") or None
 
-            insert_rows.append({
-                "session_id": session_id,
-                "turn_num": current_turn,
-                "role": m.type,
-                "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
-                "tool_call_id": None,
-                "tool_calls": json.dumps(getattr(m, "tool_calls", None), ensure_ascii=False),
-                "tool_status": None,
-                "tool_name": None,
-                "timestamp": base_timestamp,
-                "finish_reason": None,
-                "reasoning": reasoning_text,
-                "reasoning_content": None,
-                "images": None,
-                "audios": None,
-                "videos": None,
-                "model_name": model_name,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-            })
+            insert_rows.append(
+                {
+                    "session_id": session_id,
+                    "turn_num": current_turn,
+                    "role": m.type,
+                    "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
+                    "tool_call_id": None,
+                    "tool_calls": json.dumps(getattr(m, "tool_calls", None), ensure_ascii=False),
+                    "tool_status": None,
+                    "tool_name": None,
+                    "timestamp": base_timestamp,
+                    "finish_reason": None,
+                    "reasoning": reasoning_text,
+                    "reasoning_content": None,
+                    "images": None,
+                    "audios": None,
+                    "videos": None,
+                    "model_name": model_name,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                }
+            )
         elif m.type == "human":
-            additional_kwargs:dict[str, str] = getattr(m, "additional_kwargs", {})
+            additional_kwargs: dict[str, str] = getattr(m, "additional_kwargs", {})
 
             # Filter out human messages produced by summarization,
             # so compressed history doesn't pollute the raw store.
@@ -107,51 +112,56 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             audios: list[str] = additional_kwargs.get("audios", []) or []
             videos: list[str] = additional_kwargs.get("videos", []) or []
 
-            insert_rows.append({
-                "session_id": session_id,
-                "turn_num": current_turn,
-                "role": m.type,
-                "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
-                "tool_call_id": None,
-                "tool_calls": None,
-                "tool_status": None,
-                "tool_name": None,
-                "timestamp": base_timestamp,
-                "finish_reason": None,
-                "reasoning": None,
-                "reasoning_content": None,
-                "images": json.dumps(images, ensure_ascii=False) if images else None,
-                "audios": json.dumps(audios, ensure_ascii=False) if audios else None,
-                "videos": json.dumps(videos, ensure_ascii=False) if videos else None,
-                "model_name": None,
-                "input_tokens": None,
-                "output_tokens": None,
-            })
+            insert_rows.append(
+                {
+                    "session_id": session_id,
+                    "turn_num": current_turn,
+                    "role": m.type,
+                    "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
+                    "tool_call_id": None,
+                    "tool_calls": None,
+                    "tool_status": None,
+                    "tool_name": None,
+                    "timestamp": base_timestamp,
+                    "finish_reason": None,
+                    "reasoning": None,
+                    "reasoning_content": None,
+                    "images": json.dumps(images, ensure_ascii=False) if images else None,
+                    "audios": json.dumps(audios, ensure_ascii=False) if audios else None,
+                    "videos": json.dumps(videos, ensure_ascii=False) if videos else None,
+                    "model_name": None,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                }
+            )
         elif m.type == "tool":
             # Tool message: carry tool metadata (call id, name, execution status).
-            insert_rows.append({
-                "session_id": session_id,
-                "turn_num": current_turn,
-                "role": m.type,
-                "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
-                "tool_call_id": getattr(m, "tool_call_id", None),
-                "tool_calls": None,
-                "tool_name": getattr(m, "name", None),
-                "tool_status": getattr(m, "status", "success"),
-                "finish_reason": None,
-                "reasoning": None,
-                "reasoning_content": None,
-                "timestamp": base_timestamp,
-                "images": None,
-                "audios": None,
-                "videos": None,
-                "model_name": None,
-                "input_tokens": None,
-                "output_tokens": None,
-            })
+            insert_rows.append(
+                {
+                    "session_id": session_id,
+                    "turn_num": current_turn,
+                    "role": m.type,
+                    "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
+                    "tool_call_id": getattr(m, "tool_call_id", None),
+                    "tool_calls": None,
+                    "tool_name": getattr(m, "name", None),
+                    "tool_status": getattr(m, "status", "success"),
+                    "finish_reason": None,
+                    "reasoning": None,
+                    "reasoning_content": None,
+                    "timestamp": base_timestamp,
+                    "images": None,
+                    "audios": None,
+                    "videos": None,
+                    "model_name": None,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                }
+            )
 
     # Bulk-insert all accumulated rows in a single transaction.
-    _db.executemany("""
+    _db.executemany(
+        """
         INSERT INTO messages (
             session_id,
             turn_num,
@@ -191,12 +201,17 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             :input_tokens,
             :output_tokens
         )
-    """, insert_rows)
+    """,
+        insert_rows,
+    )
 
     # Persist the batch atomically.
     _db.commit()
 
-def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scope: int = 5) -> list[dict]:
+
+def get_turns_by_turn_num_scope(
+    session_id: str, target_turn_num: int, half_scope: int = 5
+) -> list[dict]:
     """Fetch messages whose turn_num falls within a range centered on a target turn.
 
     Args:
@@ -219,11 +234,14 @@ def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scop
         max_turn_num = min(max_turn_num, target_turn_num + half_scope)
         min_turn_num = max(min_turn_num, target_turn_num - half_scope)
 
-        rows = _db.execute(f"""
+        rows = _db.execute(
+            """
             SELECT * FROM messages 
             WHERE session_id = ? AND turn_num >= ? AND turn_num <= ?
             ORDER BY turn_num DESC, id ASC
-        """, (session_id, min_turn_num, max_turn_num)).fetchall()
+        """,
+            (session_id, min_turn_num, max_turn_num),
+        ).fetchall()
 
         if rows is None or len(rows) == 0:
             return []
@@ -245,6 +263,7 @@ def get_turns_by_turn_num_scope(session_id: str, target_turn_num: int, half_scop
             result.append(row)
 
         return result
+
 
 @validate_call
 def get_history_by_turn_page(
@@ -284,11 +303,14 @@ def get_history_by_turn_page(
         if target_start_turn_num < min_turn_num:
             target_start_turn_num = min_turn_num
 
-        rows = _db.execute("""
+        rows = _db.execute(
+            """
             select * from messages
             where session_id = ? and turn_num >= ? and turn_num <= ?
             ORDER BY turn_num DESC, id ASC
-        """, (session_id, target_start_turn_num, target_end_turn_num)).fetchall()
+        """,
+            (session_id, target_start_turn_num, target_end_turn_num),
+        ).fetchall()
 
         if rows is None or len(rows) == 0:
             return []
@@ -317,7 +339,9 @@ def get_messages_by_lastest_n_turns(session_id: str, last_n: int = 5) -> list[di
 
     Delegates to paginated history with page 1 and the desired page size.
     """
-    return get_history_by_turn_page(session_id, min_turn_num=1, turn_page_size=last_n, turn_page_num=1)
+    return get_history_by_turn_page(
+        session_id, min_turn_num=1, turn_page_size=last_n, turn_page_num=1
+    )
 
 
 def delete_messages_by_session(session_id: str) -> int:
@@ -334,10 +358,7 @@ def delete_messages_by_session(session_id: str) -> int:
         The number of rows deleted.
     """
     with _db:
-        cur = _db.execute(
-            "DELETE FROM messages WHERE session_id = ?",
-            (session_id,)
-        )
+        cur = _db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
     return cur.rowcount
 
 
@@ -357,7 +378,11 @@ def _decode_title_content(raw_content: str | None) -> str:
         return decoded.strip()
     if isinstance(decoded, list):
         for part in decoded:
-            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            ):
                 return part["text"].strip()
     return ""
 
@@ -418,17 +443,24 @@ def get_session_ids() -> list[dict]:
         # instead of leaking the raw session_id.
         title: str = ""
         with _db:
-            last_msg = _db.execute("""
+            last_msg = _db.execute(
+                """
                 SELECT content FROM messages
                 WHERE session_id = ? AND role = 'human'
                 ORDER BY turn_num DESC, id DESC
                 LIMIT 1
-            """, (session_id,)).fetchone()
+            """,
+                (session_id,),
+            ).fetchone()
         if last_msg is not None:
-            title = _decode_title_content(last_msg["content"] if last_msg["content"] is not None else None)
-        result.append({
-            "session_id": session_id,
-            "last_time": str(row["last_time"]),
-            "title": title,
-        })
+            title = _decode_title_content(
+                last_msg["content"] if last_msg["content"] is not None else None
+            )
+        result.append(
+            {
+                "session_id": session_id,
+                "last_time": str(row["last_time"]),
+                "title": title,
+            }
+        )
     return result

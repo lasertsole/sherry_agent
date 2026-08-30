@@ -1,4 +1,3 @@
-import pytest
 from agent.tools.subagent.spawn.gateway_dispatch import resolve_least_privilege_scopes
 from agent.tools.subagent.types.capability import SubagentSessionRole
 

@@ -1,4 +1,5 @@
 """Read file tool with pagination support (offset + limit) and line numbers."""
+
 import json
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
@@ -10,9 +11,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 class ReadFileInput(BaseModel):
     """Input schema for paginated read_file."""
 
-    file_path: str = Field(
-        description="Path to the file to read (absolute, relative, or ~/path)"
-    )
+    file_path: str = Field(description="Path to the file to read (absolute, relative, or ~/path)")
     offset: int = Field(
         default=1,
         ge=1,
@@ -60,7 +59,9 @@ class ReadFileTool(BaseTool):
         try:
             resolved = resolve_path(file_path)
         except PathOutOfBoundsError:
-            return json.dumps({"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False
+            )
 
         if not resolved.exists():
             return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)
@@ -130,7 +131,6 @@ class ReadFileTool(BaseTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         return self._core(file_path, offset, limit)
-
 
 
 def build_read_file_tool() -> ReadFileTool:

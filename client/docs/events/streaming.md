@@ -15,7 +15,7 @@ The `bridge.ts` composable handles this transparently in both Tauri and browser 
 
 ## Event Lifecycle
 
-```
+```text
 agent:stream:start  -->  agent:stream:chunk  (x N)  -->  agent:stream:end
                               |
                               +-->  agent:stream:error  (on failure)

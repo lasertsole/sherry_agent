@@ -31,6 +31,7 @@ def _write(path: Path, text: str) -> None:
 # _list_log_files
 # ---------------------------------------------------------------------------
 
+
 class TestListLogFiles:
     def test_empty_dir(self, log_dir: Path):
         assert logs._list_log_files(log_dir) == []
@@ -44,7 +45,9 @@ class TestListLogFiles:
         _write(log_dir / "all" / "all_2024-01-01_1234.log", "trace\n")
         _write(log_dir / "error" / "error_2024-01-02_5678.log", "boom\n")
         # Only unpacked ``.log`` files are considered.
-        log_dir.joinpath("info", "info_2024-01-03_9999.log.zip").write_text("dummy", encoding="utf-8")
+        log_dir.joinpath("info", "info_2024-01-03_9999.log.zip").write_text(
+            "dummy", encoding="utf-8"
+        )
         # Ignore non-log directories and non-log files entirely.
         (log_dir / "other").mkdir()
         (log_dir / "other" / "info_2024-01-04_1111.log").write_text("x", encoding="utf-8")
@@ -97,7 +100,6 @@ class TestListLogFiles:
         _write(old, "old\n")
         _write(new, "new\n")
         # Give "new" a later mtime to guarantee ordering.
-        import time
         t_old = old.stat().st_mtime
         os.utime(new, (t_old + 10, t_old + 10))
         files = logs._list_log_files(log_dir)
@@ -131,6 +133,7 @@ class TestListLogFiles:
 # _resolve_log_path
 # ---------------------------------------------------------------------------
 
+
 class TestResolveLogPath:
     @patch.object(logs, "LOG_DIR", lambda: None)  # placeholder; replaced below
     def _ctx(self, log_dir: Path):
@@ -146,6 +149,7 @@ class TestResolveLogPath:
         # The path travels as a URL query param, so backslashes/colons arrive
         # percent-encoded (e.g. `C:%5C...`). It must be unquoted before use.
         import urllib.parse
+
         p = log_dir / "info_2024-01-01_2.log"
         _write(p, "x\n")
         encoded = urllib.parse.quote(str(p))
@@ -192,6 +196,7 @@ class TestResolveLogPath:
 # ---------------------------------------------------------------------------
 # _tail_lines
 # ---------------------------------------------------------------------------
+
 
 class TestTailLines:
     def test_empty_file(self, tmp_path: Path):
@@ -240,6 +245,7 @@ class TestTailLines:
 # ---------------------------------------------------------------------------
 # WebSocket sink + serializer (pure helpers)
 # ---------------------------------------------------------------------------
+
 
 class TestLogSinkSerialization:
     def test_serialize_record_shape(self):

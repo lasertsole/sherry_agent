@@ -11,10 +11,12 @@ class Trigger(BaseModel):
     callback: Callable
     args: dict[str, Any] = Field(default_factory=dict)
 
+
 class CountCallRegister(Register):
     """
     Count register for tracking and triggering callbacks
     """
+
     def __init__(self):
         if self._initialized:
             return
@@ -25,7 +27,15 @@ class CountCallRegister(Register):
 
         self._initialized = True
 
-    def register(self, session_id: str, name: str, callback: Callable, threshold: int = 1, args: dict[str, Any] = None, execute_now: bool = False)-> bool:
+    def register(
+        self,
+        session_id: str,
+        name: str,
+        callback: Callable,
+        threshold: int = 1,
+        args: dict[str, Any] = None,
+        execute_now: bool = False,
+    ) -> bool:
         """
         Register a counter with callback
 
@@ -48,7 +58,9 @@ class CountCallRegister(Register):
             return False
 
         self.session_id_to_counter.setdefault(session_id, {})[name] = 0
-        self.session_id_to_trigger.setdefault(session_id, {})[name] = Trigger(threshold = threshold, callback = callback, args = args)
+        self.session_id_to_trigger.setdefault(session_id, {})[name] = Trigger(
+            threshold=threshold, callback=callback, args=args
+        )
 
         # Execute immediately if requested
         if execute_now:
@@ -56,13 +68,17 @@ class CountCallRegister(Register):
                 result = callback(**args)
                 if inspect.iscoroutine(result):
                     self._callback_executor.run_coroutine(result)
-                logger.debug(f"[count_call_register] execute_now: callback '{name}' triggered immediately for session {session_id}")
+                logger.debug(
+                    f"[count_call_register] execute_now: callback '{name}' triggered immediately for session {session_id}"
+                )
             except Exception:
-                logger.exception(f"[count_call_register] execute_now: callback '{name}' failed for session {session_id}")
+                logger.exception(
+                    f"[count_call_register] execute_now: callback '{name}' failed for session {session_id}"
+                )
 
         return True
 
-    def unregister(self, session_id: str, name: str)-> bool:
+    def unregister(self, session_id: str, name: str) -> bool:
         """
         Unregister a counter
         """
@@ -75,8 +91,7 @@ class CountCallRegister(Register):
 
         return True
 
-
-    def increase(self, session_id: str, name: str)-> bool:
+    def increase(self, session_id: str, name: str) -> bool:
         """
         Increase counter value
         """
@@ -84,7 +99,7 @@ class CountCallRegister(Register):
             logger.error(f"{name} is not registered")
             return False
 
-        now_counter:int = self.session_id_to_counter.setdefault(session_id, {})[name] + 1
+        now_counter: int = self.session_id_to_counter.setdefault(session_id, {})[name] + 1
 
         trigger: Trigger = self.session_id_to_trigger.setdefault(session_id, {})[name]
         threshold: int = trigger.threshold
@@ -120,5 +135,6 @@ class CountCallRegister(Register):
     def clear_session(self, session_id: str):
         self.session_id_to_counter.pop(session_id, None)
         self.session_id_to_trigger.pop(session_id, None)
+
 
 count_call_register = CountCallRegister()

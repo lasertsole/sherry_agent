@@ -19,7 +19,9 @@ def resolve_configured_subagent_run_timeout_seconds(
     return get_config().run_timeout_seconds
 
 
-def resolve_run_deadline_ms(started_at: float | None, timeout_seconds: float | None = None) -> float | None:
+def resolve_run_deadline_ms(
+    started_at: float | None, timeout_seconds: float | None = None
+) -> float | None:
     """Compute the absolute deadline timestamp from a start time and timeout."""
     if started_at is None:
         return None

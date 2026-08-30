@@ -7,8 +7,9 @@
  * |-------|------|----------|-------------|
  * | `session_id` | `string` | Yes | Session to stop |
  */
-export type StopRequest = { 
-/**
- * The session whose generation should be cancelled.
- */
-session_id: string, };
+export type StopRequest = {
+  /**
+   * The session whose generation should be cancelled.
+   */
+  session_id: string;
+};

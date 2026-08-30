@@ -28,9 +28,7 @@ class CallbackExecutor:
         """Lazy-start the background thread and loop."""
         if self._thread is None or not self._thread.is_alive():
             self._start_event.clear()
-            self._thread = threading.Thread(
-                target=self._run_loop, daemon=True, name=self._name
-            )
+            self._thread = threading.Thread(target=self._run_loop, daemon=True, name=self._name)
             self._thread.start()
             self._start_event.wait(timeout=5)
 

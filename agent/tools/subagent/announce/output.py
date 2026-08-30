@@ -30,10 +30,24 @@ def build_child_completion_findings(run: SubagentRunRecord) -> str:
 def build_compact_announce_stats_line(runs: list[SubagentRunRecord]) -> str:
     """Build a compact one-line stats summary across multiple sub-agent runs."""
     total = len(runs)
-    ok = sum(1 for r in runs if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.OK)
-    errors = sum(1 for r in runs if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.ERROR)
-    timeouts = sum(1 for r in runs if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.TIMEOUT)
-    killed = sum(1 for r in runs if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.KILLED)
+    ok = sum(
+        1 for r in runs if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.OK
+    )
+    errors = sum(
+        1
+        for r in runs
+        if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.ERROR
+    )
+    timeouts = sum(
+        1
+        for r in runs
+        if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.TIMEOUT
+    )
+    killed = sum(
+        1
+        for r in runs
+        if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.KILLED
+    )
     total_runtime_ms = sum(r.accumulated_runtime_ms for r in runs)
 
     parts = [f"total={total} ok={ok} errors={errors} timeouts={timeouts} killed={killed}"]

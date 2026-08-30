@@ -1,24 +1,30 @@
 import type { Config } from 'dompurify';
 
 /**
- * DOMPurify 统一净化配置 —— 聊天消息 markdown 渲染专用（v-safe-html 指令）。
+ * Unified DOMPurify sanitization configuration — dedicated to chat-message markdown
+ * rendering (the v-safe-html directive).
  *
- * 设计要点：
- *  - 白名单 = markdown-it 核心（v15，默认 preset、无插件）的完整输出标签集：
- *    块级（p/blockquote/hr/ul/ol/li/pre/code/标题/表格）+ 行内（strong/em/s/del/a/img/br/span）。
- *    本项目未启用语法高亮（shiki/hljs）、公式（KaTeX）或任务列表插件，
- *    因此无需为它们放行标签；原始 HTML 中不在白名单的标签（div/section/video…）
- *    会被整体移除（文本内容保留），这是刻意的收窄。
- *  - 片段模式：md.render() 输出的是 HTML 片段而非完整文档，
- *    绝不能开启 WHOLE_DOCUMENT（会把输出包上 <html><body> 破坏片段语义）。
- *  - style 属性必须放行：markdown-it 的 GFM 表格对齐通过
- *    th/td 上的 style="text-align:…" 实现；属性值本身仍由 DOMPurify 净化。
- *  - ALLOW_DATA_ATTR: false —— 原始 HTML 里的 data-* 一律剥离。
+ * Design points:
+ *  - Allowlist = the full output tag set of markdown-it core (v15, default preset,
+ *    no plugins): block-level (p/blockquote/hr/ul/ol/li/pre/code/headings/tables) +
+ *    inline (strong/em/s/del/a/img/br/span).
+ *    This project does not enable syntax highlighting (shiki/hljs), math (KaTeX), or
+ *    task-list plugins, so no tags need to be allowed for them; raw-HTML tags outside
+ *    the allowlist (div/section/video…) are removed wholesale (their text content is
+ *    kept) — this narrowing is intentional.
+ *  - Fragment mode: md.render() outputs an HTML fragment, not a full document;
+ *    WHOLE_DOCUMENT must never be enabled (it would wrap the output in <html><body>,
+ *    breaking fragment semantics).
+ *  - The style attribute must be allowed: markdown-it's GFM table alignment is
+ *    implemented via style="text-align:…" on th/td; the attribute value itself is
+ *    still sanitized by DOMPurify.
+ *  - ALLOW_DATA_ATTR: false — data-* attributes in raw HTML are stripped without
+ *    exception.
  */
 export const chatPurifyConfig: Config = {
   WHOLE_DOCUMENT: false,
   ALLOWED_TAGS: [
-    // 块级
+    // Block-level
     'p',
     'br',
     'hr',
@@ -40,7 +46,7 @@ export const chatPurifyConfig: Config = {
     'tr',
     'th',
     'td',
-    // 行内
+    // Inline
     'strong',
     'em',
     's',
@@ -56,11 +62,11 @@ export const chatPurifyConfig: Config = {
     // img
     'src',
     'alt',
-    // code（fence 的 language-* class）、span 等
+    // code (the fence's language-* class), span, etc.
     'class',
-    // GFM 表格对齐（th/td 的 text-align）
+    // GFM table alignment (text-align on th/td)
     'style',
-    // v-safe-html 钩子为外链补写的 rel="noopener noreferrer"
+    // rel="noopener noreferrer" added to external links by the v-safe-html hook
     'rel'
   ],
   ALLOW_DATA_ATTR: false

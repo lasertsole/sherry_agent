@@ -10,6 +10,8 @@ from server.service import process_heartbeat_task, process_heartbeat_notify
 from pub_func import string_to_unique_int, check_if_image_and_convert_to_base64
 
 """Channel inbound message handler"""
+
+
 async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> None:
     user_input_text: str = message.content
     user_input_media: list[str] = getattr(message, "media", [])
@@ -17,51 +19,67 @@ async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> Non
     # Process media attachments
     image_base64_list: list[str] = []
     for url in user_input_media:
-
         # Check if URL points to an image
         is_img, content_type, fmt, base64_str = check_if_image_and_convert_to_base64(url)
         if is_img and base64_str:
             image_base64_list.append(base64_str)
 
-    user_input: MultiModalMessage = MultiModalMessage(text = user_input_text, image_base64_list = image_base64_list)
+    user_input: MultiModalMessage = MultiModalMessage(
+        text=user_input_text, image_base64_list=image_base64_list
+    )
 
     # Session ID is derived from the channel name only
-    session_id:str = str(string_to_unique_int(channel.name))
+    session_id: str = str(string_to_unique_int(channel.name))
 
     # Register channel session (idempotent)
-    relation_register.register_channel_chat(session_id=session_id, channel_id=channel.name, chat_id=message.chat_id)
+    relation_register.register_channel_chat(
+        session_id=session_id, channel_id=channel.name, chat_id=message.chat_id
+    )
 
     ai_reply: str = ""
-    stream = async_generate(session_id = session_id, multi_modal_message = user_input, is_stream = False)
+    stream = async_generate(session_id=session_id, multi_modal_message=user_input, is_stream=False)
     async for item in stream:
         ai_reply += item["content"]
 
-    await channel.send(OutboundMessage(channel=channel.name, chat_id = message.chat_id, content = ai_reply))
+    await channel.send(
+        OutboundMessage(channel=channel.name, chat_id=message.chat_id, content=ai_reply)
+    )
+
 
 # Set channel inbound consumer
 channel_manager.set_inbound_consumer(_process_inbound)
 
+
 async def _process_outbound(message: OutboundMessage, channel: BaseChannel) -> None:
-    session_id:str = str(string_to_unique_int(channel.name))
+    session_id: str = str(string_to_unique_int(channel.name))
 
     # Register channel session (idempotent)
-    relation_register.register_channel_chat(session_id=session_id, channel_id=channel.name, chat_id=message.chat_id)
+    relation_register.register_channel_chat(
+        session_id=session_id, channel_id=channel.name, chat_id=message.chat_id
+    )
+
 
 # Set channel outbound consumer
 channel_manager.set_outbound_consumer(_process_outbound)
 """End channel inbound/outbound handlers"""
 
 """Heartbeat event handler"""
+
+
 async def _process_heartbeat_task(task: str) -> str:
     return await process_heartbeat_task(task=task)
 
+
 heartbeat_service.on_execute = _process_heartbeat_task
+
 
 async def _process_heartbeat_notify(agent_res: str) -> None:
     return await process_heartbeat_notify(agent_res)
 
+
 heartbeat_service.on_notify = _process_heartbeat_notify
 """End heartbeat event handler"""
+
 
 def _run() -> None:
     # Get the event loop from the channel manager so heartbeat and cron services share the same loop

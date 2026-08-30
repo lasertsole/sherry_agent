@@ -1,4 +1,4 @@
-﻿"""Docling parser integration (raw client, cache, manifest, IR adapter).
+"""Docling parser integration (raw client, cache, manifest, IR adapter).
 
 Public surface for the rest of the codebase. ``parse_docling`` imports
 only from this facade so the inner module layout stays free to evolve.

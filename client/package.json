@@ -7,7 +7,7 @@
     "dev": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "typecheck": "vue-tsc --noEmit",
+    "typecheck": "vue-tsc --noEmit -p .nuxt/tsconfig.app.json",
     "postinstall": "nuxt prepare",
     "test": "vitest run",
     "test:watch": "vitest",

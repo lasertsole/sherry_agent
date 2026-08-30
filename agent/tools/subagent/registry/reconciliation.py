@@ -14,6 +14,7 @@ from ..types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, Run
 
 class SubagentSessionCompletion(BaseModel):
     """Represents an inferred completion result for a sub-agent session."""
+
     started_at: float | None = None
     ended_at: float
     outcome: RunOutcome
@@ -93,7 +94,9 @@ def resolve_completion_from_session_entry(
     if session_status == "failed":
         return SubagentSessionCompletion(
             ended_at=ended_at,
-            outcome=RunOutcome(status=RunOutcomeStatus.ERROR, error="session completed before registry settled"),
+            outcome=RunOutcome(
+                status=RunOutcomeStatus.ERROR, error="session completed before registry settled"
+            ),
             reason="error",
         )
     if session_status == "killed":

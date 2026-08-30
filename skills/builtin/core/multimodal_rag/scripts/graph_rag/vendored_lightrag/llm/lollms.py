@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import warnings
 
 if sys.version_info < (3, 9):
@@ -35,9 +35,7 @@ from graph_rag.vendored_lightrag.utils import (
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def lollms_model_if_cache(
     model,
@@ -138,9 +136,7 @@ async def lollms_model_if_cache(
 
             return inner()
         else:
-            async with session.post(
-                f"{base_url}/lollms_generate", json=request_data
-            ) as response:
+            async with session.post(f"{base_url}/lollms_generate", json=request_data) as response:
                 return await response.text()
 
 

@@ -1,5 +1,3 @@
-import type { Response } from "@/types/response";
-
 export interface EnvEntry {
   key: string;
   value: string;
@@ -11,15 +9,16 @@ export interface EnvGroup {
   entries: EnvEntry[];
 }
 
-/** 后端 `/env` 返回的原始结构（分组列表） */
+/** Raw structure returned by the backend `/env` endpoint (a list of groups) */
 export interface EnvConfigPayload {
   groups: EnvGroup[];
 }
 
 /**
- * 读取项目 .env 配置（按前缀分组）。
- * 请求失败时抛出异常，交由调用方区分「请求错误」与「真实空 .env」，
- * 避免把网络/鉴权失败误报为「未找到 .env 文件」。
+ * Read the project's .env configuration (grouped by prefix).
+ * Throws on request failure so callers can distinguish a "request error" from a
+ * genuinely empty .env, avoiding misreporting network/auth failures as "no .env file
+ * found".
  */
 export async function readEnvConfig(): Promise<EnvConfigPayload> {
   // Backend `GET /env` returns the group payload directly (NOT wrapped in
@@ -36,7 +35,7 @@ export async function readEnvConfig(): Promise<EnvConfigPayload> {
   const res = await fetchApi({
     url: '/env',
     opts: { _ts: Date.now() },
-    method: 'get',
+    method: 'get'
   });
   // `res` is never null in practice on success (backend responds with the full
   // payload). Guard against an empty body while preserving the `{ groups }`
@@ -45,19 +44,20 @@ export async function readEnvConfig(): Promise<EnvConfigPayload> {
 }
 
 /**
- * 更新 .env 中已存在 key 的值。
- * @param changes 形如 { KEY: "new value" }；仅接受文件中已存在的 key。
- * @returns 成功 true，失败 false
+ * Update the values of keys that already exist in .env.
+ * @param changes Shaped like { KEY: "new value" }; only keys already present in the
+ *   file are accepted.
+ * @returns true on success, false on failure
  */
 export async function writeEnvConfig(changes: Record<string, string>): Promise<boolean> {
   try {
     await fetchApi({
       url: '/env',
       opts: { changes },
-      method: 'put',
+      method: 'put'
     });
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }

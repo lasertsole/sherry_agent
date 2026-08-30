@@ -14,9 +14,10 @@ BLACKLIST = {"rm -rf /", "mkfs", "shutdown", "reboot"}
 
 class SafeShellTool(ShellTool):
     """
-        name: str = "terminal"
-        description: str = "Run shell commands in a sandboxed workspace."
+    name: str = "terminal"
+    description: str = "Run shell commands in a sandboxed workspace."
     """
+
     def __init__(self, root_dir):
         super().__init__(root_dir=root_dir)
         # Detect system encoding (Windows typically uses GBK/codepage 936)
@@ -62,9 +63,7 @@ class SafeShellTool(ShellTool):
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(ROOT_DIR),
             )
-            stdout_bytes, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=TERMINAL_TIMEOUT
-            )
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=TERMINAL_TIMEOUT)
             output = stdout_bytes.decode(self._encoding, errors="replace")
             if proc.returncode != 0:
                 return f"Exit code {proc.returncode}\n{output}"
@@ -73,7 +72,9 @@ class SafeShellTool(ShellTool):
             if proc:
                 proc.kill()
                 await proc.communicate()
-            logger.warning("terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120])
+            logger.warning(
+                "terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120]
+            )
             return (
                 f"Terminal command timed out after {TERMINAL_TIMEOUT} seconds. "
                 "The command was forcibly terminated. Please try a simpler command."
@@ -111,7 +112,9 @@ class SafeShellTool(ShellTool):
             if proc:
                 proc.kill()
                 proc.communicate()
-            logger.warning("terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120])
+            logger.warning(
+                "terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120]
+            )
             return (
                 f"Terminal command timed out after {TERMINAL_TIMEOUT} seconds. "
                 "The command was forcibly terminated. Please try a simpler command."
@@ -121,7 +124,6 @@ class SafeShellTool(ShellTool):
 
 
 def build_terminal_tool() -> SafeShellTool:
-    tool = SafeShellTool(root_dir = str(ROOT_DIR))
+    tool = SafeShellTool(root_dir=str(ROOT_DIR))
     tool.handle_tool_error = True
     return tool
-

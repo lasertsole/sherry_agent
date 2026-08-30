@@ -18,7 +18,9 @@ def _read_dotenv(key: str, default: str = "") -> str:
     """Parse from .env file only, avoiding os.environ (to skip load_dotenv side effects)."""
     try:
         text = ENV_PATH.read_text(encoding="utf-8")
-        for mobj in re.finditer(rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$', text, re.MULTILINE):
+        for mobj in re.finditer(
+            rf"^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$", text, re.MULTILINE
+        ):
             raw = mobj.group(1)
             raw = raw.strip("\"'").strip()
             if raw:
@@ -51,16 +53,24 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
     api_name = _read_dotenv("EMBEDDING_API_NAME")
 
     if not api_base:
-        _abort("EMBEDDING_API_BASE is empty — remote embedding requires API base URL (e.g. https://api.modelarts-maas.com/v1)")
+        _abort(
+            "EMBEDDING_API_BASE is empty — remote embedding requires API base URL (e.g. https://api.modelarts-maas.com/v1)"
+        )
     if not api_key:
         _abort("EMBEDDING_API_KEY is empty — remote embedding requires API Key")
     if not api_name:
         _abort("EMBEDDING_API_NAME is empty — remote embedding requires model name (e.g. bge-m3)")
     if not provider:
-        _abort("EMBEDDING_MODEL_PROVIDER is empty — remote embedding requires model provider (e.g. openai)")
+        _abort(
+            "EMBEDDING_MODEL_PROVIDER is empty — remote embedding requires model provider (e.g. openai)"
+        )
 
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    return "remote", False, {"provider": provider, "api_base": api_base, "api_key": api_key, "api_name": api_name}
+    return (
+        "remote",
+        False,
+        {"provider": provider, "api_base": api_base, "api_key": api_key, "api_name": api_name},
+    )
 
 
 # ─────────────────────────────────────────────
@@ -172,5 +182,6 @@ class CustomEmbedding(Embeddings):
             return self._embed_local([text])[0]
         return self._embed_remote([text])[0]
 
-def build_embed_model()-> CustomEmbedding:
+
+def build_embed_model() -> CustomEmbedding:
     return CustomEmbedding()

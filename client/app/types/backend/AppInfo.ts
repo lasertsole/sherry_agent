@@ -10,20 +10,21 @@
  * | `tauri_version` | `string` | Tauri runtime version |
  * | `debug` | `boolean` | `true` in debug builds |
  */
-export type AppInfo = { 
-/**
- * Application name (from Cargo.toml).
- */
-name: string, 
-/**
- * Semantic version.
- */
-version: string, 
-/**
- * Rust toolchain / Tauri runtime info.
- */
-tauri_version: string, 
-/**
- * Whether the application is running in debug mode.
- */
-debug: boolean, };
+export type AppInfo = {
+  /**
+   * Application name (from Cargo.toml).
+   */
+  name: string;
+  /**
+   * Semantic version.
+   */
+  version: string;
+  /**
+   * Rust toolchain / Tauri runtime info.
+   */
+  tauri_version: string;
+  /**
+   * Whether the application is running in debug mode.
+   */
+  debug: boolean;
+};

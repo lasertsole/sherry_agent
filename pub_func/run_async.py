@@ -2,7 +2,7 @@ import asyncio
 import threading
 
 
-_tool_loop = None          # persistent loop for the main (CLI) thread
+_tool_loop = None  # persistent loop for the main (CLI) thread
 _worker_thread_local = threading.local()
 _tool_loop_lock = threading.Lock()
 
@@ -21,12 +21,13 @@ def _get_worker_loop():
     By keeping the loop alive for the thread's lifetime, cached clients
     stay valid and their cleanup runs on a live loop.
     """
-    loop = getattr(_worker_thread_local, 'loop', None)
+    loop = getattr(_worker_thread_local, "loop", None)
     if loop is None or loop.is_closed():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         _worker_thread_local.loop = loop
     return loop
+
 
 def _get_tool_loop():
     """Return a long-lived event loop for running async tool handlers.
@@ -41,6 +42,7 @@ def _get_tool_loop():
         if _tool_loop is None or _tool_loop.is_closed():
             _tool_loop = asyncio.new_event_loop()
         return _tool_loop
+
 
 def run_async(coro, timeout: float = 300):
     """Run an async coroutine from a sync context.

@@ -32,7 +32,7 @@ const vueAutoImports = {
   reactive: Vue.reactive,
   nextTick: Vue.nextTick,
   useTemplateRef: Vue.useTemplateRef,
-  defineModel: () => Vue.ref(''), // defineModel is a compiler macro; fallback no-op
+  defineModel: () => Vue.ref('') // defineModel is a compiler macro; fallback no-op
 };
 for (const [name, impl] of Object.entries(vueAutoImports)) {
   (globalThis as any)[name] = impl;
@@ -41,13 +41,11 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
 // Nuxt auto-import used by `requestApi.ts` (called from `get_history_by_turn_page`).
 (globalThis as any).useFetch = vi.fn().mockReturnValue({
   data: { value: null },
-  error: { value: null },
+  error: { value: null }
 });
 
 // Nuxt auto-import used by `messages.ts` / `workspace.ts` / `bridge.ts`.
-(globalThis as any).fetchApi = vi.fn(() =>
-  Promise.resolve({ code: 200, data: null }),
-);
+(globalThis as any).fetchApi = vi.fn(() => Promise.resolve({ code: 200, data: null }));
 
 // Nuxt auto-import called inline at setup by `home/index.vue`
 // (`get_history_by_turn_page('default', 0, 10, 1)`). Resolve to an empty list so the
@@ -57,7 +55,7 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
 // Nuxt auto-import used by `ModeSwitch.vue` for dark/light theme.
 (globalThis as any).useColorMode = vi.fn(() => ({
   preference: 'light',
-  value: 'light',
+  value: 'light'
 }));
 
 // Nuxt auto-import used by `home/index.vue` / `ModeSwitch.vue` (Pinia UI store,
@@ -76,7 +74,7 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
     },
     toggleSidebar: () => {
       state.sidebarCollapsed = !state.sidebarCollapsed;
-    },
+    }
   });
   return state;
 });
@@ -88,7 +86,7 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   previewSrc: Vue.ref(''),
   isPreviewVisible: Vue.ref(false),
   openPreview: vi.fn(),
-  closePreview: vi.fn(),
+  closePreview: vi.fn()
 }));
 
 // Nuxt auto-import used by `home/index.vue` / `ConfigDialog.vue` for the global
@@ -116,16 +114,16 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
         backgroundImage: `url("${backgroundUrl.value}")`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
+        backgroundRepeat: 'no-repeat'
       };
     }),
     chatBackgroundOverlayStyle: Vue.computed(() => {
       const colorMode = (globalThis as any).useColorMode?.() ?? { value: 'light' };
       return {
         backgroundColor: colorMode.value === 'light' ? '#ffffff' : '#000000',
-        opacity: backgroundOpacity.value / 100,
+        opacity: backgroundOpacity.value / 100
       };
-    }),
+    })
   };
 });
 
@@ -137,17 +135,15 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   replace: vi.fn(async () => {}),
   back: vi.fn(),
   go: vi.fn(),
-  currentRoute: Vue.ref({ path: '/home', params: {}, query: {} }),
+  currentRoute: Vue.ref({ path: '/home', params: {}, query: {} })
 }));
 (globalThis as any).useRoute = vi.fn(() => ({
   path: '/home',
   fullPath: '/home',
   params: {} as Record<string, string>,
-  query: {} as Record<string, string>,
+  query: {} as Record<string, string>
 }));
-(globalThis as any).useLocalePath = vi.fn((to?: unknown) =>
-  typeof to === 'string' ? to : '/',
-);
+(globalThis as any).useLocalePath = vi.fn((to?: unknown) => (typeof to === 'string' ? to : '/'));
 
 // Pinia auto-import used by `home/index.vue` (:307, :310) to destructure the
 // UI store. Faithful to Pinia's contract: state keys become refs bound to the
@@ -203,10 +199,10 @@ class FakeWebSocket {
 // worker at the 4GB heap limit (~5M lines of "[clientLog] failed to persist
 // entry" spam). Keep the module's real API but never install the capture in
 // integration tests.
-vi.mock('@/composables/clientLog', async (importOriginal) => {
+vi.mock('@/composables/clientLog', async importOriginal => {
   const actual = await importOriginal<typeof import('@/composables/clientLog')>();
   return {
     ...actual,
-    installClientLogCapture: () => {},
+    installClientLogCapture: () => {}
   };
 });

@@ -16,5 +16,5 @@ __all__ = [
     "RelationManager",
     "relation_register",
     "TimerCallRegister",
-    "timer_call_register"
+    "timer_call_register",
 ]

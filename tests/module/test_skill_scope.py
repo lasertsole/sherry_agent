@@ -29,6 +29,7 @@ from agent.tools.skill_tools.skill_manage import _validate_frontmatter, build_sk
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
+
 def _write_skill(skills_dir, rel_dir: str, frontmatter: str) -> None:
     skill_dir = skills_dir / rel_dir
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +97,7 @@ _SCOPE_FIXTURE = [
 # scan_skills — scope parsing
 # ---------------------------------------------------------------------------
 
+
 class TestScanSkillsScope:
     def test_scope_parsed_and_carried(self, scope_skills_dir):
         skills = {s["name"]: s for s in scan_skills(use_cache=False)}
@@ -119,10 +121,13 @@ class TestScanSkillsScope:
 # get_skills_text — caller-scope filtering
 # ---------------------------------------------------------------------------
 
+
 class TestGetSkillsTextScope:
     @pytest.fixture(autouse=True)
     def _patch_scan(self, monkeypatch):
-        monkeypatch.setattr(loader_module, "scan_skills", lambda use_cache=True: list(_SCOPE_FIXTURE))
+        monkeypatch.setattr(
+            loader_module, "scan_skills", lambda use_cache=True: list(_SCOPE_FIXTURE)
+        )
 
     def test_main_sees_all_except_subagent_only(self):
         xml = get_skills_text(caller_scope="main")
@@ -147,7 +152,9 @@ class TestGetSkillsTextScope:
         xml = get_skills_text(selected_skill_names=["mainly"], caller_scope="subagent")
         assert "mainly" not in xml
 
-        xml = get_skills_text(selected_skill_names=["mainly", "shared_tool"], caller_scope="subagent")
+        xml = get_skills_text(
+            selected_skill_names=["mainly", "shared_tool"], caller_scope="subagent"
+        )
         assert "shared_tool" in xml
         assert "mainly" not in xml
 
@@ -161,6 +168,7 @@ class TestGetSkillsTextScope:
 # ---------------------------------------------------------------------------
 # skill_view — denial for subagent callers
 # ---------------------------------------------------------------------------
+
 
 class TestSkillViewScope:
     @pytest.fixture
@@ -214,6 +222,7 @@ class TestSkillViewScope:
 # skill_list — caller-scope filtering
 # ---------------------------------------------------------------------------
 
+
 class TestSkillListScope:
     @pytest.fixture(autouse=True)
     def _patch_scan(self, monkeypatch):
@@ -250,6 +259,7 @@ class TestSkillListScope:
 # ---------------------------------------------------------------------------
 # skill_manage — frontmatter scope validation + tool metadata tag
 # ---------------------------------------------------------------------------
+
 
 class TestSkillManageScopeValidation:
     def _frontmatter(self, scope_line: str | None) -> str:

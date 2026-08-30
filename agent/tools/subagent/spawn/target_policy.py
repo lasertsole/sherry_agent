@@ -9,7 +9,9 @@ def resolve_allowed_target_ids(agent_id: str | None = None) -> list[str]:
     return config.allow_agents
 
 
-def is_target_allowed(target_agent_id: str, allow_agents: list[str] | None = None) -> tuple[bool, str]:
+def is_target_allowed(
+    target_agent_id: str, allow_agents: list[str] | None = None
+) -> tuple[bool, str]:
     """Check whether a target agent ID is in the allow-list; '*' permits all."""
     if allow_agents is None:
         allow_agents = resolve_allowed_target_ids()

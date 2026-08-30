@@ -1,5 +1,7 @@
 <template>
-  <div ref="containerRef" class="w-full h-full" />
+  <div
+    ref="containerRef"
+    class="w-full h-full" />
 </template>
 
 <script lang="ts" setup>
@@ -45,7 +47,8 @@ const buildSpec = (): G2Spec => {
   const height = Math.round(rect?.height ?? mountedSize.height) || mountedSize.height;
   // If we have a reliable non-zero measure, remember it for fallback.
   if (width > 0 && height > 0) mountedSize = { width, height };
-  const { autoFit: _drop, ...rest } = props.options;
+  const rest: G2Spec = { ...props.options };
+  delete rest.autoFit;
   return { ...rest, width: mountedSize.width, height: mountedSize.height };
 };
 
@@ -85,14 +88,14 @@ const render = async () => {
     if (token === renderToken) console.error('[GChart] render failed:', e);
   } finally {
     renderInFlight = false;
-    // If a resize/options change arrived while we were painting, re-render
-    // once more now that the canvas is clear — never drop the request.
-    if (!chart) return;
-    if (rerenderRequested) {
-      rerenderRequested = false;
-      // Defer to the next frame so any racy resize settles.
-      requestAnimationFrame(render);
-    }
+  }
+  // If a resize/options change arrived while we were painting, re-render
+  // once more now that the canvas is clear — never drop the request.
+  if (!chart) return;
+  if (rerenderRequested) {
+    rerenderRequested = false;
+    // Defer to the next frame so any racy resize settles.
+    requestAnimationFrame(render);
   }
 };
 

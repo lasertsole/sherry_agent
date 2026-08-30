@@ -32,15 +32,11 @@ NS = {
 
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 CONTENT_TYPE_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
-IMAGE_REL_TYPE = (
-    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
-)
+IMAGE_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
 SOURCE_DOCUMENT_PART = "/word/document.xml"
 
 # Match old and new drawing placeholders (requires id/name, allows extra attributes)
-DRAWING_PATTERN = re.compile(
-    r'<drawing\b(?=[^>]*\bid="[^"]*")(?=[^>]*\bname="[^"]*")[^>]*/>'
-)
+DRAWING_PATTERN = re.compile(r'<drawing\b(?=[^>]*\bid="[^"]*")(?=[^>]*\bname="[^"]*")[^>]*/>')
 DRAWING_TAG_PATTERN = re.compile(r"<drawing\b[^>]*/>")
 DRAWING_ATTR_PATTERN = re.compile(r'([a-zA-Z_][\w:.-]*)="([^"]*)"')
 
@@ -395,10 +391,7 @@ def extract_vml_image_placeholder_from_element(
 
 def parse_drawing_attributes(placeholder: str) -> Dict[str, str]:
     """Parse attributes from a <drawing ... /> placeholder."""
-    return {
-        name: unescape(value)
-        for name, value in DRAWING_ATTR_PATTERN.findall(placeholder)
-    }
+    return {name: unescape(value) for name, value in DRAWING_ATTR_PATTERN.findall(placeholder)}
 
 
 def normalize_drawing_placeholder(

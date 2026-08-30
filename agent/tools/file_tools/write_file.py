@@ -1,4 +1,5 @@
 """write file tool with project root restriction and autopep8 formatting for .py files."""
+
 import asyncio
 from typing import override
 from pathlib import Path
@@ -12,6 +13,7 @@ def _format_py_code(text: str) -> str:
     """Format Python code using autopep8 if the content looks like valid Python."""
     try:
         import autopep8
+
         formatted = autopep8.fix_code(text)
         return formatted
     except Exception:

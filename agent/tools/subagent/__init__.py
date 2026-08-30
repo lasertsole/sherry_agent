@@ -36,37 +36,51 @@ from .delegate import DelegatedTaskHandle, delegate_task
 def build_sessions_spawn_tool(session_id: str = ""):
     """Build the sessions_spawn tool for LLM to spawn child agent tasks."""
     from .tools.sessions_spawn import build_sessions_spawn_tool as _build
+
     return _build(session_id)
+
 
 def build_sessions_yield_tool():
     """Build the sessions_yield tool for the parent agent to wait for children."""
     from .tools.sessions_yield import build_sessions_yield_tool as _build
+
     return _build()
+
 
 def build_sessions_send_tool(session_id: str = ""):
     """Build the sessions_send tool for bidirectional agent messaging."""
     from .tools.sessions_send import build_sessions_send_tool as _build
+
     return _build(session_id)
+
 
 def build_agents_list_tool():
     """Build the agents_list tool returning the allow_agents whitelist."""
     from .tools.agents_list import build_agents_list_tool as _build
+
     return _build()
+
 
 def build_subagents_list_tool(session_id: str = ""):
     """Build the subagents_list tool showing active and recent child agents."""
     from .tools.subagents_list import build_subagents_list_tool as _build
+
     return _build(session_id)
+
 
 def build_sessions_kill_tool(session_id: str = ""):
     """Build the sessions_kill tool to cancel a running child agent."""
     from .tools.sessions_kill import build_sessions_kill_tool as _build
+
     return _build(session_id)
+
 
 def build_sessions_steer_tool(session_id: str = ""):
     """Build the sessions_steer tool to inject new instructions into a running child."""
     from .tools.sessions_steer import build_sessions_steer_tool as _build
+
     return _build(session_id)
+
 
 def build_subagent_runtime_tools():
     """Build the 7 runtime-InjectedState subagent tools for the main agent.
@@ -76,7 +90,9 @@ def build_subagent_runtime_tools():
     spawned subagents.
     """
     from .tools.runtime_tools import build_subagent_runtime_tools as _build
+
     return _build()
+
 
 __all__ = [
     "SpawnMode",

@@ -25,20 +25,21 @@
  * }
  * ```
  */
-export type ChatRequest = { 
-/**
- * Unique session identifier.
- */
-session_id: string, 
-/**
- * Optional text message content.
- */
-text: string | null, 
-/**
- * Optional list of base64-encoded images for multi-modal input.
- */
-image_base64_list: Array<string>, 
-/**
- * Optional list of HTTP image URLs already uploaded to the backend.
- */
-image_path_list: Array<string>, };
+export type ChatRequest = {
+  /**
+   * Unique session identifier.
+   */
+  session_id: string;
+  /**
+   * Optional text message content.
+   */
+  text: string | null;
+  /**
+   * Optional list of base64-encoded images for multi-modal input.
+   */
+  image_base64_list: Array<string>;
+  /**
+   * Optional list of HTTP image URLs already uploaded to the backend.
+   */
+  image_path_list: Array<string>;
+};

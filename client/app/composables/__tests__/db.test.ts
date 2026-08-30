@@ -1,52 +1,89 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CachedMessage, CachedSessionMeta, DraftTurn, CachedSubagentRun, CachedBackground } from '../db';
+import { CHAT_ROLE, type MessageItem } from '@/pages/home/type';
+
+/** `where(...).between(...)` chain result exposed by the messages-table mock (only what ../db calls). */
+interface MessagesBetweenResult {
+  toArray: () => Promise<CachedMessage[]>;
+  last: () => Promise<CachedMessage | undefined>;
+}
+
+/** `where(...)` clause shape exposed by the messages-table mock. */
+interface MessagesWhereResult {
+  between: (lower: [string, number], upper: [string, number]) => MessagesBetweenResult;
+  equals: (key: string) => { delete: () => Promise<number> };
+  delete: () => Promise<number>;
+}
+
+/** `where(...).between(...)` chain result exposed by the drafts-table mock. */
+interface DraftsBetweenResult {
+  toArray: () => Promise<DraftTurn[]>;
+}
+
+/** `where(...)` clause shape exposed by the drafts-table mock. */
+interface DraftsWhereResult {
+  between: (lower: [string, number], upper: [string, number]) => DraftsBetweenResult;
+  equals: (key: string) => { delete: () => Promise<number> };
+}
 
 // Mock every table the `../db` wrappers touch (messages, sessions, drafts,
 // background, subagentRuns) at the collection level. `character` is already
 // covered by character.db.test.ts. Each table exposes the chain methods
 // (where/between/last/delete/put/bulkPut/bulkDelete/toArray/clear) with
-// vi.fn() hand-rolled implementations so the wrapper dispatch is verifiable.
+// explicitly typed vi.fn() declarations (matching the real Dexie chain
+// signatures db.ts calls) so the wrapper dispatch is verifiable.
 const messagesTable = vi.hoisted(() => {
-  const between = vi.fn(() => ({ toArray: vi.fn(async () => []), last: vi.fn(async () => undefined) }));
-  const where = vi.fn(() => ({
+  const between = vi.fn<(lower: [string, number], upper: [string, number]) => MessagesBetweenResult>();
+  between.mockReturnValue({
+    toArray: vi.fn<() => Promise<CachedMessage[]>>(async () => []),
+    last: vi.fn<() => Promise<CachedMessage | undefined>>(async () => undefined)
+  });
+  const equals = vi.fn<(key: string) => { delete: () => Promise<number> }>();
+  equals.mockReturnValue({ delete: vi.fn(async () => 0) });
+  const where = vi.fn<(index: string) => MessagesWhereResult>();
+  where.mockReturnValue({
     between,
-    equals: vi.fn(() => ({ delete: vi.fn(async () => 0) })),
-    delete: vi.fn(async () => 0),
-  }));
+    equals,
+    delete: vi.fn(async () => 0)
+  });
   return {
-    bulkPut: vi.fn(async () => undefined),
+    bulkPut: vi.fn<(rows: CachedMessage[]) => Promise<void>>(),
     where,
-    between,
+    between
   };
 });
 
 const sessionsTable = vi.hoisted(() => ({
-  put: vi.fn(async () => undefined),
-  toArray: vi.fn(async () => []),
-  delete: vi.fn(async () => undefined),
+  put: vi.fn<(meta: CachedSessionMeta) => Promise<void>>(),
+  toArray: vi.fn<() => Promise<CachedSessionMeta[]>>(),
+  delete: vi.fn<(id: string) => Promise<void>>()
 }));
 
 const draftsTable = vi.hoisted(() => {
-  const between = vi.fn(() => ({ toArray: vi.fn(async () => []) }));
-  const where = vi.fn(() => ({ between, equals: vi.fn(() => ({ delete: vi.fn(async () => 0) })) }));
+  const between = vi.fn<(lower: [string, number], upper: [string, number]) => DraftsBetweenResult>();
+  between.mockReturnValue({ toArray: vi.fn<() => Promise<DraftTurn[]>>(async () => []) });
+  const equals = vi.fn<(key: string) => { delete: () => Promise<number> }>();
+  equals.mockReturnValue({ delete: vi.fn(async () => 0) });
+  const where = vi.fn<(index: string) => DraftsWhereResult>();
+  where.mockReturnValue({ between, equals });
   return {
-    put: vi.fn(async () => undefined),
-    delete: vi.fn(async () => undefined),
+    put: vi.fn<(draft: DraftTurn) => Promise<void>>(),
+    delete: vi.fn<(key: [string, number]) => Promise<void>>(),
     where,
-    between,
+    between
   };
 });
 
 const backgroundTable = vi.hoisted(() => ({
-  put: vi.fn(async () => undefined),
-  get: vi.fn(async () => undefined),
+  put: vi.fn<(row: CachedBackground) => Promise<void>>(),
+  get: vi.fn<(key: string) => Promise<CachedBackground | undefined>>()
 }));
 
 const subagentRunsTable = vi.hoisted(() => ({
-  bulkPut: vi.fn(async () => undefined),
-  toArray: vi.fn(async () => []),
-  bulkDelete: vi.fn(async () => undefined),
-  clear: vi.fn(async () => undefined),
+  bulkPut: vi.fn<(runs: CachedSubagentRun[]) => Promise<void>>(),
+  toArray: vi.fn<() => Promise<CachedSubagentRun[]>>(),
+  bulkDelete: vi.fn<(ids: string[]) => Promise<void>>(),
+  clear: vi.fn<() => Promise<void>>()
 }));
 
 vi.mock('../db', () => ({
@@ -59,23 +96,17 @@ vi.mock('../db', () => ({
     sessions: sessionsTable,
     drafts: draftsTable,
     background: backgroundTable,
-    subagentRuns: subagentRunsTable,
+    subagentRuns: subagentRunsTable
   },
   cacheMessages: async (rows: CachedMessage[]) => {
     if (!rows || rows.length === 0) return;
     await messagesTable.bulkPut(rows);
   },
   readCachedMessages: async (sessionId: string) => {
-    return messagesTable
-      .where('_')
-      .between([sessionId, -Infinity], [sessionId, Infinity])
-      .toArray();
+    return messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
   },
   cachedMaxTurnNum: async (sessionId: string) => {
-    const last = await messagesTable
-      .where('_')
-      .between([sessionId, -Infinity], [sessionId, Infinity])
-      .last();
+    const last = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).last();
     return last ? last.turn_num : 0;
   },
   clearCachedSession: async (sessionId: string) => {
@@ -95,10 +126,7 @@ vi.mock('../db', () => ({
     await draftsTable.put(draft);
   },
   readDraftTurns: async (sessionId: string) => {
-    return draftsTable
-      .where('_')
-      .between([sessionId, -Infinity], [sessionId, Infinity])
-      .toArray();
+    return draftsTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
   },
   clearDraftTurn: async (sessionId: string, turnNum: number) => {
     await draftsTable.delete([sessionId, turnNum]);
@@ -131,7 +159,7 @@ vi.mock('../db', () => ({
   },
   cacheCharacter: async () => undefined,
   readCachedCharacter: async () => undefined,
-  clearCachedCharacter: async () => undefined,
+  clearCachedCharacter: async () => undefined
 }));
 
 import {
@@ -152,7 +180,7 @@ import {
   cacheSubagentRuns,
   readCachedSubagentRuns,
   deleteCachedSubagentRuns,
-  clearCachedSubagentRuns,
+  clearCachedSubagentRuns
 } from '../db';
 
 const msg = (over: Partial<CachedMessage> = {}): CachedMessage => ({
@@ -161,6 +189,7 @@ const msg = (over: Partial<CachedMessage> = {}): CachedMessage => ({
   session_id: 'ses_A',
   role: 'user',
   content: 'hi',
+  timestamp: null,
   images: null,
   audios: null,
   videos: null,
@@ -174,7 +203,18 @@ const msg = (over: Partial<CachedMessage> = {}): CachedMessage => ({
   model_name: null,
   input_tokens: null,
   output_tokens: null,
-  ...over,
+  ...over
+});
+
+/** MessageItem-shaped fixture for DraftTurn.messages (role must be a real CHAT_ROLE value). */
+const msgItem = (over: Partial<MessageItem> = {}): MessageItem => ({
+  session_id: 'ses_A',
+  role: CHAT_ROLE.USER,
+  content: 'hi',
+  id: 1,
+  turn_num: 1,
+  timestamp: '2026-01-01T00:00:00Z',
+  ...over
 });
 
 const run = (over: Partial<CachedSubagentRun> = {}): CachedSubagentRun => ({
@@ -198,7 +238,7 @@ const run = (over: Partial<CachedSubagentRun> = {}): CachedSubagentRun => ({
   execution: { status: 'RUNNING', outcome: null, started_at: null, completed_at: null },
   completion: null,
   delivery: null,
-  ...over,
+  ...over
 });
 
 beforeEach(() => {
@@ -238,7 +278,7 @@ describe('cacheMessages', () => {
 describe('readCachedMessages', () => {
   it('queries the compound [session_id+turn_num] index between session bounds', async () => {
     const rows = [msg({ id: 1 }), msg({ id: 2, turn_num: 2 })];
-    messagesTable.between.mockReturnValue({ toArray: vi.fn(async () => rows) });
+    messagesTable.between.mockReturnValue({ toArray: vi.fn(async () => rows), last: vi.fn(async () => undefined) });
 
     await expect(readCachedMessages('ses_A')).resolves.toEqual(rows);
     expect(messagesTable.where).toHaveBeenCalledWith('_');
@@ -248,12 +288,15 @@ describe('readCachedMessages', () => {
 
 describe('cachedMaxTurnNum', () => {
   it('returns the last row turn_num when cache is non-empty', async () => {
-    messagesTable.between.mockReturnValue({ last: vi.fn(async () => msg({ turn_num: 5 })) });
+    messagesTable.between.mockReturnValue({
+      toArray: vi.fn(async () => []),
+      last: vi.fn(async () => msg({ turn_num: 5 }))
+    });
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(5);
   });
 
   it('returns 0 when the session has no cached rows', async () => {
-    messagesTable.between.mockReturnValue({ last: vi.fn(async () => undefined) });
+    messagesTable.between.mockReturnValue({ toArray: vi.fn(async () => []), last: vi.fn(async () => undefined) });
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(0);
   });
 });
@@ -261,7 +304,11 @@ describe('cachedMaxTurnNum', () => {
 describe('clearCachedSession', () => {
   it('deletes all messages of a session by its session_id column', async () => {
     const del = vi.fn(async () => 0);
-    messagesTable.where.mockReturnValue({ equals: vi.fn(() => ({ delete: del })) });
+    messagesTable.where.mockReturnValue({
+      between: vi.fn<MessagesWhereResult['between']>(),
+      equals: vi.fn(() => ({ delete: del })),
+      delete: vi.fn(async () => 0)
+    });
     await clearCachedSession('ses_A');
     expect(messagesTable.where).toHaveBeenCalledWith('session_id');
     expect(del).toHaveBeenCalledTimes(1);
@@ -279,12 +326,12 @@ describe('session meta (cacheSessionMeta / readCachedSessionMetaList / clearCach
     sessionsTable.toArray.mockResolvedValue([
       { id: 'a', title: 'a', createTime: 'x', updatedAt: 1 },
       { id: 'b', title: 'b', createTime: 'x', updatedAt: 3 },
-      { id: 'c', title: 'c', createTime: 'x', updatedAt: 2 },
+      { id: 'c', title: 'c', createTime: 'x', updatedAt: 2 }
     ]);
     await expect(readCachedSessionMetaList()).resolves.toEqual([
       expect.objectContaining({ id: 'b' }),
       expect.objectContaining({ id: 'c' }),
-      expect.objectContaining({ id: 'a' }),
+      expect.objectContaining({ id: 'a' })
     ]);
   });
 
@@ -296,13 +343,13 @@ describe('session meta (cacheSessionMeta / readCachedSessionMetaList / clearCach
 
 describe('drafts (saveDraftTurn / readDraftTurns / clearDraftTurn / clearDraftSession)', () => {
   it('writes a whole-turn draft via drafts.put', async () => {
-    const draft: DraftTurn = { session_id: 'ses_A', turn_num: 1, messages: [msg()] };
+    const draft: DraftTurn = { session_id: 'ses_A', turn_num: 1, messages: [msgItem()] };
     await saveDraftTurn(draft);
     expect(draftsTable.put).toHaveBeenCalledWith(draft);
   });
 
   it('reads drafts by compound key bounds', async () => {
-    const draft: DraftTurn = { session_id: 'ses_A', turn_num: 1, messages: [msg()] };
+    const draft: DraftTurn = { session_id: 'ses_A', turn_num: 1, messages: [msgItem()] };
     draftsTable.between.mockReturnValue({ toArray: vi.fn(async () => [draft]) });
     await expect(readDraftTurns('ses_A')).resolves.toEqual([draft]);
     expect(draftsTable.between).toHaveBeenCalledWith(['ses_A', -Infinity], ['ses_A', Infinity]);
@@ -315,7 +362,10 @@ describe('drafts (saveDraftTurn / readDraftTurns / clearDraftTurn / clearDraftSe
 
   it('clears every draft of a session by its session_id column', async () => {
     const del = vi.fn(async () => 0);
-    draftsTable.where.mockReturnValue({ equals: vi.fn(() => ({ delete: del })) });
+    draftsTable.where.mockReturnValue({
+      between: vi.fn<DraftsWhereResult['between']>(),
+      equals: vi.fn(() => ({ delete: del }))
+    });
     await clearDraftSession('ses_A');
     expect(draftsTable.where).toHaveBeenCalledWith('session_id');
     expect(del).toHaveBeenCalledTimes(1);
@@ -328,7 +378,7 @@ describe('background (saveBackground / readBackgroundConfig)', () => {
     expect(backgroundTable.put).toHaveBeenCalledWith({
       session_id: GLOBAL_SESSION_KEY,
       backgroundUrl: 'data:image/png;base64,ZZZ',
-      backgroundOpacity: 40,
+      backgroundOpacity: 40
     });
   });
 
@@ -341,11 +391,11 @@ describe('background (saveBackground / readBackgroundConfig)', () => {
     backgroundTable.get.mockResolvedValue({
       session_id: GLOBAL_SESSION_KEY,
       backgroundUrl: 'data:image/png;base64,ZZZ',
-      backgroundOpacity: 55,
+      backgroundOpacity: 55
     });
     await expect(readBackgroundConfig()).resolves.toEqual({
       backgroundUrl: 'data:image/png;base64,ZZZ',
-      backgroundOpacity: 55,
+      backgroundOpacity: 55
     });
   });
 
@@ -353,7 +403,7 @@ describe('background (saveBackground / readBackgroundConfig)', () => {
     backgroundTable.get.mockResolvedValue({
       session_id: GLOBAL_SESSION_KEY,
       backgroundUrl: '',
-      backgroundOpacity: 0,
+      backgroundOpacity: 0
     });
     await expect(readBackgroundConfig()).resolves.toBeUndefined();
   });

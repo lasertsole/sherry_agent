@@ -28,6 +28,7 @@ logger.remove()
 # Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def fts5_db():
     """Create a real SQLite database with messages + both FTS5 tables.
@@ -173,39 +174,59 @@ def populate_english_data(fts5_db):
     db = fts5_db["db"]
     sid = fts5_db["session_id"]
     _insert_message(
-        db, sid, 1, "human",
+        db,
+        sid,
+        1,
+        "human",
         json.dumps("How do I deploy Docker containers?", ensure_ascii=False),
     )
     _insert_message(
-        db, sid, 2, "ai",
+        db,
+        sid,
+        2,
+        "ai",
         json.dumps(
             "You can use `docker compose up -d` to start containers in detached mode.",
             ensure_ascii=False,
         ),
     )
     _insert_message(
-        db, sid, 3, "human",
+        db,
+        sid,
+        3,
+        "human",
         json.dumps("What about Kubernetes cluster setup?", ensure_ascii=False),
     )
     _insert_message(
-        db, sid, 4, "ai",
+        db,
+        sid,
+        4,
+        "ai",
         json.dumps(
-            "Kubernetes requires a control plane and worker nodes. "
-            "Use kubeadm for initialization.",
+            "Kubernetes requires a control plane and worker nodes. Use kubeadm for initialization.",
             ensure_ascii=False,
         ),
     )
     _insert_message(
-        db, sid, 5, "tool",
+        db,
+        sid,
+        5,
+        "tool",
         json.dumps("Docker version 24.0.7, build 12345", ensure_ascii=False),
         tool_name="terminal",
     )
     _insert_message(
-        db, sid, 6, "human",
+        db,
+        sid,
+        6,
+        "human",
         json.dumps("Can you explain memory management in Python?", ensure_ascii=False),
     )
     _insert_message(
-        db, sid, 7, "ai",
+        db,
+        sid,
+        7,
+        "ai",
         json.dumps(
             "Python uses reference counting and a generational garbage collector.",
             ensure_ascii=False,
@@ -214,7 +235,10 @@ def populate_english_data(fts5_db):
     # Add a message containing both "Docker" and "Kubernetes" so FTS5 AND
     # queries like "docker kubernetes" return results (space = AND by default).
     _insert_message(
-        db, sid, 8, "ai",
+        db,
+        sid,
+        8,
+        "ai",
         json.dumps(
             "Comparing Docker Compose vs Kubernetes for container orchestration.",
             ensure_ascii=False,
@@ -235,22 +259,34 @@ def populate_chinese_data(fts5_db):
 
     # >=3 CJK chars per token — should route to trigram
     _insert_message(
-        db, sid, 1, "human",
+        db,
+        sid,
+        1,
+        "human",
         json.dumps("大别山项目的部署方案是什么？", ensure_ascii=False),
     )
     _insert_message(
-        db, sid, 2, "ai",
+        db,
+        sid,
+        2,
+        "ai",
         json.dumps(
             "大别山项目使用 Docker 容器化部署，配合 Kubernetes 进行编排。",
             ensure_ascii=False,
         ),
     )
     _insert_message(
-        db, sid, 3, "human",
+        db,
+        sid,
+        3,
+        "human",
         json.dumps("数据库连接失败，请检查配置。", ensure_ascii=False),
     )
     _insert_message(
-        db, sid, 4, "ai",
+        db,
+        sid,
+        4,
+        "ai",
         json.dumps(
             "请检查数据库配置文件中的连接字符串是否包含正确的主机名和端口。",
             ensure_ascii=False,
@@ -259,21 +295,33 @@ def populate_chinese_data(fts5_db):
 
     # <3 CJK chars per token — should route to LIKE
     _insert_message(
-        db, sid, 5, "human",
+        db,
+        sid,
+        5,
+        "human",
         json.dumps("广西桂林漓江风景如何？", ensure_ascii=False),
     )
     _insert_message(
-        db, sid, 6, "ai",
+        db,
+        sid,
+        6,
+        "ai",
         json.dumps("桂林山水甲天下，漓江风景如画。", ensure_ascii=False),
     )
 
     # Mixed CJK + English
     _insert_message(
-        db, sid, 7, "human",
+        db,
+        sid,
+        7,
+        "human",
         json.dumps("Python 的内存管理机制是怎样的？", ensure_ascii=False),
     )
     _insert_message(
-        db, sid, 8, "ai",
+        db,
+        sid,
+        8,
+        "ai",
         json.dumps("Python 使用引用计数和分代垃圾回收来管理内存。", ensure_ascii=False),
     )
 
@@ -285,9 +333,11 @@ def populate_chinese_data(fts5_db):
 # Patch helper
 # ============================================================================
 
+
 def _patched_search(query, fts5_db, **kwargs):
     """Call search_messages with patched _db (real SQLite + FTS5)."""
     from context_engine.core import search_messages
+
     db = fts5_db["db"]
     sid = fts5_db["session_id"]
 
@@ -307,6 +357,7 @@ def _patched_search(query, fts5_db, **kwargs):
 # English FTS5 (default unicode61 tokenizer)
 # ============================================================================
 
+
 class TestEnglishFTS5:
     """Default FTS5 path — unicode61 tokenizer."""
 
@@ -315,17 +366,15 @@ class TestEnglishFTS5:
         results = _patched_search("docker", populate_english_data)
         assert len(results) >= 1
         # Should match "docker compose" (turn 2) and "Docker version" (turn 5) etc.
-        ids = {r["id"] for r in results}
-        assert any(
-            r["role"] == "ai" and "docker" in r["snippet"].lower()
-            for r in results
-        ), f"No docker-related AI result found in {results}"
+        assert any(r["role"] == "ai" and "docker" in r["snippet"].lower() for r in results), (
+            f"No docker-related AI result found in {results}"
+        )
 
     def test_multi_word(self, populate_english_data):
         """Multi-word phrase should match as boolean AND."""
         results = _patched_search("docker kubernetes", populate_english_data)
         # At least one result should contain both terms in snippet
-        assert len(results) >= 1, f"Expected results for 'docker kubernetes', got empty"
+        assert len(results) >= 1, "Expected results for 'docker kubernetes', got empty"
 
     def test_exact_phrase(self, populate_english_data):
         """Quoted phrase should match exact sequence."""
@@ -360,19 +409,20 @@ class TestEnglishFTS5:
 # Chinese trigram FTS5 (tokens with >=3 CJK chars)
 # ============================================================================
 
+
 class TestChineseTrigramFTS5:
     """Trigram FTS5 path — for queries with >=3 CJK chars per token."""
 
     def test_chinese_word_recall(self, populate_chinese_data):
         """Chinese query with >=3 CJK chars should recall via trigram."""
         results = _patched_search("大别山", populate_chinese_data)
-        assert len(results) >= 1, f"Expected recall for '大别山', got empty"
+        assert len(results) >= 1, "Expected recall for '大别山', got empty"
         assert any("大别山" in r["snippet"] for r in results)
 
     def test_chinese_multi_token(self, populate_chinese_data):
         """Multi-token Chinese query should recall via trigram with AND."""
         results = _patched_search("配置 数据库", populate_chinese_data)
-        assert len(results) >= 1, f"Expected recall for '配置 数据库', got empty"
+        assert len(results) >= 1, "Expected recall for '配置 数据库', got empty"
 
     def test_chinese_exact_phrase(self, populate_chinese_data):
         """Quoted Chinese phrase should recall via trigram."""
@@ -401,7 +451,10 @@ class TestChineseTrigramFTS5:
         db = populate_chinese_data["db"]
         sid = populate_chinese_data["session_id"]
         _insert_message(
-            db, sid, 9, "tool",
+            db,
+            sid,
+            9,
+            "tool",
             json.dumps("execution output", ensure_ascii=False),
             tool_name="部署脚本",
         )
@@ -418,19 +471,20 @@ class TestChineseTrigramFTS5:
 # LIKE fallback (short CJK — <3 chars per token)
 # ============================================================================
 
+
 class TestChineseLikeFallback:
     """LIKE path — for short CJK queries where trigram can't match (<3 chars)."""
 
     def test_short_cjk_single_token(self, populate_chinese_data):
         """Single 2-char CJK token should recall via LIKE."""
         results = _patched_search("广西", populate_chinese_data)
-        assert len(results) >= 1, f"Expected recall for '广西', got empty"
+        assert len(results) >= 1, "Expected recall for '广西', got empty"
         assert any("广西" in r["snippet"] for r in results)
 
     def test_short_cjk_multi_token_or(self, populate_chinese_data):
         """Multi 2-char CJK tokens with OR should recall via LIKE."""
         results = _patched_search("广西 OR 桂林 OR 漓江", populate_chinese_data)
-        assert len(results) >= 1, f"Expected recall for '广西 OR 桂林 OR 漓江', got empty"
+        assert len(results) >= 1, "Expected recall for '广西 OR 桂林 OR 漓江', got empty"
         # Should find results containing any of these terms
         snippet_text = " ".join(r["snippet"] for r in results)
         assert "桂林" in snippet_text, f"Expected '桂林' in LIKE results: {snippet_text}"
@@ -438,13 +492,14 @@ class TestChineseLikeFallback:
     def test_short_cjk_substring(self, populate_chinese_data):
         """Single 1-char CJK query should recall via LIKE."""
         results = _patched_search("桂", populate_chinese_data)
-        assert len(results) >= 1, f"Expected recall for '桂', got empty"
+        assert len(results) >= 1, "Expected recall for '桂', got empty"
         assert any("桂" in r["snippet"] for r in results)
 
 
 # ============================================================================
 # Context expansion
 # ============================================================================
+
 
 class TestContextExpansion:
     """search_messages adds ±1 message context around each match."""
@@ -471,6 +526,7 @@ class TestContextExpansion:
 # Content field omission
 # ============================================================================
 
+
 class TestContentOmission:
     """Search results should not include the full content field (tokensaving)."""
 
@@ -478,9 +534,7 @@ class TestContentOmission:
         """The 'content' key should be removed from results."""
         results = _patched_search("docker", populate_english_data)
         for r in results:
-            assert "content" not in r, (
-                f"Result {r['id']} should not contain 'content' field"
-            )
+            assert "content" not in r, f"Result {r['id']} should not contain 'content' field"
 
     def test_snippet_present(self, populate_english_data):
         """Each result should have a 'snippet' field instead."""
@@ -494,6 +548,7 @@ class TestContentOmission:
 # ============================================================================
 # Sanitization edge cases
 # ============================================================================
+
 
 class TestQuerySanitization:
     """Queries with special FTS5 characters should not crash."""
@@ -526,6 +581,7 @@ class TestQuerySanitization:
 # JSON-encoded content check
 # ============================================================================
 
+
 class TestJsonEncodedContent:
     """The FTS5 index stores content as-is (including JSON encoding).
 
@@ -541,28 +597,30 @@ class TestJsonEncodedContent:
         sid = fts5_db["session_id"]
         # Insert content EXACTLY as add_messages would: json.dumps + ensure_ascii=False
         _insert_message(
-            db, sid, 1, "human",
+            db,
+            sid,
+            1,
+            "human",
             json.dumps("Hello world test message", ensure_ascii=False),
         )
         db.commit()
 
         results = _patched_search("hello", fts5_db)
-        assert len(results) >= 1, (
-            "FTS5 should match across JSON-encoded content"
-        )
+        assert len(results) >= 1, "FTS5 should match across JSON-encoded content"
 
     def test_chinese_json_encoding(self, fts5_db):
         """Chinese content should still match despite JSON encoding."""
         db = fts5_db["db"]
         sid = fts5_db["session_id"]
         _insert_message(
-            db, sid, 1, "human",
+            db,
+            sid,
+            1,
+            "human",
             json.dumps("你好世界测试消息", ensure_ascii=False),
         )
         db.commit()
 
         # >=3 CJK chars -> trigram
         results = _patched_search("你好世界", fts5_db)
-        assert len(results) >= 1, (
-            "Trigram FTS5 should match Chinese content through JSON encoding"
-        )
+        assert len(results) >= 1, "Trigram FTS5 should match Chinese content through JSON encoding"

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Azure OpenAI compatibility layer.
 
 This module provides backward compatibility by re-exporting Azure OpenAI functions

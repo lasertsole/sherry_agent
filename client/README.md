@@ -22,7 +22,7 @@ Built with **Tauri 2 + Nuxt 4 (Vue 3 + TypeScript)**:
 
 ### Hybrid Architecture
 
-```
+```text
 +--------------------------------------------------------------+
 |                Frontend (Nuxt 4 SPA, app/)                   |
 |  Vue 3 components + composables + Pinia + mitt event bus     |
@@ -51,7 +51,7 @@ Built with **Tauri 2 + Nuxt 4 (Vue 3 + TypeScript)**:
 
 ### Data Flow
 
-```
+```text
 User interaction (Vue component)
     -> bridge.ts (auto-detect Tauri vs browser mode)
         |
@@ -70,7 +70,7 @@ User interaction (Vue component)
 
 ## Directory Structure
 
-```
+```text
 client/
 ├── .env.example                   # Environment variable template (VITE_APP_NAME, VITE_API_BACK_URL)
 ├── eslint.config.mjs              # ESLint flat config
@@ -214,7 +214,7 @@ client/
 
 ### Component Hierarchy
 
-```
+```text
 app.vue (root: toast layer, connection banner, locale restore)
   └─ NuxtLayout (layouts/default.vue)
        └─ NuxtPage

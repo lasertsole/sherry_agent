@@ -9,10 +9,11 @@ from ._callback_executor import CallbackExecutor
 
 class Timer(BaseModel):
     """Timer configuration"""
-    minutes: int = Field(ge=1, le=60)           # 倒计时分钟(1-60)
-    callback: Callable                           # 触发回调
+
+    minutes: int = Field(ge=1, le=60)  # 倒计时分钟(1-60)
+    callback: Callable  # 触发回调
     args: dict[str, Any] = Field(default_factory=dict)
-    task_name: str | None = None              # 后台 task name, 用于查找/取消
+    task_name: str | None = None  # 后台 task name, 用于查找/取消
 
 
 class TimerCallRegister(Register):
@@ -24,6 +25,7 @@ class TimerCallRegister(Register):
     All timers run in a separate background thread event loop to avoid
     timer scheduling issues when main event loop is blocked.
     """
+
     def __init__(self):
         if self._initialized:
             return
@@ -33,7 +35,15 @@ class TimerCallRegister(Register):
 
         self._initialized = True
 
-    def register(self, session_id: str, name: str, callback: Callable, args: dict[str, Any] | None = None, minutes: int = 15, execute_now: bool = False) -> bool:
+    def register(
+        self,
+        session_id: str,
+        name: str,
+        callback: Callable,
+        args: dict[str, Any] | None = None,
+        minutes: int = 15,
+        execute_now: bool = False,
+    ) -> bool:
         """
         Register a countdown timer
 
@@ -53,7 +63,9 @@ class TimerCallRegister(Register):
             return False
 
         if name in self.session_id_to_timers.setdefault(session_id, {}):
-            logger.warning(f"[timer_call_register] {name} is already registered in session {session_id}")
+            logger.warning(
+                f"[timer_call_register] {name} is already registered in session {session_id}"
+            )
             return False
 
         args = args or {}
@@ -69,9 +81,13 @@ class TimerCallRegister(Register):
                 result = callback(**args)
                 if inspect.iscoroutine(result):
                     self._executor.run_coroutine(result)
-                logger.debug(f"[timer_call_register] execute_now: timer '{name}' triggered immediately for session {session_id}")
+                logger.debug(
+                    f"[timer_call_register] execute_now: timer '{name}' triggered immediately for session {session_id}"
+                )
             except Exception:
-                logger.exception(f"[timer_call_register] execute_now: callback '{name}' failed for session {session_id}")
+                logger.exception(
+                    f"[timer_call_register] execute_now: callback '{name}' failed for session {session_id}"
+                )
 
         # Start the timer coroutine on the background thread's event loop
         self._executor.create_task(
@@ -79,7 +95,9 @@ class TimerCallRegister(Register):
             name=task_name,
         )
 
-        logger.debug(f"[timer_call_register] registered timer '{name}' for session {session_id}, {minutes}min")
+        logger.debug(
+            f"[timer_call_register] registered timer '{name}' for session {session_id}, {minutes}min"
+        )
         return True
 
     def unregister(self, session_id: str, name: str) -> bool:
@@ -88,12 +106,16 @@ class TimerCallRegister(Register):
         """
         timers = self.session_id_to_timers.get(session_id)
         if not timers or name not in timers:
-            logger.warning(f"[timer_call_register] {name} is not registered in session {session_id}")
+            logger.warning(
+                f"[timer_call_register] {name} is not registered in session {session_id}"
+            )
             return False
 
         timer = timers.pop(name, None)
         if timer is None:
-            logger.warning(f"[timer_call_register] {name} already removed from session {session_id}")
+            logger.warning(
+                f"[timer_call_register] {name} already removed from session {session_id}"
+            )
             return False
 
         if timer.task_name:
@@ -102,7 +124,15 @@ class TimerCallRegister(Register):
         logger.debug(f"[timer_call_register] unregistered timer '{name}' for session {session_id}")
         return True
 
-    async def _run_timer(self, session_id: str, name: str, minutes: int, callback: Callable, args: dict[str, Any], timer_obj: Timer):
+    async def _run_timer(
+        self,
+        session_id: str,
+        name: str,
+        minutes: int,
+        callback: Callable,
+        args: dict[str, Any],
+        timer_obj: Timer,
+    ):
         """
         Repeating countdown task (runs in background thread event loop).
         Loops forever until cancelled or unregistered.
@@ -114,11 +144,17 @@ class TimerCallRegister(Register):
                     result = callback(**args)
                     if inspect.iscoroutine(result):
                         self._executor.run_coroutine(result)
-                    logger.debug(f"[timer_call_register] timer '{name}' triggered after {minutes}min for session {session_id}")
+                    logger.debug(
+                        f"[timer_call_register] timer '{name}' triggered after {minutes}min for session {session_id}"
+                    )
                 except Exception:
-                    logger.exception(f"[timer_call_register] callback '{name}' failed for session {session_id}")
+                    logger.exception(
+                        f"[timer_call_register] callback '{name}' failed for session {session_id}"
+                    )
             except asyncio.CancelledError:
-                logger.debug(f"[timer_call_register] timer '{name}' cancelled for session {session_id}")
+                logger.debug(
+                    f"[timer_call_register] timer '{name}' cancelled for session {session_id}"
+                )
                 break
 
         # Clean up registration on cancel — only if still the same timer object
@@ -139,7 +175,9 @@ class TimerCallRegister(Register):
         """
         timers = self.session_id_to_timers.get(session_id)
         if not timers or name not in timers:
-            logger.warning(f"[timer_call_register] {name} is not registered in session {session_id}")
+            logger.warning(
+                f"[timer_call_register] {name} is not registered in session {session_id}"
+            )
             return False
 
         old_timer = timers[name]
@@ -162,7 +200,9 @@ class TimerCallRegister(Register):
             name=task_name,
         )
 
-        logger.debug(f"[timer_call_register] reset timer '{name}' for session {session_id}, {minutes}min")
+        logger.debug(
+            f"[timer_call_register] reset timer '{name}' for session {session_id}, {minutes}min"
+        )
         return True
 
     def clear_session(self, session_id: str):

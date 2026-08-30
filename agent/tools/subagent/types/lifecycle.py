@@ -5,6 +5,7 @@ from enum import Enum
 
 class LifecycleEndedReason(str, Enum):
     """Why a sub-agent lifecycle ended."""
+
     COMPLETE = "complete"
     ERROR = "error"
     KILLED = "killed"
@@ -14,6 +15,7 @@ class LifecycleEndedReason(str, Enum):
 
 class LifecycleEndedOutcome(str, Enum):
     """Terminal outcome category mirrored from RunOutcomeStatus for lifecycle events."""
+
     OK = "ok"
     ERROR = "error"
     TIMEOUT = "timeout"

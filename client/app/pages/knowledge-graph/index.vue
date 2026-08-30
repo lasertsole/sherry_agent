@@ -1,6 +1,6 @@
 <i18n lang="json">
 {
-    "en": {
+  "en": {
     "knowledgeGraph": {
       "back": "Back",
       "placeholder": "Knowledge Graph feature under development…",
@@ -109,7 +109,7 @@
 
 <template>
   <div class="flex flex-col h-full bg-[#f8f9fa] dark:bg-[#131619]">
-    <!-- 顶部标题栏 -->
+    <!-- Top title bar -->
     <div
       class="shrink-0 h-14 flex items-center gap-3 px-4 border-b border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21]">
       <Button
@@ -147,23 +147,23 @@
       </div>
     </div>
 
-    <!-- 主体：上树下详（图谱在上，节点详情在下） -->
+    <!-- Main body: graph on top, details below (graph in the upper part, node details in the lower part) -->
     <div class="flex flex-col flex-1 min-h-0">
-      <!-- 上半：图谱渲染区 -->
+      <!-- Upper half: graph rendering area -->
       <div class="relative flex-[3] min-h-0 overflow-hidden">
-        <div ref="containerRef" class="w-full h-full" />
+        <div
+          ref="containerRef"
+          class="w-full h-full" />
 
-        <!-- 上传结果提示 -->
+        <!-- Upload result toast -->
         <div
           v-if="uploadMessage"
-          class="absolute top-3 right-3 z-10 max-w-xs px-3 py-2 text-xs rounded-md shadow-md
-                 bg-white dark:bg-[#1a1d21] text-gray-700 dark:text-gray-200
-                 border border-gray-light dark:border-gray-dark">
+          class="absolute top-3 right-3 z-10 max-w-xs px-3 py-2 text-xs rounded-md shadow-md bg-white dark:bg-[#1a1d21] text-gray-700 dark:text-gray-200 border border-gray-light dark:border-gray-dark">
           <i class="pi pi-info-circle mr-1 text-blue-500" />
           {{ uploadMessage }}
         </div>
 
-        <!-- 加载中 -->
+        <!-- Loading state -->
         <div
           v-if="loading"
           class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/60 dark:bg-[#131619]/60">
@@ -171,7 +171,7 @@
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('knowledgeGraph.loading') }}</span>
         </div>
 
-        <!-- 空态 -->
+        <!-- Empty state -->
         <div
           v-else-if="empty"
           class="absolute inset-0 flex flex-col items-center justify-center gap-4">
@@ -181,7 +181,7 @@
           </div>
         </div>
 
-        <!-- 错误态 -->
+        <!-- Error state -->
         <div
           v-else-if="error"
           class="absolute inset-0 flex flex-col items-center justify-center gap-4">
@@ -197,16 +197,20 @@
         </div>
       </div>
 
-      <!-- 下半：选中节点详情 -->
+      <!-- Lower half: selected node details -->
       <div
         class="flex-[2] min-h-0 border-t border-solid border-gray-light dark:border-gray-dark bg-white/60 dark:bg-[#1a1d21]/60">
-        <div v-if="!selectedNode" class="flex flex-col items-center justify-center gap-3 h-full text-center py-8">
+        <div
+          v-if="!selectedNode"
+          class="flex flex-col items-center justify-center gap-3 h-full text-center py-8">
           <i class="pi pi-hand-pointer text-3xl text-gray-300 dark:text-gray-600" />
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('knowledgeGraph.nodeDetailPlaceholder') }}</span>
         </div>
 
-        <div v-else class="flex flex-col gap-3 h-full min-h-0 overflow-y-auto p-4">
-          <!-- 头部：实体名 + 实体类型 -->
+        <div
+          v-else
+          class="flex flex-col gap-3 h-full min-h-0 overflow-y-auto p-4">
+          <!-- Header: entity name + entity type -->
           <div
             class="rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21] px-4 py-3 shadow-sm">
             <div class="text-sm font-medium text-gray-900 dark:text-gray-100 break-words">
@@ -217,7 +221,7 @@
             </div>
           </div>
 
-          <!-- 节点内容 -->
+          <!-- Node content -->
           <div
             v-if="nodeContent(selectedNode)"
             class="rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21] px-4 py-3 shadow-sm">
@@ -229,24 +233,28 @@
             </div>
           </div>
 
-          <!-- 来源文档 / 文件 -->
+          <!-- Source document / file -->
           <div
             v-if="nodeSourceFile(selectedNode) || nodeSourceId(selectedNode)"
             class="rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21] px-4 py-3 shadow-sm">
             <div class="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1.5">
               {{ t('knowledgeGraph.nodeSource') }}
             </div>
-            <div v-if="nodeSourceFile(selectedNode)" class="flex items-start gap-2 text-sm">
+            <div
+              v-if="nodeSourceFile(selectedNode)"
+              class="flex items-start gap-2 text-sm">
               <i class="pi pi-file text-gray-400 dark:text-gray-500 mt-0.5" />
               <span class="text-gray-800 dark:text-gray-200 break-all">{{ nodeSourceFile(selectedNode) }}</span>
             </div>
-            <div v-if="nodeSourceId(selectedNode)" class="flex items-start gap-2 text-sm mt-1.5">
+            <div
+              v-if="nodeSourceId(selectedNode)"
+              class="flex items-start gap-2 text-sm mt-1.5">
               <i class="pi pi-hashtag text-gray-400 dark:text-gray-500 mt-0.5" />
               <span class="text-gray-800 dark:text-gray-200 break-all">{{ nodeSourceId(selectedNode) }}</span>
             </div>
           </div>
 
-          <!-- 实体属性 -->
+          <!-- Entity properties -->
           <div
             v-if="nodeProperties(selectedNode).length > 0"
             class="rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21] px-4 py-3 shadow-sm">
@@ -264,7 +272,7 @@
             </div>
           </div>
 
-          <!-- 关联的节点（邻居） -->
+          <!-- Connected nodes (neighbors) -->
           <div
             v-if="neighborsOf(selectedNode).length > 0"
             class="rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21] px-4 py-3 shadow-sm">
@@ -284,14 +292,14 @@
         </div>
       </div>
     </div>
-
   </div>
 </template>
 
 <script lang="ts" setup>
-// 页面级错误捕获：本页所有后代组件（G6 图谱容器/节点详情面板等）的运行时错误
-// → logUtil 日志 + 全局 toast，return false 阻断向上冒泡
-// （03-errorCaptured工厂函数.md 工厂函数模式）
+// Page-level error capture: runtime errors from all descendant components on this page
+// (G6 graph container / node detail panel, etc.)
+// → logUtil logging + global toast; returning false stops further upward propagation
+// (factory function pattern from 03-errorCapturedFactoryFunction.md)
 import { useErrorCaptured } from '~/composables/errorCaptured';
 
 useErrorCaptured();
@@ -299,7 +307,7 @@ useErrorCaptured();
 import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Graph, NodeEvent } from '@antv/g6';
-import type { GraphData, IElementEvent } from '@antv/g6';
+import type { GraphData, IElementEvent, NodeData, EdgeData } from '@antv/g6';
 import { fetchApi } from '~/composables/requestApi';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -310,14 +318,14 @@ const goBack = () => {
   router.push(localePath('/home'));
 };
 
-/** 后端知识图谱节点 */
+/** Backend knowledge graph node */
 interface BackendNode {
   id: string;
   labels: string[];
   properties: Record<string, unknown>;
 }
 
-/** 后端知识图谱边 */
+/** Backend knowledge graph edge */
 interface BackendEdge {
   id: string;
   type: string;
@@ -326,7 +334,7 @@ interface BackendEdge {
   properties: Record<string, unknown>;
 }
 
-/** 后端知识图谱响应 */
+/** Backend knowledge graph response */
 interface KnowledgeGraphResponse {
   nodes: BackendNode[];
   edges: BackendEdge[];
@@ -334,20 +342,21 @@ interface KnowledgeGraphResponse {
 }
 
 /**
- * 映射后的 G6 节点。
- * data 内同时保留原始 labels/properties，供下方详情面板展示选中节点的完整信息。
+ * Mapped G6 node.
+ * `data` also keeps the original labels/properties so the detail panel below can display the
+ * full information of the selected node.
  */
 interface GraphNode {
   id: string;
   label: string;
   data: {
     entityType: string;
-    /** 原始后端节点（非空即保留，供详情面板使用） */
+    /** Original backend node (kept whenever present, for use by the detail panel) */
     raw?: BackendNode;
   };
 }
 
-/** 映射后的 G6 边 */
+/** Mapped G6 edge */
 interface GraphEdge {
   id: string;
   source: string;
@@ -358,14 +367,14 @@ interface GraphEdge {
   };
 }
 
-/** 映射后的 G6 图数据 */
+/** Mapped G6 graph data */
 interface MappedGraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
 
-/** 实体类型 → 颜色（浅色主题） */
-const LIGHT_PALETTE: Record<string, string> = {
+/** Entity type → color (light theme) */
+const LIGHT_PALETTE: { default: string } & Record<string, string> = {
   person: '#3b82f6',
   organization: '#f59e0b',
   location: '#10b981',
@@ -377,8 +386,8 @@ const LIGHT_PALETTE: Record<string, string> = {
   default: '#64748b'
 };
 
-/** 实体类型 → 颜色（深色主题） */
-const DARK_PALETTE: Record<string, string> = {
+/** Entity type → color (dark theme) */
+const DARK_PALETTE: { default: string } & Record<string, string> = {
   person: '#60a5fa',
   organization: '#fbbf24',
   location: '#34d399',
@@ -396,30 +405,30 @@ const loading = ref(false);
 const empty = ref(false);
 const error = ref(false);
 
-/** 当前选中的节点 id（点击节点时写入，用于高亮 + 详情面板）；undefined 表示未选中 */
+/** Currently selected node id (written on node click, used for highlighting + the detail panel); undefined means nothing selected */
 const selectedNodeId = ref<string | undefined>(undefined);
-/** 当前选中的完整节点数据（含 labels/properties），供下方详情面板展示 */
+/** Full data of the currently selected node (including labels/properties), displayed by the detail panel below */
 const selectedNode = ref<GraphNode | undefined>(undefined);
-/** 最近一次成功加载的完整图数据（nodes + edges），供详情面板计算邻居节点 */
+/** Full graph data (nodes + edges) from the most recent successful load, used by the detail panel to compute neighbor nodes */
 const loadedGraphData = shallowRef<MappedGraphData | null>(null);
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
-/** 上传后的提示文本（成功/失败），为空时不展示 */
+/** Toast text after upload (success/failure); hidden when empty */
 const uploadMessage = ref('');
 
 const colorMode = useColorMode();
 
-/** 当前是否为深色主题（未知时默认深色） */
+/** Whether the current theme is dark (defaults to dark when unknown) */
 const isDark = () => colorMode.value === 'dark';
 
-/** 根据主题取实体颜色 */
+/** Pick the entity color according to the theme */
 const entityColor = (entityType: string): string => {
   const palette = isDark() ? DARK_PALETTE : LIGHT_PALETTE;
   return palette[entityType] ?? palette.default;
 };
 
-/** 从节点 properties / labels 推导实体类型 */
+/** Derive the entity type from the node's properties / labels */
 const resolveEntityType = (node: BackendNode): string => {
   const fromProps = node.properties?.entity_type;
   if (typeof fromProps === 'string' && fromProps.trim().length > 0) {
@@ -432,11 +441,11 @@ const resolveEntityType = (node: BackendNode): string => {
   return 'default';
 };
 
-/** 后端数据 → G6 图数据 */
+/** Backend data → G6 graph data */
 const mapGraphData = (payload: KnowledgeGraphResponse): MappedGraphData => {
   const nodes: GraphNode[] = (payload.nodes ?? []).map(node => ({
     id: node.id,
-    label: node.properties?.name ?? node.id,
+    label: typeof node.properties?.name === 'string' ? node.properties.name : node.id,
     data: {
       entityType: resolveEntityType(node),
       raw: node
@@ -458,23 +467,32 @@ const mapGraphData = (payload: KnowledgeGraphResponse): MappedGraphData => {
   return { nodes, edges };
 };
 
-/** 详情面板：展示实体类型标签（默认降级为 default） */
+/** Detail panel: display the entity type label (falls back to default when unknown) */
 const nodeTypeLabel = (node: GraphNode): string => {
   const entityType = node.data.entityType || 'default';
   const palette = isDark() ? DARK_PALETTE : LIGHT_PALETTE;
   return palette[entityType] !== undefined ? entityType : 'default';
 };
 
-/** 详情面板：节点属性（name 已作为标题展示，故排除，避免重复） */
+/** Detail panel: node properties (name is already shown as the title, so it is excluded to avoid duplication) */
 const nodeProperties = (node: GraphNode): Array<[string, unknown]> => {
   const raw = node.data.raw;
   if (!raw?.properties) return [];
   return Object.entries(raw.properties).filter(([key]) => {
-    return !['name', 'entity_id', 'entity_type', 'entity_name', 'description', 'source_id', 'file_path', 'created_at'].includes(key);
+    return ![
+      'name',
+      'entity_id',
+      'entity_type',
+      'entity_name',
+      'description',
+      'source_id',
+      'file_path',
+      'created_at'
+    ].includes(key);
   });
 };
 
-/** 详情面板：节点内容（LightRAG 实体摘要，最接近「正文」的字段；无 content 时回退 description） */
+/** Detail panel: node content (the LightRAG entity summary, the field closest to a "body text"; falls back to description when content is absent) */
 const nodeContent = (node: GraphNode): string => {
   const props = node.data.raw?.properties;
   if (!props) return '';
@@ -485,7 +503,7 @@ const nodeContent = (node: GraphNode): string => {
   return '';
 };
 
-/** 详情面板：来源文件路径 */
+/** Detail panel: source file path */
 const nodeSourceFile = (node: GraphNode): string => {
   const props = node.data.raw?.properties;
   if (!props) return '';
@@ -494,7 +512,7 @@ const nodeSourceFile = (node: GraphNode): string => {
   return '';
 };
 
-/** 详情面板：来源文档 ID */
+/** Detail panel: source document ID */
 const nodeSourceId = (node: GraphNode): string => {
   const props = node.data.raw?.properties;
   if (!props) return '';
@@ -503,7 +521,7 @@ const nodeSourceId = (node: GraphNode): string => {
   return '';
 };
 
-/** 详情面板：属性值格式化（对象/数组 → JSON 字符串） */
+/** Detail panel: property value formatting (objects/arrays → JSON string) */
 const formatProp = (value: unknown): string => {
   if (value === null || value === undefined) return '';
   if (typeof value === 'object') {
@@ -516,7 +534,7 @@ const formatProp = (value: unknown): string => {
   return String(value);
 };
 
-/** 详情面板：与选中节点直接相连的邻居节点（用于展示关联实体） */
+/** Detail panel: neighbor nodes directly connected to the selected node (used to display related entities) */
 const neighborsOf = (node: GraphNode): GraphNode[] => {
   const data = loadedGraphData.value;
   if (!data) return [];
@@ -525,10 +543,10 @@ const neighborsOf = (node: GraphNode): GraphNode[] => {
     if (edge.source === node.id) neighborIds.add(edge.target);
     if (edge.target === node.id) neighborIds.add(edge.source);
   }
-  return data.nodes.filter((n) => n.id !== node.id && neighborIds.has(n.id));
+  return data.nodes.filter(n => n.id !== node.id && neighborIds.has(n.id));
 };
 
-/** 构建 G6 图配置并渲染 */
+/** Build the G6 graph config and render it */
 const renderGraph = async (data: MappedGraphData) => {
   if (!containerRef.value) return;
 
@@ -538,7 +556,6 @@ const renderGraph = async (data: MappedGraphData) => {
   const dark = isDark();
   const background = dark ? '#131619' : '#f8f9fa';
   const nodeFill = dark ? '#1a1d21' : '#ffffff';
-  const nodeStroke = dark ? '#3f4650' : '#d1d5db';
   const labelFill = dark ? '#e5e7eb' : '#1f2937';
   const edgeStroke = dark ? '#4b5563' : '#9ca3af';
   const edgeLabelFill = dark ? '#9ca3af' : '#6b7280';
@@ -581,7 +598,10 @@ const renderGraph = async (data: MappedGraphData) => {
     autoFit: 'view',
     node: {
       style: {
-        labelText: (datum: { label?: string }) => datum.label ?? '',
+        labelText: (datum: NodeData) => {
+          const label = datum['label'];
+          return typeof label === 'string' ? label : '';
+        },
         labelFill,
         labelFontSize: 12,
         labelPlacement: 'bottom',
@@ -600,7 +620,10 @@ const renderGraph = async (data: MappedGraphData) => {
       style: {
         stroke: edgeStroke,
         lineWidth: 1.5,
-        labelText: (datum: { label?: string }) => datum.label ?? '',
+        labelText: (datum: EdgeData) => {
+          const label = datum['label'];
+          return typeof label === 'string' ? label : '';
+        },
         labelFill: edgeLabelFill,
         labelFontSize: 10,
         endArrow: true
@@ -621,13 +644,15 @@ const renderGraph = async (data: MappedGraphData) => {
     }
   });
 
-  // 点击节点：选中并联动下方详情面板。
-  // G6 v5 的 node:click 事件中 evt.target 已被事件转发层解析为节点元素本身（其 id 即节点 id），
-  // 无论点中节点主体还是其 label 子形状都一样，用 targetType 判定命中节点后取 evt.target.id 即可。
+  // Node click: select the node and sync the detail panel below.
+  // In G6 v5's node:click event, evt.target has already been resolved by the event forwarding
+  // layer into the node element itself (its id is the node id) — the same whether the node body
+  // or one of its label child shapes was hit. After confirming the hit is a node via targetType,
+  // simply take evt.target.id.
   graph.on(NodeEvent.CLICK, (evt: IElementEvent) => {
     const id = evt.targetType === 'node' ? evt.target.id : undefined;
     if (!id) return;
-    const node = data.nodes.find((n) => n.id === id);
+    const node = data.nodes.find(n => n.id === id);
     if (node) {
       selectedNodeId.value = id;
       selectedNode.value = node;
@@ -637,22 +662,26 @@ const renderGraph = async (data: MappedGraphData) => {
   graphRef.value = graph;
   await graph.render();
 
-  // 首次渲染后重放既有选中（若存在），使高亮即时可见。
-  // G6 render() 完成后节点已就绪，这里再同步点亮即可。
+  // After the first render, replay any existing selection (if present) so the highlight is
+  // immediately visible.
+  // By the time G6 render() completes, the nodes are ready, so we can light it up synchronously
+  // here.
   if (selectedNodeId.value) {
     try {
       graph.setElementState(selectedNodeId.value, ['selected']);
     } catch {
-      /* 选中节点不在新数据内，忽略 */
+      /* The selected node is not in the new data; ignore */
     }
   }
 };
 
 /**
- * 选中高亮切换：就地应用 G6 的 selected state，不销毁实例、不重跑布局。
- * 依赖上面 node.state.selected 样式，点击节点后仅改变该节点状态即可即时高亮。
- * @param prev 上一个选中节点 id（撤销高亮），可为空
- * @param next 新选中的节点 id（点亮），可为空
+ * Selection highlight switching: applies G6's selected state in place, without destroying the
+ * instance or re-running the layout.
+ * Relies on the node.state.selected style above; after a node is clicked, only that node's state
+ * needs to change for an instant highlight.
+ * @param prev The previously selected node id (to un-highlight); may be empty
+ * @param next The newly selected node id (to light up); may be empty
  */
 const applyHighlight = async (prev?: string, next?: string) => {
   const graph = graphRef.value;
@@ -661,33 +690,33 @@ const applyHighlight = async (prev?: string, next?: string) => {
     try {
       await graph.setElementState(prev, []);
     } catch {
-      /* 节点可能已不在当前展示范围，忽略 */
+      /* The node may no longer be within the currently displayed range; ignore */
     }
   }
   if (next) {
     try {
       await graph.setElementState(next, ['selected']);
     } catch {
-      /* 节点可能尚未渲染，忽略（后续 render 时会据 selectedNodeId 补齐） */
+      /* The node may not be rendered yet; ignore (a later render() will restore it based on selectedNodeId) */
     }
   }
 };
 
-/** 允许上传的文件后缀（与后端 _ALLOWED_EXT 保持一致） */
+/** File extensions allowed for upload (kept in sync with the backend's _ALLOWED_EXT) */
 const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md'];
 
-/** 校验单个文件后缀是否被允许 */
+/** Check whether a single file's extension is allowed */
 const isAllowedFile = (name: string): boolean => {
   const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
   return ALLOWED_EXTENSIONS.includes(ext);
 };
 
-/** 点击上传按钮 → 弹出文件选择框 */
+/** Upload button click → open the file picker */
 const triggerUpload = () => {
   fileInputRef.value?.click();
 };
 
-/** 文件选择后触发上传 */
+/** Trigger the upload after files are selected */
 const onFileSelected = (event: Event) => {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files ?? []);
@@ -696,7 +725,7 @@ const onFileSelected = (event: Event) => {
   uploadFiles(files);
 };
 
-/** 上传文件到后端并重新加载图谱 */
+/** Upload files to the backend and reload the graph */
 const uploadFiles = async (files: File[]) => {
   if (uploading.value) return;
 
@@ -734,7 +763,7 @@ const uploadFiles = async (files: File[]) => {
   }
 };
 
-/** 拉取并渲染知识图谱 */
+/** Fetch and render the knowledge graph */
 const loadGraph = async () => {
   loading.value = true;
   error.value = false;
@@ -768,7 +797,7 @@ const loadGraph = async () => {
   }
 };
 
-/** 主题切换时重建图谱以应用新配色 */
+/** Rebuild the graph when the theme changes to apply the new color scheme */
 watch(
   () => colorMode.value,
   () => {
@@ -778,7 +807,7 @@ watch(
   }
 );
 
-/** 选中节点变化时只就地更新高亮（selected state），不重建整图、不重排布局 */
+/** When the selected node changes, update only the highlight in place (selected state); no full graph rebuild, no re-layout */
 watch(
   () => selectedNodeId.value,
   (next, prev) => {

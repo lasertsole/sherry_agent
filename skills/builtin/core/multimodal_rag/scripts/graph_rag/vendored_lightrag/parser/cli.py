@@ -1,4 +1,4 @@
-﻿"""Unified sidecar debug CLI for any registered parser engine.
+"""Unified sidecar debug CLI for any registered parser engine.
 
 Dispatches one source file through the parser registry
 (``get_parser(engine).parse(...)``) and writes the resulting sidecar (and
@@ -38,9 +38,7 @@ def _normalize_direct_script_sys_path() -> None:
 
     # Direct execution adds lightrag/parser to sys.path, which makes the
     # native parser's third-party ``docx`` import resolve to parser/docx.
-    sys.path[:] = [
-        entry for entry in sys.path if Path(entry or ".").resolve() != parser_dir
-    ]
+    sys.path[:] = [entry for entry in sys.path if Path(entry or ".").resolve() != parser_dir]
     repo_root_str = str(repo_root)
     if repo_root_str in sys.path:
         sys.path.remove(repo_root_str)
@@ -136,9 +134,7 @@ def _print_summary(blocks_path: Path, raw_dir: Path | None, preview: int) -> Non
             heading = row.get("heading") or ""
             content = (row.get("content") or "").replace("\n", " ")
             snippet = content if len(content) <= 80 else content[:77] + "..."
-            print(
-                f"  [{row.get('blockid', '')[:8]}] " f"heading={heading!r} :: {snippet}"
-            )
+            print(f"  [{row.get('blockid', '')[:8]}] heading={heading!r} :: {snippet}")
 
 
 def _print_raw_summary(result: dict, preview: int) -> None:
@@ -197,11 +193,7 @@ async def _run(args: argparse.Namespace) -> int:
     # External engines preserve a raw bundle next to the sidecar; its name is
     # derived from the engine's own raw_dir_suffix (mirrors the flattened
     # raw_dir_for_parsed_dir layout), so any external engine works here.
-    raw_dir = (
-        sidecar_parent / f"{source.name}{parser.raw_dir_suffix}"
-        if is_external
-        else None
-    )
+    raw_dir = sidecar_parent / f"{source.name}{parser.raw_dir_suffix}" if is_external else None
 
     doc_id = args.doc_id or compute_mdhash_id(str(source), prefix="doc-")
 
@@ -251,9 +243,7 @@ async def _run(args: argparse.Namespace) -> int:
         # ``self.is_bundle_valid(...)``, so patch the resolved instance method
         # directly — works for any external engine without knowing its module.
         if is_external:
-            stack.enter_context(
-                mock.patch.object(parser, "is_bundle_valid", bundle_check)
-            )
+            stack.enter_context(mock.patch.object(parser, "is_bundle_valid", bundle_check))
 
         # Patch 3: keep the source file in place. Every engine archives via
         # ctx.archive_source -> lightrag.pipeline.archive_docx_source_after_...

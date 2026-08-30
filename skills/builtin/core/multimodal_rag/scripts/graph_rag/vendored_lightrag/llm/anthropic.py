@@ -1,4 +1,4 @@
-﻿from ..utils import verbose_debug, VERBOSE_DEBUG
+from ..utils import verbose_debug, VERBOSE_DEBUG
 import sys
 import os
 import logging
@@ -71,9 +71,7 @@ async def anthropic_complete_if_cache(
     if history_messages is None:
         history_messages = []
     if enable_cot:
-        logger.debug(
-            "enable_cot=True is not supported for the Anthropic API and will be ignored."
-        )
+        logger.debug("enable_cot=True is not supported for the Anthropic API and will be ignored.")
     if not api_key:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
 
@@ -113,9 +111,7 @@ async def anthropic_complete_if_cache(
     stream = kwargs.pop("stream", False)
 
     anthropic_async_client = (
-        AsyncAnthropic(
-            default_headers=default_headers, api_key=api_key, timeout=timeout
-        )
+        AsyncAnthropic(default_headers=default_headers, api_key=api_key, timeout=timeout)
         if base_url is None
         else AsyncAnthropic(
             base_url=base_url,
@@ -198,9 +194,7 @@ async def anthropic_complete_if_cache(
             async for event in response:
                 content = (
                     event.delta.text
-                    if hasattr(event, "delta")
-                    and hasattr(event.delta, "text")
-                    and event.delta.text
+                    if hasattr(event, "delta") and hasattr(event.delta, "text") and event.delta.text
                     else None
                 )
                 if content is None:

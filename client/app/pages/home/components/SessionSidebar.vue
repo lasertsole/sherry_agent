@@ -1,8 +1,8 @@
 <template>
-  <!-- 左侧-历史记录区域 -->
-  <!-- 移动端：固定定位，默认隐藏，通过按钮切换 -->
-  <!-- md：固定定位，显示宽度 280px -->
-  <!-- lg：相对定位，显示宽度 360px -->
+  <!-- Left side - history records area -->
+  <!-- Mobile: fixed positioning, hidden by default, toggled via a button -->
+  <!-- md: fixed positioning, width 280px -->
+  <!-- lg: relative positioning, width 360px -->
   <div
     :class="[
       'relative h-full overflow-hidden transition-all duration-300',
@@ -10,11 +10,11 @@
         ? 'w-0 border-r-0'
         : 'w-[280px] md:w-[280px] lg:w-[360px] border-r border-solid border-gray-light bg-transparent dark:border-gray-dark dark:bg-transparent'
     ]">
-    <!-- 内容固定宽度：折叠时由外层 overflow-hidden 整体裁切，内部元素不会被挤压换行 -->
+    <!-- Fixed content width: when collapsed the outer overflow-hidden clips it wholesale, inner elements are never squeezed or wrapped -->
     <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
-      <!-- LOGO区域 -->
+      <!-- LOGO area -->
       <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
-      <!-- 标签页切换：会话 / 后台任务 -->
+      <!-- Tab switcher: sessions / background tasks -->
       <div class="flex gap-1 my-3 rounded-lg p-1 bg-gray-100 dark:bg-gray-800">
         <button
           class="flex-1 h-8 rounded-md text-sm transition-all cursor-pointer"
@@ -43,16 +43,16 @@
         </button>
       </div>
 
-      <!-- ===== 会话 Tab ===== -->
+      <!-- ===== Sessions Tab ===== -->
       <template v-if="activeTab === 'sessions'">
-        <!-- 新建对话 -->
+        <!-- New chat -->
         <Button
           icon="pi pi-comment"
           :label="t('toolbar.newChat')"
           class="mb-3"
           @click="handleCreateSession"
           size="small" />
-        <!-- 筛选开关：默认折叠，收起时不显示任何搜索框（样式沿用 ChatBox 折叠块的 chevron+rotate 模式） -->
+        <!-- Filter toggle: collapsed by default, no search box shown while collapsed (reuses the ChatBox collapsible block's chevron+rotate pattern) -->
         <div
           class="flex items-center mb-2 cursor-pointer select-none text-xs text-[#868686]"
           role="button"
@@ -68,7 +68,7 @@
               { 'rotate-180': showSessionFilters }
             ]" />
         </div>
-        <!-- 筛选栏：标题关键字 + 创建日期范围（本地过滤，两条件 AND 生效，均可选） -->
+        <!-- Filter bar: title keyword + creation date range (local filtering, the two conditions combine with AND, both optional) -->
         <div
           v-if="showSessionFilters"
           class="flex flex-col gap-2 mb-3">
@@ -92,7 +92,7 @@
             severity="secondary"
             @click="clearFilters" />
         </div>
-        <!-- 记录列表 -->
+        <!-- Records list -->
         <div class="flex flex-col overflow-auto flex-1 gap-3">
           <div
             v-if="filteredHistoryList.length === 0"
@@ -127,7 +127,7 @@
         </div>
       </template>
 
-      <!-- ===== 后台任务 Tab ===== -->
+      <!-- ===== Background Tasks Tab ===== -->
       <template v-else>
         <div class="flex flex-col overflow-auto flex-1 gap-2">
           <div
@@ -171,15 +171,34 @@
                   v-if="statusLabel(run) !== t('sidebar.statusUnknown')"
                   class="ml-auto flex-none inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full leading-none"
                   :class="badgeClass(run)">
-                  <i v-if="isRunning(run)" class="pi pi-spin pi-spinner text-[10px]" />
+                  <i
+                    v-if="isRunning(run)"
+                    class="pi pi-spin pi-spinner text-[10px]" />
                   {{ statusLabel(run) }}
                 </span>
               </div>
-              <div class="text-[13px] leading-snug line-clamp-2 break-words">{{ run.label || run.task_name || '-' }}</div>
-              <div class="text-[11px] leading-snug text-[#868686] break-all">
-                <span class="text-[#b0b0b0]">{{ t('sidebar.startTime') }}: </span>{{ formatTime(run.execution.started_at) }}
-                <span class="mx-1.5 text-[#b0b0b0]">/</span>
-                <span class="text-[#b0b0b0]">{{ t('sidebar.endTime') }}: </span>{{ formatTime(run.execution.ended_at) }}
+              <div class="text-[13px] leading-snug line-clamp-2 break-words">
+                {{ run.label || run.task_name || '-' }}
+              </div>
+              <div class="flex justify-between items-center gap-2 text-[11px] leading-snug text-[#868686] break-all">
+                <div class="min-w-0">
+                  <span class="text-[#b0b0b0]">{{ t('sidebar.startTime') }}: </span
+                  >{{ formatTime(run.execution.started_at) }}
+                  <span class="mx-1.5 text-[#b0b0b0]">/</span>
+                  <span class="text-[#b0b0b0]">{{ t('sidebar.endTime') }}: </span
+                  >{{ formatTime(run.execution.ended_at) }}
+                </div>
+                <!-- Single delete: trash icon (reuses the session box pattern), deletes this task and its entire subtree -->
+                <button
+                  type="button"
+                  class="shrink-0 cursor-pointer text-theme-main hover:text-red-500"
+                  :aria-label="t('sidebar.taskDelete')"
+                  :title="t('sidebar.taskDelete')"
+                  @click.stop="handleDeleteTask(run)">
+                  <i
+                    class="pi"
+                    :class="deletingRunIds.has(run.run_id) ? 'pi-spin pi-spinner' : 'pi-trash'" />
+                </button>
               </div>
             </div>
           </template>
@@ -208,18 +227,13 @@
 </template>
 
 <script lang="ts">
-// 方法/类型（普通 script 块：仅用于向父组件导出 ensureSessionCharacter，供其复用）
+// Methods/types (regular script block: only for exporting ensureSessionCharacter to parent component for reuse)
 import type { CachedCharacter } from '@/composables/db';
-import {
-  GLOBAL_SESSION_KEY,
-  DEFAULT_CACHED_CHARACTER,
-  cacheCharacter,
-  readCachedCharacter
-} from '@/composables/db';
+import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter } from '@/composables/db';
 
 /**
- * 默认角色显示信息（内置：远野汉娜 / 橘雪莉 + 默认头像 URL，见 `defaultCharacter.ts`）。
- * 用于在会话尚未锁定角色快照时，作为 Dexie 锁定的兜底数据源。
+ * Default character display info (built-in: Touno Hanna / Sherry Orange + default avatar URLs, see `defaultCharacter.ts`).
+ * Used as fallback data source for Dexie locking when session hasn't locked character snapshot yet.
  */
 const defaultCharacter = (): { userName: string; userAvatar: string; aiName: string; aiAvatar: string } => ({
   userName: DEFAULT_CACHED_CHARACTER.userName,
@@ -229,16 +243,16 @@ const defaultCharacter = (): { userName: string; userAvatar: string; aiName: str
 });
 
 /**
- * 确保指定会话已锁定自己的角色快照。
+ * Ensure the specified session has locked its own character snapshot.
  *
- * 命名逻辑：系统配置-角色配置编辑的是「全局待定 profile」（`GLOBAL_SESSION_KEY` 行）。
- * 每个会话在首次打开时，把当时的全局 profile 拷贝并锁定到自己的 `session_id` 行；
- * 之后全局更新（改头像/名字）不再作用于已锁定快照的旧会话，仅新会话会取到最新全局值。
- * 锁定结果由 [sid].vue 通过 `readCachedCharacter(sessionId)` 消费。
+ * Naming logic: System configuration - character configuration edits the 'global pending profile' (`GLOBAL_SESSION_KEY` row).
+ * When each session is first opened, copy and lock the current global profile to its own `session_id` row;
+ * Subsequent global updates (avatar/name changes) no longer affect old sessions with locked snapshots, only new sessions get the latest global values.
+ * Locking result is consumed by [sid].vue through `readCachedCharacter(sessionId)`.
  *
- * 导出供 home/index.vue 复用（系统配置保存后加载当前会话快照、首屏 default 会话初始化）。
+ * Exported for reuse by home/index.vue (load current session snapshot after system config save, initialize default session on first screen).
  *
- * @param sessionId 会话 ID
+ * @param sessionId Session ID
  */
 export async function ensureSessionCharacter(sessionId: string) {
   try {
@@ -246,18 +260,18 @@ export async function ensureSessionCharacter(sessionId: string) {
       readCachedCharacter(GLOBAL_SESSION_KEY),
       readCachedCharacter(sessionId)
     ]);
-    // 会话已有快照（旧会话锁定的头像/名字）→ 保持现状，不覆盖旧会话快照。
+    // Session already has snapshot (old session locked avatar/name) → keep as-is, don't overwrite old session snapshot.
     if (sessionSnap) {
       return;
     }
-    // 会话尚无快照（新建或从未打开过的会话）→ 用全局 profile 快照并锁定。
-    // 注意：`base` 可能是全局行（含 session_id=GLOBAL_SESSION_KEY），
-    // 必须用 `...base` 之后显式覆盖 session_id，避免把真实会话的 key 写进全局行。
+    // Session has no snapshot yet (new session or never opened before) → use global profile snapshot and lock it.
+    // Note: `base` might be the global row (with session_id=GLOBAL_SESSION_KEY),
+    // must use `...base` then explicitly override session_id, avoid writing real session key into global row.
     const base = globalSnap ?? defaultCharacter();
     const locked: CachedCharacter = { ...base, session_id: sessionId };
     await cacheCharacter(locked);
   } catch (error) {
-    // Dexie 读写异常时不阻塞聊天。
+    // Don't block chat on Dexie read/write exceptions.
     console.warn('[ensureSessionCharacter] 读取角色快照失败：', error);
   }
 }
@@ -285,22 +299,19 @@ import type { SubagentRun } from '@/composables/bridge';
 import { useSubagentTasks } from '@/composables/useSubagentTasks';
 import dayjs from 'dayjs';
 import { filterSessions } from '@/composables/sessionFilter';
+import { isValidSessionTitle } from '@/common/utils';
 
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 const localePath = useLocalePath();
 
-// 后台任务共享状态（模块级单例，与右侧完整任务列表页共用同一份响应式数据）
+// Background task shared state (module-level singleton, shares same reactive data with right-side complete task list page)
 const {
-  taskRuns,
-  allTaskRuns,
   rootTaskRuns,
   groupedRootTaskRuns,
   taskLoading,
-  runningTaskCount,
   allRunningTaskCount,
-  lastUpdatedText,
   selectedRunIds,
   deletingRunIds,
   allSelected,
@@ -308,7 +319,6 @@ const {
   isRunning,
   badgeClass,
   statusLabel,
-  parentSessionLabel,
   initTasks,
   setTasksTabActive,
   focusRun,
@@ -316,55 +326,56 @@ const {
   loadTaskRuns,
   toggleTaskSelection,
   toggleSelectAllTasks,
+  deleteSubagentSubtree,
   deleteSelectedTasks
 } = useSubagentTasks();
 
-/** 是否折叠（由父组件通过 v-model:collapsed 控制，折叠/展开按钮在父组件工具栏） */
+/** Whether collapsed (controlled by parent component via v-model:collapsed, collapse/expand buttons in parent component toolbar) */
 const collapsed = defineModel<boolean>('collapsed', { default: false });
 
-/** 当前会话 id（由父组件 v-model:current-session-id 双向同步，父组件用于加载角色快照） */
+/** Current session id (bidirectionally synced by parent component via v-model:current-session-id, parent uses it to load character snapshot) */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');
 
-/** 渲染执行时间：epoch 毫秒 → 本地可读字符串；空值/非法值显示占位符 '-' */
+/** Render execution time: epoch milliseconds → local readable string; null/invalid values show placeholder '-' */
 function formatTime(ms: number | null | undefined): string {
   if (ms == null || Number.isNaN(Number(ms))) return '-';
   return dayjs(Number(ms)).format('YYYY-MM-DD HH:mm:ss');
 }
 
-/** 历史会话 */
+/** History sessions */
 const historyList = ref<SessionRecord[]>([]);
 
-/** 筛选栏展开状态：默认折叠，收起时不显示任何搜索框 */
+/** Filter bar expand state: collapsed by default, no search box shown when collapsed */
 const showSessionFilters = ref(false);
 
-/** 筛选：标题关键字（空/空白视为未启用） */
+/** Filter: title keyword (empty/blank considered disabled) */
 const searchKeyword = ref('');
-/** 筛选：创建日期范围（PrimeVue Calendar range 模式，null/空数组视为未启用） */
+/** Filter: creation date range (PrimeVue Calendar range mode, null/empty array considered disabled) */
 const dateRange = ref<Date[] | null>(null);
 
 /**
- * 筛选后的会话列表：关键字与创建日期范围同时生效（AND），纯客户端过滤不发请求；
- * 两个条件均未启用时原样返回 historyList（同一引用，避免无谓的数组重建）。
+ * Filtered session list: keyword and creation date range both effective (AND), pure client-side filtering without requests;
+ * When both conditions are disabled, return historyList as-is (same reference, avoid unnecessary array reconstruction).
  */
 const filteredHistoryList = computed(() => filterSessions(historyList.value, searchKeyword.value, dateRange.value));
 
-/** 是否有任一筛选条件生效（控制「清除筛选」按钮与空态文案） */
+/** Whether any filter condition is active (controls 'Clear Filters' button and empty state text) */
 const hasActiveFilters = computed(() => {
   if (searchKeyword.value.trim().length > 0) return true;
   return Array.isArray(dateRange.value) && dateRange.value.some(d => d != null);
 });
 
-/** 清空筛选条件：重置关键字与日期范围 */
+/** Clear filter conditions: reset keyword and date range */
 const clearFilters = () => {
   searchKeyword.value = '';
   dateRange.value = null;
 };
 
-/** 选择的会话 */
+/** Selected sessions */
 const selectedSessionIds = ref<string[]>([]);
 /**
- * 全选状态：以「筛选后可见」的会话为准——仅当所有可见项都被选中时勾选；
- * 被筛选隐藏但仍在 selectedSessionIds 中的项不影响勾选态。
+ * Select all state: based on 'visible after filtering' sessions — only checked when all visible items are selected;
+ * Items filtered out but still in selectedSessionIds don't affect checked state.
  */
 const isCheckAllSession = computed(
   () =>
@@ -372,8 +383,8 @@ const isCheckAllSession = computed(
     filteredHistoryList.value.every(s => selectedSessionIds.value.includes(s.id))
 );
 /**
- * 会话选择状态（半选）：以「筛选后可见」的会话为准——
- * 可见项中仅部分被选中时为半选；全部选中或全部未选中则不是。
+ * Session selection state (indeterminate): based on 'visible after filtering' sessions —
+ * indeterminate when only some visible items are selected; not indeterminate when all selected or none selected.
  */
 const isIndeterminate = computed(() => {
   const visible = filteredHistoryList.value;
@@ -382,29 +393,29 @@ const isIndeterminate = computed(() => {
 });
 
 /**
- * 从服务端拉取全部会话列表并填充左侧历史列表。
+ * Fetch complete session list from server and populate left-side history list.
  *
- * 会话列表的唯一权威来源是服务端（context_engine）。这里会把服务端返回的
- * `{session_id, last_time, title}` 映射为前端 `SessionRecord`（id / createTime / title）。
- * 本地新建但尚未持久化的会话（createTime 为本地时间）会保留在列表头部。
+ * The only authoritative source for session list is server (context_engine). Here we map server-returned
+ * `{session_id, last_time, title}` to frontend `SessionRecord` (id / createTime / title).
+ * Locally created but not yet persisted sessions (createTime is local time) will be kept at list top.
  */
 const loadSessionList = async () => {
   try {
     const sessions = await getSessionList();
-    // 合并本地新建但服务端尚不存在的会话（IndexedDB 占位，刷新后仍能恢复）：
-    // 1) 读取 IndexedDB 中持久化的占位会话（新建空会话尚未发消息）；
-    // 2) 服务端已有记录（发过消息）的会话直接从内存列表保留，并顺手清除其占位；
-    // 3) 内存 `historyList` 中的本地项（本次会话新建但尚未写入 IndexedDB，兜底）。
+    // Merge locally created sessions that don't exist on server yet (IndexedDB placeholders, can still recover after refresh):
+    // 1) Read persisted placeholder sessions in IndexedDB (new empty sessions not yet sent messages);
+    // 2) Sessions with server records (messages sent) are kept directly from memory list, and their placeholders are cleared;
+    // 3) Local items in memory `historyList` (newly created in this session but not yet written to IndexedDB, fallback).
     let localPlaceholders = historyList.value.filter(s => !sessions.some(row => row.id === s.id));
     const serverIds = new Set(sessions.map(row => row.id));
-    // 服务端已有记录的会话，删除其本地占位（已晋升为真实服务端会话）。
+    // For sessions with server records, delete their local placeholders (already promoted to real server sessions).
     const placeholders = await readCachedSessionMetaList();
     for (const p of placeholders) {
       if (serverIds.has(p.id)) {
         clearCachedSessionMeta(p.id);
       }
     }
-    // 合并：IndexedDB 占位（刷新恢复） + 内存本地项（本次会话兜底），去重。
+    // Merge: IndexedDB placeholders (refresh recovery) + memory local items (this session fallback), deduplicated.
     const localById = new Map<string, SessionRecord>();
     for (const p of placeholders) {
       localById.set(p.id, { id: p.id, title: p.title, createTime: p.createTime });
@@ -413,15 +424,15 @@ const loadSessionList = async () => {
       if (!localById.has(s.id)) localById.set(s.id, s);
     }
     localPlaceholders = Array.from(localById.values());
-    // 占位会话按最新优先（createTime 倒序，字符串格式 YYYY-MM-DD HH:mm 可字典序比较）。
+    // Placeholder sessions sorted by newest first (createTime descending, string format YYYY-MM-DD HH:mm can be compared lexicographically).
     localPlaceholders.sort((a, b) => (b.createTime < a.createTime ? -1 : 1));
-    // 合并后应用自定义标题覆盖层：被编辑命名的会话标题固定，不再跟随最后一句用户消息
+    // After merging, apply custom title overlay: edited session titles are fixed, no longer follow last user message
     const overrides = await readSessionTitleOverrides();
     historyList.value = [...localPlaceholders, ...sessions].map(item =>
       overrides.has(item.id) ? { ...item, title: overrides.get(item.id) ?? item.title, renamed: true } : item
     );
   } catch (error) {
-    // 服务端不可达时：本次会话内存态保留，并尝试从 IndexedDB 恢复已持久化的占位会话
+    // When server unreachable: current session memory state preserved, try to recover persisted placeholder sessions from IndexedDB
     console.warn('[loadSessionList] 拉取会话列表失败：', error);
     try {
       const placeholders = await readCachedSessionMetaList();
@@ -432,7 +443,7 @@ const loadSessionList = async () => {
       for (const s of historyList.value) {
         if (!localById.has(s.id)) localById.set(s.id, s);
       }
-      // 应用自定义标题覆盖层：离线时重命名会话同样保持自定义标题
+      // Apply custom title overlay: offline session renaming also maintains custom titles
       const overrides = await readSessionTitleOverrides();
       historyList.value = Array.from(localById.values()).map(item =>
         overrides.has(item.id) ? { ...item, title: overrides.get(item.id) ?? item.title, renamed: true } : item
@@ -443,7 +454,7 @@ const loadSessionList = async () => {
   }
 };
 
-/** 新增会话：生成随机 session_id，加入列表并路由到新会话页（KeepAlive 按 sid 缓存） */
+/** Add new session: generate random session_id, add to list and route to new session page (KeepAlive caches by sid) */
 const handleCreateSession = () => {
   const sessionId = crypto.randomUUID();
   const now = new Date();
@@ -456,38 +467,40 @@ const handleCreateSession = () => {
   };
   historyList.value = [newSession, ...historyList.value];
   currentSessionId.value = sessionId;
-  // 新会话：立即用当前全局 profile 创建并锁定角色快照，保证头像/名字正确显示
+  // New session: immediately create and lock character snapshot with current global profile, ensure avatar/name display correctly
   ensureSessionCharacter(sessionId);
-  // 切回「会话」展示态：通知右侧 [sid].vue 恢复聊天区
+  // Switch back to 'chat' display state: notify right-side [sid].vue to restore chat area
   emit('subagent:show-chat');
   setTasksTabActive(false);
-  // 持久化占位会话（新建即写入 IndexedDB），保证刷新/重开后该空会话仍保留在列表
-  // （服务端会话列表由消息表派生，未发消息前无记录，只能靠本地占位恢复）。
+  // Persist placeholder session (written to IndexedDB on creation), ensure this empty session remains in list after refresh/reopen
+  // (server session list is derived from message table, no records before messages sent, can only recover from local placeholders).
   cacheSessionMeta({ id: sessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
   router.push(localePath(`/home/${sessionId}`));
 };
 
 /**
- * 会话切换：路由到对应会话页。
- * [sid].vue 由 KeepAlive 按 session_id 缓存，切换时原样恢复其草稿/滚动/流式状态。
+ * Session switch: route to corresponding session page.
+ * [sid].vue is cached by KeepAlive using session_id, switches restore its draft/scroll/streaming state as-is.
  */
 const handleToggleSession = (id: string) => {
   if (currentSessionId.value === id) return;
   currentSessionId.value = id;
-  // 切换会话：加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
+  // Switch session: load this session's locked character snapshot (use global profile lock if no snapshot)
   ensureSessionCharacter(id);
-  // 切回「会话」展示态：通知右侧 [sid].vue 恢复聊天区
+  // Switch back to 'chat' display state: notify right-side [sid].vue to restore chat area
   emit('subagent:show-chat');
   setTasksTabActive(false);
   router.push(localePath(`/home/${id}`));
 };
 
 /**
- * 重命名会话：本地即时生效（可被搜索），并持久化覆盖层。
- * 标题覆盖层独立存于 Dexie `sessionTitles` 表（不随占位会话晋升被清除），
- * 下次 loadSessionList 时会覆盖服务端派生标题并标记 `renamed`（展示高亮色）。
+ * Rename session: takes effect locally immediately (can be searched), and persists overlay.
+ * Title overlay is stored separately in Dexie `sessionTitles` table (not cleared when placeholder session is promoted),
+ * next loadSessionList will overwrite server-derived title and mark as `renamed` (shows highlighted color).
  */
 async function handleRenameSession(id: string, title: string) {
+  // In-depth defense: illegal titles (over 30 chars / contain special chars) are ignored directly, normal path already intercepted in HistoryItem before submission
+  if (!isValidSessionTitle(title)) return;
   const item = historyList.value.find(s => s.id === id);
   if (!item) return;
   item.title = title;
@@ -495,15 +508,15 @@ async function handleRenameSession(id: string, title: string) {
   await saveSessionTitleOverride(id, title);
 }
 
-/** 正在删除中的会话 id 集合（in-flight 防重入：同一会话的删除请求只发一次） */
+/** Set of session ids being deleted (in-flight anti-reentrancy: delete request for same session only sent once) */
 const deletingSessionIds = ref<Set<string>>(new Set());
-/** 批量删除会话进行中（in-flight 防重入） */
+/** Bulk session deletion in progress (in-flight anti-reentrancy) */
 const batchDeleting = ref(false);
 
 /**
- * 删除会话：调用服务端 clearSession，成功后从列表移除。
- * 若删除的是当前激活会话，则路由回首页空态（[sid].vue 实例由 KeepAlive 释放）。
- * in-flight 防重入：删除进行中再次触发同一会话直接忽略（快速连点只发一次 DELETE）。
+ * Delete session: call server clearSession, remove from list after success.
+ * If deleting the currently active session, route back to home empty state ([sid].vue instance released by KeepAlive).
+ * in-flight anti-reentrancy: if same session is triggered again during deletion, directly ignore (rapid clicks only send one DELETE).
  */
 const handleDeleteSession = async (id: string) => {
   if (deletingSessionIds.value.has(id)) return;
@@ -511,52 +524,67 @@ const handleDeleteSession = async (id: string) => {
   try {
     const ok = await clearSession(id);
     if (!ok) {
-      console.warn('[handleDeleteSession] 删除会话失败，保留列表项：', id);
+      console.warn('[handleDeleteSession] Failed to delete session, keeping list item:', id);
       return;
     }
     historyList.value = historyList.value.filter(s => s.id !== id);
     selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id);
-    // 同步清理该会话的角色快照缓存
+    // Synchronously clear this session's character snapshot cache
     clearCachedCharacter(id);
-    // 同步清理本地占位会话缓存（IndexedDB），避免删除后仍残留占位
+    // Synchronously clear local placeholder session cache (IndexedDB), avoid remaining placeholders after deletion
     clearCachedSessionMeta(id);
-    // 同步清理自定义标题覆盖层（IndexedDB），避免删除后残留孤儿覆盖记录
+    // Synchronously clear custom title overlay (IndexedDB), avoid leaving orphan overlay records after deletion
     await clearSessionTitleOverride(id);
-    // 该会话可能仍在流式生成（尤其是非激活会话，其 [sid].vue 仍被 KeepAlive 缓存且流未中止）。
-    // 广播中止事件，让对应的 [sid].vue 实例 abort 其 AbortController，避免删除后流仍在后台推块、污染聊天状态。
+    // This session may still be streaming (especially inactive sessions, their [sid].vue still KeepAlive cached and stream not aborted).
+    // Broadcast abort event, let corresponding [sid].vue instance abort its AbortController, avoid stream still pushing chunks in background after deletion, contaminating chat state.
     emit(SESSION_ABORT_STREAM_EVENT, id);
     if (currentSessionId.value === id) {
       currentSessionId.value = undefined;
       router.push(localePath('/home'));
     }
   } catch (error) {
-    console.warn('[handleDeleteSession] 删除会话异常，保留列表项：', id, error);
+    console.warn('[handleDeleteSession] Exception deleting session, keeping list item:', id, error);
   } finally {
     deletingSessionIds.value.delete(id);
   }
 };
 
-/** 全选/取消全选：仅作用于「筛选后可见」的会话，隐藏（被筛掉）项的原有选中状态保持不变 */
+/** Select all/Deselect all: only affects 'visible after filtering' sessions, original selected state of hidden (filtered out) items remains unchanged */
 const handleToggleSelectAll = (checked: boolean) => {
   const visibleIds = new Set(filteredHistoryList.value.map(s => s.id));
   if (checked) {
-    // 勾选全选：选中当前可见（筛选后）的全部会话，保留隐藏项已有选择
+    // Check all: select all currently visible (filtered) sessions, keep existing selections of hidden items
     selectedSessionIds.value = Array.from(new Set([...selectedSessionIds.value, ...visibleIds]));
   } else {
-    // 取消全选：仅取消当前可见项的选中
+    // Deselect all: only deselect currently visible items
     selectedSessionIds.value = selectedSessionIds.value.filter(id => !visibleIds.has(id));
   }
 };
 
+// PrimeVue confirmation dialog service (ConfirmationService auto-registered by nuxt module, ConfirmDialog mounted in app.vue)
+const confirm = useConfirm();
+
 /**
- * 批量删除会话：逐个调用服务端 clearSession，成功后统一从列表移除。
- * 若其中有当前激活会话，则路由回首页空态。
- * in-flight 防重入：批量删除进行中再次点击直接忽略（按钮同时禁用 + loading）。
+ * Bulk delete sessions: after PrimeVue confirmation dialog confirmation, call server clearSession one by one, uniformly remove from list after success.
+ * If current active session is among them, route back to home empty state.
+ * in-flight anti-reentrancy: bulk deletion in progress, directly ignore on re-click (button disabled + loading simultaneously).
  */
-const handleBatchDelete = async () => {
+const handleBatchDelete = () => {
   if (batchDeleting.value) return;
   if (selectedSessionIds.value.length === 0) return;
-  if (!window.confirm(t('history.batchDeleteConfirm'))) return;
+  confirm.require({
+    header: t('common.confirmDelete'),
+    message: t('history.batchDeleteConfirm'),
+    acceptProps: { label: t('common.delete'), severity: 'danger', icon: 'pi pi-trash' },
+    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
+    accept: () => {
+      void doBatchDeleteSessions();
+    }
+  });
+};
+
+/** Actual executor for bulk session deletion (triggered by confirmation dialog accept callback). */
+const doBatchDeleteSessions = async () => {
   batchDeleting.value = true;
   try {
     const ids = [...selectedSessionIds.value];
@@ -572,19 +600,19 @@ const handleBatchDelete = async () => {
       } catch (error) {
         failed = true;
         remain.push(id);
-        console.warn('[handleBatchDelete] 删除会话异常：', id, error);
+        console.warn('[handleBatchDelete] Exception deleting session:', id, error);
       }
     }
 
     const deleted = ids.filter(id => !remain.includes(id));
     if (deleted.length > 0) {
       historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
-      // 同步清理被删会话的角色快照缓存
+      // Synchronously clear deleted sessions' character snapshot cache
       for (const id of deleted) clearCachedCharacter(id);
-      // 同步清理被删会话的自定义标题覆盖层（IndexedDB），避免残留孤儿覆盖记录
+      // Synchronously clear deleted sessions' custom title overlay (IndexedDB), avoid leaving orphan overlay records
       for (const id of deleted) await clearSessionTitleOverride(id);
-      // 被删会话可能仍在流式生成（KeepAlive 缓存内的非激活实例流未中止），
-      // 逐个广播中止事件，让对应 [sid].vue 实例 abort 其 AbortController。
+      // Deleted sessions may still be streaming (inactive instances in KeepAlive cache with streams not aborted),
+      // broadcast abort events one by one, let corresponding [sid].vue instances abort their AbortControllers.
       for (const id of deleted) emit(SESSION_ABORT_STREAM_EVENT, id);
     }
     if (currentSessionId.value && deleted.includes(currentSessionId.value)) {
@@ -594,18 +622,18 @@ const handleBatchDelete = async () => {
     selectedSessionIds.value = remain;
 
     if (failed && remain.length > 0) {
-      console.warn('[handleBatchDelete] 部分会话删除失败，已保留：', remain);
+      console.warn('[handleBatchDelete] Some sessions failed to delete, kept:', remain);
     }
   } finally {
     batchDeleting.value = false;
   }
 };
 
-// 首屏加载 default 会话的角色显示信息（头像 + 名字）
+// Load default session character display info (avatar + name) on first screen
 ensureSessionCharacter('default');
-// 挂载后拉取会话列表 + 初始化后台任务（WS 订阅为模块级单例，幂等；角色信息已由 ensureSessionCharacter 从本地 Dexie 加载）
-// 收到「展示聊天」事件（新建会话/切换会话/后台任务「返回会话」）时，
-// 切回「会话」标签，确保会话列表可见并高亮目标 session box。
+// After mounting, fetch session list + initialize background tasks (WS subscription is module-level singleton, idempotent; character info already loaded by ensureSessionCharacter from local Dexie)
+// When receiving 'show chat' event (new session/switch session/background task 'return to session'),
+// switch back to 'sessions' tab, ensure session list is visible and highlight target session box.
 const onShowChatSwitchTab = () => switchTab('sessions');
 onMounted(() => {
   loadSessionList();
@@ -617,17 +645,17 @@ onUnmounted(() => {
 });
 
 /* ------------------------------------------------------------------ */
-/* 后台任务 Tab（子 Agent 运行记录）                                   */
+/* Background Tasks Tab (Subagent Run Records)                         */
 /* ------------------------------------------------------------------ */
-/** 侧边栏当前激活的标签页：'sessions'（会话）| 'tasks'（后台任务） */
+/** Sidebar current active tab: 'sessions' (sessions) | 'tasks' (background tasks) */
 const activeTab = ref<'sessions' | 'tasks'>('sessions');
 
 /**
- * 切换标签页（仅切换侧边栏左侧展示的列表 + 后台任务的加载态，**不**切换右侧视图）。
- * 右侧视图只在点击具体「会话 Box」（handleToggleSession / handleCreateSession）或
- * 「后台任务 Box」（showTasksView）时才随之切换。
- * - 切到「后台任务」：标记后台任务处于展示态，令 WS 就绪时拉取全量任务数据供列表展示。
- * - 切到「会话」：解除该标记。
+ * Switch tab (only switches sidebar left-side display list + background tasks loading state, **does not** switch right-side view).
+ * Right-side view only switches when clicking specific 'Session Box' (handleToggleSession / handleCreateSession) or
+ * 'Background Tasks Box' (showTasksView).
+ * - Switch to 'background tasks': mark background tasks in display state, let WS pull full task data for list display when ready.
+ * - Switch to 'sessions': unmark that state.
  */
 const switchTab = (tab: 'sessions' | 'tasks') => {
   activeTab.value = tab;
@@ -640,54 +668,93 @@ const switchTab = (tab: 'sessions' | 'tasks') => {
 };
 
 /**
- * 点击任务项：切换到「后台任务」展示态，并定位/展开/高亮该 run。
- * 有激活会话（route 带 sid）时，发出 subagent:show-tasks 事件，由 [sid].vue 内嵌视图接收并置为任务展示态；
- * 无激活会话（根路径 /home，[sid].vue 未挂载，事件无人接收）时，直接聚焦该 run（模块级单例状态跨路由保留）
- * 并导航到独立任务页 /home/tasks/{父会话}——该页始终挂载 SubagentTasksView，可从单例状态读到已聚焦的 run。
+ * Click task item: switch to 'background tasks' display state, and locate/expand/highlight that run.
+ * When there's an active session (route with sid), emit subagent:show-tasks event, received by [sid].vue embedded view and set to task display state;
+ * When there's no active session (root path /home, [sid].vue not mounted, event has no receiver), directly focus that run (module-level singleton state preserved across routes)
+ * and navigate to standalone task page /home/tasks/{parent session} — that page always mounts SubagentTasksView, can read focused run from singleton state.
  */
 const showTasksView = (run: SubagentRun) => {
   activeTab.value = 'tasks';
-  // 记录当前聚焦/打开的 run，用于侧边栏任务 box 的激活态高亮（与会话列表项一致）
+  // Record currently focused/opened run, used for sidebar task box active state highlight (consistent with session list items)
   focusRun(run.run_id);
   const sid = route.params.sid;
   if (typeof sid === 'string' && sid) {
-    // 有激活会话：走内嵌视图事件流（由 [sid].vue 的 onShowTasks 把 viewMode 切为 'tasks'）
+    // With active session: go through embedded view event flow (by [sid].vue's onShowTasks switching viewMode to 'tasks')
     emit('subagent:show-tasks', run.run_id);
     setTasksTabActive(true);
   } else {
-    // 无激活会话：聚焦 + 导航到独立任务页（跨会话任务树的父会话）
+    // Without active session: focus + navigate to standalone task page (parent session of cross-session task tree)
     const parentSid = run.requester_session_key;
     router.push(localePath(`/home/tasks/${parentSid || 'default'}`));
   }
 };
 
 /**
- * 切换单个任务的选中态（仅由任务卡片内的复选框触发）。
- * 卡片本体点击改为 showTasksView（打开任务详情页），避免遮挡打开逻辑。
+ * Toggle single task selection state (only triggered by checkbox within task card).
+ * Card body click changed to showTasksView (opens task detail page), avoiding blocking open logic.
  */
 const handleToggleTask = (runId: string) => {
   if (deletingRunIds.value.has(runId)) return;
   toggleTaskSelection(runId);
 };
 
-/** 批量删除当前选中的任务（各任务连同其整棵子树一并彻底清空前后端缓存）。 */
-const handleBatchDeleteTasks = async () => {
+/** Batch delete currently selected tasks: PrimeVue confirmation dialog (each task along with its entire subtree completely cleared from frontend and backend cache). */
+const handleBatchDeleteTasks = () => {
   if (selectedRunIds.value.size === 0) return;
-  if (!window.confirm(t('sidebar.tasksBatchDeleteConfirm'))) return;
+  confirm.require({
+    header: t('common.confirmDelete'),
+    message: t('sidebar.tasksBatchDeleteConfirm'),
+    acceptProps: { label: t('common.delete'), severity: 'danger', icon: 'pi pi-trash' },
+    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
+    accept: () => {
+      void doBatchDeleteTasks();
+    }
+  });
+};
+
+/** Actual executor for batch background task deletion (triggered by confirmation dialog accept callback). */
+const doBatchDeleteTasks = async () => {
   try {
     const removed = await deleteSelectedTasks();
     if (removed > 0) emit('subagent:refresh-tasks');
   } catch (error) {
-    console.error('[SessionSidebar] 批量删除后台任务失败：', error);
+    console.error('[SessionSidebar] Failed to batch delete background tasks:', error);
   }
 };
 
-// 更强保障：以浏览器 URL 末尾的 session_id 作为激活态的「唯一事实来源」。
-// 用 immediate 监听 route.params.sid，同时覆盖三种场景：
-//   1) 刷新/直达 /home/{sid}：组件挂载时立即恢复高亮（此前 currentSessionId 初始为 undefined，
-//      不恢复则侧边栏无任何激活态背景）；
-//   2) 浏览器内导航（后退/前进/改 URL）：sid 变化时同步移动高亮，无需整页刷新；
-//   3) 时序竞态：无论 loadSessionList 列表返回先后，只要 URL 带 sid，就始终以它为激活项。
+/**
+ * Single task box deletion (trash icon at bottom right, consistent with session box delete entry).
+ * Reuses the same deletion pipeline as batch delete: after PrimeVue confirmation dialog, completely deletes the task and its entire subtree (frontend/backend + Dexie).
+ */
+const handleDeleteTask = (run: { run_id: string }) => {
+  if (deletingRunIds.value.has(run.run_id)) return;
+  confirm.require({
+    header: t('common.confirmDelete'),
+    message: t('sidebar.taskDeleteConfirm'),
+    acceptProps: { label: t('common.delete'), severity: 'danger', icon: 'pi pi-trash' },
+    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
+    accept: () => {
+      void doDeleteTask(run.run_id);
+    }
+  });
+};
+
+/** Actual executor for single background task deletion (triggered by confirmation dialog accept callback). */
+const doDeleteTask = async (runId: string) => {
+  try {
+    await deleteSubagentSubtree(runId);
+    emit('subagent:refresh-tasks');
+  } catch (error) {
+    console.error('[SessionSidebar] Failed to delete background task:', error);
+  }
+};
+
+// Stronger guarantee: use the session_id at the end of the browser URL as the 'single source of truth' for the active state.
+// Use immediate watch on route.params.sid, covering three scenarios simultaneously:
+//   1) Refresh/direct access to /home/{sid}: restore highlight immediately on component mount (previously currentSessionId initialized as undefined,
+//      without restoring, sidebar would have no active state background);
+//   2) In-browser navigation (back/forward/URL change): synchronously move highlight when sid changes, no full page refresh needed;
+//   3) Timing race: regardless of loadSessionList return order, as long as URL has sid, always use it as the active item.
 const activeSessionId = computed(() => {
   const sid = route.params.sid;
   return typeof sid === 'string' && sid ? sid : undefined;
@@ -697,14 +764,14 @@ watch(
   async sid => {
     currentSessionId.value = sid;
     if (sid) {
-      // 加载该会话已锁定的角色快照（无快照则用全局 profile 锁定）
+      // Load this session's locked character snapshot (use global profile lock if no snapshot)
       await ensureSessionCharacter(sid);
     }
   },
   { immediate: true }
 );
 
-// 切换激活会话时刷新后台任务（仅当用户曾打开过该 Tab）
+// Refresh background tasks when switching active session (only if user has opened this Tab before)
 watch(
   activeSessionId,
   () => {

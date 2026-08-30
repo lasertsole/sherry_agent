@@ -1,6 +1,6 @@
 """Runtime metrics collection for sub-agent sessions."""
 
-from ..types.registry import SubagentRunRecord, ExecutionStatus
+from ..types.registry import SubagentRunRecord
 
 
 def resolve_subagent_session_started_at(run: SubagentRunRecord) -> float | None:
@@ -20,5 +20,6 @@ def get_subagent_session_runtime_ms(run: SubagentRunRecord) -> float | None:
     end = run.execution.ended_at
     if end is None:
         import time
+
         end = time.monotonic()
     return (end - run.execution.started_at) * 1000

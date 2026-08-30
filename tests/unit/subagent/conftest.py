@@ -5,7 +5,7 @@ import importlib.util
 import sys
 import types as stdlib_types
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -105,10 +105,19 @@ def _setup_subagent_alias():
         return
 
     for mod_name in [
-        "agent", "agent.tools", "agent.core",
-        "agent.checkpointer", "agent.middlewares",
-        "pub_func", "models", "sessions", "runtime",
-        "plugins", "context_engine", "channels", "skills",
+        "agent",
+        "agent.tools",
+        "agent.core",
+        "agent.checkpointer",
+        "agent.middlewares",
+        "pub_func",
+        "models",
+        "sessions",
+        "runtime",
+        "plugins",
+        "context_engine",
+        "channels",
+        "skills",
     ]:
         if mod_name not in sys.modules:
             sys.modules[mod_name] = _make_stub(mod_name)
@@ -124,9 +133,11 @@ def _setup_subagent_alias():
     # `from runtime import state_register_mem`). Register MUST be bound
     # before importing state_register. `clear_all_register_sessions` stays a
     # no-op so subagent runs can't wipe session state mid-test.
-    import runtime.core  # noqa: E402
+    import runtime.core  # noqa: F401  (side-effect: must be in sys.modules for aliasing below)
+
     sys.modules["runtime"].Register = sys.modules["runtime.core"].Register
-    import runtime.state_register  # noqa: E402
+    import runtime.state_register  # noqa: F401  (side-effect: same, bound via sys.modules)
+
     sys.modules["runtime"].state_register_mem = sys.modules[
         "runtime.state_register"
     ].state_register_mem
@@ -147,7 +158,13 @@ def _setup_subagent_alias():
     )
     sys.modules["agent"].checkpointer = sys.modules["agent.checkpointer"]
 
-    for mw_name in ["IterationBudget", "ToolGuardrails", "ToolCallNormalize", "Summarization", "HeartbeatStaleness"]:
+    for mw_name in [
+        "IterationBudget",
+        "ToolGuardrails",
+        "ToolCallNormalize",
+        "Summarization",
+        "HeartbeatStaleness",
+    ]:
         setattr(sys.modules["agent.middlewares"], mw_name, lambda *a, **kw: None)
     sys.modules["agent"].middlewares = sys.modules["agent.middlewares"]
 
@@ -190,7 +207,7 @@ def _setup_subagent_alias():
             for n in sorted(selected_skill_names)
             if not (caller_scope == "subagent" and _SKILL_SCOPES.get(n) == "main_only")
         ]
-        return "<skills>\n" + "\n".join(f"  <skill name=\"{n}\"/>" for n in names) + "\n</skills>"
+        return "<skills>\n" + "\n".join(f'  <skill name="{n}"/>' for n in names) + "\n</skills>"
 
     _skills_loader.scan_skills = _scan_skills_stub
     _skills_loader.get_skills_text = _get_skills_text_stub

@@ -1,4 +1,4 @@
-﻿"""Central registry for parser engines (mirrors the storage-layer convention).
+"""Central registry for parser engines (mirrors the storage-layer convention).
 
 Like :data:`lightrag.kg.STORAGES` / ``STORAGE_IMPLEMENTATIONS``, this module
 holds a module-level literal table of lightweight :class:`ParserSpec`
@@ -267,9 +267,7 @@ def supported_parser_engines(
     specs: dict[str, ParserSpec] | None = None,
 ) -> frozenset[str]:
     """User-selectable engine names (replaces SUPPORTED_PARSER_ENGINES)."""
-    return frozenset(
-        name for name, spec in _table(specs).items() if spec.user_selectable
-    )
+    return frozenset(name for name, spec in _table(specs).items() if spec.user_selectable)
 
 
 def available_engine_suffixes(
@@ -292,16 +290,12 @@ def available_engine_suffixes(
     return frozenset(out)
 
 
-def suffix_capabilities(
-    engine: str, specs: dict[str, ParserSpec] | None = None
-) -> frozenset[str]:
+def suffix_capabilities(engine: str, specs: dict[str, ParserSpec] | None = None) -> frozenset[str]:
     spec = _table(specs).get(engine)
     return spec.suffixes if spec is not None else frozenset()
 
 
-def engine_endpoint_configured(
-    engine: str, specs: dict[str, ParserSpec] | None = None
-) -> bool:
+def engine_endpoint_configured(engine: str, specs: dict[str, ParserSpec] | None = None) -> bool:
     spec = _table(specs).get(engine)
     return spec.endpoint_configured() if spec is not None else True
 

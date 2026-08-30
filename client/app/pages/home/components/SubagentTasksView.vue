@@ -1,6 +1,6 @@
 <template>
   <div class="flex flex-col flex-1 h-full bg-transparent dark:bg-transparent">
-    <!-- 顶部工具条：返回调用方会话（单条，定位到当前子树根（深度1 task）的 requester_session_key） -->
+    <!-- Top toolbar: back to the caller session (single item, locating the requester_session_key of the current subtree root (depth-1 task)) -->
     <div
       class="flex items-center justify-between gap-3 shrink-0 border-b border-solid border-gray-light dark:border-gray-dark bg-white/60 dark:bg-[#1a1d21]/60 px-4 py-2">
       <div class="min-w-0 flex items-center gap-3">
@@ -33,11 +33,11 @@
       </div>
     </div>
 
-    <!-- 主体：上树下详（两栏） -->
+    <!-- Main body: tree on top, details below (two sections) -->
     <div class="flex flex-col flex-1 min-h-0">
-      <!-- 上半：总树状图（从根节点分叉到叶子） -->
+      <!-- Upper half: full tree graph (branching from root node down to leaves) -->
       <div class="flex-[3] min-h-0">
-        <!-- 加载中 -->
+        <!-- Loading -->
         <div
           v-if="taskLoading && focusedSubtreeRuns.length === 0"
           class="flex flex-col items-center justify-center gap-3 h-full py-16">
@@ -45,7 +45,7 @@
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('sidebar.tasksLoading') }}</span>
         </div>
 
-        <!-- 空态 -->
+        <!-- Empty state -->
         <div
           v-else-if="focusedSubtreeRuns.length === 0"
           class="flex flex-col items-center justify-center gap-4 h-full py-16">
@@ -53,7 +53,7 @@
           <div class="text-base text-gray-500 dark:text-gray-400">{{ t('sidebar.noTasks') }}</div>
         </div>
 
-        <!-- 树状图 -->
+        <!-- Tree graph -->
         <SubagentFlowGraph
           v-else
           class="h-full w-full"
@@ -63,8 +63,9 @@
           :display-runs="focusedRunId ? focusedSubtreeRuns : undefined" />
       </div>
 
-      <!-- 下半：选中节点详情 -->
-      <div class="flex-[2] min-h-0 border-t border-solid border-gray-light dark:border-gray-dark bg-white/60 dark:bg-[#1a1d21]/60">
+      <!-- Lower half: details of the selected node -->
+      <div
+        class="flex-[2] min-h-0 border-t border-solid border-gray-light dark:border-gray-dark bg-white/60 dark:bg-[#1a1d21]/60">
         <SubagentRunDetail :run="selectedRun" />
       </div>
     </div>
@@ -82,7 +83,7 @@ import SubagentFlowGraph from './SubagentFlowGraph.vue';
 import SubagentRunDetail from './SubagentRunDetail.vue';
 
 const props = defineProps<{
-  /** 初始要定位/展开的 run_id（点击侧边栏任务项时传入） */
+  /** run_id to initially locate/expand (passed in when clicking a sidebar task item) */
   initialRunId?: string;
 }>();
 
@@ -100,55 +101,64 @@ const {
   initTasks,
   setTasksTabActive,
   refreshFocusedSubtree,
-  // 与 orphaned-run 过滤共享一套会话存在性判定（避免两端各自拉取、各自归一化不一致）
+  // Shares one session-existence check with orphaned-run filtering (avoids the two sides fetching and normalizing inconsistently)
   normalizeSessionKey,
   loadSubagentValidSessions,
   validSessionIds
 } = useSubagentTasks();
 
-/** 当前会话 id（供流程图拉取该会话的运行树） */
+/** Current session id (used by the flow graph to fetch this session's run tree) */
 const currentSessionId = computed(() => {
   const sid = route.params.sid;
   return typeof sid === 'string' && sid ? sid : undefined;
 });
 
 /**
- * 选中节点的完整 run 对象，供下方详情面板展示。
+ * The full run object of the selected node, displayed by the detail panel below.
  *
- * 【设计说明】这是一个「可写 computed」而非普通 ref：
- *  - getter 从单例 selectedRunId（focusRun/流程图节点点击都会写它）+ 聚焦子树池派生，
- *    因此切换 task box（focusRun 仅写 selectedRunId）后，详情栏会**自动**同步为该
- *    task box 对应、默认激活的任务根节点，无需依赖 watch 时序。
- *  - 相比 watch(focusedRunId)：组件挂载时 focusedRunId/selectedRunId 已由侧边栏在导航前
- *    写入（本组件 mount 前该值已存在），普通 watch 不会对“已有值”触发，导致首屏/挂载后
- *    详情栏为空。computed 是响应式求值，挂载后池子（focusedSubtreeRuns）一填充便立即重算。
- *  - setter 兼容 SubagentFlowGraph 节点点击的 v-model:selected-run 写回（两向同步），
- *    同时把 selectedRunId 一并同步，保持高亮与详情源一致。
+ * [Design note] This is a "writable computed" rather than a plain ref:
+ *  - The getter derives from the singleton selectedRunId (written by both focusRun and
+ *    flow-graph node clicks) plus the focused subtree pool, so after switching task boxes
+ *    (focusRun only writes selectedRunId) the detail panel **automatically** syncs to that
+ *    task box's default active task root node, without depending on watch timing.
+ *  - Compared with watch(focusedRunId): when the component mounts, focusedRunId/selectedRunId
+ *    have already been written by the sidebar before navigation (the value exists before this
+ *    component mounts); a plain watch does not fire for "already set" values, which would leave
+ *    the detail panel empty on first render/after mounting. A computed is evaluated reactively,
+ *    so as soon as the pool (focusedSubtreeRuns) fills after mounting it recomputes immediately.
+ *  - The setter supports the v-model:selected-run write-back from SubagentFlowGraph node
+ *    clicks (two-way sync), and also syncs selectedRunId to keep the highlight and the
+ *    detail source consistent.
  */
 const selectedRun = computed<SubagentRun | undefined>({
   get: () => {
     const id = selectedRunId.value;
     if (id) {
-      const inSubtree = focusedSubtreeRuns.value.find((r) => r.run_id === id);
+      const inSubtree = focusedSubtreeRuns.value.find(r => r.run_id === id);
       if (inSubtree) return inSubtree;
     }
     return undefined;
   },
-  set: (val) => {
+  set: val => {
     if (val) selectedRunId.value = val.run_id;
   }
 });
 
-/** 「返回会话」的目标 session_id：
- *  优先取当前聚焦子树根（深度1 task）的 requester_session_key（发起它的父会话），
- *  归一化为 bare UUID，并仅当该会话在（服务端权威/本地占位的）实时会话列表中真实存在时才返回，
- *  从而避免「返回会话」跳到已被销毁/不存在的会话（stale/orphaned run 的 ghost 按钮）；
- *  未聚焦（默认全量列表，跨多会话的深度1任务）时回退为当前 route 的 sid。
- *  存在性判定复用 composable 共享的 validSessionIds/normalizeSessionKey。
- *  注意：目标会话不存在（orphaned run，调用方会话已销毁）时返回 undefined，从而隐藏按钮，
- *  但该 run 的任务 box 仍在列表中展示——遵循「孤儿 run 要显示，但不能有返回会话」的约束。 */
+/** Target session_id for "back to session":
+ *  Prefers the requester_session_key of the current focused subtree root (depth-1 task),
+ *  i.e. the parent session that spawned it, normalized to a bare UUID, and returns it only
+ *  when that session actually exists in the live session list (server-authoritative or local
+ *  placeholder), preventing "back to session" from jumping to a destroyed/nonexistent session
+ *  (the ghost button of a stale/orphaned run);
+ *  when not focused (default full list of depth-1 tasks across multiple sessions), falls back
+ *  to the current route's sid.
+ *  The existence check reuses the composable's shared validSessionIds/normalizeSessionKey.
+ *  Note: returns undefined when the target session does not exist (orphaned run, caller session
+ *  destroyed), which hides the button, while the run's task box still shows in the list —
+ *  following the "orphan runs must be shown, but must not offer a back-to-session button"
+ *  constraint. */
 const backToSessionSid = computed(() => {
-  // 目标始终基于当前 route 的 sid（bare UUID），导航用归一化键
+  // The target is always based on the current route's sid (bare UUID); navigation uses the normalized key
   const fallback = normalizeSessionKey(currentSessionId.value);
   let candidate: string | null | undefined;
   if (focusedRunId.value && focusedSubtreeRuns.value.length > 0) {
@@ -156,47 +166,52 @@ const backToSessionSid = computed(() => {
     candidate = normalizeSessionKey(root?.requester_session_key);
   }
   const target = candidate || fallback;
-  // 仅当目标会话在实时会话列表中真实存在时才展示/启用「返回会话」
+  // Only show/enable "back to session" when the target session actually exists in the live session list
   if (!target || !validSessionIds.value.has(target)) return undefined;
   return target;
 });
 
-/** 跳到调用方 Session 的聊天页：
- *  目标会话 = 当前聚焦子树根（深度1 task）的 requester_session_key（发起该子任务的父会话），
- *  而非当前 route 的 sid；未聚焦（默认全量列表）时回退为当前 sid。
- *  嵌入式视图（viewMode==='tasks' 于 [sid].vue 内）：通过 mitt 总线广播 'subagent:show-chat'，
- *  由 [sid].vue 的 onShowChat 监听器把 viewMode 切回 'chat'，侧边栏也随之切回「会话」标签。
- *  独立页 /home/tasks/{sid}：无 'subagent:show-chat' 监听者，需显式路由到该会话聊天页。
- *  双重调用安全：嵌入式下目标会话即当前 route 时 router.push 为 no-op，不会重复导航。 */
+/** Jump to the caller session's chat page:
+ *  Target session = the requester_session_key of the current focused subtree root (depth-1 task),
+ *  i.e. the parent session that spawned this subtask, not the current route's sid;
+ *  when not focused (default full list), falls back to the current sid.
+ *  Embedded view (viewMode==='tasks' inside [sid].vue): broadcasts 'subagent:show-chat' over the
+ *  mitt bus; the onShowChat listener in [sid].vue switches viewMode back to 'chat', and the
+ *  sidebar switches back to the "Sessions" tab accordingly.
+ *  Standalone page /home/tasks/{sid}: there is no 'subagent:show-chat' listener, so an explicit
+ *  route to that session's chat page is required.
+ *  Double-invocation safe: in embedded mode, when the target session is the current route,
+ *  router.push is a no-op and no duplicate navigation occurs. */
 const jumpBackToSession = () => {
   const targetSid = backToSessionSid.value;
   if (!targetSid) return;
-  // 嵌入式（viewMode==='tasks' 于 [sid].vue 内）：通知宿主切回聊天视图
+  // Embedded (viewMode==='tasks' inside [sid].vue): notify the host to switch back to the chat view
   busEmit('subagent:show-chat');
-  // 侧边栏切回「会话」标签，确保会话列表可见并高亮目标 session
+  // Switch the sidebar back to the "Sessions" tab, ensuring the session list is visible and the target session is highlighted
   setTasksTabActive(false);
-  // 路由到目标会话页；嵌入式下若已在目标页则为 no-op，独立页则完成跳转。
-  // 路由变化会触发 SessionSidebar 的 activeSessionId watch，从而把高亮切到目标 session。
+  // Route to the target session page; a no-op in embedded mode if already on the target page, completes the jump on the standalone page.
+  // The route change triggers SessionSidebar's activeSessionId watch, moving the highlight to the target session.
   router.push(localePath(`/home/${targetSid}`));
 };
 
-/** 收到侧边栏「展示后台任务」事件：定位/展开指定 run（若有） */
-const onShowTasks = (runId?: string) => {
+/** Received the sidebar's "show background tasks" event: locate/expand the specified run (if any) */
+const onShowTasks = (event: unknown) => {
+  const runId = typeof event === 'string' ? event : undefined;
   focusRun(runId);
 };
 
-/** 手动刷新流程图：有聚焦 task box 时仅刷新该子树，否则按当前会话全量刷新 */
+/** Manually refresh the flow graph: refresh only that subtree when a task box is focused, otherwise do a full refresh for the current session */
 const handleRefresh = () => {
   refreshFocusedSubtree();
 };
 
 onMounted(() => {
   initTasks(currentSessionId.value);
-  // 预载「存在会话」集合，用于「返回会话」目标的存在性校验（隐藏 ghost 按钮）
-  // 复用 composable 共享加载器（initTasks 内已触发，此处幂等预留，兼顾仅本视图挂载的场景）
+  // Preload the set of existing sessions for "back to session" target existence validation (hides ghost buttons)
+  // Reuses the composable's shared loader (already triggered inside initTasks; idempotent here as a safeguard, covering the case where only this view is mounted)
   void loadSubagentValidSessions();
   on('subagent:show-tasks', onShowTasks);
-  // 首次进入时若带 initialRunId，则定位/展开对应 run（状态被提升到单例，重挂载后保留）
+  // On first entry with an initialRunId, locate/expand the corresponding run (state is hoisted to a singleton and survives remounts)
   focusRun(props.initialRunId);
 });
 

@@ -1,6 +1,6 @@
 from .core import cron
 from .base import CronService, cron_service
-from .types import (CronSchedule, CronPayload, CronRunRecord, CronJobState, CronJob, CronStore)
+from .types import CronSchedule, CronPayload, CronRunRecord, CronJobState, CronJob, CronStore
 
 __all__ = [
     "CronService",
@@ -11,5 +11,5 @@ __all__ = [
     "CronJobState",
     "CronJob",
     "CronStore",
-    "cron"
+    "cron",
 ]

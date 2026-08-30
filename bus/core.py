@@ -48,8 +48,7 @@ class MessageBus:
         """Consume the next outbound message (blocks until available)."""
         msg = await self.outbound.get()
         logger.debug(
-            f"Consumed outbound message: channel={msg.channel}, "
-            f"queue_size={self.outbound.qsize()}"
+            f"Consumed outbound message: channel={msg.channel}, queue_size={self.outbound.qsize()}"
         )
         return msg
 

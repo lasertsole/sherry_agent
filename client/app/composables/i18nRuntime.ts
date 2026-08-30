@@ -1,49 +1,55 @@
 /**
- * 非 setup 上下文的 i18n 翻译函数解析器。
+ * i18n translation function resolver for non-setup contexts.
  *
- * 背景（2026-08 浏览器实测，两层坑）：
- *  1. @nuxtjs/i18n v10.6 会把 `nuxtApp.$i18n` / `globalProperties.$i18n` 替换为
- *     **仅含 locale 状态的代理**（无 `t`、无 `global`、`Object.keys` 为空），
- *     与官方文档「$i18n 即全局 Composer」相悖。
- *  2. 真正的 vue-i18n 实例挂在 vue-i18n 自己的注入键 `Symbol(vue-i18n)` 下；
- *     但本项目的 Vite 构建（@nuxtjs/i18n 内置 @intlify/unplugin-vue-i18n 对
- *     `'vue-i18n'` 的别名重定向）会把业务代码导入到**不含 `I18nInjectionKey`
- *     导出**的 dist 入口（运行时该值为 `undefined`，动态 import 实证），
- *     nuxt-i18n 插件与业务代码各持一份 vue-i18n 模块实例，符号同一性方案不可靠。
+ * Background (verified in-browser, 2026-08; two layers of pitfalls):
+ *  1. @nuxtjs/i18n v10.6 replaces `nuxtApp.$i18n` / `globalProperties.$i18n` with a
+ *     **proxy containing only locale state** (no `t`, no `global`, empty
+ *     `Object.keys`), contradicting the official docs' "$i18n is the global Composer".
+ *  2. The real vue-i18n instance lives under vue-i18n's own injection key
+ *     `Symbol(vue-i18n)`; however, this project's Vite build (@nuxtjs/i18n's built-in
+ *     @intlify/unplugin-vue-i18n alias-redirects `'vue-i18n'`) makes business code
+ *     import a dist entry that **does not export `I18nInjectionKey`** (verified at
+ *     runtime via dynamic import: the value is `undefined`); the nuxt-i18n plugin and
+ *     business code each hold their own vue-i18n module instance, so any
+ *     symbol-identity approach is unreliable.
  *
- * 解析顺序：
- *  1. **形状扫描** `vueApp._context.provides`：查找形如 `{ global: { t: fn } }`
- *     的注入值（即 vue-i18n 实例）——不依赖符号/入口一致性，当前构建下唯一可靠路径
- *  2. `nuxtApp.$i18n.global.t`（旧版 nuxt-i18n / 官方文档行为，向后兼容）
- *  3. 都拿不到 → `undefined`（调用方回退为原样返回 key）
+ * Resolution order:
+ *  1. **Shape scan** of `vueApp._context.provides`: look for an injected value shaped
+ *     like `{ global: { t: fn } }` (i.e. the vue-i18n instance) — independent of
+ *     symbol/entry identity, the only reliable path under the current build
+ *  2. `nuxtApp.$i18n.global.t` (older nuxt-i18n / official-documented behavior, kept
+ *     for backward compatibility)
+ *  3. Neither available → `undefined` (callers fall back to returning the key as-is)
  *
- * 单测 / 非 Nuxt 上下文：`useNuxtApp` 不存在（ReferenceError）→ 被 try/catch
- * 吞掉返回 `undefined`，绝不抛出。setup 上下文请直接 `useI18n().t`
- * （见 errorCaptured.ts / useSubagentTasks.ts 的用法），勿用本函数。
+ * Unit tests / non-Nuxt contexts: `useNuxtApp` does not exist (ReferenceError) →
+ * swallowed by try/catch, returning `undefined`; never throws. In a setup context use
+ * `useI18n().t` directly (see errorCaptured.ts / useSubagentTasks.ts usage); do not
+ * use this function there.
  */
 
-/** vue-i18n 全局 composer 的最小结构（本模块只关心 t）。 */
+/** Minimal structure of the vue-i18n global composer (this module only cares about t). */
 interface MinimalComposer {
   t: (key: string) => string;
 }
 
-/** vue-i18n 实例（createI18n 返回值）的最小结构：global 上挂全局 composer。 */
+/** Minimal structure of a vue-i18n instance (createI18n return value): global holds the global composer. */
 interface MinimalI18nInstance {
   global?: MinimalComposer;
 }
 
-/** 旧版 nuxt-i18n 形态：$i18n 直接带 global（v9 及文档描述的行为）。 */
+/** Legacy nuxt-i18n shape: $i18n carries global directly (v9 and documented behavior). */
 interface MinimalNuxtI18n {
   global?: MinimalComposer;
 }
 
-/** 运行时翻译函数（只保证单 key 翻译语义）。 */
+/** Runtime translation function (only single-key translation semantics are guaranteed). */
 export type RuntimeT = (key: string) => string;
 
 /**
- * 在 app 级 provides 中按形状查找 vue-i18n 全局 composer。
+ * Find the vue-i18n global composer by shape among the app-level provides.
  *
- * 逐 key 读取并容忍 getter 抛错（provides 里可能有任意第三方注入值）。
+ * Reads key by key and tolerates getters that throw (provides may contain arbitrary
+ * third-party injected values).
  */
 function findGlobalComposer(provides: Record<PropertyKey, unknown>): MinimalComposer | undefined {
   for (const key of Reflect.ownKeys(provides)) {
@@ -63,24 +69,26 @@ function findGlobalComposer(provides: Record<PropertyKey, unknown>): MinimalComp
 }
 
 /**
- * 解析可在**任意运行时上下文**（事件回调、定时器、非组件模块）使用的翻译函数。
+ * Resolve a translation function usable in **any runtime context** (event callbacks,
+ * timers, non-component modules).
  *
- * @returns 可用的 t 函数；Nuxt 不可用或 i18n 未挂载时返回 `undefined`。
+ * @returns A usable t function; `undefined` when Nuxt is unavailable or i18n is not
+ *   mounted.
  */
 export function resolveRuntimeT(): RuntimeT | undefined {
   try {
     const nuxtApp = useNuxtApp();
 
-    // 1) 形状扫描 provides（当前构建下唯一可靠的路径，见模块注释）
+    // 1) Shape-scan provides (the only reliable path under the current build; see module comment)
     const composer = findGlobalComposer(nuxtApp.vueApp._context.provides);
-    if (composer) return (key) => composer.t(key);
+    if (composer) return key => composer.t(key);
 
-    // 2) 旧版形态回退：$i18n.global.t（nuxt-i18n v9 及官方文档描述的行为）
+    // 2) Legacy-shape fallback: $i18n.global.t (nuxt-i18n v9 and documented behavior)
     const $i18n = nuxtApp?.$i18n;
     const legacyT = ($i18n as MinimalNuxtI18n | undefined)?.global?.t;
-    if (typeof legacyT === 'function') return (key) => legacyT(key);
+    if (typeof legacyT === 'function') return key => legacyT(key);
   } catch {
-    // 非 Nuxt 上下文（单测 / 纯函数调用）：回退为 undefined
+    // Non-Nuxt context (unit tests / plain function calls): fall back to undefined
   }
   return undefined;
 }

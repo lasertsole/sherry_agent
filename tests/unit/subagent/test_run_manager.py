@@ -1,5 +1,10 @@
 import pytest
-from agent.tools.subagent.registry.run_manager import register_run, mark_run_paused_after_yield, mark_run_running, complete_run
+from agent.tools.subagent.registry.run_manager import (
+    register_run,
+    mark_run_paused_after_yield,
+    mark_run_running,
+    complete_run,
+)
 from agent.tools.subagent.registry.memory import get, clear
 from agent.tools.subagent.types.registry import ExecutionStatus, RunOutcome, RunOutcomeStatus
 from agent.tools.subagent.types.spawn import SpawnMode
@@ -47,10 +52,12 @@ class TestRegisterRun:
             depth=0,
         )
         from agent.tools.subagent.types.capability import SubagentSessionRole
+
         assert run.role == SubagentSessionRole.MAIN
 
     def test_depth_at_max_is_leaf(self):
         from agent.tools.subagent.config import get_config
+
         config = get_config()
         run = register_run(
             child_session_key="agent:main:subagent:abc",
@@ -59,6 +66,7 @@ class TestRegisterRun:
             depth=config.max_spawn_depth,
         )
         from agent.tools.subagent.types.capability import SubagentSessionRole
+
         assert run.role == SubagentSessionRole.LEAF
 
     def test_session_mode_delivery_not_required(self):
@@ -69,6 +77,7 @@ class TestRegisterRun:
             spawn_mode=SpawnMode.SESSION,
         )
         from agent.tools.subagent.types.registry import DeliveryStatus
+
         assert run.delivery.status == DeliveryStatus.NOT_REQUIRED
 
     def test_run_mode_delivery_pending(self):
@@ -79,6 +88,7 @@ class TestRegisterRun:
             spawn_mode=SpawnMode.RUN,
         )
         from agent.tools.subagent.types.registry import DeliveryStatus
+
         assert run.delivery.status == DeliveryStatus.PENDING
 
 

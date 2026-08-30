@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import traceback
 import asyncio
@@ -200,9 +200,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     top_k: int = field(default=get_env_value("TOP_K", DEFAULT_TOP_K, int))
     """Number of entities/relations to retrieve for each query."""
 
-    chunk_top_k: int = field(
-        default=get_env_value("CHUNK_TOP_K", DEFAULT_CHUNK_TOP_K, int)
-    )
+    chunk_top_k: int = field(default=get_env_value("CHUNK_TOP_K", DEFAULT_CHUNK_TOP_K, int))
     """Maximum number of chunks in context."""
 
     max_entity_tokens: int = field(
@@ -249,23 +247,17 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     """Maximum number of entity extraction attempts for ambiguous content."""
 
     entity_extract_max_records: int = field(
-        default=get_env_value(
-            "MAX_EXTRACTION_RECORDS", DEFAULT_MAX_EXTRACTION_RECORDS, int
-        )
+        default=get_env_value("MAX_EXTRACTION_RECORDS", DEFAULT_MAX_EXTRACTION_RECORDS, int)
     )
     """Per-response cap on total entity+relationship rows/records."""
 
     entity_extract_max_entities: int = field(
-        default=get_env_value(
-            "MAX_EXTRACTION_ENTITIES", DEFAULT_MAX_EXTRACTION_ENTITIES, int
-        )
+        default=get_env_value("MAX_EXTRACTION_ENTITIES", DEFAULT_MAX_EXTRACTION_ENTITIES, int)
     )
     """Per-response cap on entity rows/objects."""
 
     force_llm_summary_on_merge: int = field(
-        default=get_env_value(
-            "FORCE_LLM_SUMMARY_ON_MERGE", DEFAULT_FORCE_LLM_SUMMARY_ON_MERGE, int
-        )
+        default=get_env_value("FORCE_LLM_SUMMARY_ON_MERGE", DEFAULT_FORCE_LLM_SUMMARY_ON_MERGE, int)
     )
 
     # Text chunking
@@ -383,9 +375,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     embedding_batch_num: int = field(default=int(os.getenv("EMBEDDING_BATCH_NUM", 10)))
     """Batch size for embedding computations."""
 
-    embedding_func_max_async: int = field(
-        default=int(os.getenv("EMBEDDING_FUNC_MAX_ASYNC", 8))
-    )
+    embedding_func_max_async: int = field(default=int(os.getenv("EMBEDDING_FUNC_MAX_ASYNC", 8)))
     """Maximum number of concurrent embedding function calls."""
 
     embedding_cache_config: dict[str, Any] = field(
@@ -411,9 +401,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     llm_model_func: Callable[..., object] | None = field(default=None)
     """Function for interacting with the large language model (LLM). Must be set before use."""
 
-    role_llm_configs: dict[str, RoleLLMConfig | dict[str, Any]] | None = field(
-        default=None
-    )
+    role_llm_configs: dict[str, RoleLLMConfig | dict[str, Any]] | None = field(default=None)
     """Per-role LLM overrides keyed by role name (see :data:`ROLES`).
 
     Each entry is a :class:`RoleLLMConfig` (or a plain dict with the same
@@ -436,25 +424,19 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     """Maximum number of tokens allowed per LLM response."""
 
     summary_length_recommended: int = field(
-        default=int(
-            os.getenv("SUMMARY_LENGTH_RECOMMENDED", DEFAULT_SUMMARY_LENGTH_RECOMMENDED)
-        )
+        default=int(os.getenv("SUMMARY_LENGTH_RECOMMENDED", DEFAULT_SUMMARY_LENGTH_RECOMMENDED))
     )
     """Recommended length of LLM summary output."""
 
     llm_model_max_async: int = field(
-        default=int(
-            os.getenv("MAX_ASYNC_LLM", os.getenv("MAX_ASYNC", DEFAULT_MAX_ASYNC))
-        )
+        default=int(os.getenv("MAX_ASYNC_LLM", os.getenv("MAX_ASYNC", DEFAULT_MAX_ASYNC)))
     )
     """Maximum number of concurrent LLM calls."""
 
     llm_model_kwargs: dict[str, Any] = field(default_factory=dict)
     """Additional keyword arguments passed to the LLM model function."""
 
-    default_llm_timeout: int = field(
-        default=int(os.getenv("LLM_TIMEOUT", DEFAULT_LLM_TIMEOUT))
-    )
+    default_llm_timeout: int = field(default=int(os.getenv("LLM_TIMEOUT", DEFAULT_LLM_TIMEOUT)))
 
     entity_extraction_use_json: bool = field(
         default=os.getenv("ENTITY_EXTRACTION_USE_JSON", "false").lower() == "true"
@@ -526,30 +508,18 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     """Maximum number of parallel insert operations."""
 
     max_parallel_parse_native: int = field(
-        default=int(
-            os.getenv(
-                "MAX_PARALLEL_PARSE_NATIVE", str(DEFAULT_MAX_PARALLEL_PARSE_NATIVE)
-            )
-        )
+        default=int(os.getenv("MAX_PARALLEL_PARSE_NATIVE", str(DEFAULT_MAX_PARALLEL_PARSE_NATIVE)))
     )
     max_parallel_parse_mineru: int = field(
-        default=int(
-            os.getenv(
-                "MAX_PARALLEL_PARSE_MINERU", str(DEFAULT_MAX_PARALLEL_PARSE_MINERU)
-            )
-        )
+        default=int(os.getenv("MAX_PARALLEL_PARSE_MINERU", str(DEFAULT_MAX_PARALLEL_PARSE_MINERU)))
     )
     max_parallel_parse_docling: int = field(
         default=int(
-            os.getenv(
-                "MAX_PARALLEL_PARSE_DOCLING", str(DEFAULT_MAX_PARALLEL_PARSE_DOCLING)
-            )
+            os.getenv("MAX_PARALLEL_PARSE_DOCLING", str(DEFAULT_MAX_PARALLEL_PARSE_DOCLING))
         )
     )
     max_parallel_analyze: int = field(
-        default=int(
-            os.getenv("MAX_PARALLEL_ANALYZE", str(DEFAULT_MAX_PARALLEL_ANALYZE))
-        )
+        default=int(os.getenv("MAX_PARALLEL_ANALYZE", str(DEFAULT_MAX_PARALLEL_ANALYZE)))
     )
     queue_size_parse: int = field(
         default=int(os.getenv("QUEUE_SIZE_PARSE", str(DEFAULT_QUEUE_SIZE_PARSE)))
@@ -567,9 +537,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     """Maximum number of graph nodes to return in knowledge graph queries."""
 
     max_source_ids_per_entity: int = field(
-        default=get_env_value(
-            "MAX_SOURCE_IDS_PER_ENTITY", DEFAULT_MAX_SOURCE_IDS_PER_ENTITY, int
-        )
+        default=get_env_value("MAX_SOURCE_IDS_PER_ENTITY", DEFAULT_MAX_SOURCE_IDS_PER_ENTITY, int)
     )
     """Maximum number of source (chunk) ids in entity Grpah + VDB."""
 
@@ -631,9 +599,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     auto_manage_storages_states: bool = field(default=False)
     """If True, lightrag will automatically calls initialize_storages and finalize_storages at the appropriate times."""
 
-    cosine_better_than_threshold: float = field(
-        default=float(os.getenv("COSINE_THRESHOLD", 0.2))
-    )
+    cosine_better_than_threshold: float = field(default=float(os.getenv("COSINE_THRESHOLD", 0.2)))
 
     ollama_server_infos: Optional[OllamaServerInfos] = field(default=None)
     """Configuration for Ollama server information."""
@@ -787,9 +753,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         # F-flavoured legacy ``self.chunk_overlap_token_size`` semantics
         # used by the legacy 6-arg ``chunking_func`` path.
         self.chunk_token_size = chunker_cfg["chunk_token_size"]
-        self.chunk_overlap_token_size = chunker_cfg["fixed_token"][
-            "chunk_overlap_token_size"
-        ]
+        self.chunk_overlap_token_size = chunker_cfg["fixed_token"]["chunk_overlap_token_size"]
 
     def _refresh_addon_params_cache(self) -> None:
         summary_language = self._addon_params.get("language", DEFAULT_SUMMARY_LANGUAGE)
@@ -801,12 +765,10 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             self._addon_params,
             self.entity_extraction_use_json,
         )
-        self._entity_extraction_prompt_profile = (
-            validate_entity_extraction_prompt_profile_for_mode(
-                resolved_prompt_profile,
-                self.entity_extraction_use_json,
-                self._addon_params.get("entity_type_prompt_file"),
-            )
+        self._entity_extraction_prompt_profile = validate_entity_extraction_prompt_profile_for_mode(
+            resolved_prompt_profile,
+            self.entity_extraction_use_json,
+            self._addon_params.get("entity_type_prompt_file"),
         )
         self._cached_entity_extraction_use_json = self.entity_extraction_use_json
         self._addon_params_dirty = False
@@ -814,8 +776,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     def _ensure_addon_params_cache(self) -> None:
         if (
             not self._addon_params_dirty
-            and self._cached_entity_extraction_use_json
-            == self.entity_extraction_use_json
+            and self._cached_entity_extraction_use_json == self.entity_extraction_use_json
         ):
             return
         self._refresh_addon_params_cache()
@@ -833,13 +794,10 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         # state is built, so fall back to an empty dict in that case.
         states = getattr(self, "_role_llm_states", None) or {}
         global_config["role_llm_funcs"] = {
-            spec.name: states[spec.name].wrapped if spec.name in states else None
-            for spec in ROLES
+            spec.name: states[spec.name].wrapped if spec.name in states else None for spec in ROLES
         }
         global_config["llm_cache_identities"] = {
-            spec.name: self._build_role_llm_cache_identity(
-                spec.name, states.get(spec.name)
-            )
+            spec.name: self._build_role_llm_cache_identity(spec.name, states.get(spec.name))
             for spec in ROLES
         }
         return global_config
@@ -961,9 +919,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         embedding_max_token_size = None
         if self.embedding_func and hasattr(self.embedding_func, "max_token_size"):
             embedding_max_token_size = self.embedding_func.max_token_size
-            logger.debug(
-                f"Captured embedding max_token_size: {embedding_max_token_size}"
-            )
+            logger.debug(f"Captured embedding max_token_size: {embedding_max_token_size}")
         self.embedding_token_limit = embedding_max_token_size
 
         # Fix global_config now
@@ -991,12 +947,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         self.key_string_value_json_storage_cls: type[BaseKVStorage] = get_storage_class(
             self.kv_storage
         )  # type: ignore
-        self.vector_db_storage_cls: type[BaseVectorStorage] = get_storage_class(
-            self.vector_storage
-        )  # type: ignore
-        self.graph_storage_cls: type[BaseGraphStorage] = get_storage_class(
-            self.graph_storage
-        )  # type: ignore
+        self.vector_db_storage_cls: type[BaseVectorStorage] = get_storage_class(self.vector_storage)  # type: ignore
+        self.graph_storage_cls: type[BaseGraphStorage] = get_storage_class(self.graph_storage)  # type: ignore
         self.key_string_value_json_storage_cls = partial(  # type: ignore
             self.key_string_value_json_storage_cls, global_config=global_config
         )
@@ -1108,8 +1060,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             valid_roles = ", ".join(sorted(ROLE_NAMES))
             unknown = ", ".join(repr(role) for role in unknown_roles)
             raise ValueError(
-                f"Unknown role_llm_configs key(s): {unknown}. "
-                f"Valid roles are: {valid_roles}"
+                f"Unknown role_llm_configs key(s): {unknown}. Valid roles are: {valid_roles}"
             )
 
         self._role_llm_states: dict[str, _RoleLLMState] = {}
@@ -1228,9 +1179,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
             # Log summary of finalization results
             if successful_finalizations:
-                logger.info(
-                    f"Successfully finalized {len(successful_finalizations)} storages"
-                )
+                logger.info(f"Successfully finalized {len(successful_finalizations)} storages")
 
             if failed_finalizations:
                 logger.error(
@@ -1385,9 +1334,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         doc_id: str | list[str] | None = None,
     ) -> None:
         loop = always_get_an_event_loop()
-        loop.run_until_complete(
-            self.ainsert_custom_chunks(full_text, text_chunks, doc_id)
-        )
+        loop.run_until_complete(self.ainsert_custom_chunks(full_text, text_chunks, doc_id))
 
     # TODO: deprecated, use ainsert instead
     async def ainsert_custom_chunks(
@@ -1430,9 +1377,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
             doc_ids = set(inserting_chunks.keys())
             add_chunk_keys = await self.text_chunks.filter_keys(doc_ids)
-            inserting_chunks = {
-                k: v for k, v in inserting_chunks.items() if k in add_chunk_keys
-            }
+            inserting_chunks = {k: v for k, v in inserting_chunks.items() if k in add_chunk_keys}
             if not len(inserting_chunks):
                 logger.warning("All chunks are already in the storage.")
                 return
@@ -1491,9 +1436,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             if storage_inst is not None
         ]
 
-    async def _discard_pending_index_ops(
-        self, *, skip_enqueue_owned: bool = True
-    ) -> None:
+    async def _discard_pending_index_ops(self, *, skip_enqueue_owned: bool = True) -> None:
         """Drop not-yet-flushed buffers on an aborting batch.
 
         Called when a batch aborts on an internal storage error. Each
@@ -1570,14 +1513,9 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             try:
                 await cast(StorageNameSpace, storage_inst).drop_pending_index_ops()
             except Exception as e:
-                logger.error(
-                    f"Failed to discard pending ops on "
-                    f"{type(storage_inst).__name__}: {e}"
-                )
+                logger.error(f"Failed to discard pending ops on {type(storage_inst).__name__}: {e}")
 
-    async def _insert_done(
-        self, pipeline_status=None, pipeline_status_lock=None
-    ) -> None:
+    async def _insert_done(self, pipeline_status=None, pipeline_status_lock=None) -> None:
         storages = self._index_storages()
 
         async def _flush_one(storage_inst) -> None:
@@ -1654,9 +1592,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             await self._discard_pending_index_ops(skip_enqueue_owned=False)
             raise
 
-    def insert_custom_kg(
-        self, custom_kg: dict[str, Any], full_doc_id: str = None
-    ) -> None:
+    def insert_custom_kg(self, custom_kg: dict[str, Any], full_doc_id: str = None) -> None:
         loop = always_get_an_event_loop()
         loop.run_until_complete(self.ainsert_custom_kg(custom_kg, full_doc_id))
 
@@ -1673,9 +1609,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             for chunk_data in custom_kg.get("chunks", []):
                 chunk_content = sanitize_text_for_encoding(chunk_data["content"])
                 source_id = chunk_data["source_id"]
-                file_path = normalize_document_file_path(
-                    chunk_data.get("file_path", "custom_kg")
-                )
+                file_path = normalize_document_file_path(chunk_data.get("file_path", "custom_kg"))
                 tokens = len(self.tokenizer.encode(chunk_content))
                 chunk_order_index = (
                     0
@@ -1689,9 +1623,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     "source_id": source_id,
                     "tokens": tokens,
                     "chunk_order_index": chunk_order_index,
-                    "full_doc_id": full_doc_id
-                    if full_doc_id is not None
-                    else source_id,
+                    "full_doc_id": full_doc_id if full_doc_id is not None else source_id,
                     "file_path": file_path,
                     "status": DocStatus.PROCESSED,
                 }
@@ -1722,9 +1654,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 description = entity_data.get("description", "No description provided")
                 source_chunk_id = entity_data.get("source_id", "UNKNOWN")
                 source_id = chunk_to_source_map.get(source_chunk_id, "UNKNOWN")
-                file_path = normalize_document_file_path(
-                    entity_data.get("file_path", "custom_kg")
-                )
+                file_path = normalize_document_file_path(entity_data.get("file_path", "custom_kg"))
 
                 if source_id == "UNKNOWN":
                     logger.warning(
@@ -1775,9 +1705,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             async def _do_graph_and_vdb_writes() -> None:
                 # Batch insert entities (reduces N serial awaits to 1)
                 if entity_nodes:
-                    await self.chunk_entity_relation_graph.upsert_nodes_batch(
-                        entity_nodes
-                    )
+                    await self.chunk_entity_relation_graph.upsert_nodes_batch(entity_nodes)
 
                 # Insert relationships into knowledge graph (batch for performance)
                 all_relationships_data: list[dict[str, str]] = []
@@ -1853,9 +1781,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
                 # Batch insert missing placeholder nodes
                 if missing_nodes:
-                    await self.chunk_entity_relation_graph.upsert_nodes_batch(
-                        missing_nodes
-                    )
+                    await self.chunk_entity_relation_graph.upsert_nodes_batch(missing_nodes)
 
                 # Batch insert edges
                 if edge_list:
@@ -1892,9 +1818,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     {
                         rel_id
                         for dp in all_relationships_data
-                        for rel_id in make_relation_vdb_ids(dp["src_id"], dp["tgt_id"])[
-                            1:
-                        ]
+                        for rel_id in make_relation_vdb_ids(dp["src_id"], dp["tgt_id"])[1:]
                     }
                 )
 
@@ -2323,9 +2247,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             # Extract structured data from query result
             raw_data = query_result.raw_data or {}
             raw_data["llm_response"] = {
-                "content": query_result.content
-                if not query_result.is_streaming
-                else None,
+                "content": query_result.content if not query_result.is_streaming else None,
                 "response_iterator": query_result.response_iterator
                 if query_result.is_streaming
                 else None,
@@ -2399,9 +2321,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         updated_metadata = dict(metadata)
         if retry_cache_ids:
             updated_metadata["deletion_llm_cache_ids"] = retry_cache_ids
-        updated_metadata["last_deletion_attempt_at"] = datetime.now(
-            timezone.utc
-        ).isoformat()
+        updated_metadata["last_deletion_attempt_at"] = datetime.now(timezone.utc).isoformat()
 
         if failed:
             updated_metadata["deletion_failed"] = True
@@ -2441,9 +2361,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 f"(delete may have succeeded): {verification_error}"
             ) from verification_error
         return [
-            cache_id
-            for cache_id, record in zip(cache_ids, existing_records)
-            if record is not None
+            cache_id for cache_id, record in zip(cache_ids, existing_records) if record is not None
         ]
 
     async def aclear_cache(self) -> None:
@@ -2476,9 +2394,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         """Synchronous version of aclear_cache."""
         return always_get_an_event_loop().run_until_complete(self.aclear_cache())
 
-    async def get_docs_by_status(
-        self, status: DocStatus
-    ) -> dict[str, DocProcessingStatus]:
+    async def get_docs_by_status(self, status: DocStatus) -> dict[str, DocProcessingStatus]:
         """Get documents by status
 
         Returns:
@@ -2486,9 +2402,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         """
         return await self.doc_status.get_docs_by_status(status)
 
-    async def aget_docs_by_ids(
-        self, ids: str | list[str]
-    ) -> dict[str, DocProcessingStatus]:
+    async def aget_docs_by_ids(self, ids: str | list[str]) -> dict[str, DocProcessingStatus]:
         """Retrieves the processing status for one or more documents by their IDs.
 
         Args:
@@ -2505,9 +2419,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         elif (
             ids is None
         ):  # Handle potential None input gracefully, although type hint suggests str/list
-            logger.warning(
-                "aget_docs_by_ids called with None input, returning empty dict."
-            )
+            logger.warning("aget_docs_by_ids called with None input, returning empty dict.")
             return {}
         else:
             # Assume input is already a list if not a string
@@ -2531,9 +2443,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
         # Iterate through the results, correlating them back to the original IDs
         for i, status_obj in enumerate(results_list):
-            doc_id = id_list[
-                i
-            ]  # Get the original ID corresponding to this result index
+            doc_id = id_list[i]  # Get the original ID corresponding to this result index
             if status_obj:
                 # If a status object was returned (not None), add it to the result dict
                 found_statuses[doc_id] = status_obj
@@ -2543,9 +2453,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
         # Log a warning if any of the requested document IDs were not found
         if not_found_ids:
-            logger.warning(
-                f"Document statuses not found for the following IDs: {not_found_ids}"
-            )
+            logger.warning(f"Document statuses not found for the following IDs: {not_found_ids}")
 
         # Return the dictionary containing statuses only for the found document IDs
         return found_statuses
@@ -2622,9 +2530,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
             if doc_entities_data and "entity_names" in doc_entities_data:
                 entity_names = doc_entities_data["entity_names"]
-                nodes_dict = await self.chunk_entity_relation_graph.get_nodes_batch(
-                    entity_names
-                )
+                nodes_dict = await self.chunk_entity_relation_graph.get_nodes_batch(entity_names)
                 for entity_name in entity_names:
                     node_data = nodes_dict.get(entity_name)
                     if node_data:
@@ -2634,9 +2540,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
             if doc_relations_data and "relation_pairs" in doc_relations_data:
                 relation_pairs = doc_relations_data["relation_pairs"]
-                edge_pairs_dicts = [
-                    {"src": pair[0], "tgt": pair[1]} for pair in relation_pairs
-                ]
+                edge_pairs_dicts = [{"src": pair[0], "tgt": pair[1]} for pair in relation_pairs]
                 edges_dict = await self.chunk_entity_relation_graph.get_edges_batch(
                     edge_pairs_dicts
                 )
@@ -2650,9 +2554,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                             edge_data["target"] = tgt
                         affected_edges.append(edge_data)
         except Exception as e:
-            logger.error(
-                f"[purge] Failed to analyze affected graph elements for {doc_id}: {e}"
-            )
+            logger.error(f"[purge] Failed to analyze affected graph elements for {doc_id}: {e}")
             raise Exception(f"Failed to analyze graph dependencies: {e}") from e
 
         # ---- 2. Classify entities/relations into delete vs rebuild ----
@@ -2668,9 +2570,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     stored_chunks = await self.entity_chunks.get_by_id(node_label)
                     if stored_chunks and isinstance(stored_chunks, dict):
                         existing_sources = [
-                            chunk_id
-                            for chunk_id in stored_chunks.get("chunk_ids", [])
-                            if chunk_id
+                            chunk_id for chunk_id in stored_chunks.get("chunk_ids", []) if chunk_id
                         ]
 
                 if node_data.get("source_id"):
@@ -2696,10 +2596,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 if not remaining_sources:
                     entities_to_delete.add(node_label)
                     entity_chunk_updates[node_label] = []
-                elif (
-                    remaining_sources != existing_sources
-                    or graph_references_deleted_chunks
-                ):
+                elif remaining_sources != existing_sources or graph_references_deleted_chunks:
                     entities_to_rebuild[node_label] = remaining_sources
                     entity_chunk_updates[node_label] = remaining_sources
 
@@ -2719,10 +2616,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     continue
 
                 edge_tuple = tuple(sorted((src, tgt)))
-                if (
-                    edge_tuple in relationships_to_delete
-                    or edge_tuple in relationships_to_rebuild
-                ):
+                if edge_tuple in relationships_to_delete or edge_tuple in relationships_to_rebuild:
                     continue
 
                 existing_sources = []
@@ -2732,9 +2626,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     stored_chunks = await self.relation_chunks.get_by_id(storage_key)
                     if stored_chunks and isinstance(stored_chunks, dict):
                         existing_sources = [
-                            chunk_id
-                            for chunk_id in stored_chunks.get("chunk_ids", [])
-                            if chunk_id
+                            chunk_id for chunk_id in stored_chunks.get("chunk_ids", []) if chunk_id
                         ]
 
                 if edge_data.get("source_id"):
@@ -2760,10 +2652,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 if not remaining_sources:
                     relationships_to_delete.add(edge_tuple)
                     relation_chunk_updates[edge_tuple] = []
-                elif (
-                    remaining_sources != existing_sources
-                    or graph_references_deleted_chunks
-                ):
+                elif remaining_sources != existing_sources or graph_references_deleted_chunks:
                     relationships_to_rebuild[edge_tuple] = remaining_sources
                     relation_chunk_updates[edge_tuple] = remaining_sources
 
@@ -2805,9 +2694,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 if relation_upsert_payload:
                     await self.relation_chunks.upsert(relation_upsert_payload)
         except Exception as e:
-            logger.error(
-                f"[purge] Failed to process graph analysis results for {doc_id}: {e}"
-            )
+            logger.error(f"[purge] Failed to process graph analysis results for {doc_id}: {e}")
             raise Exception(f"Failed to process graph dependencies: {e}") from e
 
         # ---- 3. Delete chunks themselves ----
@@ -2815,9 +2702,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             await self.chunks_vdb.delete(chunk_ids)
             await self.text_chunks.delete(chunk_ids)
             async with pipeline_status_lock:
-                log_message = (
-                    f"[purge] {doc_id}: deleted {len(chunk_ids)} chunk(s) from storage"
-                )
+                log_message = f"[purge] {doc_id}: deleted {len(chunk_ids)} chunk(s) from storage"
                 logger.info(log_message)
                 pipeline_status["latest_message"] = log_message
                 pipeline_status["history_messages"].append(log_message)
@@ -2837,36 +2722,28 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                         ]
                     )
                 await self.relationships_vdb.delete(rel_ids_to_delete)
-                await self.chunk_entity_relation_graph.remove_edges(
-                    list(relationships_to_delete)
-                )
+                await self.chunk_entity_relation_graph.remove_edges(list(relationships_to_delete))
                 if self.relation_chunks:
                     relation_storage_keys = [
-                        make_relation_chunk_key(src, tgt)
-                        for src, tgt in relationships_to_delete
+                        make_relation_chunk_key(src, tgt) for src, tgt in relationships_to_delete
                     ]
                     await self.relation_chunks.delete(relation_storage_keys)
                 async with pipeline_status_lock:
                     log_message = (
-                        f"[purge] {doc_id}: deleted "
-                        f"{len(relationships_to_delete)} relation(s)"
+                        f"[purge] {doc_id}: deleted {len(relationships_to_delete)} relation(s)"
                     )
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
                     pipeline_status["history_messages"].append(log_message)
             except Exception as e:
-                logger.error(
-                    f"[purge] Failed to delete relationships for {doc_id}: {e}"
-                )
+                logger.error(f"[purge] Failed to delete relationships for {doc_id}: {e}")
                 raise Exception(f"Failed to delete relationships: {e}") from e
 
         # ---- 5. Delete entities with no remaining sources ----
         if entities_to_delete:
             try:
-                nodes_edges_dict = (
-                    await self.chunk_entity_relation_graph.get_nodes_edges_batch(
-                        list(entities_to_delete)
-                    )
+                nodes_edges_dict = await self.chunk_entity_relation_graph.get_nodes_edges_batch(
+                    list(entities_to_delete)
                 )
 
                 edges_to_delete: set[tuple[str, str]] = set()
@@ -2887,8 +2764,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     await self.relationships_vdb.delete(rel_ids_to_delete)
                     if self.relation_chunks:
                         relation_storage_keys = [
-                            make_relation_chunk_key(src, tgt)
-                            for src, tgt in edges_to_delete
+                            make_relation_chunk_key(src, tgt) for src, tgt in edges_to_delete
                         ]
                         await self.relation_chunks.delete(relation_storage_keys)
                     logger.info(
@@ -2896,13 +2772,10 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                         f"edge(s) from VDB and chunk-tracking storage"
                     )
 
-                await self.chunk_entity_relation_graph.remove_nodes(
-                    list(entities_to_delete)
-                )
+                await self.chunk_entity_relation_graph.remove_nodes(list(entities_to_delete))
 
                 entity_vdb_ids = [
-                    compute_mdhash_id(entity, prefix="ent-")
-                    for entity in entities_to_delete
+                    compute_mdhash_id(entity, prefix="ent-") for entity in entities_to_delete
                 ]
                 await self.entities_vdb.delete(entity_vdb_ids)
 
@@ -2910,10 +2783,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     await self.entity_chunks.delete(list(entities_to_delete))
 
                 async with pipeline_status_lock:
-                    log_message = (
-                        f"[purge] {doc_id}: deleted "
-                        f"{len(entities_to_delete)} entity(ies)"
-                    )
+                    log_message = f"[purge] {doc_id}: deleted {len(entities_to_delete)} entity(ies)"
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
                     pipeline_status["history_messages"].append(log_message)
@@ -2961,9 +2831,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             logger.error(
                 f"[purge] Failed to delete full_entities/full_relations rows for {doc_id}: {e}"
             )
-            raise Exception(
-                f"Failed to delete from full_entities/full_relations: {e}"
-            ) from e
+            raise Exception(f"Failed to delete from full_entities/full_relations: {e}") from e
 
     async def adelete_by_doc_id(
         self, doc_id: str, delete_llm_cache: bool = False
@@ -3009,12 +2877,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 - `file_path` (str | None): The file path of the deleted document, if available.
         """
         # Get pipeline status shared data and lock for validation
-        pipeline_status = await get_namespace_data(
-            "pipeline_status", workspace=self.workspace
-        )
-        pipeline_status_lock = get_namespace_lock(
-            "pipeline_status", workspace=self.workspace
-        )
+        pipeline_status = await get_namespace_data("pipeline_status", workspace=self.workspace)
+        pipeline_status_lock = get_namespace_lock("pipeline_status", workspace=self.workspace)
 
         # Track whether WE acquired the pipeline
         we_acquired_pipeline = False
@@ -3092,30 +2956,18 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
             if doc_status != DocStatus.PROCESSED:
                 if doc_status == DocStatus.PENDING:
-                    warning_msg = (
-                        f"Deleting {doc_id} {file_path}(previous status: PENDING)"
-                    )
+                    warning_msg = f"Deleting {doc_id} {file_path}(previous status: PENDING)"
                 elif doc_status == DocStatus.PROCESSING:
-                    warning_msg = (
-                        f"Deleting {doc_id} {file_path}(previous status: PROCESSING)"
-                    )
+                    warning_msg = f"Deleting {doc_id} {file_path}(previous status: PROCESSING)"
                 elif doc_status == DocStatus.PREPROCESSED:
-                    warning_msg = (
-                        f"Deleting {doc_id} {file_path}(previous status: PREPROCESSED)"
-                    )
+                    warning_msg = f"Deleting {doc_id} {file_path}(previous status: PREPROCESSED)"
                 elif doc_status == DocStatus.FAILED:
-                    warning_msg = (
-                        f"Deleting {doc_id} {file_path}(previous status: FAILED)"
-                    )
+                    warning_msg = f"Deleting {doc_id} {file_path}(previous status: FAILED)"
                 else:
                     status_text = (
-                        doc_status.value
-                        if isinstance(doc_status, DocStatus)
-                        else str(doc_status)
+                        doc_status.value if isinstance(doc_status, DocStatus) else str(doc_status)
                     )
-                    warning_msg = (
-                        f"Deleting {doc_id} {file_path}(previous status: {status_text})"
-                    )
+                    warning_msg = f"Deleting {doc_id} {file_path}(previous status: {status_text})"
                 logger.info(warning_msg)
                 # Update pipeline status for monitoring
                 async with pipeline_status_lock:
@@ -3185,15 +3037,11 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     await self.doc_status.delete([doc_id])
                     await self.full_docs.delete([doc_id])
                 except Exception as e:
-                    logger.error(
-                        f"Failed to delete document {doc_id} with no chunks: {e}"
-                    )
+                    logger.error(f"Failed to delete document {doc_id} with no chunks: {e}")
                     raise Exception(f"Failed to delete document entry: {e}") from e
 
                 async with pipeline_status_lock:
-                    log_message = (
-                        f"Document deleted without associated chunks: {doc_id}"
-                    )
+                    log_message = f"Document deleted without associated chunks: {doc_id}"
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
                     pipeline_status["history_messages"].append(log_message)
@@ -3225,9 +3073,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     )
                 else:
                     try:
-                        chunk_data_list = await self.text_chunks.get_by_ids(
-                            list(chunk_ids)
-                        )
+                        chunk_data_list = await self.text_chunks.get_by_ids(list(chunk_ids))
                         seen_cache_ids: set[str] = set(doc_llm_cache_ids)
                         for chunk_data in chunk_data_list:
                             if not chunk_data or not isinstance(chunk_data, dict):
@@ -3322,9 +3168,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 # Get relation data from graph storage using relation pairs from full_relations
                 if doc_relations_data and "relation_pairs" in doc_relations_data:
                     relation_pairs = doc_relations_data["relation_pairs"]
-                    edge_pairs_dicts = [
-                        {"src": pair[0], "tgt": pair[1]} for pair in relation_pairs
-                    ]
+                    edge_pairs_dicts = [{"src": pair[0], "tgt": pair[1]} for pair in relation_pairs]
                     # get_edges_batch returns dict[tuple[str, str], dict], need to convert to list[dict]
                     edges_dict = await self.chunk_entity_relation_graph.get_edges_batch(
                         edge_pairs_dicts
@@ -3367,9 +3211,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     if node_data.get("source_id"):
                         graph_sources = [
                             chunk_id
-                            for chunk_id in node_data["source_id"].split(
-                                GRAPH_FIELD_SEP
-                            )
+                            for chunk_id in node_data["source_id"].split(GRAPH_FIELD_SEP)
                             if chunk_id
                         ]
 
@@ -3395,10 +3237,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     if not remaining_sources:
                         entities_to_delete.add(node_label)
                         entity_chunk_updates[node_label] = []
-                    elif (
-                        remaining_sources != existing_sources
-                        or graph_references_deleted_chunks
-                    ):
+                    elif remaining_sources != existing_sources or graph_references_deleted_chunks:
                         entities_to_rebuild[node_label] = remaining_sources
                         entity_chunk_updates[node_label] = remaining_sources
                     else:
@@ -3430,9 +3269,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     graph_sources: list[str] = []
                     if self.relation_chunks:
                         storage_key = make_relation_chunk_key(src, tgt)
-                        stored_chunks = await self.relation_chunks.get_by_id(
-                            storage_key
-                        )
+                        stored_chunks = await self.relation_chunks.get_by_id(storage_key)
                         if stored_chunks and isinstance(stored_chunks, dict):
                             existing_sources = [
                                 chunk_id
@@ -3443,9 +3280,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     if edge_data.get("source_id"):
                         graph_sources = [
                             chunk_id
-                            for chunk_id in edge_data["source_id"].split(
-                                GRAPH_FIELD_SEP
-                            )
+                            for chunk_id in edge_data["source_id"].split(GRAPH_FIELD_SEP)
                             if chunk_id
                         ]
 
@@ -3470,19 +3305,14 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     if not remaining_sources:
                         relationships_to_delete.add(edge_tuple)
                         relation_chunk_updates[edge_tuple] = []
-                    elif (
-                        remaining_sources != existing_sources
-                        or graph_references_deleted_chunks
-                    ):
+                    elif remaining_sources != existing_sources or graph_references_deleted_chunks:
                         relationships_to_rebuild[edge_tuple] = remaining_sources
                         relation_chunk_updates[edge_tuple] = remaining_sources
                     else:
                         logger.info(f"Untouch relation: {edge_tuple}")
 
                 async with pipeline_status_lock:
-                    log_message = (
-                        f"Found {len(relationships_to_rebuild)} affected relations"
-                    )
+                    log_message = f"Found {len(relationships_to_rebuild)} affected relations"
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
                     pipeline_status["history_messages"].append(log_message)
@@ -3534,9 +3364,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     await self.text_chunks.delete(chunk_ids)
 
                     async with pipeline_status_lock:
-                        log_message = (
-                            f"Successfully deleted {len(chunk_ids)} chunks from storage"
-                        )
+                        log_message = f"Successfully deleted {len(chunk_ids)} chunks from storage"
                         logger.info(log_message)
                         pipeline_status["latest_message"] = log_message
                         pipeline_status["history_messages"].append(log_message)
@@ -3574,7 +3402,9 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                         await self.relation_chunks.delete(relation_storage_keys)
 
                     async with pipeline_status_lock:
-                        log_message = f"Successfully deleted {len(relationships_to_delete)} relations"
+                        log_message = (
+                            f"Successfully deleted {len(relationships_to_delete)} relations"
+                        )
                         logger.info(log_message)
                         pipeline_status["latest_message"] = log_message
                         pipeline_status["history_messages"].append(log_message)
@@ -3588,10 +3418,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 try:
                     deletion_stage = "delete_entities"
                     # Batch get all edges for entities to avoid N+1 query problem
-                    nodes_edges_dict = (
-                        await self.chunk_entity_relation_graph.get_nodes_edges_batch(
-                            list(entities_to_delete)
-                        )
+                    nodes_edges_dict = await self.chunk_entity_relation_graph.get_nodes_edges_batch(
+                        list(entities_to_delete)
                     )
 
                     # Debug: Check and log all edges before deleting nodes
@@ -3605,21 +3433,12 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                                 edge_tuple = tuple(sorted((src, tgt)))
                                 edges_to_delete.add(edge_tuple)
 
-                                if (
-                                    src in entities_to_delete
-                                    and tgt in entities_to_delete
-                                ):
-                                    logger.warning(
-                                        f"Edge still exists: {src} <-> {tgt}"
-                                    )
+                                if src in entities_to_delete and tgt in entities_to_delete:
+                                    logger.warning(f"Edge still exists: {src} <-> {tgt}")
                                 elif src in entities_to_delete:
-                                    logger.warning(
-                                        f"Edge still exists: {src} --> {tgt}"
-                                    )
+                                    logger.warning(f"Edge still exists: {src} --> {tgt}")
                                 else:
-                                    logger.warning(
-                                        f"Edge still exists: {src} <-- {tgt}"
-                                    )
+                                    logger.warning(f"Edge still exists: {src} <-- {tgt}")
                             edges_still_exist += 1
 
                     if edges_still_exist:
@@ -3643,8 +3462,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                         # Delete from relation_chunks storage
                         if self.relation_chunks:
                             relation_storage_keys = [
-                                make_relation_chunk_key(src, tgt)
-                                for src, tgt in edges_to_delete
+                                make_relation_chunk_key(src, tgt) for src, tgt in edges_to_delete
                             ]
                             await self.relation_chunks.delete(relation_storage_keys)
 
@@ -3653,14 +3471,11 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                         )
 
                     # Delete from graph (edges will be auto-deleted with nodes)
-                    await self.chunk_entity_relation_graph.remove_nodes(
-                        list(entities_to_delete)
-                    )
+                    await self.chunk_entity_relation_graph.remove_nodes(list(entities_to_delete))
 
                     # Delete from vector vdb
                     entity_vdb_ids = [
-                        compute_mdhash_id(entity, prefix="ent-")
-                        for entity in entities_to_delete
+                        compute_mdhash_id(entity, prefix="ent-") for entity in entities_to_delete
                     ]
                     await self.entities_vdb.delete(entity_vdb_ids)
 
@@ -3669,9 +3484,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                         await self.entity_chunks.delete(list(entities_to_delete))
 
                     async with pipeline_status_lock:
-                        log_message = (
-                            f"Successfully deleted {len(entities_to_delete)} entities"
-                        )
+                        log_message = f"Successfully deleted {len(entities_to_delete)} entities"
                         logger.info(log_message)
                         pipeline_status["latest_message"] = log_message
                         pipeline_status["history_messages"].append(log_message)
@@ -3733,9 +3546,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     # Some storage implementations do not raise on delete errors and
                     # instead only log internally, so confirm the cache entries are
                     # actually gone before deleting the document/status records.
-                    remaining_cache_ids = await self._get_existing_llm_cache_ids(
-                        doc_llm_cache_ids
-                    )
+                    remaining_cache_ids = await self._get_existing_llm_cache_ids(doc_llm_cache_ids)
                     if remaining_cache_ids:
                         doc_llm_cache_ids = remaining_cache_ids
                         raise Exception(
@@ -3749,8 +3560,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     log_message = cache_log_message
                 except Exception as cache_delete_error:
                     log_message = (
-                        f"Failed to delete LLM cache for document {doc_id}: "
-                        f"{cache_delete_error}"
+                        f"Failed to delete LLM cache for document {doc_id}: {cache_delete_error}"
                     )
                     logger.error(log_message)
                     logger.error(traceback.format_exc())
@@ -3766,9 +3576,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 await self.full_relations.delete([doc_id])
             except Exception as e:
                 logger.error(f"Failed to delete from full_entities/full_relations: {e}")
-                raise Exception(
-                    f"Failed to delete from full_entities/full_relations: {e}"
-                ) from e
+                raise Exception(f"Failed to delete from full_entities/full_relations: {e}") from e
 
             # 11. Delete original document and status.
             # doc_status is deleted first so that if full_docs.delete fails, a retry
@@ -3875,9 +3683,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 async with pipeline_status_lock:
                     pipeline_status["busy"] = False
                     pipeline_status["cancellation_requested"] = False
-                    completion_msg = (
-                        f"Deletion process completed for document: {doc_id}"
-                    )
+                    completion_msg = f"Deletion process completed for document: {doc_id}"
                     pipeline_status["latest_message"] = completion_msg
                     pipeline_status["history_messages"].append(completion_msg)
                     logger.info(completion_msg)
@@ -3912,9 +3718,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         loop = always_get_an_event_loop()
         return loop.run_until_complete(self.adelete_by_entity(entity_name))
 
-    async def adelete_by_relation(
-        self, source_entity: str, target_entity: str
-    ) -> DeletionResult:
+    async def adelete_by_relation(self, source_entity: str, target_entity: str) -> DeletionResult:
         """Asynchronously delete a relation between two entities.
 
         Args:
@@ -3933,9 +3737,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             target_entity,
         )
 
-    def delete_by_relation(
-        self, source_entity: str, target_entity: str
-    ) -> DeletionResult:
+    def delete_by_relation(self, source_entity: str, target_entity: str) -> DeletionResult:
         """Synchronously delete a relation between two entities.
 
         Args:
@@ -3946,9 +3748,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             DeletionResult: An object containing the outcome of the deletion process.
         """
         loop = always_get_an_event_loop()
-        return loop.run_until_complete(
-            self.adelete_by_relation(source_entity, target_entity)
-        )
+        return loop.run_until_complete(self.adelete_by_relation(source_entity, target_entity))
 
     async def get_processing_status(self) -> dict[str, int]:
         """Get current document processing status counts
@@ -3958,9 +3758,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         """
         return await self.doc_status.get_status_counts()
 
-    async def aget_docs_by_track_id(
-        self, track_id: str
-    ) -> dict[str, DocProcessingStatus]:
+    async def aget_docs_by_track_id(self, track_id: str) -> dict[str, DocProcessingStatus]:
         """Get documents by track_id
 
         Args:
@@ -4081,9 +3879,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             self.aedit_relation(source_entity, target_entity, updated_data)
         )
 
-    async def acreate_entity(
-        self, entity_name: str, entity_data: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def acreate_entity(self, entity_name: str, entity_data: dict[str, Any]) -> dict[str, Any]:
         """Asynchronously create a new entity.
 
         Creates a new entity in the knowledge graph and adds it to the vector database.
@@ -4105,9 +3901,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             entity_data,
         )
 
-    def create_entity(
-        self, entity_name: str, entity_data: dict[str, Any]
-    ) -> dict[str, Any]:
+    def create_entity(self, entity_name: str, entity_data: dict[str, Any]) -> dict[str, Any]:
         loop = always_get_an_event_loop()
         return loop.run_until_complete(self.acreate_entity(entity_name, entity_data))
 
@@ -4195,9 +3989,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     ) -> dict[str, Any]:
         loop = always_get_an_event_loop()
         return loop.run_until_complete(
-            self.amerge_entities(
-                source_entities, target_entity, merge_strategy, target_entity_data
-            )
+            self.amerge_entities(source_entities, target_entity, merge_strategy, target_entity_data)
         )
 
     async def aexport_data(
@@ -4253,9 +4045,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-        loop.run_until_complete(
-            self.aexport_data(output_path, file_format, include_vector_data)
-        )
+        loop.run_until_complete(self.aexport_data(output_path, file_format, include_vector_data))
 
 
 # `addon_params` is declared as an InitVar on the dataclass so it can still be

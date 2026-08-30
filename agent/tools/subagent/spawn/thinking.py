@@ -4,8 +4,6 @@ Three-layer precedence: explicit override → requester's subagent setting →
 target agent's default.
 """
 
-from ..config import get_config
-
 
 def resolve_thinking_override(
     requester_thinking: str | None = None,

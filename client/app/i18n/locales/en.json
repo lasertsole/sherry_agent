@@ -5,6 +5,11 @@
     "toggleTheme": "Toggle theme",
     "deleteSession": "Delete session"
   },
+  "common": {
+    "confirmDelete": "Confirm Delete",
+    "delete": "Delete",
+    "cancel": "Cancel"
+  },
   "chatInput": {
     "placeholder": "Type a message...",
     "thinking": "AI is thinking...",
@@ -31,12 +36,54 @@
     "toolRunning": "Running…",
     "thinking": "Thinking",
     "modelMeta": "{input} in · {output} out tokens",
+    "scrollBottom": "Scroll to bottom",
     "copy": "Copy",
     "copied": "Copied"
   },
   "errors": {
     "requestFailed": "Request failed",
-    "pageError": "Page error"
+    "pageError": "Page error",
+    "replyFailed": "(Reply failed: {reason})",
+    "sendFailed": "(Send failed: {reason})",
+    "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly."
+  },
+  "hitl": {
+    "title": "Action Requires Approval",
+    "tool": "Tool",
+    "reject": "Reject",
+    "approve": "Approve"
+  },
+  "taskViewer": {
+    "viewTasks": "View Background Tasks"
+  },
+  "taskDetail": {
+    "placeholder": "Click a node in the tree above to view task details",
+    "taskDesc": "Description",
+    "status": "Status",
+    "depth": "Depth",
+    "agentId": "Agent",
+    "spawnMode": "Spawn Mode",
+    "parentSession": "Parent Session",
+    "startedAt": "Started At",
+    "endedAt": "Ended At",
+    "endedReason": "End Reason",
+    "outcome": "Outcome",
+    "outcomeStatus": "Outcome Status",
+    "error": "Error",
+    "resultText": "Result",
+    "delivery": "Delivery",
+    "steerTitle": "Steer / Resume",
+    "steerHint": "The child agent continues from its current context with your new instructions; leave empty to simply resume an interrupted run.",
+    "steerPlaceholder": "New instructions (optional, e.g. retry with a different approach…)",
+    "steerAction": "Send & Continue",
+    "steerSteering": "Sending…",
+    "steerSuccess": "Sent — the child agent is continuing.",
+    "steerFailed": "Steer failed (run may have finished or is rate-limited)"
+  },
+  "flow": {
+    "loading": "Loading…",
+    "empty": "No background data",
+    "error": "Failed to load"
   },
   "connection": {
     "reconnecting": "Connection lost, reconnecting… (attempt {attempt}/{max})",
@@ -59,7 +106,8 @@
     "noSearchResults": "No matching sessions",
     "filterToggle": "Filter",
     "editTitle": "Rename session",
-    "titlePlaceholder": "Enter new title"
+    "titlePlaceholder": "Enter new title",
+    "titleInvalid": "Title must be at most 30 characters and contain only letters, numbers, spaces, and . _ -"
   },
   "sidebar": {
     "tabSessions": "Chats",
@@ -67,9 +115,11 @@
     "tasksLoading": "Loading tasks...",
     "noTasks": "No background tasks yet",
     "tasksUpdatedAt": "Updated {time}",
-    "tasksSelectAll": "Select all",
+    "tasksSelectAll": "Select All",
     "tasksBatchDelete": "Batch delete tasks",
     "tasksBatchDeleteConfirm": "Delete the selected tasks? Their root and all child tasks will be permanently cleared. This cannot be undone.",
+    "taskDelete": "Delete task",
+    "taskDeleteConfirm": "Delete this task? Its root and all child tasks will be permanently cleared. This cannot be undone.",
     "tasksAgoSeconds": "{sec}s ago",
     "statusRunning": "Running",
     "statusInterrupted": "Interrupted",

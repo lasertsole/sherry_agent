@@ -1,4 +1,4 @@
-﻿"""Fixed-size token-window chunking — the LightRAG default strategy.
+"""Fixed-size token-window chunking — the LightRAG default strategy.
 
 Chunks the input text into windows of at most ``chunk_token_size`` tokens
 with ``chunk_overlap_token_size`` of overlap between adjacent windows.
@@ -153,11 +153,7 @@ def chunking_by_token_size(
                         chunk_token_limit=chunk_token_size,
                         chunk_preview=chunk[:120],
                     )
-                span = (
-                    _source_span(content, chunk_start, chunk_end)
-                    if _emit_source_span
-                    else None
-                )
+                span = _source_span(content, chunk_start, chunk_end) if _emit_source_span else None
                 new_chunks.append((len(_tokens), chunk, span))
         else:
             for chunk, (chunk_start, chunk_end) in zip(raw_chunks, raw_spans):
@@ -195,9 +191,7 @@ def chunking_by_token_size(
                         )
                 else:
                     span = (
-                        _source_span(content, chunk_start, chunk_end)
-                        if _emit_source_span
-                        else None
+                        _source_span(content, chunk_start, chunk_end) if _emit_source_span else None
                     )
                     new_chunks.append((len(_tokens), chunk, span))
         for index, (_len, chunk, span) in enumerate(new_chunks):

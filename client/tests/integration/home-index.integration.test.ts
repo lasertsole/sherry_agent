@@ -9,7 +9,7 @@ import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 // with MissingAPIError), so keep the real module but neutralize the persistence
 // wrappers: they resolve empty and the fetchApi-seeded server rows become the
 // sole data source for SessionSidebar.loadSessionList.
-vi.mock('@/composables/db', async (importOriginal) => {
+vi.mock('@/composables/db', async importOriginal => {
   const actual = await importOriginal<typeof import('@/composables/db')>();
   return {
     ...actual,
@@ -29,7 +29,7 @@ vi.mock('@/composables/db', async (importOriginal) => {
     saveDraftTurn: async () => {},
     readDraftTurns: async () => [],
     clearDraftTurn: async () => {},
-    clearDraftSession: async () => {},
+    clearDraftSession: async () => {}
   };
 });
 
@@ -38,12 +38,12 @@ const primevueStub = {
     name: 'Checkbox',
     props: ['modelValue'],
     emits: ['update:modelValue'],
-    template: '<button class="cb" @click="$emit(\'update:modelValue\', !modelValue)">C</button>',
+    template: '<button class="cb" @click="$emit(\'update:modelValue\', !modelValue)">C</button>'
   },
   Button: { props: ['label'], template: '<button class="btn"><slot /><span>{{ label }}</span></button>' },
   Menu: { template: '<div class="mnu"></div>', methods: { toggle() {} } },
   ToggleSwitch: { template: '<span class="ts"></span>' },
-  ChatInputBox: { template: '<div class="cib"></div>' },
+  ChatInputBox: { template: '<div class="cib"></div>' }
 };
 
 // SessionSidebar loads sessions asynchronously through getSessionList() ->
@@ -54,7 +54,7 @@ const primevueStub = {
 const seededFetchApi = vi.fn(async (opts?: { url?: string }) =>
   opts?.url === '/sessions'
     ? [{ session_id: 's1', last_time: '20260617104200', title: '第一次对话' }]
-    : { code: 200, data: null },
+    : { code: 200, data: null }
 );
 
 // `get_history_by_turn_page` is a Nuxt auto-import pre-stubbed in setup.ts, so
@@ -62,7 +62,7 @@ const seededFetchApi = vi.fn(async (opts?: { url?: string }) =>
 // (PrimeVue/markdown) are stubbed above.
 function mountHome() {
   return mount(homeIndex, {
-    global: { stubs: primevueStub },
+    global: { stubs: primevueStub }
   });
 }
 

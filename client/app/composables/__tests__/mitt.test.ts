@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import { emit, on } from '../mitt';
 
+/** mitt listeners receive a single `unknown` payload (default Events map). */
+type Handler = (event: unknown) => void;
+
 describe('mitt event bus', () => {
-  let handler: ReturnType<typeof vi.fn>;
+  let handler: Mock<Handler>;
 
   beforeEach(() => {
-    handler = vi.fn();
+    handler = vi.fn<Handler>();
   });
 
   afterEach(() => {
@@ -36,7 +40,7 @@ describe('mitt event bus', () => {
   });
 
   it('invokes multiple listeners for the same event in registration order', () => {
-    const second = vi.fn();
+    const second = vi.fn<Handler>();
     on('multi', handler);
     on('multi', second);
 

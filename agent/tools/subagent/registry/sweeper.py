@@ -33,7 +33,11 @@ async def _do_sweep() -> None:
         pressure_prune_suspended_deliveries,
     )
     from .work_admission import run_with_work_admission
-    from ..orphan.recovery import scan_orphaned_sessions, schedule_orphan_recovery, reclassify_legacy_timeout
+    from ..orphan.recovery import (
+        scan_orphaned_sessions,
+        schedule_orphan_recovery,
+        reclassify_legacy_timeout,
+    )
 
     orphans = await recover_orphaned_runs()
     if orphans > 0:
@@ -77,8 +81,8 @@ async def _expire_suspended_by_requester_type() -> int:
     from . import memory, mark_delivery_discarded, set_run
 
     _REQUESTER_TYPE_EXPIRY_MS = {
-        "cron": 2 * 3600 * 1000,        # 2 hours for cron
-        "subagent": 6 * 3600 * 1000,     # 6 hours for sub-agent
+        "cron": 2 * 3600 * 1000,  # 2 hours for cron
+        "subagent": 6 * 3600 * 1000,  # 6 hours for sub-agent
         "interactive": 24 * 3600 * 1000,  # 24 hours for interactive
     }
 
@@ -112,13 +116,13 @@ async def _expire_suspended_by_requester_type() -> int:
 async def _persist_async() -> None:
     """Trigger an asynchronous persist of in-memory state to disk."""
     from .state import persist_runs_to_disk
+
     await persist_runs_to_disk()
 
 
 async def _finalize_killed_unterminated() -> int:
     """Finalize cleanup for killed runs that are terminal but not yet cleaned up."""
     from . import memory
-    from ..types.registry import RunOutcome, ExecutionState, RunOutcomeStatus
 
     count = 0
     for run in memory.values():
@@ -130,6 +134,7 @@ async def _finalize_killed_unterminated() -> int:
             continue
 
         from .lifecycle import _finalize_cleanup
+
         await _finalize_cleanup(run, "killed_finalization")
         count += 1
 

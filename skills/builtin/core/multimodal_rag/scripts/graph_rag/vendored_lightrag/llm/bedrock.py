@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 import inspect
 import json
 import logging
@@ -204,9 +204,7 @@ async def bedrock_complete_if_cache(
       to let the AWS SDK select its default endpoint.
     """
     if enable_cot:
-        logging.debug(
-            "enable_cot=True is not supported for Bedrock and will be ignored."
-        )
+        logging.debug("enable_cot=True is not supported for Bedrock and will be ignored.")
 
     # Bedrock Converse API has no JSON mode; drop legacy extraction flags and
     # response_format below and rely on the prompt template plus downstream
@@ -270,9 +268,7 @@ async def bedrock_complete_if_cache(
         user_content: list[dict[str, Any]] = [{"text": prompt}]
         for img in normalized_images:
             fmt = img.mime_type.split("/", 1)[1] if "/" in img.mime_type else "png"
-            user_content.append(
-                {"image": {"format": fmt, "source": {"bytes": img.raw_bytes}}}
-            )
+            user_content.append({"image": {"format": fmt, "source": {"bytes": img.raw_bytes}}})
         messages.append({"role": "user", "content": user_content})
 
         if stream:
@@ -544,17 +540,13 @@ async def bedrock_embed(
 
                         embedding = response_body["embedding"]
                         if not embedding:
-                            raise BedrockError(
-                                f"Received empty embedding for text: {text[:50]}..."
-                            )
+                            raise BedrockError(f"Received empty embedding for text: {text[:50]}...")
 
                         embed_texts.append(embedding)
 
                     except Exception as e:
                         # Convert to appropriate exception type
-                        _handle_bedrock_exception(
-                            e, "Bedrock embedding (amazon, text chunk)"
-                        )
+                        _handle_bedrock_exception(e, "Bedrock embedding (amazon, text chunk)")
 
             elif model_provider == "cohere":
                 try:
@@ -577,9 +569,7 @@ async def bedrock_embed(
 
                     # Validate response structure
                     if not response_body or "embeddings" not in response_body:
-                        raise BedrockError(
-                            "Invalid embedding response structure from Cohere"
-                        )
+                        raise BedrockError("Invalid embedding response structure from Cohere")
 
                     embeddings = response_body["embeddings"]
                     if not embeddings or len(embeddings) != len(texts):
@@ -594,9 +584,7 @@ async def bedrock_embed(
                     _handle_bedrock_exception(e, "Bedrock embedding (cohere)")
 
             else:
-                raise BedrockError(
-                    f"Model provider '{model_provider}' is not supported!"
-                )
+                raise BedrockError(f"Model provider '{model_provider}' is not supported!")
 
             # Final validation
             if not embed_texts:

@@ -1,15 +1,12 @@
 """Kill sub-agent runs with control-scope checks, reconciliation snapshots, and cascade support."""
 
 import asyncio
-import time
 from loguru import logger
 from ..types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
-from ..types.capability import ControlScope
 from ..registry import (
     get_run,
     set_run,
     cancel_task,
-    all_runs,
     wake_yield_if_all_children_settled,
     save_kill_reconciliation,
 )
@@ -57,6 +54,7 @@ async def kill_subagent_run(
             return None
 
     from ..orphan.recovery import cancel_recovery
+
     cancel_recovery(run_id)
 
     save_kill_reconciliation(run_id)
@@ -64,13 +62,16 @@ async def kill_subagent_run(
     await _clear_session_queues(run.child_session_key)
 
     from ..registry.lifecycle import complete_subagent_run
+
     outcome = RunOutcome(status=RunOutcomeStatus.KILLED, error=reason)
     updated = await complete_subagent_run(run_id, outcome)
     if updated is None:
         logger.warning("kill_subagent_run: complete_subagent_run returned None for {}", run_id)
         return get_run(run_id)
 
-    updated = updated.model_copy(update={"aborted_last_run": True})  # Flag for orphan recovery detection
+    updated = updated.model_copy(
+        update={"aborted_last_run": True}
+    )  # Flag for orphan recovery detection
     set_run(updated)
 
     logger.info("Killed subagent run {}: reason={}", run_id, reason)
@@ -106,11 +107,15 @@ async def kill_subagent_run_with_cascade(
 
             allowed, _ = can_control_run(child, run.child_session_key)
             if not allowed:
-                logger.debug("cascade kill: skipping child {} — no control permission", child.run_id)
+                logger.debug(
+                    "cascade kill: skipping child {} — no control permission", child.run_id
+                )
                 continue
 
             child_killed = await kill_subagent_run_with_cascade(
-                child.run_id, reason=f"parent killed: {reason}", cascade=True,
+                child.run_id,
+                reason=f"parent killed: {reason}",
+                cascade=True,
                 requester_session_key=child.controller_session_key,
             )
             killed.extend(child_killed)
@@ -132,12 +137,15 @@ def list_killable_children(session_key: str) -> list[SubagentRunRecord]:
     """List non-terminal child runs that are eligible for killing."""
     children = list_runs_for_requester(session_key)
     return [
-        c for c in children
+        c
+        for c in children
         if c.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
     ]
 
 
-async def kill_subagent_run_admin(run_id: str, reason: str = "admin_kill") -> SubagentRunRecord | None:
+async def kill_subagent_run_admin(
+    run_id: str, reason: str = "admin_kill"
+) -> SubagentRunRecord | None:
     """Admin kill that bypasses requester-session-key checks."""
     return await kill_subagent_run(run_id, reason=reason)
 
@@ -155,13 +163,17 @@ async def kill_all_controlled_subagent_runs(
     if first:
         allowed, deny_reason = can_control_run(first, requester_session_key)
         if not allowed:
-            logger.warning("kill_all: control denied for {}: {}", requester_session_key, deny_reason)
+            logger.warning(
+                "kill_all: control denied for {}: {}", requester_session_key, deny_reason
+            )
             return []
 
     killed: list[SubagentRunRecord] = []
     for child in killable:
         result = await kill_subagent_run(
-            child.run_id, reason=reason, requester_session_key=requester_session_key,
+            child.run_id,
+            reason=reason,
+            requester_session_key=requester_session_key,
         )
         if result is not None:
             killed.append(result)
@@ -176,7 +188,8 @@ async def kill_all_controlled_subagent_runs(
 async def _clear_session_queues(child_session_key: str) -> None:
     """Best-effort cancellation of pending asyncio tasks for a child session."""
     try:
-        from ..registry import remove_task, get_task
+        from ..registry import get_task
+
         task = get_task(child_session_key)
         if task and not task.done():
             task.cancel()

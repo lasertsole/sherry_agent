@@ -22,6 +22,7 @@ import pytest
 # Fixture: real SQLite DB (only the columns get_session_ids reads)
 # ============================================================================
 
+
 @pytest.fixture
 def sid_db():
     """Create a real SQLite DB with the ``messages`` table, patch module ``_db``.
@@ -83,6 +84,7 @@ def patch_db(sid_db):
 # Tests
 # ============================================================================
 
+
 class TestGetSessionIds:
     def test_title_uses_latest_human_message(self, sid_db, patch_db):
         """Title should be the latest human message, ignoring newer AI/tool rows."""
@@ -100,9 +102,7 @@ class TestGetSessionIds:
         assert result[0]["session_id"] == "s1"
         assert result[0]["title"] == "latest question"
 
-    def test_title_ignores_ai_message_after_human_in_same_turn(
-        self, sid_db, patch_db
-    ):
+    def test_title_ignores_ai_message_after_human_in_same_turn(self, sid_db, patch_db):
         """A newer AI message in the last turn must NOT override the human title."""
         from context_engine.store.core import get_session_ids
 
@@ -113,16 +113,16 @@ class TestGetSessionIds:
         result = get_session_ids()
         assert result[0]["title"] == "question"
 
-    def test_empty_title_when_last_human_has_no_usable_text(
-        self, sid_db, patch_db
-    ):
+    def test_empty_title_when_last_human_has_no_usable_text(self, sid_db, patch_db):
         """A last human message with no usable text yields an empty title ("")."""
         from context_engine.store.core import get_session_ids
 
         ins = sid_db["insert"]
         # Human message is a multimodal array with only an image, no text.
         ins(
-            "s1", 1, "human",
+            "s1",
+            1,
+            "human",
             json.dumps([{"type": "image", "image": "x.png"}], ensure_ascii=False),
             "20260101100000",
         )
@@ -149,9 +149,14 @@ class TestGetSessionIds:
 
         ins = sid_db["insert"]
         ins(
-            "s1", 1, "human",
+            "s1",
+            1,
+            "human",
             json.dumps(
-                [{"type": "text", "text": "  describe this image  "}, {"type": "image", "image": "x.png"}],
+                [
+                    {"type": "text", "text": "  describe this image  "},
+                    {"type": "image", "image": "x.png"},
+                ],
                 ensure_ascii=False,
             ),
             "20260101100000",
@@ -167,8 +172,20 @@ class TestGetSessionIds:
 
         ins = sid_db["insert"]
         ins("main-user-session", 1, "human", json.dumps("hi", ensure_ascii=False), "20260101100000")
-        ins("agent:main:subagent::abc123", 1, "human", json.dumps("sub", ensure_ascii=False), "20260101110000")
-        ins("agent:main:subagent::mother:subagent::child42", 1, "human", json.dumps("sub2", ensure_ascii=False), "20260101120000")
+        ins(
+            "agent:main:subagent::abc123",
+            1,
+            "human",
+            json.dumps("sub", ensure_ascii=False),
+            "20260101110000",
+        )
+        ins(
+            "agent:main:subagent::mother:subagent::child42",
+            1,
+            "human",
+            json.dumps("sub2", ensure_ascii=False),
+            "20260101120000",
+        )
 
         result = get_session_ids()
         sessions = {r["session_id"] for r in result}

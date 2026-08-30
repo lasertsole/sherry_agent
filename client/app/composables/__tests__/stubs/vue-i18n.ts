@@ -12,7 +12,7 @@ export function useI18n() {
   return {
     t: (key: string) => key,
     locale: { value: 'zh' },
-    te: () => false,
+    te: () => false
   };
 }
 

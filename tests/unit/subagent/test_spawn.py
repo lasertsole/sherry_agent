@@ -1,12 +1,19 @@
-﻿import pytest
-import asyncio
-from agent.tools.subagent.spawn.depth import get_subagent_depth, validate_spawn_depth, validate_concurrent_children
+import pytest
+from agent.tools.subagent.spawn.depth import (
+    get_subagent_depth,
+    validate_spawn_depth,
+    validate_concurrent_children,
+)
 from agent.tools.subagent.spawn.target_policy import validate_target_policy, is_target_allowed
 from agent.tools.subagent.spawn.plan import resolve_run_timeout_seconds, split_model_ref
 from agent.tools.subagent.spawn.task_name import normalize_subagent_task_name
 from agent.tools.subagent.spawn.system_prompt import build_subagent_system_prompt
 from agent.tools.subagent.spawn.initial_message import build_subagent_initial_user_message
-from agent.tools.subagent.spawn.inherited_tool_policy import apply_tool_policy, normalize_tool_denylist, DEFAULT_SUBAGENT_BLOCKED_TOOLS
+from agent.tools.subagent.spawn.inherited_tool_policy import (
+    apply_tool_policy,
+    normalize_tool_denylist,
+    DEFAULT_SUBAGENT_BLOCKED_TOOLS,
+)
 from agent.tools.subagent.spawn.context import prepare_spawned_context
 from agent.tools.subagent.spawn.attachments import (
     validate_attachment_name,
@@ -32,6 +39,7 @@ class TestDepth:
 
     def test_validate_spawn_depth_exceeded(self):
         from agent.tools.subagent.config import get_config
+
         ok, reason = validate_spawn_depth(get_config().max_spawn_depth)
         assert not ok
         assert "exceeds" in reason
@@ -42,6 +50,7 @@ class TestDepth:
 
     def test_validate_concurrent_children_exceeded(self):
         from agent.tools.subagent.config import get_config
+
         ok, reason = validate_concurrent_children(get_config().max_children_per_agent)
         assert not ok
 
@@ -150,6 +159,7 @@ class TestInheritedToolPolicy:
         class FakeTool:
             def __init__(self, name):
                 self.name = name
+
         tools = [FakeTool("read"), FakeTool("write"), FakeTool("sessions_spawn")]
         # tool_deny=None means "no policy provided" → default-blocked fallback applies
         result = apply_tool_policy(tools, [], None)
@@ -161,6 +171,7 @@ class TestInheritedToolPolicy:
         class FakeTool:
             def __init__(self, name):
                 self.name = name
+
         tools = [FakeTool("read"), FakeTool("write")]
         result = apply_tool_policy(tools, ["read"], [])
         assert len(result) == 1
@@ -170,9 +181,11 @@ class TestInheritedToolPolicy:
         """Regression: ORCHESTRATOR passes an explicit deny-list omitting
         spawn/yield so it can recurse. An explicit tool_deny must be
         authoritative and NOT have default_blocked re-applied on top."""
+
         class FakeTool:
             def __init__(self, name):
                 self.name = name
+
         tools = [
             FakeTool("read"),
             FakeTool("sessions_spawn"),
@@ -185,20 +198,23 @@ class TestInheritedToolPolicy:
         # (memory, skill_manage, sessions_kill, sessions_steer) are blocked
         # via metadata scope tags, covered by test_inherited_tool_policy.py.
         orchestrator_deny = [
-            t for t in DEFAULT_SUBAGENT_BLOCKED_TOOLS
+            t
+            for t in DEFAULT_SUBAGENT_BLOCKED_TOOLS
             if t not in ("sessions_spawn", "sessions_yield")
         ]
         result = apply_tool_policy(tools, [], orchestrator_deny)
         names = [t.name for t in result]
-        assert "sessions_spawn" in names         # unblocked → recursion allowed
-        assert "sessions_yield" in names         # unblocked → can yield
-        assert "sessions_send" in names          # unaffected bidirectional comm
+        assert "sessions_spawn" in names  # unblocked → recursion allowed
+        assert "sessions_yield" in names  # unblocked → can yield
+        assert "sessions_send" in names  # unaffected bidirectional comm
 
     def test_none_deny_falls_back_to_default_blocked(self):
         """When no deny policy is provided (None), default-blocked tools are applied."""
+
         class FakeTool:
             def __init__(self, name):
                 self.name = name
+
         tools = [FakeTool("read"), FakeTool("sessions_spawn"), FakeTool("sessions_yield")]
         result = apply_tool_policy(tools, [], None)
         names = [t.name for t in result]
@@ -265,14 +281,14 @@ class TestMountPathSanitization:
     @pytest.mark.parametrize(
         "bad",
         [
-            "a/..",    # traversal nested inside a valid-looking path
+            "a/..",  # traversal nested inside a valid-looking path
             "a/../b",  # traversal in middle of path
-            "....",    # '..' as substring of a longer run of dots
+            "....",  # '..' as substring of a longer run of dots
             "a/....",  # '..' nested inside dots + slash
-            "../",     # trailing slash after traversal
+            "../",  # trailing slash after traversal
             "a/../../b",  # multi-level traversal
-            "sub dir", # forbidden space
-            "a\\b",    # backslash separator (runs on win32, forbid anyway)
+            "sub dir",  # forbidden space
+            "a\\b",  # backslash separator (runs on win32, forbid anyway)
         ],
     )
     def test_reject_all_traversal_and_forbidden(self, bad):
@@ -316,6 +332,7 @@ class TestMaterializeAttachments:
         assert "Attachments:" in result.system_prompt_suffix
         import json
         from pathlib import Path
+
         manifest = json.loads((Path(result.abs_dir) / ".manifest.json").read_text())
         assert len(manifest["files"]) == 1
         assert manifest["files"][0]["name"] == "test.txt"
@@ -323,32 +340,43 @@ class TestMaterializeAttachments:
     @pytest.mark.asyncio
     async def test_too_many_files(self, tmp_path):
         attachments = [{"name": f"f{i}.txt", "content": "x"} for i in range(3)]
-        result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path, max_files=2)
+        result = await materialize_subagent_attachments(
+            attachments, child_workspace=tmp_path, max_files=2
+        )
         assert result.status == "error"
         assert "Too many" in result.error
 
     @pytest.mark.asyncio
     async def test_file_too_large(self, tmp_path):
         attachments = [{"name": "big.txt", "content": "x" * 200}]
-        result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path, max_file_bytes=100)
+        result = await materialize_subagent_attachments(
+            attachments, child_workspace=tmp_path, max_file_bytes=100
+        )
         assert result.status == "error"
         assert "exceeds max file size" in result.error
 
     @pytest.mark.asyncio
     async def test_total_too_large(self, tmp_path):
-        attachments = [{"name": "a.txt", "content": "x" * 60}, {"name": "b.txt", "content": "y" * 60}]
-        result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path, max_total_bytes=100)
+        attachments = [
+            {"name": "a.txt", "content": "x" * 60},
+            {"name": "b.txt", "content": "y" * 60},
+        ]
+        result = await materialize_subagent_attachments(
+            attachments, child_workspace=tmp_path, max_total_bytes=100
+        )
         assert result.status == "error"
         assert "Total" in result.error
 
     @pytest.mark.asyncio
     async def test_base64_attachment(self, tmp_path):
         import base64
+
         encoded = base64.b64encode(b"binary data").decode()
         attachments = [{"name": "data.bin", "content": encoded, "encoding": "base64"}]
         result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path)
         assert result.status == "ok"
         from pathlib import Path
+
         content = (Path(result.abs_dir) / "data.bin").read_bytes()
         assert content == b"binary data"
 
@@ -358,6 +386,7 @@ class TestMaterializeAttachments:
         result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path)
         assert result.status == "ok"
         from pathlib import Path
+
         assert (Path(result.abs_dir) / "sub" / "dir" / "f.txt").exists()
 
     @pytest.mark.asyncio
@@ -376,6 +405,7 @@ class TestMaterializeAttachments:
     @pytest.mark.asyncio
     async def test_no_file_leaks_outside_attack_dir(self, tmp_path):
         from pathlib import Path
+
         # Mount path '.' collapses to the attack dir root; the file must land
         # inside ab_dir and nowhere else in the workspace.
         marker = tmp_path / "MARKER"
@@ -393,6 +423,7 @@ class TestMaterializeAttachments:
     @pytest.mark.asyncio
     async def test_prompt_suffix_has_rel_dir_and_bytes(self, tmp_path):
         from pathlib import Path
+
         attachments = [
             {"name": "a.txt", "content": "hello"},
             {"name": "b.txt", "content": "world !"},
@@ -418,6 +449,7 @@ class TestSpawnSubagentDirect:
     @pytest.fixture(autouse=True)
     def _cleanup_registry(self):
         from agent.tools.subagent.registry import clear as clear_registry
+
         clear_registry()
         yield
         clear_registry()
@@ -425,9 +457,14 @@ class TestSpawnSubagentDirect:
     @pytest.fixture(autouse=True)
     def _mock_execute(self):
         from unittest.mock import AsyncMock, patch
+
         async def fake_execute(**kwargs):
             pass
-        with patch("agent.tools.subagent.spawn.core._execute_subagent", new=AsyncMock(side_effect=fake_execute)):
+
+        with patch(
+            "agent.tools.subagent.spawn.core._execute_subagent",
+            new=AsyncMock(side_effect=fake_execute),
+        ):
             yield
 
     @pytest.mark.asyncio
@@ -600,9 +637,7 @@ class TestSpawnSubagentDirect:
         orig_config = get_config()
         try:
             limited_config = get_config()
-            limited_config = limited_config.model_copy(
-                update={"max_children_per_agent": 2}
-            )
+            limited_config = limited_config.model_copy(update={"max_children_per_agent": 2})
             set_config(limited_config)
             clear_registry()
 

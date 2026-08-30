@@ -1,4 +1,4 @@
-﻿"""Storage backend class factory.
+"""Storage backend class factory.
 
 Resolves a storage backend name (e.g. ``"SNKVKVStorage"``) to its concrete
 implementation class through the ``STORAGES`` registry.

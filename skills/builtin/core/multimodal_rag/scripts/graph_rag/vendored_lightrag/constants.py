@@ -180,15 +180,9 @@ ProcessChunkingOption: TypeAlias = Literal["F", "R", "V", "P"]
 PROCESS_OPTION_CHUNK_FIXED: ProcessChunkingOption = (
     "F"  # Fixed-length / separator chunking (default)
 )
-PROCESS_OPTION_CHUNK_RECURSIVE: ProcessChunkingOption = (
-    "R"  # Recursive semantic chunking
-)
-PROCESS_OPTION_CHUNK_VECTOR: ProcessChunkingOption = (
-    "V"  # Vector-driven semantic chunking
-)
-PROCESS_OPTION_CHUNK_PARAGRAH: ProcessChunkingOption = (
-    "P"  # Paragrah-driven semantic chunking
-)
+PROCESS_OPTION_CHUNK_RECURSIVE: ProcessChunkingOption = "R"  # Recursive semantic chunking
+PROCESS_OPTION_CHUNK_VECTOR: ProcessChunkingOption = "V"  # Vector-driven semantic chunking
+PROCESS_OPTION_CHUNK_PARAGRAH: ProcessChunkingOption = "P"  # Paragrah-driven semantic chunking
 
 PROCESS_OPTION_CHUNK_CHARS: frozenset[ProcessChunkingOption] = frozenset(
     {

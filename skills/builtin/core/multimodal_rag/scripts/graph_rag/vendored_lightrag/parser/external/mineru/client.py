@@ -1,4 +1,4 @@
-﻿"""MinerU raw bundle downloader.
+"""MinerU raw bundle downloader.
 
 Supports MinerU's official cloud and self-hosted API protocols and lands the
 final parser bundle on disk under ``raw_dir/``:
@@ -91,16 +91,12 @@ async def _iter_file_bytes(path: Path) -> AsyncIterator[bytes]:
             yield chunk
 
 
-def _validate_base_url(
-    name: str, endpoint: str, forbidden_segments: tuple[str, ...]
-) -> None:
+def _validate_base_url(name: str, endpoint: str, forbidden_segments: tuple[str, ...]) -> None:
     parsed = urlparse(endpoint)
     path = (parsed.path or "").rstrip("/")
     for segment in forbidden_segments:
         if path.endswith(segment) or f"{segment}/" in path:
-            raise ValueError(
-                f"{name} must be a base URL, not an API path: {endpoint!r}"
-            )
+            raise ValueError(f"{name} must be a base URL, not an API path: {endpoint!r}")
 
 
 class MinerURawClient:
@@ -117,30 +113,20 @@ class MinerURawClient:
     """
 
     def __init__(self) -> None:
-        self.api_mode = (
-            os.getenv("MINERU_API_MODE", DEFAULT_MINERU_API_MODE).strip().lower()
-        )
+        self.api_mode = os.getenv("MINERU_API_MODE", DEFAULT_MINERU_API_MODE).strip().lower()
         if self.api_mode not in VALID_MINERU_API_MODES:
             allowed = ", ".join(sorted(VALID_MINERU_API_MODES))
-            raise ValueError(
-                f"MINERU_API_MODE must be one of {allowed}, got {self.api_mode!r}"
-            )
+            raise ValueError(f"MINERU_API_MODE must be one of {allowed}, got {self.api_mode!r}")
 
         self.official_endpoint = _strip_trailing_slash(
-            os.getenv(
-                "MINERU_OFFICIAL_ENDPOINT", DEFAULT_MINERU_OFFICIAL_ENDPOINT
-            ).strip()
+            os.getenv("MINERU_OFFICIAL_ENDPOINT", DEFAULT_MINERU_OFFICIAL_ENDPOINT).strip()
             or DEFAULT_MINERU_OFFICIAL_ENDPOINT
         )
-        self.local_endpoint = _strip_trailing_slash(
-            os.getenv("MINERU_LOCAL_ENDPOINT", "").strip()
-        )
+        self.local_endpoint = _strip_trailing_slash(os.getenv("MINERU_LOCAL_ENDPOINT", "").strip())
         self.api_token = os.getenv("MINERU_API_TOKEN", "").strip()
         if self.api_mode == "official":
             if not self.api_token:
-                raise ValueError(
-                    "MINERU_API_TOKEN is required when MINERU_API_MODE=official"
-                )
+                raise ValueError("MINERU_API_TOKEN is required when MINERU_API_MODE=official")
             _validate_base_url(
                 "MINERU_OFFICIAL_ENDPOINT",
                 self.official_endpoint,
@@ -149,9 +135,7 @@ class MinerURawClient:
             self.endpoint = self.official_endpoint
         elif self.api_mode == "local":
             if not self.local_endpoint:
-                raise ValueError(
-                    "MINERU_LOCAL_ENDPOINT is required when MINERU_API_MODE=local"
-                )
+                raise ValueError("MINERU_LOCAL_ENDPOINT is required when MINERU_API_MODE=local")
             _validate_base_url(
                 "MINERU_LOCAL_ENDPOINT",
                 self.local_endpoint,
@@ -263,21 +247,17 @@ class MinerURawClient:
         file_urls = (data or {}).get("file_urls") or []
         if not batch_id or not isinstance(file_urls, list) or not file_urls:
             raise RuntimeError(
-                f"MinerU official upload URL response missing batch_id/file_urls: "
-                f"{payload}"
+                f"MinerU official upload URL response missing batch_id/file_urls: {payload}"
             )
 
         first_file_url = file_urls[0]
         if isinstance(first_file_url, dict):
-            upload_url = str(
-                first_file_url.get("url") or first_file_url.get("file_url") or ""
-            )
+            upload_url = str(first_file_url.get("url") or first_file_url.get("file_url") or "")
         else:
             upload_url = str(first_file_url)
         if not upload_url:
             raise RuntimeError(
-                f"MinerU official upload URL response had an empty upload URL: "
-                f"{payload}"
+                f"MinerU official upload URL response had an empty upload URL: {payload}"
             )
         upload_resp = await client.put(
             upload_url,
@@ -323,9 +303,7 @@ class MinerURawClient:
                 return full_zip_url
             if state in OFFICIAL_FAILED_STATES:
                 err = selected.get("err_msg") or selected.get("error") or selected
-                raise RuntimeError(
-                    f"MinerU official parse failed for batch {batch_id}: {err}"
-                )
+                raise RuntimeError(f"MinerU official parse failed for batch {batch_id}: {err}")
 
         raise TimeoutError(f"MinerU official batch polling timeout: {batch_id}")
 
@@ -334,9 +312,7 @@ class MinerURawClient:
             raise RuntimeError(f"{operation} returned non-object payload: {payload!r}")
         code = payload.get("code", 0)
         if code not in (0, "0", None):
-            raise RuntimeError(
-                f"{operation} failed: code={code} msg={payload.get('msg')!r}"
-            )
+            raise RuntimeError(f"{operation} failed: code={code} msg={payload.get('msg')!r}")
 
     def _local_form_data(self) -> dict[str, str]:
         return {
@@ -381,9 +357,7 @@ class MinerURawClient:
         payload = resp.json() if resp.text else {}
         task_id = str(payload.get("task_id") or "")
         if not task_id:
-            raise RuntimeError(
-                f"MinerU local /tasks response missing task_id: {payload}"
-            )
+            raise RuntimeError(f"MinerU local /tasks response missing task_id: {payload}")
 
         await self._poll_local_task(client, task_id)
         await self._download_zip(
@@ -409,9 +383,7 @@ class MinerURawClient:
                 return
             if status in LOCAL_FAILED_STATES:
                 err = payload.get("error") or payload.get("message") or payload
-                raise RuntimeError(
-                    f"MinerU local parse failed for task {task_id}: {err}"
-                )
+                raise RuntimeError(f"MinerU local parse failed for task {task_id}: {err}")
 
         raise TimeoutError(f"MinerU local task polling timeout: {task_id}")
 
@@ -472,9 +444,7 @@ class MinerURawClient:
         if (raw_dir / CONTENT_LIST_FILENAME).is_file():
             return
 
-        candidate = _select_content_list_candidate(
-            raw_dir, source_file_path, upload_name
-        )
+        candidate = _select_content_list_candidate(raw_dir, source_file_path, upload_name)
         if candidate is None:
             return
 
@@ -647,9 +617,7 @@ def _select_content_list_candidate(
     for path in raw_dir.rglob("*.json"):
         if not path.is_file():
             continue
-        if path.name != CONTENT_LIST_FILENAME and not path.name.endswith(
-            "_content_list.json"
-        ):
+        if path.name != CONTENT_LIST_FILENAME and not path.name.endswith("_content_list.json"):
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))

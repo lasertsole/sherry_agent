@@ -1,4 +1,4 @@
-﻿"""Addon parameters: observable mapping + normalization helper.
+"""Addon parameters: observable mapping + normalization helper.
 
 ``addon_params`` is a free-form configuration dict on :class:`LightRAG` that
 controls things like summary language and entity-type prompt overrides. The
@@ -66,14 +66,11 @@ def normalize_addon_params(addon_params: Mapping[str, Any] | None) -> dict[str, 
     elif isinstance(addon_params, Mapping):
         _emit_deprecated_addon_warnings(addon_params)
         normalized = {
-            k: v
-            for k, v in addon_params.items()
-            if k not in _DEPRECATED_ADDON_PARAM_KEYS
+            k: v for k, v in addon_params.items() if k not in _DEPRECATED_ADDON_PARAM_KEYS
         }
     else:
         raise TypeError(
-            "addon_params must be a Mapping or None, got "
-            f"{type(addon_params).__name__}"
+            f"addon_params must be a Mapping or None, got {type(addon_params).__name__}"
         )
 
     # When the caller supplies addon_params explicitly, the dataclass

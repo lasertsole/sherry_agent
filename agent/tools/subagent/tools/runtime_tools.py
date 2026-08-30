@@ -113,7 +113,8 @@ async def sessions_yield_runtime_tool(
 
     children = list_runs_for_requester(session_key)
     active = [
-        c for c in children
+        c
+        for c in children
         if c.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
     ]
     if not active:
@@ -230,7 +231,9 @@ async def agents_list_runtime_tool() -> str:
     config = get_config()
     allow_agents = config.allow_agents
     if "*" in allow_agents:
-        return "Available agents: * (all agents allowed). Use agent_id='main' for the default agent."
+        return (
+            "Available agents: * (all agents allowed). Use agent_id='main' for the default agent."
+        )
     agents = [f"- {aid}" for aid in allow_agents]
     return "Available agents:\n" + "\n".join(agents)
 

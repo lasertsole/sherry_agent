@@ -29,11 +29,13 @@ if str(scripts_dir) not in sys.path:
     sys.path.insert(0, str(scripts_dir))
 
 from config import SRC_DIR
+
 # Import graph_rag FIRST: its __init__ aliases bare `lightrag` onto the
 # vendored copy before raganything (which imports `from lightrag import ...`
 # at module load) is pulled in transitively via graph_rag.core.
 from graph_rag import get_rag_anything
 from graph_rag.vendored_raganything import RAGAnything
+
 
 @validate_call
 async def folder_index(input_folder_path: str, classify_folder: str) -> str:
@@ -51,6 +53,7 @@ async def folder_index(input_folder_path: str, classify_folder: str) -> str:
     logger.debug(suc_mess)
     return suc_mess
 
+
 @validate_call
 async def file_index(input_file_path: str, classify_folder: str) -> None:
     rag: RAGAnything = await get_rag_anything()
@@ -64,4 +67,6 @@ async def file_index(input_file_path: str, classify_folder: str) -> None:
         # on this box. Harmless for txt/md (routed to the fallback_txt parser).
         backend="pipeline",
     )
-    logger.debug(f"✅ Indexing complete! File '{input_file_path}' added to knowledge graph category '{classify_folder}'")
+    logger.debug(
+        f"✅ Indexing complete! File '{input_file_path}' added to knowledge graph category '{classify_folder}'"
+    )

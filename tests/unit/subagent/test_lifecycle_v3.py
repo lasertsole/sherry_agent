@@ -1,5 +1,3 @@
-﻿import pytest
-import time
 from agent.tools.subagent.registry.lifecycle import (
     _should_suspend_pending_final_delivery,
     _should_retain_attachments,
@@ -160,7 +158,9 @@ class TestArbitrateKillVsCompletion:
             reconciled=False,
         )
         run = _make_run(kill_reconciliation=kr)
-        result = _arbitrate_kill_vs_completion(run, RunOutcome(status=RunOutcomeStatus.ERROR, error="fail"))
+        result = _arbitrate_kill_vs_completion(
+            run, RunOutcome(status=RunOutcomeStatus.ERROR, error="fail")
+        )
         assert result.kill_reconciliation.reconciled is True
 
 

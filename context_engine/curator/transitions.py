@@ -9,7 +9,7 @@ from context_engine.curator.config import (
     is_enabled,
     get_effective_interval_hours,
 )
-from context_engine.curator.state import load_state, save_state, is_paused
+from context_engine.curator.state import load_state, is_paused
 from context_engine.curator.usage import (
     agent_created_report,
     seed_record_if_missing,
@@ -44,7 +44,13 @@ def apply_automatic_transitions(now: datetime | None = None) -> dict[str, int]:
     stale_cutoff = now - timedelta(days=get_stale_after_days())
     archive_cutoff = now - timedelta(days=get_archive_after_days())
 
-    counts: dict[str, int] = {"marked_stale": 0, "archived": 0, "reactivated": 0, "checked": 0, "seeded": 0}
+    counts: dict[str, int] = {
+        "marked_stale": 0,
+        "archived": 0,
+        "reactivated": 0,
+        "checked": 0,
+        "seeded": 0,
+    }
 
     for row in agent_created_report():
         counts["checked"] += 1

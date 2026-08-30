@@ -117,7 +117,13 @@ class ToolGuardrails(AgentMiddleware):
         return hashlib.md5(content.encode()).hexdigest()
 
     def _evaluate(
-        self, gs: _TurnGuardrailState, tool_name: str, args_hash: str, result_hash: str | None, is_error: bool, is_idempotent: bool
+        self,
+        gs: _TurnGuardrailState,
+        tool_name: str,
+        args_hash: str,
+        result_hash: str | None,
+        is_error: bool,
+        is_idempotent: bool,
     ) -> GuardrailAction:
         if gs.halt_decision is not None:
             return GuardrailAction.HALT
@@ -132,35 +138,57 @@ class ToolGuardrails(AgentMiddleware):
             gs.exact_failure_counts[exact_key] = gs.exact_failure_counts.get(exact_key, 0) + 1
             exact_count = gs.exact_failure_counts[exact_key]
 
-            if self.config.hard_stop_enabled and exact_count >= self.config.exact_failure_block_after:
+            if (
+                self.config.hard_stop_enabled
+                and exact_count >= self.config.exact_failure_block_after
+            ):
                 action = GuardrailAction.HALT
             elif exact_count >= self.config.exact_failure_block_after:
                 action = GuardrailAction.BLOCK
-            elif self.config.warnings_enabled and exact_count >= self.config.exact_failure_warn_after:
+            elif (
+                self.config.warnings_enabled and exact_count >= self.config.exact_failure_warn_after
+            ):
                 action = GuardrailAction.WARN
 
-            gs.same_tool_failure_counts[tool_name] = gs.same_tool_failure_counts.get(tool_name, 0) + 1
+            gs.same_tool_failure_counts[tool_name] = (
+                gs.same_tool_failure_counts.get(tool_name, 0) + 1
+            )
             same_count = gs.same_tool_failure_counts[tool_name]
 
-            if self.config.hard_stop_enabled and same_count >= self.config.same_tool_failure_halt_after:
+            if (
+                self.config.hard_stop_enabled
+                and same_count >= self.config.same_tool_failure_halt_after
+            ):
                 action = GuardrailAction.HALT
             elif same_count >= self.config.same_tool_failure_halt_after:
                 action = GuardrailAction.BLOCK
-            elif self.config.warnings_enabled and same_count >= self.config.same_tool_failure_warn_after and action == GuardrailAction.ALLOW:
+            elif (
+                self.config.warnings_enabled
+                and same_count >= self.config.same_tool_failure_warn_after
+                and action == GuardrailAction.ALLOW
+            ):
                 action = GuardrailAction.WARN
         else:
             if is_idempotent and result_hash is not None:
                 for rec in reversed(gs.records):
                     if rec.name == tool_name and rec.result_hash == result_hash:
                         no_progress_key = f"{tool_name}:{result_hash}"
-                        gs.no_progress_counts[no_progress_key] = gs.no_progress_counts.get(no_progress_key, 0) + 1
+                        gs.no_progress_counts[no_progress_key] = (
+                            gs.no_progress_counts.get(no_progress_key, 0) + 1
+                        )
                         np_count = gs.no_progress_counts[no_progress_key]
 
-                        if self.config.hard_stop_enabled and np_count >= self.config.no_progress_block_after:
+                        if (
+                            self.config.hard_stop_enabled
+                            and np_count >= self.config.no_progress_block_after
+                        ):
                             action = GuardrailAction.HALT
                         elif np_count >= self.config.no_progress_block_after:
                             action = GuardrailAction.BLOCK
-                        elif self.config.warnings_enabled and np_count >= self.config.no_progress_warn_after:
+                        elif (
+                            self.config.warnings_enabled
+                            and np_count >= self.config.no_progress_warn_after
+                        ):
                             action = GuardrailAction.WARN
                         break
 
@@ -203,9 +231,7 @@ class ToolGuardrails(AgentMiddleware):
         state_register_mem.set_state(session_id, _GUARDRAIL_STATE_KEY, _TurnGuardrailState())
 
     @override
-    def before_agent(
-        self, state: AgentState, runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
+    def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         logger.debug("{} before_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
@@ -234,12 +260,14 @@ class ToolGuardrails(AgentMiddleware):
         result_content = str(result.content) if result.content else ""
         result_hash = self._result_hash(result_content) if not is_error and is_idempotent else None
 
-        gs.records.append(_ToolCallRecord(
-            name=tool_name,
-            args_hash=args_hash,
-            is_error=is_error,
-            result_hash=result_hash,
-        ))
+        gs.records.append(
+            _ToolCallRecord(
+                name=tool_name,
+                args_hash=args_hash,
+                is_error=is_error,
+                result_hash=result_hash,
+            )
+        )
 
         action = self._evaluate(gs, tool_name, args_hash, result_hash, is_error, is_idempotent)
         self._save_state(session_id, gs)
@@ -290,20 +318,26 @@ class ToolGuardrails(AgentMiddleware):
 
                 if exact_count >= self.config.exact_failure_warn_after:
                     warning = self._warning_message(
-                        tool_name, "exact failure repetition",
-                        exact_count, self.config.exact_failure_block_after,
+                        tool_name,
+                        "exact failure repetition",
+                        exact_count,
+                        self.config.exact_failure_block_after,
                     )
                 else:
                     warning = self._warning_message(
-                        tool_name, "same-tool failure accumulation",
-                        same_count, self.config.same_tool_failure_halt_after,
+                        tool_name,
+                        "same-tool failure accumulation",
+                        same_count,
+                        self.config.same_tool_failure_halt_after,
                     )
             else:
                 no_progress_key = f"{tool_name}:{result_hash}" if result_hash else ""
                 np_count = gs.no_progress_counts.get(no_progress_key, 0)
                 warning = self._warning_message(
-                    tool_name, "idempotent no-progress",
-                    np_count, self.config.no_progress_block_after,
+                    tool_name,
+                    "idempotent no-progress",
+                    np_count,
+                    self.config.no_progress_block_after,
                 )
 
             return ToolMessage(

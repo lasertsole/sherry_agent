@@ -1,4 +1,4 @@
-﻿"""Document ingestion pipeline mixin for the LightRAG class.
+"""Document ingestion pipeline mixin for the LightRAG class.
 
 This module isolates the document parse/enqueue/extraction pipeline so that
 ``lightrag.py`` stays focused on storage management, querying, and editing.
@@ -183,9 +183,7 @@ def _format_chunking_params(
         if isinstance(value, (list, dict, str)) and len(value) == 0:
             continue
         short = _CHUNK_LOG_KEY_ALIASES.get(key, key)
-        pieces.append(
-            f"{short}={value!r}" if isinstance(value, str) else f"{short}={value}"
-        )
+        pieces.append(f"{short}={value!r}" if isinstance(value, str) else f"{short}={value}")
     return ", ".join(pieces)
 
 
@@ -323,12 +321,8 @@ class _PipelineMixin:
         #   * ``destructive_busy`` — clear / delete is dropping storages
         #     or removing input files; a concurrent write would be
         #     silently clobbered.
-        pipeline_status = await get_namespace_data(
-            "pipeline_status", workspace=self.workspace
-        )
-        pipeline_status_lock = get_namespace_lock(
-            "pipeline_status", workspace=self.workspace
-        )
+        pipeline_status = await get_namespace_data("pipeline_status", workspace=self.workspace)
+        pipeline_status_lock = get_namespace_lock("pipeline_status", workspace=self.workspace)
         async with pipeline_status_lock:
             if not from_scan and pipeline_status.get("scanning_exclusive"):
                 raise RuntimeError(
@@ -364,12 +358,8 @@ class _PipelineMixin:
             if isinstance(file_paths, str):
                 file_paths = [file_paths]
             if len(file_paths) != len(input):
-                raise ValueError(
-                    "Number of file paths must match the number of documents"
-                )
-            file_paths = [
-                path.strip() if isinstance(path, str) else "" for path in file_paths
-            ]
+                raise ValueError("Number of file paths must match the number of documents")
+            file_paths = [path.strip() if isinstance(path, str) else "" for path in file_paths]
             file_paths = [path if path else "unknown_source" for path in file_paths]
         else:
             file_paths = ["unknown_source"] * len(input)
@@ -383,17 +373,11 @@ class _PipelineMixin:
                 "and ReuseParser."
             )
         if parse_engine is not None and len(parse_engine) != len(input):
-            raise ValueError(
-                "Number of parse engines must match the number of documents"
-            )
+            raise ValueError("Number of parse engines must match the number of documents")
         if process_options is not None and len(process_options) != len(input):
-            raise ValueError(
-                "Number of process options must match the number of documents"
-            )
+            raise ValueError("Number of process options must match the number of documents")
         if chunk_options is not None and len(chunk_options) != len(input):
-            raise ValueError(
-                "Number of chunk_options dicts must match the number of documents"
-            )
+            raise ValueError("Number of chunk_options dicts must match the number of documents")
 
         def _parse_engine_at(index: int) -> str | None:
             if parse_engine is None:
@@ -450,9 +434,7 @@ class _PipelineMixin:
         # Canonicalize every input filename once: the stored ``file_path``
         # is hint-stripped and serves UI display, filename dedup, and the
         # deterministic doc_id seed in one go.
-        file_paths_canonical = [
-            normalize_document_file_path(path) for path in file_paths
-        ]
+        file_paths_canonical = [normalize_document_file_path(path) for path in file_paths]
         contents: dict[str, dict[str, Any]] = {}
         source_to_doc_id: dict[str, str] = {}
         content_hash_to_doc_id: dict[str, str] = {}
@@ -592,8 +574,7 @@ class _PipelineMixin:
             return base
 
         new_docs: dict[str, Any] = {
-            id_: _initial_doc_status(content_data)
-            for id_, content_data in contents.items()
+            id_: _initial_doc_status(content_data) for id_, content_data in contents.items()
         }
 
         # Serialise the dedup-read-then-upsert critical section across
@@ -613,9 +594,7 @@ class _PipelineMixin:
         # Lock order: enqueue_serialize → pipeline_status_lock (the
         # request_pending nudge inside is fine; no caller holds
         # pipeline_status_lock first then needs enqueue_serialize).
-        enqueue_serialize_lock = get_namespace_lock(
-            "enqueue_serialize", workspace=self.workspace
-        )
+        enqueue_serialize_lock = get_namespace_lock("enqueue_serialize", workspace=self.workspace)
 
         async with enqueue_serialize_lock:
             # 3. Filter out already processed documents
@@ -644,15 +623,9 @@ class _PipelineMixin:
                             "doc_id": doc_id,
                             "original_doc_id": existing_doc_id,
                             "file_path": content_data["file_path"],
-                            "content_length": new_docs.get(doc_id, {}).get(
-                                "content_length", 0
-                            ),
-                            "existing_status": doc_status_field(
-                                existing_doc, "status", "unknown"
-                            ),
-                            "existing_track_id": doc_status_field(
-                                existing_doc, "track_id", ""
-                            ),
+                            "content_length": new_docs.get(doc_id, {}).get("content_length", 0),
+                            "existing_status": doc_status_field(existing_doc, "status", "unknown"),
+                            "existing_track_id": doc_status_field(existing_doc, "track_id", ""),
                             "duplicate_kind": "filename",
                         }
                     )
@@ -662,9 +635,7 @@ class _PipelineMixin:
                 content_hash = content_data.get("content_hash")
                 if not content_hash:
                     continue
-                hash_match = await get_existing_doc_by_content_hash(
-                    self.doc_status, content_hash
-                )
+                hash_match = await get_existing_doc_by_content_hash(self.doc_status, content_hash)
                 if hash_match:
                     existing_doc_id, existing_doc = hash_match
                     unique_new_doc_ids.discard(doc_id)
@@ -673,15 +644,9 @@ class _PipelineMixin:
                             "doc_id": doc_id,
                             "original_doc_id": existing_doc_id,
                             "file_path": content_data["file_path"],
-                            "content_length": new_docs.get(doc_id, {}).get(
-                                "content_length", 0
-                            ),
-                            "existing_status": doc_status_field(
-                                existing_doc, "status", "unknown"
-                            ),
-                            "existing_track_id": doc_status_field(
-                                existing_doc, "track_id", ""
-                            ),
+                            "content_length": new_docs.get(doc_id, {}).get("content_length", 0),
+                            "existing_status": doc_status_field(existing_doc, "status", "unknown"),
+                            "existing_track_id": doc_status_field(existing_doc, "track_id", ""),
                             "duplicate_kind": "content_hash",
                         }
                     )
@@ -689,25 +654,17 @@ class _PipelineMixin:
             # Handle duplicate documents - create trackable records with current track_id
             ignored_ids = list(all_new_doc_ids - unique_new_doc_ids)
             for doc_id in ignored_ids:
-                if any(
-                    attempt.get("doc_id") == doc_id for attempt in duplicate_attempts
-                ):
+                if any(attempt.get("doc_id") == doc_id for attempt in duplicate_attempts):
                     continue
                 existing_doc = await self.doc_status.get_by_id(doc_id)
                 duplicate_attempts.append(
                     {
                         "doc_id": doc_id,
                         "original_doc_id": doc_id,
-                        "file_path": new_docs.get(doc_id, {}).get(
-                            "file_path", "unknown_source"
-                        ),
-                        "content_length": new_docs.get(doc_id, {}).get(
-                            "content_length", 0
-                        ),
+                        "file_path": new_docs.get(doc_id, {}).get("file_path", "unknown_source"),
+                        "content_length": new_docs.get(doc_id, {}).get("content_length", 0),
                         "existing_status": (
-                            existing_doc.get("status", "unknown")
-                            if existing_doc
-                            else "unknown"
+                            existing_doc.get("status", "unknown") if existing_doc else "unknown"
                         ),
                         "existing_track_id": (
                             existing_doc.get("track_id", "") if existing_doc else ""
@@ -723,8 +680,7 @@ class _PipelineMixin:
                     file_path = attempt.get("file_path") or "unknown_source"
                     duplicate_kind = attempt.get("duplicate_kind") or "filename"
                     logger.warning(
-                        f"Duplicate document detected ({duplicate_kind}): "
-                        f"{doc_id} ({file_path})"
+                        f"Duplicate document detected ({duplicate_kind}): {doc_id} ({file_path})"
                     )
 
                     # Create a new record with unique ID for this duplicate attempt
@@ -732,9 +688,7 @@ class _PipelineMixin:
                         f"{doc_id}-{track_id}-{index}-{file_path}", prefix="dup-"
                     )
                     if duplicate_kind == "content_hash":
-                        error_prefix = (
-                            "Identical content already exists under another filename."
-                        )
+                        error_prefix = "Identical content already exists under another filename."
                     else:
                         error_prefix = "File name already exists."
                     duplicate_docs[dup_record_id] = {
@@ -772,9 +726,7 @@ class _PipelineMixin:
 
             # Filter new_docs to only include documents with unique IDs
             new_docs = {
-                doc_id: new_docs[doc_id]
-                for doc_id in unique_new_doc_ids
-                if doc_id in new_docs
+                doc_id: new_docs[doc_id] for doc_id in unique_new_doc_ids if doc_id in new_docs
             }
 
             if not new_docs:
@@ -786,31 +738,21 @@ class _PipelineMixin:
                 doc_id: {
                     "content": contents[doc_id].get("content", ""),
                     "file_path": contents[doc_id]["file_path"],
-                    "parse_format": contents[doc_id].get(
-                        "parse_format", FULL_DOCS_FORMAT_RAW
-                    ),
+                    "parse_format": contents[doc_id].get("parse_format", FULL_DOCS_FORMAT_RAW),
                 }
                 for doc_id in new_docs.keys()
             }
             for doc_id in new_docs.keys():
                 if contents[doc_id].get("content_hash"):
-                    full_docs_data[doc_id]["content_hash"] = contents[doc_id][
-                        "content_hash"
-                    ]
+                    full_docs_data[doc_id]["content_hash"] = contents[doc_id]["content_hash"]
                 if contents[doc_id].get("parse_engine"):
-                    full_docs_data[doc_id]["parse_engine"] = contents[doc_id][
-                        "parse_engine"
-                    ]
+                    full_docs_data[doc_id]["parse_engine"] = contents[doc_id]["parse_engine"]
                 if contents[doc_id].get("process_options"):
-                    full_docs_data[doc_id]["process_options"] = contents[doc_id][
-                        "process_options"
-                    ]
+                    full_docs_data[doc_id]["process_options"] = contents[doc_id]["process_options"]
                 # ``chunk_options`` is always populated by ``_add_content``
                 # at enqueue time so it's persisted unconditionally.
                 if contents[doc_id].get("chunk_options") is not None:
-                    full_docs_data[doc_id]["chunk_options"] = contents[doc_id][
-                        "chunk_options"
-                    ]
+                    full_docs_data[doc_id]["chunk_options"] = contents[doc_id]["chunk_options"]
             await self.full_docs.upsert(full_docs_data)
             # Persist data to disk immediately
             await self.full_docs.index_done_callback()
@@ -868,12 +810,8 @@ class _PipelineMixin:
         current_time = datetime.now(timezone.utc).isoformat()
 
         for error_file in error_files:
-            file_path = normalize_document_file_path(
-                error_file.get("file_path", "unknown_file")
-            )
-            error_description = error_file.get(
-                "error_description", "File extraction failed"
-            )
+            file_path = normalize_document_file_path(error_file.get("file_path", "unknown_file"))
+            error_description = error_file.get("error_description", "File extraction failed")
             original_error = error_file.get("original_error", "Unknown error")
             file_size = error_file.get("file_size", 0)
 
@@ -902,9 +840,7 @@ class _PipelineMixin:
             await self.doc_status.upsert(error_docs)
             # Log each error for debugging
             for doc_id, error_doc in error_docs.items():
-                logger.error(
-                    f"File processing error: - ID: {doc_id} {error_doc['file_path']}"
-                )
+                logger.error(f"File processing error: - ID: {doc_id} {error_doc['file_path']}")
 
     async def apipeline_process_enqueue_documents(self) -> None:
         """
@@ -918,21 +854,15 @@ class _PipelineMixin:
         4. Process each chunk for entity and relation extraction
         5. Update the document status
         """
-        pipeline_status = await get_namespace_data(
-            "pipeline_status", workspace=self.workspace
-        )
-        pipeline_status_lock = get_namespace_lock(
-            "pipeline_status", workspace=self.workspace
-        )
+        pipeline_status = await get_namespace_data("pipeline_status", workspace=self.workspace)
+        pipeline_status_lock = get_namespace_lock("pipeline_status", workspace=self.workspace)
 
         async with pipeline_status_lock:
             # Ensure only one worker is processing documents
             if not pipeline_status.get("busy", False):
                 to_process_docs: dict[
                     str, DocProcessingStatus
-                ] = await self.doc_status.get_docs_by_statuses(
-                    list(_INFLIGHT_DOC_STATUSES)
-                )
+                ] = await self.doc_status.get_docs_by_statuses(list(_INFLIGHT_DOC_STATUSES))
 
                 if not to_process_docs:
                     logger.info("No documents to process")
@@ -981,10 +911,7 @@ class _PipelineMixin:
                 async with pipeline_status_lock:
                     if pipeline_status.get("cancellation_requested", False):
                         # Read the cause BEFORE resetting reason/detail below.
-                        is_internal = (
-                            pipeline_status.get("cancellation_reason")
-                            == "internal_error"
-                        )
+                        is_internal = pipeline_status.get("cancellation_reason") == "internal_error"
                         label = self._cancellation_label(pipeline_status)
                         pipeline_status["request_pending"] = False
                         pipeline_status["cancellation_requested"] = False
@@ -1030,9 +957,7 @@ class _PipelineMixin:
                 )
 
                 if not to_process_docs:
-                    log_message = (
-                        "No valid documents to process after consistency check"
-                    )
+                    log_message = "No valid documents to process after consistency check"
                     logger.info(log_message)
                     pipeline_status["latest_message"] = log_message
                     pipeline_status["history_messages"].append(log_message)
@@ -1105,9 +1030,7 @@ class _PipelineMixin:
                         self._cancellation_label(pipeline_status)
                     )
                     logger.error(internal_halt)
-                pipeline_status["cancellation_requested"] = (
-                    False  # Always reset cancellation flag
-                )
+                pipeline_status["cancellation_requested"] = False  # Always reset cancellation flag
                 pipeline_status["cancellation_reason"] = None
                 pipeline_status["cancellation_detail"] = None
                 pipeline_status["history_messages"].append(stopped_message)
@@ -1138,17 +1061,14 @@ class _PipelineMixin:
           - Layer 3: Entity / Relation Extraction  (process_single_document)
         """
         total_files = len(to_process_docs)
-        pipeline_status["job_name"] = self._format_job_name(
-            to_process_docs, total_files
-        )
+        pipeline_status["job_name"] = self._format_job_name(to_process_docs, total_files)
 
         # Lock one registry snapshot for the whole batch; build one parse
         # queue per distinct queue_group (always includes "native").
         parser_specs = parser_specs_snapshot()
         queue_groups = {spec.queue_group for spec in parser_specs.values()}
         parse_queues = {
-            group: asyncio.Queue(maxsize=self.queue_size_parse)
-            for group in queue_groups
+            group: asyncio.Queue(maxsize=self.queue_size_parse) for group in queue_groups
         }
 
         ctx = _BatchRunContext(
@@ -1207,16 +1127,12 @@ class _PipelineMixin:
         # concurrency owners). Raising here — while zero workers exist — avoids
         # orphaning already-spawned workers outside the try/finally below (they
         # would block forever on an empty queue, never cancelled).
-        group_worker_counts = {
-            group: max(1, _group_concurrency(group)) for group in parse_queues
-        }
+        group_worker_counts = {group: max(1, _group_concurrency(group)) for group in parse_queues}
 
         workers: list[asyncio.Task] = []
         for group, queue in parse_queues.items():
             for _ in range(group_worker_counts[group]):
-                workers.append(
-                    asyncio.create_task(self._parse_worker(group, queue, ctx))
-                )
+                workers.append(asyncio.create_task(self._parse_worker(group, queue, ctx)))
         for _ in range(max(1, self.max_parallel_analyze)):
             workers.append(asyncio.create_task(self._analyze_worker(ctx)))
         for _ in range(max(1, self.max_parallel_insert)):
@@ -1311,10 +1227,7 @@ class _PipelineMixin:
             content_data = await self.full_docs.get_by_id(doc_id)
             if not content_data:
                 # Check if this is a failed document that should be preserved
-                if (
-                    hasattr(status_doc, "status")
-                    and status_doc.status == DocStatus.FAILED
-                ):
+                if hasattr(status_doc, "status") and status_doc.status == DocStatus.FAILED:
                     failed_docs_to_preserve.append(doc_id)
                 else:
                     inconsistent_docs.append(doc_id)
@@ -1334,9 +1247,7 @@ class _PipelineMixin:
         # Delete inconsistent document entries(excluding failed documents)
         if inconsistent_docs:
             async with pipeline_status_lock:
-                summary_message = (
-                    f"Inconsistent document entries found: {len(inconsistent_docs)}"
-                )
+                summary_message = f"Inconsistent document entries found: {len(inconsistent_docs)}"
                 logger.info(summary_message)
                 pipeline_status["latest_message"] = summary_message
                 pipeline_status["history_messages"].append(summary_message)
@@ -1353,9 +1264,7 @@ class _PipelineMixin:
 
                     # Log successful deletion
                     async with pipeline_status_lock:
-                        log_message = (
-                            f"Deleted inconsistent entry: {doc_id} ({file_path})"
-                        )
+                        log_message = f"Deleted inconsistent entry: {doc_id} ({file_path})"
                         logger.info(log_message)
                         pipeline_status["latest_message"] = log_message
                         pipeline_status["history_messages"].append(log_message)
@@ -1412,15 +1321,12 @@ class _PipelineMixin:
             # stale per-attempt field — a precise trigger so unrelated/custom
             # metadata on a clean PENDING is never rewritten or dropped.
             needs_pending_normalize = (
-                status == DocStatus.PENDING
-                and doc_status_metadata_has_attempt_fields(status_doc)
+                status == DocStatus.PENDING and doc_status_metadata_has_attempt_fields(status_doc)
             )
             if not (is_interrupted or needs_pending_normalize):
                 continue
 
-            preserved_chunks_list, preserved_chunks_count = (
-                chunk_fields_from_status_doc(status_doc)
-            )
+            preserved_chunks_list, preserved_chunks_count = chunk_fields_from_status_doc(status_doc)
             resolved_file_path = resolve_doc_file_path(
                 status_doc=status_doc,
                 content_data=content_data,
@@ -1462,8 +1368,7 @@ class _PipelineMixin:
                     f"Reset {reset_count} documents from "
                     "PARSING/ANALYZING/PROCESSING/FAILED to PENDING status"
                     + (
-                        f"; normalized {normalized_count} PENDING document(s) "
-                        "with stale metadata"
+                        f"; normalized {normalized_count} PENDING document(s) with stale metadata"
                         if normalized_count
                         else ""
                     )
@@ -1514,9 +1419,7 @@ class _PipelineMixin:
         first_doc = next(iter(to_process_docs.values()))
         first_doc_path = first_doc.file_path
         if first_doc_path:
-            path_prefix = first_doc_path[:20] + (
-                "..." if len(first_doc_path) > 20 else ""
-            )
+            path_prefix = first_doc_path[:20] + ("..." if len(first_doc_path) > 20 else "")
         else:
             path_prefix = "unknown_source"
         return f"{path_prefix}[{total_files} files]"
@@ -1643,9 +1546,7 @@ class _PipelineMixin:
                             f".{suffix_w or '<no suffix>'}: doc_id={doc_id_w}"
                         )
                 parsed_data_w = (
-                    await parser.parse(
-                        ParseContext(self, doc_id_w, file_path_w, content_data_w)
-                    )
+                    await parser.parse(ParseContext(self, doc_id_w, file_path_w, content_data_w))
                 ).to_dict()
 
                 # Mirror non-fatal parser warnings (e.g. legacy docx tables
@@ -1685,13 +1586,9 @@ class _PipelineMixin:
                 # mirrors the process stage's read from full_docs: the parser's
                 # own report wins, then the enqueue-time directive on
                 # content_data (raw passthrough), then the format-based default.
-                parse_format_w = (
-                    parsed_data_w.get("parse_format") or FULL_DOCS_FORMAT_RAW
-                )
+                parse_format_w = parsed_data_w.get("parse_format") or FULL_DOCS_FORMAT_RAW
                 explicit_engine_w = parsed_data_w.get("parse_engine") or (
-                    content_data_w.get("parse_engine")
-                    if isinstance(content_data_w, dict)
-                    else None
+                    content_data_w.get("parse_engine") if isinstance(content_data_w, dict) else None
                 )
                 status_doc_w.metadata["parse_format"] = parse_format_w
                 status_doc_w.metadata["parse_engine"] = resolve_doc_status_parse_engine(
@@ -2003,9 +1900,7 @@ class _PipelineMixin:
                 # Check for cancellation before starting document processing.
                 # file_path is resolved before this check so queued documents
                 # do not lose their source path on early cancellation.
-                await self._raise_if_cancelled(
-                    ctx.pipeline_status, ctx.pipeline_status_lock
-                )
+                await self._raise_if_cancelled(ctx.pipeline_status, ctx.pipeline_status_lock)
 
                 async with ctx.pipeline_status_lock:
                     ctx.processed_count += 1
@@ -2013,8 +1908,7 @@ class _PipelineMixin:
                     ctx.pipeline_status["cur_batch"] = ctx.processed_count
 
                     log_message = (
-                        f"Extracting stage {current_file_number}/"
-                        f"{ctx.total_files}: {file_path}"
+                        f"Extracting stage {current_file_number}/{ctx.total_files}: {file_path}"
                     )
                     logger.info(log_message)
                     ctx.pipeline_status["history_messages"].append(log_message)
@@ -2125,12 +2019,8 @@ class _PipelineMixin:
                         # only a safety net for snapshots predating that
                         # change; new docs always carry ``DEFAULT_CHUNK_P_SIZE``.
                         p_opts = dict(chunk_opts.get("paragraph_semantic") or {})
-                        p_chunk_size = int(
-                            p_opts.pop("chunk_token_size", resolved_chunk_size)
-                        )
-                        p_blocks_path = (
-                            str(parsed_data.get("blocks_path") or "").strip() or None
-                        )
+                        p_chunk_size = int(p_opts.pop("chunk_token_size", resolved_chunk_size))
+                        p_blocks_path = str(parsed_data.get("blocks_path") or "").strip() or None
                         chunk_opts_str = _format_chunking_params(p_chunk_size, p_opts)
                         logger.info(f"Chunking P: {chunk_opts_str}, doc_id: {doc_id}")
                         chunking_result = chunking_by_paragraph_semantic(
@@ -2149,9 +2039,7 @@ class _PipelineMixin:
                         # would TypeError).  Fall back to the shared
                         # top-level resolved size when unset.
                         r_opts = dict(chunk_opts.get("recursive_character") or {})
-                        r_chunk_size = int(
-                            r_opts.pop("chunk_token_size", resolved_chunk_size)
-                        )
+                        r_chunk_size = int(r_opts.pop("chunk_token_size", resolved_chunk_size))
                         chunk_opts_str = _format_chunking_params(r_chunk_size, r_opts)
                         logger.info(f"Chunking R: {chunk_opts_str}, doc_id: {doc_id}")
                         chunking_result = chunking_by_recursive_character(
@@ -2166,9 +2054,7 @@ class _PipelineMixin:
                         # ``addon_params['chunker']['semantic_vector']``);
                         # same pop-then-splat pattern as P/R.
                         v_opts = dict(chunk_opts.get("semantic_vector") or {})
-                        v_chunk_size = int(
-                            v_opts.pop("chunk_token_size", resolved_chunk_size)
-                        )
+                        v_chunk_size = int(v_opts.pop("chunk_token_size", resolved_chunk_size))
                         chunk_opts_str = _format_chunking_params(v_chunk_size, v_opts)
                         logger.info(f"Chunking V: {chunk_opts_str}, doc_id: {doc_id}")
                         chunking_result = await chunking_by_semantic_vector(
@@ -2187,9 +2073,7 @@ class _PipelineMixin:
                         # TypeError), falling back to the shared top-level
                         # resolved size when unset.
                         f_opts = dict(chunk_opts.get("fixed_token") or {})
-                        f_chunk_size = int(
-                            f_opts.pop("chunk_token_size", resolved_chunk_size)
-                        )
+                        f_chunk_size = int(f_opts.pop("chunk_token_size", resolved_chunk_size))
                         chunk_opts_str = _format_chunking_params(f_chunk_size, f_opts)
                         logger.info(f"Chunking F: {chunk_opts_str}, doc_id: {doc_id}")
                         chunking_result = chunking_by_fixed_token(
@@ -2213,25 +2097,19 @@ class _PipelineMixin:
                     # ``fixed_token.chunk_token_size``.  ``f_opts`` is read
                     # field-by-field here (not splatted), so there is no
                     # positional/kwarg collision.
-                    legacy_chunk_size = int(
-                        f_opts.get("chunk_token_size", resolved_chunk_size)
-                    )
+                    legacy_chunk_size = int(f_opts.get("chunk_token_size", resolved_chunk_size))
                     chunk_opts_str = _format_chunking_params(
                         legacy_chunk_size,
                         {
                             "split_by_character": f_opts.get("split_by_character"),
-                            "split_by_character_only": f_opts.get(
-                                "split_by_character_only", False
-                            ),
+                            "split_by_character_only": f_opts.get("split_by_character_only", False),
                             "overlap": f_opts.get(
                                 "chunk_overlap_token_size",
                                 self.chunk_overlap_token_size,
                             ),
                         },
                     )
-                    logger.info(
-                        f"Chunking F(legacy): {chunk_opts_str}, doc_id: {doc_id}"
-                    )
+                    logger.info(f"Chunking F(legacy): {chunk_opts_str}, doc_id: {doc_id}")
                     from graph_rag.vendored_lightrag.chunker import chunking_by_token_size
 
                     # Only the unmodified default fixed-token chunker understands the
@@ -2273,9 +2151,7 @@ class _PipelineMixin:
                     else FULL_DOCS_FORMAT_RAW
                 ) or FULL_DOCS_FORMAT_RAW
                 persisted_engine = (
-                    content_data.get("parse_engine")
-                    if isinstance(content_data, dict)
-                    else None
+                    content_data.get("parse_engine") if isinstance(content_data, dict) else None
                 )
                 extraction_meta = {
                     "parse_format": persisted_format,
@@ -2310,9 +2186,7 @@ class _PipelineMixin:
                 if blocks_path:
                     max_order = -1
                     for ch in chunking_result:
-                        if isinstance(ch, dict) and isinstance(
-                            ch.get("chunk_order_index"), int
-                        ):
+                        if isinstance(ch, dict) and isinstance(ch.get("chunk_order_index"), int):
                             max_order = max(max_order, int(ch["chunk_order_index"]))
                     # Default to "" (no modalities) when full_docs has no
                     # ``process_options`` key for this doc: a reinsert that
@@ -2325,8 +2199,7 @@ class _PipelineMixin:
                         file_path=file_path,
                         blocks_path=blocks_path,
                         base_order_index=max_order + 1,
-                        process_options=(content_data or {}).get("process_options")
-                        or "",
+                        process_options=(content_data or {}).get("process_options") or "",
                     )
                     if mm_chunks:
                         chunking_result = list(chunking_result) + mm_chunks
@@ -2334,10 +2207,7 @@ class _PipelineMixin:
 
                 # Final hard guard before embedding: split any oversize
                 # chunk while preserving heading hierarchy metadata.
-                if (
-                    self.embedding_token_limit is not None
-                    and self.embedding_token_limit > 0
-                ):
+                if self.embedding_token_limit is not None and self.embedding_token_limit > 0:
                     original_chunk_count = len(chunking_result)
                     chunking_result = enforce_chunk_token_limit_before_embedding(
                         chunking_result=chunking_result,
@@ -2378,9 +2248,7 @@ class _PipelineMixin:
                 else:
                     from graph_rag.vendored_lightrag.chunker import chunking_by_token_size
 
-                    sidecar_backfill_eligible = (
-                        self.chunking_func is chunking_by_token_size
-                    )
+                    sidecar_backfill_eligible = self.chunking_func is chunking_by_token_size
 
                 if blocks_path and sidecar_backfill_eligible:
                     from graph_rag.vendored_lightrag.sidecar import backfill_chunk_sidecars
@@ -2396,9 +2264,7 @@ class _PipelineMixin:
 
                 process_start_time = int(time.time())
 
-                await self._raise_if_cancelled(
-                    ctx.pipeline_status, ctx.pipeline_status_lock
-                )
+                await self._raise_if_cancelled(ctx.pipeline_status, ctx.pipeline_status_lock)
 
                 # Stage 1: persist doc_status PROCESSING + chunks in parallel.
                 doc_status_task = asyncio.create_task(
@@ -2476,9 +2342,7 @@ class _PipelineMixin:
             # entities and relationships.
             if file_extraction_stage_ok:
                 try:
-                    await self._raise_if_cancelled(
-                        ctx.pipeline_status, ctx.pipeline_status_lock
-                    )
+                    await self._raise_if_cancelled(ctx.pipeline_status, ctx.pipeline_status_lock)
 
                     # Use chunk_results from entity_relation_task.  When
                     # skip_kg is set, chunk_results is empty so there are no
@@ -2511,9 +2375,7 @@ class _PipelineMixin:
                     # shared flush buffer is being torn down, so re-flushing
                     # would just re-raise the same error. Bail out as cancelled
                     # so this document is FAILED and retried on the next run.
-                    await self._raise_if_cancelled(
-                        ctx.pipeline_status, ctx.pipeline_status_lock
-                    )
+                    await self._raise_if_cancelled(ctx.pipeline_status, ctx.pipeline_status_lock)
 
                     process_end_time = int(time.time())
                     await self._upsert_doc_status_transition(
@@ -2556,15 +2418,11 @@ class _PipelineMixin:
                     if isinstance(e, IndexFlushError):
                         async with ctx.pipeline_status_lock:
                             ctx.pipeline_status["cancellation_requested"] = True
-                            ctx.pipeline_status["cancellation_reason"] = (
-                                "internal_error"
-                            )
+                            ctx.pipeline_status["cancellation_reason"] = "internal_error"
                             ctx.pipeline_status["cancellation_detail"] = (
                                 f"{e.storage_name}[{e.namespace}]: {e.__cause__}"
                             )
-                        logger.error(
-                            f"Aborting pipeline batch due to storage flush error: {e}"
-                        )
+                        logger.error(f"Aborting pipeline batch due to storage flush error: {e}")
                     await self._finalize_doc_failure(
                         doc_id=doc_id,
                         status_doc=status_doc,
@@ -2696,9 +2554,7 @@ class _PipelineMixin:
             "file_path": file_path,
             "track_id": status_doc.track_id,
             "content_hash": status_doc.content_hash,
-            "metadata": doc_status_transition_metadata(
-                status_doc, extra=metadata_extra
-            ),
+            "metadata": doc_status_transition_metadata(status_doc, extra=metadata_extra),
         }
         if extra_fields:
             payload.update(extra_fields)
@@ -2772,10 +2628,7 @@ class _PipelineMixin:
         sibling tasks (e.g. successful multimodal items inside a doc that is
         being cancelled) survive a server restart.
         """
-        error_msg = (
-            f"{self._cancellation_label(pipeline_status)} during "
-            f"{stage_label}: {file_path}"
-        )
+        error_msg = f"{self._cancellation_label(pipeline_status)} during {stage_label}: {file_path}"
         logger.warning(error_msg)
         async with pipeline_status_lock:
             pipeline_status["latest_message"] = error_msg
@@ -2828,20 +2681,17 @@ class _PipelineMixin:
             # during <stage>" rather than "User cancelled during <stage>".
             raw = str(error)
             if raw.startswith("User cancelled"):
-                doc_error_msg = f"{cancel_label}{raw[len('User cancelled'):]}"
+                doc_error_msg = f"{cancel_label}{raw[len('User cancelled') :]}"
             elif raw:
                 doc_error_msg = f"{cancel_label}: {raw}"
             else:
                 doc_error_msg = cancel_label
             if stage_label == "merge":
                 error_msg = (
-                    f"{cancel_label} during merge {current_file_number}/"
-                    f"{total_files}: {file_path}"
+                    f"{cancel_label} during merge {current_file_number}/{total_files}: {file_path}"
                 )
             else:
-                error_msg = (
-                    f"{cancel_label} {current_file_number}/{total_files}: {file_path}"
-                )
+                error_msg = f"{cancel_label} {current_file_number}/{total_files}: {file_path}"
             logger.warning(error_msg)
             async with pipeline_status_lock:
                 pipeline_status["latest_message"] = error_msg
@@ -2856,8 +2706,7 @@ class _PipelineMixin:
                 )
             else:
                 error_msg = (
-                    f"Failed to extract document "
-                    f"{current_file_number}/{total_files}: {file_path}"
+                    f"Failed to extract document {current_file_number}/{total_files}: {file_path}"
                 )
             logger.error(error_msg)
             async with pipeline_status_lock:
@@ -2961,9 +2810,7 @@ class _PipelineMixin:
         if not content_hash:
             return False
 
-        match = await get_duplicate_doc_by_content_hash(
-            self.doc_status, content_hash, doc_id
-        )
+        match = await get_duplicate_doc_by_content_hash(self.doc_status, content_hash, doc_id)
         if not match:
             return False
 
@@ -3121,8 +2968,7 @@ class _PipelineMixin:
                 for candidate in sorted(root.iterdir(), key=lambda item: item.name):
                     if (
                         candidate.is_file()
-                        and normalize_document_file_path(candidate.name)
-                        == canonical_name
+                        and normalize_document_file_path(candidate.name) == canonical_name
                     ):
                         matches.append(candidate)
 
@@ -3240,9 +3086,7 @@ class _PipelineMixin:
                 rows = _normalize_grid_rows(raw_value.get("grid"))
                 if not rows and isinstance(raw_value.get("rows"), list):
                     rows = _normalize_grid_rows(raw_value.get("rows"))
-                num_rows = _parse_int(
-                    raw_value.get("num_rows"), len(rows) if rows else 0
-                )
+                num_rows = _parse_int(raw_value.get("num_rows"), len(rows) if rows else 0)
                 num_cols = _parse_int(
                     raw_value.get("num_cols"),
                     max((len(r) for r in rows), default=0),
@@ -3268,9 +3112,7 @@ class _PipelineMixin:
 
         heading_stack: list[str] = []
 
-        def _update_heading_context(
-            heading_text: str, level: int
-        ) -> tuple[str, int, list[str]]:
+        def _update_heading_context(heading_text: str, level: int) -> tuple[str, int, list[str]]:
             nonlocal heading_stack
             clean_heading = str(heading_text or "").strip()
             clean_level = max(_parse_int(level, 1), 1)
@@ -3356,13 +3198,10 @@ class _PipelineMixin:
             if item_type == "equation":
                 equation_idx += 1
                 eq_id = str(
-                    item.get("id")
-                    or f"eq-{doc_id.removeprefix('doc-')}-{equation_idx:04d}"
+                    item.get("id") or f"eq-{doc_id.removeprefix('doc-')}-{equation_idx:04d}"
                 )
                 caption = str(item.get("caption") or f"公式{equation_idx}")
-                footnotes = _to_list_str(
-                    item.get("equation_footnote") or item.get("footnotes")
-                )
+                footnotes = _to_list_str(item.get("equation_footnote") or item.get("footnotes"))
                 eq_text = str(item.get("text") or item.get("content") or "").strip()
                 wrapped = (
                     f'<equation id="{eq_id}" format="latex" caption="{caption}">{eq_text}</equation>'
@@ -3390,16 +3229,13 @@ class _PipelineMixin:
             if item_type == "table":
                 table_idx += 1
                 table_id = str(
-                    item.get("id")
-                    or f"tb-{doc_id.removeprefix('doc-')}-{table_idx:04d}"
+                    item.get("id") or f"tb-{doc_id.removeprefix('doc-')}-{table_idx:04d}"
                 )
                 caption = str(item.get("caption") or f"表格{table_idx}")
                 table_caption = _to_list_str(item.get("table_caption"))
                 if table_caption and not item.get("caption"):
                     caption = table_caption[0]
-                footnotes = _to_list_str(
-                    item.get("table_footnote") or item.get("footnotes")
-                )
+                footnotes = _to_list_str(item.get("table_footnote") or item.get("footnotes"))
                 table_body = item.get("table_body") or item.get("content") or ""
                 rows = item.get("rows") if isinstance(item.get("rows"), list) else None
                 (
@@ -3410,9 +3246,7 @@ class _PipelineMixin:
                     inferred_num_cols,
                 ) = _coerce_table_rows(rows if rows is not None else table_body)
                 rows = normalized_rows or (rows if isinstance(rows, list) else [])
-                cite_text = (
-                    f'<cite type="table" refid="{table_id}">表{table_idx}</cite>'
-                )
+                cite_text = f'<cite type="table" refid="{table_id}">表{table_idx}</cite>'
                 blockid = _append_block(
                     cite_text,
                     heading=current_heading,
@@ -3439,19 +3273,14 @@ class _PipelineMixin:
             if item_type in {"image", "picture", "drawing"}:
                 drawing_idx += 1
                 drawing_id = str(
-                    item.get("id")
-                    or f"im-{doc_id.removeprefix('doc-')}-{drawing_idx:04d}"
+                    item.get("id") or f"im-{doc_id.removeprefix('doc-')}-{drawing_idx:04d}"
                 )
-                image_caption = _to_list_str(
-                    item.get("image_caption") or item.get("captions")
-                )
+                image_caption = _to_list_str(item.get("image_caption") or item.get("captions"))
                 caption = str(
                     item.get("caption")
                     or (image_caption[0] if image_caption else f"图{drawing_idx}")
                 )
-                footnotes = _to_list_str(
-                    item.get("image_footnote") or item.get("footnotes")
-                )
+                footnotes = _to_list_str(item.get("image_footnote") or item.get("footnotes"))
                 path_val = str(item.get("img_path") or item.get("path") or "")
                 src_val = str(item.get("src") or "")
                 fmt = (
@@ -3520,9 +3349,7 @@ class _PipelineMixin:
 
         if tables:
             tables_path.write_text(
-                json.dumps(
-                    {"version": "1.0", "tables": tables}, ensure_ascii=False, indent=2
-                ),
+                json.dumps({"version": "1.0", "tables": tables}, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
         if drawings:
@@ -3619,9 +3446,7 @@ class _PipelineMixin:
             except Exception:
                 content_data = {}
             options_str = (
-                content_data.get("process_options")
-                if isinstance(content_data, dict)
-                else ""
+                content_data.get("process_options") if isinstance(content_data, dict) else ""
             ) or ""
         else:
             options_str = process_options
@@ -3656,9 +3481,7 @@ class _PipelineMixin:
             if enabled and not Path(sidecar_base + suffix).exists():
                 opt_in_missing.append(f"{opt_char}:{modality}")
         if opt_in_missing:
-            logger.info(
-                f"[analyze_multimodal] {','.join(opt_in_missing)} sidecar empty: {doc_id}"
-            )
+            logger.info(f"[analyze_multimodal] {','.join(opt_in_missing)} sidecar empty: {doc_id}")
 
         # Backfill sidecar `surrounding` for the enabled modalities just
         # before VLM consumption.  Universal coverage: native, MinerU,
@@ -3748,16 +3571,12 @@ class _PipelineMixin:
             # the sidecar item.llm_cache_list is likewise gated so a
             # disabled cache does not seed cache-cleanup metadata that
             # corresponds to entries that were never persisted.
-            analysis_cache_enabled = bool(
-                global_config.get("enable_llm_cache_for_entity_extract")
-            )
+            analysis_cache_enabled = bool(global_config.get("enable_llm_cache_for_entity_extract"))
 
             use_vlm_func = self.role_llm_funcs.get("vlm")
             use_extract_func = self.role_llm_funcs.get("extract")
             vlm_cache_identity = get_llm_cache_identity(global_config, role="vlm")
-            extract_cache_identity = get_llm_cache_identity(
-                global_config, role="extract"
-            )
+            extract_cache_identity = get_llm_cache_identity(global_config, role="extract")
 
             _IMAGE_TYPE_VALUES = set(IMAGE_TYPE_ENUM)
             _VLM_RASTER_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -3837,9 +3656,7 @@ class _PipelineMixin:
                 value = _normalize_text(surrounding.get(key))
                 return value or "n/a"
 
-            def _resolve_image_path(
-                path_str: str | None, sidecar_dir: Path
-            ) -> Path | None:
+            def _resolve_image_path(path_str: str | None, sidecar_dir: Path) -> Path | None:
                 if not path_str:
                     return None
                 candidate = Path(path_str)
@@ -3868,9 +3685,7 @@ class _PipelineMixin:
             async def _analyze_drawing(
                 item_id: str, item: dict[str, Any], sidecar_dir: Path
             ) -> tuple[dict[str, Any], str | None]:
-                path_str = (
-                    item.get("path") or item.get("img_path") or item.get("image_path")
-                )
+                path_str = item.get("path") or item.get("img_path") or item.get("image_path")
                 candidate = _resolve_image_path(path_str, sidecar_dir)
                 if candidate is None:
                     return (
@@ -3884,13 +3699,10 @@ class _PipelineMixin:
                         None,
                     )
                 dims = read_image_dimensions(candidate)
-                if dims is not None and (
-                    dims[0] < min_image_pixel or dims[1] < min_image_pixel
-                ):
+                if dims is not None and (dims[0] < min_image_pixel or dims[1] < min_image_pixel):
                     return (
                         _skipped_result(
-                            f"image width or height is smaller than "
-                            f"{min_image_pixel}px"
+                            f"image width or height is smaller than {min_image_pixel}px"
                         ),
                         None,
                     )
@@ -3907,14 +3719,11 @@ class _PipelineMixin:
                         f"drawings/{item_id}: cannot read image {candidate}: {exc}"
                     ) from exc
                 if not raw:
-                    raise MultimodalAnalysisError(
-                        f"drawings/{item_id}: image file is empty"
-                    )
+                    raise MultimodalAnalysisError(f"drawings/{item_id}: image file is empty")
                 if len(raw) > max_image_bytes:
                     return (
                         _skipped_result(
-                            f"image too large: {len(raw)} bytes "
-                            f"(limit {max_image_bytes})"
+                            f"image too large: {len(raw)} bytes (limit {max_image_bytes})"
                         ),
                         None,
                     )
@@ -3994,9 +3803,7 @@ class _PipelineMixin:
                 if fresh and analysis_cache_enabled:
                     audit_blob = image_audit_metadata(normalized_images)
                     original_prompt = prompt + (
-                        f"\n<vlm_images>"
-                        f"{json.dumps(audit_blob, ensure_ascii=False)}"
-                        "</vlm_images>"
+                        f"\n<vlm_images>{json.dumps(audit_blob, ensure_ascii=False)}</vlm_images>"
                         if audit_blob
                         else ""
                     )
@@ -4051,9 +3858,7 @@ class _PipelineMixin:
                             _skipped_result("missing table content"),
                             None,
                         )
-                    raise MultimodalAnalysisError(
-                        f"{kind}/{item_id}: missing {kind} content"
-                    )
+                    raise MultimodalAnalysisError(f"{kind}/{item_id}: missing {kind} content")
                 template = MULTIMODAL_PROMPTS[f"{kind}_analysis"]
 
                 # A table item written by the sidecar writer ALWAYS carries a
@@ -4093,8 +3898,12 @@ class _PipelineMixin:
                 # it for their model's context window.
                 tokenizer = getattr(self, "tokenizer", None)
                 if tokenizer is not None:
-                    from graph_rag.vendored_lightrag.constants import DEFAULT_MAX_EXTRACT_INPUT_TOKENS
-                    from graph_rag.vendored_lightrag.multimodal_context import trim_content_to_budget
+                    from graph_rag.vendored_lightrag.constants import (
+                        DEFAULT_MAX_EXTRACT_INPUT_TOKENS,
+                    )
+                    from graph_rag.vendored_lightrag.multimodal_context import (
+                        trim_content_to_budget,
+                    )
 
                     SAFETY_BUFFER = 256
                     max_extract_tokens = get_env_value(
@@ -4105,9 +3914,7 @@ class _PipelineMixin:
                     total_tokens = len(tokenizer.encode(prompt))
                     if max_extract_tokens > 0 and total_tokens > max_extract_tokens:
                         frame_tokens = len(tokenizer.encode(_render("")))
-                        content_budget = (
-                            max_extract_tokens - frame_tokens - SAFETY_BUFFER
-                        )
+                        content_budget = max_extract_tokens - frame_tokens - SAFETY_BUFFER
                         if content_budget <= 0:
                             # The prompt template alone (with empty content)
                             # already exceeds the cap — no content trim can
@@ -4206,10 +4013,7 @@ class _PipelineMixin:
                 }
                 if kind == "equation":
                     equation_value = parsed.get("equation")
-                    if (
-                        not isinstance(equation_value, str)
-                        or not equation_value.strip()
-                    ):
+                    if not isinstance(equation_value, str) or not equation_value.strip():
                         raise MultimodalAnalysisError(
                             f"equation/{item_id}: missing or invalid field 'equation'"
                         )
@@ -4234,9 +4038,7 @@ class _PipelineMixin:
                     cache_id_to_attach = cache_id
                 return (result_obj, cache_id_to_attach)
 
-            def _attach_cache_id(
-                item_obj: dict[str, Any], cache_id: str | None
-            ) -> None:
+            def _attach_cache_id(item_obj: dict[str, Any], cache_id: str | None) -> None:
                 if not cache_id:
                     return
                 existing = item_obj.get("llm_cache_list")
@@ -4268,10 +4070,7 @@ class _PipelineMixin:
                             pipeline_status["history_messages"].append(log_message)
                     raise
                 result_obj = result[0] if isinstance(result, tuple) else {}
-                is_success = (
-                    isinstance(result_obj, dict)
-                    and result_obj.get("status") == "success"
-                )
+                is_success = isinstance(result_obj, dict) and result_obj.get("status") == "success"
                 if is_success:
                     log_message = f"Analyzing  {kind}/{item_id}: ok"
                     logger.info(log_message)
@@ -4340,23 +4139,17 @@ class _PipelineMixin:
                 # create tasks and then cancel them on the very first poll
                 # iteration — wasteful and harder to reason about.
                 if pipeline_status is not None and pipeline_status_lock is not None:
-                    await self._raise_if_cancelled(
-                        pipeline_status, pipeline_status_lock
-                    )
+                    await self._raise_if_cancelled(pipeline_status, pipeline_status_lock)
 
                 task_meta: dict[asyncio.Task, tuple[str, dict]] = {}
                 for item_id, item in items.items():
                     if not isinstance(item, dict):
                         continue
                     if kind == "drawing":
-                        inner_coro = _analyze_drawing(
-                            item_id, item, sidecar_path.parent
-                        )
+                        inner_coro = _analyze_drawing(item_id, item, sidecar_path.parent)
                     else:
                         inner_coro = _analyze_text_modality(kind, item_id, item)
-                    task = asyncio.create_task(
-                        _run_with_progress_log(inner_coro, kind, item_id)
-                    )
+                    task = asyncio.create_task(_run_with_progress_log(inner_coro, kind, item_id))
                     task_meta[task] = (item_id, item)
 
                 if not task_meta:
@@ -4388,9 +4181,7 @@ class _PipelineMixin:
                             pipeline_status, pipeline_status_lock
                         )
                     ):
-                        fail_fast_exc = PipelineCancelledException(
-                            "User cancelled during analyze"
-                        )
+                        fail_fast_exc = PipelineCancelledException("User cancelled during analyze")
                         break
 
                     done_now, pending = await asyncio.wait(
@@ -4434,9 +4225,7 @@ class _PipelineMixin:
                     elif isinstance(texc, MultimodalAnalysisError):
                         item["llm_analyze_result"] = _failure_result(str(texc))
                     else:
-                        item["llm_analyze_result"] = _failure_result(
-                            f"unexpected error: {texc}"
-                        )
+                        item["llm_analyze_result"] = _failure_result(f"unexpected error: {texc}")
 
                 try:
                     sidecar_path.write_text(
@@ -4445,8 +4234,7 @@ class _PipelineMixin:
                     )
                 except OSError as exc:
                     logger.warning(
-                        f"[analyze_multimodal] failed to write sidecar "
-                        f"{sidecar_path}: {exc}"
+                        f"[analyze_multimodal] failed to write sidecar {sidecar_path}: {exc}"
                     )
 
                 if fail_fast_exc is not None:
@@ -4568,9 +4356,7 @@ class _PipelineMixin:
         def _build_heading_dict(item: dict[str, Any]) -> dict[str, Any] | None:
             heading_raw = item.get("heading")
             if isinstance(heading_raw, dict):
-                heading_text = sanitize_text_for_encoding(
-                    str(heading_raw.get("heading") or "")
-                )
+                heading_text = sanitize_text_for_encoding(str(heading_raw.get("heading") or ""))
                 parents = _norm_parent_headings(heading_raw.get("parent_headings"))
                 try:
                     level = int(heading_raw.get("level") or 0)
@@ -4663,12 +4449,8 @@ class _PipelineMixin:
                 # graph node/edge attributes, where XML-illegal characters
                 # crash the GraphML flush.
                 name = sanitize_text_for_encoding(str(analysis.get("name") or ""))
-                description = sanitize_text_for_encoding(
-                    str(analysis.get("description") or "")
-                )
-                equation_body = sanitize_text_for_encoding(
-                    str(analysis.get("equation") or "")
-                )
+                description = sanitize_text_for_encoding(str(analysis.get("description") or ""))
+                equation_body = sanitize_text_for_encoding(str(analysis.get("equation") or ""))
                 image_type = sanitize_text_for_encoding(str(analysis.get("type") or ""))
                 if not name:
                     raise MultimodalAnalysisError(

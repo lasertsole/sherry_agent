@@ -6,7 +6,8 @@ from loguru import logger
 from dotenv import load_dotenv
 from config import ROOT_DIR, ENV_PATH
 
-load_dotenv(ENV_PATH, override = True)
+load_dotenv(ENV_PATH, override=True)
+
 
 def _clean_expired_logs(log_dir: Path, timeout_days: int = 7):
     """Recursively delete log files older than `days` under `log_dir`.
@@ -53,7 +54,7 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         sys.stderr,
         level=level,
         format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        enqueue=True
+        enqueue=True,
     )
 
     # 3. 正常流水日志（只捕获 INFO 级别，供日常查看；WARNING/ERROR/CRITICAL
@@ -66,7 +67,7 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         retention="30 days",
         compression="zip",
         encoding="utf-8",
-        enqueue=True
+        enqueue=True,
     )
 
     # 4. 全量日志（记录所有级别，包括 TRACE/DEBUG/WARNING，供全面排查）
@@ -77,7 +78,7 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         retention="30 days",
         compression="zip",
         encoding="utf-8",
-        enqueue=True
+        enqueue=True,
     )
 
     # 5. 异常错误日志（只捕获 ERROR 和 CRITICAL，带有完整的堆栈和变量诊断）
@@ -90,5 +91,5 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         encoding="utf-8",
         enqueue=True,
         backtrace=True,
-        diagnose=True
+        diagnose=True,
     )

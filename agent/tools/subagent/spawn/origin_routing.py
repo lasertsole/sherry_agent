@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class ChildSessionOrigin(BaseModel):
     """Origin metadata extracted from the requester's session key: channel, account, thread, and group space."""
+
     channel: str | None = None
     account_id: str | None = None
     thread_id: str | None = None

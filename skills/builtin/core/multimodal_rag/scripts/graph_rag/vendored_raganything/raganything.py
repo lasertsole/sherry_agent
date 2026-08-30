@@ -192,21 +192,15 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
     def _create_context_extractor(self) -> ContextExtractor:
         """Create context extractor with tokenizer from LightRAG"""
         if self.lightrag is None:
-            raise ValueError(
-                "LightRAG must be initialized before creating context extractor"
-            )
+            raise ValueError("LightRAG must be initialized before creating context extractor")
 
         context_config = self._create_context_config()
-        return ContextExtractor(
-            config=context_config, tokenizer=self.lightrag.tokenizer
-        )
+        return ContextExtractor(config=context_config, tokenizer=self.lightrag.tokenizer)
 
     def _initialize_processors(self):
         """Initialize multimodal processors with appropriate model functions"""
         if self.lightrag is None:
-            raise ValueError(
-                "LightRAG instance must be initialized before creating processors"
-            )
+            raise ValueError("LightRAG instance must be initialized before creating processors")
 
         # Create context extractor
         self.context_extractor = self._create_context_extractor()
@@ -274,15 +268,11 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
             if self.lightrag is not None:
                 # LightRAG was pre-provided, but we need to ensure it's properly initialized
                 # Inherit model functions from LightRAG if not explicitly provided
-                if self.llm_model_func is None and hasattr(
-                    self.lightrag, "llm_model_func"
-                ):
+                if self.llm_model_func is None and hasattr(self.lightrag, "llm_model_func"):
                     self.llm_model_func = self.lightrag.llm_model_func
                     self.logger.debug("Inherited llm_model_func from LightRAG instance")
 
-                if self.embedding_func is None and hasattr(
-                    self.lightrag, "embedding_func"
-                ):
+                if self.embedding_func is None and hasattr(self.lightrag, "embedding_func"):
                     self.embedding_func = self.lightrag.embedding_func
                     self.logger.debug("Inherited embedding_func from LightRAG instance")
 
@@ -292,9 +282,7 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
                         not hasattr(self.lightrag, "_storages_status")
                         or self.lightrag._storages_status.name != "INITIALIZED"
                     ):
-                        self.logger.info(
-                            "Initializing storages for pre-provided LightRAG instance"
-                        )
+                        self.logger.info("Initializing storages for pre-provided LightRAG instance")
                         await self.lightrag.initialize_storages()
                         from lightrag.kg.shared_storage import (
                             initialize_pipeline_status,
@@ -307,13 +295,11 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
                         self.logger.info(
                             "Initializing parse cache for pre-provided LightRAG instance"
                         )
-                        self.parse_cache = (
-                            self.lightrag.key_string_value_json_storage_cls(
-                                namespace="parse_cache",
-                                workspace=self.lightrag.workspace,
-                                global_config=self.lightrag.__dict__,
-                                embedding_func=self.embedding_func,
-                            )
+                        self.parse_cache = self.lightrag.key_string_value_json_storage_cls(
+                            namespace="parse_cache",
+                            workspace=self.lightrag.workspace,
+                            global_config=self.lightrag.__dict__,
+                            embedding_func=self.embedding_func,
                         )
                         await self.parse_cache.initialize()
 
@@ -338,9 +324,7 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
                     return {"success": True}
 
                 except Exception as e:
-                    error_msg = (
-                        f"Failed to initialize pre-provided LightRAG instance: {str(e)}"
-                    )
+                    error_msg = f"Failed to initialize pre-provided LightRAG instance: {str(e)}"
                     self.logger.error(error_msg, exc_info=True)
                     return {"success": False, "error": error_msg}
 
@@ -371,8 +355,7 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
             log_params = {
                 k: v
                 for k, v in lightrag_params.items()
-                if not callable(v)
-                and k not in ["llm_model_kwargs", "vector_db_storage_cls_kwargs"]
+                if not callable(v) and k not in ["llm_model_kwargs", "vector_db_storage_cls_kwargs"]
             }
             self.logger.info(f"Initializing LightRAG with parameters: {log_params}")
 
@@ -391,13 +374,11 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
                 )
                 await self.parse_cache.initialize()
 
-                self.multimodal_status_cache = (
-                    self.lightrag.key_string_value_json_storage_cls(
-                        namespace="multimodal_status",
-                        workspace=self.lightrag.workspace,
-                        global_config=self.lightrag.__dict__,
-                        embedding_func=self.embedding_func,
-                    )
+                self.multimodal_status_cache = self.lightrag.key_string_value_json_storage_cls(
+                    namespace="multimodal_status",
+                    workspace=self.lightrag.workspace,
+                    global_config=self.lightrag.__dict__,
+                    embedding_func=self.embedding_func,
                 )
                 await self.multimodal_status_cache.initialize()
 
@@ -530,8 +511,7 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
             safe_kwargs = {
                 k: v
                 for k, v in self.lightrag_kwargs.items()
-                if not callable(v)
-                and k not in ["llm_model_kwargs", "vector_db_storage_cls_kwargs"]
+                if not callable(v) and k not in ["llm_model_kwargs", "vector_db_storage_cls_kwargs"]
             }
             config_info["lightrag_config"] = {
                 "custom_parameters": safe_kwargs,
@@ -545,9 +525,7 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
 
         return config_info
 
-    def set_content_source_for_context(
-        self, content_source, content_format: str = "auto"
-    ):
+    def set_content_source_for_context(self, content_source, content_format: str = "auto"):
         """Set content source for context extraction in all modal processors
 
         Args:
@@ -565,13 +543,9 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
                 processor.set_content_source(content_source, content_format)
                 self.logger.debug(f"Set content source for {processor_name} processor")
             except Exception as e:
-                self.logger.error(
-                    f"Failed to set content source for {processor_name}: {e}"
-                )
+                self.logger.error(f"Failed to set content source for {processor_name}: {e}")
 
-        self.logger.info(
-            f"Content source set for context extraction (format: {content_format})"
-        )
+        self.logger.info(f"Content source set for context extraction (format: {content_format})")
 
     def update_context_config(self, **context_kwargs):
         """Update context extraction configuration
@@ -596,12 +570,8 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
                 for processor_name, processor in self.modal_processors.items():
                     processor.context_extractor = self.context_extractor
 
-                self.logger.info(
-                    "Context configuration updated and applied to all processors"
-                )
-                self.logger.info(
-                    f"New context configuration: {self._create_context_config()}"
-                )
+                self.logger.info("Context configuration updated and applied to all processors")
+                self.logger.info(f"New context configuration: {self._create_context_config()}")
             except Exception as e:
                 self.logger.error(f"Failed to update context configuration: {e}")
 
@@ -615,15 +585,9 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
             },
             "config": self.get_config_info(),
             "models": {
-                "llm_model": "External function"
-                if self.llm_model_func
-                else "Not provided",
-                "vision_model": "External function"
-                if self.vision_model_func
-                else "Not provided",
-                "embedding_model": "External function"
-                if self.embedding_func
-                else "Not provided",
+                "llm_model": "External function" if self.llm_model_func else "Not provided",
+                "vision_model": "External function" if self.vision_model_func else "Not provided",
+                "embedding_model": "External function" if self.embedding_func else "Not provided",
             },
         }
 

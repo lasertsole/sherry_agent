@@ -1,8 +1,6 @@
-import pytest
 from agent.tools.subagent.spawn.thread_binding import (
     ThreadBindingConfig,
     ThreadBindingInfo,
-    ThreadBindingResult,
     bind_thread_for_subagent_spawn,
     unbind_thread_on_cleanup,
     refresh_thread_binding,

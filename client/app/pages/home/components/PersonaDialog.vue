@@ -17,6 +17,7 @@
           <TabPanel
             v-for="tab in tabs"
             :key="tab.key"
+            :value="tab.key"
             :header="t(tab.i18nKey)">
             <div class="flex flex-col gap-2">
               <div class="flex items-center justify-between">
@@ -104,10 +105,38 @@ interface PersonaTab {
 }
 
 const tabs: PersonaTab[] = [
-  { key: 'AGENTS.md', file: 'AGENTS.md', i18nKey: 'config.tabs.agents', i18nDescKey: 'config.desc.agents', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
-  { key: 'IDENTITY.md', file: 'IDENTITY.md', i18nKey: 'config.tabs.identity', i18nDescKey: 'config.desc.identity', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
-  { key: 'SOUL.md', file: 'SOUL.md', i18nKey: 'config.tabs.soul', i18nDescKey: 'config.desc.soul', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
-  { key: 'USER.md', file: 'USER.md', i18nKey: 'config.tabs.user', i18nDescKey: 'config.desc.user', readFn: readSystemPrompt, writeFn: writeSystemPrompt },
+  {
+    key: 'AGENTS.md',
+    file: 'AGENTS.md',
+    i18nKey: 'config.tabs.agents',
+    i18nDescKey: 'config.desc.agents',
+    readFn: readSystemPrompt,
+    writeFn: writeSystemPrompt
+  },
+  {
+    key: 'IDENTITY.md',
+    file: 'IDENTITY.md',
+    i18nKey: 'config.tabs.identity',
+    i18nDescKey: 'config.desc.identity',
+    readFn: readSystemPrompt,
+    writeFn: writeSystemPrompt
+  },
+  {
+    key: 'SOUL.md',
+    file: 'SOUL.md',
+    i18nKey: 'config.tabs.soul',
+    i18nDescKey: 'config.desc.soul',
+    readFn: readSystemPrompt,
+    writeFn: writeSystemPrompt
+  },
+  {
+    key: 'USER.md',
+    file: 'USER.md',
+    i18nKey: 'config.tabs.user',
+    i18nDescKey: 'config.desc.user',
+    readFn: readSystemPrompt,
+    writeFn: writeSystemPrompt
+  }
 ] as const;
 
 const activeTab = ref(0);

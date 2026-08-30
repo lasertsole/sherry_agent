@@ -11,6 +11,7 @@ from enum import Enum
 
 class SubagentSessionRole(str, Enum):
     """Sub-agent role. MAIN = top-level agent; ORCHESTRATOR = mid-layer that can spawn; LEAF = terminal node that cannot spawn."""
+
     MAIN = "main"
     ORCHESTRATOR = "orchestrator"
     LEAF = "leaf"
@@ -18,5 +19,6 @@ class SubagentSessionRole(str, Enum):
 
 class ControlScope(str, Enum):
     """Control scope. CHILDREN = can control direct child sub-agents; NONE = no control authority."""
+
     CHILDREN = "children"
     NONE = "none"

@@ -1,4 +1,4 @@
-﻿"""Shared helpers for ``lightrag/parser/external/<engine>/`` packages.
+"""Shared helpers for ``lightrag/parser/external/<engine>/`` packages.
 
 Currently consumed by the docling subpackage; expected to be reused when
 mineru is migrated under ``parser/external/mineru/``.
@@ -82,9 +82,7 @@ def env_int(name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        logger.warning(
-            "[external_parser] %s=%r is not an integer; using %s", name, raw, default
-        )
+        logger.warning("[external_parser] %s=%r is not an integer; using %s", name, raw, default)
         return default
 
 
@@ -96,9 +94,7 @@ def env_json(name: str, default: Any) -> Any:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning(
-            "[external_parser] %s=%r is not valid JSON; using default", name, raw
-        )
+        logger.warning("[external_parser] %s=%r is not valid JSON; using default", name, raw)
         return default
 
 

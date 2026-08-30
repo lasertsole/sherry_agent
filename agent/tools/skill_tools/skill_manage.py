@@ -17,14 +17,14 @@ from pub_func import atomic_replace, has_traversal_component, validate_within_di
 
 _MAX_NAME_LENGTH: int = 64
 _MAX_DESCRIPTION_LENGTH: int = 1024
-_MAX_SKILL_CONTENT_CHARS = 100_000   # ~36k tokens at 2.75 chars/token
-_VALID_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*$')
+_MAX_SKILL_CONTENT_CHARS = 100_000  # ~36k tokens at 2.75 chars/token
+_VALID_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 # Subdirectories allowed for write_file/remove_file (umbrella skill standard dirs)
 _ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets", "examples", "resources"}
 # Target max length (chars) for an umbrella SKILL.md main body. Above this the
 # curator is instructed to offload bulky content into references/examples/etc.
 _UMBRELLA_SKILL_CHAR_TARGET = 15_000
-_MAX_SKILL_FILE_BYTES = 1_048_576    # 1 MiB per supporting file
+_MAX_SKILL_FILE_BYTES = 1_048_576  # 1 MiB per supporting file
 
 
 def split_oversized_skill(
@@ -117,7 +117,9 @@ def split_oversized_skill(
     for idx, (file_path, _content) in enumerate(overflow_files.items(), start=1):
         # Recover the titles packed into this file for the stub headings.
         file_sections = [
-            m.group(1).strip() if (m := re.match(r"^##\s+(.+)", seg)) else seg.strip().lstrip("#").strip()
+            m.group(1).strip()
+            if (m := re.match(r"^##\s+(.+)", seg))
+            else seg.strip().lstrip("#").strip()
             for seg in _content.split("\n\n## ")
         ]
         heading = file_sections[0] if file_sections else f"Part {idx}"
@@ -141,6 +143,7 @@ def split_oversized_skill(
 
 class SkillManageSchema(BaseModel):
     """Schema for skill_manage tool arguments."""
+
     action: Literal["create", "patch", "edit", "delete", "write_file", "remove_file"] = Field(
         description="The action to perform."
     )
@@ -156,7 +159,7 @@ class SkillManageSchema(BaseModel):
             "Full SKILL.md content (YAML frontmatter + markdown body). "
             "Required for 'create' and 'edit'. For 'edit', read the skill "
             "first with skill_view() and provide the complete updated text."
-        )
+        ),
     )
     old_string: str | None = Field(
         default=None,
@@ -164,18 +167,18 @@ class SkillManageSchema(BaseModel):
             "Text to find in the file (required for 'patch'). Must be unique "
             "unless replace_all=true. Include enough surrounding context to "
             "ensure uniqueness."
-        )
+        ),
     )
     new_string: str | None = Field(
         default=None,
         description=(
             "Replacement text (required for 'patch'). Can be empty string "
             "to delete the matched text."
-        )
+        ),
     )
     replace_all: bool | None = Field(
         default=None,
-        description="For 'patch': replace all occurrences instead of requiring a unique match (default: false)."
+        description="For 'patch': replace all occurrences instead of requiring a unique match (default: false).",
     )
     category: str | None = Field(
         default=None,
@@ -183,7 +186,7 @@ class SkillManageSchema(BaseModel):
             "Optional category/domain for organizing the skill (e.g., 'devops', "
             "'data-science', 'mlops'). Creates a subdirectory grouping. "
             "Only used with 'create'."
-        )
+        ),
     )
     file_path: str | None = Field(
         default=None,
@@ -192,11 +195,10 @@ class SkillManageSchema(BaseModel):
             "For 'write_file'/'remove_file': required, must be under references/, "
             "templates/, scripts/, or assets/. "
             "For 'patch': optional, defaults to SKILL.md if omitted."
-        )
+        ),
     )
     file_content: str | None = Field(
-        default=None,
-        description="Content for the file. Required for 'write_file'."
+        default=None, description="Content for the file. Required for 'write_file'."
     )
     absorbed_into: str | None = Field(
         default=None,
@@ -210,8 +212,9 @@ class SkillManageSchema(BaseModel):
             "on delete is supported for backward compatibility but "
             "downstream tooling (e.g. cron-job skill reference "
             "rewriting) will have to guess at intent."
-        )
+        ),
     )
+
 
 def _write_file(name: str, file_path: str, file_content: str) -> dict[str, Any]:
     """Add or overwrite a supporting file within any skill directory."""
@@ -242,7 +245,10 @@ def _write_file(name: str, file_path: str, file_content: str) -> dict[str, Any]:
         outside_err = _check_skill_outside_auto(name)
         if outside_err:
             return {"success": False, "error": outside_err}
-        return {"success": False, "error": f"Skill '{name}' not found. Create it first with action='create'."}
+        return {
+            "success": False,
+            "error": f"Skill '{name}' not found. Create it first with action='create'.",
+        }
 
     target, err = _resolve_skill_target(skill_dir, file_path)
     if err:
@@ -334,13 +340,14 @@ def _find_skill(name: str) -> Path | None:
             return skill_md.parent
     return None
 
+
 def _check_skill_outside_auto(name: str) -> str | None:
     """Check if a skill with the given name exists outside the auto directory.
-    
+
     Returns an error message if found outside auto/, or None if not found anywhere.
     """
     from config import SKILLS_DIR
-    
+
     for sub_dir_name in ["builtin", "plugins"]:
         search_dir = SKILLS_DIR / sub_dir_name
         if search_dir and search_dir.exists():
@@ -353,20 +360,22 @@ def _check_skill_outside_auto(name: str) -> str | None:
                     )
     return None
 
+
 def _resolve_skill_dir(name: str, category: str = None) -> Path:
     """Build the directory path for a new skill, optionally under a category."""
     if category:
         return AUTO_SKILLS_DIR / category / name
     return AUTO_SKILLS_DIR / name
 
+
 def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -> None:
     """
     Atomically write text content to a file.
-    
+
     Uses a temporary file in the same directory and os.replace() to ensure
     the target file is never left in a partially-written state if the process
     crashes or is interrupted.
-    
+
     Args:
         file_path: Target file path
         content: Content to write
@@ -387,7 +396,9 @@ def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -
         try:
             os.unlink(temp_path)
         except OSError:
-            logger.error("Failed to remove temporary file %s during atomic write", temp_path, exc_info=True)
+            logger.error(
+                "Failed to remove temporary file %s during atomic write", temp_path, exc_info=True
+            )
         raise
 
 
@@ -406,9 +417,12 @@ def _write_split_files(skill_dir: Path, split_files: dict[str, str]) -> None:
         rel_str = rel_path.replace("\\", "/")
         err = _validate_file_path(rel_str)
         if err:
-            logger.warning("Skip invalid split file '{}' in skill '{}': {}", rel_str, skill_dir.name, err)
+            logger.warning(
+                "Skip invalid split file '{}' in skill '{}': {}", rel_str, skill_dir.name, err
+            )
             continue
         _atomic_write_text(skill_dir / Path(*rel_path.split("/")), content)
+
 
 def _resolve_skill_target(skill_dir: Path, file_path: str) -> tuple[Path | None, str | None]:
     """Resolve a supporting-file path and ensure it stays within the skill directory."""
@@ -417,6 +431,7 @@ def _resolve_skill_target(skill_dir: Path, file_path: str) -> tuple[Path | None,
     if error:
         return None, error
     return target, None
+
 
 def _containing_skills_root(skill_path: Path) -> Path:
     """Return the skills root directory (local or external_dirs entry) that
@@ -445,9 +460,11 @@ def _containing_skills_root(skill_path: Path) -> Path:
             continue
     return AUTO_SKILLS_DIR
 
+
 # =============================================================================
 # Validation helpers
 # =============================================================================
+
 
 def _validate_name(name: str) -> str | None:
     """Validate a skill name. Returns error message or None if valid."""
@@ -461,6 +478,7 @@ def _validate_name(name: str) -> str | None:
             f"hyphens, dots, and underscores. Must start with a letter or digit."
         )
     return None
+
 
 def _validate_category(category: str | None) -> str | None:
     """Validate an optional category name used as a single directory segment."""
@@ -486,6 +504,7 @@ def _validate_category(category: str | None) -> str | None:
         )
     return None
 
+
 def _validate_frontmatter(content: str) -> str | None:
     """
     Validate that SKILL.md content has proper frontmatter with required fields.
@@ -497,11 +516,11 @@ def _validate_frontmatter(content: str) -> str | None:
     if not content.startswith("---"):
         return "SKILL.md must start with YAML frontmatter (---). See existing skills for format."
 
-    end_match = re.search(r'\n---\s*\n', content[3:])
+    end_match = re.search(r"\n---\s*\n", content[3:])
     if not end_match:
         return "SKILL.md frontmatter is not closed. Ensure you have a closing '---' line."
 
-    yaml_content = content[3:end_match.start() + 3]
+    yaml_content = content[3 : end_match.start() + 3]
 
     try:
         parsed = yaml.safe_load(yaml_content)
@@ -524,16 +543,14 @@ def _validate_frontmatter(content: str) -> str | None:
         scope_value = parsed["scope"]
         scope = str(scope_value).strip().lower() if scope_value is not None else ""
         if scope not in ("all", "main_only", "subagent_only"):
-            return (
-                f"Invalid scope '{scope_value}'. Must be one of: "
-                "all, main_only, subagent_only."
-            )
+            return f"Invalid scope '{scope_value}'. Must be one of: all, main_only, subagent_only."
 
-    body = content[end_match.end() + 3:].strip()
+    body = content[end_match.end() + 3 :].strip()
     if not body:
         return "SKILL.md must have content after the frontmatter (instructions, procedures, etc.)."
 
     return None
+
 
 def _validate_content_size(content: str, label: str = "SKILL.md") -> str | None:
     """Check that content doesn't exceed the character limit for agent writes.
@@ -548,6 +565,7 @@ def _validate_content_size(content: str, label: str = "SKILL.md") -> str | None:
             f"in references/ or templates/."
         )
     return None
+
 
 def _validate_file_path(file_path: str) -> str | None:
     """
@@ -581,13 +599,17 @@ def _validate_file_path(file_path: str) -> str | None:
 
     # Must have a filename (not just a directory)
     if len(normalized.parts) < 2:
-        return f"Provide a file path, not just a directory. Example: '{normalized.parts[0]}/myfile.md'"
+        return (
+            f"Provide a file path, not just a directory. Example: '{normalized.parts[0]}/myfile.md'"
+        )
 
     return None
+
 
 # =============================================================================
 # Core actions
 # =============================================================================
+
 
 def _create_skill(name: str, content: str, category: str = None) -> dict[str, Any]:
     """Create a new user skill with SKILL.md content."""
@@ -614,7 +636,7 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
     if existing:
         return {
             "success": False,
-            "error": f"A skill named '{name}' already exists at {existing.as_posix()}."
+            "error": f"A skill named '{name}' already exists at {existing.as_posix()}.",
         }
 
     # Create the skill directory
@@ -640,9 +662,12 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
         result["category"] = category
     result["hint"] = (
         "To add reference files, templates, or scripts, use "
-        "skill_manage(action='write_file', name='{}', file_path='references/example.md', file_content='...')".format(name)
+        "skill_manage(action='write_file', name='{}', file_path='references/example.md', file_content='...')".format(
+            name
+        )
     )
     return result
+
 
 def _edit_skill(name: str, content: str) -> dict[str, Any]:
     """Replace the SKILL.md of any existing skill (full rewrite)."""
@@ -663,7 +688,10 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
         outside_err = _check_skill_outside_auto(name)
         if outside_err:
             return {"success": False, "error": outside_err}
-        return {"success": False, "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'"}
+        return {
+            "success": False,
+            "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'",
+        }
 
     # Enforce the shared char budget: if content overshoots target, split the
     # markdown body along ## sections into references/partNN.md (no content loss),
@@ -680,6 +708,7 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
         "path": skill_dir.as_posix(),
     }
 
+
 def _patch_skill(
     name: str,
     old_string: str,
@@ -695,14 +724,20 @@ def _patch_skill(
     if not old_string:
         return {"success": False, "error": "old_string is required for 'patch'."}
     if new_string is None:
-        return {"success": False, "error": "new_string is required for 'patch'. Use an empty string to delete matched text."}
+        return {
+            "success": False,
+            "error": "new_string is required for 'patch'. Use an empty string to delete matched text.",
+        }
 
     skill_dir = _find_skill(name)
     if not skill_dir:
         outside_err = _check_skill_outside_auto(name)
         if outside_err:
             return {"success": False, "error": outside_err}
-        return {"success": False, "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'"}
+        return {
+            "success": False,
+            "error": f"Skill '{name}' not found in folder '{AUTO_SKILLS_DIR.as_posix()}'",
+        }
 
     if file_path:
         # Patching a supporting file
@@ -742,7 +777,7 @@ def _patch_skill(
             "error": err_msg,
             "file_preview": preview,
         }
- 
+
     # Check size limit on the result
     target_label = "SKILL.md" if not file_path else file_path
     err = _validate_content_size(new_content, label=target_label)
@@ -764,6 +799,7 @@ def _patch_skill(
         "success": True,
         "message": f"Patched {'SKILL.md' if not file_path else file_path} in skill '{name}' ({match_count} replacement{'s' if match_count > 1 else ''}).",
     }
+
 
 def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]:
     """Delete a skill.
@@ -823,6 +859,7 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
         "message": message,
     }
 
+
 class SkillManage(BaseTool):
     name: str = "skill_manage"
     description: str = (
@@ -875,7 +912,7 @@ class SkillManage(BaseTool):
         file_path: str | None,
         file_content: str | None,
         absorbed_into: str | None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Any:
         if action == "create":
             if not content:
@@ -897,7 +934,9 @@ class SkillManage(BaseTool):
                 result = _delete_skill(name, absorbed_into=absorbed_into)
             elif action == "write_file":
                 if not file_path:
-                    return "file_path is required for 'write_file'. Example: 'references/api-guide.md'"
+                    return (
+                        "file_path is required for 'write_file'. Example: 'references/api-guide.md'"
+                    )
                 if file_content is None:
                     return "file_content is required for 'write_file'."
                 result = _write_file(name, file_path, file_content)
@@ -907,11 +946,15 @@ class SkillManage(BaseTool):
                 result = _remove_file(name, file_path)
 
         else:
-            result = {"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file"}
+            result = {
+                "success": False,
+                "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file",
+            }
 
         if result.get("success"):
             try:
                 from skills import build_skills_snapshot
+
                 build_skills_snapshot()
             except Exception:
                 pass
@@ -922,7 +965,13 @@ class SkillManage(BaseTool):
             # user-directed, and those skills belong to the user (the curator must
             # not touch them). Best-effort; telemetry failures never break the tool.
             try:
-                from agent.tools.pub_base import bump_patch, forget, mark_agent_created, is_background_review
+                from agent.tools.pub_base import (
+                    bump_patch,
+                    forget,
+                    mark_agent_created,
+                    is_background_review,
+                )
+
                 if action == "create":
                     if is_background_review():
                         mark_agent_created(name)
@@ -952,7 +1001,7 @@ class SkillManage(BaseTool):
         file_path: str | None,
         file_content: str | None,
         absorbed_into: str | None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Any:
         return self._run(
             action,
@@ -967,7 +1016,8 @@ class SkillManage(BaseTool):
             absorbed_into,
         )
 
-def build_skill_manage_tool()-> SkillManage:
+
+def build_skill_manage_tool() -> SkillManage:
     tool: SkillManage = SkillManage()
     tool.handle_tool_error = True
     # Tool-metadata visibility tag (shared contract): skill_manage is a

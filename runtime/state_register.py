@@ -9,7 +9,7 @@ from runtime import Register
 
 class StateRegisterMeM(Register):
     def __init__(self):
-        if getattr(self, '_initialized', False):
+        if getattr(self, "_initialized", False):
             return
         self._states = {}
         self._initialized = True
@@ -90,7 +90,9 @@ class StateRegisterMeM(Register):
             logger.exception(f"update_states failed: session_id={session_id}")
         return False
 
+
 state_register_mem = StateRegisterMeM()
+
 
 class StateRegisterDB(Register):
     def __init__(self):
@@ -117,7 +119,7 @@ class StateRegisterDB(Register):
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR REPLACE INTO states (session_id, key, value) VALUES (?, ?, ?)",
-                    (session_id, key, json.dumps(value))
+                    (session_id, key, json.dumps(value)),
                 )
                 conn.commit()
             return True
@@ -130,8 +132,7 @@ class StateRegisterDB(Register):
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT value FROM states WHERE session_id = ? AND key = ?",
-                    (session_id, key)
+                    "SELECT value FROM states WHERE session_id = ? AND key = ?", (session_id, key)
                 )
                 row = cursor.fetchone()
 
@@ -146,10 +147,7 @@ class StateRegisterDB(Register):
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT key, value FROM states WHERE session_id = ?",
-                    (session_id,)
-                )
+                cursor.execute("SELECT key, value FROM states WHERE session_id = ?", (session_id,))
                 rows = cursor.fetchall()
             return {row[0]: json.loads(row[1]) for row in rows}
         except Exception:
@@ -161,8 +159,7 @@ class StateRegisterDB(Register):
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "DELETE FROM states WHERE session_id = ? AND key = ?",
-                    (session_id, key)
+                    "DELETE FROM states WHERE session_id = ? AND key = ?", (session_id, key)
                 )
                 affected = cursor.rowcount
                 conn.commit()
@@ -190,10 +187,7 @@ class StateRegisterDB(Register):
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT 1 FROM states WHERE session_id = ? LIMIT 1",
-                    (session_id,)
-                )
+                cursor.execute("SELECT 1 FROM states WHERE session_id = ? LIMIT 1", (session_id,))
                 result = cursor.fetchone() is not None
             return result
         except Exception:
@@ -206,7 +200,7 @@ class StateRegisterDB(Register):
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT 1 FROM states WHERE session_id = ? AND key = ? LIMIT 1",
-                    (session_id, key)
+                    (session_id, key),
                 )
                 result = cursor.fetchone() is not None
             return result
@@ -221,7 +215,7 @@ class StateRegisterDB(Register):
                 for key, value in states.items():
                     cursor.execute(
                         "INSERT OR REPLACE INTO states (session_id, key, value) VALUES (?, ?, ?)",
-                        (session_id, key, json.dumps(value))
+                        (session_id, key, json.dumps(value)),
                     )
                 conn.commit()
             return True

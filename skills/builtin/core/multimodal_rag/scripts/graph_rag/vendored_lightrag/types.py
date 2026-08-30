@@ -19,12 +19,8 @@ class ExtractedEntity(BaseModel):
 class ExtractedRelationship(BaseModel):
     """A single relationship between two entities extracted from text."""
 
-    source_entity: str = Field(
-        description="Name of the source entity in the relationship."
-    )
-    target_entity: str = Field(
-        description="Name of the target entity in the relationship."
-    )
+    source_entity: str = Field(description="Name of the source entity in the relationship.")
+    target_entity: str = Field(description="Name of the target entity in the relationship.")
     relationship_keywords: str = Field(
         description="Comma-separated high-level keywords summarizing the relationship."
     )

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import numpy as np
 import pipmaster as pm  # Pipmaster for dynamic library install
 
@@ -32,9 +32,7 @@ class VoyageAIError(Exception):
     pass
 
 
-@wrap_embedding_func_with_attrs(
-    embedding_dim=1024, max_token_size=32000, supports_asymmetric=True
-)
+@wrap_embedding_func_with_attrs(embedding_dim=1024, max_token_size=32000, supports_asymmetric=True)
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),
@@ -138,7 +136,9 @@ async def voyageai_embed(
             raise VoyageAIError(err_msg)
 
         if len(result.embeddings) != len(texts):
-            err_msg = f"VoyageAI API returned {len(result.embeddings)} embeddings for {len(texts)} texts"
+            err_msg = (
+                f"VoyageAI API returned {len(result.embeddings)} embeddings for {len(texts)} texts"
+            )
             logger.error(err_msg)
             raise VoyageAIError(err_msg)
 

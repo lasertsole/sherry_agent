@@ -27,6 +27,7 @@ def _save_channel_config(config_path: Path, data: dict) -> bool:
     """
     import os
     import tempfile
+
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(dir=str(config_path.parent), suffix=".tmp")
@@ -106,17 +107,19 @@ async def list_channels_handler(request):
             display_name = getattr(cls, "display_name", None) or name
         except Exception as e:
             logger.debug(f"Failed to load channel class '{name}': {e}")
-        result.append({
-            "name": name,
-            "display_name": display_name,
-            "enabled": enabled,
-            # Boolean runtime toggles, persisted in plugins/channels/config.json.
-            # heartbeat gate: the heartbeat service also requires a non-empty
-            # `receiver` to actually deliver; we only surface the persisted flag here.
-            "heartbeat": bool(entry.get("heartbeat", False)),
-            "cron": bool(entry.get("cron", False)),
-            "icon": _channel_icon_url(name),
-        })
+        result.append(
+            {
+                "name": name,
+                "display_name": display_name,
+                "enabled": enabled,
+                # Boolean runtime toggles, persisted in plugins/channels/config.json.
+                # heartbeat gate: the heartbeat service also requires a non-empty
+                # `receiver` to actually deliver; we only surface the persisted flag here.
+                "heartbeat": bool(entry.get("heartbeat", False)),
+                "cron": bool(entry.get("cron", False)),
+                "icon": _channel_icon_url(name),
+            }
+        )
     result.sort(key=lambda x: x["name"])
     logger.debug(f"Listed channels: count={len(result)}")
     return {"channels": result}
@@ -262,6 +265,7 @@ async def channel_icon_handler(request, path_params):
 
     try:
         from robyn.responses import serve_file
+
         return serve_file(str(full_path), file_name=file_name)
     except Exception as e:
         logger.warning(f"Failed to serve icon {full_path}: {e}")

@@ -1,6 +1,12 @@
 from loguru import logger
 from server.trigger.core import app
-from server.service import clear_session, get_history_by_turn_page as _get_history_by_turn_page, get_session_list as _get_session_list, get_pending_interrupt as _get_pending_interrupt
+from server.service import (
+    clear_session,
+    get_history_by_turn_page as _get_history_by_turn_page,
+    get_session_list as _get_session_list,
+    get_pending_interrupt as _get_pending_interrupt,
+)
+
 
 @app.get("/sessions")
 async def get_sessions_handler(request):
@@ -13,6 +19,7 @@ async def get_sessions_handler(request):
     logger.debug(f"Enumerated sessions: count={len(session_list)}")
     return session_list
 
+
 @app.delete("/sessions")
 async def clear_session_handler(request):
     request_json = request.json()
@@ -21,6 +28,7 @@ async def clear_session_handler(request):
     logger.info(f"Clearing session: session_id={session_id}")
     await clear_session(session_id=session_id)
     logger.info(f"Session cleared: session_id={session_id}")
+
 
 @app.get("/get_history_by_turn_page")
 async def get_history_by_turn_page(request):
@@ -54,6 +62,7 @@ async def get_history_by_turn_page(request):
         raise ValueError("turn_page_num is required")
 
     return _get_history_by_turn_page(session_id, min_turn_num, turn_page_size, turn_page_num)
+
 
 @app.get("/get_pending_interrupt")
 async def get_pending_interrupt_handler(request):

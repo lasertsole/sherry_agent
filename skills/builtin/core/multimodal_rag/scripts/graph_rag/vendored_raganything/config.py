@@ -29,9 +29,7 @@ class RAGAnythingConfig:
     parser: str = field(default=get_env_value("PARSER", "mineru", str))
     """Parser selection: 'mineru', 'docling', or 'paddleocr'."""
 
-    display_content_stats: bool = field(
-        default=get_env_value("DISPLAY_CONTENT_STATS", True, bool)
-    )
+    display_content_stats: bool = field(default=get_env_value("DISPLAY_CONTENT_STATS", True, bool))
     """Whether to display content statistics during parsing."""
 
     # Multimodal Processing Configuration
@@ -53,9 +51,7 @@ class RAGAnythingConfig:
 
     # Batch Processing Configuration
     # ---
-    max_concurrent_files: int = field(
-        default=get_env_value("MAX_CONCURRENT_FILES", 1, int)
-    )
+    max_concurrent_files: int = field(default=get_env_value("MAX_CONCURRENT_FILES", 1, int))
     """Maximum number of files to process concurrently."""
 
     supported_file_extensions: List[str] = field(
@@ -83,25 +79,18 @@ class RAGAnythingConfig:
     context_mode: str = field(default=get_env_value("CONTEXT_MODE", "page", str))
     """Context extraction mode: 'page' for page-based, 'chunk' for chunk-based."""
 
-    max_context_tokens: int = field(
-        default=get_env_value("MAX_CONTEXT_TOKENS", 2000, int)
-    )
+    max_context_tokens: int = field(default=get_env_value("MAX_CONTEXT_TOKENS", 2000, int))
     """Maximum number of tokens in extracted context."""
 
     include_headers: bool = field(default=get_env_value("INCLUDE_HEADERS", True, bool))
     """Whether to include document headers and titles in context."""
 
-    include_captions: bool = field(
-        default=get_env_value("INCLUDE_CAPTIONS", True, bool)
-    )
+    include_captions: bool = field(default=get_env_value("INCLUDE_CAPTIONS", True, bool))
     """Whether to include image/table captions in context."""
 
     context_filter_content_types: List[str] = field(
         default_factory=lambda: [
-            x.strip()
-            for x in get_env_value("CONTEXT_FILTER_CONTENT_TYPES", "text", str).split(
-                ","
-            )
+            x.strip() for x in get_env_value("CONTEXT_FILTER_CONTENT_TYPES", "text", str).split(",")
         ]
     )
     """Content types to include in context extraction (e.g., 'text', 'image', 'table')."""

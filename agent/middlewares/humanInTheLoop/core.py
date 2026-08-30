@@ -10,7 +10,6 @@ Delegates to:
 from __future__ import annotations
 
 import json
-import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -19,16 +18,35 @@ from langgraph.errors import GraphInterrupt
 from runtime.state_register import state_register_mem
 
 from .types import (
-    ApprovalDecision, ApprovalMode, ApprovalResult, HITLConfig,
-    SmartApprovalResult, WriteTarget, _STATE_PREFIX, BLOCKED_MESSAGE,
-    AgentMiddleware, AgentState, Runtime, AIMessage, ToolMessage,
-    ToolCallRequest, ActionRequest, ReviewConfig, HITLRequest,
-    InterruptOnConfig, override, interrupt,
+    ApprovalDecision,
+    ApprovalMode,
+    ApprovalResult,
+    HITLConfig,
+    SmartApprovalResult,
+    WriteTarget,
+    _STATE_PREFIX,
+    BLOCKED_MESSAGE,
+    AgentMiddleware,
+    AgentState,
+    Runtime,
+    AIMessage,
+    ToolMessage,
+    ToolCallRequest,
+    ActionRequest,
+    ReviewConfig,
+    HITLRequest,
+    InterruptOnConfig,
+    override,
+    interrupt,
 )
 from .approval import ApprovalPipeline
 from .gates import (
-    WriteApprovalGate, InterruptManager, MCPElicitationConsent,
-    KanbanTriage, PairingStore, SlashConfirm,
+    WriteApprovalGate,
+    InterruptManager,
+    MCPElicitationConsent,
+    KanbanTriage,
+    PairingStore,
+    SlashConfirm,
 )
 
 
@@ -79,12 +97,14 @@ class HumanInTheLoop(AgentMiddleware):
 
     def _make_hook_dispatcher(self) -> Callable[[str, ApprovalResult], None]:
         """Build a dispatcher that calls all registered approval hooks safely."""
+
         def _dispatch(session_id: str, result: ApprovalResult):
             for hook in self._approval_hooks:
                 try:
                     hook(session_id, result)
                 except Exception:
                     logger.exception("HITL approval hook raised an exception")
+
         return _dispatch
 
     # ── Session / state helpers ──────────────────────────────────────────
@@ -109,7 +129,9 @@ class HumanInTheLoop(AgentMiddleware):
         """Delegate to :meth:`ApprovalPipeline.check_command`."""
         return self.approval.check_command(command, session_id)
 
-    def check_command_with_approval(self, command: str, session_id: str, prompt_fn=None) -> ApprovalResult:
+    def check_command_with_approval(
+        self, command: str, session_id: str, prompt_fn=None
+    ) -> ApprovalResult:
         """Delegate to :meth:`ApprovalPipeline.check_command_with_approval`."""
         return self.approval.check_command_with_approval(command, session_id, prompt_fn)
 
@@ -117,7 +139,9 @@ class HumanInTheLoop(AgentMiddleware):
         """Delegate to :meth:`ApprovalPipeline.smart_approve`."""
         return self.approval.smart_approve(command)
 
-    def clarify(self, question: str, choices: list[str] | None = None, session_id: str = "default") -> str | None:
+    def clarify(
+        self, question: str, choices: list[str] | None = None, session_id: str = "default"
+    ) -> str | None:
         """Ask the user a clarification question via an interrupt.
 
         Args:
@@ -131,6 +155,7 @@ class HumanInTheLoop(AgentMiddleware):
         if choices:
             choices = choices[:4] + ["Other (type your answer)"]
         from .types import ActionRequest as AR, ReviewConfig as RC, HITLRequest as HR
+
         hitl_request = HR(
             action_requests=[AR(name="clarify", args={"question": question, "choices": choices})],
             review_configs=[RC(action_name="clarify", allowed_decisions=["approve", "reject"])],
@@ -173,7 +198,9 @@ class HumanInTheLoop(AgentMiddleware):
         """Delegate to :meth:`InterruptManager.clear_interrupt`."""
         self.interrupt_mgr.clear_interrupt(session_id)
 
-    def request_tool_approval(self, tool_name: str, tool_args: dict, session_id: str) -> ApprovalResult:
+    def request_tool_approval(
+        self, tool_name: str, tool_args: dict, session_id: str
+    ) -> ApprovalResult:
         """Delegate to :meth:`ApprovalPipeline.request_tool_approval`."""
         return self.approval.request_tool_approval(tool_name, tool_args, session_id)
 
@@ -233,9 +260,7 @@ class HumanInTheLoop(AgentMiddleware):
         if not messages:
             return None
 
-        last_ai_msg = next(
-            (msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None
-        )
+        last_ai_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None)
         if not last_ai_msg or not getattr(last_ai_msg, "tool_calls", None):
             return None
 
@@ -255,10 +280,14 @@ class HumanInTheLoop(AgentMiddleware):
                 result = self.approval.check_command(command, session_id)
 
                 if result.blocked and result.decision == ApprovalDecision.DENY:
-                    artificial_tool_messages.append(ToolMessage(
-                        content=result.reason, name=tool_name,
-                        tool_call_id=tool_call["id"], status="error",
-                    ))
+                    artificial_tool_messages.append(
+                        ToolMessage(
+                            content=result.reason,
+                            name=tool_name,
+                            tool_call_id=tool_call["id"],
+                            status="error",
+                        )
+                    )
                     continue
 
                 # Smart approval (layer 6)
@@ -268,44 +297,64 @@ class HumanInTheLoop(AgentMiddleware):
                         revised_tool_calls.append(tool_call)
                         continue
                     elif smart == SmartApprovalResult.DENY:
-                        artificial_tool_messages.append(ToolMessage(
-                            content=f"Smart approval denied. {BLOCKED_MESSAGE}",
-                            name=tool_name, tool_call_id=tool_call["id"], status="error",
-                        ))
+                        artificial_tool_messages.append(
+                            ToolMessage(
+                                content=f"Smart approval denied. {BLOCKED_MESSAGE}",
+                                name=tool_name,
+                                tool_call_id=tool_call["id"],
+                                status="error",
+                            )
+                        )
                         continue
 
                 # If still not approved, use interrupt for human decision
                 if not result.approved:
                     action_request = ActionRequest(
-                        name=tool_name, args=tool_args,
+                        name=tool_name,
+                        args=tool_args,
                         description=f"Dangerous command: {command}",
                     )
                     review_config = ReviewConfig(
-                        action_name=tool_name, allowed_decisions=["approve", "reject"],
+                        action_name=tool_name,
+                        allowed_decisions=["approve", "reject"],
                     )
                     try:
-                        hitl_response = interrupt(HITLRequest(
-                            action_requests=[action_request],
-                            review_configs=[review_config],
-                        ))
+                        hitl_response = interrupt(
+                            HITLRequest(
+                                action_requests=[action_request],
+                                review_configs=[review_config],
+                            )
+                        )
                         decisions = hitl_response.get("decisions", [])
                         if decisions and decisions[0]["type"] == "approve":
                             revised_tool_calls.append(tool_call)
                         else:
-                            msg = decisions[0].get("message", "Rejected by user") if decisions else "No decision"
-                            artificial_tool_messages.append(ToolMessage(
-                            content=f"User denied: {msg}. {BLOCKED_MESSAGE}",
-                            name=tool_name, tool_call_id=tool_call["id"], status="error",
-                        ))
+                            msg = (
+                                (decisions[0].get("message") or "Rejected by user")
+                                if decisions
+                                else "No decision"
+                            )
+                            artificial_tool_messages.append(
+                                ToolMessage(
+                                    content=f"User denied: {msg}. {BLOCKED_MESSAGE}",
+                                    name=tool_name,
+                                    tool_call_id=tool_call["id"],
+                                    status="error",
+                                )
+                            )
                     except GraphInterrupt:
                         # Real HITL interrupt: let LangGraph persist it so the
                         # frontend approval dialog can fire. Do NOT swallow it.
                         raise
                     except Exception:
-                        artificial_tool_messages.append(ToolMessage(
-                            content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
-                            name=tool_name, tool_call_id=tool_call["id"], status="error",
-                        ))
+                        artificial_tool_messages.append(
+                            ToolMessage(
+                                content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
+                                name=tool_name,
+                                tool_call_id=tool_call["id"],
+                                status="error",
+                            )
+                        )
                     continue
 
                 revised_tool_calls.append(tool_call)
@@ -316,13 +365,19 @@ class HumanInTheLoop(AgentMiddleware):
                 action = tool_args.get("action", "")
                 if action in ("add", "replace"):
                     write_result = self.write_gate.request_write(
-                        WriteTarget.MEMORY, json.dumps(tool_args), session_id,
+                        WriteTarget.MEMORY,
+                        json.dumps(tool_args),
+                        session_id,
                     )
                     if write_result.blocked:
-                        artificial_tool_messages.append(ToolMessage(
-                            content=write_result.reason, name=tool_name,
-                            tool_call_id=tool_call["id"], status="error",
-                        ))
+                        artificial_tool_messages.append(
+                            ToolMessage(
+                                content=write_result.reason,
+                                name=tool_name,
+                                tool_call_id=tool_call["id"],
+                                status="error",
+                            )
+                        )
                         continue
 
             # ── Configured interrupt_on tools ──
@@ -334,25 +389,36 @@ class HumanInTheLoop(AgentMiddleware):
                 elif description_value is not None:
                     description = description_value
                 else:
-                    description = f"{self.config.description_prefix}\n\nTool: {tool_name}\nArgs: {tool_args}"
+                    description = (
+                        f"{self.config.description_prefix}\n\nTool: {tool_name}\nArgs: {tool_args}"
+                    )
 
                 action_request = ActionRequest(
-                    name=tool_name, args=tool_args, description=description,
+                    name=tool_name,
+                    args=tool_args,
+                    description=description,
                 )
                 review_config = ReviewConfig(
-                    action_name=tool_name, allowed_decisions=config["allowed_decisions"],
+                    action_name=tool_name,
+                    allowed_decisions=config["allowed_decisions"],
                 )
                 try:
-                    hitl_response = interrupt(HITLRequest(
-                        action_requests=[action_request],
-                        review_configs=[review_config],
-                    ))
+                    hitl_response = interrupt(
+                        HITLRequest(
+                            action_requests=[action_request],
+                            review_configs=[review_config],
+                        )
+                    )
                     decisions = hitl_response.get("decisions", [])
                     if not decisions:
-                        artificial_tool_messages.append(ToolMessage(
-                            content=f"No decision received. {BLOCKED_MESSAGE}",
-                            name=tool_name, tool_call_id=tool_call["id"], status="error",
-                        ))
+                        artificial_tool_messages.append(
+                            ToolMessage(
+                                content=f"No decision received. {BLOCKED_MESSAGE}",
+                                name=tool_name,
+                                tool_call_id=tool_call["id"],
+                                status="error",
+                            )
+                        )
                         continue
 
                     decision = decisions[0]
@@ -367,39 +433,59 @@ class HumanInTheLoop(AgentMiddleware):
                         revised_tool_calls.append(revised_tc)
                     elif decision["type"] == "reject" and "reject" in allowed:
                         msg = decision.get("message", f"User rejected {tool_name}")
-                        artificial_tool_messages.append(ToolMessage(
-                            content=f"{msg}. {BLOCKED_MESSAGE}",
-                            name=tool_name, tool_call_id=tool_call["id"], status="error",
-                        ))
+                        artificial_tool_messages.append(
+                            ToolMessage(
+                                content=f"{msg}. {BLOCKED_MESSAGE}",
+                                name=tool_name,
+                                tool_call_id=tool_call["id"],
+                                status="error",
+                            )
+                        )
                     else:
-                        artificial_tool_messages.append(ToolMessage(
-                            content=f"Unexpected decision type. {BLOCKED_MESSAGE}",
-                            name=tool_name, tool_call_id=tool_call["id"], status="error",
-                        ))
+                        artificial_tool_messages.append(
+                            ToolMessage(
+                                content=f"Unexpected decision type. {BLOCKED_MESSAGE}",
+                                name=tool_name,
+                                tool_call_id=tool_call["id"],
+                                status="error",
+                            )
+                        )
                 except GraphInterrupt:
                     # Real HITL interrupt: let LangGraph persist it so the
                     # frontend approval dialog can fire. Do NOT swallow it.
                     raise
                 except Exception:
-                    artificial_tool_messages.append(ToolMessage(
-                        content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
-                        name=tool_name, tool_call_id=tool_call["id"], status="error",
-                    ))
+                    artificial_tool_messages.append(
+                        ToolMessage(
+                            content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
+                            name=tool_name,
+                            tool_call_id=tool_call["id"],
+                            status="error",
+                        )
+                    )
                 continue
 
             # ── Plugin-escalated tool approval (layer 10) ──
             tool_approval = self.approval.request_tool_approval(tool_name, tool_args, session_id)
             if tool_approval.blocked:
-                artificial_tool_messages.append(ToolMessage(
-                    content=tool_approval.reason, name=tool_name,
-                    tool_call_id=tool_call["id"], status="error",
-                ))
+                artificial_tool_messages.append(
+                    ToolMessage(
+                        content=tool_approval.reason,
+                        name=tool_name,
+                        tool_call_id=tool_call["id"],
+                        status="error",
+                    )
+                )
                 continue
 
             revised_tool_calls.append(tool_call)
 
         last_ai_msg.tool_calls = revised_tool_calls
-        return {"messages": [last_ai_msg, *artificial_tool_messages]} if artificial_tool_messages else None
+        return (
+            {"messages": [last_ai_msg, *artificial_tool_messages]}
+            if artificial_tool_messages
+            else None
+        )
 
     @override
     async def aafter_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
@@ -407,7 +493,9 @@ class HumanInTheLoop(AgentMiddleware):
 
     @override
     def wrap_tool_call(
-        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage],
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage],
     ) -> ToolMessage:
         session_id = self._session_id(request.state)
         if self.interrupt_mgr.is_interrupted(session_id):
@@ -415,13 +503,17 @@ class HumanInTheLoop(AgentMiddleware):
             self.interrupt_mgr.clear_interrupt(session_id)
             return ToolMessage(
                 content=f"Tool execution interrupted by user. {BLOCKED_MESSAGE}",
-                name=tool_name, tool_call_id=request.tool_call["id"], status="error",
+                name=tool_name,
+                tool_call_id=request.tool_call["id"],
+                status="error",
             )
         return handler(request)
 
     @override
     async def awrap_tool_call(
-        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
     ) -> ToolMessage:
         session_id = self._session_id(request.state)
         if self.interrupt_mgr.is_interrupted(session_id):
@@ -429,6 +521,8 @@ class HumanInTheLoop(AgentMiddleware):
             self.interrupt_mgr.clear_interrupt(session_id)
             return ToolMessage(
                 content=f"Tool execution interrupted by user. {BLOCKED_MESSAGE}",
-                name=tool_name, tool_call_id=request.tool_call["id"], status="error",
+                name=tool_name,
+                tool_call_id=request.tool_call["id"],
+                status="error",
             )
         return await handler(request)

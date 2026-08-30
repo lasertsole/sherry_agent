@@ -8,6 +8,7 @@ the O(n*d) rebuild on the next open.
 
 No dependency on snkv.vector.VectorStore — usearch is managed directly.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,8 +25,7 @@ try:
     from usearch.index import Index as UsearchIndex
 except ImportError as exc:
     raise ImportError(
-        "usearch is required for SNKVVectorStorage.\n"
-        "Install with:  pip install snkv[vector]"
+        "usearch is required for SNKVVectorStorage.\nInstall with:  pip install snkv[vector]"
     ) from exc
 
 from ..base import BaseVectorStorage
@@ -80,20 +80,20 @@ class SNKVVectorStorage(BaseVectorStorage):
         self._max_batch_size = self.global_config["embedding_batch_num"]
 
         ns = self.namespace
-        self._cf_val_name  = f"vec_val_{ns}"   # key → JSON payload
-        self._cf_raw_name  = f"vec_raw_{ns}"   # key → float32 bytes
-        self._cf_idk_name  = f"vec_idk_{ns}"   # key → int64 usearch label
-        self._cf_idi_name  = f"vec_idi_{ns}"   # int64 → key
+        self._cf_val_name = f"vec_val_{ns}"  # key → JSON payload
+        self._cf_raw_name = f"vec_raw_{ns}"  # key → float32 bytes
+        self._cf_idk_name = f"vec_idk_{ns}"  # key → int64 usearch label
+        self._cf_idi_name = f"vec_idi_{ns}"  # int64 → key
         self._cf_meta_name = f"vec_meta_{ns}"  # config (next_id)
-        self._cf_rev_name  = f"vec_rev_{ns}"   # entity_name → JSON list of relation keys
+        self._cf_rev_name = f"vec_rev_{ns}"  # entity_name → JSON list of relation keys
 
         self._shared: snkv_shared.SharedStore | None = None
-        self._val_cf  = None
-        self._raw_cf  = None
-        self._idk_cf  = None
-        self._idi_cf  = None
+        self._val_cf = None
+        self._raw_cf = None
+        self._idk_cf = None
+        self._idi_cf = None
         self._meta_cf = None
-        self._rev_cf  = None
+        self._rev_cf = None
         self._index: UsearchIndex | None = None
         self._next_id: int = 0
 
@@ -125,12 +125,12 @@ class SNKVVectorStorage(BaseVectorStorage):
 
     def _open_store(self) -> None:
         kv = self._shared.kv
-        self._val_cf  = _get_or_create_cf(kv, self._cf_val_name)
-        self._raw_cf  = _get_or_create_cf(kv, self._cf_raw_name)
-        self._idk_cf  = _get_or_create_cf(kv, self._cf_idk_name)
-        self._idi_cf  = _get_or_create_cf(kv, self._cf_idi_name)
+        self._val_cf = _get_or_create_cf(kv, self._cf_val_name)
+        self._raw_cf = _get_or_create_cf(kv, self._cf_raw_name)
+        self._idk_cf = _get_or_create_cf(kv, self._cf_idk_name)
+        self._idi_cf = _get_or_create_cf(kv, self._cf_idi_name)
         self._meta_cf = _get_or_create_cf(kv, self._cf_meta_name)
-        self._rev_cf  = _get_or_create_cf(kv, self._cf_rev_name)
+        self._rev_cf = _get_or_create_cf(kv, self._cf_rev_name)
 
         stored_nid = self._meta_cf.get(b"next_id")
         self._next_id = _unpack_i64(stored_nid) if stored_nid else 0
@@ -185,13 +185,22 @@ class SNKVVectorStorage(BaseVectorStorage):
                     except OSError:
                         pass
 
-        for cf in (self._val_cf, self._raw_cf, self._idk_cf, self._idi_cf, self._meta_cf, self._rev_cf):
+        for cf in (
+            self._val_cf,
+            self._raw_cf,
+            self._idk_cf,
+            self._idi_cf,
+            self._meta_cf,
+            self._rev_cf,
+        ):
             if cf is not None:
                 try:
                     cf.close()
                 except Exception:
                     pass
-        self._val_cf = self._raw_cf = self._idk_cf = self._idi_cf = self._meta_cf = self._rev_cf = None
+        self._val_cf = self._raw_cf = self._idk_cf = self._idi_cf = self._meta_cf = self._rev_cf = (
+            None
+        )
         self._index = None
 
     # ------------------------------------------------------------------
@@ -267,8 +276,7 @@ class SNKVVectorStorage(BaseVectorStorage):
             # Collect all entity names that need reverse index changes
             affected: set[str] = set()
             for key_b in new_entity_pairs:
-                for e in (*pre_entity_pairs.get(key_b, (None, None)),
-                           *new_entity_pairs[key_b]):
+                for e in (*pre_entity_pairs.get(key_b, (None, None)), *new_entity_pairs[key_b]):
                     if e:
                         affected.add(e)
 
@@ -296,9 +304,7 @@ class SNKVVectorStorage(BaseVectorStorage):
                             lst.append(key_str)
 
             base_id = self._next_id
-            new_ids: dict[bytes, int] = {
-                key.encode(): base_id + i for i, key in enumerate(keys)
-            }
+            new_ids: dict[bytes, int] = {key.encode(): base_id + i for i, key in enumerate(keys)}
 
             kv.begin(write=True)
             try:
@@ -339,7 +345,7 @@ class SNKVVectorStorage(BaseVectorStorage):
                     except Exception:
                         pass
 
-            ids_arr  = np.array(list(new_ids.values()), dtype=np.uint64)
+            ids_arr = np.array(list(new_ids.values()), dtype=np.uint64)
             vecs_arr = np.stack([emb.astype(np.float32) for emb in embeddings])
             cap = self._index.capacity
             if cap > 0 and (len(self._index) + len(ids_arr)) / cap >= 0.9:
@@ -348,7 +354,9 @@ class SNKVVectorStorage(BaseVectorStorage):
 
         await self._ex().run_in_executor(self._shared.executor, _batch_put)
 
-    async def query(self, query: str, top_k: int, query_embedding: list[float] = None) -> list[dict[str, Any]]:
+    async def query(
+        self, query: str, top_k: int, query_embedding: list[float] = None
+    ) -> list[dict[str, Any]]:
         if query_embedding is not None:
             q_vec = np.asarray(query_embedding, dtype=np.float32)
         else:
@@ -362,8 +370,8 @@ class SNKVVectorStorage(BaseVectorStorage):
                 return []
 
             matches = self._index.search(q_vec.reshape(1, -1), top_k)
-            labels  = np.asarray(matches.keys).ravel()
-            dists   = np.asarray(matches.distances).ravel()
+            labels = np.asarray(matches.keys).ravel()
+            dists = np.asarray(matches.distances).ravel()
 
             out = []
             for label, dist in zip(labels, dists):
@@ -379,12 +387,14 @@ class SNKVVectorStorage(BaseVectorStorage):
                     val = json.loads(val_b.decode())
                 except Exception:
                     val = {}
-                out.append({
-                    "id": key_b.decode(),
-                    "distance": 1.0 - dist,
-                    "created_at": val.pop("__created_at__", None),
-                    **val,
-                })
+                out.append(
+                    {
+                        "id": key_b.decode(),
+                        "distance": 1.0 - dist,
+                        "created_at": val.pop("__created_at__", None),
+                        **val,
+                    }
+                )
             return out
 
         return await self._ex().run_in_executor(self._shared.executor, _search)
@@ -603,9 +613,7 @@ class SNKVVectorStorage(BaseVectorStorage):
                 except Exception:
                     pass
 
-            logger.debug(
-                f"[{self.workspace}] deleted {len(pre_data)} relations for {entity_name}"
-            )
+            logger.debug(f"[{self.workspace}] deleted {len(pre_data)} relations for {entity_name}")
 
         await self._ex().run_in_executor(self._shared.executor, _delete_relations)
 
@@ -628,8 +636,14 @@ class SNKVVectorStorage(BaseVectorStorage):
 
     async def drop(self) -> dict[str, str]:
         def _drop():
-            for cf in (self._val_cf, self._raw_cf, self._idk_cf, self._idi_cf,
-                       self._meta_cf, self._rev_cf):
+            for cf in (
+                self._val_cf,
+                self._raw_cf,
+                self._idk_cf,
+                self._idi_cf,
+                self._meta_cf,
+                self._rev_cf,
+            ):
                 if cf is not None:
                     cf.clear()
             self._next_id = 0

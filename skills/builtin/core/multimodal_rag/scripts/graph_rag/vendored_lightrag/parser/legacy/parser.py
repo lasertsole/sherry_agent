@@ -1,4 +1,4 @@
-﻿"""Legacy engine adapter: worker-stage plain-text extraction (RAW output)."""
+"""Legacy engine adapter: worker-stage plain-text extraction (RAW output)."""
 
 from __future__ import annotations
 
@@ -45,17 +45,14 @@ class LegacyParser(BaseParser):
         # ``global_args`` (which would invert the parser -> API dependency
         # direction).
         pdf_password = os.getenv("PDF_DECRYPT_PASSWORD") or None
-        text = await asyncio.to_thread(
-            extract_text, file_bytes, suffix, pdf_password=pdf_password
-        )
+        text = await asyncio.to_thread(extract_text, file_bytes, suffix, pdf_password=pdf_password)
         # The binary extractors (pdf/docx/pptx/xlsx) return whatever the
         # library yields — a scanned PDF with no text layer extracts to pure
         # whitespace. Fail the parse (like the text-decode path already does)
         # instead of persisting an empty document into chunking.
         if not text.strip():
             raise LegacyExtractionError(
-                f"extracted no usable text from {ctx.file_path} "
-                f"(doc_id={ctx.doc_id})"
+                f"extracted no usable text from {ctx.file_path} (doc_id={ctx.doc_id})"
             )
 
         await ctx.rag._persist_parsed_full_docs(

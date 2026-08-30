@@ -18,6 +18,7 @@ async def _init_registry_once() -> None:
     """Run registry initialization (idempotent) and start the EventBus bridge."""
     try:
         from agent.tools.subagent.registry import init_registry
+
         await init_registry()
         logger.info("Subagent registry initialized via server startup hook")
     except Exception as e:  # pragma: no cover - startup robustness
@@ -45,4 +46,3 @@ def _schedule_startup() -> None:
 
 
 _schedule_startup()
-

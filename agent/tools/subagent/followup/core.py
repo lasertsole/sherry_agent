@@ -17,7 +17,9 @@ async def _followup_loop() -> None:
     _running = True
     config = get_config()
     # Followup interval is 2× sweeper interval to avoid being too aggressive
-    interval = config.sweeper_interval_seconds * 2  # 2× sweeper interval to avoid being too aggressive
+    interval = (
+        config.sweeper_interval_seconds * 2
+    )  # 2× sweeper interval to avoid being too aggressive
 
     logger.info("Subagent followup started (interval={}s)", interval)
 
@@ -43,8 +45,12 @@ async def _check_timeouts() -> None:
 
         elapsed = time.monotonic() - run.execution.started_at
         if elapsed > config.run_timeout_seconds:
-            logger.warning("Followup: run {} exceeded timeout ({:.0f}s > {:.0f}s)",
-                          run.run_id, elapsed, config.run_timeout_seconds)
+            logger.warning(
+                "Followup: run {} exceeded timeout ({:.0f}s > {:.0f}s)",
+                run.run_id,
+                elapsed,
+                config.run_timeout_seconds,
+            )
             timed_out += 1
 
     # Trigger batch recovery when timed-out runs are detected

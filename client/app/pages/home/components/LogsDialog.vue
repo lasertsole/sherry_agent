@@ -121,10 +121,12 @@
     @show="onShow"
     @hide="onHide">
     <TabView v-model:activeIndex="activeTab">
-      <!-- ===== 前端日志 Tab ===== -->
-      <TabPanel :header="t('logs.tabs.frontend')">
+      <!-- ===== Frontend logs Tab ===== -->
+      <TabPanel
+        value="frontend"
+        :header="t('logs.tabs.frontend')">
         <div class="flex flex-col gap-3">
-          <!-- 工具栏：类型 + 按天分桶下拉（对等 server tab 的「文件 per 天」层级） -->
+          <!-- Toolbar: type + per-day bucket dropdown (mirroring the server tab's "file per day" hierarchy) -->
           <div class="flex items-center gap-2 flex-wrap">
             <Select
               :model-value="selectedType"
@@ -192,21 +194,25 @@
             </div>
           </div>
 
-          <!-- 连接状态提示 -->
-          <div v-if="frontendLive" class="flex items-center gap-2 text-xs">
+          <!-- Connection status hint -->
+          <div
+            v-if="frontendLive"
+            class="flex items-center gap-2 text-xs">
             <i class="pi pi-circle-fill text-green-500" />
             <span class="text-gray-500 dark:text-gray-400">
               {{ t('logs.connected') }}
             </span>
           </div>
 
-          <!-- 前端日志控制台 -->
+          <!-- Frontend log console -->
           <div
             ref="frontendConsoleRef"
             class="overflow-auto rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 font-mono text-xs leading-relaxed"
-            style="max-height: 60vh; min-height: 40vh;"
+            style="max-height: 60vh; min-height: 40vh"
             @scroll="onFrontendScroll">
-            <div v-if="loadingBucketContent" class="flex items-center justify-center h-full">
+            <div
+              v-if="loadingBucketContent"
+              class="flex items-center justify-center h-full">
               <ProgressSpinner style="width: 2rem; height: 2rem" />
             </div>
             <template v-else-if="frontendLines.length > 0">
@@ -218,17 +224,21 @@
                 {{ line.text }}
               </div>
             </template>
-            <div v-else class="flex items-center justify-center h-full text-sm text-gray-400">
+            <div
+              v-else
+              class="flex items-center justify-center h-full text-sm text-gray-400">
               {{ t('logs.empty') }}
             </div>
           </div>
         </div>
       </TabPanel>
 
-      <!-- ===== 后端日志 Tab ===== -->
-      <TabPanel :header="t('logs.tabs.backend')">
+      <!-- ===== Backend logs Tab ===== -->
+      <TabPanel
+        value="backend"
+        :header="t('logs.tabs.backend')">
         <div class="flex flex-col gap-3">
-          <!-- 工具栏：类型大桶 + 日期列 + PID 列（每行对应一个真实日志文件，日期+PID 定位） -->
+          <!-- Toolbar: type mega-bucket + date column + PID column (each row maps to one real log file, located by date + PID) -->
           <div class="flex items-center gap-2 flex-wrap">
             <Select
               :model-value="serverSelectedType"
@@ -305,8 +315,10 @@
             </div>
           </div>
 
-          <!-- 连接状态提示 -->
-          <div v-if="live" class="flex items-center gap-2 text-xs">
+          <!-- Connection status hint -->
+          <div
+            v-if="live"
+            class="flex items-center gap-2 text-xs">
             <i
               :class="[
                 'pi',
@@ -317,13 +329,15 @@
             </span>
           </div>
 
-          <!-- 后端日志控制台 -->
+          <!-- Backend log console -->
           <div
             ref="consoleRef"
             class="overflow-auto rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 font-mono text-xs leading-relaxed"
-            style="max-height: 60vh; min-height: 40vh;"
+            style="max-height: 60vh; min-height: 40vh"
             @scroll="onConsoleScroll">
-            <div v-if="loadingContent" class="flex items-center justify-center h-full">
+            <div
+              v-if="loadingContent"
+              class="flex items-center justify-center h-full">
               <ProgressSpinner style="width: 2rem; height: 2rem" />
             </div>
             <template v-else-if="lines.length > 0">
@@ -335,7 +349,9 @@
                 {{ formatLine(line) }}
               </div>
             </template>
-            <div v-else class="flex items-center justify-center h-full text-sm text-gray-400">
+            <div
+              v-else
+              class="flex items-center justify-center h-full text-sm text-gray-400">
               {{ t('logs.empty') }}
             </div>
           </div>
@@ -363,7 +379,7 @@ import {
   typeOfEntry,
   type ClientLogBucket,
   type ClientLogEntry,
-  type ClientLogType,
+  type ClientLogType
 } from '@/composables/clientLog';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -373,29 +389,30 @@ const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 
 const visible = computed({
   get: () => props.modelValue,
-  set: (v) => emits('update:modelValue', v),
+  set: v => emits('update:modelValue', v)
 });
 
 const activeTab = ref(0);
 
-/** 渲染的日志行（含级别，用于着色） */
+/** Rendered log line (includes the level, used for coloring) */
 interface LogLine {
   level: string;
   text: string;
 }
 
-/** 渲染行数上限：超出后丢弃最旧的行 */
+/** Cap on rendered lines: the oldest lines are dropped once exceeded */
 const MAX_LINES = 5000;
 
-/* ==================== 前端日志（clientLog 组合式：历史 + 实时） ==================== */
+/* ==================== Frontend logs (clientLog composable: history + live) ==================== */
 
-// 安装一次浏览器 console 捕获：输出进入内存缓冲（实时）+ IndexedDB（跨重启历史）。
-// 捕获为进程级模块单例，幂等；与 server tab 对等提供「历史 + 实时」两段能力。
+// Install the browser console capture once: output goes into an in-memory buffer (live) +
+// IndexedDB (history across restarts). The capture is a process-level module singleton and
+// idempotent; it provides the same "history + live" two-part capability as the server tab.
 installClientLogCapture();
 
 const frontendLines = ref<ClientLogEntry[]>([]);
-const logTypes = ref<ClientLogType[]>([]); // 固定顺序 all/log/error
-const buckets = ref<ClientLogBucket[]>([]); // 当前类型的按天分桶
+const logTypes = ref<ClientLogType[]>([]); // fixed order all/log/error
+const buckets = ref<ClientLogBucket[]>([]); // per-day buckets for the current type
 const selectedType = ref<ClientLogType>('all');
 const selectedBucket = ref<string | null>(null);
 const loadingTypes = ref(false);
@@ -406,23 +423,23 @@ const frontendConsoleRef = ref<HTMLElement | null>(null);
 let frontendUserScrolledUp = false;
 let unsubscribeFrontend: (() => void) | null = null;
 
-/** 当前选中的类型分桶（由 selectedType + selectedBucket 解析）。 */
+/** The currently selected type bucket (resolved from selectedType + selectedBucket). */
 const selectedClientBucket = computed<ClientLogBucket | null>(() => {
   if (!selectedBucket.value) return null;
-  return buckets.value.find((x) => x.name === selectedBucket.value) ?? null;
+  return buckets.value.find(x => x.name === selectedBucket.value) ?? null;
 });
 
-/** 当前选中分桶是否为「今天」（只有它可实时推送）。 */
+/** Whether the selected bucket is "today" (only it can receive live pushes). */
 const selectedBucketIsCurrent = computed<boolean>(() => {
   const b = selectedClientBucket.value;
   return !!b?.is_current;
 });
 
-/** 实时流是否应接受该条目（仅当前类型；all = 全部）。 */
+/** Whether the live stream should accept this entry (current type only; all = everything). */
 const entryMatchesSelectedType = (entry: ClientLogEntry): boolean =>
   selectedType.value === 'all' || typeOfEntry(entry) === selectedType.value;
 
-/** 弹窗打开期间实时追加前端新日志（仅当当前选中「今天」分桶且开启实时、类型匹配）。 */
+/** Live-append new frontend logs while the dialog is open (only when the "today" bucket is selected, live is enabled, and the type matches). */
 const handleFrontendEntry = (entry: ClientLogEntry) => {
   if (!entryMatchesSelectedType(entry)) return;
   frontendLines.value.push(entry);
@@ -430,12 +447,12 @@ const handleFrontendEntry = (entry: ClientLogEntry) => {
   scrollFrontendToBottom();
 };
 
-/** 加载类型下拉（固定 all/log/error，各带计数），并进入该类型的默认分桶选择。 */
+/** Load the type dropdown (fixed all/log/error, each with a count) and enter the default bucket selection for that type. */
 const loadTypeList = async () => {
   loadingTypes.value = true;
   try {
     const infos = await listClientLogTypes();
-    logTypes.value = infos.map((i) => i.type);
+    logTypes.value = infos.map(i => i.type);
     await onTypeChange(selectedType.value);
   } catch (e) {
     console.error('[LogsDialog] Failed to load client log types:', e);
@@ -446,13 +463,14 @@ const loadTypeList = async () => {
   }
 };
 
-/** 类型切换：重载该类型的分桶列表并默认选中「今天」（今天最新在前）。 */
+/** Type switch: reload the bucket list for that type and default-select "today" (today, newest first). */
 const loadBucketsForType = async (type: ClientLogType) => {
   loadingBucketContent.value = true;
   try {
     buckets.value = await listClientLogBucketsForType(type);
-    if (buckets.value.length > 0) {
-      selectedBucket.value = buckets.value[0].name;
+    const firstBucket = buckets.value[0];
+    if (firstBucket) {
+      selectedBucket.value = firstBucket.name;
       await loadBucketContent();
     } else {
       selectedBucket.value = null;
@@ -466,7 +484,7 @@ const loadBucketsForType = async (type: ClientLogType) => {
   }
 };
 
-/** 当前选中分桶的内容（最新在前）。 */
+/** Content of the currently selected bucket (newest first). */
 const loadBucketContent = async () => {
   const bucket = selectedClientBucket.value;
   if (!bucket) return;
@@ -482,21 +500,21 @@ const loadBucketContent = async () => {
   }
 };
 
-/** 类型切换：停止实时（类型变了）、重载分桶与内容。 */
+/** Type switch: stop live (the type changed) and reload buckets + content. */
 const onTypeChange = async (type: ClientLogType) => {
   stopFrontendLive();
   selectedType.value = type;
   await loadBucketsForType(type);
 };
 
-/** 分桶切换：若离开「今天」则停止实时，否则重新加载内容。 */
+/** Bucket switch: stop live when leaving "today"; otherwise reload the content. */
 const onBucketChange = async (name: string) => {
   stopFrontendLive();
   selectedBucket.value = name;
   await loadBucketContent();
 };
 
-/** 切换前端实时开关（仅「今天」分桶可用）。 */
+/** Toggle the frontend live switch (only available for the "today" bucket). */
 const toggleFrontendLive = () => {
   if (frontendLive.value) {
     stopFrontendLive();
@@ -505,20 +523,20 @@ const toggleFrontendLive = () => {
   }
 };
 
-/** 启动前端实时流：仅当选中「今天」分桶。 */
+/** Start the frontend live stream: only when the "today" bucket is selected. */
 const startFrontendLive = () => {
   if (!selectedBucketIsCurrent.value || frontendLive.value) return;
   frontendLive.value = true;
   subscribeFrontend();
 };
 
-/** 停止前端实时流。 */
+/** Stop the frontend live stream. */
 const stopFrontendLive = () => {
   frontendLive.value = false;
   teardownFrontend();
 };
 
-/** 清空前端日志：IndexedDB 历史 + 内存缓冲 + 视图 + console 输出。 */
+/** Clear frontend logs: IndexedDB history + in-memory buffer + view + console output. */
 const clearFrontend = async () => {
   frontendLines.value = [];
   try {
@@ -529,17 +547,17 @@ const clearFrontend = async () => {
   if (typeof window !== 'undefined' && window.console && typeof window.console.clear === 'function') {
     window.console.clear();
   }
-  // 清空后重载类型/分桶（计数归零）。
+  // Reload types/buckets after clearing (counts reset to zero).
   await loadBucketsForType(selectedType.value);
 };
 
-/** 开始接收前端实时日志。 */
+/** Start receiving live frontend logs. */
 const subscribeFrontend = () => {
   unsubscribeFrontend?.();
   unsubscribeFrontend = subscribeClientLogs(handleFrontendEntry);
 };
 
-/** 停止接收前端实时日志。 */
+/** Stop receiving live frontend logs. */
 const teardownFrontend = () => {
   unsubscribeFrontend?.();
   unsubscribeFrontend = null;
@@ -558,7 +576,7 @@ const onFrontendScroll = () => {
   frontendUserScrolledUp = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
 };
 
-/* ==================== 后端日志（文件 + WS 实时流） ==================== */
+/* ==================== Backend logs (files + WS live stream) ==================== */
 
 const logFiles = ref<LogFileInfo[]>([]);
 const loadingFiles = ref(false);
@@ -568,52 +586,52 @@ const live = ref(false);
 const autoScroll = ref(true);
 const wsStatus = ref<'idle' | 'connecting' | 'connected'>('idle');
 
-/* ---- server tab 的「类型大桶 → 按天分桶」层级（对等 client tab） ---- */
+/* ---- Server tab's "type mega-bucket → per-day bucket" hierarchy (mirroring the client tab) ---- */
 
-/** 服务端日志的目录类型 → 统一类型大桶：info → log（INFO 流水）、all → all、error → error。 */
+/** Server log directory type → unified type mega-bucket: info → log (INFO stream), all → all, error → error. */
 const kindToType = (kind: string): ClientLogType => (kind === 'info' ? 'log' : (kind as ClientLogType));
 
-/** 解析服务端日志文件名 `{kind}_{YYYY-MM-DD}_{pid}.log` 得到类型与日期。 */
+/** Parse the server log filename `{kind}_{YYYY-MM-DD}_{pid}.log` to get the type and date. */
 const LOG_FILENAME_RE = /^(?<kind>info|all|error)_(?<date>\d{4}-\d{2}-\d{2})_(?<pid>\d+)\.log$/;
 
-/** 类型大桶下拉（固定 all/log/error，对等 client tab）。 */
-const serverLogTypes = ref<ClientLogType[]>(CLIENT_LOG_TYPES);
+/** Type mega-bucket dropdown (fixed all/log/error, mirroring the client tab). */
+const serverLogTypes = ref<ClientLogType[]>([...CLIENT_LOG_TYPES]);
 const serverSelectedType = ref<ClientLogType>('all');
 
-/** 服务端日志分桶视图行：一个桶对应后端一个真实的 `.log` 文件（不再按日期合并 PID）。
- *  展示名为日期（YYYY-MM-DD）；同一天存在多个 PID 文件时在展示名追加 PID 以区分。
- *  桶的 `name` 使用文件名（如 `error_2026-08-17_32760.log`）作为唯一键，与 `LogFileInfo` 一一对应。 */
+/** Server log bucket view row: each bucket corresponds to one real `.log` file on the backend
+ *  (PIDs are no longer merged by date). The display name is the date (YYYY-MM-DD); when multiple
+ *  PID files exist on the same day, the PID is appended to the display name to distinguish them.
+ *  The bucket's `name` uses the filename (e.g. `error_2026-08-17_32760.log`) as the unique key,
+ *  one-to-one with `LogFileInfo`. */
 interface ServerLogBucket extends ClientLogBucket {
-  /** 后端文件名 `{kind}_{YYYY-MM-DD}_{pid}.log`，即该桶对应的真实日志文件。 */
+  /** Backend filename `{kind}_{YYYY-MM-DD}_{pid}.log`, i.e. the real log file this bucket corresponds to. */
   file: string;
-  /** 该桶对应文件的完整路径（用于读取/实时），消除「同一天多 PID 折叠」歧义。 */
+  /** Full path of the file this bucket corresponds to (used for reading/live), eliminating the "multiple PIDs folded into the same day" ambiguity. */
   path: string;
-  /** 该桶对应的进程 PID（从文件名解析）。 */
+  /** Process PID this bucket corresponds to (parsed from the filename). */
   pid: string;
-  /** 该桶日期（YYYY-MM-DD）。 */
+  /** Bucket date (YYYY-MM-DD). */
   date: string;
 }
 
-/** 当前类型的按「日期 + PID」分桶（每个桶对应一个真实文件，最新在前）。数据源，派生日期/PID 两列。 */
+/** Per-"date + PID" buckets for the current type (each bucket maps to one real file, newest first). Source data from which the date/PID columns are derived. */
 const serverBuckets = ref<ServerLogBucket[]>([]);
 
-/** 日期列（第 2 列）：该类型下所有日期，降序。 */
+/** Date column (2nd column): all dates under the type, descending. */
 const serverDates = computed<string[]>(() => {
-  const set = new Set(serverBuckets.value.map((b) => b.date));
+  const set = new Set(serverBuckets.value.map(b => b.date));
   return [...set].sort((a, b) => b.localeCompare(a));
 });
 
-/** PID 列表（第 3 列）：选中日期下的分桶，按 PID 升序。 */
+/** PID list (3rd column): buckets under the selected date, sorted by PID ascending. */
 const serverPidsForDate = computed<ServerLogBucket[]>(() =>
-  serverBuckets.value
-    .filter((b) => b.date === serverSelectedDate.value)
-    .sort((a, b) => a.pid.localeCompare(b.pid)),
+  serverBuckets.value.filter(b => b.date === serverSelectedDate.value).sort((a, b) => a.pid.localeCompare(b.pid))
 );
 
 const serverSelectedDate = ref<string | null>(null);
 const serverSelectedPid = ref<string | null>(null);
 
-/** 日期列切换：记录所选日期，并默认选中该日期下第一个（PID 升序）PID。 */
+/** Date column switch: record the chosen date and default-select the first PID (ascending) under that date. */
 const onServerDateChange = async (date: string | null) => {
   stopLive();
   serverSelectedDate.value = date;
@@ -622,14 +640,12 @@ const onServerDateChange = async (date: string | null) => {
     lines.value = [];
     return;
   }
-  const pids = serverBuckets.value
-    .filter((b) => b.date === date)
-    .sort((a, b) => a.pid.localeCompare(b.pid));
+  const pids = serverBuckets.value.filter(b => b.date === date).sort((a, b) => a.pid.localeCompare(b.pid));
   serverSelectedPid.value = pids[0]?.pid ?? null;
   if (pids[0]) await loadContent();
 };
 
-/** PID 列切换：更新选中 PID 并读取该 PID 对应的真实文件。 */
+/** PID column switch: update the selected PID and read the real file corresponding to that PID. */
 const onServerPidChange = async (pid: string | null) => {
   stopLive();
   serverSelectedPid.value = pid;
@@ -640,53 +656,56 @@ const onServerPidChange = async (pid: string | null) => {
   await loadContent();
 };
 
-/** 当前解析出的分桶（由「日期 + PID」定位到具体真实文件），驱动路径与按钮状态。 */
-const resolvedServerBucket = computed<ServerLogBucket | null>(() =>
-  serverBuckets.value.find(
-    (b) => b.date === serverSelectedDate.value && b.pid === serverSelectedPid.value,
-  ) ?? null,
+/** The currently resolved bucket (pinpointed to a concrete real file via "date + PID"), driving the path and button states. */
+const resolvedServerBucket = computed<ServerLogBucket | null>(
+  () => serverBuckets.value.find(b => b.date === serverSelectedDate.value && b.pid === serverSelectedPid.value) ?? null
 );
 
-/** 当前选中分桶的文件名（唯一键），派生自日期 + PID。 */
+/** Filename (unique key) of the currently selected bucket, derived from date + PID. */
 const serverSelectedBucket = computed<string | null>(() => resolvedServerBucket.value?.name ?? null);
 
-/** 当前选中分桶是否为「今天」（只有它可实时推送）。 */
+/** Whether the selected bucket is "today" (only it can receive live pushes). */
 const serverSelectedBucketIsCurrent = computed<boolean>(() => !!resolvedServerBucket.value?.is_current);
 
-/** 类型切换：重算该类型下分桶，默认选中最新「今天」。 */
+/** Type switch: recompute the buckets under that type, default-selecting the latest "today". */
 const onServerTypeChange = async (type: ClientLogType) => {
   stopLive();
   serverSelectedType.value = type;
   await loadServerBucketsForType(type);
 };
 
-/** 按「日期 + PID」分桶：把该类型的每个真实日志文件都作为一个分桶（每个桶一个 PID），
- *  同一天多 PID 不再互相折叠。桶 `name` 用文件名作唯一键，作为「日期 + PID」两列的底层数据源。 */
+/** Bucketing by "date + PID": every real log file of the type becomes one bucket (one PID per
+ *  bucket), so multiple PIDs on the same day no longer fold into each other. The bucket `name`
+ *  uses the filename as the unique key and serves as the underlying data source for the
+ *  "date + PID" columns. */
 const buildServerBucketsForType = (type: ClientLogType): ServerLogBucket[] => {
-  // 该类型下所有真实文件，按文件名分组计数同日期 PID 数量。
-  const files = logFiles.value.filter((f) => {
+  // All real files under this type; filenames are grouped/matched to count the PIDs per date.
+  const files = logFiles.value.filter(f => {
     const m = f.name.match(LOG_FILENAME_RE);
-    return !!m?.groups && kindToType(m.groups['kind']) === type;
+    return !!m?.groups && kindToType(m.groups['kind'] ?? '') === type;
   });
-  const buckets: ServerLogBucket[] = files.map((f) => {
+  const buckets: ServerLogBucket[] = files.map(f => {
     const m = f.name.match(LOG_FILENAME_RE)!;
-    const date = m.groups!['date'];
-    const [y, mo, d] = date.split('-').map(Number);
+    const groups = m.groups!;
+    const date = groups['date'] ?? '';
+    const pid = groups['pid'] ?? '';
+    const [y = 0, mo = 1, d = 1] = date.split('-').map(Number);
     const dayStart = new Date(y, mo - 1, d).getTime();
     return {
       type,
-      name: f.name, // 唯一键 = 文件名（含 PID），与 LogFileInfo 一一对应
+      name: f.name, // unique key = filename (including PID), one-to-one with LogFileInfo
       file: f.name,
       path: f.path,
-      pid: m.groups!['pid'],
+      pid,
       date,
       tsStart: dayStart,
       tsEnd: dayStart + 24 * 60 * 60 * 1000,
       count: 1,
-      is_current: f.is_current,
+      is_current: f.is_current
     };
   });
-  // 停活的当前进程日志优先（今天在前），再按日期降序、PID 升序，保证同日期多 PID 顺序稳定。
+  // Still-alive current-process logs come first (today at the top), then date descending and
+  // PID ascending, keeping a stable order for multiple PIDs on the same date.
   buckets.sort((a, b) => {
     if (a.is_current !== b.is_current) return a.is_current ? -1 : 1;
     if (a.date !== b.date) return b.date.localeCompare(a.date);
@@ -695,17 +714,19 @@ const buildServerBucketsForType = (type: ClientLogType): ServerLogBucket[] => {
   return buckets;
 };
 
-/** 加载该类型的分桶列表：每个后端日志文件一个分桶（含自身路径），
- *  默认选中最新「今天」文件并据此设定「日期 + PID」两列初值。 */
+/** Load the bucket list for the type: one bucket per backend log file (with its own path),
+ *  default-selecting the latest "today" file and using it to set the initial "date + PID"
+ *  column values. */
 const loadServerBucketsForType = async (type: ClientLogType) => {
   loadingFiles.value = true;
   try {
     const buckets = buildServerBucketsForType(type);
     serverBuckets.value = buckets;
-    if (buckets.length > 0) {
-      // 默认选中第一个（buildServerBucketsForType 已把「今天」排最前，最新在前）
-      serverSelectedDate.value = buckets[0].date;
-      serverSelectedPid.value = buckets[0].pid;
+    const firstBucket = buckets[0];
+    if (firstBucket) {
+      // Default-select the first (buildServerBucketsForType already sorts "today" first, newest first)
+      serverSelectedDate.value = firstBucket.date;
+      serverSelectedPid.value = firstBucket.pid;
       await loadContent();
     } else {
       serverSelectedDate.value = null;
@@ -720,10 +741,10 @@ const loadServerBucketsForType = async (type: ClientLogType) => {
   }
 };
 
-/** 当前选中分桶的文件路径（用于读取/实时），由「日期 + PID」解析。 */
+/** File path of the currently selected bucket (used for reading/live), resolved from "date + PID". */
 const serverSelectedFilePath = computed<string | null>(() => resolvedServerBucket.value?.path ?? null);
 
-/** 实时流是否应接受该条日志（仅当前类型；all = 全部）。 */
+/** Whether the live stream should accept this log entry (current type only; all = everything). */
 const frameMatchesSelectedType = (level: string): boolean =>
   serverSelectedType.value === 'all' || levelToType(level) === serverSelectedType.value;
 
@@ -731,7 +752,7 @@ const consoleRef = ref<HTMLElement | null>(null);
 let streamHandle: { close: () => void } | null = null;
 let userScrolledUp = false;
 
-/** 根据日志级别返回 Tailwind 着色类（dark 模式感知） */
+/** Return the Tailwind color classes for a log level (dark-mode aware) */
 const levelClass = (level: string): string => {
   const lv = (level || '').toUpperCase();
   if (lv === 'TRACE' || lv === 'DEBUG') return 'text-gray-500 dark:text-gray-400';
@@ -741,10 +762,10 @@ const levelClass = (level: string): string => {
   return 'text-gray-800 dark:text-gray-200';
 };
 
-/** 格式化单行日志：`{message}`（原始文本已含时间戳与级别） */
+/** Format a single log line: `{message}` (the raw text already contains the timestamp and level) */
 const formatLine = (line: LogLine): string => line.text;
 
-/** 追加日志行（实时流），超出上限时丢弃最旧 */
+/** Append log lines (live stream), dropping the oldest when over the cap */
 const appendLines = (newLines: LogLine[]) => {
   if (newLines.length === 0) return;
   lines.value = [...lines.value, ...newLines];
@@ -754,7 +775,7 @@ const appendLines = (newLines: LogLine[]) => {
   scrollToBottom();
 };
 
-/** 自动滚动到底部（仅当开启自动滚动且用户未上翻） */
+/** Auto-scroll to the bottom (only when auto-scroll is on and the user has not scrolled up) */
 const scrollToBottom = async () => {
   if (!autoScroll.value || userScrolledUp) return;
   await nextTick();
@@ -762,14 +783,14 @@ const scrollToBottom = async () => {
   if (el) el.scrollTop = el.scrollHeight;
 };
 
-/** 用户滚动时记录是否上翻，用于暂停自动滚动 */
+/** Record whether the user scrolled up, used to pause auto-scrolling */
 const onConsoleScroll = () => {
   const el = consoleRef.value;
   if (!el) return;
   userScrolledUp = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
 };
 
-/** 加载文件列表并默认选中「今天」类型分桶 */
+/** Load the file list and default-select the "today" type bucket */
 const loadFileList = async () => {
   loadingFiles.value = true;
   try {
@@ -784,7 +805,7 @@ const loadFileList = async () => {
   }
 };
 
-/** 读取当前选中分桶（日期文件）的尾部内容 */
+/** Read the tail content of the currently selected bucket (date file) */
 const loadContent = async () => {
   const path = serverSelectedFilePath.value;
   if (!path) return;
@@ -794,8 +815,8 @@ const loadContent = async () => {
     if (resp.success) {
       lines.value = resp.content
         .split('\n')
-        .filter((l) => l.trim().length > 0)
-        .map((l) => ({ level: inferLevel(l), text: l }));
+        .filter(l => l.trim().length > 0)
+        .map(l => ({ level: inferLevel(l), text: l }));
       scrollToBottom();
     } else {
       lines.value = [];
@@ -808,13 +829,13 @@ const loadContent = async () => {
   }
 };
 
-/** 从原始日志文本行推断级别（用于着色） */
+/** Infer the level from a raw log text line (used for coloring) */
 const inferLevel = (text: string): string => {
   const m = text.match(/\b(TRACE|DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\b/);
-  return m ? m[1] : 'INFO';
+  return m?.[1] ?? 'INFO';
 };
 
-/** 切换实时流开关 */
+/** Toggle the live stream switch */
 const toggleLive = () => {
   if (live.value) {
     stopLive();
@@ -823,7 +844,7 @@ const toggleLive = () => {
   }
 };
 
-/** 启动实时日志流：仅当选中「今天」分桶且类型匹配。 */
+/** Start the live log stream: only when the "today" bucket is selected and the type matches. */
 const startLive = () => {
   if (!serverSelectedBucketIsCurrent.value || live.value) return;
   live.value = true;
@@ -835,18 +856,23 @@ const startLive = () => {
       } else if (frame.event === 'log' && frame.data) {
         wsStatus.value = 'connected';
         if (frameMatchesSelectedType(frame.data.level)) {
-          appendLines([{ level: frame.data.level, text: `${frame.data.timestamp} | ${frame.data.level.padEnd(8, ' ')} | ${frame.data.message}` }]);
+          appendLines([
+            {
+              level: frame.data.level,
+              text: `${frame.data.timestamp} | ${frame.data.level.padEnd(8, ' ')} | ${frame.data.message}`
+            }
+          ]);
         }
       }
     },
-    (e) => {
+    e => {
       console.error('[LogsDialog] Log stream error:', e);
       wsStatus.value = 'idle';
-    },
+    }
   );
 };
 
-/** 停止实时日志流 */
+/** Stop the live log stream */
 const stopLive = () => {
   live.value = false;
   wsStatus.value = 'idle';
@@ -854,12 +880,12 @@ const stopLive = () => {
   streamHandle = null;
 };
 
-/** 清空后端当前可见日志 */
+/** Clear the currently visible backend logs */
 const clearBackend = () => {
   lines.value = [];
 };
 
-/** 弹窗打开：加载前端分桶历史 + 加载后端文件列表 */
+/** Dialog opened: load the frontend bucket history + the backend file list */
 const onShow = () => {
   userScrolledUp = false;
   frontendUserScrolledUp = false;
@@ -867,7 +893,7 @@ const onShow = () => {
   loadFileList();
 };
 
-/** 弹窗关闭：取消前端实时订阅、停止实时流并重置状态（前端历史保留，便于下次查看） */
+/** Dialog closed: cancel the frontend live subscription, stop the live stream, and reset state (frontend history is kept for the next viewing) */
 const onHide = () => {
   teardownFrontend();
   frontendLive.value = false;
@@ -886,7 +912,7 @@ const onHide = () => {
   frontendUserScrolledUp = false;
 };
 
-// 组件卸载时取消前端订阅并清理 WebSocket
+// Cancel the frontend subscription and clean up the WebSocket when the component unmounts
 onBeforeUnmount(() => {
   teardownFrontend();
   stopLive();

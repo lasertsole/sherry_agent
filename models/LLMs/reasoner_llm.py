@@ -10,7 +10,7 @@ from models.LLMs.reasoning_normalizer import NormalizingChatModel
 current_dir = Path(__file__).parent.resolve()
 
 # Load environment variables
-load_dotenv(ENV_PATH, override = True)
+load_dotenv(ENV_PATH, override=True)
 api_base = os.getenv("REASONER_LLM_API_BASE")
 api_key = os.getenv("REASONER_LLM_API_KEY")
 api_name = os.getenv("REASONER_LLM_NAME")
@@ -19,17 +19,19 @@ max_tokens = os.getenv("REASONER_LLM_MAX_TOKEN")
 if max_tokens:
     max_tokens = min(int(max_tokens), 65536)
 
-model_config:dict[str, Any] = {
+model_config: dict[str, Any] = {
     "model_provider": model_provider,
     "model": api_name,
     "api_key": api_key,
     "base_url": api_base,
     "temperature": 0.5,
     "max_retries": 2,
-    "profile": {"max_input_tokens": max_tokens}  # Set model context window size
+    "profile": {"max_input_tokens": max_tokens},  # Set model context window size
 }
 
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
+
+
 def build_reasoner_model():
     model = init_chat_model(**model_config)
     return NormalizingChatModel(inner=model)

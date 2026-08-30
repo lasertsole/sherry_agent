@@ -33,6 +33,7 @@ def _cleanup_partial_archive(skill_filename: Path) -> None:
     except OSError:
         pass
 
+
 @validate_call
 def package_skill(skill_path: str | Path, output_dir=None):
     """

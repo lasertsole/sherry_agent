@@ -2,14 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   max,
   min,
-  getFormattedDate,
   stringToDate,
   formatToLocalTime,
   compareDate,
   isLate,
   maxDate,
   getUTCTimeNow,
-  isTimestamp,
+  isTimestamp
 } from '../utils';
 
 describe('max / min (string|number comparison)', () => {

@@ -27,9 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DATA_URL_RE = re.compile(
-    r"^data:(?P<mime>[\w./+-]+);base64,(?P<data>[A-Za-z0-9+/=\s]+)$"
-)
+DATA_URL_RE = re.compile(r"^data:(?P<mime>[\w./+-]+);base64,(?P<data>[A-Za-z0-9+/=\s]+)$")
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _JPEG_SIGNATURE = b"\xff\xd8\xff"
@@ -85,9 +83,7 @@ def _coerce_item(item: Any) -> dict[str, Any]:
         if "base64" not in item:
             raise ValueError("image_inputs dict element must contain a 'base64' key")
         return item
-    raise TypeError(
-        f"image_inputs element must be str or dict, got {type(item).__name__}"
-    )
+    raise TypeError(f"image_inputs element must be str or dict, got {type(item).__name__}")
 
 
 def normalize_image_inputs(

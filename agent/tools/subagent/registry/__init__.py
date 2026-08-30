@@ -65,7 +65,11 @@ from .completion import (
     resolve_lifecycle_outcome,
     emit_ended_hook_once,
 )
-from .cleanup import resolve_cleanup_completion_reason, resolve_deferred_cleanup_decision, should_cleanup_run
+from .cleanup import (
+    resolve_cleanup_completion_reason,
+    resolve_deferred_cleanup_decision,
+    should_cleanup_run,
+)
 from .task_refs import register_task, get_task, remove_task, cancel_task
 from .yield_events import (
     register_yield_event,
@@ -107,7 +111,12 @@ from .lifecycle import (
 )
 from .terminal_gen import TerminalGenerationTracker, get_terminal_gen_tracker
 from .settle_wake import SettleWakeState, RequesterSettleWakeBatch, get_settle_wake_batch
-from .work_admission import is_gateway_draining, set_draining, run_with_work_admission, pending_root_work_count
+from .work_admission import (
+    is_gateway_draining,
+    set_draining,
+    run_with_work_admission,
+    pending_root_work_count,
+)
 
 __all__ = [
     "get_run",
@@ -205,4 +214,9 @@ __all__ = [
     "set_draining",
     "run_with_work_admission",
     "pending_root_work_count",
+    "ensure_delivery_state",
+    "should_update_run_outcome",
+    "resolve_completion_from_session",
+    "resolve_completion_from_session_entry",
+    "resolve_run_orphan_reason",
 ]

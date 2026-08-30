@@ -24,7 +24,9 @@
           <div
             class="w-full overflow-hidden rounded-lg border border-gray-300 bg-black/10 dark:border-gray-700"
             :style="{ aspectRatio: String(props.aspectRatio) }">
-            <canvas ref="previewCanvas" class="block h-full w-full" />
+            <canvas
+              ref="previewCanvas"
+              class="block h-full w-full" />
           </div>
         </div>
       </div>
@@ -76,12 +78,12 @@ const props = withDefaults(
   defineProps<{
     modelValue: boolean;
     src: string;
-    /** 裁剪框宽高比（如 1 = 正方形；背景为当前电脑屏幕长宽比）。默认正方形 */
+    /** Crop box aspect ratio (e.g. 1 = square; background uses the current computer screen's aspect ratio). Defaults to square */
     aspectRatio?: number;
-    /** 裁剪输出尺寸（背景图等比铺满窗口，需足够大；avatar 固定 512） */
+    /** Crop output size (the background image scales proportionally to fill the window so it must be large enough; avatar fixed at 512) */
     outputWidth?: number;
     outputHeight?: number;
-    /** 对话框标题，用于区分裁剪用途 */
+    /** Dialog title, used to distinguish the crop purpose */
     header?: string;
   }>(),
   { aspectRatio: 1, outputWidth: 512, outputHeight: 512, header: '' }
@@ -102,7 +104,7 @@ const cropImage = ref<HTMLImageElement>();
 const previewCanvas = ref<HTMLCanvasElement>();
 const cropper = ref<Cropper | null>(null);
 
-/** 预览重绘的 requestAnimationFrame 句柄，拖动时避免每帧同步绘制 */
+/** requestAnimationFrame handle for preview redraws, avoiding per-frame synchronous drawing while dragging */
 let previewFrame = 0;
 const schedulePreview = () => {
   if (previewFrame || !cropper.value) return;
@@ -112,7 +114,7 @@ const schedulePreview = () => {
   });
 };
 
-/** 实时渲染裁剪结果预览，缩小输出以保持拖拽流畅 */
+/** Render the crop result preview in real time, downscaling the output to keep dragging smooth */
 const renderPreview = () => {
   const cropperInstance = cropper.value;
   const canvas = previewCanvas.value;
@@ -136,7 +138,7 @@ watch(
   [visible, () => props.src],
   ([v, src]) => {
     if (!v || !src) return;
-    // 等图片渲染完毕再初始化 cropper
+    // Wait until the image has finished rendering before initializing the cropper
     setTimeout(() => initCropper(), 0);
   },
   { immediate: true }
@@ -148,7 +150,7 @@ const initCropper = () => {
   cropper.value = new Cropper(cropImage.value, {
     viewMode: 1,
     dragMode: 'move',
-      aspectRatio: props.aspectRatio, // 裁剪比例：头像 1:1 正方形；背景 当前电脑屏幕长宽比
+    aspectRatio: props.aspectRatio, // Crop ratio: avatar 1:1 square; background = the current computer screen's aspect ratio
     autoCropArea: 0.8,
     background: false,
     modal: true,
@@ -156,12 +158,11 @@ const initCropper = () => {
     center: true,
     highlight: false,
     cropBoxMovable: true,
-    cropBoxResizable: false, // 固定大小，只能移动/缩放图片
+    cropBoxResizable: false, // Fixed size; only the image can be moved/zoomed
     toggleDragModeOnDblclick: false,
-    // 移动 / 缩放 / 旋转 / 裁剪框变化时实时刷新结果预览
-    move: schedulePreview,
+    // Refresh the result preview in real time on move / zoom / rotate / crop box changes
+    // (cropperjs v1 has no `move`/`rotate` options — the `crop` event covers all canvas/crop-box changes)
     zoom: schedulePreview,
-    rotate: schedulePreview,
     crop: schedulePreview
   });
   schedulePreview();
@@ -203,5 +204,5 @@ const destroyCropper = () => {
 </script>
 
 <style>
-/* cropperjs 需要父容器尺寸确定，imageContainer 已固定 520px 高 */
+/* cropperjs requires the parent container to have a definite size; imageContainer is fixed at 520px height */
 </style>

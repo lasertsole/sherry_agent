@@ -163,9 +163,7 @@ For more information, visit: https://github.com/HKUDS/LightRAG
     print("=" * 70)
 
     try:
-        success_count, failed_models = download_tiktoken_cache(
-            args.cache_dir, args.models
-        )
+        success_count, failed_models = download_tiktoken_cache(args.cache_dir, args.models)
 
         print("\n" + "=" * 70)
         print("Download Complete")

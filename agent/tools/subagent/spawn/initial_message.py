@@ -11,10 +11,12 @@ def build_subagent_initial_user_message(
     """Assemble the first user message with a structured header, task body, and optional context."""
     parts = []
 
-    header_lines = [f"[Subagent Context]"]
+    header_lines = ["[Subagent Context]"]
     header_lines.append(f"Depth: {depth}/{max_depth}")
     if is_persistent_session:
-        header_lines.append("This is a persistent session. It will remain active after task completion.")
+        header_lines.append(
+            "This is a persistent session. It will remain active after task completion."
+        )
     parts.append("\n".join(header_lines))
 
     task_section = f"[Subagent Task]\n{task}"

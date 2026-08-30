@@ -5,8 +5,10 @@ from config import SESSIONS_DIR
 from runtime import clear_all_register_sessions
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
 
+
 def _session_folder(session_id: str) -> str:
     return (Path(SESSIONS_DIR) / session_id).as_posix()
+
 
 async def clear_session(session_id: str) -> None:
     """Purge every trace of a session across all stores.
@@ -22,6 +24,7 @@ async def clear_session(session_id: str) -> None:
     """
     # (1) Context engine mes_memory store — messages for this session.
     from context_engine import delete_messages_by_session
+
     deleted = delete_messages_by_session(session_id=session_id)
     logger.debug(f"Cleared {deleted} mes_memory message row(s) for session_id={session_id}")
 

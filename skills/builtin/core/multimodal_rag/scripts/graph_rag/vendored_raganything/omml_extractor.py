@@ -155,8 +155,7 @@ def extract_omml_equations(
                 xml_bytes = archive.read("word/document.xml")
             except KeyError as e:
                 raise ValueError(
-                    f"{path} does not contain word/document.xml; "
-                    "is it a valid DOCX file?"
+                    f"{path} does not contain word/document.xml; is it a valid DOCX file?"
                 ) from e
     except zipfile.BadZipFile as e:
         raise ValueError(f"{path} is not a valid ZIP/DOCX archive") from e
@@ -195,8 +194,7 @@ def extract_omml_equations(
             latex = omml_to_latex(elem).strip()
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(
-                "Failed to convert OMML equation #%d to LaTeX: %s. "
-                "Falling back to text content.",
+                "Failed to convert OMML equation #%d to LaTeX: %s. Falling back to text content.",
                 len(results),
                 e,
             )
@@ -595,9 +593,7 @@ def _h_delimiter(element: ET.Element) -> str:
         if sep_elem is not None:
             sep = sep_elem.get(_M + "val", sep)
     inner = sep.join(_convert_children(e) for e in _children_by_tag(element, "e"))
-    return (
-        _delim_to_latex(beg, opening=True) + inner + _delim_to_latex(end, opening=False)
-    )
+    return _delim_to_latex(beg, opening=True) + inner + _delim_to_latex(end, opening=False)
 
 
 def _delim_to_latex(ch: str, *, opening: bool) -> str:

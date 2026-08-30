@@ -128,6 +128,7 @@ def _validate_description(description: str) -> str | None:
         return f"Description is too long ({len(trimmed)} characters). Maximum is 1024 characters."
     return None
 
+
 @validate_call
 def validate_skill(skill_path: str | Path):
     """Validate a skill folder structure and required frontmatter."""

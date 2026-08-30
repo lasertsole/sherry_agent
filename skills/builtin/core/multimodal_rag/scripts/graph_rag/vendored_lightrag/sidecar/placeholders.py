@@ -43,10 +43,7 @@ def render_table_tag(table_id: str, fmt: str, body: str) -> str:
     ``html`` it is the raw ``<table>...</table>`` HTML inside (the outer
     wrapper is added here).
     """
-    return (
-        f'<table id="{xml_attr_escape(table_id)}" '
-        f'format="{xml_attr_escape(fmt)}">{body}</table>'
-    )
+    return f'<table id="{xml_attr_escape(table_id)}" format="{xml_attr_escape(fmt)}">{body}</table>'
 
 
 def render_drawing_tag(

@@ -1,4 +1,3 @@
-import pytest
 from agent.tools.subagent.capabilities.core import (
     resolve_subagent_capabilities,
     is_subagent_session,

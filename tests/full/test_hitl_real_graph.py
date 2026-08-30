@@ -219,10 +219,7 @@ def test_command_resume_reject_resolves_interrupt_and_denies():
     terminal_err = [
         m
         for m in (state2.values or {}).get("messages", [])
-        if getattr(m, "name", None) == "terminal"
-        and getattr(m, "status", None) == "error"
+        if getattr(m, "name", None) == "terminal" and getattr(m, "status", None) == "error"
     ]
     assert terminal_err, "Expected a deny ToolMessage after the reject decision"
-    assert "No" in terminal_err[0].content, (
-        "The deny message should reflect the user's rejection."
-    )
+    assert "No" in terminal_err[0].content, "The deny message should reflect the user's rejection."

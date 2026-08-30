@@ -16,7 +16,6 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Any
 
 from pydantic import validate_call
 
@@ -194,11 +193,11 @@ Note: This is a text placeholder. Actual assets can be any file type.
 """
 
 
-
 def _resolve_path(path_str: str) -> Path:
     """Replace {{ROOT_DIR}} placeholder with the actual project root path."""
     try:
         from config import ROOT_DIR
+
         resolved = path_str.replace("{{ROOT_DIR}}", str(ROOT_DIR))
     except ImportError:
         resolved = path_str
@@ -214,13 +213,15 @@ def normalize_skill_name(skill_name: str):
     normalized = re.sub(r"-{2,}", "-", normalized)
     return normalized
 
+
 @validate_call
 def title_case_skill_name(skill_name: str):
     """Convert hyphenated skill name to Title Case for display."""
     return " ".join(word.capitalize() for word in skill_name.split("-"))
 
+
 @validate_call
-def parse_resources(raw_resources: str)-> list[str]:
+def parse_resources(raw_resources: str) -> list[str]:
     if not raw_resources:
         return []
     resources = [item.strip() for item in raw_resources.split(",") if item.strip()]
@@ -238,8 +239,15 @@ def parse_resources(raw_resources: str)-> list[str]:
             seen.add(resource)
     return deduped
 
+
 @validate_call
-def create_resource_dirs(skill_dir: str | Path, skill_name: str, skill_title: str, resources: list[str], include_examples: bool):
+def create_resource_dirs(
+    skill_dir: str | Path,
+    skill_name: str,
+    skill_title: str,
+    resources: list[str],
+    include_examples: bool,
+):
     for resource in resources:
         resource_dir = skill_dir / resource
         resource_dir.mkdir(exist_ok=True)
@@ -266,8 +274,9 @@ def create_resource_dirs(skill_dir: str | Path, skill_name: str, skill_title: st
             else:
                 print("[OK] Created assets/")
 
+
 @validate_call
-def init_skill(skill_name: str, path:  str, resources: list[str], include_examples: bool):
+def init_skill(skill_name: str, path: str, resources: list[str], include_examples: bool):
     """
     Initialize a new skill directory with template SKILL.md.
 
@@ -365,7 +374,7 @@ def main():
     if skill_name != raw_skill_name:
         print(f"Note: Normalized skill name from '{raw_skill_name}' to '{skill_name}'.")
 
-    resources:list[str] = parse_resources(args.resources)
+    resources: list[str] = parse_resources(args.resources)
     if args.examples and not resources:
         print("[ERROR] --examples requires --resources to be set.")
         sys.exit(1)
@@ -390,6 +399,7 @@ def main():
         # must never cause the skill-creation to appear to have failed.
         try:
             from skills import build_skills_snapshot
+
             build_skills_snapshot()
         except Exception:  # noqa: BLE001
             print("[WARN] Skill created, but failed to refresh skills snapshot.")

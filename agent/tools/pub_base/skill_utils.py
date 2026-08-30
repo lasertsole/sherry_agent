@@ -10,8 +10,6 @@ import re
 import sys
 from typing import Any
 from pathlib import Path
-from loguru import logger
-from skills.loader import parse_frontmatter
 from config import ROOT_DIR, AUTO_SKILLS_DIR
 
 # ── Platform mapping ──────────────────────────────────────────────────────
@@ -112,6 +110,7 @@ def skill_matches_platform(frontmatter: dict[str, Any]) -> bool:
             return True
     return False
 
+
 # ── Skill scope visibility ────────────────────────────────────────────────
 
 #: Allowed values for the ``scope:`` frontmatter field.
@@ -207,6 +206,7 @@ def is_valid_namespace(candidate: str | None) -> bool:
         return False
     return bool(_NAMESPACE_RE.match(candidate))
 
+
 def find_auto_skills(*, skip_disabled: bool = False) -> list[dict[str, Any]]:
     skills: list[dict[str, Any]] = []
     seen_paths = set()  # 用于去重
@@ -232,11 +232,13 @@ def find_auto_skills(*, skip_disabled: bool = False) -> list[dict[str, Any]]:
     skills.sort(key=lambda x: x["name"])
     return skills
 
+
 def sort_skills(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep every skill listing path ordered the same way."""
     return sorted(skills, key=lambda s: (s.get("category") or "", s["name"]))
 
-def get_all_auto_skills_dirs()-> list[Path]:
+
+def get_all_auto_skills_dirs() -> list[Path]:
     skills_dirs: list[Path] = []
     for skill_file in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
         skills_dirs.append(skill_file.parent)

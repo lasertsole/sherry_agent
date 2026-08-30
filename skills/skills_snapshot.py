@@ -3,9 +3,7 @@ import json
 from config import SKILLS_DIR
 from loguru import logger
 
-_BUILTIN_SCAN_TARGETS = (
-    ("clawhub", "builtin/core/clawhub"),
-)
+_BUILTIN_SCAN_TARGETS = (("clawhub", "builtin/core/clawhub"),)
 
 
 def _scan_builtin_skills() -> None:
@@ -63,15 +61,16 @@ def build_skills_snapshot() -> None:
 
     skills: list[dict[str, str]] = scan_skills(use_cache=False)
     skills_json: str = json.dumps(skills, ensure_ascii=False, indent=4)
-    with open(os.path.join(SKILLS_DIR, 'skills_snapshot.json'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(SKILLS_DIR, "skills_snapshot.json"), "w", encoding="utf-8") as f:
         f.write(skills_json)
 
+
 def read_skills_snapshot() -> list[dict[str, str]] | None:
-    file_path:str = os.path.join(SKILLS_DIR, 'skills_snapshot.json')
+    file_path: str = os.path.join(SKILLS_DIR, "skills_snapshot.json")
 
     if os.path.exists(file_path):
-        with open(os.path.join(SKILLS_DIR, file_path), 'r', encoding='utf-8') as f:
-            skills_json:str = f.read()
+        with open(os.path.join(SKILLS_DIR, file_path), "r", encoding="utf-8") as f:
+            skills_json: str = f.read()
             skills: list[dict[str, str]] = json.loads(skills_json)
             return skills
 

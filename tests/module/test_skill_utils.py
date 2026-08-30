@@ -1,13 +1,18 @@
 """Module tests for agent/tools/pub_base/skill_utils.py — skill metadata utilities."""
 
 import pytest
-from pathlib import Path
-from unittest.mock import patch
 from agent.tools.pub_base.skill_utils import (
-    parse_frontmatter, skill_matches_platform, extract_skill_description,
-    iter_skill_index_files, parse_qualified_name, is_valid_namespace,
-    sort_skills, skill_visible_to, normalize_skill_scope,
-    VALID_SKILL_SCOPES, PLATFORM_MAP, EXCLUDED_SKILL_DIRS,
+    parse_frontmatter,
+    skill_matches_platform,
+    extract_skill_description,
+    iter_skill_index_files,
+    parse_qualified_name,
+    is_valid_namespace,
+    sort_skills,
+    skill_visible_to,
+    normalize_skill_scope,
+    VALID_SKILL_SCOPES,
+    PLATFORM_MAP,
 )
 
 
@@ -62,6 +67,7 @@ class TestSkillMatchesPlatform:
 
     def test_single_matching(self):
         import sys
+
         # Map sys.platform to a known platform name
         current_platforms = [k for k, v in PLATFORM_MAP.items() if sys.platform.startswith(v)]
         if current_platforms:
@@ -73,6 +79,7 @@ class TestSkillMatchesPlatform:
 
     def test_string_not_list(self):
         import sys
+
         current_platforms = [k for k, v in PLATFORM_MAP.items() if sys.platform.startswith(v)]
         if current_platforms:
             assert skill_matches_platform({"platforms": current_platforms[0]}) is True

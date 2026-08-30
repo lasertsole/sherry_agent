@@ -1,23 +1,36 @@
 // @vitest-environment jsdom
 /*
- * 本套件必须运行在 jsdom 而非项目默认的 happy-dom：
- * DOMPurify 官方 README 明确警示 "Combining DOMPurify with happy-dom is currently
- * not recommended and will likely lead to XSS" —— happy-dom 的 DOM 实现会让净化结果
- * 失真（片段首元素被吞、兄弟节点逃逸净化），无法用于验证真实浏览器（WebView2/Chromium）
- * 中的安全行为。项目其余测试套件保持 happy-dom 不受影响。
+ * This suite must run under jsdom rather than the project default of happy-dom:
+ * the DOMPurify README explicitly warns "Combining DOMPurify with happy-dom is currently
+ * not recommended and will likely lead to XSS" — happy-dom's DOM implementation distorts
+ * the sanitization result (the fragment's first element gets swallowed, sibling nodes escape
+ * sanitization), so it cannot be used to verify real browser (WebView2/Chromium) security
+ * behavior. The project's other test suites remain on happy-dom, unaffected.
  */
 import { describe, it, expect } from 'vitest';
-import type { DirectiveBinding } from 'vue';
+import { createVNode } from 'vue';
+import type { ComponentPublicInstance, DirectiveBinding, VNode } from 'vue';
 import { vSafeHtml, safeMarkdownHtml } from '../safeHtml';
 
-/** 构造最小可用的 DirectiveBinding（测试用） */
+/** Constructs a minimal usable DirectiveBinding (for tests) */
 const makeBinding = (value: string | null | undefined): DirectiveBinding<string | null | undefined> => ({
+  // No real component instance exists in unit tests; the hooks only read
+  // (el, binding), so an empty stub fills the required `instance` slot.
+  instance: {} as ComponentPublicInstance,
   value,
   oldValue: null,
   arg: undefined,
   modifiers: {},
   dir: vSafeHtml
 });
+
+/**
+ * Shared vnode/prevVnode placeholder for hook invocation (the hooks only read (el, binding)).
+ * createVNode's public API hardcodes the renderer-generic pair (VNode<RendererNode, RendererElement>)
+ * which is not directly assignable to the HTMLElement-bound hook signature, so the stub is
+ * adapted once here; the runtime shape is a plain element vnode, exactly what Vue passes.
+ */
+const vnode = createVNode('div') as VNode<any, HTMLElement>;
 
 describe('safeMarkdownHtml — XSS 攻击向量', () => {
   it('剥离 <script> 标签，保留正文文本', () => {
@@ -36,7 +49,7 @@ describe('safeMarkdownHtml — XSS 攻击向量', () => {
   it('剥离 javascript: 伪协议链接', () => {
     const html = safeMarkdownHtml('<a href="javascript:alert(1)">点我</a>');
     expect(html).not.toContain('javascript:');
-    expect(html).toContain('点我'); // 标签在白名单内，仅 href 被移除
+    expect(html).toContain('点我'); // the tag is whitelisted; only the href was removed
   });
 
   it('剥离白名单外的危险标签（svg/iframe/object）', () => {
@@ -102,29 +115,29 @@ describe('safeMarkdownHtml — 合法 markdown 渲染不被误伤', () => {
 describe('vSafeHtml 指令', () => {
   it('mounted 渲染净化后的 markdown', () => {
     const el = document.createElement('div');
-    vSafeHtml.mounted!(el, makeBinding('**bold**'));
+    vSafeHtml.mounted!(el, makeBinding('**bold**'), vnode, null);
     expect(el.innerHTML).toContain('<strong>bold</strong>');
   });
 
   it('updated 随绑定值变化重新渲染（流式追加场景）', () => {
     const el = document.createElement('div');
-    vSafeHtml.mounted!(el, makeBinding('first'));
+    vSafeHtml.mounted!(el, makeBinding('first'), vnode, null);
     expect(el.innerHTML).toContain('first');
-    vSafeHtml.updated!(el, makeBinding('# second'));
+    vSafeHtml.updated!(el, makeBinding('# second'), vnode, vnode);
     expect(el.innerHTML).toContain('<h1>second</h1>');
     expect(el.innerHTML).not.toContain('first');
   });
 
   it('updated 传入空值时清空内容', () => {
     const el = document.createElement('div');
-    vSafeHtml.mounted!(el, makeBinding('**bold**'));
-    vSafeHtml.updated!(el, makeBinding(''));
+    vSafeHtml.mounted!(el, makeBinding('**bold**'), vnode, null);
+    vSafeHtml.updated!(el, makeBinding(''), vnode, vnode);
     expect(el.innerHTML).toBe('');
   });
 
   it('mounted 对 XSS 载荷净化为空/安全内容', () => {
     const el = document.createElement('div');
-    vSafeHtml.mounted!(el, makeBinding('<script>alert(1)</script>hi'));
+    vSafeHtml.mounted!(el, makeBinding('<script>alert(1)</script>hi'), vnode, null);
     expect(el.querySelector('script')).toBeNull();
     expect(el.textContent).toContain('hi');
   });

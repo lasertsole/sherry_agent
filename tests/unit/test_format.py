@@ -1,7 +1,6 @@
 """Unit tests for pub_func/format/*.py — all 6 format modules."""
 
 import pytest
-import json
 from pydantic import BaseModel
 from pub_func.format.escape_xml import escape_xml
 from pub_func.format.escape_prompt_braces import escape_prompt_braces
@@ -11,6 +10,7 @@ from pub_func.format.render_template import template_render, render_template_fil
 
 
 # --- escape_xml ---
+
 
 class TestEscapeXml:
     def test_ampersand(self):
@@ -40,6 +40,7 @@ class TestEscapeXml:
 
 # --- escape_prompt_braces ---
 
+
 class TestEscapePromptBraces:
     def test_single_open(self):
         assert escape_prompt_braces("{") == "{{"
@@ -64,6 +65,7 @@ class TestEscapePromptBraces:
 
 
 # --- sanitize_content ---
+
 
 class TestSanitizeContent:
     def test_removes_parentheses_content_cn(self):
@@ -113,6 +115,7 @@ class TestSanitizeContent:
 
 # --- parse_markdown_json --
 
+
 class SampleModel(BaseModel):
     name: str
     value: int
@@ -144,16 +147,14 @@ class TestParseMarkdownJson:
 
 # --- template_render ---
 
+
 class TestTemplateRender:
     def test_simple_replacement(self):
         result = template_render("Hello {{ name }}", {"name": "World"})
         assert result == "Hello World"
 
     def test_multiple_vars(self):
-        result = template_render(
-            "{{ a }} and {{ b }}",
-            {"a": "X", "b": "Y"}
-        )
+        result = template_render("{{ a }} and {{ b }}", {"a": "X", "b": "Y"})
         assert result == "X and Y"
 
     def test_missing_var_left_as_is(self):
@@ -182,6 +183,7 @@ class TestTemplateRender:
 
 
 # --- render_template_file ---
+
 
 class TestRenderTemplateFile:
     def test_renders_file(self, tmp_path):

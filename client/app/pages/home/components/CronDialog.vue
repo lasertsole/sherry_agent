@@ -83,7 +83,9 @@
                 {{ t('config.cron.lastStatus') }}: {{ job.state.lastStatus }}
                 <span
                   v-if="job.state.lastError"
-                  class="ml-1 text-red-500 dark:text-red-400">{{ job.state.lastError }}</span>
+                  class="ml-1 text-red-500 dark:text-red-400"
+                  >{{ job.state.lastError }}</span
+                >
               </div>
             </div>
           </div>
@@ -121,7 +123,9 @@
       </div>
 
       <!-- Schedule-specific fields -->
-      <div v-if="form.scheduleType === 'at'" class="flex flex-col gap-1">
+      <div
+        v-if="form.scheduleType === 'at'"
+        class="flex flex-col gap-1">
         <label class="text-sm">{{ t('config.cron.atTime') }}</label>
         <Calendar
           v-model="form.atDate"
@@ -131,7 +135,9 @@
           class="w-full" />
       </div>
 
-      <div v-else-if="form.scheduleType === 'every'" class="flex flex-col gap-1">
+      <div
+        v-else-if="form.scheduleType === 'every'"
+        class="flex flex-col gap-1">
         <label class="text-sm">{{ t('config.cron.everyInterval') }}</label>
         <div class="flex items-center gap-2">
           <InputNumber
@@ -148,7 +154,9 @@
         </div>
       </div>
 
-      <div v-else class="flex flex-col gap-1">
+      <div
+        v-else
+        class="flex flex-col gap-1">
         <label class="text-sm">{{ t('config.cron.cronExpr') }}</label>
         <InputText
           v-model="form.expr"
@@ -171,7 +179,11 @@
           v-model="form.deliver"
           :binary="true"
           inputId="cron-deliver" />
-        <label for="cron-deliver" class="text-sm">{{ t('config.cron.deliver') }}</label>
+        <label
+          for="cron-deliver"
+          class="text-sm"
+          >{{ t('config.cron.deliver') }}</label
+        >
       </div>
 
       <template v-if="form.deliver">
@@ -196,7 +208,11 @@
           v-model="form.deleteAfterRun"
           :binary="true"
           inputId="cron-delete-after-run" />
-        <label for="cron-delete-after-run" class="text-sm">{{ t('config.cron.deleteAfterRun') }}</label>
+        <label
+          for="cron-delete-after-run"
+          class="text-sm"
+          >{{ t('config.cron.deleteAfterRun') }}</label
+        >
       </div>
     </div>
 
@@ -229,11 +245,11 @@ import {
   enableCronJob,
   deleteCronJob,
   type CronJob,
-  type CronSchedule,
+  type CronSchedule
 } from '@/composables/bridge';
 import { vDebounce } from '~/directives/debounce';
 
-  const { t } = useI18n({ useScope: 'local' });
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
@@ -246,7 +262,7 @@ const visible = computed({
 const loading = ref(false);
 const saving = ref(false);
 const jobs = ref<CronJob[]>([]);
-/** 启用/停用切换进行中的任务 id 集合（change 事件不走防抖指令，用此在途守卫防连点） */
+/** Set of task ids with an enable/disable toggle in flight (the change event bypasses the debounce directive, so this in-flight guard prevents rapid double clicks) */
 const busyToggleIds = ref<Set<string>>(new Set());
 
 // ── Add / Edit form state ─────────────────────────
@@ -299,11 +315,16 @@ function everyToMs(): number | null {
   const v = form.value.everyValue;
   if (!v || v <= 0) return null;
   switch (form.value.everyUnit) {
-    case 's': return v * SECOND_MS;
-    case 'm': return v * MINUTE_MS;
-    case 'h': return v * HOUR_MS;
-    case 'd': return v * DAY_MS;
-    default: return null;
+    case 's':
+      return v * SECOND_MS;
+    case 'm':
+      return v * MINUTE_MS;
+    case 'h':
+      return v * HOUR_MS;
+    case 'd':
+      return v * DAY_MS;
+    default:
+      return null;
   }
 }
 

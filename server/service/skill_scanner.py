@@ -66,7 +66,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
@@ -122,11 +121,7 @@ def _llm_env() -> dict[str, str]:
             "AUXILIARY_LLM_API_KEY", os.environ.get("OPENAI_API_KEY", "")
         ),
     }
-    model = (
-        os.environ.get("SKILLSPECTOR_MODEL")
-        or os.environ.get("AUXILIARY_LLM_API_NAME")
-        or ""
-    )
+    model = os.environ.get("SKILLSPECTOR_MODEL") or os.environ.get("AUXILIARY_LLM_API_NAME") or ""
     if model:
         env["SKILLSPECTOR_MODEL"] = model
     # Keep any explicit overrides the operator set (e.g. OPENAI_BASE_URL for a
@@ -142,6 +137,7 @@ def _llm_env() -> dict[str, str]:
         )
         return {}
     return env
+
 
 #: CLI flag that turns the scanner into a hard gate when the scanner is running
 #: but the skill's verdict is `DO_NOT_INSTALL` (see ``scan_skill``).
@@ -311,6 +307,7 @@ def _is_available(backend: str) -> bool:
     if backend == "python":
         try:
             import skillspector  # noqa: F401  (guarded import is the probe)
+
             return True
         except Exception:
             return False
@@ -364,7 +361,9 @@ def _run_cli(path: Path) -> ScanResult:
 
     if proc.returncode == _EXIT_ERROR:
         stderr = (proc.stderr or "").strip()[-800:]
-        logger.warning("SkillSpector CLI reported an error for %s: %s", path, stderr or proc.stdout[:500])
+        logger.warning(
+            "SkillSpector CLI reported an error for %s: %s", path, stderr or proc.stdout[:500]
+        )
         return _unavailable("cli")
 
     # exit 0 (SAFE/CAUTION) or 1 (DO_NOT_INSTALL): parse JSON regardless of the
@@ -457,8 +456,7 @@ def scan_skill(path: str | os.PathLike[str]) -> ScanResult:
     if backend == "python":
         return _run_python_api(p)
     logger.debug(
-        "SkillScanner unavailable (neither CLI nor python API present); "
-        "skipping scan for %s",
+        "SkillScanner unavailable (neither CLI nor python API present); skipping scan for %s",
         p,
     )
     return _unavailable()
@@ -498,9 +496,7 @@ def build_reject_message(result: ScanResult) -> str | None:
       absent.
     """
     if result.is_unavailable:
-        logger.warning(
-            "Skill security scanner unavailable; allowing upload without scan verdict"
-        )
+        logger.warning("Skill security scanner unavailable; allowing upload without scan verdict")
         return None
     if result.is_do_not_install:
         score = result.risk_score if result.risk_score is not None else 0

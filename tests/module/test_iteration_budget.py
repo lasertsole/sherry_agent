@@ -20,6 +20,7 @@ class TestIterationBudget:
     def _make_middleware(self, max_iterations=None):
         """Create an IterationBudget with a fresh state register."""
         from agent.middlewares.iteration_budget import IterationBudget
+
         if max_iterations is None:
             return IterationBudget()
         return IterationBudget(max_iterations=max_iterations)
@@ -84,7 +85,6 @@ class TestIterationBudget:
         with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
             request = MagicMock()
             request.state = self._make_state("s1")
-            handler = MagicMock(return_value=MagicMock(name="ModelResponse"))
             result = ib._wrap_model_call_impl(request)
             assert result is None  # None means proceed to handler
 
@@ -121,5 +121,6 @@ class TestIterationBudget:
 
     def test_key_constants(self):
         from agent.middlewares.iteration_budget import IterationBudget
+
         assert IterationBudget._BUDGET_KEY == "iteration_budget"
         assert IterationBudget._USED_KEY == "iteration_budget_used"

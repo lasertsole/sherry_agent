@@ -66,10 +66,5 @@ async def upload_video(request):
     return Response(
         status_code=200,
         headers={"Content-Type": "application/json"},
-        description=(
-            '{"success": true, '
-            f'"url": "{url}", '
-            f'"filename": "{filename}"'
-            '}'
-        ),
+        description=(f'{{"success": true, "url": "{url}", "filename": "{filename}"}}'),
     )

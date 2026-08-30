@@ -40,9 +40,9 @@ def eval(a, b):
         for i in range(1, n + 1):
             cost = 0 if a[i - 1] == b[j - 1] else 1
             curr[i] = min(
-                prev[i] + 1,        # deletion
-                curr[i - 1] + 1,    # insertion
-                prev[i - 1] + cost, # substitution
+                prev[i] + 1,  # deletion
+                curr[i - 1] + 1,  # insertion
+                prev[i - 1] + cost,  # substitution
             )
         prev, curr = curr, prev
 

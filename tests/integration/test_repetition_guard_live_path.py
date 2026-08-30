@@ -51,6 +51,7 @@ class MockInnerAgent:
     async def aget_state(self, config=None, **kwargs):
         class _State:
             values = {}
+
         return _State()
 
     async def aupdate_state(self, config=None, values=None, **kwargs):
@@ -113,9 +114,7 @@ def _run_async_generate(session_id: str, text: str, mock_agent):
 
     async def _drive():
         frames = []
-        async for frame in _messages_mod.async_generate(
-            session_id, message, is_stream=True
-        ):
+        async for frame in _messages_mod.async_generate(session_id, message, is_stream=True):
             frames.append(frame)
         return frames
 
@@ -125,9 +124,7 @@ def _run_async_generate(session_id: str, text: str, mock_agent):
 
 def test_repetition_guard_surfaces_marker_in_live_path():
     """The guard's [Output Repetition Guard] marker reaches the WS frame."""
-    wrapper = RepetitionGuardWrapper(
-        MockInnerAgent(_repetitive_script())
-    )
+    wrapper = RepetitionGuardWrapper(MockInnerAgent(_repetitive_script()))
     frames = _run_async_generate("it-s1", "请继续你的分析。", wrapper)
 
     text_frames = [f["content"] for f in frames if f.get("type") == "text"]
@@ -146,9 +143,7 @@ def test_repetition_guard_surfaces_marker_in_live_path():
 def test_repetition_guard_emits_meta_end_frame():
     """Even when the guard cuts the stream, async_generate still emits a
     final `meta` frame (the WS client relies on it to finalize the turn)."""
-    wrapper = RepetitionGuardWrapper(
-        MockInnerAgent(_repetitive_script())
-    )
+    wrapper = RepetitionGuardWrapper(MockInnerAgent(_repetitive_script()))
     frames = _run_async_generate("it-s2", "继续说。", wrapper)
 
     end_frames = [f for f in frames if f.get("type") == "meta"]

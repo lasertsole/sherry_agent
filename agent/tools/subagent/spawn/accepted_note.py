@@ -21,9 +21,9 @@ def resolve_spawn_accepted_note(
 
     if agent_session_key:
         return (
-            f"Subagent spawned in run mode. DO NOT poll for results — "
-            f"the result will be delivered to you automatically when complete. "
-            f"Use sessions_yield() to wait for completion."
+            "Subagent spawned in run mode. DO NOT poll for results — "
+            "the result will be delivered to you automatically when complete. "
+            "Use sessions_yield() to wait for completion."
         )
 
     return (

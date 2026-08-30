@@ -2,7 +2,6 @@
 llm_wiki search: Wiki搜索与健康检查
 """
 
-import sys
 import os
 import re
 import glob
@@ -13,8 +12,7 @@ from loguru import logger
 
 # 动态加载 core 模块
 _scripts_dir = Path(__file__).resolve().parent
-_core_spec = importlib.util.spec_from_file_location(
-    "wiki_core", str(_scripts_dir / "core.py"))
+_core_spec = importlib.util.spec_from_file_location("wiki_core", str(_scripts_dir / "core.py"))
 _core = importlib.util.module_from_spec(_core_spec)
 _core_spec.loader.exec_module(_core)
 get_wiki_path = _core.get_wiki_path
@@ -46,10 +44,7 @@ def search_wiki(keyword: str) -> list:
             if keyword.lower() in content.lower():
                 rel_path = os.path.relpath(fpath, str(wiki_root))
                 match_count = content.lower().count(keyword.lower())
-                results.append({
-                    "file": rel_path,
-                    "matches": match_count
-                })
+                results.append({"file": rel_path, "matches": match_count})
         except Exception as e:
             logger.warning(f"Failed to read {fpath}: {e}")
 
@@ -72,7 +67,7 @@ def lint_wiki() -> dict:
         "frontmatter_issues": [],
         "large_pages": [],
         "total_pages": 0,
-        "errors": []
+        "errors": [],
     }
 
     if not wiki_root.exists():
@@ -102,7 +97,7 @@ def lint_wiki() -> dict:
                 content = f.read()
 
             # 提取 [[wikilinks]]
-            links = re.findall(r'\[\[([^\]]+)\]\]', content)
+            links = re.findall(r"\[\[([^\]]+)\]\]", content)
             for link in links:
                 target = link.split("|")[0].strip()
                 outbound_links[rel_path].add(target)
@@ -116,18 +111,14 @@ def lint_wiki() -> dict:
                     required = ["title", "created", "updated", "type", "tags"]
                     missing = [f for f in required if f not in fm]
                     if missing:
-                        report["frontmatter_issues"].append({
-                            "file": rel_path,
-                            "missing_fields": missing
-                        })
+                        report["frontmatter_issues"].append(
+                            {"file": rel_path, "missing_fields": missing}
+                        )
 
             # 检查文件大小
             lines = content.split("\n")
             if len(lines) > 200:
-                report["large_pages"].append({
-                    "file": rel_path,
-                    "lines": len(lines)
-                })
+                report["large_pages"].append({"file": rel_path, "lines": len(lines)})
 
         except Exception as e:
             report["errors"].append(f"Failed to process {rel_path}: {e}")
@@ -149,9 +140,6 @@ def lint_wiki() -> dict:
     for src, targets in outbound_links.items():
         for t in targets:
             if t not in all_page_names:
-                report["broken_links"].append({
-                    "source": src,
-                    "target": t
-                })
+                report["broken_links"].append({"source": src, "target": t})
 
     return report

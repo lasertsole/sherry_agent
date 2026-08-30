@@ -7,8 +7,9 @@
  * |-------|------|----------|-------------|
  * | `session_id` | `string` | Yes | Session to clear |
  */
-export type ClearSessionRequest = { 
-/**
- * The session ID to clear.
- */
-session_id: string, };
+export type ClearSessionRequest = {
+  /**
+   * The session ID to clear.
+   */
+  session_id: string;
+};

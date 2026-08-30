@@ -24,6 +24,7 @@ tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool
 # refreshes live when a heartbeat execution completes.
 HEARTBEAT_WS_SESSION_ID: str = "default"
 
+
 async def push_heartbeat_updated() -> None:
     """Push a `heartbeat:updated` event over WebSocket so the browser UI can
     refresh the heartbeat file (especially `## Completed`) live.
@@ -40,6 +41,7 @@ async def push_heartbeat_updated() -> None:
         await websocket.send_text(json.dumps(res))
     except Exception as e:
         logger.warning("Failed to push heartbeat:updated: {}", e)
+
 
 async def push_heartbeat_notification(result_content: str) -> None:
     """Push a `notification` WS event after a heartbeat task completes so the
@@ -59,6 +61,7 @@ async def push_heartbeat_notification(result_content: str) -> None:
     except Exception as e:
         logger.warning("Failed to push heartbeat notification: {}", e)
 
+
 async def process_heartbeat_task(task: str) -> str:
     try:
         # Lazy-ensure the core persona files exist before building the prompt.
@@ -73,11 +76,8 @@ async def process_heartbeat_task(task: str) -> str:
         )
 
         messages: list[BaseMessage] = [
-            SystemMessage(
-                content=
-                build_system_prompt(selected_file_names=CORE_SYSTEM_FILE_NAMES)
-            ),
-            HumanMessage(content=task)
+            SystemMessage(content=build_system_prompt(selected_file_names=CORE_SYSTEM_FILE_NAMES)),
+            HumanMessage(content=task),
         ]
         result: dict[str, Any] = agent.invoke(input={"messages": messages})
         res_messages = result["messages"]
@@ -98,6 +98,7 @@ async def process_heartbeat_task(task: str) -> str:
     except Exception as e:
         logger.exception(e)
         return f"Error occurred: {e}"
+
 
 async def _mark_executed_tasks_completed(task: str) -> None:
     """Move executed heartbeat task line(s) from Active Tasks to Completed.
@@ -123,6 +124,7 @@ async def _mark_executed_tasks_completed(task: str) -> None:
                     logger.warning("Failed to move active task '{}': {}", line, e)
     except Exception as e:
         logger.warning("Failed to mark heartbeat tasks completed: {}", e)
+
 
 async def process_heartbeat_notify(agent_res: str) -> None:
     channels_json: Path = PLUGINS_PATH / "channels/config.json"
@@ -151,7 +153,8 @@ async def process_heartbeat_notify(agent_res: str) -> None:
     for name, receiver in res.items():
         channel: BaseChannel = channel_manager.get_channel(name)
         if channel:
-            await channel.send(OutboundMessage(channel=name, chat_id = receiver, content = agent_res))
+            await channel.send(OutboundMessage(channel=name, chat_id=receiver, content=agent_res))
+
 
 # The heartbeat file lives directly at workspace/HEARTBEAT.md (NOT under memory/).
 # It holds pending tasks for the heartbeat scheduled service and can legitimately
@@ -161,6 +164,7 @@ async def process_heartbeat_notify(agent_res: str) -> None:
 # do NOT count toward it (see heartbeat_content_length).
 HEARTBEAT_FILE_NAME: str = "HEARTBEAT.md"
 HEARTBEAT_MAX_CONTENT_LENGTH: int = 2000
+
 
 def heartbeat_content_length(content: str) -> int:
     """Count only the task text in HEARTBEAT.md.
@@ -187,6 +191,7 @@ def heartbeat_content_length(content: str) -> int:
             total += len(stripped)
     return total
 
+
 def read_heartbeat_file() -> dict[str, str]:
     """Read the heartbeat file (workspace/HEARTBEAT.md)."""
     if HEARTBEAT_PATH.exists():
@@ -194,6 +199,7 @@ def read_heartbeat_file() -> dict[str, str]:
             return {HEARTBEAT_FILE_NAME: file.read()}
 
     return {}
+
 
 def write_heartbeat_file(file_to_content: dict[str, str]) -> None:
     """Write the heartbeat file (only the provided file, leave others unchanged)."""

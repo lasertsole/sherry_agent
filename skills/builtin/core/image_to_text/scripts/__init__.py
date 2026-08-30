@@ -1,5 +1,3 @@
 from .core import itt
 
-__all__ = [
-    "itt"
-]
+__all__ = ["itt"]

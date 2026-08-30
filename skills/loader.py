@@ -3,7 +3,7 @@
 import json
 import yaml
 from typing import Any
-from config import ROOT_DIR, SKILLS_DIR, AUTO_SKILLS_DIR, PLUGIN_SKILLS_DIR, SKILLS_STATE_FILE
+from config import ROOT_DIR, SKILLS_DIR, SKILLS_STATE_FILE
 
 
 def parse_frontmatter(text: str) -> dict[str, Any]:

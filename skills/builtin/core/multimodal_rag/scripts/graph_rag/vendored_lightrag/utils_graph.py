@@ -11,9 +11,7 @@ from .utils import compute_mdhash_id, logger, make_relation_vdb_ids
 from .base import StorageNameSpace
 
 
-def _require_non_empty_description(
-    description: Any, *, operation: str, object_type: str
-) -> None:
+def _require_non_empty_description(description: Any, *, operation: str, object_type: str) -> None:
     if description is None or not str(description).strip():
         raise ValueError(
             f"{object_type.capitalize()} description cannot be empty for {operation} operation"
@@ -90,9 +88,7 @@ async def adelete_by_entity(
     # mutex per key, and identical key strings share the same mutex.
     workspace = entities_vdb.global_config.get("workspace", "")
     namespace = f"{workspace}:GraphDB" if workspace else "GraphDB"
-    async with get_storage_keyed_lock(
-        [entity_name], namespace=namespace, enable_logging=False
-    ):
+    async with get_storage_keyed_lock([entity_name], namespace=namespace, enable_logging=False):
         try:
             # Check if the entity exists
             if not await chunk_entity_relation_graph.has_node(entity_name):
@@ -111,9 +107,7 @@ async def adelete_by_entity(
             if entity_chunks_storage is not None:
                 # Delete entity's entry from entity_chunks_storage
                 await entity_chunks_storage.delete([entity_name])
-                logger.info(
-                    f"Entity Delete: removed chunk tracking for `{entity_name}`"
-                )
+                logger.info(f"Entity Delete: removed chunk tracking for `{entity_name}`")
 
             if relation_chunks_storage is not None and edges:
                 # Delete all related relationships from relation_chunks_storage
@@ -123,9 +117,7 @@ async def adelete_by_entity(
                 for src, tgt in edges:
                     # Normalize entity order for consistent key generation
                     normalized_src, normalized_tgt = sorted([src, tgt])
-                    storage_key = make_relation_chunk_key(
-                        normalized_src, normalized_tgt
-                    )
+                    storage_key = make_relation_chunk_key(normalized_src, normalized_tgt)
                     relation_keys_to_delete.append(storage_key)
 
                 if relation_keys_to_delete:
@@ -138,7 +130,9 @@ async def adelete_by_entity(
             await relationships_vdb.delete_entity_relation(entity_name)
             await chunk_entity_relation_graph.delete_node(entity_name)
 
-            message = f"Entity Delete: remove '{entity_name}' and its {related_relations_count} relations"
+            message = (
+                f"Entity Delete: remove '{entity_name}' and its {related_relations_count} relations"
+            )
             logger.info(message)
             await _persist_graph_updates(
                 entities_vdb=entities_vdb,
@@ -191,14 +185,10 @@ async def adelete_by_relation(
     workspace = relationships_vdb.global_config.get("workspace", "")
     namespace = f"{workspace}:GraphDB" if workspace else "GraphDB"
     sorted_edge_key = sorted([source_entity, target_entity])
-    async with get_storage_keyed_lock(
-        sorted_edge_key, namespace=namespace, enable_logging=False
-    ):
+    async with get_storage_keyed_lock(sorted_edge_key, namespace=namespace, enable_logging=False):
         try:
             # Check if the relation exists
-            edge_exists = await chunk_entity_relation_graph.has_edge(
-                source_entity, target_entity
-            )
+            edge_exists = await chunk_entity_relation_graph.has_edge(source_entity, target_entity)
             if not edge_exists:
                 message = f"Relation from '{source_entity}' to '{target_entity}' does not exist"
                 logger.warning(message)
@@ -231,9 +221,7 @@ async def adelete_by_relation(
             await relationships_vdb.delete(rel_ids_to_delete)
 
             # Delete relation from knowledge graph
-            await chunk_entity_relation_graph.remove_edges(
-                [(source_entity, target_entity)]
-            )
+            await chunk_entity_relation_graph.remove_edges([(source_entity, target_entity)])
 
             message = f"Relation Delete: `{source_entity}`~`{target_entity}` deleted successfully"
             logger.info(message)
@@ -249,7 +237,9 @@ async def adelete_by_relation(
                 status_code=200,
             )
         except Exception as e:
-            error_message = f"Error while deleting relation from '{source_entity}' to '{target_entity}': {e}"
+            error_message = (
+                f"Error while deleting relation from '{source_entity}' to '{target_entity}': {e}"
+            )
             logger.error(error_message)
             return DeletionResult(
                 status="fail",
@@ -303,17 +293,13 @@ async def _edit_entity_impl(
     if is_renaming:
         existing_node = await chunk_entity_relation_graph.has_node(new_entity_name)
         if existing_node:
-            raise ValueError(
-                f"Entity name '{new_entity_name}' already exists, cannot rename"
-            )
+            raise ValueError(f"Entity name '{new_entity_name}' already exists, cannot rename")
 
     new_node_data = {**node_data, **updated_data}
     new_node_data["entity_id"] = new_entity_name
 
     if "entity_name" in new_node_data:
-        del new_node_data[
-            "entity_name"
-        ]  # Node data should not contain entity_name field
+        del new_node_data["entity_name"]  # Node data should not contain entity_name field
 
     if is_renaming:
         logger.info(f"Entity Edit: renaming `{entity_name}` to `{new_entity_name}`")
@@ -327,12 +313,8 @@ async def _edit_entity_impl(
             for source, target in edges:
                 edge_data = await chunk_entity_relation_graph.get_edge(source, target)
                 if edge_data:
-                    relations_to_delete.append(
-                        compute_mdhash_id(source + target, prefix="rel-")
-                    )
-                    relations_to_delete.append(
-                        compute_mdhash_id(target + source, prefix="rel-")
-                    )
+                    relations_to_delete.append(compute_mdhash_id(source + target, prefix="rel-"))
+                    relations_to_delete.append(compute_mdhash_id(target + source, prefix="rel-"))
                     if source == entity_name:
                         await chunk_entity_relation_graph.upsert_edge(
                             new_entity_name, target, edge_data
@@ -361,9 +343,7 @@ async def _edit_entity_impl(
 
             content = f"{normalized_src}\t{normalized_tgt}\n{keywords}\n{description}"
 
-            relation_id = compute_mdhash_id(
-                normalized_src + normalized_tgt, prefix="rel-"
-            )
+            relation_id = compute_mdhash_id(normalized_src + normalized_tgt, prefix="rel-")
 
             relation_data = {
                 relation_id: {
@@ -409,9 +389,7 @@ async def _edit_entity_impl(
             storage_key = original_entity_name if is_renaming else entity_name
             stored_data = await entity_chunks_storage.get_by_id(storage_key)
             has_stored_data = (
-                stored_data
-                and isinstance(stored_data, dict)
-                and stored_data.get("chunk_ids")
+                stored_data and isinstance(stored_data, dict) and stored_data.get("chunk_ids")
             )
 
             old_source_id = node_data.get("source_id", "")
@@ -468,17 +446,11 @@ async def _edit_entity_impl(
                 old_normalized_src, old_normalized_tgt = sorted([old_src, old_tgt])
                 new_normalized_src, new_normalized_tgt = sorted([src, tgt])
 
-                old_storage_key = make_relation_chunk_key(
-                    old_normalized_src, old_normalized_tgt
-                )
-                new_storage_key = make_relation_chunk_key(
-                    new_normalized_src, new_normalized_tgt
-                )
+                old_storage_key = make_relation_chunk_key(old_normalized_src, old_normalized_tgt)
+                new_storage_key = make_relation_chunk_key(new_normalized_src, new_normalized_tgt)
 
                 if old_storage_key != new_storage_key:
-                    old_stored_data = await relation_chunks_storage.get_by_id(
-                        old_storage_key
-                    )
+                    old_stored_data = await relation_chunks_storage.get_by_id(old_storage_key)
                     relation_chunk_ids = []
 
                     if old_stored_data and isinstance(old_stored_data, dict):
@@ -488,9 +460,7 @@ async def _edit_entity_impl(
                     else:
                         relation_source_id = edge_data.get("source_id", "")
                         relation_chunk_ids = [
-                            cid
-                            for cid in relation_source_id.split(GRAPH_FIELD_SEP)
-                            if cid
+                            cid for cid in relation_source_id.split(GRAPH_FIELD_SEP) if cid
                         ]
 
                     await relation_chunks_storage.delete([old_storage_key])
@@ -504,9 +474,7 @@ async def _edit_entity_impl(
                                 }
                             }
                         )
-            logger.info(
-                f"Entity Edit: migrate {len(relations_to_update)} relations after rename"
-            )
+            logger.info(f"Entity Edit: migrate {len(relations_to_update)} relations after rename")
 
     await _persist_graph_updates(
         entities_vdb=entities_vdb,
@@ -608,9 +576,7 @@ async def aedit_entity(
         "final_entity": new_entity_name if is_renaming else entity_name,
         "renamed": is_renaming,
     }
-    async with get_storage_keyed_lock(
-        lock_keys, namespace=namespace, enable_logging=False
-    ):
+    async with get_storage_keyed_lock(lock_keys, namespace=namespace, enable_logging=False):
         try:
             if is_renaming and not allow_rename:
                 raise ValueError(
@@ -618,9 +584,7 @@ async def aedit_entity(
                 )
 
             if is_renaming:
-                target_exists = await chunk_entity_relation_graph.has_node(
-                    new_entity_name
-                )
+                target_exists = await chunk_entity_relation_graph.has_node(new_entity_name)
                 if target_exists:
                     if not allow_merge:
                         raise ValueError(
@@ -634,17 +598,13 @@ async def aedit_entity(
                     # Track whether non-name updates were applied
                     non_name_updates_applied = False
                     non_name_updates = {
-                        key: value
-                        for key, value in updated_data.items()
-                        if key != "entity_name"
+                        key: value for key, value in updated_data.items() if key != "entity_name"
                     }
 
                     # Apply non-name updates first
                     if non_name_updates:
                         try:
-                            logger.info(
-                                "Entity Edit: applying non-name updates before merge"
-                            )
+                            logger.info("Entity Edit: applying non-name updates before merge")
                             await _edit_entity_impl(
                                 chunk_entity_relation_graph,
                                 entities_vdb,
@@ -657,9 +617,7 @@ async def aedit_entity(
                             non_name_updates_applied = True
                         except Exception as update_error:
                             # If update fails, re-raise immediately
-                            logger.error(
-                                f"Entity Edit: non-name updates failed: {update_error}"
-                            )
+                            logger.error(f"Entity Edit: non-name updates failed: {update_error}")
                             raise
 
                     # Attempt to merge entities
@@ -773,21 +731,15 @@ async def aedit_relation(
     workspace = relationships_vdb.global_config.get("workspace", "")
     namespace = f"{workspace}:GraphDB" if workspace else "GraphDB"
     sorted_edge_key = sorted([source_entity, target_entity])
-    async with get_storage_keyed_lock(
-        sorted_edge_key, namespace=namespace, enable_logging=False
-    ):
+    async with get_storage_keyed_lock(sorted_edge_key, namespace=namespace, enable_logging=False):
         try:
             # 1. Get current relation information
-            edge_exists = await chunk_entity_relation_graph.has_edge(
-                source_entity, target_entity
-            )
+            edge_exists = await chunk_entity_relation_graph.has_edge(source_entity, target_entity)
             if not edge_exists:
                 raise ValueError(
                     f"Relation from '{source_entity}' to '{target_entity}' does not exist"
                 )
-            edge_data = await chunk_entity_relation_graph.get_edge(
-                source_entity, target_entity
-            )
+            edge_data = await chunk_entity_relation_graph.get_edge(source_entity, target_entity)
             # Important: First delete the old relation record from the vector database
             # Delete both permutations to handle relationships created before normalization
             rel_ids_to_delete = [
@@ -795,9 +747,7 @@ async def aedit_relation(
                 compute_mdhash_id(target_entity + source_entity, prefix="rel-"),
             ]
             await relationships_vdb.delete(rel_ids_to_delete)
-            logger.debug(
-                f"Relation Delete: delete vdb for `{source_entity}`~`{target_entity}`"
-            )
+            logger.debug(f"Relation Delete: delete vdb for `{source_entity}`~`{target_entity}`")
 
             # 2. Update relation information in the graph
             new_edge_data = {**edge_data, **updated_data}
@@ -815,9 +765,7 @@ async def aedit_relation(
             content = f"{source_entity}\t{target_entity}\n{keywords}\n{description}"
 
             # Calculate relation ID
-            relation_id = compute_mdhash_id(
-                source_entity + target_entity, prefix="rel-"
-            )
+            relation_id = compute_mdhash_id(source_entity + target_entity, prefix="rel-")
 
             # Prepare data for vector database update
             relation_data = {
@@ -849,21 +797,15 @@ async def aedit_relation(
                 # Check if storage has existing data
                 stored_data = await relation_chunks_storage.get_by_id(storage_key)
                 has_stored_data = (
-                    stored_data
-                    and isinstance(stored_data, dict)
-                    and stored_data.get("chunk_ids")
+                    stored_data and isinstance(stored_data, dict) and stored_data.get("chunk_ids")
                 )
 
                 # Get old and new source_id
                 old_source_id = edge_data.get("source_id", "")
-                old_chunk_ids = [
-                    cid for cid in old_source_id.split(GRAPH_FIELD_SEP) if cid
-                ]
+                old_chunk_ids = [cid for cid in old_source_id.split(GRAPH_FIELD_SEP) if cid]
 
                 new_source_id = new_edge_data.get("source_id", "")
-                new_chunk_ids = [
-                    cid for cid in new_source_id.split(GRAPH_FIELD_SEP) if cid
-                ]
+                new_chunk_ids = [cid for cid in new_source_id.split(GRAPH_FIELD_SEP) if cid]
 
                 source_id_changed = set(new_chunk_ids) != set(old_chunk_ids)
 
@@ -956,9 +898,7 @@ async def acreate_entity(
     # Use keyed lock for entity to ensure atomic graph and vector db operations
     workspace = entities_vdb.global_config.get("workspace", "")
     namespace = f"{workspace}:GraphDB" if workspace else "GraphDB"
-    async with get_storage_keyed_lock(
-        [entity_name], namespace=namespace, enable_logging=False
-    ):
+    async with get_storage_keyed_lock([entity_name], namespace=namespace, enable_logging=False):
         try:
             # Check if entity already exists
             existing_node = await chunk_entity_relation_graph.has_node(entity_name)
@@ -1075,9 +1015,7 @@ async def acreate_relation(
     workspace = relationships_vdb.global_config.get("workspace", "")
     namespace = f"{workspace}:GraphDB" if workspace else "GraphDB"
     sorted_edge_key = sorted([source_entity, target_entity])
-    async with get_storage_keyed_lock(
-        sorted_edge_key, namespace=namespace, enable_logging=False
-    ):
+    async with get_storage_keyed_lock(sorted_edge_key, namespace=namespace, enable_logging=False):
         try:
             # Check if both entities exist
             source_exists = await chunk_entity_relation_graph.has_node(source_entity)
@@ -1089,9 +1027,7 @@ async def acreate_relation(
                 raise ValueError(f"Target entity '{target_entity}' does not exist")
 
             # Check if relation already exists
-            existing_edge = await chunk_entity_relation_graph.has_edge(
-                source_entity, target_entity
-            )
+            existing_edge = await chunk_entity_relation_graph.has_edge(source_entity, target_entity)
             if existing_edge:
                 raise ValueError(
                     f"Relation from '{source_entity}' to '{target_entity}' already exists"
@@ -1108,9 +1044,7 @@ async def acreate_relation(
             }
 
             # Add relation to knowledge graph
-            await chunk_entity_relation_graph.upsert_edge(
-                source_entity, target_entity, edge_data
-            )
+            await chunk_entity_relation_graph.upsert_edge(source_entity, target_entity, edge_data)
 
             # Normalize entity order for undirected relation vector (ensures consistent key generation)
             if source_entity > target_entity:
@@ -1126,9 +1060,7 @@ async def acreate_relation(
             content = f"{keywords}\t{source_entity}\n{target_entity}\n{description}"
 
             # Calculate relation ID
-            relation_id = compute_mdhash_id(
-                source_entity + target_entity, prefix="rel-"
-            )
+            relation_id = compute_mdhash_id(source_entity + target_entity, prefix="rel-")
 
             # Prepare data for vector database update
             relation_data_for_vdb = {
@@ -1261,9 +1193,7 @@ async def _merge_entities_impl(
     target_exists = await chunk_entity_relation_graph.has_node(target_entity)
     existing_target_entity_data = {}
     if target_exists:
-        existing_target_entity_data = await chunk_entity_relation_graph.get_node(
-            target_entity
-        )
+        existing_target_entity_data = await chunk_entity_relation_graph.get_node(target_entity)
 
     # 3. Merge entity data
     merged_entity_data = _merge_attributes(
@@ -1411,14 +1341,10 @@ async def _merge_entities_impl(
                 }
 
             await relation_chunks_storage.upsert(updates)
-            logger.info(
-                f"Entity Merge: {len(updates)} relation chunk tracking records updated"
-            )
+            logger.info(f"Entity Merge: {len(updates)} relation chunk tracking records updated")
 
     # 7. Update relationship vector representations
-    logger.debug(
-        f"Entity Merge: deleting {len(relations_to_delete)} relations from vdb"
-    )
+    logger.debug(f"Entity Merge: deleting {len(relations_to_delete)} relations from vdb")
     await relationships_vdb.delete(relations_to_delete)
 
     for rel_data in relation_updates.values():
@@ -1448,9 +1374,7 @@ async def _merge_entities_impl(
             }
         }
         await relationships_vdb.upsert(relation_data_for_vdb)
-        logger.debug(
-            f"Entity Merge: updating vdb `{normalized_src}`~`{normalized_tgt}`"
-        )
+        logger.debug(f"Entity Merge: updating vdb `{normalized_src}`~`{normalized_tgt}`")
 
     logger.info(f"Entity Merge: {len(relation_updates)} relations in vdb updated")
 
@@ -1529,9 +1453,7 @@ async def _merge_entities_impl(
     # 10. Delete source entities
     for entity_name in source_entities:
         if entity_name == target_entity:
-            logger.warning(
-                f"Entity Merge: source entity'{entity_name}' is same as target entity"
-            )
+            logger.warning(f"Entity Merge: source entity'{entity_name}' is same as target entity")
             continue
 
         logger.info(f"Entity Merge: deleting '{entity_name}' from KG and vdb")
@@ -1603,9 +1525,7 @@ async def amerge_entities(
 
     workspace = entities_vdb.global_config.get("workspace", "")
     namespace = f"{workspace}:GraphDB" if workspace else "GraphDB"
-    async with get_storage_keyed_lock(
-        lock_keys, namespace=namespace, enable_logging=False
-    ):
+    async with get_storage_keyed_lock(lock_keys, namespace=namespace, enable_logging=False):
         try:
             return await _merge_entities_impl(
                 chunk_entity_relation_graph,

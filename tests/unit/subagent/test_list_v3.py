@@ -1,7 +1,10 @@
-﻿import pytest
-from agent.tools.subagent.control.list import is_subagent_run_visible_to_session, build_subagent_list
+import pytest
+from agent.tools.subagent.control.list import (
+    is_subagent_run_visible_to_session,
+    build_subagent_list,
+)
 from agent.tools.subagent.registry.memory import set_run, clear
-from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionState, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.types.registry import SubagentRunRecord
 
 
 @pytest.fixture(autouse=True)
@@ -53,10 +56,18 @@ class TestIsSubagentRunVisibleToSession:
 
 class TestBuildSubagentListWithVisibility:
     def test_filters_by_visibility(self):
-        r1 = _make_run(run_id="r1", requester_session_key="parent1",
-                        child_session_key="agent:main:subagent:c1", label="w1")
-        r2 = _make_run(run_id="r2", requester_session_key="parent2",
-                        child_session_key="agent:main:subagent:c2", label="w2")
+        r1 = _make_run(
+            run_id="r1",
+            requester_session_key="parent1",
+            child_session_key="agent:main:subagent:c1",
+            label="w1",
+        )
+        r2 = _make_run(
+            run_id="r2",
+            requester_session_key="parent2",
+            child_session_key="agent:main:subagent:c2",
+            label="w2",
+        )
         set_run(r1)
         set_run(r2)
 

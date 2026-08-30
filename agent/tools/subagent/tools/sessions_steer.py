@@ -9,22 +9,22 @@ from ..control import steer_subagent_run
 
 class SessionsSteerSchema(BaseModel):
     """Input schema for the sessions_steer tool."""
-    run_id: str = Field(
-        description="The run_id of the subagent to steer."
-    )
+
+    run_id: str = Field(description="The run_id of the subagent to steer.")
     new_task: str | None = Field(
         default=None,
-        description="Optional new task description to replace the original task entirely."
+        description="Optional new task description to replace the original task entirely.",
     )
     new_instructions: str | None = Field(
         default=None,
         description="Additional instructions to inject into the running subagent. "
-                    "Use this to redirect or refine the subagent's approach without replacing the whole task."
+        "Use this to redirect or refine the subagent's approach without replacing the whole task.",
     )
 
 
 class SessionsSteerTool(BaseTool):
     """LLM tool: steer a running sub-agent by injecting new instructions or replacing its task."""
+
     name: str = "sessions_steer"
     description: str = (
         "Steer a running subagent by injecting new instructions or replacing its task. "
@@ -44,8 +44,12 @@ class SessionsSteerTool(BaseTool):
         new_task: str | None = None,
         new_instructions: str | None = None,
     ) -> str:
-        logger.info("sessions_steer called: run_id={}, new_task={}, new_instructions={}",
-                     run_id, bool(new_task), bool(new_instructions))
+        logger.info(
+            "sessions_steer called: run_id={}, new_task={}, new_instructions={}",
+            run_id,
+            bool(new_task),
+            bool(new_instructions),
+        )
 
         if not new_task and not new_instructions:
             return "Error: Must provide at least one of new_task or new_instructions."

@@ -1,4 +1,4 @@
-﻿"""Shared debug LightRAG stand-in for registry-dispatched parsing.
+"""Shared debug LightRAG stand-in for registry-dispatched parsing.
 
 A minimal ``LightRAG`` stand-in plus a deterministic ``datetime`` shim,
 shared by the unified parser debug CLI (``lightrag/parser/cli.py``),

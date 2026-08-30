@@ -31,4 +31,8 @@ __all__ = [
     "resolve_thinking_override",
     "resolve_model_and_thinking_plan",
     "ModelThinkingPlan",
+    "resolve_run_timeout_seconds",
+    "prepare_spawned_context",
+    "normalize_subagent_task_name",
+    "materialize_subagent_attachments",
 ]

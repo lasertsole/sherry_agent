@@ -1,10 +1,12 @@
 <template>
   <div class="flex flex-col h-full w-full bg-[#f8f9fa] dark:bg-[#131619]">
-    <!-- 图谱渲染区 -->
+    <!-- Graph rendering area -->
     <div class="relative flex-1 w-full h-full overflow-hidden">
-      <div ref="containerRef" class="w-full h-full" />
+      <div
+        ref="containerRef"
+        class="w-full h-full" />
 
-      <!-- 加载中 -->
+      <!-- Loading -->
       <div
         v-if="loading"
         class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/60 dark:bg-[#131619]/60">
@@ -12,7 +14,7 @@
         <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('flow.loading') }}</span>
       </div>
 
-      <!-- 空态 -->
+      <!-- Empty state -->
       <div
         v-else-if="empty"
         class="absolute inset-0 flex flex-col items-center justify-center gap-4">
@@ -22,7 +24,7 @@
         </div>
       </div>
 
-      <!-- 错误态 -->
+      <!-- Error state -->
       <div
         v-else-if="error"
         class="absolute inset-0 flex flex-col items-center justify-center gap-4">
@@ -39,23 +41,23 @@
 import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Graph, NodeEvent } from '@antv/g6';
-import type { GraphData, IElementEvent } from '@antv/g6';
+import type { GraphData, IElementEvent, NodeData } from '@antv/g6';
 import { on, off } from '@/composables/mitt';
 import { fetchSubagentRuns, type SubagentRun } from '@/composables/bridge';
 import { useSubagentWs } from '@/composables/ws';
 
-  const { t } = useI18n({ useScope: 'local' });
+  const { t } = useI18n();
 
-/** 当前会话 id（由父组件 v-model:current-session-id 双向同步） */
+/** Current session id (two-way synced from the parent via v-model:current-session-id) */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');
 
-/** 选中的 run id（由父组件 :selected-run-id 传入，用于高亮 + 作为根展示其全部后代） */
+/** Selected run id (passed in from the parent via :selected-run-id, used for highlighting + as the root for showing all of its descendants) */
 const selectedRunId = defineModel<string | undefined>('selectedRunId');
 
-/** 选中的完整 run 对象（由父组件 v-model:selected-run 传入，供下方详情面板展示） */
+/** The complete selected run object (passed in from the parent via v-model:selected-run, displayed in the detail panel below) */
 const selectedRun = defineModel<SubagentRun | undefined>('selectedRun');
 
-/** 供下方详情面板使用的导航提示（点击节点时由本组件外抛） */
+/** Navigation hint for the detail panel below (emitted outward by this component when a node is clicked) */
 const emit = defineEmits<{
   (e: 'node-select', run: SubagentRun | undefined): void;
 }>();
@@ -67,31 +69,35 @@ const loading = ref(false);
 const empty = ref(false);
 const error = ref(false);
 
-/** 内部权威数据源：run_id → SubagentRun（由 fetch + WS 增量累积） */
+/** Internal authoritative data source: run_id → SubagentRun (accumulated incrementally via fetch + WS) */
 const runStore = new Map<string, SubagentRun>();
 
 /**
- * 请求序号：用于丢弃「迟到的旧响应」。
- * loadFlow 会被 onMounted / watch(currentSessionId) / ws:subagents:ready /
- * watch(colorMode) 等多个路径触发，快速切换会话/tab 时会并发多个 async 拉取；
- * 若无防护，旧会话的响应（可能为空）会晚到并覆盖新会话正在展示的运行树，
- * 导致间歇性显示「暂无子 Agent 运行」。每次 loadFlow 递增该序号，仅接受最新一次。
+ * Request sequence number: used to discard "stale late responses".
+ * loadFlow is triggered from multiple paths — onMounted / watch(currentSessionId) /
+ * ws:subagents:ready / watch(colorMode), etc. Rapidly switching sessions/tabs can start several
+ * concurrent async fetches; without protection, an old session's response (possibly empty)
+ * would arrive late and overwrite the run tree the new session is displaying, causing
+ * intermittent "no subagent runs" displays. Each loadFlow increments this number and only the
+ * latest round is accepted.
  */
 let loadFlowSeq = 0;
 
 /**
- * 可选：外部指定要展示的运行集（如侧边栏点击聚焦某任务后，仅展示该任务的子任务子树）。
- * 当该 prop 有值时（且非空），图谱只渲染这里给定的 run，忽略内部 runStore 的整棵会话树；
- * 无值时回退为渲染 runStore 的完整运行树（未聚焦时的「总树状图」行为）。
+ * Optional: externally specified set of runs to display (e.g. after clicking a task in the
+ * sidebar to focus it, only that task's subtask subtree is shown). When this prop has a value
+ * (and is non-empty), the graph renders only the runs given here and ignores the internal
+ * runStore's full session tree; when unset, it falls back to rendering the complete run tree
+ * from runStore (the "overall tree graph" behavior when not focused).
  */
 const displayRuns = defineModel<SubagentRun[] | undefined>('displayRuns');
 
 const colorMode = useColorMode();
 
-/** 当前是否为深色主题 */
+/** Whether the current theme is dark */
 const isDark = () => colorMode.value === 'dark';
 
-/** 运行状态 → 节点颜色（浅色主题） */
+/** Run status → node color (light theme) */
 const statusColorLight = (status: string): string => {
   switch (status) {
     case 'RUNNING':
@@ -108,7 +114,7 @@ const statusColorLight = (status: string): string => {
   }
 };
 
-/** 运行状态 → 节点颜色（深色主题） */
+/** Run status → node color (dark theme) */
 const statusColorDark = (status: string): string => {
   switch (status) {
     case 'RUNNING':
@@ -125,12 +131,12 @@ const statusColorDark = (status: string): string => {
   }
 };
 
-/** 运行状态 → 节点颜色（按主题） */
+/** Run status → node color (per theme) */
 const statusColor = (status: string): string => {
   return isDark() ? statusColorDark(status) : statusColorLight(status);
 };
 
-/** 运行状态 → 状态文案 key */
+/** Run status → status text i18n key */
 const statusKey = (run: SubagentRun): string => {
   const exec = run?.execution?.status;
   if (exec === 'RUNNING' || exec === 'INTERRUPTED') return 'running';
@@ -140,20 +146,22 @@ const statusKey = (run: SubagentRun): string => {
   return 'unknown';
 };
 
-/** 节点主标题：优先 label/task_name，其次 task 文本 */
+/** Node main title: prefers label/task_name, then the task text */
 const nodeLabel = (run: SubagentRun): string => {
   return run?.label || run?.task_name || run?.task || run?.run_id || '-';
 };
 
 /**
- * 将运行记录列表映射为 G6 图数据（树形）。
- * 父子关联（SubagentRun 无 parent_run_id）：父 run 的 child_session_key = K，
- * 则所有 requester_session_key === K 的 run 都是其直接子任务。由此逐层派生边。
- * @param runs 运行记录列表
- * 计算单个 run 的节点基础样式（按运行状态着色）。
- * 选中高亮不在此处理，改由 G6 的 selected state 就地应用（见 ensureGraph 的 node.state 配置），
- * 从而避免点击节点时重建整图 / 重跑布局。
- * @param run 运行记录
+ * Map a list of run records into G6 graph data (tree-shaped).
+ * Parent-child association (SubagentRun has no parent_run_id): when a parent run's
+ * child_session_key = K, every run whose requester_session_key === K is its direct child
+ * task. Edges are derived level by level from this.
+ * @param runs list of run records
+ * Computes the base node style for a single run (colored by run status).
+ * Selection highlighting is not handled here; it is applied in place via G6's selected state
+ * (see the node.state configuration in ensureGraph), avoiding a full graph rebuild / layout
+ * rerun when a node is clicked.
+ * @param run run record
  */
 const nodeStyle = (run: SubagentRun) => {
   return {
@@ -165,14 +173,14 @@ const nodeStyle = (run: SubagentRun) => {
 };
 
 /**
- * 将运行集映射为 G6 GraphData。
- * @param runs 待展示的运行集
+ * Map a run set into G6 GraphData.
+ * @param runs the run set to display
  */
 const mapToGraphData = (runs: SubagentRun[]): GraphData => {
   const nodes: GraphData['nodes'] = [];
   const edges: GraphData['edges'] = [];
   const seen = new Set<string>();
-  // child_session_key → run_id：用于把子任务的 requester_session_key 反查到父 run
+  // child_session_key → run_id: used to look up the parent run from a child task's requester_session_key
   const childSessionKeyToRunId = new Map<string, string>();
 
   for (const run of runs) {
@@ -194,8 +202,9 @@ const mapToGraphData = (runs: SubagentRun[]): GraphData => {
     });
   }
 
-  // 边：父 run → 子 run。子 run 的 requester_session_key 对应父 run 的 child_session_key，
-  // 通过反查表找到父 run_id；找不到（requester 是会话根、不在节点集内）则跳过，避免 G6 "Node not found"。
+  // Edges: parent run → child run. A child run's requester_session_key matches the parent run's
+  // child_session_key; find the parent run_id via the reverse-lookup map. If not found (the
+  // requester is the session root and not in the node set), skip it to avoid G6 "Node not found".
   for (const run of runs) {
     const id = run.run_id;
     if (!id || !seen.has(id)) continue;
@@ -217,32 +226,37 @@ const mapToGraphData = (runs: SubagentRun[]): GraphData => {
 };
 
 /**
- * 从展示数据源派生 GraphData。
- * - 当外部通过 displayRuns 指定了运行集（侧边栏聚焦某任务）时：此时以该任务的子树为「权威范围」，
- *   图谱只渲染这批 run，避免把同会话的其它无关兄弟任务也画进来。
- * - 未指定 displayRuns 时：渲染 runStore 的完整运行树（默认「总树状图」）。
- * 高亮（selected state）由 ensureGraph / applyHighlight 就地管理，不参与数据派生。
+ * Derive GraphData from the display data source.
+ * - When an external run set is specified via displayRuns (sidebar focuses a task): that task's
+ *   subtree becomes the "authoritative scope", and the graph renders only those runs, avoiding
+ *   drawing other unrelated sibling tasks of the same session.
+ * - When displayRuns is unset: render the full run tree from runStore (the default "overall
+ *   tree graph").
+ * Highlighting (selected state) is managed in place by ensureGraph / applyHighlight and does
+ * not participate in data derivation.
  */
 const deriveDisplayData = (): GraphData => {
-  const sourceRuns = displayRuns.value?.length
-    ? displayRuns.value
-    : Array.from(runStore.values());
+  const sourceRuns = displayRuns.value?.length ? displayRuns.value : Array.from(runStore.values());
   return mapToGraphData(sourceRuns);
 };
 
 /**
- * 构建 G6 图配置并渲染（仅在尚无实例或图结构发生实质性变化时调用）。
- * 结构变化（首次加载 / WS 引起新增节点）会重建数据并重新执行布局；
- * 单纯的选中高亮切换应调用 applyHighlight()，避免整图重建与重排。
+ * Build the G6 graph configuration and render (called only when there is no instance yet or the
+ * graph structure changed substantively). Structural changes (first load / WS-introduced new
+ * nodes) rebuild the data and re-run the layout; a mere selection-highlight toggle should call
+ * applyHighlight() instead, avoiding a full graph rebuild and re-layout.
  */
 const ensureGraph = async (data: GraphData) => {
   if (!containerRef.value) return;
 
-  // 已有实例：节点/边集合整体变化（首次加载之外的全部场景：task box 切换 / session 切换 / WS 增量）。
-  // 不能在已有实例上 setData 引入全新节点后再重跑 d3-force layout()——
-  // G6 v5 该路径下 before-layout 触发但 after-layout 永不触发，力导向模拟永不收敛，
-  // 全新节点坐标全程停留在 [0,0]，互相堆叠（已端到端复现确认）。
-  // 因此销毁实例并按新的权威数据重建，确保 d3-force 依据新拓扑完整初始化每个节点位置。
+  // Existing instance: the node/edge set changed wholesale (every scenario other than first
+  // load: task box switching / session switching / WS increments).
+  // You cannot setData brand-new nodes onto an existing instance and then re-run the d3-force
+  // layout() —— on this path in G6 v5, before-layout fires but after-layout never fires, the
+  // force simulation never converges, and the new nodes' coordinates stay stuck at [0,0] the
+  // whole time, piling up on each other (confirmed by end-to-end reproduction).
+  // Therefore destroy the instance and rebuild from the new authoritative data, ensuring
+  // d3-force fully initializes every node position based on the new topology.
   if (graphRef.value) {
     destroyGraph();
   }
@@ -260,7 +274,10 @@ const ensureGraph = async (data: GraphData) => {
     autoFit: 'view',
     node: {
       style: {
-        labelText: (datum: { label?: string }) => datum.label ?? '',
+        labelText: (datum: NodeData) => {
+          const label = datum['label'];
+          return typeof label === 'string' ? label : '';
+        },
         labelFill,
         labelFontSize: 11,
         labelPlacement: 'bottom',
@@ -297,19 +314,19 @@ const ensureGraph = async (data: GraphData) => {
     }
   });
 
-  // 点击节点：选中并联动下方详情面板
-  // G6 v5 的 node:click 事件中 evt.target 已由 forceCanvas 事件转发层的
-  // eventTargetOf() 解析为节点元素本身（其 id 即 run_id），无论点中节点主体
-  // 还是其 label 子形状都一样。因此用 targetType 判定命中节点后取 evt.target.id 即可。
+  // Click a node: select it and link the detail panel below
+  // In G6 v5's node:click event, evt.target has already been resolved by the forceCanvas event
+  // forwarding layer's eventTargetOf() into the node element itself (its id is the run_id),
+  // whether you click the node body or its label child shape. So after using targetType to
+  // determine that a node was hit, simply take evt.target.id.
   graph.on(NodeEvent.CLICK, (evt: IElementEvent) => {
-    // G6 的 node:click 会解析 evt.target 为节点元素（id 即 run_id），点击 label 子形状时同样命中节点本体
+    // G6's node:click resolves evt.target into the node element (id is the run_id); clicking a label child shape hits the node itself too
     const id = evt.targetType === 'node' ? evt.target.id : undefined;
     if (!id) return;
-    // 优先从实际渲染数据源解析 run：焦点子树（displayRuns）可能是跨会话的，
-    // 其节点 id 未必存在于仅含当前会话 descendants 的 runStore 中；故二者都查。
-    const run = displayRuns.value?.length
-      ? displayRuns.value.find((r) => r.run_id === id)
-      : runStore.get(id);
+    // Prefer resolving the run from the actual rendering data source: the focused subtree
+    // (displayRuns) may span sessions, and its node ids may not exist in runStore, which only
+    // holds the current session's descendants; hence query both.
+    const run = displayRuns.value?.length ? displayRuns.value.find(r => r.run_id === id) : runStore.get(id);
     if (run) {
       selectedRunId.value = id;
       selectedRun.value = run;
@@ -319,8 +336,9 @@ const ensureGraph = async (data: GraphData) => {
 
   graphRef.value = graph;
   await graph.render();
-  // 容器尺寸变化时同步 G6 canvas 宽高（保持 100% 跟随父容器）。
-  // G6 v5 无参 resize() 并非稳定支持，需显式传入容器像素尺寸，canvas 才会真正跟随缩放。
+  // Sync the G6 canvas width/height when the container size changes (keep following the parent
+  // container at 100%). G6 v5's no-arg resize() is not reliably supported; the container's pixel
+  // size must be passed explicitly for the canvas to actually scale along.
   resizeObserverRef.value?.disconnect();
   resizeObserverRef.value = new ResizeObserver(() => {
     if (graphRef.value && containerRef.value) {
@@ -328,22 +346,22 @@ const ensureGraph = async (data: GraphData) => {
         const { clientWidth, clientHeight } = containerRef.value;
         graphRef.value.resize(clientWidth || 1, clientHeight || 1);
       } catch {
-        /* canvas 尚未就绪，忽略 */
+        /* canvas not ready yet, ignore */
       }
     }
   });
   if (containerRef.value) resizeObserverRef.value.observe(containerRef.value);
-  // 首次渲染后重放既有选中（若存在），使高亮即时可见
+  // After the first render, replay the existing selection (if any) so the highlight is immediately visible
   if (selectedRunId.value) {
     try {
       await graph.setElementState(selectedRunId.value, ['selected']);
     } catch {
-      /* 选中节点不在新数据内，忽略 */
+      /* selected node is not in the new data, ignore */
     }
   }
 };
 
-/** 销毁当前图实例（用于更换会话/清空数据时释放） */
+/** Destroy the current graph instance (used to release resources when switching sessions / clearing data) */
 const destroyGraph = () => {
   resizeObserverRef.value?.disconnect();
   resizeObserverRef.value = null;
@@ -352,10 +370,12 @@ const destroyGraph = () => {
 };
 
 /**
- * 选中高亮切换：就地应用 G6 的 selected state，不销毁实例、不重跑布局。
- * 依赖 ensureGraph 中配置的 node.state.selected 样式，点击节点后仅改变该节点状态即可即时高亮。
- * @param prev 上一个选中节点 id（撤销高亮），可为空
- * @param next 新选中的节点 id（点亮），可为空
+ * Selection highlight toggle: apply G6's selected state in place without destroying the
+ * instance or re-running the layout. Relies on the node.state.selected style configured in
+ * ensureGraph; after clicking a node, only changing that node's state makes it highlight
+ * immediately.
+ * @param prev the previously selected node id (highlight removed), may be empty
+ * @param next the newly selected node id (lit up), may be empty
  */
 const applyHighlight = async (prev?: string, next?: string) => {
   const graph = graphRef.value;
@@ -364,31 +384,33 @@ const applyHighlight = async (prev?: string, next?: string) => {
     try {
       await graph.setElementState(prev, []);
     } catch {
-      /* 节点可能已不在当前展示范围，忽略 */
+      /* the node may no longer be in the current display scope, ignore */
     }
   }
   if (next) {
     try {
       await graph.setElementState(next, ['selected']);
     } catch {
-      /* 节点可能尚未渲染，忽略（后续 render 时会据 selectedRunId 补齐） */
+      /* the node may not be rendered yet, ignore (a later render will apply it based on selectedRunId) */
     }
   }
 };
 
-/** 拉取并渲染子 Agent 运行树（写入 runStore 后按选中状态派生展示） */
+/** Fetch and render the subagent run tree (after writing into runStore, derive the display per the selection state) */
 const loadFlow = async () => {
   const sid = currentSessionId.value;
   if (!sid) return;
-  // 本次请求的序号：任何旧请求在 await 返回后若发现新一轮 loadFlow 已开始，
-  // 或当前会话已切换，则直接丢弃其结果，防止旧数据覆盖新会话（间歇性空态根因）。
+  // Sequence number of this request: after an old request's await returns, if it finds that a
+  // new round of loadFlow has started or the current session has switched, it discards its
+  // result outright, preventing old data from overwriting the new session (root cause of the
+  // intermittent empty state).
   const seq = ++loadFlowSeq;
   loading.value = true;
   error.value = false;
   empty.value = false;
   try {
     const runs = await fetchSubagentRuns(sid, 'descendants');
-    // 竞态守卫：已有更新的 loadFlow 发起，或会话已变，丢弃本次结果
+    // Race guard: a newer loadFlow has started or the session has changed — discard this result
     if (seq !== loadFlowSeq || sid !== currentSessionId.value) return;
     runStore.clear();
     for (const run of runs) {
@@ -401,7 +423,7 @@ const loadFlow = async () => {
     }
     ensureGraph(deriveDisplayData());
   } catch (e) {
-    // 竞态守卫同样适用于错误分支：被更新的请求取代时，不污染当前状态
+    // The race guard applies to the error branch too: when superseded by a newer request, do not pollute the current state
     if (seq !== loadFlowSeq || sid !== currentSessionId.value) return;
     console.error('[SubagentFlowGraph] 拉取子 Agent 运行树失败：', e);
     error.value = true;
@@ -411,24 +433,24 @@ const loadFlow = async () => {
   }
 };
 
-/** 增量更新：合并新事件到 runStore 并按选中状态重渲染 */
+/** Incremental update: merge the new event into runStore and re-render per the selection state */
 const applyIncremental = (run: SubagentRun) => {
   if (!run?.run_id) return;
   if (empty.value) empty.value = false;
   if (error.value) error.value = false;
 
-  // 写入权威数据源
+  // Write into the authoritative data source
   runStore.set(run.run_id, run);
 
-  // 从 runStore 派生展示数据（始终渲染完整运行树，仅高亮当前选中）
+  // Derive display data from runStore (always render the full run tree, only highlight the current selection)
   ensureGraph(deriveDisplayData());
 };
 
-/** 建立 /subagents/ws 订阅（复用模块级单例，不新建连接） */
+/** Set up the /subagents/ws subscription (reuses the module-level singleton, no new connection) */
 const setupSubagentWs = () => {
   useSubagentWs({
     onReconnect: () => {
-      // 重连成功后服务端会补发 ready，届时再拉一次全量补齐
+      // After a successful reconnect the server re-sends ready, at which point a full re-fetch fills everything in
     }
   });
 
@@ -445,14 +467,14 @@ const setupSubagentWs = () => {
   });
 };
 
-/** 移除 mitt 订阅（WS 连接为模块级单例，交给后续组件复用，不在此关闭） */
+/** Remove the mitt subscriptions (the WS connection is a module-level singleton left for later components to reuse; not closed here) */
 const teardownSubagentSubscribe = () => {
   off('ws:subagent_spawned');
   off('ws:subagent_ended');
   off('ws:subagents:ready');
 };
 
-/** 主题切换时重建图谱以应用新配色 */
+/** Rebuild the graph on theme switch to apply the new color scheme */
 watch(
   () => colorMode.value,
   () => {
@@ -462,7 +484,7 @@ watch(
   }
 );
 
-/** 会话切换时清空选中并重新拉取该会话的运行树 */
+/** On session switch, clear the selection and re-fetch that session's run tree */
 watch(
   () => currentSessionId.value,
   () => {
@@ -473,8 +495,9 @@ watch(
 );
 
 /**
- * 外部展示范围变化（侧边栏聚焦切换：displayRuns 在全树/某任务子树间切换）。
- * 节点/边的集合与结构随之变化，需重建数据并重新布局；高亮由 applyHighlight 就地更新。
+ * External display scope change (sidebar focus switching: displayRuns toggles between the full
+ * tree and a single task's subtree). The node/edge set and structure change accordingly, so the
+ * data must be rebuilt and the layout re-run; highlighting is updated in place by applyHighlight.
  */
 watch(
   () => displayRuns.value,
@@ -486,7 +509,7 @@ watch(
   { deep: true }
 );
 
-/** 选中 run 变化时只就地更新高亮（selected state），不重建整图、不重排布局 */
+/** When the selected run changes, only update the highlight in place (selected state); no full graph rebuild, no layout rerun */
 watch(
   () => selectedRunId.value,
   (next, prev) => {
@@ -507,35 +530,3 @@ onBeforeUnmount(() => {
 });
 </script>
 
-<i18n lang="json">
-{
-  "zh": {
-    "flow": {
-      "loading": "加载中…",
-      "empty": "无后台数据",
-      "error": "加载失败"
-    }
-  },
-  "en": {
-    "flow": {
-      "loading": "Loading…",
-      "empty": "No background data",
-      "error": "Failed to load"
-    }
-  },
-  "ja": {
-    "flow": {
-      "loading": "読み込み中...",
-      "empty": "バックグラウンドデータがありません",
-      "error": "読み込みに失敗しました"
-    }
-  },
-  "ko": {
-    "flow": {
-      "loading": "불러오는 중...",
-      "empty": "백그라운드 데이터가 없습니다",
-      "error": "불러오지 못했습니다"
-    }
-  }
-}
-</i18n>

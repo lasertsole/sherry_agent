@@ -21,8 +21,12 @@ from langchain_core.messages import HumanMessage
 # Load environment variables
 load_dotenv(project_root / ".env", override=True)
 
+
 @validate_call
-def itt(image_path: str, user_text: str = "Please describe the image content in as much detail as possible.")-> str:
+def itt(
+    image_path: str,
+    user_text: str = "Please describe the image content in as much detail as possible.",
+) -> str:
     """Recognize image content (supports local file path or URL)
 
     Args:
@@ -88,7 +92,7 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
             img_format = img.format.lower()  # jpg, png, webp, etc.
 
         with open(path, "rb") as image_file:
-            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
     except Exception as e:
         err_mes = f"[Error] Image conversion failed: {repr(e)}"
         logger.error(err_mes)
@@ -110,7 +114,7 @@ def itt(image_path: str, user_text: str = "Please describe the image content in 
         logger.info(suc_mess)
         return suc_mess
     except Exception as e:
-        err_mes:str = f"[Error] Vision model call failed: {e}"
+        err_mes: str = f"[Error] Vision model call failed: {e}"
         logger.error(err_mes)
         return err_mes
     finally:

@@ -50,9 +50,7 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models  # type: ignore
 
 # Add project root to path for imports
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # Load environment variables
 load_dotenv(dotenv_path=".env", override=False)
@@ -151,9 +149,7 @@ class QdrantLegacyDataPreparationTool:
             config.read("config.ini", "utf-8")
 
             self._client = QdrantClient(
-                url=os.environ.get(
-                    "QDRANT_URL", config.get("qdrant", "uri", fallback=None)
-                ),
+                url=os.environ.get("QDRANT_URL", config.get("qdrant", "uri", fallback=None)),
                 api_key=os.environ.get(
                     "QDRANT_API_KEY",
                     config.get("qdrant", "apikey", fallback=None),
@@ -450,9 +446,7 @@ class QdrantLegacyDataPreparationTool:
 
             try:
                 # Upsert to target collection
-                client.upsert(
-                    collection_name=target_collection, points=new_points, wait=True
-                )
+                client.upsert(collection_name=target_collection, points=new_points, wait=True)
                 stats.copied_records += len(new_points)
 
                 # Progress bar
@@ -469,9 +463,7 @@ class QdrantLegacyDataPreparationTool:
 
             except Exception as e:
                 stats.add_error(batch_idx, e, len(new_points))
-                print(
-                    f"\n  {BOLD_RED}✗{RESET} Batch {batch_idx} failed: {type(e).__name__}: {e}"
-                )
+                print(f"\n  {BOLD_RED}✗{RESET} Batch {batch_idx} failed: {type(e).__name__}: {e}")
 
             if next_offset is None:
                 break
@@ -510,9 +502,7 @@ class QdrantLegacyDataPreparationTool:
         # Check source collection
         source_info = self.get_collection_info(source)
         if source_info is None:
-            print(
-                f"  {BOLD_YELLOW}⚠{RESET} Source collection '{source}' does not exist, skipping"
-            )
+            print(f"  {BOLD_YELLOW}⚠{RESET} Source collection '{source}' does not exist, skipping")
             return None
 
         print(f"  Source vector dimension: {source_info['vector_size']}d")
@@ -541,9 +531,7 @@ class QdrantLegacyDataPreparationTool:
             return None
 
         # Copy data with workspace filter
-        stats = self.copy_collection_data(
-            source, target, collection_type, workspace_count
-        )
+        stats = self.copy_collection_data(source, target, collection_type, workspace_count)
 
         # Print result
         if stats.failed_records == 0:
@@ -570,9 +558,7 @@ class QdrantLegacyDataPreparationTool:
 
         for stats in all_stats:
             status = (
-                f"{BOLD_GREEN}✓{RESET}"
-                if stats.failed_records == 0
-                else f"{BOLD_YELLOW}⚠{RESET}"
+                f"{BOLD_GREEN}✓{RESET}" if stats.failed_records == 0 else f"{BOLD_YELLOW}⚠{RESET}"
             )
             print(
                 f"  {status} {stats.collection_type}: {stats.copied_records:,}/{stats.total_records:,} "
@@ -596,9 +582,7 @@ class QdrantLegacyDataPreparationTool:
         if all_errors:
             print(f"\n{BOLD_RED}Errors ({len(all_errors)}){RESET}")
             for i, error in enumerate(all_errors[:5], 1):
-                print(
-                    f"  {i}. Batch {error['batch']}: {error['error_type']}: {error['error_msg']}"
-                )
+                print(f"  {i}. Batch {error['batch']}: {error['error_type']}: {error['error_msg']}")
             if len(all_errors) > 5:
                 print(f"  ... and {len(all_errors) - 5} more errors")
 
@@ -620,13 +604,9 @@ class QdrantLegacyDataPreparationTool:
         # Determine which collection types to process
         if collection_types:
             types_to_process = [t.strip() for t in collection_types]
-            invalid_types = [
-                t for t in types_to_process if t not in COLLECTION_NAMESPACES
-            ]
+            invalid_types = [t for t in types_to_process if t not in COLLECTION_NAMESPACES]
             if invalid_types:
-                print(
-                    f"{BOLD_RED}✗{RESET} Invalid collection types: {', '.join(invalid_types)}"
-                )
+                print(f"{BOLD_RED}✗{RESET} Invalid collection types: {', '.join(invalid_types)}")
                 print(f"  Valid types: {', '.join(COLLECTION_NAMESPACES.keys())}")
                 return
         else:

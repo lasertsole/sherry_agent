@@ -11,16 +11,17 @@
  * | `message_id` | `string` | The message turn that completed |
  * | `total_chunks` | `number` | Total number of chunks emitted |
  */
-export type AgentStreamEnd = { 
-/**
- * The session that completed.
- */
-session_id: string, 
-/**
- * The message turn that completed.
- */
-message_id: string, 
-/**
- * Total number of chunks emitted during this turn.
- */
-total_chunks: number, };
+export type AgentStreamEnd = {
+  /**
+   * The session that completed.
+   */
+  session_id: string;
+  /**
+   * The message turn that completed.
+   */
+  message_id: string;
+  /**
+   * Total number of chunks emitted during this turn.
+   */
+  total_chunks: number;
+};

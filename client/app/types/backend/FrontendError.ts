@@ -12,12 +12,13 @@
  * }
  * ```
  */
-export type FrontendError = { 
-/**
- * Stable error code (e.g. `"MODEL_ERROR"`).
- */
-code: string, 
-/**
- * Human-readable description.
- */
-message: string, };
+export type FrontendError = {
+  /**
+   * Stable error code (e.g. `"MODEL_ERROR"`).
+   */
+  code: string;
+  /**
+   * Human-readable description.
+   */
+  message: string;
+};

@@ -48,9 +48,14 @@ async def _run_stream(
                 # as a regular chunk.
                 meta = {k: v for k, v in chunk.items() if k != "type"}
                 continue
-            await _send_ws(websocket, {
-                "event": "chunk", "session_id": session_id, **chunk,
-            })
+            await _send_ws(
+                websocket,
+                {
+                    "event": "chunk",
+                    "session_id": session_id,
+                    **chunk,
+                },
+            )
 
         # After the stream ends, check if the agent paused for HITL approval.
         interrupt_data = await get_pending_interrupt(session_id)
@@ -59,25 +64,38 @@ async def _run_stream(
                 f"Agent WS HITL interrupt detected: session_id={session_id}, "
                 f"tool={interrupt_data.get('tool_name')}"
             )
-            await _send_ws(websocket, {
-                "event": "hitl_request", "session_id": session_id,
-                "content": interrupt_data,
-            })
+            await _send_ws(
+                websocket,
+                {
+                    "event": "hitl_request",
+                    "session_id": session_id,
+                    "content": interrupt_data,
+                },
+            )
         else:
-            await _send_ws(websocket, {
-                "event": "done", "session_id": session_id, "content": "",
-                "model_name": meta.get("model_name", ""),
-                "input_tokens": meta.get("input_tokens", 0),
-                "output_tokens": meta.get("output_tokens", 0),
-            })
+            await _send_ws(
+                websocket,
+                {
+                    "event": "done",
+                    "session_id": session_id,
+                    "content": "",
+                    "model_name": meta.get("model_name", ""),
+                    "input_tokens": meta.get("input_tokens", 0),
+                    "output_tokens": meta.get("output_tokens", 0),
+                },
+            )
     except asyncio.CancelledError:
         # asyncio.Task.cancel() landed; the generator already yields
         # "Request cancelled" (left inside the stream) and resets answering.
         logger.info(f"Agent WS {stream_kind} cancelled: session_id={session_id}")
-        await _send_ws(websocket, {
-            "event": "stopped", "session_id": session_id,
-            "content": "Request cancelled",
-        })
+        await _send_ws(
+            websocket,
+            {
+                "event": "stopped",
+                "session_id": session_id,
+                "content": "Request cancelled",
+            },
+        )
         raise
     except Exception as e:
         elapsed = time.time() - start_time
@@ -85,9 +103,14 @@ async def _run_stream(
             f"Agent WS {stream_kind} failed: session_id={session_id}, "
             f"duration={elapsed:.2f}s, error={str(e)}"
         )
-        await _send_ws(websocket, {
-            "event": "error", "session_id": session_id, "content": str(e),
-        })
+        await _send_ws(
+            websocket,
+            {
+                "event": "error",
+                "session_id": session_id,
+                "content": str(e),
+            },
+        )
     finally:
         # Gracefully release the session's task slot if this is the current one.
         current = _active_tasks.get(session_id)
@@ -124,13 +147,18 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
 
                 session_id: str | None = obj.get("session_id", None)
                 if session_id is None:
-                    await _send_ws(websocket, {"event": "error", "session_id": None, "content": "Missing session_id"})
+                    await _send_ws(
+                        websocket,
+                        {"event": "error", "session_id": None, "content": "Missing session_id"},
+                    )
                     continue
 
                 if obj.get("type") == "stop":
                     await _cancel_session(session_id)
                     # ack on the (possibly separate) stop connection
-                    await _send_ws(websocket, {"event": "stopped", "session_id": session_id, "content": ""})
+                    await _send_ws(
+                        websocket, {"event": "stopped", "session_id": session_id, "content": ""}
+                    )
                     continue
 
                 if obj.get("type") == "hitl_response":
@@ -153,16 +181,33 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     _active_tasks[session_id] = task
                     continue
 
-                multi_modal_message_data: dict[str, Any] | None = obj.get("multi_modal_message", None)
+                multi_modal_message_data: dict[str, Any] | None = obj.get(
+                    "multi_modal_message", None
+                )
                 if not multi_modal_message_data:
-                    await _send_ws(websocket, {"event": "error", "session_id": session_id, "content": "Missing multi_modal_message"})
+                    await _send_ws(
+                        websocket,
+                        {
+                            "event": "error",
+                            "session_id": session_id,
+                            "content": "Missing multi_modal_message",
+                        },
+                    )
                     continue
 
                 multi_modal_message = MultiModalMessage(**multi_modal_message_data)
 
                 text_preview = multi_modal_message.text[:50] if multi_modal_message.text else ""
-                image_count = len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0
-                image_path_count = len(multi_modal_message.image_path_list) if multi_modal_message.image_path_list else 0
+                image_count = (
+                    len(multi_modal_message.image_base64_list)
+                    if multi_modal_message.image_base64_list
+                    else 0
+                )
+                image_path_count = (
+                    len(multi_modal_message.image_path_list)
+                    if multi_modal_message.image_path_list
+                    else 0
+                )
                 logger.info(
                     f"Agent WS request started: session_id={session_id}, "
                     f"text_preview='{text_preview}', image_count={image_count}, image_path_count={image_path_count}"
@@ -183,7 +228,9 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                 _active_tasks[session_id] = task
             except json.JSONDecodeError as e:
                 logger.warning(f"Agent WS JSON decode error: {e}, websocket_id={websocket.id}")
-                await _send_ws(websocket, {"event": "error", "session_id": None, "content": "Invalid JSON"})
+                await _send_ws(
+                    websocket, {"event": "error", "session_id": None, "content": "Invalid JSON"}
+                )
             except Exception as e:
                 logger.warning(f"Error in agent_ws_handler: {e}, websocket_id={websocket.id}")
     except (WebSocketDisconnect, ConnectionResetError) as e:

@@ -1,6 +1,5 @@
 """Unit tests for type/message.py — MultiModalMessage model."""
 
-import pytest
 from type.message import MultiModalMessage
 
 

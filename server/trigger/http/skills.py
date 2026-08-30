@@ -24,7 +24,6 @@ from context_engine.curator.usage import (
     is_pinned,
     pin_skill,
     unpin_skill,
-    _skill_dir,
 )
 
 
@@ -62,17 +61,19 @@ async def list_skills_handler(request):
     skills = scan_skills(use_cache=False)
     result = []
     for s in skills:
-        result.append({
-            "name": s["name"],
-            "description": s["description"],
-            "location": s["location"],
-            "category": _get_category(s["location"]),
-            # Visibility scope from the SKILL.md frontmatter (default "all").
-            "scope": s.get("scope", "all"),
-            # Pin/fix state is surfaced so the client can render the correct
-            # controls (fixed skills can't be deleted; pinned/fixed are shown).
-            "pinned": is_pinned(s["name"]),
-        })
+        result.append(
+            {
+                "name": s["name"],
+                "description": s["description"],
+                "location": s["location"],
+                "category": _get_category(s["location"]),
+                # Visibility scope from the SKILL.md frontmatter (default "all").
+                "scope": s.get("scope", "all"),
+                # Pin/fix state is surfaced so the client can render the correct
+                # controls (fixed skills can't be deleted; pinned/fixed are shown).
+                "pinned": is_pinned(s["name"]),
+            }
+        )
     result.sort(key=lambda x: (x["category"], x["name"]))
     logger.debug(f"Listed skills: count={len(result)}")
     return {"skills": result}
@@ -116,7 +117,6 @@ def _build_skill_file_tree(skill_root: Path):
 
 @app.get("/skills/*skill_path")
 async def read_skill_handler(request, path_params):
-    from pathlib import Path
     from config import ROOT_DIR
 
     skill_path = path_params["skill_path"]
@@ -144,6 +144,7 @@ async def read_skill_handler(request, path_params):
 # =============================================================================
 # Skills state file helpers
 # =============================================================================
+
 
 def _read_skills_state() -> dict[str, dict[str, bool]]:
     """Read the skills state file defensively.
@@ -191,6 +192,7 @@ def _rebuild_snapshot() -> None:
     """Rebuild skills_snapshot.json after a mutation."""
     try:
         from skills.skills_snapshot import build_skills_snapshot
+
         build_skills_snapshot()
     except Exception:
         logger.exception("Failed to rebuild skills snapshot")
@@ -213,6 +215,7 @@ def _validate_skill_name(name: str) -> str | None:
 # =============================================================================
 # Skill upload / toggle endpoints
 # =============================================================================
+
 
 @app.post("/skills/upload")
 async def upload_skill_handler(request):
@@ -251,7 +254,7 @@ async def upload_skill_handler(request):
             headers={"Content-Type": "application/json"},
             description=(
                 '{"success": false, "message": "'
-                f'Skill content is {len(content):,} characters (limit: {_MAX_SKILL_CONTENT_CHARS:,})'
+                f"Skill content is {len(content):,} characters (limit: {_MAX_SKILL_CONTENT_CHARS:,})"
                 '"}'
             ),
         )
@@ -348,9 +351,7 @@ async def upload_skill_handler(request):
     # an empty list here — DO_NOT_INSTALL is already rejected above.
     warnings = build_caution_warnings(scan_result)
     if warnings:
-        logger.warning(
-            f"Skill uploaded with CAUTION flags: name={name}, warnings={warnings!r}"
-        )
+        logger.warning(f"Skill uploaded with CAUTION flags: name={name}, warnings={warnings!r}")
     payload = {"success": True, "warnings": warnings}
     return Response(
         status_code=200,

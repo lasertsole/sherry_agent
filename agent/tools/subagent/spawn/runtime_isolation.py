@@ -4,7 +4,6 @@ Enforces CWD restrictions and cross-runtime spawn prevention (without
 porting the full ACP sandbox).
 """
 
-
 from loguru import logger
 from pydantic import BaseModel
 from config import ROOT_DIR
@@ -12,6 +11,7 @@ from config import ROOT_DIR
 
 class RuntimeIsolationConfig(BaseModel):
     """Isolation configuration: allowed CWD prefixes and restricted-mode flag."""
+
     runtime: str = "subagent"
     allowed_cwd_prefixes: list[str] = []
     restricted: bool = False
@@ -30,7 +30,9 @@ def resolve_runtime_isolation(
 
     if agent_id != "main" and agent_id != config.runtime:
         config.restricted = True
-        logger.warning("Runtime isolation: cross-runtime spawn from {} to {}", requester_session_key, agent_id)
+        logger.warning(
+            "Runtime isolation: cross-runtime spawn from {} to {}", requester_session_key, agent_id
+        )
 
     return config
 
@@ -46,7 +48,6 @@ def resolve_spawned_workspace_inheritance(
 
     parts = requester_session_key.split(":")
     if len(parts) >= 3:
-        from pathlib import Path
         workspace_hint = ROOT_DIR / "workspaces" / target_agent_id
         if workspace_hint.is_dir():
             return str(workspace_hint)
@@ -68,6 +69,7 @@ def validate_cwd_restriction(cwd: str | None, allowed_prefixes: list[str]) -> tu
         return True, ""
 
     from pathlib import Path
+
     cwd_path = Path(cwd).resolve()
 
     for prefix in allowed_prefixes:

@@ -5,6 +5,11 @@
     "toggleTheme": "テーマを切り替え",
     "deleteSession": "セッションを削除"
   },
+  "common": {
+    "confirmDelete": "削除の確認",
+    "delete": "削除",
+    "cancel": "キャンセル"
+  },
   "chatInput": {
     "placeholder": "メッセージを入力してください...",
     "thinking": "AI が考えています...",
@@ -31,12 +36,54 @@
     "toolRunning": "実行中…",
     "thinking": "思考",
     "modelMeta": "入力 {input} · 出力 {output} tokens",
+    "scrollBottom": "最下部へ戻る",
     "copy": "コピー",
     "copied": "コピーしました"
   },
   "errors": {
     "requestFailed": "リクエストに失敗しました",
-    "pageError": "ページエラー"
+    "pageError": "ページエラー",
+    "replyFailed": "（返信に失敗：{reason}）",
+    "sendFailed": "（送信に失敗：{reason}）",
+    "streamInterrupted": "接続が中断されました。返信はバックグラウンドで完了している可能性があります。まもなく自動同期されます。"
+  },
+  "hitl": {
+    "title": "操作の承認が必要です",
+    "tool": "ツール",
+    "reject": "拒否",
+    "approve": "承認"
+  },
+  "taskViewer": {
+    "viewTasks": "バックグラウンドタスクを表示"
+  },
+  "taskDetail": {
+    "placeholder": "上のツリーでノードをクリックするとタスク詳細を表示します",
+    "taskDesc": "説明",
+    "status": "ステータス",
+    "depth": "深さ",
+    "agentId": "エージェント",
+    "spawnMode": "生成モード",
+    "parentSession": "親セッション",
+    "startedAt": "開始時刻",
+    "endedAt": "終了時刻",
+    "endedReason": "終了理由",
+    "outcome": "結果",
+    "outcomeStatus": "結果ステータス",
+    "error": "エラー",
+    "resultText": "結果",
+    "delivery": "配信",
+    "steerTitle": "軌道修正 / 再開",
+    "steerHint": "送信すると、子エージェントは現在のコンテキストと新しい指示に従って処理を続けます。空欄の場合は中断されたタスクの再開のみ行います。",
+    "steerPlaceholder": "新しい指示（任意。例：別のアプローチで再試行…）",
+    "steerAction": "送信して続行",
+    "steerSteering": "送信中…",
+    "steerSuccess": "指示を送信しました。子エージェントが処理を続けています。",
+    "steerFailed": "軌道修正に失敗しました（タスク終了済みまたはレート制限の可能性）"
+  },
+  "flow": {
+    "loading": "読み込み中...",
+    "empty": "バックグラウンドデータがありません",
+    "error": "読み込みに失敗しました"
   },
   "connection": {
     "reconnecting": "接続が切断されました。再接続中…（{attempt}/{max} 回目）",
@@ -59,7 +106,8 @@
     "noSearchResults": "一致するセッションがありません",
     "filterToggle": "絞り込み",
     "editTitle": "セッション名を変更",
-    "titlePlaceholder": "新しいタイトルを入力"
+    "titlePlaceholder": "新しいタイトルを入力",
+    "titleInvalid": "タイトルは30文字以内で、英字・数字・空白および . _ - のみ使用できます"
   },
   "sidebar": {
     "tabSessions": "会話",
@@ -70,6 +118,8 @@
     "tasksSelectAll": "すべて選択",
     "tasksBatchDelete": "タスクを一括削除",
     "tasksBatchDeleteConfirm": "選択したタスクを一括削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
+    "taskDelete": "タスクを削除",
+    "taskDeleteConfirm": "このタスクを削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "実行中",
     "statusInterrupted": "中断",

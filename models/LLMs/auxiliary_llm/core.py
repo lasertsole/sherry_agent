@@ -33,7 +33,6 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
-from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -51,6 +50,7 @@ load_dotenv(ENV_PATH, override=True)
 # ---------------------------------------------------------------------------
 # 2.  Factory function (avoids event-loop binding at import time)
 # ---------------------------------------------------------------------------
+
 
 def build_auxiliary_llm(temperature: float | None = None):
     """Create a fresh auxiliary LLM instance bound to the current event loop.
@@ -246,7 +246,11 @@ def build_auxiliary_llm(temperature: float | None = None):
                         params = {}
                         for fname, field in t.model_fields.items():
                             params[fname] = {
-                                "type": str(field.annotation.__name__ if hasattr(field.annotation, '__name__') else field.annotation),
+                                "type": str(
+                                    field.annotation.__name__
+                                    if hasattr(field.annotation, "__name__")
+                                    else field.annotation
+                                ),
                                 "description": (field.description or ""),
                             }
                     elif hasattr(t, "name"):
@@ -258,18 +262,24 @@ def build_auxiliary_llm(temperature: float | None = None):
                             params = {}
                             for fname, field in args_schema.model_fields.items():
                                 params[fname] = {
-                                    "type": str(field.annotation.__name__ if hasattr(field.annotation, '__name__') else field.annotation),
+                                    "type": str(
+                                        field.annotation.__name__
+                                        if hasattr(field.annotation, "__name__")
+                                        else field.annotation
+                                    ),
                                     "description": (field.description or ""),
                                 }
                         else:
                             params = getattr(t, "args", {})
                     else:
                         continue
-                    tool_descriptions.append({
-                        "name": name,
-                        "description": desc,
-                        "parameters": params,
-                    })
+                    tool_descriptions.append(
+                        {
+                            "name": name,
+                            "description": desc,
+                            "parameters": params,
+                        }
+                    )
 
                 tool_prompt = (
                     "You have access to the following tools. When you need to use a tool, "
@@ -280,11 +290,13 @@ def build_auxiliary_llm(temperature: float | None = None):
                 )
                 for td in tool_descriptions:
                     tool_prompt += f"\n### {td['name']}\n{td['description']}\n"
-                    if td['parameters']:
+                    if td["parameters"]:
                         tool_prompt += f"Parameters: {json.dumps(td['parameters'], ensure_ascii=False, default=str)}\n"
 
                 if tool_choice and tool_choice != "any":
-                    tool_prompt += f"\nYou MUST use the tool '{tool_choice}'. Do not use any other tool.\n"
+                    tool_prompt += (
+                        f"\nYou MUST use the tool '{tool_choice}'. Do not use any other tool.\n"
+                    )
 
                 def _invoke_with_tools(input_data: Any) -> AIMessage:
                     if isinstance(input_data, str):
@@ -302,7 +314,9 @@ def build_auxiliary_llm(temperature: float | None = None):
                         for i, m in enumerate(msgs):
                             if isinstance(m, SystemMessage):
                                 msgs[i] = SystemMessage(
-                                    content=m.content + "\n\n" + tool_prompt if m.content else tool_prompt
+                                    content=m.content + "\n\n" + tool_prompt
+                                    if m.content
+                                    else tool_prompt
                                 )
                                 break
                     else:
@@ -331,12 +345,14 @@ def build_auxiliary_llm(temperature: float | None = None):
                             name = obj.get("name", "")
                             args = obj.get("arguments", obj.get("args", {}))
                             if name:
-                                parsed_tool_calls.append({
-                                    "name": name,
-                                    "args": args if isinstance(args, dict) else {},
-                                    "id": f"call_{uuid.uuid4().hex[:12]}",
-                                    "type": "tool_call",
-                                })
+                                parsed_tool_calls.append(
+                                    {
+                                        "name": name,
+                                        "args": args if isinstance(args, dict) else {},
+                                        "id": f"call_{uuid.uuid4().hex[:12]}",
+                                        "type": "tool_call",
+                                    }
+                                )
                         except json.JSONDecodeError:
                             pass
 

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Diagnostic tool to check LightRAG initialization status.
 
@@ -47,9 +47,7 @@ async def check_lightrag_setup(rag_instance: LightRAG, verbose: bool = False) ->
     if not hasattr(rag_instance, "_storages_status"):
         issues.append("LightRAG instance missing _storages_status attribute")
     elif rag_instance._storages_status != StoragesStatus.INITIALIZED:
-        issues.append(
-            f"Storages not initialized (status: {rag_instance._storages_status.name})"
-        )
+        issues.append(f"Storages not initialized (status: {rag_instance._storages_status.name})")
     else:
         print("✅ Storage status: INITIALIZED")
 
@@ -92,9 +90,7 @@ async def check_lightrag_setup(rag_instance: LightRAG, verbose: bool = False) ->
         get_namespace_data("pipeline_status", workspace=rag_instance.workspace)
         print("✅ Pipeline status: INITIALIZED")
     except KeyError:
-        issues.append(
-            "Pipeline status not initialized - call rag.initialize_storages() first"
-        )
+        issues.append("Pipeline status not initialized - call rag.initialize_storages() first")
     except Exception as e:
         issues.append(f"Error checking pipeline status: {str(e)}")
 

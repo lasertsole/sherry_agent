@@ -11,6 +11,7 @@ Endpoints:
     POST /knowledge-graph/upload  (multipart: file(s))
         -> {"success": bool, "message": str, "files": [{name, ok, error} | ...]}
 """
+
 from pathlib import Path
 from typing import Any
 from uuid import uuid4

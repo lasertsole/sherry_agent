@@ -20,6 +20,7 @@ from pub_func.extract_text_from_content import extract_text_from_content
 
 # --- cjk ---
 
+
 class TestCjk:
     def test_contains_han_returns_true(self):
         assert contains_cjk("hello 世界") is True
@@ -54,6 +55,7 @@ class TestCjk:
 
 # --- string_to_unique_int ---
 
+
 class TestStringToUniqueInt:
     def test_deterministic(self):
         assert string_to_unique_int("abc") == string_to_unique_int("abc")
@@ -75,6 +77,7 @@ class TestStringToUniqueInt:
 
 
 # --- rand_str_to_int ---
+
 
 class TestRandStrToInt:
     def test_deterministic(self):
@@ -102,6 +105,7 @@ class TestRandStrToInt:
 
 # --- string_to_int (canonical dispatcher) ---
 
+
 class TestStringToInt:
     def test_sha256_matches_legacy_string_to_unique_int(self):
         for s in ("", "abc", "hello", "中文"):
@@ -110,7 +114,9 @@ class TestStringToInt:
     def test_md5_matches_legacy_rand_str_to_int(self):
         for s in ("", "abc", "hello", "中文"):
             for n in (1, 4, 8, 16):
-                assert string_to_int(s, algorithm="md5", slice_len=n) == rand_str_to_int(s, slice_len=n)
+                assert string_to_int(s, algorithm="md5", slice_len=n) == rand_str_to_int(
+                    s, slice_len=n
+                )
 
     def test_unknown_algorithm_raises(self):
         with pytest.raises(ValueError):
@@ -128,6 +134,7 @@ class TestStringToInt:
 
 
 # --- generate_tsid ---
+
 
 class TestGenerateTsid:
     def test_matches_format(self):
@@ -147,6 +154,7 @@ class TestGenerateTsid:
 
     def test_zero_pads_month_and_day(self):
         from datetime import datetime, timedelta
+
         now = datetime.now() + timedelta(days=0)
         expected_month = str(now.month).zfill(2)
         expected_day = str(now.day).zfill(2)
@@ -156,6 +164,7 @@ class TestGenerateTsid:
 
 
 # --- process_sse_data ---
+
 
 class TestProcessSseData:
     def test_extracts_data_lines(self):
@@ -185,6 +194,7 @@ class TestProcessSseData:
 
 
 # --- extract_text_from_content ---
+
 
 class TestExtractTextFromContent:
     def test_string_content(self):

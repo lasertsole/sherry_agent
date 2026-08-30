@@ -6,7 +6,6 @@ from loguru import logger
 from ..types.swarm import SwarmRunState, SwarmGroupConfig
 from ..types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome
 from ..registry import register_run, get_run, set_run, all_runs
-from ..registry.queries import count_active_runs_for_session
 from .fifo import get_fifo
 
 
@@ -40,7 +39,11 @@ async def reserve_swarm_run(
         if existing_run_id:
             existing = get_run(existing_run_id)
             if existing is not None:
-                logger.info("reserve_swarm_run: idempotent hit for fingerprint {} → run {}", fp_key, existing_run_id)
+                logger.info(
+                    "reserve_swarm_run: idempotent hit for fingerprint {} → run {}",
+                    fp_key,
+                    existing_run_id,
+                )
                 return existing
 
     config = _group_configs.get(group_id)
@@ -50,14 +53,25 @@ async def reserve_swarm_run(
 
     total = _count_swarm_runs_by_group(group_id)
     if total >= config.max_children_per_group:
-        logger.warning("reserve_swarm_run: group {} at capacity ({}/{})", group_id, total, config.max_children_per_group)
+        logger.warning(
+            "reserve_swarm_run: group {} at capacity ({}/{})",
+            group_id,
+            total,
+            config.max_children_per_group,
+        )
         return None
 
     if config.max_total_per_group > 0 and total >= config.max_total_per_group:
-        logger.warning("reserve_swarm_run: group {} at total capacity ({}/{})", group_id, total, config.max_total_per_group)
+        logger.warning(
+            "reserve_swarm_run: group {} at total capacity ({}/{})",
+            group_id,
+            total,
+            config.max_total_per_group,
+        )
         return None
 
     import uuid
+
     child_session_key = f"agent:{agent_id}:swarm:{group_id}:{uuid.uuid4()}"  # Deterministic prefix for identification
 
     run = register_run(
@@ -69,10 +83,12 @@ async def reserve_swarm_run(
         agent_id=agent_id,
     )
 
-    updated = run.model_copy(update={
-        "swarm_group_id": group_id,
-        "swarm_run_state": SwarmRunState.RESERVED.value,
-    })
+    updated = run.model_copy(
+        update={
+            "swarm_group_id": group_id,
+            "swarm_run_state": SwarmRunState.RESERVED.value,
+        }
+    )
     set_run(updated)
 
     fifo = get_fifo()
@@ -109,16 +125,24 @@ async def activate_swarm_run(run_id: str) -> SubagentRunRecord | None:
 
     active_count = _count_active_swarm_runs(group_id)
     if active_count >= config.max_concurrent:
-        logger.info("activate_swarm_run: group {} at max concurrent ({}/{}), queued",
-                    group_id, active_count, config.max_concurrent)
+        logger.info(
+            "activate_swarm_run: group {} at max concurrent ({}/{}), queued",
+            group_id,
+            active_count,
+            config.max_concurrent,
+        )
         return run
 
-    updated = run.model_copy(update={
-        "swarm_run_state": SwarmRunState.ACTIVE.value,
-        "execution": run.execution.model_copy(update={
-            "started_at": time.monotonic(),
-        }),
-    })
+    updated = run.model_copy(
+        update={
+            "swarm_run_state": SwarmRunState.ACTIVE.value,
+            "execution": run.execution.model_copy(
+                update={
+                    "started_at": time.monotonic(),
+                }
+            ),
+        }
+    )
     set_run(updated)
 
     fifo = get_fifo()
@@ -130,9 +154,11 @@ async def activate_swarm_run(run_id: str) -> SubagentRunRecord | None:
         await _on_swarm_run_started(updated)
     except Exception as e:
         logger.error("onStartFailure for swarm run {}: {}", run_id, e)
-        failed = updated.model_copy(update={
-            "swarm_run_state": SwarmRunState.FAILED.value,
-        })
+        failed = updated.model_copy(
+            update={
+                "swarm_run_state": SwarmRunState.FAILED.value,
+            }
+        )
         set_run(failed)
         await _activate_next_in_group(group_id)
         return failed
@@ -144,20 +170,26 @@ async def _on_swarm_run_started(run: SubagentRunRecord) -> None:
     """Fire the spawned hook when a swarm run starts."""
     try:
         from ..hooks.progress import fire_spawned_hook
+
         await fire_spawned_hook(run)
     except Exception:
         pass
 
 
-async def complete_swarm_run(run_id: str, outcome: RunOutcome, result_text: str | None = None) -> SubagentRunRecord | None:
+async def complete_swarm_run(
+    run_id: str, outcome: RunOutcome, result_text: str | None = None
+) -> SubagentRunRecord | None:
     """Complete a swarm run and activate the next queued run in the group."""
     run = get_run(run_id)
     if run is None:
         return None
 
-    state = SwarmRunState.COMPLETED.value if outcome.status == "ok" else SwarmRunState.FAILED.value  # Map ok→COMPLETED, else→FAILED
+    state = (
+        SwarmRunState.COMPLETED.value if outcome.status == "ok" else SwarmRunState.FAILED.value
+    )  # Map ok→COMPLETED, else→FAILED
 
     from ..registry.run_manager import complete_run
+
     updated = complete_run(run_id, outcome, result_text)
     if updated is None:
         return None
@@ -208,7 +240,9 @@ def build_structured_output_prompt(output_schema: dict | None) -> str:
     )
 
 
-def validate_structured_output(result_text: str | None, output_schema: dict | None) -> tuple[bool, str | None]:
+def validate_structured_output(
+    result_text: str | None, output_schema: dict | None
+) -> tuple[bool, str | None]:
     """Validate that result_text parses as JSON and conforms to the given JSON schema."""
     if output_schema is None or result_text is None:
         return True, None
@@ -240,7 +274,9 @@ def _validate_value_against_schema(value, schema: dict, path: str) -> tuple[bool
         properties = schema.get("properties", {})
         for field_name, field_schema in properties.items():
             if field_name in value:
-                ok, err = _validate_value_against_schema(value[field_name], field_schema, f"{path}.{field_name}")
+                ok, err = _validate_value_against_schema(
+                    value[field_name], field_schema, f"{path}.{field_name}"
+                )
                 if not ok:
                     return False, err
 
@@ -253,13 +289,16 @@ def _validate_value_against_schema(value, schema: dict, path: str) -> tuple[bool
         pattern_props = schema.get("patternProperties", {})
         for pattern, pat_schema in pattern_props.items():
             import re
+
             try:
                 pat_re = re.compile(pattern)
             except re.error:
                 continue
             for key in value:
                 if pat_re.search(key):
-                    ok, err = _validate_value_against_schema(value[key], pat_schema, f"{path}.{key}")
+                    ok, err = _validate_value_against_schema(
+                        value[key], pat_schema, f"{path}.{key}"
+                    )
                     if not ok:
                         return False, err
 
@@ -275,8 +314,10 @@ def _validate_value_against_schema(value, schema: dict, path: str) -> tuple[bool
 
     elif schema_type in ("string", "number", "integer", "boolean"):
         type_map = {
-            "string": str, "number": (int, float),
-            "integer": int, "boolean": bool,
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
         }
         python_type = type_map.get(schema_type)
         if python_type and not isinstance(value, python_type):
@@ -293,7 +334,8 @@ def _count_swarm_runs_by_group(group_id: str) -> int:
 def _count_active_swarm_runs(group_id: str) -> int:
     """Count currently running/interrupted runs in a swarm group."""
     return sum(
-        1 for r in all_runs()
+        1
+        for r in all_runs()
         if r.swarm_group_id == group_id
         and r.swarm_run_state == SwarmRunState.ACTIVE.value
         and r.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
@@ -308,9 +350,9 @@ def list_swarm_runs_by_group(group_id: str) -> list[SubagentRunRecord]:
 def count_pending_swarm_runs(group_id: str) -> int:
     """Count RESERVED (queued) runs in a swarm group."""
     return sum(
-        1 for r in all_runs()
-        if r.swarm_group_id == group_id
-        and r.swarm_run_state == SwarmRunState.RESERVED.value
+        1
+        for r in all_runs()
+        if r.swarm_group_id == group_id and r.swarm_run_state == SwarmRunState.RESERVED.value
     )
 
 

@@ -39,11 +39,11 @@ def wake_yield(session_key: str) -> bool:
 
 async def wake_yield_if_all_children_settled(session_key: str) -> bool:
     """Wake the parent only if all child runs have ended (RUNNING/INTERRUPTED count is zero)."""
-    from . import all_runs
 
     children = queries.list_runs_for_requester(session_key)
     active = [
-        r for r in children
+        r
+        for r in children
         if r.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
     ]
 

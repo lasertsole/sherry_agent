@@ -18,6 +18,16 @@ def should_skip_dir(d: Path) -> bool:
     name = d.name
     if name.startswith(".") and name not in (".", ".."):
         return True
-    if name in ("__pycache__", "node_modules", ".venv", "venv", ".git", ".hg", ".svn", ".idea", ".mypy_cache"):
+    if name in (
+        "__pycache__",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".git",
+        ".hg",
+        ".svn",
+        ".idea",
+        ".mypy_cache",
+    ):
         return True
     return False

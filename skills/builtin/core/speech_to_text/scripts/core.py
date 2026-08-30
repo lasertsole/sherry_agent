@@ -33,7 +33,9 @@ _HTTP_TIMEOUT: float = 60.0
 
 # Where ``main`` lives, so the daemon can be (re)spawned from anywhere.
 _IMPORT_FN = "skills.builtin.core.speech_to_text.scripts.server"
-_INTERPRETER = Path(INTERPRETER_PATH if Path(INTERPRETER_PATH).exists() else ROOT_DIR / ".venv/Scripts/python").as_posix()
+_INTERPRETER = Path(
+    INTERPRETER_PATH if Path(INTERPRETER_PATH).exists() else ROOT_DIR / ".venv/Scripts/python"
+).as_posix()
 
 
 def _daemon_alive() -> bool:

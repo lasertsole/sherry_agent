@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from agent.tools.subagent.control.kill import (
     resolve_kill_target_state,
     list_killable_children,
@@ -70,17 +70,24 @@ class TestResolveKillTargetState:
 
 class TestListKillableChildren:
     def test_running_children(self):
-        r1 = _make_run(run_id="r1", requester_session_key="agent:main:session:p1",
-                        child_session_key="agent:main:subagent:c1")
+        r1 = _make_run(
+            run_id="r1",
+            requester_session_key="agent:main:session:p1",
+            child_session_key="agent:main:subagent:c1",
+        )
         set_run(r1)
         result = list_killable_children("agent:main:session:p1")
         assert len(result) == 1
 
     def test_terminal_children_not_listed(self):
-        r1 = _make_run(run_id="r1", requester_session_key="agent:main:session:p1",
-                        child_session_key="agent:main:subagent:c1",
-                        execution=ExecutionState(status=ExecutionStatus.TERMINAL,
-                                                 outcome=RunOutcome(status=RunOutcomeStatus.OK)))
+        r1 = _make_run(
+            run_id="r1",
+            requester_session_key="agent:main:session:p1",
+            child_session_key="agent:main:subagent:c1",
+            execution=ExecutionState(
+                status=ExecutionStatus.TERMINAL, outcome=RunOutcome(status=RunOutcomeStatus.OK)
+            ),
+        )
         set_run(r1)
         result = list_killable_children("agent:main:session:p1")
         assert len(result) == 0

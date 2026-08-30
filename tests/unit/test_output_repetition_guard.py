@@ -22,7 +22,7 @@ import sys
 import types
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # ---- llama_cpp is an optional runtime dependency that pulls a heavy native
 # ---- DLL and isn't installed in the CI/test environment.  `import agent.*`
@@ -59,7 +59,6 @@ from agent.middlewares.output_repetition_guard import (
     _REASONING_WARNED_KEY,
     _MAX_HISTORY,
     _TAIL_CHARS,
-    _MIN_CONTENT_LENGTH,
     _CHAR_RUN_MIN,
 )
 
@@ -91,6 +90,7 @@ class TestContentHash:
         h = g._content_hash("hello world")
         # deterministic md5 of stripped content
         import hashlib
+
         assert h == hashlib.md5(b"hello world").hexdigest()
 
     def test_hash_uses_tail_only_for_long_content(self):
@@ -99,6 +99,7 @@ class TestContentHash:
         h = g._content_hash(long)
         # content longer than tail -> only last _TAIL_CHARS considered
         import hashlib
+
         expected = hashlib.md5(long[-_TAIL_CHARS:].strip().encode()).hexdigest()
         assert h == expected
         # leading part must NOT influence the hash
@@ -112,7 +113,9 @@ class TestContentHash:
 
 class TestInternalRepetition:
     def make(self, internal_min_lines=6, char_run_min=8):
-        return OutputRepetitionGuard(internal_min_lines=internal_min_lines, char_run_min=char_run_min)
+        return OutputRepetitionGuard(
+            internal_min_lines=internal_min_lines, char_run_min=char_run_min
+        )
 
     # ---- sentence / line level ---------------------------------------
     def test_sentence_repetition_no_fire_short(self):
@@ -198,8 +201,8 @@ class TestInternalRepetition:
     # ---- combined detector ----------------------------------------------
     def test_internal_repetition_any_subdetector(self):
         g = self.make()
-        assert g._detect_internal_repetition("啊" * 8) is True       # char run
-        assert g._detect_internal_repetition("我去" * 6) is True      # phrase
+        assert g._detect_internal_repetition("啊" * 8) is True  # char run
+        assert g._detect_internal_repetition("我去" * 6) is True  # phrase
         assert g._detect_internal_repetition("clean text.") is False  # none
 
     def test_internal_repetition_short_content_false(self):
@@ -359,7 +362,9 @@ class TestCrossCallRepetition:
 
     def test_warn_at_threshold(self, fresh_state):
         g = self.make(warn_after=2, max_identical_outputs=3)
-        content = "A very long non-trivial response content that appears repeatedly with enough length."
+        content = (
+            "A very long non-trivial response content that appears repeatedly with enough length."
+        )
         for _ in range(1):
             g._wrap_model_call_post(self._request(), self._result(content))
         # second identical -> warn
@@ -405,7 +410,8 @@ class TestCrossCallRepetition:
         for i in range(_MAX_HISTORY + 5):
             g._content_hash(f"content-{i}")  # warm nothing
             g._wrap_model_call_post(
-                self._request(), self._result(f"Distinct content entry number {i} with padding text.")
+                self._request(),
+                self._result(f"Distinct content entry number {i} with padding text."),
             )
         hist = fresh_state.get_state("s1", _HISTORY_KEY, [])
         assert len(hist) <= _MAX_HISTORY
@@ -455,8 +461,9 @@ class TestInternalWarn:
         assert r1 is not None
         assert "highly repetitive" in r1.content
         # second time: already warned -> not warned again
-        r2 = g._wrap_model_call_post(
-            self._request(), AIMessage(content="normal distinct text that is different.", tool_calls=[])
+        g._wrap_model_call_post(
+            self._request(),
+            AIMessage(content="normal distinct text that is different.", tool_calls=[]),
         )
         # distinct content won't warn, but more importantly the flag is set
         assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is True
@@ -509,7 +516,9 @@ class TestReasoningHistory:
     def test_reasoning_short_skipped(self, fresh_state):
         g = self.make()
         reasoning = "abc"
-        g._wrap_model_call_post(self._request(), self._reasoned_msg("long enough visible output", reasoning))
+        g._wrap_model_call_post(
+            self._request(), self._reasoned_msg("long enough visible output", reasoning)
+        )
         # below _MIN_CONTENT_LENGTH -> not tracked in reasoning history
         assert fresh_state.get_state("s1", _REASONING_HISTORY_KEY, []) == []
 
@@ -628,11 +637,14 @@ class TestHooks:
         async def run():
             g = self.make()
             request = self._request("s1")
-            ok_response = ModelResponse(result=[AIMessage(content="async clean response text here")])
+            ok_response = ModelResponse(
+                result=[AIMessage(content="async clean response text here")]
+            )
             handler = AsyncMock(return_value=ok_response)
             out = await g.awrap_model_call(request, handler)
             handler.assert_awaited_once()
             return out, ok_response
+
         out, ok_response = asyncio.run(run())
         assert out is ok_response  # clean response passes through unchanged
 
@@ -646,6 +658,7 @@ class TestHooks:
             await g.awrap_model_call(request, handler)  # call 1: records
             out = await g.awrap_model_call(request, handler)  # call 2: identical -> warn
             return out
+
         out = asyncio.run(run())
         assert isinstance(out, AIMessage)
         assert "repetition" in out.content
@@ -676,6 +689,7 @@ class TestConfigAndConstants:
 
     def test_is_agent_middleware(self):
         from langchain.agents.middleware import AgentMiddleware
+
         assert issubclass(OutputRepetitionGuard, AgentMiddleware)
 
     def test_state_keys_constants(self):

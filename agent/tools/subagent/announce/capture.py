@@ -5,8 +5,6 @@ briefly wait before sending an empty or stale announcement.
 """
 
 import asyncio
-from loguru import logger
-from ..types.registry import SubagentRunRecord
 
 
 async def read_subagent_output_with_retry(
@@ -63,6 +61,7 @@ async def capture_subagent_completion_reply(
 async def _read_output_from_registry(child_session_key: str) -> str | None:
     """Read result text from the registry by child session key."""
     from ..registry.read import get_run_by_child_session_key_readonly
+
     run = get_run_by_child_session_key_readonly(child_session_key)
     if run is None:
         return None

@@ -9,25 +9,24 @@ from pub_func import run_async
 from typing import Any, Annotated
 from models import build_main_llm
 from langchain.tools import BaseTool, tool
-from pydantic import BaseModel, Field, validate_call
+from pydantic import BaseModel, Field
 from langgraph.prebuilt.tool_node import InjectedState
 from context_engine import get_db, search_messages, get_turns_by_turn_num_scope
 
 MAX_SESSION_CHARS = 100_000
 
+
 class MessageSearchSchema(BaseModel):
     query: str | None = Field(
         default=None,
-        description="Search query — keywords, phrases, or boolean expressions to find in past sessions. Omit this parameter entirely to browse recent sessions instead (returns titles, previews, timestamps with no LLM cost)."
+        description="Search query — keywords, phrases, or boolean expressions to find in past sessions. Omit this parameter entirely to browse recent sessions instead (returns titles, previews, timestamps with no LLM cost).",
     )
     role_filter: str | None = Field(
         default=None,
-        description="Optional: only search messages from specific roles (comma-separated). E.g. 'user,assistant' to skip tool outputs."
+        description="Optional: only search messages from specific roles (comma-separated). E.g. 'user,assistant' to skip tool outputs.",
     )
-    limit: int = Field(
-        default=3,
-        description="Max sessions to summarize (default: 3, max: 5)."
-    )
+    limit: int = Field(default=3, description="Max sessions to summarize (default: 3, max: 5).")
+
 
 def _tool_error(message, **extra) -> str:
     """Return a JSON error string for tool handlers.
@@ -41,6 +40,7 @@ def _tool_error(message, **extra) -> str:
     if extra:
         result.update(extra)
     return json.dumps(result, ensure_ascii=False)
+
 
 def _format_conversation(messages: list[dict[str, Any]]) -> str:
     """Format session messages into a readable transcript for summarization."""
@@ -75,9 +75,8 @@ def _format_conversation(messages: list[dict[str, Any]]) -> str:
 
     return "\n\n".join(parts)
 
-def _truncate_around_matches(
-    full_text: str, query: str, max_chars: int = MAX_SESSION_CHARS
-) -> str:
+
+def _truncate_around_matches(full_text: str, query: str, max_chars: int = MAX_SESSION_CHARS) -> str:
     """
     Truncate a conversation transcript to *max_chars*, choosing a window
     that maximises coverage of positions where the *query* actually appears.
@@ -109,9 +108,7 @@ def _truncate_around_matches(
             # Collect every occurrence of each term
             term_positions: dict[str, list[int]] = {}
             for t in terms:
-                term_positions[t] = [
-                    m.start() for m in re.finditer(re.escape(t), text_lower)
-                ]
+                term_positions[t] = [m.start() for m in re.finditer(re.escape(t), text_lower)]
             # Slide through positions of the rarest term and check proximity
             rarest = min(terms, key=lambda t: len(term_positions.get(t, [])))
             for pos in term_positions.get(rarest, []):
@@ -160,9 +157,7 @@ def _truncate_around_matches(
     return prefix + truncated + suffix
 
 
-async def _summarize(
-    conversation_text: str, query: str
-) -> str | None:
+async def _summarize(conversation_text: str, query: str) -> str | None:
     """Summarize a single session conversation focused on the search query."""
     system_prompt = (
         "You are reviewing a past conversation transcript to help recall what happened. "
@@ -186,17 +181,23 @@ async def _summarize(
     for attempt in range(max_retries):
         try:
             main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
-            response = main_llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ])
+            response = main_llm.invoke(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+            )
 
             content = response.content
 
             if content:
                 return content
             # Reasoning-only / empty — let the retry loop handle it
-            logger.warning("Session search LLM returned empty content (attempt %d/%d)", attempt + 1, max_retries)
+            logger.warning(
+                "Session search LLM returned empty content (attempt %d/%d)",
+                attempt + 1,
+                max_retries,
+            )
             if attempt < max_retries - 1:
                 await asyncio.sleep(1 * (attempt + 1))
                 continue
@@ -215,6 +216,7 @@ async def _summarize(
                     exc_info=True,
                 )
                 return None
+
 
 def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str:
     """Return metadata for the most recent sessions (no LLM cost)."""
@@ -239,33 +241,39 @@ def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str
             preview = row["first_user_msg"] or ""
             if isinstance(preview, list):
                 preview = next(
-                    (p.get("text", "") for p in preview if isinstance(p, dict) and p.get("type") == "text"),
+                    (
+                        p.get("text", "")
+                        for p in preview
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ),
                     "[multimodal content]",
                 )
             preview = (preview[:200] + "…") if len(preview) > 200 else preview
-            results.append({
-                "session_id": sid,
-                "preview": preview,
-                "last_activity": row["last_activity"],
-            })
+            results.append(
+                {
+                    "session_id": sid,
+                    "preview": preview,
+                    "last_activity": row["last_activity"],
+                }
+            )
 
-        return json.dumps({
-            "success": True,
-            "query": None,
-            "mode": "recent_sessions",
-            "results": results,
-            "count": len(results),
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "success": True,
+                "query": None,
+                "mode": "recent_sessions",
+                "results": results,
+                "count": len(results),
+            },
+            ensure_ascii=False,
+        )
     except Exception as e:
         logger.error("Recent sessions query failed: %s", e, exc_info=True)
         return _tool_error(f"Recent sessions query failed: {str(e)}", success=False)
 
 
 def session_search(
-    query: str | None,
-    session_id: str,
-    role_filter: str = None,
-    limit: int = 3
+    query: str | None, session_id: str, role_filter: str = None, limit: int = 3
 ) -> str:
     """
     Search past sessions and return focused summaries of matching conversations.
@@ -302,20 +310,23 @@ def session_search(
         # FTS5 search -- get matches ranked by relevance
         raw_results = search_messages(
             query=query,
-            session_id = session_id,
+            session_id=session_id,
             role_filter=role_list,
             limit=50,  # Get more matches to find unique sessions
             offset=0,
         )
 
         if not raw_results or len(raw_results) == 0:
-            return json.dumps({
-                "success": True,
-                "query": query,
-                "results": [],
-                "count": 0,
-                "message": "No matching sessions found.",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "success": True,
+                    "query": query,
+                    "results": [],
+                    "count": 0,
+                    "message": "No matching sessions found.",
+                },
+                ensure_ascii=False,
+            )
 
         # context of message
         raw_scopes: list[list[dict[str, Any]]] = []
@@ -348,10 +359,7 @@ def session_search(
                 async with semaphore:
                     return await _summarize(text, query)
 
-            coros = [
-                _bounded_summary(text)
-                for _, _, text in tasks
-            ]
+            coros = [_bounded_summary(text) for _, _, text in tasks]
             return await asyncio.gather(*coros, return_exceptions=True)
 
         try:
@@ -368,17 +376,22 @@ def session_search(
                 "Session summarization timed out after 60 seconds",
                 exc_info=True,
             )
-            return json.dumps({
-                "success": False,
-                "error": "Session summarization timed out. Try a more specific query or reduce the limit.",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "Session summarization timed out. Try a more specific query or reduce the limit.",
+                },
+                ensure_ascii=False,
+            )
 
-        summaries:list[str] = []
+        summaries: list[str] = []
         for (session_id, match_info, conversation_text), result in zip(tasks, results):
             if isinstance(result, Exception):
                 logger.warning(
                     "Failed to summarize session %s: %s",
-                    session_id, result, exc_info=True,
+                    session_id,
+                    result,
+                    exc_info=True,
                 )
                 result = None
 
@@ -391,17 +404,19 @@ def session_search(
             else:
                 # Fallback: raw preview so matched sessions aren't silently
                 # dropped when the summarizer is unavailable (fixes #3409).
-                preview = (conversation_text[:500] + "\n…[truncated]") if conversation_text else "No preview available."
+                preview = (
+                    (conversation_text[:500] + "\n…[truncated]")
+                    if conversation_text
+                    else "No preview available."
+                )
                 summary = f"[Raw preview — summarization unavailable]\n{preview}"
 
             summaries.append(summary)
 
-        return json.dumps({
-            "success": True,
-            "query": query,
-            "results": summaries,
-            "count": len(summaries)
-        }, ensure_ascii=False)
+        return json.dumps(
+            {"success": True, "query": query, "results": summaries, "count": len(summaries)},
+            ensure_ascii=False,
+        )
 
     except Exception as e:
         logger.error("Session search failed: %s", e, exc_info=True)

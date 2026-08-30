@@ -6,6 +6,7 @@ Supports two search targets:
 
 No external dependencies (rg, grep, find) required.
 """
+
 import fnmatch
 import json
 import os
@@ -22,9 +23,14 @@ from agent.tools.pub_base import is_text_file, resolve_path, PathOutOfBoundsErro
 
 # ── Content search (grep-like) ───────────────────────────────────────────
 
+
 def _search_content(
-    pattern: str, root: Path, file_glob: str | None,
-    limit: int, offset: int, context: int,
+    pattern: str,
+    root: Path,
+    file_glob: str | None,
+    limit: int,
+    offset: int,
+    context: int,
 ) -> dict:
     try:
         regex = re.compile(pattern, re.IGNORECASE)
@@ -54,13 +60,15 @@ def _search_content(
                 if regex.search(line):
                     ctx_before = lines[max(0, i - context) : i] if context else []
                     ctx_after = lines[i + 1 : i + 1 + context] if context else []
-                    matches.append({
-                        "path": str(fpath),
-                        "line_number": i + 1,
-                        "content": line[:500],
-                        "context_before": ctx_before,
-                        "context_after": ctx_after,
-                    })
+                    matches.append(
+                        {
+                            "path": str(fpath),
+                            "line_number": i + 1,
+                            "content": line[:500],
+                            "context_before": ctx_before,
+                            "context_after": ctx_after,
+                        }
+                    )
                     if len(matches) >= offset + limit + 1:
                         truncated = True
                         break
@@ -88,6 +96,7 @@ def _search_content(
 
 
 # ── File search (glob-like) ──────────────────────────────────────────────
+
 
 def _search_files(pattern: str, root: Path, limit: int, offset: int) -> dict:
     bare_name = pattern.split("/")[-1] if "/" in pattern else pattern
@@ -118,6 +127,7 @@ def _search_files(pattern: str, root: Path, limit: int, offset: int) -> dict:
 
 
 # ── LangChain tool ───────────────────────────────────────────────────────
+
 
 class SearchFilesInput(BaseModel):
     pattern: str = Field(
@@ -186,7 +196,9 @@ class SearchFilesTool(BaseTool):
         try:
             resolved = resolve_path(path)
         except PathOutOfBoundsError:
-            return json.dumps({"error": f"Path outside project root not allowed: {path}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Path outside project root not allowed: {path}"}, ensure_ascii=False
+            )
 
         if not resolved.exists():
             return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)

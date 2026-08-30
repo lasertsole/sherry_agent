@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import type { Response } from '@/types/response';
 
 // `fetchApi` is used inside workspace.ts as a Nuxt auto-import (no explicit
 // `import` statement), so it must be stubbed as a global.
 import {
   read_system_prompt_handler,
   write_system_prompt_file_handler,
-  update_system_prompt_file_handler,
+  update_system_prompt_file_handler
 } from '../workspace';
 
 function stubFetchApi(data: unknown) {
@@ -28,7 +27,7 @@ describe('read_system_prompt_handler', () => {
     expect(mock).toHaveBeenCalledWith({
       url: '/system_prompt',
       opts: {},
-      method: 'get',
+      method: 'get'
     });
   });
 
@@ -46,34 +45,28 @@ describe('read_system_prompt_handler', () => {
 describe('write_system_prompt_file_handler', () => {
   it('returns true on success', async () => {
     const mock = stubFetchApi({ code: 200 });
-    await expect(
-      write_system_prompt_file_handler({ 'IDENTITY.md': 'X' }),
-    ).resolves.toBe(true);
+    await expect(write_system_prompt_file_handler({ 'IDENTITY.md': 'X' })).resolves.toBe(true);
     expect(mock).toHaveBeenCalledWith({
       url: '/system_prompt',
       opts: { file_to_content: { 'IDENTITY.md': 'X' } },
-      method: 'post',
+      method: 'post'
     });
   });
 
   it('returns false on failure', async () => {
     stubFetchApi(Promise.reject(new Error('down')));
-    await expect(
-      write_system_prompt_file_handler({ a: 'b' }),
-    ).resolves.toBe(false);
+    await expect(write_system_prompt_file_handler({ a: 'b' })).resolves.toBe(false);
   });
 });
 
 describe('update_system_prompt_file_handler', () => {
   it('returns true on success', async () => {
     const mock = stubFetchApi({ code: 200 });
-    await expect(
-      update_system_prompt_file_handler({ 'SOUL.md': 'Y' }),
-    ).resolves.toBe(true);
+    await expect(update_system_prompt_file_handler({ 'SOUL.md': 'Y' })).resolves.toBe(true);
     expect(mock).toHaveBeenCalledWith({
       url: '/system_prompt',
       opts: { file_to_content: { 'SOUL.md': 'Y' } },
-      method: 'patch',
+      method: 'patch'
     });
   });
 

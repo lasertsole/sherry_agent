@@ -5,6 +5,7 @@ to verify entity relationships appear on the knowledge-graph page.
 Usage:
     python skills/builtin/core/multimodal_rag/scripts/rag_import_test.py
 """
+
 import asyncio
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from config import SRC_DIR
+
 # Import graph_rag FIRST: its __init__ aliases bare `lightrag` onto the
 # vendored copy before raganything (which imports `from lightrag import ...`
 # at module load) is pulled in transitively via graph_rag.core.

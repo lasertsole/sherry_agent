@@ -37,7 +37,8 @@ _EVALUATE_TOOL = [
     }
 ]
 
-def evaluate_response(response: str, task_context: str)-> bool:
+
+def evaluate_response(response: str, task_context: str) -> bool:
     """Decide whether a background-task result should be delivered to the user.
 
     Uses a lightweight tool-call LLM request (same pattern as heartbeat
@@ -46,13 +47,17 @@ def evaluate_response(response: str, task_context: str)-> bool:
     """
     auxiliary_llm = build_auxiliary_llm()
     try:
-        llm_response = auxiliary_llm.bind_tools(_EVALUATE_TOOL).invoke([
-            {"role": "system", "content": _EVALUATE_SYSTEM_PROMPT},
-            {"role": "user", "content": (
-                f"## Original task\n{task_context}\n\n"
-                f"## Agent response\n{response}"
-            )},
-        ])
+        llm_response = auxiliary_llm.bind_tools(_EVALUATE_TOOL).invoke(
+            [
+                {"role": "system", "content": _EVALUATE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"## Original task\n{task_context}\n\n## Agent response\n{response}"
+                    ),
+                },
+            ]
+        )
 
         if not llm_response.tool_calls or len(llm_response.tool_calls) == 0:
             logger.warning("evaluate_response: no tool call returned, defaulting to notify")

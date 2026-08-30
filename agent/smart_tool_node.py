@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 
 from langgraph.prebuilt.tool_node import ToolNode as _OrigToolNode
 
@@ -54,8 +53,7 @@ class SmartToolNode(_OrigToolNode):
         config_list = self._get_config_list(config, len(tool_calls))
         tool_runtimes = self._build_tool_runtimes(tool_calls, config_list, input, runtime)
         coros = [
-            self._arun_one(call, input_type, tr)
-            for call, tr in zip(tool_calls, tool_runtimes)
+            self._arun_one(call, input_type, tr) for call, tr in zip(tool_calls, tool_runtimes)
         ]
         outputs = await asyncio.gather(*coros)
         return self._combine_tool_outputs(outputs, input_type)
@@ -74,21 +72,26 @@ class SmartToolNode(_OrigToolNode):
 
         logger.debug("smart_tool_node: concurrent for %d calls", len(tool_calls))
         from langgraph.config import get_executor_for_config
+
         config_list = self._get_config_list(config, len(tool_calls))
         tool_runtimes = self._build_tool_runtimes(tool_calls, config_list, input, runtime)
         with get_executor_for_config(config) as executor:
             outputs = list(
-                executor.map(self._run_one, tool_calls, [input_type] * len(tool_calls), tool_runtimes)
+                executor.map(
+                    self._run_one, tool_calls, [input_type] * len(tool_calls), tool_runtimes
+                )
             )
         return self._combine_tool_outputs(outputs, input_type)
 
     @staticmethod
     def _get_config_list(config, n):
         from langgraph.prebuilt.tool_node import get_config_list as _get
+
         return _get(config, n)
 
     def _build_tool_runtimes(self, tool_calls, config_list, input, runtime):
         from langgraph.prebuilt.tool_node import ToolRuntime
+
         runtimes = []
         for call, cfg in zip(tool_calls, config_list):
             state = self._extract_state(input, cfg)
@@ -109,5 +112,6 @@ class SmartToolNode(_OrigToolNode):
 
 def patch_tool_node():
     import langchain.agents.factory as _f
+
     _f.ToolNode = SmartToolNode
     logger.debug("smart_tool_node: patched factory.ToolNode -> SmartToolNode")

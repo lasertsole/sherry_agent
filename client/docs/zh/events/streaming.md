@@ -15,7 +15,7 @@ Agent 使用 Tauri 事件系统向前端实时流式传输响应。
 
 ## 事件生命周期
 
-```
+```text
 agent:stream:start  -->  agent:stream:chunk  (x N)  -->  agent:stream:end
                               |
                               +-->  agent:stream:error  (失败时)

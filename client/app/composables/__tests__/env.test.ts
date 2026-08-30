@@ -20,10 +20,10 @@ const payload: EnvConfigPayload = {
       name: 'APP',
       entries: [
         { key: 'APP_NAME', value: 'EMA', value_edited: false },
-        { key: 'APP_ENV', value: 'prod', value_edited: true },
-      ],
-    },
-  ],
+        { key: 'APP_ENV', value: 'prod', value_edited: true }
+      ]
+    }
+  ]
 };
 
 beforeEach(() => {
@@ -41,7 +41,7 @@ describe('readEnvConfig', () => {
     expect(call).toMatchObject({
       url: '/env',
       method: 'get',
-      opts: { _ts: expect.any(Number) },
+      opts: { _ts: expect.any(Number) }
     });
   });
 
@@ -69,7 +69,7 @@ describe('writeEnvConfig', () => {
     expect(call).toMatchObject({
       url: '/env',
       method: 'put',
-      opts: { changes: { APP_NAME: 'EMA2' } },
+      opts: { changes: { APP_NAME: 'EMA2' } }
     });
   });
 

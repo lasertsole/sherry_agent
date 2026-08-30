@@ -44,3 +44,27 @@ dev = [
 
 [tool.uv.sources]
 editdistance = { path = "models/STT_model/editdistance-0.8.1-py3-none-any.whl" }
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = [
+    "client",           # Nuxt/Tauri frontend
+    "src",              # runtime data (checkpoints, media, rag index)
+    "temp",
+    ".omo",
+    ".playwright-mcp",
+]
+
+[tool.ruff.lint]
+# Keep default rule set (E4/E7/E9 + F: pyflakes)
+
+[tool.ruff.lint.per-file-ignores]
+# Vendored LightRAG / RAG-Anything code - keep close to upstream, don't chase style
+"skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_raganything/*" = ["E402", "F403", "F405"]
+# Skill scripts initialize env/model before imports (intentional delayed imports)
+"skills/builtin/**/scripts/*" = ["E402"]
+# Tests do sys.path setup before imports
+"tests/**" = ["E402"]
+# Vendored FunASR onnxruntime utils
+"models/STT_model/utils/*" = ["E722"]

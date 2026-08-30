@@ -2,7 +2,6 @@
 llm_wiki ingest: 原始资料导入
 """
 
-import sys
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -11,8 +10,7 @@ from loguru import logger
 
 # 动态加载 core 模块
 _scripts_dir = Path(__file__).resolve().parent
-_core_spec = importlib.util.spec_from_file_location(
-    "wiki_core", str(_scripts_dir / "core.py"))
+_core_spec = importlib.util.spec_from_file_location("wiki_core", str(_scripts_dir / "core.py"))
 _core = importlib.util.module_from_spec(_core_spec)
 _core_spec.loader.exec_module(_core)
 get_wiki_path = _core.get_wiki_path
@@ -58,15 +56,7 @@ sha256: {sha256_hash}
     try:
         file_path.write_text(full_content, encoding="utf-8")
         logger.debug(f"Source saved: {file_path}")
-        return {
-            "file_path": str(file_path),
-            "sha256": sha256_hash,
-            "success": True
-        }
+        return {"file_path": str(file_path), "sha256": sha256_hash, "success": True}
     except Exception as e:
         logger.error(f"Failed to save source: {e}")
-        return {
-            "file_path": str(file_path),
-            "error": str(e),
-            "success": False
-        }
+        return {"file_path": str(file_path), "error": str(e), "success": False}

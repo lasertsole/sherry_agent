@@ -1,4 +1,4 @@
-﻿"""Spec-compliant sidecar writer.
+"""Spec-compliant sidecar writer.
 
 This module is the *single executable specification* of the LightRAG sidecar
 format (``docs/LightRAGSidecarFormat-zh.md``). Engine adapters hand it an
@@ -103,8 +103,7 @@ def write_sidecar(
     if block_drawing_path_style not in _VALID_BLOCK_DRAWING_PATH_STYLES:
         allowed = ", ".join(sorted(_VALID_BLOCK_DRAWING_PATH_STYLES))
         raise ValueError(
-            f"block_drawing_path_style must be one of {allowed}, "
-            f"got {block_drawing_path_style!r}"
+            f"block_drawing_path_style must be one of {allowed}, got {block_drawing_path_style!r}"
         )
 
     if clean_parsed_dir and parsed_dir.exists():
@@ -403,7 +402,7 @@ def _materialize_assets(
             src_path = Path(spec.source)
             if not src_path.exists():
                 logger.warning(
-                    "[sidecar] asset source missing for ref=%s (%s); " "skipping copy",
+                    "[sidecar] asset source missing for ref=%s (%s); skipping copy",
                     spec.ref,
                     src_path,
                 )
@@ -418,7 +417,7 @@ def _materialize_assets(
             # missing.
             if not target_path.exists():
                 logger.warning(
-                    "[sidecar] asset ref=%s declared in place but %s " "is absent",
+                    "[sidecar] asset ref=%s declared in place but %s is absent",
                     spec.ref,
                     target_path,
                 )

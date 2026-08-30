@@ -24,6 +24,7 @@ from skills.builtin.core.cron.scripts import cron_service, CronSchedule
 # Serialization helpers
 # =============================================================================
 
+
 def _to_text_response(status_code: int, payload: dict) -> Response:
     """Build a JSON Robyn Response."""
     return Response(
@@ -124,6 +125,7 @@ def _read_body(request) -> dict | None:
 # =============================================================================
 # Endpoints
 # =============================================================================
+
 
 @app.get("/cron")
 async def list_cron_jobs_handler(request):
@@ -294,7 +296,9 @@ async def run_cron_job_handler(request):
     ok = await cron_service.run_job(job_id, force=force)
     logger.info(f"Cron job run: id={job_id}, force={force}, ok={ok}")
     if not ok:
-        return _to_text_response(400, {"success": False, "message": "Job is disabled; pass force=true to override"})
+        return _to_text_response(
+            400, {"success": False, "message": "Job is disabled; pass force=true to override"}
+        )
     return _ok({"success": True})
 
 
@@ -340,5 +344,7 @@ async def delete_cron_job_handler(request):
         logger.info(f"Cron job removed: id={job_id}")
         return _ok({"success": True})
     if result == "protected":
-        return _to_text_response(403, {"success": False, "message": "Job is protected and cannot be removed"})
+        return _to_text_response(
+            403, {"success": False, "message": "Job is protected and cannot be removed"}
+        )
     return _not_found(f"Cron job '{job_id}' not found")

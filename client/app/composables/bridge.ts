@@ -14,35 +14,36 @@
 import type { HistoryMessage } from '~/types/backend/HistoryMessage';
 import type { PromptFileResponse } from '~/types/backend/PromptFileResponse';
 import type { HealthStatus } from '~/types/backend/HealthStatus';
+import type { Response as ApiResponse } from '~/types/response';
 import { fetchApi } from './requestApi';
 import { emit } from './mitt';
 
 /**
- * Chat 请求体 —— 供 sendChatMessage / handleSend 使用。
- * 字段与后端 `type/message.py` MultiModalMessage 保持一致。
+ * Chat request body — used by sendChatMessage / handleSend.
+ * Fields mirror the backend `type/message.py` MultiModalMessage.
  */
 export interface ChatRequest {
-  /** 会话 ID（缺省时后端按 "default"/默认会话处理） */
+  /** Session ID (when omitted the backend treats it as the "default" session) */
   session_id?: string;
-  /** 文本内容 */
+  /** Text content */
   text: string;
-  /** 图片 base64 列表（Tauri 模式使用；浏览器模式下会自动上传转为 image_path_list） */
+  /** Image base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to image_path_list) */
   image_base64_list?: string[];
-  /** 图片 URL 列表（浏览器模式使用，来自 /images/upload 上传后返回的 HTTP URL） */
+  /** Image URL list (browser mode; HTTP URLs returned after uploading via /images/upload) */
   image_path_list?: string[];
-  /** 音频 base64 列表（Tauri 模式使用；浏览器模式下会自动上传转为 audio_path_list） */
+  /** Audio base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to audio_path_list) */
   audio_bytes_list?: string[];
-  /** 音频 URL 列表（浏览器模式使用，来自 /audio/upload 上传后返回的 HTTP URL） */
+  /** Audio URL list (browser mode; HTTP URLs returned after uploading via /audio/upload) */
   audio_path_list?: string[];
-  /** 视频 base64 列表（Tauri 模式使用；浏览器模式下会自动上传转为 video_path_list） */
+  /** Video base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to video_path_list) */
   video_bytes_list?: string[];
-  /** 视频 URL 列表（浏览器模式使用，来自 /video/upload 上传后返回的 HTTP URL） */
+  /** Video URL list (browser mode; HTTP URLs returned after uploading via /video/upload) */
   video_path_list?: string[];
 }
 
 /**
- * 浏览器模式下后端 `/sessions/agent/ws` 返回的流式事件帧。
- * 对应 `server/trigger/ws/messages.py` 的 `{"event": ..., "session_id": ..., "content": ...}`。
+ * Streaming event frames returned by the backend `/sessions/agent/ws` in browser mode.
+ * Corresponds to `{"event": ..., "session_id": ..., "content": ...}` in `server/trigger/ws/messages.py`.
  */
 export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request';
 
@@ -75,25 +76,27 @@ export interface AgentWsEvent {
   tool_name?: string;
   args?: Record<string, unknown>;
   error?: boolean;
-  /** 模型名称（仅 done 帧携带；来自后端 model_name） */
+  /** Model name (carried only on done frames; from the backend model_name) */
   model_name?: string;
-  /** 输入 token 数（仅 done 帧携带；来自后端 input_tokens） */
+  /** Input token count (carried only on done frames; from the backend input_tokens) */
   input_tokens?: number;
-  /** 输出 token 数（仅 done 帧携带；来自后端 output_tokens） */
+  /** Output token count (carried only on done frames; from the backend output_tokens) */
   output_tokens?: number;
 }
 
 /**
- * 流被网络中断（WebSocket 重连失败耗尽重试）时 reject 的错误。
- * `midStream` 为 true 表示断流发生在本轮**已产出首个 chunk 之后**——
- * 此时任何内容都已上屏，绝不能重发（见 handleSend Case B 注释），
- * 只能由 UI 侧标记失败并触发历史对账兜底。
+ * Error used to reject when the stream is interrupted by the network
+ * (WebSocket reconnect retries exhausted).
+ * `midStream` being true means the disconnect happened **after the first chunk
+ * of this round had already been produced** — any content is already on screen
+ * and must never be re-sent (see the handleSend Case B comment); the UI can
+ * only mark the round as failed and trigger a history reconciliation fallback.
  */
 export class StreamInterruptedError extends Error {
   constructor(
     message: string,
-    /** true = 断流时已收到过 chunk（本轮内容已上屏）；false = 首 chunk 前的纯连接失败 */
-    readonly midStream: boolean,
+    /** true = at least one chunk was received before the disconnect (this round's content is already on screen); false = pure connection failure before the first chunk */
+    readonly midStream: boolean
   ) {
     super(message);
     this.name = 'StreamInterruptedError';
@@ -101,23 +104,25 @@ export class StreamInterruptedError extends Error {
 }
 
 /**
- * 浏览器模式 WebSocket 断流重连的最大尝试次数。
- * 每次失败后按指数退避（1000 * 2^(attempt-1) ms）重试，
- * 超过该上限仍失败则抛出 {@link StreamInterruptedError}。
- * 后端会在每次连接时取消该会话的活动任务并将本轮在 agent 图完成时才落库，
- * 因此「首 chunk 前」的重连重发是安全的（见 `server/trigger/ws/messages.py:171-183`）。
+ * Maximum number of reconnect attempts for a browser-mode WebSocket stream loss.
+ * After each failure it retries with exponential backoff (1000 * 2^(attempt-1) ms);
+ * once this cap is exceeded, {@link StreamInterruptedError} is thrown.
+ * The backend cancels the session's active task on every new connection and only
+ * persists the round when the agent graph completes, so reconnecting and
+ * re-sending "before the first chunk" is safe
+ * (see `server/trigger/ws/messages.py:171-183`).
  */
 export const WS_RECONNECT_MAX_ATTEMPTS = 3;
 
 /**
- * 指数退避：第 `attempt`（1 起）次重连的等待毫秒数。
+ * Exponential backoff: wait time in milliseconds before the `attempt`-th (1-based) reconnect.
  * @example wsReconnectDelayMs(1) === 1000; wsReconnectDelayMs(2) === 2000; wsReconnectDelayMs(3) === 4000
  */
 export function wsReconnectDelayMs(attempt: number): number {
   return 1000 * 2 ** (attempt - 1);
 }
 
-/** mitt 事件名——WebSocket 流连接丢失（断流）。载荷为本次断流的会话 ID。 */
+/** mitt event name — WebSocket stream connection loss (stream drop). Payload is the session ID of the interrupted stream. */
 export const WS_CONN_LOSS_EVENT = 'ws:conn-loss';
 
 /** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
@@ -185,18 +190,14 @@ export type OnChunkCallback = (
   content: string,
   type: AgentChunkType,
   sessionId: string,
-  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean },
+  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
 ) => void;
 
 /** HITL interrupt callback: invoked when the agent pauses for human approval. */
 export type OnHitlCallback = (data: HitlInterruptData) => void;
 
-/** 流结束回调：携带可选的模型元数据（model_name/input_tokens/output_tokens，来自 done 帧）。 */
-export type OnDoneCallback = (meta?: {
-  modelName?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-}) => void;
+/** Stream-end callback: carries optional model metadata (model_name/input_tokens/output_tokens, from the done frame). */
+export type OnDoneCallback = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => void;
 
 /**
  * Send a chat message and receive streaming chunks.
@@ -209,10 +210,7 @@ export type OnDoneCallback = (meta?: {
  * @param onChunk  Callback invoked for each text fragment with its type and session id.
  * @returns        Resolves when the stream completes; rejects on error.
  */
-export async function sendChatMessage(
-  request: ChatRequest,
-  onChunk: OnChunkCallback,
-): Promise<void> {
+export async function sendChatMessage(request: ChatRequest, onChunk: OnChunkCallback): Promise<void> {
   return streamChatMessage(request, onChunk).promise;
 }
 
@@ -220,7 +218,7 @@ export async function sendChatMessage(
 async function sendChatMessageTauri(
   request: ChatRequest,
   onChunk: OnChunkCallback,
-  onDone?: OnDoneCallback,
+  onDone?: OnDoneCallback
 ): Promise<void> {
   const invoke = await getInvoke();
   const listen = await getListen();
@@ -241,34 +239,42 @@ async function sendChatMessageTauri(
     // Listen for stream start
     listen<AgentStreamStart>('agent:stream:start', () => {
       // Stream started, no action needed
-    }).then((fn) => { unlistenStart = fn; });
+    }).then(fn => {
+      unlistenStart = fn;
+    });
 
     // Listen for chunks
-    listen<AgentStreamChunk>('agent:stream:chunk', (event) => {
+    listen<AgentStreamChunk>('agent:stream:chunk', event => {
       const p = event.payload;
       onChunk(p.content, p.chunk_type ?? 'text', p.session_id, {
         tool_id: p.tool_id,
         tool_name: p.tool_name,
         args: p.args,
-        error: p.error,
+        error: p.error
       });
-    }).then((fn) => { unlistenChunk = fn; });
+    }).then(fn => {
+      unlistenChunk = fn;
+    });
 
     // Listen for stream end
     listen<AgentStreamEnd>('agent:stream:end', () => {
       cleanup();
       onDone?.();
       resolve();
-    }).then((fn) => { unlistenEnd = fn; });
+    }).then(fn => {
+      unlistenEnd = fn;
+    });
 
     // Listen for stream error
-    listen<AgentStreamError>('agent:stream:error', (event) => {
+    listen<AgentStreamError>('agent:stream:error', event => {
       cleanup();
       reject(new Error(`[${event.payload.code}] ${event.payload.message}`));
-    }).then((fn) => { unlistenErr = fn; });
+    }).then(fn => {
+      unlistenErr = fn;
+    });
 
     // Invoke the Rust command (triggers the SSE bridge)
-    invoke<ChatChunk[]>('agent_chat', { request }).catch((err) => {
+    invoke<ChatChunk[]>('agent_chat', { request }).catch(err => {
       cleanup();
       reject(err);
     });
@@ -282,7 +288,7 @@ async function sendChatMessageTauri(
  * and strips any trailing slashes.
  */
 function resolveWsBaseUrl(apiBaseUrl: string): string {
-  return apiBaseUrl.replace(/^https?:\/\//, (m) => (m === 'https://' ? 'wss://' : 'ws://')).replace(/\/+$/, '');
+  return apiBaseUrl.replace(/^https?:\/\//, m => (m === 'https://' ? 'wss://' : 'ws://')).replace(/\/+$/, '');
 }
 
 /**
@@ -318,7 +324,7 @@ export function streamChatMessage(
   request: ChatRequest,
   onChunk: OnChunkCallback,
   onHitl?: OnHitlCallback,
-  onDone?: OnDoneCallback,
+  onDone?: OnDoneCallback
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -327,7 +333,7 @@ export function streamChatMessage(
     const promise = sendChatMessageTauri(request, onChunk, onDone);
     return {
       controller: { closed: false, abort: () => void stopChatMessage(request.session_id || 'default') },
-      promise,
+      promise
     };
   }
   return sendChatMessageWs(request, onChunk, onHitl, onDone);
@@ -337,12 +343,12 @@ export function streamChatMessage(
  * Browser mode: stream agent chat over the backend WebSocket
  * (`/sessions/agent/ws`) instead of the (non-existent) SSE HTTP endpoint.
  *
- * 协议（参见 `server/trigger/ws/messages.py`）：
- * - 客户端先将 base64 图片通过 HTTP POST /images/upload 上传获取 URL，
- *   再通过 WebSocket 发送消息体：
- *   `{ session_id, multi_modal_message: { text, image_base64_list: [], image_path_list: [上传后的URL...] } }`
- * - 服务端返回 `{ event: "chunk", content }` 流式帧，
- *   以 `{ event: "done" }`（成功）或 `{ event: "error", content }` 结束。
+ * Protocol (see `server/trigger/ws/messages.py`):
+ * - The client first uploads base64 images via HTTP POST /images/upload to get
+ *   URLs, then sends the message body over the WebSocket:
+ *   `{ session_id, multi_modal_message: { text, image_base64_list: [], image_path_list: [uploaded URLs...] } }`
+ * - The server returns `{ event: "chunk", content }` streaming frames,
+ *   ending with `{ event: "done" }` (success) or `{ event: "error", content }`.
  *
  * @param request  The chat payload.
  * @param onChunk  Called with each text fragment.
@@ -355,38 +361,38 @@ export type UploadMediaKind = 'image' | 'audio' | 'video';
 const KIND_ENDPOINT: Record<UploadMediaKind, string> = {
   image: '/images/upload',
   audio: '/audio/upload',
-  video: '/video/upload',
+  video: '/video/upload'
 };
 
 /** Wildcard MIME (e.g. `image/`, `audio/`, `video/`) to parse a `data:...;base64,` prefix. */
 const KIND_MIME_PREFIX: Record<UploadMediaKind, string> = {
   image: 'image/',
   audio: 'audio/',
-  video: 'video/',
+  video: 'video/'
 };
 
 /** Fallback content-type when the payload carries no `data:` prefix. */
 const KIND_DEFAULT_CONTENT_TYPE: Record<UploadMediaKind, string> = {
   image: 'image/png',
   audio: 'audio/webm',
-  video: 'video/mp4',
+  video: 'video/mp4'
 };
 
 /** Human-readable kind label used in error messages. */
 const KIND_LABEL: Record<UploadMediaKind, string> = {
   image: '图片',
   audio: '音频',
-  video: '视频',
+  video: '视频'
 };
 
 /**
- * 将 base64 媒体（图片/音频/视频）上传到后端对应的 `/images|/audio|/video/upload`
- * 端点并返回 URL 列表。
+ * Upload base64 media (image/audio/video) to the backend's corresponding
+ * `/images|/audio|/video/upload` endpoint and return the URL list.
  *
- * @param kind       媒体类型（image | audio | video），决定上传端点与 MIME 解析规则
- * @param base64List base64 编码的字符串列表（可能带 data:<mime>;base64, 前缀）
- * @param baseURL    后端 HTTP 基地址
- * @returns          上传后的 URL 数组（与输入同序）
+ * @param kind       Media kind (image | audio | video); determines the upload endpoint and MIME parsing rules
+ * @param base64List List of base64-encoded strings (may carry a data:<mime>;base64, prefix)
+ * @param baseURL    Backend HTTP base URL
+ * @returns          Array of uploaded URLs (same order as the input)
  */
 async function uploadBase64ToUrls(kind: UploadMediaKind, base64List: string[], baseURL: string): Promise<string[]> {
   const label = KIND_LABEL[kind];
@@ -395,24 +401,24 @@ async function uploadBase64ToUrls(kind: UploadMediaKind, base64List: string[], b
     let contentType = KIND_DEFAULT_CONTENT_TYPE[kind];
     let pureBase64 = base64;
 
-    // 若带有 data:<mime>;base64, 前缀，则剥离并提取 MIME 类型
-    const match = pureBase64.match(new RegExp(`^data:(${KIND_MIME_PREFIX[kind]}[\w.+-]+);base64,(.+)$`));
+    // If a data:<mime>;base64, prefix is present, strip it and extract the MIME type
+    const match = pureBase64.match(new RegExp(`^data:(${KIND_MIME_PREFIX[kind]}[w.+-]+);base64,(.+)$`));
     if (match) {
-      contentType = match[1];
-      pureBase64 = match[2];
+      contentType = match[1] ?? contentType;
+      pureBase64 = match[2] ?? pureBase64;
     }
 
-    const bytes = Uint8Array.from(atob(pureBase64), (c) => c.charCodeAt(0));
+    const bytes = Uint8Array.from(atob(pureBase64), c => c.charCodeAt(0));
 
     let resp: Response;
     try {
       resp = await fetch(`${baseURL}${KIND_ENDPOINT[kind]}`, {
         method: 'POST',
         headers: { 'Content-Type': contentType },
-        body: bytes,
+        body: bytes
       });
     } catch (e) {
-      throw new Error(`${label}上传网络错误: ${e}`);
+      throw new Error(`${label}上传网络错误: ${e}`, { cause: e });
     }
 
     if (!resp.ok) {
@@ -439,7 +445,7 @@ function sendChatMessageWs(
   request: ChatRequest,
   onChunk: OnChunkCallback,
   onHitl?: OnHitlCallback,
-  onDone?: OnDoneCallback,
+  onDone?: OnDoneCallback
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -450,17 +456,18 @@ function sendChatMessageWs(
 
   let socket: WebSocket | null = null;
   let done: boolean = false;
-  /** 是否已收到过 chunk——用于区分 Case A（首 chunk 前断流）与 Case B（中途断流）。 */
+  /** Whether a chunk has been received — distinguishes Case A (disconnect before the first chunk) from Case B (mid-stream disconnect). */
   let receivedChunk: boolean = false;
-  /** 当前已发起的连接/重连次数（首连 0，重连 1..WS_RECONNECT_MAX_ATTEMPTS）。 */
+  /** Number of connection/reconnect attempts initiated so far (first connect 0, reconnects 1..WS_RECONNECT_MAX_ATTEMPTS). */
   let attempt: number = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 是否已调度重连——浏览器失败时 onerror 与 onclose 会先后触发，用该标志去重，避免一次断连消耗两次尝试预算。 */
+  /** Whether a reconnect has been scheduled — on browser failure both onerror and onclose fire in sequence; this flag dedupes them so one disconnect does not consume two attempts from the budget. */
   let reconnectScheduled: boolean = false;
   let release: (err?: unknown) => void = () => {};
 
-  // 组装聊天载荷的单一辅助函数：首次连接与 Case A 断流重连共用同一份载荷，
-  // 保证不因重建 WebSocket 而丢字段。
+  // Single helper that assembles the chat payload: the first connection and the
+  // Case A reconnect share the same payload, guaranteeing no fields are lost
+  // when the WebSocket is rebuilt.
   const buildChatPayload = (imageUrls: string[], audioUrls: string[], videoUrls: string[]) =>
     JSON.stringify({
       session_id: sessionId,
@@ -471,8 +478,8 @@ function sendChatMessageWs(
         audio_bytes_list: [],
         audio_path_list: audioUrls,
         video_bytes_list: [],
-        video_path_list: videoUrls,
-      },
+        video_path_list: videoUrls
+      }
     });
 
   const clearReconnectTimer = () => {
@@ -513,7 +520,7 @@ function sendChatMessageWs(
       release('aborted');
     },
     sendHitlResponse: (response: HitlResponse) => {
-      // 连接已关闭/中止时静默忽略
+      // Silently ignore when the connection is closed/aborted
       if (done || !socket || socket.readyState !== WebSocket.OPEN) return;
       socket.send(
         JSON.stringify({
@@ -521,21 +528,21 @@ function sendChatMessageWs(
           session_id: sessionId,
           decision: response.decision,
           message: response.message ?? '',
-          edited_args: response.edited_args,
-        }),
+          edited_args: response.edited_args
+        })
       );
-    },
+    }
   };
 
-  const promise = new Promise<void>(async (resolve, reject) => {
+  const runStream = async (resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void) => {
     release = (err?: unknown) => {
-      // 用户主动 abort 后 promise 保持挂起（与既有行为一致）
+      // After a user-initiated abort the promise stays pending (matches existing behavior)
       if (done && err === 'aborted') return;
       if (err) reject(err instanceof Error ? err : new Error(String(err)));
       else resolve();
     };
 
-    // 将 base64 图片上传到后端 /images/upload，获取 HTTP URL
+    // Upload base64 images to the backend /images/upload to get HTTP URLs
     let imageUrls: string[] = [];
     const imageList = request.image_base64_list;
     if (imageList && imageList.length > 0) {
@@ -550,7 +557,7 @@ function sendChatMessageWs(
       }
     }
 
-    // 将 base64 音频上传到后端 /audio/upload，获取 HTTP URL
+    // Upload base64 audio to the backend /audio/upload to get HTTP URLs
     let audioUrls: string[] = [];
     const audioList = request.audio_bytes_list;
     if (audioList && audioList.length > 0) {
@@ -565,7 +572,7 @@ function sendChatMessageWs(
       }
     }
 
-    // 将 base64 视频上传到后端 /video/upload，获取 HTTP URL
+    // Upload base64 video to the backend /video/upload to get HTTP URLs
     let videoUrls: string[] = [];
     const videoList = request.video_bytes_list;
     if (videoList && videoList.length > 0) {
@@ -580,17 +587,23 @@ function sendChatMessageWs(
       }
     }
 
-    // 上传期间被中止，不再建立 WebSocket
+    // Aborted during upload; do not establish the WebSocket
     if (done) return;
 
-    // 连接丢失（onerror/onclose 且在 done 前触发）时的统一处理。
-    // - Case B（已收到 chunk）：本轮内容已上屏。后端会在每次新连接时取消该会话的活动
-    //   任务（`server/trigger/ws/messages.py:171-183`）——此刻重发会丢失已流出的尾部，
-    //   因此**绝不重发**，直接中止并抛 StreamInterruptedError，由 UI 触发历史对账兜底。
-    // - Case A（尚未收到 chunk）：后端仅在 agent 图完成时才持久化该轮消息，新连接会取消
-    //   未启动的任务，故可安全重连并重发同一载荷（指数退避，最多 WS_RECONNECT_MAX_ATTEMPTS 次）。
+    // Unified handling for connection loss (onerror/onclose firing before done).
+    // - Case B (chunk already received): this round's content is already on
+    //   screen. The backend cancels the session's active task on every new
+    //   connection (`server/trigger/ws/messages.py:171-183`) — re-sending now
+    //   would lose the tail that already streamed out, so **never re-send**;
+    //   abort immediately and throw StreamInterruptedError, letting the UI
+    //   trigger a history reconciliation fallback.
+    // - Case A (no chunk received yet): the backend persists the round's
+    //   messages only when the agent graph completes, and a new connection
+    //   cancels the not-yet-started task, so it is safe to reconnect and
+    //   re-send the same payload (exponential backoff, at most
+    //   WS_RECONNECT_MAX_ATTEMPTS times).
     const handleConnectionLoss = () => {
-      // reconnectScheduled 去重：onerror 触发后 onclose 必然跟随，二者只处理一次
+      // reconnectScheduled dedup: onclose always follows onerror; handle them only once
       if (done || reconnectScheduled) return;
       clearReconnectTimer();
       if (receivedChunk) {
@@ -627,7 +640,7 @@ function sendChatMessageWs(
       let ws: WebSocket;
       try {
         ws = new WebSocket(url);
-      } catch (e) {
+      } catch {
         if (!done) handleConnectionLoss();
         return;
       }
@@ -638,12 +651,12 @@ function sendChatMessageWs(
           ws.close();
           return;
         }
-        // 重连成功（非首连）：通知 UI 收起「重连中」横幅
+        // Reconnect succeeded (not the first connect): notify the UI to collapse the "reconnecting" banner
         if (attempt > 0) emit('stream:reconnected', { sessionId });
         ws.send(buildChatPayload(imageUrls, audioUrls, videoUrls));
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = event => {
         let data: AgentWsEvent;
         try {
           data = JSON.parse(event.data as string) as AgentWsEvent;
@@ -656,10 +669,10 @@ function sendChatMessageWs(
             tool_id: data.tool_id,
             tool_name: data.tool_name,
             args: data.args,
-            error: data.error,
+            error: data.error
           });
         } else if (data.event === 'hitl_request') {
-          // HITL 中断：agent 需人工审批，调用 onHitl 回调（无回调时静默忽略）
+          // HITL interrupt: the agent needs human approval; invoke the onHitl callback (silently ignored when absent)
           if (onHitl && data.content) {
             onHitl(data.content as unknown as HitlInterruptData);
           }
@@ -669,11 +682,11 @@ function sendChatMessageWs(
             clearReconnectTimer();
             closeSocket();
             release();
-            // 携带模型元数据（model_name/input_tokens/output_tokens）通知流结束回调
+            // Notify the stream-end callback with model metadata (model_name/input_tokens/output_tokens)
             onDone?.({
               modelName: data.model_name ?? undefined,
               inputTokens: data.input_tokens ?? undefined,
-              outputTokens: data.output_tokens ?? undefined,
+              outputTokens: data.output_tokens ?? undefined
             });
           }
         } else if (data.event === 'error') {
@@ -691,6 +704,10 @@ function sendChatMessageWs(
     };
 
     connect();
+  };
+
+  const promise = new Promise<void>((resolve, reject) => {
+    void runStream(resolve, reject);
   });
 
   return { controller, promise };
@@ -725,7 +742,7 @@ export function resumeHitl(
   decision: string,
   message: string = '',
   onChunk: OnChunkCallback,
-  onHitl?: OnHitlCallback,
+  onHitl?: OnHitlCallback
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -765,7 +782,7 @@ export function resumeHitl(
         closeSocket();
       }
       release('aborted');
-    },
+    }
   };
 
   const promise = new Promise<void>((resolve, reject) => {
@@ -789,12 +806,12 @@ export function resumeHitl(
           type: 'hitl_response',
           session_id: sessionId,
           decision,
-          message: message ?? '',
-        }),
+          message: message ?? ''
+        })
       );
     };
 
-    socket.onmessage = (event) => {
+    socket.onmessage = event => {
       let data: AgentWsEvent;
       try {
         data = JSON.parse(event.data as string) as AgentWsEvent;
@@ -806,10 +823,10 @@ export function resumeHitl(
           tool_id: data.tool_id,
           tool_name: data.tool_name,
           args: data.args,
-          error: data.error,
+          error: data.error
         });
       } else if (data.event === 'hitl_request') {
-        // 顺序 HITL：恢复后的执行再次暂停，转发给调用方重新显示审批卡
+        // Sequential HITL: the resumed execution paused again; forward to the caller to re-show the approval card
         if (onHitl && data.content) {
           onHitl(data.content as unknown as HitlInterruptData);
         }
@@ -868,7 +885,7 @@ export async function stopChatMessage(sessionId: string): Promise<void> {
 function stopChatMessageBrowser(sessionId: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const baseURL: string = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
-    const wsBase = baseURL.replace(/^https?:\/\//, (m) => (m === 'https://' ? 'wss://' : 'ws://'));
+    const wsBase = baseURL.replace(/^https?:\/\//, m => (m === 'https://' ? 'wss://' : 'ws://'));
     const url = `${wsBase.replace(/\/+$/, '')}/sessions/agent/ws`;
 
     let socket: WebSocket | null = null;
@@ -881,7 +898,7 @@ function stopChatMessageBrowser(sessionId: string): Promise<void> {
     }
 
     // Resolve once the server acknowledges the stop.
-    socket.onmessage = (event) => {
+    socket.onmessage = event => {
       try {
         const data = JSON.parse(event.data as string);
         if (data && data.event === 'stopped' && data.session_id === sessionId) {
@@ -933,13 +950,13 @@ export async function clearSession(sessionId: string): Promise<void> {
     await fetchApi({
       url: '/sessions',
       opts: { session_id: sessionId },
-      method: 'delete',
+      method: 'delete'
     });
   }
 }
 
 /**
- * A single sub-agent run record surfaced to the "后台任务" (background tasks) tab.
+ * A single sub-agent run record surfaced to the "background tasks" tab.
  *
  * Mirrors the serialized `SubagentRunRecord` returned by `GET /subagents/runs`
  * on the backend. Only the public/safe subset of fields is exposed.
@@ -999,19 +1016,19 @@ export interface SubagentRun {
  */
 export async function fetchSubagentRuns(
   sessionId: string,
-  scope: 'descendants' | 'controller' = 'descendants',
+  scope: 'descendants' | 'controller' = 'descendants'
 ): Promise<SubagentRun[]> {
   if (isTauri()) {
     const invoke = await getInvoke();
     const resp = await invoke<{ runs: SubagentRun[] }>('subagent_runs', {
-      request: { session_id: sessionId, scope },
+      request: { session_id: sessionId, scope }
     });
     return resp.runs ?? [];
   }
-  const res: Response = await fetchApi({
+  const res: ApiResponse = await fetchApi({
     url: '/subagents/runs',
     opts: { session_id: sessionId, scope },
-    method: 'get',
+    method: 'get'
   });
   const resp = (res as unknown as { runs?: SubagentRun[] }).runs ?? [];
   return Array.isArray(resp) ? resp : [];
@@ -1032,14 +1049,14 @@ export async function fetchSubagentRunSubtree(runId: string): Promise<SubagentRu
   if (isTauri()) {
     const invoke = await getInvoke();
     const resp = await invoke<{ runs: SubagentRun[] }>('subagent_runs', {
-      request: { run_id: runId },
+      request: { run_id: runId }
     });
     return resp.runs ?? [];
   }
-  const res: Response = await fetchApi({
+  const res: ApiResponse = await fetchApi({
     url: '/subagents/runs',
     opts: { run_id: runId },
-    method: 'get',
+    method: 'get'
   });
   const resp = (res as unknown as { runs?: SubagentRun[] }).runs ?? [];
   return Array.isArray(resp) ? resp : [];
@@ -1061,14 +1078,14 @@ export async function deleteSubagentRunSubtree(runId: string): Promise<number> {
   if (isTauri()) {
     const invoke = await getInvoke();
     const resp = await invoke<{ success: boolean; removed: number }>('subagent_run_delete', {
-      request: { run_id: runId },
+      request: { run_id: runId }
     });
     return resp?.removed ?? 0;
   }
-  const res: Response = await fetchApi({
+  const res: ApiResponse = await fetchApi({
     url: '/subagents/runs',
     opts: { run_id: runId },
-    method: 'delete',
+    method: 'delete'
   });
   const resp = (res as unknown as { success?: boolean; removed?: number }) ?? {};
   return typeof resp.removed === 'number' ? resp.removed : 0;
@@ -1095,12 +1112,12 @@ export async function deleteSubagentRunSubtree(runId: string): Promise<number> {
  */
 export async function steerSubagentRun(
   runId: string,
-  payload: { new_task?: string; new_instructions?: string } = {},
+  payload: { new_task?: string; new_instructions?: string } = {}
 ): Promise<SubagentRun | null> {
-  const res: Response = await fetchApi({
+  const res: ApiResponse = await fetchApi({
     url: '/subagents/steer',
     opts: { run_id: runId, ...payload },
-    method: 'post',
+    method: 'post'
   });
   const resp = (res as unknown as { run?: SubagentRun }) ?? {};
   return resp.run ?? null;
@@ -1109,20 +1126,17 @@ export async function steerSubagentRun(
 /**
  * Retrieve conversation history.
  */
-export async function getHistory(
-  sessionId: string,
-  lastTurnCount: number = 10,
-): Promise<HistoryMessage[]> {
+export async function getHistory(sessionId: string, lastTurnCount: number = 10): Promise<HistoryMessage[]> {
   if (isTauri()) {
     const invoke = await getInvoke();
     return invoke<HistoryMessage[]>('session_history', {
-      request: { session_id: sessionId, last_turn_count: lastTurnCount },
+      request: { session_id: sessionId, last_turn_count: lastTurnCount }
     });
   }
   return fetchApi({
     url: '/n_turns_history_messages',
     opts: { session_id: sessionId, last_turn_count: lastTurnCount },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<HistoryMessage[]>;
 }
 
@@ -1146,29 +1160,25 @@ export async function readSystemPrompt(): Promise<Record<string, string>> {
  * The templates live under `workspace/template/<lang>/`. When `lang` is omitted
  * the backend falls back to the user's preferred workspace template language.
  */
-export async function readSystemPromptTemplate(
-  lang?: string,
-): Promise<Record<string, string>> {
+export async function readSystemPromptTemplate(lang?: string): Promise<Record<string, string>> {
   if (isTauri()) {
     const invoke = await getInvoke();
     const resp = await invoke<PromptFileResponse>('system_prompt_read_template', {
-      payload: { lang: lang ?? null },
+      payload: { lang: lang ?? null }
     });
     return resp.file_to_content;
   }
   return fetchApi({
     url: '/system_prompt/template',
     opts: { lang: lang ?? undefined },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<Record<string, string>>;
 }
 
 /**
  * Overwrite system prompt files (full replacement).
  */
-export async function writeSystemPrompt(
-  fileToContent: Record<string, string>,
-): Promise<void> {
+export async function writeSystemPrompt(fileToContent: Record<string, string>): Promise<void> {
   if (isTauri()) {
     const invoke = await getInvoke();
     await invoke('system_prompt_write', { payload: { file_to_content: fileToContent } });
@@ -1176,7 +1186,7 @@ export async function writeSystemPrompt(
     await fetchApi({
       url: '/system_prompt',
       opts: { file_to_content: fileToContent },
-      method: 'put',
+      method: 'put'
     });
   }
 }
@@ -1184,9 +1194,7 @@ export async function writeSystemPrompt(
 /**
  * Partially update system prompt files (merge).
  */
-export async function updateSystemPrompt(
-  fileToContent: Record<string, string>,
-): Promise<void> {
+export async function updateSystemPrompt(fileToContent: Record<string, string>): Promise<void> {
   if (isTauri()) {
     const invoke = await getInvoke();
     await invoke('system_prompt_update', { payload: { file_to_content: fileToContent } });
@@ -1194,7 +1202,7 @@ export async function updateSystemPrompt(
     await fetchApi({
       url: '/system_prompt',
       opts: { file_to_content: fileToContent },
-      method: 'put',
+      method: 'put'
     });
   }
 }
@@ -1218,7 +1226,7 @@ export async function readMemory(): Promise<Record<string, string>> {
   return fetchApi({
     url: '/memory',
     opts: { _ts: Date.now() },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<Record<string, string>>;
 }
 
@@ -1226,9 +1234,7 @@ export async function readMemory(): Promise<Record<string, string>> {
  * Overwrite long-term memory files (full replacement).
  * Only provided files are overwritten; others are left unchanged.
  */
-export async function writeMemory(
-  fileToContent: Record<string, string>,
-): Promise<void> {
+export async function writeMemory(fileToContent: Record<string, string>): Promise<void> {
   if (isTauri()) {
     const invoke = await getInvoke();
     await invoke('memory_write', { payload: { file_to_content: fileToContent } });
@@ -1236,7 +1242,7 @@ export async function writeMemory(
     await fetchApi({
       url: '/memory',
       opts: { file_to_content: fileToContent },
-      method: 'put',
+      method: 'put'
     });
   }
 }
@@ -1256,7 +1262,7 @@ export async function readHeartbeat(): Promise<Record<string, string>> {
   return fetchApi({
     url: '/heartbeat',
     opts: { _ts: Date.now() },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<Record<string, string>>;
 }
 
@@ -1265,13 +1271,11 @@ export async function readHeartbeat(): Promise<Record<string, string>> {
  * Always uses `fetchApi` in both modes — no Rust/Tauri command exists for
  * heartbeat.
  */
-export async function writeHeartbeat(
-  fileToContent: Record<string, string>,
-): Promise<void> {
+export async function writeHeartbeat(fileToContent: Record<string, string>): Promise<void> {
   await fetchApi({
     url: '/heartbeat',
     opts: { file_to_content: fileToContent },
-    method: 'put',
+    method: 'put'
   });
 }
 
@@ -1357,7 +1361,7 @@ export async function listCronJobs(includeDisabled = false): Promise<CronListRes
   const resp = (await fetchApi({
     url: '/cron',
     opts: { _ts: Date.now(), include_disabled: includeDisabled },
-    method: 'get',
+    method: 'get'
   })) as unknown as CronListResponse;
   return resp;
 }
@@ -1368,21 +1372,19 @@ export async function listCronJobs(includeDisabled = false): Promise<CronListRes
  * @param input The job fields (mirrors the `POST /cron` body).
  * @returns `{ success, job?, message? }` from the backend.
  */
-export async function addCronJob(
-  input: {
-    name: string;
-    message: string;
-    schedule: CronSchedule;
-    deliver?: boolean;
-    channel?: string | null;
-    to?: string | null;
-    delete_after_run?: boolean;
-  },
-): Promise<CronMutateResponse> {
+export async function addCronJob(input: {
+  name: string;
+  message: string;
+  schedule: CronSchedule;
+  deliver?: boolean;
+  channel?: string | null;
+  to?: string | null;
+  delete_after_run?: boolean;
+}): Promise<CronMutateResponse> {
   return fetchApi({
     url: '/cron',
     opts: input,
-    method: 'post',
+    method: 'post'
   }) as unknown as Promise<CronMutateResponse>;
 }
 
@@ -1403,12 +1405,12 @@ export async function updateCronJob(
     channel?: string | null;
     to?: string | null;
     delete_after_run?: boolean;
-  },
+  }
 ): Promise<CronMutateResponse> {
   return fetchApi({
     url: '/cron',
     opts: { id, ...patch },
-    method: 'put',
+    method: 'put'
   }) as unknown as Promise<CronMutateResponse>;
 }
 
@@ -1423,7 +1425,7 @@ export async function runCronJob(id: string, force = false): Promise<CronActionR
   return fetchApi({
     url: '/cron/trigger',
     opts: { id, force },
-    method: 'post',
+    method: 'post'
   }) as unknown as Promise<CronActionResponse>;
 }
 
@@ -1438,7 +1440,7 @@ export async function enableCronJob(id: string, enabled = true): Promise<CronMut
   return fetchApi({
     url: '/cron/enable',
     opts: { id, enabled },
-    method: 'post',
+    method: 'post'
   }) as unknown as Promise<CronMutateResponse>;
 }
 
@@ -1452,7 +1454,7 @@ export async function deleteCronJob(id: string): Promise<CronActionResponse> {
   return fetchApi({
     url: '/cron',
     opts: { id },
-    method: 'delete',
+    method: 'delete'
   }) as unknown as Promise<CronActionResponse>;
 }
 
@@ -1468,7 +1470,7 @@ export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
   return fetchApi({
     url: '/skills',
     opts: { _ts: Date.now() },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<{ skills: SkillInfo[] }>;
 }
 
@@ -1483,7 +1485,7 @@ export async function listChannels(): Promise<{ channels: ChannelInfo[] }> {
   return fetchApi({
     url: '/channels',
     opts: { _ts: Date.now() },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<{ channels: ChannelInfo[] }>;
 }
 
@@ -1508,7 +1510,7 @@ export async function readSkill(location: string): Promise<SkillDetail> {
  *   the security scanner flagged concerns that should be surfaced to the user.
  */
 export async function uploadSkill(
-  file: File,
+  file: File
 ): Promise<{ success: boolean; message?: string; name?: string; warnings?: string[] }> {
   const formData = new FormData();
   formData.append('file', file);
@@ -1518,7 +1520,7 @@ export async function uploadSkill(
     url: '/skills/upload',
     opts: formData,
     method: 'post',
-    contentType: 'multipart/form-data',
+    contentType: 'multipart/form-data'
   }) as unknown as Promise<{ success: boolean; message?: string; name?: string; warnings?: string[] }>;
 }
 
@@ -1533,7 +1535,7 @@ export async function setSkillActive(name: string, active: boolean): Promise<{ s
   return fetchApi({
     url: '/skills/toggle',
     opts: { name, active },
-    method: 'post',
+    method: 'post'
   }) as unknown as Promise<{ success: boolean; message?: string }>;
 }
 
@@ -1558,7 +1560,7 @@ export async function deleteSkill(name: string): Promise<DeleteSkillResponse> {
   return fetchApi({
     url: '/skills/delete',
     opts: { name },
-    method: 'post',
+    method: 'post'
   }) as unknown as Promise<DeleteSkillResponse>;
 }
 
@@ -1585,7 +1587,7 @@ export async function pinSkill(name: string, pinned: boolean): Promise<PinSkillR
   return fetchApi({
     url: '/skills/pin',
     opts: { name, pinned },
-    method: 'post',
+    method: 'post'
   }) as unknown as Promise<PinSkillResponse>;
 }
 
@@ -1671,7 +1673,7 @@ export async function setCuratorSettings(days: number | null): Promise<CuratorSe
   return fetchApi({
     url: '/curator/settings',
     opts: { auto_interval_days: days },
-    method: 'put',
+    method: 'put'
   }) as unknown as Promise<CuratorSettingsUpdateResponse>;
 }
 
@@ -1754,14 +1756,11 @@ export interface ChannelUpdate {
  * round-trip through Rust, channel writes go straight to the Python REST API
  * in both modes (mirrors `listChannels`).
  */
-export async function updateChannel(
-  channelName: string,
-  update: ChannelUpdate,
-): Promise<ChannelInfo> {
+export async function updateChannel(channelName: string, update: ChannelUpdate): Promise<ChannelInfo> {
   return fetchApi({
     url: `/channels/${channelName}`,
     opts: { ...update },
-    method: 'put',
+    method: 'put'
   }) as unknown as Promise<ChannelInfo>;
 }
 
@@ -1782,13 +1781,11 @@ export interface ChannelConfigResponse {
  * returned as a free-form key/value map so the settings UI can render/edit
  * arbitrary fields (strings, numbers, booleans, lists).
  */
-export async function getChannelConfig(
-  channelName: string,
-): Promise<ChannelConfigResponse> {
+export async function getChannelConfig(channelName: string): Promise<ChannelConfigResponse> {
   return fetchApi({
     url: `/channels/${channelName}/config`,
     opts: { _ts: Date.now() },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<ChannelConfigResponse>;
 }
 
@@ -1796,14 +1793,11 @@ export async function getChannelConfig(
  * Persist a channel's own config.json wholesale. The dict is stored verbatim,
  * preserving each value's JSON type. Mirrors the PUT semantics of the backend.
  */
-export async function updateChannelConfig(
-  channelName: string,
-  config: ChannelConfig,
-): Promise<ChannelConfigResponse> {
+export async function updateChannelConfig(channelName: string, config: ChannelConfig): Promise<ChannelConfigResponse> {
   return fetchApi({
     url: `/channels/${channelName}/config`,
     opts: { ...config },
-    method: 'put',
+    method: 'put'
   }) as unknown as Promise<ChannelConfigResponse>;
 }
 
@@ -1869,7 +1863,7 @@ export async function readLogFile(path: string, lines?: number): Promise<LogRead
   return fetchApi({
     url: '/logs',
     opts: { path, lines: lines ?? 500 },
-    method: 'get',
+    method: 'get'
   }) as unknown as Promise<LogReadResult>;
 }
 
@@ -1885,7 +1879,7 @@ export async function readLogFile(path: string, lines?: number): Promise<LogRead
  */
 export function openLogStream(
   onFrame: (frame: LogStreamFrame) => void,
-  onError?: (e: string) => void,
+  onError?: (e: string) => void
 ): { close: () => void } {
   const baseURL = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
   const url = `${resolveWsBaseUrl(baseURL)}/logs/ws`;
@@ -1920,7 +1914,7 @@ export function openLogStream(
     // No action needed; the server pushes a "ready" frame on connect.
   };
 
-  socket.onmessage = (event) => {
+  socket.onmessage = event => {
     let frame: LogStreamFrame;
     try {
       frame = JSON.parse(event.data as string) as LogStreamFrame;

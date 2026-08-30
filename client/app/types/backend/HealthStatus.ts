@@ -8,12 +8,13 @@
  * | `healthy` | `boolean` | `true` if all subsystems are operational |
  * | `message` | `string` | Human-readable status description |
  */
-export type HealthStatus = { 
-/**
- * Whether all core subsystems are operational.
- */
-healthy: boolean, 
-/**
- * Human-readable status description.
- */
-message: string, };
+export type HealthStatus = {
+  /**
+   * Whether all core subsystems are operational.
+   */
+  healthy: boolean;
+  /**
+   * Human-readable status description.
+   */
+  message: string;
+};

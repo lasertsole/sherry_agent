@@ -54,7 +54,8 @@ def _ensure_deps(plugin_dir: Path, plugin_name: str) -> bool:
         stderr = (result.stderr or result.stdout or "").strip()
         logger.error(
             "Failed to install dependencies for channel '{}':\n{}",
-            plugin_name, stderr,
+            plugin_name,
+            stderr,
         )
         return False
 
@@ -79,7 +80,8 @@ def discover_channel_names() -> list[str]:
 
 
 def load_channel_class(
-    module_name: str, strict_deps: bool = True,
+    module_name: str,
+    strict_deps: bool = True,
 ) -> type[BaseChannel]:
     """Dynamically import ``<module_name>/core.py`` from plugins/channels/ and return the first BaseChannel subclass found.
 
@@ -94,15 +96,11 @@ def load_channel_class(
     channel_dir = PLUGINS_PATH / "channels"
     core_path = channel_dir / module_name / "core.py"
     if not core_path.is_file():
-        raise ImportError(
-            f"No channel plugins/channels/{module_name}/core.py"
-        )
+        raise ImportError(f"No channel plugins/channels/{module_name}/core.py")
 
     if not _ensure_deps(channel_dir / module_name, module_name):
         if strict_deps:
-            raise ImportError(
-                f"Failed to install dependencies for channel {module_name}"
-            )
+            raise ImportError(f"Failed to install dependencies for channel {module_name}")
         # Non-strict: let the module import anyway.  The SDK is unavailable,
         # but the channel's start() retries the install via its own fallback.
         logger.warning(
@@ -110,9 +108,7 @@ def load_channel_class(
             module_name,
         )
 
-    spec = importlib.util.spec_from_file_location(
-        f"channels.plugin.{module_name}", str(core_path)
-    )
+    spec = importlib.util.spec_from_file_location(f"channels.plugin.{module_name}", str(core_path))
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load spec for channel {module_name}")
     mod = importlib.util.module_from_spec(spec)
@@ -122,9 +118,7 @@ def load_channel_class(
         obj = getattr(mod, attr)
         if isinstance(obj, type) and issubclass(obj, _Base) and obj is not _Base:
             return obj
-    raise ImportError(
-        f"No BaseChannel subclass in plugins/channels/{module_name}/core.py"
-    )
+    raise ImportError(f"No BaseChannel subclass in plugins/channels/{module_name}/core.py")
 
 
 def discover_plugins() -> dict[str, type[BaseChannel]]:

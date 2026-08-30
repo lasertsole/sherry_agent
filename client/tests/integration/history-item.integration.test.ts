@@ -8,7 +8,7 @@ const record: SessionRecord = {
   title: '第一次对话',
   // The component formats createTime via formatCompactTimeString, which strictly
   // requires the backend's 14-digit compact string (YYYYMMDDHHmmss).
-  createTime: '20260617104200',
+  createTime: '20260617104200'
 };
 
 // PrimeVue Menu is explicitly imported and renders via Teleport, which is
@@ -20,18 +20,18 @@ const mountItem = (props: Record<string, unknown>) =>
       stubs: {
         Menu: {
           template: '<div class="mnu"><slot /></div>',
-          methods: { toggle() {} },
+          methods: { toggle() {} }
         },
         Checkbox: {
           props: ['modelValue'],
           emits: ['update:modelValue'],
           template:
-            '<button class="cb" @click="$emit(\'update:modelValue\', [...(modelValue || []), \'s1\'])">CB</button>',
+            '<button class="cb" @click="$emit(\'update:modelValue\', [...(modelValue || []), \'s1\'])">CB</button>'
         },
         // Rendered when the row enters inline rename mode (startEdit).
-        InputText: { template: '<input class="it" />' },
-      },
-    },
+        InputText: { template: '<input class="it" />' }
+      }
+    }
   });
 
 describe('HistoryItem.vue (integration, backend mocked)', () => {
@@ -39,7 +39,7 @@ describe('HistoryItem.vue (integration, backend mocked)', () => {
     const wrapper = mountItem({ historyRecord: record, isActive: false });
     expect(wrapper.text()).toContain('第一次对话');
     // createTime renders through t('history.createdAt') after formatCompactTimeString:
-    // zh "创建时间：{time}" + dateFormat 'YYYY-MM-DD HH:mm' -> 创建时间：2026-06-17 10:42
+    // the zh template ("created at: {time}") + dateFormat 'YYYY-MM-DD HH:mm' -> the zh prefix plus 2026-06-17 10:42
     expect(wrapper.text()).toContain('创建时间：');
     expect(wrapper.text()).toContain('2026-06-17 10:42');
   });
@@ -69,7 +69,7 @@ describe('HistoryItem.vue (integration, backend mocked)', () => {
     const wrapper = mountItem({
       historyRecord: record,
       isActive: false,
-      selectedList: ['s0', 's1'],
+      selectedList: ['s0', 's1']
     });
     await wrapper.find('button.cb').trigger('click');
     const updates = wrapper.emitted('update:selectedList') as unknown as string[][][];

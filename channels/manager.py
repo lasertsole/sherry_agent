@@ -1,4 +1,5 @@
 """Channel manager for coordinating chat channels."""
+
 import json
 import asyncio
 from loguru import logger
@@ -9,6 +10,7 @@ from asyncio import AbstractEventLoop
 from typing import Any, Callable, Awaitable
 from type.bus import InboundMessage, OutboundMessage
 
+
 class ChannelManager:
     """
     Manages chat channels and coordinates message routing.
@@ -18,7 +20,7 @@ class ChannelManager:
     - Start/stop channels
     - Route outbound messages
     """
-    
+
     _bus: MessageBus = None
     _channels: dict[str, BaseChannel] = {}
     _dispatch_task: asyncio.Task | None = None
@@ -32,8 +34,7 @@ class ChannelManager:
         while True:
             msg: InboundMessage = await self._bus.consume_inbound()
             logger.debug(
-                f"Processing inbound message: channel={msg.channel}, "
-                f"chat_id={msg.chat_id}"
+                f"Processing inbound message: channel={msg.channel}, chat_id={msg.chat_id}"
             )
 
             if self._inbound_consumer is not None:
@@ -61,13 +62,17 @@ class ChannelManager:
                     else:
                         logger.warning("Channel {} not found", name)
 
-    def set_inbound_consumer(self, inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]])->None:
+    def set_inbound_consumer(
+        self, inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]]
+    ) -> None:
         self._inbound_consumer = inbound_consumer
 
-    def set_outbound_consumer(self, outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]])->None:
+    def set_outbound_consumer(
+        self, outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]]
+    ) -> None:
         self._outbound_consumer = outbound_consumer
 
-    def __init__(self, config: dict[str, str] | None = None,  bus: MessageBus | None = None):
+    def __init__(self, config: dict[str, str] | None = None, bus: MessageBus | None = None):
         if config is None:
             channels_json = PLUGINS_PATH / "channels/config.json"
             if not channels_json.exists():
@@ -90,7 +95,6 @@ class ChannelManager:
     def _init_channels(self) -> None:
         """Initialize channels discovered via pkgutil scan + entry_points plugins."""
         from channels.registry import discover_all
-
 
         for name, cls in discover_all().items():
             section = self._config.get(name, None)
@@ -136,7 +140,7 @@ class ChannelManager:
                 return
 
             logger.info(f"Starting channel manager service: channel_count={len(self._channels)}")
-            
+
             # Start outbound dispatcher
             self._dispatch_task = self._event_loop.create_task(self._dispatch_outbound())
 
@@ -186,10 +190,7 @@ class ChannelManager:
 
         while True:
             try:
-                msg = await asyncio.wait_for(
-                    self._bus.consume_outbound(),
-                    timeout=1.0
-                )
+                msg = await asyncio.wait_for(self._bus.consume_outbound(), timeout=1.0)
 
                 channel = self._channels.get(msg.channel)
                 if channel:
@@ -212,10 +213,7 @@ class ChannelManager:
     def get_status(self) -> dict[str, Any]:
         """Get status of all channels."""
         return {
-            name: {
-                "enabled": True,
-                "running": channel.is_running
-            }
+            name: {"enabled": True, "running": channel.is_running}
             for name, channel in self._channels.items()
         }
 
@@ -226,11 +224,11 @@ class ChannelManager:
     def get_event_loop(self) -> asyncio.AbstractEventLoop:
         """Get the event loop."""
         return self._event_loop
-    
+
     @property
     def enabled_channels(self) -> list[str]:
         """Get list of enabled channel names."""
         return list(self._channels.keys())
 
 
-channel_manager:ChannelManager = ChannelManager()
+channel_manager: ChannelManager = ChannelManager()

@@ -8,7 +8,7 @@ from models.LLMs.reasoning_openai import ReasoningChatOpenAI
 from models.LLMs.reasoning_payload import build_reasoning_kwargs, is_zhipu_reasoning_model
 
 # Load environment variables
-load_dotenv(ENV_PATH, override = True)
+load_dotenv(ENV_PATH, override=True)
 api_key = os.getenv("MAIN_LLM_API_KEY")
 api_name = os.getenv("MAIN_LLM_NAME")
 model_provider = os.getenv("MAIN_LLM_PROVIDER")
@@ -33,26 +33,29 @@ if max_tokens:
 enable_thinking = os.getenv("MAIN_LLM_ENABLE_THINKING", "").strip().lower() == "true"
 reasoning_effort = os.getenv("MAIN_LLM_REASONING_EFFORT")
 
-model_config:dict[str, Any] = {
+model_config: dict[str, Any] = {
     "model_provider": model_provider,
     "model": api_name,
     "api_key": api_key,
     "base_url": api_base,
     "temperature": 0,
     "max_retries": 2,
-    "timeout": 120,              # Explicit bounded window for each LLM request (seconds)
+    "timeout": 120,  # Explicit bounded window for each LLM request (seconds)
     "stream_chunk_timeout": 60,  # Max idle gap between streamed chunks before aborting
     "profile": {"max_input_tokens": max_tokens},  # Set model context window size
 }
 # Map the universal switch to the provider-correct reasoning payload. Returns
 # {} (no-op) for providers/models that don't accept one, so it never crashes.
-model_config.update(build_reasoning_kwargs(
-    provider=model_provider,
-    model_name=api_name,
-    enabled=enable_thinking,
-    reasoning_effort=reasoning_effort,
-))
+model_config.update(
+    build_reasoning_kwargs(
+        provider=model_provider,
+        model_name=api_name,
+        enabled=enable_thinking,
+        reasoning_effort=reasoning_effort,
+    )
+)
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
+
 
 def _build_inner_chat_model():
     """Construct the inner chat model for ``build_main_llm``.

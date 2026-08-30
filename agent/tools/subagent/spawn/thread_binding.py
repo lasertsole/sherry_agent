@@ -13,6 +13,7 @@ from ..types.spawn import SpawnMode
 
 class ThreadBindingConfig(BaseModel):
     """Configuration for thread creation: idle/max-age timeouts and optional naming."""
+
     idle_timeout_ms: int = 300000  # 5 minutes
     max_age_ms: int = 86400000
     thread_name: str | None = None
@@ -21,6 +22,7 @@ class ThreadBindingConfig(BaseModel):
 
 class ThreadBindingInfo(BaseModel):
     """Runtime state for an active thread binding: identity, timing, and delivery origin."""
+
     thread_id: str
     bound_at: float = 0.0
     idle_timeout_ms: int = 300000  # 5 minutes
@@ -30,7 +32,14 @@ class ThreadBindingInfo(BaseModel):
 
 class ThreadBindingResult:
     """Outcome of a thread-binding attempt."""
-    def __init__(self, bound: bool, thread_id: str | None = None, binding_info: ThreadBindingInfo | None = None, delivery_origin: str | None = None):
+
+    def __init__(
+        self,
+        bound: bool,
+        thread_id: str | None = None,
+        binding_info: ThreadBindingInfo | None = None,
+        delivery_origin: str | None = None,
+    ):
         self.bound = bound
         self.thread_id = thread_id
         self.binding_info = binding_info
@@ -94,7 +103,9 @@ def resolve_thread_binding_policy(
     return bind_thread_for_subagent_spawn(child_session_key, config)
 
 
-def _create_channel_thread(child_session_key: str | None, config: ThreadBindingConfig) -> str | None:
+def _create_channel_thread(
+    child_session_key: str | None, config: ThreadBindingConfig
+) -> str | None:
     """Generate a deterministic thread ID for the sub-agent; returns None if no session key."""
     try:
         return f"thread:subagent:{uuid.uuid4()}" if child_session_key else None

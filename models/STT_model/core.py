@@ -11,6 +11,7 @@ from funasr.train_utils.device_funcs import force_gatherable
 from funasr.losses.label_smoothing_loss import LabelSmoothingLoss
 from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
 
+
 class SinusoidalPositionEncoder(torch.nn.Module):
     def __init__(self, d_model=80, dropout_rate=0.1):
         super().__init__()
@@ -629,21 +630,30 @@ class SenseVoiceSmall(nn.Module):
         self.lid_int_dict = {24884: 3, 24885: 4, 24888: 7, 24892: 11, 24896: 12, 24992: 13}
         self.textnorm_dict = {"withitn": 14, "woitn": 15}
         self.textnorm_int_dict = {25016: 14, 25017: 15}
-        self.embed = torch.nn.Embedding(7 + len(self.lid_dict) + len(self.textnorm_dict), input_size)
-        self.emo_dict = {"unk": 25009, "happy": 25001, "sad": 25002, "angry": 25003, "neutral": 25004}
-        
+        self.embed = torch.nn.Embedding(
+            7 + len(self.lid_dict) + len(self.textnorm_dict), input_size
+        )
+        self.emo_dict = {
+            "unk": 25009,
+            "happy": 25001,
+            "sad": 25002,
+            "angry": 25003,
+            "neutral": 25004,
+        }
+
         self.criterion_att = LabelSmoothingLoss(
             size=self.vocab_size,
             padding_idx=self.ignore_id,
             smoothing=kwargs.get("lsm_weight", 0.0),
             normalize_length=self.length_normalized_loss,
         )
-    
+
     @staticmethod
-    def from_pretrained(model:str=None, **kwargs):
+    def from_pretrained(model: str = None, **kwargs):
         from funasr import AutoModel
+
         model, kwargs = AutoModel.build_model(model=model, trust_remote_code=True, **kwargs)
-        
+
         return model, kwargs
 
     def forward(
@@ -681,9 +691,7 @@ class SenseVoiceSmall(nn.Module):
             encoder_out[:, 4:, :], encoder_out_lens - 4, text[:, 4:], text_lengths - 4
         )
 
-        loss_rich, acc_rich = self._calc_rich_ce_loss(
-            encoder_out[:, :4, :], text[:, :4]
-        )
+        loss_rich, acc_rich = self._calc_rich_ce_loss(encoder_out[:, :4, :], text[:, :4])
 
         loss = loss_ctc + loss_rich
         # Collect total loss stats
@@ -720,16 +728,28 @@ class SenseVoiceSmall(nn.Module):
         if self.normalize is not None:
             speech, speech_lengths = self.normalize(speech, speech_lengths)
 
-
-        lids = torch.LongTensor([[self.lid_int_dict[int(lid)] if torch.rand(1) > 0.2 and int(lid) in self.lid_int_dict else 0 ] for lid in text[:, 0]]).to(speech.device)
+        lids = torch.LongTensor(
+            [
+                [
+                    self.lid_int_dict[int(lid)]
+                    if torch.rand(1) > 0.2 and int(lid) in self.lid_int_dict
+                    else 0
+                ]
+                for lid in text[:, 0]
+            ]
+        ).to(speech.device)
         language_query = self.embed(lids)
-        
-        styles = torch.LongTensor([[self.textnorm_int_dict[int(style)]] for style in text[:, 3]]).to(speech.device)
+
+        styles = torch.LongTensor(
+            [[self.textnorm_int_dict[int(style)]] for style in text[:, 3]]
+        ).to(speech.device)
         style_query = self.embed(styles)
         speech = torch.cat((style_query, speech), dim=1)
         speech_lengths += 1
 
-        event_emo_query = self.embed(torch.LongTensor([[1, 2]]).to(speech.device)).repeat(speech.size(0), 1, 1)
+        event_emo_query = self.embed(torch.LongTensor([[1, 2]]).to(speech.device)).repeat(
+            speech.size(0), 1, 1
+        )
         input_query = torch.cat((language_query, event_emo_query), dim=1)
         speech = torch.cat((input_query, speech), dim=1)
         speech_lengths += 3
@@ -771,7 +791,6 @@ class SenseVoiceSmall(nn.Module):
 
         return loss_rich, acc_rich
 
-
     def inference(
         self,
         data_in,
@@ -781,7 +800,6 @@ class SenseVoiceSmall(nn.Module):
         frontend=None,
         **kwargs,
     ):
-
 
         meta_data = {}
         if (
@@ -818,11 +836,11 @@ class SenseVoiceSmall(nn.Module):
 
         language = kwargs.get("language", "auto")
         language_query = self.embed(
-            torch.LongTensor(
-                [[self.lid_dict[language] if language in self.lid_dict else 0]]
-            ).to(speech.device)
+            torch.LongTensor([[self.lid_dict[language] if language in self.lid_dict else 0]]).to(
+                speech.device
+            )
         ).repeat(speech.size(0), 1, 1)
-        
+
         use_itn = kwargs.get("use_itn", False)
         output_timestamp = kwargs.get("output_timestamp", False)
 
@@ -867,7 +885,7 @@ class SenseVoiceSmall(nn.Module):
             if kwargs.get("output_dir") is not None:
                 if not hasattr(self, "writer"):
                     self.writer = DatadirWriter(kwargs.get("output_dir"))
-                ibest_writer = self.writer[f"1best_recog"]
+                ibest_writer = self.writer["1best_recog"]
 
             mask = yseq != self.blank_id
             token_int = yseq[mask].tolist()
@@ -879,31 +897,32 @@ class SenseVoiceSmall(nn.Module):
 
             if output_timestamp:
                 from itertools import groupby
+
                 timestamp = []
                 tokens = tokenizer.text2tokens(text)[4:]
 
-                logits_speech = self.ctc.softmax(encoder_out)[i, 4:encoder_out_lens[i].item(), :]
+                logits_speech = self.ctc.softmax(encoder_out)[i, 4 : encoder_out_lens[i].item(), :]
 
                 pred = logits_speech.argmax(-1).cpu()
-                logits_speech[pred==self.blank_id, self.blank_id] = 0
+                logits_speech[pred == self.blank_id, self.blank_id] = 0
 
                 align = ctc_forced_align(
                     logits_speech.unsqueeze(0).float(),
                     torch.Tensor(token_int[4:]).unsqueeze(0).long().to(logits_speech.device),
-                    (encoder_out_lens-4).long()[i],
-                    torch.tensor(len(token_int)-4).unsqueeze(0).long().to(logits_speech.device),
+                    (encoder_out_lens - 4).long()[i],
+                    torch.tensor(len(token_int) - 4).unsqueeze(0).long().to(logits_speech.device),
                     ignore_id=self.ignore_id,
                 )
 
-                pred = groupby(align[0, :encoder_out_lens[0]])
+                pred = groupby(align[0, : encoder_out_lens[0]])
                 _start = 0
                 token_id = 0
                 ts_max = encoder_out_lens[i] - 4
                 for pred_token, pred_frame in pred:
                     _end = _start + len(list(pred_frame))
                     if pred_token != 0 and token_id < len(tokens):
-                        ts_left = max((_start*60-30)/1000, 0)
-                        ts_right = min((_end*60-30)/1000, (ts_max*60-30)/1000)
+                        ts_left = max((_start * 60 - 30) / 1000, 0)
+                        ts_right = min((_end * 60 - 30) / 1000, (ts_max * 60 - 30) / 1000)
                         timestamp.append([tokens[token_id], ts_left, ts_right])
                         token_id += 1
                     _start = _end

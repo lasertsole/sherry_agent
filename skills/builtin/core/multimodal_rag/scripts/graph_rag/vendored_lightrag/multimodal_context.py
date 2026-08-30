@@ -1,4 +1,4 @@
-﻿"""Surrounding-context enrichment for native multimodal sidecars.
+"""Surrounding-context enrichment for native multimodal sidecars.
 
 See ``docs/NativeMultimodalSurroundingContextPlan-zh.md``.
 
@@ -160,9 +160,7 @@ def _equation_pattern(item_id: str) -> re.Pattern[str]:
     )
 
 
-def find_target_span(
-    kind: str, item_id: str, block_content: str
-) -> tuple[int, int] | None:
+def find_target_span(kind: str, item_id: str, block_content: str) -> tuple[int, int] | None:
     """Locate the target multimodal marker with the given ``id`` inside
     ``block_content``.
 
@@ -268,9 +266,7 @@ def _char_trim_trailing(text: str, max_tokens: int, tokenizer: Tokenizer) -> str
 # ---------------------------------------------------------------------------
 
 
-def _row_trim_table_leading(
-    tag_text: str, max_tokens: int, tokenizer: Tokenizer
-) -> str | None:
+def _row_trim_table_leading(tag_text: str, max_tokens: int, tokenizer: Tokenizer) -> str | None:
     """Return a smaller ``<table>…</table>`` whose tail rows fit ``max_tokens``.
 
     For a JSON table, takes the last ``k`` rows (closest to the target)
@@ -290,11 +286,7 @@ def _row_trim_table_leading(
             return None
         attrs_str, rows = parsed
         for k in range(len(rows) - 1, 0, -1):
-            candidate = (
-                f"<table {attrs_str}>"
-                f"{json.dumps(rows[-k:], ensure_ascii=False)}"
-                f"</table>"
-            )
+            candidate = f"<table {attrs_str}>{json.dumps(rows[-k:], ensure_ascii=False)}</table>"
             if _count_tokens(tokenizer, candidate) <= max_tokens:
                 return candidate
         return _char_fallback_json_table(
@@ -323,9 +315,7 @@ def _row_trim_table_leading(
     return None
 
 
-def _row_trim_table_trailing(
-    tag_text: str, max_tokens: int, tokenizer: Tokenizer
-) -> str | None:
+def _row_trim_table_trailing(tag_text: str, max_tokens: int, tokenizer: Tokenizer) -> str | None:
     """Return a smaller ``<table>…</table>`` whose head rows fit ``max_tokens``."""
     match = TABLE_TAG_RE.match(tag_text.strip())
     if not match:
@@ -339,11 +329,7 @@ def _row_trim_table_trailing(
             return None
         attrs_str, rows = parsed
         for k in range(len(rows) - 1, 0, -1):
-            candidate = (
-                f"<table {attrs_str}>"
-                f"{json.dumps(rows[:k], ensure_ascii=False)}"
-                f"</table>"
-            )
+            candidate = f"<table {attrs_str}>{json.dumps(rows[:k], ensure_ascii=False)}</table>"
             if _count_tokens(tokenizer, candidate) <= max_tokens:
                 return candidate
         return _char_fallback_json_table(
@@ -831,9 +817,7 @@ def trim_content_to_budget(
         return content, False
 
     # Reserve token room for the truncation marker before trimming.
-    marker_probe = _CONTENT_TRUNCATION_MARKER.format(
-        original=original_tokens, final=max_tokens
-    )
+    marker_probe = _CONTENT_TRUNCATION_MARKER.format(original=original_tokens, final=max_tokens)
     marker_tokens = _count_tokens(tokenizer, marker_probe)
     inner_budget = max(0, max_tokens - marker_tokens)
 
@@ -847,9 +831,7 @@ def trim_content_to_budget(
         trimmed_inner = _char_trim_trailing(content, inner_budget, tokenizer)
 
     final_tokens = _count_tokens(tokenizer, trimmed_inner)
-    marker = _CONTENT_TRUNCATION_MARKER.format(
-        original=original_tokens, final=final_tokens
-    )
+    marker = _CONTENT_TRUNCATION_MARKER.format(original=original_tokens, final=final_tokens)
     return trimmed_inner + marker, True
 
 

@@ -1,9 +1,8 @@
 """Controller resolution, permission validation, and control-scope enforcement."""
 
-from ..types.registry import SubagentRunRecord, ExecutionStatus
-from ..types.capability import SubagentSessionRole, ControlScope
+from ..types.registry import SubagentRunRecord
+from ..types.capability import ControlScope
 from ..registry.read import list_runs_for_controller_readonly, get_run_by_child_session_key_readonly
-from ..registry.generation import get_latest_run_by_child_session_key
 
 
 def resolve_controller(session_key: str) -> str | None:
@@ -20,8 +19,10 @@ def list_controlled_runs(controller_session_key: str) -> list[SubagentRunRecord]
     """List runs that the given controller session is allowed to control."""
     runs = list_runs_for_controller_readonly(controller_session_key)
     return [
-        r for r in runs
-        if r.control_scope == ControlScope.CHILDREN or r.requester_session_key == controller_session_key
+        r
+        for r in runs
+        if r.control_scope == ControlScope.CHILDREN
+        or r.requester_session_key == controller_session_key
     ]
 
 

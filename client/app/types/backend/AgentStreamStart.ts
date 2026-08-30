@@ -10,12 +10,13 @@
  * | `session_id` | `string` | The session being processed |
  * | `message_id` | `string` | Unique ID for this message turn |
  */
-export type AgentStreamStart = { 
-/**
- * The session being processed.
- */
-session_id: string, 
-/**
- * Unique ID for this message turn (used for correlation).
- */
-message_id: string, };
+export type AgentStreamStart = {
+  /**
+   * The session being processed.
+   */
+  session_id: string;
+  /**
+   * Unique ID for this message turn (used for correlation).
+   */
+  message_id: string;
+};

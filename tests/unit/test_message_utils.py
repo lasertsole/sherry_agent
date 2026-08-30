@@ -33,6 +33,7 @@ class FakeTextMsg:
 
 # --- extract_final_answer ---
 
+
 class TestExtractFinalAnswer:
     def test_returns_last_message_content(self):
         result = {
@@ -88,6 +89,7 @@ class TestExtractFinalAnswer:
 
 # --- estimate_msg_tokens ---
 
+
 class TestEstimateMsgTokens:
     def test_string_content(self):
         msg = SimpleNamespace(content="hello world")
@@ -96,9 +98,7 @@ class TestEstimateMsgTokens:
     def test_structured_content_uses_json(self):
         content = [{"type": "text", "text": "hi"}]
         msg = SimpleNamespace(content=content)
-        assert estimate_msg_tokens(msg) == len(
-            '[{"type": "text", "text": "hi"}]'
-        )
+        assert estimate_msg_tokens(msg) == len('[{"type": "text", "text": "hi"}]')
 
     def test_empty_string(self):
         msg = SimpleNamespace(content="")

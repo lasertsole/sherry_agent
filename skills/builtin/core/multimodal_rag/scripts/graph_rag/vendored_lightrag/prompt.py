@@ -327,9 +327,7 @@ Description List:
 ---Output---
 """
 
-PROMPTS["fail_response"] = (
-    "Sorry, I'm not able to provide an answer to that question.[no-context]"
-)
+PROMPTS["fail_response"] = "Sorry, I'm not able to provide an answer to that question.[no-context]"
 
 PROMPTS["rag_response"] = """---Role---
 
@@ -569,8 +567,7 @@ def resolve_entity_type_prompt_path(prompt_file_name: str | Path) -> Path:
     file_name = str(prompt_file_name).strip()
     if not file_name:
         raise ValueError(
-            "ENTITY_TYPE_PROMPT_FILE must be a file name such as "
-            "'entity_type_prompt.sample.yml'."
+            "ENTITY_TYPE_PROMPT_FILE must be a file name such as 'entity_type_prompt.sample.yml'."
         )
     if "\\" in file_name:
         raise ValueError(
@@ -579,27 +576,19 @@ def resolve_entity_type_prompt_path(prompt_file_name: str | Path) -> Path:
         )
 
     candidate = Path(file_name)
-    if (
-        candidate.is_absolute()
-        or candidate.name != file_name
-        or ".." in candidate.parts
-    ):
+    if candidate.is_absolute() or candidate.name != file_name or ".." in candidate.parts:
         raise ValueError(
             "ENTITY_TYPE_PROMPT_FILE must be a file name only. "
             "Files are loaded from PROMPT_DIR/entity_type "
             "(PROMPT_DIR defaults to ./prompts)."
         )
     if candidate.suffix.lower() not in _ALLOWED_PROMPT_SUFFIXES:
-        raise ValueError(
-            "ENTITY_TYPE_PROMPT_FILE must use a '.yml' or '.yaml' extension."
-        )
+        raise ValueError("ENTITY_TYPE_PROMPT_FILE must use a '.yml' or '.yaml' extension.")
 
     return get_entity_type_prompt_dir() / candidate.name
 
 
-def _normalize_prompt_examples(
-    value: Any, field_name: str, profile_path: Path
-) -> list[str]:
+def _normalize_prompt_examples(value: Any, field_name: str, profile_path: Path) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(
             f"ENTITY_TYPE_PROMPT_FILE '{profile_path}' field '{field_name}' "
@@ -623,20 +612,14 @@ def load_entity_extraction_prompt_profile(
 
     profile_path = Path(prompt_file)
     if not profile_path.exists():
-        raise FileNotFoundError(
-            f"ENTITY_TYPE_PROMPT_FILE '{profile_path}' does not exist."
-        )
+        raise FileNotFoundError(f"ENTITY_TYPE_PROMPT_FILE '{profile_path}' does not exist.")
     if not profile_path.is_file():
-        raise ValueError(
-            f"ENTITY_TYPE_PROMPT_FILE '{profile_path}' must point to a file."
-        )
+        raise ValueError(f"ENTITY_TYPE_PROMPT_FILE '{profile_path}' must point to a file.")
 
     try:
         content = profile_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise OSError(
-            f"Failed to read ENTITY_TYPE_PROMPT_FILE '{profile_path}': {exc}"
-        ) from exc
+        raise OSError(f"Failed to read ENTITY_TYPE_PROMPT_FILE '{profile_path}': {exc}") from exc
 
     try:
         raw_profile = yaml.safe_load(content)
@@ -648,9 +631,7 @@ def load_entity_extraction_prompt_profile(
     if raw_profile is None:
         raw_profile = {}
     if not isinstance(raw_profile, dict):
-        raise ValueError(
-            f"ENTITY_TYPE_PROMPT_FILE '{profile_path}' must contain a YAML mapping."
-        )
+        raise ValueError(f"ENTITY_TYPE_PROMPT_FILE '{profile_path}' must contain a YAML mapping.")
 
     profile: dict[str, Any] = {}
 
@@ -690,9 +671,7 @@ def resolve_entity_extraction_prompt_profile(
         prompt_path = resolve_entity_type_prompt_path(prompt_file)
         file_profile = load_entity_extraction_prompt_profile(prompt_path)
         required_examples_key = (
-            "entity_extraction_json_examples"
-            if use_json
-            else "entity_extraction_examples"
+            "entity_extraction_json_examples" if use_json else "entity_extraction_examples"
         )
         if required_examples_key not in file_profile:
             mode_name = "json" if use_json else "text"
@@ -708,9 +687,7 @@ def resolve_entity_extraction_prompt_profile(
             "entity_types_guidance", default_profile["entity_types_guidance"]
         )
     elif not isinstance(guidance, str) or not guidance.strip():
-        raise ValueError(
-            "addon_params['entity_types_guidance'] must be a non-empty string."
-        )
+        raise ValueError("addon_params['entity_types_guidance'] must be a non-empty string.")
 
     return {
         "entity_types_guidance": guidance,
@@ -739,10 +716,7 @@ def validate_entity_extraction_prompt_profile_for_mode(
     required_examples_key = (
         "entity_extraction_json_examples" if use_json else "entity_extraction_examples"
     )
-    if (
-        required_examples_key not in prompt_profile
-        or not prompt_profile[required_examples_key]
-    ):
+    if required_examples_key not in prompt_profile or not prompt_profile[required_examples_key]:
         mode_name = "json" if use_json else "text"
         source = (
             f"ENTITY_TYPE_PROMPT_FILE '{prompt_file_name}'"
@@ -757,11 +731,9 @@ def validate_entity_extraction_prompt_profile_for_mode(
     return {
         "entity_types_guidance": str(prompt_profile["entity_types_guidance"]).rstrip(),
         "entity_extraction_examples": [
-            str(example).rstrip()
-            for example in prompt_profile["entity_extraction_examples"]
+            str(example).rstrip() for example in prompt_profile["entity_extraction_examples"]
         ],
         "entity_extraction_json_examples": [
-            str(example).rstrip()
-            for example in prompt_profile["entity_extraction_json_examples"]
+            str(example).rstrip() for example in prompt_profile["entity_extraction_json_examples"]
         ],
     }

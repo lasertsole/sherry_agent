@@ -13,12 +13,7 @@ class ToolCallNormalize(AgentMiddleware):
         normalize_messages: list[BaseMessage] = sanitize_tool_use_result_pairing(state["messages"])
         normalize_messages = [m for m in normalize_messages if not isinstance(m, RemoveMessage)]
 
-        return {
-            "messages": [
-                RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *normalize_messages
-            ]
-        }
+        return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *normalize_messages]}
 
     @override
     def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:

@@ -2,30 +2,31 @@ import Dexie, { type IndexableType, type Table } from 'dexie';
 import { DEFAULT_CHARACTER } from './defaultCharacter';
 import type { MessageItem } from '@/pages/home/type';
 
-/** 复合索引下边界（session_id 前缀相同的最小编码值）�?*/
+/** Lower bound of the compound index (smallest encoded value sharing the same session_id prefix) */
 const MIN_KEY = Dexie.minKey as IndexableType;
 
-/** 复合索引上边界（session_id 前缀相同的最小编码值）�?*/
+/** Upper bound of the compound index (largest encoded value sharing the same session_id prefix) */
 const MAX_KEY = Dexie.maxKey as IndexableType;
 
 /**
- * 缓存的会话历史消息记录�?
+ * Cached conversation history message records.
  *
- * 字段与后�?`context_engine/store/db.py` �?messages 表保持一致，
- * 以便�?`/get_history_by_turn_page` 返回的行原样缓存（去重键�?`id`）�?
+ * Fields stay consistent with the backend's `messages` table in
+ * `context_engine/store/db.py`, so rows returned by `/get_history_by_turn_page`
+ * can be cached as-is (deduplication key: `id`).
  */
 export interface CachedMessage {
-  /** 数据库自增主键（去重依据�?*/
+  /** Auto-increment primary key from the database (deduplication basis) */
   id: number;
-  /** 轮次序号 */
+  /** Turn number */
   turn_num: number;
-  /** 会话 ID */
+  /** Session ID */
   session_id: string;
   role: string;
   content: string | null;
   timestamp: string | null;
-  /** 图片数组（与后端消息行一致，历史接口已把 JSON 解析为数组）�?
-   *  用户消息�?base64（无 data: 前缀），AI 消息为持久化后的绝对文件路径�?*/
+  /** Image array (matches the backend message rows; the history API has already parsed JSON into arrays).
+   *  User messages store base64 (no data: prefix), AI messages store absolute file paths after persistence. */
   images: string[] | null;
   audios: string[] | null;
   videos: string[] | null;
@@ -36,128 +37,140 @@ export interface CachedMessage {
   finish_reason: string | null;
   reasoning: string | null;
   reasoning_content: string | null;
-  /** 模型名称（来自后端历史行的 model_name） */
+  /** Model name (from the backend history row's model_name) */
   model_name: string | null;
-  /** 输入 token 数（来自后端历史行的 input_tokens） */
+  /** Input token count (from the backend history row's input_tokens) */
   input_tokens: number | null;
-  /** 输出 token 数（来自后端历史行的 output_tokens） */
+  /** Output token count (from the backend history row's output_tokens) */
   output_tokens: number | null;
 }
 
 /**
- * 缓存的角色显示信息（头像 + 名字），�?`session_id` 存储�?
+ * Cached character display info (avatar + name), keyed by `session_id`.
  *
- * 每个会话在首次打开时会对「全局待定 profile」做一次快照并锁定到该会话行，
- * 因此之后在系统配置中更新头像/名字只会影响新会话（新会话再次快照最新全局），
- * 旧会话保留各自打开时的快照不变�?
+ * Each session snapshots the "global pending profile" once when first opened and locks it to
+ * that session's row. Therefore updating the avatar/name in system config afterwards only
+ * affects new sessions (which snapshot the latest global profile again); old sessions keep
+ * the snapshot taken when they were opened.
  *
- * 头像可为 base64 data URL（`data:image/...;base64,...`，用户自定义上传）或
- * `/avatar/xxx.jpg` 相对 URL（内置默认，�?`defaultCharacter.ts`）；
- * 前端 `<img>` 对二者均可直接渲染，无需拼接 `static/` 静态路径�?
+ * An avatar can be a base64 data URL (`data:image/...;base64,...`, user-uploaded) or a
+ * `/avatar/xxx.jpg` relative URL (built-in default, from `defaultCharacter.ts`);
+ * the frontend `<img>` renders both directly, with no need to prepend the `static/` path.
  */
 export interface CachedCharacter {
-  /** 会话 ID；全局待定 profile 使用 {@link GLOBAL_SESSION_KEY} 作为主键 */
+  /** Session ID; the global pending profile uses {@link GLOBAL_SESSION_KEY} as its primary key */
   session_id: string;
   userName: string;
-  /** base64 data URL �?`/avatar/xxx.jpg` 相对 URL */
+  /** base64 data URL or `/avatar/xxx.jpg` relative URL */
   userAvatar: string;
   aiName: string;
-  /** base64 data URL �?`/avatar/xxx.jpg` 相对 URL */
+  /** base64 data URL or `/avatar/xxx.jpg` relative URL */
   aiAvatar: string;
 }
 
 /**
- * 缓存的会话列表条目（本地持久化的空会话占位）�?
+ * Cached session-list entry (locally persisted placeholder for an empty session).
  *
- * 后端会话列表由消息表派生，创建空会话（尚未发消息）时服务端不存在对应记录�?
- * 为满足「新建对话后刷新仍保留」的离线场景，前端在 IndexedDB 中持久化这些占位条目�?
- * �?`historyList` 的内存态对应，可在刷新 / 重启后恢复�?
+ * The backend session list is derived from the message table, so when an empty session is
+ * created (no messages sent yet) no corresponding record exists server-side. To cover the
+ * offline scenario "a newly created conversation survives a refresh", the frontend persists
+ * these placeholder entries in IndexedDB. They mirror the in-memory `historyList` state and
+ * can be restored after refresh / restart.
  */
 export interface CachedSessionMeta {
-  /** 会话 ID */
+  /** Session ID */
   id: string;
-  /** 会话标题（新建未命名会话的占位标题） */
+  /** Session title (placeholder title for newly created unnamed sessions) */
   title: string;
-  /** 创建时间（本地时间字符串，用于左侧列表展示） */
+  /** Creation time (local time string, shown in the left-hand list) */
   createTime: string;
-  /** 本地排序时间戳（用于按最新优先合并排序） */
+  /** Local sort timestamp (used for newest-first merge sorting) */
   updatedAt: number;
 }
 
 /**
- * 会话自定义标题覆盖层：独立于 sessions 占位符表，避免会话提升（promotion）时被清除
+ * Session custom-title override layer: separate from the sessions placeholder table so it
+ * survives session promotion.
  *
- * 服务端会话标题由「最后一句用户消息」在读取时派生（无服务端标题存储），
- * 用户在左侧列表内联重命名后，把自定义标题写到这里，加载列表时覆盖派生标题。
+ * The server-side session title is derived at read time from "the last user message"
+ * (no server-side title storage). After the user renames a session inline in the left-hand
+ * list, the custom title is written here and overrides the derived title when loading the list.
  */
 export interface SessionTitleOverride {
-  /** 会话 ID */
+  /** Session ID */
   id: string;
-  /** 用户自定义的标题 */
+  /** User-defined custom title */
   title: string;
-  /** 最后一次重命名的时间戳（Date.now()） */
+  /** Timestamp of the last rename (Date.now()) */
   updatedAt: number;
 }
 
 /**
- * 用户上传的聊天区背景图（浅色/深色主题下均显示）�?
+ * User-uploaded chat-area background image (shown in both light/dark themes).
  *
- * 全局唯一行（主键 {@link GLOBAL_SESSION_KEY}），存一份 base64 data URL，
- * 以及主题化遮罩透明度；不随会话区分�?从系统配置「背景设置」读写。
+ * A single global row (primary key {@link GLOBAL_SESSION_KEY}) stores one base64 data URL
+ * plus the themed overlay opacity; it is not per-session. Read/written from the system
+ * config "background settings".
  */
 export interface CachedBackground {
-  /** 全局唯一主键，固定为 {@link GLOBAL_SESSION_KEY} */
+  /** Global unique primary key, fixed to {@link GLOBAL_SESSION_KEY} */
   session_id: string;
-  /** 背景图 base64 data URL（`data:image/...;base64,...`），空字符串表示尚未设置 */
+  /** Background image base64 data URL (`data:image/...;base64,...`); empty string means not set yet */
   backgroundUrl: string;
-  /** 遮罩透明度（0-100 整数）。浅色主题下为白色遮罩、深色主题下为黑色遮罩，
-   *  数值越大照片越接近纯白/纯黑直至完全淹没。默认 0 表示不叠加遮罩。 */
+  /** Overlay opacity (integer 0-100). White overlay in the light theme, black overlay in the dark theme;
+   *  the higher the value, the closer the photo gets to pure white/pure black until fully washed out. Default 0 means no overlay. */
   backgroundOpacity: number;
 }
 
 /**
- * 进行中（in-flight）一整个 agent 轮次的草稿缓存记录�?
+ * Draft cache record for a whole in-flight agent turn.
  *
- * 后端 `aafter_agent` 仅在整个 LangGraph 节点成功返回时每轮触发一次持久化�?
- * 工具调用阶段、以及中途异�?中止的轮次在服务�?*完全不会落库**。为避免
- * 「agent 回复『寒暄→分析→调用工具→观察工具结果→最终结果』时，因某一�?
- * 报错或最终结果未输出而丢失前面已产生的阶段内容」，前端把进行中的整一�?
- * `MessageItem[]` 缓存到本�?IndexedDB �?`drafts` 表�?
+ * The backend `aafter_agent` only triggers persistence once per turn, and only when the
+ * entire LangGraph node returns successfully. Tool-calling phases, as well as turns that
+ * error out or get aborted midway, are **never persisted server-side**. To avoid "losing
+ * the stage content already produced earlier when the agent replies 'greeting → analysis →
+ * tool call → tool result observation → final result' because some step errors out or the
+ * final result is never emitted", the frontend caches the entire in-flight `MessageItem[]`
+ * into the local IndexedDB `drafts` table.
  *
- * 键为 `[session_id + turn_num]`：`turn_num` 与实时消息使用相同的**正轮次号**
- * （见 {@link DraftTurn.turn_num}）。服务端 `aafter_agent` 只在整个 LangGraph 节点
- * 成功返回后才落库该轮，in-flight / error / abort 轮在服务端不产生任何行，因此草稿
- * �?`turn_num` 不会与任何已落库行冲突；草稿独立存于 `drafts` 表，也不污染
- * `cachedMaxTurnNum`（该函数只查 `messages` 表）�?
+ * The key is `[session_id + turn_num]`: `turn_num` uses the same **positive turn number**
+ * as live messages (see {@link DraftTurn.turn_num}). The server's `aafter_agent` only
+ * persists a turn after the whole LangGraph node returns successfully; in-flight / error /
+ * aborted turns produce no server row at all, so a draft's `turn_num` never collides with
+ * any persisted row. Drafts live in the separate `drafts` table and do not pollute
+ * `cachedMaxTurnNum` (that function only queries the `messages` table).
  *
- * 每执行一步（send / tool_start / tool_end / tool_result / error / 首个文本 /
- * 服务�?onDone）就整体重写本行，做到「每步缓存」；文本追加�?200ms 去抖合并�?
- * 服务端成功落库（onDone �?`loadSessionHistory` 对账）后清除本行�?
+ * Each step (send / tool_start / tool_end / tool_result / error / first text chunk /
+ * server onDone) rewrites this row wholesale, achieving "cache per step"; text appends are
+ * merged with a ~200ms debounce. The row is cleared after the server persists successfully
+ * (reconciled via onDone / `loadSessionHistory`).
  */
 export interface DraftTurn {
-  /** 会话 ID */
+  /** Session ID */
   session_id: string;
   /**
-   * 本轮次号，与服务�?`messages` 表同一会话内递增的正 `turn_num` 一致�?
-   * 草稿行的 `messages` 内各�?`MessageItem` 使用本地负临�?id（`tempIdCounter`
-   * �?-1000000 递增，同轮内 id 升序即创建顺序），对账时可将草稿�?id 行替换为
-   * 服务端正 id 行完成去重�?
+   * This turn's number, consistent with the incrementing positive `turn_num` within the same
+   * session in the server's `messages` table. Each `MessageItem` inside the draft row's
+   * `messages` uses a local negative temporary id (`tempIdCounter` incrementing from
+   * -1000000, so ascending id order within a turn equals creation order); during
+   * reconciliation, draft rows with negative ids can be replaced by the server's positive-id
+   * rows to complete deduplication.
    */
   turn_num: number;
-  /** 进行中的整一轮消息（本地负临�?id，创建顺序即 id 升序�?*/
+  /** All messages of the in-flight turn (local negative temporary ids; ascending id order equals creation order) */
   messages: MessageItem[];
 }
 
 /**
- * 缓存的子任务（subagent）运行记录�?
+ * Cached subagent run records.
  *
- * 由后端 `/subagents/ws` WebSocket 实时推送（事件 `subagent_spawned` /
- * `subagent_ended`），并在首次加载 / 会话切换 / WS 重连后通过
- * `GET /subagents/runs` 拉取补齐（间隙填充）�?字段与后端
- * `server/trigger/http/subagent.py` 的 `_PUBLIC_FIELDS` 保持一致�?
+ * Pushed in real time by the backend `/subagents/ws` WebSocket (events `subagent_spawned` /
+ * `subagent_ended`), and backfilled (gap filling) via `GET /subagents/runs` after first
+ * load / session switch / WS reconnection. Fields stay consistent with the backend's
+ * `_PUBLIC_FIELDS` in `server/trigger/http/subagent.py`.
  *
- * 主键为 `run_id`；`requester_session_key` 用于在前端「后台任务」里高亮
- * 当前会话派生�?子任务�?
+ * Primary key is `run_id`; `requester_session_key` is used to highlight, in the frontend
+ * "background tasks" view, the subagents spawned by the current session.
  */
 export interface CachedSubagentRun {
   run_id: string;
@@ -177,28 +190,30 @@ export interface CachedSubagentRun {
   swarm_run_state: string | null;
   ended_reason: string | null;
   pause_reason: string | null;
-  execution:
-    | { status?: string | null; outcome?: string | null; started_at?: string | null; completed_at?: string | null }
-    | null;
-  completion:
-    | {
-        required?: boolean | null;
-        owner_session_key?: string | null;
-        result_text?: string | null;
-        captured_at?: string | null;
-      }
-    | null;
+  execution: {
+    status?: string | null;
+    outcome?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+  } | null;
+  completion: {
+    required?: boolean | null;
+    owner_session_key?: string | null;
+    result_text?: string | null;
+    captured_at?: string | null;
+  } | null;
   delivery: { status?: string | null; attempt_count?: number | null; delivered_at?: string | null } | null;
 }
 
-/** 全局待定 profile �?character 表中的主键（非真实会�?ID）�?*/
+/** Primary key of the global pending profile in the character table (not a real session ID) */
 export const GLOBAL_SESSION_KEY = '__global__';
 
 /**
- * 内置默认角色信息（便于调用方映射�?`CachedCharacter` 快照）�?
+ * Built-in default character info (so callers can map it into a `CachedCharacter` snapshot).
  *
- * 默认头像/名字内置在前端（�?`defaultCharacter.ts`），
- * 当全局 profile 行还不存在、或某会话尚无快照时，用它作为回退值�?
+ * The default avatar/names are built into the frontend (see `defaultCharacter.ts`);
+ * used as the fallback when the global profile row does not exist yet, or a session has
+ * no snapshot yet.
  */
 export const DEFAULT_CACHED_CHARACTER: Pick<CachedCharacter, 'userName' | 'userAvatar' | 'aiName' | 'aiAvatar'> = {
   userName: DEFAULT_CHARACTER.userName,
@@ -208,79 +223,84 @@ export const DEFAULT_CACHED_CHARACTER: Pick<CachedCharacter, 'userName' | 'userA
 };
 
 class HistoryDb extends Dexie {
-  /** 会话消息缓存�?*/
+  /** Session message cache. */
   messages!: Table<CachedMessage, number>;
-  /** 按会话缓存的角色显示信息表（主键 session_id，含全局�?GLOBAL_SESSION_KEY�?*/
+  /** Per-session character display info table (primary key session_id, including the global {@link GLOBAL_SESSION_KEY} row) */
   character!: Table<CachedCharacter, string>;
-  /** 本地持久化的会话列表占位表（用于恢复刷新前新建但尚未发消息的空会话） */
+  /** Locally persisted session-list placeholder table (restores empty sessions created before a refresh that have no messages yet) */
   sessions!: Table<CachedSessionMeta, string>;
-  /** 进行�?agent 轮次的草稿缓存表（主�?[session_id+turn_num]，见 {@link DraftTurn}�?*/
+  /** Draft cache table for in-flight agent turns (primary key [session_id+turn_num], see {@link DraftTurn}) */
   drafts!: Table<DraftTurn, [string, number]>;
-  /** 用户上传的聊天区背景图表（主键 session_id，固定为全局行 {@link GLOBAL_SESSION_KEY}） */
+  /** User-uploaded chat-area background image table (primary key session_id, fixed to the global row {@link GLOBAL_SESSION_KEY}) */
   background!: Table<CachedBackground, string>;
-  /** 缓存的子任务运行记录表（主键 run_id，见 {@link CachedSubagentRun}） */
+  /** Cached subagent run records table (primary key run_id, see {@link CachedSubagentRun}) */
   subagentRuns!: Table<CachedSubagentRun, string>;
-  /** 会话自定义标题覆盖层表（主键会话 id，见 {@link SessionTitleOverride}） */
+  /** Session custom-title override table (primary key session id, see {@link SessionTitleOverride}) */
   sessionTitles!: Table<SessionTitleOverride, string>;
 
   constructor() {
     super('ema-history-cache');
     this.version(1).stores({
-      // 主键 id，复合索�?[session_id+turn_num] 用于按会话查�?去重�?
-      // 单列 session_id 用于清空某会话的缓存�?
+      // Primary key id; compound index [session_id+turn_num] for per-session queries and deduplication.
+      // Single-column session_id is used to clear a session's cache.
       messages: 'id, [session_id+turn_num], session_id'
     });
     this.version(2).stores({
-      // �?session_id 主键缓存每个会话的头�?名字快照（含全局行）�?
+      // Caches each session's avatar/name snapshot keyed by session_id (including the global row).
       character: 'session_id'
     });
     this.version(3).stores({
-      // 本地会话列表占位（主键为会话 id），新增表不破坏既有表结构�?
+      // Local session-list placeholders (primary key is the session id); adding a table does not break existing table structures.
       sessions: 'id, updatedAt'
     });
     this.version(4).stores({
-      // 复合主键 [session_id+turn_num]：整轮草稿按会话 + 轮次读写�?
-      // 单列 session_id 用于删除某个会话时按前缀清空全部草稿�?
+      // Compound primary key [session_id+turn_num]: whole-turn drafts are read/written by session + turn.
+      // Single-column session_id clears all drafts for a session by prefix when deleting it.
       drafts: '[session_id+turn_num], session_id'
     });
     this.version(5).stores({
-      // 全局背景图（主键 session_id=GLOBAL_SESSION_KEY），新增表不破坏既有表结构�?
+      // Global background image (primary key session_id=GLOBAL_SESSION_KEY); adding a table does not break existing table structures.
       background: 'session_id'
     });
-    this.version(6).stores({
-      // 结构不变，仅 messages 表新增 model_name/input_tokens/output_tokens 列，
-      // 旧行缺省为 null，读取时按 undefined 处理即可。
-      messages: 'id, [session_id+turn_num], session_id'
-    }).upgrade((tx) => {
-      return tx.table('messages').toCollection().modify((msg) => {
-        if (msg.model_name === undefined) msg.model_name = null;
-        if (msg.input_tokens === undefined) msg.input_tokens = null;
-        if (msg.output_tokens === undefined) msg.output_tokens = null;
+    this.version(6)
+      .stores({
+        // Structure unchanged; only the messages table gains model_name/input_tokens/output_tokens columns.
+        // Old rows default to null and can simply be treated as undefined when read.
+        messages: 'id, [session_id+turn_num], session_id'
+      })
+      .upgrade(tx => {
+        return tx
+          .table('messages')
+          .toCollection()
+          .modify(msg => {
+            if (msg.model_name === undefined) msg.model_name = null;
+            if (msg.input_tokens === undefined) msg.input_tokens = null;
+            if (msg.output_tokens === undefined) msg.output_tokens = null;
+          });
       });
-    });
     this.version(7).stores({
-      // 子任务运行记录缓存（主键 run_id），新增表不破坏既有表结构。
+      // Subagent run records cache (primary key run_id); adding a table does not break existing table structures.
       subagentRuns: 'run_id'
     });
     this.version(8).stores({
-      // 会话自定义标题覆盖层（主键为会话 id），新增表不破坏既有表结构。
-      // 独立于 sessions 占位表：占位表在会话晋升为服务端会话时会被清除，
-      // 自定义标题必须跨晋升保留。
+      // Session custom-title overrides (primary key is the session id); adding a table does not break existing table structures.
+      // Separate from the sessions placeholder table: the placeholder table is cleared when a session
+      // is promoted to a server-side session, while custom titles must survive promotion.
       sessionTitles: 'id'
     });
   }
 }
 
 /**
- * 全局唯一�?Dexie 数据库实例（用于缓存历史对话记录）�?
+ * Global unique Dexie database instance (used to cache conversation history).
  */
 export const db = new HistoryDb();
 
 /**
- * 将服务端返回的消息行合并写入缓存（按 `id` 去重）�?
+ * Merge server-returned message rows into the cache (deduplicated by `id`).
  *
- * @param rows  服务端返回的消息记录（含 `id` 字段�?
- * @returns     Promise，写入完成时 resolve
+ * @param rows  Message records returned by the server (including the `id` field)
+ * @returns     Promise, resolves when the write completes
  */
 export async function cacheMessages(rows: CachedMessage[]): Promise<void> {
   if (!rows || rows.length === 0) return;
@@ -288,29 +308,30 @@ export async function cacheMessages(rows: CachedMessage[]): Promise<void> {
 }
 
 /**
- * 读取某个会话在本地缓存中的全部消息，并按 `turn_num` 升序、`id` 升序排列�?
+ * Read all messages of a session from the local cache, sorted by `turn_num` ascending then `id` ascending.
  *
- * 通过复合索引 `[session_id+turn_num]` 做前缀查询：Dexie 会按复合�?
- * `(session_id, turn_num)` 升序返回结果，从而避免在 JS 中二次排序�?
+ * Uses a prefix query on the compound index `[session_id+turn_num]`: Dexie returns results
+ * ordered ascending by the compound `(session_id, turn_num)`, avoiding a second sort in JS.
  *
- * @param sessionId 会话 ID
- * @returns         缓存的该会话消息数组
+ * @param sessionId Session ID
+ * @returns         Array of the session's cached messages
  */
 export async function readCachedMessages(sessionId: string): Promise<CachedMessage[]> {
   return await db.messages.where('[session_id+turn_num]').between([sessionId, MIN_KEY], [sessionId, MAX_KEY]).toArray();
 }
 
 /**
- * 计算某个会话在本地缓存中的最大轮次�?
+ * Compute a session's maximum turn number in the local cache.
  *
- * 复合索引 `[session_id+turn_num]` �?`turn_num` 升序返回该会话的行，
- * 因此最�?`turn_num` 可取最后一条记录的值，避免�?JS 中遍历全部行�?
+ * The compound index `[session_id+turn_num]` returns the session's rows ordered by
+ * `turn_num` ascending, so the max `turn_num` can be taken from the last record,
+ * avoiding iterating all rows in JS.
  *
- * 若缓存为空则返回 `0`（后端要�?`min_turn_num >= 1`�?
- * 客户端不传该值上限，交由服务端逻辑处理）�?
+ * Returns `0` when the cache is empty (the backend requires `min_turn_num >= 1`;
+ * the client does not send an upper bound for this value, leaving that to server logic).
  *
- * @param sessionId 会话 ID
- * @returns         缓存中的最�?turn_num（无缓存时为 0�?
+ * @param sessionId Session ID
+ * @returns         Max cached turn_num (0 when nothing is cached)
  */
 export async function cachedMaxTurnNum(sessionId: string): Promise<number> {
   const last = await db.messages
@@ -321,56 +342,57 @@ export async function cachedMaxTurnNum(sessionId: string): Promise<number> {
 }
 
 /**
- * 清除某个会话在本地缓存中的全部消息�?
+ * Clear all messages of a session from the local cache.
  *
- * @param sessionId 会话 ID
+ * @param sessionId Session ID
  */
 export async function clearCachedSession(sessionId: string): Promise<void> {
   await db.messages.where('session_id').equals(sessionId).delete();
 }
 
 /**
- * 写入（缓�?/ 覆盖）某个会话的角色显示信息快照�?
+ * Write (cache / overwrite) a session's character display info snapshot.
  *
- * @param char 包含 `session_id`（真实会�?ID �?`GLOBAL_SESSION_KEY`）的角色信息
+ * @param char Character info containing `session_id` (a real session ID or `GLOBAL_SESSION_KEY`)
  */
 export async function cacheCharacter(char: CachedCharacter): Promise<void> {
   await db.character.put(char);
 }
 
 /**
- * 读取某个会话的角色显示信息快照（无记录时返回 `undefined`）�?
+ * Read a session's character display info snapshot (returns `undefined` when no record exists).
  *
- * @param sessionId 会话 ID �?`GLOBAL_SESSION_KEY`
+ * @param sessionId Session ID or `GLOBAL_SESSION_KEY`
  */
 export async function readCachedCharacter(sessionId: string): Promise<CachedCharacter | undefined> {
   return await db.character.get(sessionId);
 }
 
 /**
- * 清除某个会话的角色显示信息快照（删除会话时同步清理）�?
+ * Clear a session's character display info snapshot (cleaned up when the session is deleted).
  *
- * @param sessionId 会话 ID（真实会话，不应�?`GLOBAL_SESSION_KEY`�?
+ * @param sessionId Session ID (a real session; should not be `GLOBAL_SESSION_KEY`)
  */
 export async function clearCachedCharacter(sessionId: string): Promise<void> {
   await db.character.delete(sessionId);
 }
 
 /**
- * 写入（缓�?/ 覆盖）某个本地会话占位条目�?
+ * Write (cache / overwrite) a local session placeholder entry.
  *
- * 新建空会话（尚未发消息）时服务端无记录，靠此表在刷新/重开后仍保留�?
+ * When an empty session is created (no messages sent yet) the server has no record; this
+ * table keeps it alive across refreshes / restarts.
  *
- * @param meta 会话占位条目（`id` 为会�?ID�?
+ * @param meta Session placeholder entry (`id` is the session ID)
  */
 export async function cacheSessionMeta(meta: CachedSessionMeta): Promise<void> {
   await db.sessions.put(meta);
 }
 
 /**
- * 读取本地缓存中的全部会话占位条目，并�?`updatedAt` 降序（最新优先）排列�?
+ * Read all session placeholder entries from the local cache, sorted by `updatedAt` descending (newest first).
  *
- * @returns 本地缓存的会话占位数�?
+ * @returns Locally cached session placeholder entries
  */
 export async function readCachedSessionMetaList(): Promise<CachedSessionMeta[]> {
   const list = await db.sessions.toArray();
@@ -378,31 +400,33 @@ export async function readCachedSessionMetaList(): Promise<CachedSessionMeta[]> 
 }
 
 /**
- * 删除本地缓存的某个会话占位条目（删除会话时同步清理；服务端已有记录时也无需保留占位）�?
+ * Delete a session's placeholder entry from the local cache (cleaned up when the session is deleted;
+ * no need to keep the placeholder once a server-side record exists).
  *
- * @param sessionId 会话 ID
+ * @param sessionId Session ID
  */
 export async function clearCachedSessionMeta(sessionId: string): Promise<void> {
   await db.sessions.delete(sessionId);
 }
 
 /**
- * 写入（覆盖）某个会话的自定义标题覆盖层
+ * Write (overwrite) a session's custom-title override.
  *
- * 用户在左侧列表内联重命名会话时调用：自定义标题独立持久化到 `sessionTitles` 表，
- * 加载列表时覆盖服务端派生标题（最后一句用户消息），并可被关键字筛选命中。
+ * Called when the user renames a session inline in the left-hand list: the custom title is
+ * persisted independently to the `sessionTitles` table, overrides the server-derived title
+ * (the last user message) when loading the list, and is matchable by keyword filters.
  *
- * @param id    会话 ID
- * @param title 自定义标题
+ * @param id    Session ID
+ * @param title Custom title
  */
 export async function saveSessionTitleOverride(id: string, title: string): Promise<void> {
   await db.sessionTitles.put({ id, title, updatedAt: Date.now() });
 }
 
 /**
- * 读取全部会话的自定义标题覆盖层
+ * Read all sessions' custom-title overrides.
  *
- * @returns `会话 ID → 自定义标题` 的映射（无任何重命名记录时为空 Map）
+ * @returns Mapping of `session ID → custom title` (an empty Map when there are no rename records)
  */
 export async function readSessionTitleOverrides(): Promise<Map<string, string>> {
   const rows = await db.sessionTitles.toArray();
@@ -410,75 +434,77 @@ export async function readSessionTitleOverrides(): Promise<Map<string, string>> 
 }
 
 /**
- * 删除某个会话的自定义标题覆盖层（删除会话时同步清理）
+ * Delete a session's custom-title override (cleaned up when the session is deleted)
  *
- * @param id 会话 ID
+ * @param id Session ID
  */
 export async function clearSessionTitleOverride(id: string): Promise<void> {
   await db.sessionTitles.delete(id);
 }
 
 /**
- * 写入（整体覆盖）某个会话某个轮次的进行中草稿�?
+ * Write (wholesale overwrite) a session's in-flight draft for one turn.
  *
- * 调用方每次状态变更（send / tool 各阶�?/ error / 落库对账前）都用「当前整�?
- * `MessageItem[]`」整体重写该行，从而实现「每执行一步即缓存」�?
+ * On every state change (send / each tool phase / error / before persistence reconciliation)
+ * the caller rewrites the row with the "current full `MessageItem[]`", achieving
+ * "cache on every step".
  *
- * @param draft 待持久化的整轮草稿（�?`session_id` �?`turn_num`；`.messages` �?
- *              各条保留本地负临�?id，供对账时按内容匹配替换�?
+ * @param draft The whole-turn draft to persist (keyed by `session_id` and `turn_num`; entries in
+ *              `.messages` keep their local negative temporary ids so reconciliation can match
+ *              and replace them by content)
  */
 export async function saveDraftTurn(draft: DraftTurn): Promise<void> {
   await db.drafts.put(draft);
 }
 
 /**
- * 读取某个会话在本地缓存中的全部进行中草稿轮次，按 `turn_num` 升序排列�?
+ * Read all in-flight draft turns of a session from the local cache, sorted by `turn_num` ascending.
  *
- * 复合主键 `[session_id+turn_num]` 按轮次升序返回该会话的草稿；
- * `turn_num` 与实时消息同源（正轮次号），对账时可直接�?`session_id + turn_num +
- * role + content` 匹配、替换负临时 id 行，实现去重�?
+ * The compound primary key `[session_id+turn_num]` returns the session's drafts in turn order;
+ * `turn_num` shares the same source as live messages (positive turn numbers), so reconciliation
+ * can match directly on `session_id + turn_num + role + content` and replace negative-temporary-id
+ * rows, achieving deduplication.
  *
- * @param sessionId 会话 ID
- * @returns         该会话未完成的草稿轮数组（空数组表示无草稿）
+ * @param sessionId Session ID
+ * @returns         Array of the session's unfinished draft turns (empty array means no drafts)
  */
 export async function readDraftTurns(sessionId: string): Promise<DraftTurn[]> {
   return await db.drafts.where('[session_id+turn_num]').between([sessionId, MIN_KEY], [sessionId, MAX_KEY]).toArray();
 }
 
 /**
- * 清除某个会话某个轮次的进行中草稿�?
+ * Clear a session's in-flight draft for one turn.
  *
- * 在服务端成功落库（onDone �?重新拉取历史对账）或被用户主动停�?清空后调用，
- * 避免草稿与已落库消息重复渲染�?
+ * Called after the server persists successfully (reconciled via onDone or re-fetching history)
+ * or after the user actively stops / clears it, preventing drafts and persisted messages from
+ * being rendered twice.
  *
- * @param sessionId 会话 ID
- * @param turnNum   命中的草稿轮次（与实时消息同源的正轮次号�?
+ * @param sessionId Session ID
+ * @param turnNum   The matched draft turn (positive turn number from the same source as live messages)
  */
 export async function clearDraftTurn(sessionId: string, turnNum: number): Promise<void> {
   await db.drafts.delete([sessionId, turnNum]);
 }
 
 /**
- * 清除某个会话在本地缓存中的全部进行中草稿轮次�?
+ * Clear all in-flight draft turns of a session from the local cache.
  *
- * 删除会话时同步清理，防止孤儿草稿在重建同 id 会话后错误重水合�?
+ * Cleaned up when the session is deleted, preventing orphan drafts from incorrectly
+ * rehydrating after a session with the same id is recreated.
  *
- * @param sessionId 会话 ID
+ * @param sessionId Session ID
  */
 export async function clearDraftSession(sessionId: string): Promise<void> {
   await db.drafts.where('session_id').equals(sessionId).delete();
 }
 
 /**
- * 写入（覆盖）全局聊天区背景图�?
+ * Write (overwrite) the global chat-area background image.
  *
- * @param backgroundUrl 背景图 base64 data URL（`data:image/...;base64,...`）；空字符串表示清除背景
- * @param backgroundOpacity 遮罩透明度（0-100）
+ * @param backgroundUrl Background image base64 data URL (`data:image/...;base64,...`); empty string clears the background
+ * @param backgroundOpacity Overlay opacity (0-100)
  */
-export async function saveBackground(
-  backgroundUrl: string,
-  backgroundOpacity: number
-): Promise<void> {
+export async function saveBackground(backgroundUrl: string, backgroundOpacity: number): Promise<void> {
   await db.background.put({
     session_id: GLOBAL_SESSION_KEY,
     backgroundUrl,
@@ -487,13 +513,12 @@ export async function saveBackground(
 }
 
 /**
- * 读取全局聊天区背景配置（未设置时返回 `undefined`）�?
+ * Read the global chat-area background config (returns `undefined` when not set).
  *
- * @returns 背景配置 `{ backgroundUrl, backgroundOpacity }`；未设置时返回 undefined
+ * @returns Background config `{ backgroundUrl, backgroundOpacity }`; returns undefined when not set
  */
 export async function readBackgroundConfig(): Promise<
-  | { backgroundUrl: string; backgroundOpacity: number }
-  | undefined
+  { backgroundUrl: string; backgroundOpacity: number } | undefined
 > {
   const row = await db.background.get(GLOBAL_SESSION_KEY);
   if (!row?.backgroundUrl) return undefined;
@@ -504,12 +529,13 @@ export async function readBackgroundConfig(): Promise<
 }
 
 /**
- * 将一条（或多条）子任务运行记录写入本地缓存（按 `run_id` 去重，同样支持覆盖）�?
+ * Write one (or more) subagent run records into the local cache (deduplicated by `run_id`, overwrites supported too).
  *
- * 来自 `/subagents/ws` 的实时事件以及 `GET /subagents/runs` 的间隙填充都会调用
- * 本函数，使 IndexedDB 成为后台任务列表的权威本地数据源�?
+ * Both the real-time events from `/subagents/ws` and the gap-filling `GET /subagents/runs`
+ * calls go through this function, making IndexedDB the authoritative local data source for
+ * the background task list.
  *
- * @param runs 待缓存的子任务运行记录（单条或数组均可）
+ * @param runs Subagent run records to cache (a single entry or an array)
  */
 export async function cacheSubagentRuns(runs: CachedSubagentRun[]): Promise<void> {
   if (!runs || runs.length === 0) return;
@@ -517,32 +543,34 @@ export async function cacheSubagentRuns(runs: CachedSubagentRun[]): Promise<void
 }
 
 /**
- * 读取本地缓存中的全部子任务运行记录，按运行发起时间倒序（最新优先）排列�?
+ * Read all subagent run records from the local cache, sorted by spawn time descending (newest first).
  *
- * 返回结果用每条的 `run_id` 隐含的先后关系（后端 run_id 单调递增）做倒序，
- * 以便 UI 直接从缓存渲染非实时的任务列表�?
+ * The result is sorted descending using the ordering implied by each record's `run_id`
+ * (backend run_ids increase monotonically), so the UI can render the non-real-time task
+ * list directly from the cache.
  *
- * @returns 本地缓存的子任务运行记录数组（空数组表示无记录）
+ * @returns Array of locally cached subagent run records (empty array means no records)
  */
 export async function readCachedSubagentRuns(): Promise<CachedSubagentRun[]> {
   const list = await db.subagentRuns.toArray();
-  // run_id 为后端递增序号，数值化后倒序即最新优先
+  // run_id is the backend's incrementing sequence number; sorting numerically descending gives newest-first
   return list.sort((a, b) => {
     const an = Number(a.run_id);
     const bn = Number(b.run_id);
     if (Number.isFinite(an) && Number.isFinite(bn)) return bn - an;
-    // 非纯数字回退到字面量比较（字典序倒序）
+    // Fall back to literal comparison for non-numeric ids (descending lexicographic order)
     return String(b.run_id) < String(a.run_id) ? -1 : 1;
   });
 }
 
 /**
- * 从本地缓存中删除指定 `run_id` 的子任务运行记录�?
+ * Delete the subagent run records with the given `run_id`s from the local cache.
  *
- * 用于「后台任务」批量删除：先后端删除了子树（根 + 后代），
- * 前端据此删除 Dexie/IndexedDB 中的对应记录，彻底清干净缓存�?
+ * Used for batch deletion in "background tasks": after the backend deletes a subtree
+ * (root + descendants), the frontend deletes the corresponding records in Dexie/IndexedDB
+ * based on that, fully cleaning the cache.
  *
- * @param runIds 待删除的 run_id 数组（含根节点及其所有后代）
+ * @param runIds Array of run_ids to delete (including the root node and all its descendants)
  */
 export async function deleteCachedSubagentRuns(runIds: string[]): Promise<void> {
   if (!runIds || runIds.length === 0) return;
@@ -550,9 +578,10 @@ export async function deleteCachedSubagentRuns(runIds: string[]): Promise<void> 
 }
 
 /**
- * 清除本地缓存中的全部子任务运行记录�?
+ * Clear all subagent run records from the local cache.
  *
- * 后端数据被清空（如重建仓库）时，前端据此清理旧缓存，避免渲染僵尸记录�?
+ * When the backend data is wiped (e.g. rebuilding the repository), the frontend uses this
+ * to clear stale cache and avoid rendering zombie records.
  */
 export async function clearCachedSubagentRuns(): Promise<void> {
   await db.subagentRuns.clear();

@@ -9,7 +9,6 @@ import asyncio
 import time
 from loguru import logger
 from ..types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
-from ..types.capability import ControlScope
 from ..registry import (
     get_run,
     set_run,
@@ -17,8 +16,7 @@ from ..registry import (
     is_live_unended_run,
     replace_run_after_steer,
 )
-from ..registry.helpers import is_stale_unended_run, reconcile_orphaned_run
-from ..registry.lifecycle import complete_subagent_run
+from ..registry.helpers import reconcile_orphaned_run
 from ..announce.core import run_subagent_announce_flow
 from ..config import get_config
 
@@ -61,6 +59,7 @@ async def _recovery_loop(run_id: str, delay_seconds: float) -> None:
     if gate_result == "wedged":
         logger.warning("Run {} is wedged, forcing terminal", run_id)
         from ..registry.memory import update as update_run
+
         update_run(run_id, ended_reason="wedged_recovery")
         updated = reconcile_orphaned_run(run)
         if updated is not None:
@@ -75,7 +74,11 @@ async def _recovery_loop(run_id: str, delay_seconds: float) -> None:
     recovery_attempts_persisted[run_id] = recovery_attempts_persisted.get(run_id, 0) + 1
     _persist_recovery_attempt(run_id)
 
-    logger.info("Attempting orphan recovery for run {} (attempt {})", run_id, recovery_attempts_persisted.get(run_id, 0))
+    logger.info(
+        "Attempting orphan recovery for run {} (attempt {})",
+        run_id,
+        recovery_attempts_persisted.get(run_id, 0),
+    )
 
     if await _attempt_resume(run):
         logger.info("Orphan recovery resume succeeded for run {}", run_id)
@@ -92,7 +95,6 @@ def evaluate_recovery_gate(run: SubagentRunRecord) -> str:
         if age > _WEDGED_AGE_SECONDS:
             return "wedged"
 
-    attempts = recovery_attempts_persisted.get(run.run_id, 0)
     if run.recovery_attempts_persisted > _MAX_RECOVERY_ATTEMPTS:
         return "wedged"
 
@@ -105,6 +107,7 @@ def evaluate_recovery_gate(run: SubagentRunRecord) -> str:
 async def scan_orphaned_sessions() -> list[SubagentRunRecord]:
     """Scan all runs and return those that are live but have no active task (orphaned)."""
     from ..registry import get_task
+
     orphans = []
 
     for run in all_runs():
@@ -134,6 +137,7 @@ async def _attempt_resume(run: SubagentRunRecord) -> bool:
             return False
 
         from ..control.steer import steer_subagent_run
+
         result = await steer_subagent_run(run.run_id, new_instructions=resume_message)
         if result is not None:
             _clear_aborted_last_run(run.run_id)
@@ -162,7 +166,9 @@ async def _build_resume_message(run: SubagentRunRecord) -> str | None:
             parts.append(f"Last assistant response:\n{last_ai[:500]}\n")
 
         if chat_history.get("config_changes"):
-            parts.append("Note: Configuration changes were detected during the previous session. Please avoid re-applying the same configuration changes.\n")
+            parts.append(
+                "Note: Configuration changes were detected during the previous session. Please avoid re-applying the same configuration changes.\n"
+            )
 
     elif run.completion.result_text:
         last_output = run.completion.result_text[:500]
@@ -188,11 +194,17 @@ async def _read_chat_history(child_session_key: str) -> dict | None:
         result = {"last_human_message": None, "last_ai_message": None, "config_changes": False}
 
         for msg in reversed(messages):
-            if result["last_human_message"] is None and hasattr(msg, "type") and msg.type == "human":
+            if (
+                result["last_human_message"] is None
+                and hasattr(msg, "type")
+                and msg.type == "human"
+            ):
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
                 result["last_human_message"] = content
                 if "openclaw.json" in content or "gateway restart" in content:
-                    result["config_changes"] = True  # Detect config-change patterns that caused the interruption
+                    result["config_changes"] = (
+                        True  # Detect config-change patterns that caused the interruption
+                    )
             if result["last_ai_message"] is None and hasattr(msg, "type") and msg.type == "ai":
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
                 result["last_ai_message"] = content
@@ -212,6 +224,7 @@ def _persist_recovery_attempt(run_id: str) -> None:
         return
     attempts = recovery_attempts_persisted.get(run_id, 0)
     from ..registry.memory import update as update_run
+
     update_run(run_id, recovery_attempts_persisted=attempts)
 
 
@@ -221,6 +234,7 @@ def _clear_aborted_last_run(run_id: str) -> None:
     if run is None:
         return
     from ..registry.memory import update as update_run
+
     update_run(run_id, aborted_last_run=False)
 
 
@@ -247,24 +261,29 @@ async def finalize_interrupted_run_with_retry(
         if run.execution.status == ExecutionStatus.TERMINAL:
             return run
 
-        from ..types.registry import ExecutionState, RunOutcomeStatus
-        updated = run.model_copy(update={
-            "execution": ExecutionState(
-                status=ExecutionStatus.TERMINAL,
-                started_at=run.execution.started_at,
-                ended_at=time.monotonic(),
-                outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT, error="finalized"),
-            ),
-            "ended_reason": "finalized",
-        })
+        from ..types.registry import ExecutionState
+
+        updated = run.model_copy(
+            update={
+                "execution": ExecutionState(
+                    status=ExecutionStatus.TERMINAL,
+                    started_at=run.execution.started_at,
+                    ended_at=time.monotonic(),
+                    outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT, error="finalized"),
+                ),
+                "ended_reason": "finalized",
+            }
+        )
         set_run(updated)
         try:
             await run_subagent_announce_flow(updated)
             return updated
         except Exception as e:
-            logger.error("Finalize interrupted run attempt {} failed for {}: {}", attempt + 1, run_id, e)
+            logger.error(
+                "Finalize interrupted run attempt {} failed for {}: {}", attempt + 1, run_id, e
+            )
 
-        delay = min(1.0 * (2 ** attempt), 8.0)  # Exponential backoff: 1s, 2s, 4s, capped at 8s
+        delay = min(1.0 * (2**attempt), 8.0)  # Exponential backoff: 1s, 2s, 4s, capped at 8s
         await asyncio.sleep(delay)
 
     logger.warning("Max terminal finalize attempts reached for run {}", run_id)
@@ -280,13 +299,17 @@ def reclassify_legacy_timeout(run: SubagentRunRecord) -> SubagentRunRecord | Non
     if run.execution.status != ExecutionStatus.TERMINAL:
         return None
 
-    updated = run.model_copy(update={
-        "ended_reason": "interrupted",
-        "execution": run.execution.model_copy(update={
-            "status": ExecutionStatus.INTERRUPTED,
-            "ended_at": None,
-        }),
-    })
+    updated = run.model_copy(
+        update={
+            "ended_reason": "interrupted",
+            "execution": run.execution.model_copy(
+                update={
+                    "status": ExecutionStatus.INTERRUPTED,
+                    "ended_at": None,
+                }
+            ),
+        }
+    )
     set_run(updated)
     logger.info("Reclassified legacy timeout → interrupted for run {}", run.run_id)
     return updated

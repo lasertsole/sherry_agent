@@ -22,7 +22,9 @@ def _ensure_dir(p: Path) -> None:
 
 def _atomic_json_write(path: Path, data: dict[str, Any], indent: int = 2) -> None:
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=indent, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(data, indent=indent, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
+    )
     tmp.replace(path)
 
 
@@ -38,6 +40,7 @@ def _read_skill_description(skill_dir: Path) -> str:
         if len(parts) < 3:
             return ""
         import yaml
+
         meta = yaml.safe_load(parts[1]) or {}
         return str(meta.get("description", ""))
     except Exception:

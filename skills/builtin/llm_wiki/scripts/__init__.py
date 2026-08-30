@@ -12,8 +12,7 @@ _scripts_dir = Path(__file__).resolve().parent
 
 def _load_module(name, filename):
     """动态加载同目录下的Python模块"""
-    spec = importlib.util.spec_from_file_location(
-        name, str(_scripts_dir / filename))
+    spec = importlib.util.spec_from_file_location(name, str(_scripts_dir / filename))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -40,8 +39,13 @@ lint_wiki = _search.lint_wiki
 save_source = _ingest.save_source
 
 __all__ = [
-    "get_wiki_path", "get_wiki_subdir", "init_wiki", "wiki_exists",
-    "print_structure", "WIKI_STRUCTURE",
-    "search_wiki", "lint_wiki",
+    "get_wiki_path",
+    "get_wiki_subdir",
+    "init_wiki",
+    "wiki_exists",
+    "print_structure",
+    "WIKI_STRUCTURE",
+    "search_wiki",
+    "lint_wiki",
     "save_source",
 ]

@@ -2,9 +2,7 @@ import os
 import torch
 
 
-def export(
-    model, quantize: bool = False, opset_version: int = 14, type="onnx", **kwargs
-):
+def export(model, quantize: bool = False, opset_version: int = 14, type="onnx", **kwargs):
     model_scripts = model.export(**kwargs)
     export_dir = kwargs.get("output_dir", os.path.dirname(kwargs.get("init_param")))
     os.makedirs(export_dir, exist_ok=True)

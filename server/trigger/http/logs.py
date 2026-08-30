@@ -61,14 +61,16 @@ def _list_log_files(log_dir: Path) -> list[dict]:
             match = _LOG_FILENAME_RE.match(p.name)
             is_current = bool(match) and match.group("pid") == str(pid)
             is_error = p.name.startswith("error") or p.parent.name == "error"
-            files.append({
-                "name": p.name,
-                "path": str(p),
-                "size": stat.st_size,
-                "modified": _format_mtime(stat.st_mtime),
-                "is_error": is_error,
-                "is_current": is_current,
-            })
+            files.append(
+                {
+                    "name": p.name,
+                    "path": str(p),
+                    "size": stat.st_size,
+                    "modified": _format_mtime(stat.st_mtime),
+                    "is_error": is_error,
+                    "is_current": is_current,
+                }
+            )
 
     files.sort(key=lambda f: f["modified"], reverse=True)
     return files
@@ -77,6 +79,7 @@ def _list_log_files(log_dir: Path) -> list[dict]:
 def _format_mtime(timestamp: float) -> str:
     """Format a unix timestamp as an ISO-8601 string (local time)."""
     import datetime
+
     return datetime.datetime.fromtimestamp(timestamp).isoformat()
 
 

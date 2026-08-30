@@ -7,9 +7,9 @@ from config import STATIC_DIR, SRC_DIR
 from config import API_HOST, API_PORT, ENV_PATH
 
 # Fix UnicodeEncodeError for emoji in Windows GBK terminal
-if sys.stdout.encoding and sys.stdout.encoding.lower() in ('gbk', 'gb2312', 'gb18030'):
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+if sys.stdout.encoding and sys.stdout.encoding.lower() in ("gbk", "gb2312", "gb18030"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Fix nested event loop conflicts
 nest_asyncio.apply()
@@ -25,7 +25,9 @@ if os.getenv("LANGSMITH_TRACING_V2") == "true" and os.getenv("LANGSMITH_API_KEY"
     os.environ["LANGSMITH_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "EMA_AI_agent")
     print("🔍 LangSmith tracing enabled -> project:", os.environ["LANGSMITH_PROJECT"])
 else:
-    print("ℹ️  LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY to enable)")
+    print(
+        "ℹ️  LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY to enable)"
+    )
 
 
 if __name__ == "__main__":
@@ -41,33 +43,24 @@ if __name__ == "__main__":
     # Configuring Static File Directory Hosting
     app.serve_directory(
         route="/static",  # URL prefix accessed by the client.
-        directory_path=os.path.join(os.getcwd(), STATIC_DIR.absolute().as_posix())
+        directory_path=os.path.join(os.getcwd(), STATIC_DIR.absolute().as_posix()),
     )
 
     # Ensure the /images upload directory exists before serving it statically.
     images_dir = SRC_DIR / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    app.serve_directory(
-        route="/images",
-        directory_path=os.path.join(os.getcwd(), str(images_dir))
-    )
+    app.serve_directory(route="/images", directory_path=os.path.join(os.getcwd(), str(images_dir)))
 
     # Ensure the /audio and /video upload directories exist before serving them statically.
     audio_dir = SRC_DIR / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    app.serve_directory(
-        route="/audio",
-        directory_path=os.path.join(os.getcwd(), str(audio_dir))
-    )
+    app.serve_directory(route="/audio", directory_path=os.path.join(os.getcwd(), str(audio_dir)))
 
     video_dir = SRC_DIR / "video"
     video_dir.mkdir(parents=True, exist_ok=True)
 
-    app.serve_directory(
-        route="/video",
-        directory_path=os.path.join(os.getcwd(), str(video_dir))
-    )
+    app.serve_directory(route="/video", directory_path=os.path.join(os.getcwd(), str(video_dir)))
 
     app.start(host=API_HOST, port=API_PORT)

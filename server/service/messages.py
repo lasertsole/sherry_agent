@@ -101,13 +101,14 @@ def _normalize_text(content) -> str:
     return str(content)
 
 
-async def _get_agent_history_list(session_id: str)-> list[BaseMessage]:
+async def _get_agent_history_list(session_id: str) -> list[BaseMessage]:
     agent = await built_agent()
 
     state = await agent.aget_state(config=build_agent_config(session_id))
     return state.values.get("messages", [])
 
-def _get_content_list(multi_modal_message: MultiModalMessage)-> list[dict[str, str]]:
+
+def _get_content_list(multi_modal_message: MultiModalMessage) -> list[dict[str, str]]:
     user_text: str = multi_modal_message.text
     content_list: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
 
@@ -122,7 +123,7 @@ def _get_content_list(multi_modal_message: MultiModalMessage)-> list[dict[str, s
     if multi_modal_message.image_base64_list:
         for image_base64 in multi_modal_message.image_base64_list:
             # Check if it already has a data URI prefix
-            if image_base64.startswith('data:image/'):
+            if image_base64.startswith("data:image/"):
                 # Already has the prefix, use as-is
                 image_url = image_base64
             else:
@@ -133,7 +134,7 @@ def _get_content_list(multi_modal_message: MultiModalMessage)-> list[dict[str, s
 
     if multi_modal_message.image_bytes_list:
         for image_bytes in multi_modal_message.image_bytes_list:
-            base64_str = base64.b64encode(image_bytes).decode('utf-8')
+            base64_str = base64.b64encode(image_bytes).decode("utf-8")
             image_url = f"data:image/png;base64,{base64_str}"
             content_list.append({"type": "image_url", "image_url": {"url": image_url}})
     ##** End image handling logic **##
@@ -166,13 +167,16 @@ def _get_content_list(multi_modal_message: MultiModalMessage)-> list[dict[str, s
 
     return content_list
 
+
 """Agent assembly logic — builds agent with context"""
-async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True):
+
+
+async def _get_generator(
+    session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True
+):
     start_time = time.time()
 
-    logger.debug(
-        f"Building agent: session_id={session_id}"
-    )
+    logger.debug(f"Building agent: session_id={session_id}")
 
     # Rebuild the agent every turn with a FRESH main_llm -> httpx transport
     # pool. Reusing a long-lived pooled connection across WS turns goes stale
@@ -184,8 +188,8 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
     agent = await built_agent(force_rebuild=True)
 
     # Prepare the content_list
-    content_list:list[dict[str, str]] = _get_content_list(multi_modal_message)
-            
+    content_list: list[dict[str, str]] = _get_content_list(multi_modal_message)
+
     elapsed = time.time() - start_time
     logger.debug(
         f"Agent generator prepared: session_id={session_id}, duration={elapsed:.2f}s, "
@@ -194,9 +198,14 @@ async def _get_generator(session_id: str, multi_modal_message: MultiModalMessage
 
     input_dict = {"session_id": session_id, "messages": [HumanMessage(content=content_list)]}
     if is_stream:
-        return agent.astream(input=input_dict, config=build_agent_config(session_id), stream_mode=["messages", "updates"])
+        return agent.astream(
+            input=input_dict,
+            config=build_agent_config(session_id),
+            stream_mode=["messages", "updates"],
+        )
     else:
         return agent.ainvoke(input=input_dict, config=build_agent_config(session_id))
+
 
 """End agent assembly logic"""
 
@@ -211,7 +220,11 @@ Each yielded item is a dict ``{"type": <str>, "content": <str>}`` where
 Callers that only need the plain text (e.g. channel consumers) can
 join ``chunk["content"]`` for every item.
 """
-async def async_generate(session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True)-> AsyncGenerator[dict[str, str], None]:
+
+
+async def async_generate(
+    session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True
+) -> AsyncGenerator[dict[str, str], None]:
     start_time = time.time()
     logger.debug(
         f"Agent execution started: session_id={session_id}, is_stream={is_stream}, "
@@ -219,7 +232,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     )
 
     # Create the agent with assembled context
-    ai_text:str = ""
+    ai_text: str = ""
 
     # reset curator reset_idle_for_seconds
     reset_idle_for_seconds()
@@ -242,7 +255,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
             async for chunk in generator:
                 # With stream_mode=["messages", "updates"], each chunk is (mode, data).
                 # Only process the "messages" mode; skip "updates" mode chunks.
-                if state_register_mem.get_state(session_id, "answering") == False:
+                if state_register_mem.get_state(session_id, "answering") is False:
                     raise asyncio.CancelledError
 
                 mode: str = chunk[0]
@@ -283,7 +296,10 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                 metadata: dict[str, Any] = data[1]
 
                 # Filter out outputs from non-model nodes in the lifecycle
-                if metadata.get("langgraph_node", None) != "model" or metadata.get("lc_source") == "summarization":
+                if (
+                    metadata.get("langgraph_node", None) != "model"
+                    or metadata.get("lc_source") == "summarization"
+                ):
                     continue
 
                 if isinstance(msg_chunk, AIMessageChunk):
@@ -306,22 +322,42 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                         pass
 
                     # Tool call output logic
-                    tool_calls: list[ToolCall] | list[ToolCallChunk] = msg_chunk.tool_calls if msg_chunk.tool_calls and len(
-                        msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
-                    if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
+                    tool_calls: list[ToolCall] | list[ToolCallChunk] = (
+                        msg_chunk.tool_calls
+                        if msg_chunk.tool_calls and len(msg_chunk.tool_calls) > 0
+                        else msg_chunk.tool_call_chunks
+                    )
+                    if (
+                        len(tool_calls) > 0
+                        or state_register_mem.get_state(session_id, "current_tool_id", "").strip()
+                    ):
                         repeat_flag: bool = True  # Prevent duplicate tool call output
-                        tool_id: str | None = None  # current tool call id (unknown for dict-typed access)
+                        tool_id: str | None = (
+                            None  # current tool call id (unknown for dict-typed access)
+                        )
                         if len(tool_calls) > 0:
                             tool_call = tool_calls[0]
 
                             if tool_call["name"]:
-                                if tool_call["name"].strip() or tool_call["name"].strip() != state_register_mem.get_state(session_id, "current_tool_name"):
-                                    state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
+                                if tool_call["name"].strip() or tool_call[
+                                    "name"
+                                ].strip() != state_register_mem.get_state(
+                                    session_id, "current_tool_name"
+                                ):
+                                    state_register_mem.set_state(
+                                        session_id, "current_tool_name", tool_call["name"]
+                                    )
 
                             if tool_call["id"]:
                                 tool_id = tool_call["id"]
-                                if tool_id.strip() or tool_id.strip() != state_register_mem.get_state(session_id, "current_tool_id"):
-                                    state_register_mem.set_state(session_id,"current_tool_id", tool_id)
+                                if (
+                                    tool_id.strip()
+                                    or tool_id.strip()
+                                    != state_register_mem.get_state(session_id, "current_tool_id")
+                                ):
+                                    state_register_mem.set_state(
+                                        session_id, "current_tool_id", tool_id
+                                    )
                                     repeat_flag = False
 
                         # Continuously refresh the pending arg-bag from the most
@@ -344,7 +380,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                         # carry partial-JSON string fragments. Accumulate them onto
                         # the effective tool id (persisted in state register) so the
                         # bag is populated by the time tool_start/tool_result emit.
-                        eff_tool_id: str | None = tool_id or state_register_mem.get_state(session_id, "current_tool_id", "").strip() or None
+                        eff_tool_id: str | None = (
+                            tool_id
+                            or state_register_mem.get_state(
+                                session_id, "current_tool_id", ""
+                            ).strip()
+                            or None
+                        )
                         # IMPORTANT: the args fragment MUST come from tool_call_chunks
                         # (the complete ordered partial-JSON stream, including the
                         # leading `{`), NOT from the `tool_calls` ToolCall dict whose
@@ -357,7 +399,9 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                         _accumulate_pending_args(eff_tool_id, _arg_frag)
 
                         if not repeat_flag:
-                            tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                            tool_name = state_register_mem.get_state(
+                                session_id, "current_tool_name", ""
+                            )
                             ai_text += f"\n\n**Calling tool {tool_name}...**"
                             yield {
                                 "type": "tool_start",
@@ -395,7 +439,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
                     # End conversation output logic
 
         else:
-            generator = await _get_generator(session_id, multi_modal_message, is_stream = False)
+            generator = await _get_generator(session_id, multi_modal_message, is_stream=False)
             result: dict[str, Any] = await generator
             res: str = result["messages"][-1].content
             ai_text += res
@@ -418,7 +462,13 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
 
         # Normal completion: surface the rolling model metadata as a final
         # "meta" chunk. Only yielded here — never on the exception paths below.
-        yield {"type": "meta", "content": "", "model_name": meta_model_name or "", "input_tokens": meta_input_tokens or 0, "output_tokens": meta_output_tokens or 0}
+        yield {
+            "type": "meta",
+            "content": "",
+            "model_name": meta_model_name or "",
+            "input_tokens": meta_input_tokens or 0,
+            "output_tokens": meta_output_tokens or 0,
+        }
 
         elapsed = time.time() - start_time
         logger.debug(
@@ -428,15 +478,15 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
     except asyncio.CancelledError:
         elapsed = time.time() - start_time
         yield {"type": "text", "content": "Request cancelled"}
-        logger.debug(
-            f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s"
-        )
+        logger.debug(f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s")
     except HeartbeatTimeoutError as e:
         elapsed = time.time() - start_time
-        yield {"type": "text", "content": "\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated."}
+        yield {
+            "type": "text",
+            "content": "\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated.",
+        }
         logger.warning(
-            f"Agent heartbeat timeout: session_id={session_id}, duration={elapsed:.2f}s, "
-            f"error={e}"
+            f"Agent heartbeat timeout: session_id={session_id}, duration={elapsed:.2f}s, error={e}"
         )
     except Exception as e:
         elapsed = time.time() - start_time
@@ -466,6 +516,7 @@ async def async_generate(session_id: str, multi_modal_message: MultiModalMessage
         state_register_mem.set_state(session_id, "answering", False)
         _pending_args.clear()
 
+
 """HITL interrupt detection — checks agent state for pending interrupts.
 
 When the humanInTheLoop middleware calls ``interrupt()``, the agent stream
@@ -473,6 +524,8 @@ ends and the interrupt payload is stored in the graph state's ``tasks``.
 This function inspects the state and returns the interrupt request so
 the WebSocket layer can forward it to the client for human approval.
 """
+
+
 async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
     """Return the pending HITL interrupt payload for a session, or ``None``.
 
@@ -498,8 +551,12 @@ async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
                     value = getattr(intr, "value", None)
                     if value is None:
                         continue
-                    action_requests = value.get("action_requests", []) if isinstance(value, dict) else []
-                    review_configs = value.get("review_configs", []) if isinstance(value, dict) else []
+                    action_requests = (
+                        value.get("action_requests", []) if isinstance(value, dict) else []
+                    )
+                    review_configs = (
+                        value.get("review_configs", []) if isinstance(value, dict) else []
+                    )
                     if not action_requests:
                         continue
                     ar = action_requests[0]
@@ -515,6 +572,8 @@ async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
     except Exception as e:
         logger.debug(f"get_pending_interrupt failed for session_id={session_id}: {e}")
         return None
+
+
 """End HITL interrupt detection"""
 
 """HITL resume — continues the agent after a human decision.
@@ -523,6 +582,8 @@ Called when the client sends back an approval/rejection. Uses
 ``Command(resume=...)`` to un-pause the graph and streams the
 remaining output just like ``async_generate``.
 """
+
+
 async def resume_agent(
     session_id: str,
     decision: str,
@@ -541,9 +602,7 @@ async def resume_agent(
         Same chunk format as :func:`async_generate`.
     """
     start_time = time.time()
-    logger.info(
-        f"Agent resume started: session_id={session_id}, decision={decision}"
-    )
+    logger.info(f"Agent resume started: session_id={session_id}, decision={decision}")
 
     agent = await built_agent(force_rebuild=True)
     config = build_agent_config(session_id)
@@ -572,7 +631,7 @@ async def resume_agent(
             config=config,
             stream_mode=["messages", "updates"],
         ):
-            if state_register_mem.get_state(session_id, "answering") == False:
+            if state_register_mem.get_state(session_id, "answering") is False:
                 raise asyncio.CancelledError
 
             mode: str = chunk[0]
@@ -607,36 +666,93 @@ async def resume_agent(
             msg_chunk: BaseMessage = data[0]
             metadata: dict[str, Any] = data[1]
 
-            if metadata.get("langgraph_node", None) != "model" or metadata.get("lc_source") == "summarization":
+            # HITL denial path: a rejected tool call never reaches the "tools"
+            # node — the HumanInTheLoop middleware's after_model hook replaces it
+            # with an artificial error ToolMessage inside its own middleware node
+            # ("HumanInTheLoop.after_model"), so the updates-mode "tools" branch
+            # above never sees it and the client got zero feedback for the
+            # rejection. Emit the tool_result frame here, scoped to middleware
+            # after_model nodes; normal tools-node results keep their existing
+            # updates-mode path (the node filter below still skips them in
+            # messages mode).
+            _chunk_node = metadata.get("langgraph_node", None)
+            if (
+                isinstance(msg_chunk, ToolMessage)
+                and isinstance(_chunk_node, str)
+                and _chunk_node.endswith(".after_model")
+            ):
+                _hitl_args = _pending_args.pop(msg_chunk.tool_call_id, {})
+                yield {
+                    "type": "tool_result",
+                    "content": _normalize_text(msg_chunk.content),
+                    "tool_id": msg_chunk.tool_call_id,
+                    "tool_name": getattr(msg_chunk, "name", "")
+                    or state_register_mem.get_state(session_id, "current_tool_name", ""),
+                    # _pending_args was cleared by the generate turn's finally
+                    # block before the resume started; sending {} would wipe the
+                    # args already shown on the client card, so emit null instead
+                    # (client keeps its existing args when meta.args is falsy).
+                    "args": _hitl_args or None,
+                    "error": bool(getattr(msg_chunk, "status", None) == "error"),
+                }
+                continue
+
+            if (
+                metadata.get("langgraph_node", None) != "model"
+                or metadata.get("lc_source") == "summarization"
+            ):
                 continue
 
             if isinstance(msg_chunk, AIMessageChunk):
-                tool_calls = msg_chunk.tool_calls if msg_chunk.tool_calls and len(msg_chunk.tool_calls) > 0 else msg_chunk.tool_call_chunks
-                if len(tool_calls) > 0 or state_register_mem.get_state(session_id, "current_tool_id", "").strip():
+                tool_calls = (
+                    msg_chunk.tool_calls
+                    if msg_chunk.tool_calls and len(msg_chunk.tool_calls) > 0
+                    else msg_chunk.tool_call_chunks
+                )
+                if (
+                    len(tool_calls) > 0
+                    or state_register_mem.get_state(session_id, "current_tool_id", "").strip()
+                ):
                     repeat_flag = True
                     tool_id: str | None = None  # current tool call id
                     if len(tool_calls) > 0:
                         tool_call = tool_calls[0]
                         if tool_call["name"]:
-                            if tool_call["name"].strip() or tool_call["name"].strip() != state_register_mem.get_state(session_id, "current_tool_name"):
-                                state_register_mem.set_state(session_id, "current_tool_name", tool_call['name'])
+                            if tool_call["name"].strip() or tool_call[
+                                "name"
+                            ].strip() != state_register_mem.get_state(
+                                session_id, "current_tool_name"
+                            ):
+                                state_register_mem.set_state(
+                                    session_id, "current_tool_name", tool_call["name"]
+                                )
                         if tool_call["id"]:
                             tool_id = tool_call["id"]
-                            if tool_id.strip() or tool_id.strip() != state_register_mem.get_state(session_id, "current_tool_id"):
+                            if tool_id.strip() or tool_id.strip() != state_register_mem.get_state(
+                                session_id, "current_tool_id"
+                            ):
                                 state_register_mem.set_state(session_id, "current_tool_id", tool_id)
                                 repeat_flag = False
                         # Same streaming-args fix as async_generate: read the partial
                         # JSON args fragment from tool_call_chunks (which includes the
                         # leading `{`) rather than the `tool_calls` dict (empty `{}` on
                         # the first chunk) so the accumulated buffer forms valid JSON.
-                        eff_tool_id: str | None = tool_id or state_register_mem.get_state(session_id, "current_tool_id", "").strip() or None
+                        eff_tool_id: str | None = (
+                            tool_id
+                            or state_register_mem.get_state(
+                                session_id, "current_tool_id", ""
+                            ).strip()
+                            or None
+                        )
                         _arg_frag = None
                         if msg_chunk.tool_call_chunks and len(msg_chunk.tool_call_chunks) > 0:
                             _arg_frag = msg_chunk.tool_call_chunks[0].get("args")
                         _accumulate_pending_args(eff_tool_id, _arg_frag)
 
                         if not repeat_flag:
-                            tool_name = state_register_mem.get_state(session_id, "current_tool_name", "")
+                            tool_name = state_register_mem.get_state(
+                                session_id, "current_tool_name", ""
+                            )
                             yield {
                                 "type": "tool_start",
                                 "content": tool_name,
@@ -661,14 +777,15 @@ async def resume_agent(
                     yield {"type": "reasoning", "content": _reasoning}
 
         elapsed = time.time() - start_time
-        logger.debug(
-            f"Agent resume completed: session_id={session_id}, duration={elapsed:.2f}s"
-        )
+        logger.debug(f"Agent resume completed: session_id={session_id}, duration={elapsed:.2f}s")
     except asyncio.CancelledError:
         yield {"type": "text", "content": "Request cancelled"}
         logger.debug(f"Agent resume cancelled: session_id={session_id}")
     except HeartbeatTimeoutError as e:
-        yield {"type": "text", "content": "\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated."}
+        yield {
+            "type": "text",
+            "content": "\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated.",
+        }
         logger.warning(f"Agent resume heartbeat timeout: session_id={session_id}, error={e}")
     except Exception as e:
         logger.error(f"Agent resume failed: session_id={session_id}, error={str(e)}")
@@ -684,16 +801,26 @@ async def resume_agent(
         state_register_mem.set_state(session_id, "current_tool_id", "")
         state_register_mem.set_state(session_id, "answering", False)
         _pending_args.clear()
+
+
 """End HITL resume"""
 
 """End response generation logic"""
 
 """History retrieval logic"""
-def get_history_by_turn_page(session_id: str, min_turn_num: int, turn_page_size: int, turn_page_num: int) -> list[dict[str, Any]]:
+
+
+def get_history_by_turn_page(
+    session_id: str, min_turn_num: int, turn_page_size: int, turn_page_num: int
+) -> list[dict[str, Any]]:
     return _get_history_by_turn_page(session_id, min_turn_num, turn_page_size, turn_page_num)
+
+
 """End history retrieval logic"""
 
 """Session list retrieval logic"""
+
+
 def get_session_list() -> list[dict[str, Any]]:
     """Enumerate all distinct sessions, newest activity first.
 
@@ -701,11 +828,17 @@ def get_session_list() -> list[dict[str, Any]]:
     ``{"session_id": str, "last_time": str, "title": str}`` dicts.
     """
     return get_session_ids()
+
+
 """End session list retrieval logic"""
 
 """Clear session history logic"""
+
+
 async def clear_session(session_id: str):
     logger.debug(f"Clearing session history: session_id={session_id}")
-    await clear_session_DAO(session_id = session_id)
+    await clear_session_DAO(session_id=session_id)
     logger.debug(f"Session history cleared: session_id={session_id}")
+
+
 """End clear session history logic"""

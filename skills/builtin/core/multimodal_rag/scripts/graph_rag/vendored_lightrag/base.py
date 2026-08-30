@@ -112,9 +112,7 @@ class QueryParam:
     If None, defaults to top_k value.
     """
 
-    max_entity_tokens: int = int(
-        os.getenv("MAX_ENTITY_TOKENS", str(DEFAULT_MAX_ENTITY_TOKENS))
-    )
+    max_entity_tokens: int = int(os.getenv("MAX_ENTITY_TOKENS", str(DEFAULT_MAX_ENTITY_TOKENS)))
     """Maximum number of tokens allocated for entity context in unified token control system."""
 
     max_relation_tokens: int = int(
@@ -122,9 +120,7 @@ class QueryParam:
     )
     """Maximum number of tokens allocated for relationship context in unified token control system."""
 
-    max_total_tokens: int = int(
-        os.getenv("MAX_TOTAL_TOKENS", str(DEFAULT_MAX_TOTAL_TOKENS))
-    )
+    max_total_tokens: int = int(os.getenv("MAX_TOTAL_TOKENS", str(DEFAULT_MAX_TOTAL_TOKENS)))
     """Maximum total tokens budget for the entire query context (entities + relations + chunks + system prompt)."""
 
     hl_keywords: list[str] = field(default_factory=list)
@@ -502,9 +498,7 @@ class BaseGraphStorage(StorageNameSpace, ABC):
         """
 
     @abstractmethod
-    async def get_edge(
-        self, source_node_id: str, target_node_id: str
-    ) -> dict[str, str] | None:
+    async def get_edge(self, source_node_id: str, target_node_id: str) -> dict[str, str] | None:
         """Get edge properties between two nodes.
 
         Args:
@@ -569,9 +563,7 @@ class BaseGraphStorage(StorageNameSpace, ABC):
             result[(src_id, tgt_id)] = degree
         return result
 
-    async def get_edges_batch(
-        self, pairs: list[dict[str, str]]
-    ) -> dict[tuple[str, str], dict]:
+    async def get_edges_batch(self, pairs: list[dict[str, str]]) -> dict[tuple[str, str], dict]:
         """Get edges as a batch using UNWIND
 
         Default implementation fetches edges one by one.
@@ -587,9 +579,7 @@ class BaseGraphStorage(StorageNameSpace, ABC):
                 result[(src_id, tgt_id)] = edge
         return result
 
-    async def get_nodes_edges_batch(
-        self, node_ids: list[str]
-    ) -> dict[str, list[tuple[str, str]]]:
+    async def get_nodes_edges_batch(self, node_ids: list[str]) -> dict[str, list[tuple[str, str]]]:
         """Get nodes edges as a batch using UNWIND
 
         Default implementation fetches node edges one by one.
@@ -648,9 +638,7 @@ class BaseGraphStorage(StorageNameSpace, ABC):
                 existing.add(node_id)
         return existing
 
-    async def upsert_edges_batch(
-        self, edges: list[tuple[str, str, dict[str, str]]]
-    ) -> None:
+    async def upsert_edges_batch(self, edges: list[tuple[str, str, dict[str, str]]]) -> None:
         """Insert or update multiple edges in a single batch call.
 
         Default implementation falls back to calling upsert_edge() serially.
@@ -853,10 +841,7 @@ class DocProcessingStatus:
         """
         # Apply status conversion logic
         if self.multimodal_processed is not None:
-            if (
-                self.multimodal_processed is False
-                and self.status == DocStatus.PROCESSED
-            ):
+            if self.multimodal_processed is False and self.status == DocStatus.PROCESSED:
                 self.status = DocStatus.PREPROCESSED
 
 
@@ -885,9 +870,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         """Get counts of documents in each status"""
 
     @abstractmethod
-    async def get_docs_by_status(
-        self, status: DocStatus
-    ) -> dict[str, DocProcessingStatus]:
+    async def get_docs_by_status(self, status: DocStatus) -> dict[str, DocProcessingStatus]:
         """Get all documents with a specific status"""
 
     @abstractmethod
@@ -897,9 +880,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         """Get all documents matching any of the given statuses"""
 
     @abstractmethod
-    async def get_docs_by_track_id(
-        self, track_id: str
-    ) -> dict[str, DocProcessingStatus]:
+    async def get_docs_by_track_id(self, track_id: str) -> dict[str, DocProcessingStatus]:
         """Get all documents with a specific track_id"""
 
     @abstractmethod
@@ -947,9 +928,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         """
 
     @abstractmethod
-    async def get_doc_by_file_basename(
-        self, basename: str
-    ) -> tuple[str, dict[str, Any]] | None:
+    async def get_doc_by_file_basename(self, basename: str) -> tuple[str, dict[str, Any]] | None:
         """Get document by canonical file basename.
 
         Used for filename-based deduplication. Callers must pass the canonical
@@ -964,9 +943,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         """
 
     @abstractmethod
-    async def get_doc_by_content_hash(
-        self, content_hash: str
-    ) -> tuple[str, dict[str, Any]] | None:
+    async def get_doc_by_content_hash(self, content_hash: str) -> tuple[str, dict[str, Any]] | None:
         """Get document by content_hash field.
 
         Used for content-hash deduplication of full documents.

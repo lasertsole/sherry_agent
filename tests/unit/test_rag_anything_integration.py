@@ -9,7 +9,6 @@ an SNKV-backed LightRAG.
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 import sys
 from pathlib import Path
@@ -27,9 +26,7 @@ if str(REPO_ROOT) not in sys.path:
 # scripts).  The vendored lightrag uses short absolute imports internally, so
 # the deep dotted ``skills...`` path would create a second module identity with
 # divergent registries -- deliberately avoided here.
-SCRIPTS_DIR = (
-    REPO_ROOT / "skills" / "builtin" / "core" / "multimodal_rag" / "scripts"
-)
+SCRIPTS_DIR = REPO_ROOT / "skills" / "builtin" / "core" / "multimodal_rag" / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -55,15 +52,13 @@ def _build_snkv_lightrag(working_dir: str) -> LightRAG:
 
     Mimics ``get_lightrag()``: importing the vendored package is enough — the
     SNKV backends are native to the vendored ``lightrag.kg`` (baked directly
-    into its registries, no runtime ``register()`` injection).    """
+    into its registries, no runtime ``register()`` injection)."""
     importlib.import_module(_PKG_TOP)
 
     return LightRAG(
         working_dir=working_dir,
         llm_model_func=_stub_llm,
-        embedding_func=EmbeddingFunc(
-            embedding_dim=3, max_token_size=128, func=_stub_embed
-        ),
+        embedding_func=EmbeddingFunc(embedding_dim=3, max_token_size=128, func=_stub_embed),
         kv_storage="SNKVKVStorage",
         vector_storage="SNKVVectorStorage",
         graph_storage="SNKVGraphStorage",

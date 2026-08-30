@@ -36,8 +36,16 @@ HARDLINE_PATTERNS: list[re.Pattern[str]] = [
 # Each entry is (compiled_regex, human_readable_tag).
 # Tags are used in ApprovalResult.pattern_key for allowlist tracking.
 DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)", re.IGNORECASE), "rm_recursive_force"),
-    (re.compile(r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*|-[a-zA-Z]*r[a-zA-Z]*)\s+", re.IGNORECASE), "rm_recursive"),
+    (
+        re.compile(
+            r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)", re.IGNORECASE
+        ),
+        "rm_recursive_force",
+    ),
+    (
+        re.compile(r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*|-[a-zA-Z]*r[a-zA-Z]*)\s+", re.IGNORECASE),
+        "rm_recursive",
+    ),
     (re.compile(r"\bchmod\s+(000|777|666)\b", re.IGNORECASE), "chmod_dangerous"),
     (re.compile(r"\bchown\s+(-R\s+)?.*\s+/", re.IGNORECASE), "chown_recursive_root"),
     (re.compile(r"\bgit\s+push\s+(--force|-f)\b", re.IGNORECASE), "git_force_push"),
@@ -55,8 +63,14 @@ DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(?:pip|pip3|python\s+-m\s+pip)\s+install\s+", re.IGNORECASE), "pip_install"),
     (re.compile(r"\beval\s+\$?\(?\s*(curl|wget)", re.IGNORECASE), "eval_remote_exec"),
     (re.compile(r"\bwget\s+.*\s+&&\s+\w*bash\b", re.IGNORECASE), "wget_then_bash"),
-    (re.compile(r"\bsudo\s+(?:npm|npx|yarn|pip|pip3)\s+install\b", re.IGNORECASE), "sudo_pkg_install"),
-    (re.compile(r"\bdocker\s+run\s+.*(?:--privileged|-v\s+/:/|--volume\s+/:/)", re.IGNORECASE), "docker_privileged_host_mount"),
+    (
+        re.compile(r"\bsudo\s+(?:npm|npx|yarn|pip|pip3)\s+install\b", re.IGNORECASE),
+        "sudo_pkg_install",
+    ),
+    (
+        re.compile(r"\bdocker\s+run\s+.*(?:--privileged|-v\s+/:/|--volume\s+/:/)", re.IGNORECASE),
+        "docker_privileged_host_mount",
+    ),
     (re.compile(r"\bdocker\s+(rm|rmi)\s+(-f|--force)", re.IGNORECASE), "docker_force_remove"),
     (re.compile(r"\bdocker\s+system\s+prune\s+(-a|--all)", re.IGNORECASE), "docker_prune_all"),
     (re.compile(r"\bkubectl\s+delete\s+", re.IGNORECASE), "kubectl_delete"),
@@ -93,8 +107,14 @@ DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\byum\s+remove\s+", re.IGNORECASE), "yum_remove"),
     (re.compile(r"\bpacman\s+-R\s+", re.IGNORECASE), "pacman_remove"),
     (re.compile(r"\bsnap\s+remove\s+", re.IGNORECASE), "snap_remove"),
-    (re.compile(r"\bENV\s+\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=", re.IGNORECASE), "env_secret_set"),
-    (re.compile(r"\bexport\s+\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=", re.IGNORECASE), "export_secret"),
+    (
+        re.compile(r"\bENV\s+\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=", re.IGNORECASE),
+        "env_secret_set",
+    ),
+    (
+        re.compile(r"\bexport\s+\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=", re.IGNORECASE),
+        "export_secret",
+    ),
 ]
 
 

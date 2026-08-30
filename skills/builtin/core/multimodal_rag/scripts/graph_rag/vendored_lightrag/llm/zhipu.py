@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import warnings
 from ..utils import verbose_debug
 
@@ -36,9 +36,7 @@ from typing import Union, List, Optional, Dict
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def zhipu_complete_if_cache(
     prompt: Union[str, List[Dict[str, str]]],
@@ -207,15 +205,11 @@ async def zhipu_complete(
     )
 
 
-@wrap_embedding_func_with_attrs(
-    embedding_dim=1024, max_token_size=8192, model_name="embedding-3"
-)
+@wrap_embedding_func_with_attrs(embedding_dim=1024, max_token_size=8192, model_name="embedding-3")
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def zhipu_embedding(
     texts: list[str],
@@ -246,9 +240,7 @@ async def zhipu_embedding(
             request_kwargs = dict(kwargs)
             if embedding_dim is not None:
                 request_kwargs["dimensions"] = embedding_dim
-            response = client.embeddings.create(
-                model=model, input=[text], **request_kwargs
-            )
+            response = client.embeddings.create(model=model, input=[text], **request_kwargs)
             embeddings.append(response.data[0].embedding)
         except Exception as e:
             raise Exception(f"Error calling ChatGLM Embedding API: {str(e)}")

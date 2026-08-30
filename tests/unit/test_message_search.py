@@ -3,8 +3,7 @@
 import json
 import sqlite3
 import pytest
-from unittest.mock import patch, MagicMock, ANY
-from pydantic import ValidationError
+from unittest.mock import patch, MagicMock
 
 from agent.tools.message_search import (
     MessageSearchSchema,
@@ -13,7 +12,6 @@ from agent.tools.message_search import (
     _truncate_around_matches,
     _recent_sessions,
     session_search,
-    _message_search_tool,
     build_message_search_tool,
 )
 
@@ -21,6 +19,7 @@ from agent.tools.message_search import (
 # ============================================================================
 # MessageSearchSchema
 # ============================================================================
+
 
 class TestMessageSearchSchema:
     def test_defaults(self):
@@ -68,6 +67,7 @@ class TestMessageSearchSchema:
 # _tool_error
 # ============================================================================
 
+
 class TestToolError:
     def test_basic_error(self):
         result = json.loads(_tool_error("something went wrong"))
@@ -92,6 +92,7 @@ class TestToolError:
 # _format_conversation
 # ============================================================================
 
+
 class TestFormatConversation:
     def test_empty_messages(self):
         assert _format_conversation([]) == ""
@@ -107,26 +108,30 @@ class TestFormatConversation:
         assert "[ASSISTANT]: hi there" in result
 
     def test_ai_with_tool_calls_list(self):
-        msgs = [{
-            "role": "ai",
-            "content": "Let me check",
-            "tool_calls": [
-                {"name": "web_search"},
-                {"name": "read_file"},
-            ],
-        }]
+        msgs = [
+            {
+                "role": "ai",
+                "content": "Let me check",
+                "tool_calls": [
+                    {"name": "web_search"},
+                    {"name": "read_file"},
+                ],
+            }
+        ]
         result = _format_conversation(msgs)
         assert "[Called: web_search, read_file]" in result
         assert "[ASSISTANT]: Let me check" in result
 
     def test_ai_with_tool_calls_function_dict(self):
-        msgs = [{
-            "role": "ai",
-            "content": "",
-            "tool_calls": [
-                {"function": {"name": "python_repl"}},
-            ],
-        }]
+        msgs = [
+            {
+                "role": "ai",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "python_repl"}},
+                ],
+            }
+        ]
         result = _format_conversation(msgs)
         assert "[Called: python_repl]" in result
 
@@ -174,6 +179,7 @@ class TestFormatConversation:
 # ============================================================================
 # _truncate_around_matches
 # ============================================================================
+
 
 class TestTruncateAroundMatches:
     def test_shorter_than_max(self):
@@ -228,13 +234,18 @@ class TestTruncateAroundMatches:
 # _recent_sessions (browse mode)
 # ============================================================================
 
+
 class TestRecentSessions:
     def test_returns_json_with_results(self):
         mock_db = MagicMock(spec=sqlite3.Connection)
         mock_cursor = MagicMock()
         mock_db.execute.return_value = mock_cursor
         mock_cursor.fetchall.return_value = [
-            {"session_id": "s1", "first_user_msg": "hello world", "last_activity": "20260714120000"},
+            {
+                "session_id": "s1",
+                "first_user_msg": "hello world",
+                "last_activity": "20260714120000",
+            },
             {"session_id": "s2", "first_user_msg": None, "last_activity": "20260713120000"},
         ]
 
@@ -287,6 +298,7 @@ class TestRecentSessions:
 # ============================================================================
 # session_search
 # ============================================================================
+
 
 class TestSessionSearch:
     @pytest.fixture
@@ -377,7 +389,9 @@ class TestSessionSearch:
         """search_messages raises → tool_error returned."""
         with (
             patch("agent.tools.message_search.get_db", return_value=mock_db),
-            patch("agent.tools.message_search.search_messages", side_effect=Exception("fts5 crash")),
+            patch(
+                "agent.tools.message_search.search_messages", side_effect=Exception("fts5 crash")
+            ),
         ):
             result = json.loads(session_search("query", "s", limit=3))
         assert "error" in result
@@ -399,6 +413,7 @@ class TestSessionSearch:
 # _message_search_tool (the actual @tool-decorated function)
 # ============================================================================
 
+
 class TestMessageSearchTool:
     def test_tool_decorated(self):
         """build_message_search_tool returns a BaseTool."""
@@ -415,6 +430,7 @@ class TestMessageSearchTool:
 # ============================================================================
 # Edge cases for session_search internals
 # ============================================================================
+
 
 class TestSessionSearchEdgeCases:
     def test_role_filter_empty_string(self):

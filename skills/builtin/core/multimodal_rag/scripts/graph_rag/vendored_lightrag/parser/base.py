@@ -1,4 +1,4 @@
-﻿"""Unified parser contract for native + external parser engines.
+"""Unified parser contract for native + external parser engines.
 
 Every engine (native docx, mineru, docling, legacy, plus the internal
 ``reuse``/``passthrough`` format handlers) implements :class:`BaseParser`.
@@ -87,9 +87,7 @@ class ParseContext:
         document_name = normalize_document_file_path(self.file_path)
         if document_name == "unknown_source":
             document_name = source_path.name or f"{self.doc_id}.bin"
-        parsed_dir = parsed_artifact_dir_for(
-            document_name, parent_hint=source_path.parent
-        )
+        parsed_dir = parsed_artifact_dir_for(document_name, parent_hint=source_path.parent)
         return ResolvedSource(source_path, document_name, parsed_dir)
 
     async def archive_source(self, source_path: str) -> str | None:

@@ -6,6 +6,7 @@ from .registry import RunOutcome
 
 class DeliveryContext(BaseModel):
     """Payload passed through the announce pipeline when delivering a sub-agent result."""
+
     requester_session_key: str
     child_session_key: str
     child_label: str | None = None

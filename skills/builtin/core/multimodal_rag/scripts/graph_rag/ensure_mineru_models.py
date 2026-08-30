@@ -35,6 +35,7 @@ PROJECT_CONFIG_FILE = EXTRACT_MODELS_DIR / "mineru_config.json"
 HOME_DIR = Path.home()
 USER_CONFIG_FILE = HOME_DIR / "mineru.json"
 
+
 # ──────────────────────────────────────────────
 # 1. 配置读写
 # ──────────────────────────────────────────────
@@ -100,9 +101,13 @@ def _find_modelscope_cache_dir(model_name: str, model_type_label: str) -> str | 
                 snapshots = list(snapshots_dir.iterdir())
                 if snapshots:
                     snapshot_dir = max(snapshots, key=lambda p: p.stat().st_mtime)
-                    logger.debug(f"Found {model_type_label} model in modelscope cache: {snapshot_dir}")
+                    logger.debug(
+                        f"Found {model_type_label} model in modelscope cache: {snapshot_dir}"
+                    )
                     return str(snapshot_dir)
-            logger.debug(f"Found {model_type_label} model in modelscope cache (no snapshots): {candidate}")
+            logger.debug(
+                f"Found {model_type_label} model in modelscope cache (no snapshots): {candidate}"
+            )
             return str(candidate)
 
     return None
@@ -223,8 +228,10 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
         result = subprocess.run(
             [
                 str(MINERU_DOWNLOAD_SCRIPT),
-                "-s", attempt_source,
-                "-m", model_type,
+                "-s",
+                attempt_source,
+                "-m",
+                model_type,
             ],
             capture_output=True,
             text=True,
@@ -315,7 +322,9 @@ def ensure_mineru_models(source: str = "huggingface", download_vlm: bool = True)
         except RuntimeError as e:
             logger.warning(f"VLM model handling failed (continuing without VLM): {e}")
 
-    logger.debug(f"MinerU models configured: pipeline={pipeline_path}, vlm={vlm_path or '(not configured)'}")
+    logger.debug(
+        f"MinerU models configured: pipeline={pipeline_path}, vlm={vlm_path or '(not configured)'}"
+    )
     return {"pipeline": pipeline_path, "vlm": vlm_path}
 
 
@@ -342,9 +351,12 @@ def is_vlm_configured() -> bool:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Ensure MinerU pipeline & VLM models are in the project directory.")
+    parser = argparse.ArgumentParser(
+        description="Ensure MinerU pipeline & VLM models are in the project directory."
+    )
     parser.add_argument(
-        "-s", "--source",
+        "-s",
+        "--source",
         choices=["huggingface", "modelscope"],
         default="huggingface",
         help="Model download source (default: huggingface)",

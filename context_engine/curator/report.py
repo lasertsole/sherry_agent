@@ -26,11 +26,19 @@ def _build_rename_summary(
     if not removed:
         return ""
 
-    heuristic = _classify_removed_skills(removed=removed, added=added, after_names=after_names, tool_calls=tool_calls)
+    heuristic = _classify_removed_skills(
+        removed=removed, added=added, after_names=after_names, tool_calls=tool_calls
+    )
     model_block = _parse_structured_summary(model_final)
     destinations = set(after_names) | set(added)
     absorbed_declarations = _extract_absorbed_into_declarations(tool_calls)
-    classification = _reconcile_classification(removed=removed, heuristic=heuristic, model_block=model_block, destinations=destinations, absorbed_declarations=absorbed_declarations)
+    classification = _reconcile_classification(
+        removed=removed,
+        heuristic=heuristic,
+        model_block=model_block,
+        destinations=destinations,
+        absorbed_declarations=absorbed_declarations,
+    )
 
     consolidated = classification["consolidated"]
     pruned = classification["pruned"]
@@ -41,7 +49,7 @@ def _build_rename_summary(
     for entry in consolidated[:SHOW]:
         lines.append(f"  - {entry.get('name', '?')} -> {entry.get('into', '?')}")
         shown += 1
-    for entry in pruned[:SHOW - shown]:
+    for entry in pruned[: SHOW - shown]:
         name = entry.get("name", "?") if isinstance(entry, dict) else str(entry)
         lines.append(f"  - {name} — pruned (stale)")
         shown += 1
@@ -99,11 +107,24 @@ def _write_run_report(
         name = tc.get("name", "unknown")
         tc_counts[name] = tc_counts.get(name, 0) + 1
 
-    heuristic = _classify_removed_skills(removed=removed, added=added, after_names=after_names, tool_calls=llm_meta.get("tool_calls", []) or [])
+    heuristic = _classify_removed_skills(
+        removed=removed,
+        added=added,
+        after_names=after_names,
+        tool_calls=llm_meta.get("tool_calls", []) or [],
+    )
     model_block = _parse_structured_summary(llm_meta.get("final", "") or "")
     destinations = set(after_names) | set(added or [])
-    absorbed_declarations = _extract_absorbed_into_declarations(llm_meta.get("tool_calls", []) or [])
-    classification = _reconcile_classification(removed=removed, heuristic=heuristic, model_block=model_block, destinations=destinations, absorbed_declarations=absorbed_declarations)
+    absorbed_declarations = _extract_absorbed_into_declarations(
+        llm_meta.get("tool_calls", []) or []
+    )
+    classification = _reconcile_classification(
+        removed=removed,
+        heuristic=heuristic,
+        model_block=model_block,
+        destinations=destinations,
+        absorbed_declarations=absorbed_declarations,
+    )
     consolidated = classification["consolidated"]
     pruned = classification["pruned"]
 
@@ -114,23 +135,34 @@ def _write_run_report(
         "provider": llm_meta.get("provider", ""),
         "auto_transitions": auto_counts,
         "counts": {
-            "before": len(before_names), "after": len(after_names),
+            "before": len(before_names),
+            "after": len(after_names),
             "delta": len(after_names) - len(before_names),
-            "archived_this_run": len(removed), "added_this_run": len(added),
-            "consolidated_this_run": len(consolidated), "pruned_this_run": len(pruned),
-            "state_transitions": len(transitions), "tool_calls_total": sum(tc_counts.values()),
+            "archived_this_run": len(removed),
+            "added_this_run": len(added),
+            "consolidated_this_run": len(consolidated),
+            "pruned_this_run": len(pruned),
+            "state_transitions": len(transitions),
+            "tool_calls_total": sum(tc_counts.values()),
         },
         "tool_call_counts": tc_counts,
-        "archived": removed, "consolidated": consolidated, "pruned": pruned,
-        "pruned_names": [p["name"] for p in pruned], "added": added,
+        "archived": removed,
+        "consolidated": consolidated,
+        "pruned": pruned,
+        "pruned_names": [p["name"] for p in pruned],
+        "added": added,
         "state_transitions": transitions,
         "auto_summary": auto_summary,
-        "llm_final": llm_meta.get("final", ""), "llm_summary": llm_meta.get("summary", ""),
-        "llm_error": llm_meta.get("error"), "tool_calls": llm_meta.get("tool_calls", []),
+        "llm_final": llm_meta.get("final", ""),
+        "llm_summary": llm_meta.get("summary", ""),
+        "llm_error": llm_meta.get("error"),
+        "tool_calls": llm_meta.get("tool_calls", []),
     }
 
     try:
-        (run_dir / "run.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        (run_dir / "run.json").write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
     except Exception as e:
         logger.debug("Curator run.json write failed: {}", e)
 
@@ -153,7 +185,9 @@ def _render_report_markdown(p: dict[str, Any]) -> str:
     model = p.get("model") or "(not resolved)"
     prov = p.get("provider") or "(not resolved)"
     counts = p.get("counts") or {}
-    lines.append(f"Model: `{model}` via `{prov}`  ·  Duration: {dur_label}  ·  Skills: {counts.get('before', 0)} → {counts.get('after', 0)} ({counts.get('delta', 0):+d})\n")
+    lines.append(
+        f"Model: `{model}` via `{prov}`  ·  Duration: {dur_label}  ·  Skills: {counts.get('before', 0)} → {counts.get('after', 0)} ({counts.get('delta', 0):+d})\n"
+    )
 
     error = p.get("llm_error")
     if error:
@@ -169,7 +203,9 @@ def _render_report_markdown(p: dict[str, Any]) -> str:
 
     tc_counts = p.get("tool_call_counts") or {}
     lines.append("## LLM consolidation pass\n")
-    lines.append(f"- tool calls: **{counts.get('tool_calls_total', 0)}** (by name: {', '.join(f'{k}={v}' for k, v in sorted(tc_counts.items())) or 'none'})")
+    lines.append(
+        f"- tool calls: **{counts.get('tool_calls_total', 0)}** (by name: {', '.join(f'{k}={v}' for k, v in sorted(tc_counts.items())) or 'none'})"
+    )
     lines.append(f"- consolidated: **{counts.get('consolidated_this_run', 0)}**")
     lines.append(f"- pruned: **{counts.get('pruned_this_run', 0)}**")
     lines.append("")

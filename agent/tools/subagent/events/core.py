@@ -47,6 +47,7 @@ class EventBus:
 
     def __init__(self) -> None:
         import collections
+
         self._buffer: collections.deque[InboundMessage] = collections.deque()
         self._lock = asyncio.Lock()
 

@@ -158,8 +158,7 @@ def audit_samples(
 
         query_tokens = tokenize(question)
         scored_documents = [
-            (score_query(query_tokens, document, idf), document)
-            for document in documents
+            (score_query(query_tokens, document, idf), document) for document in documents
         ]
         ranked = [
             document

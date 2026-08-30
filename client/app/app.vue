@@ -1,55 +1,66 @@
 <template>
   <NuxtLayout>
-    <!-- 顶层 <NuxtPage> 不再包裹 keepalive：per-session 状态由 home/index.vue 内层
-         <NuxtPage :page-key="route.params.sid"> 的 KeepAlive 按 page-key 缓存。
-         若两层同时 keepalive（嵌套 KeepAlive），切换 session 时外层按路由名缓存
-         home/index 单槽、内层按 page-key 换子页，二者节奏不一致会在首帧产生
-         「新旧子页 DOM 短暂共存」的错位残影。移除外层冗余 keepalive 消除该竞态。 -->
-    <NuxtPage/>
+    <!-- Top-level <NuxtPage> no longer wraps keepalive: per-session state is cached by the
+         KeepAlive of the inner <NuxtPage :page-key="route.params.sid"> inside home/index.vue,
+         keyed by page-key.
+         If both layers keepalive at once (nested KeepAlive), when switching sessions the outer
+         layer caches by route name (single slot for home/index) while the inner layer swaps child
+         pages by page-key; the two rhythms disagree and the first frame can show a misaligned
+         ghost of "old and new child pages briefly coexisting". Removing the redundant outer
+         keepalive eliminates this race. -->
+    <NuxtPage />
   </NuxtLayout>
   <ImagePreviewOverlay />
   <Toast position="bottom-right" />
-  <!-- 断网 / 后端不可达时的全局连接状态提示条（红色=断网；琥珀=网络在线但后端不可达） -->
+  <!-- Global confirm dialog (ConfirmationService is auto-registered along with components by
+       @primevue/nuxt-module): destructive operations such as deleting a session/background task
+       all go through useConfirm(), replacing native window.confirm -->
+  <ConfirmDialog />
+  <!-- Global connection status banner when offline / backend unreachable (red = offline;
+       amber = network online but backend unreachable) -->
   <Transition name="conn-fade">
     <div
       v-if="showConnectionBanner"
       class="conn-banner"
       :class="{ 'conn-banner--warn': isOnline !== false && backendStatus === 'down' }"
       role="status"
-      aria-live="polite"
-    >
+      aria-live="polite">
       {{ connectionBannerText }}
     </div>
   </Transition>
 </template>
 
 <script lang="ts" setup>
-// 客户端初始化恢复所选语言（配合 nuxt.config.ts 的 detectBrowserLanguage: false）。
-// 背景：Nuxt i18n 的浏览器语言自动检测在 prefix_except_default 下会把 /home/:id 自动重定向
-// 到 /en/home/:id（带前缀路由不存在）导致 i18n 失效，故已在配置里彻底关闭。此处由我们自行
-// 接管：
-//   1) 优先读持久化偏好 cookie（key: i18n_redirected，即 nuxt-i18n 模块 setLocale 写入的
-//      默认 key）——用户上次选择的语言优先级最高；
-//   2) 其次浏览器语言匹配合法 locale (zh/en/ja/ko)；
-//   3) 匹配不中默认回退英文 en。
-// 统一通过 setLocale() 生效：它既会加载该 locale 的语言包（避免首帧渲染原始 key），又会在
-// 无偏好 cookie 时写入偏好 cookie，刷新后即可恢复语言且路由保持稳定。
+// Client-side initialization restores the selected locale (paired with detectBrowserLanguage: false in nuxt.config.ts).
+// Background: Nuxt i18n's browser-language auto detection under prefix_except_default would auto-redirect
+// /home/:id to /en/home/:id (the prefixed route does not exist), breaking i18n, so it has been fully
+// disabled in the config. We take over here ourselves:
+//   1) First read the persisted preference cookie (key: i18n_redirected, the default key written by
+//      the nuxt-i18n module's setLocale) — the user's last chosen locale has the highest priority;
+//   2) Next match the browser language against valid locales (zh/en/ja/ko);
+//   3) If nothing matches, fall back to English (en) by default.
+// Everything goes through setLocale(): it both loads that locale's language pack (avoiding rendering
+// raw keys on the first frame) and, when no preference cookie exists, writes the preference cookie,
+// so the language is restored after refresh and the route stays stable.
 const { setLocale, t } = useI18n();
 
-// 全局 toast 通知层：把 useToast() 返回的实例注入 toast 注册表，供
-// requestApi / connection 等模块在非组件上下文（如请求拦截器）中弹 toast。
+// Global toast notification layer: injects the instance returned by useToast() into the toast
+// registry so modules like requestApi / connection can show toasts outside component context
+// (e.g. request interceptors).
 registerToastApi(useToast());
 
-// 页面级错误捕获的**顶层兜底**（03-errorCaptured工厂函数.md §3.3 App 层捕获）：
-// 捕获 NuxtPage 之外的子组件（ImagePreviewOverlay / 连接横幅 / 布局等）错误。
-// 各页面自身已在 setup 中调用 useErrorCaptured() 按页捕获（return false 阻断冒泡，
-// 页面内错误不会到达这里）；errorCaptured.ts 的 toast 依赖本行的 registerToastApi。
+// Top-level fallback for page-level error capture (03-errorCaptured factory doc §3.3, App-layer capture):
+// captures errors from child components outside NuxtPage (ImagePreviewOverlay / connection banner /
+// layout, etc.).
+// Each page already calls useErrorCaptured() in its own setup to capture per page (return false stops
+// propagation, so in-page errors never reach here); errorCaptured.ts's toast depends on registerToastApi
+// on the line above.
 useErrorCaptured();
 
-// 网络 / 后端连通性监控（isOnline、backendStatus、startConnectionWatch 等）。
+// Network / backend connectivity monitoring (isOnline, backendStatus, startConnectionWatch, etc.).
 const { isOnline, backendStatus, startConnectionWatch } = useConnection();
 
-// 连接状态提示条：仅当浏览器断网或后端不可达时展示。
+// Connection status banner: shown only when the browser is offline or the backend is unreachable.
 const showConnectionBanner = computed(() => {
   return isOnline.value === false || backendStatus.value === 'down';
 });
@@ -58,38 +69,40 @@ const connectionBannerText = computed(() => {
   return t('connection.backendDown');
 });
 
-// nuxt-i18n 在 detectBrowserLanguage: false 时默认使用的偏好 cookie key
+// Preference cookie key used by nuxt-i18n by default when detectBrowserLanguage: false
 const PREF_COOKIE = 'i18n_redirected';
 const LOCALE_CODES = ['zh', 'en', 'ja', 'ko'] as const;
 type LocaleCode = (typeof LOCALE_CODES)[number];
 
-// 浏览器匹配不中时的默认回退语言（要求：不匹配系统语言时默认英文）
+// Default fallback language when the browser does not match (requirement: default to English when the system language does not match)
 const DEFAULT_LOCALE = 'en' as const;
 
 onMounted(async () => {
   if (!import.meta.client) return;
 
-  // 启动网络/后端连通性轮询监控（驱动全局连接状态提示条 + 去重 toast）。
-  // 返回的 stop 句柄无需保存：app.vue 是根组件，与页面同生命周期。
+  // Start the network/backend connectivity polling monitor (drives the global connection status
+  // banner + deduplicated toasts).
+  // The returned stop handle needs no saving: app.vue is the root component and shares the page's
+  // lifecycle.
   void startConnectionWatch();
 
-  // 1) cookie：用户上次选择的语言（优先级最高，持久化偏好）
+  // 1) Cookie: the user's last chosen language (highest priority, persisted preference)
   const cookieLocale = readCookie(PREF_COOKIE);
   if (cookieLocale && (LOCALE_CODES as readonly string[]).includes(cookieLocale)) {
     await setLocale(cookieLocale as LocaleCode);
     return;
   }
 
-  // 2) 浏览器语言（初次访问），仅取前两位匹配到 zh/en/ja/ko 的
+  // 2) Browser language (first visit), taking only the first two characters matched against zh/en/ja/ko
   const browserLang = navigator.language?.toLowerCase().slice(0, 2) ?? '';
-  const matched = (LOCALE_CODES as readonly string[]).find((c) => c === browserLang);
+  const matched = (LOCALE_CODES as readonly string[]).find(c => c === browserLang);
   if (matched) {
     await setLocale(matched as LocaleCode);
     persistLocalePreference(matched as LocaleCode);
     return;
   }
 
-  // 3) 浏览器语言不匹配任何 locale -> 回退默认英文
+  // 3) Browser language matches no locale -> fall back to default English
   await setLocale(DEFAULT_LOCALE);
   persistLocalePreference(DEFAULT_LOCALE);
 });
@@ -106,23 +119,24 @@ function readCookie(name: string): string | null {
 }
 
 /**
- * 手动写入语言偏好 cookie（key: i18n_redirected）。
+ * Manually writes the language preference cookie (key: i18n_redirected).
  *
- * nuxt.config.ts 设 `detectBrowserLanguage: false` 后，模块把检测配置归一化为 `{}`，
- * 使 `setCookieLocale` 因 `detectConfig.useCookie` 为 falsy 而变成空操作——模块绝不写 cookie。
- * 因此 `setLocale` 只能即时切换，无法持久化。为满足「刷新/重开仍是偏好语言」，由我们手动
- * 写入偏好 cookie（与初载时的 readCookie 配合同套 key；与 home/index.vue 的
- * persistLocalePreference 行为一致）。
+ * After nuxt.config.ts sets `detectBrowserLanguage: false`, the module normalizes the detection
+ * config to `{}`, making `setCookieLocale` a no-op because `detectConfig.useCookie` is falsy —
+ * the module never writes the cookie itself.
+ * Therefore `setLocale` can only switch immediately and cannot persist. To satisfy "still the
+ * preferred language after refresh/reopen", we write the preference cookie manually (same key set
+ * as readCookie on first load; behavior consistent with persistLocalePreference in home/index.vue).
  */
 function persistLocalePreference(code: LocaleCode) {
   if (!import.meta.client) return;
-  // document.cookie 同步写入，同站路径，约一年有效期
+  // Synchronous write via document.cookie; same-site path, roughly one-year max-age
   document.cookie = `${PREF_COOKIE}=${encodeURIComponent(code)}; path=/; max-age=31536000; SameSite=Lax`;
 }
 </script>
 
 <style lang="scss" scoped>
-/* 全局连接状态提示条（固定吸底，不挤压布局） */
+/* Global connection status banner (fixed to the bottom, does not squeeze the layout) */
 .conn-banner {
   position: fixed;
   bottom: 0;
@@ -134,16 +148,16 @@ function persistLocalePreference(code: LocaleCode) {
   font-size: 0.875rem;
   font-weight: 500;
   color: #fff;
-  background-color: #dc2626; /* red-600：浏览器离线 */
+  background-color: #dc2626; /* red-600: browser offline */
   box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
 }
 
-/* 网络在线但后端不可达：降一级为琥珀色，减少「断网」恐慌 */
+/* Network online but backend unreachable: step down one level to amber, reducing "offline" panic */
 .conn-banner--warn {
   background-color: #d97706; /* amber-600 */
 }
 
-/* 横幅淡入/淡出（配合 <Transition name="conn-fade">） */
+/* Banner fade in/out (paired with <Transition name="conn-fade">) */
 .conn-fade-enter-active,
 .conn-fade-leave-active {
   transition: opacity 0.25s ease;

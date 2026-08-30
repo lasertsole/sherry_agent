@@ -88,8 +88,12 @@ def _render_candidate_list() -> str:
 
 def _run_llm_review(prompt: str) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "final": "", "summary": "", "model": "", "provider": "",
-        "tool_calls": [], "error": None,
+        "final": "",
+        "summary": "",
+        "model": "",
+        "provider": "",
+        "tool_calls": [],
+        "error": None,
     }
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -97,10 +101,12 @@ def _run_llm_review(prompt: str) -> dict[str, Any]:
 
         llm = build_main_llm(temperature=0.3)
         system_msg = "You are a skill librarian. Review and consolidate overlapping skills into umbrella skills."
-        response = llm.invoke([
-            SystemMessage(content=system_msg),
-            HumanMessage(content=prompt),
-        ])
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=prompt),
+            ]
+        )
         final = str(response.content).strip() if response and response.content else ""
         result["final"] = final
         result["summary"] = (final[:240] + "…") if len(final) > 240 else (final or "no change")
@@ -122,7 +128,13 @@ def run_curator_review(
     if dry_run:
         try:
             report = agent_created_report()
-            counts = {"checked": len(report), "marked_stale": 0, "archived": 0, "reactivated": 0, "seeded": 0}
+            counts = {
+                "checked": len(report),
+                "marked_stale": 0,
+                "archived": 0,
+                "reactivated": 0,
+                "seeded": 0,
+            }
         except Exception:
             counts = {"checked": 0, "marked_stale": 0, "archived": 0, "reactivated": 0, "seeded": 0}
     else:
@@ -156,14 +168,30 @@ def run_curator_review(
 
     if not consolidate:
         final_summary = f"{prefix}{auto_summary}; llm: skipped (consolidation off)"
-        llm_meta: dict[str, Any] = {"final": "", "summary": "skipped (consolidation off)", "model": "", "provider": "", "tool_calls": [], "error": None}
+        llm_meta: dict[str, Any] = {
+            "final": "",
+            "summary": "skipped (consolidation off)",
+            "model": "",
+            "provider": "",
+            "tool_calls": [],
+            "error": None,
+        }
         elapsed = (datetime.now(timezone.utc) - start).total_seconds()
         try:
             after_report = agent_created_report()
         except Exception:
             after_report = []
         try:
-            report_path = _write_run_report(started_at=start, elapsed_seconds=elapsed, auto_counts=counts, auto_summary=auto_summary, before_report=before_report, before_names=before_names, after_report=after_report, llm_meta=llm_meta)
+            report_path = _write_run_report(
+                started_at=start,
+                elapsed_seconds=elapsed,
+                auto_counts=counts,
+                auto_summary=auto_summary,
+                before_report=before_report,
+                before_names=before_names,
+                after_report=after_report,
+                llm_meta=llm_meta,
+            )
             rp = str(report_path) if report_path else None
         except Exception:
             rp = None
@@ -184,7 +212,14 @@ def run_curator_review(
             "summary_so_far": auto_summary,
         }
 
-    llm_meta: dict[str, Any] = {"final": "", "summary": "", "model": "", "provider": "", "tool_calls": [], "error": None}
+    llm_meta: dict[str, Any] = {
+        "final": "",
+        "summary": "",
+        "model": "",
+        "provider": "",
+        "tool_calls": [],
+        "error": None,
+    }
     try:
         candidate_list = _render_candidate_list()
         if "No agent-created skills" in candidate_list:
@@ -199,10 +234,22 @@ def run_curator_review(
             final_summary = f"{prefix}{auto_summary}; llm: {llm_meta.get('summary', 'no change')}"
     except Exception as e:
         final_summary = f"{prefix}{auto_summary}; llm: error ({e})"
-        llm_meta = {"final": "", "summary": f"error ({e})", "model": "", "provider": "", "tool_calls": [], "error": str(e)}
+        llm_meta = {
+            "final": "",
+            "summary": f"error ({e})",
+            "model": "",
+            "provider": "",
+            "tool_calls": [],
+            "error": str(e),
+        }
 
     try:
-        rename_lines = _build_rename_summary(before_names=before_names, after_report=agent_created_report(), tool_calls=llm_meta.get("tool_calls", []) or [], model_final=llm_meta.get("final", "") or "")
+        rename_lines = _build_rename_summary(
+            before_names=before_names,
+            after_report=agent_created_report(),
+            tool_calls=llm_meta.get("tool_calls", []) or [],
+            model_final=llm_meta.get("final", "") or "",
+        )
         if rename_lines:
             final_summary = f"{final_summary}\n{rename_lines}"
     except Exception as e:
@@ -220,7 +267,16 @@ def run_curator_review(
     except Exception:
         after_report = []
     try:
-        report_path = _write_run_report(started_at=start, elapsed_seconds=elapsed, auto_counts=counts, auto_summary=auto_summary, before_report=before_report, before_names=before_names, after_report=after_report, llm_meta=llm_meta)
+        report_path = _write_run_report(
+            started_at=start,
+            elapsed_seconds=elapsed,
+            auto_counts=counts,
+            auto_summary=auto_summary,
+            before_report=before_report,
+            before_names=before_names,
+            after_report=after_report,
+            llm_meta=llm_meta,
+        )
         rp = str(report_path) if report_path else None
     except Exception:
         rp = None
@@ -270,7 +326,14 @@ def maybe_run_curator(
 
 
 _UMBRELLA_FILE_DELIM = "<<<"  # file-path block delimiter; a line matching '<<<PATH>>>'
-_UMBRELLA_ALLOWED_SUBDIRS = ("references", "templates", "scripts", "assets", "examples", "resources")
+_UMBRELLA_ALLOWED_SUBDIRS = (
+    "references",
+    "templates",
+    "scripts",
+    "assets",
+    "examples",
+    "resources",
+)
 
 
 def _parse_multifile_umbrella(text: str) -> tuple[str, dict[str, str]]:
@@ -319,7 +382,9 @@ def _parse_multifile_umbrella(text: str) -> tuple[str, dict[str, str]]:
     return main, files
 
 
-def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: str, file_inventory: str = "") -> tuple[str, dict[str, str]]:
+def _generate_umbrella_skill(
+    umbrella: str, reasons: list[str], source_content: str, file_inventory: str = ""
+) -> tuple[str, dict[str, str]]:
     """Generate an umbrella SKILL.md plus optional supporting files.
 
     Returns ``(main_content, supporting_files)`` where ``supporting_files`` maps
@@ -327,7 +392,10 @@ def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: 
     output cannot be split into blocks, ``supporting_files`` is empty and the
     whole response is used as the main content (historical behavior).
     """
-    from agent.tools.skill_tools.skill_manage import _UMBRELLA_SKILL_CHAR_TARGET, split_oversized_skill
+    from agent.tools.skill_tools.skill_manage import (
+        _UMBRELLA_SKILL_CHAR_TARGET,
+        split_oversized_skill,
+    )
     from langchain_core.messages import HumanMessage, SystemMessage
     from models import build_main_llm
 
@@ -375,14 +443,18 @@ def _generate_umbrella_skill(umbrella: str, reasons: list[str], source_content: 
     if file_inventory:
         user_msg += f"\n\nMigrated supporting files (already moved into the umbrella skill directory):\n\n{file_inventory}"
     try:
-        response = llm.invoke([
-            SystemMessage(content=system_msg),
-            HumanMessage(content=user_msg),
-        ])
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=user_msg),
+            ]
+        )
         text = str(response.content).strip() if response and response.content else ""
         main_content, supporting_files = _parse_multifile_umbrella(text)
         if main_content:
-            main_content, supporting_files = split_oversized_skill(main_content, _UMBRELLA_SKILL_CHAR_TARGET, supporting_files)
+            main_content, supporting_files = split_oversized_skill(
+                main_content, _UMBRELLA_SKILL_CHAR_TARGET, supporting_files
+            )
             return main_content, supporting_files
     except Exception as e:
         logger.warning("Curator LLM umbrella generation failed: {}", e)
@@ -419,6 +491,7 @@ def _refresh_all_cached_system_prompts() -> None:
         # returns the freshly-consolidated/pruned skill list instead of the
         # stale snapshot (and so the on-disk file itself is kept in sync).
         from skills import build_skills_snapshot
+
         build_skills_snapshot()
 
         session_ids = state_register_db.get_all_session_ids()
@@ -488,7 +561,9 @@ def _apply_consolidation(llm_final: str) -> None:
                         file_inventory_lines.append(f"- {subdir}/{f.name} (from {src_name})")
 
         file_inventory = "\n".join(file_inventory_lines)
-        umbrella_content, supporting_files = _generate_umbrella_skill(umbrella, reasons, merged_content, file_inventory)
+        umbrella_content, supporting_files = _generate_umbrella_skill(
+            umbrella, reasons, merged_content, file_inventory
+        )
 
         if umbrella_content.startswith("---"):
             umbrella_content = umbrella_content + "\n"
@@ -496,7 +571,9 @@ def _apply_consolidation(llm_final: str) -> None:
         if result.get("success"):
             logger.info("Curator created umbrella skill: {}", umbrella)
         else:
-            logger.warning("Curator failed to create umbrella '{}': {}", umbrella, result.get("error"))
+            logger.warning(
+                "Curator failed to create umbrella '{}': {}", umbrella, result.get("error")
+            )
             continue
 
         seed_record_if_missing(umbrella)
@@ -509,7 +586,9 @@ def _apply_consolidation(llm_final: str) -> None:
             if wr.get("success"):
                 logger.debug("Curator wrote umbrella support file {}/{}", umbrella, file_path)
             else:
-                logger.warning("Curator failed to write {}/{}: {}", umbrella, file_path, wr.get("error"))
+                logger.warning(
+                    "Curator failed to write {}/{}: {}", umbrella, file_path, wr.get("error")
+                )
 
         for entry in merged_skills:
             src_name = entry.get("from", "").strip()
@@ -525,14 +604,22 @@ def _apply_consolidation(llm_final: str) -> None:
                         continue
                     file_path = f"{subdir}/{f.name}"
                     if file_path in written:
-                        logger.debug("Curator: skip migrating {}/{} (umbrella support file already written)", src_name, file_path)
+                        logger.debug(
+                            "Curator: skip migrating {}/{} (umbrella support file already written)",
+                            src_name,
+                            file_path,
+                        )
                         continue
                     file_content = f.read_text(encoding="utf-8")
                     wr = _write_file(umbrella, file_path, file_content)
                     if wr.get("success"):
-                        logger.debug("Curator migrated {}/{} -> {}/{}", src_name, f.name, umbrella, f.name)
+                        logger.debug(
+                            "Curator migrated {}/{} -> {}/{}", src_name, f.name, umbrella, f.name
+                        )
                     else:
-                        logger.warning("Curator failed to migrate {}/{}: {}", src_name, f.name, wr.get("error"))
+                        logger.warning(
+                            "Curator failed to migrate {}/{}: {}", src_name, f.name, wr.get("error")
+                        )
 
     for entry in consolidations:
         name = entry.get("from", "").strip()

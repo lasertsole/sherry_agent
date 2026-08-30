@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 RAGAS Evaluation Script for LightRAG System
 
@@ -139,14 +139,11 @@ class RAGEvaluator:
         # Validate RAGAS dependencies are installed
         if not RAGAS_AVAILABLE:
             raise ImportError(
-                "RAGAS dependencies not installed. "
-                "Install with: pip install ragas datasets"
+                "RAGAS dependencies not installed. Install with: pip install ragas datasets"
             )
 
         # Configure evaluation LLM (for RAGAS scoring)
-        eval_llm_api_key = os.getenv("EVAL_LLM_BINDING_API_KEY") or os.getenv(
-            "OPENAI_API_KEY"
-        )
+        eval_llm_api_key = os.getenv("EVAL_LLM_BINDING_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not eval_llm_api_key:
             raise EnvironmentError(
                 "EVAL_LLM_BINDING_API_KEY or OPENAI_API_KEY is required for evaluation. "
@@ -164,9 +161,7 @@ class RAGEvaluator:
             or os.getenv("EVAL_LLM_BINDING_API_KEY")
             or os.getenv("OPENAI_API_KEY")
         )
-        eval_embedding_model = os.getenv(
-            "EVAL_EMBEDDING_MODEL", "text-embedding-3-large"
-        )
+        eval_embedding_model = os.getenv("EVAL_EMBEDDING_MODEL", "text-embedding-3-large")
         # Fallback chain: EVAL_EMBEDDING_BINDING_HOST -> EVAL_LLM_BINDING_HOST -> None
         eval_embedding_base_url = os.getenv("EVAL_EMBEDDING_BINDING_HOST") or os.getenv(
             "EVAL_LLM_BINDING_HOST"
@@ -254,9 +249,7 @@ class RAGEvaluator:
         # Display Embedding endpoint (only if different from LLM)
         if self.eval_embedding_base_url:
             if self.eval_embedding_base_url != self.eval_llm_base_url:
-                logger.info(
-                    "  • Embedding Endpoint:   %s", self.eval_embedding_base_url
-                )
+                logger.info("  • Embedding Endpoint:   %s", self.eval_embedding_base_url)
             # If same as LLM endpoint, no need to display separately
         elif not self.eval_llm_base_url:
             # Both using OpenAI - already displayed above
@@ -376,9 +369,7 @@ class RAGEvaluator:
                 f"   Error: {str(e)}"
             )
         except httpx.HTTPStatusError as e:
-            raise Exception(
-                f"LightRAG API error {e.response.status_code}: {e.response.text}"
-            )
+            raise Exception(f"LightRAG API error {e.response.status_code}: {e.response.text}")
         except httpx.ReadTimeout as e:
             raise Exception(
                 f"Request timeout after waiting for response\n"
@@ -423,9 +414,7 @@ class RAGEvaluator:
 
             # Stage 1: Generate RAG response
             try:
-                rag_response = await self.generate_rag_response(
-                    question=question, client=client
-                )
+                rag_response = await self.generate_rag_response(question=question, client=client)
             except Exception as e:
                 logger.error("Error generating response for test %s: %s", idx, str(e))
                 progress_counter["completed"] += 1
@@ -508,15 +497,9 @@ class RAGEvaluator:
                         "project": test_case.get("project", "unknown"),
                         "metrics": {
                             "faithfulness": float(scores_row.get("faithfulness", 0)),
-                            "answer_relevance": float(
-                                scores_row.get("answer_relevancy", 0)
-                            ),
-                            "context_recall": float(
-                                scores_row.get("context_recall", 0)
-                            ),
-                            "context_precision": float(
-                                scores_row.get("context_precision", 0)
-                            ),
+                            "answer_relevance": float(scores_row.get("answer_relevancy", 0)),
+                            "context_recall": float(scores_row.get("context_recall", 0)),
+                            "context_precision": float(scores_row.get("context_precision", 0)),
                         },
                         "timestamp": datetime.now().isoformat(),
                     }
@@ -524,9 +507,7 @@ class RAGEvaluator:
                     # Calculate RAGAS score (average of all metrics, excluding NaN values)
                     metrics = result["metrics"]
                     valid_metrics = [v for v in metrics.values() if not _is_nan(v)]
-                    ragas_score = (
-                        sum(valid_metrics) / len(valid_metrics) if valid_metrics else 0
-                    )
+                    ragas_score = sum(valid_metrics) / len(valid_metrics) if valid_metrics else 0
                     result["ragas_score"] = round(ragas_score, 4)
 
                     # Update progress counter
@@ -640,9 +621,7 @@ class RAGEvaluator:
             - ragas_score: Overall RAGAS score (0-1)
             - timestamp: When evaluation was run
         """
-        csv_path = (
-            self.results_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        )
+        csv_path = self.results_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             fieldnames = [
@@ -726,9 +705,7 @@ class RAGEvaluator:
             test_num = result.get("test_number", 0)
             question = result.get("question", "")
             # Truncate question to 50 chars
-            question_display = (
-                (question[:47] + "...") if len(question) > 50 else question
-            )
+            question_display = (question[:47] + "...") if len(question) > 50 else question
 
             metrics = result.get("metrics", {})
             if metrics:
@@ -769,9 +746,7 @@ class RAGEvaluator:
 
         logger.info("%s", "=" * 115)
 
-    def _calculate_benchmark_stats(
-        self, results: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _calculate_benchmark_stats(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Calculate benchmark statistics from evaluation results
 
@@ -839,9 +814,7 @@ class RAGEvaluator:
         for metric_name, data in metrics_data.items():
             if data["count"] > 0:
                 avg_val = data["sum"] / data["count"]
-                avg_metrics[metric_name] = (
-                    round(avg_val, 4) if not _is_nan(avg_val) else 0.0
-                )
+                avg_metrics[metric_name] = round(avg_val, 4) if not _is_nan(avg_val) else 0.0
             else:
                 avg_metrics[metric_name] = 0.0
 
@@ -892,10 +865,7 @@ class RAGEvaluator:
         self._display_results_table(results)
 
         # Save JSON results
-        json_path = (
-            self.results_dir
-            / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        )
+        json_path = self.results_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(json_path, "w") as f:
             json.dump(summary, f, indent=2)
 
@@ -1003,9 +973,7 @@ Examples:
         logger.info("🔍 RAGAS Evaluation - Using Real LightRAG API")
         logger.info("%s", "=" * 70)
 
-        evaluator = RAGEvaluator(
-            test_dataset_path=args.dataset, rag_api_url=args.ragendpoint
-        )
+        evaluator = RAGEvaluator(test_dataset_path=args.dataset, rag_api_url=args.ragendpoint)
         await evaluator.run()
     except Exception as e:
         logger.exception("❌ Error: %s", e)

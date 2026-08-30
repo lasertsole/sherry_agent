@@ -46,8 +46,7 @@ def format_table_body(table_body: Any) -> str:
             return ""
         if all(isinstance(row, (list, tuple)) for row in table_body):
             rendered_rows = [
-                "| " + " | ".join(str(cell) for cell in row) + " |"
-                for row in table_body
+                "| " + " | ".join(str(cell) for cell in row) + " |" for row in table_body
             ]
             if len(rendered_rows) >= 1:
                 column_count = max(len(row) for row in table_body)
@@ -194,9 +193,7 @@ def validate_image_file(image_path: str, max_size_mb: int = 50) -> bool:
 
         path_lower = str(path).lower()
         has_valid_extension = any(path_lower.endswith(ext) for ext in image_extensions)
-        logger.debug(
-            f"File extension check - path: {path_lower}, valid: {has_valid_extension}"
-        )
+        logger.debug(f"File extension check - path: {path_lower}, valid: {has_valid_extension}")
 
         if not has_valid_extension:
             logger.warning(f"File does not appear to be an image: {image_path}")
@@ -205,9 +202,7 @@ def validate_image_file(image_path: str, max_size_mb: int = 50) -> bool:
         # Check file size
         file_size = path.stat().st_size
         max_size = max_size_mb * 1024 * 1024
-        logger.debug(
-            f"File size check - size: {file_size} bytes, max: {max_size} bytes"
-        )
+        logger.debug(f"File size check - size: {file_size} bytes, max: {max_size} bytes")
 
         if file_size > max_size:
             logger.warning(f"Image file too large ({file_size} bytes): {image_path}")
@@ -312,9 +307,7 @@ async def insert_text_content_with_multimodal_content(
             "retrying with text-only insertion so doc_status is still created"
         )
 
-    if scheme_name is not None and (
-        accepts_any_kwargs or "scheme_name" in supported_params
-    ):
+    if scheme_name is not None and (accepts_any_kwargs or "scheme_name" in supported_params):
         insert_kwargs["scheme_name"] = scheme_name
     elif scheme_name is not None:
         logger.warning(

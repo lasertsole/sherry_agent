@@ -107,9 +107,7 @@ class BatchParser:
             | {".pdf"}
         )
 
-    def filter_supported_files(
-        self, file_paths: List[str], recursive: bool = True
-    ) -> List[str]:
+    def filter_supported_files(self, file_paths: List[str], recursive: bool = True) -> List[str]:
         """
         Filter file paths to only include supported file types
 
@@ -136,18 +134,12 @@ class BatchParser:
                 if recursive:
                     # Recursively find all files
                     for file_path in path.rglob("*"):
-                        if (
-                            file_path.is_file()
-                            and file_path.suffix.lower() in supported_extensions
-                        ):
+                        if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
                             supported_files.append(str(file_path))
                 else:
                     # Only files in the directory (not subdirectories)
                     for file_path in path.glob("*"):
-                        if (
-                            file_path.is_file()
-                            and file_path.suffix.lower() in supported_extensions
-                        ):
+                        if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
                             supported_files.append(str(file_path))
 
             else:
@@ -243,9 +235,7 @@ class BatchParser:
         self.logger.info(f"Found {len(supported_files)} files to process")
 
         if dry_run:
-            self.logger.info(
-                f"Dry run enabled. {len(supported_files)} files would be processed."
-            )
+            self.logger.info(f"Dry run enabled. {len(supported_files)} files would be processed.")
             return BatchProcessingResult(
                 successful_files=supported_files,
                 failed_files=[],
@@ -289,9 +279,7 @@ class BatchParser:
                 }
 
                 # Process completed tasks
-                for future in as_completed(
-                    future_to_file, timeout=self.timeout_per_file
-                ):
+                for future in as_completed(future_to_file, timeout=self.timeout_per_file):
                     success, file_path, error_msg = future.result()
 
                     if success:
@@ -397,21 +385,15 @@ def main():
         default="auto",
         help="Parsing method",
     )
-    parser.add_argument(
-        "--workers", type=int, default=4, help="Number of parallel workers"
-    )
-    parser.add_argument(
-        "--no-progress", action="store_true", help="Disable progress bar"
-    )
+    parser.add_argument("--workers", type=int, default=4, help="Number of parallel workers")
+    parser.add_argument("--no-progress", action="store_true", help="Disable progress bar")
     parser.add_argument(
         "--recursive",
         action="store_true",
         default=True,
         help="Search directories recursively",
     )
-    parser.add_argument(
-        "--timeout", type=int, default=300, help="Timeout per file (seconds)"
-    )
+    parser.add_argument("--timeout", type=int, default=300, help="Timeout per file (seconds)")
     parser.add_argument(
         "--dry-run",
         action="store_true",

@@ -15,6 +15,7 @@ from skimage.metrics import structural_similarity as ssim
 @dataclass
 class FrameResult:
     """Result of one extracted frame: image path and timestamp"""
+
     image_path: str
     timestamp_sec: float
 
@@ -148,9 +149,11 @@ def extract_frames(
         img_path = os.path.join(output_dir, img_filename)
         cv2.imwrite(img_path, frame, save_params)
 
-        results.append(FrameResult(
-            image_path=img_path,
-            timestamp_sec=time_sec,
-        ))
+        results.append(
+            FrameResult(
+                image_path=img_path,
+                timestamp_sec=time_sec,
+            )
+        )
 
     return results

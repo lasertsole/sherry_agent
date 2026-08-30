@@ -4,27 +4,25 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 from loguru import logger
 
-from ..registry import get_run
 from ..registry.queries import get_run_by_child_session_key
 from ..control.controller import can_control_run
 
 
 class SessionsSendSchema(BaseModel):
     """Input schema for the sessions_send tool."""
+
     target_session_key: str = Field(
         description="The session key of the target agent to send a message to."
     )
-    message: str = Field(
-        description="The message content to send to the target agent."
-    )
+    message: str = Field(description="The message content to send to the target agent.")
     max_turns: int = Field(
-        default=1,
-        description="Maximum ping-pong turns for agent-to-agent communication."
+        default=1, description="Maximum ping-pong turns for agent-to-agent communication."
     )
 
 
 class SessionsSendTool(BaseTool):
     """LLM tool: send a message to a running sub-agent session."""
+
     name: str = "sessions_send"
     description: str = (
         "Send a message to another session (agent-to-agent communication). "
@@ -57,7 +55,8 @@ class SessionsSendTool(BaseTool):
             logger.debug("ANNOUNCE_SKIP sentinel detected in send message for run {}", run.run_id)
 
         from ..control.send import send_subagent_message
-        result = await send_subagent_message(
+
+        await send_subagent_message(
             run_id=run.run_id,
             message=message,
             caller_session_key=requester_key,

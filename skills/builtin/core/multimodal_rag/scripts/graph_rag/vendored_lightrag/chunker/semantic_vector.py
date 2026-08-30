@@ -1,4 +1,4 @@
-﻿"""Semantic vector chunking — the ``"V"`` strategy.
+"""Semantic vector chunking — the ``"V"`` strategy.
 
 Wraps LangChain's :class:`SemanticChunker` (from ``langchain-experimental``)
 which splits text by sentence embeddings: it first segments the input into
@@ -147,10 +147,7 @@ def _semantic_groups_with_spans(
     if len(single_sentences_list) == 1:
         group = _group(0, 0)
         return [group] if group else []
-    if (
-        splitter.breakpoint_threshold_type == "gradient"
-        and len(single_sentences_list) == 2
-    ):
+    if splitter.breakpoint_threshold_type == "gradient" and len(single_sentences_list) == 2:
         return [g for i in range(2) if (g := _group(i, i)) is not None]
 
     distances, sentences = splitter._calculate_sentence_distances(single_sentences_list)
@@ -158,8 +155,8 @@ def _semantic_groups_with_spans(
         breakpoint_distance_threshold = splitter._threshold_from_clusters(distances)
         breakpoint_array = distances
     else:
-        breakpoint_distance_threshold, breakpoint_array = (
-            splitter._calculate_breakpoint_threshold(distances)
+        breakpoint_distance_threshold, breakpoint_array = splitter._calculate_breakpoint_threshold(
+            distances
         )
 
     indices_above_thresh = [
@@ -172,10 +169,7 @@ def _semantic_groups_with_spans(
         end_index = index
         group_sentences = sentences[start_index : end_index + 1]
         combined_text = " ".join([d["sentence"] for d in group_sentences])
-        if (
-            splitter.min_chunk_size is not None
-            and len(combined_text) < splitter.min_chunk_size
-        ):
+        if splitter.min_chunk_size is not None and len(combined_text) < splitter.min_chunk_size:
             continue
         group = _group(start_index, end_index)
         if group is not None:
@@ -276,9 +270,7 @@ async def chunking_by_semantic_vector(
         "min_chunk_size": min_chunk_size,
     }
     if breakpoint_threshold_amount is not None:
-        chunker_kwargs["breakpoint_threshold_amount"] = float(
-            breakpoint_threshold_amount
-        )
+        chunker_kwargs["breakpoint_threshold_amount"] = float(breakpoint_threshold_amount)
 
     splitter = SemanticChunker(**chunker_kwargs)
     pieces = await asyncio.to_thread(_semantic_groups_with_spans, splitter, content)

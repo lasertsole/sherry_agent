@@ -67,10 +67,12 @@
     :closable="true"
     class="w-[95vw] md:w-[800px]">
     <TabView v-model:activeIndex="activeTab">
-      <!-- ===== 频道 Tab ===== -->
-      <TabPanel :header="t('extend.tabs.channel')">
+      <!-- ===== Channels tab ===== -->
+      <TabPanel
+        value="channel"
+        :header="t('extend.tabs.channel')">
         <div class="flex flex-col gap-3">
-          <!-- 加载中 -->
+          <!-- Loading -->
           <div
             v-if="loading"
             class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
@@ -78,7 +80,7 @@
             <span class="text-sm">{{ t('extend.empty') }}</span>
           </div>
 
-          <!-- 空态：无频道 -->
+          <!-- Empty state: no channels -->
           <div
             v-else-if="channels.length === 0"
             class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
@@ -87,7 +89,7 @@
             <span class="text-xs">{{ t('extend.channelHint') }}</span>
           </div>
 
-          <!-- 频道九宫格 -->
+          <!-- Channel grid -->
           <div
             v-else
             class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -120,9 +122,11 @@
               </span>
               <span
                 class="text-xs px-2 py-0.5 rounded-full"
-                :class="ch.enabled
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
-                  : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'">
+                :class="
+                  ch.enabled
+                    ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+                    : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                ">
                 {{ ch.enabled ? t('extend.enabled') : t('extend.disabled') }}
               </span>
             </div>
@@ -130,10 +134,12 @@
         </div>
       </TabPanel>
 
-      <!-- ===== mcp Tab ===== -->
-      <TabPanel :header="t('extend.tabs.mcp')">
+      <!-- ===== MCP tab ===== -->
+      <TabPanel
+        value="mcp"
+        :header="t('extend.tabs.mcp')">
         <div class="flex flex-col gap-3">
-          <!-- 空态占位：MCP 服务器尚未配置，先显示占位 -->
+          <!-- Empty state placeholder: no MCP servers configured yet, show a placeholder for now -->
           <div
             class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
             <i class="pi pi-plug text-3xl" />
@@ -144,7 +150,7 @@
       </TabPanel>
     </TabView>
 
-    <!-- 频道设置弹窗（卡片点击打开） -->
+    <!-- Channel settings dialog (opened by clicking a card) -->
     <ChannelSettingsDialog
       v-model="showSettings"
       :channel="selectedChannel"
@@ -166,20 +172,20 @@ const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 
 const visible = computed({
   get: () => props.modelValue,
-  set: (v) => emits('update:modelValue', v),
+  set: v => emits('update:modelValue', v)
 });
 
-/** 当前激活 Tab（0=频道，1=mcp） */
+/** Currently active tab (0=channels, 1=MCP) */
 const activeTab = ref(0);
 
 const loading = ref(false);
 const channels = ref<ChannelInfo[]>([]);
 
-/** 频道设置弹窗状态：选中频道 + 弹窗显隐。 */
+/** Channel settings dialog state: the selected channel + dialog visibility. */
 const selectedChannel = ref<ChannelInfo | null>(null);
 const showSettings = ref(false);
 
-/** 卡片点击 → 打开该频道的设置弹窗。 */
+/** Card click → open that channel's settings dialog. */
 const openSettings = (ch: ChannelInfo) => {
   selectedChannel.value = ch;
   showSettings.value = true;

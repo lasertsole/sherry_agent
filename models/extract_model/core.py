@@ -5,6 +5,8 @@ Reuses the model weights already downloaded under models/extract_model/.
 Uses mineru-vl-utils (MinerUClient) for high-level document parsing (PDF page -> Markdown).
 """
 
+from __future__ import annotations
+
 import os
 import sys
 from typing import Any
@@ -17,9 +19,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-os.environ["MINERU_TOOLS_CONFIG_JSON"] = str(
-    MODELS_DIR / "extract_model" / "mineru_config.json"
-)
+os.environ["MINERU_TOOLS_CONFIG_JSON"] = str(MODELS_DIR / "extract_model" / "mineru_config.json")
 
 # ---------- paths ----------
 _VLM_DIR = MODELS_DIR / "extract_model" / "vlm"
@@ -97,9 +97,7 @@ class MinerUModel:
         if backend == "transformers":
             from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
-            model = Qwen2VLForConditionalGeneration.from_pretrained(
-                model_path, **kwargs
-            )
+            model = Qwen2VLForConditionalGeneration.from_pretrained(model_path, **kwargs)
             processor = AutoProcessor.from_pretrained(model_path, use_fast=True)
 
             self._client = MinerUClient(
@@ -120,9 +118,11 @@ class MinerUModel:
         self._client = None
         self._backend = None
         import gc
+
         gc.collect()
         try:
             import torch
+
             torch.cuda.empty_cache()
         except ImportError:
             pass
@@ -189,5 +189,6 @@ class MinerUModel:
             model_kwargs=model_kwargs,
         )
         return json2md(content_list)
+
 
 mineru_model = MinerUModel.get_instance()

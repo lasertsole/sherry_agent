@@ -1,4 +1,4 @@
-﻿"""Pipeline-specific helpers for document status, identity, and content.
+"""Pipeline-specific helpers for document status, identity, and content.
 
 These helpers are shared by the LightRAG pipeline mixin (lightrag/pipeline.py)
 and by other LightRAG methods that touch the document ingestion paths
@@ -258,9 +258,7 @@ def resolve_doc_status_parse_engine(
     if explicit_engine:
         return explicit_engine
     return (
-        PARSER_ENGINE_NATIVE
-        if parse_format == FULL_DOCS_FORMAT_LIGHTRAG
-        else PARSER_ENGINE_LEGACY
+        PARSER_ENGINE_NATIVE if parse_format == FULL_DOCS_FORMAT_LIGHTRAG else PARSER_ENGINE_LEGACY
     )
 
 
@@ -425,14 +423,10 @@ def doc_status_parse_failure_fields(
     """
     error_text = str(error)
     extra_fields: dict[str, Any] = {"error_msg": error_text}
-    current_summary = str(
-        doc_status_field(status_doc, "content_summary", "") or ""
-    ).strip()
-    if not current_summary or current_summary.startswith(
-        FILE_EXTRACTION_SUMMARY_PREFIX
-    ):
-        extra_fields["content_summary"] = (
-            FILE_EXTRACTION_SUMMARY_PREFIX + get_content_summary(error_text)
+    current_summary = str(doc_status_field(status_doc, "content_summary", "") or "").strip()
+    if not current_summary or current_summary.startswith(FILE_EXTRACTION_SUMMARY_PREFIX):
+        extra_fields["content_summary"] = FILE_EXTRACTION_SUMMARY_PREFIX + get_content_summary(
+            error_text
         )
     metadata_extra: dict[str, Any] = {
         "error_type": "file_extraction_error",
@@ -635,9 +629,7 @@ def parsed_dir() -> Path:
     return input_dir_path() / PARSED_DIR_NAME
 
 
-def parsed_artifact_dir_for(
-    file_path: str, *, parent_hint: Path | str | None = None
-) -> Path:
+def parsed_artifact_dir_for(file_path: str, *, parent_hint: Path | str | None = None) -> Path:
     """Return the per-document sidecar directory for ``file_path``.
 
     ``file_path`` must already be canonical (run ``normalize_document_file_path``
@@ -655,9 +647,7 @@ def parsed_artifact_dir_for(
         root = hint if hint.name == PARSED_DIR_NAME else hint / PARSED_DIR_NAME
     else:
         root = parsed_dir()
-    source_name = (
-        canonicalize_parser_hinted_basename(file_path or "document") or "document"
-    )
+    source_name = canonicalize_parser_hinted_basename(file_path or "document") or "document"
     artifact_name = f"{source_name}.parsed"
     artifact_dir = root / artifact_name
     if not artifact_dir.exists() or artifact_dir.is_dir():
@@ -756,16 +746,12 @@ async def archive_docx_source_after_full_docs_sync(source_path: str) -> str | No
     try:
         target = await move_file_to_parsed_dir(source, skip_if_already_parsed=True)
     except Exception as e:
-        logger.warning(
-            f"[parse] Source archive skipped after full_docs sync: {source_path}: {e}"
-        )
+        logger.warning(f"[parse] Source archive skipped after full_docs sync: {source_path}: {e}")
         return None
     if target is None:
         return None
     if target != source:
-        logger.debug(
-            f"[parse] Archived DOCX source after full_docs sync: {source} -> {target}"
-        )
+        logger.debug(f"[parse] Archived DOCX source after full_docs sync: {source} -> {target}")
     return str(target)
 
 
@@ -788,9 +774,7 @@ async def load_lightrag_document_content(sidecar_uri: str) -> tuple[str, str]:
     """
     resolved = sidecar_blocks_path(sidecar_uri)
     if resolved is None:
-        raise FileNotFoundError(
-            f"LightRAG blocks file not found from sidecar uri: {sidecar_uri}"
-        )
+        raise FileNotFoundError(f"LightRAG blocks file not found from sidecar uri: {sidecar_uri}")
     blocks_path = Path(resolved)
 
     merged_parts: list[str] = []

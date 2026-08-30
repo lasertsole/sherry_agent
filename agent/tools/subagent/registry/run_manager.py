@@ -62,6 +62,7 @@ def register_run(
 
     run_id = str(uuid.uuid4())
     from .generation import next_subagent_run_generation
+
     gen = next_subagent_run_generation(child_session_key)
 
     run = SubagentRunRecord(
@@ -92,7 +93,9 @@ def register_run(
         ),
         completion=CompletionState(required=completion_required),
         delivery=CompletionDeliveryState(
-            status=DeliveryStatus.NOT_REQUIRED if not completion_required else DeliveryStatus.PENDING,
+            status=DeliveryStatus.NOT_REQUIRED
+            if not completion_required
+            else DeliveryStatus.PENDING,
         ),
         label=label,
         inherited_tool_allow=inherited_tool_allow or [],
@@ -108,7 +111,12 @@ def register_run(
     store_sqlite.upsert_run_sync(run)
     logger.info(
         "Registered subagent run: run_id={}, child={}, requester={}, depth={}, role={}, controller={}",
-        run.run_id, child_session_key, requester_session_key, depth, role, run.controller_session_key,
+        run.run_id,
+        child_session_key,
+        requester_session_key,
+        depth,
+        role,
+        run.controller_session_key,
     )
     return run
 
@@ -120,14 +128,18 @@ def mark_run_paused_after_yield(run_id: str) -> SubagentRunRecord | None:
         return None
 
     runtime_ms = _compute_accumulated_runtime_ms(run)
-    updated = run.model_copy(update={
-        "execution": run.execution.model_copy(update={
-            "status": ExecutionStatus.INTERRUPTED,
-        }),
-        "accumulated_runtime_ms": runtime_ms,
-        "pause_reason": "yield",
-        "ended_reason": None,
-    })
+    updated = run.model_copy(
+        update={
+            "execution": run.execution.model_copy(
+                update={
+                    "status": ExecutionStatus.INTERRUPTED,
+                }
+            ),
+            "accumulated_runtime_ms": runtime_ms,
+            "pause_reason": "yield",
+            "ended_reason": None,
+        }
+    )
     memory.set_run(updated)
     return updated
 
@@ -138,12 +150,16 @@ def mark_run_running(run_id: str) -> SubagentRunRecord | None:
     if run is None:
         return None
 
-    updated = run.model_copy(update={
-        "execution": run.execution.model_copy(update={
-            "status": ExecutionStatus.RUNNING,
-        }),
-        "pause_reason": None,
-    })
+    updated = run.model_copy(
+        update={
+            "execution": run.execution.model_copy(
+                update={
+                    "status": ExecutionStatus.RUNNING,
+                }
+            ),
+            "pause_reason": None,
+        }
+    )
     memory.set_run(updated)
     return updated
 
@@ -172,20 +188,26 @@ def complete_run(
     config = get_config()
     archive_at = time.monotonic() + config.archive_after_minutes * 60
 
-    updated = run.model_copy(update={
-        "execution": run.execution.model_copy(update={
-            "status": ExecutionStatus.TERMINAL,
-            "ended_at": time.monotonic(),
-            "outcome": outcome,
-        }),
-        "completion": run.completion.model_copy(update={
-            "result_text": cap_frozen_result_text(result_text),
-            "captured_at": time.monotonic(),
-        }),
-        "accumulated_runtime_ms": runtime_ms,
-        "ended_reason": ended_reason,
-        "archive_at": archive_at,
-    })
+    updated = run.model_copy(
+        update={
+            "execution": run.execution.model_copy(
+                update={
+                    "status": ExecutionStatus.TERMINAL,
+                    "ended_at": time.monotonic(),
+                    "outcome": outcome,
+                }
+            ),
+            "completion": run.completion.model_copy(
+                update={
+                    "result_text": cap_frozen_result_text(result_text),
+                    "captured_at": time.monotonic(),
+                }
+            ),
+            "accumulated_runtime_ms": runtime_ms,
+            "ended_reason": ended_reason,
+            "archive_at": archive_at,
+        }
+    )
     memory.set_run(updated)
     # Persist the terminal state so a restart restores the run with its outcome.
     store_sqlite.upsert_run_sync(updated)
@@ -201,32 +223,42 @@ def replace_run_after_steer(
         return None
 
     runtime_ms = _compute_accumulated_runtime_ms(run)
-    updated = run.model_copy(update={
-        "generation": run.generation + 1,
-        "accumulated_runtime_ms": runtime_ms,
-        "task": new_task or run.task,
-        "execution": run.execution.model_copy(update={
-            "status": ExecutionStatus.INTERRUPTED,
-            "outcome": None,
-            "ended_at": None,
-        }),
-        "completion": run.completion.model_copy(update={
-            "result_text": None,
-            "captured_at": None,
-        }),
-        "delivery": CompletionDeliveryState(
-            status=DeliveryStatus.PENDING if run.completion.required else DeliveryStatus.NOT_REQUIRED,
-        ),
-        "ended_reason": None,
-        "pause_reason": "steer",
-        "cleanup_completed_at": None,
-        "archive_at": None,
-        "ended_hook_emitted": False,
-    })
+    updated = run.model_copy(
+        update={
+            "generation": run.generation + 1,
+            "accumulated_runtime_ms": runtime_ms,
+            "task": new_task or run.task,
+            "execution": run.execution.model_copy(
+                update={
+                    "status": ExecutionStatus.INTERRUPTED,
+                    "outcome": None,
+                    "ended_at": None,
+                }
+            ),
+            "completion": run.completion.model_copy(
+                update={
+                    "result_text": None,
+                    "captured_at": None,
+                }
+            ),
+            "delivery": CompletionDeliveryState(
+                status=DeliveryStatus.PENDING
+                if run.completion.required
+                else DeliveryStatus.NOT_REQUIRED,
+            ),
+            "ended_reason": None,
+            "pause_reason": "steer",
+            "cleanup_completed_at": None,
+            "archive_at": None,
+            "ended_hook_emitted": False,
+        }
+    )
     memory.set_run(updated)
     logger.info(
         "Replaced run after steer: run_id={}, generation={}, accumulated_runtime_ms={:.0f}",
-        run_id, updated.generation, updated.accumulated_runtime_ms,
+        run_id,
+        updated.generation,
+        updated.accumulated_runtime_ms,
     )
     return updated
 

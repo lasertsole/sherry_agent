@@ -9,7 +9,9 @@
       "refresh": "Refresh",
       "rangeDay": "Today",
       "rangeWeek": "Last 7 Days",
-      "rangeMonth": "Last 30 Days"
+      "rangeMonth": "Last 30 Days",
+      "modeValue": "Absolute",
+      "modePercent": "Share"
     }
   },
   "ja": {
@@ -21,7 +23,9 @@
       "refresh": "更新",
       "rangeDay": "今日",
       "rangeWeek": "近7日",
-      "rangeMonth": "近30日"
+      "rangeMonth": "近30日",
+      "modeValue": "絶対値",
+      "modePercent": "比率"
     }
   },
   "ko": {
@@ -33,7 +37,9 @@
       "refresh": "새로고침",
       "rangeDay": "오늘",
       "rangeWeek": "최근 7일",
-      "rangeMonth": "최근 30일"
+      "rangeMonth": "최근 30일",
+      "modeValue": "절대값",
+      "modePercent": "비율"
     }
   },
   "zh": {
@@ -45,7 +51,9 @@
       "refresh": "刷新",
       "rangeDay": "今日",
       "rangeWeek": "近七天",
-      "rangeMonth": "近三十天"
+      "rangeMonth": "近三十天",
+      "modeValue": "绝对值",
+      "modePercent": "占比"
     }
   }
 }
@@ -57,11 +65,11 @@
     :header="t('stats.title')"
     :modal="true"
     :closable="true"
-      class="w-[min(95vw,1200px)]"
+    class="w-[min(95vw,1200px)]"
     @show="loadStats"
     @hide="onHide">
     <div class="flex flex-col gap-3">
-      <!-- 范围切换 + 刷新 -->
+      <!-- Range switch + refresh -->
       <div class="shrink-0 flex items-center justify-center gap-2">
         <SelectButton
           v-model="selectedRange"
@@ -69,23 +77,31 @@
           option-label="label"
           option-value="value"
           :allow-empty="false" />
+        <SelectButton
+          v-model="chartMode"
+          :options="modeOptions"
+          option-label="label"
+          option-value="value"
+          :allow-empty="false" />
         <Button
+          v-debounce:click.300="loadStats"
           icon="pi pi-refresh"
           text
           rounded
           :loading="loading"
-          :aria-label="t('stats.refresh')"
-          @click="loadStats" />
+          :aria-label="t('stats.refresh')" />
       </div>
 
-      <!-- 图表渲染区 -->
-      <div class="relative w-full overflow-hidden" style="height: 56vh;">
+      <!-- Chart rendering area -->
+      <div
+        class="relative w-full overflow-hidden"
+        style="height: 56vh">
         <GChart
           v-if="!loading && !empty && !error"
           class="w-full h-full"
           :options="chartOption" />
 
-        <!-- 加载中 -->
+        <!-- Loading -->
         <div
           v-if="loading"
           class="absolute inset-0 flex flex-col items-center justify-center gap-3">
@@ -93,7 +109,7 @@
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('stats.loading') }}</span>
         </div>
 
-        <!-- 空态 -->
+        <!-- Empty state -->
         <div
           v-else-if="empty"
           class="absolute inset-0 flex flex-col items-center justify-center gap-4">
@@ -103,7 +119,7 @@
           </div>
         </div>
 
-        <!-- 错误态 -->
+        <!-- Error state -->
         <div
           v-else-if="error"
           class="absolute inset-0 flex flex-col items-center justify-center gap-4">
@@ -112,11 +128,11 @@
             {{ t('stats.loadError') }}
           </div>
           <Button
+            v-debounce:click.300="loadStats"
             :label="t('stats.refresh')"
             icon="pi pi-refresh"
             severity="secondary"
-            :loading="loading"
-            @click="loadStats" />
+            :loading="loading" />
         </div>
       </div>
     </div>
@@ -129,6 +145,7 @@ import { useI18n } from 'vue-i18n';
 import type { G2Spec } from '@antv/g2';
 import GChart from './GChart.vue';
 import { fetchApi } from '~/composables/requestApi';
+import { vDebounce } from '~/directives/debounce';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -137,35 +154,35 @@ const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 
 const visible = computed({
   get: () => props.modelValue,
-  set: (v) => emits('update:modelValue', v),
+  set: v => emits('update:modelValue', v)
 });
 
-/** 后端单日单模型 token 用量（snake_case 原样保留） */
+/** Per-day per-model token usage from the backend (snake_case kept as-is) */
 interface BackendModelUsage {
   model_name: string;
   input_tokens: number;
   output_tokens: number;
 }
 
-/** 后端单日用量 */
+/** Per-day usage from the backend */
 interface BackendDayUsage {
   date: string;
   by_model: BackendModelUsage[];
 }
 
-/** 后端统计响应（snake_case 原样保留） */
+/** Backend stats response (snake_case kept as-is) */
 interface StatsResponse {
   range: string;
   days: BackendDayUsage[];
 }
 
-/** 映射后的单日用量（camelCase） */
+/** Mapped per-day usage (camelCase) */
 interface DayUsage {
   date: string;
   byModel: BackendModelUsage[];
 }
 
-/** 范围选项 */
+/** Range options */
 type RangeValue = 'day' | 'week' | 'month';
 
 const rangeOptions = computed(() => [
@@ -174,7 +191,16 @@ const rangeOptions = computed(() => [
   { label: t('stats.rangeMonth'), value: 'month' as RangeValue }
 ]);
 
+/** Chart mode options: absolute values / share (100% stacked) */
+type ChartModeValue = 'value' | 'percent';
+
+const modeOptions = computed(() => [
+  { label: t('stats.modeValue'), value: 'value' as ChartModeValue },
+  { label: t('stats.modePercent'), value: 'percent' as ChartModeValue }
+]);
+
 const selectedRange = ref<RangeValue>('week');
+const chartMode = ref<ChartModeValue>('value');
 const loading = ref(false);
 const empty = ref(false);
 const error = ref(false);
@@ -182,10 +208,10 @@ const days = ref<DayUsage[]>([]);
 
 const colorMode = useColorMode();
 
-/** 当前是否为深色主题 */
+/** Whether the current theme is dark */
 const isDark = () => colorMode.value === 'dark';
 
-/** 模型 → 颜色（浅色主题） */
+/** Model → color (light theme) */
 const LIGHT_PALETTE: string[] = [
   '#3b82f6',
   '#f59e0b',
@@ -199,7 +225,7 @@ const LIGHT_PALETTE: string[] = [
   '#14b8a6'
 ];
 
-/** 模型 → 颜色（深色主题） */
+/** Model → color (dark theme) */
 const DARK_PALETTE: string[] = [
   '#60a5fa',
   '#fbbf24',
@@ -213,13 +239,13 @@ const DARK_PALETTE: string[] = [
   '#2dd4bf'
 ];
 
-/** 按模型名取稳定颜色 */
+/** Stable color by model name */
 const modelColor = (index: number): string => {
   const palette = isDark() ? DARK_PALETTE : LIGHT_PALETTE;
-  return palette[index % palette.length];
+  return palette[index % palette.length] ?? '';
 };
 
-/** 后端数据 → 前端映射 */
+/** Backend data → frontend mapping */
 const mapStatsData = (payload: StatsResponse): DayUsage[] => {
   const rawDays = Array.isArray(payload?.days) ? payload.days : [];
   return rawDays.map(day => ({
@@ -228,20 +254,21 @@ const mapStatsData = (payload: StatsResponse): DayUsage[] => {
   }));
 };
 
-/** 构建 G2 堆叠柱状图配置 */
+/** Build the G2 stacked bar chart config */
 const chartOption = computed<G2Spec>(() => {
   const dark = isDark();
-  const axisLabelColor = dark ? '#9ca3af' : '#6b7280';
-  const axisLineColor = dark ? '#3f4650' : '#d1d5db';
-  const splitLineColor = dark ? '#2a2e35' : '#e5e7eb';
+  // Axis (tick labels/axis line/grid line) colors: white in dark theme, black in light theme, to guarantee contrast
+  const axisColor = dark ? '#ffffff' : '#000000';
+  // Bar stroke: keep the original low-contrast theme color, not following the axis color (avoids overly heavy white/black strokes)
+  const barStrokeColor = dark ? '#3f4650' : '#d1d5db';
   const legendTextColor = dark ? '#e5e7eb' : '#1f2937';
-  const tooltipBg = dark ? '#1a1d21' : '#ffffff';
-  const tooltipBorder = dark ? '#3f4650' : '#d1d5db';
-  const tooltipText = dark ? '#e5e7eb' : '#1f2937';
+  // Share mode: stackY + normalizeY → 100% stacked bars with percentage y-axis ticks
+  const percent = chartMode.value === 'percent';
 
-  // 收集所有出现的模型名（保持出现顺序）。若没有任何模型数据，days 可能
-  // 非空但 modelNames 为空——空 scale 会让 G2 图例布局（computeCategoryLegendSize）
-  // 读取未初始化的 items 而崩溃，这里直接兜底为空规范。
+  // Collect all model names that appear (preserving order of appearance). If there is no model
+  // data at all, days may be non-empty while modelNames is empty — an empty scale makes the G2
+  // legend layout (computeCategoryLegendSize) read uninitialized items and crash, so we fall
+  // back to an empty spec here.
   const modelNames: string[] = [];
   for (const day of days.value) {
     for (const usage of day.byModel) {
@@ -252,7 +279,7 @@ const chartOption = computed<G2Spec>(() => {
   }
   if (modelNames.length === 0) return { type: 'interval', data: [] } as G2Spec;
 
-  // 长表数据：每行 = 某日某模型的 input+output 之和
+  // Long-form data: each row = sum of input+output tokens for one model on one day
   const data: { date: string; model: string; tokens: number }[] = [];
   for (const day of days.value) {
     for (const modelName of modelNames) {
@@ -270,7 +297,7 @@ const chartOption = computed<G2Spec>(() => {
     autoFit: true,
     data,
     encode: { x: 'date', y: 'tokens', color: 'model' },
-    transform: [{ type: 'stackY' }],
+    transform: percent ? [{ type: 'stackY' }, { type: 'normalizeY' }] : [{ type: 'stackY' }],
     scale: {
       color: {
         domain: modelNames,
@@ -281,31 +308,64 @@ const chartOption = computed<G2Spec>(() => {
       type: dark ? 'classicDark' : 'classic',
       view: { viewFill: 'transparent' },
       axis: {
-        labelFill: axisLabelColor,
-        lineStroke: axisLineColor,
-        gridStroke: splitLineColor
+        labelFill: axisColor,
+        lineStroke: axisColor,
+        gridStroke: axisColor,
+        titleFill: axisColor
       }
     },
     tooltip: {
       title: 'date',
       items: [
-        {
-          channel: 'y',
-          name: 'tokens',
-          valueFormatter: (d: number) => String(d)
+        // Hover block: shows "model name: token count (percentage of that day's total)"
+        (
+          datum: { date: string; model: string; tokens: number },
+          _index: number | undefined,
+          all: { date: string; model: string; tokens: number }[] | undefined
+        ) => {
+          const dayTotal = (all ?? []).reduce((sum, d) => (d.date === datum.date ? sum + d.tokens : sum), 0);
+          const pct = dayTotal > 0 ? ((datum.tokens / dayTotal) * 100).toFixed(1) : '0.0';
+          return {
+            name: datum.model,
+            value: `${datum.tokens.toLocaleString('en-US')} (${pct}%)`
+          };
         }
       ]
     },
     axis: {
-      x: { labelFill: axisLabelColor, lineStroke: axisLineColor, tick: false },
-      y: { labelFill: axisLabelColor, gridStroke: splitLineColor, title: 'token', grid: true }
+      x: {
+        labelFill: axisColor,
+        lineStroke: axisColor,
+        line: true,
+        lineStrokeOpacity: 1,
+        lineLineWidth: 1,
+        tick: false,
+        titleFill: axisColor
+      },
+      y: {
+        labelFill: axisColor,
+        lineStroke: axisColor,
+        line: true,
+        lineStrokeOpacity: 1,
+        lineLineWidth: 1,
+        gridStroke: axisColor,
+        gridStrokeOpacity: 1,
+        gridLineWidth: 1,
+        title: percent ? '%' : 'token',
+        titleFill: axisColor,
+        labelFormatter: percent ? (d: number) => `${Math.round(d * 100)}%` : undefined,
+        grid: true
+      }
     },
     style: {
       minHeight: 6,
       radiusTopLeft: 4,
       radiusTopRight: 4,
-      stroke: axisLineColor,
-      lineWidth: 1
+      stroke: barStrokeColor,
+      lineWidth: 1,
+      // With a single date (today) the bar fills the whole x band; cap the max width to avoid overly wide bars;
+      // the week/month multi-date cases are not capped, keeping the original look
+      maxWidth: days.value.length <= 2 ? 64 : undefined
     },
     legend: {
       color: { position: 'top', itemLabelFill: legendTextColor, itemSpacing: [8, 4, 4] }
@@ -313,7 +373,7 @@ const chartOption = computed<G2Spec>(() => {
   };
 });
 
-/** 拉取并渲染统计图表 */
+/** Fetch and render the statistics chart */
 const loadStats = async () => {
   loading.value = true;
   error.value = false;
@@ -331,8 +391,8 @@ const loadStats = async () => {
       days.value = [];
       return;
     }
-    // 没有任何模型用量（days 非空但所有 by_model 均为空）→ 视为空态，避免
-    // 空 scale 触发 G2 图例布局崩溃（computeCategoryLegendSize 读取 undefined）。
+    // No model usage at all (days non-empty but every by_model empty) → treat as empty state, avoiding
+    // an empty scale triggering the G2 legend layout crash (computeCategoryLegendSize reading undefined).
     const hasModelData = mapped.some(day => day.byModel.length > 0);
     if (!hasModelData) {
       empty.value = true;
@@ -349,17 +409,18 @@ const loadStats = async () => {
   }
 };
 
-/** 范围切换时重新拉取 */
+/** Re-fetch when the range changes */
 watch(selectedRange, () => {
   loadStats();
 });
 
-/** 弹窗关闭后重置状态 */
+/** Reset state after the dialog closes */
 const onHide = () => {
   loading.value = false;
   empty.value = false;
   error.value = false;
   days.value = [];
   selectedRange.value = 'week';
+  chartMode.value = 'value';
 };
 </script>

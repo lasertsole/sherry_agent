@@ -1,4 +1,4 @@
-﻿"""Legacy parser engine: simple in-process text extraction (no sidecar).
+"""Legacy parser engine: simple in-process text extraction (no sidecar).
 
 Produces ``raw``-format plain text.  The extraction helpers
 (:func:`extract_text` and the per-format ``_extract_*`` functions) were moved

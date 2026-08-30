@@ -51,9 +51,7 @@ def estimate_tokens(text: str) -> int:
     json_chars_count = len(re.findall(r'[\[\]",{}]', text))
     other_count = len(text) - chinese_count - json_chars_count
 
-    base_estimate = (
-        (chinese_count * 0.75) + (json_chars_count * 1) + (other_count * 0.4)
-    )
+    base_estimate = (chinese_count * 0.75) + (json_chars_count * 1) + (other_count * 0.4)
     final_tokens = int(base_estimate * 1.05) + 2
     return final_tokens
 
@@ -543,9 +541,7 @@ async def global_extract_gemini_async(
             "MEDIUM": types.ThinkingLevel.MEDIUM,
             "HIGH": types.ThinkingLevel.HIGH,
         }
-        thinking_config = types.ThinkingConfig(
-            thinking_level=level_map[thinking_level.upper()]
-        )
+        thinking_config = types.ThinkingConfig(thinking_level=level_map[thinking_level.upper()])
     elif thinking_budget is not None:
         thinking_config = types.ThinkingConfig(thinking_budget=int(thinking_budget))
 
@@ -619,9 +615,7 @@ async def global_verify_gemini_async(
             "MEDIUM": types.ThinkingLevel.MEDIUM,
             "HIGH": types.ThinkingLevel.HIGH,
         }
-        thinking_config = types.ThinkingConfig(
-            thinking_level=level_map[thinking_level.upper()]
-        )
+        thinking_config = types.ThinkingConfig(thinking_level=level_map[thinking_level.upper()])
     elif thinking_budget is not None:
         thinking_config = types.ThinkingConfig(thinking_budget=int(thinking_budget))
 
@@ -712,9 +706,7 @@ async def audit_block_gemini_async(
             "MEDIUM": types.ThinkingLevel.MEDIUM,
             "HIGH": types.ThinkingLevel.HIGH,
         }
-        thinking_config = types.ThinkingConfig(
-            thinking_level=level_map[thinking_level.upper()]
-        )
+        thinking_config = types.ThinkingConfig(thinking_level=level_map[thinking_level.upper()])
     elif thinking_budget is not None:
         # For Gemini 2.5 models
         thinking_config = types.ThinkingConfig(thinking_budget=int(thinking_budget))

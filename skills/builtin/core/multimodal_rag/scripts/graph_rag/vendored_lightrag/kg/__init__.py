@@ -1,4 +1,4 @@
-﻿# SNKV-only storage registries.
+# SNKV-only storage registries.
 #
 # The vendored LightRAG is locked to the SNKV storage family (embedded
 # SQLite + vector stores) — no Redis/Postgres/Mongo/Neo4J/Milvus/etc.  The

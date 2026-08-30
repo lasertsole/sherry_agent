@@ -7,8 +7,6 @@ may contain many images, in this priority order:
   3. lexicographically first file in the icon dir
 """
 
-from pathlib import Path
-
 import pytest
 
 from server.trigger.http import channels as ch

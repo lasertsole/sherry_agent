@@ -8,9 +8,4 @@ def escape_xml(s: str) -> str:
     Returns:
         Escaped string.
     """
-    return (
-        s.replace('&', '&amp;')
-        .replace('<', '&lt;')
-        .replace('>', '&gt;')
-        .replace('"', '&quot;')
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")

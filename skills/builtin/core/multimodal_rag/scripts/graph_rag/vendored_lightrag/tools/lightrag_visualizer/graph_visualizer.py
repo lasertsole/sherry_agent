@@ -32,9 +32,7 @@ DEFAULT_FONT_CHI = "SmileySans-Oblique.ttf"
 class Node3D:
     """Class representing a 3D node in the graph"""
 
-    def __init__(
-        self, position: glm.vec3, color: glm.vec3, label: str, size: float, idx: int
-    ):
+    def __init__(self, position: glm.vec3, color: glm.vec3, label: str, size: float, idx: int):
         self.position = position
         self.color = color
         self.label = label
@@ -135,11 +133,7 @@ class GraphViewer:
 
     def handle_mouse_interaction(self):
         """Handle mouse interaction for camera control and node selection"""
-        if (
-            imgui.is_any_item_active()
-            or imgui.is_any_item_hovered()
-            or imgui.is_any_item_focused()
-        ):
+        if imgui.is_any_item_active() or imgui.is_any_item_hovered() or imgui.is_any_item_focused():
             return
 
         io = imgui.get_io()
@@ -213,10 +207,7 @@ class GraphViewer:
         pos = nx.spring_layout(
             self.graph,
             dim=3,
-            pos={
-                node_id: list(node.position)
-                for node_id, node in self.id_node_map.items()
-            },
+            pos={node_id: list(node.position) for node_id, node in self.id_node_map.items()},
             k=2.0,
             iterations=100,
             weight=None,
@@ -544,9 +535,7 @@ class GraphViewer:
 
         # Calculate layout based on selected type
         if self.layout_type == "Spring":
-            pos = nx.spring_layout(
-                self.graph, dim=3, k=2.0, iterations=100, weight=None
-            )
+            pos = nx.spring_layout(self.graph, dim=3, k=2.0, iterations=100, weight=None)
         elif self.layout_type == "Circular":
             pos_2d = nx.circular_layout(self.graph)
             pos = {node: np.array((x, 0.0, y)) for node, (x, y) in pos_2d.items()}
@@ -688,9 +677,7 @@ class GraphViewer:
 
     def update_view_proj_matrix(self):
         """Update view matrix based on camera parameters"""
-        self.view_matrix = glm.lookAt(
-            self.position, self.position + self.front, self.up
-        )
+        self.view_matrix = glm.lookAt(self.position, self.position + self.front, self.up)
 
         aspect_ratio = self.window_width / self.window_height
         self.proj_matrix = glm.perspective(
@@ -765,9 +752,7 @@ class GraphViewer:
 
             if self.show_labels:
                 # Label size slider
-                changed, value = imgui.slider_float(
-                    "Label Size", self.label_size, 0.5, 10.0
-                )
+                changed, value = imgui.slider_float("Label Size", self.label_size, 0.5, 10.0)
                 if changed:
                     self.label_size = value
 
@@ -913,18 +898,14 @@ class GraphViewer:
 
             for node in self.nodes:
                 # Project node position to screen space
-                pos = mvp * glm.vec4(
-                    node.position[0], node.position[1], node.position[2], 1.0
-                )
+                pos = mvp * glm.vec4(node.position[0], node.position[1], node.position[2], 1.0)
 
                 # Check if node is behind camera
                 if pos.w > 0 and pos.w < self.label_culling_distance:
                     screen_x = (pos.x / pos.w + 1) * self.window_width / 2
                     screen_y = (-pos.y / pos.w + 1) * self.window_height / 2
 
-                    if self.is_node_visible_at(
-                        (int(screen_x), int(screen_y)), node.idx
-                    ):
+                    if self.is_node_visible_at((int(screen_x), int(screen_y)), node.idx):
                         # Set font scale
                         imgui.set_window_font_scale(float(self.label_size) * node.size)
 
@@ -1102,9 +1083,7 @@ def main():
         imgui.separator()
 
         # Camera settings
-        _, viewer.move_speed = imgui.slider_float(
-            "Movement Speed", viewer.move_speed, 0.01, 2.0
-        )
+        _, viewer.move_speed = imgui.slider_float("Movement Speed", viewer.move_speed, 0.01, 2.0)
         _, viewer.mouse_sensitivity = imgui.slider_float(
             "Mouse Sensitivity", viewer.mouse_sensitivity, 0.01, 0.5
         )

@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from agent.tools.subagent.registry.helpers import (
     cap_frozen_result_text,
     resolve_announce_retry_delay_seconds,
@@ -6,7 +6,7 @@ from agent.tools.subagent.registry.helpers import (
     has_run_ended,
     reconcile_orphaned_run,
 )
-from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionState, ExecutionStatus, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionState, ExecutionStatus
 from agent.tools.subagent.registry.memory import clear
 
 

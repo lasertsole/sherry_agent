@@ -14,15 +14,11 @@ from typing import Any
 PROMPTS_ZH: dict[str, Any] = {}
 
 # System prompts for different analysis types
-PROMPTS_ZH["IMAGE_ANALYSIS_SYSTEM"] = (
-    "你是一位专业的图像分析专家。请提供详细、准确的描述。"
-)
+PROMPTS_ZH["IMAGE_ANALYSIS_SYSTEM"] = "你是一位专业的图像分析专家。请提供详细、准确的描述。"
 PROMPTS_ZH["IMAGE_ANALYSIS_FALLBACK_SYSTEM"] = (
     "你是一位专业的图像分析专家。请根据现有信息提供详细分析。"
 )
-PROMPTS_ZH["TABLE_ANALYSIS_SYSTEM"] = (
-    "你是一位专业的数据分析师。请提供包含具体洞察的详细表格分析。"
-)
+PROMPTS_ZH["TABLE_ANALYSIS_SYSTEM"] = "你是一位专业的数据分析师。请提供包含具体洞察的详细表格分析。"
 PROMPTS_ZH["EQUATION_ANALYSIS_SYSTEM"] = "你是一位数学专家。请提供详细的数学分析。"
 PROMPTS_ZH["GENERIC_ANALYSIS_SYSTEM"] = "你是一位专注于{content_type}内容的专业分析师。"
 
@@ -121,9 +117,7 @@ PROMPTS_ZH["table_prompt"] = """请分析此表格内容，并以以下JSON结�
 请专注于从表格数据中提取有意义的洞察和关系。"""
 
 # Table analysis prompt with context support
-PROMPTS_ZH[
-    "table_prompt_with_context"
-] = """请结合上下文分析此表格内容，并以以下JSON结构提供回答：
+PROMPTS_ZH["table_prompt_with_context"] = """请结合上下文分析此表格内容，并以以下JSON结构提供回答：
 
 {{
     "detailed_description": "对表格的全面分析，包括：
@@ -290,13 +284,9 @@ PROMPTS_ZH["generic_chunk"] = """{content_type}内容分析：
 分析：{enhanced_caption}"""
 
 # Query-related prompts
-PROMPTS_ZH["QUERY_IMAGE_DESCRIPTION"] = (
-    "请简要描述这张图片的主要内容、关键元素和重要信息。"
-)
+PROMPTS_ZH["QUERY_IMAGE_DESCRIPTION"] = "请简要描述这张图片的主要内容、关键元素和重要信息。"
 
-PROMPTS_ZH["QUERY_IMAGE_ANALYST_SYSTEM"] = (
-    "你是一位能准确描述图片内容的专业图像分析师。"
-)
+PROMPTS_ZH["QUERY_IMAGE_ANALYST_SYSTEM"] = "你是一位能准确描述图片内容的专业图像分析师。"
 
 PROMPTS_ZH["QUERY_TABLE_ANALYSIS"] = """请分析以下表格数据的主要内容、结构和关键信息：
 
@@ -307,9 +297,7 @@ PROMPTS_ZH["QUERY_TABLE_ANALYSIS"] = """请分析以下表格数据的主要内�
 
 请简要总结表格的主要内容、数据特征和重要发现。"""
 
-PROMPTS_ZH["QUERY_TABLE_ANALYST_SYSTEM"] = (
-    "你是一位能准确分析表格数据的专业数据分析师。"
-)
+PROMPTS_ZH["QUERY_TABLE_ANALYST_SYSTEM"] = "你是一位能准确分析表格数据的专业数据分析师。"
 
 PROMPTS_ZH["QUERY_EQUATION_ANALYSIS"] = """请解释以下数学公式的含义和用途：
 

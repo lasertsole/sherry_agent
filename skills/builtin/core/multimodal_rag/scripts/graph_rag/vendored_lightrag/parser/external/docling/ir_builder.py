@@ -1,4 +1,4 @@
-﻿"""Docling IR builder: ``DoclingDocument`` JSON → :class:`IRDoc`.
+"""Docling IR builder: ``DoclingDocument`` JSON → :class:`IRDoc`.
 
 Input contract: a ``*.docling_raw/`` directory containing a ``<stem>.json``
 produced by docling-serve with ``to_formats=[json,md]`` +
@@ -108,9 +108,7 @@ class DoclingIRBuilder:
         try:
             doc = json.loads(main_json.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Docling raw JSON malformed at {main_json}: {exc}"
-            ) from exc
+            raise ValueError(f"Docling raw JSON malformed at {main_json}: {exc}") from exc
         if not isinstance(doc, dict):
             raise ValueError(f"Docling raw JSON is not an object at {main_json}")
         return self._normalize(doc, raw_dir, document_name=document_name)
@@ -174,8 +172,7 @@ class DoclingIRBuilder:
                 cb_bbox_positions = []
                 return
             positions = [
-                IRPosition(type="bbox", anchor=p)
-                for p in _sort_page_anchors(cb_page_set)
+                IRPosition(type="bbox", anchor=p) for p in _sort_page_anchors(cb_page_set)
             ] + list(cb_bbox_positions)
             blocks.append(
                 IRBlock(
@@ -219,9 +216,7 @@ class DoclingIRBuilder:
                 bbox = prov.get("bbox") or {}
                 page_raw = prov.get("page_no")
                 charspan = prov.get("charspan")
-                if isinstance(bbox, dict) and all(
-                    k in bbox for k in ("l", "t", "r", "b")
-                ):
+                if isinstance(bbox, dict) and all(k in bbox for k in ("l", "t", "r", "b")):
                     coord_origin = str(bbox.get("coord_origin") or "").upper()
                     origin_override: str | None = None
                     if coord_origin == "TOPLEFT":
@@ -247,9 +242,7 @@ class DoclingIRBuilder:
                             type="bbox",
                             anchor=anchor,
                             range=range_,
-                            charspan=(
-                                list(charspan) if isinstance(charspan, list) else None
-                            ),
+                            charspan=(list(charspan) if isinstance(charspan, list) else None),
                             origin=origin_override,
                         )
                     )
@@ -283,9 +276,7 @@ class DoclingIRBuilder:
                 return
             # Unknown kind — log and ignore; falling through silently would
             # hide schema drift in future docling releases.
-            logger.warning(
-                "[docling_ir_builder] unknown ref kind %r (ref=%r); skipping", kind, ref
-            )
+            logger.warning("[docling_ir_builder] unknown ref kind %r (ref=%r); skipping", kind, ref)
 
         def _visit_group(group: dict) -> None:
             label = str(group.get("label") or "").lower()
@@ -711,11 +702,7 @@ def _build_ir_table(
         )
         return None
 
-    num_rows = (
-        int(data.get("num_rows") or len(rows) or 0)
-        if isinstance(data, dict)
-        else len(rows)
-    )
+    num_rows = int(data.get("num_rows") or len(rows) or 0) if isinstance(data, dict) else len(rows)
     num_cols = int(
         (data.get("num_cols") if isinstance(data, dict) else 0)
         or (max((len(r) for r in rows), default=0))
@@ -726,14 +713,10 @@ def _build_ir_table(
     captions = _resolve_text_refs(item.get("captions"), ref_index)
     if not captions:
         # Fallback: direct children with label="caption"
-        captions = _resolve_children_with_label(
-            item.get("children"), ref_index, "caption"
-        )
+        captions = _resolve_children_with_label(item.get("children"), ref_index, "caption")
     footnotes = _resolve_text_refs(item.get("footnotes"), ref_index)
     if not footnotes:
-        footnotes = _resolve_children_with_label(
-            item.get("children"), ref_index, "footnote"
-        )
+        footnotes = _resolve_children_with_label(item.get("children"), ref_index, "footnote")
 
     return IRTable(
         placeholder_key="",
@@ -764,9 +747,7 @@ def _rows_from_grid(grid: Any) -> list[list[str]]:
     for row in grid:
         if not isinstance(row, list):
             continue
-        out.append(
-            [str((c or {}).get("text", "") if isinstance(c, dict) else c) for c in row]
-        )
+        out.append([str((c or {}).get("text", "") if isinstance(c, dict) else c) for c in row])
     return out
 
 
@@ -882,14 +863,10 @@ def _build_ir_drawing(
 
     captions = _resolve_text_refs(item.get("captions"), ref_index)
     if not captions:
-        captions = _resolve_children_with_label(
-            item.get("children"), ref_index, "caption"
-        )
+        captions = _resolve_children_with_label(item.get("children"), ref_index, "caption")
     footnotes = _resolve_text_refs(item.get("footnotes"), ref_index)
     if not footnotes:
-        footnotes = _resolve_children_with_label(
-            item.get("children"), ref_index, "footnote"
-        )
+        footnotes = _resolve_children_with_label(item.get("children"), ref_index, "footnote")
 
     extras: dict[str, Any] = {}
     if image_size is not None:
@@ -922,9 +899,7 @@ def _build_ir_drawing(
         decoded = _decode_data_uri(uri)
         if decoded is not None:
             payload, ext = decoded
-            stem = (
-                (item.get("self_ref") or "picture").replace("#/", "").replace("/", "_")
-            )
+            stem = (item.get("self_ref") or "picture").replace("#/", "").replace("/", "_")
             suggested = f"{stem}.{ext or fmt or 'bin'}"
             asset_ref = uri  # use the data URI as a stable ref
             if asset_ref not in seen_asset_refs:
@@ -936,8 +911,7 @@ def _build_ir_drawing(
                 seen_asset_refs[asset_ref] = suggested
         else:
             logger.warning(
-                "[docling_ir_builder] skipping picture %s because data URI could "
-                "not be decoded",
+                "[docling_ir_builder] skipping picture %s because data URI could not be decoded",
                 item.get("self_ref") or "<unknown>",
             )
             return None

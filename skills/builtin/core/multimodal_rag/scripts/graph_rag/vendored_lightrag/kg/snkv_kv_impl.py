@@ -3,6 +3,7 @@
 All KV namespaces share one ``snkv.db`` file (via snkv_shared) using
 one column family per namespace.
 """
+
 from __future__ import annotations
 
 import asyncio

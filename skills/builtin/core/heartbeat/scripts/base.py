@@ -35,6 +35,7 @@ _HEARTBEAT_TOOL = [
     }
 ]
 
+
 # Pydantic model for heartbeat decision (fallback path)
 class _HeartbeatDecision(BaseModel):
     """Report heartbeat decision after reviewing tasks."""
@@ -93,7 +94,7 @@ class HeartbeatService:
         from pub_func import current_time_str
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        system_msg = f"You are a heartbeat agent. Call the heartbeat tool to report your decision."
+        system_msg = "You are a heartbeat agent. Call the heartbeat tool to report your decision."
         user_msg = (
             f"Current Time: {current_time_str(self.timezone)}\n\n"
             "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
@@ -103,10 +104,12 @@ class HeartbeatService:
         # ── Attempt bind_tools path ──────────────────────────────────
         auxiliary_llm = build_auxiliary_llm()
         try:
-            response = auxiliary_llm.bind_tools(_HEARTBEAT_TOOL).invoke([
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ])
+            response = auxiliary_llm.bind_tools(_HEARTBEAT_TOOL).invoke(
+                [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ]
+            )
 
             if response.tool_calls and len(response.tool_calls) > 0:
                 args = response.tool_calls[0].get("args", {})
@@ -116,19 +119,27 @@ class HeartbeatService:
             logger.debug("Heartbeat _decide: no tool calls returned, treating as skip")
             return "skip", ""
         except NotImplementedError:
-            logger.warning("Heartbeat _decide: bind_tools not supported, falling back to with_structured_output")
+            logger.warning(
+                "Heartbeat _decide: bind_tools not supported, falling back to with_structured_output"
+            )
         except Exception:
-            logger.exception("Heartbeat _decide: bind_tools failed, falling back to with_structured_output")
+            logger.exception(
+                "Heartbeat _decide: bind_tools failed, falling back to with_structured_output"
+            )
 
         # ── Fallback: with_structured_output ──────────────────────────
         try:
-            structured = auxiliary_llm.with_structured_output(_HeartbeatDecision).invoke([
-                SystemMessage(content=system_msg),
-                HumanMessage(content=user_msg),
-            ])
+            structured = auxiliary_llm.with_structured_output(_HeartbeatDecision).invoke(
+                [
+                    SystemMessage(content=system_msg),
+                    HumanMessage(content=user_msg),
+                ]
+            )
             return structured.action, structured.tasks or ""
         except Exception:
-            logger.exception("Heartbeat _decide: with_structured_output also failed, defaulting to skip")
+            logger.exception(
+                "Heartbeat _decide: with_structured_output also failed, defaulting to skip"
+            )
             return "skip", ""
 
     async def start(self) -> None:
@@ -185,7 +196,7 @@ class HeartbeatService:
             if self.on_execute:
                 response: str = await self.on_execute(tasks)
                 if response:
-                    should_notify:bool = evaluate_response(response, tasks)
+                    should_notify: bool = evaluate_response(response, tasks)
                     if should_notify and self.on_notify:
                         logger.info("Heartbeat: completed, delivering response")
                         await self.on_notify(response)
@@ -203,5 +214,6 @@ class HeartbeatService:
         if action != "run" or not self.on_execute:
             return None
         return await self.on_execute(tasks)
+
 
 heartbeat_service: HeartbeatService = HeartbeatService()

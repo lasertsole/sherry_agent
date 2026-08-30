@@ -2,7 +2,6 @@
 
 import asyncio
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from type.bus import InboundMessage, OutboundMessage
 from bus.core import MessageBus
 
@@ -104,9 +103,7 @@ class TestMessageBusE2E:
 
         async def producer(n):
             await bus.publish_inbound(
-                InboundMessage(
-                    channel="test", sender_id="u", chat_id="c", content=f"msg-{n}"
-                )
+                InboundMessage(channel="test", sender_id="u", chat_id="c", content=f"msg-{n}")
             )
 
         async def consumer(count):
@@ -130,7 +127,6 @@ class TestRegisterIntegration:
 
     def test_clear_all_registers(self):
         """Verify clear_all_register_sessions cascades to all register types."""
-        from runtime.core import Register
         from runtime.state_register import StateRegisterMeM
         from runtime.count_call_register import CountCallRegister
 
@@ -144,6 +140,7 @@ class TestRegisterIntegration:
 
         # Clear
         from runtime import clear_all_register_sessions
+
         clear_all_register_sessions("test-session")
 
         # Verify state register is cleared
@@ -175,6 +172,7 @@ class TestConfigIntegration:
     def test_config_construction(self):
         """Verify Config can be constructed with defaults."""
         from config.schema import Config
+
         c = Config()
         assert c.agents.defaults.model is not None
         assert c.gateway.port > 0
@@ -182,6 +180,7 @@ class TestConfigIntegration:
     def test_nested_config_access(self):
         """Verify deep nested config access."""
         from config.schema import Config
+
         c = Config()
         # Access deeply nested values
         assert isinstance(c.tools.web.search.provider, str)

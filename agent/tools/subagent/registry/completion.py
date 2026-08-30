@@ -1,8 +1,7 @@
 """Completion state resolution: determines run outcomes and maps them to lifecycle ended reasons."""
 
-import time
 from loguru import logger
-from ..types.registry import SubagentRunRecord, RunOutcome, ExecutionState
+from ..types.registry import SubagentRunRecord, RunOutcome
 from ..types.registry import RunOutcomeStatus
 from ..types.lifecycle import LifecycleEndedReason, outcome_to_ended_reason
 
@@ -14,9 +13,15 @@ def should_update_run_outcome(current: RunOutcome | None, new_outcome: RunOutcom
     """
     if current is None:
         return True
-    if current.status == RunOutcomeStatus.UNKNOWN and new_outcome.status != RunOutcomeStatus.UNKNOWN:
+    if (
+        current.status == RunOutcomeStatus.UNKNOWN
+        and new_outcome.status != RunOutcomeStatus.UNKNOWN
+    ):
         return True
-    if current.status == RunOutcomeStatus.OK and new_outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
+    if current.status == RunOutcomeStatus.OK and new_outcome.status in (
+        RunOutcomeStatus.ERROR,
+        RunOutcomeStatus.TIMEOUT,
+    ):
         return True
     return False
 
@@ -43,7 +48,9 @@ def resolve_finalized_task_state(run: SubagentRunRecord) -> dict:
     return {
         "ended_reason": ended_reason,
         "terminal_state": terminal_state_map.get(outcome.status, "failed"),
-        "progress_summary": run.completion.result_text[:200] if run.completion.result_text else None,
+        "progress_summary": run.completion.result_text[:200]
+        if run.completion.result_text
+        else None,
         "terminal_summary": run.completion.result_text or outcome.error or "no result",
     }
 
@@ -68,8 +75,10 @@ async def emit_ended_hook_once(run: SubagentRunRecord) -> None:
     _ended_hook_in_flight.add(run.run_id)
     try:
         from ..hooks.base import fire_stop_hooks
+
         await fire_stop_hooks(run)
         from .memory import update as update_run
+
         update_run(run.run_id, ended_hook_emitted=True)
     except Exception as e:
         logger.error("emit_ended_hook_once failed for run {}: {}", run.run_id, e)

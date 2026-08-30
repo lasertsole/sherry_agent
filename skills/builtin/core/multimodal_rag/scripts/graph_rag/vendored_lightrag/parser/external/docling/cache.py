@@ -1,4 +1,4 @@
-﻿"""Cache validation for ``*.docling_raw/`` bundles.
+"""Cache validation for ``*.docling_raw/`` bundles.
 
 Validation policy (settled in
 ``docs/DoclingSidecarRefactorPlan-zh.md`` §4.1):
@@ -167,11 +167,7 @@ def is_bundle_valid(raw_dir: Path, source_file: Path) -> bool:
     #    we don't reject the cache just because the env happens to be unset
     #    at validation time (e.g. CLI tooling that only reads the cache).
     cur_endpoint = current_endpoint_signature()
-    if (
-        cur_endpoint
-        and manifest.endpoint_signature
-        and cur_endpoint != manifest.endpoint_signature
-    ):
+    if cur_endpoint and manifest.endpoint_signature and cur_endpoint != manifest.endpoint_signature:
         return False
 
     # 5. Options signature: only enforced if the manifest recorded one

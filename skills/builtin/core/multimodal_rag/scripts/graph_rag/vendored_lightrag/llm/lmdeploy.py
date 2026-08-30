@@ -1,4 +1,4 @@
-﻿import warnings
+import warnings
 
 import pipmaster as pm  # Pipmaster for dynamic library install
 
@@ -49,9 +49,7 @@ def initialize_lmdeploy_pipeline(
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def lmdeploy_model_if_cache(
     model,
@@ -102,9 +100,7 @@ async def lmdeploy_model_if_cache(
     if enable_cot:
         from graph_rag.vendored_lightrag.utils import logger
 
-        logger.debug(
-            "enable_cot=True is not supported for lmdeploy and will be ignored."
-        )
+        logger.debug("enable_cot=True is not supported for lmdeploy and will be ignored.")
     try:
         import lmdeploy
         from lmdeploy import version_info, GenerationConfig

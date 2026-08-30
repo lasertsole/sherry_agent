@@ -75,9 +75,7 @@ def table_content_format_label(fmt: str) -> str:
     try:
         return _TABLE_FORMAT_LABELS[key]
     except KeyError:
-        raise ValueError(
-            f"unknown table format {fmt!r}; expected 'html' or 'json'"
-        ) from None
+        raise ValueError(f"unknown table format {fmt!r}; expected 'html' or 'json'") from None
 
 
 MULTIMODAL_PROMPTS: dict[str, str] = {}

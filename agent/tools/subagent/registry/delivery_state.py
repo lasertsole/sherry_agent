@@ -1,7 +1,12 @@
 """Delivery state machine accessors: query and transition CompletionDeliveryState statuses."""
 
 import time
-from ..types.registry import SubagentRunRecord, CompletionDeliveryState, DeliveryStatus, CompletionState
+from ..types.registry import (
+    SubagentRunRecord,
+    CompletionDeliveryState,
+    DeliveryStatus,
+    CompletionState,
+)
 
 
 def ensure_delivery_state(run: SubagentRunRecord) -> CompletionDeliveryState:
@@ -69,69 +74,89 @@ def get_delivery_last_error(run: SubagentRunRecord) -> str | None:
 
 def mark_delivery_pending(run: SubagentRunRecord) -> SubagentRunRecord:
     """Transition delivery to PENDING status."""
-    return run.model_copy(update={
-        "delivery": run.delivery.model_copy(update={"status": DeliveryStatus.PENDING})
-    })
+    return run.model_copy(
+        update={"delivery": run.delivery.model_copy(update={"status": DeliveryStatus.PENDING})}
+    )
 
 
 def mark_delivery_in_progress(run: SubagentRunRecord) -> SubagentRunRecord:
     """Transition delivery to IN_PROGRESS and record the attempt timestamp."""
-    return run.model_copy(update={
-        "delivery": run.delivery.model_copy(update={
-            "status": DeliveryStatus.IN_PROGRESS,
-            "last_attempt_at": time.monotonic(),
-        })
-    })
+    return run.model_copy(
+        update={
+            "delivery": run.delivery.model_copy(
+                update={
+                    "status": DeliveryStatus.IN_PROGRESS,
+                    "last_attempt_at": time.monotonic(),
+                }
+            )
+        }
+    )
 
 
 def mark_delivery_delivered(run: SubagentRunRecord) -> SubagentRunRecord:
     """Transition delivery to DELIVERED and record delivery timestamps."""
-    return run.model_copy(update={
-        "delivery": run.delivery.model_copy(update={
-            "status": DeliveryStatus.DELIVERED,
-            "delivered_at": time.monotonic(),
-            "announced_at": time.monotonic(),
-        })
-    })
+    return run.model_copy(
+        update={
+            "delivery": run.delivery.model_copy(
+                update={
+                    "status": DeliveryStatus.DELIVERED,
+                    "delivered_at": time.monotonic(),
+                    "announced_at": time.monotonic(),
+                }
+            )
+        }
+    )
 
 
 def mark_delivery_failed(run: SubagentRunRecord, error: str) -> SubagentRunRecord:
     """Transition delivery to FAILED, increment attempt count, and record the error."""
-    return run.model_copy(update={
-        "delivery": run.delivery.model_copy(update={
-            "status": DeliveryStatus.FAILED,
-            "last_error": error,
-            "attempt_count": run.delivery.attempt_count + 1,
-            "last_attempt_at": time.monotonic(),
-        })
-    })
+    return run.model_copy(
+        update={
+            "delivery": run.delivery.model_copy(
+                update={
+                    "status": DeliveryStatus.FAILED,
+                    "last_error": error,
+                    "attempt_count": run.delivery.attempt_count + 1,
+                    "last_attempt_at": time.monotonic(),
+                }
+            )
+        }
+    )
 
 
 def mark_delivery_suspended(run: SubagentRunRecord) -> SubagentRunRecord:
     """Transition delivery to SUSPENDED and record the suspension timestamp."""
-    return run.model_copy(update={
-        "delivery": run.delivery.model_copy(update={
-            "status": DeliveryStatus.SUSPENDED,
-            "suspended_at": time.monotonic(),
-        })
-    })
+    return run.model_copy(
+        update={
+            "delivery": run.delivery.model_copy(
+                update={
+                    "status": DeliveryStatus.SUSPENDED,
+                    "suspended_at": time.monotonic(),
+                }
+            )
+        }
+    )
 
 
-def mark_delivery_discarded(run: SubagentRunRecord, reason: str = "max_retries") -> SubagentRunRecord:
+def mark_delivery_discarded(
+    run: SubagentRunRecord, reason: str = "max_retries"
+) -> SubagentRunRecord:
     """Transition delivery to DISCARDED with an optional reason."""
-    return run.model_copy(update={
-        "delivery": run.delivery.model_copy(update={
-            "status": DeliveryStatus.DISCARDED,
-            "discard_reason": reason,
-        })
-    })
+    return run.model_copy(
+        update={
+            "delivery": run.delivery.model_copy(
+                update={
+                    "status": DeliveryStatus.DISCARDED,
+                    "discard_reason": reason,
+                }
+            )
+        }
+    )
 
 
 def clear_delivery_state(run: SubagentRunRecord) -> SubagentRunRecord:
     """Reset the delivery state to its default (initial) values."""
-    return run.model_copy(update={
-        "delivery": CompletionDeliveryState()
-    })
+    return run.model_copy(update={"delivery": CompletionDeliveryState()})
 
 
 def should_retry_delivery(run: SubagentRunRecord, max_attempts: int = 10) -> bool:

@@ -15,6 +15,7 @@ def current_time_str(timezone: str | None = None) -> str:
         tz = None
 
     from datetime import datetime
+
     now = datetime.now(tz=tz) if tz else datetime.now().astimezone()
     offset = now.strftime("%z")
     offset_fmt = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset

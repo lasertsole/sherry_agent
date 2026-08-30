@@ -3,23 +3,25 @@ import time
 import base64
 import urllib.request
 from PIL import Image
-from pathlib import Path
 from typing import Any
 from loguru import logger
 from config import SRC_DIR
 from pub_func import is_url
 from typing_extensions import override
+from langgraph.runtime import Runtime
+from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain_core.messages import BaseMessage, HumanMessage
 
 # Magic byte signatures → file extension
 # Ordered by specificity (more bytes = earlier check)
 _AUDIO_MAGIC: dict[bytes, str] = {
-    b"\x52\x49\x46\x46": ".wav",   # RIFF (WAV)
+    b"\x52\x49\x46\x46": ".wav",  # RIFF (WAV)
     b"\x1a\x45\xdf\xa3": ".webm",  # WebM / Matroska (audio or video)
-    b"\x4f\x67\x67\x53": ".ogg",   # Ogg (Vorbis/Opus)
-    b"\x49\x44\x33": ".mp3",       # ID3 tag (MP3)
-    b"\xff\xfb": ".mp3",           # MPEG audio frame sync 1 (MP3)
-    b"\xff\xf3": ".mp3",           # MPEG audio frame sync 2 (MP3)
-    b"\xff\xf2": ".mp3",           # MPEG audio frame sync 3
+    b"\x4f\x67\x67\x53": ".ogg",  # Ogg (Vorbis/Opus)
+    b"\x49\x44\x33": ".mp3",  # ID3 tag (MP3)
+    b"\xff\xfb": ".mp3",  # MPEG audio frame sync 1 (MP3)
+    b"\xff\xf3": ".mp3",  # MPEG audio frame sync 2 (MP3)
+    b"\xff\xf2": ".mp3",  # MPEG audio frame sync 3
     b"\x66\x4c\x61\x43": ".flac",  # FLAC
 }
 _VIDEO_MAGIC: dict[bytes, str] = {
@@ -29,13 +31,13 @@ _VIDEO_MAGIC: dict[bytes, str] = {
     b"\x00\x00\x00\x1c\x66\x74\x79\x70": ".mp4",  # ftyp box variant (small header)
 }
 _IMAGE_MAGIC: dict[bytes, str] = {
-    b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a": ".png",   # PNG
-    b"\xff\xd8\xff": ".jpg",                          # JPEG (SOI marker)
-    b"\x47\x49\x46\x38": ".gif",                      # GIF89a / GIF87a
-    b"\x42\x4d": ".bmp",                              # BMP
-    b"\x49\x49\x2a\x00": ".tiff",                     # TIFF little-endian
-    b"\x4d\x4d\x00\x2a": ".tiff",                     # TIFF big-endian
-    b"\x52\x49\x46\x46": ".webp",                     # RIFF (WebP)
+    b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a": ".png",  # PNG
+    b"\xff\xd8\xff": ".jpg",  # JPEG (SOI marker)
+    b"\x47\x49\x46\x38": ".gif",  # GIF89a / GIF87a
+    b"\x42\x4d": ".bmp",  # BMP
+    b"\x49\x49\x2a\x00": ".tiff",  # TIFF little-endian
+    b"\x4d\x4d\x00\x2a": ".tiff",  # TIFF big-endian
+    b"\x52\x49\x46\x46": ".webp",  # RIFF (WebP)
 }
 
 
@@ -77,9 +79,7 @@ def _download_url_to_temp(url: str, session_id: str, kind: str) -> str | None:
     Returns the persistent media/ path (posix-style) on success, or None on failure.
     """
     try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 (EMA_AI_agent)"}
-        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (EMA_AI_agent)"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = resp.read()
         if not data:
@@ -123,11 +123,6 @@ def _unwrap_media_bytes(item: Any) -> bytes | None:
         logger.error(f"Invalid media bytes payload: {type(media_bytes).__name__}")
         return None
     return bytes(media_bytes)
-
-
-from langgraph.runtime import Runtime
-from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain_core.messages import BaseMessage, HumanMessage
 
 
 class MultimodalProcessor(AgentMiddleware):
@@ -187,11 +182,11 @@ class MultimodalProcessor(AgentMiddleware):
                     url: str = item.get("image_url", {}).get("url", "")
 
                     # Check if it's a URL (exclude data: scheme, which is a base64-embedded image)
-                    if is_url(url) and not url.startswith('data:'):
+                    if is_url(url) and not url.startswith("data:"):
                         image_path_list.append(url)
                         continue
                     else:
-                        if url.startswith('data:image/'):
+                        if url.startswith("data:image/"):
                             # Already has a prefix, use as-is
                             base64_data: str = url.split(",")[1]
                         else:
@@ -259,7 +254,9 @@ class MultimodalProcessor(AgentMiddleware):
                     media_dir.mkdir(parents=True, exist_ok=True)
                     media_path = (media_dir / f"{timestamp}{ext}").resolve()
                     media_path.write_bytes(media_bytes)
-                    logger.debug(f"Audio cached successfully! (temp={temp_path.as_posix()}, persistent={media_path.as_posix()}, extension={ext})")
+                    logger.debug(
+                        f"Audio cached successfully! (temp={temp_path.as_posix()}, persistent={media_path.as_posix()}, extension={ext})"
+                    )
                     audio_path_list.append(media_path.as_posix())
 
                 elif item.get("type") == "video_url":
@@ -289,7 +286,9 @@ class MultimodalProcessor(AgentMiddleware):
                     media_dir.mkdir(parents=True, exist_ok=True)
                     media_path = (media_dir / f"{timestamp}{ext}").resolve()
                     media_path.write_bytes(media_bytes)
-                    logger.debug(f"Video cached successfully! (temp={temp_path.as_posix()}, persistent={media_path.as_posix()}, extension={ext})")
+                    logger.debug(
+                        f"Video cached successfully! (temp={temp_path.as_posix()}, persistent={media_path.as_posix()}, extension={ext})"
+                    )
                     video_path_list.append(media_path.as_posix())
 
         if text_dict is None:
@@ -342,7 +341,9 @@ class MultimodalProcessor(AgentMiddleware):
         # Persist the list of media file paths into additional_kwargs so the
         # context engine can save them to the messages table for history rendering.
         if len(media_path_list) > 0 or len(audio_path_list) > 0 or len(video_path_list) > 0:
-            additional_kwargs: dict[str, Any] = dict(getattr(last_mes, "additional_kwargs", {}) or {})
+            additional_kwargs: dict[str, Any] = dict(
+                getattr(last_mes, "additional_kwargs", {}) or {}
+            )
             if len(media_path_list) > 0:
                 additional_kwargs["images"] = media_path_list
             if len(audio_path_list) > 0:

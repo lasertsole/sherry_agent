@@ -5,24 +5,24 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 from loguru import logger
 
-from ..registry import register_yield_event, get_yield_event, remove_yield_event
+from ..registry import register_yield_event, remove_yield_event
 from ..registry.queries import list_runs_for_requester
 from ..types.registry import ExecutionStatus
 
 
 class SessionsYieldSchema(BaseModel):
     reason: str | None = Field(
-        default=None,
-        description="Optional reason for yielding (e.g., 'waiting for subagents')."
+        default=None, description="Optional reason for yielding (e.g., 'waiting for subagents')."
     )
     timeout_seconds: float = Field(
         default=300.0,
-        description="Maximum seconds to wait for subagent results. Default 300 (5 min)."
+        description="Maximum seconds to wait for subagent results. Default 300 (5 min).",
     )
 
 
 class SessionsYieldTool(BaseTool):
     """LLM tool: pause the current turn and auto-resume when all spawned sub-agents complete."""
+
     name: str = "sessions_yield"
     description: str = (
         "Pause your current turn and wait for all spawned subagents to complete. "
@@ -43,7 +43,8 @@ class SessionsYieldTool(BaseTool):
         # Check for active child sub-agents
         children = list_runs_for_requester(session_key)
         active = [
-            c for c in children
+            c
+            for c in children
             if c.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
         ]
 
@@ -58,7 +59,9 @@ class SessionsYieldTool(BaseTool):
             await asyncio.wait_for(event.wait(), timeout=timeout_seconds)
             return "All subagents have completed. Their results have been delivered to you."
         except asyncio.TimeoutError:
-            logger.warning("sessions_yield timed out after {}s for session {}", timeout_seconds, session_key)
+            logger.warning(
+                "sessions_yield timed out after {}s for session {}", timeout_seconds, session_key
+            )
             return f"Yield timed out after {timeout_seconds}s. Some subagents may still be running. Use subagents_list to check."
         finally:
             remove_yield_event(session_key)

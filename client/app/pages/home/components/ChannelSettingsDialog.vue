@@ -135,7 +135,9 @@
       <!-- enabled -->
       <div class="flex items-center justify-between gap-3 py-2">
         <div class="flex flex-col">
-          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ t('extend.channelSettings.enabled') }}</span>
+          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{
+            t('extend.channelSettings.enabled')
+          }}</span>
         </div>
         <ToggleSwitch v-model="form.enabled" />
       </div>
@@ -144,7 +146,9 @@
       <!-- heartbeat -->
       <div class="flex items-center justify-between gap-3 py-2">
         <div class="flex flex-col">
-          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ t('extend.channelSettings.heartbeat') }}</span>
+          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{
+            t('extend.channelSettings.heartbeat')
+          }}</span>
           <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('extend.channelSettings.heartbeatHint') }}</span>
         </div>
         <ToggleSwitch v-model="form.heartbeat" />
@@ -154,7 +158,9 @@
       <!-- cron -->
       <div class="flex items-center justify-between gap-3 py-2">
         <div class="flex flex-col">
-          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ t('extend.channelSettings.cron') }}</span>
+          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{
+            t('extend.channelSettings.cron')
+          }}</span>
           <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('extend.channelSettings.cronHint') }}</span>
         </div>
         <ToggleSwitch v-model="form.cron" />
@@ -164,8 +170,14 @@
       <!-- per-channel config.json -->
       <div class="flex flex-col gap-2 py-2">
         <div class="flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ t('extend.channelSettings.config') }}</span>
-          <span v-if="configEmpty" class="text-xs text-gray-400 dark:text-gray-500">{{ t('extend.channelSettings.configEmpty') }}</span>
+          <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{
+            t('extend.channelSettings.config')
+          }}</span>
+          <span
+            v-if="configEmpty"
+            class="text-xs text-gray-400 dark:text-gray-500"
+            >{{ t('extend.channelSettings.configEmpty') }}</span
+          >
         </div>
 
         <div
@@ -174,8 +186,16 @@
           class="flex items-start justify-between gap-3 py-1">
           <div class="flex min-w-0 flex-col">
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ key }}</span>
-            <span v-if="isBool(field.value)" class="text-xs text-gray-400 dark:text-gray-500">{{ t('extend.channelSettings.configBool') }}</span>
-            <span v-else class="text-xs text-gray-400 dark:text-gray-500">{{ t('extend.channelSettings.configPlain') }}</span>
+            <span
+              v-if="isBool(field.value)"
+              class="text-xs text-gray-400 dark:text-gray-500"
+              >{{ t('extend.channelSettings.configBool') }}</span
+            >
+            <span
+              v-else
+              class="text-xs text-gray-400 dark:text-gray-500"
+              >{{ t('extend.channelSettings.configPlain') }}</span
+            >
           </div>
 
           <div class="min-w-0 basis-3/5">
@@ -201,7 +221,9 @@
 
       <p
         v-if="error"
-        class="m-0 mt-2 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
+        class="m-0 mt-2 text-xs text-red-600 dark:text-red-400">
+        {{ error }}
+      </p>
     </div>
 
     <template #footer>
@@ -231,29 +253,32 @@ const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{
   modelValue: boolean;
-  /** 当前要设置的频道（为 null 时弹窗不生效）。 */
+  /** The channel being configured (the dialog has no effect when null). */
   channel: ChannelInfo | null;
 }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
 
 const visible = computed({
   get: () => props.modelValue,
-  set: (v) => emits('update:modelValue', v),
+  set: v => emits('update:modelValue', v)
 });
 
-/** 编辑表单，保存成功后同步到父级（父级通过 @saved 重新拉取频道列表）。 */
+/** Edit form; synced back to the parent after a successful save (the parent re-fetches the channel list via @saved). */
 const form = ref<{ enabled: boolean; heartbeat: boolean; cron: boolean }>({
   enabled: false,
   heartbeat: false,
-  cron: false,
+  cron: false
 });
 
 /**
- * 每个 config 字段的编辑状态。value 保持原始 JSON 类型；
- * 对象/数组在 UI 上以字符串展示，保存时再解析回对象。
+ * Edit state for each config field. value keeps the original JSON type;
+ * objects/arrays are shown as strings in the UI and parsed back into objects on save.
  */
+/** JSON config value as kept in the edit form: booleans → ToggleSwitch, numbers → InputNumber, everything else → InputText. */
+type ConfigValue = boolean | number | string | null;
+
 interface ConfigField {
-  value: unknown;
+  value: ConfigValue;
 }
 const configFields = ref<Record<string, ConfigField>>({});
 const saving = ref(false);
@@ -268,7 +293,7 @@ function isNumber(v: unknown): v is number {
   return typeof v === 'number';
 }
 
-/** 把 config 对象转成前端编辑结构；对象/数组序列化为 JSON 字符串以便在 InputText 中编辑。 */
+/** Convert the config object into the frontend edit structure; objects/arrays are serialized to JSON strings so they can be edited in InputText. */
 function normalizeConfig(raw: ChannelConfig): Record<string, ConfigField> {
   const out: Record<string, ConfigField> = {};
   for (const [k, v] of Object.entries(raw)) {
@@ -277,37 +302,40 @@ function normalizeConfig(raw: ChannelConfig): Record<string, ConfigField> {
   return out;
 }
 
-function normalizeValue(v: unknown): unknown {
+function normalizeValue(v: unknown): ConfigValue {
   if (v !== null && typeof v === 'object') {
     return JSON.stringify(v, null, 0);
   }
-  return v;
+  if (v === null || typeof v === 'boolean' || typeof v === 'number' || typeof v === 'string') {
+    return v;
+  }
+  return String(v);
 }
 
-/** 保存时把字符串形式的对象/数组解析回 JSON；无法解析则保持字符串。 */
+/** On save, parse stringified objects/arrays back to JSON; keep the string if parsing fails. */
 function denormalizeValue(v: unknown): unknown {
   if (typeof v !== 'string') return v;
   const trimmed = v.trim();
-  // 仅对看起来像 JSON 文本的字符串尝试解析。
+  // Only attempt to parse strings that look like JSON text.
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       return JSON.parse(trimmed);
     } catch {
-      // 保留原始字符串，前端会回显。
+      // Keep the original string; the frontend echoes it back.
       return v;
     }
   }
   return v;
 }
 
-/** @show 触发：拉取频道本地 config 并预填表单与配置字段。 */
+/** Triggered by @show: fetch the channel's local config and prefill the form and config fields. */
 const init = async () => {
   error.value = '';
   const ch = props.channel;
   form.value = {
     enabled: ch?.enabled ?? false,
     heartbeat: ch?.heartbeat ?? false,
-    cron: ch?.cron ?? false,
+    cron: ch?.cron ?? false
   };
   configFields.value = {};
   if (ch) {
@@ -330,10 +358,10 @@ const handleSave = async () => {
     await updateChannel(ch.name, {
       enabled: form.value.enabled,
       heartbeat: form.value.heartbeat,
-      cron: form.value.cron,
+      cron: form.value.cron
     });
 
-    // 将编辑后的 config 回写（保留各值的原始 JSON 类型）。
+    // Write the edited config back (preserving each value's original JSON type).
     const cfg: ChannelConfig = {};
     for (const [k, f] of Object.entries(configFields.value)) {
       cfg[k] = denormalizeValue(f.value);

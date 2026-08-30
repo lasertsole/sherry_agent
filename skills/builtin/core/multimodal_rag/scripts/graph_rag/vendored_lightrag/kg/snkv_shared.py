@@ -10,12 +10,13 @@ executor or the refcount.  Storage classes use a reset_token to detect
 when the underlying connection has been replaced and reopen their column
 families accordingly.
 """
+
 from __future__ import annotations
 
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from snkv import KVStore
 

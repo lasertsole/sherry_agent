@@ -55,20 +55,21 @@ class TestSummarizationTriggerDiagnose:
         """fraction=0.5 of 65_536_000 → threshold = 32_768_000."""
         limits = summarizer._get_profile_limits()
         threshold = int(limits * 0.5)
-        assert threshold == EXPECTED_THRESHOLD, (
-            f"Expected threshold 32_768_000, got {threshold}"
-        )
+        assert threshold == EXPECTED_THRESHOLD, f"Expected threshold 32_768_000, got {threshold}"
 
-    @pytest.mark.parametrize("token_count,should_trigger", [
-        (1_000,    False),   # tiny → no
-        (100_000,  False),   # 100K → still far below 32M
-        (1_000_000, False),  # 1M  → still below
-        (10_000_000, False), # 10M → still below
-        (30_000_000, False), # 30M → still below 32.768M
-        (33_000_000, True),  # 33M → barely over
-        (50_000_000, True),  # 50M → way over
-        (65_536_000, True),  # 100% of context
-    ])
+    @pytest.mark.parametrize(
+        "token_count,should_trigger",
+        [
+            (1_000, False),  # tiny → no
+            (100_000, False),  # 100K → still far below 32M
+            (1_000_000, False),  # 1M  → still below
+            (10_000_000, False),  # 10M → still below
+            (30_000_000, False),  # 30M → still below 32.768M
+            (33_000_000, True),  # 33M → barely over
+            (50_000_000, True),  # 50M → way over
+            (65_536_000, True),  # 100% of context
+        ],
+    )
     def test_fraction_trigger_only(self, token_count, should_trigger):
         """Check the ``fraction`` trigger in isolation (no ``tokens`` or ``messages`` trigger interference).
 
@@ -95,11 +96,14 @@ class TestSummarizationTriggerDiagnose:
                 f"got {result}"
             )
 
-    @pytest.mark.parametrize("token_count,should_trigger", [
-        (1_000,    False),
-        (30_000,   True),  # ("tokens", 30000) trigger
-        (100_000,  True),
-    ])
+    @pytest.mark.parametrize(
+        "token_count,should_trigger",
+        [
+            (1_000, False),
+            (30_000, True),  # ("tokens", 30000) trigger
+            (100_000, True),
+        ],
+    )
     def test_tokens_trigger_still_works(self, token_count, should_trigger):
         """Verify the absolute ``tokens`` trigger still fires at 30K."""
         from agent.middlewares.summarization import Summarization

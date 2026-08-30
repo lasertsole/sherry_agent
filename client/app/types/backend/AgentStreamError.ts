@@ -12,20 +12,21 @@
  * | `code` | `string` | Machine-readable error code |
  * | `message` | `string` | Human-readable error description |
  */
-export type AgentStreamError = { 
-/**
- * The session that failed.
- */
-session_id: string, 
-/**
- * The message turn that failed.
- */
-message_id: string, 
-/**
- * Machine-readable error code (e.g., `"MODEL_ERROR"`).
- */
-code: string, 
-/**
- * Human-readable error description.
- */
-message: string, };
+export type AgentStreamError = {
+  /**
+   * The session that failed.
+   */
+  session_id: string;
+  /**
+   * The message turn that failed.
+   */
+  message_id: string;
+  /**
+   * Machine-readable error code (e.g., `"MODEL_ERROR"`).
+   */
+  code: string;
+  /**
+   * Human-readable error description.
+   */
+  message: string;
+};

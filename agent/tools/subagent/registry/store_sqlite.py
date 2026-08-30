@@ -7,20 +7,10 @@ Table schema: subagent_runs(run_id TEXT PK, data TEXT) where data is model_dump_
 import json
 from pathlib import Path
 from loguru import logger
-from typing import Any
 import aiosqlite
 from ..types.registry import (
     SubagentRunRecord,
-    ExecutionState,
-    CompletionState,
-    CompletionDeliveryState,
-    RunOutcome,
-    ExecutionStatus,
-    DeliveryStatus,
-    RunOutcomeStatus,
 )
-from ..types.spawn import SpawnMode, ContextMode
-from ..types.capability import SubagentSessionRole, ControlScope
 
 _DB_DIR = Path(__file__).resolve().parent.parent / "data"
 _DB_PATH = _DB_DIR / "subagent_registry.db"
@@ -109,6 +99,7 @@ def upsert_run_sync(run: SubagentRunRecord) -> None:
     truth; SQLite is a best-effort restart-recovery mirror.
     """
     import sqlite3
+
     _DB_DIR.mkdir(parents=True, exist_ok=True)
     try:
         conn = sqlite3.connect(str(_DB_PATH))
@@ -136,6 +127,7 @@ async def delete_run_from_sqlite(run_id: str) -> None:
 def save_settle_wake_state(state: dict) -> None:
     """Synchronously save settle-wake state to SQLite."""
     import sqlite3
+
     _DB_DIR.mkdir(parents=True, exist_ok=True)
     try:
         conn = sqlite3.connect(str(_DB_PATH))
@@ -153,6 +145,7 @@ def save_settle_wake_state(state: dict) -> None:
 def load_settle_wake_state() -> dict | None:
     """Synchronously load settle-wake state from SQLite."""
     import sqlite3
+
     try:
         _DB_DIR.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(_DB_PATH))

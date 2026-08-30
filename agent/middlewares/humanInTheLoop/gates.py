@@ -15,13 +15,14 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
 
-from loguru import logger
 
 from .types import (
-    ApprovalDecision, ApprovalResult, HITLConfig, WriteTarget,
-    TriageStatus, BLOCKED_MESSAGE,
+    ApprovalDecision,
+    ApprovalResult,
+    HITLConfig,
+    WriteTarget,
+    TriageStatus,
 )
 
 
@@ -36,6 +37,7 @@ class PendingWrite:
         created_at:  Unix timestamp when this write was staged.
         approved:    ``True``  if approved, ``False``  if rejected, ``None``  if pending.
     """
+
     write_id: str
     target: WriteTarget
     content: str
@@ -58,17 +60,21 @@ class WriteApprovalGate:
             otherwise ``ApprovalResult(approved=False, decision=DENY)``  with a staged write ID.
         """
         gate_on = (
-            self.config.write_approval_memory if target == WriteTarget.MEMORY
+            self.config.write_approval_memory
+            if target == WriteTarget.MEMORY
             else self.config.write_approval_skills
         )
         if not gate_on:
-            return ApprovalResult(approved=True, decision=ApprovalDecision.ONCE, reason="Write approval gate off")
+            return ApprovalResult(
+                approved=True, decision=ApprovalDecision.ONCE, reason="Write approval gate off"
+            )
 
         write_id = str(uuid.uuid4())
         pending = PendingWrite(write_id=write_id, target=target, content=content)
         self._pending_writes.setdefault(session_id, []).append(pending)
         return ApprovalResult(
-            approved=False, decision=ApprovalDecision.DENY,
+            approved=False,
+            decision=ApprovalDecision.DENY,
             reason=f"Write staged for approval (id={write_id}). Use approve_write/reject_write.",
         )
 
@@ -97,7 +103,9 @@ class WriteApprovalGate:
                 return True
         return False
 
-    def get_pending_writes(self, session_id: str, target: WriteTarget | None = None) -> list[PendingWrite]:
+    def get_pending_writes(
+        self, session_id: str, target: WriteTarget | None = None
+    ) -> list[PendingWrite]:
         """Retrieve all pending writes for a session, optionally filtered by target.
 
         Returns:
@@ -161,7 +169,8 @@ class MCPElicitationConsent:
             Always an ``approved=False``, ``decision=DENY`` result.
         """
         return ApprovalResult(
-            approved=False, decision=ApprovalDecision.DENY,
+            approved=False,
+            decision=ApprovalDecision.DENY,
             reason=f"MCP elicitation from '{server_name}' requires consent. Defaulting to deny.",
         )
 
@@ -244,6 +253,7 @@ class SlashConfirm:
         if not self.config.destructive_slash_confirm:
             return ApprovalResult(approved=True, reason="Destructive confirmation disabled")
         return ApprovalResult(
-            approved=False, decision=ApprovalDecision.DENY,
+            approved=False,
+            decision=ApprovalDecision.DENY,
             reason=f"Destructive action '{action}' requires confirmation. Defaulting to deny.",
         )

@@ -36,6 +36,7 @@ from langchain.tools import BaseTool
 from contextlib import contextmanager
 from pydantic import BaseModel, Field
 from typing import Any, Literal, Type, override
+
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 msvcrt = None
 try:
@@ -51,25 +52,37 @@ ENTRY_DELIMITER = "\n§\n"
 # Subset of invisible chars for injection detection
 
 _INVISIBLE_CHARS = {
-    '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff',
-    '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+    "\u200b",
+    "\u200c",
+    "\u200d",
+    "\u2060",
+    "\ufeff",
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
 }
 _MEMORY_THREAT_PATTERNS = [
     # Prompt injection
-    (r'ignore\s+(previous|all|above|prior)\s+instructions', "prompt_injection"),
-    (r'you\s+are\s+now\s+', "role_hijack"),
-    (r'do\s+not\s+tell\s+the\s+user', "deception_hide"),
-    (r'system\s+prompt\s+override', "sys_prompt_override"),
-    (r'disregard\s+(your|all|any)\s+(instructions|rules|guidelines)', "disregard_rules"),
-    (r'act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)', "bypass_restrictions"),
+    (r"ignore\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
+    (r"you\s+are\s+now\s+", "role_hijack"),
+    (r"do\s+not\s+tell\s+the\s+user", "deception_hide"),
+    (r"system\s+prompt\s+override", "sys_prompt_override"),
+    (r"disregard\s+(your|all|any)\s+(instructions|rules|guidelines)", "disregard_rules"),
+    (
+        r"act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)",
+        "bypass_restrictions",
+    ),
     # Exfiltration via curl/wget with secrets
-    (r'curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_curl"),
-    (r'wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_wget"),
-    (r'cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)', "read_secrets"),
+    (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl"),
+    (r"wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_wget"),
+    (r"cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)", "read_secrets"),
     # Persistence via shell rc
-    (r'authorized_keys', "ssh_backdoor"),
-    (r'\$HOME/\.ssh|\~/\.ssh', "ssh_access"),
+    (r"authorized_keys", "ssh_backdoor"),
+    (r"\$HOME/\.ssh|\~/\.ssh", "ssh_access"),
 ]
+
 
 def _scan_memory_content(content: str) -> str | None:
     """Scan memory content for injection/exfil patterns. Returns error string if blocked."""
@@ -84,6 +97,7 @@ def _scan_memory_content(content: str) -> str | None:
             return f"Blocked: content matches threat pattern '{pid}'. Memory entries are injected into the system prompt and must not contain injection or exfiltration payloads."
 
     return None
+
 
 class MemoryStore:
     """
@@ -269,7 +283,10 @@ class MemoryStore:
         if not old_text:
             return {"success": False, "error": "old_text cannot be empty."}
         if not new_content:
-            return {"success": False, "error": "new_content cannot be empty. Use 'remove' to delete entries."}
+            return {
+                "success": False,
+                "error": "new_content cannot be empty. Use 'remove' to delete entries.",
+            }
 
         # Scan replacement content for injection/exfiltration
         scan_error = _scan_memory_content(new_content)
@@ -436,9 +453,7 @@ class MemoryStore:
         content = ENTRY_DELIMITER.join(entries) if entries else ""
         try:
             # Write to temp file in same directory (same filesystem for atomic rename)
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(path.parent), suffix=".tmp", prefix=".mem_"
-            )
+            fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".mem_")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(content)
@@ -455,6 +470,7 @@ class MemoryStore:
         except (OSError, IOError) as e:
             raise RuntimeError(f"Failed to write memory file {path}: {e}")
 
+
 def _tool_error(message, **extra) -> str:
     """Return a JSON error string for tool handlers.
 
@@ -468,7 +484,9 @@ def _tool_error(message, **extra) -> str:
         result.update(extra)
     return json.dumps(result, ensure_ascii=False)
 
+
 memory_store: MemoryStore = MemoryStore()
+
 
 def memory_tool(
     action: str,
@@ -484,12 +502,12 @@ def memory_tool(
     start_time = time.time()
     content_preview = content[:50] if content else ""
     old_text_preview = old_text[:50] if old_text else ""
-    
+
     logger.debug(
         f"Memory tool called: action={action}, target={target}, "
         f"content_preview='{content_preview}', old_text_preview='{old_text_preview}'"
     )
-    
+
     if target not in ("memory", "user"):
         logger.warning(f"Invalid memory target: {target}")
         return _tool_error(f"Invalid target '{target}'. Use 'memory' or 'user'.", success=False)
@@ -513,13 +531,15 @@ def memory_tool(
             result = memory_store.remove(target, old_text)
 
         else:
-            return _tool_error(f"Unknown action '{action}'. Use: add, replace, remove", success=False)
+            return _tool_error(
+                f"Unknown action '{action}'. Use: add, replace, remove", success=False
+            )
 
         elapsed = time.time() - start_time
         logger.debug(
             f"Memory tool completed: action={action}, target={target}, duration={elapsed:.3f}s"
         )
-        
+
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         elapsed = time.time() - start_time
@@ -539,22 +559,22 @@ def check_memory_requirements() -> bool:
 # OpenAI Function-Calling Schema
 # =============================================================================
 
+
 class MemoryActionSchema(BaseModel):
     """Schema for memory tool arguments."""
-    action: Literal["add", "replace", "remove"] = Field(
-        description="The action to perform."
-    )
+
+    action: Literal["add", "replace", "remove"] = Field(description="The action to perform.")
     target: Literal["memory", "user"] = Field(
         description="Which memory store: 'memory' for personal notes, 'user' for user profile."
     )
     content: str | None = Field(
-        default=None,
-        description="The entry content. Required for 'add' and 'replace'."
+        default=None, description="The entry content. Required for 'add' and 'replace'."
     )
     old_text: str | None = Field(
         default=None,
-        description="Short unique substring identifying the entry to replace or remove."
+        description="Short unique substring identifying the entry to replace or remove.",
     )
+
 
 class MemoryTool(BaseTool):
     name: str = "memory"
@@ -591,12 +611,17 @@ class MemoryTool(BaseTool):
         super().__init__(**kwargs)
 
     @override
-    def _run(self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any) -> str:
+    def _run(
+        self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any
+    ) -> str:
         return memory_tool(action, target, content, old_text)
 
     @override
-    async def _arun(self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any) -> str:
+    async def _arun(
+        self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any
+    ) -> str:
         return memory_tool(action, target, content, old_text)
+
 
 def build_memory_tool() -> MemoryTool:
     tool: MemoryTool = MemoryTool()

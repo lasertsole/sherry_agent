@@ -6,6 +6,7 @@ from bus import MessageBus
 from abc import ABC, abstractmethod
 from type.bus import InboundMessage, OutboundMessage
 
+
 class BaseChannel(ABC):
     name: str = "base"
     display_name: str = "Base"
@@ -85,7 +86,8 @@ class BaseChannel(ABC):
             logger.warning(
                 "Access denied for sender {} on channel {}. "
                 "Add them to allowFrom list in config to grant access.",
-                sender_id, self.name,
+                sender_id,
+                self.name,
             )
             return
 

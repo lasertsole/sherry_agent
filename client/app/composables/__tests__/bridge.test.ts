@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // bridge.ts *explicitly imports* fetchApi from './requestApi' (not a Nuxt
 // auto-import), so we mock that module directly.
 const mocks = vi.hoisted(() => ({
-  fetchApi: vi.fn(),
+  fetchApi: vi.fn()
 }));
 
 vi.mock('../requestApi', () => ({
-  fetchApi: mocks.fetchApi,
+  fetchApi: mocks.fetchApi
 }));
 
 import * as bridge from '../bridge';
@@ -77,20 +77,17 @@ describe('sendChatMessage (browser WebSocket)', () => {
     // before grabbing the WS instance.
     const uploadFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, url: 'http://localhost:8080/uploads/img1.png' }),
+      json: async () => ({ success: true, url: 'http://localhost:8080/uploads/img1.png' })
     });
     vi.stubGlobal('fetch', uploadFetch);
 
     const onChunk = vi.fn();
-    const promise = bridge.sendChatMessage(
-      { session_id: 's1', text: 'hi', image_base64_list: ['img1'] },
-      onChunk,
-    );
+    const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi', image_base64_list: ['img1'] }, onChunk);
 
     // Let the upload (`fetch` + `resp.json`) resolve so the WebSocket is created.
     await vi.waitFor(() => expect(FakeWebSocket.instances[0]).toBeTruthy());
 
-    const ws = FakeWebSocket.instances[0];
+    const ws = FakeWebSocket.instances[0]!;
     expect(ws).toBeTruthy();
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
 
@@ -106,9 +103,9 @@ describe('sendChatMessage (browser WebSocket)', () => {
           audio_bytes_list: [],
           audio_path_list: [],
           video_bytes_list: [],
-          video_path_list: [],
-        },
-      }),
+          video_path_list: []
+        }
+      })
     ]);
 
     ws.frame({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' });
@@ -126,7 +123,7 @@ describe('sendChatMessage (browser WebSocket)', () => {
     const onChunk = vi.fn();
     const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi' }, onChunk);
 
-    const ws = FakeWebSocket.instances[0];
+    const ws = FakeWebSocket.instances[0]!;
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
     ws.open();
 
@@ -141,7 +138,7 @@ describe('sendChatMessage (browser WebSocket)', () => {
       content: '',
       type: 'tool_start',
       tool_id: 't1',
-      tool_name: 'web_search',
+      tool_name: 'web_search'
     });
     // Second thinking pass after the tool result.
     ws.frame({ event: 'chunk', session_id: 's1', content: 'Now I know.', type: 'reasoning' });
@@ -155,7 +152,7 @@ describe('sendChatMessage (browser WebSocket)', () => {
       tool_id: 't1',
       tool_name: 'web_search',
       args: undefined,
-      error: undefined,
+      error: undefined
     });
     expect(onChunk).toHaveBeenNthCalledWith(5, 'Now I know.', 'reasoning', 's1', metaEmpty);
     expect(onChunk).toHaveBeenNthCalledWith(6, ' I can answer.', 'text', 's1', metaEmpty);
@@ -166,8 +163,8 @@ describe('sendChatMessage (browser WebSocket)', () => {
   });
 
   it('defaults text and images when not provided', async () => {
-    const promise = bridge.sendChatMessage({ session_id: 's9' }, () => {});
-    const ws = FakeWebSocket.instances[0];
+    const promise = bridge.sendChatMessage({ session_id: 's9', text: '' }, () => {});
+    const ws = FakeWebSocket.instances[0]!;
     ws.open();
     expect(ws.sent[0]).toBe(
       JSON.stringify({
@@ -179,17 +176,17 @@ describe('sendChatMessage (browser WebSocket)', () => {
           audio_bytes_list: [],
           audio_path_list: [],
           video_bytes_list: [],
-          video_path_list: [],
-        },
-      }),
+          video_path_list: []
+        }
+      })
     );
     ws.frame({ event: 'done', session_id: 's9', content: '' });
     await promise;
   });
 
   it('rejects on error frame', async () => {
-    const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
-    const ws = FakeWebSocket.instances[0];
+    const promise = bridge.sendChatMessage({ session_id: 's1', text: '' }, () => {});
+    const ws = FakeWebSocket.instances[0]!;
     ws.open();
     ws.frame({ event: 'error', session_id: 's1', content: 'boom' });
     await expect(promise).rejects.toThrow('boom');
@@ -199,27 +196,27 @@ describe('sendChatMessage (browser WebSocket)', () => {
   it('rejects with StreamInterruptedError after exhausting reconnect on socket error before done', async () => {
     vi.useFakeTimers();
     try {
-      const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
-      // 首个连接失败 -> Case A：进入指数退避重连（旧行为是立即以 'WebSocket connection error' reject）
-      let ws = FakeWebSocket.instances[0];
+      const promise = bridge.sendChatMessage({ session_id: 's1', text: '' }, () => {});
+      // First connection fails -> Case A: enter exponential-backoff reconnect (the old behavior was to reject immediately with 'WebSocket connection error')
+      let ws = FakeWebSocket.instances[0]!;
       ws.error();
       expect(FakeWebSocket.instances).toHaveLength(1);
-      // 依次推进退避延时，触发重连；每轮新连接再失败，直至重试预算耗尽
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      // Advance the backoff delays in sequence to trigger reconnects; each new connection fails again until the retry budget is exhausted
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(1000); // wsReconnectDelayMs(1)
       ws.error();
       expect(FakeWebSocket.instances).toHaveLength(2);
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(2000); // wsReconnectDelayMs(2)
       ws.error();
       expect(FakeWebSocket.instances).toHaveLength(3);
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(4000); // wsReconnectDelayMs(3)
-      // 达到 WS_RECONNECT_MAX_ATTEMPTS（3）后仍失败 => StreamInterruptedError(midStream=false)
+      // After reaching WS_RECONNECT_MAX_ATTEMPTS (3) it still fails => StreamInterruptedError(midStream=false)
       ws.error();
       await expect(promise).rejects.toMatchObject({
         name: 'StreamInterruptedError',
-        midStream: false,
+        midStream: false
       });
     } finally {
       vi.useRealTimers();
@@ -229,19 +226,19 @@ describe('sendChatMessage (browser WebSocket)', () => {
   it('rejects with StreamInterruptedError after reconnect budget is used when the socket closes before completion', async () => {
     vi.useFakeTimers();
     try {
-      const promise = bridge.sendChatMessage({ session_id: 's1' }, () => {});
-      let ws = FakeWebSocket.instances[0];
-      // pre-chunk 断开属 Case A（未产出 chunk），可安全重试重发
+      const promise = bridge.sendChatMessage({ session_id: 's1', text: '' }, () => {});
+      let ws = FakeWebSocket.instances[0]!;
+      // A pre-chunk disconnect is Case A (no chunk produced yet), so it is safe to retry and resend
       ws.closeFromServer();
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(1000);
       ws.closeFromServer();
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(2000);
       ws.closeFromServer();
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(4000);
-      // 重试穷尽后 reject（不再抛旧的 'WebSocket closed before stream completion'）
+      // Reject once retries are exhausted (no longer throws the old 'WebSocket closed before stream completion')
       ws.closeFromServer();
       await expect(promise).rejects.toMatchObject({ name: 'StreamInterruptedError' });
     } finally {
@@ -250,17 +247,17 @@ describe('sendChatMessage (browser WebSocket)', () => {
   });
 
   it('rejects immediately with midStream error when the socket closes after chunks (never resends)', async () => {
-    // Case B：已收到 chunk 后断流 —— 内容已上屏，重发会导致重复内容，必须立即失败
+    // Case B: the stream broke after chunks were received — content is already on screen, resending would duplicate it, so it must fail immediately
     const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi' }, () => {});
-    const ws = FakeWebSocket.instances[0];
+    const ws = FakeWebSocket.instances[0]!;
     ws.open();
     ws.frame({ event: 'chunk', session_id: 's1', content: 'partial', type: 'text' });
     ws.closeFromServer();
     await expect(promise).rejects.toMatchObject({
       name: 'StreamInterruptedError',
-      midStream: true,
+      midStream: true
     });
-    // 绝不重连/重发：仍然只有最初那一个 socket，且只发送过一次载荷
+    // Never reconnect/resend: still only the original single socket, and the payload was sent exactly once
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(ws.sent).toHaveLength(1);
   });
@@ -274,7 +271,7 @@ describe('stopChatMessage (browser WebSocket)', () => {
 
   it('connects to the WS url and sends a stop frame on open', async () => {
     const promise = bridge.stopChatMessage('abc');
-    const ws = FakeWebSocket.instances[0];
+    const ws = FakeWebSocket.instances[0]!;
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
 
     // Server acknowledges the stop -> resolves
@@ -288,7 +285,7 @@ describe('stopChatMessage (browser WebSocket)', () => {
 
   it('rejects when a different session id is stopped', async () => {
     const promise = bridge.stopChatMessage('abc');
-    const ws = FakeWebSocket.instances[0];
+    const ws = FakeWebSocket.instances[0]!;
     ws.onopen?.({});
     ws.onmessage?.({ data: JSON.stringify({ event: 'stopped', session_id: 'other' }) });
 
@@ -296,7 +293,7 @@ describe('stopChatMessage (browser WebSocket)', () => {
     let settled = false;
     promise.then(
       () => (settled = true),
-      () => (settled = true),
+      () => (settled = true)
     );
     await Promise.resolve();
     expect(settled).toBe(false);
@@ -305,7 +302,7 @@ describe('stopChatMessage (browser WebSocket)', () => {
 
   it('rejects on WebSocket error', async () => {
     const promise = bridge.stopChatMessage('abc');
-    const ws = FakeWebSocket.instances[0];
+    const ws = FakeWebSocket.instances[0]!;
     ws.onerror?.({});
     await expect(promise).rejects.toThrow('WebSocket stop failed');
     expect(ws.closed).toBe(true);
@@ -313,7 +310,7 @@ describe('stopChatMessage (browser WebSocket)', () => {
 
   it('rejects when closed before confirmation', async () => {
     const promise = bridge.stopChatMessage('abc');
-    const ws = FakeWebSocket.instances[0];
+    const ws = FakeWebSocket.instances[0]!;
     ws.onclose?.({});
     await expect(promise).rejects.toThrow('WebSocket closed before stop confirmation');
     expect(ws.closed).toBe(true);
@@ -327,7 +324,7 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     expect(mocks.fetchApi).toHaveBeenCalledWith({
       url: '/sessions',
       opts: { session_id: 'abc' },
-      method: 'delete',
+      method: 'delete'
     });
   });
 
@@ -337,7 +334,7 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     expect(mocks.fetchApi).toHaveBeenCalledWith({
       url: '/n_turns_history_messages',
       opts: { session_id: 's1', last_turn_count: 5 },
-      method: 'get',
+      method: 'get'
     });
   });
 
@@ -347,7 +344,7 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     await expect(bridge.readSystemPrompt()).resolves.toEqual(resp);
     expect(mocks.fetchApi).toHaveBeenCalledWith({
       url: '/system_prompt',
-      method: 'get',
+      method: 'get'
     });
   });
 
@@ -357,7 +354,7 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     expect(mocks.fetchApi).toHaveBeenCalledWith({
       url: '/system_prompt',
       opts: { file_to_content: { 'ID.md': 'x' } },
-      method: 'put',
+      method: 'put'
     });
   });
 
@@ -367,7 +364,7 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     expect(mocks.fetchApi).toHaveBeenCalledWith({
       url: '/system_prompt',
       opts: { file_to_content: { 'SOUL.md': 'y' } },
-      method: 'put',
+      method: 'put'
     });
   });
 
@@ -375,7 +372,7 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true });
     await expect(bridge.checkHealth()).resolves.toEqual({
       healthy: true,
-      message: 'Python backend reachable',
+      message: 'Python backend reachable'
     });
   });
 
@@ -383,7 +380,7 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
     (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 });
     await expect(bridge.checkHealth()).resolves.toEqual({
       healthy: false,
-      message: 'HTTP 503',
+      message: 'HTTP 503'
     });
   });
 

@@ -5,6 +5,11 @@
     "toggleTheme": "切换主题",
     "deleteSession": "删除会话"
   },
+  "common": {
+    "confirmDelete": "确认删除",
+    "delete": "删除",
+    "cancel": "取消"
+  },
   "chatInput": {
     "placeholder": "请输入内容...",
     "thinking": "AI 正在思考中...",
@@ -31,12 +36,54 @@
     "toolRunning": "执行中…",
     "thinking": "思考过程",
     "modelMeta": "输入 {input} · 输出 {output} tokens",
+    "scrollBottom": "回到最底部",
     "copy": "复制",
     "copied": "已复制"
   },
   "errors": {
     "requestFailed": "请求失败",
-    "pageError": "页面错误"
+    "pageError": "页面错误",
+    "replyFailed": "（回复失败：{reason}）",
+    "sendFailed": "（发送失败：{reason}）",
+    "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步"
+  },
+  "hitl": {
+    "title": "操作需要审批",
+    "tool": "工具",
+    "reject": "拒绝",
+    "approve": "批准"
+  },
+  "taskViewer": {
+    "viewTasks": "查看后台任务"
+  },
+  "taskDetail": {
+    "placeholder": "点击上方树状图中的节点查看任务详情",
+    "taskDesc": "任务描述",
+    "status": "状态",
+    "depth": "深度",
+    "agentId": "Agent",
+    "spawnMode": "生成方式",
+    "parentSession": "调用方 Session",
+    "startedAt": "开始时间",
+    "endedAt": "结束时间",
+    "endedReason": "结束原因",
+    "outcome": "执行结果",
+    "outcomeStatus": "结果状态",
+    "error": "错误信息",
+    "resultText": "返回内容",
+    "delivery": "配送状态",
+    "steerTitle": "改道 / 恢复执行",
+    "steerHint": "发送后，子任务将带着当前对话上下文与你的新指令继续执行；留空则仅恢复被中断的任务。",
+    "steerPlaceholder": "新指令（可选，例如：换个方向重试…）",
+    "steerAction": "发送并继续",
+    "steerSteering": "发送中…",
+    "steerSuccess": "指令已送达，子任务正在继续。",
+    "steerFailed": "改道失败（任务可能已结束或频率受限）"
+  },
+  "flow": {
+    "loading": "加载中…",
+    "empty": "无后台数据",
+    "error": "加载失败"
   },
   "connection": {
     "reconnecting": "连接中断，正在重连…（第 {attempt}/{max} 次）",
@@ -59,7 +106,8 @@
     "noSearchResults": "没有匹配的会话",
     "filterToggle": "筛选",
     "editTitle": "重命名会话",
-    "titlePlaceholder": "输入新标题"
+    "titlePlaceholder": "输入新标题",
+    "titleInvalid": "标题限 30 字以内，且只能包含中英文、数字、空格和 . _ -"
   },
   "sidebar": {
     "tabSessions": "会话",
@@ -70,6 +118,8 @@
     "tasksSelectAll": "全选",
     "tasksBatchDelete": "批量删除任务",
     "tasksBatchDeleteConfirm": "确定要批量删除选中的任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
+    "taskDelete": "删除任务",
+    "taskDeleteConfirm": "确定要删除该任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "运行中",
     "statusInterrupted": "已中断",

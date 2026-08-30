@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from agent.tools.subagent.hooks.base import (
     SubagentStartEvent,
     SubagentStopEvent,
@@ -22,6 +21,7 @@ class TestHooks:
     @pytest.mark.asyncio
     async def test_start_hook(self):
         received = []
+
         async def on_start(event):
             received.append(event)
 
@@ -39,6 +39,7 @@ class TestHooks:
     @pytest.mark.asyncio
     async def test_stop_hook(self):
         received = []
+
         async def on_stop(event):
             received.append(event)
 
@@ -57,31 +58,39 @@ class TestHooks:
     @pytest.mark.asyncio
     async def test_multiple_hooks(self):
         count = [0]
+
         async def hook1(event):
             count[0] += 1
+
         async def hook2(event):
             count[0] += 10
 
         register_start_hook(hook1)
         register_start_hook(hook2)
-        await fire_start_hooks(SubagentStartEvent(
-            parent_session_key="p", child_session_key="c", child_role="leaf", child_goal="t"
-        ))
+        await fire_start_hooks(
+            SubagentStartEvent(
+                parent_session_key="p", child_session_key="c", child_role="leaf", child_goal="t"
+            )
+        )
         assert count[0] == 11
 
     @pytest.mark.asyncio
     async def test_hook_exception_does_not_stop_others(self):
         count = [0]
+
         async def bad_hook(event):
             raise RuntimeError("fail")
+
         async def good_hook(event):
             count[0] += 1
 
         register_start_hook(bad_hook)
         register_start_hook(good_hook)
-        await fire_start_hooks(SubagentStartEvent(
-            parent_session_key="p", child_session_key="c", child_role="leaf", child_goal="t"
-        ))
+        await fire_start_hooks(
+            SubagentStartEvent(
+                parent_session_key="p", child_session_key="c", child_role="leaf", child_goal="t"
+            )
+        )
         assert count[0] == 1
 
     @pytest.mark.asyncio
@@ -89,6 +98,8 @@ class TestHooks:
         register_start_hook(lambda e: None)
         register_stop_hook(lambda e: None)
         clear_hooks()
-        await fire_start_hooks(SubagentStartEvent(
-            parent_session_key="p", child_session_key="c", child_role="leaf", child_goal="t"
-        ))
+        await fire_start_hooks(
+            SubagentStartEvent(
+                parent_session_key="p", child_session_key="c", child_role="leaf", child_goal="t"
+            )
+        )

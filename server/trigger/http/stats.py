@@ -8,6 +8,7 @@ Endpoint:
     GET /stats/tokens?range=week
         -> {"range": "week", "days": [{"date": "MM-DD", "by_model": [...]}]}
 """
+
 from datetime import date, datetime, timedelta
 
 from loguru import logger
@@ -109,9 +110,7 @@ async def stats_tokens_handler(request):
                 }
                 for model_name, tokens in bucket.items()
             ]
-            by_model.sort(
-                key=lambda m: m["input_tokens"] + m["output_tokens"], reverse=True
-            )
+            by_model.sort(key=lambda m: m["input_tokens"] + m["output_tokens"], reverse=True)
             days.append({"date": cursor.strftime("%m-%d"), "by_model": by_model})
             cursor += timedelta(days=1)
 

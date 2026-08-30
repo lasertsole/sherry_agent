@@ -1,4 +1,4 @@
-﻿"""Storage data migration helpers for :class:`LightRAG`.
+"""Storage data migration helpers for :class:`LightRAG`.
 
 Mixed into LightRAG and runs once at startup (``initialize_storages`` →
 ``check_and_migrate_data``) to upgrade legacy data layouts:
@@ -36,9 +36,7 @@ class _StorageMigrationMixin:
                 # 2. full_entities and full_relations are empty
 
                 # Get all entity labels from graph
-                all_entity_labels = (
-                    await self.chunk_entity_relation_graph.get_all_labels()
-                )
+                all_entity_labels = await self.chunk_entity_relation_graph.get_all_labels()
 
                 if not all_entity_labels:
                     logger.debug("No entities found in graph, skipping migration check")
@@ -54,9 +52,7 @@ class _StorageMigrationMixin:
                 # Check if full_entities and full_relations are empty
                 # Get all processed documents to check their entity/relation data
                 try:
-                    processed_docs = await self.doc_status.get_docs_by_status(
-                        DocStatus.PROCESSED
-                    )
+                    processed_docs = await self.doc_status.get_docs_by_status(DocStatus.PROCESSED)
 
                     if not processed_docs:
                         logger.debug("No processed documents found, skipping migration")
@@ -182,9 +178,7 @@ class _StorageMigrationMixin:
                 }
             await self.full_relations.upsert(relations_data)
 
-        migration_count = len(
-            set(list(doc_entities.keys()) + list(doc_relations.keys()))
-        )
+        migration_count = len(set(list(doc_entities.keys()) + list(doc_relations.keys())))
 
         # Persist the migrated data
         await self.full_entities.index_done_callback()
@@ -247,9 +241,7 @@ class _StorageMigrationMixin:
 
                     raw_source = node.get("source_id") or ""
                     chunk_ids = [
-                        chunk_id
-                        for chunk_id in raw_source.split(GRAPH_FIELD_SEP)
-                        if chunk_id
+                        chunk_id for chunk_id in raw_source.split(GRAPH_FIELD_SEP) if chunk_id
                     ]
                     if not chunk_ids:
                         continue
@@ -301,9 +293,7 @@ class _StorageMigrationMixin:
 
                     raw_source = edge.get("source_id") or ""
                     chunk_ids = [
-                        chunk_id
-                        for chunk_id in raw_source.split(GRAPH_FIELD_SEP)
-                        if chunk_id
+                        chunk_id for chunk_id in raw_source.split(GRAPH_FIELD_SEP) if chunk_id
                     ]
                     if not chunk_ids:
                         continue

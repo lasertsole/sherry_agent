@@ -5,7 +5,7 @@ import inputBox from '@/components/chat/inputBox.vue';
 // PrimeVue Button is a Nuxt auto-import; stub it in this environment.
 function mountInput() {
   return mount(inputBox, {
-    global: { stubs: { Button: { template: '<button class="send-stub">send</button>' } } },
+    global: { stubs: { Button: { template: '<button class="send-stub">send</button>' } } }
   });
 }
 
@@ -22,9 +22,7 @@ describe('inputBox.vue (integration, backend mocked)', () => {
     // Simulate a fresh, empty input that happy-dom serializes as <br>.
     inputEl.innerHTML = '<br>';
     // A real InputEvent is required: inputFunc() early-returns on generic Events.
-    inputEl.dispatchEvent(
-      new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true })
-    );
+    inputEl.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true }));
     await Promise.resolve();
     // Backspacing an empty box must wipe out the leftover <br>.
     expect(inputEl.innerHTML).toContain('');

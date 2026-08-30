@@ -309,9 +309,7 @@ class TableExtractor:
                             if para_id_attr:
                                 if cell_para_id is None:
                                     cell_para_id = para_id_attr  # First paraId
-                                cell_para_id_end = (
-                                    para_id_attr  # Always update to get last
-                                )
+                                cell_para_id_end = para_id_attr  # Always update to get last
 
                             # Get text content with format preservation (superscript/subscript/equations)
                             para_text = extract_paragraph_content_table(
@@ -345,9 +343,7 @@ class TableExtractor:
                             if para_id_attr:
                                 if cell_para_id is None:
                                     cell_para_id = para_id_attr  # First paraId
-                                cell_para_id_end = (
-                                    para_id_attr  # Always update to get last
-                                )
+                                cell_para_id_end = para_id_attr  # Always update to get last
 
                             # Extract text with format preservation (superscript/subscript/equations)
                             para_text = extract_paragraph_content_table(

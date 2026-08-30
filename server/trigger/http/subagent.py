@@ -65,6 +65,7 @@ def _serialize_run(run) -> dict:
 # Response helpers (mirrors cron.py)
 # =============================================================================
 
+
 def _to_text_response(status_code: int, payload: dict) -> Response:
     """Build a JSON Robyn Response."""
     return Response(
@@ -124,9 +125,7 @@ async def get_subagent_runs_handler(request):
     session_id: str | None = query_params.get("session_id", None)
     scope: str = query_params.get("scope", "descendants")
     run_id: str | None = query_params.get("run_id", None)
-    logger.debug(
-        f"Reading sub-agent runs: session_id={session_id}, run_id={run_id}, scope={scope}"
-    )
+    logger.debug(f"Reading sub-agent runs: session_id={session_id}, run_id={run_id}, scope={scope}")
 
     if run_id:
         root = get_run(run_id)
@@ -346,7 +345,9 @@ async def steer_subagent_handler(request):
     new_task = body.get("new_task")
     new_instructions = body.get("new_instructions")
     for field_name, field_value in (("new_task", new_task), ("new_instructions", new_instructions)):
-        if field_value is not None and (not isinstance(field_value, str) or not field_value.strip()):
+        if field_value is not None and (
+            not isinstance(field_value, str) or not field_value.strip()
+        ):
             return _bad_request(f"Invalid '{field_name}' (non-empty string or null required)")
 
     run = get_run(run_id)
@@ -377,11 +378,12 @@ async def steer_subagent_handler(request):
         # steer_subagent_run returns None for: terminal status, collector run,
         # rate-limited, or control denied (not-found already handled above).
         # 400 (not 409) on purpose: ofetch retries 409s on the client side.
-        logger.warning(f"POST /subagents/steer rejected for run {run_id} (not steerable or rate-limited)")
+        logger.warning(
+            f"POST /subagents/steer rejected for run {run_id} (not steerable or rate-limited)"
+        )
         return _bad_request(
             f"Sub-agent run '{run_id}' is not steerable (terminal/collector state, rate-limited, or control denied)"
         )
 
     logger.info(f"Sub-agent run steered via HTTP: run_id={run_id}, generation={steered.generation}")
     return _ok({"run": _serialize_run(steered)})
-

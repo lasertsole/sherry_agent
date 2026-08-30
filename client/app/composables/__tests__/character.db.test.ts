@@ -4,10 +4,12 @@ import type { CachedCharacter } from '../db';
 // The character caching wrappers in `../db` route through the exported `db`
 // instance's `character` table (put / get / delete). Mocking that table keeps
 // tests off a real IndexedDB while still verifying dispatch + key semantics.
+// Explicit call signatures (no implementation params) keep both TS and
+// no-unused-vars clean; the vi.mock wrappers below supply the arguments.
 const characterTable = vi.hoisted(() => ({
-  put: vi.fn(async (char: CachedCharacter) => undefined),
-  get: vi.fn(async (key: string) => undefined),
-  delete: vi.fn(async (key: string) => undefined),
+  put: vi.fn<(char: CachedCharacter) => Promise<void>>(),
+  get: vi.fn<(key: string) => Promise<CachedCharacter | undefined>>(),
+  delete: vi.fn<(key: string) => Promise<void>>()
 }));
 
 vi.mock('../db', () => ({
@@ -16,7 +18,7 @@ vi.mock('../db', () => ({
     userName: '远野汉娜',
     userAvatar: '/avatar/user.jpg',
     aiName: '橘雪莉',
-    aiAvatar: '/avatar/assistant.jpg',
+    aiAvatar: '/avatar/assistant.jpg'
   },
   db: { character: characterTable },
   cacheCharacter: async (char: CachedCharacter) => {
@@ -27,7 +29,7 @@ vi.mock('../db', () => ({
   },
   clearCachedCharacter: async (sessionId: string) => {
     await characterTable.delete(sessionId);
-  },
+  }
 }));
 
 import {
@@ -35,7 +37,7 @@ import {
   DEFAULT_CACHED_CHARACTER,
   cacheCharacter,
   readCachedCharacter,
-  clearCachedCharacter,
+  clearCachedCharacter
 } from '../db';
 
 const snapshot: CachedCharacter = {
@@ -43,7 +45,7 @@ const snapshot: CachedCharacter = {
   userName: '用户',
   userAvatar: 'data:image/png;base64,AAAB',
   aiName: 'Sherry',
-  aiAvatar: 'data:image/png;base64,BBBC',
+  aiAvatar: 'data:image/png;base64,BBBC'
 };
 
 beforeEach(() => {
@@ -66,7 +68,7 @@ describe('cacheCharacter', () => {
       userName: '待定',
       userAvatar: '',
       aiName: 'AI',
-      aiAvatar: '',
+      aiAvatar: ''
     };
     await cacheCharacter(globalProfile);
     expect(characterTable.put).toHaveBeenCalledWith(globalProfile);
@@ -91,7 +93,7 @@ describe('readCachedCharacter', () => {
       userName: '待定',
       userAvatar: '',
       aiName: 'AI',
-      aiAvatar: '',
+      aiAvatar: ''
     };
     characterTable.get.mockResolvedValue(globalProfile);
     await expect(readCachedCharacter(GLOBAL_SESSION_KEY)).resolves.toEqual(globalProfile);
@@ -103,7 +105,7 @@ describe('readCachedCharacter', () => {
     const newSession: CachedCharacter = { ...snapshot, session_id: 'ses_NEW', aiName: '新名' };
 
     characterTable.get.mockImplementation(async (key: string) =>
-      key === 'ses_OLD' ? oldSession : key === 'ses_NEW' ? newSession : undefined,
+      key === 'ses_OLD' ? oldSession : key === 'ses_NEW' ? newSession : undefined
     );
 
     await expect(readCachedCharacter('ses_OLD')).resolves.toEqual(oldSession);
@@ -133,8 +135,8 @@ describe('DEFAULT_CACHED_CHARACTER (builtin defaults)', () => {
         userName: '远野汉娜',
         userAvatar: '/avatar/user.jpg',
         aiName: '橘雪莉',
-        aiAvatar: '/avatar/assistant.jpg',
-      }),
+        aiAvatar: '/avatar/assistant.jpg'
+      })
     );
   });
 });

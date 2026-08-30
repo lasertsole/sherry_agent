@@ -25,10 +25,13 @@ import numpy as np
 import requests
 from config import ENV_PATH
 
+
 def _read_dotenv(key: str, default: str = "") -> str:
     try:
         text = ENV_PATH.read_text(encoding="utf-8")
-        for mobj in re.finditer(rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$', text, re.MULTILINE):
+        for mobj in re.finditer(
+            rf"^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$", text, re.MULTILINE
+        ):
             raw = mobj.group(1)
             raw = raw.strip("\"'").strip()
             if raw:
@@ -50,7 +53,9 @@ def _ll():
     if not _is_local():
         raise RuntimeError("RERANKER_MODEL_LOCAL=false, local llama_cpp is disabled")
     from llama_cpp import llama_cpp as ll
+
     return ll
+
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -82,7 +87,9 @@ def _ensure_model(
         resolved = str(model_path)
         if os.path.isfile(resolved):
             return resolved
-        logger.warning("Specified model_path does not exist: %s — falling back to auto-download", resolved)
+        logger.warning(
+            "Specified model_path does not exist: %s — falling back to auto-download", resolved
+        )
 
     # Destination path
     dest = _MODEL_WEIGHT_DIR / GGUF_FILENAME
@@ -92,6 +99,7 @@ def _ensure_model(
 
     # Auto-download
     from huggingface_hub import hf_hub_download
+
     _MODEL_WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading %s/%s (%s) …", GGUF_REPO_ID, GGUF_FILENAME, "636 MB Q8_0")
     dest = hf_hub_download(
@@ -123,25 +131,18 @@ def dequantize_q8_0(
     blocks_per_row = n_cols // Q8_0_BLOCK_SIZE
     expected_cols = blocks_per_row * Q8_0_BYTES_PER_BLOCK
     if raw.shape != (n_rows, expected_cols):
-        raise ValueError(
-            f"raw shape {raw.shape} != ({n_rows}, {expected_cols})"
-        )
+        raise ValueError(f"raw shape {raw.shape} != ({n_rows}, {expected_cols})")
 
     out = np.zeros((n_rows, n_cols), dtype=np.float32)
     for row in range(n_rows):
         row_data = raw[row]
         for b in range(blocks_per_row):
             offset = b * Q8_0_BYTES_PER_BLOCK
-            scale = np.frombuffer(
-                row_data[offset : offset + 2].tobytes(), dtype=np.float16
-            )[0]
-            quants = (
-                np.frombuffer(
-                    row_data[offset + 2 : offset + Q8_0_BYTES_PER_BLOCK].tobytes(),
-                    dtype=np.int8,
-                )
-                .astype(np.float32)
-            )
+            scale = np.frombuffer(row_data[offset : offset + 2].tobytes(), dtype=np.float16)[0]
+            quants = np.frombuffer(
+                row_data[offset + 2 : offset + Q8_0_BYTES_PER_BLOCK].tobytes(),
+                dtype=np.int8,
+            ).astype(np.float32)
             col_start = b * Q8_0_BLOCK_SIZE
             out[row, col_start : col_start + Q8_0_BLOCK_SIZE] = quants * scale
     return out
@@ -198,9 +199,7 @@ def load_classifier_weights(gguf_path: str | os.PathLike) -> ClassifierWeights:
     def _get_tensor(name: str):
         matches = [t for t in reader.tensors if t.name == name]
         if len(matches) != 1:
-            raise ValueError(
-                f"Expected exactly one tensor named '{name}', found {len(matches)}"
-            )
+            raise ValueError(f"Expected exactly one tensor named '{name}', found {len(matches)}")
         return matches[0]
 
     # --- cls.weight (Q8_0 quantised) ---
@@ -209,9 +208,7 @@ def load_classifier_weights(gguf_path: str | os.PathLike) -> ClassifierWeights:
     n_rows = int(shape_field[0])
     n_cols = int(shape_field[1])
     logger.info("Dequantising cls.weight (%s × %s, Q8_0) …", n_rows, n_cols)
-    W1 = dequantize_q8_0(
-        np.asarray(cls_weight_t.data, dtype=np.uint8), n_rows, n_cols
-    )
+    W1 = dequantize_q8_0(np.asarray(cls_weight_t.data, dtype=np.uint8), n_rows, n_cols)
 
     # --- cls.bias ---
     b1 = _get_tensor("cls.bias").data.copy().astype(np.float32)
@@ -241,6 +238,7 @@ def _get_meta(model_path: str) -> _MetaCache:
     # n_embd from the embedding tensor
     # GGUF shape field is [n_embd, vocab_size] for token_embd.weight
     import gguf
+
     reader = gguf.GGUFReader(model_path)
     tok_embeds = [t for t in reader.tensors if t.name == "token_embd.weight"]
     n_embd = int(tok_embeds[0].shape[0]) if tok_embeds else 1024
@@ -317,9 +315,7 @@ class CrossEncoderGGUF:
         model_params = ll.llama_model_default_params()
         if use_gpu:
             model_params.n_gpu_layers = -1
-        self._model = ll.llama_load_model_from_file(
-            self._model_path.encode("utf-8"), model_params
-        )
+        self._model = ll.llama_load_model_from_file(self._model_path.encode("utf-8"), model_params)
         if not self._model:
             raise RuntimeError(f"Failed to load model from {model_path}")
 
@@ -509,8 +505,8 @@ class CrossEncoderGGUF:
             text_len,
             buf,
             max_tokens,
-            False,   # add_special
-            False,   # parse_special
+            False,  # add_special
+            False,  # parse_special
         )
         if n < 0:
             ll = _ll()

@@ -13,12 +13,13 @@
  * | `content` | `string` | Text fragment for this chunk |
  * | `done` | `boolean` | `true` if this is the final chunk |
  */
-export type ChatChunk = { 
-/**
- * The text fragment for this chunk.
- */
-content: string, 
-/**
- * Whether this is the final chunk.
- */
-done: boolean, };
+export type ChatChunk = {
+  /**
+   * The text fragment for this chunk.
+   */
+  content: string;
+  /**
+   * Whether this is the final chunk.
+   */
+  done: boolean;
+};

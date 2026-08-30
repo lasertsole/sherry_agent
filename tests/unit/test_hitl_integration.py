@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock
 from types import SimpleNamespace
 
@@ -21,7 +20,6 @@ from runtime.state_register import state_register_mem
 from agent.middlewares.humanInTheLoop import (
     ApprovalDecision,
     ApprovalMode,
-    ApprovalResult,
     HITLConfig,
     SmartApprovalResult,
     WriteTarget,
@@ -163,7 +161,7 @@ def test_pipeline_hardline_layer(tmp_path, unit_test_config):
 
 def test_pipeline_deny_rules_layer(tmp_path, unit_test_config):
     """Layer 2: user-configured glob deny rules block matching commands."""
-    cfg = HITLConfig( deny_rules=["git push*", "*prod*"])
+    cfg = HITLConfig(deny_rules=["git push*", "*prod*"])
     pipeline = ApprovalPipeline(cfg, MagicMock())
     result = pipeline.check_command("git push origin", "sess-deny")
     assert result.approved is False
@@ -174,7 +172,7 @@ def test_pipeline_deny_rules_layer(tmp_path, unit_test_config):
 
 def test_pipeline_yolo_bypass(tmp_path, unit_test_config):
     """Layer 3: YOLO mode bypasses dangerous-pattern escalation for everything."""
-    cfg = HITLConfig( yolo_mode=True)
+    cfg = HITLConfig(yolo_mode=True)
     pipeline = ApprovalPipeline(cfg, MagicMock())
     result = pipeline.check_command("git push --force origin main", "sess-yolo")
     assert result.approved is True
@@ -183,7 +181,7 @@ def test_pipeline_yolo_bypass(tmp_path, unit_test_config):
 
 def test_pipeline_mode_off_is_yolo(tmp_path, unit_test_config):
     """mode=OFF is treated as YOLO (bypass-all)."""
-    cfg = HITLConfig( mode=ApprovalMode.OFF)
+    cfg = HITLConfig(mode=ApprovalMode.OFF)
     pipeline = ApprovalPipeline(cfg, MagicMock())
     result = pipeline.check_command("git push --force origin main", "sess-off")
     assert result.approved is True
@@ -272,7 +270,9 @@ def test_apply_decision_always(tmp_path, unit_test_config):
     pipeline = ApprovalPipeline(cfg, MagicMock())
     session_id = "sess-dec-always"
     _clean_state(session_id, "permanent", "session_approved")
-    result = pipeline._apply_decision("key", ApprovalDecision.ALWAYS, session_id, "git push --force origin main")
+    result = pipeline._apply_decision(
+        "key", ApprovalDecision.ALWAYS, session_id, "git push --force origin main"
+    )
     assert result.approved is True
     assert result.decision == ApprovalDecision.ALWAYS
     assert "permanently" in result.reason
@@ -285,7 +285,9 @@ def test_apply_decision_session(tmp_path, unit_test_config):
     pipeline = ApprovalPipeline(cfg, MagicMock())
     session_id = "sess-dec-session"
     _clean_state(session_id, "permanent", "session_approved")
-    result = pipeline._apply_decision("key", ApprovalDecision.SESSION, session_id, "pip install requests")
+    result = pipeline._apply_decision(
+        "key", ApprovalDecision.SESSION, session_id, "pip install requests"
+    )
     assert result.approved is True
     assert result.decision == ApprovalDecision.SESSION
     session = state_register_mem.get_state(session_id, "hitl:session_approved", [])
@@ -311,7 +313,8 @@ def test_check_command_with_approval_prompt_deny(tmp_path, unit_test_config):
     session_id = "sess-prompt-deny"
     _clean_state(session_id, "permanent", "session_approved")
     result = pipeline.check_command_with_approval(
-        "git push --force origin main", session_id,
+        "git push --force origin main",
+        session_id,
         prompt_fn=lambda c: ApprovalDecision.DENY,
     )
     assert result.approved is False
@@ -324,7 +327,8 @@ def test_check_command_with_approval_prompt_always(tmp_path, unit_test_config):
     session_id = "sess-prompt-always"
     _clean_state(session_id, "permanent", "session_approved")
     result = pipeline.check_command_with_approval(
-        "git push --force origin main", session_id,
+        "git push --force origin main",
+        session_id,
         prompt_fn=lambda c: ApprovalDecision.ALWAYS,
     )
     assert result.approved is True
@@ -347,12 +351,14 @@ def test_check_command_with_approval_no_prompt_defaults_deny(tmp_path, unit_test
 
 def test_extract_pattern_two_words():
     from agent.middlewares.humanInTheLoop.approval import _extract_pattern
+
     assert _extract_pattern("git push --force origin main") == "git push*"
     assert _extract_pattern("ls") == "ls*"
 
 
 def test_args_hash_is_deterministic():
     from agent.middlewares.humanInTheLoop.approval import _args_hash
+
     a = _args_hash({"b": 1, "a": 2})
     b = _args_hash({"a": 2, "b": 1})
     c = _args_hash({"b": 1, "a": 2})
@@ -374,7 +380,7 @@ def test_smart_approve_no_llm_escalates(tmp_path, unit_test_config):
 def test_smart_approve_safe(tmp_path, unit_test_config):
     llm = MagicMock()
     llm.invoke.return_value = "safe"
-    cfg = HITLConfig( smart_approval_llm=llm)
+    cfg = HITLConfig(smart_approval_llm=llm)
     pipeline = ApprovalPipeline(cfg, MagicMock())
     assert pipeline.smart_approve("ls -la") == SmartApprovalResult.APPROVE
 
@@ -382,7 +388,7 @@ def test_smart_approve_safe(tmp_path, unit_test_config):
 def test_smart_approve_dangerous(tmp_path, unit_test_config):
     llm = MagicMock()
     llm.invoke.return_value = "dangerous"
-    cfg = HITLConfig( smart_approval_llm=llm)
+    cfg = HITLConfig(smart_approval_llm=llm)
     pipeline = ApprovalPipeline(cfg, MagicMock())
     assert pipeline.smart_approve("mkfs.ext4 /dev/sda") == SmartApprovalResult.DENY
 
@@ -390,7 +396,7 @@ def test_smart_approve_dangerous(tmp_path, unit_test_config):
 def test_smart_approve_uncertain(tmp_path, unit_test_config):
     llm = MagicMock()
     llm.invoke.return_value = "maybe"
-    cfg = HITLConfig( smart_approval_llm=llm)
+    cfg = HITLConfig(smart_approval_llm=llm)
     pipeline = ApprovalPipeline(cfg, MagicMock())
     assert pipeline.smart_approve("curl something") == SmartApprovalResult.ESCALATE
 
@@ -398,7 +404,7 @@ def test_smart_approve_uncertain(tmp_path, unit_test_config):
 def test_smart_approve_llm_exception(tmp_path, unit_test_config):
     llm = MagicMock()
     llm.invoke.side_effect = RuntimeError("llm down")
-    cfg = HITLConfig( smart_approval_llm=llm)
+    cfg = HITLConfig(smart_approval_llm=llm)
     pipeline = ApprovalPipeline(cfg, MagicMock())
     # fail-closed: exception escalates rather than approving
     assert pipeline.smart_approve("curl something") == SmartApprovalResult.ESCALATE
@@ -466,9 +472,11 @@ def test_approval_hook_fired_on_check(tmp_path, unit_test_config):
 def test_hooks_dispatcher_calls_all_and_swallows(tmp_path, unit_test_config):
     """Hooks that raise must not break the approval pipeline."""
     from agent.middlewares.humanInTheLoop.core import HumanInTheLoop as HITL
+
     mw = HITL(HITLConfig())
 
     called = []
+
     def ok_hook(sid, result):
         called.append((sid, result))
 
@@ -498,7 +506,7 @@ def test_pending_write_construction():
 
 def test_write_approval_gate_default_deny(unit_test_config):
     """With write-approval on, a write is staged for approval (denied until approved)."""
-    cfg = HITLConfig( write_approval_memory=True)
+    cfg = HITLConfig(write_approval_memory=True)
     gate = WriteApprovalGate(cfg)
     result = gate.request_write(WriteTarget.MEMORY, "mx = 1", "sess-write-deny")
     assert result.approved is False
@@ -508,7 +516,7 @@ def test_write_approval_gate_default_deny(unit_test_config):
 
 def test_write_approval_gate_stages_pending(unit_test_config):
     """A staged write appears in get_pending_writes with approved=None."""
-    cfg = HITLConfig( write_approval_memory=True)
+    cfg = HITLConfig(write_approval_memory=True)
     gate = WriteApprovalGate(cfg)
     gate.request_write(WriteTarget.MEMORY, "mx = 2", "sess-write-stage")
     pending = gate.get_pending_writes("sess-write-stage", target=WriteTarget.MEMORY)
@@ -531,7 +539,7 @@ def test_write_approval_gate_gate_off_auto_approves(unit_test_config):
 
 def test_write_approval_gate_reject_removes(unit_test_config):
     """Rejected writes are removed from the pending list."""
-    cfg = HITLConfig( write_approval_memory=True)
+    cfg = HITLConfig(write_approval_memory=True)
     gate = WriteApprovalGate(cfg)
     gate.request_write(WriteTarget.MEMORY, "x = 3", "sess-write-rej")
     pending = gate.get_pending_writes("sess-write-rej", target=WriteTarget.MEMORY)
@@ -591,6 +599,7 @@ def test_mcp_consent_fail_closed(unit_test_config):
 
 def test_kanban_triage_blocked_until_limit(unit_test_config):
     from agent.middlewares.humanInTheLoop.types import TriageStatus
+
     assert hasattr(TriageStatus, "TODO")
     assert hasattr(TriageStatus, "BLOCKED")
     assert hasattr(TriageStatus, "TRIAGE")
@@ -637,7 +646,7 @@ def test_slash_confirm_disabled_auto_approves(unit_test_config):
 
 def test_slash_confirm_enabled_denies(unit_test_config):
     """With destructive confirmation enabled, the action defaults to deny."""
-    confirmer = SlashConfirm(HITLConfig( destructive_slash_confirm=True))
+    confirmer = SlashConfirm(HITLConfig(destructive_slash_confirm=True))
     result = confirmer.confirm_destructive("kill", "sess-slash2")
     assert result.approved is False
     assert result.decision == ApprovalDecision.DENY
@@ -683,7 +692,7 @@ def test_session_id_default(unit_test_config):
 
 
 def test_interrupted_tools_bool_true(unit_test_config):
-    cfg = HITLConfig( interrupted_tools={"rm": True})
+    cfg = HITLConfig(interrupted_tools={"rm": True})
     mw = HumanInTheLoop(cfg)
     assert mw._interrupt_on["rm"]["allowed_decisions"] == ["approve", "edit", "reject"]
 
@@ -697,7 +706,7 @@ def test_interrupted_tools_dict(unit_test_config):
 
 
 def test_interrupted_tools_false_skipped(unit_test_config):
-    cfg = HITLConfig( interrupted_tools={"python": False})
+    cfg = HITLConfig(interrupted_tools={"python": False})
     mw = HumanInTheLoop(cfg)
     assert "python" not in mw._interrupt_on
 
@@ -782,9 +791,12 @@ async def test_get_pending_interrupt_reads_executed_action(unit_test_config, mon
     }
 
 
-@pytest.mark.skip(reason="Assumes server contract shape requires presence of a request context; covered by above cases")
+@pytest.mark.skip(
+    reason="Assumes server contract shape requires presence of a request context; covered by above cases"
+)
 def test_resume_agent_runs(unit_test_config):
     from server.service.messages import resume_agent
+
     assert callable(resume_agent)
 
 

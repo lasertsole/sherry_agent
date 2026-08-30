@@ -37,13 +37,9 @@ def _validate_video_duration(video_path: str) -> float:
         raise ValueError(f"Cannot determine video duration: {video_path}")
     duration = total_frames / fps
     if duration < MIN_DURATION_SEC:
-        raise ValueError(
-            f"Video too short ({duration:.1f}s). Minimum: {MIN_DURATION_SEC}s"
-        )
+        raise ValueError(f"Video too short ({duration:.1f}s). Minimum: {MIN_DURATION_SEC}s")
     if duration > MAX_DURATION_SEC:
-        raise ValueError(
-            f"Video too long ({duration:.1f}s). Maximum: {MAX_DURATION_SEC}s"
-        )
+        raise ValueError(f"Video too long ({duration:.1f}s). Maximum: {MAX_DURATION_SEC}s")
     return duration
 
 
@@ -55,13 +51,14 @@ def _image_to_data_url(path: str) -> str:
     mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
     return f"data:image/{mime};base64,{b64}"
 
+
 @validate_call
-def vtt(video_path: str, query: str = "")-> str:
+def vtt(video_path: str, query: str = "") -> str:
     # --- Duration check ---
     try:
         _validate_video_duration(video_path)
     except ValueError as e:
-        err_mes:str = f"[Error] {e}"
+        err_mes: str = f"[Error] {e}"
         logger.error(err_mes)
         return err_mes
 
@@ -75,23 +72,28 @@ def vtt(video_path: str, query: str = "")-> str:
         if query.strip() == "":
             query = "what happen in the video?"
 
-        msg = HumanMessage(content=[
-            {"type": "text", "text": query},
-            {"type": "video_url", "video_url": {"url": data_url}},
-        ])
+        msg = HumanMessage(
+            content=[
+                {"type": "text", "text": query},
+                {"type": "video_url", "video_url": {"url": data_url}},
+            ]
+        )
         res = VTTT_model.invoke([msg])
         suc_mes: str = f"Video recognition completed, content:\n{res.content}"
         logger.debug(suc_mes)
         return suc_mes
     except Exception as e:
-        warn_mes: str = (f"[warn] Primary video path failed: {e}, Video format may not be supported,"
-                       f" try extracting video frames as input for the VLM model.")
+        warn_mes: str = (
+            f"[warn] Primary video path failed: {e}, Video format may not be supported,"
+            f" try extracting video frames as input for the VLM model."
+        )
         logger.warning(warn_mes)
         # Auto-fallback: primary path failed → extract frames locally and recognize as images
         return vtt_fackback(video_path=video_path, query=query)
 
+
 @validate_call
-def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
+def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0) -> str:
     # --- Duration check ---
     try:
         _validate_video_duration(video_path)
@@ -122,16 +124,21 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
             return err_mes
 
         image_dict: list[dict[str, str]] = [
-            {"type": "image_url", "image_url": {"url": _image_to_data_url(r.image_path), "detail": "low"}}
+            {
+                "type": "image_url",
+                "image_url": {"url": _image_to_data_url(r.image_path), "detail": "low"},
+            }
             for r in frames
         ]
 
         if query.strip() == "":
             query = "what happen in the video?"
-        msg = HumanMessage(content=[
-            {"type": "text", "text": query},
-            *image_dict,
-        ])
+        msg = HumanMessage(
+            content=[
+                {"type": "text", "text": query},
+                *image_dict,
+            ]
+        )
         res = VTTT_model.invoke([msg])
         suc_mes: str = f"Video recognition completed, content:\n{res.content}"
         logger.debug(suc_mes)
@@ -144,5 +151,6 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0)-> str:
         # Clean up extracted frame files
         if output_dir.exists():
             import shutil
+
             shutil.rmtree(output_dir, ignore_errors=True)
             logger.debug("Cleaned up extracted frames: %s", output_dir)

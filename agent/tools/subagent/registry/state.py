@@ -44,6 +44,7 @@ async def init_registry() -> None:
 
     try:
         from .settle_wake import get_settle_wake_batch
+
         batch = get_settle_wake_batch()
         batch.load_persisted_state()
     except Exception as e:
@@ -51,6 +52,7 @@ async def init_registry() -> None:
 
     try:
         from ..events.bridge import start_bridge
+
         start_bridge()
     except Exception as e:
         logger.warning("Failed to start EventBus bridge: {}", e)

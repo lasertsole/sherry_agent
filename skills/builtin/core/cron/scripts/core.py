@@ -3,6 +3,7 @@ from pydantic import Field, validate_call
 from skills.builtin.core.cron.scripts.base import cron_service, CronService
 from skills.builtin.core.cron.scripts.types import CronSchedule, CronJob, CronJobState
 
+
 class Cron:
     _cronService: CronService
     _instance: "Cron | None" = None
@@ -21,9 +22,7 @@ class Cron:
 
     @validate_call
     def set_context(
-            self,
-        channel: str = Field(min_length=1),
-        chat_id: str = Field(min_length=1)
+        self, channel: str = Field(min_length=1), chat_id: str = Field(min_length=1)
     ) -> str:
         """Set the current session context for delivery."""
         self._channel = channel
@@ -180,10 +179,8 @@ class Cron:
                     "This is a system-managed Dream memory consolidation job for long-term memory.\n"
                     "It remains visible so you can inspect it, but it cannot be removed."
                 )
-            return (
-                f"Cannot remove job `{job_id}`.\n"
-                "This is a protected system-managed cron job."
-            )
+            return f"Cannot remove job `{job_id}`.\nThis is a protected system-managed cron job."
         return f"Job {job_id} not found"
+
 
 cron = Cron()

@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 
 if sys.version_info < (3, 9):
@@ -39,9 +39,7 @@ import numpy as np
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def nvidia_openai_embed(
     texts: list[str],
@@ -56,9 +54,7 @@ async def nvidia_openai_embed(
     if api_key:
         os.environ["OPENAI_API_KEY"] = api_key
 
-    openai_async_client = (
-        AsyncOpenAI() if base_url is None else AsyncOpenAI(base_url=base_url)
-    )
+    openai_async_client = AsyncOpenAI() if base_url is None else AsyncOpenAI(base_url=base_url)
     response = await openai_async_client.embeddings.create(
         model=model,
         input=texts,

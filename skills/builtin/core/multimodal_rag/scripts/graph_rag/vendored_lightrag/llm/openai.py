@@ -1,4 +1,4 @@
-﻿from ..utils import verbose_debug, VERBOSE_DEBUG
+from ..utils import verbose_debug, VERBOSE_DEBUG
 import os
 import logging
 import warnings
@@ -57,9 +57,7 @@ try:
     else:
         from openai import AsyncOpenAI
 
-        logger.debug(
-            "Langfuse environment variables not configured, using standard OpenAI client"
-        )
+        logger.debug("Langfuse environment variables not configured, using standard OpenAI client")
 except ImportError:
     from openai import AsyncOpenAI
 
@@ -127,9 +125,7 @@ def _get_tiktoken_encoding_for_model(model: str) -> Any:
         try:
             _TIKTOKEN_ENCODING_CACHE[model] = tiktoken.encoding_for_model(model)
         except KeyError:
-            logger.debug(
-                f"Encoding for model '{model}' not found, falling back to cl100k_base"
-            )
+            logger.debug(f"Encoding for model '{model}' not found, falling back to cl100k_base")
             _TIKTOKEN_ENCODING_CACHE[model] = tiktoken.get_encoding("cl100k_base")
     return _TIKTOKEN_ENCODING_CACHE[model]
 
@@ -397,9 +393,7 @@ async def openai_complete_if_cache(
             user_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{img.mime_type};base64,{img.base64_str}"
-                    },
+                    "image_url": {"url": f"data:{img.mime_type};base64,{img.base64_str}"},
                 }
             )
         messages.append({"role": "user", "content": user_content})
@@ -489,9 +483,7 @@ async def openai_complete_if_cache(
         if req is not None:
             extra_parts.append(f"Request URL: {req.url}")
         extra = ("\n" + "\n".join(extra_parts)) if extra_parts else ""
-        logger.error(
-            f"OpenAI API Call Failed,\nModel: {model},\nParams: {kwargs}, Got: {e}{extra}"
-        )
+        logger.error(f"OpenAI API Call Failed,\nModel: {model},\nParams: {kwargs}, Got: {e}{extra}")
         try:
             await openai_async_client.close()
         except Exception as close_error:
@@ -516,9 +508,7 @@ async def openai_complete_if_cache(
                     # Check if this chunk has usage information (final chunk)
                     if hasattr(chunk, "usage") and chunk.usage:
                         final_chunk_usage = chunk.usage
-                        logger.debug(
-                            f"Received usage info in streaming chunk: {chunk.usage}"
-                        )
+                        logger.debug(f"Received usage info in streaming chunk: {chunk.usage}")
 
                     # Check if choices exists and is not empty
                     if not hasattr(chunk, "choices") or not chunk.choices:
@@ -595,9 +585,7 @@ async def openai_complete_if_cache(
                     # Use actual usage from the API
                     token_counts = {
                         "prompt_tokens": getattr(final_chunk_usage, "prompt_tokens", 0),
-                        "completion_tokens": getattr(
-                            final_chunk_usage, "completion_tokens", 0
-                        ),
+                        "completion_tokens": getattr(final_chunk_usage, "completion_tokens", 0),
                         "total_tokens": getattr(final_chunk_usage, "total_tokens", 0),
                     }
                     token_tracker.add_usage(token_counts)
@@ -626,9 +614,7 @@ async def openai_complete_if_cache(
                         await response.aclose()
                         logger.debug("Successfully closed stream response after error")
                     except Exception as close_error:
-                        logger.warning(
-                            f"Failed to close stream response: {close_error}"
-                        )
+                        logger.warning(f"Failed to close stream response: {close_error}")
                 # Ensure client is closed in case of exception
                 try:
                     await openai_async_client.close()
@@ -670,9 +656,7 @@ async def openai_complete_if_cache(
                 # This prevents resource leaks since the caller doesn't handle closing
                 try:
                     await openai_async_client.close()
-                    logger.debug(
-                        "Successfully closed OpenAI client for streaming response"
-                    )
+                    logger.debug("Successfully closed OpenAI client for streaming response")
                 except Exception as client_close_error:
                     logger.warning(
                         f"Failed to close OpenAI client in streaming finally block: {client_close_error}"
@@ -682,11 +666,7 @@ async def openai_complete_if_cache(
 
     else:
         try:
-            if (
-                not response
-                or not response.choices
-                or not hasattr(response.choices[0], "message")
-            ):
+            if not response or not response.choices or not hasattr(response.choices[0], "message"):
                 logger.error("Invalid response from OpenAI API")
                 try:
                     await openai_async_client.close()
@@ -717,9 +697,7 @@ async def openai_complete_if_cache(
                         if not content or content.strip() == "":
                             # Case 1: Only reasoning content, should include COT
                             should_include_reasoning = True
-                            final_content = (
-                                content or ""
-                            )  # Use empty string if content is None
+                            final_content = content or ""  # Use empty string if content is None
                         else:
                             # Case 3: Both content and reasoning_content present, ignore reasoning
                             should_include_reasoning = False
@@ -734,9 +712,7 @@ async def openai_complete_if_cache(
                             reasoning_content = safe_unicode_decode(
                                 reasoning_content.encode("utf-8")
                             )
-                        final_content = (
-                            f"<think>{reasoning_content}</think>{final_content}"
-                        )
+                        final_content = f"<think>{reasoning_content}</think>{final_content}"
                 else:
                     # COT disabled, only use regular content
                     final_content = content or ""
@@ -757,9 +733,7 @@ async def openai_complete_if_cache(
             if token_tracker and hasattr(response, "usage"):
                 token_counts = {
                     "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
-                    "completion_tokens": getattr(
-                        response.usage, "completion_tokens", 0
-                    ),
+                    "completion_tokens": getattr(response.usage, "completion_tokens", 0),
                     "total_tokens": getattr(response.usage, "total_tokens", 0),
                 }
                 token_tracker.add_usage(token_counts)
@@ -980,9 +954,7 @@ async def openai_embed(
                 truncated_tokens = tokens[:max_token_size]
                 truncated_texts.append(encoding.decode(truncated_tokens))
                 truncation_count += 1
-                logger.debug(
-                    f"Text truncated from {len(tokens)} to {max_token_size} tokens"
-                )
+                logger.debug(f"Text truncated from {len(tokens)} to {max_token_size} tokens")
             else:
                 truncated_texts.append(text)
 
@@ -1068,12 +1040,8 @@ async def azure_openai_complete_if_cache(
     """
     # Handle Azure-specific environment variables and parameters
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT") or model or os.getenv("LLM_MODEL")
-    base_url = (
-        base_url or os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("LLM_BINDING_HOST")
-    )
-    api_key = (
-        api_key or os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("LLM_BINDING_API_KEY")
-    )
+    base_url = base_url or os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("LLM_BINDING_HOST")
+    api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("LLM_BINDING_API_KEY")
     api_version = (
         api_version
         or os.getenv("AZURE_OPENAI_API_VERSION")
@@ -1191,14 +1159,10 @@ async def azure_openai_embed(
         or os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     )
     base_url = (
-        base_url
-        or os.getenv("AZURE_EMBEDDING_ENDPOINT")
-        or os.getenv("EMBEDDING_BINDING_HOST")
+        base_url or os.getenv("AZURE_EMBEDDING_ENDPOINT") or os.getenv("EMBEDDING_BINDING_HOST")
     )
     api_key = (
-        api_key
-        or os.getenv("AZURE_EMBEDDING_API_KEY")
-        or os.getenv("EMBEDDING_BINDING_API_KEY")
+        api_key or os.getenv("AZURE_EMBEDDING_API_KEY") or os.getenv("EMBEDDING_BINDING_API_KEY")
     )
     api_version = (
         api_version

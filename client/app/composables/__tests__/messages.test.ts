@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import type { Response } from '@/types/response';
 import type { CachedMessage } from '../db';
 
 // `fetchApi` is used inside messages.ts as a Nuxt auto-import (no explicit
@@ -10,18 +9,14 @@ import type { CachedMessage } from '../db';
 // IndexedDB instance.
 const dbMock = vi.hoisted(() => ({
   cacheMessages: vi.fn(async () => {}),
-  readCachedMessages: vi.fn(async () => []),
+  readCachedMessages: vi.fn(async (): Promise<CachedMessage[]> => []),
   cachedMaxTurnNum: vi.fn(async () => 0),
-  clearCachedSession: vi.fn(async () => {}),
+  clearCachedSession: vi.fn(async () => {})
 }));
 
 vi.mock('../db', () => dbMock);
 
-import {
-  get_history_by_turn_page,
-  clearSession,
-  postAgentStream,
-} from '../messages';
+import { get_history_by_turn_page, clearSession, postAgentStream } from '../messages';
 
 function stubFetchApi(data: unknown) {
   const mock = vi.fn().mockResolvedValue(data);
@@ -29,7 +24,7 @@ function stubFetchApi(data: unknown) {
   return mock;
 }
 
-let mockDb = dbMock;
+const mockDb = dbMock;
 
 beforeEach(() => {
   // Reset in-memory cache state to empty on each test.
@@ -45,9 +40,49 @@ afterEach(() => {
 });
 
 describe('get_history_by_turn_page', () => {
-  const rows: CachedMessage[] = [
-    { id: 1, turn_num: 1, session_id: 's1', role: 'human', content: 'hi', timestamp: null, tool_call_id: null, tool_calls: null, tool_status: null, tool_name: null, finish_reason: null, reasoning: null, reasoning_content: null, images: null, audios: null, videos: null, model_name: null, input_tokens: null, output_tokens: null },
-    { id: 2, turn_num: 2, session_id: 's1', role: 'ai', content: 'hello', timestamp: null, tool_call_id: null, tool_calls: null, tool_status: null, tool_name: null, finish_reason: null, reasoning: null, reasoning_content: null, images: null, audios: null, videos: null, model_name: null, input_tokens: null, output_tokens: null },
+  const rows: [CachedMessage, CachedMessage] = [
+    {
+      id: 1,
+      turn_num: 1,
+      session_id: 's1',
+      role: 'human',
+      content: 'hi',
+      timestamp: null,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_status: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning: null,
+      reasoning_content: null,
+      images: null,
+      audios: null,
+      videos: null,
+      model_name: null,
+      input_tokens: null,
+      output_tokens: null
+    },
+    {
+      id: 2,
+      turn_num: 2,
+      session_id: 's1',
+      role: 'ai',
+      content: 'hello',
+      timestamp: null,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_status: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning: null,
+      reasoning_content: null,
+      images: null,
+      audios: null,
+      videos: null,
+      model_name: null,
+      input_tokens: null,
+      output_tokens: null
+    }
   ];
 
   it('returns cached + fetched merged data (deduped by id)', async () => {
@@ -68,9 +103,9 @@ describe('get_history_by_turn_page', () => {
         session_id: 's1',
         min_turn_num: 2,
         turn_page_size: 10,
-        turn_page_num: 1,
+        turn_page_num: 1
       },
-      method: 'get',
+      method: 'get'
     });
     expect(mockDb.cacheMessages).toHaveBeenCalledWith(fetched);
   });
@@ -86,9 +121,9 @@ describe('get_history_by_turn_page', () => {
         session_id: 's1',
         min_turn_num: 5,
         turn_page_size: 20,
-        turn_page_num: 2,
+        turn_page_num: 2
       },
-      method: 'get',
+      method: 'get'
     });
   });
 
@@ -111,9 +146,9 @@ describe('get_history_by_turn_page', () => {
         session_id: 's1',
         min_turn_num: 1,
         turn_page_size: 10,
-        turn_page_num: 1,
+        turn_page_num: 1
       },
-      method: 'get',
+      method: 'get'
     });
   });
 
@@ -132,7 +167,7 @@ describe('clearSession', () => {
     expect(mock).toHaveBeenCalledWith({
       url: '/sessions',
       opts: { session_id: 'abc' },
-      method: 'delete',
+      method: 'delete'
     });
     expect(mockDb.clearCachedSession).toHaveBeenCalledWith('abc');
   });
@@ -147,42 +182,42 @@ describe('clearSession', () => {
 describe('postAgentStream', () => {
   let sockets: FakeWebSocket[];
 
+  /** Minimal WebSocket double used to observe the bridge's browser-mode socket. */
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+    onopen: ((ev: any) => void) | null = null;
+    onmessage: ((ev: any) => void) | null = null;
+    onerror: ((ev: any) => void) | null = null;
+    onclose: ((ev: any) => void) | null = null;
+    sent: string[] = [];
+    url: string;
+    closed = false;
+    readyState = FakeWebSocket.CONNECTING;
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+    }
+    send(data: string) {
+      this.sent.push(data);
+    }
+    close() {
+      this.closed = true;
+      this.readyState = FakeWebSocket.CLOSED;
+    }
+    // Simulate the backend opening the connection; mirrors the real
+    // WebSocket readyState transition to OPEN.
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.({});
+    }
+  }
+
   beforeEach(() => {
     sockets = [];
-    vi.stubGlobal(
-      'WebSocket',
-      class FakeWebSocket {
-        static readonly CONNECTING = 0;
-        static readonly OPEN = 1;
-        static readonly CLOSING = 2;
-        static readonly CLOSED = 3;
-        onopen: ((ev: any) => void) | null = null;
-        onmessage: ((ev: any) => void) | null = null;
-        onerror: ((ev: any) => void) | null = null;
-        onclose: ((ev: any) => void) | null = null;
-        sent: string[] = [];
-        url: string;
-        closed = false;
-        readyState = FakeWebSocket.CONNECTING;
-        constructor(url: string) {
-          this.url = url;
-          sockets.push(this);
-        }
-        send(data: string) {
-          this.sent.push(data);
-        }
-        close() {
-          this.closed = true;
-          this.readyState = FakeWebSocket.CLOSED;
-        }
-        // Simulate the backend opening the connection; mirrors the real
-        // WebSocket readyState transition to OPEN.
-        open() {
-          this.readyState = FakeWebSocket.OPEN;
-          this.onopen?.({});
-        }
-      } as unknown as typeof WebSocket,
-    );
+    vi.stubGlobal('WebSocket', FakeWebSocket);
   });
 
   it('opens the WS bridge, sends the request, and calls onData with each chunk', async () => {
@@ -190,13 +225,19 @@ describe('postAgentStream', () => {
     const onDone = vi.fn();
 
     const promise = new Promise<void>((resolve, reject) => {
-      postAgentStream('s1', { text: 'hi' }, onData, () => {
-        onDone();
-        resolve();
-      }, reject);
+      postAgentStream(
+        's1',
+        { text: 'hi' },
+        onData,
+        () => {
+          onDone();
+          resolve();
+        },
+        reject
+      );
     });
 
-    const ws = sockets[0];
+    const ws = sockets[0]!;
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
     ws.open();
     // Tauri mode guarded out; browser uses streamChatMessage -> sendChatMessageWs.
@@ -210,9 +251,9 @@ describe('postAgentStream', () => {
           audio_bytes_list: [],
           audio_path_list: [],
           video_bytes_list: [],
-          video_path_list: [],
-        },
-      }),
+          video_path_list: []
+        }
+      })
     ]);
 
     ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' }) });
@@ -222,13 +263,13 @@ describe('postAgentStream', () => {
       tool_id: undefined,
       tool_name: undefined,
       args: undefined,
-      error: undefined,
+      error: undefined
     });
     expect(onData).toHaveBeenNthCalledWith(2, 'lo', 'text', 's1', {
       tool_id: undefined,
       tool_name: undefined,
       args: undefined,
-      error: undefined,
+      error: undefined
     });
 
     ws.onmessage?.({ data: JSON.stringify({ event: 'done', session_id: 's1', content: '' }) });
@@ -238,9 +279,15 @@ describe('postAgentStream', () => {
 
   it('sends the request body with the given session id/text', async () => {
     const done = new Promise<void>((resolve, reject) => {
-      postAgentStream('s7', { text: 'ping' }, () => {}, () => resolve(), reject);
+      postAgentStream(
+        's7',
+        { text: 'ping' },
+        () => {},
+        () => resolve(),
+        reject
+      );
     });
-    const ws = sockets[0];
+    const ws = sockets[0]!;
     ws.open();
     ws.onmessage?.({ data: JSON.stringify({ event: 'done', session_id: 's7', content: '' }) });
     await done;
@@ -255,19 +302,25 @@ describe('postAgentStream', () => {
           audio_bytes_list: [],
           audio_path_list: [],
           video_bytes_list: [],
-          video_path_list: [],
-        },
-      }),
+          video_path_list: []
+        }
+      })
     ]);
   });
 
   it('calls onError on an error frame', async () => {
     const onError = vi.fn();
-    const promise = new Promise<void>((resolve) => {
-      postAgentStream('s1', { text: 'x' }, () => {}, () => {}, onError);
+    const promise = new Promise<void>(resolve => {
+      postAgentStream(
+        's1',
+        { text: 'x' },
+        () => {},
+        () => {},
+        onError
+      );
       setTimeout(resolve, 20);
     });
-    const ws = sockets[0];
+    const ws = sockets[0]!;
     ws.open();
     ws.onmessage?.({ data: JSON.stringify({ event: 'error', session_id: 's1', content: 'boom' }) });
     await promise;
@@ -275,26 +328,34 @@ describe('postAgentStream', () => {
   });
 
   it('calls onError on socket error (重连预算耗尽后)', async () => {
-    // 新契约：pre-chunk 断流 → bridge 进入指数退避重连（1s/2s/4s），
-    // 预算耗尽才以 StreamInterruptedError 结束并派发 onError（旧版是立即回调）。
+    // New contract: a pre-chunk stream break -> bridge enters exponential-backoff reconnect (1s/2s/4s);
+    // only when the budget is exhausted does it end with StreamInterruptedError and dispatch onError
+    // (the old version called back immediately).
     vi.useFakeTimers();
     try {
       const onError = vi.fn();
-      postAgentStream('s1', { text: 'x' }, () => {}, () => {}, onError);
-      const ws = sockets[0];
+      postAgentStream(
+        's1',
+        { text: 'x' },
+        () => {},
+        () => {},
+        onError
+      );
+      const ws = sockets[0]!;
       ws.open();
       ws.onerror?.({});
       for (let i = 0; i < 3; i++) {
         await vi.advanceTimersByTimeAsync(1000 * 2 ** i);
-        // 每次重连出的新 socket 继续失败，驱动重连预算耗尽
-        const retry = sockets[sockets.length - 1];
+        // Each reconnect's new socket keeps failing, driving the reconnect budget to exhaustion
+        const retry = sockets[sockets.length - 1]!;
         retry.onerror?.({});
       }
-      // flush microtasks：release → promise.catch → onError 派发
+      // flush microtasks: release -> promise.catch -> onError dispatch
       await vi.advanceTimersByTimeAsync(0);
       expect(onError).toHaveBeenCalledTimes(1);
-      // [sid].vue 消费该语义：StreamInterruptedError → 中断提示 + 延迟对账
-      expect(onError.mock.calls[0][0]).toMatchObject({ name: 'StreamInterruptedError' });
+      // [sid].vue consumes this semantics: StreamInterruptedError -> interruption hint + delayed reconciliation
+      const firstError = onError.mock.calls[0]![0];
+      expect(firstError).toMatchObject({ name: 'StreamInterruptedError' });
     } finally {
       vi.useRealTimers();
     }
@@ -302,15 +363,21 @@ describe('postAgentStream', () => {
 
   it('does not call onError when the request is aborted', async () => {
     const onError = vi.fn();
-    const controller = postAgentStream('s1', { text: 'x' }, () => {}, () => {}, onError);
-    const ws = sockets[0];
+    const controller = postAgentStream(
+      's1',
+      { text: 'x' },
+      () => {},
+      () => {},
+      onError
+    );
+    const ws = sockets[0]!;
     ws.open();
 
     controller.abort();
 
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise(r => setTimeout(r, 30));
     expect(onError).not.toHaveBeenCalled();
     // Stop frame is sent over the same socket before teardown.
-    expect(ws.sent.some((s) => JSON.parse(s).type === 'stop')).toBe(true);
+    expect(ws.sent.some(s => JSON.parse(s).type === 'stop')).toBe(true);
   });
 });

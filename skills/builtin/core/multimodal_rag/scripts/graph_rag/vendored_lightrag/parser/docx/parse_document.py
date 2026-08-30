@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ABOUTME: Parses DOCX documents into text blocks using python-docx
 ABOUTME: Extracts automatic numbering, splits by headings, converts tables to JSON
@@ -14,9 +14,7 @@ except ImportError as exc:
     # Raise instead of sys.exit: this module is imported in-process by the
     # gunicorn/uvicorn worker, where a SystemExit would tear down the whole
     # worker rather than surfacing a normal, catchable error.
-    raise ImportError(
-        "python-docx not installed. Run: pip install python-docx"
-    ) from exc
+    raise ImportError("python-docx not installed. Run: pip install python-docx") from exc
 
 from graph_rag.vendored_lightrag.parser._markdown import (
     render_heading_line,
@@ -34,9 +32,7 @@ from .drawing_image_extractor import (
 
 # Constants for content validation (character-based for UI/display)
 MAX_HEADING_LENGTH = 200  # Maximum heading length in characters (UI constraint)
-MAX_ANCHOR_CANDIDATE_LENGTH = (
-    100  # Maximum length for candidate anchor paragraphs (characters)
-)
+MAX_ANCHOR_CANDIDATE_LENGTH = 100  # Maximum length for candidate anchor paragraphs (characters)
 
 # Constants for content splitting (token-based for LLM context management)
 IDEAL_BLOCK_CONTENT_TOKENS = 6000  # Ideal target size for balanced splitting (tokens)
@@ -134,8 +130,7 @@ def _diagnose_invalid_docx(file_path: str) -> tuple[str, str]:
     except OSError as exc:
         return (
             f"The file at '{file_path}' could not be read: {exc}",
-            "  1. Verify the file exists and is readable\n"
-            "  2. Re-upload it to LightRAG",
+            "  1. Verify the file exists and is readable\n  2. Re-upload it to LightRAG",
         )
 
     if not head:
@@ -232,9 +227,7 @@ def validate_heading_length(heading_text: str, para_id: str):
         DocxContentError: if heading exceeds maximum length
     """
     if len(heading_text) > MAX_HEADING_LENGTH:
-        preview = (
-            heading_text[:100] + "..." if len(heading_text) > 100 else heading_text
-        )
+        preview = heading_text[:100] + "..." if len(heading_text) > 100 else heading_text
         raise DocxContentError(
             format_error(
                 f"Heading too long ({len(heading_text)} characters, max {MAX_HEADING_LENGTH})",
@@ -447,9 +440,7 @@ def split_table(
             if combined_tokens <= TABLE_MAX_TOKENS:
                 # Merge the chunks
                 merged_para_ids = prev_chunk["para_ids"] + last_chunk["para_ids"]
-                merged_para_ids_end = (
-                    prev_chunk["para_ids_end"] + last_chunk["para_ids_end"]
-                )
+                merged_para_ids_end = prev_chunk["para_ids_end"] + last_chunk["para_ids_end"]
                 chunks[-2] = {
                     "rows": combined_rows,
                     "para_ids": merged_para_ids,
@@ -465,9 +456,7 @@ def split_table(
                         f"[DEBUG] Merged small last chunk (~{last_chunk_tokens} tokens) with previous chunk",
                         file=sys.stderr,
                     )
-                    print(
-                        f"  Combined size: ~{combined_tokens} tokens", file=sys.stderr
-                    )
+                    print(f"  Combined size: ~{combined_tokens} tokens", file=sys.stderr)
 
     return chunks
 
@@ -499,9 +488,7 @@ def split_table_with_heading(
     Returns:
         Same as split_table(), with each chunk having suffix calculated from start_suffix
     """
-    chunks = split_table(
-        table_rows, para_ids, para_ids_end, header_indices, debug=False
-    )
+    chunks = split_table(table_rows, para_ids, para_ids_end, header_indices, debug=False)
 
     # Add suffix_number to each chunk for later use
     for i, chunk in enumerate(chunks):
@@ -512,18 +499,18 @@ def split_table_with_heading(
 
     # Debug output with headings
     if debug and len(chunks) > 1:
-        print(
-            f"\n[DEBUG] Table split into {len(chunks)} chunks (final)", file=sys.stderr
-        )
+        print(f"\n[DEBUG] Table split into {len(chunks)} chunks (final)", file=sys.stderr)
         for i, chunk in enumerate(chunks):
             chunk_json = json.dumps(chunk["rows"], ensure_ascii=False)
             # Generate heading for this chunk
             if chunk["suffix_number"] is None:
                 chunk_heading = current_heading
             else:
-                chunk_heading = f"{current_heading} [{TABLE_CHUNK_SUFFIX_LABEL}{chunk['suffix_number']}]"
+                chunk_heading = (
+                    f"{current_heading} [{TABLE_CHUNK_SUFFIX_LABEL}{chunk['suffix_number']}]"
+                )
             print(
-                f"  Chunk {i+1}: heading=\"{chunk_heading}\", {len(chunk['rows'])} rows, {len(chunk_json)} chars",
+                f'  Chunk {i + 1}: heading="{chunk_heading}", {len(chunk["rows"])} rows, {len(chunk_json)} chars',
                 file=sys.stderr,
             )
 
@@ -591,9 +578,7 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                 current_role = current_block.get("table_chunk_role", "none")
 
                 # Only process blocks of current level that are below IDEAL and not locked
-                is_below_ideal = (
-                    current_tokens < IDEAL_BLOCK_CONTENT_TOKENS and current_tokens > 0
-                )
+                is_below_ideal = current_tokens < IDEAL_BLOCK_CONTENT_TOKENS and current_tokens > 0
                 is_current_level = block_level == current_level
 
                 if is_below_ideal and is_current_level:
@@ -613,18 +598,14 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                         # Phase A: Only merge same-level blocks
                         if next_level == current_level and next_can_merge_backward:
                             merged_content = (
-                                current_block["content"]
-                                + "\n\n"
-                                + next_block["content"]
+                                current_block["content"] + "\n\n" + next_block["content"]
                             )
                             combined_tokens = estimate_tokens(merged_content)
 
                             if combined_tokens <= MAX_BLOCK_CONTENT_TOKENS:
                                 merged_block = {
                                     "uuid": current_block["uuid"],
-                                    "uuid_end": next_block.get(
-                                        "uuid_end", next_block["uuid"]
-                                    ),
+                                    "uuid_end": next_block.get("uuid_end", next_block["uuid"]),
                                     "heading": current_block["heading"],
                                     "content": merged_content,
                                     "type": "text",
@@ -662,9 +643,7 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                             and prev_below_ideal
                         ):
                             merged_content = (
-                                prev_block["content"]
-                                + "\n\n"
-                                + current_block["content"]
+                                prev_block["content"] + "\n\n" + current_block["content"]
                             )
                             combined_tokens = estimate_tokens(merged_content)
 
@@ -702,10 +681,7 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                 else:
                     # Current block is at or above IDEAL, or not current level
                     # Check for tail absorption: if remaining same-level blocks are small enough, absorb them all
-                    if (
-                        is_current_level
-                        and current_tokens >= IDEAL_BLOCK_CONTENT_TOKENS
-                    ):
+                    if is_current_level and current_tokens >= IDEAL_BLOCK_CONTENT_TOKENS:
                         # Calculate total size of remaining same-level blocks
                         remaining_same_level_tokens = 0
                         remaining_end_idx = i + 1
@@ -724,9 +700,7 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                                 # Middle chunks cannot be absorbed - stop here
                                 break
 
-                            remaining_same_level_tokens += estimate_tokens(
-                                next_block["content"]
-                            )
+                            remaining_same_level_tokens += estimate_tokens(next_block["content"])
                             remaining_end_idx = j + 1
 
                         # If remaining same-level blocks are small enough, absorb them all
@@ -735,29 +709,19 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                             and remaining_same_level_tokens < SMALL_TAIL_THRESHOLD
                         ):
                             # Check if combined size doesn't exceed MAX
-                            combined_tokens = (
-                                current_tokens + remaining_same_level_tokens
-                            )
+                            combined_tokens = current_tokens + remaining_same_level_tokens
 
                             if combined_tokens <= MAX_BLOCK_CONTENT_TOKENS:
                                 # Absorb all remaining same-level blocks
                                 absorbed_content = current_block["content"]
-                                last_uuid_end = current_block.get(
-                                    "uuid_end", current_block["uuid"]
-                                )
-                                combined_headers = list(
-                                    current_block.get("table_headers", [])
-                                )
+                                last_uuid_end = current_block.get("uuid_end", current_block["uuid"])
+                                combined_headers = list(current_block.get("table_headers", []))
 
                                 for j in range(i + 1, remaining_end_idx):
                                     next_block = result[j]
                                     absorbed_content += "\n\n" + next_block["content"]
-                                    last_uuid_end = next_block.get(
-                                        "uuid_end", next_block["uuid"]
-                                    )
-                                    combined_headers.extend(
-                                        next_block.get("table_headers", [])
-                                    )
+                                    last_uuid_end = next_block.get("uuid_end", next_block["uuid"])
+                                    combined_headers.extend(next_block.get("table_headers", []))
 
                                 # Create merged block
                                 merged_block = {
@@ -816,9 +780,7 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                 current_role = current_block.get("table_chunk_role", "none")
 
                 # Only process blocks of current level that are below IDEAL
-                is_below_ideal = (
-                    current_tokens < IDEAL_BLOCK_CONTENT_TOKENS and current_tokens > 0
-                )
+                is_below_ideal = current_tokens < IDEAL_BLOCK_CONTENT_TOKENS and current_tokens > 0
                 is_current_level = block_level == current_level
 
                 if is_below_ideal and is_current_level:
@@ -837,18 +799,14 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                         # Phase B: current level can absorb deeper levels (larger numbers)
                         if next_level > current_level and next_can_merge_backward:
                             merged_content = (
-                                current_block["content"]
-                                + "\n\n"
-                                + next_block["content"]
+                                current_block["content"] + "\n\n" + next_block["content"]
                             )
                             combined_tokens = estimate_tokens(merged_content)
 
                             if combined_tokens <= MAX_BLOCK_CONTENT_TOKENS:
                                 merged_block = {
                                     "uuid": current_block["uuid"],
-                                    "uuid_end": next_block.get(
-                                        "uuid_end", next_block["uuid"]
-                                    ),
+                                    "uuid_end": next_block.get("uuid_end", next_block["uuid"]),
                                     "heading": current_block["heading"],
                                     "content": merged_content,
                                     "type": "text",
@@ -886,9 +844,7 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
                             and prev_below_ideal
                         ):
                             merged_content = (
-                                prev_block["content"]
-                                + "\n\n"
-                                + current_block["content"]
+                                prev_block["content"] + "\n\n" + current_block["content"]
                             )
                             combined_tokens = estimate_tokens(merged_content)
 
@@ -963,7 +919,7 @@ def merge_small_blocks(blocks: list, debug: bool = False) -> tuple:
             )
             for info in oversized_blocks:
                 print(
-                    f"  Block #{info['index']}: level={info['level']}, tokens={info['tokens']}, heading=\"{info['heading']}\"",
+                    f'  Block #{info["index"]}: level={info["level"]}, tokens={info["tokens"]}, heading="{info["heading"]}"',
                     file=sys.stderr,
                 )
 
@@ -1014,9 +970,7 @@ def split_long_block(
     effective_heading = strip_heading_markdown_prefix(block_heading)
 
     if paragraphs and paragraphs[0].get("_chunk_heading"):
-        effective_heading = strip_heading_markdown_prefix(
-            paragraphs[0]["_chunk_heading"]
-        )
+        effective_heading = strip_heading_markdown_prefix(paragraphs[0]["_chunk_heading"])
 
     # Calculate total content token count
     total_content = "\n".join(p["text"] for p in paragraphs)
@@ -1062,10 +1016,7 @@ def split_long_block(
     candidates = []
     cumulative_tokens = 0
     for idx, para in enumerate(paragraphs):
-        if (
-            not para.get("is_table", False)
-            and 0 < len(para["text"]) <= MAX_ANCHOR_CANDIDATE_LENGTH
-        ):
+        if not para.get("is_table", False) and 0 < len(para["text"]) <= MAX_ANCHOR_CANDIDATE_LENGTH:
             candidates.append(
                 {
                     "index": idx,
@@ -1078,9 +1029,7 @@ def split_long_block(
 
     if not candidates:
         # No suitable anchor found
-        preview = (
-            block_heading[:80] + "..." if len(block_heading) > 80 else block_heading
-        )
+        preview = block_heading[:80] + "..." if len(block_heading) > 80 else block_heading
         raise DocxContentError(
             format_error(
                 "Cannot split long block (no suitable anchor paragraphs found)",
@@ -1135,9 +1084,7 @@ def split_long_block(
             last_para = block_paragraphs[-1]
             block_uuid_end = last_para.get("para_id_end") or last_para.get("para_id")
             new_block = {
-                "uuid": block_paragraphs[0][
-                    "para_id"
-                ],  # UUID from first paragraph in content
+                "uuid": block_paragraphs[0]["para_id"],  # UUID from first paragraph in content
                 "uuid_end": block_uuid_end,  # UUID_end from last paragraph (or table's last cell)
                 "heading": current_block_heading,
                 "content": block_content,
@@ -1162,9 +1109,7 @@ def split_long_block(
                 strip_heading_markdown_prefix(block_heading)
             ]
 
-        prev_idx = (
-            split_idx  # Don't skip anchor - it becomes first paragraph of next block
-        )
+        prev_idx = split_idx  # Don't skip anchor - it becomes first paragraph of next block
 
     # Create final block with remaining paragraphs
     final_paragraphs = paragraphs[prev_idx:]
@@ -1172,13 +1117,9 @@ def split_long_block(
         final_content = "\n".join(p["text"] for p in final_paragraphs)
         # For uuid_end: use para_id_end if last element is a table, otherwise para_id
         last_final_para = final_paragraphs[-1]
-        final_uuid_end = last_final_para.get("para_id_end") or last_final_para.get(
-            "para_id"
-        )
+        final_uuid_end = last_final_para.get("para_id_end") or last_final_para.get("para_id")
         final_block = {
-            "uuid": final_paragraphs[0][
-                "para_id"
-            ],  # UUID from first paragraph in content
+            "uuid": final_paragraphs[0]["para_id"],  # UUID from first paragraph in content
             "uuid_end": final_uuid_end,  # UUID_end from last paragraph (or table's last cell)
             "heading": current_block_heading,
             "content": final_content,
@@ -1212,7 +1153,7 @@ def split_long_block(
                     format_error(
                         "Cannot re-split oversized block (internal error)",
                         f"A block exceeded MAX_BLOCK_CONTENT_TOKENS but paragraph metadata was lost.\n\n"
-                        f"Location: Under heading \"{preview}\"\n"
+                        f'Location: Under heading "{preview}"\n'
                         f"Block size: ~{block_tokens} tokens ({len(block['content'])} characters)",
                         "This is an internal error. Please report this issue.",
                     )
@@ -1266,9 +1207,7 @@ def extract_para_id(para_element) -> str:
         propagate the ``None`` upward — the LightRAG adapter counts these
         and surfaces a single warning per document.
     """
-    return para_element.get(
-        "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
-    )
+    return para_element.get("{http://schemas.microsoft.com/office/word/2010/wordml}paraId")
 
 
 def parse_styles_outline_levels(docx_path: str) -> dict:
@@ -1370,9 +1309,7 @@ def get_heading_level(para_element, styles_outline_map: dict) -> int:
         int: 0-8 for heading levels (0=level 1, 1=level 2, etc.), None for non-heading
     """
     # 1. Check paragraph direct format
-    pPr = para_element.find(
-        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr"
-    )
+    pPr = para_element.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr")
     if pPr is not None:
         outline_elem = pPr.find(
             "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}outlineLvl"
@@ -1506,9 +1443,7 @@ def extract_paragraph_content(
         if tag in _SKIP_PARAGRAPH_TAGS:
             return
         if tag == "r":
-            parts.append(
-                extract_text_from_run(node, ns, drawing_context=drawing_context)
-            )
+            parts.append(extract_text_from_run(node, ns, drawing_context=drawing_context))
             return
         if tag == "oMath":
             from .omml import convert_omml_to_latex
@@ -1551,9 +1486,7 @@ def _collect_table_headers(paragraphs: list) -> list:
     return [p.get("_table_header") for p in paragraphs if p.get("is_table")]
 
 
-def _build_unsplit_block(
-    heading: str, paragraphs: list, parent_headings: list, level: int
-) -> dict:
+def _build_unsplit_block(heading: str, paragraphs: list, parent_headings: list, level: int) -> dict:
     """Build a single block from paragraphs without size-based splitting."""
     last_para = paragraphs[-1]
     block = {
@@ -1590,9 +1523,7 @@ def _flush_current_block(
         return
 
     if fixlevel is None:
-        blocks.extend(
-            split_long_block(heading, paragraphs, parent_headings, level, debug)
-        )
+        blocks.extend(split_long_block(heading, paragraphs, parent_headings, level, debug))
         return
 
     block = _build_unsplit_block(heading, paragraphs, parent_headings, level)
@@ -1671,12 +1602,8 @@ def extract_docx_blocks(
     current_parent_headings = []  # Parent headings for current block
     current_paragraphs = []  # Track paragraphs with metadata for splitting
     matched_fixlevel_heading = False  # Track whether --fixlevel matched any heading
-    table_split_counter = (
-        0  # Track cumulative table split suffix numbers within current block
-    )
-    first_heading_recorded = (
-        False  # Track whether the document's first heading has been captured
-    )
+    table_split_counter = 0  # Track cumulative table split suffix numbers within current block
+    first_heading_recorded = False  # Track whether the document's first heading has been captured
 
     # Iterate through document body elements (paragraphs and tables)
     body = doc._element.body
@@ -1804,9 +1731,7 @@ def extract_docx_blocks(
 
                         # Reset for new block
                         current_paragraphs = []
-                        table_split_counter = (
-                            0  # Reset table split counter for new heading
-                        )
+                        table_split_counter = 0  # Reset table split counter for new heading
 
                     # Add heading to current_paragraphs. The content line gets
                     # a markdown ``#`` prefix (capped at 6) via
@@ -1824,9 +1749,7 @@ def extract_docx_blocks(
                     # (when current_paragraphs just had this heading added as its first element)
                     if len(current_paragraphs) == 1:
                         current_heading = clean_heading_text
-                        current_heading_level = (
-                            level  # Only set level when setting heading
-                        )
+                        current_heading_level = level  # Only set level when setting heading
                         # Parent headings = all headings from levels strictly less than current level
                         # Sort by level to maintain hierarchy order
                         current_parent_headings = [
@@ -1880,9 +1803,7 @@ def extract_docx_blocks(
 
             # Check for paragraph-level section break (after processing paragraph)
             # sectPr in pPr means this paragraph ends a section
-            pPr = element.find(
-                "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr"
-            )
+            pPr = element.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr")
             if pPr is not None:
                 sectPr = pPr.find(
                     "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sectPr"
@@ -1936,9 +1857,7 @@ def extract_docx_blocks(
             # sidecar via the block-level ``table_headers`` list.
             header_rows = []
             if header_indices:
-                header_rows = [
-                    table_rows[idx] for idx in header_indices if idx < len(table_rows)
-                ]
+                header_rows = [table_rows[idx] for idx in header_indices if idx < len(table_rows)]
             header_rows_or_none = header_rows if header_rows else None
 
             # Check if table needs splitting (disabled in fixlevel mode)

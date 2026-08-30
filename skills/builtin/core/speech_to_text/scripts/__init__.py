@@ -1,1 +1,1 @@
-from .core import stt
+from .core import stt as stt

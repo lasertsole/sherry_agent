@@ -1,4 +1,4 @@
-﻿"""Recursive character chunking — the ``"R"`` strategy.
+"""Recursive character chunking — the ``"R"`` strategy.
 
 Wraps LangChain's :class:`RecursiveCharacterTextSplitter` and delivers
 output rows in the LightRAG file-chunker schema. The splitter walks the
@@ -70,21 +70,13 @@ def _split_text_with_regex_spans(
                     )
                 cursor = match.end()
             if cursor < len(text):
-                pieces.append(
-                    (text[cursor:], base_offset + cursor, base_offset + len(text))
-                )
+                pieces.append((text[cursor:], base_offset + cursor, base_offset + len(text)))
         else:
             first = matches[0]
             if first.start() > 0:
-                pieces.append(
-                    (text[: first.start()], base_offset, base_offset + first.start())
-                )
+                pieces.append((text[: first.start()], base_offset, base_offset + first.start()))
             for index, match in enumerate(matches):
-                end = (
-                    matches[index + 1].start()
-                    if index + 1 < len(matches)
-                    else len(text)
-                )
+                end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
                 if end > match.start():
                     pieces.append(
                         (
@@ -106,9 +98,7 @@ def _split_text_with_regex_spans(
                 )
             cursor = match.end()
         if cursor < len(text):
-            pieces.append(
-                (text[cursor:], base_offset + cursor, base_offset + len(text))
-            )
+            pieces.append((text[cursor:], base_offset + cursor, base_offset + len(text)))
 
     return [piece for piece in pieces if piece[0]]
 
@@ -167,10 +157,7 @@ def _merge_splits_with_spans(
 
     for split in splits:
         split_len = length_function(split[0])
-        if (
-            total + split_len + (separator_len if len(current_doc) > 0 else 0)
-            > chunk_size
-        ):
+        if total + split_len + (separator_len if len(current_doc) > 0 else 0) > chunk_size:
             if total > chunk_size:
                 logger.warning(
                     "Created a chunk of size %d, which is longer than the specified %d",
@@ -186,8 +173,7 @@ def _merge_splits_with_spans(
                 if doc is not None:
                     docs.append(doc)
                 while total > chunk_overlap or (
-                    total + split_len + (separator_len if len(current_doc) > 0 else 0)
-                    > chunk_size
+                    total + split_len + (separator_len if len(current_doc) > 0 else 0) > chunk_size
                     and total > 0
                 ):
                     total -= length_function(current_doc[0][0]) + (

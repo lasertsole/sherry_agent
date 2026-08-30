@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import asyncio
 import multiprocessing as mp
@@ -179,11 +179,7 @@ class UnifiedLock(Generic[T]):
             return self
         except Exception as e:
             # If main lock acquisition fails, release the async lock if it was acquired
-            if (
-                not self._is_async
-                and self._async_lock is not None
-                and self._async_lock.locked()
-            ):
+            if not self._is_async and self._async_lock is not None and self._async_lock.locked():
                 self._async_lock.release()
 
             direct_log(
@@ -370,8 +366,7 @@ def _perform_lock_cleanup(
     )
 
     interval_satisfied = (
-        last_cleanup_time is None
-        or current_time - last_cleanup_time > MIN_CLEANUP_INTERVAL_SECONDS
+        last_cleanup_time is None or current_time - last_cleanup_time > MIN_CLEANUP_INTERVAL_SECONDS
     )
 
     if not (has_expired_locks and interval_satisfied):
@@ -442,9 +437,7 @@ def _perform_lock_cleanup(
         return 0, earliest_cleanup_time, last_cleanup_time
 
 
-def _get_or_create_shared_raw_mp_lock(
-    factory_name: str, key: str
-) -> Optional[mp.synchronize.Lock]:
+def _get_or_create_shared_raw_mp_lock(factory_name: str, key: str) -> Optional[mp.synchronize.Lock]:
     """Return the *singleton* manager.Lock() proxy for keyed lock, creating if needed."""
     if not _is_multiprocess:
         return None
@@ -502,10 +495,7 @@ def _release_shared_raw_mp_lock(factory_name: str, key: str):
             _lock_cleanup_data[combined_key] = current_time
 
             # Update earliest multiprocess cleanup time (only when earlier)
-            if (
-                _earliest_mp_cleanup_time is None
-                or current_time < _earliest_mp_cleanup_time
-            ):
+            if _earliest_mp_cleanup_time is None or current_time < _earliest_mp_cleanup_time:
                 _earliest_mp_cleanup_time = current_time
 
         # Use generic cleanup function
@@ -540,15 +530,9 @@ class KeyedUnifiedLock:
     def __init__(self, *, default_enable_logging: bool = True) -> None:
         self._default_enable_logging = default_enable_logging
         self._async_lock: Dict[str, asyncio.Lock] = {}  # local keyed locks
-        self._async_lock_count: Dict[
-            str, int
-        ] = {}  # local keyed locks referenced count
-        self._async_lock_cleanup_data: Dict[
-            str, time.time
-        ] = {}  # local keyed locks timeout
-        self._mp_locks: Dict[
-            str, mp.synchronize.Lock
-        ] = {}  # multi-process lock proxies
+        self._async_lock_count: Dict[str, int] = {}  # local keyed locks referenced count
+        self._async_lock_cleanup_data: Dict[str, time.time] = {}  # local keyed locks timeout
+        self._mp_locks: Dict[str, mp.synchronize.Lock] = {}  # multi-process lock proxies
         self._earliest_async_cleanup_time: Optional[float] = (
             None  # track earliest async cleanup time
         )
@@ -556,9 +540,7 @@ class KeyedUnifiedLock:
             None  # track last async cleanup time for minimum interval
         )
 
-    def __call__(
-        self, namespace: str, keys: list[str], *, enable_logging: Optional[bool] = None
-    ):
+    def __call__(self, namespace: str, keys: list[str], *, enable_logging: Optional[bool] = None):
         """
         Ergonomic helper so you can write:
 
@@ -721,11 +703,7 @@ class KeyedUnifiedLock:
         current_time = time.time()
 
         # 1. Cleanup multiprocess locks using generic function
-        if (
-            _is_multiprocess
-            and _lock_registry is not None
-            and _registry_guard is not None
-        ):
+        if _is_multiprocess and _lock_registry is not None and _registry_guard is not None:
             try:
                 with _registry_guard:
                     if _lock_cleanup_data is not None:
@@ -759,17 +737,15 @@ class KeyedUnifiedLock:
         # 2. Cleanup async locks using generic function
         try:
             # Use generic cleanup function without threshold check
-            cleaned_count, new_earliest_time, new_last_cleanup_time = (
-                _perform_lock_cleanup(
-                    lock_type="async",
-                    cleanup_data=self._async_lock_cleanup_data,
-                    lock_registry=self._async_lock,
-                    lock_count=self._async_lock_count,
-                    earliest_cleanup_time=self._earliest_async_cleanup_time,
-                    last_cleanup_time=self._last_async_cleanup_time,
-                    current_time=current_time,
-                    threshold_check=False,  # Force cleanup in cleanup_expired_locks
-                )
+            cleaned_count, new_earliest_time, new_last_cleanup_time = _perform_lock_cleanup(
+                lock_type="async",
+                cleanup_data=self._async_lock_cleanup_data,
+                lock_registry=self._async_lock,
+                lock_count=self._async_lock_count,
+                earliest_cleanup_time=self._earliest_async_cleanup_time,
+                last_cleanup_time=self._last_async_cleanup_time,
+                current_time=current_time,
+                threshold_check=False,  # Force cleanup in cleanup_expired_locks
             )
 
             # Update instance state if cleanup was performed
@@ -857,9 +833,7 @@ class _KeyedLockContext:
         # to avoid deadlocks
         self._keys = sorted(keys)
         self._enable_logging = (
-            enable_logging
-            if enable_logging is not None
-            else parent._default_enable_logging
+            enable_logging if enable_logging is not None else parent._default_enable_logging
         )
         self._ul: Optional[List[Dict[str, Any]]] = None  # set in __aenter__
 
@@ -944,9 +918,7 @@ class _KeyedLockContext:
             lock = entry["lock"]
             debug_inc = entry["debug_inc"]
             entered = entry["entered"]
-            ref_incremented = entry.get(
-                "ref_incremented", True
-            )  # Default to True for safety
+            ref_incremented = entry.get("ref_incremented", True)  # Default to True for safety
 
             errors = []
 
@@ -1354,9 +1326,7 @@ async def initialize_pipeline_status(workspace: str | None = None):
         )
 
         final_namespace = get_final_namespace("pipeline_status", workspace)
-        direct_log(
-            f"Process {os.getpid()} Pipeline namespace '{final_namespace}' initialized"
-        )
+        direct_log(f"Process {os.getpid()} Pipeline namespace '{final_namespace}' initialized")
 
 
 async def get_update_flag(namespace: str, workspace: str | None = None):
@@ -1467,9 +1437,7 @@ async def get_all_update_flags_status(workspace: str | None = None) -> Dict[str,
     return result
 
 
-async def try_initialize_namespace(
-    namespace: str, workspace: str | None = None
-) -> bool:
+async def try_initialize_namespace(namespace: str, workspace: str | None = None) -> bool:
     """
     Returns True if the current worker(process) gets initialization permission for loading data later.
     The worker does not get the permission is prohibited to load data from files.
@@ -1520,8 +1488,7 @@ async def get_namespace_data(
         if final_namespace not in _shared_dicts:
             # Special handling for pipeline_status namespace
             if (
-                final_namespace.endswith(":pipeline_status")
-                or final_namespace == "pipeline_status"
+                final_namespace.endswith(":pipeline_status") or final_namespace == "pipeline_status"
             ) and not first_init:
                 # Check if pipeline_status should have been initialized but wasn't
                 # This helps users to call initialize_pipeline_status() before get_namespace_data()
@@ -1559,9 +1526,7 @@ class NamespaceLock:
         )
     """
 
-    def __init__(
-        self, namespace: str, workspace: str | None = None, enable_logging: bool = False
-    ):
+    def __init__(self, namespace: str, workspace: str | None = None, enable_logging: bool = False):
         self._namespace = namespace
         self._workspace = workspace
         self._enable_logging = enable_logging
@@ -1575,9 +1540,7 @@ class NamespaceLock:
         """Create a fresh context each time we enter"""
         # Check if this coroutine already has an active lock context
         if self._ctx_var.get() is not None:
-            raise RuntimeError(
-                "NamespaceLock already acquired in current coroutine context"
-            )
+            raise RuntimeError("NamespaceLock already acquired in current coroutine context")
 
         final_namespace = get_final_namespace(self._namespace, self._workspace)
         ctx = get_storage_keyed_lock(
@@ -1660,14 +1623,10 @@ def finalize_share_data():
 
     # Check if already initialized
     if not _initialized:
-        direct_log(
-            f"Process {os.getpid()} storage data not initialized, nothing to finalize"
-        )
+        direct_log(f"Process {os.getpid()} storage data not initialized, nothing to finalize")
         return
 
-    direct_log(
-        f"Process {os.getpid()} finalizing storage data (multiprocess={_is_multiprocess})"
-    )
+    direct_log(f"Process {os.getpid()} finalizing storage data (multiprocess={_is_multiprocess})")
 
     # In multi-process mode, shut down the Manager
     if _is_multiprocess and _manager is not None:
@@ -1692,9 +1651,7 @@ def finalize_share_data():
                         if isinstance(flags_list, list):
                             # Clear Value objects in the list
                             for flag in flags_list:
-                                if hasattr(
-                                    flag, "value"
-                                ):  # Check if it's a Value object
+                                if hasattr(flag, "value"):  # Check if it's a Value object
                                     flag.value = False
                             flags_list.clear()
                 except Exception:
@@ -1705,9 +1662,7 @@ def finalize_share_data():
             _manager.shutdown()
             direct_log(f"Process {os.getpid()} Manager shutdown complete")
         except Exception as e:
-            direct_log(
-                f"Process {os.getpid()} Error shutting down Manager: {e}", level="ERROR"
-            )
+            direct_log(f"Process {os.getpid()} Error shutting down Manager: {e}", level="ERROR")
 
     # Reset global variables
     _manager = None
@@ -1756,9 +1711,7 @@ def get_default_workspace() -> str:
     return _default_workspace
 
 
-def get_pipeline_status_lock(
-    enable_logging: bool = False, workspace: str = None
-) -> NamespaceLock:
+def get_pipeline_status_lock(enable_logging: bool = False, workspace: str = None) -> NamespaceLock:
     """Return unified storage lock for pipeline status data consistency.
 
     This function is for compatibility with legacy code only.

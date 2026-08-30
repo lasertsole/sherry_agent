@@ -20,7 +20,10 @@ def is_superseded_run(run: SubagentRunRecord) -> bool:
         return False
     for other in memory.values():
         if other.child_session_key == run.child_session_key and other.run_id != run.run_id:
-            if other.generation > run.generation and other.execution.status != ExecutionStatus.TERMINAL:
+            if (
+                other.generation > run.generation
+                and other.execution.status != ExecutionStatus.TERMINAL
+            ):
                 return True
     return False
 

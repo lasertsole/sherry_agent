@@ -10,8 +10,10 @@ import time
 from typing import TypedDict, Any
 from langchain_core.messages import ToolMessage, AIMessage, BaseMessage
 
+
 class ToolCallLike(TypedDict):
     """Tool-call type definition."""
+
     id: str
     name: str | None
     error: str | None
@@ -27,11 +29,11 @@ def extract_tool_call_id(block: dict[str, Any]) -> str | None:
     Returns:
         Tool-call ID, or None if not found.
     """
-    if isinstance(block.get('id'), str) and block['id']:
-        return block['id']
+    if isinstance(block.get("id"), str) and block["id"]:
+        return block["id"]
 
-    if isinstance(block.get('call_id'), str) and block['call_id']:
-        return block['call_id']
+    if isinstance(block.get("call_id"), str) and block["call_id"]:
+        return block["call_id"]
 
     return None
 
@@ -62,12 +64,19 @@ def extract_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
         if not call_id:
             continue
 
-        block_type = block.get('type')
+        block_type = block.get("type")
 
         if isinstance(block_type, str) and block_type == "tool_call":
-            calls.append(ToolCallLike(id = call_id, name = block.get('name') if isinstance(block.get('name'), str) else None, error=None))
+            calls.append(
+                ToolCallLike(
+                    id=call_id,
+                    name=block.get("name") if isinstance(block.get("name"), str) else None,
+                    error=None,
+                )
+            )
 
     return calls
+
 
 def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
     """
@@ -95,14 +104,16 @@ def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLi
         if not call_id:
             continue
 
-        error = block.get('error', '')
+        error = block.get("error", "")
 
         if isinstance(error, str) and error != "":
-            calls.append({
-                'id': call_id,
-                'name': block.get('name') if isinstance(block.get('name'), str) else None,
-                'error': error,
-            })
+            calls.append(
+                {
+                    "id": call_id,
+                    "name": block.get("name") if isinstance(block.get("name"), str) else None,
+                    "error": error,
+                }
+            )
 
     return calls
 
@@ -136,11 +147,11 @@ def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) ->
         A dummy ToolMessage indicating the result was missing.
     """
     return ToolMessage(
-        name = tool_name or 'unknown',
-        content = "tool result missing after context trim.",
-        tool_call_id = tool_call_id,
-        status = "error",
-        additional_kwargs = {"timestamp": int(time.time() * 1000)}
+        name=tool_name or "unknown",
+        content="tool result missing after context trim.",
+        tool_call_id=tool_call_id,
+        status="error",
+        additional_kwargs={"timestamp": int(time.time() * 1000)},
     )
 
 
@@ -196,9 +207,8 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
         # Keep error-status messages (but clear invalid_tool_calls to prevent serialisation as OpenAI tool_calls)
         raw_invalid_tool_calls = getattr(msg, "invalid_tool_calls", None)
         has_invalid = isinstance(raw_invalid_tool_calls, list) and len(raw_invalid_tool_calls) > 0
-        invalid_tool_calls: list[ToolCallLike] = extract_invalid_tool_calls_from_assistant(msg)
 
-        if getattr(msg, 'status', "") == "error" or has_invalid:
+        if getattr(msg, "status", "") == "error" or has_invalid:
             if has_invalid:
                 # LangChain serialises invalid_tool_calls as tool_calls for the API;
                 # if a corresponding ToolMessage is missing this triggers a 400 error.
@@ -217,7 +227,7 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
             i += 1
             continue
 
-        tool_call_ids:set[str] = {t['id'] for t in tool_calls}
+        tool_call_ids: set[str] = {t["id"] for t in tool_calls}
         span_results_by_id: dict[str, ToolMessage] = {}
         remainder: list[ToolMessage] = []
 
@@ -254,21 +264,23 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
         # Add assistant message
         out.append(msg)
 
-        if len(span_results_by_id)>0 and len(remainder)>0:
+        if len(span_results_by_id) > 0 and len(remainder) > 0:
             changed = True
 
         # Add tool results (existing or dummy)
         for call in tool_calls:
-            existing = span_results_by_id.get(call['id'])
+            existing = span_results_by_id.get(call["id"])
 
             if existing:
                 push_tool_result(existing)
             else:
                 changed = True
-                push_tool_result(make_missing_tool_result(
-                    tool_call_id=call['id'],
-                    tool_name=call.get('name'),
-                ))
+                push_tool_result(
+                    make_missing_tool_result(
+                        tool_call_id=call["id"],
+                        tool_name=call.get("name"),
+                    )
+                )
 
         # Add remaining messages
         for rem in remainder:
@@ -283,7 +295,7 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
     for msg in out:
         if isinstance(msg, AIMessage):
             calls = extract_tool_calls_from_assistant(msg)
-            active_tool_call_ids = {c['id'] for c in calls}
+            active_tool_call_ids = {c["id"] for c in calls}
 
         if isinstance(msg, ToolMessage):
             result_id = extract_tool_result_id(msg)

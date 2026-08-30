@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+
 def generate_tsid(days_offset: int = 0) -> str:
     """
     Generate a timestamp ID: YYYYMMDDHHmmss (e.g. 202602260705).

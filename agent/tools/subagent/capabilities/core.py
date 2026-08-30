@@ -36,5 +36,5 @@ def extract_depth_from_session_key(session_key: str) -> int:
     while ":subagent:" in current:
         depth += 1
         idx = current.index(":subagent:")
-        current = current[idx + len(":subagent:"):]
+        current = current[idx + len(":subagent:") :]
     return depth

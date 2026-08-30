@@ -50,31 +50,35 @@ def build_subagent_list(session_key: str) -> dict:
     active_summaries = []
     for r in active[:10]:
         pending_desc = queries.count_pending_descendant_runs(r.child_session_key)
-        active_summaries.append({
-            "run_id": r.run_id,
-            "label": r.label,
-            "task": r.task[:80],
-            "depth": r.depth,
-            "role": r.role,
-            "generation": r.generation,
-            "model": r.thinking,
-            "runtime": _resolve_runtime_display(r),
-            "pending_descendants": pending_desc,
-        })
+        active_summaries.append(
+            {
+                "run_id": r.run_id,
+                "label": r.label,
+                "task": r.task[:80],
+                "depth": r.depth,
+                "role": r.role,
+                "generation": r.generation,
+                "model": r.thinking,
+                "runtime": _resolve_runtime_display(r),
+                "pending_descendants": pending_desc,
+            }
+        )
 
     recent_summaries = []
     for r in recent[:5]:
         outcome = r.execution.outcome
-        recent_summaries.append({
-            "run_id": r.run_id,
-            "label": r.label,
-            "status": outcome.status if outcome else "unknown",
-            "ended_reason": r.ended_reason,
-            "task": r.task[:80],
-            "generation": r.generation,
-            "model": r.thinking,
-            "runtime": _resolve_runtime_display(r),
-        })
+        recent_summaries.append(
+            {
+                "run_id": r.run_id,
+                "label": r.label,
+                "status": outcome.status if outcome else "unknown",
+                "ended_reason": r.ended_reason,
+                "task": r.task[:80],
+                "generation": r.generation,
+                "model": r.thinking,
+                "runtime": _resolve_runtime_display(r),
+            }
+        )
 
     return {
         "total": len(deduped),

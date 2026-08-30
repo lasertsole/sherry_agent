@@ -1,4 +1,4 @@
-﻿"""Docling raw bundle downloader.
+"""Docling raw bundle downloader.
 
 Talks to Docling Serve v1 over HTTP:
 
@@ -138,18 +138,14 @@ class DoclingRawClient:
         ``parse_docling`` entry point.
         """
         if httpx is None:
-            raise RuntimeError(
-                "httpx is required for Docling parsing but is not installed"
-            )
+            raise RuntimeError("httpx is required for Docling parsing but is not installed")
         raw_dir.mkdir(parents=True, exist_ok=True)
 
         effective_filename = upload_filename or source_file_path.name
 
         timeout = httpx.Timeout(120.0, connect=30.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            task_id = await self._submit(
-                client, source_file_path, filename=effective_filename
-            )
+            task_id = await self._submit(client, source_file_path, filename=effective_filename)
             await self._poll_until_done(client, task_id)
             payload = await self._download_zip_bytes(client, task_id)
 
@@ -220,9 +216,7 @@ class DoclingRawClient:
         # OOM the worker before docling-serve ever sees the request.
         with source_file_path.open("rb") as fh:
             files = {"files": (filename, fh, "application/octet-stream")}
-            resp = await client.post(
-                url, data=self._build_multipart_data(), files=files
-            )
+            resp = await client.post(url, data=self._build_multipart_data(), files=files)
         raise_for_status_with_detail(resp, f"Docling upload for {filename!r}")
         payload = resp.json() if resp.text else {}
         task_id = str(payload.get("task_id") or payload.get("id") or "").strip()
@@ -242,9 +236,7 @@ class DoclingRawClient:
             resp = await client.get(url, params=params)
             raise_for_status_with_detail(resp, f"Docling task {task_id} poll")
             payload = resp.json() if resp.text else {}
-            status = str(
-                payload.get("task_status") or payload.get("status") or ""
-            ).lower()
+            status = str(payload.get("task_status") or payload.get("status") or "").lower()
 
             if status in SUCCESS_STATES:
                 return

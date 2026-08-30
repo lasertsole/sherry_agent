@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import weakref
 
 import sys
@@ -178,9 +178,7 @@ async def safe_vdb_operation_with_exception(
                     operation_name,
                     entity_name or "<unknown>",
                     attempt_label,
-                    f"{timeout_seconds:.1f}s"
-                    if timeout_seconds is not None
-                    else "none",
+                    f"{timeout_seconds:.1f}s" if timeout_seconds is not None else "none",
                 )
 
             if timeout_seconds is not None and timeout_seconds > 0:
@@ -286,9 +284,7 @@ def get_env_value(
                 )
                 return default
         except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(
-                f"Failed to parse {env_key} as JSON list: {e}, using default"
-            )
+            logger.warning(f"Failed to parse {env_key} as JSON list: {e}, using default")
             return default
 
     try:
@@ -307,9 +303,7 @@ if TYPE_CHECKING:
 load_dotenv(dotenv_path=".env", override=False)
 
 VERBOSE_DEBUG = os.getenv("VERBOSE", "false").lower() == "true"
-PERFORMANCE_TIMING_LOGS = (
-    os.getenv("LIGHTRAG_PERFORMANCE_TIMING_LOGS", "false").lower() == "true"
-)
+PERFORMANCE_TIMING_LOGS = os.getenv("LIGHTRAG_PERFORMANCE_TIMING_LOGS", "false").lower() == "true"
 
 
 def verbose_debug(msg: str, *args, **kwargs):
@@ -331,9 +325,7 @@ def verbose_debug(msg: str, *args, **kwargs):
         else:
             formatted_msg = msg
         # Then truncate the formatted message
-        truncated_msg = (
-            formatted_msg[:150] + "..." if len(formatted_msg) > 150 else formatted_msg
-        )
+        truncated_msg = formatted_msg[:150] + "..." if len(formatted_msg) > 150 else formatted_msg
         # Remove consecutive newlines
         truncated_msg = re.sub(r"\n+", "\n", truncated_msg)
         logger.debug(truncated_msg, **kwargs)
@@ -411,9 +403,7 @@ def setup_logger(
         enable_file_logging: Whether to enable logging to a file (defaults to True)
     """
     # Configure formatters
-    detailed_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    detailed_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     simple_formatter = logging.Formatter("%(levelname)s: %(message)s")
 
     logger_instance = logging.getLogger(logger_name)
@@ -439,9 +429,7 @@ def setup_logger(
 
         # Get log file max size and backup count from environment variables
         log_max_bytes = get_env_value("LOG_MAX_BYTES", DEFAULT_LOG_MAX_BYTES, int)
-        log_backup_count = get_env_value(
-            "LOG_BACKUP_COUNT", DEFAULT_LOG_BACKUP_COUNT, int
-        )
+        log_backup_count = get_env_value("LOG_BACKUP_COUNT", DEFAULT_LOG_BACKUP_COUNT, int)
 
         try:
             # Add file handler
@@ -534,9 +522,7 @@ class EmbeddingFunc:
     model_name: str | None = (
         None  # Model name for implementing workspace data isolation in vector DB
     )
-    supports_asymmetric: bool = (
-        False  # Whether underlying function accepts context parameter
-    )
+    supports_asymmetric: bool = False  # Whether underlying function accepts context parameter
 
     def __post_init__(self):
         """Unwrap nested EmbeddingFunc to prevent double wrapping issues.
@@ -573,10 +559,7 @@ class EmbeddingFunc:
             if "embedding_dim" in kwargs:
                 user_provided_dim = kwargs["embedding_dim"]
                 # If user's value differs from class attribute, output warning
-                if (
-                    user_provided_dim is not None
-                    and user_provided_dim != self.embedding_dim
-                ):
+                if user_provided_dim is not None and user_provided_dim != self.embedding_dim:
                     logger.warning(
                         f"Ignoring user-provided embedding_dim={user_provided_dim}, "
                         f"using declared embedding_dim={self.embedding_dim} from decorator"
@@ -709,10 +692,7 @@ def _validate_cached_response_format(response_format: Any | None) -> None:
     if response_format is None:
         return
 
-    if (
-        isinstance(response_format, dict)
-        and response_format.get("type") == "json_object"
-    ):
+    if isinstance(response_format, dict) and response_format.get("type") == "json_object":
         return
 
     raise ValueError(
@@ -773,9 +753,7 @@ async def move_file_to_parsed_dir(
     unique_filename = get_unique_filename_in_parsed(parsed_dir, file_path.name)
     target_path = parsed_dir / unique_filename
     await asyncio.to_thread(file_path.rename, target_path)
-    logger.debug(
-        f"Moved file to parsed directory: {file_path.name} -> {unique_filename}"
-    )
+    logger.debug(f"Moved file to parsed directory: {file_path.name} -> {unique_filename}")
     return target_path
 
 
@@ -788,9 +766,7 @@ def make_relation_vdb_ids(src_entity: str, tgt_entity: str) -> list[str]:
     """
     normalized_src, normalized_tgt = sorted((src_entity, tgt_entity))
     relation_ids = [compute_mdhash_id(normalized_src + normalized_tgt, prefix="rel-")]
-    reverse_relation_id = compute_mdhash_id(
-        normalized_tgt + normalized_src, prefix="rel-"
-    )
+    reverse_relation_id = compute_mdhash_id(normalized_tgt + normalized_src, prefix="rel-")
     if reverse_relation_id not in relation_ids:
         relation_ids.append(reverse_relation_id)
     return relation_ids
@@ -945,15 +921,10 @@ def priority_limit_async_func_call(
                             task_state = task_states[task_id]
                             task_state.worker_started = True
                             # Record execution start time when worker actually begins processing
-                            task_state.execution_start_time = (
-                                asyncio.get_event_loop().time()
-                            )
+                            task_state.execution_start_time = asyncio.get_event_loop().time()
 
                         # Check if task was cancelled before worker started
-                        if (
-                            task_state.cancellation_requested
-                            or task_state.future.cancelled()
-                        ):
+                        if task_state.cancellation_requested or task_state.future.cancelled():
                             async with task_states_lock:
                                 task_states.pop(task_id, None)
                             queue.task_done()
@@ -979,17 +950,13 @@ def priority_limit_async_func_call(
                             )
                             if not task_state.future.done():
                                 task_state.future.set_exception(
-                                    WorkerTimeoutError(
-                                        max_execution_timeout, "execution"
-                                    )
+                                    WorkerTimeoutError(max_execution_timeout, "execution")
                                 )
                         except asyncio.CancelledError:
                             # Task was cancelled during execution
                             if not task_state.future.done():
                                 task_state.future.cancel()
-                            logger.debug(
-                                f"{queue_name}: Task {task_id} cancelled during execution"
-                            )
+                            logger.debug(f"{queue_name}: Task {task_id} cancelled during execution")
                         except Exception as e:
                             # Function execution error
                             logger.error(
@@ -1005,9 +972,7 @@ def priority_limit_async_func_call(
 
                     except Exception as e:
                         # Critical error in worker loop
-                        logger.error(
-                            f"{queue_name}: Critical error in worker: {str(e)}"
-                        )
+                        logger.error(f"{queue_name}: Critical error in worker: {str(e)}")
                         await asyncio.sleep(0.1)
             finally:
                 logger.debug(f"{queue_name}: Worker exiting")
@@ -1036,8 +1001,7 @@ def priority_limit_async_func_call(
                                     stuck_tasks.append(
                                         (
                                             task_id,
-                                            current_time
-                                            - task_state.execution_start_time,
+                                            current_time - task_state.execution_start_time,
                                         )
                                     )
 
@@ -1066,9 +1030,7 @@ def priority_limit_async_func_call(
                     workers_needed = max_size - active_tasks_count
 
                     if workers_needed > 0:
-                        logger.info(
-                            f"{queue_name}: Creating {workers_needed} new workers"
-                        )
+                        logger.info(f"{queue_name}: Creating {workers_needed} new workers")
                         new_tasks = set()
                         for _ in range(workers_needed):
                             task = asyncio.create_task(worker())
@@ -1095,9 +1057,7 @@ def priority_limit_async_func_call(
 
                 if reinit_count > 0:
                     reinit_count += 1
-                    logger.warning(
-                        f"{queue_name}: Reinitializing system (count: {reinit_count})"
-                    )
+                    logger.warning(f"{queue_name}: Reinitializing system (count: {reinit_count})")
                 else:
                     reinit_count = 1
 
@@ -1132,12 +1092,8 @@ def priority_limit_async_func_call(
                 if max_task_duration is not None:
                     timeout_info.append(f"Health Check: {max_task_duration}s")
 
-                timeout_str = (
-                    f"(Timeouts: {', '.join(timeout_info)})" if timeout_info else ""
-                )
-                logger.info(
-                    f"{queue_name}: {workers_needed} new workers initialized {timeout_str}"
-                )
+                timeout_str = f"(Timeouts: {', '.join(timeout_info)})" if timeout_info else ""
+                logger.info(f"{queue_name}: {workers_needed} new workers initialized {timeout_str}")
 
         async def get_queue_stats():
             """Return a best-effort snapshot of queue and worker state."""
@@ -1183,9 +1139,7 @@ def priority_limit_async_func_call(
             if graceful:
                 effective_timeout = timeout
                 if effective_timeout is None:
-                    effective_timeout = (
-                        max_task_duration if max_task_duration is not None else 30.0
-                    )
+                    effective_timeout = max_task_duration if max_task_duration is not None else 30.0
                 try:
                     await asyncio.wait_for(queue.join(), timeout=effective_timeout)
                 except asyncio.TimeoutError:
@@ -1277,9 +1231,7 @@ def priority_limit_async_func_call(
             future = asyncio.Future()
 
             # Create task state
-            task_state = TaskState(
-                future=future, start_time=asyncio.get_event_loop().time()
-            )
+            task_state = TaskState(future=future, start_time=asyncio.get_event_loop().time())
 
             try:
                 # Register task state
@@ -1301,15 +1253,11 @@ def priority_limit_async_func_call(
                         raise RuntimeError(f"{queue_name}: Queue is shutting down")
                     if _queue_timeout is not None:
                         await asyncio.wait_for(
-                            queue.put(
-                                (_priority, current_count, task_id, args, kwargs)
-                            ),
+                            queue.put((_priority, current_count, task_id, args, kwargs)),
                             timeout=_queue_timeout,
                         )
                     else:
-                        await queue.put(
-                            (_priority, current_count, task_id, args, kwargs)
-                        )
+                        await queue.put((_priority, current_count, task_id, args, kwargs))
                     submitted_total += 1
                 except asyncio.TimeoutError:
                     raise QueueFullError(
@@ -1344,15 +1292,12 @@ def priority_limit_async_func_call(
                     cleanup_start = asyncio.get_event_loop().time()
                     while (
                         task_id in task_states
-                        and asyncio.get_event_loop().time() - cleanup_start
-                        < cleanup_timeout
+                        and asyncio.get_event_loop().time() - cleanup_start < cleanup_timeout
                     ):
                         await asyncio.sleep(0.1)
 
                     cancelled_total += 1
-                    raise TimeoutError(
-                        f"{queue_name}: User timeout after {_timeout} seconds"
-                    )
+                    raise TimeoutError(f"{queue_name}: User timeout after {_timeout} seconds")
                 except WorkerTimeoutError as e:
                     # This is Worker-level timeout, directly propagate exception information
                     failed_total += 1
@@ -1723,9 +1668,7 @@ class TiktokenTokenizer(Tokenizer):
 
 def pack_user_ass_to_openai_messages(*args: str):
     roles = ["user", "assistant"]
-    return [
-        {"role": roles[i % 2], "content": content} for i, content in enumerate(args)
-    ]
+    return [{"role": roles[i % 2], "content": content} for i, content in enumerate(args)]
 
 
 def split_string_by_multi_markers(content: str, markers: list[str]) -> list[str]:
@@ -1796,9 +1739,7 @@ def split_text_units_for_hard_fallback(text: str) -> list[str]:
     return units if units else [text]
 
 
-def split_text_by_token_limit(
-    text: str, tokenizer: Tokenizer, max_tokens: int
-) -> list[str]:
+def split_text_by_token_limit(text: str, tokenizer: Tokenizer, max_tokens: int) -> list[str]:
     """Split text by token limit with sentence-first, token-window fallback."""
     if not text:
         return []
@@ -1960,9 +1901,7 @@ def enforce_chunk_token_limit_before_embedding(
         try:
             token_count = len(tokenizer.encode(content))
         except Exception:
-            token_count = (
-                dp.get("tokens", 0) if isinstance(dp.get("tokens"), int) else 0
-            )
+            token_count = dp.get("tokens", 0) if isinstance(dp.get("tokens"), int) else 0
 
         if token_count <= max_tokens:
             ndp = dict(dp)
@@ -2085,18 +2024,14 @@ async def save_to_cache(hashing_kv, cache_data: CacheData):
         return
 
     # Use flattened cache key format: {mode}:{cache_type}:{hash}
-    flattened_key = generate_cache_key(
-        cache_data.mode, cache_data.cache_type, cache_data.args_hash
-    )
+    flattened_key = generate_cache_key(cache_data.mode, cache_data.cache_type, cache_data.args_hash)
 
     # Check if we already have identical content cached
     existing_cache = await hashing_kv.get_by_id(flattened_key)
     if existing_cache:
         existing_content = existing_cache.get("return")
         if existing_content == cache_data.content:
-            logger.warning(
-                f"Cache duplication detected for {flattened_key}, skipping update"
-            )
+            logger.warning(f"Cache duplication detected for {flattened_key}, skipping update")
             return
 
     # Create cache entry with flattened structure
@@ -2105,9 +2040,7 @@ async def save_to_cache(hashing_kv, cache_data: CacheData):
         "cache_type": cache_data.cache_type,
         "chunk_id": cache_data.chunk_id if cache_data.chunk_id is not None else None,
         "original_prompt": cache_data.prompt,
-        "queryparam": cache_data.queryparam
-        if cache_data.queryparam is not None
-        else None,
+        "queryparam": cache_data.queryparam if cache_data.queryparam is not None else None,
     }
 
     logger.info(f" == LLM cache == saving: {flattened_key}")
@@ -2126,9 +2059,7 @@ def safe_unicode_decode(content):
         return chr(int(match.group(1), 16))
 
     # Perform the substitution
-    decoded_content = unicode_escape_pattern.sub(
-        replace_unicode_escape, content.decode("utf-8")
-    )
+    decoded_content = unicode_escape_pattern.sub(replace_unicode_escape, content.decode("utf-8"))
 
     return decoded_content
 
@@ -2243,14 +2174,10 @@ async def aexport_data(
             if src_entity == tgt_entity:
                 continue
 
-            edge_exists = await chunk_entity_relation_graph.has_edge(
-                src_entity, tgt_entity
-            )
+            edge_exists = await chunk_entity_relation_graph.has_edge(src_entity, tgt_entity)
             if edge_exists:
                 # Get edge information from graph
-                edge_data = await chunk_entity_relation_graph.get_edge(
-                    src_entity, tgt_entity
-                )
+                edge_data = await chunk_entity_relation_graph.get_edge(src_entity, tgt_entity)
                 source_id = edge_data.get("source_id") if edge_data else None
 
                 relation_info = {
@@ -2310,9 +2237,7 @@ async def aexport_data(
             # Relationships
             if relationships_data:
                 csvfile.write("# RELATIONSHIPS\n")
-                writer = csv.DictWriter(
-                    csvfile, fieldnames=relationships_data[0].keys()
-                )
+                writer = csv.DictWriter(csvfile, fieldnames=relationships_data[0].keys())
                 writer.writeheader()
                 writer.writerows(relationships_data)
 
@@ -2321,9 +2246,7 @@ async def aexport_data(
         import pandas as pd
 
         entities_df = pd.DataFrame(entities_data) if entities_data else pd.DataFrame()
-        relations_df = (
-            pd.DataFrame(relations_data) if relations_data else pd.DataFrame()
-        )
+        relations_df = pd.DataFrame(relations_data) if relations_data else pd.DataFrame()
         relationships_df = (
             pd.DataFrame(relationships_data) if relationships_data else pd.DataFrame()
         )
@@ -2334,9 +2257,7 @@ async def aexport_data(
             if not relations_df.empty:
                 relations_df.to_excel(writer, sheet_name="Relations", index=False)
             if not relationships_df.empty:
-                relationships_df.to_excel(
-                    writer, sheet_name="Relationships", index=False
-                )
+                relationships_df.to_excel(writer, sheet_name="Relationships", index=False)
 
     elif file_format == "md":
         # Markdown export
@@ -2348,15 +2269,11 @@ async def aexport_data(
             if entities_data:
                 # Write header
                 mdfile.write("| " + " | ".join(entities_data[0].keys()) + " |\n")
-                mdfile.write(
-                    "| " + " | ".join(["---"] * len(entities_data[0].keys())) + " |\n"
-                )
+                mdfile.write("| " + " | ".join(["---"] * len(entities_data[0].keys())) + " |\n")
 
                 # Write rows
                 for entity in entities_data:
-                    mdfile.write(
-                        "| " + " | ".join(str(v) for v in entity.values()) + " |\n"
-                    )
+                    mdfile.write("| " + " | ".join(str(v) for v in entity.values()) + " |\n")
                 mdfile.write("\n\n")
             else:
                 mdfile.write("*No entity data available*\n\n")
@@ -2366,15 +2283,11 @@ async def aexport_data(
             if relations_data:
                 # Write header
                 mdfile.write("| " + " | ".join(relations_data[0].keys()) + " |\n")
-                mdfile.write(
-                    "| " + " | ".join(["---"] * len(relations_data[0].keys())) + " |\n"
-                )
+                mdfile.write("| " + " | ".join(["---"] * len(relations_data[0].keys())) + " |\n")
 
                 # Write rows
                 for relation in relations_data:
-                    mdfile.write(
-                        "| " + " | ".join(str(v) for v in relation.values()) + " |\n"
-                    )
+                    mdfile.write("| " + " | ".join(str(v) for v in relation.values()) + " |\n")
                 mdfile.write("\n\n")
             else:
                 mdfile.write("*No relation data available*\n\n")
@@ -2385,18 +2298,12 @@ async def aexport_data(
                 # Write header
                 mdfile.write("| " + " | ".join(relationships_data[0].keys()) + " |\n")
                 mdfile.write(
-                    "| "
-                    + " | ".join(["---"] * len(relationships_data[0].keys()))
-                    + " |\n"
+                    "| " + " | ".join(["---"] * len(relationships_data[0].keys())) + " |\n"
                 )
 
                 # Write rows
                 for relationship in relationships_data:
-                    mdfile.write(
-                        "| "
-                        + " | ".join(str(v) for v in relationship.values())
-                        + " |\n"
-                    )
+                    mdfile.write("| " + " | ".join(str(v) for v in relationship.values()) + " |\n")
             else:
                 mdfile.write("*No relationship data available*\n\n")
 
@@ -2421,9 +2328,7 @@ async def aexport_data(
 
                 # Write rows
                 for entity in entities_data:
-                    row = "  ".join(
-                        str(v).ljust(col_widths[k]) for k, v in entity.items()
-                    )
+                    row = "  ".join(str(v).ljust(col_widths[k]) for k, v in entity.items())
                     txtfile.write(row + "\n")
                 txtfile.write("\n\n")
             else:
@@ -2444,9 +2349,7 @@ async def aexport_data(
 
                 # Write rows
                 for relation in relations_data:
-                    row = "  ".join(
-                        str(v).ljust(col_widths[k]) for k, v in relation.items()
-                    )
+                    row = "  ".join(str(v).ljust(col_widths[k]) for k, v in relation.items())
                     txtfile.write(row + "\n")
                 txtfile.write("\n\n")
             else:
@@ -2461,17 +2364,13 @@ async def aexport_data(
                     k: max(len(k), max(len(str(r[k])) for r in relationships_data))
                     for k in relationships_data[0]
                 }
-                header = "  ".join(
-                    k.ljust(col_widths[k]) for k in relationships_data[0]
-                )
+                header = "  ".join(k.ljust(col_widths[k]) for k in relationships_data[0])
                 txtfile.write(header + "\n")
                 txtfile.write("-" * len(header) + "\n")
 
                 # Write rows
                 for relationship in relationships_data:
-                    row = "  ".join(
-                        str(v).ljust(col_widths[k]) for k, v in relationship.items()
-                    )
+                    row = "  ".join(str(v).ljust(col_widths[k]) for k, v in relationship.items())
                     txtfile.write(row + "\n")
             else:
                 txtfile.write("No relationship data available\n\n")
@@ -2664,9 +2563,7 @@ async def use_llm_func_with_cache(
     _validate_cached_response_format(response_format)
     # Sanitize input text to prevent UTF-8 encoding errors for all LLM providers
     safe_user_prompt = sanitize_text_for_encoding(user_prompt)
-    safe_system_prompt = (
-        sanitize_text_for_encoding(system_prompt) if system_prompt else None
-    )
+    safe_system_prompt = sanitize_text_for_encoding(system_prompt) if system_prompt else None
 
     # Sanitize history messages if provided
     safe_history_messages = None
@@ -2731,9 +2628,7 @@ async def use_llm_func_with_cache(
         if response_format is not None:
             kwargs["response_format"] = response_format
 
-        res: str = await use_llm_func(
-            safe_user_prompt, system_prompt=safe_system_prompt, **kwargs
-        )
+        res: str = await use_llm_func(safe_user_prompt, system_prompt=safe_system_prompt, **kwargs)
 
         res = remove_think_tags(res)
 
@@ -2768,9 +2663,7 @@ async def use_llm_func_with_cache(
         kwargs["response_format"] = response_format
 
     try:
-        res = await use_llm_func(
-            safe_user_prompt, system_prompt=safe_system_prompt, **kwargs
-        )
+        res = await use_llm_func(safe_user_prompt, system_prompt=safe_system_prompt, **kwargs)
     except Exception as e:
         # Add [LLM func] prefix to error message
         error_msg = f"[LLM func] {str(e)}"
@@ -2798,9 +2691,7 @@ def get_content_summary(content: str, max_length: int = 250) -> str:
     return content[:max_length] + "..."
 
 
-def sanitize_and_normalize_extracted_text(
-    input_text: str, remove_inner_quotes=False
-) -> str:
+def sanitize_and_normalize_extracted_text(input_text: str, remove_inner_quotes=False) -> str:
     """Santitize and normalize extracted text
     Args:
         input_text: text string to be processed
@@ -2882,12 +2773,8 @@ def normalize_extracted_info(name: str, remove_inner_quotes=False) -> str:
     name = re.sub(r"(?<=[\u4e00-\u9fa5])\s+(?=[\u4e00-\u9fa5])", "", name)
 
     # Remove spaces between Chinese and English/numbers/symbols
-    name = re.sub(
-        r"(?<=[\u4e00-\u9fa5])\s+(?=[a-zA-Z0-9\(\)\[\]@#$%!&\*\-=+_])", "", name
-    )
-    name = re.sub(
-        r"(?<=[a-zA-Z0-9\(\)\[\]@#$%!&\*\-=+_])\s+(?=[\u4e00-\u9fa5])", "", name
-    )
+    name = re.sub(r"(?<=[\u4e00-\u9fa5])\s+(?=[a-zA-Z0-9\(\)\[\]@#$%!&\*\-=+_])", "", name)
+    name = re.sub(r"(?<=[a-zA-Z0-9\(\)\[\]@#$%!&\*\-=+_])\s+(?=[\u4e00-\u9fa5])", "", name)
 
     # Remove outer quotes
     if len(name) >= 2:
@@ -3048,8 +2935,7 @@ def repair_vlm_json_escape_damage(text: str, *, context: str = "") -> str:
     if suspect:
         snippet = repaired[max(0, suspect.start() - 30) : suspect.start() + 30]
         logger.warning(
-            "Suspected whitespace-class LaTeX escape damage%s "
-            "(not auto-repaired): %r",
+            "Suspected whitespace-class LaTeX escape damage%s (not auto-repaired): %r",
             f" in {context}" if context else "",
             snippet,
         )
@@ -3076,9 +2962,7 @@ def repair_vlm_json_escape_damage_nested(obj: Any, *, context: str = "") -> Any:
             for key, value in obj.items()
         }
     if isinstance(obj, list):
-        return [
-            repair_vlm_json_escape_damage_nested(item, context=context) for item in obj
-        ]
+        return [repair_vlm_json_escape_damage_nested(item, context=context) for item in obj]
     return obj
 
 
@@ -3136,9 +3020,7 @@ def pick_by_weighted_polling(
     for i in range(n):
         # Linear interpolation: from max_related_chunks to min_related_chunks
         ratio = i / (n - 1) if n > 1 else 0
-        expected = max_related_chunks - ratio * (
-            max_related_chunks - min_related_chunks
-        )
+        expected = max_related_chunks - ratio * (max_related_chunks - min_related_chunks)
         expected_counts.append(int(round(expected)))
 
     # First round allocation: allocate by expected values
@@ -3223,9 +3105,7 @@ async def pick_by_vector_similarity(
         all_chunk_ids.update(chunk_ids)
 
     if not all_chunk_ids:
-        logger.warning(
-            "Vector similarity chunk selection:  no chunk IDs found in entity_info"
-        )
+        logger.warning("Vector similarity chunk selection:  no chunk IDs found in entity_info")
         return []
 
     logger.debug(
@@ -3238,16 +3118,10 @@ async def pick_by_vector_similarity(
         # Use pre-computed query embedding if provided, otherwise compute it
         if query_embedding is None:
             query_embedding = await embedding_func([query], context="query")
-            query_embedding = query_embedding[
-                0
-            ]  # Extract first embedding from batch result
-            logger.debug(
-                "Computed query embedding for vector similarity chunk selection"
-            )
+            query_embedding = query_embedding[0]  # Extract first embedding from batch result
+            logger.debug("Computed query embedding for vector similarity chunk selection")
         else:
-            logger.debug(
-                "Using pre-computed query embedding for vector similarity chunk selection"
-            )
+            logger.debug("Using pre-computed query embedding for vector similarity chunk selection")
 
         # Get chunk embeddings from vector database
         chunk_vectors = await chunks_vdb.get_vectors_by_ids(all_chunk_ids)
@@ -3338,9 +3212,9 @@ class TokenTracker:
         if "total_tokens" in token_counts:
             self.total_tokens += token_counts["total_tokens"]
         else:
-            self.total_tokens += token_counts.get(
-                "prompt_tokens", 0
-            ) + token_counts.get("completion_tokens", 0)
+            self.total_tokens += token_counts.get("prompt_tokens", 0) + token_counts.get(
+                "completion_tokens", 0
+            )
 
         self.call_count += 1
 
@@ -3494,9 +3368,7 @@ async def process_chunks_unified(
             # Filter chunks with score below threshold
             filtered_chunks = []
             for chunk in unique_chunks:
-                rerank_score = chunk.get(
-                    "rerank_score", 1.0
-                )  # Default to 1.0 if no score
+                rerank_score = chunk.get("rerank_score", 1.0)  # Default to 1.0 if no score
                 if rerank_score >= min_rerank_score:
                     filtered_chunks.append(chunk)
 
@@ -3534,9 +3406,7 @@ async def process_chunks_unified(
 
         unique_chunks = truncate_list_by_token_size(
             unique_chunks,
-            key=lambda x: "\n".join(
-                json.dumps(item, ensure_ascii=False) for item in [x]
-            ),
+            key=lambda x: "\n".join(json.dumps(item, ensure_ascii=False) for item in [x]),
             max_token_size=chunk_token_limit,
             tokenizer=tokenizer,
         )
@@ -3663,9 +3533,7 @@ def compute_incremental_chunk_ids(
 
     # Apply changes to full chunk_ids
     # Step 1: Remove chunks that are no longer needed
-    updated_chunk_ids = [
-        cid for cid in existing_full_chunk_ids if cid not in chunks_to_remove
-    ]
+    updated_chunk_ids = [cid for cid in existing_full_chunk_ids if cid not in chunks_to_remove]
 
     # Step 2: Add new chunks (preserving order from new_chunk_ids)
     # Note: 'cid not in updated_chunk_ids' check ensures deduplication
@@ -3686,11 +3554,7 @@ def subtract_source_ids(
     if not removal_set:
         return [source_id for source_id in source_ids if source_id]
 
-    return [
-        source_id
-        for source_id in source_ids
-        if source_id and source_id not in removal_set
-    ]
+    return [source_id for source_id in source_ids if source_id and source_id not in removal_set]
 
 
 def make_relation_chunk_key(src: str, tgt: str) -> str:
@@ -3750,9 +3614,7 @@ def get_pinyin_sort_key(text: str) -> str:
         return text.lower()
 
 
-def fix_tuple_delimiter_corruption(
-    record: str, delimiter_core: str, tuple_delimiter: str
-) -> str:
+def fix_tuple_delimiter_corruption(record: str, delimiter_core: str, tuple_delimiter: str) -> str:
     """
     Fix various forms of tuple_delimiter corruption from LLM output.
 
@@ -4015,9 +3877,7 @@ def convert_to_user_format(
         }
         formatted_chunks.append(chunk_data)
 
-    logger.debug(
-        f"[convert_to_user_format] Formatted {len(formatted_chunks)}/{len(chunks)} chunks"
-    )
+    logger.debug(f"[convert_to_user_format] Formatted {len(formatted_chunks)}/{len(chunks)} chunks")
 
     # Build basic metadata (metadata details will be added by calling functions)
     metadata = {

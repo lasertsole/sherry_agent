@@ -1,4 +1,4 @@
-﻿"""MinerU parser integration (raw client, cache, manifest, IR builder).
+"""MinerU parser integration (raw client, cache, manifest, IR builder).
 
 Public surface for the rest of the codebase. ``parse_mineru`` imports
 only from this facade so the inner module layout stays free to evolve.

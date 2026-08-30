@@ -11,20 +11,17 @@ from ..types.registry import SubagentRunRecord, ExecutionStatus, CompletionState
 from .output import build_child_completion_findings
 from .delivery import deliver_subagent_announcement
 from .capture import capture_subagent_completion_reply
-from .idempotency import build_idempotency_key
-from .origin import resolve_announce_origin
 from ..registry import (
     is_delivery_delivered,
-    is_delivery_suspended,
     set_run,
-    get_run,
 )
 from ..registry.memory import update as update_run
 from ..registry.helpers import safe_remove_attachments_dir
 from ..registry.completion import emit_ended_hook_once
-from ..config import get_config
 
-SILENT_REPLY_TOKEN = "⟦ANNOUNCE_SKIP⟧"  # Sentinel that suppresses announce delivery when present in result text
+SILENT_REPLY_TOKEN = (
+    "⟦ANNOUNCE_SKIP⟧"  # Sentinel that suppresses announce delivery when present in result text
+)
 
 
 async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
@@ -49,13 +46,15 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
     if run.suppress_announce_reason:
         logger.debug(
             "Skipping announce for run {}: suppress_reason={}",
-            run.run_id, run.suppress_announce_reason,
+            run.run_id,
+            run.suppress_announce_reason,
         )
         return
 
     if _is_silent_reply(run):
         logger.debug("Skipping announce for run {}: silent reply detected", run.run_id)
         from ..registry import mark_delivery_delivered
+
         updated = mark_delivery_delivered(run)
         set_run(updated)
         await emit_ended_hook_once(updated)
@@ -82,17 +81,18 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
             if updated:
                 run = updated
 
-    origin = resolve_announce_origin(run)
-
     from ..registry.queries import count_active_descendant_runs
+
     pending_descendants = count_active_descendant_runs(run.child_session_key)
     if pending_descendants > 0 and run.wake_on_descendant_settle:
         # Defer announce until all descendant runs settle
         logger.info(
             "Deferring announce for run {}: {} descendant(s) still active",
-            run.run_id, pending_descendants,
+            run.run_id,
+            pending_descendants,
         )
         from ..registry.settle_wake import get_settle_wake_batch
+
         batch = get_settle_wake_batch()
         batch.register_run_for_settle(run.run_id, run.requester_session_key)
         batch.schedule_settle_wake_retry(run.requester_session_key, delay=5.0)
@@ -106,7 +106,11 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
     try:
         result = await deliver_subagent_announcement(run)
         if result.success:
-            logger.info("Announce delivered for run {} via {}", run.run_id, "→".join(result.dispatch_path) or "direct")
+            logger.info(
+                "Announce delivered for run {} via {}",
+                run.run_id,
+                "→".join(result.dispatch_path) or "direct",
+            )
         elif result.suspended:
             logger.warning("Announce suspended for run {}", run.run_id)
         elif result.terminal:
@@ -126,6 +130,7 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
 
     try:
         from ..registry import wake_yield_if_all_children_settled
+
         woke = await wake_yield_if_all_children_settled(run.requester_session_key)
         if woke:
             logger.info("Woke yield-paused parent after run {} settled", run.run_id)
@@ -155,10 +160,12 @@ def _schedule_descendant_wake_if_needed(run: SubagentRunRecord) -> None:
     async def _check():
         await asyncio.sleep(5.0)
         from ..registry.queries import count_active_descendant_runs
+
         active = count_active_descendant_runs(run.child_session_key)
         if active == 0:
             try:
                 from ..registry import wake_yield_if_all_children_settled
+
                 await wake_yield_if_all_children_settled(run.requester_session_key)
             except Exception:
                 pass

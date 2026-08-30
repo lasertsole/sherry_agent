@@ -17,6 +17,7 @@
           <TabPanel
             v-for="tab in tabs"
             :key="tab.file"
+            :value="tab.file"
             :header="t(tab.i18nKey)">
             <div class="flex flex-col gap-2">
               <div class="flex items-center justify-between">
@@ -38,7 +39,9 @@
                 {{ t('config.memory.effectiveHint') }}
               </div>
 
-              <div v-if="!entries(tab.file).length" class="text-sm text-gray-400 dark:text-gray-500 pb-2">
+              <div
+                v-if="!entries(tab.file).length"
+                class="text-sm text-gray-400 dark:text-gray-500 pb-2">
                 {{ t('config.memory.empty') }}
               </div>
 
@@ -59,11 +62,12 @@
                     @click="removeEntry(tab.file, idx)" />
                 </div>
                 <Textarea
-                  v-model="editEntries[tab.file][idx]"
+                  :model-value="entries(tab.file)[idx]"
                   rows="3"
                   class="w-full font-mono text-sm"
                   autoResize
-                  style="min-height: 4.5rem; max-height: 24rem" />
+                  style="min-height: 4.5rem; max-height: 24rem"
+                  @update:model-value="setEntry(tab.file, idx, $event)" />
               </div>
 
               <Button
@@ -131,7 +135,7 @@ function joinFileBody(file: string, entries: string[]): string {
   return `${fileTitle(file)}${ENTRY_DELIMITER}${body}`;
 }
 
-  const { t } = useI18n({ useScope: 'local' });
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -154,7 +158,7 @@ interface MemoryTab {
 
 const tabs: MemoryTab[] = [
   { file: 'MEMORY.md', i18nKey: 'config.tabs.memoryAgent', i18nDescKey: 'config.desc.memoryAgent' },
-  { file: 'USER.md', i18nKey: 'config.tabs.memoryUser', i18nDescKey: 'config.desc.memoryUser' },
+  { file: 'USER.md', i18nKey: 'config.tabs.memoryUser', i18nDescKey: 'config.desc.memoryUser' }
 ] as const;
 
 const activeTab = ref(0);
@@ -204,11 +208,16 @@ function entryLength(file: string, idx: number): number {
 }
 
 function addEntry(file: string) {
-  editEntries.value[file].push('');
+  editEntries.value[file]?.push('');
 }
 
 function removeEntry(file: string, idx: number) {
-  editEntries.value[file].splice(idx, 1);
+  editEntries.value[file]?.splice(idx, 1);
+}
+
+function setEntry(file: string, idx: number, value: string) {
+  const list = editEntries.value[file];
+  if (list) list[idx] = value;
 }
 
 const loadContent = async () => {

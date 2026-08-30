@@ -1,4 +1,4 @@
-﻿"""LightRAG chunking strategies.
+"""LightRAG chunking strategies.
 
 Two contracts coexist intentionally:
 

@@ -1,4 +1,4 @@
-﻿"""Shared template for native (local, in-process) parser engines.
+"""Shared template for native (local, in-process) parser engines.
 
 ``NativeParserBase.parse`` fixes the common local-parse flow once:
 
@@ -41,9 +41,7 @@ class NativeParserBase(BaseParser):
     def validate_source(self, source: Path, file_path: str) -> None:
         """Validate the resolved source (default: must be an existing file)."""
         if not (source.exists() and source.is_file()):
-            raise FileNotFoundError(
-                f"{self.engine_name} source file not found: {source}"
-            )
+            raise FileNotFoundError(f"{self.engine_name} source file not found: {source}")
 
     @abstractmethod
     def extract(
@@ -67,9 +65,7 @@ class NativeParserBase(BaseParser):
         metadata: dict[str, Any],
     ) -> "IRDoc": ...
 
-    def surface_warnings(
-        self, warnings: dict[str, Any], source: Path
-    ) -> dict[str, Any] | None:
+    def surface_warnings(self, warnings: dict[str, Any], source: Path) -> dict[str, Any] | None:
         """Map parser warnings to the ``parse_warnings`` result field (opt)."""
         return None
 
@@ -114,8 +110,7 @@ class NativeParserBase(BaseParser):
             if parsed_dir.exists():
                 shutil.rmtree(parsed_dir, ignore_errors=True)
             raise ValueError(
-                f"{self.empty_content_label} parser returned empty content "
-                f"for {ctx.file_path}"
+                f"{self.empty_content_label} parser returned empty content for {ctx.file_path}"
             )
 
         parse_warnings = self.surface_warnings(warnings, source)

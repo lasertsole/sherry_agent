@@ -16,7 +16,6 @@ required. They exercise:
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from server.service.skill_scanner import (
     ScanResult,
@@ -89,9 +88,10 @@ class TestScanSkill:
 
     def test_file_path_lifts_to_parent_dir(self, tmp_path):
         skill_md = _file_skill_dir(tmp_path)
-        with patch(
-            "server.service.skill_scanner._resolve_backend", return_value="cli"
-        ), patch("server.service.skill_scanner._run_cli") as run_cli:
+        with (
+            patch("server.service.skill_scanner._resolve_backend", return_value="cli"),
+            patch("server.service.skill_scanner._run_cli") as run_cli,
+        ):
             run_cli.return_value = _scanned("SAFE", score=5)
             result = scan_skill(str(skill_md))
         # The scan must target the parent directory, not the SKILL.md file.
@@ -104,9 +104,10 @@ class TestScanSkill:
         skill_dir = tmp_path / "demo_skill"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("content", encoding="utf-8")
-        with patch(
-            "server.service.skill_scanner._resolve_backend", return_value="cli"
-        ), patch("server.service.skill_scanner._run_cli") as run_cli:
+        with (
+            patch("server.service.skill_scanner._resolve_backend", return_value="cli"),
+            patch("server.service.skill_scanner._run_cli") as run_cli,
+        ):
             run_cli.return_value = _scanned("CAUTION", score=40)
             scan_skill(str(skill_dir))
         run_cli.assert_called_once()
@@ -114,27 +115,27 @@ class TestScanSkill:
 
     def test_unavailable_when_no_backend(self, tmp_path):
         skill_md = _file_skill_dir(tmp_path)
-        with patch(
-            "server.service.skill_scanner._resolve_backend", return_value=None
-        ):
+        with patch("server.service.skill_scanner._resolve_backend", return_value=None):
             result = scan_skill(skill_md)
         assert result.is_unavailable
         assert result.backend is None
 
     def test_cli_backend_selected(self, tmp_path):
         skill_md = _file_skill_dir(tmp_path)
-        with patch(
-            "server.service.skill_scanner._resolve_backend", return_value="cli"
-        ), patch("server.service.skill_scanner._run_cli") as run_cli:
+        with (
+            patch("server.service.skill_scanner._resolve_backend", return_value="cli"),
+            patch("server.service.skill_scanner._run_cli") as run_cli,
+        ):
             run_cli.return_value = _scanned("SAFE")
             result = scan_skill(skill_md)
         assert result.backend == "cli"
 
     def test_python_backend_selected(self, tmp_path):
         skill_md = _file_skill_dir(tmp_path)
-        with patch(
-            "server.service.skill_scanner._resolve_backend", return_value="python"
-        ), patch("server.service.skill_scanner._run_python_api") as run_py:
+        with (
+            patch("server.service.skill_scanner._resolve_backend", return_value="python"),
+            patch("server.service.skill_scanner._run_python_api") as run_py,
+        ):
             run_py.return_value = _scanned("SAFE", backend="python")
             result = scan_skill(skill_md)
         assert result.backend == "python"
@@ -144,12 +145,14 @@ class TestCliSubprocess:
     def test_ok_exit_parses_payload(self, tmp_path):
         payload = '{"risk_score": 10, "risk_recommendation": "SAFE", "risk_severity": "low", "filtered_findings": []}'
         proc = MagicMock(returncode=0, stdout=payload, stderr="")
-        with patch(
-            "server.service.skill_scanner._probe_backend",
-            lambda b: b == "cli",
-        ), patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"), patch(
-            "server.service.skill_scanner.subprocess.run", return_value=proc
-        ) as run:
+        with (
+            patch(
+                "server.service.skill_scanner._probe_backend",
+                lambda b: b == "cli",
+            ),
+            patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"),
+            patch("server.service.skill_scanner.subprocess.run", return_value=proc) as run,
+        ):
             result = scan_skill(tmp_path)
         run.assert_called_once()
         result.risk_score == 10
@@ -160,11 +163,13 @@ class TestCliSubprocess:
         # exit code 1 = DO_NOT_INSTALL even if the body is inconsistent.
         payload = '{"risk_score": 90, "risk_recommendation": "SAFE", "risk_severity": "high"}'
         proc = MagicMock(returncode=1, stdout=payload, stderr="")
-        with patch(
-            "server.service.skill_scanner._probe_backend",
-            lambda b: b == "cli",
-        ), patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"), patch(
-            "server.service.skill_scanner.subprocess.run", return_value=proc
+        with (
+            patch(
+                "server.service.skill_scanner._probe_backend",
+                lambda b: b == "cli",
+            ),
+            patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"),
+            patch("server.service.skill_scanner.subprocess.run", return_value=proc),
         ):
             result = scan_skill(tmp_path)
         assert result.is_do_not_install
@@ -173,15 +178,20 @@ class TestCliSubprocess:
     def test_error_exit_falls_back_to_python_api(self, tmp_path):
         # CLI exit code 2 = error → fall through to the python API.
         proc_err = MagicMock(returncode=2, stdout="", stderr="boom")
-        with patch(
-            "server.service.skill_scanner._probe_backend",
-            lambda b: b == "cli",
-        ), patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"), patch(
-            "server.service.skill_scanner.subprocess.run",
-            return_value=proc_err,
-        ) as run, patch(
-            "server.service.skill_scanner._run_python_api",
-        ) as run_py:
+        with (
+            patch(
+                "server.service.skill_scanner._probe_backend",
+                lambda b: b == "cli",
+            ),
+            patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"),
+            patch(
+                "server.service.skill_scanner.subprocess.run",
+                return_value=proc_err,
+            ) as run,
+            patch(
+                "server.service.skill_scanner._run_python_api",
+            ) as run_py,
+        ):
             run_py.return_value = _scanned("SAFE", score=0, backend="python")
             result = scan_skill(tmp_path)
         run.assert_called_once()
@@ -190,21 +200,29 @@ class TestCliSubprocess:
         assert result.status is ScanStatus.SCANNED  # fell back and produced a verdict
 
     def test_no_cli_binary_returns_unavailable(self, tmp_path):
-        with patch(
-            "server.service.skill_scanner._probe_backend",
-            lambda b: b == "cli",
-        ), patch("server.service.skill_scanner.shutil.which", return_value=None):
+        with (
+            patch(
+                "server.service.skill_scanner._probe_backend",
+                lambda b: b == "cli",
+            ),
+            patch("server.service.skill_scanner.shutil.which", return_value=None),
+        ):
             result = scan_skill(tmp_path)
         assert result.is_unavailable
 
     def test_timeout_returns_unavailable(self, tmp_path):
         import subprocess as real_subprocess
-        with patch(
-            "server.service.skill_scanner._probe_backend",
-            lambda b: b == "cli",
-        ), patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"), patch(
-            "server.service.skill_scanner.subprocess.run",
-            side_effect=real_subprocess.TimeoutExpired(cmd=["skillspector"], timeout=1),
+
+        with (
+            patch(
+                "server.service.skill_scanner._probe_backend",
+                lambda b: b == "cli",
+            ),
+            patch("server.service.skill_scanner.shutil.which", return_value="/x/skillspector"),
+            patch(
+                "server.service.skill_scanner.subprocess.run",
+                side_effect=real_subprocess.TimeoutExpired(cmd=["skillspector"], timeout=1),
+            ),
         ):
             result = scan_skill(tmp_path)
         assert result.is_unavailable
@@ -246,10 +264,12 @@ class TestExtractScanResult:
 
 class TestNormaliseFindings:
     def test_flat_list(self):
-        out = _normalise_findings([
-            {"title": "one", "severity": "high"},
-            {"title": "two"},
-        ])
+        out = _normalise_findings(
+            [
+                {"title": "one", "severity": "high"},
+                {"title": "two"},
+            ]
+        )
         assert len(out) == 2
         assert out[0].title == "one"
         assert out[0].severity.value == "high"
@@ -267,9 +287,9 @@ class TestNormaliseFindings:
 
 class TestRejectMessagePolicy:
     def test_do_not_install_rejects(self):
-        result = _scanned("DO_NOT_INSTALL", score=90, findings=[
-            type("F", (), {"title": "data exfiltration"})()
-        ])
+        result = _scanned(
+            "DO_NOT_INSTALL", score=90, findings=[type("F", (), {"title": "data exfiltration"})()]
+        )
         msg = build_reject_message(result)
         assert msg is not None
         assert "DO_NOT_INSTALL" in msg
@@ -329,9 +349,9 @@ class TestCautionWarnings:
 
     def test_do_not_install_produces_no_warnings(self):
         # DO_NOT_INSTALL is rejected via build_reject_message instead.
-        result = _scanned("DO_NOT_INSTALL", score=90, findings=[
-            type("F", (), {"title": "data exfiltration"})()
-        ])
+        result = _scanned(
+            "DO_NOT_INSTALL", score=90, findings=[type("F", (), {"title": "data exfiltration"})()]
+        )
         assert build_caution_warnings(result) == []
 
     def test_unavailable_produces_no_warnings(self):
@@ -356,9 +376,11 @@ class TestScanResultPredicates:
         assert not r.is_caution
 
     def test_to_dict(self):
-        result = _scanned("CAUTION", score=35, findings=[
-            type("F", (), {"to_dict": lambda self: {"title": "x"}})()
-        ])
+        result = _scanned(
+            "CAUTION",
+            score=35,
+            findings=[type("F", (), {"to_dict": lambda self: {"title": "x"}})()],
+        )
         d = result.to_dict()
         assert d["status"] == "scanned"
         assert d["risk_score"] == 35

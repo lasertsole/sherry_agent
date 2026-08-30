@@ -1,4 +1,4 @@
-﻿"""Adapters for external document parsing services.
+"""Adapters for external document parsing services.
 
 Each subpackage under ``parser/external/`` integrates one external parser
 (docling, mineru, ...) by handling:

@@ -1,4 +1,4 @@
-﻿"""MinerU engine adapter (implements ExternalParserBase hooks)."""
+"""MinerU engine adapter (implements ExternalParserBase hooks)."""
 
 from __future__ import annotations
 
@@ -22,18 +22,12 @@ class MinerUParser(ExternalParserBase):
 
         return is_bundle_valid(raw_dir, source_path)
 
-    async def download_into(
-        self, raw_dir: Path, source_path: Path, *, upload_name: str
-    ) -> None:
+    async def download_into(self, raw_dir: Path, source_path: Path, *, upload_name: str) -> None:
         from graph_rag.vendored_lightrag.parser.external.mineru import MinerURawClient
 
-        await MinerURawClient().download_into(
-            raw_dir, source_path, upload_name=upload_name
-        )
+        await MinerURawClient().download_into(raw_dir, source_path, upload_name=upload_name)
 
     def build_ir(self, raw_dir: Path, document_name: str) -> "IRDoc":
         from graph_rag.vendored_lightrag.parser.external.mineru import MinerUIRBuilder
 
-        return MinerUIRBuilder().normalize_from_workdir(
-            raw_dir, document_name=document_name
-        )
+        return MinerUIRBuilder().normalize_from_workdir(raw_dir, document_name=document_name)

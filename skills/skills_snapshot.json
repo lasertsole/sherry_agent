@@ -1,0 +1,86 @@
+[
+    {
+        "name": "clawhub",
+        "description": "Search and install agent skills from ClawHub, the public skill registry.",
+        "location": "./skills/builtin/core/clawhub/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
+        "name": "code-wiki",
+        "description": "Generate wiki docs + Mermaid diagrams for any codebase. Use when the user asks to document a codebase, generate architecture diagrams, or create a structured wiki for a repo.",
+        "location": "./skills/builtin/code_wiki/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "cron",
+        "description": "Schedule reminders and recurring tasks. Actions: add, list, remove or set_context.",
+        "location": "./skills/builtin/core/cron/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "heartbeat",
+        "description": "Periodic wake-up service that checks HEARTBEAT.md for pending tasks and executes them automatically. Use this skill to write or update HEARTBEAT.md.",
+        "location": "./skills/builtin/core/heartbeat/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "image_to_text",
+        "description": "Recognize and describe the content of an image. Accepts either a local file path OR a URL (http/https). Use this whenever the user uploads or refers to an image and expects you to see/analyze it — even if the image is provided as a URL, not a local path. Enables non-multimodal LLMs to have vision capabilities.",
+        "location": "./skills/builtin/core/image_to_text/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "llm-wiki",
+        "description": "Karpathy's LLM Wiki: build/query interlinked markdown KB.",
+        "location": "./skills/builtin/llm_wiki/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "multimodal_rag",
+        "description": "Private knowledge base for indexing multimodal files or folders into a knowledge graph, supporting multi-hop graph retrieval",
+        "location": "./skills/builtin/core/multimodal_rag/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "skill_creator",
+        "description": "Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.",
+        "location": "./skills/builtin/core/skill_creator/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
+        "name": "speech_to_text",
+        "description": "Transcribe speech (such as .mp3, .wav, .ogg) into text. Use whenever the user uploads or refers to an audio file and expects you to understand its spoken content. Enables non-multimodal LLMs to transcribe audio by running this skill's script via the terminal tool.",
+        "location": "./skills/builtin/core/speech_to_text/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "subagent-orchestration",
+        "description": "Delegate work to background subagents (sessions_spawn) and reliably collect their results. Use when a task can be split into independent parallel pieces, or when the user explicitly asks to use subagents.",
+        "location": "./skills/auto/workflow/subagent-orchestration/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "text_to_image",
+        "description": "When a user needs to generate an image from a text description, use the python_repl tool to call generate_image().",
+        "location": "./skills/builtin/text_to_image/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "video_text_to_text",
+        "description": "Describe/transcribe video content (such as .mp4, .mkv, .avi) into text. Use whenever the user uploads or refers to a video file and expects you to understand what happens in it. Enables non-multimodal LLMs to understand video by running this skill's script via the terminal tool.",
+        "location": "./skills/builtin/core/video_text_to_text/SKILL.md",
+        "scope": "all",
+        "active": true
+    }
+]

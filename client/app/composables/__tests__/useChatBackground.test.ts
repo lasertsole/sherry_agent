@@ -8,13 +8,16 @@ import { ref, computed } from 'vue';
 // stubs are in place before the module body runs.
 vi.stubGlobal('ref', ref);
 vi.stubGlobal('computed', computed);
-vi.stubGlobal('useColorMode', vi.fn(() => ref('dark')));
+vi.stubGlobal(
+  'useColorMode',
+  vi.fn(() => ref('dark'))
+);
 
 // The module imports `readBackgroundConfig` / `saveBackground` from
 // `@/composables/db`; mock the whole module so no Dexie/IndexedDB is touched.
 const mocks = vi.hoisted(() => ({
   readBackgroundConfig: vi.fn(),
-  saveBackground: vi.fn(async () => undefined),
+  saveBackground: vi.fn(async () => undefined)
 }));
 
 vi.mock('@/composables/db', () => mocks);
@@ -48,10 +51,7 @@ describe('useChatBackground', () => {
     api.backgroundUrl.value = '';
     api.backgroundOpacity.value = 0;
     api.backgroundLoaded.value = false;
-    (useColorMode.getMockImplementation ?? (() => {}));
-    (globalThis as { useColorMode: ReturnType<typeof vi.fn> }).useColorMode.mockReturnValue(
-      ref('dark'),
-    );
+    (globalThis as unknown as { useColorMode: ReturnType<typeof vi.fn> }).useColorMode.mockReturnValue(ref('dark'));
   });
 
   it('starts with default state (no bg, opacity 0, not loaded)', () => {
@@ -73,7 +73,7 @@ describe('useChatBackground', () => {
       backgroundImage: 'url("/bg/ocean.jpg")',
       backgroundSize: 'cover',
       backgroundPosition: 'center',
-      backgroundRepeat: 'no-repeat',
+      backgroundRepeat: 'no-repeat'
     });
   });
 
@@ -82,19 +82,17 @@ describe('useChatBackground', () => {
     api.backgroundOpacity.value = 40;
     expect(api.chatBackgroundOverlayStyle.value).toEqual({
       backgroundColor: '#000000',
-      opacity: 0.4,
+      opacity: 0.4
     });
   });
 
   it('chatBackgroundOverlayStyle uses white overlay in light mode', () => {
-    (globalThis as { useColorMode: ReturnType<typeof vi.fn> }).useColorMode.mockReturnValue(
-      ref('light'),
-    );
+    (globalThis as unknown as { useColorMode: ReturnType<typeof vi.fn> }).useColorMode.mockReturnValue(ref('light'));
     const api = useChatBackground();
     api.backgroundOpacity.value = 100;
     expect(api.chatBackgroundOverlayStyle.value).toEqual({
       backgroundColor: '#ffffff',
-      opacity: 1,
+      opacity: 1
     });
   });
 
@@ -102,7 +100,7 @@ describe('useChatBackground', () => {
     const api = useChatBackground();
     mocks.readBackgroundConfig.mockResolvedValue({
       backgroundUrl: '/bg/green.jpg',
-      backgroundOpacity: 60,
+      backgroundOpacity: 60
     });
 
     await api.loadBackground();

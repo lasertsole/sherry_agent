@@ -290,9 +290,9 @@ class WavFrontendOnline(WavFrontend):
         self, input: np.ndarray, input_lengths: np.ndarray, is_final: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_size = input.shape[0]
-        assert (
-            batch_size == 1
-        ), "we support to extract feature online only when the batch size is equal to 1 now"
+        assert batch_size == 1, (
+            "we support to extract feature online only when the batch size is equal to 1 now"
+        )
         waveforms, feats, feats_lengths = self.fbank(input, input_lengths)  # input shape: B T D
         if feats.shape[0]:
             self.waveforms = (
@@ -327,8 +327,7 @@ class WavFrontendOnline(WavFrontend):
                     # print('frame_frame:  ' + str(frame_from_waveforms))
                     self.reserve_waveforms = self.waveforms[
                         :,
-                        reserve_frame_idx
-                        * self.frame_shift_sample_length : frame_from_waveforms
+                        reserve_frame_idx * self.frame_shift_sample_length : frame_from_waveforms
                         * self.frame_shift_sample_length,
                     ]
                     sample_length = (

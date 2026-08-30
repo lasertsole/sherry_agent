@@ -1,11 +1,7 @@
-import pytest
-import time
 from agent.tools.subagent.types.spawn import SpawnMode, ContextMode
 from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
-    CompletionState,
-    CompletionDeliveryState,
     RunOutcome,
     ExecutionStatus,
     DeliveryStatus,

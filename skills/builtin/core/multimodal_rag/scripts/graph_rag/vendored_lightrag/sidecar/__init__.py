@@ -1,4 +1,4 @@
-﻿"""LightRAG Sidecar writer infrastructure.
+"""LightRAG Sidecar writer infrastructure.
 
 Spec: ``docs/LightRAGSidecarFormat-zh.md``.
 

@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+
 def atomic_replace(tmp_path: str | Path, target: str | Path) -> str:
     """Atomically move *tmp_path* onto *target*, preserving symlinks.
 

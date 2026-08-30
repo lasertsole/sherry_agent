@@ -1,4 +1,4 @@
-﻿"""
+"""
 Gemini LLM binding for LightRAG.
 
 This module provides asynchronous helpers that adapt Google's Gemini models
@@ -106,9 +106,7 @@ def _get_gemini_client(
             if location:
                 client_kwargs["location"] = location
         else:
-            raise ValueError(
-                "GOOGLE_CLOUD_PROJECT must be set when using Vertex AI mode"
-            )
+            raise ValueError("GOOGLE_CLOUD_PROJECT must be set when using Vertex AI mode")
     else:
         # Standard Gemini API mode: use api_key
         client_kwargs["api_key"] = api_key
@@ -169,9 +167,7 @@ def _build_generation_config(
 
     # Remove entries that are explicitly set to None to avoid type errors
     sanitized = {
-        key: value
-        for key, value in config_data.items()
-        if value is not None and value != ""
+        key: value for key, value in config_data.items() if value is not None and value != ""
     }
 
     if not sanitized:
@@ -226,9 +222,7 @@ def _format_history_messages(history_messages: list[dict[str, Any]] | None) -> s
     return "\n".join(history_lines)
 
 
-def _extract_response_text(
-    response: Any, extract_thoughts: bool = False
-) -> tuple[str, str]:
+def _extract_response_text(response: Any, extract_thoughts: bool = False) -> tuple[str, str]:
     """
     Extract text content from Gemini response, separating regular content from thoughts.
 
@@ -425,9 +419,7 @@ async def gemini_complete_if_cache(
             try:
                 # Use native async streaming from genai SDK
                 # Note: generate_content_stream returns Awaitable[AsyncIterator], need to await first
-                stream_iter = await client.aio.models.generate_content_stream(
-                    **request_kwargs
-                )
+                stream_iter = await client.aio.models.generate_content_stream(**request_kwargs)
                 async for chunk in stream_iter:
                     usage = getattr(chunk, "usage_metadata", None)
                     if usage is not None:
@@ -451,9 +443,7 @@ async def gemini_complete_if_cache(
 
                             # Process and yield regular content
                             if "\\u" in regular_text:
-                                regular_text = safe_unicode_decode(
-                                    regular_text.encode("utf-8")
-                                )
+                                regular_text = safe_unicode_decode(regular_text.encode("utf-8"))
                             yield regular_text
 
                         # Process thought content
@@ -467,17 +457,13 @@ async def gemini_complete_if_cache(
                             # Yield thought content if COT is active
                             if cot_active:
                                 if "\\u" in thought_text:
-                                    thought_text = safe_unicode_decode(
-                                        thought_text.encode("utf-8")
-                                    )
+                                    thought_text = safe_unicode_decode(thought_text.encode("utf-8"))
                                 yield thought_text
                     else:
                         # COT disabled - only yield regular content
                         if regular_text:
                             if "\\u" in regular_text:
-                                regular_text = safe_unicode_decode(
-                                    regular_text.encode("utf-8")
-                                )
+                                regular_text = safe_unicode_decode(regular_text.encode("utf-8"))
                             yield regular_text
 
                 # Ensure COT is properly closed if still active
@@ -498,15 +484,11 @@ async def gemini_complete_if_cache(
                 if token_tracker and usage_metadata:
                     token_tracker.add_usage(
                         {
-                            "prompt_tokens": getattr(
-                                usage_metadata, "prompt_token_count", 0
-                            ),
+                            "prompt_tokens": getattr(usage_metadata, "prompt_token_count", 0),
                             "completion_tokens": getattr(
                                 usage_metadata, "candidates_token_count", 0
                             ),
-                            "total_tokens": getattr(
-                                usage_metadata, "total_token_count", 0
-                            ),
+                            "total_tokens": getattr(usage_metadata, "total_token_count", 0),
                         }
                     )
 
@@ -711,9 +693,7 @@ async def gemini_embed(
         raise RuntimeError("Gemini response did not contain embeddings.")
 
     # Convert embeddings to numpy array
-    embeddings = np.array(
-        [np.array(e.values, dtype=np.float32) for e in response.embeddings]
-    )
+    embeddings = np.array([np.array(e.values, dtype=np.float32) for e in response.embeddings])
 
     # Apply L2 normalization for dimensions < 3072
     # The 3072 dimension embedding is already normalized by Gemini API

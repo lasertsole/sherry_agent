@@ -4,7 +4,6 @@ llm_wiki core: Wiki路径管理与初始化
 """
 
 import sys
-import os
 import json
 from pathlib import Path
 from loguru import logger
@@ -26,12 +25,12 @@ WIKI_STRUCTURE = {
             "articles": "网页文章/网络资料",
             "papers": "论文/研究报告",
             "transcripts": "对话记录/访谈",
-            "assets": "图片/附件资源"
+            "assets": "图片/附件资源",
         },
         "entities": "人物/组织档案",
         "concepts": "概念/主题解析",
         "comparisons": "对比分析",
-        "queries": "查询结果存档"
+        "queries": "查询结果存档",
     }
 }
 
@@ -68,11 +67,7 @@ def init_wiki() -> dict:
     Returns:
         dict: 初始化结果，包含 created_dirs, created_files, errors
     """
-    result = {
-        "created_dirs": [],
-        "created_files": [],
-        "errors": []
-    }
+    result = {"created_dirs": [], "created_files": [], "errors": []}
 
     wiki_root = get_wiki_path()
 

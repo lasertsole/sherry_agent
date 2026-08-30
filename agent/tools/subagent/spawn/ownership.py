@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 class SubagentSpawnOwnership(BaseModel):
     """Resolved ownership triple: controller, thread-binding requester, and completion delivery target."""
+
     controller_session_key: str
     thread_binding_requester_session_key: str
     completion_requester_session_key: str
@@ -42,7 +43,9 @@ def resolve_spawn_ownership(
     """
     canonical_alias = _resolve_canonical_alias(requester_session_key, alias)
 
-    effective_requester = requester_session_key.strip() if requester_session_key else canonical_alias
+    effective_requester = (
+        requester_session_key.strip() if requester_session_key else canonical_alias
+    )
     if ":main:" in effective_requester and ":session:" not in effective_requester:
         # Bare main-agent key without a session segment — normalize to alias
         effective_requester = canonical_alias

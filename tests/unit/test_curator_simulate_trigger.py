@@ -40,6 +40,7 @@ from context_engine.curator import maybe_run_curator, get_min_idle_hours
 
 # --- fixtures ---------------------------------------------------------------
 
+
 @pytest.fixture
 def isolated_state(tmp_path):
     """Point CURATOR_STATE_FILE at a temp file so tests stay hermetic."""
@@ -65,14 +66,13 @@ def with_elapsed_interval(isolated_state):
 @pytest.fixture
 def mock_review():
     """Patch the actual maintenance orchestrator so we assert trigger/no-trigger."""
-    with patch(
-        "context_engine.curator.orchestrator.run_curator_review"
-    ) as mock:
+    with patch("context_engine.curator.orchestrator.run_curator_review") as mock:
         mock.return_value = {"started_at": "mock", "auto_transitions": {}}
         yield mock
 
 
 # --- scenario 1: time up + idle enough → triggers ----------------------------
+
 
 def test_trigger_time_elapsed_and_idle_enough(with_elapsed_interval, mock_review):
     """Interval elapses AND agent idle ≥ min_idle_hours → maintenance fires."""
@@ -84,6 +84,7 @@ def test_trigger_time_elapsed_and_idle_enough(with_elapsed_interval, mock_review
 
 
 # --- scenario 2: within interval → no trigger --------------------------------
+
 
 def test_no_trigger_within_interval(isolated_state, mock_review):
     """Last run is recent (within interval) → maintenance must NOT fire."""
@@ -101,6 +102,7 @@ def test_no_trigger_within_interval(isolated_state, mock_review):
 
 # --- scenario 3: time up but idle insufficient → no trigger ------------------
 
+
 def test_no_trigger_insufficient_idle(with_elapsed_interval, mock_review):
     """Interval elapsed but agent idle < min_idle_hours → maintenance must NOT fire."""
     min_idle_s = get_min_idle_hours() * 3600.0
@@ -111,6 +113,7 @@ def test_no_trigger_insufficient_idle(with_elapsed_interval, mock_review):
 
 
 # --- scenario 4: paused → no trigger -----------------------------------------
+
 
 def test_no_trigger_paused(with_elapsed_interval, mock_review):
     """Interval + idle pass but paused=True → maintenance must NOT fire."""
@@ -126,6 +129,7 @@ def test_no_trigger_paused(with_elapsed_interval, mock_review):
 
 
 # --- scenario 5: disabled (config) → no trigger ------------------------------
+
 
 def test_no_trigger_disabled(enabled_false, with_elapsed_interval, mock_review):
     """Interval + idle pass but curator disabled in config → maintenance must NOT fire.

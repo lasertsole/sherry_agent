@@ -8,10 +8,16 @@ from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
 from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
-from .middlewares import (Summarization, ToolCallNormalize, MultimodalProcessor, ContextEngineHook, ToolGuardrails,
-                          IterationBudget, HeartbeatStaleness)
+from .middlewares import (
+    Summarization,
+    ToolCallNormalize,
+    MultimodalProcessor,
+    ContextEngineHook,
+    ToolGuardrails,
+    IterationBudget,
+    HeartbeatStaleness,
+)
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
-from .smart_tool_node import patch_tool_node
 from .repetition_guard_wrapper import RepetitionGuardWrapper
 
 # # 只有幂等的工具才能并行执行，非幂等串行执行
@@ -21,9 +27,12 @@ from .repetition_guard_wrapper import RepetitionGuardWrapper
 # Carries ``session_id`` through the graph so that middlewares reading
 # ``request.state["session_id"]`` is used by middlewares that need it
 
+
 class StateSchema(AgentState):
     """Agent state that preserves an ``session_id``."""
+
     session_id: str
+
 
 # Rebuild skill snapshot at server start to keep skills prompt stable
 # throughout this server run, ensuring reliable model prefix caching.
@@ -36,8 +45,10 @@ memory_store.load_from_disk()
 # Build tool list
 _tools: list[BaseTool] = build_main_tools()
 
-def get_agent_tools()-> list[BaseTool]:
+
+def get_agent_tools() -> list[BaseTool]:
     return _tools
+
 
 # Cache of compiled agents, keyed by the asyncio event loop that they were
 # built on. Each entry holds a fresh main_llm whose internal openai.AsyncOpenAI
@@ -59,12 +70,14 @@ def get_agent_tools()-> list[BaseTool]:
 _agent: CompiledStateGraph | None = None
 _agent_loop = None
 
+
 async def built_agent(
     temperature: float = 0.8,
     force_rebuild: bool = False,
-)-> CompiledStateGraph:
+) -> CompiledStateGraph:
     global _agent, _agent_loop
     import asyncio
+
     current_loop = asyncio.get_running_loop()
 
     # Rebuild whenever the loop changes, on first call, or when explicitly
@@ -97,12 +110,12 @@ async def built_agent(
         auxiliary_llm = build_auxiliary_llm()
 
         # Build the agent
-        _agent =  create_agent(
-            model = main_llm.bind(temperature=temperature),
-            state_schema = StateSchema,
-            checkpointer = checkpointer,
-            tools = get_agent_tools(),
-            middleware = [
+        _agent = create_agent(
+            model=main_llm.bind(temperature=temperature),
+            state_schema=StateSchema,
+            checkpointer=checkpointer,
+            tools=get_agent_tools(),
+            middleware=[
                 ContextEngineHook(),
                 MultimodalProcessor(),
                 IterationBudget(90),
@@ -113,11 +126,8 @@ async def built_agent(
                 Summarization(
                     need_update_system_prompt=True,
                     model=auxiliary_llm,
-                    trigger=[
-                        ("tokens", int(main_llm_max_tokens / 2))
-                    ],
+                    trigger=[("tokens", int(main_llm_max_tokens / 2))],
                     keep=("messages", 10),
-
                 ),
             ],
         )

@@ -9,6 +9,7 @@ cleared) so a malicious skill can never become active. A ``CAUTION`` skill is
 kept but logged. If the scanner is unavailable the download is allowed but
 warned (fail-open, matching the upload path's dev-convenience policy).
 """
+
 import json
 import os
 import shutil
@@ -34,6 +35,7 @@ def _resolve_workdir(workdir: str) -> str:
 # server/trigger/http/skills.py). Runs SkillSpector over third-party skills that
 # clawhub just wrote into skills/plugins/, rolling back any DO_NOT_INSTALL skill.
 # =============================================================================
+
 
 def _read_state() -> dict[str, dict[str, bool]]:
     """Read skills/plugins/.state.json defensively; degrade to {} on error."""
@@ -247,6 +249,7 @@ def run_clawhub_command(command: list[str]) -> dict[str, Any]:
             # rebuild the skills snapshot so the loaded skill roster reflects them.
             try:
                 from skills import build_skills_snapshot
+
                 build_skills_snapshot()
             except Exception:  # noqa: BLE001 - snapshot failure must not break install
                 logger.warning("Failed to rebuild skills snapshot after clawhub install/update.")

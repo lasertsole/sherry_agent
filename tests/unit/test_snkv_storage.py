@@ -38,14 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-SCRIPTS_DIR = (
-    REPO_ROOT
-    / "skills"
-    / "builtin"
-    / "core"
-    / "multimodal_rag"
-    / "scripts"
-)
+SCRIPTS_DIR = REPO_ROOT / "skills" / "builtin" / "core" / "multimodal_rag" / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -112,9 +105,7 @@ async def test_lightrag_initializes_with_snkv_backends(tmp_path):
     rag = LightRAG(
         working_dir=working_dir,
         llm_model_func=_stub_llm,
-        embedding_func=EmbeddingFunc(
-            embedding_dim=3, max_token_size=128, func=_stub_embed
-        ),
+        embedding_func=EmbeddingFunc(embedding_dim=3, max_token_size=128, func=_stub_embed),
         kv_storage="SNKVKVStorage",
         vector_storage="SNKVVectorStorage",
         graph_storage="SNKVGraphStorage",

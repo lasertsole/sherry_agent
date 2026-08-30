@@ -1,4 +1,4 @@
-﻿"""Chunk schema helpers shared across the chunking + extraction pipeline.
+"""Chunk schema helpers shared across the chunking + extraction pipeline.
 
 Three responsibilities live here so chunker implementations and the pipeline
 both consume identical normalization rules:
@@ -113,8 +113,7 @@ def _clean_heading_text(text: str) -> str:
     text = "".join(
         ch
         for ch in text
-        if ch in _HEADING_KEEP_WS
-        or unicodedata.category(ch) not in _HEADING_STRIP_CATEGORIES
+        if ch in _HEADING_KEEP_WS or unicodedata.category(ch) not in _HEADING_STRIP_CATEGORIES
     )
     # Collapse LAST so the spaces introduced above (→, kept whitespace controls,
     # and any gap left around a removed control char) all fold into one space.
@@ -285,10 +284,7 @@ _ATTR_RE = re.compile(
 
 
 def _attrs_to_dict(attr_string: str) -> dict[str, str]:
-    return {
-        match.group(1).lower(): match.group(2)
-        for match in _ATTR_RE.finditer(attr_string)
-    }
+    return {match.group(1).lower(): match.group(2) for match in _ATTR_RE.finditer(attr_string)}
 
 
 def _format_attrs(pairs: list[tuple[str, str]]) -> str:

@@ -8,6 +8,7 @@ MEMORY_SYSTEM_FILE_NAMES: list[str] = [
     "USER.md",
 ]
 
+
 # Memory entries are delimited by "\n§\n" on disk (see agent/tools/memory.py).
 # The raw file is a plain text source; we treat it as a full-file editable text.
 def read_memory_files() -> dict[str, str]:
@@ -22,6 +23,7 @@ def read_memory_files() -> dict[str, str]:
                 file_to_content[file_name] = file.read()
 
     return file_to_content
+
 
 def write_memory_files(file_to_content: dict[str, str]) -> None:
     """Write memory files (only provided files, leave others unchanged)."""

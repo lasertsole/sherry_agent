@@ -1,21 +1,21 @@
 """Tool to list available agent IDs for sessions_spawn targeting."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from langchain.tools import BaseTool
 from ..config import get_config
 
 
 class AgentsListSchema(BaseModel):
     """Input schema for the agents_list tool (no parameters)."""
+
     pass
 
 
 class AgentsListTool(BaseTool):
     """List agent IDs that can be used as targets for sessions_spawn."""
+
     name: str = "agents_list"
-    description: str = (
-        "List available agent IDs that can be used as targets for sessions_spawn."
-    )
+    description: str = "List available agent IDs that can be used as targets for sessions_spawn."
     args_schema: type = AgentsListSchema
 
     def _run(self, **kwargs) -> str:

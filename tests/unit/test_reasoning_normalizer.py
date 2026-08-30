@@ -70,9 +70,19 @@ def _sync_stream_chunks(model: NormalizingChatModel) -> list[AIMessageChunk]:
 
 class TestChunkDeltaPassthrough:
     def test_chunks_carry_deltas_verbatim(self):
-        model = _make_model([{"reasoning_content": "The"}, {"reasoning_content": " user"}, {"reasoning_content": " asks"}])
+        model = _make_model(
+            [
+                {"reasoning_content": "The"},
+                {"reasoning_content": " user"},
+                {"reasoning_content": " asks"},
+            ]
+        )
         chunks = _sync_stream_chunks(model)
-        assert [c.additional_kwargs["reasoning_content"] for c in chunks] == ["The", " user", " asks"]
+        assert [c.additional_kwargs["reasoning_content"] for c in chunks] == [
+            "The",
+            " user",
+            " asks",
+        ]
 
     def test_no_cumulative_accumulation(self):
         deltas = [{"reasoning_content": d} for d in ["a", "ab", "abc"]]
@@ -82,7 +92,9 @@ class TestChunkDeltaPassthrough:
         assert [c.additional_kwargs["reasoning_content"] for c in chunks] == ["a", "ab", "abc"]
 
     def test_alias_keys_folded_into_canonical(self):
-        model = _make_model([{"reasoning": "d1"}, {"reasoning_text": "d2"}, {"reasoning_content": "d3"}])
+        model = _make_model(
+            [{"reasoning": "d1"}, {"reasoning_text": "d2"}, {"reasoning_content": "d3"}]
+        )
         chunks = _sync_stream_chunks(model)
         assert [c.additional_kwargs["reasoning_content"] for c in chunks] == ["d1", "d2", "d3"]
         for c in chunks:

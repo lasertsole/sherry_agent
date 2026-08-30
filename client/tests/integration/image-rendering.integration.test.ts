@@ -36,11 +36,11 @@ vi.mock('vue-router', () => {
     useRoute,
     useRouter,
     RouterLink: { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' },
-    RouterView: { name: 'RouterView', template: '<div><slot /></div>' },
+    RouterView: { name: 'RouterView', template: '<div><slot /></div>' }
   };
 });
 
-vi.mock('@/composables/db', async (importOriginal) => {
+vi.mock('@/composables/db', async importOriginal => {
   const actual = await importOriginal<typeof import('@/composables/db')>();
   return {
     ...actual,
@@ -60,12 +60,12 @@ vi.mock('@/composables/db', async (importOriginal) => {
     saveDraftTurn: async () => {},
     readDraftTurns: async () => [],
     clearDraftTurn: async () => {},
-    clearDraftSession: async () => {},
+    clearDraftSession: async () => {}
   };
 });
 
 vi.mock('@/pages/home/components/SubagentTasksView.vue', () => ({
-  default: { name: 'SubagentTasksView', template: '<div class="stv-stub"></div>' },
+  default: { name: 'SubagentTasksView', template: '<div class="stv-stub"></div>' }
 }));
 
 const base = (over: Partial<MessageItem>): MessageItem => ({
@@ -75,7 +75,7 @@ const base = (over: Partial<MessageItem>): MessageItem => ({
   id: 1,
   turn_num: 0,
   timestamp: '20260621004725',
-  ...over,
+  ...over
 });
 
 describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
@@ -83,8 +83,8 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
     const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     const wrapper = mount(ChatBox, {
       props: {
-        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [b64], content: '' })],
-      },
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [b64], content: '' })]
+      }
     });
     // The <img> inside the image container (class w-24, as opposed to the avatar's w-full)
     const img = wrapper.find('img.w-24');
@@ -104,22 +104,20 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
             // Note: an AI message with empty content gets filtered out by filteredMessages
             // as an "empty placeholder", which also suppresses the image branch —
             // non-empty content is required to hit the normal rendering path.
-            content: 'look at this',
-          }),
-        ],
-      },
+            content: 'look at this'
+          })
+        ]
+      }
     });
     const img = wrapper.find('img.w-24');
     expect(img.exists()).toBe(true);
     // backendBaseUrl comes from VITE_API_BACK_URL=http://localhost:8080
-    expect(img.attributes('src')).toBe(
-      'http://localhost:8080/media?session_id=default&filename=12345_67890.png',
-    );
+    expect(img.attributes('src')).toBe('http://localhost:8080/media?session_id=default&filename=12345_67890.png');
   });
 
   it('renders no image container for a message without images', () => {
     const wrapper = mount(ChatBox, {
-      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'plain' })] },
+      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'plain' })] }
     });
     expect(wrapper.find('img.w-24').exists()).toBe(false);
   });
@@ -129,8 +127,8 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
     const b2 = 'BBBB';
     const wrapper = mount(ChatBox, {
       props: {
-        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [b1, b2], content: '' })],
-      },
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [b1, b2], content: '' })]
+      }
     });
     const imgs = wrapper.findAll('img.w-24');
     expect(imgs).toHaveLength(2);
@@ -142,8 +140,8 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
     const url = 'http://127.0.0.1:8080/images/abc123.png';
     const wrapper = mount(ChatBox, {
       props: {
-        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [url], content: '' })],
-      },
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [url], content: '' })]
+      }
     });
     const img = wrapper.find('img.w-24');
     expect(img.exists()).toBe(true);
@@ -153,12 +151,11 @@ describe('ChatBox.vue image rendering (integration, backend mocked)', () => {
 
   it('falls back to served URLs parsed from the content Location marker when images is empty', () => {
     const url = 'http://127.0.0.1:8080/images/abc123.png';
-    const con =
-      `[System: The user uploaded 1 image(s). Location: ${url}. If you need to view the image(s), use the image_to_text skill.]`;
+    const con = `[System: The user uploaded 1 image(s). Location: ${url}. If you need to view the image(s), use the image_to_text skill.]`;
     const wrapper = mount(ChatBox, {
       props: {
-        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [], content: con })],
-      },
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, images: [], content: con })]
+      }
     });
     const img = wrapper.find('img.w-24');
     expect(img.exists()).toBe(true);
@@ -171,12 +168,12 @@ const primevueStub = {
     name: 'Checkbox',
     props: ['modelValue'],
     emits: ['update:modelValue'],
-    template: '<button class="cb" @click="$emit(\'update:modelValue\', !modelValue)">C</button>',
+    template: '<button class="cb" @click="$emit(\'update:modelValue\', !modelValue)">C</button>'
   },
   Button: { props: ['label'], template: '<button class="btn"><slot /><span>{{ label }}</span></button>' },
   Menu: { template: '<div class="mnu"></div>', methods: { toggle() {} } },
   ToggleSwitch: { template: '<span class="ts"></span>' },
-  ChatInputBox: { template: '<div class="cib"></div>' },
+  ChatInputBox: { template: '<div class="cib"></div>' }
 };
 
 describe('home/index/[sid].vue image pass-through (integration, backend mocked)', () => {
@@ -198,16 +195,16 @@ describe('home/index/[sid].vue image pass-through (integration, backend mocked)'
       tool_name: null,
       finish_reason: null,
       reasoning: null,
-      reasoning_content: null,
-    },
+      reasoning_content: null
+    }
   ];
 
   beforeEach(() => {
     vi.stubGlobal(
       'fetchApi',
       vi.fn(async (opts?: { url?: string }) =>
-        opts?.url === '/get_history_by_turn_page' ? rows : { code: 200, data: null },
-      ),
+        opts?.url === '/get_history_by_turn_page' ? rows : { code: 200, data: null }
+      )
     );
   });
 

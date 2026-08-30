@@ -20,6 +20,7 @@ def file_sync_isolation(tmp_path, monkeypatch):
         (template_en / name).write_text(f"TEMPLATE-{name}", encoding="utf-8")
 
     import workspace.file_sync as mod
+
     monkeypatch.setattr(mod, "WORKSPACE_DIR", ws)
     monkeypatch.setattr(mod, "ALL_SYSTEM_FILE_NAMES", file_names)
     monkeypatch.setattr(

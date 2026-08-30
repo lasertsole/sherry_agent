@@ -1,4 +1,3 @@
-import pytest
 from agent.tools.subagent.announce.idempotency import build_idempotency_key
 from agent.tools.subagent.announce.output import (
     build_child_completion_findings,
@@ -6,7 +5,13 @@ from agent.tools.subagent.announce.output import (
 )
 from agent.tools.subagent.announce.dispatch import AnnounceDispatchType, resolve_dispatch_type
 from agent.tools.subagent.announce.origin import resolve_announce_origin
-from agent.tools.subagent.types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionState, CompletionState
+from agent.tools.subagent.types.registry import (
+    SubagentRunRecord,
+    RunOutcome,
+    RunOutcomeStatus,
+    ExecutionState,
+    CompletionState,
+)
 
 
 class TestIdempotency:
@@ -41,12 +46,27 @@ class TestBuildCompletionFindings:
 class TestCompactStatsLine:
     def test_mixed_outcomes(self):
         runs = [
-            SubagentRunRecord(run_id="r1", child_session_key="c1", requester_session_key="p", task="t",
-                              execution=ExecutionState(outcome=RunOutcome(status=RunOutcomeStatus.OK))),
-            SubagentRunRecord(run_id="r2", child_session_key="c2", requester_session_key="p", task="t",
-                              execution=ExecutionState(outcome=RunOutcome(status=RunOutcomeStatus.ERROR))),
-            SubagentRunRecord(run_id="r3", child_session_key="c3", requester_session_key="p", task="t",
-                              execution=ExecutionState(outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT))),
+            SubagentRunRecord(
+                run_id="r1",
+                child_session_key="c1",
+                requester_session_key="p",
+                task="t",
+                execution=ExecutionState(outcome=RunOutcome(status=RunOutcomeStatus.OK)),
+            ),
+            SubagentRunRecord(
+                run_id="r2",
+                child_session_key="c2",
+                requester_session_key="p",
+                task="t",
+                execution=ExecutionState(outcome=RunOutcome(status=RunOutcomeStatus.ERROR)),
+            ),
+            SubagentRunRecord(
+                run_id="r3",
+                child_session_key="c3",
+                requester_session_key="p",
+                task="t",
+                execution=ExecutionState(outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT)),
+            ),
         ]
         line = build_compact_announce_stats_line(runs)
         assert "total=3" in line
@@ -62,7 +82,13 @@ class TestDispatch:
 
 class TestOrigin:
     def test_resolve_origin(self):
-        run = SubagentRunRecord(run_id="r1", child_session_key="child", requester_session_key="parent", task="t", agent_id="main")
+        run = SubagentRunRecord(
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="t",
+            agent_id="main",
+        )
         origin = resolve_announce_origin(run)
         assert origin.child_session_key == "child"
         assert origin.requester_session_key == "parent"

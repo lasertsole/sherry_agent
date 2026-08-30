@@ -1,1 +1,1 @@
-from .core import ITTT_model
+from .core import ITTT_model as ITTT_model

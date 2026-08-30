@@ -31,7 +31,6 @@ curator config/transition/orchestrator function reads/writes state through
 ``state.CURATOR_STATE_FILE``), so this single patch fully isolates state I/O.
 """
 
-
 import json
 import pytest
 from datetime import datetime, timedelta, timezone
@@ -52,6 +51,7 @@ from context_engine.curator import (
 
 # --- fixtures ---------------------------------------------------------------
 
+
 @pytest.fixture
 def isolated_state(tmp_path):
     """Point CURATOR_STATE_FILE at a temp file so tests stay hermetic.
@@ -67,6 +67,7 @@ def isolated_state(tmp_path):
 
 # --- interval override get/set clamping -------------------------------------
 
+
 def test_interval_override_default_none(isolated_state):
     """No override configured -> get returns None, effective falls back to yaml."""
     assert get_interval_override_days() is None
@@ -77,7 +78,12 @@ def test_set_interval_override_min_clamp(isolated_state):
     """1 keep as-is (lower bound)."""
     assert set_interval_override_days(1) == 1
     assert get_interval_override_days() == 1
-    assert json.loads(curator_state.CURATOR_STATE_FILE.read_text(encoding="utf-8")).get("auto_interval_days") == 1
+    assert (
+        json.loads(curator_state.CURATOR_STATE_FILE.read_text(encoding="utf-8")).get(
+            "auto_interval_days"
+        )
+        == 1
+    )
     assert get_effective_interval_hours() == 24
 
 
@@ -136,6 +142,7 @@ def test_invalid_types_reset_to_none(isolated_state):
 
 # --- effective interval hours ------------------------------------------------
 
+
 def test_effective_hours_uses_override(isolated_state):
     """A valid override (2d) overrides the default 5d/120h."""
     set_interval_override_days(2)
@@ -151,6 +158,7 @@ def test_effective_hours_cleared_uses_yaml(isolated_state):
 
 # --- should_run_now trigger / no-trigger ------------------------------------
 
+
 def test_should_run_no_state_file_runs(isolated_state):
     """No state file yet -> eligible (last_run_at missing)."""
     assert should_run_now() is True
@@ -165,7 +173,9 @@ def test_should_run_missing_last_run_runs(isolated_state):
 def test_should_run_within_interval_no_run(isolated_state):
     """Now is less than the effective interval since last run -> no trigger."""
     now = datetime.now(timezone.utc)
-    curator_state.save_state({"last_run_at": (now - timedelta(hours=24)).isoformat()})  # default 120h
+    curator_state.save_state(
+        {"last_run_at": (now - timedelta(hours=24)).isoformat()}
+    )  # default 120h
     assert should_run_now(now=now) is False
 
 
@@ -204,6 +214,7 @@ def test_should_run_override_longer_window(isolated_state):
 
 # --- manual run updates last_maintenance_at ---------------------------------
 
+
 def test_run_review_updates_last_maintenance_at(isolated_state):
     """Non-dry-run run_curator_review writes last_maintenance_at."""
     result = run_curator_review(dry_run=False, consolidate=False)
@@ -231,6 +242,7 @@ def test_run_review_increments_run_count(isolated_state):
 
 
 # --- last maintenance timestamp persistence + round-trip --------------------
+
 
 def test_last_maintenance_set_and_read(isolated_state):
     """set_last_maintenance_at persists to state file."""

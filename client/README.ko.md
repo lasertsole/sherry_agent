@@ -22,7 +22,7 @@
 
 ### 하이브리드 아키텍처
 
-```
+```text
 +--------------------------------------------------------------+
 |                프런트엔드(Nuxt 4 SPA, app/)                   |
 |  Vue 3 컴포넌트 + composables + Pinia + mitt 이벤트 버스       |
@@ -51,7 +51,7 @@
 
 ### 데이터 흐름
 
-```
+```text
 사용자 상호작용(Vue 컴포넌트)
     -> bridge.ts(Tauri / 브라우저 모드 자동 감지)
         |
@@ -70,7 +70,7 @@
 
 ## 디렉터리 구조
 
-```
+```text
 client/
 ├── .env.example                   # 환경변수 템플릿(VITE_APP_NAME, VITE_API_BACK_URL)
 ├── eslint.config.mjs              # ESLint flat 설정
@@ -212,7 +212,7 @@ client/
 
 ### 컴포넌트 계층
 
-```
+```text
 app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
   └─ NuxtLayout(layouts/default.vue)
        └─ NuxtPage

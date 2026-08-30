@@ -9,16 +9,17 @@
  * | `content` | `string` | Message text content |
  * | `timestamp` | `string \| null` | ISO 8601 timestamp (omitted if absent) |
  */
-export type HistoryMessage = { 
-/**
- * Message role: `"user"` or `"assistant"`.
- */
-role: string, 
-/**
- * Message text content.
- */
-content: string, 
-/**
- * Optional ISO 8601 timestamp.
- */
-timestamp: string | null, };
+export type HistoryMessage = {
+  /**
+   * Message role: `"user"` or `"assistant"`.
+   */
+  role: string;
+  /**
+   * Message text content.
+   */
+  content: string;
+  /**
+   * Optional ISO 8601 timestamp.
+   */
+  timestamp: string | null;
+};

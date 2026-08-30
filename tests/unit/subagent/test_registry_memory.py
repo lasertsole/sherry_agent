@@ -1,7 +1,15 @@
 import pytest
-from agent.tools.subagent.registry.memory import get, set_run, delete, update, snapshot, size, clear, find_by_child_session_key
-from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionStatus
-from agent.tools.subagent.types.spawn import SpawnMode
+from agent.tools.subagent.registry.memory import (
+    get,
+    set_run,
+    delete,
+    update,
+    snapshot,
+    size,
+    clear,
+    find_by_child_session_key,
+)
+from agent.tools.subagent.types.registry import SubagentRunRecord
 
 
 @pytest.fixture(autouse=True)
@@ -11,7 +19,9 @@ def _clean_memory():
     clear()
 
 
-def _make_run(run_id="r1", child_key="agent:main:subagent:abc", requester="agent:main:session:p1", task="test"):
+def _make_run(
+    run_id="r1", child_key="agent:main:subagent:abc", requester="agent:main:session:p1", task="test"
+):
     return SubagentRunRecord(
         run_id=run_id,
         child_session_key=child_key,

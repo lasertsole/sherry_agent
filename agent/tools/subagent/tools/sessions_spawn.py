@@ -2,8 +2,6 @@
 
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
-from typing import Annotated, Any
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..spawn import spawn_subagent_direct
 from ..types.spawn import SpawnMode, ContextMode
@@ -11,10 +9,13 @@ from ..types.spawn import SpawnMode, ContextMode
 
 class AttachmentSchema(BaseModel):
     """Schema for a single file attachment passed to a sub-agent."""
+
     name: str = Field(description="File name for the attachment.")
     content: str = Field(description="File content (text or base64 encoded).")
     encoding: str = Field(default="utf8", description="Content encoding: 'utf8' or 'base64'.")
-    mount_path: str | None = Field(default=None, description="Optional subdirectory within the attachment area.")
+    mount_path: str | None = Field(
+        default=None, description="Optional subdirectory within the attachment area."
+    )
 
 
 class SessionsSpawnSchema(BaseModel):
@@ -22,42 +23,37 @@ class SessionsSpawnSchema(BaseModel):
         description="The task description for the subagent to execute. Be detailed and specific."
     )
     task_name: str | None = Field(
-        default=None,
-        description="Optional stable alias for targeting this subagent later."
+        default=None, description="Optional stable alias for targeting this subagent later."
     )
     label: str | None = Field(
-        default=None,
-        description="Optional short display label for the subagent."
+        default=None, description="Optional short display label for the subagent."
     )
     agent_id: str = Field(
-        default="main",
-        description="Target agent ID to spawn. Defaults to 'main'."
+        default="main", description="Target agent ID to spawn. Defaults to 'main'."
     )
-    thinking: str | None = Field(
-        default=None,
-        description="Optional thinking level override."
-    )
+    thinking: str | None = Field(default=None, description="Optional thinking level override.")
     mode: str = Field(
         default="run",
-        description="Spawn mode: 'run' (ephemeral one-shot) or 'session' (persistent)."
+        description="Spawn mode: 'run' (ephemeral one-shot) or 'session' (persistent).",
     )
     cleanup: str = Field(
         default="delete",
-        description="Cleanup policy: 'delete' (remove session after completion) or 'keep'."
+        description="Cleanup policy: 'delete' (remove session after completion) or 'keep'.",
     )
     context: str = Field(
         default="isolated",
-        description="Context mode: 'isolated' (clean slate) or 'fork' (inherit parent transcript)."
+        description="Context mode: 'isolated' (clean slate) or 'fork' (inherit parent transcript).",
     )
     attachments: list[AttachmentSchema] | None = Field(
         default=None,
         description="Optional list of file attachments to pass to the subagent. "
-                    "Each attachment has name, content, encoding (utf8/base64), and optional mount_path."
+        "Each attachment has name, content, encoding (utf8/base64), and optional mount_path.",
     )
 
 
 class SessionsSpawnTool(BaseTool):
     """LLM tool: spawn a sub-agent to execute a task; results are auto-delivered on completion."""
+
     name: str = "sessions_spawn"
     description: str = (
         "Spawn a subagent to execute a task. "
@@ -94,7 +90,12 @@ class SessionsSpawnTool(BaseTool):
         attach_dicts = None
         if attachments:
             attach_dicts = [
-                {"name": a.name, "content": a.content, "encoding": a.encoding, "mount_path": a.mount_path}
+                {
+                    "name": a.name,
+                    "content": a.content,
+                    "encoding": a.encoding,
+                    "mount_path": a.mount_path,
+                }
                 for a in attachments
             ]
 

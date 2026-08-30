@@ -1,10 +1,17 @@
 """Sub-agent run record and three state-machine models: execution, completion, and delivery."""
 
 from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from .spawn import SpawnMode, ContextMode
+from .capability import SubagentSessionRole, ControlScope
 
 
 class ExecutionStatus(str, Enum):
     """Top-level execution phase of a sub-agent run."""
+
     RUNNING = "running"
     INTERRUPTED = "interrupted"
     TERMINAL = "terminal"
@@ -12,6 +19,7 @@ class ExecutionStatus(str, Enum):
 
 class DeliveryStatus(str, Enum):
     """Lifecycle of a completion-delivery attempt from the sub-agent to its parent."""
+
     NOT_REQUIRED = "not_required"
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -23,6 +31,7 @@ class DeliveryStatus(str, Enum):
 
 class RunOutcomeStatus(str, Enum):
     """Terminal outcome category for a sub-agent run."""
+
     OK = "ok"
     ERROR = "error"
     TIMEOUT = "timeout"
@@ -30,18 +39,16 @@ class RunOutcomeStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
-from pydantic import BaseModel, Field
-from typing import Literal
-
-
 class RunOutcome(BaseModel):
     """Result of a completed sub-agent run, including status and optional error detail."""
+
     status: RunOutcomeStatus = RunOutcomeStatus.UNKNOWN
     error: str | None = None
 
 
 class ExecutionState(BaseModel):
     """Tracks whether a sub-agent is running, interrupted, or terminal, with timing and outcome."""
+
     status: ExecutionStatus = ExecutionStatus.RUNNING
     started_at: float | None = None
     ended_at: float | None = None
@@ -51,6 +58,7 @@ class ExecutionState(BaseModel):
 
 class CompletionState(BaseModel):
     """Whether a sub-agent result has been captured and is awaiting delivery."""
+
     required: bool = True
     result_text: str | None = None
     captured_at: float | None = None
@@ -58,6 +66,7 @@ class CompletionState(BaseModel):
 
 class CompletionDeliveryState(BaseModel):
     """Full delivery lifecycle state: attempts, suspension, discard, and final delivery/announce timestamps."""
+
     status: DeliveryStatus = DeliveryStatus.NOT_REQUIRED
     payload: str | None = None
     attempt_count: int = 0
@@ -71,6 +80,7 @@ class CompletionDeliveryState(BaseModel):
 
 class ThreadBindingInfo(BaseModel):
     """Metadata for a SESSION-mode sub-agent bound to a conversation thread."""
+
     thread_id: str
     bound_at: float = 0.0
     idle_timeout_ms: int = 300000
@@ -80,18 +90,16 @@ class ThreadBindingInfo(BaseModel):
 
 class KillReconciliationState(BaseModel):
     """Snapshot of execution/delivery state taken at kill time, used for graceful reconciliation."""
+
     snapshot_execution: ExecutionState = Field(default_factory=ExecutionState)
     snapshot_delivery: CompletionDeliveryState = Field(default_factory=CompletionDeliveryState)
     killed_at: float = 0.0
     reconciled: bool = False
 
 
-from .spawn import SpawnMode, ContextMode
-from .capability import SubagentSessionRole, ControlScope
-
-
 class SubagentRunRecord(BaseModel):
     """Persistent record for a single sub-agent run, encompassing spawn config, lifecycle state, and delivery tracking."""
+
     run_id: str
     task_run_id: str | None = None
     child_session_key: str

@@ -1,15 +1,22 @@
 """Module tests for agent/tools/pub_base/skill_usage.py — sidecar usage telemetry."""
 
-import json
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 from agent.tools.pub_base.skill_usage import (
-    _empty_record, latest_activity_at, activity_count,
-    load_usage, save_usage, get_record, _mutate,
-    bump_use, bump_view, bump_patch, mark_agent_created,
-    set_state, set_pinned, forget,
-    STATE_ACTIVE, STATE_STALE, STATE_ARCHIVED, _VALID_STATES,
+    _empty_record,
+    latest_activity_at,
+    activity_count,
+    get_record,
+    _mutate,
+    bump_use,
+    bump_view,
+    bump_patch,
+    mark_agent_created,
+    set_state,
+    set_pinned,
+    forget,
+    STATE_ACTIVE,
+    STATE_STALE,
+    STATE_ARCHIVED,
 )
 
 
@@ -94,9 +101,11 @@ class TestBumpFunctions:
     def test_bump_use(self):
         data = {"test_skill": _empty_record()}
         data["test_skill"]["created_by"] = "agent"
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             bump_use("test_skill")
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["use_count"] == 1
@@ -105,9 +114,11 @@ class TestBumpFunctions:
     def test_bump_view(self):
         data = {"test_skill": _empty_record()}
         data["test_skill"]["created_by"] = "agent"
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             bump_view("test_skill")
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["view_count"] == 1
@@ -115,9 +126,11 @@ class TestBumpFunctions:
     def test_bump_patch(self):
         data = {"test_skill": _empty_record()}
         data["test_skill"]["created_by"] = "agent"
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             bump_patch("test_skill")
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["patch_count"] == 1
@@ -126,9 +139,11 @@ class TestBumpFunctions:
 class TestMarkAgentCreated:
     def test_marks_created(self):
         data = {"test_skill": _empty_record()}
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             mark_agent_created("test_skill")
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["created_by"] == "agent"
@@ -138,9 +153,11 @@ class TestSetState:
     def test_valid_state(self):
         data = {"test_skill": _empty_record()}
         data["test_skill"]["created_by"] = "agent"
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             set_state("test_skill", STATE_STALE)
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["state"] == STATE_STALE
@@ -154,9 +171,11 @@ class TestSetState:
     def test_archived_sets_timestamp(self):
         data = {"test_skill": _empty_record()}
         data["test_skill"]["created_by"] = "agent"
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             set_state("test_skill", STATE_ARCHIVED)
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["archived_at"] is not None
@@ -165,9 +184,11 @@ class TestSetState:
         data = {"test_skill": _empty_record()}
         data["test_skill"]["archived_at"] = "2026-01-01"
         data["test_skill"]["created_by"] = "agent"
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             set_state("test_skill", STATE_ACTIVE)
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["archived_at"] is None
@@ -177,9 +198,11 @@ class TestSetPinned:
     def test_pin(self):
         data = {"test_skill": _empty_record()}
         data["test_skill"]["created_by"] = "agent"
-        with patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True), \
-             patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             set_pinned("test_skill", True)
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["pinned"] is True
@@ -188,8 +211,10 @@ class TestSetPinned:
 class TestForget:
     def test_removes_entry(self):
         data = {"test_skill": _empty_record(), "other": _empty_record()}
-        with patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data), \
-             patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save:
+        with (
+            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
+            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
+        ):
             forget("test_skill")
             saved_data = mock_save.call_args[0][0]
             assert "test_skill" not in saved_data

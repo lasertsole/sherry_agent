@@ -120,6 +120,7 @@ class TestCountCallRegister:
     def test_callback_exception_doesnt_crash(self, reg):
         def bad_callback():
             raise ValueError("boom")
+
         reg.register("s1", "counter", bad_callback, threshold=1)
         # Should not raise
         assert reg.increase("s1", "counter") is True

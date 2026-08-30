@@ -1,7 +1,7 @@
 """Build structured system prompts for sub-agents based on their role and spawn context."""
 
 from ..types.capability import SubagentSessionRole
-from ..types.registry import SubagentRunRecord, ExecutionStatus
+from ..types.registry import SubagentRunRecord
 
 
 def build_subagent_system_prompt(
@@ -50,7 +50,7 @@ def build_subagent_system_prompt(
             "Use `sessions_kill` to cancel unneeded subagents.\n"
             "Use `sessions_steer` to redirect subagents with new instructions."
         )
-    sections.append("## Rules\n" + "\n".join(f"{i+1}. {r}" for i, r in enumerate(rules)))
+    sections.append("## Rules\n" + "\n".join(f"{i + 1}. {r}" for i, r in enumerate(rules)))
 
     # Section 3: Output Format
     output_format = (
@@ -61,8 +61,8 @@ def build_subagent_system_prompt(
         "**Status**: [completed | failed | partial]\n"
         "**Summary**: [1-2 sentence summary of what was accomplished]\n"
         "**Details**: [key findings, data, or decisions]\n"
-        "**Errors**: [any errors encountered, or \"None\"]\n"
-        "**Next Steps**: [recommendations if applicable, or \"None\"]\n"
+        '**Errors**: [any errors encountered, or "None"]\n'
+        '**Next Steps**: [recommendations if applicable, or "None"]\n'
         "```\n"
         "Keep your output concise. Long outputs will be truncated."
     )
@@ -100,7 +100,9 @@ def build_subagent_system_prompt(
         f"  Depth: {depth} / {max_depth}",
     ]
     if is_persistent_session:
-        context_lines.append("  This is a PERSISTENT session — it will remain active after your task.")
+        context_lines.append(
+            "  This is a PERSISTENT session — it will remain active after your task."
+        )
     sections.append("## Session Context\n" + "\n".join(context_lines))
 
     return "\n\n".join(sections)
@@ -123,7 +125,7 @@ def build_active_subagents_section(
     for child in active_children:
         label = child.label or child.task[:60]
         lines.append(
-            f"- [{child.run_id[:8]}] \"{label}\" | depth={child.depth} | "
+            f'- [{child.run_id[:8]}] "{label}" | depth={child.depth} | '
             f"role={child.role} | session={child.child_session_key}"
         )
 

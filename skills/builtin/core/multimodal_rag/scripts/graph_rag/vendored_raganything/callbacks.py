@@ -88,9 +88,7 @@ class ProcessingCallback:
         """Called when document parsing fails."""
 
     # ── Text insertion stage ──────────────────────────────────────
-    def on_text_insert_start(
-        self, file_path: str, text_length: int = 0, **kwargs: Any
-    ) -> None:
+    def on_text_insert_start(self, file_path: str, text_length: int = 0, **kwargs: Any) -> None:
         """Called before text content is inserted into LightRAG."""
 
     def on_text_insert_complete(
@@ -99,9 +97,7 @@ class ProcessingCallback:
         """Called after text content insertion succeeds."""
 
     # ── Multimodal processing stage ───────────────────────────────
-    def on_multimodal_start(
-        self, file_path: str, item_count: int = 0, **kwargs: Any
-    ) -> None:
+    def on_multimodal_start(self, file_path: str, item_count: int = 0, **kwargs: Any) -> None:
         """Called before multimodal content processing begins."""
 
     def on_multimodal_item_complete(
@@ -243,22 +239,14 @@ class MetricsCallback(ProcessingCallback):
         **kw: Any,
     ) -> None:
         self.metrics["documents_failed"] += 1
-        self.metrics["errors"].append(
-            {"file": file_path, "error": str(error), "stage": stage}
-        )
+        self.metrics["errors"].append({"file": file_path, "error": str(error), "stage": stage})
 
-    def on_query_complete(
-        self, query: str, duration_seconds: float = 0.0, **kw: Any
-    ) -> None:
+    def on_query_complete(self, query: str, duration_seconds: float = 0.0, **kw: Any) -> None:
         self.metrics["queries_executed"] += 1
         self.metrics["total_query_time"] += duration_seconds
 
-    def on_query_error(
-        self, query: str, error: BaseException | str = "", **kw: Any
-    ) -> None:
-        self.metrics["errors"].append(
-            {"file": None, "error": str(error), "stage": "query"}
-        )
+    def on_query_error(self, query: str, error: BaseException | str = "", **kw: Any) -> None:
+        self.metrics["errors"].append({"file": None, "error": str(error), "stage": "query"})
 
     def summary(self) -> str:
         """Return a human-readable summary of collected metrics."""
@@ -311,9 +299,7 @@ class CallbackManager:
             TypeError: If *callback* is not a :class:`ProcessingCallback`.
         """
         if not isinstance(callback, ProcessingCallback):
-            raise TypeError(
-                f"Expected ProcessingCallback instance, got {type(callback).__name__}"
-            )
+            raise TypeError(f"Expected ProcessingCallback instance, got {type(callback).__name__}")
         with self._lock:
             self._callbacks.append(callback)
 

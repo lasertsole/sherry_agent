@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { parseSessionCreateTime, matchesSessionFilter, filterSessions } from '../sessionFilter';
 
-/** 本地占位会话格式（SessionSidebar.handleCreateSession 写入的格式） */
+/** Local placeholder session format (the format written by SessionSidebar.handleCreateSession) */
 const LOCAL_FORMAT = 'YYYY-MM-DD HH:mm';
 
-/** 构造一个最小会话记录（与 SessionRecord 的筛选相关字段一致） */
+/** Constructs a minimal session record (fields relevant to SessionRecord filtering) */
 function makeSession(title: string, createTime: string) {
   return { id: `${title}-${createTime}`, title, createTime };
 }
@@ -53,7 +53,7 @@ describe('matchesSessionFilter', () => {
   it('matches within the full [start, end] day range inclusively', () => {
     const range = [new Date(2026, 5, 20), new Date(2026, 5, 22)];
     expect(matchesSessionFilter(item, '', range)).toBe(true);
-    // 边界：会话创建当天的 00:00 与 23:59:59.999 均应包含。
+    // Boundary: the session's creation day at 00:00 and 23:59:59.999 must both be included.
     expect(matchesSessionFilter(makeSession('t', '20260620000000'), '', range)).toBe(true);
     expect(matchesSessionFilter(makeSession('t', '20260622235959'), '', range)).toBe(true);
     expect(matchesSessionFilter(makeSession('t', '20260619235959'), '', range)).toBe(false);
@@ -63,9 +63,9 @@ describe('matchesSessionFilter', () => {
   it('combines keyword AND date range', () => {
     const range = [new Date(2026, 5, 21), new Date(2026, 5, 21)];
     expect(matchesSessionFilter(item, 'detective', range)).toBe(true);
-    // 日期命中但关键字未命中 → 排除。
+    // Date hits but keyword misses -> excluded.
     expect(matchesSessionFilter(item, 'missing', range)).toBe(false);
-    // 关键字命中但日期未命中 → 排除。
+    // Keyword hits but date misses -> excluded.
     expect(matchesSessionFilter(makeSession('Detective Notes', '20250101000000'), 'detective', range)).toBe(false);
   });
 
@@ -104,7 +104,7 @@ describe('filterSessions', () => {
 
   it('filters by keyword only', () => {
     expect(filterSessions(list, 'detective', null)).toEqual([list[0]]);
-    // 两种 createTime 格式均按日期语义参与关键字筛选无关，这里验证标题匹配。
+    // Both createTime formats are irrelevant to keyword filtering by date semantics; here title matching is verified.
     expect(filterSessions(list, '6月', null)).toEqual([list[1]]);
   });
 

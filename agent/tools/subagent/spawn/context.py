@@ -18,7 +18,9 @@ async def prepare_spawned_context(
 
     if context_mode == ContextMode.FORK:
         if not requester_session_id:
-            logger.warning("FORK context requested but no requester_session_id provided, falling back to isolated")
+            logger.warning(
+                "FORK context requested but no requester_session_id provided, falling back to isolated"
+            )
             return []
 
         try:
@@ -30,13 +32,23 @@ async def prepare_spawned_context(
             messages = state.values.get("messages", [])
 
             if messages:
-                logger.info("FORK context: copied {} messages from parent session {}", len(messages), requester_session_id)
+                logger.info(
+                    "FORK context: copied {} messages from parent session {}",
+                    len(messages),
+                    requester_session_id,
+                )
                 return list(messages)
 
-            logger.info("FORK context: no messages found in parent session {}", requester_session_id)
+            logger.info(
+                "FORK context: no messages found in parent session {}", requester_session_id
+            )
             return []
         except Exception as e:
-            logger.error("FORK context: failed to read parent history for session {}: {}", requester_session_id, e)
+            logger.error(
+                "FORK context: failed to read parent history for session {}: {}",
+                requester_session_id,
+                e,
+            )
             return []
 
     return []

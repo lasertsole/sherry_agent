@@ -6,7 +6,6 @@ Covers both consumption paths that share this single length-limit guard:
 """
 
 import re
-from pathlib import Path
 
 from agent.tools.skill_tools.skill_manage import (
     _UMBRELLA_SKILL_CHAR_TARGET,
@@ -19,11 +18,14 @@ from agent.tools.skill_tools.skill_manage import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _skill_with_sections(section_count, section_char_len, prefix_len=0, frontmatter=""):
     """Build a SKILL.md body with ``section_count`` ``## `` sections, each padded
     to ``section_char_len`` chars, plus an optional lead-in of ``prefix_len`` chars."""
     lead = "x" * prefix_len + "\n\n" if prefix_len else ""
-    sections = "\n\n".join(f"## Section {i}\n\n" + "y" * section_char_len for i in range(section_count))
+    sections = "\n\n".join(
+        f"## Section {i}\n\n" + "y" * section_char_len for i in range(section_count)
+    )
     body = lead + sections
     if frontmatter:
         return frontmatter + body
@@ -36,6 +38,7 @@ _FM = "---\nname: my_skill\ndescription: test\n---\n"
 # ---------------------------------------------------------------------------
 # Under-budget behavior
 # ---------------------------------------------------------------------------
+
 
 class TestUnderBudget:
     def test_short_content_returned_unchanged(self):
@@ -62,6 +65,7 @@ class TestUnderBudget:
 # Over-budget with splittable sections
 # ---------------------------------------------------------------------------
 
+
 class TestOverBudgetSplittable:
     def test_splits_into_reference_parts(self):
         # 8 sections x 2000 chars = 16k > 15k target, each section < target
@@ -82,9 +86,7 @@ class TestOverBudgetSplittable:
         assert all(f"## T{i}" in combined for i in range(8))
 
     def test_frontmatter_preserved(self):
-        content = _FM + "\n\n" + "\n\n".join(
-            f"## S{i}\n\n" + "q" * 2000 for i in range(8)
-        )
+        content = _FM + "\n\n" + "\n\n".join(f"## S{i}\n\n" + "q" * 2000 for i in range(8))
         slim, _files = split_oversized_skill(content, target=15_000)
         assert slim.startswith("---\nname: my_skill")
         assert "description: test" in slim
@@ -102,7 +104,6 @@ class TestOverBudgetSplittable:
         content = "\n\n".join(f"## Topic{i}\n\n" + "t" * 2000 for i in range(8))
         slim, files = split_oversized_skill(content, target=15_000)
         assert files
-        part = next(iter(files))
         assert any(part in slim for part in files), "SKILL.md must link the moved files"
 
     def test_no_clobber_of_authored_supporting_file(self):
@@ -125,6 +126,7 @@ class TestOverBudgetSplittable:
 # Over-budget with NO splittable sections (no "## " headings)
 # ---------------------------------------------------------------------------
 
+
 class TestOverBudgetNoSections:
     def test_single_blob_returned_unchanged(self):
         content = _FM + "\n\n" + "plain text with no headings, " * 2000  # > 15k
@@ -146,6 +148,7 @@ class TestOverBudgetNoSections:
 # _write_split_files persistence helper (IO path used by create/edit)
 # ---------------------------------------------------------------------------
 
+
 class TestWriteSplitFiles:
     def test_writes_reference_parts_to_disk(self, tmp_path):
         split_files = {
@@ -159,8 +162,8 @@ class TestWriteSplitFiles:
     def test_skips_invalid_paths(self, tmp_path):
         split_files = {
             "references/part01.md": "ok",
-            "../escape.md": "must be skipped",           # traversal
-            "nested/too/deep.md": "must be skipped",     # not an allowed subdir
+            "../escape.md": "must be skipped",  # traversal
+            "nested/too/deep.md": "must be skipped",  # not an allowed subdir
         }
         _write_split_files(tmp_path, split_files)
         assert (tmp_path / "references" / "part01.md").read_text() == "ok"
@@ -171,6 +174,7 @@ class TestWriteSplitFiles:
 # ---------------------------------------------------------------------------
 # Shared budget constant used by both paths
 # ---------------------------------------------------------------------------
+
 
 class TestSharedBudget:
     def test_default_target_is_umbrella_budget(self):

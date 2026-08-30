@@ -9,11 +9,11 @@ import asyncio
 import re
 import time
 from loguru import logger
-from ..types.registry import SubagentRunRecord, DeliveryStatus, RunOutcome
+from ..types.registry import SubagentRunRecord, RunOutcome
 from ..types.delivery import DeliveryContext
 from ..config import get_config
 from .idempotency import build_idempotency_key
-from .dispatch import resolve_dispatch_type, AnnounceDeliveryResult, run_announce_dispatch
+from .dispatch import AnnounceDeliveryResult, run_announce_dispatch
 
 _delivered_keys: set[str] = set()  # In-memory idempotency tracking
 _delivery_mirror: dict[str, str] = {}  # Content-based deduplication mirror
@@ -43,7 +43,12 @@ _PERMANENT_PATTERNS = [
 ]
 
 _TRANSIENT_RETRY_DELAYS_MS = [5000, 10000, 20000]  # Exponential backoff for transient errors
-_COMPACTION_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000]  # Backoff for nested sub-agent compaction retries
+_COMPACTION_RETRY_DELAYS_MS = [
+    1000,
+    2000,
+    4000,
+    8000,
+]  # Backoff for nested sub-agent compaction retries
 
 
 def _is_already_delivered(run: SubagentRunRecord) -> bool:
@@ -70,7 +75,7 @@ def _check_delivery_mirror(run: SubagentRunRecord) -> bool:
         return True
     _delivery_mirror[content_key] = run.run_id
     if len(_delivery_mirror) > _MIRROR_MAX:  # Evict oldest half when capacity exceeded
-        oldest = list(_delivery_mirror.items())[:_MIRROR_MAX // 2]
+        oldest = list(_delivery_mirror.items())[: _MIRROR_MAX // 2]
         for k, _ in oldest:
             _delivery_mirror.pop(k, None)
     return False
@@ -113,6 +118,7 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
 
     if not run.completion.required:
         from ..registry import mark_delivery_delivered, set_run
+
         updated = mark_delivery_delivered(run)
         set_run(updated)
         return AnnounceDeliveryResult(success=True)
@@ -120,7 +126,6 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
     from ..registry import (
         mark_delivery_in_progress,
         mark_delivery_delivered,
-        mark_delivery_failed,
         mark_delivery_suspended,
         set_run,
         count_pending_descendant_runs,
@@ -139,9 +144,15 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
     target_key = run.requester_session_key
     try:
         from ..hooks.progress import fire_delivery_target_hook
+
         redirect = await fire_delivery_target_hook(run, target_key)
         if redirect is not None:
-            logger.info("Delivery target hook redirected run {} from {} to {}", run.run_id, target_key, redirect)
+            logger.info(
+                "Delivery target hook redirected run {} from {} to {}",
+                run.run_id,
+                target_key,
+                redirect,
+            )
             run = run.model_copy(update={"requester_session_key": redirect})
             set_run(run)
     except Exception as e:
@@ -156,8 +167,12 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
     elif not result.suspended:
         now = time.monotonic()
         from ..registry.delivery_state import should_discard_delivery
-        if should_discard_delivery(run, config.max_announce_retry_count, config.announce_hard_expiry_ms, now):
+
+        if should_discard_delivery(
+            run, config.max_announce_retry_count, config.announce_hard_expiry_ms, now
+        ):
             from ..registry import mark_delivery_discarded
+
             updated = mark_delivery_discarded(run, reason="max_retries_or_expiry")
             set_run(updated)
             result.terminal = True
@@ -187,14 +202,21 @@ async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliv
             error_class = classify_delivery_error(error_str)
             logger.warning(
                 "Announce delivery attempt {}/{} failed for run {} [{}]: {}",
-                attempt + 1, config.announce_retry_max, run.run_id, error_class, error_str,
+                attempt + 1,
+                config.announce_retry_max,
+                run.run_id,
+                error_class,
+                error_str,
             )
 
             if error_class == "permanent":
-                logger.error("Permanent delivery error for run {}, aborting: {}", run.run_id, error_str)
+                logger.error(
+                    "Permanent delivery error for run {}, aborting: {}", run.run_id, error_str
+                )
                 return AnnounceDeliveryResult(success=False, error=f"permanent: {error_str}")
 
             from ..registry import mark_delivery_failed, set_run
+
             updated = mark_delivery_failed(run, error_str)
             set_run(updated)
             run = updated
@@ -207,7 +229,10 @@ async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliv
                 delay = resolve_compaction_retry_delay_ms(compaction_attempt - 1)
             else:
                 from ..registry.helpers import resolve_announce_retry_delay_seconds
-                delay = resolve_announce_retry_delay_seconds(attempt, config.announce_retry_delay_base_ms)
+
+                delay = resolve_announce_retry_delay_seconds(
+                    attempt, config.announce_retry_delay_base_ms
+                )
 
             await asyncio.sleep(delay)
 
@@ -217,6 +242,7 @@ async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliv
 def _build_delivery_context(run: SubagentRunRecord) -> DeliveryContext:
     """Build a DeliveryContext from a run record, resolving the announce origin."""
     from .origin import resolve_announce_origin
+
     origin = resolve_announce_origin(run)
 
     return DeliveryContext(
@@ -280,7 +306,9 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
         if len(text) > 4000:  # Truncate long results to prevent oversized messages
             text = text[:4000] + "\n... [truncated]"
         content_parts.append(f"Result:\n{text}")
-    content_parts.append("\nPlease review the sub-agent execution results above. Provide further instructions if needed.")
+    content_parts.append(
+        "\nPlease review the sub-agent execution results above. Provide further instructions if needed."
+    )
 
     msg = InboundMessage(
         channel="system",

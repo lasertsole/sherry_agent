@@ -34,6 +34,7 @@ from skills.builtin.core.clawhub.scripts import clawhub_runner
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _fake_scan_result(recommendation: str | None = "SAFE"):
     """Build a no-backend ScanResult-like stub with the predicate properties."""
     return SimpleNamespace(
@@ -49,9 +50,7 @@ def _make_skill(plugins_dir: Path, name: str) -> Path:
     """Create a skill dir ``plugins_dir/<name>/SKILL.md`` and return the path."""
     skill_root = plugins_dir / name
     skill_root.mkdir(parents=True, exist_ok=True)
-    (skill_root / "SKILL.md").write_text(
-        f"---\nname: {name}\n---\n\nbody\n", encoding="utf-8"
-    )
+    (skill_root / "SKILL.md").write_text(f"---\nname: {name}\n---\n\nbody\n", encoding="utf-8")
     return skill_root
 
 
@@ -104,8 +103,9 @@ def clamp_globals(tmp_path):
     """Point clawhub_runner's plugin dir + state file at tmp_path."""
     plugins_dir = tmp_path / "plugins"
     state_file = tmp_path / "plugins" / ".state.json"
-    with patch.object(clawhub_runner, "PLUGIN_SKILLS_DIR", plugins_dir), patch.object(
-        clawhub_runner, "SKILLS_STATE_FILE", state_file
+    with (
+        patch.object(clawhub_runner, "PLUGIN_SKILLS_DIR", plugins_dir),
+        patch.object(clawhub_runner, "SKILLS_STATE_FILE", state_file),
     ):
         yield plugins_dir, state_file
 
@@ -113,6 +113,7 @@ def clamp_globals(tmp_path):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestScanPluginSkills:
     def test_do_not_install_rolled_back_and_state_pruned(self, clamp_globals):

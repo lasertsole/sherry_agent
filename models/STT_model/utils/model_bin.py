@@ -10,15 +10,11 @@ import numpy as np
 from pathlib import Path
 from utils.infer_utils import (
     CharTokenizer,
-    Hypothesis,
-    ONNXRuntimeError,
     OrtInferSession,
-    TokenIDConverter,
     get_logger,
     read_yaml,
 )
 from utils.frontend import WavFrontend
-from utils.infer_utils import pad_list
 
 logging = get_logger()
 
@@ -55,7 +51,7 @@ class SenseVoiceSmallONNX:
 
         # self.converter = TokenIDConverter(token_list)
         self.tokenizer = CharTokenizer()
-        config["frontend_conf"]['cmvn_file'] = cmvn_file
+        config["frontend_conf"]["cmvn_file"] = cmvn_file
         self.frontend = WavFrontend(**config["frontend_conf"])
         self.ort_infer = OrtInferSession(
             model_file, device_id, intra_op_num_threads=intra_op_num_threads
@@ -63,23 +59,26 @@ class SenseVoiceSmallONNX:
         self.batch_size = batch_size
         self.blank_id = 0
 
-    def __call__(self, 
-                 wav_content: str | np.ndarray | list[str], 
-                 language: list, 
-                 textnorm: list,
-                 tokenizer=None,
-                 **kwargs) -> list:
+    def __call__(
+        self,
+        wav_content: str | np.ndarray | list[str],
+        language: list,
+        textnorm: list,
+        tokenizer=None,
+        **kwargs,
+    ) -> list:
         waveform_list = self.load_data(wav_content, self.frontend.opts.frame_opts.samp_freq)
         waveform_nums = len(waveform_list)
         asr_res = []
         for beg_idx in range(0, waveform_nums, self.batch_size):
             end_idx = min(waveform_nums, beg_idx + self.batch_size)
             feats, feats_len = self.extract_feat(waveform_list[beg_idx:end_idx])
-            ctc_logits, encoder_out_lens = self.infer(feats, 
-                                 feats_len, 
-                                 np.array(language, dtype=np.int32), 
-                                 np.array(textnorm, dtype=np.int32)
-                                 )
+            ctc_logits, encoder_out_lens = self.infer(
+                feats,
+                feats_len,
+                np.array(language, dtype=np.int32),
+                np.array(textnorm, dtype=np.int32),
+            )
             # back to torch.Tensor
             ctc_logits = torch.from_numpy(ctc_logits).float()
             # support batch_size=1 only currently
@@ -89,7 +88,7 @@ class SenseVoiceSmallONNX:
 
             mask = yseq != self.blank_id
             token_int = yseq[mask].tolist()
-            
+
             if tokenizer is not None:
                 asr_res.append(tokenizer.tokens2text(token_int))
             else:
@@ -134,10 +133,12 @@ class SenseVoiceSmallONNX:
         feats = np.array(feat_res).astype(np.float32)
         return feats
 
-    def infer(self, 
-              feats: np.ndarray, 
-              feats_len: np.ndarray,
-              language: np.ndarray,
-              textnorm: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
+    def infer(
+        self,
+        feats: np.ndarray,
+        feats_len: np.ndarray,
+        language: np.ndarray,
+        textnorm: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
         outputs = self.ort_infer([feats, feats_len, language, textnorm])
         return outputs

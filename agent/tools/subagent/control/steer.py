@@ -8,13 +8,11 @@ import asyncio
 import time
 from loguru import logger
 from ..types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
-from ..types.capability import ControlScope
 from ..registry import (
     get_run,
     set_run,
     update_run,
     cancel_task,
-    register_task,
     replace_run_after_steer,
     save_kill_reconciliation,
 )
@@ -38,7 +36,9 @@ async def steer_subagent_run(
         return None
 
     if run.execution.status not in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED):
-        logger.warning("steer_subagent_run: run {} not steerable (status={})", run_id, run.execution.status)
+        logger.warning(
+            "steer_subagent_run: run {} not steerable (status={})", run_id, run.execution.status
+        )
         return None
 
     if run.swarm_group_id:
@@ -86,30 +86,41 @@ async def steer_subagent_run(
     # Register the new generation with the terminal tracker so a late completion
     # callback from the cancelled generation is rejected as stale.
     from ..registry.terminal_gen import get_terminal_gen_tracker
+
     get_terminal_gen_tracker().register_expected(run_id, updated.generation)
 
     frozen_fallback = None
     if run.completion and run.completion.result_text:
         frozen_fallback = run.completion.result_text[:500]
 
-    updated = updated.model_copy(update={
-        "suppress_announce_reason": "steer-restart",  # Suppress announce for the pre-steer generation
-    })
+    updated = updated.model_copy(
+        update={
+            "suppress_announce_reason": "steer-restart",  # Suppress announce for the pre-steer generation
+        }
+    )
     if new_task:
         updated = updated.model_copy(update={"task": new_task})
     if frozen_fallback:
         # Preserve the previous generation's output as context for the steered run
         from ..registry.memory import update as _memory_update
-        _memory_update(updated.run_id, completion=updated.completion.model_copy(update={
-            "result_text": f"[FROZEN FALLBACK from previous generation]\n{frozen_fallback}",
-        }))
+
+        _memory_update(
+            updated.run_id,
+            completion=updated.completion.model_copy(
+                update={
+                    "result_text": f"[FROZEN FALLBACK from previous generation]\n{frozen_fallback}",
+                }
+            ),
+        )
         updated = get_run(updated.run_id) or updated
 
     set_run(updated)
 
     logger.info(
         "Steered subagent run {}: generation={}, accumulated_runtime_ms={:.0f}",
-        run_id, updated.generation, updated.accumulated_runtime_ms,
+        run_id,
+        updated.generation,
+        updated.accumulated_runtime_ms,
     )
 
     steer_message = _build_steer_message(new_task, new_instructions, run)
@@ -132,14 +143,18 @@ async def steer_subagent_run(
         logger.error("Failed to rebuild child agent for steer {}: {}", run_id, e)
         return updated
 
-    restarted = updated.model_copy(update={
-        "execution": updated.execution.model_copy(update={
-            "status": ExecutionStatus.RUNNING,
-            "started_at": time.monotonic(),
-        }),
-        "pause_reason": None,
-        "suppress_announce_reason": None,
-    })
+    restarted = updated.model_copy(
+        update={
+            "execution": updated.execution.model_copy(
+                update={
+                    "status": ExecutionStatus.RUNNING,
+                    "started_at": time.monotonic(),
+                }
+            ),
+            "pause_reason": None,
+            "suppress_announce_reason": None,
+        }
+    )
     set_run(restarted)
 
     timeout_seconds = config.run_timeout_seconds
@@ -153,6 +168,7 @@ async def steer_subagent_run(
     )
 
     from ..registry import register_task as _register_task
+
     _register_task(run_id, bg_task)
 
     return restarted
@@ -161,6 +177,7 @@ async def steer_subagent_run(
 async def _abort_settle_wait(run_id: str, timeout: float = 5.0) -> bool:
     """Wait for the current task to settle after cancellation, up to the given timeout."""
     from ..registry import get_task
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         task = get_task(run_id)
@@ -199,23 +216,34 @@ async def _execute_steered_subagent(
         if agent_result and "messages" in agent_result:
             last_msg = agent_result["messages"][-1] if agent_result["messages"] else None
             if last_msg and hasattr(last_msg, "content"):
-                result_text = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
+                result_text = (
+                    last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
+                )
 
     except asyncio.TimeoutError:
-        outcome = RunOutcome(status=RunOutcomeStatus.TIMEOUT, error=f"Steered subagent timed out after {timeout_seconds}s")
+        outcome = RunOutcome(
+            status=RunOutcomeStatus.TIMEOUT,
+            error=f"Steered subagent timed out after {timeout_seconds}s",
+        )
     except asyncio.CancelledError:
         outcome = RunOutcome(status=RunOutcomeStatus.KILLED, error="Steered subagent was killed")
     except Exception as e:
         outcome = RunOutcome(status=RunOutcomeStatus.ERROR, error=str(e))
     finally:
         from ..registry import remove_task
+
         remove_task(run.run_id)
 
         from ..registry.lifecycle import complete_subagent_run
-        await complete_subagent_run(run.run_id, outcome, result_text, expected_generation=run.generation)
+
+        await complete_subagent_run(
+            run.run_id, outcome, result_text, expected_generation=run.generation
+        )
 
 
-def _build_steer_message(new_task: str | None, new_instructions: str | None, original_run: SubagentRunRecord) -> str:
+def _build_steer_message(
+    new_task: str | None, new_instructions: str | None, original_run: SubagentRunRecord
+) -> str:
     """Compose the human-readable steer message sent to the sub-agent."""
     parts = ["[STEER] Your task has been redirected by your parent agent.\n"]
 

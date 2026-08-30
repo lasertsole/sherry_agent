@@ -3,25 +3,31 @@ import type { ToastServiceMethods } from 'primevue/toastservice';
 import { resolveRuntimeT } from '~/composables/i18nRuntime';
 
 /**
- * 全局 toast 通知层。
+ * Global toast notification layer.
  *
- * 设计约束：
- *  - 不在模块顶层 import `useToast`（Nuxt 自动导入 / PrimeVue composable），因为
- *    单测（bare vitest）环境没有该自动导入。改为由 `app.vue` 在 setup 中把真实的
- *    `useToast()` 结果通过 `registerToastApi` 注入进来。
- *  - 所有导出函数在“未注册”或 `import.meta.client === false` 时都是安全的空操作，
- *    绝不让 toast 逻辑破坏请求链路。
- *  - i18n 的 `t` 在非 Nuxt 上下文（含单测）下安全回退为原样返回 key，不抛错。
+ * Design constraints:
+ *  - Do not import `useToast` (Nuxt auto-import / PrimeVue composable) at the module
+ *    top level, because the unit-test (bare vitest) environment lacks that auto-import.
+ *    Instead, `app.vue` injects the real `useToast()` result via `registerToastApi`
+ *    during setup.
+ *  - All exported functions are safe no-ops when "unregistered" or when
+ *    `import.meta.client === false`; toast logic must never break the request chain.
+ *  - The i18n `t` function safely falls back to returning the key as-is in non-Nuxt
+ *    contexts (including unit tests), without throwing.
  */
 
 /**
- * 仅测试用：显式覆盖 client 语义标志（生产代码勿调用）。
- * 背景：Vitest 的 import.meta 没有 Nuxt 的 client/server 语义（undefined → falsy），
- * 测试需显式注入。
- * 关键实现约束：生产运行时必须走**字面量** `import.meta.client`——Nuxt/Vite 的构建期
- * 静态替换只作用于该字面量表达式；若经 `const meta = import.meta` 别名访问
- * `meta.client`，别名属性在运行时不存在（undefined → 恒 falsy），客户端守卫会
- * 全部静默失效（2026-08 E2E 实测踩坑：toast 注册/弹写在浏览器全程空操作）。
+ * For tests only: explicitly override the client-semantics flag (do not call in
+ * production code).
+ * Background: Vitest's `import.meta` lacks Nuxt's client/server semantics
+ * (undefined → falsy), so tests must inject this explicitly.
+ * Key implementation constraint: production runtime must use the **literal**
+ * `import.meta.client` — Nuxt/Vite's build-time static replacement only applies to
+ * that literal expression. If accessed through an alias like `const meta = import.meta`
+ * and then `meta.client`, the aliased property does not exist at runtime
+ * (undefined → always falsy), and every client guard silently fails
+ * (pitfall confirmed by 2026-08 E2E testing: toast registration/display was a
+ * complete no-op in the browser).
  */
 let clientFlagOverride: boolean | null = null;
 
@@ -29,22 +35,24 @@ export function _setClientFlag(client: boolean): void {
   clientFlagOverride = client;
 }
 
-/** 当前是否处于浏览器客户端环境（生产走构建期静态替换；测试走显式覆盖）。 */
+/** Whether we are currently in a browser client environment (production uses build-time static replacement; tests use explicit override). */
 function isClient(): boolean {
   if (clientFlagOverride !== null) return clientFlagOverride;
   return import.meta.client === true;
 }
 
-/** useToast() 返回的 ToastServiceMethods，我们只关心 .add(...)。 */
+/** The ToastServiceMethods returned by useToast(); we only care about .add(...). */
 type ToastApi = Pick<ToastServiceMethods, 'add'>;
 
 let toastApi: ToastApi | null = null;
 
 /**
- * 注册全局 toast 实例。由 app.vue（客户端 setup）调用。
- * 非客户端或入参为空时不注册（保留空操作）。
+ * Register the global toast instance. Called by app.vue (client setup).
+ * Does not register when not on the client or when the argument is empty
+ * (stays a no-op).
  *
- * @param api useToast() 的返回值；传 null/undefined 表示注销（回到空操作）。
+ * @param api The value returned by useToast(); pass null/undefined to unregister
+ *   (back to no-op).
  */
 export function registerToastApi(api: ToastApi | null): void {
   if (!isClient()) return;
@@ -52,11 +60,13 @@ export function registerToastApi(api: ToastApi | null): void {
 }
 
 /**
- * 安全获取 i18n 翻译。
+ * Safely get an i18n translation.
  *
- * 委托 `resolveRuntimeT()`（i18nRuntime.ts）在 Nuxt 运行时解析真正的翻译函数
- * （nuxt-i18n v10 的 `$i18n` 是不含 t 的 locale 状态代理，不能直接用）；
- * 单测 / 非 Nuxt 上下文回退为原样返回 key。无论哪种情况都不抛出。
+ * Delegates to `resolveRuntimeT()` (i18nRuntime.ts) to resolve the real translation
+ * function within the Nuxt runtime (nuxt-i18n v10's `$i18n` is a locale state proxy
+ * that does not include `t`, so it cannot be used directly);
+ * unit tests / non-Nuxt contexts fall back to returning the key as-is.
+ * Never throws in either case.
  */
 function safeT(key: string): string {
   if (!isClient()) return key;
@@ -64,60 +74,61 @@ function safeT(key: string): string {
   return t ? t(key) : key;
 }
 
-/** 统一派发入口：未注册 / 非客户端时静默返回。 */
+/** Unified dispatch entry: silently returns when unregistered / not on the client. */
 function show(message: ToastMessageOptions): void {
   if (!isClient() || !toastApi) return;
   toastApi.add(message);
 }
 
 /**
- * info 级别 toast。
- * @param summary 标题（已翻译）
- * @param detail  正文（可选）
- * @param life    展示时长（毫秒，默认 3000）
+ * info-level toast.
+ * @param summary Title (already translated)
+ * @param detail  Body (optional)
+ * @param life    Display duration (ms, default 3000)
  */
 export function toastInfo(summary?: string, detail?: string, life = 3000): void {
   show({ severity: 'info', summary, detail, life });
 }
 
 /**
- * success 级别 toast。
- * @param summary 标题（已翻译）
- * @param detail  正文（可选）
- * @param life    展示时长（毫秒，默认 3000）
+ * success-level toast.
+ * @param summary Title (already translated)
+ * @param detail  Body (optional)
+ * @param life    Display duration (ms, default 3000)
  */
 export function toastSuccess(summary?: string, detail?: string, life = 3000): void {
   show({ severity: 'success', summary, detail, life });
 }
 
 /**
- * warn 级别 toast。
- * @param summary 标题（已翻译）
- * @param detail  正文（可选）
- * @param life    展示时长（毫秒，默认 5000）
+ * warn-level toast.
+ * @param summary Title (already translated)
+ * @param detail  Body (optional)
+ * @param life    Display duration (ms, default 5000)
  */
 export function toastWarn(summary?: string, detail?: string, life = 5000): void {
   show({ severity: 'warn', summary, detail, life });
 }
 
 /**
- * error 级别 toast。
- * @param summary 标题（已翻译）
- * @param detail  正文（可选）
- * @param life    展示时长（毫秒，默认 8000）
+ * error-level toast.
+ * @param summary Title (already translated)
+ * @param detail  Body (optional)
+ * @param life    Display duration (ms, default 8000)
  */
 export function toastError(summary?: string, detail?: string, life = 8000): void {
   show({ severity: 'error', summary, detail, life });
 }
 
-/** 请求失败兜底文案 key（与 locales/*.json 的 errors.requestFailed 对应）。 */
+/** Fallback message key for request failures (corresponds to errors.requestFailed in locales/*.json). */
 const REQUEST_FAILED_KEY = 'errors.requestFailed';
 
 /**
- * 请求失败时统一弹出的 toast，供 requestApi.ts 在 fetch 失败后调用（保证每次请求
- * 至多一次）。summary 使用安全翻译的 `errors.requestFailed`。
+ * Toast shown uniformly when a request fails; called by requestApi.ts after a fetch
+ * failure (guarantees at most one toast per request). The summary uses the safely
+ * translated `errors.requestFailed` key.
  *
- * @param detail 额外的失败原因（可选）
+ * @param detail Additional failure reason (optional)
  */
 export function sendRequestErrorToast(detail?: string): void {
   const summary = safeT(REQUEST_FAILED_KEY);

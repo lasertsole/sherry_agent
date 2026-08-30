@@ -6,19 +6,17 @@ import ko from '../../i18n/locales/ko.json';
 
 type Dict = { [key: string]: unknown };
 
-/** 扁平化嵌套对象为点路径 key 列表，用于对齐校验 */
+/** Flattens a nested object into a list of dot-path keys, used for parity checks */
 const flatten = (obj: Dict, prefix = ''): string[] =>
-  Object.keys(obj).flatMap((k) => {
+  Object.keys(obj).flatMap(k => {
     const path = prefix ? `${prefix}.${k}` : k;
     const value = obj[k];
-    return value !== null && typeof value === 'object'
-      ? flatten(value as Dict, path)
-      : [path];
+    return value !== null && typeof value === 'object' ? flatten(value as Dict, path) : [path];
   });
 
 /**
- * 校验插值占位符（{xxx}）对齐。
- * 返回每个叶子 key 的占位符集合。
+ * Validates that interpolation placeholders ({xxx}) line up.
+ * Returns the placeholder set for every leaf key.
  */
 const placeholdersOf = (obj: Dict, prefix = ''): Record<string, Set<string>> => {
   const result: Record<string, Set<string>> = {};
@@ -30,7 +28,7 @@ const placeholdersOf = (obj: Dict, prefix = ''): Record<string, Set<string>> => 
     } else {
       const placeholders = new Set<string>();
       for (const match of String(value).matchAll(/\{(\w+)\}/g)) {
-        placeholders.add(match[1]);
+        placeholders.add(match[1]!);
       }
       result[path] = placeholders;
     }
@@ -52,9 +50,7 @@ describe('i18n locale parity', () => {
     for (const other of others) {
       const otherPlaceholders = placeholdersOf(other as Dict);
       for (const key of Object.keys(otherPlaceholders)) {
-        expect([...otherPlaceholders[key]].sort()).toEqual(
-          [...placeholdersOf(zh as Dict)[key]].sort(),
-        );
+        expect([...otherPlaceholders[key]!].sort()).toEqual([...placeholdersOf(zh as Dict)[key]!].sort());
       }
     }
   });

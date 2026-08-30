@@ -2,9 +2,8 @@
 
 import pytest
 import tempfile
-import shutil
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 def pytest_configure(config):
@@ -20,13 +19,15 @@ def unit_test_config():
     """Patch ROOT_DIR and AUTO_SKILLS_DIR to temp directories for isolated tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
-        with patch("config.path.ROOT_DIR", tmp_path), \
-             patch("config.path.SRC_DIR", tmp_path / "src"), \
-             patch("config.path.AUTO_SKILLS_DIR", tmp_path / "skills" / "auto"), \
-             patch("config.path.WORKSPACE_DIR", tmp_path / "workspace"), \
-             patch("config.path.TEMP_DIR", tmp_path / "temp"), \
-             patch("config.path.MODELS_DIR", tmp_path / "models"), \
-             patch("config.path.SKILLS_DIR", tmp_path / "skills"):
+        with (
+            patch("config.path.ROOT_DIR", tmp_path),
+            patch("config.path.SRC_DIR", tmp_path / "src"),
+            patch("config.path.AUTO_SKILLS_DIR", tmp_path / "skills" / "auto"),
+            patch("config.path.WORKSPACE_DIR", tmp_path / "workspace"),
+            patch("config.path.TEMP_DIR", tmp_path / "temp"),
+            patch("config.path.MODELS_DIR", tmp_path / "models"),
+            patch("config.path.SKILLS_DIR", tmp_path / "skills"),
+        ):
             yield tmp_path
 
 
@@ -41,7 +42,7 @@ def tmp_skills_dir(unit_test_config):
     test_skill_dir.mkdir()
     (test_skill_dir / "SKILL.md").write_text(
         "---\nname: test_skill\ndescription: A test skill\n---\n\nThis is a test skill body.",
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     return skills_dir
@@ -51,13 +52,13 @@ def tmp_skills_dir(unit_test_config):
 def message_bus():
     """Create a fresh MessageBus instance for bus tests."""
     from bus.core import MessageBus
+
     return MessageBus()
 
 
 @pytest.fixture(autouse=True)
 def clean_registers():
     """Clear all register sessions before each test to prevent state leakage."""
-    from runtime import clear_all_register_sessions
     yield
     # Cleanup after test if needed
 
@@ -66,8 +67,10 @@ def clean_registers():
 def mock_state_register_mem():
     """Provide a clean StateRegisterMeM instance for module tests."""
     from runtime.state_register import StateRegisterMeM
+
     # Force a fresh instance by clearing the singleton
     from runtime.core import Register
+
     if StateRegisterMeM in Register._instances:
         del Register._instances[StateRegisterMeM]
     reg = StateRegisterMeM()

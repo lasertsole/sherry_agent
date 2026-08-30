@@ -1,4 +1,4 @@
-﻿"""Native DOCX IR builder: ``extract_docx_blocks`` output → :class:`IRDoc`.
+"""Native DOCX IR builder: ``extract_docx_blocks`` output → :class:`IRDoc`.
 
 Input contract: a list of block dicts as produced by
 ``lightrag.parser.docx.parse_document.extract_docx_blocks``. Each
@@ -294,12 +294,8 @@ class NativeDocxIRBuilder:
             # equations, then drawings — each ``re.sub`` operates on the
             # output of the previous pass.
             content_template = _TABLE_TAG_RE.sub(builder.replace_table, raw_content)
-            content_template = _EQUATION_TAG_RE.sub(
-                builder.replace_equation, content_template
-            )
-            content_template = DRAWING_TAG_PATTERN.sub(
-                builder.replace_drawing, content_template
-            )
+            content_template = _EQUATION_TAG_RE.sub(builder.replace_equation, content_template)
+            content_template = DRAWING_TAG_PATTERN.sub(builder.replace_drawing, content_template)
 
             positions = [
                 IRPosition(type="paraid", range=[uuid_start, uuid_end]),

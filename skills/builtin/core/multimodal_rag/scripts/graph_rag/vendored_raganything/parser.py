@@ -60,9 +60,7 @@ class MineruExecutionError(Exception):
     def __init__(self, return_code, error_msg):
         self.return_code = return_code
         self.error_msg = error_msg
-        super().__init__(
-            f"Mineru command failed with return code {return_code}: {error_msg}"
-        )
+        super().__init__(f"Mineru command failed with return code {return_code}: {error_msg}")
 
 
 class Parser:
@@ -118,9 +116,7 @@ class Parser:
 
             # If no extension in URL, try Content-Type header
             if not suffix:
-                content_type = (
-                    response.headers.get("Content-Type", "").split(";")[0].strip()
-                )
+                content_type = response.headers.get("Content-Type", "").split(";")[0].strip()
                 if content_type:
                     import mimetypes
 
@@ -154,9 +150,7 @@ class Parser:
                         f"Cleaned up temporary file after failed download: {tmp_path}"
                     )
                 except Exception as cleanup_error:
-                    self.logger.warning(
-                        f"Failed to clean up temp file {tmp_path}: {cleanup_error}"
-                    )
+                    self.logger.warning(f"Failed to clean up temp file {tmp_path}: {cleanup_error}")
 
             self.logger.error(f"Failed to download file from {url}: {e}")
             raise RuntimeError(f"Failed to download file from {url}: {e}")
@@ -169,9 +163,7 @@ class Parser:
         pass
 
     @staticmethod
-    def _unique_output_dir(
-        base_dir: Union[str, Path], file_path: Union[str, Path]
-    ) -> Path:
+    def _unique_output_dir(base_dir: Union[str, Path], file_path: Union[str, Path]) -> Path:
         """Create a unique output subdirectory for a file to prevent same-name collisions.
 
         When multiple files share the same name (e.g. dir1/paper.pdf and dir2/paper.pdf),
@@ -226,9 +218,7 @@ class Parser:
                 temp_path = Path(temp_dir)
 
                 # Convert to PDF using LibreOffice
-                cls.logger.info(
-                    f"Converting {doc_path.name} to PDF using LibreOffice..."
-                )
+                cls.logger.info(f"Converting {doc_path.name} to PDF using LibreOffice...")
 
                 # Prepare subprocess parameters to hide console window on Windows
                 # Try LibreOffice commands in order of preference
@@ -260,13 +250,9 @@ class Parser:
 
                         # Hide console window on Windows
                         if _IS_WINDOWS:
-                            convert_subprocess_kwargs["creationflags"] = (
-                                subprocess.CREATE_NO_WINDOW
-                            )
+                            convert_subprocess_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-                        result = subprocess.run(
-                            convert_cmd, **convert_subprocess_kwargs
-                        )
+                        result = subprocess.run(convert_cmd, **convert_subprocess_kwargs)
 
                         if result.returncode == 0:
                             conversion_successful = True
@@ -287,15 +273,12 @@ class Parser:
                             cls.logger.warning(f"LibreOffice command '{cmd}' not found")
                         else:
                             cls.logger.debug(
-                                f"LibreOffice command '{cmd}' not found, "
-                                f"trying next candidate"
+                                f"LibreOffice command '{cmd}' not found, trying next candidate"
                             )
                     except subprocess.TimeoutExpired:
                         cls.logger.warning(f"LibreOffice command '{cmd}' timed out")
                     except Exception as e:
-                        cls.logger.error(
-                            f"LibreOffice command '{cmd}' failed with exception: {e}"
-                        )
+                        cls.logger.error(f"LibreOffice command '{cmd}' failed with exception: {e}")
 
                 if not conversion_successful:
                     raise RuntimeError(
@@ -317,9 +300,7 @@ class Parser:
                     )
 
                 pdf_path = pdf_files[0]
-                cls.logger.info(
-                    f"Generated PDF: {pdf_path.name} ({pdf_path.stat().st_size} bytes)"
-                )
+                cls.logger.info(f"Generated PDF: {pdf_path.name} ({pdf_path.stat().st_size} bytes)")
 
                 # Validate the generated PDF
                 if pdf_path.stat().st_size < 100:  # Very small file, likely empty
@@ -374,9 +355,7 @@ class Parser:
                     try:
                         with open(text_path, "r", encoding=encoding) as f:
                             text_content = f.read()
-                        cls.logger.info(
-                            f"Successfully read file with {encoding} encoding"
-                        )
+                        cls.logger.info(f"Successfully read file with {encoding} encoding")
                         break
                     except UnicodeDecodeError:
                         continue
@@ -408,9 +387,7 @@ class Parser:
                 support_chinese = True
                 try:
                     if "WenQuanYi" not in pdfmetrics.getRegisteredFontNames():
-                        if not Path(
-                            "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc"
-                        ).exists():
+                        if not Path("/usr/share/fonts/wqy-microhei/wqy-microhei.ttc").exists():
                             support_chinese = False
                             cls.logger.warning(
                                 "WenQuanYi font not found at /usr/share/fonts/wqy-microhei/wqy-microhei.ttc. Chinese characters may not render correctly."
@@ -518,9 +495,7 @@ class Parser:
                         # Regular text lines
                         # Escape special characters for ReportLab
                         safe_line = (
-                            line.replace("&", "&amp;")
-                            .replace("<", "&lt;")
-                            .replace(">", "&gt;")
+                            line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                         )
 
                         # Create paragraph
@@ -545,9 +520,7 @@ class Parser:
                     "Please install it using: pip install reportlab"
                 )
             except Exception as e:
-                raise RuntimeError(
-                    f"Failed to convert text file {text_path.name} to PDF: {str(e)}"
-                )
+                raise RuntimeError(f"Failed to convert text file {text_path.name} to PDF: {str(e)}")
 
             # Validate the generated PDF
             if not pdf_path.exists() or pdf_path.stat().st_size < 100:
@@ -686,9 +659,7 @@ class Parser:
         Returns:
             bool: True if installation is valid, False otherwise
         """
-        raise NotImplementedError(
-            "check_installation must be implemented by subclasses"
-        )
+        raise NotImplementedError("check_installation must be implemented by subclasses")
 
 
 class MineruParser(Parser):
@@ -786,9 +757,7 @@ class MineruParser(Parser):
         # Validate env if provided
         if custom_env is not None:
             if not isinstance(custom_env, dict):
-                raise TypeError(
-                    f"env must be a dictionary, got {type(custom_env).__name__}"
-                )
+                raise TypeError(f"env must be a dictionary, got {type(custom_env).__name__}")
             for k, v in custom_env.items():
                 if not isinstance(k, str) or not isinstance(v, str):
                     raise TypeError("env keys and values must be strings")
@@ -1006,9 +975,7 @@ class MineruParser(Parser):
                     json_file = candidate_json
                     images_base_dir = subdir
                     found = True
-                    cls.logger.info(
-                        f"Found MinerU output in subdirectory: {subdir.name}"
-                    )
+                    cls.logger.info(f"Found MinerU output in subdirectory: {subdir.name}")
                     break
 
             # Fallback to method-based path if scanning didn't find output
@@ -1068,9 +1035,7 @@ class MineruParser(Parser):
                         ]:
                             if field_name in item and item[field_name]:
                                 img_path = item[field_name]
-                                absolute_img_path = (
-                                    images_base_dir / img_path
-                                ).resolve()
+                                absolute_img_path = (images_base_dir / img_path).resolve()
 
                                 # Security check: ensure the image path is within the base directory
                                 resolved_base = images_base_dir.resolve()
@@ -1218,9 +1183,7 @@ class MineruParser(Parser):
 
             # If format is not natively supported by MinerU, convert it
             if ext not in mineru_supported_formats:
-                self.logger.info(
-                    f"Converting {ext} image to PNG for MinerU compatibility..."
-                )
+                self.logger.info(f"Converting {ext} image to PNG for MinerU compatibility...")
 
                 try:
                     from PIL import Image
@@ -1267,9 +1230,7 @@ class MineruParser(Parser):
                 except Exception as e:
                     if temp_converted_file and temp_converted_file.exists():
                         temp_converted_file.unlink()
-                    raise RuntimeError(
-                        f"Failed to convert image {image_path.name}: {str(e)}"
-                    )
+                    raise RuntimeError(f"Failed to convert image {image_path.name}: {str(e)}")
 
             name_without_suff = image_path.stem
 
@@ -1343,9 +1304,7 @@ class MineruParser(Parser):
             pdf_path = self.convert_office_to_pdf(doc_path, output_dir)
 
             # Parse the converted PDF
-            return self.parse_pdf(
-                pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs
-            )
+            return self.parse_pdf(pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs)
 
         except Exception as e:
             self.logger.error(f"Error in parse_office_doc: {str(e)}")
@@ -1377,9 +1336,7 @@ class MineruParser(Parser):
             pdf_path = self.convert_text_to_pdf(text_path, output_dir)
 
             # Parse the converted PDF
-            return self.parse_pdf(
-                pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs
-            )
+            return self.parse_pdf(pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs)
 
         except Exception as e:
             self.logger.error(f"Error in parse_text_file: {str(e)}")
@@ -1430,8 +1387,7 @@ class MineruParser(Parser):
         else:
             # For unsupported file types, try as PDF
             self.logger.warning(
-                f"Warning: Unsupported file extension '{ext}', "
-                f"attempting to parse as PDF"
+                f"Warning: Unsupported file extension '{ext}', attempting to parse as PDF"
             )
             return self.parse_pdf(file_path, output_dir, method, lang, **kwargs)
 
@@ -1682,9 +1638,7 @@ class DoclingParser(Parser):
         if hasattr(pipeline_options, "table_structure_options"):
             try:
                 pipeline_options.table_structure_options.mode = (
-                    TableFormerMode.ACCURATE
-                    if table_mode == "accurate"
-                    else TableFormerMode.FAST
+                    TableFormerMode.ACCURATE if table_mode == "accurate" else TableFormerMode.FAST
                 )
             except Exception as e:  # pragma: no cover - defensive
                 self.logger.debug(f"Could not set TableFormer mode '{table_mode}': {e}")
@@ -1754,9 +1708,7 @@ class DoclingParser(Parser):
         custom_env = kwargs.pop("env", None)
         if custom_env is not None:
             if not isinstance(custom_env, dict):
-                raise TypeError(
-                    f"env must be a dictionary, got {type(custom_env).__name__}"
-                )
+                raise TypeError(f"env must be a dictionary, got {type(custom_env).__name__}")
             for k, v in custom_env.items():
                 if not isinstance(k, str) or not isinstance(v, str):
                     raise TypeError("env keys and values must be strings")
@@ -1769,8 +1721,7 @@ class DoclingParser(Parser):
             converter = self._get_converter(**kwargs)
         except ImportError as e:
             raise RuntimeError(
-                "Docling Python API is not available. Install it with: "
-                "pip install docling"
+                "Docling Python API is not available. Install it with: pip install docling"
             ) from e
 
         try:
@@ -1804,9 +1755,7 @@ class DoclingParser(Parser):
         except Exception as e:
             self.logger.warning(f"Could not write Docling Markdown to {md_path}: {e}")
 
-        self.logger.info(
-            f"Docling Python API parse completed for {Path(input_path).name}"
-        )
+        self.logger.info(f"Docling Python API parse completed for {Path(input_path).name}")
         return doc_dict
 
     def read_from_block_recursive(
@@ -1825,9 +1774,7 @@ class DoclingParser(Parser):
         else:
             if type not in ["groups", "body"]:
                 cnt += 1
-                content_list.append(
-                    self.read_from_block(block, type, output_dir, cnt, num)
-                )
+                content_list.append(self.read_from_block(block, type, output_dir, cnt, num))
             members = block["children"]
             for member in members:
                 cnt += 1
@@ -2058,8 +2005,7 @@ class DoclingParser(Parser):
             return True
         except ImportError:
             self.logger.debug(
-                "Docling Python package is not installed. "
-                "Install it with: pip install docling"
+                "Docling Python package is not installed. Install it with: pip install docling"
             )
             return False
 
@@ -2213,9 +2159,7 @@ class PaddleOCRParser(Parser):
             result = ocr.predict(input_data)
             return self._extract_text_lines(result)
 
-        raise RuntimeError(
-            "Unsupported PaddleOCR API: expected `ocr` or `predict` method."
-        )
+        raise RuntimeError("Unsupported PaddleOCR API: expected `ocr` or `predict` method.")
 
     def _extract_pdf_page_inputs(self, pdf_path: Path) -> Iterator[Tuple[int, Any]]:
         try:
@@ -2239,9 +2183,7 @@ class PaddleOCRParser(Parser):
                     elif hasattr(rendered, "to_numpy"):
                         yield (page_idx, rendered.to_numpy())
                     else:
-                        raise RuntimeError(
-                            "Unsupported rendered page format from pypdfium2."
-                        )
+                        raise RuntimeError("Unsupported rendered page format from pypdfium2.")
                 finally:
                     if hasattr(page, "close"):
                         page.close()
@@ -2258,9 +2200,7 @@ class PaddleOCRParser(Parser):
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp:
                     temp_image_path = Path(temp.name)
                 rendered_page.save(temp_image_path)
-                return self._ocr_input(
-                    str(temp_image_path), lang=lang, cls_enabled=cls_enabled
-                )
+                return self._ocr_input(str(temp_image_path), lang=lang, cls_enabled=cls_enabled)
             finally:
                 if temp_image_path is not None and temp_image_path.exists():
                     try:
@@ -2292,9 +2232,7 @@ class PaddleOCRParser(Parser):
                     rendered_page, lang=lang, cls_enabled=cls_enabled
                 )
                 for text in page_lines:
-                    content_list.append(
-                        {"type": "text", "text": text, "page_idx": int(page_idx)}
-                    )
+                    content_list.append({"type": "text", "text": text, "page_idx": int(page_idx)})
         finally:
             # Ensure we promptly release PDF handles even if OCR fails mid-stream.
             close = getattr(page_inputs, "close", None)
@@ -2322,12 +2260,8 @@ class PaddleOCRParser(Parser):
 
         cls_enabled = kwargs.get("cls", True)
         page_idx = int(kwargs.get("page_idx", 0))
-        text_lines = self._ocr_input(
-            str(image_path), lang=lang, cls_enabled=cls_enabled
-        )
-        return [
-            {"type": "text", "text": text, "page_idx": page_idx} for text in text_lines
-        ]
+        text_lines = self._ocr_input(str(image_path), lang=lang, cls_enabled=cls_enabled)
+        return [{"type": "text", "text": text, "page_idx": page_idx} for text in text_lines]
 
     def parse_office_doc(
         self,
@@ -2337,9 +2271,7 @@ class PaddleOCRParser(Parser):
         **kwargs,
     ) -> List[Dict[str, Any]]:
         pdf_path = self.convert_office_to_pdf(doc_path, output_dir)
-        return self.parse_pdf(
-            pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs
-        )
+        return self.parse_pdf(pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs)
 
     def parse_text_file(
         self,
@@ -2349,9 +2281,7 @@ class PaddleOCRParser(Parser):
         **kwargs,
     ) -> List[Dict[str, Any]]:
         pdf_path = self.convert_text_to_pdf(text_path, output_dir)
-        return self.parse_pdf(
-            pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs
-        )
+        return self.parse_pdf(pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs)
 
     def parse_document(
         self,
@@ -2392,9 +2322,7 @@ class PaddleOCRParser(Parser):
 def _normalize_parser_name(name: str) -> str:
     """Normalize and validate a parser name for registry APIs."""
     if not isinstance(name, str):
-        raise TypeError(
-            f"parser name must be a non-empty string, got {type(name).__name__}"
-        )
+        raise TypeError(f"parser name must be a non-empty string, got {type(name).__name__}")
     normalized = name.strip().lower()
     if not normalized:
         raise ValueError("parser name must be a non-empty string")
@@ -2447,9 +2375,7 @@ def register_parser(name: str, parser_class: type) -> None:
     """
     normalized_name = _normalize_parser_name(name)
     if not isinstance(parser_class, type) or not issubclass(parser_class, Parser):
-        raise TypeError(
-            f"parser_class must be a subclass of Parser, got {parser_class!r}"
-        )
+        raise TypeError(f"parser_class must be a subclass of Parser, got {parser_class!r}")
     _BUILTIN_NAMES = {"mineru", "docling", "paddleocr"}
     if normalized_name in _BUILTIN_NAMES:
         raise ValueError(
@@ -2592,9 +2518,7 @@ def main():
         action="store_true",
         help="Disable table parsing",
     )
-    parser.add_argument(
-        "--stats", action="store_true", help="Display content statistics"
-    )
+    parser.add_argument("--stats", action="store_true", help="Display content statistics")
     parser.add_argument(
         "--check",
         action="store_true",

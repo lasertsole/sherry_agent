@@ -1,7 +1,6 @@
 """Thread-safe in-memory store for SubagentRunRecord instances using a dict with lock-based access."""
 
 import threading
-from typing import Iterator
 from ..types.registry import SubagentRunRecord
 
 _lock = threading.Lock()

@@ -39,6 +39,7 @@ def resolve_deferred_cleanup_decision(run: SubagentRunRecord) -> tuple[bool, str
         return True, reason
 
     from .queries import count_active_descendant_runs
+
     active_descendants = count_active_descendant_runs(run.child_session_key)
     if active_descendants > 0:
         return False, "defer_descendants"

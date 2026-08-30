@@ -23,8 +23,13 @@ from loguru import logger
 from runtime.state_register import state_register_mem
 
 from .types import (
-    ApprovalDecision, ApprovalMode, ApprovalResult, HITLConfig,
-    SmartApprovalResult, _STATE_PREFIX, BLOCKED_MESSAGE,
+    ApprovalDecision,
+    ApprovalMode,
+    ApprovalResult,
+    HITLConfig,
+    SmartApprovalResult,
+    _STATE_PREFIX,
+    BLOCKED_MESSAGE,
 )
 from .detection import detect_hardline_command, detect_dangerous_command
 
@@ -47,6 +52,7 @@ def _is_yolo_active(config: HITLConfig) -> bool:
 def _check_deny_rules(command: str, deny_rules: list[str]) -> str | None:
     """Return the first deny-rule glob that matches *command*, or ``None``."""
     import fnmatch
+
     for rule in deny_rules:
         if fnmatch.fnmatch(command, rule):
             return rule
@@ -125,7 +131,8 @@ class ApprovalPipeline:
         hardline = detect_hardline_command(command)
         if hardline:
             result = ApprovalResult(
-                approved=False, decision=ApprovalDecision.DENY,
+                approved=False,
+                decision=ApprovalDecision.DENY,
                 reason=f"Hardline blocklist: {hardline}. {BLOCKED_MESSAGE}",
                 pattern_key=hardline,
             )
@@ -136,7 +143,8 @@ class ApprovalPipeline:
         deny_match = _check_deny_rules(command, self.config.deny_rules)
         if deny_match:
             result = ApprovalResult(
-                approved=False, decision=ApprovalDecision.DENY,
+                approved=False,
+                decision=ApprovalDecision.DENY,
                 reason=f"User deny rule: {deny_match}. {BLOCKED_MESSAGE}",
                 pattern_key=f"deny:{deny_match}",
             )
@@ -145,16 +153,23 @@ class ApprovalPipeline:
 
         # Layer 3: YOLO bypass
         if _is_yolo_active(self.config):
-            result = ApprovalResult(approved=True, decision=ApprovalDecision.ONCE, reason="YOLO mode active")
+            result = ApprovalResult(
+                approved=True, decision=ApprovalDecision.ONCE, reason="YOLO mode active"
+            )
             self._fire_hooks(session_id, result)
             return result
 
         # Layer 4: Permanent allowlist
         permanent: list[str] = _get_state(session_id, "permanent", [])
         import fnmatch
+
         for pattern_str in permanent:
             if fnmatch.fnmatch(command, pattern_str):
-                result = ApprovalResult(approved=True, decision=ApprovalDecision.ALWAYS, reason="Permanent allowlist match")
+                result = ApprovalResult(
+                    approved=True,
+                    decision=ApprovalDecision.ALWAYS,
+                    reason="Permanent allowlist match",
+                )
                 self._fire_hooks(session_id, result)
                 return result
 
@@ -162,25 +177,36 @@ class ApprovalPipeline:
         session_list: list[str] = _get_state(session_id, "session_approved", [])
         for pattern_str in session_list:
             if fnmatch.fnmatch(command, pattern_str):
-                result = ApprovalResult(approved=True, decision=ApprovalDecision.SESSION, reason="Session allowlist match")
+                result = ApprovalResult(
+                    approved=True,
+                    decision=ApprovalDecision.SESSION,
+                    reason="Session allowlist match",
+                )
                 self._fire_hooks(session_id, result)
                 return result
 
         # Layer 5: Dangerous pattern detection
         dangerous = detect_dangerous_command(command)
         if not dangerous:
-            result = ApprovalResult(approved=True, decision=ApprovalDecision.ONCE, reason="No dangerous patterns detected")
+            result = ApprovalResult(
+                approved=True,
+                decision=ApprovalDecision.ONCE,
+                reason="No dangerous patterns detected",
+            )
             self._fire_hooks(session_id, result)
             return result
 
         return ApprovalResult(
-            approved=False, decision=None,
+            approved=False,
+            decision=None,
             reason=f"Dangerous pattern(s): {', '.join(tag for _, tag in dangerous)}. Requires human approval.",
             pattern_key=dangerous[0][1],
         )
 
     def check_command_with_approval(
-        self, command: str, session_id: str,
+        self,
+        command: str,
+        session_id: str,
         prompt_fn: Callable[[str], ApprovalDecision] | None = None,
     ) -> ApprovalResult:
         """Run the pipeline and, if escalated, call *prompt_fn* for human decision.
@@ -199,7 +225,8 @@ class ApprovalPipeline:
             return auto_result
         if prompt_fn is None:
             return ApprovalResult(
-                approved=False, decision=ApprovalDecision.DENY,
+                approved=False,
+                decision=ApprovalDecision.DENY,
                 reason="Human approval required but no prompt function. Defaulting to deny.",
             )
         decision = prompt_fn(command)
@@ -219,25 +246,33 @@ class ApprovalPipeline:
         """
         if decision == ApprovalDecision.DENY:
             result = ApprovalResult(
-                approved=False, decision=ApprovalDecision.DENY,
-                reason=f"User denied. {BLOCKED_MESSAGE}", pattern_key=pattern_key,
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason=f"User denied. {BLOCKED_MESSAGE}",
+                pattern_key=pattern_key,
             )
         elif decision == ApprovalDecision.ALWAYS:
             self._add_to_permanent(session_id, command)
             result = ApprovalResult(
-                approved=True, decision=ApprovalDecision.ALWAYS,
-                reason="User approved permanently", pattern_key=pattern_key,
+                approved=True,
+                decision=ApprovalDecision.ALWAYS,
+                reason="User approved permanently",
+                pattern_key=pattern_key,
             )
         elif decision == ApprovalDecision.SESSION:
             self._add_to_session(session_id, command)
             result = ApprovalResult(
-                approved=True, decision=ApprovalDecision.SESSION,
-                reason="User approved for this session", pattern_key=pattern_key,
+                approved=True,
+                decision=ApprovalDecision.SESSION,
+                reason="User approved for this session",
+                pattern_key=pattern_key,
             )
         else:
             result = ApprovalResult(
-                approved=True, decision=ApprovalDecision.ONCE,
-                reason="User approved once", pattern_key=pattern_key,
+                approved=True,
+                decision=ApprovalDecision.ONCE,
+                reason="User approved once",
+                pattern_key=pattern_key,
             )
         self._fire_hooks(session_id, result)
         return result
@@ -292,7 +327,10 @@ class ApprovalPipeline:
     # ── Layer 10: Plugin tool approval ───────────────────────────────────
 
     def request_tool_approval(
-        self, tool_name: str, tool_args: dict[str, Any], session_id: str,
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
     ) -> ApprovalResult:
         """Check whether a plugin tool invocation has been pre-approved.
 
@@ -307,13 +345,20 @@ class ApprovalPipeline:
         args_hash = _args_hash(tool_args)
         if args_hash in approved_args:
             if approved_args[args_hash]:
-                return ApprovalResult(approved=True, decision=ApprovalDecision.SESSION, reason="Previously session-approved")
+                return ApprovalResult(
+                    approved=True,
+                    decision=ApprovalDecision.SESSION,
+                    reason="Previously session-approved",
+                )
             return ApprovalResult(
-                approved=False, decision=ApprovalDecision.DENY,
+                approved=False,
+                decision=ApprovalDecision.DENY,
                 reason=f"Tool '{tool_name}' is denied for this session.",
             )
         # No explicit decision recorded → allow the tool through by default.
-        return ApprovalResult(approved=True, decision=ApprovalDecision.ONCE, reason="Tool allowed by default")
+        return ApprovalResult(
+            approved=True, decision=ApprovalDecision.ONCE, reason="Tool allowed by default"
+        )
 
     def approve_tool_for_session(self, tool_name: str, tool_args: dict[str, Any], session_id: str):
         """Mark a specific tool + args combination as approved for the current session."""

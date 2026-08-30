@@ -13,6 +13,7 @@ app = Robyn(__file__)
 # Enable CORS for all origins (development)
 ALLOW_CORS(app, origins=["*"])
 
+
 @app.exception
 def handle_exception(error: Exception):
     """
@@ -26,18 +27,25 @@ def handle_exception(error: Exception):
     return Response(
         status_code=HTTP_500_INTERNAL_SERVER_ERROR,
         headers={"Content-Type": "application/json"},
-        description=json.dumps({
-            "success": False,
-            "message": "Internal Server Error",
-            "error": str(error),
-        }, ensure_ascii=False),
+        description=json.dumps(
+            {
+                "success": False,
+                "message": "Internal Server Error",
+                "error": str(error),
+            },
+            ensure_ascii=False,
+        ),
     )
+
 
 ws_event_processor_dict: dict[str, Callable[[str, str | dict[str, Any]], str]] = {}
 
+
 async def ws_processor(session_id: str, event: str, content: str | dict[str, Any]) -> Any:
     try:
-        processor: Callable[[str, str | dict[str, Any]], str] | None = ws_event_processor_dict.get(event, None)
+        processor: Callable[[str, str | dict[str, Any]], str] | None = ws_event_processor_dict.get(
+            event, None
+        )
         if processor is None:
             logger.debug(f"No processor registered for event: {event}, session_id={session_id}")
             return None
@@ -47,6 +55,25 @@ async def ws_processor(session_id: str, event: str, content: str | dict[str, Any
     except Exception as e:
         logger.warning(f"ws_processor error happened: {e}, session_id={session_id}, event={event}")
         return None
+
+
+def ping_processor(session_id: str, content: str | dict[str, Any]) -> str | dict[str, Any]:
+    """
+    心跳保活处理器
+
+    客户端基于 /sessions/ws 连接做应用层存活检测：定期发送 event="ping" 的
+    心跳帧，这里原样回复 {"event": "pong"}（返回 dict 而非 str，客户端收到的
+    即为 JSON 对象帧），用于替代旧的 HTTP 轮询健康检查。
+
+    注意：必须是同步函数——ws_processor 对处理器做同步调用，async 函数会
+    返回 coroutine 对象，json.dumps(coroutine) 抛 TypeError 导致回帧静默丢失。
+    """
+    return {"event": "pong"}
+
+
+# 注册 ping -> pong 心跳事件处理器
+ws_event_processor_dict["ping"] = ping_processor
+
 
 @app.websocket("/sessions/ws")
 async def ws_handler(websocket: WebSocketAdapter):
@@ -58,7 +85,9 @@ async def ws_handler(websocket: WebSocketAdapter):
                 obj: dict[str, Any] = json.loads(msg)
                 session_id: str | None = obj.get("session_id", None)
                 if session_id is None:
-                    logger.debug(f"WebSocket message missing session_id: websocket_id={websocket.id}")
+                    logger.debug(
+                        f"WebSocket message missing session_id: websocket_id={websocket.id}"
+                    )
                     continue
 
                 event: str | None = obj.get("event", None)
@@ -68,7 +97,9 @@ async def ws_handler(websocket: WebSocketAdapter):
 
                 content: str | dict[str, Any] | None = obj.get("content", None)
                 if content is None:
-                    logger.debug(f"WebSocket message missing content: session_id={session_id}, event={event}")
+                    logger.debug(
+                        f"WebSocket message missing content: session_id={session_id}, event={event}"
+                    )
                     continue
 
                 logger.debug(
@@ -94,26 +125,35 @@ async def handle_connect(websocket: WebSocketAdapter):
     query_params = websocket.query_params
     session_id: str | None = query_params.get("session_id", None)
     if session_id is None:
-        logger.warning(f"WebSocket connection rejected: missing session_id, websocket_id={websocket.id}")
+        logger.warning(
+            f"WebSocket connection rejected: missing session_id, websocket_id={websocket.id}"
+        )
         await websocket.close()
         relation_register.unregister_websocket_by_websocket_id(websocket_id=websocket.id)
         return
 
-    logger.info(f"WebSocket connection established: session_id={session_id}, websocket_id={websocket.id}")
+    logger.info(
+        f"WebSocket connection established: session_id={session_id}, websocket_id={websocket.id}"
+    )
     res = {"content": "websocket connected successfully"}
     await websocket.send_text(json.dumps(res))
 
     relation_register.register_websocket(session_id=session_id, websocket=websocket)
+
 
 @ws_handler.on_close
 async def handle_disconnect(websocket: WebSocketAdapter):
     logger.info(f"Client {websocket.id} disconnected")
 
     # Pop and clear session_id when user disconnects
-    session_id: str | None = relation_register.get_session_id_by_websocket_id(websocket_id=websocket.id)
+    session_id: str | None = relation_register.get_session_id_by_websocket_id(
+        websocket_id=websocket.id
+    )
 
     if session_id:
-        logger.info(f"WebSocket session cleanup: session_id={session_id}, websocket_id={websocket.id}")
+        logger.info(
+            f"WebSocket session cleanup: session_id={session_id}, websocket_id={websocket.id}"
+        )
         relation_register.unregister_websocket_by_websocket_id(websocket_id=websocket.id)
 
         clear_all_register_sessions(session_id=session_id)

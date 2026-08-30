@@ -102,13 +102,9 @@ def reap_orphan_tmp_files(
                 continue
             try:
                 os.remove(path)
-                logger.info(
-                    f"[{workspace}] Reaped orphan tmp file: {path} (age {age:.0f}s)"
-                )
+                logger.info(f"[{workspace}] Reaped orphan tmp file: {path} (age {age:.0f}s)")
             except OSError as exc:
-                logger.warning(
-                    f"[{workspace}] Failed to reap orphan tmp file {path}: {exc}"
-                )
+                logger.warning(f"[{workspace}] Failed to reap orphan tmp file {path}: {exc}")
 
 
 def atomic_write(
@@ -136,7 +132,5 @@ def atomic_write(
             if os.path.exists(tmp):
                 os.remove(tmp)
         except OSError as exc:
-            logger.warning(
-                f"[{workspace}] Failed to remove tmp after failed atomic write: {exc}"
-            )
+            logger.warning(f"[{workspace}] Failed to remove tmp after failed atomic write: {exc}")
         raise

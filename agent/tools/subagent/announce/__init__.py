@@ -17,4 +17,6 @@ __all__ = [
     "build_compact_announce_stats_line",
     "capture_subagent_completion_reply",
     "build_idempotency_key",
+    "AnnounceDispatchType",
+    "resolve_dispatch_type",
 ]

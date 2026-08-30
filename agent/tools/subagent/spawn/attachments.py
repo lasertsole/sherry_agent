@@ -13,11 +13,12 @@ import base64
 import hashlib
 from pathlib import Path
 from loguru import logger
-from config import ROOT_DIR, TEMP_DIR
+from config import TEMP_DIR
 
 
 class AttachmentError(Exception):
     """Raised when attachment validation fails."""
+
     pass
 
 
@@ -29,7 +30,7 @@ def validate_attachment_name(name: str) -> str:
         if ch in name:
             raise AttachmentError(f"Attachment name contains forbidden character: {repr(ch)}")
     for ch in name:
-        if ord(ch) < 0x20 or ord(ch) == 0x7f:  # C0 range (0x00-0x1F) and DEL (0x7F)
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:  # C0 range (0x00-0x1F) and DEL (0x7F)
             raise AttachmentError(f"Attachment name contains control character: U+{ord(ch):04X}")
     if name in (".", ".."):
         raise AttachmentError(f"Attachment name '{name}' is not allowed")
@@ -47,7 +48,9 @@ def sanitize_mount_path(mount_path: str | None) -> str | None:
         raise AttachmentError(f"Mount path contains '..': {mount_path}")
     for ch in cleaned:
         if not (ch.isalnum() or ch in "._-/"):
-            raise AttachmentError(f"Mount path contains forbidden character: {repr(ch)} in {mount_path}")
+            raise AttachmentError(
+                f"Mount path contains forbidden character: {repr(ch)} in {mount_path}"
+            )
     return cleaned or None
 
 
@@ -58,11 +61,14 @@ def decode_attachment_content(raw: str, encoding: str = "utf8") -> bytes:
         if not stripped:
             raise AttachmentError("Empty base64 content")
         import re
-        if not re.match(r'^[A-Za-z0-9+/\n\r]*={0,2}$', stripped):  # strict base64 alphabet check
+
+        if not re.match(r"^[A-Za-z0-9+/\n\r]*={0,2}$", stripped):  # strict base64 alphabet check
             raise AttachmentError("Invalid base64 character set")
         padding_needed = len(stripped) % 4
         if padding_needed:
-            if not stripped.endswith("=" * (4 - padding_needed)):  # base64 padding must be 0-2 '=' chars
+            if not stripped.endswith(
+                "=" * (4 - padding_needed)
+            ):  # base64 padding must be 0-2 '=' chars
                 raise AttachmentError("Invalid base64 padding")
         try:
             decoded = base64.b64decode(stripped, validate=True)
@@ -74,6 +80,7 @@ def decode_attachment_content(raw: str, encoding: str = "utf8") -> bytes:
 
 class MaterializeResult:
     """Result of attachment materialization: directory paths, manifest, and prompt suffix for the child agent."""
+
     def __init__(
         self,
         status: str = "ok",
@@ -108,7 +115,9 @@ async def materialize_subagent_attachments(
         return MaterializeResult()
 
     if len(attachments) > max_files:
-        return MaterializeResult(status="error", error=f"Too many attachments: {len(attachments)} > {max_files}")
+        return MaterializeResult(
+            status="error", error=f"Too many attachments: {len(attachments)} > {max_files}"
+        )
 
     if child_workspace is None:
         child_workspace = TEMP_DIR
@@ -170,15 +179,21 @@ async def materialize_subagent_attachments(
         try:
             target.write_bytes(content_bytes)
         except Exception as e:
-            return MaterializeResult(status="error", error=f"Failed to write attachment '{name}': {e}")
+            return MaterializeResult(
+                status="error", error=f"Failed to write attachment '{name}': {e}"
+            )
 
-        sha256 = hashlib.sha256(content_bytes).hexdigest()[:16]  # truncated hash for manifest integrity check
-        manifest_entries.append({
-            "name": name,
-            "bytes": len(content_bytes),
-            "sha256": sha256,
-            "mount_path": sanitized_mount,
-        })
+        sha256 = hashlib.sha256(content_bytes).hexdigest()[
+            :16
+        ]  # truncated hash for manifest integrity check
+        manifest_entries.append(
+            {
+                "name": name,
+                "bytes": len(content_bytes),
+                "sha256": sha256,
+                "mount_path": sanitized_mount,
+            }
+        )
 
     try:
         abs_dir.mkdir(parents=True, exist_ok=True)

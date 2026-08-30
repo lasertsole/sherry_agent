@@ -15,11 +15,13 @@
       </div>
       <template v-else>
         <TabView v-model:activeIndex="activeTab">
-          <TabPanel :header="t('config.tabs.character')">
+          <TabPanel
+            value="character"
+            :header="t('config.tabs.character')">
             <div class="flex flex-col gap-5">
               <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
 
-              <!-- AI 角色配置 -->
+              <!-- AI role configuration -->
               <div class="flex flex-col gap-2">
                 <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{
                   t('config.role.assistant')
@@ -47,8 +49,8 @@
                       customUpload
                       :auto="false"
                       @select="onAssistAvatarSelect">
-                      <!-- filelabel 默认在未选文件时显示浏览器原生 "No file chosen"，用本地化文案替代：
-                           已选文件 → 显示文件名；否则 → 提示可上传新头像 -->
+                      <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
                       <template #filelabel="{ files }">
                         <span class="text-xs text-gray-400">
                           {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
@@ -61,7 +63,7 @@
 
               <Divider />
 
-              <!-- 用户角色配置 -->
+              <!-- User role configuration -->
               <div class="flex flex-col gap-2">
                 <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{
                   t('config.role.userRole')
@@ -89,8 +91,8 @@
                       customUpload
                       :auto="false"
                       @select="onUserAvatarSelect">
-                      <!-- filelabel 默认在未选文件时显示浏览器原生 "No file chosen"，用本地化文案替代：
-                           已选文件 → 显示文件名；否则 → 提示可上传新头像 -->
+                      <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
                       <template #filelabel="{ files }">
                         <span class="text-xs text-gray-400">
                           {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
@@ -102,9 +104,11 @@
               </div>
             </div>
           </TabPanel>
-          <TabPanel :header="t('config.background.title')">
+          <TabPanel
+            value="background"
+            :header="t('config.background.title')">
             <div class="flex flex-col gap-5">
-              <!-- 背景图：浅色/深色主题下均显示；下方 slider 控制主题化遮罩（浅色=白/深色=黑） -->
+              <!-- Background image: shown in both light/dark themes; the slider below controls the themed overlay (light=white / dark=black) -->
               <div class="flex items-center justify-between gap-3">
                 <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
                   {{ t('config.background.bothThemes') }}
@@ -118,7 +122,7 @@
                   @click="backgroundUrl = ''" />
               </div>
 
-              <!-- 背景预览：按窗口长宽比展示，浏览器过矮时容器内滚动；叠加主题化遮罩以实时预览 slider 效果 -->
+              <!-- Background preview: displayed at the window's aspect ratio; scrolls inside the container when the browser window is too short; a themed overlay is stacked on top to preview the slider effect in real time -->
               <div
                 v-if="backgroundUrl"
                 class="relative w-full rounded-lg border border-solid border-gray-300 dark:border-gray-700 overflow-y-auto"
@@ -147,8 +151,8 @@
                   customUpload
                   :auto="false"
                   @select="onBackgroundSelect">
-                  <!-- filelabel 默认在未选文件时显示浏览器原生 "No file chosen"，用本地化文案替代：
-                       已选文件 → 显示文件名；已设置背景 → 提示已有背景；否则 → 提示请选择图片 -->
+                  <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                       replaced with localized text: file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to choose an image -->
                   <template #filelabel="{ files }">
                     <span class="text-xs text-gray-400">
                       {{ fileLabelText(Array.isArray(files) ? files : []) }}
@@ -157,7 +161,7 @@
                 </FileUpload>
               </div>
 
-              <!-- 遮罩透明度：浅色=白色遮罩 / 深色=黑色遮罩；越向左照片越清晰，越向右越被冲淡直至纯白/纯黑遮蔽 -->
+              <!-- Overlay opacity: light theme=white overlay / dark theme=black overlay; the further left, the clearer the photo; the further right, the more it fades until fully covered by pure white/black -->
               <div
                 v-if="backgroundUrl"
                 class="flex flex-col gap-2">
@@ -178,17 +182,20 @@
             </div>
           </TabPanel>
 
-          <!-- 环境配置 Tab：读取/编辑项目根目录 .env，按前缀分组，仅允许修改已存在的 key
-               加载由下方 setup 作用域 watch 驱动（@show 是事件上下文，getCurrentInstance() 为 null，
-               Nuxt useFetch 不会真正发请求） -->
-          <TabPanel :header="t('config.tabs.env')">
+          <!-- Env config tab: reads/edits the project root .env, grouped by prefix; only existing keys can be modified.
+               Loading is driven by the setup-scoped watch below (@show runs in an event context where
+               getCurrentInstance() is null, so Nuxt useFetch never actually sends the request) -->
+          <TabPanel
+            value="env"
+            :header="t('config.tabs.env')">
             <div class="flex flex-col gap-4">
-              <p
-                class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
                 {{ t('config.env.restartHint') }}
               </p>
 
-              <div v-if="envLoadError" class="flex">
+              <div
+                v-if="envLoadError"
+                class="flex">
                 <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
               </div>
 
@@ -264,10 +271,10 @@ import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { EnvGroup } from '@/composables/env';
 import { readEnvConfig, writeEnvConfig } from '@/composables/env';
 
-/** 全局聊天区背景单例：setBackground 同步更新响应式状态并持久化，保存后立即生效 */
+/** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
 const { backgroundOpacity, setBackground } = useChatBackground();
 
-  const { t } = useI18n({ useScope: 'local' });
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -281,23 +288,21 @@ const activeTab = ref(0);
 const loading = ref(false);
 const saving = ref(false);
 
-// ── 环境配置状态（.env）──────────────────────────────────
-// 仅加载时快照一次；编辑直接改 envGroups 内 entry.value，保存时与快照 diff 出变更写回后端。
+// ── Env config state (.env) ──────────────────────────────────
+// Snapshot taken once on load; edits directly modify entry.value inside envGroups, and on save the changes are diffed against the snapshot and written back to the backend.
 const envGroups = ref<EnvGroup[]>([]);
 const originalEnvValues = ref<Record<string, string>>({});
 const envLoadError = ref('');
 
-/** 是否已加载过环境配置（避免重复 GET） */
+/** Whether the env config has already been loaded (avoids duplicate GETs) */
 const envLoaded = ref(false);
 
-/** 计算是否有环境配置变更（用于 canSave 与保存判断） */
+/** Computes whether the env config has changes (used for canSave and save decisions) */
 const envHasChanges = computed(() =>
-  envGroups.value.some(group =>
-    group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key])
-  )
+  envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
 );
 
-/** 打开环境 Tab 时懒加载 .env 配置（后端 /env GET） */
+/** Lazily loads the .env config when the env tab is opened (backend GET /env) */
 const loadEnvConfig = async () => {
   if (envLoaded.value) return;
   envLoaded.value = true;
@@ -317,7 +322,7 @@ const loadEnvConfig = async () => {
   }
 };
 
-/** 将环境变更写回后端（.env PUT），成功返回 true */
+/** Writes env changes back to the backend (.env PUT); returns true on success */
 const persistEnvChanges = async (): Promise<boolean> => {
   const changes: Record<string, string> = {};
   for (const g of envGroups.value) {
@@ -328,7 +333,7 @@ const persistEnvChanges = async (): Promise<boolean> => {
   if (Object.keys(changes).length === 0) return true;
   const ok = await writeEnvConfig(changes);
   if (ok) {
-    // 同步快照，作为下次 diff 基线
+    // Sync the snapshot to serve as the baseline for the next diff
     for (const g of envGroups.value) {
       for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
     }
@@ -336,7 +341,7 @@ const persistEnvChanges = async (): Promise<boolean> => {
   return ok;
 };
 
-/** 每次对话框隐藏（取消或保存）时重置环境 Tab：下次打开重新加载 */
+/** Resets the env tab every time the dialog hides (cancel or save): reloads on next open */
 const resetEnvState = () => {
   envGroups.value = [];
   originalEnvValues.value = {};
@@ -344,26 +349,27 @@ const resetEnvState = () => {
   envLoaded.value = false;
 };
 
-// ── 环境配置加载触发器（setup 作用域）──────────────────
-// 之前用 PrimeVue TabPanel 的 @show 事件调用 loadEnvConfig：事件回调是非 setup 上下文，
-// getCurrentInstance() 为 null，导致 Nuxt useFetch(server:true) 在纯 SPA 下不发请求、
-// data 恒为 undefined → 触发 || { groups: [] } 兜底，渲染成误导性的“未找到 .env 文件”。
-// 改为在 setup 作用域 watch 对话框可见性 + 环境 Tab(activeTab===2)，回调在 setup 上下文执行，
-// getCurrentInstance() 存活 → useFetch 真正发出 GET /env，加载真实 .env 分组。
+// ── Env config load trigger (setup scope) ──────────────
+// Previously loadEnvConfig was called from the PrimeVue TabPanel @show event: event callbacks run in a
+// non-setup context where getCurrentInstance() is null, so Nuxt useFetch(server:true) never sent a request
+// in pure SPA mode and data stayed undefined forever → the || { groups: [] } fallback kicked in and rendered
+// the misleading "No .env file found" message.
+// Instead, dialog visibility + the env tab (activeTab===2) are now watched in setup scope; the callback runs
+// in a setup context where getCurrentInstance() stays alive → useFetch actually issues GET /env and loads the real .env groups.
 watch(
   [() => props.modelValue, activeTab],
   ([dialogVisible, tab]) => {
     if (dialogVisible && tab === 2) void loadEnvConfig();
   },
-  // 对话框由 v-model 控制从隐藏→显示，无需 initial 触发；隐藏时 resetEnvState 已重置 envLoaded
+  // The dialog goes hidden→visible via v-model, so no immediate trigger is needed; resetEnvState already resets envLoaded on hide
   { flush: 'post' }
 );
 
-// ── 角色配置状态 ─────────────────────────────────────────
-// 角色头像/名字完全由前端本地保存：写入 Dexie 的全局待定 profile（GLOBAL_SESSION_KEY 行）。
-// 头像可为 base64 data URL（`data:image/...;base64,...`，用户自定义）或 `/avatar/xxx.jpg`
-// 相对 URL（内置默认）；两者 `<img>` 均可直接渲染。
-// 保存只更新全局 profile，不触碰各会话已锁定的快照 → 仅新会话取到新值。
+// ── Character config state ─────────────────────────────────────
+// Character avatar/name are saved entirely locally on the frontend: written to the global pending profile in Dexie (the GLOBAL_SESSION_KEY row).
+// The avatar can be a base64 data URL (`data:image/...;base64,...`, user-defined) or a `/avatar/xxx.jpg`
+// relative URL (built-in default); both render directly in `<img>`.
+// Saving only updates the global profile and never touches the snapshots already locked in per session → only new sessions pick up the new values.
 
 const charUser = ref<{ name: string; avatar: string }>({
   name: DEFAULT_CACHED_CHARACTER.userName,
@@ -378,11 +384,11 @@ const originalChar = ref<{ user: { name: string; avatar: string }; assistant: { 
   assistant: { name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar }
 });
 
-// 头像已是完整图片地址（base64 data URL 或 /avatar/xxx.jpg 相对 URL），直接渲染（无需拼接 static/ 路径）
+// The avatar is already a full image address (base64 data URL or /avatar/xxx.jpg relative URL) and renders directly (no need to prepend a static/ path)
 const userAvatarUrl = computed(() => charUser.value.avatar);
 const assistantAvatarUrl = computed(() => charAssistant.value.avatar);
 
-/** 将上传的图片文件读取为 base64 data URL */
+/** Reads an uploaded image file as a base64 data URL */
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -393,32 +399,32 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 
 const canSave = computed(() => {
   if (loading.value || saving.value) return false;
-  // Tab 2：环境配置；仅在有变更时可保存
+  // Tab 2: env config; saveable only when there are changes
   if (activeTab.value === 2) return envHasChanges.value;
-  // Tab 0：角色配置——两个角色名须非空
+  // Tab 0: character config — both character names must be non-empty
   if (activeTab.value === 0) {
     return charUser.value.name.trim().length > 0 && charAssistant.value.name.trim().length > 0;
   }
-  // Tab 1：背景——无需额外校验
+  // Tab 1: background — no extra validation needed
   return true;
 });
 
-// ── 图片裁剪处理（复用 AvatarCropDialog：头像 1:1，背景适配电脑屏幕） ──
-// 选中图片后打开裁剪对话框：头像强制 1:1 正方形（512×512）；
-// 背景按**当前聊天窗口/屏幕的真实长宽比**裁剪与输出，从而适配任何比例（16:9、16:10、3:2、21:9…），
-// 且因渲染用 `background-size: cover`，只有裁剪比例 == 窗口比例才不会在 cover 时被裁掉边缘。
-// 比例/尺寸在打开对话框那一刻**快照**一次（避免拖动窗口时裁剪框跳变）。
+// ── Image crop handling (reuses AvatarCropDialog: avatars 1:1, background adapted to the screen) ──
+// After an image is selected, the crop dialog opens: avatars are forced to a 1:1 square (512×512);
+// the background is cropped and output at the **actual aspect ratio of the current chat window/screen** so it fits any ratio (16:9, 16:10, 3:2, 21:9…);
+// and since rendering uses `background-size: cover`, edges get cut off under cover unless the crop ratio == the window ratio.
+// The ratio/size are **snapshotted** once at the moment the dialog opens (avoids the crop box jumping while the window is being dragged).
 const cropVisible = ref(false);
 const cropSource = ref('');
 const cropTarget = ref<'user' | 'assistant' | 'background'>('user');
 
-/** 裁剪框宽高比与输出尺寸（打开裁剪框时快照；头像固定 1:1） */
+/** Crop box aspect ratio and output size (snapshotted when the crop box opens; avatars fixed at 1:1) */
 const cropAspectRatio = ref(1);
 const cropOutput = ref({ width: 512, height: 512 });
 
 /**
- * 背景裁剪尺寸：按当前窗口物理像素生成（宽高比 == 聊天窗口宽高比）。
- * 以窗口真实物理分辨率（逻辑宽高 × devicePixelRatio）为基准，保证任何屏幕都高清铺满。
+ * Background crop size: generated from the current window's physical pixels (aspect ratio == chat window aspect ratio).
+ * Based on the window's real physical resolution (logical width/height × devicePixelRatio) so any screen gets a sharp full fill.
  */
 const getBackgroundCrop = () => {
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
@@ -428,7 +434,7 @@ const getBackgroundCrop = () => {
   const h = Math.max(288, Math.round(innerH * dpr));
   return { width: w, height: h };
 };
-/** 裁剪对话框标题 */
+/** Crop dialog title */
 const cropTitle = computed(() =>
   cropTarget.value === 'background' ? t('config.background.cropTitle') : t('config.crop.title')
 );
@@ -448,7 +454,7 @@ const onAssistAvatarSelect = (event: { files: File[] }) => {
 const openCrop = async (target: 'user' | 'assistant' | 'background', file: File) => {
   try {
     cropTarget.value = target;
-    // 打开对话框时快照裁剪比例/输出尺寸：背景适配当前窗口比例，头像固定正方形
+    // Snapshot the crop ratio/output size when the dialog opens: background adapts to the current window ratio, avatar fixed square
     if (target === 'background') {
       const { width, height } = getBackgroundCrop();
       cropAspectRatio.value = width / height;
@@ -475,19 +481,19 @@ const onCropConfirmed = (dataUrl: string) => {
   cropVisible.value = false;
 };
 
-// ── 背景设置状态 ─────────────────────────────────────────
-// 聊天区背景图仅前端本地保存：写入 Dexie 全局唯一行（GLOBAL_SESSION_KEY），
-// 供主聊天页在浅色/深色主题下读取渲染（照片+主题化遮罩）。
+// ── Background settings state ────────────────────────────────
+// The chat-area background image is saved locally on the frontend only: written to the single global row in Dexie (GLOBAL_SESSION_KEY),
+// for the main chat page to read and render under light/dark themes (photo + themed overlay).
 const backgroundUrl = ref('');
 const originalBackgroundUrl = ref('');
-/** 遮罩透明度（0-100 整数，浅色=白/深色=黑）。本地编辑态，打开对话框时从单例快照，保存时写回 */
+/** Overlay opacity (0-100 integer, light=white / dark=black). Local edit state: snapshotted from the singleton when the dialog opens, written back on save */
 const backgroundOpacityValue = ref(0);
 
 const colorMode = useColorMode();
 
 /**
- * 预览遮罩样式：与聊天区真实遮罩一致——浅色=白 / 深色=黑，opacity 随 slider 实时变化，
- * 让用户在预览大图上即可看到「拉动滑块照片被冲淡成白/黑」的真实效果。
+ * Preview overlay style: identical to the real chat-area overlay — light=white / dark=black, with opacity tracking the slider in real time,
+ * letting users see the true effect of "dragging the slider fades the photo to white/black" right on the preview image.
  */
 const backgroundPreviewOverlayStyle = computed(() => {
   const overlayColor = colorMode.value === 'light' ? '#ffffff' : '#000000';
@@ -497,7 +503,7 @@ const backgroundPreviewOverlayStyle = computed(() => {
   };
 });
 
-/** 响应式窗口尺寸（window 非响应式，故用 ref + resize 监听驱动占位框宽高比跟随窗口变化） */
+/** Reactive window size (window is not reactive, so a ref + resize listener drives the placeholder box's aspect ratio to follow window changes) */
 const windowSize = ref(getWindowSize());
 function getWindowSize() {
   if (typeof window === 'undefined') return { width: 1920, height: 1080 };
@@ -509,14 +515,14 @@ function onWindowResize() {
 onMounted(() => window.addEventListener('resize', onWindowResize));
 onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize));
 
-/** 背景图片空态占位框宽高比 == 当前窗口宽高比（与裁剪预览一致，直观预览聊天背景比例） */
+/** Empty-state background placeholder box aspect ratio == current window aspect ratio (matches the crop preview for an intuitive look at the chat background ratio) */
 const backgroundAspect = computed(() => {
   const innerW = windowSize.value.width;
   const innerH = windowSize.value.height;
   return Number((innerW / innerH).toFixed(4));
 });
 
-/** 选中背景图片后打开裁剪对话框（16:9，复用头像裁剪 UI），仅裁剪结果作为背景图 */
+/** Opens the crop dialog after a background image is selected (16:9, reuses the avatar crop UI); only the cropped result becomes the background */
 const onBackgroundSelect = (event: { files: File[] }) => {
   const file = event.files?.[0];
   if (!file) return;
@@ -524,21 +530,21 @@ const onBackgroundSelect = (event: { files: File[] }) => {
 };
 
 /**
- * 背景 FileUpload 的本地化文案（`#filelabel` slot，替代浏览器原生 "No file chosen"）：
- * 已选文件 → 显示文件名；已设置背景 → 提示已有背景；否则 → 提示可上传新背景。
+ * Localized label for the background FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
+ * file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to upload a new background.
  */
 const fileLabelText = (files: File[]): string => {
-  if (files.length > 0) return files[0].name;
+  if (files.length > 0) return files[0]?.name ?? '';
   if (backgroundUrl.value) return t('config.background.current');
   return t('config.background.noFileChosen');
 };
 
 /**
- * 头像 FileUpload 的本地化文案（`#filelabel` slot，替代浏览器原生 "No file chosen"）：
- * 已选文件 → 显示文件名；否则 → 提示可上传新头像。
+ * Localized label for the avatar FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
+ * file selected → show the file name; otherwise → prompt to upload a new avatar.
  */
 const avatarFileLabel = (files: File[]): string => {
-  if (files.length > 0) return files[0].name;
+  if (files.length > 0) return files[0]?.name ?? '';
   return t('config.role.noFileChosen');
 };
 
@@ -547,7 +553,7 @@ const loadContent = async () => {
   try {
     const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
 
-    // 从本地 Dexie 全局 profile 读取角色配置（无记录时回退到内置默认值：远野汉娜/橘雪莉 + 默认头像）
+    // Read character config from the local Dexie global profile (falls back to the built-in defaults when no record exists: Tono Hanna / Tachibana Sherry + default avatars)
     charUser.value = {
       name: charData?.userName?.trim() ? charData.userName : DEFAULT_CACHED_CHARACTER.userName,
       avatar: charData?.userAvatar ?? DEFAULT_CACHED_CHARACTER.userAvatar
@@ -561,7 +567,7 @@ const loadContent = async () => {
       assistant: { name: charAssistant.value.name, avatar: charAssistant.value.avatar }
     };
 
-    // 从本地 Dexie 读取全局背景配置（未设置则回退为空字符串 + 透明度 0）
+    // Read the global background config from local Dexie (falls back to empty string + opacity 0 when unset)
     const bgConfig = (await readBackgroundConfig()) ?? { backgroundUrl: '', backgroundOpacity: 0 };
     backgroundUrl.value = bgConfig.backgroundUrl;
     originalBackgroundUrl.value = bgConfig.backgroundUrl;
@@ -576,8 +582,8 @@ const loadContent = async () => {
 const handleSave = async () => {
   saving.value = true;
   try {
-    // 角色配置：仅当 name 或 avatar 有变更时，把变更写入本地 Dexie 全局 profile。
-    // 该写入只影响全局 profile，不触碰各会话已锁定的快照 → 只影响新会话。
+    // Character config: only when name or avatar changed, write the changes to the local Dexie global profile.
+    // This write only affects the global profile and never touches the snapshots locked in per session → only affects new sessions.
     const userChanged =
       charUser.value.name !== originalChar.value.user.name || charUser.value.avatar !== originalChar.value.user.avatar;
     const assistantChanged =
@@ -598,15 +604,15 @@ const handleSave = async () => {
         aiName: assistantChanged ? charAssistant.value.name : existing.aiName,
         aiAvatar: assistantChanged ? charAssistant.value.avatar : existing.aiAvatar
       });
-      // 保存成功后再同步 originalChar 作为下一次 diff 基线
+      // After a successful save, sync originalChar to serve as the baseline for the next diff
       originalChar.value = {
         user: { name: charUser.value.name, avatar: charUser.value.avatar },
         assistant: { name: charAssistant.value.name, avatar: charAssistant.value.avatar }
       };
     }
 
-    // 背景图：仅当有变更时写入本地 Dexie 全局行（空字符串表示清除背景）。
-    // setBackground/setBackgroundOpacity 会同步更新共享单例的响应式 state，根容器背景+遮罩立即生效，无需刷新。
+    // Background image: only when changed, write to the local Dexie global row (empty string means clearing the background).
+    // setBackground/setBackgroundOpacity synchronously update the shared singleton's reactive state, so the root container's background + overlay take effect immediately without a refresh.
     const bgUrlChanged = backgroundUrl.value !== originalBackgroundUrl.value;
     const bgOpacityChanged = backgroundOpacityValue.value !== backgroundOpacity.value;
     if (bgUrlChanged || bgOpacityChanged) {
@@ -614,7 +620,7 @@ const handleSave = async () => {
       originalBackgroundUrl.value = backgroundUrl.value;
     }
 
-    // 环境配置：若当前在 env Tab 且有变更，则写回后端 .env。保存失败则中止，不关闭对话框。
+    // Env config: if currently on the env tab and there are changes, write them back to the backend .env. Abort on save failure without closing the dialog.
     if (activeTab.value === 2 && envHasChanges.value) {
       const ok = await persistEnvChanges();
       if (!ok) {
@@ -623,7 +629,7 @@ const handleSave = async () => {
       }
     }
 
-    // 关闭对话框后丢弃环境编辑态（onHide 中 resetEnvState），保证下次打开重新读 .env
+    // Discard the env edit state after the dialog closes (resetEnvState in onHide) so the .env is re-read on next open
     emits('saved');
     visible.value = false;
   } catch (e) {
@@ -636,7 +642,7 @@ const handleSave = async () => {
 const onHide = () => {
   activeTab.value = 0;
   backgroundOpacityValue.value = backgroundOpacity.value;
-  // 环境配置改动仅在成功保存后保留；取消/非 env tab 关闭一律丢弃 → 下次打开重新载入
+  // Env config changes are kept only after a successful save; canceling / closing on a non-env tab always discards them → reloaded on next open
   resetEnvState();
 };
 </script>

@@ -7,8 +7,9 @@
  * |-------|------|-------------|
  * | `file_to_content` | `Record<string, string>` | Map of filename to file content |
  */
-export type PromptFileResponse = { 
-/**
- * Map of filename (e.g., `"AGENTS.md"`) to file content.
- */
-file_to_content: { [key in string]: string }, };
+export type PromptFileResponse = {
+  /**
+   * Map of filename (e.g., `"AGENTS.md"`) to file content.
+   */
+  file_to_content: { [key in string]: string };
+};

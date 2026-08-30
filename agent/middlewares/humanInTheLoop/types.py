@@ -31,6 +31,7 @@ class ApprovalMode(str, Enum):
     - ``MANUAL``: Always escalate to human for dangerous commands.
     - ``OFF``: Bypass all approval gates (equivalent to YOLO mode).
     """
+
     SMART = "smart"
     MANUAL = "manual"
     OFF = "off"
@@ -44,6 +45,7 @@ class ApprovalDecision(str, Enum):
     - ``ALWAYS``: Added to permanent allowlist (persistent across sessions).
     - ``DENY``: Rejected — the command must not be retried.
     """
+
     ONCE = "once"
     SESSION = "session"
     ALWAYS = "always"
@@ -60,6 +62,7 @@ class ApprovalResult:
         reason: Human-readable explanation of the result.
         pattern_key: Matched pattern identifier (for allowlist tracking).
     """
+
     approved: bool
     decision: ApprovalDecision | None = None
     reason: str = ""
@@ -77,6 +80,7 @@ class WriteTarget(str, Enum):
     - ``MEMORY``: Memory write (user profile / long-term storage).
     - ``SKILLS``: Skill definition write.
     """
+
     MEMORY = "memory"
     SKILLS = "skills"
 
@@ -87,6 +91,7 @@ class TriageStatus(str, Enum):
     - ``TODO`` / ``IN_PROGRESS`` / ``BLOCKED`` / ``DONE``: Standard task lifecycle.
     - ``TRIAGE``: Escalated to a human decision-maker after exceeding recurrence limit.
     """
+
     TODO = "todo"
     IN_PROGRESS = "in_progress"
     BLOCKED = "blocked"
@@ -104,6 +109,7 @@ class SmartApprovalResult(str, Enum):
     - ``DENY``: LLM deemed the command dangerous.
     - ``ESCALATE``: LLM uncertain — escalate to human.
     """
+
     APPROVE = "approve"
     DENY = "deny"
     ESCALATE = "escalate"
@@ -114,9 +120,17 @@ class SmartApprovalResult(str, Enum):
 try:
     from langchain.agents.middleware import AgentMiddleware, AgentState
     from langchain.agents.middleware.human_in_the_loop import (
-        Action, ActionRequest, ApproveDecision, Decision, DecisionType,
-        EditDecision, HITLRequest, HITLResponse, InterruptOnConfig,
-        RejectDecision, ReviewConfig,
+        Action,
+        ActionRequest,
+        ApproveDecision,
+        Decision,
+        DecisionType,
+        EditDecision,
+        HITLRequest,
+        HITLResponse,
+        InterruptOnConfig,
+        RejectDecision,
+        ReviewConfig,
     )
     from langchain_core.messages import AIMessage, ToolMessage
     from langgraph.prebuilt.tool_node import ToolCallRequest
@@ -191,6 +205,7 @@ class HITLConfig:
         interrupted_tools: Mapping of tool_name → config for interrupt-on-use.
         description_prefix: Prefix for auto-generated interrupt descriptions.
     """
+
     mode: ApprovalMode = ApprovalMode.SMART
     timeout: int = 60
     deny_rules: list[str] = field(default_factory=list)

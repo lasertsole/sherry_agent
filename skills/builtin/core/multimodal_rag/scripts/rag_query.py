@@ -16,8 +16,8 @@ from pydantic import validate_call
 # Note: In Python REPL environment, sys.stdout is a StringIO object without reconfigure()
 # Use try/except to handle both environments
 try:
-    if sys.stdout.encoding != 'utf-8':
-        sys.stdout.reconfigure(encoding='utf-8')
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8")
 except AttributeError:
     pass  # REPL environment (e.g. StringIO) — skip
 
@@ -46,6 +46,7 @@ if str(scripts_dir) not in sys.path:
 from graph_rag import get_rag_anything
 from graph_rag.vendored_raganything import RAGAnything
 
+
 @validate_call
 async def query(question: str) -> str:
     """Query the graph_rag-anything knowledge graph"""
@@ -57,6 +58,6 @@ async def query(question: str) -> str:
         logger.debug(answer)
         return answer
     except Exception as e:
-        err_mes:str = f"[Error] Query failed: {repr(e)}"
+        err_mes: str = f"[Error] Query failed: {repr(e)}"
         logger.error(err_mes)
         return err_mes

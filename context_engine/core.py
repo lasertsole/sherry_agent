@@ -12,6 +12,7 @@ _db: sqlite3.Connection = get_db()
 _lock = threading.Lock()
 _CONTENT_JSON_PREFIX = "\x00json:"
 
+
 def retrieve_history_by_last_n_prompt(session_id: str, n: int = 5) -> str:
     result: list[dict] = get_messages_by_lastest_n_turns(session_id, n)
 
@@ -59,6 +60,7 @@ def retrieve_history_by_last_n_prompt(session_id: str, n: int = 5) -> str:
         f"\n\n===== The above is the content of the last {n} turns =====\n\n"
     )
 
+
 def _sanitize_fts5_query(query: str) -> str:
     """Sanitize user input for safe use in FTS5 MATCH queries.
 
@@ -85,7 +87,7 @@ def _sanitize_fts5_query(query: str) -> str:
     sanitized = re.sub(r'"[^"]*"', _preserve_quoted, query)
 
     # Step 2: Strip remaining (unmatched) FTS5-special characters
-    sanitized = re.sub(r'[+{}()\"^]', " ", sanitized)
+    sanitized = re.sub(r"[+{}()\"^]", " ", sanitized)
 
     # Step 3: Collapse repeated * (e.g. "***") into a single one,
     # and remove leading * (prefix-only needs at least one char before *)
@@ -111,18 +113,17 @@ def _sanitize_fts5_query(query: str) -> str:
 
     return sanitized.strip()
 
+
 def _decode_content(content: Any) -> Any:
     """Reverse :meth:`_encode_content`; returns scalars unchanged."""
     if isinstance(content, str) and content.startswith(_CONTENT_JSON_PREFIX):
         try:
-            return json.loads(content[len(_CONTENT_JSON_PREFIX):])
+            return json.loads(content[len(_CONTENT_JSON_PREFIX) :])
         except (json.JSONDecodeError, TypeError):
-            logger.warning(
-                "Failed to decode JSON-encoded message content; "
-                "returning raw string"
-            )
+            logger.warning("Failed to decode JSON-encoded message content; returning raw string")
             return content
     return content
+
 
 def search_messages(
     query: str,
@@ -132,13 +133,14 @@ def search_messages(
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     import time
+
     start_time = time.time()
-    
+
     logger.debug(
         f"Searching messages: session_id={session_id}, query='{query[:50]}', "
         f"limit={limit}, offset={offset}"
     )
-    
+
     if not query or not query.strip():
         logger.debug("Search query is empty")
         return []
@@ -160,26 +162,25 @@ def search_messages(
     is_cjk = contains_cjk(query)
 
     if is_cjk:
-        raw_query:str = query.strip('"').strip()
-        cjk_count:int = count_cjk(raw_query)
+        raw_query: str = query.strip('"').strip()
+        cjk_count: int = count_cjk(raw_query)
 
         # Per-token CJK length check (#20494): trigram needs >=3 CJK chars
         # per token. A query like "广西 OR 桂林 OR 漓江" has cjk_count=6
         # (>=3) but each individual token is only 2 chars — trigram returns 0.
         # Route to LIKE when any non-operator CJK token is <3 CJK chars.
         _tokens_for_check: list[str] = [
-            t for t in raw_query.split()
+            t
+            for t in raw_query.split()
             if t.upper() not in ("AND", "OR", "NOT") and contains_cjk(t)
         ]
-        _any_short_cjk:bool = any(
-            count_cjk(t) < 3 for t in _tokens_for_check
-        )
+        _any_short_cjk: bool = any(count_cjk(t) < 3 for t in _tokens_for_check)
 
         if cjk_count >= 3 and not _any_short_cjk:
             # Trigram FTS5 path — quote each non-operator token to handle
             # FTS5 special chars (%, *, etc.) while preserving boolean
             # operators (AND, OR, NOT) for multi-term queries.
-            tokens:list[str] = raw_query.split()
+            tokens: list[str] = raw_query.split()
             parts: list[str] = []
             for tok in tokens:
                 if tok.upper() in ("AND", "OR", "NOT"):
@@ -204,7 +205,7 @@ def search_messages(
                     m.tool_name
                 FROM messages_fts_trigram
                 JOIN messages m ON m.id = messages_fts_trigram.rowid
-                WHERE {' AND '.join(tri_where)}
+                WHERE {" AND ".join(tri_where)}
                 ORDER BY rank
                 LIMIT ? OFFSET ?
             """
@@ -223,15 +224,14 @@ def search_messages(
             # build one LIKE condition per non-operator token so each term
             # is matched independently (#20494).
             non_op_tokens = [
-                t for t in raw_query.split()
-                if t.upper() not in ("AND", "OR", "NOT")
+                t for t in raw_query.split() if t.upper() not in ("AND", "OR", "NOT")
             ] or [raw_query]
             token_clauses = []
             # NOTE: SQL placeholder order: instr(?) is FIRST (in SELECT),
             # then m.session_id = ? (in WHERE), then LIKE values, then
             # role_filter, then LIMIT/OFFSET.  Parameter list must match.
             like_params: list = [non_op_tokens[0]]  # for instr(?) — goes first
-            like_params.append(session_id)          # for m.session_id = ?
+            like_params.append(session_id)  # for m.session_id = ?
             for tok in non_op_tokens:
                 esc = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 token_clauses.append(
@@ -254,7 +254,7 @@ def search_messages(
                 ) AS snippet,
                 m.content, m.timestamp, m.tool_name
                 FROM messages m
-                WHERE {' AND '.join(like_where)}
+                WHERE {" AND ".join(like_where)}
                 ORDER BY m.timestamp DESC
                 LIMIT ? OFFSET ?
             """
@@ -352,7 +352,8 @@ def search_messages(
                     # summary for search previews.
                     if isinstance(decoded, list):
                         text_parts = [
-                            p.get("text", "") for p in decoded
+                            p.get("text", "")
+                            for p in decoded
                             if isinstance(p, dict) and p.get("type") == "text"
                         ]
                         text = " ".join(t for t in text_parts if t).strip()
@@ -361,9 +362,7 @@ def search_messages(
                         preview = decoded
                     else:
                         preview = ""
-                    context_msgs.append(
-                        {"role": r["role"], "content": preview[:200]}
-                    )
+                    context_msgs.append({"role": r["role"], "content": preview[:200]})
             match["context"] = context_msgs
         except Exception:
             match["context"] = []

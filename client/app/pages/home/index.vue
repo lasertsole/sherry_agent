@@ -2,27 +2,34 @@
   <div
     class="relative w-full h-full flex text-theme-main"
     :style="chatBackgroundStyle">
-    <!-- 背景遮罩层：浅色=白/深色=黑，opacity 由「背景图片」tab 的 slider 控制，
-         越满照片越被冲淡成纯白/纯黑直至完全遮蔽。置于内容之下（pointer-events-none
-         不拦截交互），且背景图蒙在根容器背景上，下方内容仍在上层可选择。 -->
+    <!-- Background overlay layer: light mode = white / dark mode = black; opacity is controlled
+         by the slider in the "Background Image" tab — the higher it goes, the more the photo is
+         washed out toward pure white/pure black until fully obscured. Placed beneath the content
+         (pointer-events-none so it does not intercept interactions), and the background image is
+         layered over the root container's background, so the content below still sits on top and
+         remains selectable. -->
     <div
       v-if="backgroundOpacity > 0"
       class="absolute inset-0 pointer-events-none"
       :style="chatBackgroundOverlayStyle" />
-    <!-- 左侧-历史记录区域（会话列表侧边栏）：独立组件，状态/逻辑已随组件抽出。
-         折叠态由父组件工具栏按钮控制（v-model:collapsed 双向同步）；
-         当前会话 id 由父组件 v-model:current-session-id 双向同步（父组件用于加载角色快照）。 -->
+    <!-- Left side - history area (session list sidebar): a standalone component whose
+         state/logic has been extracted along with the component.
+         The collapsed state is controlled by the parent toolbar button (two-way sync via
+         v-model:collapsed); the current session id is two-way synced from the parent via
+         v-model:current-session-id (the parent uses it to load the character snapshot). -->
     <SessionSidebar
       v-model:collapsed="isSidebarCollapsed"
       v-model:current-session-id="currentSessionId" />
 
-    <!-- 右侧-会话主体区域 -->
+    <!-- Right side - session main area -->
     <div class="relative flex flex-col flex-1 min-w-0 h-full bg-transparent dark:bg-transparent">
-      <!-- 顶部工具栏：flex 两端对齐。折叠/展开历史按钮靠左，其余功能按钮全部靠右。
-           按钮始终可见（折叠后侧边栏收起，此按钮仍停留在会话区左上角，可再次展开）。 -->
+      <!-- Top toolbar: flex with space-between alignment. The collapse/expand history button
+           sits on the left; all other function buttons are on the right.
+           The button is always visible (after collapsing, the sidebar retracts and this button
+           stays in the top-left corner of the session area so it can be expanded again). -->
       <div
         class="flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
-        <!-- 左侧：折叠/展开历史侧边栏 -->
+        <!-- Left: collapse/expand the history sidebar -->
         <Button
           :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
           :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
@@ -30,12 +37,14 @@
           variant="text"
           class="text-theme-main"
           @click="toggleSidebar" />
-        <!-- 右侧：原有功能按钮区 -->
+        <!-- Right: original function button area -->
         <div class="flex items-center gap-3">
           <ModeSwitch />
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
-            <!-- 语言切换：从系统配置-语言设置移至顶部工具栏，直接读写 vue-i18n locale。
-                 地球图标（pi-globe）让不同语言用户都能直观识别这是语言切换控件。 -->
+            <!-- Language switcher: moved from System Config > Language Settings to the top
+                 toolbar; reads/writes the vue-i18n locale directly.
+                 The globe icon (pi-globe) lets users of any language intuitively recognize
+                 this as the language switch control. -->
             <Select
               :model-value="locale"
               :options="languageOptions"
@@ -63,7 +72,8 @@
                 <span>{{ t(`config.language.${slotProps.option.code}`) }}</span>
               </template>
             </Select>
-            <!-- 通知入口：🔔 bell 图标 + 未读/合并计数红色徽标。点击打开通知弹窗并清除未读。 -->
+            <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged count.
+                 Clicking opens the notification dialog and clears the unread count. -->
             <div class="relative flex items-center">
               <Button
                 icon="pi pi-bell"
@@ -78,15 +88,16 @@
                 {{ notificationUnread > 99 ? '99+' : notificationUnread }}
               </span>
             </div>
-            <!-- 日志入口：保留在顶部（无对应九宫格图标，不并入设置菜单） -->
+            <!-- Logs entry: kept in the top bar (no matching nine-grid icon; not merged into the settings menu) -->
             <Button
               icon="pi pi-history"
               :title="t('toolbar.logs')"
               :aria-label="t('toolbar.logs')"
               variant="text"
               @click="handleOperate('headerBar', 'logs')" />
-            <!-- 设置菜单入口：三条横线按钮。其余功能（技能/知识图谱/系统配置/扩展）
-                 全部从顶部移入此按钮弹幕出的大 dialog 九宫格。 -->
+            <!-- Settings menu entry: the three-bars button. All other functions
+                 (Skills / Knowledge Graph / System Config / Extend) have been moved from the top
+                 bar into the large dialog nine-grid that this button pops open. -->
             <Button
               icon="pi pi-bars"
               :title="t('toolbar.settingsMenu')"
@@ -97,8 +108,9 @@
         </div>
       </div>
 
-      <!-- 设置菜单：大 dialog 居中显示，内含九宫格。每个功能为正方形区块，
-           上方大图标 + 下方功能名。点击某项直接触发对应功能（弹窗/路由跳转）。 -->
+      <!-- Settings menu: shown centered in a large dialog containing a nine-grid.
+           Each function is a square block with a large icon on top and the function name below.
+           Clicking an item directly triggers the corresponding function (dialog / route jump). -->
       <Dialog
         v-model:visible="isSettingsMenuOpen"
         :header="t('toolbar.settingsMenu')"
@@ -113,65 +125,67 @@
             class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
             :title="t(tool.title)"
             @click="handleMenuSelect(tool.event)">
-            <i
-              :class="[tool.icon, 'text-4xl! text-theme-main']" />
+            <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
             <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
           </button>
         </div>
       </Dialog>
-      <!-- 会话主体：每个会话由 [sid].vue 渲染。以 route.params.sid 作为 page-key，
-           每个会话获得独立的 KeepAlive 缓存槽，切换时原样恢复其草稿/滚动/流式/HITL 状态。
-           `max` 上限：超过 N 个缓存槽时，KeepAlive 会按 LRU 淘汰最久未访问的槽，
-           防止删除的非激活会话（其 page-key 不再被路由引用，但槽仍驻留内存）导致无界增长。 -->
+      <!-- Session main area: each session is rendered by [sid].vue. Using route.params.sid as
+           the page-key gives each session its own KeepAlive cache slot, so switching restores its
+           draft/scroll/streaming/HITL state exactly as it was.
+           `max` cap: when there are more than N cache slots, KeepAlive evicts the
+           least-recently-visited slot by LRU, preventing unbounded growth from deleted inactive
+           sessions (their page-key is no longer referenced by the route, but the slot still
+           lingers in memory). -->
       <div class="flex-1 min-h-0">
         <NuxtPage
           :page-key="resolvePageKey"
           :keepalive="{ max: KEEP_ALIVE_MAX }" />
-    </div>
+      </div>
 
-    <!-- 技能查看弹窗 -->
-    <SkillsDialog v-model="showSkillsDialog" />
+      <!-- Skills dialog -->
+      <SkillsDialog v-model="showSkillsDialog" />
 
-    <!-- 统计弹窗 -->
-    <StatsDialog v-model="showStatsDialog" />
+      <!-- Statistics dialog -->
+      <StatsDialog v-model="showStatsDialog" />
 
-    <!-- 系统配置弹窗 -->
-    <ConfigDialog
-      v-model="showConfigDialog"
-      @saved="loadCharacter" />
+      <!-- System config dialog -->
+      <ConfigDialog
+        v-model="showConfigDialog"
+        @saved="loadCharacter" />
 
-    <!-- AI人格弹窗 -->
-    <PersonaDialog v-model="showPersonaDialog" />
+      <!-- AI persona dialog -->
+      <PersonaDialog v-model="showPersonaDialog" />
 
-    <!-- 记忆弹窗 -->
-    <MemoryDialog v-model="showMemoryDialog" />
+      <!-- Memory dialog -->
+      <MemoryDialog v-model="showMemoryDialog" />
 
-    <!-- 心跳任务弹窗 -->
-    <HeartbeatDialog v-model="showHeartbeatDialog" />
+      <!-- Heartbeat tasks dialog -->
+      <HeartbeatDialog v-model="showHeartbeatDialog" />
 
-    <!-- 定时任务弹窗 -->
-    <CronDialog v-model="showCronDialog" />
+      <!-- Cron (scheduled tasks) dialog -->
+      <CronDialog v-model="showCronDialog" />
 
-    <!-- 日志查看弹窗 -->
-    <LogsDialog v-model="showLogsDialog" />
+      <!-- Logs dialog -->
+      <LogsDialog v-model="showLogsDialog" />
 
-    <!-- 通知查看弹窗（监听 ws:notification，合并连续相同通知，未读数经 changed 上报） -->
-    <NotificationDialog
-      v-model="showNotificationDialog"
-      @changed="(n: number) => (notificationUnread = n)" />
+      <!-- Notification dialog (listens to ws:notification, merges consecutive identical
+         notifications, reports the unread count via changed) -->
+      <NotificationDialog
+        v-model="showNotificationDialog"
+        @changed="(n: number) => (notificationUnread = n)" />
 
-    <!-- 扩展弹窗（关联 / mcp） -->
-    <ExtendDialog v-model="showExtendDialog" />
-
-
+      <!-- Extend dialog (integrations / mcp) -->
+      <ExtendDialog v-model="showExtendDialog" />
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-// 页面级错误捕获：本页所有后代组件（侧边栏/工具栏/各弹窗，以及无自带捕获的子路由页）
-// 的运行时错误 → logUtil 日志 + 全局 toast，return false 阻断向上冒泡
-// （03-errorCaptured工厂函数.md 工厂函数模式）
+// Page-level error capture: runtime errors from all descendant components on this page
+// (sidebar/toolbar/each dialog, plus child route pages without their own capture)
+// → logUtil logging + global toast; returning false stops further upward propagation
+// (factory function pattern from 03-errorCapturedFactoryFunction.md)
 import { useErrorCaptured } from '~/composables/errorCaptured';
 
 useErrorCaptured();
@@ -197,15 +211,10 @@ import { headerTools } from './config';
 
 const { t, locale, setLocale } = useI18n();
 
-/** 全局聊天区背景图：绑定到根容器（铺满整个窗口，含左侧会话列表） */
-const {
-  backgroundOpacity,
-  chatBackgroundStyle,
-  chatBackgroundOverlayStyle,
-  loadBackground
-} = useChatBackground();
+/** Global chat area background image: bound to the root container (fills the entire window, including the left session list) */
+const { backgroundOpacity, chatBackgroundStyle, chatBackgroundOverlayStyle, loadBackground } = useChatBackground();
 
-/** 语言切换选项：复用系统配置里的语言名（各 locale 中对应自语言名） */
+/** Language switcher options: reuses the language names from System Config (each locale maps to its own language name) */
 const languageOptions = computed(() => [
   { name: t('config.language.zh'), code: 'zh' },
   { name: t('config.language.en'), code: 'en' },
@@ -214,16 +223,18 @@ const languageOptions = computed(() => [
 ]);
 
 /**
- * 语言切换处理器：通过 nuxt-i18n 的 `setLocale` 切换。在 `no_prefix` 策略下
- * `setLocale` 内部的 `navigate()` 会早退，**不会触发路由导航**，因此
- * `/home/:id` 这类会话视图的 URL 保持稳定。
+ * Language switch handler: switches via nuxt-i18n's `setLocale`. Under the `no_prefix`
+ * strategy, `setLocale`'s internal `navigate()` returns early, **without triggering a route
+ * navigation**, so URLs of session views like `/home/:id` stay stable.
  *
- * `setLocale` 同时完成两件事：
- * - 加载目标 locale 的语言包（`mergeLocaleMessage`），避免渲染原始 key
- * - 写入偏好 cookie（`i18n_redirected`）持久化，刷新后可恢复所选语言
+ * `setLocale` also does two things at once:
+ * - Loads the target locale's language pack (`mergeLocaleMessage`), avoiding rendering raw keys
+ * - Writes the preference cookie (`i18n_redirected`) for persistence, so the chosen language
+ *   can be restored after a refresh
  *
- *（相比直接 `locale.value = code` + 手动写 cookie，`setLocale` 是唯一能保证
- *  语言包被加载的路径，否则首次/切换时 `$t` 返回原始 key。）
+ * (Compared with directly setting `locale.value = code` + manually writing the cookie,
+ *  `setLocale` is the only path that guarantees the language pack gets loaded; otherwise
+ *  `$t` returns raw keys on first render/switch.)
  */
 async function onLanguageChange(code: string) {
   await setLocale(code as 'zh' | 'en' | 'ja' | 'ko');
@@ -231,12 +242,15 @@ async function onLanguageChange(code: string) {
 }
 
 /**
- * 持久化语言偏好 cookie（key: i18n_redirected）。
+ * Persist the language preference cookie (key: i18n_redirected).
  *
- * 背景：nuxt.config.ts 设了 `detectBrowserLanguage: false` 后，模块把检测配置归一化为 `{}`，
- * 导致 `setCookieLocale` 因 `detectConfig.useCookie` 为 falsy 而变成空操作——**模块绝不写 cookie**。
- * 因此 `setLocale` 只能即时切换，无法持久化。要满足「浏览器刷新/重开仍是偏好语言」，必须
- * 由我们手动写入偏好 cookie，并在 app.vue 初载时优先读取它（与 app.vue 的读取逻辑配合同套 key）。
+ * Background: after nuxt.config.ts set `detectBrowserLanguage: false`, the module normalizes the
+ * detection config to `{}`, which makes `setCookieLocale` a no-op because `detectConfig.useCookie`
+ * is falsy — **the module never writes the cookie itself**.
+ * As a result, `setLocale` can only switch immediately and cannot persist. To satisfy
+ * "the preferred language survives browser refresh/restart", we must manually write the
+ * preference cookie and have app.vue read it first on initial load (app.vue's read logic
+ * cooperates using the same key).
  */
 function persistLocalePreference(code: 'zh' | 'en' | 'ja' | 'ko') {
   if (import.meta.server) return;
@@ -247,72 +261,77 @@ const router = useRouter();
 const localePath = useLocalePath();
 
 /**
- * KeepAlive 缓存槽上限（LRU）。
+ * KeepAlive cache slot cap (LRU).
  *
- * 删除**非激活**会话时：服务端 `clearSession` + Dexie 角色快照都会清理，
- * 但该会话的 KeepAlive 缓存槽不会被显式移除（只有删除的是当前激活会话时，
- * 才会因 `router.push('/home')` 离开 `[sid].vue` 路由而随之销毁）。
- * 这些残留槽持续驻留内存，若不设上限只会无界累积。
- * `max` 令 KeepAlive 在缓存槽超过此数时，按 LRU 淘汰最久未访问的会话，
- * 从根本上防止内存增长失控（不影响按 sid 恢复的语义，被淘汰会话下次访问会重建）。
+ * When deleting an **inactive** session: the server-side `clearSession` and the Dexie character
+ * snapshot are both cleaned up, but that session's KeepAlive cache slot is not explicitly
+ * removed (only when the deleted session is the currently active one does the slot get
+ * destroyed along with leaving the `[sid].vue` route via `router.push('/home')`).
+ * These leftover slots stay resident in memory and accumulate without bound if uncapped.
+ * `max` makes KeepAlive evict the least-recently-visited session by LRU once the slots exceed
+ * this number, fundamentally preventing runaway memory growth (does not affect the
+ * restore-by-sid semantics; an evicted session is rebuilt on its next visit).
  */
 const KEEP_ALIVE_MAX = 20;
 
 /**
- * 计算某个路由对应的 KeepAlive page-key。
- * tasks 独立页使用独立槽位，避免与聊天页的 KeepAlive 状态相互覆盖；
- * 其余路由（聊天页 / 首页）统一以会话 id 作为 key。
+ * Compute the KeepAlive page-key for a given route.
+ * The standalone tasks page uses its own slot to avoid its KeepAlive state clobbering the chat
+ * page's (and vice versa); all other routes (chat page / home) uniformly use the session id as
+ * the key.
  */
 const resolvePageKey = (route: { path: string; params: Record<string, unknown> }) => {
   const sid = String(route.params.sid ?? 'root');
   return route.path.includes('/tasks/') ? `tasks-${sid}` : sid;
 };
 
-/** 技能查看弹窗开关 */
+/** Skills dialog toggle */
 const showSkillsDialog = ref(false);
 
-/** 统计弹窗开关 */
+/** Statistics dialog toggle */
 const showStatsDialog = ref(false);
 
-/** 系统配置弹窗开关 */
+/** System config dialog toggle */
 const showConfigDialog = ref(false);
 
-/** AI人格弹窗开关 */
+/** AI persona dialog toggle */
 const showPersonaDialog = ref(false);
 
-/** 记忆弹窗开关 */
+/** Memory dialog toggle */
 const showMemoryDialog = ref(false);
 
-/** 心跳任务弹窗开关 */
+/** Heartbeat tasks dialog toggle */
 const showHeartbeatDialog = ref(false);
 
-/** 定时任务弹窗开关 */
+/** Cron (scheduled tasks) dialog toggle */
 const showCronDialog = ref(false);
 
-/** 日志查看弹窗开关 */
+/** Logs dialog toggle */
 const showLogsDialog = ref(false);
 
-/** 扩展弹窗开关 */
+/** Extend dialog toggle */
 const showExtendDialog = ref(false);
 
-/** 通知查看弹窗开关 */
+/** Notification dialog toggle */
 const showNotificationDialog = ref(false);
 
-/** 通知徽标未读数（由 NotificationDialog 上报） */
+/** Notification badge unread count (reported by NotificationDialog) */
 const notificationUnread = ref(0);
 
-/** UI 全局 store（侧边栏折叠 / 设置菜单 / 主题统一入口） */
+/** Global UI store (unified entry for sidebar collapse / settings menu / theme) */
 const uiStore = useUiStore();
-/** 设置菜单（九宫格）是否展开（瞬态，不持久化） */
+/** Whether the settings menu (nine-grid) is open (transient, not persisted) */
 const { settingsMenuOpen: isSettingsMenuOpen } = storeToRefs(uiStore);
 
-/** 左侧历史侧边栏是否折叠（默认展开；持久化到 localStorage，刷新后恢复） */
+/** Whether the left history sidebar is collapsed (expanded by default; persisted to localStorage and restored after refresh) */
 const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /**
- * 系统配置保存后的回调：当前会话继续保留其已锁定的旧快照 → 显示不变；
- * 仅重读当前会话快照以确认渲染（新会话打开时才取最新全局值）。
- * `ensureSessionCharacter` 由 SessionSidebar.vue 导出复用。
+ * Callback after system config is saved: the current session keeps its already-locked old
+ * snapshot → the display stays unchanged;
+ * we only re-read the current session's snapshot to confirm rendering (the latest global values
+ * are picked up only when a new session opens).
+ * `ensureSessionCharacter` is exported by SessionSidebar.vue for reuse.
  */
 const loadCharacter = async () => {
   if (currentSessionId.value) {
@@ -320,10 +339,10 @@ const loadCharacter = async () => {
   }
 };
 
-/** 当前会话 id（用于侧边栏高亮 + NuxtPage 的 KeepAlive key） */
+/** Current session id (used for sidebar highlighting + the NuxtPage KeepAlive key) */
 const currentSessionId = ref<string>();
 
-/** 工具触发（仅头部区域；工具栏/图片等已随会话主体迁入 [sid].vue） */
+/** Tool trigger (header bar only; toolbar/images etc. have moved into [sid].vue along with the session main area) */
 const handleOperate = (type: string, event: string) => {
   if (!event || type !== 'headerBar') return;
   switch (event) {
@@ -366,20 +385,23 @@ const handleOperate = (type: string, event: string) => {
 };
 
 /**
- * 设置菜单（九宫格）项点击处理：先触发对应工具事件，再收起菜单。
- * knowledgeGraph 是路由跳转，其余为弹窗，统一复用 handleOperate 的事件分发。
+ * Settings menu (nine-grid) item click handler: first triggers the corresponding tool event,
+ * then collapses the menu.
+ * knowledgeGraph is a route jump while the rest are dialogs; both uniformly reuse
+ * handleOperate's event dispatch.
  */
 const handleMenuSelect = (event: string) => {
   isSettingsMenuOpen.value = false;
   handleOperate('headerBar', event);
 };
 
-/** 折叠/展开左侧历史侧边栏 */
+/** Collapse/expand the left history sidebar */
 const toggleSidebar = () => {
   isSidebarCollapsed.value = !isSidebarCollapsed.value;
 };
 
-// 挂载后加载全局聊天区背景图（会话列表拉取已在 SessionSidebar 组件内完成）
+// Load the global chat area background image after mount (session list fetching is already
+// done inside the SessionSidebar component)
 onMounted(() => {
   loadBackground();
 });

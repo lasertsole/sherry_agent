@@ -1,66 +1,70 @@
 import Dexie, { type Table } from 'dexie';
 
 /**
- * 客户端日志的类型大桶（对等 server logs/logger.py 的 `info`/`all`/`error` 三目录）。
- * 顺序即 UI 展示顺序：`all`（全量）、`log`（INFO 流水）、`error`（错误）。
+ * Top-level type buckets for client logs (mirroring the `info`/`all`/`error` trio of directories in server logs/logger.py).
+ * The order is the UI display order: `all` (everything), `log` (INFO stream), `error` (errors).
  */
 export const CLIENT_LOG_TYPES = ['all', 'log', 'error'] as const;
 export type ClientLogType = (typeof CLIENT_LOG_TYPES)[number];
 
 /**
- * 持久化存储抽象：默认实现指向 Dexie（IndexedDB），便于测试注入内存假实现。
+ * Persistence store abstraction: the default implementation targets Dexie (IndexedDB), so tests can inject an in-memory fake.
  *
- * 分桶语义：**先按类型分大桶（type），再在类型内按天分小桶（date）**，
- * 与 server 的「目录（info/all/error）/ 按天文件」结构对等。
+ * Bucketing semantics: **first split into top-level buckets by type, then split each type into per-day sub-buckets (date)**,
+ * mirroring the server's "directory (info/all/error) / per-day file" layout.
  */
 export interface ClientLogStore {
   add(entry: ClientLogEntry): Promise<number>;
   clear(): Promise<void>;
-  /** 读取历史（最新在前）。`beforeId` 存在时仅返回 `id < beforeId` 的记录。 */
+  /** Read history (newest first). When `beforeId` is present, only records with `id < beforeId` are returned. */
   readPage(opts: { limit: number; beforeId?: number }): Promise<ClientLogEntry[]>;
-  /** 列出类型大桶元数据（含总条数、天数），用于「按类型分大桶」下拉——对等 server 的三个日志目录。 */
+  /** List top-level type bucket metadata (total entries, day counts), for the "bucket by type" dropdown — mirrors the server's three log directories. */
   listTypes(): Promise<ClientLogTypeInfo[]>;
-  /** 列出某个类型大桶内部的日期小桶（最新在前），用于「按天分小桶」下拉。 */
+  /** List the per-day sub-buckets inside a given type bucket (newest first), for the "bucket by day" dropdown. */
   listBucketsForType(type: ClientLogType): Promise<ClientLogBucket[]>;
-  /** 读取某个类型下某天分桶内的日志（最新在前）。`tsStart` 为当天 0 点，`tsEnd` 为次 0 点（半开区间）。 */
+  /** Read the logs inside one type's per-day bucket (newest first). `tsStart` is that day's local midnight, `tsEnd` is the next midnight (half-open interval). */
   readBucket(t: { type: ClientLogType; tsStart: number; tsEnd: number; limit?: number }): Promise<ClientLogEntry[]>;
 }
 
 /**
- * 前端（客户端）日志捕获与持久化。
+ * Frontend (client-side) log capture and persistence.
  *
- * 目标：让「日志查看 → 客户端」Tab 具备与「服务端」Tab 对等的 **历史 + 实时** 能力。
+ * Goal: give the "Log Viewer → Client" tab the same **history + live** capabilities as the "Server" tab.
  *
- * - **实时**：安装一次浏览器 `console.*` 捕获，改动后即向 {@link clientLogSubscribers} 推送新增记录；
- * - **历史**：每次捕获同步写入 IndexedDB（Dexie）`client_logs` 表，应用重启后通过
- *   {@link readClientLogs} 重建记录，真正做到跨会话留存（与 only-memory 的旧行为不同）；
- * - **清理**：{@link clearClientLogs} 清空 Dexie 与内存缓冲，避免历史无限膨胀。
+ * - **Live**: install the browser `console.*` capture once; each newly captured entry is pushed
+ *   to {@link clientLogSubscribers} right away;
+ * - **History**: every capture is written synchronously into the IndexedDB (Dexie) `client_logs`
+ *   table; after an app restart the records are rebuilt via {@link readClientLogs}, achieving true
+ *   persistence across sessions (unlike the old in-memory-only behavior);
+ * - **Cleanup**: {@link clearClientLogs} empties both Dexie and the in-memory buffer so history
+ *   does not grow unboundedly.
  *
- * 捕获仅作用于前端 Vue/浏览器侧的 `console.*` 调用；Rust tracing（`src-tauri`）日志不在此列。
+ * Capture only applies to frontend Vue/browser-side `console.*` calls; Rust tracing (`src-tauri`) logs are not covered here.
  */
 
-/** 单条客户端日志记录。 */
+/** A single client log entry. */
 export interface ClientLogEntry {
-  /** Dexie 自增主键，用于历史分页（`beforeId`）与排序。 */
+  /** Dexie auto-increment primary key, used for history paging (`beforeId`) and ordering. */
   id?: number;
-  /** 日志级别（大写，与 server tab 着色规则一致）。 */
+  /** Log level (uppercase, matching the server tab's coloring rules). */
   level: string;
-  /** 已格式化的文本（包含时间戳头 `HH:MM:SS | LEVEL | message`）。 */
+  /** Pre-formatted text (including the timestamp header `HH:MM:SS | LEVEL | message`). */
   text: string;
-  /** 捕获时刻的 Unix 毫秒时间戳（用于按时间排序）。 */
+  /** Unix millisecond timestamp at capture time (used for time-based ordering). */
   ts: number;
   /**
-   * 所属类型大桶（`all`/`log`/`error`），由 {@link levelToType} 在捕获时推断并持久化，
-   * 便于按类型高效检索。历史数据（无此字段）读取时用 {@link typeOfEntry} 兜底推断。
+   * The top-level type bucket (`all`/`log`/`error`) this entry belongs to, inferred by
+   * {@link levelToType} at capture time and persisted for efficient type-based retrieval.
+   * Historical data (missing this field) falls back to {@link typeOfEntry} inference at read time.
    */
   type?: ClientLogType;
 }
 
 /**
- * 把日志级别映射到类型大桶——镜像 server logs/logger.py 的三目录语义：
- * - `all`：所有级别；`log`（对等 info 目录）仅 INFO；`error`：ERROR + CRITICAL。
- * 客户端 console 捕获实际只会产生 DEBUG/INFO/WARNING/ERROR，但补全 TRACE/SUCCESS
- * 与未知级别，使分类与 server 完全对齐。
+ * Map a log level to its top-level type bucket — mirrors the three-directory semantics of server logs/logger.py:
+ * - `all`: every level; `log` (counterpart of the info directory) only INFO; `error`: ERROR + CRITICAL.
+ * Client console capture actually only produces DEBUG/INFO/WARNING/ERROR, but TRACE/SUCCESS
+ * and unknown levels are also handled so classification aligns exactly with the server.
  */
 export function levelToType(level: string): ClientLogType {
   switch ((level || '').toUpperCase()) {
@@ -70,65 +74,67 @@ export function levelToType(level: string): ClientLogType {
     case 'INFO':
       return 'log';
     default:
-      // TRACE / DEBUG / SUCCESS / WARNING / 未知级别 均归入 all（与 server 的 all 桶一致）。
+      // TRACE / DEBUG / SUCCESS / WARNING / unknown levels all fall into `all` (same as the server's all bucket).
       return 'all';
   }
 }
 
-/** 取一条记录的类型：优先用持久化字段，缺失时从级别推断（兼容旧历史数据）。 */
+/** Get an entry's type: prefer the persisted field, falling back to level-based inference when missing (compatible with old historical data). */
 export function typeOfEntry(entry: ClientLogEntry): ClientLogType {
   return entry.type ?? levelToType(entry.level);
 }
 
-/** 内存渲染缓冲上限：超出后丢弃最旧的记录。 */
+/** Cap for the in-memory render buffer: oldest records are dropped beyond it. */
 export const MAX_LOG_RECS = 5000;
 
 /**
- * 类型大桶元数据——对等 server 端 logs/output 下的 `info`/`all`/`error` 三个目录。
- * 用于「按类型分大桶」下拉的第一级。
+ * Top-level type bucket metadata — mirrors the `info`/`all`/`error` directories under server-side logs/output.
+ * Used as the first level of the "bucket by type" dropdown.
  */
 export interface ClientLogTypeInfo {
-  /** 类型标识（`all`/`log`/`error`）。 */
+  /** Type identifier (`all`/`log`/`error`). */
   type: ClientLogType;
-  /** 该类型下的总日志条数。 */
+  /** Total number of log entries under this type. */
   count: number;
-  /** 该类型包含的日期小桶（天数）。 */
+  /** Number of per-day sub-buckets (days) this type contains. */
   dayCount: number;
 }
 
 /**
- * 某个类型大桶内的日期小桶元数据——对等 server 端 `LogFileInfo`（按天文件）。
+ * Per-day sub-bucket metadata inside a given type bucket — mirrors the server-side `LogFileInfo` (per-day files).
  *
- * - 每条客户端日志按捕获时刻归入其「当天」分桶，同时归入由级别推断出的类型大桶；
- * - 日期小桶即下拉里的一个「文件」；「今天」的日期小桶视为当前（is_current=true），
- *   只有它（且对应类型）可以开启实时流（对等 server 只有当前进程日志可实时推送）。
+ * - Each client log entry is filed into its "current day" bucket at capture time, and at the same
+ *   time into the type bucket inferred from its level;
+ * - A day bucket corresponds to one "file" in the dropdown; today's day bucket is treated as the
+ *   current one (is_current=true) and only it (with the matching type) can start a live stream
+ *   (mirroring the server, where only the current process's logs can be streamed live).
  */
 export interface ClientLogBucket {
-  /** 所属类型大桶。 */
+  /** The top-level type bucket it belongs to. */
   type: ClientLogType;
-  /** 分桶展示名，如 `2026-08-17`。 */
+  /** Display name of the bucket, e.g. `2026-08-17`. */
   name: string;
-  /** 该天 0 点（本地时区）Unix 毫秒时间戳，作为读取区间的左端点。 */
+  /** Unix millisecond timestamp of that day's midnight (local timezone), the left endpoint of the read interval. */
   tsStart: number;
-  /** 次天 0 点 Unix 毫秒时间戳（半开区间右端点）。 */
+  /** Unix millisecond timestamp of next day's midnight (right endpoint of the half-open interval). */
   tsEnd: number;
-  /** 该分桶内的日志条数。 */
+  /** Number of log entries inside this bucket. */
   count: number;
-  /** 是否为「今天」的分桶（唯一可开启实时流）。 */
+  /** Whether this is "today's" bucket (the only one that can start a live stream). */
   is_current: boolean;
 }
 
-/** 本地日期分桶粒度：每天一个桶。 */
+/** Local date bucketing granularity: one bucket per day. */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 将 Unix 毫秒时间戳归零到本地时区当天 0 点。 */
+/** Truncate a Unix millisecond timestamp to the local-timezone midnight of its day. */
 export function startOfLocalDay(ts: number): number {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
-/** 计算某时间戳所属分桶的展示名（本地时区，形如 `YYYY-MM-DD`）。 */
+/** Compute the display name of the bucket a timestamp belongs to (local timezone, formatted as `YYYY-MM-DD`). */
 export function bucketNameOf(ts: number): string {
   const d = new Date(ts);
   const y = d.getFullYear();
@@ -138,23 +144,23 @@ export function bucketNameOf(ts: number): string {
 }
 
 class ClientLogDb extends Dexie {
-  /** 客户端日志表：主键自增 `id`，每条含 `ts` 与 `type` 便于历史分页与类型检索。 */
+  /** Client log table: auto-incrementing `id` primary key; each entry carries `ts` and `type` for history paging and type-based retrieval. */
   logs!: Table<ClientLogEntry, number>;
 
   constructor() {
     super('ema-client-log-cache');
     this.version(2).stores({
-      // `ts` 建立索引以便按时间倒序读取历史；`type` + `type&ts` 支持按类型大桶聚合与区间查询；
-      // 主键 `id` 自增天然有序。旧历史无 `type` 字段，读取时用 typeOfEntry 兜底推断。
-      logs: '++id, ts, type, [type+ts]',
+      // `ts` is indexed so history can be read in reverse time order; `type` + `type&ts` support aggregation by type bucket and range queries;
+      // the auto-incrementing `id` primary key is naturally ordered. Old history has no `type` field; typeOfEntry infers it as a fallback at read time.
+      logs: '++id, ts, type, [type+ts]'
     });
   }
 }
 
-/** 全局唯一的客户端日志数据库实例。 */
+/** The single global client log database instance. */
 export const logDb = new ClientLogDb();
 
-/** 默认（生产）持久化层：把读写转发到 Dexie。 */
+/** Default (production) persistence layer: forwards reads/writes to Dexie. */
 const dexieStore: ClientLogStore = {
   async add(entry) {
     return await logDb.logs.add(entry);
@@ -167,7 +173,7 @@ const dexieStore: ClientLogStore = {
       return await logDb.logs
         .orderBy('ts')
         .reverse()
-        .filter((e) => (e.id ?? 0) < (opts.beforeId as number))
+        .filter(e => (e.id ?? 0) < (opts.beforeId as number))
         .limit(opts.limit)
         .toArray();
     }
@@ -175,7 +181,7 @@ const dexieStore: ClientLogStore = {
   },
   async listTypes() {
     const all = await logDb.logs.orderBy('ts').toArray();
-    // 先按类型大桶聚合，再在每个类型内按天聚合（供 dayCount 计数）。
+    // First aggregate by top-level type bucket, then by day within each type (for the dayCount count).
     const byType = new Map<ClientLogType, { count: number; days: Set<number> }>();
     for (const e of all) {
       const type = typeOfEntry(e);
@@ -184,26 +190,26 @@ const dexieStore: ClientLogStore = {
       cur.days.add(startOfLocalDay(e.ts));
       byType.set(type, cur);
     }
-    // 固定按 UI 顺序返回全部三个大桶（无数据的 count=0），对等 server 固定三目录。
-    return CLIENT_LOG_TYPES.map((type) => {
+    // Always return all three top-level buckets in UI order (count=0 when empty), mirroring the server's fixed three directories.
+    return CLIENT_LOG_TYPES.map(type => {
       const v = byType.get(type);
       return {
         type,
         count: v?.count ?? 0,
-        dayCount: v?.days.size ?? 0,
+        dayCount: v?.days.size ?? 0
       } satisfies ClientLogTypeInfo;
     });
   },
   async listBucketsForType(type) {
     const scoped = logDb.logs.where('[type+ts]').between([type, Dexie.minKey], [type, Dexie.maxKey]).toArray();
     const rows = await scoped;
-    // 只统计持久化 type 匹配本桶的记录；缺失 type 的旧数据由 typeOfEntry 推断后归入对应桶。
+    // Only count entries whose persisted type matches this bucket; old data missing `type` is inferred via typeOfEntry and filed into the matching bucket.
     const effective: ClientLogEntry[] = [];
     for (const e of rows) {
       const t = typeOfEntry(e);
       if (t === type) effective.push(e);
     }
-    // 按「天」聚合计数，并保留每天最早一条的 ts 用于计算小桶区间。
+    // Aggregate counts by "day", keeping the earliest ts of each day for computing the sub-bucket interval.
     const byDay = new Map<number, { count: number; minTs: number }>();
     for (const e of effective) {
       const start = startOfLocalDay(e.ts);
@@ -216,68 +222,75 @@ const dexieStore: ClientLogStore = {
       }
     }
     const nowStart = startOfLocalDay(Date.now());
-    return [...byDay.entries()]
-      .map(([start, v]) => {
-        const is_current = start === nowStart;
-        // 小桶右端点为「该天 0 点 + 1 天」。为避免时区/跨日边界的边界舍入偏差，
-        // 对每个桶使用从记录最早 ts 归零得到的当天 0 点（与 start 一致）。
-        return {
-          type,
-          name: bucketNameOf(v.minTs),
-          tsStart: start,
-          tsEnd: start + DAY_MS,
-          count: v.count,
-          is_current,
-        } satisfies ClientLogBucket;
-      })
-      // 最新（今天）在前，对等 server 文件列表「newest first」。
-      .sort((a, b) => b.tsStart - a.tsStart);
+    return (
+      [...byDay.entries()]
+        .map(([start, v]) => {
+          const is_current = start === nowStart;
+          // The sub-bucket's right endpoint is "that day's midnight + 1 day". To avoid boundary rounding
+          // artifacts at timezone / day-crossing edges,
+          // each bucket uses the local midnight obtained by truncating its earliest record's ts (identical to start).
+          return {
+            type,
+            name: bucketNameOf(v.minTs),
+            tsStart: start,
+            tsEnd: start + DAY_MS,
+            count: v.count,
+            is_current
+          } satisfies ClientLogBucket;
+        })
+        // Newest (today) first, mirroring the server file list's "newest first".
+        .sort((a, b) => b.tsStart - a.tsStart)
+    );
   },
   async readBucket(t) {
     const filtered = (rows: ClientLogEntry[]): ClientLogEntry[] =>
-      t.type === 'all' ? rows : rows.filter((e) => typeOfEntry(e) === t.type);
+      t.type === 'all' ? rows : rows.filter(e => typeOfEntry(e) === t.type);
     return await logDb.logs
       .where('ts')
       .aboveOrEqual(t.tsStart)
-      .and((e) => e.ts < t.tsEnd)
-      .sortBy('ts') // 升序，随后倒序返回（最新在前）
-      .then((rows) => filtered(rows).reverse().slice(0, t.limit ?? 500));
-  },
+      .and(e => e.ts < t.tsEnd)
+      .sortBy('ts') // ascending; reversed afterwards so results come back newest first
+      .then(rows =>
+        filtered(rows)
+          .reverse()
+          .slice(0, t.limit ?? 500)
+      );
+  }
 };
 
 /**
- * 当前生效的持久化层。默认 Dexie；测试可通过 {@link setClientLogStore} 注入内存假实现。
- * 变更为可写变量以便测试覆盖，而非常量。
+ * The currently active persistence layer. Defaults to Dexie; tests can inject an in-memory fake via {@link setClientLogStore}.
+ * Kept as a mutable variable (rather than a constant) so tests can override it.
  */
 let activeStore: ClientLogStore = dexieStore;
 
-/** 内存渲染缓冲（用于弹窗打开时的即时展示；跨重启历史见 Dexie）。 */
+/** In-memory render buffer (for instant display while the dialog is open; cross-restart history lives in Dexie). */
 const logBuffer: ClientLogEntry[] = [];
 
-/** 实时订阅器集合：弹窗打开期间收到新增记录时实时追加到视图。 */
+/** Set of live subscribers: while the dialog is open, newly captured entries are appended to the view in real time. */
 const clientLogSubscribers = new Set<(entry: ClientLogEntry) => void>();
 
 let captureInstalled = false;
 
 /**
- * 覆盖持久化层（测试用）。传入 `null` 恢复默认 Dexie 实现。
+ * Override the persistence layer (for tests). Pass `null` to restore the default Dexie implementation.
  */
 export function setClientLogStore(store: ClientLogStore | null): void {
   activeStore = store ?? dexieStore;
 }
 
-/** 原文 console 方法引用，捕获后透传给真实实现。 */
+/** References to the original console methods; after capture, calls are forwarded to these real implementations. */
 const origConsole = {
   debug: console.debug,
   log: console.log,
   info: console.info,
   warn: console.warn,
-  error: console.error,
+  error: console.error
 };
 
 /**
- * 把一条捕获记录同时写入内存缓冲（限长）与 Dexie（历史）。
- * 写入 Dexie 采用 fire-and-forget：不阻塞 console 调用本身。
+ * Write one captured entry into both the (length-capped) in-memory buffer and Dexie (history).
+ * The Dexie write is fire-and-forget: it never blocks the console call itself.
  */
 function pushEntry(level: string, text: string): void {
   if (!text) return;
@@ -288,20 +301,20 @@ function pushEntry(level: string, text: string): void {
     logBuffer.splice(0, logBuffer.length - MAX_LOG_RECS);
   }
 
-  // 历史落盘（异步，失败不阻断控制台）。
+  // Persist to history (async; failures must not block the console).
   activeStore
     .add(entry)
     .then(() => {})
-    .catch((e) => {
-      // IndexedDB 不可用时（私隐模式 / 失效），静默降级为纯内存捕获。
+    .catch(e => {
+      // When IndexedDB is unavailable (private browsing mode / broken), silently degrade to in-memory-only capture.
       console.warn('[clientLog] failed to persist entry:', e);
     });
 
-  // 实时通知打开的视图。
-  clientLogSubscribers.forEach((fn) => fn(entry));
+  // Notify open views in real time.
+  clientLogSubscribers.forEach(fn => fn(entry));
 }
 
-/** 把 console arg 列表格式化为单行文本。 */
+/** Format a list of console args into a single line of text. */
 function formatArgs(args: unknown[]): string {
   let text = '';
   for (const a of args) {
@@ -318,10 +331,10 @@ function formatArgs(args: unknown[]): string {
 }
 
 /**
- * 安装浏览器 `console.*` 捕获。进程内仅安装一次。
+ * Install the browser `console.*` capture. Installed at most once per process.
  *
- * 捕获结果同时进入内存缓冲 + Dexie 历史；安装动作本身对控制台调用无侵入，
- * 只是拦截后透传。
+ * Captured output goes into both the in-memory buffer and the Dexie history; the installation
+ * itself is non-invasive to console calls — it only intercepts and forwards them.
  */
 export function installClientLogCapture(): void {
   if (captureInstalled) return;
@@ -355,61 +368,59 @@ export function installClientLogCapture(): void {
 }
 
 /**
- * 读取客户端日志历史（倒序：最新在前）。
+ * Read client log history (reverse order: newest first).
  *
- * 用于支持「历史日志」：弹窗打开时先读一段最近记录，之后靠实时订阅追平。
+ * Supports "history logs": when the dialog opens, read an initial batch of recent entries,
+ * then catch up via the live subscription.
  *
- * @param options.limit   返回条数上限（默认 500）。
- * @param options.beforeId 可选：只返回 `id < beforeId` 的记录，用于向上翻页加载更早历史。
- * @returns 按时间**倒序**（最新在前）返回的记录数组。
+ * @param options.limit   Maximum number of entries to return (default 500).
+ * @param options.beforeId Optional: only return entries with `id < beforeId`, for paging upward into older history.
+ * @returns Array of entries in reverse time order (**newest first**).
  */
 export async function readClientLogs(options: { limit?: number; beforeId?: number } = {}): Promise<ClientLogEntry[]> {
   const limit = options.limit ?? 500;
   return await activeStore.readPage({
     limit,
-    ...(options.beforeId !== undefined ? { beforeId: options.beforeId } : {}),
+    ...(options.beforeId !== undefined ? { beforeId: options.beforeId } : {})
   });
 }
 
-/** 清空客户端日志：持久化历史 + 内存缓冲。 */
+/** Clear client logs: persisted history + in-memory buffer. */
 export async function clearClientLogs(): Promise<void> {
   logBuffer.length = 0;
   await activeStore.clear();
 }
 
 /**
- * 列出客户端日志的类型大桶（`all`/`log`/`error`），用于「按类型分大桶」下拉——对等 server 的三目录。
+ * List the client log top-level type buckets (`all`/`log`/`error`), for the "bucket by type" dropdown — mirrors the server's three directories.
  */
 export async function listClientLogTypes(): Promise<ClientLogTypeInfo[]> {
   return await activeStore.listTypes();
 }
 
 /**
- * 列出某个类型大桶内的日期小桶（最新在前），用于「按天分小桶」下拉——对等 server 按天的文件列表。
+ * List the per-day sub-buckets inside a type bucket (newest first), for the "bucket by day" dropdown — mirrors the server's per-day file list.
  */
 export async function listClientLogBucketsForType(type: ClientLogType): Promise<ClientLogBucket[]> {
   return await activeStore.listBucketsForType(type);
 }
 
 /**
- * 读取某个类型下某天分桶内的日志（最新在前）。`bucket.tsStart/tsEnd` 取自 {@link listClientLogBucketsForType}。
+ * Read the logs inside one type's per-day bucket (newest first). `bucket.tsStart/tsEnd` come from {@link listClientLogBucketsForType}.
  *
- * @param bucket 目标分桶元数据（含所属类型）。
- * @param limit  返回条数上限（默认 500）。
+ * @param bucket Target bucket metadata (including its type).
+ * @param limit  Maximum number of entries to return (default 500).
  */
-export async function readClientLogBucket(
-  bucket: ClientLogBucket,
-  limit?: number,
-): Promise<ClientLogEntry[]> {
+export async function readClientLogBucket(bucket: ClientLogBucket, limit?: number): Promise<ClientLogEntry[]> {
   return await activeStore.readBucket({ type: bucket.type, tsStart: bucket.tsStart, tsEnd: bucket.tsEnd, limit });
 }
 
-/** 返回当前内存缓冲的一份快照（最新在前）。 */
+/** Return a snapshot of the current in-memory buffer (newest first). */
 export function getLogBufferSnapshot(): ClientLogEntry[] {
   return [...logBuffer];
 }
 
-/** 订阅客户端日志实时推送。返回取消订阅函数。 */
+/** Subscribe to live client log pushes. Returns an unsubscribe function. */
 export function subscribeClientLogs(fn: (entry: ClientLogEntry) => void): () => void {
   clientLogSubscribers.add(fn);
   return () => {

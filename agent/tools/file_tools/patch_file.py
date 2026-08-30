@@ -8,6 +8,7 @@ Each strategy is tried in order; the first match wins.  When a non-exact
 strategy matches, ``new_string`` is re-indented to preserve the file's
 actual indentation pattern.
 """
+
 import json
 import difflib
 from typing import Type, override
@@ -17,6 +18,7 @@ from langchain_core.tools import BaseTool
 from agent.tools.pub_base import resolve_path, PathOutOfBoundsError, fuzzy_find_and_replace
 
 # ── Diff helper ──────────────────────────────────────────────────────────
+
 
 def _unified_diff(old: str, new: str, path: str) -> str:
     diff = difflib.unified_diff(
@@ -30,14 +32,17 @@ def _unified_diff(old: str, new: str, path: str) -> str:
 
 # ── "Did you mean?" hint ─────────────────────────────────────────────────
 
-def _find_closest_lines(old_string: str, content: str, context: int = 2, max_results: int = 3) -> str:
+
+def _find_closest_lines(
+    old_string: str, content: str, context: int = 2, max_results: int = 3
+) -> str:
     if not old_string or not content:
         return ""
     old_lines = old_string.splitlines()
     content_lines = content.splitlines()
     if not old_lines or not content_lines:
         return ""
-    anchor = next((l.strip() for l in old_lines if l.strip()), "")
+    anchor = next((ln.strip() for ln in old_lines if ln.strip()), "")
     if not anchor:
         return ""
     scored = []
@@ -60,8 +65,7 @@ def _find_closest_lines(old_string: str, content: str, context: int = 2, max_res
             continue
         seen.add(key)
         snippet = "\n".join(
-            f"{start + j + 1:4d}| {content_lines[start + j]}"
-            for j in range(end - start)
+            f"{start + j + 1:4d}| {content_lines[start + j]}" for j in range(end - start)
         )
         parts.append(snippet)
     return "\n---\n".join(parts) if parts else ""
@@ -69,9 +73,12 @@ def _find_closest_lines(old_string: str, content: str, context: int = 2, max_res
 
 # ── LangChain tool ───────────────────────────────────────────────────────
 
+
 class PatchFileInput(BaseModel):
     file_path: str = Field(description="Path to the file to patch")
-    old_string: str = Field(description="Text to find in the file (must be unique unless replace_all=True)")
+    old_string: str = Field(
+        description="Text to find in the file (must be unique unless replace_all=True)"
+    )
     new_string: str = Field(description="Replacement text")
     replace_all: bool = Field(
         default=False,
@@ -101,7 +108,9 @@ class PatchFileTool(BaseTool):
         try:
             resolved = resolve_path(file_path)
         except PathOutOfBoundsError:
-            return json.dumps({"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False
+            )
 
         if not resolved.exists():
             return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)
@@ -117,7 +126,10 @@ class PatchFileTool(BaseTool):
             content = content[1:]
 
         new_content, match_count, strategy, error = fuzzy_find_and_replace(
-            content, old_string, new_string, replace_all,
+            content,
+            old_string,
+            new_string,
+            replace_all,
         )
 
         if error or match_count == 0:
@@ -126,11 +138,14 @@ class PatchFileTool(BaseTool):
                 closest = _find_closest_lines(old_string, content)
                 if closest:
                     hint = f"\n\nDid you mean one of these sections?\n{closest}"
-            return json.dumps({
-                "error": (error or "No match found") + hint,
-                "path": file_path,
-                "strategy": strategy,
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "error": (error or "No match found") + hint,
+                    "path": file_path,
+                    "strategy": strategy,
+                },
+                ensure_ascii=False,
+            )
 
         try:
             resolved.write_text(new_content, encoding="utf-8")
@@ -139,13 +154,16 @@ class PatchFileTool(BaseTool):
 
         diff = _unified_diff(content, new_content, file_path)
 
-        return json.dumps({
-            "success": True,
-            "path": file_path,
-            "strategy": strategy,
-            "matches": match_count,
-            "diff": diff,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "success": True,
+                "path": file_path,
+                "strategy": strategy,
+                "matches": match_count,
+                "diff": diff,
+            },
+            ensure_ascii=False,
+        )
 
     @override
     def _run(

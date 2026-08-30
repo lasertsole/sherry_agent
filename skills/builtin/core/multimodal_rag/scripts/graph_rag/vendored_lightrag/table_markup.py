@@ -53,9 +53,7 @@ HTML_ROW_PARTS_RE = re.compile(
     r"(?P<wrap></?(?:thead|tbody|tfoot)\b[^>]*>)" r"|(?P<tr><tr\b[^>]*>.*?</tr>)",
     re.DOTALL | re.IGNORECASE,
 )
-HTML_WRAPPER_TAG_RE = re.compile(
-    r"<(?P<slash>/?)(?P<name>thead|tbody|tfoot)\b", re.IGNORECASE
-)
+HTML_WRAPPER_TAG_RE = re.compile(r"<(?P<slash>/?)(?P<name>thead|tbody|tfoot)\b", re.IGNORECASE)
 
 
 def detect_table_format(attrs: str, body: str) -> str | None:

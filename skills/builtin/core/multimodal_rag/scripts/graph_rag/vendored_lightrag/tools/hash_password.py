@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import getpass
 
 from graph_rag.vendored_lightrag.tools.passwords import hash_password

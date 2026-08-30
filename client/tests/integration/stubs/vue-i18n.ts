@@ -9,12 +9,12 @@
  *
  * Unlike the unit stub (identity `t`), this one resolves keys against the real
  * `zh` locale messages, because integration tests assert rendered Chinese copy
- * (e.g. 橘雪莉 / 我). A tiny `{name}` interpolator covers parameterized keys
+ * from the zh locale. A tiny `{name}` interpolator covers parameterized keys
  * (e.g. `chatBox.modelMeta`).
  */
 import zhMessages from '@/i18n/locales/zh.json';
 
-/** 逐段下钻 zh 文案树；未命中的 key 原样返回（等价于 i18n 的 missing 警告行为） */
+/** Walks down the zh message tree segment by segment; returns the key itself on a miss (mirroring i18n missing-key warning behavior) */
 function lookup(key: string): string {
   const value = key
     .split('.')

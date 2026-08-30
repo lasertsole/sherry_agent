@@ -45,7 +45,7 @@ def _strip_session_prefix(session_id: str | None) -> str | None:
         return None
     prefix = "agent:main:session:"
     if session_id.startswith(prefix):
-        return session_id[len(prefix):]
+        return session_id[len(prefix) :]
     return session_id
 
 
@@ -59,7 +59,12 @@ async def _deliver_to_channel(channel_id: str, chat_id: str, content: str) -> No
         logger.warning("EventBusBridge: channel {} not found for delivery", channel_id)
         return
     await channel.send(OutboundMessage(channel=channel_id, chat_id=chat_id, content=content))
-    logger.info("EventBusBridge: delivered to channel={} chat_id={} content_len={}", channel_id, chat_id, len(content))
+    logger.info(
+        "EventBusBridge: delivered to channel={} chat_id={} content_len={}",
+        channel_id,
+        chat_id,
+        len(content),
+    )
 
 
 async def _deliver_to_websocket(session_id: str, content: str) -> None:
@@ -72,7 +77,11 @@ async def _deliver_to_websocket(session_id: str, content: str) -> None:
         return
     payload = {"event": "notification", "content": content}
     await websocket.send_text(json.dumps(payload))
-    logger.info("EventBusBridge: delivered to websocket for session={} content_len={}", session_id, len(content))
+    logger.info(
+        "EventBusBridge: delivered to websocket for session={} content_len={}",
+        session_id,
+        len(content),
+    )
 
 
 async def _route_delivery(fs_msg: FSInboundMessage) -> None:
@@ -82,12 +91,16 @@ async def _route_delivery(fs_msg: FSInboundMessage) -> None:
     """
     # Sub→sub internal injections must NOT reach any user channel/websocket.
     if fs_msg.metadata.get("internal"):
-        logger.debug("EventBusBridge: discarding internal sub→sub injection (session={})", fs_msg.session_id)
+        logger.debug(
+            "EventBusBridge: discarding internal sub→sub injection (session={})", fs_msg.session_id
+        )
         return
 
     bare_session = _strip_session_prefix(fs_msg.session_id)
     if not bare_session:
-        logger.warning("EventBusBridge: message has no session_id, dropping: {}", fs_msg.content[:80])
+        logger.warning(
+            "EventBusBridge: message has no session_id, dropping: {}", fs_msg.content[:80]
+        )
         return
 
     from runtime import relation_register

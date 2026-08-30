@@ -1,7 +1,5 @@
 """Unit test for runtime/TODOManager.py — Register ABC and clear_all_register_sessions."""
 
-import pytest
-from abc import ABC, abstractmethod
 from runtime.core import Register, clear_all_register_sessions
 
 
@@ -37,6 +35,7 @@ class TestRegisterSingleton:
                     return
                 self.data = []
                 self._initialized = True
+
             def clear_session(self, session_id):
                 pass
 

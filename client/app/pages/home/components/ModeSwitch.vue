@@ -22,16 +22,18 @@
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
-/** 颜色主题 */
+/** Color mode */
 const colorMode = useColorMode();
-/** UI 全局 store（主题切换统一写入口） */
+/** Global UI store (unified write entry for theme switching) */
 const uiStore = useUiStore();
-/** 当前模式 */
+/** Current mode */
 const currentMode = ref<string>(colorMode.preference);
 
-/** 切换主题 */
-const handleSwitch = (value: string) => {
-  currentMode.value = value;
-  uiStore.setTheme(value);
+/** Switch the theme */
+const handleSwitch = (value: string | boolean) => {
+  // ToggleSwitch's value-change emits a boolean; normalize both shapes to the mode string.
+  const mode = typeof value === 'string' ? value : value ? 'dark' : 'light';
+  currentMode.value = mode;
+  uiStore.setTheme(mode);
 };
 </script>

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import pipmaster as pm  # Pipmaster for dynamic library install
 
 # install specific modules
@@ -28,8 +28,7 @@ async def fetch_data(url, headers, data):
                 # Check if the error response is HTML (common for 502, 503, etc.)
                 content_type = response.headers.get("content-type", "").lower()
                 is_html_error = (
-                    error_text.strip().startswith("<!DOCTYPE html>")
-                    or "text/html" in content_type
+                    error_text.strip().startswith("<!DOCTYPE html>") or "text/html" in content_type
                 )
 
                 if is_html_error:
@@ -149,9 +148,7 @@ async def jina_embed(
     if late_chunking:
         data["late_chunking"] = late_chunking
 
-    logger.debug(
-        f"Jina embedding request: {len(texts)} texts, dimensions: {embedding_dim}"
-    )
+    logger.debug(f"Jina embedding request: {len(texts)} texts, dimensions: {embedding_dim}")
 
     try:
         data_list = await fetch_data(url, headers, data)
@@ -161,18 +158,13 @@ async def jina_embed(
             raise ValueError("Jina API returned empty data list")
 
         if len(data_list) != len(texts):
-            logger.error(
-                f"Jina API returned {len(data_list)} embeddings for {len(texts)} texts"
-            )
+            logger.error(f"Jina API returned {len(data_list)} embeddings for {len(texts)} texts")
             raise ValueError(
                 f"Jina API returned {len(data_list)} embeddings for {len(texts)} texts"
             )
 
         embeddings = np.array(
-            [
-                np.frombuffer(base64.b64decode(dp["embedding"]), dtype=np.float32)
-                for dp in data_list
-            ]
+            [np.frombuffer(base64.b64decode(dp["embedding"]), dtype=np.float32) for dp in data_list]
         )
         logger.debug(f"Jina embeddings generated: shape {embeddings.shape}")
 

@@ -4,14 +4,13 @@ State machine: IDLE → COMPLETING → SETTLED → DONE, with rearm and retry sc
 """
 
 import asyncio
-import time
 from enum import Enum
 from loguru import logger
-from ..types.registry import SubagentRunRecord
 
 
 class SettleWakeState(str, Enum):
     """States for the settle-wake lifecycle per requester session."""
+
     IDLE = "idle"
     COMPLETING = "completing"
     SETTLED = "settled"
@@ -59,12 +58,14 @@ class RequesterSettleWakeBatch:
     async def complete_batch(self, requester_session_key: str) -> bool:
         """Check if all descendants are settled; if so, transition and wake the parent. Returns True on success."""
         from ..registry.queries import count_active_descendant_runs
+
         active = count_active_descendant_runs(requester_session_key)
 
         if active == 0:
             self.transition_batch(requester_session_key, "all_settled")
             try:
                 from ..registry import wake_yield_if_all_children_settled
+
                 woke = await wake_yield_if_all_children_settled(requester_session_key)
                 if woke:
                     self.transition_batch(requester_session_key, "woke")
@@ -121,6 +122,7 @@ class RequesterSettleWakeBatch:
         """Persist current pending state to SQLite for crash recovery."""
         try:
             from .store_sqlite import save_settle_wake_state
+
             save_settle_wake_state(self.get_pending_state())
         except Exception as e:
             logger.debug("Failed to persist settle-wake state: {}", e)
@@ -129,6 +131,7 @@ class RequesterSettleWakeBatch:
         """Load and restore previously persisted settle-wake state from SQLite."""
         try:
             from .store_sqlite import load_settle_wake_state
+
             data = load_settle_wake_state()
             if data:
                 self.restore_pending_state(data)

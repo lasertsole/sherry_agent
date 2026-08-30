@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { checkHealth } from '~/composables/bridge';
 import { toastInfo, toastWarn } from '~/composables/toast';
+import { emit } from '../mitt';
 import {
   isOnline,
   backendStatus,
@@ -9,13 +9,39 @@ import {
   stopConnectionWatch,
   useConnection,
   _setClientFlag,
-  _resetStateForTest,
+  _resetStateForTest
 } from '../connection';
 
-// checkHealth 是 bridge.ts 的网络探测，toast 是副作用出口 —— 全部 mock，
-// 只验证 connection 自身的状态机（offline/down/ok 迁移 + 轮询 + 幂等停止）。
-vi.mock('~/composables/bridge', () => ({
-  checkHealth: vi.fn(),
+/**
+ * WS singleton mock: mutable state via vi.hoisted + getters simulates the /sessions/ws
+ * singleton's connection state, letting test cases freely orchestrate
+ * "connected / disconnected / readyState" without a real connection.
+ * The mitt event bus uses the real implementation (connection subscribes and test cases
+ * trigger via emit — the most realistic chain).
+ */
+const wsState = vi.hoisted(() => ({
+  /** isConnected.value */
+  connected: false,
+  /** Simulates the singleton socket's readyState (1=OPEN, 3=CLOSED); when CLOSED, ws.value is treated as null */
+  readyState: 3
+}));
+
+vi.mock('~/composables/ws', () => ({
+  useWs: vi.fn(() => ({
+    // getter reads state dynamically: startConnectionWatch's initial convergence can read the orchestrated value
+    ws: {
+      get value(): { readyState: number } | null {
+        return wsState.readyState === 3 ? null : { readyState: wsState.readyState };
+      }
+    },
+    isConnected: {
+      get value(): boolean {
+        return wsState.connected;
+      }
+    }
+  })),
+  closeWs: vi.fn(),
+  isSessionWsOpen: vi.fn(() => wsState.readyState === 1)
 }));
 vi.mock('~/composables/toast', () => ({
   registerToastApi: vi.fn(),
@@ -23,22 +49,33 @@ vi.mock('~/composables/toast', () => ({
   toastSuccess: vi.fn(),
   toastWarn: vi.fn(),
   toastError: vi.fn(),
-  sendRequestErrorToast: vi.fn(),
+  sendRequestErrorToast: vi.fn()
 }));
 
-const mockHealth = vi.mocked(checkHealth);
+import { useWs } from '~/composables/ws';
+
+const mockUseWs = vi.mocked(useWs);
 const mockToastInfo = vi.mocked(toastInfo);
 const mockToastWarn = vi.mocked(toastWarn);
 
-/** 构造符合 checkHealth 返回类型的健康结果（ narrowed via as，避免 any） */
-const health = (healthy: boolean) => ({ healthy }) as Awaited<ReturnType<typeof checkHealth>>;
+/** Orchestration: singleton socket established (OPEN + isConnected), for initial convergence / readyState sync */
+function simulateWsOpen(): void {
+  wsState.connected = true;
+  wsState.readyState = 1; // WebSocket.OPEN
+}
 
-describe('connection 连通性监控', () => {
+/** Orchestration: singleton socket disconnected (CLOSED + isConnected=false, ws.value is null) */
+function simulateWsClosed(): void {
+  wsState.connected = false;
+  wsState.readyState = 3; // WebSocket.CLOSED
+}
+
+describe('connection 连通性监控（事件驱动）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockHealth.mockReset();
+    simulateWsClosed();
     _setClientFlag(true);
-    // 重置模块级单例私有状态（含决定「恢复 toast」边沿判定的 lastReachable）
+    // Reset module-level singleton private state (incl. lastReachable, which determines toast edge detection) and subscriptions
     _resetStateForTest();
   });
 
@@ -49,102 +86,143 @@ describe('connection 连通性监控', () => {
     vi.restoreAllMocks();
   });
 
-  it('后端健康 → backendStatus "ok"，且首次成功不弹恢复 toast', async () => {
-    mockHealth.mockResolvedValue(health(true));
+  it('初始 unknown -> ws:connected -> "ok"，且首连不弹恢复 toast', () => {
+    expect(backendStatus.value).toBe('unknown');
 
-    await checkConnectivity();
+    startConnectionWatch();
+    emit('ws:connected', undefined);
 
     expect(backendStatus.value).toBe('ok');
     expect(mockToastInfo).not.toHaveBeenCalled();
     expect(mockToastWarn).not.toHaveBeenCalled();
   });
 
-  it('后端不健康（首查即挂）→ "down" + backendDown warn toast', async () => {
-    mockHealth.mockResolvedValue(health(false));
+  it('connected 后 ws:disconnected -> "down" + backendDown warn toast', () => {
+    startConnectionWatch();
+    emit('ws:connected', undefined);
+    expect(backendStatus.value).toBe('ok');
 
-    await checkConnectivity();
+    emit('ws:disconnected', undefined);
 
     expect(backendStatus.value).toBe('down');
     expect(mockToastWarn).toHaveBeenCalledTimes(1);
-    // 测试环境无 Nuxt i18n，safeT 原样返回 key（生产为翻译文案）
+    // The test env has no Nuxt i18n, so safeT returns the key as-is (in production it would be the translated text)
     expect(mockToastWarn).toHaveBeenCalledWith('connection.backendDown');
+    // Browser online: isOnline is unaffected
+    expect(isOnline.value).toBe(true);
   });
 
-  it('checkHealth 抛异常视同后端不可达 → "down" + warn toast', async () => {
-    mockHealth.mockRejectedValue(new Error('connection refused'));
+  it('重连循环内重复 ws:disconnected 不重复弹 toast（边沿去重）', () => {
+    startConnectionWatch();
+    emit('ws:connected', undefined);
+    emit('ws:disconnected', undefined);
+    expect(mockToastWarn).toHaveBeenCalledTimes(1);
 
-    await checkConnectivity();
+    // While the backend is down the reconnect loop disconnects every 5s: must never re-toast repeatedly
+    emit('ws:disconnected', undefined);
+    emit('ws:disconnected', undefined);
 
-    expect(backendStatus.value).toBe('down');
-    expect(mockToastWarn).toHaveBeenCalledWith('connection.backendDown');
+    expect(mockToastWarn).toHaveBeenCalledTimes(1);
+    expect(mockToastInfo).not.toHaveBeenCalled();
   });
 
-  it('down → ok 恢复时弹 backOnline info toast', async () => {
-    mockHealth.mockResolvedValue(health(false));
-    await checkConnectivity();
+  it('down -> ws:connected 恢复时弹 backOnline info toast（同边沿去重）', () => {
+    startConnectionWatch();
+    emit('ws:connected', undefined);
+    emit('ws:disconnected', undefined);
     expect(backendStatus.value).toBe('down');
 
-    mockHealth.mockResolvedValue(health(true));
-    await checkConnectivity();
+    emit('ws:connected', undefined);
 
     expect(backendStatus.value).toBe('ok');
     expect(mockToastInfo).toHaveBeenCalledTimes(1);
     expect(mockToastInfo).toHaveBeenCalledWith('connection.backOnline');
+
+    // Duplicate connected after recovery (no intermediate disconnect, e.g. reconnect race): no re-toast
+    emit('ws:connected', undefined);
+    expect(mockToastInfo).toHaveBeenCalledTimes(1);
   });
 
-  it('navigator.onLine=false → offline warn、backendStatus "down"，且跳过健康检查', async () => {
-    vi.stubGlobal('navigator', { onLine: false });
+  it('window offline 事件 -> isOnline=false + offline toast；online 不乐观标记 ok', () => {
+    startConnectionWatch();
+    emit('ws:connected', undefined);
+    expect(backendStatus.value).toBe('ok');
 
-    await checkConnectivity();
+    vi.stubGlobal('navigator', { onLine: false });
+    window.dispatchEvent(new Event('offline'));
 
     expect(isOnline.value).toBe(false);
     expect(backendStatus.value).toBe('down');
+    expect(mockToastWarn).toHaveBeenCalledTimes(1);
     expect(mockToastWarn).toHaveBeenCalledWith('connection.offline');
-    // 浏览器已断网：不浪费一次健康检查
-    expect(mockHealth).not.toHaveBeenCalled();
+
+    // Back online: only isOnline is synced; backend ok is left to the WS reconnect event to decide
+    vi.stubGlobal('navigator', { onLine: true });
+    window.dispatchEvent(new Event('online'));
+
+    expect(isOnline.value).toBe(true);
+    expect(backendStatus.value).toBe('down');
+    expect(mockToastInfo).not.toHaveBeenCalled();
   });
 
-  it('startConnectionWatch 立即首查 + 按 5s 轮询；stop 幂等且不再轮询', async () => {
-    vi.useFakeTimers();
-    try {
-      mockHealth.mockResolvedValue(health(true));
+  it('start 时单例已 OPEN -> 立即 "ok"，无需任何事件', () => {
+    simulateWsOpen();
 
-      const stop = startConnectionWatch();
-      // 启动即同步发起首次检查
-      expect(mockHealth).toHaveBeenCalledTimes(1);
+    startConnectionWatch();
 
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(mockHealth).toHaveBeenCalledTimes(2);
-
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(mockHealth).toHaveBeenCalledTimes(3);
-
-      // 重复启动不叠加定时器（单例轮询）
-      const stopAgain = startConnectionWatch();
-      expect(vi.getTimerCount()).toBe(1);
-
-      // 停止（含幂等二次调用）后不再轮询
-      stopAgain();
-      stop();
-      await vi.advanceTimersByTimeAsync(15000);
-      expect(mockHealth).toHaveBeenCalledTimes(3);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(mockUseWs).toHaveBeenCalledTimes(1);
+    expect(backendStatus.value).toBe('ok');
+    expect(mockToastInfo).not.toHaveBeenCalled();
+    expect(mockToastWarn).not.toHaveBeenCalled();
   });
 
-  it('meta.client=false 时 startConnectionWatch 返回空操作句柄、不启动定时器', () => {
+  it('meta.client=false 时 startConnectionWatch 返回空操作句柄、不触碰单例', () => {
     _setClientFlag(false);
-    vi.useFakeTimers();
-    try {
-      const stop = startConnectionWatch();
-      expect(typeof stop).toBe('function');
-      expect(vi.getTimerCount()).toBe(0);
-      expect(() => stop()).not.toThrow();
-      expect(mockHealth).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+
+    const stop = startConnectionWatch();
+
+    expect(typeof stop).toBe('function');
+    expect(mockUseWs).not.toHaveBeenCalled();
+    // Not subscribed: incoming events cannot change the state
+    emit('ws:connected', undefined);
+    expect(backendStatus.value).toBe('unknown');
+    expect(() => stop()).not.toThrow();
+    expect(mockToastWarn).not.toHaveBeenCalled();
+  });
+
+  it('stopConnectionWatch 解除订阅：后续事件不再影响状态', () => {
+    startConnectionWatch();
+    stopConnectionWatch();
+
+    simulateWsOpen();
+    emit('ws:connected', undefined);
+    emit('ws:disconnected', undefined);
+
+    expect(backendStatus.value).toBe('unknown');
+    expect(mockToastInfo).not.toHaveBeenCalled();
+    expect(mockToastWarn).not.toHaveBeenCalled();
+  });
+
+  it('checkConnectivity 手动同步 readyState 且不弹 toast（无网络请求）', async () => {
+    startConnectionWatch();
+
+    simulateWsOpen();
+    await checkConnectivity();
+    expect(backendStatus.value).toBe('ok');
+    expect(mockToastInfo).not.toHaveBeenCalled();
+    expect(mockToastWarn).not.toHaveBeenCalled();
+
+    simulateWsClosed();
+    await checkConnectivity();
+    expect(backendStatus.value).toBe('down');
+    expect(mockToastWarn).not.toHaveBeenCalled();
+  });
+
+  it('重复 start 幂等：不重复初始化单例、不叠加订阅', () => {
+    startConnectionWatch();
+    startConnectionWatch();
+
+    expect(mockUseWs).toHaveBeenCalledTimes(1);
   });
 
   it('useConnection 返回共享单例状态与同一组控制函数', () => {

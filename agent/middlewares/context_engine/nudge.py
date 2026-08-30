@@ -193,6 +193,7 @@ _COMBINED_REVIEW_PROMPT = (
     "and stop — but don't reach for that conclusion as a default."
 )
 
+
 class _NudgeLimitTool(AgentMiddleware):
     @override
     async def awrap_tool_call(
@@ -222,15 +223,17 @@ class _NudgeLimitTool(AgentMiddleware):
             return bool(tool.metadata.get("nudge", False))
         return False
 
+
 class StateSchema(AgentState):
     """Agent state that preserves an ``session_id``."""
+
     session_id: str
+
 
 async def _create_nudge_agent(system_prompt: str):
     from agent import get_agent_tools
     from models import build_main_llm
     from agent.middlewares import ToolCallNormalize, ToolGuardrails, IterationBudget
-
 
     main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
     return create_agent(
@@ -241,14 +244,20 @@ async def _create_nudge_agent(system_prompt: str):
         # a HITL reject) before building the LLM input, preventing the LangChain
         # 400 "Messages with role 'tool' must be a response to a preceding message".
         middleware=[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()],
-        tools=get_agent_tools()
+        tools=get_agent_tools(),
     )
+
 
 async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
     state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
     try:
         _agent = await _create_nudge_agent(system_prompt)
-        res = await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_MEMORY_REVIEW_PROMPT)]})
+        res = await _agent.ainvoke(
+            input={
+                "session_id": session_id,
+                "messages": [*messages, HumanMessage(content=_MEMORY_REVIEW_PROMPT)],
+            }
+        )
         logger.debug("nudge memory res is {}", res["messages"][-1])
     finally:
         state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
@@ -258,7 +267,12 @@ async def _nudge_skill(session_id: str, system_prompt: str, messages: list[BaseM
     state_register_mem.set_state(session_id, "nudge_review_skill_lock", True)
     try:
         _agent = await _create_nudge_agent(system_prompt)
-        res = await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_SKILL_REVIEW_PROMPT)]})
+        res = await _agent.ainvoke(
+            input={
+                "session_id": session_id,
+                "messages": [*messages, HumanMessage(content=_SKILL_REVIEW_PROMPT)],
+            }
+        )
         logger.debug("nudge skill res is {}", res["messages"][-1])
     finally:
         state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)
@@ -269,7 +283,12 @@ async def _nudge_combined(session_id: str, system_prompt: str, messages: list[Ba
     state_register_mem.set_state(session_id, "nudge_review_skill_lock", True)
     try:
         _agent = await _create_nudge_agent(system_prompt)
-        res = await _agent.ainvoke(input={"session_id": session_id, "messages": [*messages, HumanMessage(content=_COMBINED_REVIEW_PROMPT)]})
+        res = await _agent.ainvoke(
+            input={
+                "session_id": session_id,
+                "messages": [*messages, HumanMessage(content=_COMBINED_REVIEW_PROMPT)],
+            }
+        )
         logger.debug("nudge combined res is {}", res["messages"][-1])
     finally:
         state_register_mem.set_state(session_id, "nudge_review_skill_lock", False)

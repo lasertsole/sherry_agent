@@ -26,7 +26,9 @@
           ref="closeBtnRef"
           class="image-preview-close"
           :aria-label="t('close')"
-          @click="closePreview"><i class="pi pi-times"></i></button>
+          @click="closePreview">
+          <i class="pi pi-times"></i>
+        </button>
       </div>
     </Transition>
   </Teleport>
@@ -64,10 +66,10 @@ const { isPreviewVisible, previewSrc, closePreview } = useImagePreview();
 
 const { t } = useI18n({ useScope: 'local' });
 
-/** 覆盖层与关闭按钮的 DOM 引用（用于焦点管理 / Tab 陷阱） */
+/** DOM references for the overlay and close button (used for focus management / Tab trap) */
 const overlayRef = ref<HTMLElement | null>(null);
 const closeBtnRef = ref<HTMLButtonElement | null>(null);
-/** 打开预览前持有焦点的元素，关闭时恢复焦点 */
+/** The element that held focus before the preview opened; focus is restored to it on close */
 let previouslyFocusedEl: HTMLElement | null = null;
 
 const scale = ref(1);
@@ -116,7 +118,7 @@ const onMouseUp = () => {
   document.removeEventListener('mouseup', onMouseUp);
 };
 
-/** Tab 陷阱：覆盖层内仅有两个焦点停靠点（覆盖层自身 + 关闭按钮），循环切换 */
+/** Tab trap: only two focus stops inside the overlay (the overlay itself + the close button), toggling in a loop */
 const trapTab = () => {
   if (document.activeElement === overlayRef.value) {
     closeBtnRef.value?.focus();
@@ -125,14 +127,14 @@ const trapTab = () => {
   }
 };
 
-watch(isPreviewVisible, async (visible) => {
+watch(isPreviewVisible, async visible => {
   if (visible) {
-    // 打开时记录来源焦点，并把焦点移入覆盖层，使 ESC / Tab 立即生效
+    // Record the source focus when opening and move focus into the overlay so ESC / Tab work immediately
     previouslyFocusedEl = document.activeElement as HTMLElement | null;
     await nextTick();
     overlayRef.value?.focus();
   } else {
-    // 关闭时恢复焦点到来源元素，避免焦点丢失回 body
+    // Restore focus to the source element on close, avoiding focus falling back to body
     previouslyFocusedEl?.focus();
     previouslyFocusedEl = null;
     resetTransform();
@@ -182,7 +184,7 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-/* 右上角关闭按钮：半透明白色圆形底，悬停增亮 */
+/* Close button in the top-right corner: translucent white round base, brightens on hover */
 .image-preview-close {
   position: absolute;
   top: 1rem;

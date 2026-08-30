@@ -1,4 +1,4 @@
-﻿"""Shared template for external (download + raw-bundle cache) parser engines.
+"""Shared template for external (download + raw-bundle cache) parser engines.
 
 ``ExternalParserBase.parse`` fixes the common MinerU/Docling flow once:
 
@@ -43,9 +43,7 @@ class ExternalParserBase(BaseParser):
         ...
 
     @abstractmethod
-    async def download_into(
-        self, raw_dir: Path, source_path: Path, *, upload_name: str
-    ) -> None:
+    async def download_into(self, raw_dir: Path, source_path: Path, *, upload_name: str) -> None:
         """Fetch the raw bundle into ``raw_dir`` (called on cache miss only)."""
         ...
 
@@ -73,9 +71,7 @@ class ExternalParserBase(BaseParser):
         rs = ctx.resolve(self.engine_name)
         source = rs.source_path
         if not source.is_file():
-            raise FileNotFoundError(
-                f"{self.engine_name} source file not found: {source}"
-            )
+            raise FileNotFoundError(f"{self.engine_name} source file not found: {source}")
         raw_dir = raw_dir_for_parsed_dir(rs.parsed_dir, suffix=self.raw_dir_suffix)
         force_reparse = env_bool(self.force_reparse_env, False)
 

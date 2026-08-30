@@ -1,5 +1,4 @@
-﻿import pytest
-import time
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from agent.tools.subagent.announce.delivery import (
     deliver_subagent_announcement,
@@ -31,6 +30,7 @@ def _clean():
     _delivered_keys.clear()
     _delivery_mirror.clear()
     from agent.tools.subagent.registry.memory import clear
+
     clear()
     yield
     _delivered_keys.clear()
@@ -211,6 +211,7 @@ class TestDeliverSubagentAnnouncement:
             delivery=CompletionDeliveryState(status=DeliveryStatus.NOT_REQUIRED),
         )
         from agent.tools.subagent.registry.memory import set_run
+
         set_run(run)
         result = await deliver_subagent_announcement(run)
         assert result.success is True

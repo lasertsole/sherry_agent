@@ -1,29 +1,49 @@
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 
-// 必须先注册该插件，才能解析自定义格式的字符串
+// This plugin must be registered before strings in custom formats can be parsed
 dayjs.extend(customParseFormat);
 
 /**
- * 转换紧凑型时间字符串（如 20260621004725）为指定格式
- * @param timeStr 紧凑的时间字符串，通常为 14 位
- * @param format 输出的目标格式，例如 'YYYY-MM-DD HH:mm:ss'
- * @returns 格式化后的时间字符串，若输入无效则返回空字符串
+ * Convert a compact time string (e.g. 20260621004725) into a target format
+ * @param timeStr Compact time string, usually 14 digits
+ * @param format The desired output format, e.g. 'YYYY-MM-DD HH:mm:ss'
+ * @returns The formatted time string, or an empty string when the input is invalid
  */
 export const formatCompactTimeString = (timeStr: string | number, format: string = 'YYYY-MM-DD HH:ss'): string => {
   if (!timeStr) return '';
 
-  // 统一转换为字符串并去除前后空格
+  // Normalize to a string and trim leading/trailing whitespace
   const str = String(timeStr).trim();
 
-  // 严格校验：如果是标准的 14 位纯数字字符串再进行解析（可根据实际后端返回微调长度）
+  // Strict validation: only parse when it is a standard 14-digit, all-numeric string
+  // (the length can be fine-tuned to match what the backend actually returns)
   if (str.length !== 14 || isNaN(Number(str))) {
     return '';
   }
 
-  // 核心：传入第二个参数 'YYYYMMDDHHmmss'，明确告诉 dayjs 如何拆解这个字符串
+  // Core: pass the second argument 'YYYYMMDDHHmmss' to explicitly tell dayjs how to
+  // break this string apart
   const date = dayjs(str, 'YYYYMMDDHHmmss');
 
-  // 防御：检查解析后的日期是否合法
+  // Defensive: check whether the parsed date is valid
   return date.isValid() ? date.format(format) : '';
 };
+
+/** Session title length cap (counted in Unicode code points; CJK and Latin each count as 1) */
+export const SESSION_TITLE_MAX_LENGTH = 30;
+
+/**
+ * Session title validity: ≤30 characters, allowing only letters (any language,
+ * including Chinese/Japanese/Korean), digits, whitespace, and the three safe symbols
+ * `.` `_` `-` (allowlist-based).
+ * Blocks `< > " ' & ; / \` and other characters usable for XSS/injection at the input
+ * side — the render layer's `{{ }}` interpolation escapes on its own, and this check
+ * serves as defense in depth, guaranteeing titles never carry a payload in any
+ * scenario (including possible future v-html / native DOM concatenation).
+ */
+const SESSION_TITLE_RE = new RegExp(`^[\\p{L}\\p{N}\\s._-]{1,${SESSION_TITLE_MAX_LENGTH}}$`, 'u');
+
+export function isValidSessionTitle(title: string): boolean {
+  return SESSION_TITLE_RE.test(title.trim());
+}

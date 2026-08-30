@@ -1,6 +1,7 @@
 from typing import Any
 
-def extract_text_from_content(content: Any)->str:
+
+def extract_text_from_content(content: Any) -> str:
     text: str = ""
     if isinstance(content, str):
         text = content

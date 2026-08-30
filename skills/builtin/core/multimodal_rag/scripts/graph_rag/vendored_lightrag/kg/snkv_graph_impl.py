@@ -4,6 +4,7 @@ Shares ``snkv.db`` with KV and doc-status storage via snkv_shared.
 Three column families: ``nodes``, ``edges``, ``adj``.
 Edge keys are canonicalised as min(src,tgt)||max(src,tgt) for undirected semantics.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,7 @@ import difflib
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, final
+from typing import final
 
 from ..base import BaseGraphStorage
 from ..types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
@@ -68,7 +69,7 @@ class SNKVGraphStorage(BaseGraphStorage):
         def _open():
             self._nodes_cf = self._get_or_create("nodes")
             self._edges_cf = self._get_or_create("edges")
-            self._adj_cf   = self._get_or_create("adj")
+            self._adj_cf = self._get_or_create("adj")
 
         await self._ex().run_in_executor(self._shared.executor, _open)
 
@@ -136,9 +137,7 @@ class SNKVGraphStorage(BaseGraphStorage):
         def _delete():
             # Pre-load all adj before the transaction (same pattern as remove_nodes).
             neighbours = self._get_adj(node_id)
-            nb_adjs: dict[str, set[str]] = {
-                nb: set(self._get_adj(nb)) for nb in neighbours
-            }
+            nb_adjs: dict[str, set[str]] = {nb: set(self._get_adj(nb)) for nb in neighbours}
             for adj in nb_adjs.values():
                 adj.discard(node_id)
 
@@ -257,9 +256,7 @@ class SNKVGraphStorage(BaseGraphStorage):
             for src, tgt, _ in edges:
                 all_nodes.add(src)
                 all_nodes.add(tgt)
-            adj_map: dict[str, set[str]] = {
-                nid: set(self._get_adj(nid)) for nid in all_nodes
-            }
+            adj_map: dict[str, set[str]] = {nid: set(self._get_adj(nid)) for nid in all_nodes}
             for src, tgt, _ in edges:
                 adj_map[src].add(tgt)
                 adj_map[tgt].add(src)
@@ -290,14 +287,9 @@ class SNKVGraphStorage(BaseGraphStorage):
 
             # Find external neighbours and pre-load their adj lists.
             external: set[str] = {
-                nb
-                for nid, nbs in node_adj.items()
-                for nb in nbs
-                if nb not in nodes_set
+                nb for nid, nbs in node_adj.items() for nb in nbs if nb not in nodes_set
             }
-            ext_adj: dict[str, set[str]] = {
-                nb: set(self._get_adj(nb)) for nb in external
-            }
+            ext_adj: dict[str, set[str]] = {nb: set(self._get_adj(nb)) for nb in external}
 
             # Apply removals in-memory.
             for node_id in nodes:
@@ -339,9 +331,7 @@ class SNKVGraphStorage(BaseGraphStorage):
             for src, tgt in edges:
                 all_nodes.add(src)
                 all_nodes.add(tgt)
-            adj_map: dict[str, set[str]] = {
-                nid: set(self._get_adj(nid)) for nid in all_nodes
-            }
+            adj_map: dict[str, set[str]] = {nid: set(self._get_adj(nid)) for nid in all_nodes}
             for src, tgt in edges:
                 adj_map[src].discard(tgt)
                 adj_map[tgt].discard(src)
@@ -375,9 +365,7 @@ class SNKVGraphStorage(BaseGraphStorage):
 
         return await self._ex().run_in_executor(self._shared.executor, _get_batch)
 
-    async def get_nodes_edges_batch(
-        self, node_ids: list[str]
-    ) -> dict[str, list[tuple[str, str]]]:
+    async def get_nodes_edges_batch(self, node_ids: list[str]) -> dict[str, list[tuple[str, str]]]:
         def _get_batch():
             out: dict[str, list[tuple[str, str]]] = {}
             for nid in node_ids:
@@ -535,11 +523,13 @@ class SNKVGraphStorage(BaseGraphStorage):
                 raw = self._nodes_cf.get(node_id.encode())
                 props = json.loads(raw.decode()) if raw is not None else {}
                 entity_type = props.get("entity_type", "")
-                kg_nodes.append(KnowledgeGraphNode(
-                    id=node_id,
-                    labels=[entity_type] if entity_type else [],
-                    properties=props,
-                ))
+                kg_nodes.append(
+                    KnowledgeGraphNode(
+                        id=node_id,
+                        labels=[entity_type] if entity_type else [],
+                        properties=props,
+                    )
+                )
                 if depth < max_depth:
                     for nb in self._get_adj(node_id):
                         canon = (min(node_id, nb), max(node_id, nb))
@@ -548,13 +538,15 @@ class SNKVGraphStorage(BaseGraphStorage):
                             raw_e = self._edges_cf.get(_edge_key(node_id, nb))
                             if raw_e is not None:
                                 edata = json.loads(raw_e.decode())
-                                kg_edges.append(KnowledgeGraphEdge(
-                                    id=f"{canon[0]}{_SEP}{canon[1]}",
-                                    type=edata.get("relation_type", edata.get("keywords")),
-                                    source=canon[0],
-                                    target=canon[1],
-                                    properties=edata,
-                                ))
+                                kg_edges.append(
+                                    KnowledgeGraphEdge(
+                                        id=f"{canon[0]}{_SEP}{canon[1]}",
+                                        type=edata.get("relation_type", edata.get("keywords")),
+                                        source=canon[0],
+                                        target=canon[1],
+                                        properties=edata,
+                                    )
+                                )
                         if nb not in visited_nodes:
                             queue.append((nb, depth + 1))
 

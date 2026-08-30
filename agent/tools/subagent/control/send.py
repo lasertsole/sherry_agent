@@ -7,8 +7,8 @@ an updated reply from the sub-agent.
 import asyncio
 import time
 from loguru import logger
-from ..types.registry import SubagentRunRecord, ExecutionStatus
-from ..registry import get_run, set_run
+from ..types.registry import ExecutionStatus
+from ..registry import get_run
 from .controller import can_control_run
 
 
@@ -30,7 +30,9 @@ async def send_subagent_message(
         return None
 
     if run.execution.status not in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED):
-        logger.warning("send_subagent_message: run {} not in sendable state ({})", run_id, run.execution.status)
+        logger.warning(
+            "send_subagent_message: run {} not in sendable state ({})", run_id, run.execution.status
+        )
         return None
 
     baseline = await _capture_baseline_reply(run.child_session_key)

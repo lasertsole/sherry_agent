@@ -22,6 +22,7 @@ async def build_async_sqlite_checkpointer() -> ThreadSafeAsyncSqliteSaver:
 
     return checkpointer
 
+
 # Delete all chat records for a given session_id
 async def delete_thread_history(session_id: str) -> None:
     """Delete all chat records (checkpoints + writes) for the given thread_id."""

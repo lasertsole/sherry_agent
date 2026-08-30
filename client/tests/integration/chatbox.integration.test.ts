@@ -10,15 +10,15 @@ const base = (over: Partial<MessageItem>): MessageItem => ({
   id: 1,
   turn_num: 0,
   timestamp: '20260621004725',
-  ...over,
+  ...over
 });
 
 describe('ChatBox.vue (integration, backend mocked)', () => {
   it('renders a single AI message with name "橘雪莉" and sanitized markdown', () => {
     const wrapper = mount(ChatBox, {
       props: {
-        messages: [base({ id: 1, role: CHAT_ROLE.AI, content: '**bold** world' })],
-      },
+        messages: [base({ id: 1, role: CHAT_ROLE.AI, content: '**bold** world' })]
+      }
     });
     expect(wrapper.text()).toContain('橘雪莉');
     expect(wrapper.text()).toContain('world');
@@ -28,7 +28,7 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
 
   it('credits human messages as 我', () => {
     const wrapper = mount(ChatBox, {
-      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' })] },
+      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' })] }
     });
     expect(wrapper.text()).toContain('我');
   });
@@ -38,9 +38,9 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
       props: {
         messages: [
           base({ id: 1, role: CHAT_ROLE.TOOL, content: 'tool-call' }),
-          base({ id: 2, role: CHAT_ROLE.USER, content: '被保留' }),
-        ],
-      },
+          base({ id: 2, role: CHAT_ROLE.USER, content: '被保留' })
+        ]
+      }
     });
     const text = wrapper.text();
     expect(text).not.toContain('tool-call');
@@ -58,10 +58,10 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
             role: CHAT_ROLE.TOOL,
             content: '',
             toolName: 'web_search',
-            toolStatus: 'running',
-          }),
-        ],
-      },
+            toolStatus: 'running'
+          })
+        ]
+      }
     });
     expect(wrapper.text()).toContain('web_search');
     // Expanding the card reveals the live "running" hint (chatBox.toolRunning).
@@ -72,10 +72,8 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
   it('strips <script> tags from user content via markdown-it + DOMPurify', () => {
     const wrapper = mount(ChatBox, {
       props: {
-        messages: [
-          base({ id: 1, role: CHAT_ROLE.USER, content: '<script>alert(1)</script>hi' }),
-        ],
-      },
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, content: '<script>alert(1)</script>hi' })]
+      }
     });
     const html = wrapper.find('.w-fit').html();
     const text = wrapper.text();
@@ -92,9 +90,9 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
       props: {
         messages: [
           base({ id: 1, role: CHAT_ROLE.USER, content: 'first' }),
-          base({ id: 2, role: CHAT_ROLE.USER, content: 'second' }),
-        ],
-      },
+          base({ id: 2, role: CHAT_ROLE.USER, content: 'second' })
+        ]
+      }
     });
     // 2 avatars exist (one per message)
     const avatars = wrapper.findAll('.pi-user');

@@ -5,6 +5,7 @@ in the /knowledge-graph.
 
 usage: python skills/builtin/core/multimodal_rag/scripts/rag_import_pdf_test.py
 """
+
 import asyncio
 import os
 import sys

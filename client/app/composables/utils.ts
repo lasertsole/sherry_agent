@@ -1,183 +1,200 @@
 /**
- * 比较string或number大小，选出大的
- * 
+ * Compare two string or number values and pick the larger one
+ *
  * @param { T extends string | number } a
- * @param { T extends string | number } b 
- * @returns { T } a和b中较大的值
+ * @param { T extends string | number } b
+ * @returns { T } the larger of a and b
  */
 export function max<T extends number | string>(a: T, b: T): T {
-    if (a > b) {
-        return a;
-    } else {
-        return b;
-    }
+  if (a > b) {
+    return a;
+  } else {
+    return b;
+  }
 }
 
 /**
- * 比较string或number大小，选出小的
- * 
+ * Compare two string or number values and pick the smaller one
+ *
  * @param { T extends string | number } a
- * @param { T extends string | number } b 
- * @returns { T } a和b中较小的值
+ * @param { T extends string | number } b
+ * @returns { T } the smaller of a and b
  */
 export function min<T extends number | string>(a: T, b: T): T {
-    if (a < b) {
-        return a;
-    } else {
-        return b;
-    }
+  if (a < b) {
+    return a;
+  } else {
+    return b;
+  }
 }
 
 /**
- * 将日期转换为格式化字符串(本地化时间)
- * 
+ * Convert a date into a formatted string (localized time)
+ *
  * @param { Date } date
- * @returns { string } 格式化后的日期字符串
+ * @returns { string } the formatted date string
  */
-export function getFormattedDate(date: Date):string {
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const oneDay = 24 * 60 * 60 * 1000; // 一天的毫秒数
-    const oneYear = 365 * oneDay; // 一年的毫秒数
+export function getFormattedDate(date: Date): string {
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const oneDay = 24 * 60 * 60 * 1000; // milliseconds in one day
+  const oneYear = 365 * oneDay; // milliseconds in one year
 
-    const options: Intl.DateTimeFormatOptions = {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: 'numeric',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-    };
+  const options: Intl.DateTimeFormatOptions = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  };
 
-    const formattedDate = date.toLocaleString('en-US', options);
-    const [timePart, amPm] = formattedDate.split(', ');
-    const [monthDayYear] = timePart.split(' ');
-    const [month, day, year] = monthDayYear.split('/');
+  const formattedDate = date.toLocaleString('en-US', options);
+  // Empty-string defaults keep the output identical for well-formed input (split() always yields
+  // the parts here); they only satisfy noUncheckedIndexedAccess for malformed strings.
+  const [timePart = '', amPm] = formattedDate.split(', ');
+  const [monthDayYear = ''] = timePart.split(' ');
+  const [month, day, year] = monthDayYear.split('/');
 
-    if (diff >= oneYear) {
-        return `${year}.${month}.${day}`;
-    } else if (diff >= oneDay) {
-        return `${month}.${day}`;
-    } else {
-        return `${amPm}`;
-    };
-};
+  if (diff >= oneYear) {
+    return `${year}.${month}.${day}`;
+  } else if (diff >= oneDay) {
+    return `${month}.${day}`;
+  } else {
+    return `${amPm}`;
+  }
+}
 
 /**
- * 将字符串转换为日期
- * 
+ * Convert a string into a date
+ *
  * @param { string } dateString
- * @returns { Date | null } 日期
+ * @returns { Date | null } the date
  */
 export function stringToDate(dateString: string): Date | null {
-    // 检查是否为数字，可能是时间戳
-    if (!isNaN(Number(dateString))) {
-        const timestamp = Number(dateString);
-        const date = new Date(timestamp);
+  // Check whether it is a number, which may be a timestamp
+  if (!isNaN(Number(dateString))) {
+    const timestamp = Number(dateString);
+    const date = new Date(timestamp);
 
-        if (isNaN(date.getTime())) {
-        console.error('Invalid date:', dateString);
-            return null; // 或者返回其他默认值
-        };
-
-        return date;
+    if (isNaN(date.getTime())) {
+      console.error('Invalid date:', dateString);
+      return null; // or return some other default value
     }
 
-    // 将自定义格式转换为标准 ISO 8601 格式
-    dateString=dateString.replace(/T/gi, ' ').replace(/Z/gi, "");
-    const isoTime = dateString.replace(' ', 'T') + 'Z';
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) {
-        console.error('Invalid date:', dateString);
-        return null; // 或者返回其他默认值
-    };
-
     return date;
-};
+  }
+
+  // Convert the custom format into a standard ISO 8601 format
+  dateString = dateString.replace(/T/gi, ' ').replace(/Z/gi, '');
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) {
+    console.error('Invalid date:', dateString);
+    return null; // or return some other default value
+  }
+
+  return date;
+}
 
 /**
- * 计算属性，用于将 UTC 时间转换为本地时间
- * 
+ * Computed-style helper for converting UTC time into local time
+ *
  * @param { string | undefined } utcTime
- * @returns { string | null } 本地时间字符串
+ * @returns { string | null } the local time string
  */
-export function formatToLocalTime(utcTime: string | undefined):string | null {
-    if (!utcTime) return '';
+export function formatToLocalTime(utcTime: string | undefined): string | null {
+  if (!utcTime) return '';
 
-    let date:Date | null = stringToDate(utcTime);
-    if (!date) {
-        return null
-    };
+  const date: Date | null = stringToDate(utcTime);
+  if (!date) {
+    return null;
+  }
 
-    return getFormattedDate(date);
-};
+  return getFormattedDate(date);
+}
 
 /**
- * 比较Date时间
- * 
- * @param { Date } a 
- * @param { Date } b 
- * @returns a与b的时间差,若为正数，则a在b之后，若为负数，则a在b之前，若为0，则a和b相等
+ * Compare two Date values
+ *
+ * @param { Date } a
+ * @param { Date } b
+ * @returns the time difference between a and b; positive means a is after b,
+ *   negative means a is before b, zero means a and b are equal
  */
 export function compareDate(a: Date, b: Date): number {
-    return a.getTime() - b.getTime();
-};
+  return a.getTime() - b.getTime();
+}
 
 /**
- * 判断Date时间是否晚于另一个Date时间
- * 
- * @param { Date } a 
- * @param { Date } b 
- * @returns { boolean } 若a晚于b，则返回true，否则返回false
+ * Check whether one Date is later than another Date
+ *
+ * @param { Date } a
+ * @param { Date } b
+ * @returns { boolean } true if a is later than b, false otherwise
  */
-export function isLate(a: Date, b: Date):boolean {
-    return a.getTime() > b.getTime();
-};
+export function isLate(a: Date, b: Date): boolean {
+  return a.getTime() > b.getTime();
+}
 
 /**
- * 筛选出最大的Date
- * 
- * @param { Date } a 
- * @param { Date } b 
- * @returns { Date } 若a晚于b，则返回true，否则返回false
+ * Pick the later of two Dates
+ *
+ * @param { Date } a
+ * @param { Date } b
+ * @returns { Date } true if a is later than b, false otherwise
  */
 export function maxDate(a: Date, b: Date): Date {
-    return isLate(a, b) ? a : b;
-};
+  return isLate(a, b) ? a : b;
+}
 
 /**
- * 当前的UTC国际通用时间,精确到微秒级别
- * 
- * @returns { string } 当前的UTC国际通用时间
+ * The current UTC (universal coordinated) time, precise to the microsecond level
+ *
+ * @returns { string } the current UTC time
  */
 export function getUTCTimeNow(): string {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = now.getUTCMonth() + 1;
-    const day = now.getUTCDate();
-    const hours = now.getUTCHours();
-    const minutes = now.getUTCMinutes();
-    const seconds = now.getUTCSeconds();
-    const milliseconds = now.getUTCMilliseconds();
-    const microseconds = (milliseconds * 1000 + Math.floor((now.getTime() % 1) * 1000000)) % 1000000;
-    return year + '-' + month + '-' + day + 'T' + hours + ':' + minutes + ':' + seconds + '.' + microseconds.toString().padStart(6, '0') + 'Z';
-};
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth() + 1;
+  const day = now.getUTCDate();
+  const hours = now.getUTCHours();
+  const minutes = now.getUTCMinutes();
+  const seconds = now.getUTCSeconds();
+  const milliseconds = now.getUTCMilliseconds();
+  const microseconds = (milliseconds * 1000 + Math.floor((now.getTime() % 1) * 1000000)) % 1000000;
+  return (
+    year +
+    '-' +
+    month +
+    '-' +
+    day +
+    'T' +
+    hours +
+    ':' +
+    minutes +
+    ':' +
+    seconds +
+    '.' +
+    microseconds.toString().padStart(6, '0') +
+    'Z'
+  );
+}
 
 /**
- * 判断string是否是时间戳
- * 
- * @param str 需要判断的字符串
- * @returns 是否是时间戳,是true,不是false
+ * Check whether a string is a timestamp
+ *
+ * @param str the string to check
+ * @returns whether it is a timestamp: true if yes, false if not
  */
 export function isTimestamp(str: string): boolean {
-    try {
-        const date = new Date(str);
-        if (!isNaN(date.getTime())) {
-            return true;
-        };
-        return false;
-    } catch (error) {
-        return false;
-    };
-};
+  try {
+    const date = new Date(str);
+    if (!isNaN(date.getTime())) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}

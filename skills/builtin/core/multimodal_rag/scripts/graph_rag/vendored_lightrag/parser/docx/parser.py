@@ -1,4 +1,4 @@
-﻿"""Native DOCX engine adapter (implements NativeParserBase hooks)."""
+"""Native DOCX engine adapter (implements NativeParserBase hooks)."""
 
 from __future__ import annotations
 
@@ -19,12 +19,8 @@ class NativeDocxParser(NativeParserBase):
     empty_content_label = "DOCX"
 
     def validate_source(self, source: Path, file_path: str) -> None:
-        if not (
-            source.exists() and source.is_file() and source.suffix.lower() == ".docx"
-        ):
-            raise ValueError(
-                f"Native parser does not support pending file: {file_path}"
-            )
+        if not (source.exists() and source.is_file() and source.suffix.lower() == ".docx"):
+            raise ValueError(f"Native parser does not support pending file: {file_path}")
 
     def extract(
         self, source: Path, *, parsed_dir: Path, asset_dir: Path, base_name: str
@@ -71,9 +67,7 @@ class NativeDocxParser(NativeParserBase):
             parse_metadata=metadata,
         )
 
-    def surface_warnings(
-        self, warnings: dict[str, Any], source: Path
-    ) -> dict[str, Any] | None:
+    def surface_warnings(self, warnings: dict[str, Any], source: Path) -> dict[str, Any] | None:
         missing = int(warnings.get("missing_paraid_count", 0) or 0)
         if missing > 0:
             # Surface once per document; affected blocks emit

@@ -56,6 +56,7 @@ _TIMER_NAME = "heartbeat_staleness_check"
 
 class HeartbeatTimeoutError(RuntimeError):
     """Raised when heartbeat staleness threshold is exceeded (graceful termination)."""
+
     pass
 
 
@@ -104,7 +105,9 @@ class HeartbeatStaleness(AgentMiddleware):
         current_tool: str | None = state_register_mem.get_state(session_id, _STATE_KEY_TOOL, None)
 
         last_iter: int = state_register_mem.get_state(session_id, f"_last_{_STATE_KEY_ITER}", 0)
-        last_tool: str | None = state_register_mem.get_state(session_id, f"_last_{_STATE_KEY_TOOL}", None)
+        last_tool: str | None = state_register_mem.get_state(
+            session_id, f"_last_{_STATE_KEY_TOOL}", None
+        )
 
         iter_advanced = current_iter > last_iter
         tool_changed = current_tool != last_tool
@@ -115,7 +118,9 @@ class HeartbeatStaleness(AgentMiddleware):
             state_register_mem.set_state(session_id, _STATE_KEY_STALE, 0)
             logger.debug(
                 "[HeartbeatStaleness] session={} progress detected (iter={}, tool={}), stale reset",
-                session_id, current_iter, current_tool,
+                session_id,
+                current_iter,
+                current_tool,
             )
         else:
             stale: int = state_register_mem.get_state(session_id, _STATE_KEY_STALE, 0) + 1
@@ -128,13 +133,19 @@ class HeartbeatStaleness(AgentMiddleware):
                 logger.warning(
                     "[HeartbeatStaleness] session={} appears stale "
                     "(no progress for {} cycles / ~{}s, tool={}) — marking killed",
-                    session_id, stale, limit_seconds, current_tool or "<none>",
+                    session_id,
+                    stale,
+                    limit_seconds,
+                    current_tool or "<none>",
                 )
                 state_register_mem.set_state(session_id, _STATE_KEY_KILLED, True)
             else:
                 logger.debug(
                     "[HeartbeatStaleness] session={} stale count={}/{} (tool={})",
-                    session_id, stale, stale_limit, current_tool or "<none>",
+                    session_id,
+                    stale,
+                    stale_limit,
+                    current_tool or "<none>",
                 )
 
     def _start_heartbeat(self, session_id: str) -> None:
@@ -149,8 +160,10 @@ class HeartbeatStaleness(AgentMiddleware):
         logger.debug(
             "[HeartbeatStaleness] started heartbeat for session={} "
             "(interval={}min, idle_cycles={}, tool_cycles={})",
-            session_id, self.heartbeat_interval_minutes,
-            self.stale_cycles_idle, self.stale_cycles_in_tool,
+            session_id,
+            self.heartbeat_interval_minutes,
+            self.stale_cycles_idle,
+            self.stale_cycles_in_tool,
         )
 
     def _stop_heartbeat(self, session_id: str) -> None:
@@ -248,7 +261,8 @@ class HeartbeatStaleness(AgentMiddleware):
             tool_name: str = request.tool_call.get("name", "unknown")
             logger.warning(
                 "[HeartbeatStaleness] session={} killed during tool call [{}] — raising HeartbeatTimeoutError",
-                session_id, tool_name,
+                session_id,
+                tool_name,
             )
             raise HeartbeatTimeoutError(
                 f"Tool [{tool_name}] skipped — heartbeat staleness timeout exceeded. "

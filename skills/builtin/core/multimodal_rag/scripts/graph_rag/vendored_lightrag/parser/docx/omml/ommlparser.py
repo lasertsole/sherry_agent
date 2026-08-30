@@ -190,10 +190,7 @@ class OMMLParser:
                         if char in character_map:
                             text = character_map[char]
                 for child2 in child:
-                    if (
-                        child2.tag == qn("m:pos")
-                        and child2.attrib.get(qn("m:val")) == "top"
-                    ):
+                    if child2.tag == qn("m:pos") and child2.attrib.get(qn("m:val")) == "top":
                         # If m:pos is set to "top", the symbol is supposed to
                         # be on top and the text is actually supposed to be under
                         bottom = True
@@ -319,10 +316,7 @@ class OMMLParser:
         for child in root:
             if child.tag == qn("m:fPr"):
                 for child2 in child:
-                    if (
-                        child2.tag == qn("m:type")
-                        and child2.attrib.get(qn("m:val")) == "noBar"
-                    ):
+                    if child2.tag == qn("m:type") and child2.attrib.get(qn("m:val")) == "noBar":
                         is_binom = True
             if child.tag == qn("m:num"):
                 num = self.parse(child)
@@ -376,10 +370,7 @@ class OMMLParser:
             return f"\\{func_name}\\limits_{{{subscript}}}^{{{superscript}}}{{{text}}}"
         if func_name not in self.FUNCTION_MAP:
             return f"{{{func_name}}}^{{{superscript}}}_{{{subscript}}}{{{text}}}"
-        return (
-            self.FUNCTION_MAP[func_name]
-            + f"_{{{subscript}}}^{{{superscript}}}{{{text}}}"
-        )
+        return self.FUNCTION_MAP[func_name] + f"_{{{subscript}}}^{{{superscript}}}{{{text}}}"
 
     def parse_s_sup(self, root: Element) -> str:
         content = ""

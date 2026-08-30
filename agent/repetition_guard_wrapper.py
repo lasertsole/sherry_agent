@@ -64,13 +64,10 @@ from agent.middlewares.output_repetition_guard import (
     OutputRepetitionGuard,
     SESSION_STATE_KEYS,
     _HISTORY_KEY,
-    _WARN_COUNT_KEY,
     _INTERNAL_WARNED_KEY,
     _HALTED_KEY,
     _REASONING_HISTORY_KEY,
     _REASONING_WARNED_KEY,
-    _MAX_HISTORY,
-    _TAIL_CHARS,
     _MIN_CONTENT_LENGTH,
     _CHAR_RUN_MIN,
     _STREAM_WARNING,
@@ -254,9 +251,7 @@ class RepetitionGuardWrapper:
                 "output",
             )
             if r is not None:
-                is_halt = state_register_mem.get_state(
-                    session_id, _HALTED_KEY, False
-                )
+                is_halt = state_register_mem.get_state(session_id, _HALTED_KEY, False)
                 return (r.content, is_halt)
 
         # ---- reasoning (independent history) ----
@@ -270,9 +265,7 @@ class RepetitionGuardWrapper:
                 "reasoning",
             )
             if r is not None:
-                is_halt = state_register_mem.get_state(
-                    session_id, _HALTED_KEY, False
-                )
+                is_halt = state_register_mem.get_state(session_id, _HALTED_KEY, False)
                 return (r.content, is_halt)
 
         return (None, False)
@@ -387,15 +380,13 @@ class RepetitionGuardWrapper:
         # arriving before ANY update cannot be live graph output; when it
         # tripped the internal-repetition cut, call_cut then suppressed the
         # REAL reply behind it (user saw only the 145-char warning).
-        saw_updates = False       # any "updates" chunk seen (graph started)
-        phantom_dropped = 0       # pre-updates "model" text chunks dropped
+        saw_updates = False  # any "updates" chunk seen (graph started)
+        phantom_dropped = 0  # pre-updates "model" text chunks dropped
         # Command(resume) streams legitimately start with messages (the
         # interrupted node re-executes without re-running before_agent),
         # so the guard only applies to fresh dict-input runs. The guard
         # itself is opt-in (constructor flag) — enabled in production.
-        phantom_guard_active = self._phantom_stream_guard and isinstance(
-            input_, dict
-        )
+        phantom_guard_active = self._phantom_stream_guard and isinstance(input_, dict)
 
         generator = self._inner.astream(*args, **kwargs)
 
@@ -545,9 +536,7 @@ class RepetitionGuardWrapper:
                 # (e.g. by the middleware backstop), yield halt messages
                 # instead of forwarding repetitive text.
                 if state_register_mem.get_state(session_id, _HALTED_KEY, False):
-                    yield self._text_chunk(
-                        self._halted_short_circuit_message(), metadata
-                    )
+                    yield self._text_chunk(self._halted_short_circuit_message(), metadata)
                     continue
 
                 if not isinstance(msg_chunk, AIMessageChunk):
@@ -591,14 +580,11 @@ class RepetitionGuardWrapper:
                                         session_id,
                                         call_text[:200],
                                     )
-                                    yield self._text_chunk(
-                                        _STREAM_WARNING, metadata
-                                    )
+                                    yield self._text_chunk(_STREAM_WARNING, metadata)
                                     call_cut = True
                         except Exception:
                             logger.exception(
-                                "[RepetitionGuardWrapper] internal detection "
-                                "error (non-fatal)"
+                                "[RepetitionGuardWrapper] internal detection error (non-fatal)"
                             )
 
                 # ---- accumulate reasoning (checked at boundary) ----
@@ -616,9 +602,7 @@ class RepetitionGuardWrapper:
 
             # ---- end of stream: process the last model call ----
             if in_model_call:
-                warning, is_halt = self._on_model_call_end(
-                    session_id, call_text, call_reasoning
-                )
+                warning, is_halt = self._on_model_call_end(session_id, call_text, call_reasoning)
                 if warning is not None:
                     yield self._text_chunk(warning)
 
@@ -675,8 +659,7 @@ class RepetitionGuardWrapper:
                             result["messages"][-1] = replacement
                     except Exception:
                         logger.exception(
-                            "[RepetitionGuardWrapper] post-hoc detection "
-                            "error (non-fatal)"
+                            "[RepetitionGuardWrapper] post-hoc detection error (non-fatal)"
                         )
 
         return result

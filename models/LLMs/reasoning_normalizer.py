@@ -53,8 +53,8 @@ from langchain_core.callbacks import (
     CallbackManagerForLLMRun,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.messages import BaseMessage
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from pydantic import Field
 
 _REASONING_KEYS = ("reasoning_content", "reasoning", "reasoning_text")
@@ -132,9 +132,7 @@ class NormalizingChatModel(BaseChatModel):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        result = await self.inner._agenerate(
-            messages, stop=stop, run_manager=run_manager, **kwargs
-        )
+        result = await self.inner._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
         for gen in result.generations:
             _normalize_message_reasoning(gen.message)
         return result
@@ -147,9 +145,7 @@ class NormalizingChatModel(BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        for chunk in self.inner._stream(
-            messages, stop=stop, run_manager=run_manager, **kwargs
-        ):
+        for chunk in self.inner._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
             self._normalize_chunk_reasoning(chunk)
             yield chunk
 
@@ -209,9 +205,7 @@ class NormalizingChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> Any:
         """Delegate structured output to the inner model."""
-        return self.inner.with_structured_output(
-            schema, include_raw=include_raw, **kwargs
-        )
+        return self.inner.with_structured_output(schema, include_raw=include_raw, **kwargs)
 
     # -- Message-parsing helpers (delegate to inner to keep behaviour aligned) --
     def _convert_input(self, input: Any) -> List[BaseMessage]:

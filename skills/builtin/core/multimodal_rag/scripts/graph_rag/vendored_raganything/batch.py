@@ -94,9 +94,7 @@ class BatchMixin:
             self.logger.warning(f"No supported files found in {folder_path}")
             return
 
-        self.logger.info(
-            f"Found {len(files_to_process)} files to process in {folder_path}"
-        )
+        self.logger.info(f"Found {len(files_to_process)} files to process in {folder_path}")
 
         # Create output directory if it doesn't exist
         output_path = Path(output_dir)
@@ -109,9 +107,7 @@ class BatchMixin:
         async def process_single_file(file_path: Path):
             async with semaphore:
                 is_in_subdir = (
-                    lambda file_path, dir_path: (
-                        len(file_path.relative_to(dir_path).parents) > 1
-                    )
+                    lambda file_path, dir_path: len(file_path.relative_to(dir_path).parents) > 1
                 )(file_path, folder_path_obj)
 
                 try:
@@ -120,10 +116,7 @@ class BatchMixin:
                         output_dir=(
                             output_dir
                             if not is_in_subdir
-                            else str(
-                                output_path
-                                / file_path.parent.relative_to(folder_path_obj)
-                            )
+                            else str(output_path / file_path.parent.relative_to(folder_path_obj))
                         ),
                         parse_method=parse_method,
                         split_by_character=split_by_character,
@@ -376,9 +369,7 @@ class BatchMixin:
         rag_results = {}
 
         if parse_result.successful_files:
-            self.logger.info(
-                f"Processing {len(parse_result.successful_files)} files with RAG"
-            )
+            self.logger.info(f"Processing {len(parse_result.successful_files)} files with RAG")
 
             # Process files with RAG (this could be parallelized in the future)
             for file_path in parse_result.successful_files:
@@ -396,9 +387,7 @@ class BatchMixin:
                     rag_results[file_path] = {"status": "success", "processed": True}
 
                 except Exception as e:
-                    self.logger.error(
-                        f"Failed to process {file_path} with RAG: {str(e)}"
-                    )
+                    self.logger.error(f"Failed to process {file_path} with RAG: {str(e)}")
                     rag_results[file_path] = {
                         "status": "failed",
                         "error": str(e),

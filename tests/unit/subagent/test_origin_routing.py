@@ -1,4 +1,3 @@
-import pytest
 from agent.tools.subagent.spawn.origin_routing import (
     ChildSessionOrigin,
     resolve_requester_origin_for_child,

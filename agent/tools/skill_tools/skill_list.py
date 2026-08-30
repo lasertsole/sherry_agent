@@ -9,12 +9,18 @@ from agent.tools.pub_base import sort_skills, skill_visible_to
 
 relative_path = SKILLS_DIR.relative_to(ROOT_DIR)
 
+
 class SkillListSchema(BaseModel):
-    category: str | None = Field(description="Optional category filter to narrow results.", default = None)
+    category: str | None = Field(
+        description="Optional category filter to narrow results.", default=None
+    )
+
 
 class SkillList(BaseTool):
     name: str = "skill_list"
-    description: str = "List available skills (name + description). Use skill_view(name) to load full content."
+    description: str = (
+        "List available skills (name + description). Use skill_view(name) to load full content."
+    )
     args_schema: Type[BaseModel] = SkillListSchema
     metadata: dict = {"idempotent": True, "nudge": True}
 
@@ -34,6 +40,7 @@ class SkillList(BaseTool):
 
             # Find all skills
             from skills.loader import scan_skills
+
             all_skills = scan_skills(use_cache=False)
 
             if not all_skills:
@@ -53,9 +60,7 @@ class SkillList(BaseTool):
             # metadata (main agent) defaults to "main" — unchanged behavior.
             metadata = getattr(self, "metadata", None)
             caller_scope = (
-                metadata.get("caller_scope", "main")
-                if isinstance(metadata, dict)
-                else "main"
+                metadata.get("caller_scope", "main") if isinstance(metadata, dict) else "main"
             )
             all_skills = [s for s in all_skills if skill_visible_to(s, caller_scope)]
 
@@ -67,9 +72,7 @@ class SkillList(BaseTool):
             all_skills = sort_skills(all_skills)
 
             # Extract unique categories
-            categories = sorted(
-                {s.get("category") for s in all_skills if s.get("category")}
-            )
+            categories = sorted({s.get("category") for s in all_skills if s.get("category")})
 
             return json.dumps(
                 {
@@ -89,7 +92,8 @@ class SkillList(BaseTool):
     async def _arun(self, category: str | None):
         return self._run(category)
 
-def build_skill_list_tool()-> BaseTool:
+
+def build_skill_list_tool() -> BaseTool:
     tool: BaseTool = SkillList()
     tool.handle_tool_error = True
     return tool

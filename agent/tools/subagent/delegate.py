@@ -99,13 +99,19 @@ class DelegatedTaskHandle:
         if not self.accepted or not self.run_id:
             return self
         run = get_run(self.run_id)
-        if run and str(
-            getattr(run.execution, "status", None) or getattr(run, "execution_status", "")
-        ).upper() == "TERMINAL":
+        if (
+            run
+            and str(
+                getattr(run.execution, "status", None) or getattr(run, "execution_status", "")
+            ).upper()
+            == "TERMINAL"
+        ):
             self.result_text, self.terminal_error = _terminal_text(self.run_id)
         return self
 
-    def result(self, timeout: float | None = None, poll_interval: float = 0.25) -> "DelegatedTaskHandle":
+    def result(
+        self, timeout: float | None = None, poll_interval: float = 0.25
+    ) -> "DelegatedTaskHandle":
         """Block until the run reaches a terminal state; returns ``self`` populated.
 
         Args:
@@ -127,6 +133,7 @@ class DelegatedTaskHandle:
             if self.is_running():
                 # Poll loop inline without blocking the outer loop.
                 import time
+
                 deadline = None if timeout is None else time.monotonic() + timeout
                 while self.is_running():
                     if deadline is not None and time.monotonic() >= deadline:
@@ -164,7 +171,10 @@ def _terminal_text(run_id: str) -> tuple[str | None, str | None]:
         outcome_status = getattr(outcome, "status", None)
         if getattr(outcome, "error", None):
             err = outcome.error
-        elif outcome_status is not None and str(getattr(outcome_status, "value", outcome_status)).lower() != "ok":
+        elif (
+            outcome_status is not None
+            and str(getattr(outcome_status, "value", outcome_status)).lower() != "ok"
+        ):
             err = str(getattr(outcome_status, "value", outcome_status)).lower()
     return result_text, err
 

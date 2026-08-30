@@ -6,16 +6,27 @@ from config import SRC_DIR
 _db_path: Path = SRC_DIR / "store/mes_memory/mes_memory.db"
 _db: sqlite3.Connection | None = None
 
+
 def _migrate(db: sqlite3.Connection) -> None:
-    db.execute("CREATE TABLE IF NOT EXISTS _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)")
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
+    )
     cur = db.execute("SELECT MAX(v) as v FROM _migrations").fetchone()[0]
     if cur is None:
         cur = 0
-    steps = [build_messages_tb, build_messages_fts_tb, build_messages_fts_trigram_tb, add_images_column, add_audio_video_columns, add_model_token_columns]
+    steps = [
+        build_messages_tb,
+        build_messages_fts_tb,
+        build_messages_fts_trigram_tb,
+        add_images_column,
+        add_audio_video_columns,
+        add_model_token_columns,
+    ]
     for i in range(cur, len(steps)):
         steps[i](db)
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
     db.commit()
+
 
 def get_db():
     global _db
@@ -38,6 +49,7 @@ def get_db():
     _migrate(_db)
 
     return _db
+
 
 def build_messages_tb(db: sqlite3.Connection) -> None:
     db.executescript("""
@@ -63,6 +75,7 @@ def build_messages_tb(db: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num);""")
 
+
 def add_images_column(db: sqlite3.Connection) -> None:
     """Add an `images` column to the messages table (JSON-encoded list of paths).
 
@@ -75,6 +88,7 @@ def add_images_column(db: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass
+
 
 def add_audio_video_columns(db: sqlite3.Connection) -> None:
     """Add `audios` and `videos` columns to the messages table.
@@ -94,6 +108,7 @@ def add_audio_video_columns(db: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass
+
 
 def add_model_token_columns(db: sqlite3.Connection) -> None:
     """Add `model_name`, `input_tokens`, and `output_tokens` columns.
@@ -118,6 +133,7 @@ def add_model_token_columns(db: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass
+
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:
     db.executescript("""
@@ -144,6 +160,7 @@ def build_messages_fts_tb(db: sqlite3.Connection) -> None:
             );
         END;
     """)
+
 
 def build_messages_fts_trigram_tb(db: sqlite3.Connection) -> None:
     db.executescript("""

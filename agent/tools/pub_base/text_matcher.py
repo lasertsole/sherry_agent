@@ -10,28 +10,34 @@ from difflib import SequenceMatcher
 
 
 _UNICODE_MAP = {
-    "\u201c": '"', "\u201d": '"',
-    "\u2018": "'", "\u2019": "'",
-    "\u2014": "--", "\u2013": "-",
-    "\u2026": "...", "\u00a0": " ",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u2014": "--",
+    "\u2013": "-",
+    "\u2026": "...",
+    "\u00a0": " ",
 }
 
 
 def _line_positions(lines: list[str], start: int, end: int, total_len: int) -> tuple[int, int]:
-    sp = sum(len(l) + 1 for l in lines[:start])
-    ep = sum(len(l) + 1 for l in lines[:end]) - 1
+    sp = sum(len(ln) + 1 for ln in lines[:start])
+    ep = sum(len(ln) + 1 for ln in lines[:end]) - 1
     return sp, min(ep, total_len)
 
 
 def _find_normalized_matches(
-    content: str, content_lines: list[str],
-    content_norm_lines: list[str], pattern_norm: str,
+    content: str,
+    content_lines: list[str],
+    content_norm_lines: list[str],
+    pattern_norm: str,
 ) -> list[tuple[int, int]]:
-    plines = pattern_norm.split('\n')
+    plines = pattern_norm.split("\n")
     plen = len(plines)
     matches = []
     for i in range(len(content_norm_lines) - plen + 1):
-        if '\n'.join(content_norm_lines[i:i + plen]) == pattern_norm:
+        if "\n".join(content_norm_lines[i : i + plen]) == pattern_norm:
             sp, ep = _line_positions(content_lines, i, i + plen, len(content))
             matches.append((sp, ep))
     return matches
@@ -50,15 +56,18 @@ def _strategy_exact(content: str, pattern: str) -> list[tuple[int, int]]:
 
 
 def _strategy_line_trimmed(content: str, pattern: str) -> list[tuple[int, int]]:
-    pattern_lines = [line.strip() for line in pattern.split('\n')]
-    pattern_normalized = '\n'.join(pattern_lines)
-    content_lines = content.split('\n')
+    pattern_lines = [line.strip() for line in pattern.split("\n")]
+    pattern_normalized = "\n".join(pattern_lines)
+    content_lines = content.split("\n")
     content_normalized_lines = [line.strip() for line in content_lines]
-    return _find_normalized_matches(content, content_lines, content_normalized_lines, pattern_normalized)
+    return _find_normalized_matches(
+        content, content_lines, content_normalized_lines, pattern_normalized
+    )
 
 
 def _map_whitespace_positions(
-    original: str, normalized: str,
+    original: str,
+    normalized: str,
     norm_matches: list[tuple[int, int]],
 ) -> list[tuple[int, int]]:
     if not norm_matches:
@@ -70,12 +79,12 @@ def _map_whitespace_positions(
             orig_to_norm.append(ni)
             oi += 1
             ni += 1
-        elif original[oi] in ' \t' and normalized[ni] == ' ':
+        elif original[oi] in " \t" and normalized[ni] == " ":
             orig_to_norm.append(ni)
             oi += 1
-            if oi < len(original) and original[oi] not in ' \t':
+            if oi < len(original) and original[oi] not in " \t":
                 ni += 1
-        elif original[oi] in ' \t':
+        elif original[oi] in " \t":
             orig_to_norm.append(ni)
             oi += 1
         else:
@@ -96,15 +105,17 @@ def _map_whitespace_positions(
     for ns, ne in norm_matches:
         os_ = n2o_start.get(ns, min(i for i, n in enumerate(orig_to_norm) if n >= ns))
         oe = n2o_end.get(ne - 1, os_ + (ne - ns)) + 1 if ne - 1 in n2o_end else os_ + (ne - ns)
-        if ne < len(normalized) and normalized[ne - 1] == ' ':
-            while oe < len(original) and original[oe] in ' \t':
+        if ne < len(normalized) and normalized[ne - 1] == " ":
+            while oe < len(original) and original[oe] in " \t":
                 oe += 1
         result.append((os_, min(oe, len(original))))
     return result
 
 
 def _strategy_whitespace_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
-    normalize = lambda s: re.sub(r'[ \t]+', ' ', s)
+    def normalize(s: str) -> str:
+        return re.sub(r"[ \t]+", " ", s)
+
     pattern_normalized = normalize(pattern)
     content_normalized = normalize(content)
     norm_matches = _strategy_exact(content_normalized, pattern_normalized)
@@ -114,37 +125,39 @@ def _strategy_whitespace_normalized(content: str, pattern: str) -> list[tuple[in
 
 
 def _strategy_indentation_flexible(content: str, pattern: str) -> list[tuple[int, int]]:
-    content_lines = content.split('\n')
+    content_lines = content.split("\n")
     content_stripped = [line.lstrip() for line in content_lines]
-    pattern_lines = [line.lstrip() for line in pattern.split('\n')]
-    return _find_normalized_matches(content, content_lines, content_stripped, '\n'.join(pattern_lines))
+    pattern_lines = [line.lstrip() for line in pattern.split("\n")]
+    return _find_normalized_matches(
+        content, content_lines, content_stripped, "\n".join(pattern_lines)
+    )
 
 
 def _strategy_escape_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
-    unescaped = pattern.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
+    unescaped = pattern.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
     if unescaped == pattern:
         return []
     return _strategy_exact(content, unescaped)
 
 
 def _strategy_trimmed_boundary(content: str, pattern: str) -> list[tuple[int, int]]:
-    pattern_lines = pattern.split('\n')
+    pattern_lines = pattern.split("\n")
     if not pattern_lines:
         return []
     pattern_lines[0] = pattern_lines[0].strip()
     if len(pattern_lines) > 1:
         pattern_lines[-1] = pattern_lines[-1].strip()
-    modified_pattern = '\n'.join(pattern_lines)
-    content_lines = content.split('\n')
+    modified_pattern = "\n".join(pattern_lines)
+    content_lines = content.split("\n")
     plen = len(pattern_lines)
     matches = []
     for i in range(len(content_lines) - plen + 1):
-        block = content_lines[i:i + plen]
+        block = content_lines[i : i + plen]
         check = block.copy()
         check[0] = check[0].strip()
         if len(check) > 1:
             check[-1] = check[-1].strip()
-        if '\n'.join(check) == modified_pattern:
+        if "\n".join(check) == modified_pattern:
             start_pos, end_pos = _line_positions(content_lines, i, i + plen, len(content))
             matches.append((start_pos, end_pos))
     return matches
@@ -182,7 +195,8 @@ def _strategy_unicode_normalized(content: str, pattern: str) -> list[tuple[int, 
 
 
 def _map_norm_to_orig(
-    orig_to_norm: list[int], norm_matches: list[tuple[int, int]],
+    orig_to_norm: list[int],
+    norm_matches: list[tuple[int, int]],
 ) -> list[tuple[int, int]]:
     n2o: dict[int, int] = {}
     for opos, npos in enumerate(orig_to_norm[:-1]):
@@ -204,16 +218,17 @@ def _map_norm_to_orig(
 def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
     norm_pattern = _unicode_normalize(pattern)
     norm_content = _unicode_normalize(content)
-    pattern_lines = norm_pattern.split('\n')
+    pattern_lines = norm_pattern.split("\n")
     if len(pattern_lines) < 2:
         return []
     first_line = pattern_lines[0].strip()
     last_line = pattern_lines[-1].strip()
-    norm_content_lines = norm_content.split('\n')
-    orig_content_lines = content.split('\n')
+    norm_content_lines = norm_content.split("\n")
+    orig_content_lines = content.split("\n")
     plen = len(pattern_lines)
     potential = [
-        i for i in range(len(norm_content_lines) - plen + 1)
+        i
+        for i in range(len(norm_content_lines) - plen + 1)
         if norm_content_lines[i].strip() == first_line
         and norm_content_lines[i + plen - 1].strip() == last_line
     ]
@@ -223,8 +238,8 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
         if plen <= 2:
             sim = 1.0
         else:
-            cm = '\n'.join(norm_content_lines[i + 1:i + plen - 1])
-            pm = '\n'.join(pattern_lines[1:-1])
+            cm = "\n".join(norm_content_lines[i + 1 : i + plen - 1])
+            pm = "\n".join(pattern_lines[1:-1])
             sim = SequenceMatcher(None, cm, pm).ratio()
         if sim >= threshold:
             sp, ep = _line_positions(orig_content_lines, i, i + plen, len(content))
@@ -233,16 +248,17 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
 
 
 def _strategy_context_aware(content: str, pattern: str) -> list[tuple[int, int]]:
-    pattern_lines = pattern.split('\n')
-    content_lines = content.split('\n')
+    pattern_lines = pattern.split("\n")
+    content_lines = content.split("\n")
     if not pattern_lines:
         return []
     plen = len(pattern_lines)
     matches = []
     for i in range(len(content_lines) - plen + 1):
-        block = content_lines[i:i + plen]
+        block = content_lines[i : i + plen]
         hi = sum(
-            1 for pl, cl in zip(pattern_lines, block)
+            1
+            for pl, cl in zip(pattern_lines, block)
             if SequenceMatcher(None, pl.strip(), cl.strip()).ratio() >= 0.80
         )
         if hi >= len(pattern_lines) * 0.5:
@@ -264,8 +280,9 @@ _STRATEGIES: list[tuple[str, Callable[[str, str], list[tuple[int, int]]]]] = [
 ]
 
 
-def _detect_escape_drift(content: str, matches: list[tuple[int, int]],
-                         old_string: str, new_string: str) -> str | None:
+def _detect_escape_drift(
+    content: str, matches: list[tuple[int, int]], old_string: str, new_string: str
+) -> str | None:
     if "\\'" not in new_string and '\\"' not in new_string:
         return None
     matched = "".join(content[s:e] for s, e in matches)
@@ -281,7 +298,7 @@ def _detect_escape_drift(content: str, matches: list[tuple[int, int]],
 
 
 def _first_meaningful_line(text: str) -> str | None:
-    for line in text.split('\n'):
+    for line in text.split("\n"):
         if line.strip():
             return line
     return None
@@ -289,7 +306,7 @@ def _first_meaningful_line(text: str) -> str | None:
 
 def _leading_ws(line: str) -> str:
     i = 0
-    while i < len(line) and line[i] in (' ', '\t'):
+    while i < len(line) and line[i] in (" ", "\t"):
         i += 1
     return line[:i]
 
@@ -306,20 +323,23 @@ def _reindent(file_region: str, old_string: str, new_string: str) -> str:
     if old_indent == file_indent:
         return new_string
     out: list[str] = []
-    for line in new_string.split('\n'):
+    for line in new_string.split("\n"):
         if not line.strip():
             out.append(line)
             continue
         li = _leading_ws(line)
         if li.startswith(old_indent):
-            out.append(file_indent + line[len(old_indent):])
+            out.append(file_indent + line[len(old_indent) :])
         else:
-            out.append(file_indent + line.lstrip(' \t'))
-    return '\n'.join(out)
+            out.append(file_indent + line.lstrip(" \t"))
+    return "\n".join(out)
 
 
 def fuzzy_find_and_replace(
-    content: str, old_string: str, new_string: str, replace_all: bool = False,
+    content: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
 ) -> tuple[str, int, str | None, str | None]:
     """Return (new_content, match_count, strategy_name, error)."""
     if not old_string:
@@ -332,9 +352,14 @@ def fuzzy_find_and_replace(
         if not matches:
             continue
         if len(matches) > 1 and not replace_all:
-            return content, 0, None, (
-                f"Found {len(matches)} matches for old_string. "
-                "Provide more context to make it unique, or use replace_all=True."
+            return (
+                content,
+                0,
+                None,
+                (
+                    f"Found {len(matches)} matches for old_string. "
+                    "Provide more context to make it unique, or use replace_all=True."
+                ),
             )
         if name != "exact":
             drift_err = _detect_escape_drift(content, matches, old_string, new_string)
@@ -355,7 +380,9 @@ def fuzzy_find_and_replace(
     return content, 0, None, "Could not find a match for old_string in the file"
 
 
-def find_closest_lines(old_string: str, content: str, context_lines: int = 2, max_results: int = 3) -> str:
+def find_closest_lines(
+    old_string: str, content: str, context_lines: int = 2, max_results: int = 3
+) -> str:
     """Find lines in content most similar to old_string for "did you mean?" feedback.
 
     Returns a formatted string showing the closest matching lines with context,
@@ -374,7 +401,7 @@ def find_closest_lines(old_string: str, content: str, context_lines: int = 2, ma
     anchor = old_lines[0].strip()
     if not anchor:
         # Try second line if first is blank
-        candidates = [l.strip() for l in old_lines if l.strip()]
+        candidates = [ln.strip() for ln in old_lines if ln.strip()]
         if not candidates:
             return ""
         anchor = candidates[0]
@@ -406,8 +433,7 @@ def find_closest_lines(old_string: str, content: str, context_lines: int = 2, ma
             continue
         seen_ranges.add(key)
         snippet = "\n".join(
-            f"{start + j + 1:4d}| {content_lines[start + j]}"
-            for j in range(end - start)
+            f"{start + j + 1:4d}| {content_lines[start + j]}" for j in range(end - start)
         )
         parts.append(snippet)
 
@@ -417,8 +443,7 @@ def find_closest_lines(old_string: str, content: str, context_lines: int = 2, ma
     return "\n---\n".join(parts)
 
 
-def format_no_match_hint(error: str | None, match_count: int,
-                         old_string: str, content: str) -> str:
+def format_no_match_hint(error: str | None, match_count: int, old_string: str, content: str) -> str:
     """Return a '\\n\\nDid you mean...' snippet for plain no-match errors.
 
     Gated so the hint only fires for actual "old_string not found" failures.

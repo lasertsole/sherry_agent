@@ -16,24 +16,24 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const bridgeMocks = vi.hoisted(() => ({
   fetchSubagentRuns: vi.fn(async () => []),
   fetchSubagentRunSubtree: vi.fn(async () => []),
-  deleteSubagentRunSubtree: vi.fn(async () => 1),
+  deleteSubagentRunSubtree: vi.fn(async () => 1)
 }));
 
 const dbMocks = vi.hoisted(() => ({
   cacheSubagentRuns: vi.fn(async () => undefined),
   readCachedSubagentRuns: vi.fn(async () => []),
   deleteCachedSubagentRuns: vi.fn(async () => undefined),
-  // loadSubagentValidSessions() 动态 import 用到；默认空列表即可（会话存在性由各用例自己覆盖）
-  readCachedSessionMetaList: vi.fn(async () => []),
+  // Used via dynamic import in loadSubagentValidSessions(); an empty list is fine by default (each case covers session existence itself)
+  readCachedSessionMetaList: vi.fn(async () => [])
 }));
 
 const mittMocks = vi.hoisted(() => ({
   on: vi.fn(),
-  off: vi.fn(),
+  off: vi.fn()
 }));
 
 const wsMocks = vi.hoisted(() => ({
-  useSubagentWs: vi.fn(),
+  useSubagentWs: vi.fn()
 }));
 
 // `vue-i18n` is aliased to a test stub in vitest.config.ts (it is not
@@ -73,11 +73,10 @@ function makeRun(overrides: Partial<Omit<SubagentRun, 'run_id'>> & { run_id: str
     context_mode: undefined,
     agent_id: undefined,
     depth: 1,
-    other: undefined,
     execution: { status: 'DONE', started_at: null, ended_at: null, outcome: { status: 'OK', error: null } },
     completion: { required: false, result_text: null, captured_at: null },
     delivery: { status: 'DELIVERED' },
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -126,13 +125,31 @@ describe('useSubagentTasks', () => {
   describe('status/badge/role labels', () => {
     it('badgeClass colors by execution status and outcome', () => {
       const api = useSubagentTasks();
-      const running = makeRun({ run_id: 'r1', execution: { status: 'RUNNING', started_at: 0, ended_at: 0, outcome: null } });
-      const interrupted = makeRun({ run_id: 'r2', execution: { status: 'INTERRUPTED', started_at: 0, ended_at: 0, outcome: null } });
+      const running = makeRun({
+        run_id: 'r1',
+        execution: { status: 'RUNNING', started_at: 0, ended_at: 0, outcome: null }
+      });
+      const interrupted = makeRun({
+        run_id: 'r2',
+        execution: { status: 'INTERRUPTED', started_at: 0, ended_at: 0, outcome: null }
+      });
       const ok = makeRun({ run_id: 'r3' });
-      const err = makeRun({ run_id: 'r4', execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'ERROR', error: null } } });
-      const timeout = makeRun({ run_id: 'r5', execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'TIMEOUT', error: null } } });
-      const killed = makeRun({ run_id: 'r6', execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'KILLED', error: null } } });
-      const unknown = makeRun({ run_id: 'r7', execution: { status: 'UNKNOWN', started_at: 0, ended_at: 0, outcome: null } });
+      const err = makeRun({
+        run_id: 'r4',
+        execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'ERROR', error: null } }
+      });
+      const timeout = makeRun({
+        run_id: 'r5',
+        execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'TIMEOUT', error: null } }
+      });
+      const killed = makeRun({
+        run_id: 'r6',
+        execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'KILLED', error: null } }
+      });
+      const unknown = makeRun({
+        run_id: 'r7',
+        execution: { status: 'UNKNOWN', started_at: 0, ended_at: 0, outcome: null }
+      });
 
       expect(api.badgeClass(running)).toContain('bg-blue-100');
       expect(api.badgeClass(interrupted)).toContain('bg-amber-100');
@@ -145,16 +162,46 @@ describe('useSubagentTasks', () => {
 
     it('statusLabel prioritizes execution, then delivery, then outcome', () => {
       const api = useSubagentTasks();
-      const running = makeRun({ run_id: 'r1', execution: { status: 'RUNNING', started_at: 0, ended_at: 0, outcome: null } });
-      const interrupted = makeRun({ run_id: 'r2', execution: { status: 'INTERRUPTED', started_at: 0, ended_at: 0, outcome: null } });
-      const pending = makeRun({ run_id: 'r3', execution: { status: 'SCHEDULED', started_at: 0, ended_at: 0, outcome: null }, delivery: { status: 'PENDING' } });
-      const inProgress = makeRun({ run_id: 'r4', execution: { status: 'SCHEDULED', started_at: 0, ended_at: 0, outcome: null }, delivery: { status: 'IN_PROGRESS' } });
+      const running = makeRun({
+        run_id: 'r1',
+        execution: { status: 'RUNNING', started_at: 0, ended_at: 0, outcome: null }
+      });
+      const interrupted = makeRun({
+        run_id: 'r2',
+        execution: { status: 'INTERRUPTED', started_at: 0, ended_at: 0, outcome: null }
+      });
+      const pending = makeRun({
+        run_id: 'r3',
+        execution: { status: 'SCHEDULED', started_at: 0, ended_at: 0, outcome: null },
+        delivery: { status: 'PENDING' }
+      });
+      const inProgress = makeRun({
+        run_id: 'r4',
+        execution: { status: 'SCHEDULED', started_at: 0, ended_at: 0, outcome: null },
+        delivery: { status: 'IN_PROGRESS' }
+      });
       const delivered = makeRun({ run_id: 'r5', delivery: { status: 'DELIVERED' } });
       const done = makeRun({ run_id: 'r6', delivery: { status: 'NONE' } });
-      const error = makeRun({ run_id: 'r7', execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'ERROR', error: null } }, delivery: { status: 'NONE' } });
-      const timeout = makeRun({ run_id: 'r8', execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'TIMEOUT', error: null } }, delivery: { status: 'NONE' } });
-      const killed = makeRun({ run_id: 'r9', execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'KILLED', error: null } }, delivery: { status: 'NONE' } });
-      const unknown = makeRun({ run_id: 'r10', execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'WEIRD', error: null } }, delivery: { status: 'NONE' } });
+      const error = makeRun({
+        run_id: 'r7',
+        execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'ERROR', error: null } },
+        delivery: { status: 'NONE' }
+      });
+      const timeout = makeRun({
+        run_id: 'r8',
+        execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'TIMEOUT', error: null } },
+        delivery: { status: 'NONE' }
+      });
+      const killed = makeRun({
+        run_id: 'r9',
+        execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'KILLED', error: null } },
+        delivery: { status: 'NONE' }
+      });
+      const unknown = makeRun({
+        run_id: 'r10',
+        execution: { status: 'DONE', started_at: 0, ended_at: 0, outcome: { status: 'WEIRD', error: null } },
+        delivery: { status: 'NONE' }
+      });
 
       expect(api.statusLabel(running)).toBe('sidebar.statusRunning');
       expect(api.statusLabel(interrupted)).toBe('sidebar.statusInterrupted');
@@ -192,19 +239,19 @@ describe('useSubagentTasks', () => {
         makeRun({ run_id: 'root-1', depth: 1, requester_session_key: 'A' }),
         makeRun({ run_id: 'root-2', depth: 1, requester_session_key: 'B' }),
         makeRun({ run_id: 'root-3', depth: 1, requester_session_key: 'A' }),
-        makeRun({ run_id: 'deep', depth: 2, requester_session_key: 'A' }),
+        makeRun({ run_id: 'deep', depth: 2, requester_session_key: 'A' })
       ];
       expect(api.rootTaskRuns.value.map(r => r.run_id)).toEqual(['root-1', 'root-2', 'root-3']);
       const groups = api.groupedRootTaskRuns.value;
       expect(groups.map(g => g.sessionId)).toEqual(['A', 'B']);
-      expect(groups[0].runs.map(r => r.run_id)).toEqual(['root-1', 'root-3']);
+      expect(groups[0]!.runs.map(r => r.run_id)).toEqual(['root-1', 'root-3']);
     });
 
     it('focusedSubtreeRuns without focus returns rootTaskRuns', () => {
       const api = useSubagentTasks();
       api.allTaskRuns.value = [
         makeRun({ run_id: 'r1', depth: 1 }),
-        makeRun({ run_id: 'r2', depth: 2, requester_session_key: 'child-sess' }),
+        makeRun({ run_id: 'r2', depth: 2, requester_session_key: 'child-sess' })
       ];
       expect(api.focusedSubtreeRuns.value.map(r => r.run_id)).toEqual(['r1']);
     });
@@ -241,11 +288,11 @@ describe('useSubagentTasks', () => {
       const api = useSubagentTasks();
       const cached = [
         makeRun({ run_id: 'c1', depth: 1, requester_session_key: 'session-1' }),
-        makeRun({ run_id: 'c2', depth: 2, requester_session_key: 'other-sess' }),
+        makeRun({ run_id: 'c2', depth: 2, requester_session_key: 'other-sess' })
       ];
       dbMocks.readCachedSubagentRuns.mockResolvedValue(cached as never);
       bridgeMocks.fetchSubagentRuns.mockResolvedValue([
-        makeRun({ run_id: 's1', depth: 1, requester_session_key: 'session-1' }),
+        makeRun({ run_id: 's1', depth: 1, requester_session_key: 'session-1' })
       ] as never);
 
       await api.loadTaskRuns('session-1');
@@ -260,7 +307,7 @@ describe('useSubagentTasks', () => {
     it('loadTaskRuns without a target sid clears taskRuns but keeps the global list', async () => {
       const api = useSubagentTasks();
       dbMocks.readCachedSubagentRuns.mockResolvedValue([
-        makeRun({ run_id: 'c1', depth: 1, requester_session_key: 'session-1' }),
+        makeRun({ run_id: 'c1', depth: 1, requester_session_key: 'session-1' })
       ] as never);
 
       await api.loadTaskRuns();
@@ -282,11 +329,9 @@ describe('useSubagentTasks', () => {
       api.focusRun('root-1');
       bridgeMocks.fetchSubagentRunSubtree.mockResolvedValue([
         makeRun({ run_id: 'root-1', depth: 1 }),
-        makeRun({ run_id: 'leaf', depth: 2, requester_session_key: 'child-sess' }),
+        makeRun({ run_id: 'leaf', depth: 2, requester_session_key: 'child-sess' })
       ] as never);
-      dbMocks.readCachedSubagentRuns.mockResolvedValue([
-        makeRun({ run_id: 'root-1', depth: 1 }),
-      ] as never);
+      dbMocks.readCachedSubagentRuns.mockResolvedValue([makeRun({ run_id: 'root-1', depth: 1 })] as never);
 
       await api.refreshFocusedSubtree();
       expect(bridgeMocks.fetchSubagentRunSubtree).toHaveBeenCalledWith('root-1');
@@ -313,14 +358,11 @@ describe('useSubagentTasks', () => {
       expect(mittMocks.on).toHaveBeenCalledWith('ws:subagents:ready', expect.any(Function));
 
       spawnedHandler = mittMocks.on.mock.calls.find(([name]) => name === 'ws:subagent_spawned')?.[1] as
-        | ((p: unknown) => void)
-        | undefined;
+        ((p: unknown) => void) | undefined;
       endedHandler = mittMocks.on.mock.calls.find(([name]) => name === 'ws:subagent_ended')?.[1] as
-        | ((p: unknown) => void)
-        | undefined;
+        ((p: unknown) => void) | undefined;
       readyHandler = mittMocks.on.mock.calls.find(([name]) => name === 'ws:subagents:ready')?.[1] as
-        | (() => void)
-        | undefined;
+        (() => void) | undefined;
 
       // Calling initTasks again must NOT re-subscribe (module-level guard).
       api.initTasks('session-2');
@@ -331,7 +373,7 @@ describe('useSubagentTasks', () => {
       const api = useSubagentTasks();
       expect(spawnedHandler).toBeDefined();
       dbMocks.readCachedSubagentRuns.mockResolvedValue([
-        makeRun({ run_id: 'new-1', depth: 1, requester_session_key: 'session-1' }),
+        makeRun({ run_id: 'new-1', depth: 1, requester_session_key: 'session-1' })
       ] as never);
 
       spawnedHandler!({ run_id: 'new-1' });
@@ -346,7 +388,7 @@ describe('useSubagentTasks', () => {
       const api = useSubagentTasks();
       expect(endedHandler).toBeDefined();
       dbMocks.readCachedSubagentRuns.mockResolvedValue([
-        makeRun({ run_id: 'ended-1', depth: 1, requester_session_key: 'session-1' }),
+        makeRun({ run_id: 'ended-1', depth: 1, requester_session_key: 'session-1' })
       ] as never);
 
       endedHandler!({ run_id: 'ended-1' });
@@ -394,7 +436,7 @@ describe('useSubagentTasks', () => {
       api.allTaskRuns.value = [
         makeRun({ run_id: 'root-1', depth: 1 }),
         makeRun({ run_id: 'root-2', depth: 1 }),
-        makeRun({ run_id: 'deep', depth: 2 }),
+        makeRun({ run_id: 'deep', depth: 2 })
       ];
       // `selectableRunIds` is module-private; its behavior (only depth===1
       // roots are selectable) is validated indirectly below via the toggle.
@@ -434,7 +476,7 @@ describe('useSubagentTasks', () => {
       api.allTaskRuns.value = [
         makeRun({ run_id: 'root-1', depth: 1, child_session_key: 'cs' }),
         makeRun({ run_id: 'child-1', depth: 2, requester_session_key: 'cs' }),
-        makeRun({ run_id: 'keep-1', depth: 1 }),
+        makeRun({ run_id: 'keep-1', depth: 1 })
       ];
       api.taskRuns.value = [...api.allTaskRuns.value];
       api.focusRun('root-1');
@@ -454,7 +496,7 @@ describe('useSubagentTasks', () => {
       api.allTaskRuns.value = [
         makeRun({ run_id: 'root-1', depth: 1 }),
         makeRun({ run_id: 'root-2', depth: 1 }),
-        makeRun({ run_id: 'keep', depth: 1 }),
+        makeRun({ run_id: 'keep', depth: 1 })
       ];
       api.taskRuns.value = [...api.allTaskRuns.value];
       api.toggleSelectAllTasks(); // selects root-1, root-2, keep

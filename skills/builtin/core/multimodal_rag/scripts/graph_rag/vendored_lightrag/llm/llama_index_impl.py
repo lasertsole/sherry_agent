@@ -1,4 +1,4 @@
-﻿import warnings
+import warnings
 
 import pipmaster as pm
 from llama_index.core.llms import (
@@ -64,22 +64,14 @@ def format_chat_messages(messages):
         content = msg.get("content", "")
 
         if role == "system":
-            formatted_messages.append(
-                ChatMessage(role=MessageRole.SYSTEM, content=content)
-            )
+            formatted_messages.append(ChatMessage(role=MessageRole.SYSTEM, content=content))
         elif role == "assistant":
-            formatted_messages.append(
-                ChatMessage(role=MessageRole.ASSISTANT, content=content)
-            )
+            formatted_messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content))
         elif role == "user":
-            formatted_messages.append(
-                ChatMessage(role=MessageRole.USER, content=content)
-            )
+            formatted_messages.append(ChatMessage(role=MessageRole.USER, content=content))
         else:
             logger.warning(f"Unknown role {role}, treating as user message")
-            formatted_messages.append(
-                ChatMessage(role=MessageRole.USER, content=content)
-            )
+            formatted_messages.append(ChatMessage(role=MessageRole.USER, content=content))
 
     return formatted_messages
 
@@ -87,9 +79,7 @@ def format_chat_messages(messages):
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def llama_index_complete_if_cache(
     model: str,
@@ -110,17 +100,13 @@ async def llama_index_complete_if_cache(
 
         # Add system message if provided
         if system_prompt:
-            formatted_messages.append(
-                ChatMessage(role=MessageRole.SYSTEM, content=system_prompt)
-            )
+            formatted_messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_prompt))
 
         # Add history messages
         for msg in history_messages:
             formatted_messages.append(
                 ChatMessage(
-                    role=MessageRole.USER
-                    if msg["role"] == "user"
-                    else MessageRole.ASSISTANT,
+                    role=MessageRole.USER if msg["role"] == "user" else MessageRole.ASSISTANT,
                     content=msg["content"],
                 )
             )
@@ -128,9 +114,7 @@ async def llama_index_complete_if_cache(
         # Add current prompt
         formatted_messages.append(ChatMessage(role=MessageRole.USER, content=prompt))
 
-        response: ChatResponse = await model.achat(
-            messages=formatted_messages, **chat_kwargs
-        )
+        response: ChatResponse = await model.achat(messages=formatted_messages, **chat_kwargs)
 
         # In newer versions, the response is in message.content
         content = response.message.content
@@ -205,9 +189,7 @@ async def llama_index_complete(
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def llama_index_embed(
     texts: list[str],

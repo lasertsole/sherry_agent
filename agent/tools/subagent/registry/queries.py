@@ -6,10 +6,7 @@ from . import memory
 
 def list_runs_for_requester(requester_session_key: str) -> list[SubagentRunRecord]:
     """Return all runs whose requester matches the given session key."""
-    return [
-        run for run in memory.values()
-        if run.requester_session_key == requester_session_key
-    ]
+    return [run for run in memory.values() if run.requester_session_key == requester_session_key]
 
 
 def list_descendant_runs(requester_session_key: str) -> list[SubagentRunRecord]:
@@ -22,10 +19,7 @@ def list_descendant_runs(requester_session_key: str) -> list[SubagentRunRecord]:
         if current in visited:
             continue
         visited.add(current)
-        children = [
-            run for run in memory.values()
-            if run.requester_session_key == current
-        ]
+        children = [run for run in memory.values() if run.requester_session_key == current]
         for child in children:
             result.append(child)
             queue.append(child.child_session_key)
@@ -35,7 +29,8 @@ def list_descendant_runs(requester_session_key: str) -> list[SubagentRunRecord]:
 def count_active_runs_for_session(session_key: str) -> int:
     """Count runs with RUNNING status for the given requester session."""
     return sum(
-        1 for run in memory.values()
+        1
+        for run in memory.values()
         if run.requester_session_key == session_key
         and run.execution.status == ExecutionStatus.RUNNING
     )
@@ -44,17 +39,15 @@ def count_active_runs_for_session(session_key: str) -> int:
 def count_active_descendant_runs(session_key: str) -> int:
     """Count RUNNING-status runs among all descendants of the given session."""
     descendants = list_descendant_runs(session_key)
-    return sum(
-        1 for run in descendants
-        if run.execution.status == ExecutionStatus.RUNNING
-    )
+    return sum(1 for run in descendants if run.execution.status == ExecutionStatus.RUNNING)
 
 
 def count_pending_descendant_runs(session_key: str) -> int:
     """Count PENDING or IN_PROGRESS delivery-status runs among all descendants."""
     descendants = list_descendant_runs(session_key)
     return sum(
-        1 for run in descendants
+        1
+        for run in descendants
         if run.delivery.status in (DeliveryStatus.PENDING, DeliveryStatus.IN_PROGRESS)
     )
 
@@ -84,7 +77,8 @@ def find_run_by_task_name(requester_session_key: str, task_name: str) -> Subagen
 def list_runs_for_controller(controller_session_key: str) -> list[SubagentRunRecord]:
     """Return runs where the session is either the requester or the child (i.e. controller-visible)."""
     return [
-        run for run in memory.values()
+        run
+        for run in memory.values()
         if run.requester_session_key == controller_session_key
         or run.child_session_key == controller_session_key
     ]

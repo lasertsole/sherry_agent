@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import httpx
 from typing import Literal
@@ -11,9 +11,7 @@ class APIStatusError(Exception):
     status_code: int
     request_id: str | None
 
-    def __init__(
-        self, message: str, *, response: httpx.Response, body: object | None
-    ) -> None:
+    def __init__(self, message: str, *, response: httpx.Response, body: object | None) -> None:
         super().__init__(message)
         self.request = response.request
         self.body = body

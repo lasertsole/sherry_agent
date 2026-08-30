@@ -1,4 +1,4 @@
-﻿"""Integration tests for robustness-plan-v3 features across phases.
+"""Integration tests for robustness-plan-v3 features across phases.
 
 Tests end-to-end flows that span multiple modules:
 - Swarm collect → spawn → complete → announce
@@ -11,8 +11,6 @@ Tests end-to-end flows that span multiple modules:
 """
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent.tools.subagent.types.swarm import SwarmGroupConfig, SwarmRunState
 from agent.tools.subagent.types.registry import (
@@ -40,13 +38,14 @@ from agent.tools.subagent.swarm.collector import (
     complete_swarm_run,
     build_structured_output_prompt,
 )
-from agent.tools.subagent.swarm.fifo import SwarmFifoQueue
 from agent.tools.subagent.spawn.thread_binding import (
     bind_thread_for_subagent_spawn,
     resolve_thread_binding_policy,
-    ThreadBindingConfig,
 )
-from agent.tools.subagent.spawn.runtime_isolation import resolve_runtime_isolation, validate_runtime_isolation
+from agent.tools.subagent.spawn.runtime_isolation import (
+    resolve_runtime_isolation,
+    validate_runtime_isolation,
+)
 from agent.tools.subagent.spawn.origin_routing import resolve_requester_origin_for_child
 from agent.tools.subagent.spawn.gateway_dispatch import resolve_least_privilege_scopes
 from agent.tools.subagent.control.kill import resolve_kill_target_state
@@ -69,12 +68,15 @@ from agent.tools.subagent.hooks.progress import (
 def _clean():
     clear()
     from agent.tools.subagent.swarm import collector as _collector
+
     _collector._group_configs.clear()
     from agent.tools.subagent.swarm.fifo import get_fifo
+
     get_fifo()._queues.clear()
     set_draining(False)
     _root_work_tasks.clear()
     from agent.tools.subagent.hooks import progress as _progress
+
     _progress._spawned_hooks.clear()
     _progress._progress_hooks.clear()
     _progress._ended_hooks.clear()
@@ -122,6 +124,7 @@ class TestSwarmCollectFullFlow:
 
         await complete_swarm_run(run1.run_id, RunOutcome(status=RunOutcomeStatus.OK))
         from agent.tools.subagent.registry import get_run
+
         r2_after = get_run(run2.run_id)
         assert r2_after.swarm_run_state == SwarmRunState.ACTIVE.value
 
@@ -149,7 +152,10 @@ class TestThreadBindingSpawnIntegration:
     def test_binding_info_stored_in_record(self):
         result = bind_thread_for_subagent_spawn("agent:main:subagent:child1")
         info = result.binding_info
-        from agent.tools.subagent.types.registry import ThreadBindingInfo as RegistryThreadBindingInfo
+        from agent.tools.subagent.types.registry import (
+            ThreadBindingInfo as RegistryThreadBindingInfo,
+        )
+
         registry_info = RegistryThreadBindingInfo(
             thread_id=info.thread_id,
             bound_at=info.bound_at,
@@ -264,20 +270,31 @@ class TestGenerationGuardLifecycle:
 
     def test_retain_attachments_integration(self):
         run_keep = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent",
-            task="test", cleanup="keep",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            cleanup="keep",
         )
         assert _should_retain_attachments(run_keep) is True
 
         run_session = SubagentRunRecord(
-            run_id="r2", child_session_key="child", requester_session_key="parent",
-            task="test", spawn_mode=SpawnMode.SESSION, cleanup="delete",
+            run_id="r2",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            spawn_mode=SpawnMode.SESSION,
+            cleanup="delete",
         )
         assert _should_retain_attachments(run_session) is True
 
         run_delete = SubagentRunRecord(
-            run_id="r3", child_session_key="child", requester_session_key="parent",
-            task="test", cleanup="delete", spawn_mode=SpawnMode.RUN,
+            run_id="r3",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            cleanup="delete",
+            spawn_mode=SpawnMode.RUN,
         )
         assert _should_retain_attachments(run_delete) is False
 
@@ -323,21 +340,30 @@ class TestControlPrecisionIntegration:
 
     def test_kill_target_state_flow(self):
         running_run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent",
-            task="test", execution=ExecutionState(status=ExecutionStatus.RUNNING),
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            execution=ExecutionState(status=ExecutionStatus.RUNNING),
         )
         assert resolve_kill_target_state(running_run) == "killable"
 
         terminal_run = SubagentRunRecord(
-            run_id="r2", child_session_key="child", requester_session_key="parent",
+            run_id="r2",
+            child_session_key="child",
+            requester_session_key="parent",
             task="test",
-            execution=ExecutionState(status=ExecutionStatus.TERMINAL, outcome=RunOutcome(status=RunOutcomeStatus.OK)),
+            execution=ExecutionState(
+                status=ExecutionStatus.TERMINAL, outcome=RunOutcome(status=RunOutcomeStatus.OK)
+            ),
         )
         assert resolve_kill_target_state(terminal_run) == "terminal"
 
         kr = KillReconciliationState(reconciled=False)
         finalizing_run = SubagentRunRecord(
-            run_id="r3", child_session_key="child", requester_session_key="parent",
+            run_id="r3",
+            child_session_key="child",
+            requester_session_key="parent",
             task="test",
             execution=ExecutionState(status=ExecutionStatus.RUNNING),
             kill_reconciliation=kr,
@@ -346,8 +372,11 @@ class TestControlPrecisionIntegration:
 
     def test_visibility_filtering(self):
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent",
-            task="test", controller_session_key="controller1",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            controller_session_key="controller1",
         )
         assert is_subagent_run_visible_to_session(run, "controller1") is True
         assert is_subagent_run_visible_to_session(run, "parent") is True
@@ -381,25 +410,38 @@ class TestOrphanRecoveryIntegration:
 
     def test_recovery_gate_wedged(self):
         import time
+
         old_time = time.monotonic() - 100000
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent",
-            task="test", execution=ExecutionState(started_at=old_time),
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            execution=ExecutionState(started_at=old_time),
         )
         assert evaluate_recovery_gate(run) == "wedged"
 
     def test_recovery_gate_aborted(self):
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent",
-            task="test", aborted_last_run=True,
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            aborted_last_run=True,
         )
         assert evaluate_recovery_gate(run) == "aborted_last_run"
 
     def test_reclassify_legacy_timeout_integration(self):
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent",
-            task="test", aborted_last_run=True, ended_reason="timeout",
-            execution=ExecutionState(status=ExecutionStatus.TERMINAL, outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT)),
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
+            aborted_last_run=True,
+            ended_reason="timeout",
+            execution=ExecutionState(
+                status=ExecutionStatus.TERMINAL, outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT)
+            ),
         )
         set_run(run)
         result = reclassify_legacy_timeout(run)
@@ -425,16 +467,20 @@ class TestProgressHooksFullLifecycle:
             events.append(("ended", run.run_id))
 
         from agent.tools.subagent.hooks import progress as _progress
+
         _progress._spawned_hooks.append(on_spawned)
         _progress._progress_hooks.append(on_progress)
         _progress._ended_hooks.append(on_ended)
 
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
             task="test",
         )
         await fire_spawned_hook(run)
         from agent.tools.subagent.hooks.progress import fire_progress_hook
+
         await fire_progress_hook(run, "50% done")
         await fire_ended_hook(run)
 
@@ -455,11 +501,14 @@ class TestProgressHooksFullLifecycle:
             events.append("ok")
 
         from agent.tools.subagent.hooks import progress as _progress
+
         _progress._spawned_hooks.append(bad_hook)
         _progress._spawned_hooks.append(good_hook)
-        await fire_spawned_hook(SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent", task="test"
-        ))
+        await fire_spawned_hook(
+            SubagentRunRecord(
+                run_id="r1", child_session_key="child", requester_session_key="parent", task="test"
+            )
+        )
         assert "ok" in events
 
 
@@ -468,7 +517,10 @@ class TestSwarmRecordFields:
 
     def test_swarm_fields(self):
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent", task="test",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
             swarm_group_id="g1",
             swarm_run_state=SwarmRunState.ACTIVE.value,
         )
@@ -478,7 +530,10 @@ class TestSwarmRecordFields:
     def test_thread_binding_info_field(self):
         info = ThreadBindingInfo(thread_id="t1", delivery_origin="origin")
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent", task="test",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
             thread_binding_info=info,
         )
         assert run.thread_binding_info is not None
@@ -486,32 +541,48 @@ class TestSwarmRecordFields:
 
     def test_suppress_completion_delivery_field(self):
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent", task="test",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
             suppress_completion_delivery=True,
         )
         assert run.suppress_completion_delivery is True
 
     def test_retain_attachments_on_keep_field(self):
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent", task="test",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
             retain_attachments_on_keep=True,
         )
         assert run.retain_attachments_on_keep is True
 
     def test_transcript_target_field(self):
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent", task="test",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
         )
         assert run.execution.transcript_target is None
-        updated = run.model_copy(update={
-            "execution": run.execution.model_copy(update={"transcript_target": "target_session"}),
-        })
+        updated = run.model_copy(
+            update={
+                "execution": run.execution.model_copy(
+                    update={"transcript_target": "target_session"}
+                ),
+            }
+        )
         assert updated.execution.transcript_target == "target_session"
 
     def test_kill_reconciliation_field(self):
         kr = KillReconciliationState(reconciled=False, killed_at=100.0)
         run = SubagentRunRecord(
-            run_id="r1", child_session_key="child", requester_session_key="parent", task="test",
+            run_id="r1",
+            child_session_key="child",
+            requester_session_key="parent",
+            task="test",
             kill_reconciliation=kr,
         )
         assert run.kill_reconciliation is not None

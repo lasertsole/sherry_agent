@@ -32,7 +32,8 @@
         "autoMaintenanceLoadFailed": "Failed to load settings",
         "lastMaintenance": "Last maintenance",
         "lastMaintenanceNone": "No maintenance performed yet",
-        "loadSettings": "Load","pinned": "Pinned",
+        "loadSettings": "Load",
+        "pinned": "Pinned",
         "pinHint": "Pinned skills are excluded from curator merging/removal",
         "pin": "Pin skill",
         "unpin": "Unpin skill",
@@ -77,7 +78,8 @@
         "autoMaintenanceLoadFailed": "設定の読み込みに失敗しました",
         "lastMaintenance": "最終メンテナンス時刻",
         "lastMaintenanceNone": "まだスキルメンテナンスを実行していません",
-        "loadSettings": "読み込み","pinned": "ピン留め",
+        "loadSettings": "読み込み",
+        "pinned": "ピン留め",
         "pinHint": "ピン留めされたスキルは、キュレーターによる統合・削除の対象から除外されます",
         "pin": "スキルをピン留め",
         "unpin": "スキルのピン留めを解除",
@@ -122,7 +124,8 @@
         "autoMaintenanceLoadFailed": "설정을 불러오지 못했습니다",
         "lastMaintenance": "마지막 유지보수 시간",
         "lastMaintenanceNone": "아직 스킬 유지보수를 실행하지 않았습니다",
-        "loadSettings": "불러오기","pinned": "고정됨",
+        "loadSettings": "불러오기",
+        "pinned": "고정됨",
         "pinHint": "고정된 스킬은 큐레이터의 병합·삭제 대상에서 제외됩니다",
         "pin": "스킬 고정",
         "unpin": "스킬 고정 해제",
@@ -167,7 +170,8 @@
         "autoMaintenanceLoadFailed": "读取设置失败",
         "lastMaintenance": "最后一次维护时间",
         "lastMaintenanceNone": "尚未执行过技能维护",
-        "loadSettings": "加载","pinned": "已固定",
+        "loadSettings": "加载",
+        "pinned": "已固定",
         "pinHint": "已固定的技能将从技能维护的合并/移除中排除",
         "pin": "固定技能",
         "unpin": "取消固定技能",
@@ -193,7 +197,9 @@
     @show="loadSkills"
     @hide="onHide">
     <div class="flex flex-col gap-3">
-      <div v-if="loading" class="flex items-center justify-center py-8">
+      <div
+        v-if="loading"
+        class="flex items-center justify-center py-8">
         <ProgressSpinner style="width: 2rem; height: 2rem" />
       </div>
       <template v-else>
@@ -206,9 +212,13 @@
             size="small"
             @click="activeCategory = cat.key" />
         </div>
-        <div class="flex gap-3" style="min-height: 60vh;">
+        <div
+          class="flex gap-3"
+          style="min-height: 60vh">
           <div class="w-72 shrink-0 flex flex-col gap-1 pr-1">
-            <div v-if="activeCategory === 'auto'" class="flex flex-col gap-2 pb-2">
+            <div
+              v-if="activeCategory === 'auto'"
+              class="flex flex-col gap-2 pb-2">
               <div class="flex items-center gap-2">
                 <Button
                   :label="t('skills.tabs.runCurator')"
@@ -217,7 +227,7 @@
                   icon="pi pi-refresh"
                   size="small"
                   class="shrink-0"
-                  style="flex-shrink: 0;"
+                  style="flex-shrink: 0"
                   @click="runCurator" />
                 <Button
                   v-tooltip.right="t('skills.tabs.runCuratorHint')"
@@ -229,11 +239,22 @@
                   :aria-label="t('skills.tabs.runCurator')"
                   class="p-button-icon-only" />
               </div>
-              <div v-if="curatorResult || curatorError" class="flex items-center gap-1">
-                <span v-if="curatorResult" class="text-xs text-gray-500 dark:text-gray-400">{{ curatorResult }}</span>
-                <span v-else-if="curatorError" class="text-xs text-red-500 dark:text-red-400">{{ curatorError }}</span>
+              <div
+                v-if="curatorResult || curatorError"
+                class="flex items-center gap-1">
+                <span
+                  v-if="curatorResult"
+                  class="text-xs text-gray-500 dark:text-gray-400"
+                  >{{ curatorResult }}</span
+                >
+                <span
+                  v-else-if="curatorError"
+                  class="text-xs text-red-500 dark:text-red-400"
+                  >{{ curatorError }}</span
+                >
               </div>
-              <div class="self-center w-full flex flex-col gap-1 bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700">
+              <div
+                class="self-center w-full flex flex-col gap-1 bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700">
                 <label class="text-xs text-gray-500 dark:text-gray-400">
                   {{ t('skills.tabs.autoMaintenanceInterval') }}（{{ t('skills.tabs.autoMaintenanceIntervalUnit') }}）
                 </label>
@@ -255,12 +276,17 @@
                     {{ lastMaintenanceDisplay }}
                   </span>
                 </div>
-                <span v-if="intervalMessage" class="text-xs" :class="intervalError ? 'text-red-500 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
+                <span
+                  v-if="intervalMessage"
+                  class="text-xs"
+                  :class="intervalError ? 'text-red-500 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
                   {{ intervalMessage }}
                 </span>
               </div>
             </div>
-            <div v-if="activeCategory === 'third_party'" class="flex flex-col gap-1 pb-1">
+            <div
+              v-if="activeCategory === 'third_party'"
+              class="flex flex-col gap-1 pb-1">
               <div class="flex items-center gap-2">
                 <Button
                   :label="t('skills.tabs.uploadSkill')"
@@ -277,10 +303,26 @@
                   class="hidden"
                   @change="handleUpload" />
               </div>
-              <span v-if="uploadStatus" class="text-xs text-green-600 dark:text-green-400">{{ uploadStatus }}</span>
-              <span v-else-if="uploadError" class="text-xs text-red-500 dark:text-red-400">{{ uploadError }}</span>
-              <span v-else-if="toggleError" class="text-xs text-red-500 dark:text-red-400">{{ toggleError }}</span>
-              <span v-else class="text-xs text-gray-400 dark:text-gray-500">{{ t('skills.tabs.uploadSkillHint') }}</span>
+              <span
+                v-if="uploadStatus"
+                class="text-xs text-green-600 dark:text-green-400"
+                >{{ uploadStatus }}</span
+              >
+              <span
+                v-else-if="uploadError"
+                class="text-xs text-red-500 dark:text-red-400"
+                >{{ uploadError }}</span
+              >
+              <span
+                v-else-if="toggleError"
+                class="text-xs text-red-500 dark:text-red-400"
+                >{{ toggleError }}</span
+              >
+              <span
+                v-else
+                class="text-xs text-gray-400 dark:text-gray-500"
+                >{{ t('skills.tabs.uploadSkillHint') }}</span
+              >
               <ul
                 v-if="uploadWarnings.length"
                 class="mt-1 flex flex-col gap-0.5"
@@ -294,7 +336,9 @@
                 </li>
               </ul>
             </div>
-            <div class="overflow-auto flex flex-col gap-1 pr-1" style="max-height: 72vh;">
+            <div
+              class="overflow-auto flex flex-col gap-1 pr-1"
+              style="max-height: 72vh">
               <div
                 v-for="skill in currentSkills"
                 :key="skill.location"
@@ -325,7 +369,9 @@
                       :model-value="(skill as SkillInfo & { active?: boolean }).active ?? false"
                       :disabled="togglingActiveIds.has(skill.name)"
                       size="small"
-                      @update:model-value="toggleActive(skill as SkillInfo & { active?: boolean }, $event as boolean)" />
+                      @update:model-value="
+                        toggleActive(skill as SkillInfo & { active?: boolean }, $event as boolean)
+                      " />
                     <template v-if="activeCategory === 'auto'">
                       <Button
                         v-tooltip.top="skill.pinned ? t('skills.tabs.unpin') : t('skills.tabs.pin')"
@@ -350,20 +396,30 @@
                   </div>
                 </div>
               </div>
-              <div v-if="currentSkills.length === 0" class="text-sm text-gray-400 px-3 py-2">
+              <div
+                v-if="currentSkills.length === 0"
+                class="text-sm text-gray-400 px-3 py-2">
                 {{ t('skills.empty') }}
               </div>
             </div>
           </div>
-          <div class="flex-1 flex flex-col overflow-hidden rounded-lg bg-gray-50 dark:bg-gray-800/50" style="max-height: 72vh;">
-            <div v-if="detailLoading" class="flex items-center justify-center h-full">
+          <div
+            class="flex-1 flex flex-col overflow-hidden rounded-lg bg-gray-50 dark:bg-gray-800/50"
+            style="max-height: 72vh">
+            <div
+              v-if="detailLoading"
+              class="flex items-center justify-center h-full">
               <ProgressSpinner style="width: 2rem; height: 2rem" />
             </div>
             <template v-else-if="skillDetail">
               <div class="flex items-center justify-between p-4 pb-2 shrink-0">
                 <div class="flex flex-col">
                   <span class="text-lg font-bold">{{ skillDetail.name }}</span>
-                  <span v-if="skillDetail.description" class="text-sm text-gray-500 dark:text-gray-400">{{ skillDetail.description }}</span>
+                  <span
+                    v-if="skillDetail.description"
+                    class="text-sm text-gray-500 dark:text-gray-400"
+                    >{{ skillDetail.description }}</span
+                  >
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                   <Tag
@@ -381,7 +437,7 @@
                 <div
                   v-if="skillTree.length"
                   class="w-64 shrink-0 overflow-auto border-r border-gray-200 dark:border-gray-700 py-2"
-                  style="max-height: 72vh;">
+                  style="max-height: 72vh">
                   <div
                     v-for="row in skillTree"
                     :key="row.key"
@@ -395,22 +451,34 @@
                     :style="{ paddingLeft: 4 + row.depth * 16 + 'px' }"
                     @click="selectFile(row.node)">
                     <i
-                      :class="row.node.type === 'dir' ? (expandedDirs.has(row.node.path) ? 'pi pi-folder-open' : 'pi pi-folder') : fileIcon(row.node.name)"
+                      :class="
+                        row.node.type === 'dir'
+                          ? expandedDirs.has(row.node.path)
+                            ? 'pi pi-folder-open'
+                            : 'pi pi-folder'
+                          : fileIcon(row.node.name)
+                      "
                       class="text-xs"
                       :style="row.node.type === 'dir' ? { color: '#f0b429' } : { color: '#6366f1' }" />
                     <span class="font-mono whitespace-pre">{{ row.node.name }}</span>
                   </div>
-                  <div v-if="!skillTree.length" class="text-sm text-gray-400 px-3 py-2">{{ t('skills.noFiles') }}</div>
+                  <div
+                    v-if="!skillTree.length"
+                    class="text-sm text-gray-400 px-3 py-2">
+                    {{ t('skills.noFiles') }}
+                  </div>
                 </div>
                 <pre
                   v-if="selectedContent !== null"
                   class="text-sm whitespace-pre-wrap font-mono m-0 p-4 overflow-auto flex-1"
-                  style="max-height: 72vh;">
+                  style="max-height: 72vh">
                   {{ selectedContent }}
                 </pre>
               </div>
             </template>
-            <div v-else class="flex items-center justify-center h-full text-sm text-gray-400">
+            <div
+              v-else
+              class="flex items-center justify-center h-full text-sm text-gray-400">
               {{ t('skills.selectHint') }}
             </div>
           </div>
@@ -426,7 +494,11 @@
       <p class="text-sm text-gray-700 dark:text-gray-300">
         {{ t('skills.tabs.deleteConfirm', { name: deleteTarget?.name ?? '' }) }}
       </p>
-      <p v-if="deleteError" class="mt-2 text-sm text-red-500 dark:text-red-400">{{ deleteError }}</p>
+      <p
+        v-if="deleteError"
+        class="mt-2 text-sm text-red-500 dark:text-red-400">
+        {{ deleteError }}
+      </p>
       <div class="flex justify-end gap-2 mt-4">
         <Button
           :label="t('skills.tabs.cancel')"
@@ -450,7 +522,17 @@
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
-import { listSkills, readSkill, runCuratorReview, uploadSkill, setSkillActive, getCuratorSettings, setCuratorSettings, deleteSkill, pinSkill } from '@/composables/bridge';
+import {
+  listSkills,
+  readSkill,
+  runCuratorReview,
+  uploadSkill,
+  setSkillActive,
+  getCuratorSettings,
+  setCuratorSettings,
+  deleteSkill,
+  pinSkill
+} from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 import { vDebounce } from '~/directives/debounce';
 
@@ -461,13 +543,13 @@ const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 
 const visible = computed({
   get: () => props.modelValue,
-  set: (v) => emits('update:modelValue', v),
+  set: v => emits('update:modelValue', v)
 });
 
 const categories = [
   { key: 'builtin' as const, i18nKey: 'skills.tabs.builtin' },
   { key: 'auto' as const, i18nKey: 'skills.tabs.auto' },
-  { key: 'third_party' as const, i18nKey: 'skills.tabs.thirdParty' },
+  { key: 'third_party' as const, i18nKey: 'skills.tabs.thirdParty' }
 ];
 
 const loading = ref(false);
@@ -488,7 +570,7 @@ const autoIntervalOptions = [
   { label: '2', value: 2 },
   { label: '3', value: 3 },
   { label: '4', value: 4 },
-  { label: '5', value: 5 },
+  { label: '5', value: 5 }
 ];
 const lastMaintenance = ref<string | null>(null);
 const intervalSaving = ref(false);
@@ -499,7 +581,7 @@ const uploadStatus = ref('');
 const uploadError = ref('');
 const uploadWarnings = ref<string[]>([]);
 const toggleError = ref('');
-// 进行中的固定/激活切换请求（按 skill.name 记录，防止双击重复触发）
+// In-flight pin/activate toggle requests (tracked by skill.name to prevent double-click duplicate triggers)
 const pinningIds = ref<Set<string>>(new Set());
 const togglingActiveIds = ref<Set<string>>(new Set());
 const fileInputKey = ref(0);
@@ -514,7 +596,7 @@ const groupedSkills = computed(() => {
   for (const s of allSkills.value) {
     const cat = s.category;
     if (groups[cat]) groups[cat].push(s);
-    else groups.third_party.push(s);
+    else groups.third_party?.push(s);
   }
   return groups;
 });
@@ -530,14 +612,15 @@ const lastMaintenanceDisplay = computed(() => {
 const isReadonly = (category: string) => category === 'builtin' || category === 'auto';
 
 const categoryI18nKey = (category: string) => {
-  const found = categories.find((c) => c.key === category);
+  const found = categories.find(c => c.key === category);
   return found ? found.i18nKey : 'skills.tabs.thirdParty';
 };
 
 const stripFrontmatter = (content: string) => {
   if (content.startsWith('---')) {
     const parts = content.split('---', 3);
-    if (parts.length >= 3) return parts[2].trim();
+    const body = parts[2];
+    if (parts.length >= 3 && body !== undefined) return body.trim();
   }
   return content;
 };
@@ -671,9 +754,8 @@ const onAutoIntervalChange = async (event: { value: number | null; originalEvent
     if (resp.success) {
       // Reload to reflect backend-normalized state (e.g. server-clamped value).
       await loadCuratorSettings();
-      intervalMessage.value = value === null
-        ? t('skills.tabs.autoMaintenanceResetDone')
-        : t('skills.tabs.autoMaintenanceSaved');
+      intervalMessage.value =
+        value === null ? t('skills.tabs.autoMaintenanceResetDone') : t('skills.tabs.autoMaintenanceSaved');
       intervalError.value = false;
     } else {
       intervalMessage.value = resp.error || t('skills.tabs.autoMaintenanceSaveFailed');
@@ -719,7 +801,7 @@ const handleUpload = async (event: Event) => {
 };
 
 const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: boolean) => {
-  // 双击保护：该技能已有进行中的激活请求时直接忽略
+  // Double-click guard: ignore directly when an activate request for this skill is already in flight
   if (togglingActiveIds.value.has(skill.name)) return;
   togglingActiveIds.value = new Set(togglingActiveIds.value).add(skill.name);
   const prev = skill.active ?? false;
@@ -742,7 +824,7 @@ const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: bool
 };
 
 const togglePin = async (skill: SkillInfo, current: boolean) => {
-  // 双击保护：该技能已有进行中的固定请求时直接忽略
+  // Double-click guard: ignore directly when a pin request for this skill is already in flight
   if (pinningIds.value.has(skill.name)) return;
   pinningIds.value = new Set(pinningIds.value).add(skill.name);
   const next = !current;
@@ -809,7 +891,7 @@ const selectSkill = async (skill: SkillInfo) => {
     const detail = await readSkill(skill.location);
     skillDetail.value = detail;
     // Default the preview to SKILL.md (the skill's primary entry point).
-    const rootMd = detail.files?.find((f) => f.path === 'SKILL.md') ?? null;
+    const rootMd = detail.files?.find(f => f.path === 'SKILL.md') ?? null;
     selectedFile.value = rootMd ?? null;
   } catch (e) {
     console.error('[SkillsDialog] Failed to read skill:', e);
@@ -866,4 +948,3 @@ const onHide = () => {
   deleteError.value = '';
 };
 </script>
-

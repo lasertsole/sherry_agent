@@ -1,4 +1,4 @@
-﻿"""
+"""
 Module that implements containers for specific LLM bindings.
 
 This module provides container implementations for various Large Language Model
@@ -99,11 +99,7 @@ class BindingOptions:
             vars_dict = {
                 k: v
                 for k, v in klass.__dict__.items()
-                if (
-                    not k.startswith("_")
-                    and not callable(v)
-                    and not isinstance(v, classmethod)
-                )
+                if (not k.startswith("_") and not callable(v) and not isinstance(v, classmethod))
             }
 
         return vars_dict
@@ -180,9 +176,7 @@ class BindingOptions:
                     return bool(value)
 
                 # Get environment variable with proper type conversion
-                env_value = get_env_value(
-                    f"{arg_item['env_name']}", argparse.SUPPRESS, bool
-                )
+                env_value = get_env_value(f"{arg_item['env_name']}", argparse.SUPPRESS, bool)
 
                 group.add_argument(
                     f"--{arg_item['argname']}",
@@ -290,9 +284,7 @@ class BindingOptions:
         )
 
         sample_bottom = (
-            ("#\n# End of .env entries for LightRAG binding options\n")
-            + "#" * 80
-            + "\n"
+            ("#\n# End of .env entries for LightRAG binding options\n") + "#" * 80 + "\n"
         )
 
         sample_stream = StringIO()
@@ -335,9 +327,7 @@ class BindingOptions:
         prefix = cls._binding_name + "_"
         skipchars = len(prefix)
         options = {
-            key[skipchars:]: value
-            for key, value in vars(args).items()
-            if key.startswith(prefix)
+            key[skipchars:]: value for key, value in vars(args).items() if key.startswith(prefix)
         }
 
         return options
@@ -611,7 +601,9 @@ class OpenAILLMOptions(BindingOptions):
     stop: List[str] = field(default_factory=list)  # Stop sequences
     temperature: float = DEFAULT_TEMPERATURE  # Controls randomness (0.0 to 2.0)
     top_p: float = 1.0  # Nucleus sampling parameter (0.0 to 1.0)
-    max_tokens: int = None  # Maximum number of tokens to generate(deprecated, use max_completion_tokens instead)
+    max_tokens: int = (
+        None  # Maximum number of tokens to generate(deprecated, use max_completion_tokens instead)
+    )
     extra_body: dict = None  # Extra body parameters for OpenRouter of vLLM
 
     # Help descriptions
@@ -762,9 +754,7 @@ if __name__ == "__main__":
                 ["--openai-llm-reasoning", '{"effort": "low", "max_tokens": 1000}']
             )
             print("✓ Valid JSON dict parsing successful:")
-            print(
-                f"  Parsed reasoning: {OpenAILLMOptions.options_dict(test_args)['reasoning']}"
-            )
+            print(f"  Parsed reasoning: {OpenAILLMOptions.options_dict(test_args)['reasoning']}")
         except Exception as e:
             print(f"✗ Valid JSON dict parsing failed: {e}")
 
@@ -811,12 +801,8 @@ if __name__ == "__main__":
         OpenAILLMOptions.add_args(env_parser)
 
         try:
-            env_args = env_parser.parse_args(
-                []
-            )  # No command line args, should use env var
-            reasoning_from_env = OpenAILLMOptions.options_dict(env_args).get(
-                "reasoning"
-            )
+            env_args = env_parser.parse_args([])  # No command line args, should use env var
+            reasoning_from_env = OpenAILLMOptions.options_dict(env_args).get("reasoning")
             if reasoning_from_env:
                 print("✓ Environment variable dict parsing successful:")
                 print(f"  Parsed reasoning from env: {reasoning_from_env}")

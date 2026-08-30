@@ -10,5 +10,5 @@ __all__ = [
     "parse_markdown_json",
     "escape_prompt_braces",
     "render_template_file",
-    "template_render"
+    "template_render",
 ]

@@ -56,9 +56,7 @@ def chunk_documents_for_rerank(
 
         tokenizer = TiktokenTokenizer(model_name=tokenizer_model)
     except Exception as e:
-        logger.warning(
-            f"Failed to initialize tokenizer: {e}. Using character-based approximation."
-        )
+        logger.warning(f"Failed to initialize tokenizer: {e}. Using character-based approximation.")
         # Fallback: approximate 1 token ≈ 4 characters
         max_chars = max_tokens * 4
         overlap_chars = overlap_tokens * 4
@@ -229,9 +227,7 @@ async def generic_rerank_api(
         documents, doc_indices = chunk_documents_for_rerank(
             documents, max_tokens=max_tokens_per_doc
         )
-        logger.debug(
-            f"Chunked {len(original_documents)} documents into {len(documents)} chunks"
-        )
+        logger.debug(f"Chunked {len(original_documents)} documents into {len(documents)} chunks")
         # When chunking is enabled, disable top_n at API level to get all chunk scores
         # This ensures proper document-level coverage after aggregation
         # We'll apply top_n to aggregated document results instead
@@ -293,8 +289,7 @@ async def generic_rerank_api(
                 error_text = await response.text()
                 content_type = response.headers.get("content-type", "").lower()
                 is_html_error = (
-                    error_text.strip().startswith("<!DOCTYPE html>")
-                    or "text/html" in content_type
+                    error_text.strip().startswith("<!DOCTYPE html>") or "text/html" in content_type
                 )
                 if is_html_error:
                     if response.status == 502:
@@ -329,9 +324,7 @@ async def generic_rerank_api(
                 # Standard format: {"results": [...]}
                 results = response_json.get("results", [])
                 if not isinstance(results, list):
-                    logger.warning(
-                        f"Expected 'results' to be list, got {type(results)}: {results}"
-                    )
+                    logger.warning(f"Expected 'results' to be list, got {type(results)}: {results}")
                     results = []
             else:
                 raise ValueError(f"Unsupported response format: {response_format}")
@@ -356,10 +349,7 @@ async def generic_rerank_api(
                 )
                 # Apply original top_n limit at document level (post-aggregation)
                 # This preserves document-level semantics: top_n limits documents, not chunks
-                if (
-                    original_top_n is not None
-                    and len(standardized_results) > original_top_n
-                ):
+                if original_top_n is not None and len(standardized_results) > original_top_n:
                     standardized_results = standardized_results[:original_top_n]
 
             return standardized_results

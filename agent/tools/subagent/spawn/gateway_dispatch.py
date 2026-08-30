@@ -6,6 +6,7 @@ from ..types.capability import SubagentSessionRole
 
 class SubagentLaunchAuthorization(BaseModel):
     """Authorization record tying a caller session to a target agent with specific scopes."""
+
     caller_session_key: str
     target_agent_id: str
     scopes: list[str] = []
@@ -22,15 +23,19 @@ def resolve_least_privilege_scopes(
     scopes = ["subagent:read"]
 
     if role == SubagentSessionRole.ORCHESTRATOR:
-        scopes.extend([
-            "subagent:spawn",
-            "subagent:kill",
-            "subagent:yield",
-            "subagent:send",
-        ])
+        scopes.extend(
+            [
+                "subagent:spawn",
+                "subagent:kill",
+                "subagent:yield",
+                "subagent:send",
+            ]
+        )
     elif role == SubagentSessionRole.LEAF:
-        scopes.extend([
-            "subagent:yield",
-        ])
+        scopes.extend(
+            [
+                "subagent:yield",
+            ]
+        )
 
     return scopes

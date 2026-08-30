@@ -228,9 +228,7 @@ class EnhancedMarkdownConverter:
     def _process_markdown_content(self, content: str) -> str:
         """Process Markdown content with extensions"""
         if not MARKDOWN_AVAILABLE:
-            raise RuntimeError(
-                "Markdown library not available. Install with: pip install markdown"
-            )
+            raise RuntimeError("Markdown library not available. Install with: pip install markdown")
 
         # Configure Markdown extensions
         extensions = [
@@ -255,9 +253,7 @@ class EnhancedMarkdownConverter:
         }
 
         # Convert Markdown to HTML
-        md = markdown.Markdown(
-            extensions=extensions, extension_configs=extension_configs
-        )
+        md = markdown.Markdown(extensions=extensions, extension_configs=extension_configs)
 
         html_content = md.convert(content)
 
@@ -286,9 +282,7 @@ class EnhancedMarkdownConverter:
     def convert_with_weasyprint(self, markdown_content: str, output_path: str) -> bool:
         """Convert using WeasyPrint (best for styling)"""
         if not WEASYPRINT_AVAILABLE:
-            raise RuntimeError(
-                "WeasyPrint not available. Install with: pip install weasyprint"
-            )
+            raise RuntimeError("WeasyPrint not available. Install with: pip install weasyprint")
 
         try:
             # Process Markdown to HTML
@@ -298,9 +292,7 @@ class EnhancedMarkdownConverter:
             html = HTML(string=html_content)
             html.write_pdf(output_path)
 
-            self.logger.info(
-                f"Successfully converted to PDF using WeasyPrint: {output_path}"
-            )
+            self.logger.info(f"Successfully converted to PDF using WeasyPrint: {output_path}")
             return True
 
         except Exception as e:
@@ -311,10 +303,7 @@ class EnhancedMarkdownConverter:
         self, markdown_content: str, output_path: str, use_system_pandoc: bool = False
     ) -> bool:
         """Convert using Pandoc (best for complex documents)"""
-        if (
-            not self.available_backends.get("pandoc_system", False)
-            and not use_system_pandoc
-        ):
+        if not self.available_backends.get("pandoc_system", False) and not use_system_pandoc:
             raise RuntimeError(
                 "Pandoc not available. Install from: https://pandoc.org/installing.html"
             )
@@ -324,9 +313,7 @@ class EnhancedMarkdownConverter:
             import subprocess
 
             # Create temporary markdown file
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".md", delete=False
-            ) as temp_file:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as temp_file:
                 temp_file.write(markdown_content)
                 temp_md_path = temp_file.name
 
@@ -346,9 +333,7 @@ class EnhancedMarkdownConverter:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             if result.returncode == 0:
-                self.logger.info(
-                    f"Successfully converted to PDF using Pandoc: {output_path}"
-                )
+                self.logger.info(f"Successfully converted to PDF using Pandoc: {output_path}")
                 return True
             else:
                 self.logger.error(f"Pandoc conversion failed: {result.stderr}")
@@ -363,9 +348,7 @@ class EnhancedMarkdownConverter:
                 try:
                     os.unlink(temp_md_path)
                 except OSError as e:
-                    self.logger.error(
-                        f"Failed to clean up temp file {temp_md_path}: {str(e)}"
-                    )
+                    self.logger.error(f"Failed to clean up temp file {temp_md_path}: {str(e)}")
 
     def convert_markdown_to_pdf(
         self, markdown_content: str, output_path: str, method: str = "auto"

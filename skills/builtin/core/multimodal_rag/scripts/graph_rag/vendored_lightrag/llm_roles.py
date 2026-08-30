@@ -1,4 +1,4 @@
-﻿"""LLM role registry, configuration types, and runtime mixin.
+"""LLM role registry, configuration types, and runtime mixin.
 
 LightRAG can route different stages of work (entity extraction, keyword
 extraction, query, vlm) to distinct LLM bindings. This module owns the
@@ -168,9 +168,7 @@ class _RoleLLMMixin:
 
     def _get_effective_role_llm_max_async(self, role: str) -> int:
         state = self._role_llm_states[self._normalize_llm_role(role)]
-        return (
-            state.max_async if state.max_async is not None else self.llm_model_max_async
-        )
+        return state.max_async if state.max_async is not None else self.llm_model_max_async
 
     def _wrap_llm_role_func(
         self,
@@ -222,9 +220,7 @@ class _RoleLLMMixin:
     def _schedule_retired_llm_queue_cleanup(
         self, wrapped_func: Callable[..., object] | None
     ) -> None:
-        if wrapped_func is None or not callable(
-            getattr(wrapped_func, "shutdown", None)
-        ):
+        if wrapped_func is None or not callable(getattr(wrapped_func, "shutdown", None)):
             return
 
         try:
@@ -308,8 +304,7 @@ class _RoleLLMMixin:
                 state.raw_func = model_func
 
             metadata_updated = any(
-                value is not None
-                for value in (binding, model, host, api_key, provider_options)
+                value is not None for value in (binding, model, host, api_key, provider_options)
             )
             if binding is not None:
                 state.metadata["binding"] = binding
@@ -530,9 +525,7 @@ class _RoleLLMMixin:
                 cfg["timeout"],
             )
 
-    async def _queue_status_for_func(
-        self, func: Callable[..., object] | None
-    ) -> dict[str, Any]:
+    async def _queue_status_for_func(self, func: Callable[..., object] | None) -> dict[str, Any]:
         if func is None:
             return {"available": False}
         get_stats = getattr(func, "get_queue_stats", None)
@@ -556,9 +549,7 @@ class _RoleLLMMixin:
         result: dict[str, Any] = {}
         for spec in ROLES:
             state = self._role_llm_states.get(spec.name)
-            result[spec.name] = await self._queue_status_for_func(
-                state.wrapped if state else None
-            )
+            result[spec.name] = await self._queue_status_for_func(state.wrapped if state else None)
         return result
 
     async def get_embedding_queue_status(self) -> dict[str, Any]:

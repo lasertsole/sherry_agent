@@ -39,8 +39,8 @@ if TYPE_CHECKING:
 # while the dependency remains genuinely unavailable.  After N consecutive
 # failures we stop attempting for _COOLDOWN_WINDOW seconds and surface the
 # manual-install guidance instead.
-_COOLDOWN_THRESHOLD = 3      # consecutive failures before suppressing retries
-_COOLDOWN_WINDOW = 60        # seconds to stay in cooldown once tripped
+_COOLDOWN_THRESHOLD = 3  # consecutive failures before suppressing retries
+_COOLDOWN_WINDOW = 60  # seconds to stay in cooldown once tripped
 _consecutive_install_failures = 0
 _cooldown_until = 0.0
 
@@ -59,7 +59,8 @@ def _record_install_failure() -> None:
         logger.error(
             "QQ dep auto-install failed {} times in a row; suppressing further attempts for {}s. "
             "Install manually:\n  uv pip install -r plugins/channels/qq/requirements.txt",
-            _consecutive_install_failures, _COOLDOWN_WINDOW,
+            _consecutive_install_failures,
+            _COOLDOWN_WINDOW,
         )
 
 
@@ -99,14 +100,15 @@ def _install_deps() -> bool:
     logger.info("Installing QQ dependencies ({}): ...", req_file.name)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired:
         logger.error("Timed out installing QQ dependencies from {}", req_file)
         _record_install_failure()
         return False
 
     if result.returncode != 0:
         logger.error(
-            "Failed to install QQ dependencies ({}): {}", req_file,
+            "Failed to install QQ dependencies ({}): {}",
+            req_file,
             (result.stderr or result.stdout or "").strip(),
         )
         _record_install_failure()
@@ -327,11 +329,10 @@ class QQChannel(BaseChannel):
                     openid=msg.chat_id,
                     **payload,
                 )
-            
+
             elapsed = time.time() - start_time
             logger.debug(
-                f"QQ message sent successfully: chat_id={msg.chat_id}, "
-                f"duration={elapsed:.2f}s"
+                f"QQ message sent successfully: chat_id={msg.chat_id}, duration={elapsed:.2f}s"
             )
         except Exception as e:
             elapsed = time.time() - start_time
@@ -348,11 +349,11 @@ class QQChannel(BaseChannel):
                 logger.debug(f"Duplicate QQ message ignored: message_id={data.id}")
                 return
             self._processed_ids.append(data.id)
-    
+
             content = (data.content or "").strip()
             # 提取图片URL
             media_urls = []
-            if hasattr(data, 'attachments') and data.attachments:
+            if hasattr(data, "attachments") and data.attachments:
                 for attachment in data.attachments:
                     if attachment.url:
                         media_urls.append(attachment.url)
@@ -362,23 +363,26 @@ class QQChannel(BaseChannel):
             if not content and not media_urls:
                 logger.debug(f"QQ message ignored: no content or media, message_id={data.id}")
                 return
-    
+
             if is_group:
                 chat_id = data.group_openid
                 user_id = data.author.member_openid
                 self._chat_type_cache[chat_id] = "group"
             else:
-                chat_id = str(getattr(data.author, 'id', None) or getattr(data.author, 'user_openid', 'unknown'))
+                chat_id = str(
+                    getattr(data.author, "id", None)
+                    or getattr(data.author, "user_openid", "unknown")
+                )
                 user_id = chat_id
                 self._chat_type_cache[chat_id] = "c2c"
-    
+
             content_preview = content[:50] if content else ""
             logger.info(
                 f"QQ message received: chat_id={chat_id}, user_id={user_id}, "
                 f"is_group={is_group}, content_preview='{content_preview}', "
                 f"media_count={len(media_urls)}"
             )
-    
+
             await self._handle_message(
                 sender_id=user_id,
                 chat_id=chat_id,

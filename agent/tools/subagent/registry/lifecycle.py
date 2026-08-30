@@ -13,10 +13,7 @@ from ..types.registry import (
     DeliveryStatus,
     RunOutcome,
     RunOutcomeStatus,
-    ExecutionState,
-    KillReconciliationState,
 )
-from ..types.lifecycle import LifecycleEndedReason, outcome_to_ended_reason
 from ..announce.core import run_subagent_announce_flow
 from ..registry import (
     complete_run as _complete_run,
@@ -27,19 +24,17 @@ from ..registry import (
     is_delivery_suspended,
     should_retry_delivery,
     mark_delivery_pending,
-    mark_delivery_discarded,
     reconcile_orphaned_run,
     is_live_unended_run,
     has_run_ended,
-    resolve_finalized_task_state,
 )
-from ..registry.helpers import safe_remove_attachments_dir, is_stale_unended_run
+from ..registry.helpers import safe_remove_attachments_dir
 from ..registry.cleanup import resolve_deferred_cleanup_decision
 from ..registry.delivery_state import should_discard_delivery, is_delivery_expired
 from ..registry.generation import is_superseded_run
 from ..registry.terminal_gen import get_terminal_gen_tracker
 from ..registry.settle_wake import get_settle_wake_batch
-from ..registry.work_admission import run_with_work_admission
+from ..registry.yield_events import wake_yield_if_all_children_settled
 from ..config import get_config
 
 _terminal_locks: dict[str, asyncio.Lock] = {}
@@ -76,18 +71,24 @@ async def complete_subagent_run(
             if not gen_tracker.is_callback_current(run_id, expected_generation):
                 logger.warning(
                     "complete_subagent_run: generation callback stale for run {} (expected={}, actual={}), skipping",
-                    run_id, expected_generation, run.generation,
+                    run_id,
+                    expected_generation,
+                    run.generation,
                 )
                 return run
         elif not gen_tracker.is_callback_current(run_id, run.generation):
             if gen_tracker.is_older_equivalent(run_id, run.generation):
-                logger.warning("complete_subagent_run: older equivalent callback for run {}, skipping", run_id)
+                logger.warning(
+                    "complete_subagent_run: older equivalent callback for run {}, skipping", run_id
+                )
                 return run
 
         gen_tracker.retire(run_id)
 
         if is_superseded_run(run):
-            logger.warning("complete_subagent_run: run {} is superseded, skipping completion", run_id)
+            logger.warning(
+                "complete_subagent_run: run {} is superseded, skipping completion", run_id
+            )
             return run
 
         run = _arbitrate_kill_vs_completion(run, outcome)
@@ -114,15 +115,25 @@ def _apply_kill_reconciliation(run: SubagentRunRecord) -> SubagentRunRecord:
 
     kr = run.kill_reconciliation
     if kr.snapshot_execution.status == ExecutionStatus.TERMINAL:
-        logger.info("Kill reconciliation: run {} was already terminal before kill, keeping kill outcome", run.run_id)
-        return run.model_copy(update={
-            "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
-        })
+        logger.info(
+            "Kill reconciliation: run {} was already terminal before kill, keeping kill outcome",
+            run.run_id,
+        )
+        return run.model_copy(
+            update={
+                "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
+            }
+        )
 
-    logger.info("Kill reconciliation: run {} had kill while running, kill outcome takes precedence", run.run_id)
-    return run.model_copy(update={
-        "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
-    })
+    logger.info(
+        "Kill reconciliation: run {} had kill while running, kill outcome takes precedence",
+        run.run_id,
+    )
+    return run.model_copy(
+        update={
+            "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
+        }
+    )
 
 
 def _mark_terminal_owner(run: SubagentRunRecord, owner: str) -> SubagentRunRecord:
@@ -146,26 +157,35 @@ def _arbitrate_kill_vs_completion(run: SubagentRunRecord, outcome: RunOutcome) -
 
     if snapshot_outcome and snapshot_outcome.status == RunOutcomeStatus.KILLED:
         if outcome.status == RunOutcomeStatus.OK and run.completion.result_text:
-            logger.info("Kill↔completion arbitration for run {}: provider completion overrides kill", run.run_id)
-            return run.model_copy(update={
-                "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
-                "suppress_completion_delivery": False,
-            })
+            logger.info(
+                "Kill↔completion arbitration for run {}: provider completion overrides kill",
+                run.run_id,
+            )
+            return run.model_copy(
+                update={
+                    "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
+                    "suppress_completion_delivery": False,
+                }
+            )
         else:
             logger.info("Kill↔completion arbitration for run {}: kill takes precedence", run.run_id)
-            return run.model_copy(update={
-                "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
-            })
+            return run.model_copy(
+                update={
+                    "kill_reconciliation": kr.model_copy(update={"reconciled": True}),
+                }
+            )
 
     return _apply_kill_reconciliation(run)
 
 
 async def _start_announce_cleanup_flow(run: SubagentRunRecord) -> None:
     """Orchestrate post-completion: announce delivery, settle-wake, swarm notification, and cleanup."""
-    config = get_config()
+    get_config()
 
     if run.suppress_announce_reason:
-        logger.debug("Announce suppressed for run {}: reason={}", run.run_id, run.suppress_announce_reason)
+        logger.debug(
+            "Announce suppressed for run {}: reason={}", run.run_id, run.suppress_announce_reason
+        )
     elif run.suppress_completion_delivery:
         logger.debug("Completion delivery suppressed for run {} (kill arbitration)", run.run_id)
     elif _should_suspend_pending_final_delivery(run):
@@ -182,12 +202,18 @@ async def _start_announce_cleanup_flow(run: SubagentRunRecord) -> None:
 
     if run.swarm_group_id:
         from ..swarm.collector import complete_swarm_run
+
         try:
-            await complete_swarm_run(run.run_id, run.execution.outcome or RunOutcome(status=RunOutcomeStatus.OK), run.completion.result_text)
+            await complete_swarm_run(
+                run.run_id,
+                run.execution.outcome or RunOutcome(status=RunOutcomeStatus.OK),
+                run.completion.result_text,
+            )
         except Exception as e:
             logger.debug("complete_swarm_run failed for run {}: {}", run.run_id, e)
 
     from .queries import count_active_descendant_runs
+
     if count_active_descendant_runs(run.requester_session_key) == 0:
         settled = await settle_batch.complete_batch(run.requester_session_key)
         if settled:
@@ -209,8 +235,12 @@ async def _finalize_cleanup(run: SubagentRunRecord, reason: str) -> None:
     current_gen = _cleanup_generations.get(run.run_id, run.generation)
     latest = get_run(run.run_id)
     if latest and latest.generation > current_gen:
-        logger.info("Cleanup skipped for run {}: generation advanced ({}) > cleanup gen ({})",
-                    run.run_id, latest.generation, current_gen)
+        logger.info(
+            "Cleanup skipped for run {}: generation advanced ({}) > cleanup gen ({})",
+            run.run_id,
+            latest.generation,
+            current_gen,
+        )
         _cleanup_generations.pop(run.run_id, None)
         return
 
@@ -219,17 +249,22 @@ async def _finalize_cleanup(run: SubagentRunRecord, reason: str) -> None:
             safe_remove_attachments_dir(run.attachments_dir, run.attachments_root_dir)
 
         from ..session.cleanup import delete_subagent_session_for_cleanup
+
         await delete_subagent_session_for_cleanup(run.child_session_key, run.spawn_mode)
 
     from ..registry import update_run
+
     update_run(run.run_id, cleanup_completed_at=time.monotonic())
 
     _cleanup_generations.pop(run.run_id, None)
-    logger.info("Finalized cleanup for run {}: reason={}, cleanup={}", run.run_id, reason, run.cleanup)
+    logger.info(
+        "Finalized cleanup for run {}: reason={}, cleanup={}", run.run_id, reason, run.cleanup
+    )
 
     if run.wake_on_descendant_settle:
         try:
             from ..registry import wake_yield_if_all_children_settled
+
             await wake_yield_if_all_children_settled(run.requester_session_key)
         except Exception as e:
             logger.debug("Wake check after cleanup failed for run {}: {}", run.run_id, e)
@@ -253,6 +288,7 @@ def _should_suspend_pending_final_delivery(run: SubagentRunRecord) -> bool:
 def _suspend_pending_final_delivery(run: SubagentRunRecord) -> None:
     """Suspend a pending delivery and schedule a settle-wake retry for the requester."""
     from ..registry import mark_delivery_suspended
+
     updated = mark_delivery_suspended(run)
     set_run(updated)
     logger.info("Suspended pending final delivery for run {}", run.run_id)
@@ -309,14 +345,18 @@ async def resume_subagent_run(run_id: str) -> SubagentRunRecord | None:
     if run.execution.status not in (ExecutionStatus.INTERRUPTED,):
         return run
 
-    updated = run.model_copy(update={
-        "execution": run.execution.model_copy(update={
-            "status": ExecutionStatus.RUNNING,
-            "started_at": time.monotonic(),
-        }),
-        "generation": run.generation + 1,
-        "pause_reason": None,
-    })
+    updated = run.model_copy(
+        update={
+            "execution": run.execution.model_copy(
+                update={
+                    "status": ExecutionStatus.RUNNING,
+                    "started_at": time.monotonic(),
+                }
+            ),
+            "generation": run.generation + 1,
+            "pause_reason": None,
+        }
+    )
     set_run(updated)
 
     try:
@@ -339,8 +379,11 @@ async def finalize_suspended_deliveries() -> int:
         if not is_delivery_suspended(run) and not is_delivery_failed(run):
             continue
 
-        if should_discard_delivery(run, config.max_announce_retry_count, config.announce_hard_expiry_ms, now):
+        if should_discard_delivery(
+            run, config.max_announce_retry_count, config.announce_hard_expiry_ms, now
+        ):
             from ..registry import mark_delivery_discarded as _mark_discarded
+
             updated = _mark_discarded(run, reason="expiry_or_max_retries")
             set_run(updated)
             count += 1
@@ -406,22 +449,21 @@ async def recover_orphaned_runs() -> int:
 async def pressure_prune_suspended_deliveries() -> int:
     """Prune oldest suspended deliveries when the soft cap is exceeded. Returns the count pruned."""
     config = get_config()
-    now = time.monotonic()
-    suspended = [
-        run for run in all_runs()
-        if has_run_ended(run) and is_delivery_suspended(run)
-    ]
+    suspended = [run for run in all_runs() if has_run_ended(run) and is_delivery_suspended(run)]
 
     if len(suspended) <= config.delivery_suspend_soft_cap:
         return 0
 
     pruned = 0
-    target_count = max(config.delivery_suspend_target, len(suspended) - config.delivery_suspend_soft_cap)
+    target_count = max(
+        config.delivery_suspend_target, len(suspended) - config.delivery_suspend_soft_cap
+    )
     to_prune = max(0, len(suspended) - target_count)
 
     suspended.sort(key=lambda r: r.delivery.suspended_at or 0)
     for run in suspended[:to_prune]:
         from ..registry import mark_delivery_discarded as _mark_discarded
+
         updated = _mark_discarded(run, reason="pressure_prune")
         set_run(updated)
         pruned += 1

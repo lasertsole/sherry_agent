@@ -6,6 +6,7 @@ from typing import Callable, Awaitable
 
 class SubagentStartEvent(BaseModel):
     """Event payload fired when a sub-agent starts."""
+
     parent_session_key: str
     child_session_key: str
     child_role: str
@@ -14,6 +15,7 @@ class SubagentStartEvent(BaseModel):
 
 class SubagentStopEvent(BaseModel):
     """Event payload fired when a sub-agent stops."""
+
     parent_session_key: str
     child_session_key: str
     child_role: str

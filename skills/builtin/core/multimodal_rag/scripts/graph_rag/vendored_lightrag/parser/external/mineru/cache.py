@@ -1,4 +1,4 @@
-﻿"""Cache validation for ``*.mineru_raw/`` bundles.
+"""Cache validation for ``*.mineru_raw/`` bundles.
 
 Validation policy (settled in design discussion; see
 ``LightRAGSidecarFormat-zh.md`` related notes):
@@ -130,9 +130,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        logger.warning(
-            "[mineru_raw] %s=%r is not an integer; using %s", name, raw, default
-        )
+        logger.warning("[mineru_raw] %s=%r is not an integer; using %s", name, raw, default)
         return default
 
 
@@ -197,18 +195,10 @@ class MinerUParserOptions:
 
     @classmethod
     def from_env(cls, *, api_mode: str | None = None) -> "MinerUParserOptions":
-        mode = (
-            _normalize_api_mode(api_mode)
-            if api_mode is not None
-            else _current_api_mode()
-        )
+        mode = _normalize_api_mode(api_mode) if api_mode is not None else _current_api_mode()
         page_ranges = os.getenv("MINERU_PAGE_RANGES", "").strip()
-        local_start = _env_int(
-            "MINERU_LOCAL_START_PAGE_ID", DEFAULT_MINERU_LOCAL_START_PAGE_ID
-        )
-        local_end = _env_int(
-            "MINERU_LOCAL_END_PAGE_ID", DEFAULT_MINERU_LOCAL_END_PAGE_ID
-        )
+        local_start = _env_int("MINERU_LOCAL_START_PAGE_ID", DEFAULT_MINERU_LOCAL_START_PAGE_ID)
+        local_end = _env_int("MINERU_LOCAL_END_PAGE_ID", DEFAULT_MINERU_LOCAL_END_PAGE_ID)
         if mode == "local" and page_ranges:
             local_start, local_end = local_page_bounds(page_ranges)
         return cls(
@@ -222,9 +212,7 @@ class MinerUParserOptions:
                 or DEFAULT_MINERU_LANGUAGE
             ),
             enable_table=_env_bool("MINERU_ENABLE_TABLE", DEFAULT_MINERU_ENABLE_TABLE),
-            enable_formula=_env_bool(
-                "MINERU_ENABLE_FORMULA", DEFAULT_MINERU_ENABLE_FORMULA
-            ),
+            enable_formula=_env_bool("MINERU_ENABLE_FORMULA", DEFAULT_MINERU_ENABLE_FORMULA),
             is_ocr=_env_bool("MINERU_IS_OCR", DEFAULT_MINERU_IS_OCR),
             page_ranges=page_ranges,
             local_backend=(
@@ -232,9 +220,7 @@ class MinerUParserOptions:
                 or DEFAULT_MINERU_LOCAL_BACKEND
             ),
             local_parse_method=(
-                os.getenv(
-                    "MINERU_LOCAL_PARSE_METHOD", DEFAULT_MINERU_LOCAL_PARSE_METHOD
-                ).strip()
+                os.getenv("MINERU_LOCAL_PARSE_METHOD", DEFAULT_MINERU_LOCAL_PARSE_METHOD).strip()
                 or DEFAULT_MINERU_LOCAL_PARSE_METHOD
             ),
             local_image_analysis=_env_bool(
@@ -274,8 +260,7 @@ def mineru_options_signature(
     if mode == "official":
         payload.update(
             {
-                "model_version": str(model_version or "").strip()
-                or DEFAULT_MINERU_MODEL_VERSION,
+                "model_version": str(model_version or "").strip() or DEFAULT_MINERU_MODEL_VERSION,
                 "is_ocr": bool(is_ocr),
                 "page_ranges": str(page_ranges or "").strip(),
             }
@@ -283,8 +268,7 @@ def mineru_options_signature(
     else:
         payload.update(
             {
-                "local_backend": str(local_backend or "").strip()
-                or DEFAULT_MINERU_LOCAL_BACKEND,
+                "local_backend": str(local_backend or "").strip() or DEFAULT_MINERU_LOCAL_BACKEND,
                 "local_parse_method": str(local_parse_method or "").strip()
                 or DEFAULT_MINERU_LOCAL_PARSE_METHOD,
                 "local_image_analysis": bool(local_image_analysis),
@@ -352,11 +336,7 @@ def is_bundle_valid(raw_dir: Path, source_file: Path) -> bool:
 
     # 6. Endpoint signature
     cur_endpoint = _current_endpoint_signature()
-    if (
-        cur_endpoint
-        and manifest.endpoint_signature
-        and cur_endpoint != manifest.endpoint_signature
-    ):
+    if cur_endpoint and manifest.endpoint_signature and cur_endpoint != manifest.endpoint_signature:
         return False
 
     # 7. Critical file: size + sha256

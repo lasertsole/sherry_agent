@@ -38,12 +38,21 @@ from .context import prepare_spawned_context
 from .attachments import materialize_subagent_attachments
 from .ownership import resolve_spawn_ownership
 from .accepted_note import resolve_spawn_accepted_note
-from .thread_binding import resolve_thread_binding_policy, unbind_thread_on_cleanup, refresh_thread_binding
-from .runtime_isolation import resolve_runtime_isolation, validate_runtime_isolation, validate_cwd_restriction
+from .thread_binding import (
+    resolve_thread_binding_policy,
+    unbind_thread_on_cleanup,
+    refresh_thread_binding,
+)
+from .runtime_isolation import (
+    resolve_runtime_isolation,
+    validate_runtime_isolation,
+    validate_cwd_restriction,
+)
 from .origin_routing import resolve_requester_origin_for_child
 from .gateway_dispatch import resolve_least_privilege_scopes
 from ..swarm.collector import reserve_swarm_run, build_structured_output_prompt
 from ..hooks.progress import fire_spawned_hook, fire_progress_hook, fire_ended_hook
+
 # Only alphanumeric, underscore and hyphen allowed — prevents path/injection attacks via agent_id
 _VALID_AGENT_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -203,11 +212,15 @@ async def spawn_subagent_direct(
 
     # Reject agent_id values that could enable path traversal or command injection
     if not _VALID_AGENT_ID.match(agent_id):
-        return SpawnResult(status="forbidden", error=f"Invalid agent_id: '{agent_id}' (only [a-zA-Z0-9_-] allowed)")
+        return SpawnResult(
+            status="forbidden", error=f"Invalid agent_id: '{agent_id}' (only [a-zA-Z0-9_-] allowed)"
+        )
 
     # When the platform requires explicit agent identification, reject the default "main"
     if config.require_agent_id and agent_id == "main":
-        return SpawnResult(status="forbidden", error="agent_id is required (cannot use default 'main')")
+        return SpawnResult(
+            status="forbidden", error="agent_id is required (cannot use default 'main')"
+        )
 
     normalized_task_name = normalize_subagent_task_name(task_name)
 
@@ -237,6 +250,7 @@ async def spawn_subagent_direct(
     # Inherit the parent's workspace when the caller does not specify one
     if cwd is None:
         from .runtime_isolation import resolve_spawned_workspace_inheritance
+
         cwd = resolve_spawned_workspace_inheritance(requester_session_key, agent_id)
 
     # Enforce directory-prefix allowlist from the isolation policy
@@ -279,6 +293,7 @@ async def spawn_subagent_direct(
     attachment_prompt_suffix = ""
     if attachments and config.attachments_enabled:
         from pathlib import Path
+
         workspace = Path(cwd) if cwd else None
         mat_result = await materialize_subagent_attachments(
             attachments,
@@ -288,7 +303,9 @@ async def spawn_subagent_direct(
             max_total_bytes=config.attachments_max_total_bytes,
         )
         if mat_result.status == "error":
-            await _rollback_spawn(child_session_key, spawn_mode, None, attachments_dir, attachments_root_dir)
+            await _rollback_spawn(
+                child_session_key, spawn_mode, None, attachments_dir, attachments_root_dir
+            )
             return SpawnResult(status="error", error=mat_result.error)
         if mat_result.status == "ok" and mat_result.abs_dir:
             attachments_dir = mat_result.abs_dir
@@ -325,42 +342,60 @@ async def spawn_subagent_direct(
         spawned_by=requester_session_key,
         spawned_cwd=cwd,
         expects_completion_message=expects_completion_message,
-        wake_on_descendant_settle=spawn_mode == SpawnMode.RUN,  # RUN mode: auto-resume parent when child tree settles
+        wake_on_descendant_settle=spawn_mode
+        == SpawnMode.RUN,  # RUN mode: auto-resume parent when child tree settles
     )
 
     # Track the expected terminal generation so orphan detection can notice if the run stalls
     from ..registry.terminal_gen import get_terminal_gen_tracker
+
     get_terminal_gen_tracker().register_expected(run.run_id, run.generation)
 
     # --- Phase 9: Swarm group reservation (optional) ---
     if swarm_group_id:
         from ..swarm.collector import configure_swarm_group, get_group_config
+
         group_cfg = get_group_config(swarm_group_id)
         if group_cfg is None:
             # First run in this group — create the group config on the fly
             from ..types.swarm import SwarmGroupConfig
+
             configure_swarm_group(SwarmGroupConfig(group_id=swarm_group_id))
 
-        swarm_run = await reserve_swarm_run(swarm_group_id, task, requester_session_key, task_name=normalized_task_name, launch_fingerprint=launch_fingerprint)
+        swarm_run = await reserve_swarm_run(
+            swarm_group_id,
+            task,
+            requester_session_key,
+            task_name=normalized_task_name,
+            launch_fingerprint=launch_fingerprint,
+        )
         if swarm_run is not None:
             from ..registry.memory import get as get_run, update as update_run
-            update_run(run.run_id, swarm_group_id=swarm_group_id, swarm_run_state=swarm_run.swarm_run_state)
+
+            update_run(
+                run.run_id, swarm_group_id=swarm_group_id, swarm_run_state=swarm_run.swarm_run_state
+            )
             run = get_run(run.run_id) or run  # refresh local reference after in-place update
 
     # Persist thread-binding metadata onto the run record
     if thread_id:
         from ..registry.memory import update as update_run
+
         update_run(run.run_id, thread_id=thread_id)
 
     if child_origin.channel or child_origin.account_id:
         from ..registry.memory import update as update_run
+
         origin_data = child_origin.model_dump(exclude_none=True)
         update_run(run.run_id, origin_data=origin_data)
 
     # --- Phase 10: System prompt & context assembly ---
     logger.info(
         "Spawned subagent: run_id={}, child={}, role={}, depth={}, owner={}",
-        run.run_id, child_session_key, role, child_depth,
+        run.run_id,
+        child_session_key,
+        role,
+        child_depth,
         ownership.completion_requester_display_key,
     )
 
@@ -401,6 +436,7 @@ async def spawn_subagent_direct(
 
     # --- Phase 11: Launch background execution ---
     from agent.tools import build_main_tools
+
     bg_task = asyncio.create_task(
         _execute_subagent(
             run=run,
@@ -415,6 +451,7 @@ async def spawn_subagent_direct(
     )
 
     from ..registry import register_task
+
     register_task(run.run_id, bg_task)
 
     # --- Phase 12: Hook dispatch & return ---
@@ -535,16 +572,21 @@ async def _execute_subagent(
         # Validate structured output against the provided JSON Schema (swarm mode)
         if output_schema and result_text:
             from ..swarm.collector import validate_structured_output
+
             valid, err = validate_structured_output(result_text, output_schema)
             if not valid:
-                logger.warning("Structured output validation failed for run {}: {}", run.run_id, err)
+                logger.warning(
+                    "Structured output validation failed for run {}: {}", run.run_id, err
+                )
 
         if run.thread_binding_info and run.thread_binding_info.thread_id:
             refresh_thread_binding(run.thread_binding_info.thread_id)
 
     # --- Exception handling: map failures to RunOutcome statuses ---
     except asyncio.TimeoutError:
-        outcome = RunOutcome(status=RunOutcomeStatus.TIMEOUT, error=f"Subagent timed out after {timeout_seconds}s")
+        outcome = RunOutcome(
+            status=RunOutcomeStatus.TIMEOUT, error=f"Subagent timed out after {timeout_seconds}s"
+        )
     except asyncio.CancelledError:
         outcome = RunOutcome(status=RunOutcomeStatus.KILLED, error="Subagent was killed")
     except Exception as e:
@@ -564,6 +606,7 @@ async def _execute_subagent(
         try:
             from agent.middlewares.output_repetition_guard import SESSION_STATE_KEYS
             from runtime import state_register_mem
+
             for _key in SESSION_STATE_KEYS:
                 state_register_mem.delete_state(run.child_session_key, _key)
         except Exception:
@@ -573,6 +616,7 @@ async def _execute_subagent(
             )
 
         from ..registry import remove_task
+
         remove_task(run.run_id)
 
         if run.thread_binding_info and run.thread_binding_info.thread_id:
@@ -585,17 +629,26 @@ async def _execute_subagent(
 
         if outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
             from ..config import get_config
+
             grace = get_config().lifecycle_grace_period_seconds
             if grace > 0:
                 # Give in-flight completion messages a chance to arrive before finalizing
-                logger.info("Lifecycle grace: waiting {:.1f}s before finalizing run {} ({})",
-                            grace, run.run_id, outcome.status.value)
+                logger.info(
+                    "Lifecycle grace: waiting {:.1f}s before finalizing run {} ({})",
+                    grace,
+                    run.run_id,
+                    outcome.status.value,
+                )
                 await asyncio.sleep(grace)
                 from ..registry import get_run as _get_run
+
                 latest = _get_run(run.run_id)
                 if latest and latest.execution.status == ExecutionStatus.TERMINAL:
                     # Run was already completed (e.g. by a yield/settle callback) during grace period
-                    logger.info("Lifecycle grace: run {} completed during grace period, skipping finalize", run.run_id)
+                    logger.info(
+                        "Lifecycle grace: run {} completed during grace period, skipping finalize",
+                        run.run_id,
+                    )
                     try:
                         await fire_ended_hook(run)
                     except Exception:
@@ -603,7 +656,10 @@ async def _execute_subagent(
                     return
 
         from ..registry.lifecycle import complete_subagent_run
-        await complete_subagent_run(run.run_id, outcome, result_text, expected_generation=run.generation)
+
+        await complete_subagent_run(
+            run.run_id, outcome, result_text, expected_generation=run.generation
+        )
 
         try:
             await fire_ended_hook(run)
@@ -655,7 +711,13 @@ async def _build_child_agent(
     from langchain.agents import create_agent
     from models import build_main_llm, build_auxiliary_llm
     from agent.checkpointer import build_async_sqlite_checkpointer
-    from agent.middlewares import IterationBudget, ToolGuardrails, ToolCallNormalize, Summarization, HeartbeatStaleness
+    from agent.middlewares import (
+        IterationBudget,
+        ToolGuardrails,
+        ToolCallNormalize,
+        Summarization,
+        HeartbeatStaleness,
+    )
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
     from agent.tools import build_main_tools
 
@@ -665,6 +727,7 @@ async def _build_child_agent(
     if model_override:
         try:
             from models import build_llm_by_name
+
             child_llm = build_llm_by_name(model_override)
         except (ImportError, AttributeError):
             if role == SubagentSessionRole.ORCHESTRATOR:
@@ -689,10 +752,7 @@ async def _build_child_agent(
         middleware=[
             Summarization(
                 model=auxiliary_llm,
-                trigger=[
-                    ("messages", 40),
-                    ("tokens", 30000)
-                ],
+                trigger=[("messages", 40), ("tokens", 30000)],
                 keep=("messages", 10),
             ),
             IterationBudget(60),
@@ -708,7 +768,7 @@ async def _build_child_agent(
             # needed here; Layer C only guards the parent's relay loop.
             OutputRepetitionGuard(),
             ToolCallNormalize(),
-            HeartbeatStaleness()
+            HeartbeatStaleness(),
         ],
     )
 
@@ -727,6 +787,7 @@ async def _build_child_agent(
     # warnings, and the wrapper's per-turn state reset bounds any
     # cross-call history duplication.
     from agent.repetition_guard_wrapper import RepetitionGuardWrapper
+
     child_agent = RepetitionGuardWrapper(child_agent, phantom_stream_guard=True)
 
     return child_agent
@@ -755,24 +816,29 @@ async def _rollback_spawn(
     """
     if attachments_dir:
         from ..registry.helpers import safe_remove_attachments_dir
+
         safe_remove_attachments_dir(attachments_dir, attachments_root_dir)
 
     await delete_subagent_session_for_cleanup(child_session_key, spawn_mode)
 
     if run_id:
         from ..registry import remove_run as _remove_run
+
         try:
             await _remove_run(run_id)
         except Exception:
             pass
 
         from ..hooks.base import fire_stop_hooks
+
         try:
-            await fire_stop_hooks(SubagentRunRecord(
-                run_id=run_id,
-                child_session_key=child_session_key,
-                requester_session_key="",
-                task="",
-            ))
+            await fire_stop_hooks(
+                SubagentRunRecord(
+                    run_id=run_id,
+                    child_session_key=child_session_key,
+                    requester_session_key="",
+                    task="",
+                )
+            )
         except Exception:
             pass

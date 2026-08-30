@@ -96,9 +96,7 @@ class Manifest:
             critical_file=ManifestFile(
                 path=str(critical_raw.get("path") or ""),
                 size=int(critical_raw.get("size") or 0),
-                sha256=(
-                    str(critical_raw["sha256"]) if critical_raw.get("sha256") else None
-                ),
+                sha256=(str(critical_raw["sha256"]) if critical_raw.get("sha256") else None),
             ),
             files=[
                 ManifestFile(

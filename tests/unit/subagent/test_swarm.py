@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from agent.tools.subagent.swarm.fifo import SwarmFifoQueue
 from agent.tools.subagent.swarm.collector import (
     configure_swarm_group,
@@ -10,16 +9,18 @@ from agent.tools.subagent.swarm.collector import (
     build_structured_output_prompt,
 )
 from agent.tools.subagent.types.swarm import SwarmMode, SwarmRunState, SwarmGroupConfig
-from agent.tools.subagent.registry.memory import set_run, clear
-from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
+from agent.tools.subagent.registry.memory import clear
+from agent.tools.subagent.types.registry import RunOutcome, RunOutcomeStatus
 
 
 @pytest.fixture(autouse=True)
 def _clean():
     clear()
     from agent.tools.subagent.swarm import collector as _collector
+
     _collector._group_configs.clear()
     from agent.tools.subagent.swarm.fifo import get_fifo
+
     get_fifo()._queues.clear()
     yield
     clear()
@@ -184,7 +185,7 @@ class TestActivateSwarmRun:
     async def test_activate_already_active(self):
         configure_swarm_group(SwarmGroupConfig(group_id="g1"))
         run = await reserve_swarm_run("g1", "task1", "agent:main:session:p1")
-        activated1 = await activate_swarm_run(run.run_id)
+        await activate_swarm_run(run.run_id)
         activated2 = await activate_swarm_run(run.run_id)
         assert activated2.run_id == run.run_id
 
@@ -195,7 +196,9 @@ class TestCompleteSwarmRun:
         configure_swarm_group(SwarmGroupConfig(group_id="g1"))
         run = await reserve_swarm_run("g1", "task1", "agent:main:session:p1")
         await activate_swarm_run(run.run_id)
-        completed = await complete_swarm_run(run.run_id, RunOutcome(status=RunOutcomeStatus.OK), "done")
+        completed = await complete_swarm_run(
+            run.run_id, RunOutcome(status=RunOutcomeStatus.OK), "done"
+        )
         assert completed is not None
         assert completed.swarm_run_state == SwarmRunState.COMPLETED.value
 
@@ -204,7 +207,9 @@ class TestCompleteSwarmRun:
         configure_swarm_group(SwarmGroupConfig(group_id="g1"))
         run = await reserve_swarm_run("g1", "task1", "agent:main:session:p1")
         await activate_swarm_run(run.run_id)
-        completed = await complete_swarm_run(run.run_id, RunOutcome(status=RunOutcomeStatus.ERROR, error="fail"), None)
+        completed = await complete_swarm_run(
+            run.run_id, RunOutcome(status=RunOutcomeStatus.ERROR, error="fail"), None
+        )
         assert completed is not None
         assert completed.swarm_run_state == SwarmRunState.FAILED.value
 
@@ -218,6 +223,7 @@ class TestCompleteSwarmRun:
 
         await complete_swarm_run(run1.run_id, RunOutcome(status=RunOutcomeStatus.OK), "done")
         from agent.tools.subagent.registry import get_run as _get
+
         run2_refreshed = _get(run2.run_id)
         assert run2_refreshed.swarm_run_state == SwarmRunState.ACTIVE.value
 

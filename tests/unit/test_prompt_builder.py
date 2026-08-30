@@ -9,12 +9,12 @@ Dynamic content (memory_store) is intentionally NOT cached.
 """
 
 import pytest
-from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
+
 
 class FakeStateDB:
     """In-memory stand-in for state_register_db (get/set_state only)."""
@@ -77,11 +77,13 @@ def _set_memory_store(monkeypatch, *, memory="MEMORY-V1", user="USER-V1"):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestSameSessionPermanent:
     """A session's cached persona snapshot is frozen once created."""
 
     def test_same_session_ignores_later_file_edits(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         _set_memory_store(monkeypatch)
 
         first = build_system_prompt(session_id="sess-1")
@@ -96,6 +98,7 @@ class TestSameSessionPermanent:
 
     def test_same_session_frozen_across_many_calls(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         _set_memory_store(monkeypatch)
 
         baseline = build_system_prompt(session_id="sess-2")
@@ -109,6 +112,7 @@ class TestNewSessionFresh:
 
     def test_new_session_after_edit_gets_new_content(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         _set_memory_store(monkeypatch)
 
         old = build_system_prompt(session_id="sess-old")
@@ -132,6 +136,7 @@ class TestSessionIsolation:
 
     def test_sessions_do_not_share_cache(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         _set_memory_store(monkeypatch)
 
         a1 = build_system_prompt(session_id="sess-A")
@@ -156,6 +161,7 @@ class TestNoSessionNoCache:
 
     def test_no_session_always_refreshes(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         _set_memory_store(monkeypatch)
 
         build_system_prompt()
@@ -167,6 +173,7 @@ class TestNoSessionNoCache:
 
     def test_empty_string_session_no_cache(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         _set_memory_store(monkeypatch)
 
         build_system_prompt(session_id="")
@@ -181,6 +188,7 @@ class TestSelectedFilesCaching:
 
     def test_explicit_files_cached_and_frozen(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         _set_memory_store(monkeypatch)
 
         first = build_system_prompt(selected_file_names=["AGENTS.md"], session_id="sess-sel")
@@ -196,6 +204,7 @@ class TestMemoryNotCached:
 
     def test_memory_updates_live_in_same_session(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt
+
         fake_mem = _set_memory_store(monkeypatch, memory="MEM-V1", user="USER-V1")
 
         build_system_prompt(session_id="sess-mem")

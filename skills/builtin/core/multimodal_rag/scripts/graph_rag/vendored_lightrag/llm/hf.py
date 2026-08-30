@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 import os
 import warnings
 from functools import lru_cache
@@ -49,9 +49,7 @@ def initialize_hf_model(model_name):
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type(
-        (RateLimitError, APIConnectionError, APITimeoutError)
-    ),
+    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def hf_model_if_cache(
     model,
@@ -85,10 +83,7 @@ async def hf_model_if_cache(
             ori_message = copy.deepcopy(messages)
             if messages[0]["role"] == "system":
                 messages[1]["content"] = (
-                    "<system>"
-                    + messages[0]["content"]
-                    + "</system>\n"
-                    + messages[1]["content"]
+                    "<system>" + messages[0]["content"] + "</system>\n" + messages[1]["content"]
                 )
                 messages = messages[1:]
                 input_prompt = hf_tokenizer.apply_chat_template(
@@ -108,9 +103,9 @@ async def hf_model_if_cache(
                     + ">\n"
                 )
 
-    input_ids = hf_tokenizer(
-        input_prompt, return_tensors="pt", padding=True, truncation=True
-    ).to("cuda")
+    input_ids = hf_tokenizer(input_prompt, return_tensors="pt", padding=True, truncation=True).to(
+        "cuda"
+    )
     inputs = {k: v.to(hf_model.device) for k, v in input_ids.items()}
     output = hf_model.generate(
         **input_ids, max_new_tokens=512, num_return_sequences=1, early_stopping=True
@@ -213,9 +208,7 @@ async def hf_embed(
         texts = [document_prefix + text for text in texts]
 
     # Tokenize the input texts and move them to the same device
-    encoded_texts = tokenizer(
-        texts, return_tensors="pt", padding=True, truncation=True
-    ).to(device)
+    encoded_texts = tokenizer(texts, return_tensors="pt", padding=True, truncation=True).to(device)
 
     # Perform inference
     with torch.no_grad():

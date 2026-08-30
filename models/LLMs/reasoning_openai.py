@@ -49,9 +49,9 @@ class ReasoningChatOpenAI(BaseChatOpenAI):
             return rtn
         choices = getattr(response, "choices", None)
         if choices and hasattr(choices[0].message, "reasoning_content"):
-            rtn.generations[0].message.additional_kwargs["reasoning_content"] = (
-                choices[0].message.reasoning_content
-            )
+            rtn.generations[0].message.additional_kwargs["reasoning_content"] = choices[
+                0
+            ].message.reasoning_content
         # Some gateways (e.g. OpenRouter) expose reasoning under ``model_extra``.
         elif choices and hasattr(choices[0].message, "model_extra"):
             model_extra = choices[0].message.model_extra

@@ -18,6 +18,7 @@ To support BOTH cases we ensure ``scripts/`` is on ``sys.path`` here, before
 any submodule (notably ``base``) executes a short ``graph_rag`` import.
 The setup is idempotent and cheap (a set membership check).
 """
+
 from __future__ import annotations
 
 import importlib
@@ -78,6 +79,7 @@ def _alias_vendored_lightrag() -> None:
 
 
 _alias_vendored_lightrag()
+
 
 # --- Vendored RAG-Anything ---
 #
@@ -142,8 +144,4 @@ from .base import get_lightrag
 from .core import get_rag_anything
 from .ensure_mineru_models import ensure_mineru_models
 
-__all__ = [
-    "get_lightrag",
-    "get_rag_anything",
-    "ensure_mineru_models"
-]
+__all__ = ["get_lightrag", "get_rag_anything", "ensure_mineru_models"]

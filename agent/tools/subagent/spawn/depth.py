@@ -34,5 +34,8 @@ def validate_concurrent_children(current_count: int) -> tuple[bool, str]:
     """Check whether the parent already has the maximum allowed concurrent children."""
     config = get_config()
     if current_count >= config.max_children_per_agent:
-        return False, f"Concurrent children {current_count} already at max {config.max_children_per_agent}"
+        return (
+            False,
+            f"Concurrent children {current_count} already at max {config.max_children_per_agent}",
+        )
     return True, ""

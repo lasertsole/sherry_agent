@@ -45,9 +45,7 @@ class ProcessorMixin:
         else:
             return os.path.basename(file_path)
 
-    def _generate_cache_key(
-        self, file_path: Path, parse_method: str = None, **kwargs
-    ) -> str:
+    def _generate_cache_key(self, file_path: Path, parse_method: str = None, **kwargs) -> str:
         """
         Generate cache key based on file path and parsing configuration
 
@@ -158,20 +156,14 @@ class ProcessorMixin:
 
     async def _get_multimodal_status_record(self, doc_id: str) -> Dict[str, Any] | None:
         """Get compatibility multimodal completion state when doc_status cannot store it."""
-        if (
-            not hasattr(self, "multimodal_status_cache")
-            or self.multimodal_status_cache is None
-        ):
+        if not hasattr(self, "multimodal_status_cache") or self.multimodal_status_cache is None:
             return None
 
         return await self.multimodal_status_cache.get_by_id(doc_id)
 
     async def _set_multimodal_status_record(self, doc_id: str, processed: bool) -> None:
         """Persist multimodal completion state in a separate KV namespace."""
-        if (
-            not hasattr(self, "multimodal_status_cache")
-            or self.multimodal_status_cache is None
-        ):
+        if not hasattr(self, "multimodal_status_cache") or self.multimodal_status_cache is None:
             return
 
         await self.multimodal_status_cache.upsert(
@@ -300,14 +292,10 @@ class ProcessorMixin:
             doc_id = cached_data.get("doc_id")
 
             if content_list and doc_id:
-                self.logger.debug(
-                    f"Found valid cached parsing result for key: {cache_key}"
-                )
+                self.logger.debug(f"Found valid cached parsing result for key: {cache_key}")
                 return content_list, doc_id
             else:
-                self.logger.debug(
-                    f"Cache incomplete - missing content or doc_id: {cache_key}"
-                )
+                self.logger.debug(f"Cache incomplete - missing content or doc_id: {cache_key}")
                 return None
 
         except Exception as e:
@@ -432,16 +420,12 @@ class ProcessorMixin:
         cache_key = self._generate_cache_key(file_path, parse_method, **kwargs)
 
         # Check cache first
-        cached_result = await self._get_cached_result(
-            cache_key, file_path, parse_method, **kwargs
-        )
+        cached_result = await self._get_cached_result(cache_key, file_path, parse_method, **kwargs)
         if cached_result is not None:
             content_list, doc_id = cached_result
             self.logger.info(f"Using cached parsing result for: {file_path}")
             if display_stats:
-                self.logger.info(
-                    f"* Total blocks in cached content_list: {len(content_list)}"
-                )
+                self.logger.info(f"* Total blocks in cached content_list: {len(content_list)}")
             if callback_manager is not None:
                 duration = time.time() - parse_start_time
                 callback_manager.dispatch(
@@ -463,9 +447,7 @@ class ProcessorMixin:
                 self.doc_parser = doc_parser
 
             # Log parser and method information
-            self.logger.info(
-                f"Using {self.config.parser} parser with method: {parse_method}"
-            )
+            self.logger.info(f"Using {self.config.parser} parser with method: {parse_method}")
 
             if ext in [".pdf"]:
                 self.logger.info("Detected PDF file, using parser for PDF...")
@@ -527,9 +509,7 @@ class ProcessorMixin:
                 )
             else:
                 # For other or unknown formats, use generic parser
-                self.logger.info(
-                    f"Using generic parser for {ext} file (method={parse_method})..."
-                )
+                self.logger.info(f"Using generic parser for {ext} file (method={parse_method})...")
                 content_list = await asyncio.to_thread(
                     doc_parser.parse_document,
                     file_path=file_path,
@@ -549,9 +529,7 @@ class ProcessorMixin:
                 )
             raise
         except Exception as e:
-            self.logger.error(
-                f"Error during parsing with {self.config.parser} parser: {str(e)}"
-            )
+            self.logger.error(f"Error during parsing with {self.config.parser} parser: {str(e)}")
             if callback_manager is not None:
                 callback_manager.dispatch(
                     "on_parse_error",
@@ -640,9 +618,7 @@ class ProcessorMixin:
         # Ensure LightRAG is initialized before accessing its storages
         init_result = await self._ensure_lightrag_initialized()
         if not init_result or not init_result.get("success"):
-            self.logger.error(
-                "LightRAG initialization failed; skipping multimodal processing"
-            )
+            self.logger.error("LightRAG initialization failed; skipping multimodal processing")
             return
 
         # Check multimodal processing status - handle LightRAG's early DocStatus.PROCESSED marking
@@ -655,9 +631,7 @@ class ProcessorMixin:
                 )
 
                 if multimodal_processed:
-                    self.logger.info(
-                        f"Document {doc_id} multimodal content is already processed"
-                    )
+                    self.logger.info(f"Document {doc_id} multimodal content is already processed")
                     return
 
                 # Even if status is DocStatus.PROCESSED (text processing done),
@@ -669,9 +643,7 @@ class ProcessorMixin:
                     )
                     # Continue with multimodal processing
                 elif doc_status == DocStatus.PROCESSED and multimodal_processed:
-                    self.logger.info(
-                        f"Document {doc_id} is fully processed (text + multimodal)"
-                    )
+                    self.logger.info(f"Document {doc_id} is fully processed (text + multimodal)")
                     return
 
         except Exception as e:
@@ -715,9 +687,7 @@ class ProcessorMixin:
             self.logger.error(f"Error in multimodal processing: {e}")
             # Fallback to individual processing if batch processing fails
             self.logger.warning("Falling back to individual multimodal processing")
-            await self._process_multimodal_content_individual(
-                multimodal_items, file_path, doc_id
-            )
+            await self._process_multimodal_content_individual(multimodal_items, file_path, doc_id)
 
             # Mark multimodal content as processed even after fallback
             await self._mark_multimodal_processing_complete(doc_id)
@@ -776,8 +746,7 @@ class ProcessorMixin:
                         item_info=item_info,  # Pass item info for context extraction
                         batch_mode=True,
                         doc_id=doc_id,  # Pass doc_id for proper association
-                        chunk_order_index=existing_chunks_count
-                        + i,  # Proper order index
+                        chunk_order_index=existing_chunks_count + i,  # Proper order index
                     )
 
                     # Collect chunk results for batch processing
@@ -813,9 +782,7 @@ class ProcessorMixin:
 
                     # Add multimodal chunks to the standard chunks_list
                     updated_chunks_list = existing_chunks_list + multimodal_chunk_ids
-                    updated_chunks_count = existing_chunks_count + len(
-                        multimodal_chunk_ids
-                    )
+                    updated_chunks_count = existing_chunks_count + len(multimodal_chunk_ids)
 
                     # Update document status with integrated chunk list
                     await self.lightrag.doc_status.upsert(
@@ -837,9 +804,7 @@ class ProcessorMixin:
                     )
 
             except Exception as e:
-                self.logger.warning(
-                    f"Error updating doc_status with multimodal chunks: {e}"
-                )
+                self.logger.warning(f"Error updating doc_status with multimodal chunks: {e}")
 
         # Batch merge all multimodal content results (similar to text content processing)
         if all_chunk_results:
@@ -926,14 +891,10 @@ class ProcessorMixin:
                     content_type = item.get("type", "unknown")
 
                     # Select the correct processor based on content type
-                    processor = get_processor_for_type(
-                        self.modal_processors, content_type
-                    )
+                    processor = get_processor_for_type(self.modal_processors, content_type)
 
                     if not processor:
-                        self.logger.warning(
-                            f"No processor found for type: {content_type}"
-                        )
+                        self.logger.warning(f"No processor found for type: {content_type}")
                         return None
 
                     item_info = {
@@ -997,9 +958,7 @@ class ProcessorMixin:
 
         # Process all items concurrently with correct processors
         tasks = [
-            asyncio.create_task(
-                process_single_item_with_correct_processor(item, i, file_path)
-            )
+            asyncio.create_task(process_single_item_with_correct_processor(item, i, file_path))
             for i, item in enumerate(multimodal_items)
         ]
 
@@ -1049,9 +1008,7 @@ class ProcessorMixin:
         )
 
         # Stage 6: Use LightRAG's batch merge
-        await self._batch_merge_lightrag_style_type_aware(
-            enhanced_chunk_results, file_path, doc_id
-        )
+        await self._batch_merge_lightrag_style_type_aware(enhanced_chunk_results, file_path, doc_id)
 
         # Stage 7: Update doc_status with integrated chunks_list
         await self._update_doc_status_with_chunks_type_aware(doc_id, chunk_ids)
@@ -1099,9 +1056,7 @@ class ProcessorMixin:
                 "page_idx": data["item_info"].get("page_idx", 0),
             }
 
-        self.logger.debug(
-            f"Converted {len(chunks)} multimodal items to multimodal chunks format"
-        )
+        self.logger.debug(f"Converted {len(chunks)} multimodal items to multimodal chunks format")
         return chunks
 
     def _apply_chunk_template(
@@ -1124,14 +1079,10 @@ class ProcessorMixin:
             if content_type == "image":
                 image_path = original_item.get("img_path", "")
                 captions = normalize_caption_list(
-                    original_item.get(
-                        "image_caption", original_item.get("img_caption", [])
-                    )
+                    original_item.get("image_caption", original_item.get("img_caption", []))
                 )
                 footnotes = normalize_caption_list(
-                    original_item.get(
-                        "image_footnote", original_item.get("img_footnote", [])
-                    )
+                    original_item.get("image_footnote", original_item.get("img_footnote", []))
                 )
 
                 return PROMPTS["image_chunk"].format(
@@ -1143,28 +1094,20 @@ class ProcessorMixin:
 
             elif content_type == "table":
                 table_img_path = original_item.get("img_path", "")
-                table_caption = normalize_caption_list(
-                    original_item.get("table_caption", [])
-                )
+                table_caption = normalize_caption_list(original_item.get("table_caption", []))
                 table_body = format_table_body(get_table_body(original_item))
-                table_footnote = normalize_caption_list(
-                    original_item.get("table_footnote", [])
-                )
+                table_footnote = normalize_caption_list(original_item.get("table_footnote", []))
 
                 return PROMPTS["table_chunk"].format(
                     table_img_path=table_img_path,
                     table_caption=", ".join(table_caption) if table_caption else "None",
                     table_body=table_body,
-                    table_footnote=", ".join(table_footnote)
-                    if table_footnote
-                    else "None",
+                    table_footnote=", ".join(table_footnote) if table_footnote else "None",
                     enhanced_caption=description,
                 )
 
             elif content_type == "equation":
-                equation_text, equation_format = get_equation_text_and_format(
-                    original_item
-                )
+                equation_text, equation_format = get_equation_text_and_format(original_item)
 
                 return PROMPTS["equation_chunk"].format(
                     equation_text=equation_text,
@@ -1182,15 +1125,11 @@ class ProcessorMixin:
                 )
 
         except Exception as e:
-            self.logger.warning(
-                f"Error applying chunk template for {content_type}: {e}"
-            )
+            self.logger.warning(f"Error applying chunk template for {content_type}: {e}")
             # Fallback to just the description if template fails
             return description
 
-    async def _store_chunks_to_lightrag_storage_type_aware(
-        self, chunks: Dict[str, Any]
-    ):
+    async def _store_chunks_to_lightrag_storage_type_aware(self, chunks: Dict[str, Any]):
         """Store chunks to storage"""
         try:
             # Store in text_chunks storage (required for extract_entities)
@@ -1316,8 +1255,7 @@ class ProcessorMixin:
             if current_doc_entities is None:
                 # Create new document entry
                 entity_names = [
-                    entity_data["entity_name"]
-                    for entity_data in entities_to_store.values()
+                    entity_data["entity_name"] for entity_data in entities_to_store.values()
                 ]
                 doc_entities_data = {
                     "entity_names": entity_names,
@@ -1327,9 +1265,7 @@ class ProcessorMixin:
             else:
                 # Update existing document entry while preserving any existing
                 # metadata fields stored by the text pipeline.
-                existing_entity_names = list(
-                    current_doc_entities.get("entity_names", [])
-                )
+                existing_entity_names = list(current_doc_entities.get("entity_names", []))
                 seen_entity_names = set(existing_entity_names)
 
                 for entity_data in entities_to_store.values():
@@ -1354,9 +1290,7 @@ class ProcessorMixin:
             )
 
         except Exception as e:
-            self.logger.error(
-                f"Error storing multimodal entities to full_entities: {e}"
-            )
+            self.logger.error(f"Error storing multimodal entities to full_entities: {e}")
             raise
 
     async def _batch_extract_entities_lightrag_style_type_aware(
@@ -1383,9 +1317,7 @@ class ProcessorMixin:
             text_chunks_storage=self.lightrag.text_chunks,
         )
 
-        self.logger.info(
-            f"Extracted entities from {len(lightrag_chunks)} multimodal chunks"
-        )
+        self.logger.info(f"Extracted entities from {len(lightrag_chunks)} multimodal chunks")
         return chunk_results
 
     async def _batch_add_belongs_to_relations_type_aware(
@@ -1447,9 +1379,7 @@ class ProcessorMixin:
 
             enhanced_chunk_results.append((maybe_nodes, maybe_edges))
 
-        self.logger.info(
-            f"Added {belongs_to_count} belongs_to relations for multimodal entities"
-        )
+        self.logger.info(f"Added {belongs_to_count} belongs_to relations for multimodal entities")
         return enhanced_chunk_results
 
     async def _batch_merge_lightrag_style_type_aware(
@@ -1489,9 +1419,7 @@ class ProcessorMixin:
 
         await self.lightrag._insert_done()
 
-    async def _update_doc_status_with_chunks_type_aware(
-        self, doc_id: str, chunk_ids: List[str]
-    ):
+    async def _update_doc_status_with_chunks_type_aware(self, doc_id: str, chunk_ids: List[str]):
         """Update document status with multimodal chunks"""
         try:
             # Get current document status
@@ -1526,9 +1454,7 @@ class ProcessorMixin:
                 )
 
         except Exception as e:
-            self.logger.warning(
-                f"Error updating doc_status with multimodal chunks: {e}"
-            )
+            self.logger.warning(f"Error updating doc_status with multimodal chunks: {e}")
 
     async def _mark_multimodal_processing_complete(self, doc_id: str):
         """Mark multimodal content processing as complete in the document status."""
@@ -1587,16 +1513,12 @@ class ProcessorMixin:
                 return False
 
             text_processed = doc_status.get("status") == DocStatus.PROCESSED
-            multimodal_processed = await self._get_multimodal_processed_flag(
-                doc_id, doc_status
-            )
+            multimodal_processed = await self._get_multimodal_processed_flag(doc_id, doc_status)
 
             return text_processed and multimodal_processed
 
         except Exception as e:
-            self.logger.error(
-                f"Error checking document processing status for {doc_id}: {e}"
-            )
+            self.logger.error(f"Error checking document processing status for {doc_id}: {e}")
             return False
 
     async def get_document_processing_status(self, doc_id: str) -> Dict[str, Any]:
@@ -1621,9 +1543,7 @@ class ProcessorMixin:
                 }
 
             text_processed = doc_status.get("status") == DocStatus.PROCESSED
-            multimodal_processed = await self._get_multimodal_processed_flag(
-                doc_id, doc_status
-            )
+            multimodal_processed = await self._get_multimodal_processed_flag(doc_id, doc_status)
             fully_processed = text_processed and multimodal_processed
 
             return {
@@ -1639,9 +1559,7 @@ class ProcessorMixin:
             }
 
         except Exception as e:
-            self.logger.error(
-                f"Error getting document processing status for {doc_id}: {e}"
-            )
+            self.logger.error(f"Error getting document processing status for {doc_id}: {e}")
             return {
                 "exists": False,
                 "error": str(e),
@@ -1728,9 +1646,7 @@ class ProcessorMixin:
                 self.logger.info(
                     "Setting content source for context-aware multimodal processing..."
                 )
-                self.set_content_source_for_context(
-                    content_list, self.config.content_format
-                )
+                self.set_content_source_for_context(content_list, self.config.content_format)
 
             # Step 3: Insert pure text content with all parameters
             stage = "text_insert"
@@ -1772,9 +1688,7 @@ class ProcessorMixin:
             # Step 4: Process multimodal content (using specialized processors)
             stage = "multimodal"
             if multimodal_items:
-                await self._process_multimodal_content(
-                    multimodal_items, file_name, doc_id
-                )
+                await self._process_multimodal_content(multimodal_items, file_name, doc_id)
             else:
                 # If no multimodal content, mark multimodal processing as complete
                 # This ensures the document status properly reflects completion of all processing
@@ -1934,9 +1848,7 @@ class ProcessorMixin:
                         }
                     }
                 )
-                current_doc_status = await self.lightrag.doc_status.get_by_id(
-                    doc_pre_id
-                )
+                current_doc_status = await self.lightrag.doc_status.get_by_id(doc_pre_id)
 
             from lightrag.kg.shared_storage import (
                 get_namespace_data,
@@ -1983,9 +1895,7 @@ class ProcessorMixin:
                         }
                     }
                 )
-                self.logger.info(
-                    f"Error processing document {file_path}: MineruExecutionError"
-                )
+                self.logger.info(f"Error processing document {file_path}: MineruExecutionError")
                 return False
             except Exception as e:
                 await self.lightrag.doc_status.upsert(
@@ -2020,9 +1930,7 @@ class ProcessorMixin:
                 self.logger.info(
                     "Setting content source for context-aware multimodal processing..."
                 )
-                self.set_content_source_for_context(
-                    content_list, self.config.content_format
-                )
+                self.set_content_source_for_context(content_list, self.config.content_format)
 
             # Step 3: Insert pure text content and multimodal content with all parameters
             if text_content.strip():
@@ -2061,18 +1969,12 @@ class ProcessorMixin:
                 try:
                     async with pipeline_status_lock:
                         pipeline_status.update({"scan_disabled": False})
-                        error_msg = (
-                            f"RAGAnything processing failed for {file_name}: {str(e)}"
-                        )
+                        error_msg = f"RAGAnything processing failed for {file_name}: {str(e)}"
                         pipeline_status["latest_message"] = error_msg
                         pipeline_status["history_messages"].append(error_msg)
-                        pipeline_status["history_messages"].append(
-                            "Now is allowed to scan"
-                        )
+                        pipeline_status["history_messages"].append("Now is allowed to scan")
                 except Exception as pipeline_update_error:
-                    self.logger.error(
-                        f"Failed to update pipeline status: {pipeline_update_error}"
-                    )
+                    self.logger.error(f"Failed to update pipeline status: {pipeline_update_error}")
 
             return False
 
@@ -2087,9 +1989,7 @@ class ProcessorMixin:
                         pipeline_status["history_messages"].append(
                             f"RAGAnything processing completed for {file_name}"
                         )
-                        pipeline_status["history_messages"].append(
-                            "Now is allowed to scan"
-                        )
+                        pipeline_status["history_messages"].append("Now is allowed to scan")
                 except Exception as _finally_err:
                     self.logger.error(
                         f"Failed to update pipeline status in finally block: {_finally_err}"
@@ -2187,12 +2087,8 @@ class ProcessorMixin:
 
         # Step 1.5: Set content source for context extraction in multimodal processing
         if hasattr(self, "set_content_source_for_context") and multimodal_items:
-            self.logger.info(
-                "Setting content source for context-aware multimodal processing..."
-            )
-            self.set_content_source_for_context(
-                content_list, self.config.content_format
-            )
+            self.logger.info("Setting content source for context-aware multimodal processing...")
+            self.set_content_source_for_context(content_list, self.config.content_format)
 
         # Step 2: Insert pure text content with all parameters
         if text_content.strip():

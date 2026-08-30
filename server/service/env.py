@@ -5,8 +5,8 @@ We parse it preserving comment lines and the original key order, group entries b
 their shared prefix, and only ever write back known/allowlisted keys so comments
 and unrelated variables are never clobbered.
 """
+
 import re
-from pathlib import Path
 
 from config.path import ENV_PATH
 
@@ -161,7 +161,6 @@ def write_env_file(changes: dict[str, str]) -> None:
     # We need to replace lines that were assignments and are present in changes.
     updated_keys = set(changes.keys())
     out: list[str] = []
-    i = 0
     for line in lines:
         if _COMMENT_RE.match(line):
             out.append(line)

@@ -159,7 +159,9 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
             paths = [str(smd) for _, smd in candidates]
             logger.warning(
                 "Skill name collision for '{}': {} candidates — {}",
-                name, len(candidates), "; ".join(paths),
+                name,
+                len(candidates),
+                "; ".join(paths),
             )
             return json.dumps(
                 {
@@ -179,6 +181,7 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
 
         if not skill_md or not skill_md.exists():
             from skills.loader import scan_skills
+
             available = [s["name"] for s in sort_skills(scan_skills())[:20]]
             return json.dumps(
                 {
@@ -237,8 +240,7 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
                 {
                     "success": False,
                     "error": (
-                        f"Skill '{name}' is not visible to this caller "
-                        f"(scope: {skill_scope})."
+                        f"Skill '{name}' is not visible to this caller (scope: {skill_scope})."
                     ),
                 },
                 ensure_ascii=False,
@@ -292,8 +294,13 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
                         elif rel.startswith("scripts/"):
                             available_files["scripts"].append(rel)
                         elif f.suffix in {
-                            ".md", ".py", ".yaml", ".yml",
-                            ".json", ".tex", ".sh",
+                            ".md",
+                            ".py",
+                            ".yaml",
+                            ".yml",
+                            ".json",
+                            ".tex",
+                            ".sh",
                         }:
                             available_files["other"].append(rel)
 
@@ -392,15 +399,17 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
         try:
             rel_path = str(skill_md.relative_to(SKILLS_DIR))
         except ValueError:
-            rel_path = str(skill_md.relative_to(skill_md.parent.parent)) if skill_md.parent.parent else skill_md.name
+            rel_path = (
+                str(skill_md.relative_to(skill_md.parent.parent))
+                if skill_md.parent.parent
+                else skill_md.name
+            )
 
-        skill_name = frontmatter.get(
-            "name", skill_md.stem if not skill_dir else skill_dir.name
-        )
+        skill_name = frontmatter.get("name", skill_md.stem if not skill_dir else skill_dir.name)
 
         description = frontmatter.get("description", "")
         if len(description) > _MAX_DESCRIPTION_LENGTH:
-            description = description[:_MAX_DESCRIPTION_LENGTH - 3] + "..."
+            description = description[: _MAX_DESCRIPTION_LENGTH - 3] + "..."
 
         result = {
             "success": True,
@@ -450,9 +459,7 @@ class SkillView(BaseTool):
     def _run(self, name: str, file_path: str | None = None) -> str:
         metadata = getattr(self, "metadata", None)
         caller_scope = (
-            metadata.get("caller_scope", "main")
-            if isinstance(metadata, dict)
-            else "main"
+            metadata.get("caller_scope", "main") if isinstance(metadata, dict) else "main"
         )
         return _skill_view(name, file_path, caller_scope=caller_scope)
 

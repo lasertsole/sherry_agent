@@ -2,8 +2,9 @@
  * Environment-aware logging utility (Nuxt-adapted version of the minimal implementation
  * from the "error captured factory function" doc, 03-errorCapturedFactoryFunction.md §2.3).
  *
- * - `import.meta.dev` / `import.meta.prod` are statically replaced at build time by Nuxt/Vite.
- *   Key implementation constraint: the expression must be the **literal** `import.meta.dev` —
+ * - `import.meta.dev` / `import.meta.env.PROD` are statically replaced at build time by Nuxt/Vite.
+ *   Key implementation constraint: the expression must be the **literal** `import.meta.dev` or
+ *   `import.meta.env.PROD` —
  *   if accessed via an alias such as `const meta = import.meta` and then `meta.dev`, the
  *   aliased property does not exist at runtime (undefined → always falsy) and every
  *   environment check silently fails
@@ -15,12 +16,12 @@
 export class SimpleLogger {
   /** Normal log: silent in production. */
   l(...args: unknown[]): void {
-    if (!import.meta.prod) console.log(...args);
+    if (!import.meta.env.PROD) console.log(...args);
   }
 
   /** Warning log: silent in production. */
   w(...args: unknown[]): void {
-    if (!import.meta.prod) console.warn(...args);
+    if (!import.meta.env.PROD) console.warn(...args);
   }
 
   /** Error log: downgraded to warn in dev; otherwise outputs console.error (goes into the clientLog error bucket). */

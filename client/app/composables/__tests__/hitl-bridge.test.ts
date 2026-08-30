@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // bridge.ts *explicitly imports* fetchApi from './requestApi' (not a Nuxt
 // auto-import), so we mock that module directly.
 const mocks = vi.hoisted(() => ({
-  fetchApi: vi.fn(),
+  fetchApi: vi.fn()
 }));
 
 vi.mock('../requestApi', () => ({
-  fetchApi: mocks.fetchApi,
+  fetchApi: mocks.fetchApi
 }));
 
 import * as bridge from '../bridge';
@@ -19,26 +19,26 @@ import * as messages from '../messages';
 // `streamChatMessage` implementation (delegated through), while the
 // `postAgentStream` test temporarily stubs it via `mutable.streamImpl`.
 type StreamImpl = (
-  request: { session_id: string; text: string },
+  request: bridge.ChatRequest,
   onChunk: bridge.OnChunkCallback,
   onHitl?: bridge.OnHitlCallback,
+  onDone?: bridge.OnDoneCallback
 ) => { controller: bridge.StreamController; promise: Promise<void> };
 
 const mutable = vi.hoisted(() => ({
-  streamImpl: undefined as StreamImpl | undefined,
+  streamImpl: undefined as StreamImpl | undefined
 }));
 
-vi.mock('../bridge', async (importOriginal) => {
+vi.mock('../bridge', async importOriginal => {
   const actual = await importOriginal<typeof bridge>();
   return {
     ...actual,
     streamChatMessage: (...args: Parameters<typeof bridge.streamChatMessage>) => {
       if (mutable.streamImpl) return mutable.streamImpl(...args);
       return actual.streamChatMessage(...args);
-    },
+    }
   };
 });
-
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -102,19 +102,13 @@ beforeEach(() => {
 // needed before the WebSocket is opened: `sendChatMessageWs` creates the
 // socket synchronously when `image_base64_list` is absent.
 
-function openStream(
-  text = 'hi',
-  sessionId = 's1',
-): { controller: bridge.StreamController; promise: Promise<void> } {
-  return bridge.streamChatMessage(
-    { session_id: sessionId, text },
-    vi.fn(),
-  );
+function openStream(text = 'hi', sessionId = 's1'): { controller: bridge.StreamController; promise: Promise<void> } {
+  return bridge.streamChatMessage({ session_id: sessionId, text }, vi.fn());
 }
 
 async function awaitSocket(): Promise<FakeWebSocket> {
   await vi.waitFor(() => expect(FakeWebSocket.instances[0]).toBeTruthy());
-  const ws = FakeWebSocket.instances[0];
+  const ws = FakeWebSocket.instances[0]!;
   ws.open();
   return ws;
 }
@@ -130,8 +124,8 @@ function hitlInterruptFrame(): string {
       tool_name: 'terminal',
       tool_args: { command: 'rm -rf data' },
       description: '执行危险命令需要人工确认',
-      allowed_decisions: ['approve', 'reject'],
-    },
+      allowed_decisions: ['approve', 'reject']
+    }
   });
 }
 
@@ -152,11 +146,11 @@ describe('sendHitlResponse (browser WebSocket)', () => {
     controller.sendHitlResponse?.({ decision: 'approve' });
 
     expect(ws.sent).toHaveLength(2);
-    const frame = JSON.parse(ws.sent[1]);
+    const frame = JSON.parse(ws.sent[1]!);
     expect(frame).toMatchObject({
       type: 'hitl_response',
       session_id: 's1',
-      decision: 'approve',
+      decision: 'approve'
     });
     expect(frame.message).toBe('');
     void promise;
@@ -168,7 +162,7 @@ describe('sendHitlResponse (browser WebSocket)', () => {
 
     controller.sendHitlResponse?.({ decision: 'reject', message: '驳回，命令太危险' });
 
-    const frame = JSON.parse(ws.sent[1]);
+    const frame = JSON.parse(ws.sent[1]!);
     expect(frame.type).toBe('hitl_response');
     expect(frame.decision).toBe('reject');
     expect(frame.message).toBe('驳回，命令太危险');
@@ -182,10 +176,10 @@ describe('sendHitlResponse (browser WebSocket)', () => {
     controller.sendHitlResponse?.({
       decision: 'edit',
       message: '让我改成安全命令',
-      edited_args: { command: 'ls -la data' },
+      edited_args: { command: 'ls -la data' }
     });
 
-    const frame = JSON.parse(ws.sent[1]);
+    const frame = JSON.parse(ws.sent[1]!);
     expect(frame.type).toBe('hitl_response');
     expect(frame.decision).toBe('edit');
     expect(frame.edited_args).toEqual({ command: 'ls -la data' });
@@ -197,16 +191,12 @@ describe('sendHitlResponse (browser WebSocket)', () => {
 describe('streamChatMessage HITL dispatch (onHitl)', () => {
   it('invokes onHitl with the parsed HitlInterruptData on hitl_request', async () => {
     const onHitl = vi.fn();
-    const { promise } = bridge.streamChatMessage(
-      { session_id: 's1', text: 'hi' },
-      vi.fn(),
-      onHitl,
-    );
+    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, vi.fn(), onHitl);
     const ws = await awaitSocket();
 
     ws.frame(JSON.parse(hitlInterruptFrame()));
 
-    const data = onHitl.mock.calls[0][0];
+    const data = onHitl.mock.calls[0]![0];
     expect(data).toEqual(JSON.parse(hitlInterruptFrame()).content);
     expect(data.tool_name).toBe('terminal');
     expect(data.tool_args).toEqual({ command: 'rm -rf data' });
@@ -216,11 +206,7 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
 
   it('routes chunk frames to onChunk with parsed content and type', async () => {
     const onChunk = vi.fn();
-    const { promise } = bridge.streamChatMessage(
-      { session_id: 's1', text: 'hi' },
-      onChunk,
-      vi.fn(),
-    );
+    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, onChunk, vi.fn());
     const ws = await awaitSocket();
 
     ws.frame({ event: 'chunk', session_id: 's1', content: '你好', type: 'text' });
@@ -228,7 +214,7 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
       tool_id: undefined,
       tool_name: undefined,
       args: undefined,
-      error: undefined,
+      error: undefined
     });
 
     ws.frame({ event: 'chunk', session_id: 's1', content: '' });
@@ -237,7 +223,7 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
       tool_id: undefined,
       tool_name: undefined,
       args: undefined,
-      error: undefined,
+      error: undefined
     });
     expect(onChunk).toHaveBeenCalledTimes(2);
     void promise;
@@ -245,11 +231,7 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
 
   it('resolves the stream promise when the server sends done', async () => {
     const onChunk = vi.fn();
-    const { promise } = bridge.streamChatMessage(
-      { session_id: 's1', text: 'hi' },
-      onChunk,
-      vi.fn(),
-    );
+    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, onChunk, vi.fn());
     const ws = await awaitSocket();
 
     ws.frame({ event: 'chunk', session_id: 's1', content: 'final', type: 'text' });
@@ -260,7 +242,7 @@ describe('streamChatMessage HITL dispatch (onHitl)', () => {
       tool_id: undefined,
       tool_name: undefined,
       args: undefined,
-      error: undefined,
+      error: undefined
     });
   });
 });
@@ -270,7 +252,7 @@ describe('postAgentStream HITL passthrough (messages.ts)', () => {
     const onHitlSpy = vi.fn();
     const captured = {
       response: undefined as bridge.HitlResponse | undefined,
-      onHitl: undefined as bridge.OnHitlCallback | undefined,
+      onHitl: undefined as bridge.OnHitlCallback | undefined
     };
 
     // Stub streamChatMessage via the hoisted mutable so the direct-binding
@@ -280,21 +262,14 @@ describe('postAgentStream HITL passthrough (messages.ts)', () => {
       const controller: bridge.StreamController = {
         closed: false,
         abort: vi.fn(),
-        sendHitlResponse: (response) => {
+        sendHitlResponse: response => {
           captured.response = response;
-        },
+        }
       };
       return { controller, promise: Promise.resolve() };
     };
     try {
-      const controller = messages.postAgentStream(
-        's1',
-        { text: 'hi' },
-        vi.fn(),
-        undefined,
-        undefined,
-        onHitlSpy,
-      );
+      const controller = messages.postAgentStream('s1', { text: 'hi' }, vi.fn(), undefined, undefined, onHitlSpy);
 
       // onHitl propagated into streamChatMessage.
       expect(captured.onHitl).toBe(onHitlSpy);
@@ -304,14 +279,16 @@ describe('postAgentStream HITL passthrough (messages.ts)', () => {
         tool_name: 'terminal',
         tool_args: { command: 'rm -rf data' },
         description: '需人工审批',
-        allowed_decisions: ['approve', 'reject'],
+        allowed_decisions: ['approve', 'reject']
       });
       expect(onHitlSpy).toHaveBeenCalledTimes(1);
 
       // The consumer-facing AbortController carries sendHitlResponse.
-      const wired = (controller as unknown as {
-        sendHitlResponse?: (r: bridge.HitlResponse) => void;
-      }).sendHitlResponse;
+      const wired = (
+        controller as unknown as {
+          sendHitlResponse?: (r: bridge.HitlResponse) => void;
+        }
+      ).sendHitlResponse;
       expect(typeof wired).toBe('function');
       wired?.({ decision: 'approve' });
       expect(captured.response).toEqual({ decision: 'approve' });
@@ -335,11 +312,7 @@ describe('HITL resilience (edge cases)', () => {
   it('silently ignores hitl_request with empty content', async () => {
     const onChunk = vi.fn();
     const onHitl = vi.fn();
-    const { promise } = bridge.streamChatMessage(
-      { session_id: 's1', text: 'hi' },
-      onChunk,
-      onHitl,
-    );
+    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, onChunk, onHitl);
     const ws = await awaitSocket();
 
     ws.frame({ event: 'hitl_request', session_id: 's1', content: '' });
@@ -358,18 +331,18 @@ describe('HITL resilience (edge cases)', () => {
     // Only the initial chat payload + the stop frame are sent; no hitl_response.
     expect(ws.sent).toEqual([
       JSON.stringify({
-      session_id: 's1',
-      multi_modal_message: {
-        text: 'hi',
-        image_base64_list: [],
-        image_path_list: [],
-        audio_bytes_list: [],
-        audio_path_list: [],
-        video_bytes_list: [],
-        video_path_list: [],
-      },
+        session_id: 's1',
+        multi_modal_message: {
+          text: 'hi',
+          image_base64_list: [],
+          image_path_list: [],
+          audio_bytes_list: [],
+          audio_path_list: [],
+          video_bytes_list: [],
+          video_path_list: []
+        }
       }),
-      JSON.stringify({ type: 'stop', session_id: 's1' }),
+      JSON.stringify({ type: 'stop', session_id: 's1' })
     ]);
     // User-initiated abort does NOT reject the stream promise (the release
     // guard early-returns on the already-done flag), so it stays pending.
@@ -388,12 +361,13 @@ describe('HITL resilience (edge cases)', () => {
       ws.closeFromServer();
       controller.sendHitlResponse?.({ decision: 'reject', message: '连接已断开' });
       // No hitl_response frame appended after the close.
-      expect(ws.sent.every((f) => !f.includes('hitl_response'))).toBe(true);
+      expect(ws.sent.every(f => !f.includes('hitl_response'))).toBe(true);
 
       // Exhaust the reconnect budget (each newly reconnected socket keeps failing) → eventually rejects with StreamInterruptedError
       for (let i = 0; i < 3; i++) {
         await vi.advanceTimersByTimeAsync(1000 * 2 ** i);
-        FakeWebSocket.instances[FakeWebSocket.instances.length - 1].closeFromServer();
+        const retry = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
+        retry.closeFromServer();
       }
       await expect(promise).rejects.toThrow();
     } finally {
@@ -412,16 +386,16 @@ describe('HITL trigger patterns match the backend guardrails', () => {
     controller.sendHitlResponse?.({
       decision: 'approve',
       message: 'gogo',
-      edited_args: { command: 'ls' },
+      edited_args: { command: 'ls' }
     });
 
-    const frame = JSON.parse(ws.sent[1]);
+    const frame = JSON.parse(ws.sent[1]!);
     expect(frame).toEqual({
       type: 'hitl_response',
       session_id: 's1',
       decision: 'approve',
       message: 'gogo',
-      edited_args: { command: 'ls' },
+      edited_args: { command: 'ls' }
     });
     void promise;
   });

@@ -22,7 +22,7 @@
 
 ### 混合架构
 
-```
+```text
 +--------------------------------------------------------------+
 |                前端（Nuxt 4 SPA，app/）                       |
 |  Vue 3 组件 + composables + Pinia + mitt 事件总线             |
@@ -51,7 +51,7 @@
 
 ### 数据流
 
-```
+```text
 用户交互（Vue 组件）
     -> bridge.ts（自动检测 Tauri / 浏览器模式）
         |
@@ -70,7 +70,7 @@
 
 ## 目录结构
 
-```
+```text
 client/
 ├── .env.example                   # 环境变量模板（VITE_APP_NAME、VITE_API_BACK_URL）
 ├── eslint.config.mjs              # ESLint flat 配置
@@ -212,7 +212,7 @@ client/
 
 ### 组件层级
 
-```
+```text
 app.vue（根：Toast 层、连接横幅、语言恢复）
   └─ NuxtLayout（layouts/default.vue）
        └─ NuxtPage

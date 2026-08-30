@@ -68,9 +68,7 @@ class TestMessageBus:
 
     async def test_outbound_size(self, bus):
         assert bus.outbound_size == 0
-        await bus.publish_outbound(
-            OutboundMessage(channel="d", chat_id="c", content="x")
-        )
+        await bus.publish_outbound(OutboundMessage(channel="d", chat_id="c", content="x"))
         assert bus.outbound_size == 1
         await bus.consume_outbound()
         assert bus.outbound_size == 0

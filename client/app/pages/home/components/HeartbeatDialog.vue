@@ -99,7 +99,9 @@
             v-for="(task, i) in completedTasks"
             :key="`done-${i}`"
             class="flex items-center justify-between gap-2 bg-gray-100 dark:bg-gray-800/60 rounded-lg px-3 py-2">
-            <span class="font-mono text-sm whitespace-pre-wrap text-gray-500 dark:text-gray-400 line-through">{{ task }}</span>
+            <span class="font-mono text-sm whitespace-pre-wrap text-gray-500 dark:text-gray-400 line-through">{{
+              task
+            }}</span>
             <div class="flex items-center gap-1 shrink-0">
               <Button
                 :label="t('config.heartbeat.reactivate')"
@@ -145,7 +147,7 @@ import { readHeartbeat, writeHeartbeat } from '@/composables/bridge';
 import { on, off } from '@/composables/mitt';
 import type { Handler } from 'mitt';
 
-  const { t } = useI18n({ useScope: 'local' });
+const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
@@ -175,7 +177,11 @@ const activeTasks = ref<string[]>([]);
 const completedTasks = ref<string[]>([]);
 
 /** Snapshot of the three regions at load time, for dirty tracking. */
-const originalSnapshot = ref<{ header: string; active: string[]; completed: string[] }>({ header: '', active: [], completed: [] });
+const originalSnapshot = ref<{ header: string; active: string[]; completed: string[] }>({
+  header: '',
+  active: [],
+  completed: []
+});
 
 const activeSectionTitle = computed(() => `${ACTIVE_HEADER}`);
 const completedSectionTitle = computed(() => `${COMPLETED_HEADER}`);
@@ -314,7 +320,8 @@ function onHeartbeatWsMessage(data: WsFrame) {
 }
 
 onMounted(() => {
-  heartbeatWsHandler = on('ws:message', onHeartbeatWsMessage as Handler);
+  heartbeatWsHandler = onHeartbeatWsMessage as Handler;
+  on('ws:message', heartbeatWsHandler);
 });
 
 onUnmounted(() => {

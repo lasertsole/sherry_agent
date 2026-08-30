@@ -1,4 +1,4 @@
-﻿"""Backfill chunk ``sidecar`` provenance for the F/R/V chunking strategies.
+"""Backfill chunk ``sidecar`` provenance for the F/R/V chunking strategies.
 
 The ``P`` (paragraph_semantic) strategy records a ``sidecar`` field on each chunk
 mapping it back to its source row(s) in the parse-time ``*.blocks.jsonl`` sidecar
@@ -145,9 +145,7 @@ def _normalize_text(text: str) -> str:
     return "".join(text.split())
 
 
-def _covered_blockids(
-    spans: list[tuple[int, int, str]], o_start: int, o_end: int
-) -> list[str]:
+def _covered_blockids(spans: list[tuple[int, int, str]], o_start: int, o_end: int) -> list[str]:
     """Blockids whose content span overlaps ``[o_start, o_end)``, in order, deduped."""
     covered: list[str] = []
     seen: set[str] = set()

@@ -6,7 +6,7 @@ from agent.tools.subagent.registry.queries import (
     count_active_runs_for_session,
     get_run_by_child_session_key,
 )
-from agent.tools.subagent.types.registry import SubagentRunRecord, ExecutionStatus
+from agent.tools.subagent.types.registry import SubagentRunRecord
 
 
 @pytest.fixture(autouse=True)

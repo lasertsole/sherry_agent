@@ -22,7 +22,9 @@ nest_asyncio.apply()
 os.environ["HF_HUB_OFFLINE"] = "0"
 os.environ["TRANSFORMERS_OFFLINE"] = "0"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "0"
-os.environ["MINERU_TOOLS_CONFIG_JSON"] = (MODELS_DIR / "extract_model/mineru_config.json").resolve().as_posix()
+os.environ["MINERU_TOOLS_CONFIG_JSON"] = (
+    (MODELS_DIR / "extract_model/mineru_config.json").resolve().as_posix()
+)
 
 
 async def _vision_model_func(
@@ -40,18 +42,14 @@ async def _vision_model_func(
     # 传统单图片格式
     elif image_data:
         messages = [
-            {"role": "system", "content": system_prompt}
-            if system_prompt
-            else None,
+            {"role": "system", "content": system_prompt} if system_prompt else None,
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_data}"
-                        },
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
                     },
                 ],
             }
@@ -171,7 +169,14 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
 
     # Auto-download and configure models
     # Bypass system proxy to avoid SSL errors with hf-mirror.com
-    for proxy_var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+    for proxy_var in (
+        "http_proxy",
+        "https_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "all_proxy",
+        "ALL_PROXY",
+    ):
         os.environ.pop(proxy_var, None)
 
     try:
@@ -198,15 +203,15 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
 
     working_dir: str = (SRC_DIR / "rag" / "store").resolve().as_posix()
     config = RAGAnythingConfig(
-        parser = parser,
-        parse_method = parse_method,
-        working_dir = working_dir,
-        parser_output_dir = str(SRC_DIR / "rag/output"),
+        parser=parser,
+        parse_method=parse_method,
+        working_dir=working_dir,
+        parser_output_dir=str(SRC_DIR / "rag/output"),
     )
     _rag_anything = RAGAnything(
-        lightrag = lightrag,
-        vision_model_func = _vision_model_func,
-        config = config,
+        lightrag=lightrag,
+        vision_model_func=_vision_model_func,
+        config=config,
     )
 
     elapsed = time.time() - start_time

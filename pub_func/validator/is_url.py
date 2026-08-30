@@ -16,21 +16,23 @@ Usage:
 from urllib.parse import urlparse
 
 # Scheme whitelist for valid URLs
-_VALID_SCHEMES = frozenset({
-    "http",
-    "https",
-    "ftp",
-    "ftps",
-    "sftp",
-    "ssh",
-    "ws",
-    "wss",
-    "file",
-    "data",
-    "mailto",
-    "tel",
-    "sms",
-})
+_VALID_SCHEMES = frozenset(
+    {
+        "http",
+        "https",
+        "ftp",
+        "ftps",
+        "sftp",
+        "ssh",
+        "ws",
+        "wss",
+        "file",
+        "data",
+        "mailto",
+        "tel",
+        "sms",
+    }
+)
 
 
 def is_url(value: str) -> bool:

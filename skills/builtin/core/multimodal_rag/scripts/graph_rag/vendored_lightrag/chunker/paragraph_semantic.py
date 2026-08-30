@@ -1,4 +1,4 @@
-﻿"""Paragraph Semantic Chunking for LightRAG.
+"""Paragraph Semantic Chunking for LightRAG.
 
 Reads a LightRAG ``.blocks.jsonl`` sidecar — produced by any sidecar-emitting
 parser (native / mineru / docling; native uses ``fixlevel=0``): heading-driven
@@ -499,9 +499,7 @@ def _split_rows_by_tokens(
         last_json = json.dumps(chunks[-1], ensure_ascii=False)
         if _count_tokens(tokenizer, last_json) < last_min:
             merged = chunks[-2] + chunks[-1]
-            merged_tokens = _count_tokens(
-                tokenizer, json.dumps(merged, ensure_ascii=False)
-            )
+            merged_tokens = _count_tokens(tokenizer, json.dumps(merged, ensure_ascii=False))
             if merged_tokens <= target_max:
                 chunks[-2] = merged
                 chunks.pop()
@@ -638,9 +636,7 @@ def _split_table_text(
         header_overhead = 0
     body_budget = max(target_max - wrapper_overhead - header_overhead, 1)
     body_max = body_budget
-    body_ideal = max(
-        min(target_ideal, target_max) - wrapper_overhead - header_overhead, 1
-    )
+    body_ideal = max(min(target_ideal, target_max) - wrapper_overhead - header_overhead, 1)
     body_last_min = max(last_min - wrapper_overhead - header_overhead, 1)
     row_chunks: list[list[Any]] | None = None
     serialize: Callable[[list[Any]], str] | None = None
@@ -672,11 +668,7 @@ def _split_table_text(
             )
 
             def serialize(chunk_rows: list[Any]) -> str:
-                return (
-                    f"<table {attrs}>"
-                    f"{json.dumps(chunk_rows, ensure_ascii=False)}"
-                    f"</table>"
-                )
+                return f"<table {attrs}>{json.dumps(chunk_rows, ensure_ascii=False)}</table>"
 
     elif fmt == "html":
         rows_html = _split_html_rows(body)
@@ -690,11 +682,7 @@ def _split_table_text(
             )
 
             def serialize(chunk_rows: list[tuple[str, str]]) -> str:
-                return (
-                    f"<table {attrs}>"
-                    f"{_serialize_rows_with_wrappers(chunk_rows)}"
-                    f"</table>"
-                )
+                return f"<table {attrs}>{_serialize_rows_with_wrappers(chunk_rows)}</table>"
 
     if row_chunks is None or serialize is None:
         # No row boundary available (single-row table, parse failure,
@@ -878,8 +866,7 @@ def _expand_block_with_table_splits(
     sep_tokens = _count_tokens(tokenizer, "\n")
     paragraphs = block["paragraphs"]
     has_oversized_table = any(
-        p["is_table"] and _count_tokens(tokenizer, p["text"]) > table_max
-        for p in paragraphs
+        p["is_table"] and _count_tokens(tokenizer, p["text"]) > table_max for p in paragraphs
     )
     if not has_oversized_table:
         return [block]
@@ -999,13 +986,9 @@ def _expand_block_with_table_splits(
             middle_start = prefix_len
             middle_end = max(middle_start, bridge_len - suffix_len)
 
-            prefix_text = (
-                tokenizer.decode(bridge_tokens[:prefix_len]) if prefix_len else ""
-            )
+            prefix_text = tokenizer.decode(bridge_tokens[:prefix_len]) if prefix_len else ""
             suffix_text = (
-                tokenizer.decode(bridge_tokens[bridge_len - suffix_len :])
-                if suffix_len
-                else ""
+                tokenizer.decode(bridge_tokens[bridge_len - suffix_len :]) if suffix_len else ""
             )
             # The standalone middle block keeps R-style overlap with the text
             # that went left (into the previous table block) and right (into the
@@ -1077,9 +1060,7 @@ def _expand_block_with_table_splits(
 
         for chunk_idx, piece_text in enumerate(pieces):
             stripped = piece_text.strip()
-            is_still_table = stripped.startswith("<table ") and stripped.endswith(
-                "</table>"
-            )
+            is_still_table = stripped.startswith("<table ") and stripped.endswith("</table>")
             chunk_para = {"text": piece_text, "is_table": is_still_table}
             is_first = chunk_idx == 0
             is_last = chunk_idx == len(pieces) - 1
@@ -1227,10 +1208,7 @@ def _split_long_block(
         pieces: list[str] = []
         for para in paragraphs:
             text = para["text"]
-            if (
-                para.get("is_table", False)
-                and _count_tokens(tokenizer, text) > target_max
-            ):
+            if para.get("is_table", False) and _count_tokens(tokenizer, text) > target_max:
                 pieces.extend(
                     _split_table_text(
                         text,
@@ -1299,9 +1277,7 @@ def _split_long_block(
         sub_blocks: list[dict[str, Any]] = []
         for i, chunk_text in enumerate(chunks_text):
             stripped = chunk_text.strip()
-            is_still_table = stripped.startswith("<table ") and stripped.endswith(
-                "</table>"
-            )
+            is_still_table = stripped.startswith("<table ") and stripped.endswith("</table>")
             sub_blocks.append(
                 _new_block(
                     heading=heading,
@@ -1589,9 +1565,7 @@ def _glue_heading_only_blocks(
         paras = block["paragraphs"]
         n = 0
         for para in paras:
-            if para.get("is_table", False) or not _HEADING_LINE_RE.match(
-                para["text"].strip()
-            ):
+            if para.get("is_table", False) or not _HEADING_LINE_RE.match(para["text"].strip()):
                 break
             n += 1
         prefix, body = paras[:n], paras[n:]
@@ -1712,9 +1686,7 @@ def _merge_small_blocks(
                             and _can_merge_backward(nxt.get("table_chunk_role", "none"))
                             and _same_parent_path(cur, nxt)
                         ):
-                            combined = _merged_pair(
-                                cur, nxt, keep="left", tokenizer=tokenizer
-                            )
+                            combined = _merged_pair(cur, nxt, keep="left", tokenizer=tokenizer)
                             if combined["tokens"] <= target_max:
                                 new_result.append(combined)
                                 i += 2
@@ -1729,9 +1701,7 @@ def _merge_small_blocks(
                             and prev["tokens"] < target_ideal
                             and _same_parent_path(prev, cur)
                         ):
-                            combined = _merged_pair(
-                                prev, cur, keep="left", tokenizer=tokenizer
-                            )
+                            combined = _merged_pair(prev, cur, keep="left", tokenizer=tokenizer)
                             if combined["tokens"] <= target_max:
                                 new_result[-1] = combined
                                 i += 1
@@ -1827,9 +1797,7 @@ def _merge_small_blocks(
                             and _can_merge_backward(nxt.get("table_chunk_role", "none"))
                             and _is_descendant(cur, nxt)
                         ):
-                            combined = _merged_pair(
-                                cur, nxt, keep="left", tokenizer=tokenizer
-                            )
+                            combined = _merged_pair(cur, nxt, keep="left", tokenizer=tokenizer)
                             if combined["tokens"] <= target_max:
                                 new_result.append(combined)
                                 i += 2
@@ -1844,9 +1812,7 @@ def _merge_small_blocks(
                             and prev["tokens"] < target_ideal
                             and _is_descendant(prev, cur)
                         ):
-                            combined = _merged_pair(
-                                prev, cur, keep="left", tokenizer=tokenizer
-                            )
+                            combined = _merged_pair(prev, cur, keep="left", tokenizer=tokenizer)
                             if combined["tokens"] <= target_max:
                                 new_result[-1] = combined
                                 i += 1
@@ -1991,9 +1957,7 @@ def chunking_by_paragraph_semantic(
             fallback_reason = f"cannot read blocks.jsonl at {blocks_path}: {exc}"
         else:
             if not rows:
-                fallback_reason = (
-                    f"blocks.jsonl at {blocks_path} contains no content rows"
-                )
+                fallback_reason = f"blocks.jsonl at {blocks_path} contains no content rows"
 
     if fallback_reason is not None:
         # Defer to recursive-character chunking when the sidecar is

@@ -1,4 +1,5 @@
 """Shared path resolution utilities for file tools."""
+
 import os
 from pathlib import Path
 

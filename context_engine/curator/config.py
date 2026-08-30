@@ -28,6 +28,7 @@ _LAST_MAINTENANCE_KEY = "last_maintenance_at"
 def _load_config() -> dict[str, Any]:
     try:
         import yaml
+
         cfg_path = ROOT_DIR / "curator.yaml"
         if cfg_path.exists():
             with open(cfg_path, "r", encoding="utf-8") as f:
@@ -101,6 +102,7 @@ def get_interval_override_days() -> int | None:
     """
     try:
         from context_engine.curator.state import load_state
+
         state = load_state()
         return _clamp_interval_days(state.get(_INTERVAL_OVERRIDE_KEY))
     except Exception:
@@ -114,6 +116,7 @@ def set_interval_override_days(days: int | None) -> int | None:
     ``interval_hours``. Returns the effective stored value after clamping.
     """
     from context_engine.curator.state import load_state, save_state
+
     effective = _clamp_interval_days(days)
     state = load_state()
     state[_INTERVAL_OVERRIDE_KEY] = effective
@@ -137,6 +140,7 @@ def get_last_maintenance_at() -> str | None:
     """Return the ISO timestamp of the last maintenance run, if any."""
     try:
         from context_engine.curator.state import load_state
+
         state = load_state()
         return state.get(_LAST_MAINTENANCE_KEY)
     except Exception:
@@ -146,7 +150,7 @@ def get_last_maintenance_at() -> str | None:
 def set_last_maintenance_at(value: str | None) -> None:
     """Persist the last maintenance timestamp to .curator_state."""
     from context_engine.curator.state import load_state, save_state
+
     state = load_state()
     state[_LAST_MAINTENANCE_KEY] = value
     save_state(state)
-

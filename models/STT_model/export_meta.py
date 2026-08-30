@@ -19,6 +19,7 @@ def export_rebuild_model(model, **kwargs):
     model.export_name = types.MethodType(export_name, model)
     return model
 
+
 def export_forward(
     self,
     speech: torch.Tensor,
@@ -34,21 +35,22 @@ def export_forward(
     print(textnorm_query.shape, speech.shape)
     speech = torch.cat((textnorm_query, speech), dim=1)
     speech_lengths += 1
-    
+
     event_emo_query = self.embed(torch.LongTensor([[1, 2]]).to(speech.device)).repeat(
         speech.size(0), 1, 1
     )
     input_query = torch.cat((language_query, event_emo_query), dim=1)
     speech = torch.cat((input_query, speech), dim=1)
     speech_lengths += 3
-    
+
     encoder_out, encoder_out_lens = self.encoder(speech, speech_lengths)
     if isinstance(encoder_out, tuple):
         encoder_out = encoder_out[0]
 
     ctc_logits = self.ctc.ctc_lo(encoder_out)
-    
+
     return ctc_logits, encoder_out_lens
+
 
 def export_dummy_inputs(self):
     speech = torch.randn(2, 30, 560)
@@ -57,11 +59,14 @@ def export_dummy_inputs(self):
     textnorm = torch.tensor([15, 15], dtype=torch.int32)
     return (speech, speech_lengths, language, textnorm)
 
+
 def export_input_names(self):
     return ["speech", "speech_lengths", "language", "textnorm"]
 
+
 def export_output_names(self):
     return ["ctc_logits", "encoder_out_lens"]
+
 
 def export_dynamic_axes(self):
     return {
@@ -70,9 +75,9 @@ def export_dynamic_axes(self):
         "language": {0: "batch_size"},
         "textnorm": {0: "batch_size"},
         "ctc_logits": {0: "batch_size", 1: "logits_length"},
-        "encoder_out_lens":  {0: "batch_size"},
+        "encoder_out_lens": {0: "batch_size"},
     }
+
 
 def export_name(self):
     return "model.onnx"
-

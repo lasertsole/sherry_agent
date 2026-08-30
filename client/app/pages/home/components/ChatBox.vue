@@ -1,229 +1,283 @@
 <template>
-  <!-- [scrollbar-gutter:stable]：始终为 (经典) 滚动条预留槽位，
-       避免无/有滚动条切换（如空态"开启新对话" → 消息变多）时内容左右跳动 -->
-  <div
-    ref="scrollContainerRef"
-    class="flex flex-col gap-6 flex-1 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]">
+  <!-- Floating layer anchor: the wrapper is relatively positioned and hosts the "scroll to bottom"
+       floating button (absolutely positioned at the bottom center of the chat list) -->
+  <div class="relative flex flex-col flex-1 min-h-0">
+    <!-- [scrollbar-gutter:stable]: always reserves a gutter for the (classic) scrollbar,
+         preventing content from shifting horizontally when switching between the no-scrollbar and
+         scrollbar states (e.g. empty state "start a new conversation" → messages accumulate) -->
     <div
-      v-for="group in turnGroups"
-      :key="group[0].id"
-      :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(group) }]">
+      ref="scrollContainerRef"
+      class="flex flex-col gap-6 flex-1 min-h-0 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]"
+      @scroll="updateScrollBottomBtn">
       <div
-        v-for="message in group"
-        :key="message.id"
-        :class="[
-          'flex justify-start gap-3 min-w-0',
-          { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
-          { 'text-left': message.role === CHAT_ROLE.AI }
-        ]">
-        <div class="flex justify-center items-center w-10 h-10 rounded-full overflow-hidden shrink-0 bg-gray-100 dark:bg-gray-800">
-        <!-- 头像区域，连续消息与工具调用均不展示头像（隐藏 img，与连续消息渲染一致） -->
-        <img
-          v-if="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
-          :class="['w-full h-full object-cover', { hidden: isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL }]"
-          :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
-          :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName" />
-        <span
-          v-else
-          :class="['pi pi-user', { hidden: isConsecutive(message.id) }]"></span>
-      </div>
-      <!-- 消息主体 -->
-      <div
-        :class="[
-          'flex flex-col max-w-[calc(100%_-_52px)] min-w-0',
-          message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start'
-        ]">
-        <!-- 用户/AI 时间 -->
+        v-for="group in turnGroups"
+        :key="group[0]?.id"
+        :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(group) }]">
         <div
-          v-if="message.role !== CHAT_ROLE.TOOL"
+          v-for="message in group"
+          :key="message.id"
           :class="[
-            'flex items-center gap-2 mb-1',
-            { 'text-right justify-end': message.role === CHAT_ROLE.USER },
+            'flex justify-start gap-3 min-w-0',
+            { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
             { 'text-left': message.role === CHAT_ROLE.AI }
           ]">
-          <span class="text-sm font-semibold text-[#111827] dark:text-[#E5E7EB]">{{
-            message.role === CHAT_ROLE.AI ? resolvedAiName : resolvedUserName
-          }}</span>
-          <span class="text-xs font-normal text-[#6B7280] dark:text-[#9CA3AF]">{{
-            formatCompactTimeString(message.timestamp)
-          }}</span>
-        </div>
-        <!-- 模型思考/推理块（折叠）：仅当 AI 消息且含 reasoning 时才渲染 -->
-        <div
-          v-if="message.role === CHAT_ROLE.AI && message.reasoning"
-          :class="['w-fit mb-1 text-sm transition-colors duration-200', { 'rounded-xl': isConsecutive(message.id) }]">
-          <button
-            type="button"
-            :class="[
-              'flex items-center gap-2 w-full text-left cursor-pointer select-none px-3 py-1.5 text-xs font-medium rounded-md border border-solid transition-colors duration-200',
-              expandedThinking.has(message.id)
-                ? 'bg-gray-50 dark:bg-gray-800/60 border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400'
-                : 'bg-gray-50/60 dark:bg-gray-800/30 border-gray-100 dark:border-gray-700/60 text-[#6B7280] dark:text-[#9CA3AF]'
-            ]"
-            @click="toggleThinking(message.id)">
-            <span class="pi pi-brain text-xs"></span>
-            <span>{{ t('chatBox.thinking') }}</span>
-            <span
-              :class="['pi pi-chevron-down text-xs ml-auto transition-transform duration-200', { 'rotate-180': expandedThinking.has(message.id) }]"></span>
-          </button>
           <div
-            v-if="expandedThinking.has(message.id)"
-            class="mt-1 px-3 py-2 text-xs whitespace-pre-wrap break-words leading-relaxed text-gray-500 dark:text-gray-400 border-l-2 border-solid border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/30 rounded-r-md">
-            {{ message.reasoning }}
-          </div>
-        </div>
-        <!-- 工具调用卡片 -->
-        <div
-          v-if="message.role === CHAT_ROLE.TOOL"
-          class="flex flex-col gap-2 w-full px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300 overflow-x-auto">
-          <button
-            type="button"
-            class="flex items-center gap-2 w-full text-left cursor-pointer select-none"
-            @click="toggleToolCard(message.id)">
-            <span class="pi pi-hammer text-xs"></span>
-            <span class="font-medium">{{ message.toolName }}</span>
-            <span
-              v-if="message.toolStatus === 'running'"
-              class="pi pi-spin pi-spinner text-xs text-blue-500"></span>
-            <span
-              v-else-if="message.toolStatus === 'failed' || message.toolStatus === 'error'"
-              class="pi pi-times text-xs text-red-500"></span>
+            class="flex justify-center items-center w-10 h-10 rounded-full overflow-hidden shrink-0 bg-gray-100 dark:bg-gray-800">
+            <!-- Avatar area: consecutive messages and tool calls all hide the avatar (hidden img,
+             consistent with the consecutive-message rendering) -->
+            <img
+              v-if="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
+              :class="[
+                'w-full h-full object-cover',
+                { hidden: isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL }
+              ]"
+              :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
+              :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName" />
             <span
               v-else
-              class="pi pi-check text-xs text-green-500"></span>
-            <span
-              v-if="isToolMessage(message)"
-              :class="['pi pi-chevron-down text-xs ml-auto transition-transform duration-200', { 'rotate-180': expandedToolCards.has(message.id) }]"></span>
-          </button>
-          <!-- 展开详情：参数 + 结果（执行中也允许展开查看实时参数/进度） -->
-          <div
-            v-if="expandedToolCards.has(message.id)"
-            class="flex flex-col gap-2 border-t border-solid border-gray-200 dark:border-gray-600 pt-2">
-            <div v-if="message.toolArgs && Object.keys(message.toolArgs).length">
-              <div class="text-xs font-semibold mb-1">{{ t('chatBox.toolArgs') }}</div>
-              <pre class="text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600">{{ formatToolArgs(message.toolArgs) }}</pre>
-            </div>
-            <div v-if="message.toolResult">
-              <div class="text-xs font-semibold mb-1">{{ t('chatBox.toolResult') }}</div>
-              <pre class="text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600">{{ message.toolResult }}</pre>
-            </div>
-            <div v-if="message.toolStatus === 'running' && !message.toolResult" class="flex items-center gap-2 text-xs text-blue-500 dark:text-blue-400">
-              <span class="pi pi-spin pi-spinner text-xs"></span>{{ t('chatBox.toolRunning') }}
-            </div>
-            <div v-else-if="!message.toolResult && !(message.toolArgs && Object.keys(message.toolArgs).length)" class="text-xs text-gray-400 dark:text-gray-500">
-              {{ t('chatBox.toolNoOutput') }}
-            </div>
+              :class="['pi pi-user', { hidden: isConsecutive(message.id) }]"></span>
           </div>
-        </div>
-        <!-- 对话内容气泡 -->
-        <div
-          v-else
-          :class="[
-            'relative group w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
-            message.role === CHAT_ROLE.USER
-              ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* 右侧气泡：蓝色，左下角/右下角圆角定制 */
-              : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* 左侧气泡：白色 */,
-            { 'rounded-xl': isConsecutive(message.id) }
-          ]">
-          <!-- 复制消息按钮：仅用户/AI 文本消息且正文非空时展示；悬停或键盘聚焦气泡时淡入 -->
-          <button
-            v-if="canCopyMessage(message)"
-            type="button"
+          <!-- Message body -->
+          <div
             :class="[
-              'absolute top-2 right-2 flex items-center justify-center w-7 h-7 rounded-full border border-solid cursor-pointer select-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-200',
-              message.role === CHAT_ROLE.USER
-                ? 'bg-blue-700/40 hover:bg-blue-600/50 border-white/20 text-blue-100 hover:text-white' /* 蓝色用户气泡上的悬浮按钮：半透明浅白 */
-                : 'bg-white/70 hover:bg-white border-gray-200 shadow-sm text-gray-400 hover:text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:hover:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200' /* 白色 AI 气泡上的悬浮按钮：浅灰 */
-            ]"
-            :aria-label="t('chatBox.copy')"
-            :title="copiedMessageId === message.id ? t('chatBox.copied') : t('chatBox.copy')"
-            @click="copyMessage(message)">
-            <span
+              'flex flex-col max-w-[calc(100%_-_52px)] min-w-0',
+              message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start'
+            ]">
+            <!-- User/AI timestamp -->
+            <div
+              v-if="message.role !== CHAT_ROLE.TOOL"
               :class="[
-                'pi text-xs',
-                copiedMessageId === message.id
-                  ? message.role === CHAT_ROLE.USER
-                    ? 'pi-check text-emerald-300'
-                    : 'pi-check text-green-600'
-                  : 'pi-copy'
-              ]"></span>
-          </button>
-          <!-- v-safe-html 指令内部完成 markdown 渲染 + DOMPurify 白名单净化（app/directives/safeHtml.ts） -->
-          <div v-safe-html="message.content"></div>
-          <template v-if="messageImages(message).length">
-            <div class="flex flex-wrap gap-2 mt-2">
-              <template
-                v-for="(src, i) in messageImages(message)"
-                :key="i">
-                <!-- 历史消息的媒体可能已在磁盘上不存在（media 特性落地前写入的行），
-                     加载失败时隐藏破图占位并展示占位块，避免出现 broken image 图标。 -->
-                <img
-                  v-if="!failedImageSources.has(resolveImageSrc(message, src))"
-                  :src="resolveImageSrc(message, src)"
-                  class="w-24 h-24 object-cover rounded-lg border border-solid border-gray-200 cursor-pointer hover:opacity-80 transition-opacity duration-200"
-                  role="button"
-                  tabindex="0"
-                  :aria-label="t('a11y.previewImage')"
-                  @click="openPreview(resolveImageSrc(message, src))"
-                  @keydown.enter.prevent="openPreview(resolveImageSrc(message, src))"
-                  @keydown.space.prevent="openPreview(resolveImageSrc(message, src))"
-                  @error="onImageError($event, resolveImageSrc(message, src))" />
-                <div
+                'flex items-center gap-2 mb-1',
+                { 'text-right justify-end': message.role === CHAT_ROLE.USER },
+                { 'text-left': message.role === CHAT_ROLE.AI }
+              ]">
+              <span class="text-sm font-semibold text-[#111827] dark:text-[#E5E7EB]">{{
+                message.role === CHAT_ROLE.AI ? resolvedAiName : resolvedUserName
+              }}</span>
+              <span class="text-xs font-normal text-[#6B7280] dark:text-[#9CA3AF]">{{
+                formatCompactTimeString(message.timestamp)
+              }}</span>
+            </div>
+            <!-- Model thinking/reasoning block (collapsible): rendered only for AI messages that contain reasoning -->
+            <div
+              v-if="message.role === CHAT_ROLE.AI && message.reasoning"
+              :class="[
+                'w-fit mb-1 text-sm transition-colors duration-200',
+                { 'rounded-xl': isConsecutive(message.id) }
+              ]">
+              <button
+                type="button"
+                :class="[
+                  'flex items-center gap-2 w-full text-left cursor-pointer select-none px-3 py-1.5 text-xs font-medium rounded-md border border-solid transition-colors duration-200',
+                  expandedThinking.has(message.id)
+                    ? 'bg-gray-50 dark:bg-gray-800/60 border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400'
+                    : 'bg-gray-50/60 dark:bg-gray-800/30 border-gray-100 dark:border-gray-700/60 text-[#6B7280] dark:text-[#9CA3AF]'
+                ]"
+                @click="toggleThinking(message.id)">
+                <span class="pi pi-brain text-xs"></span>
+                <span>{{ t('chatBox.thinking') }}</span>
+                <span
+                  :class="[
+                    'pi pi-chevron-down text-xs ml-auto transition-transform duration-200',
+                    { 'rotate-180': expandedThinking.has(message.id) }
+                  ]"></span>
+              </button>
+              <div
+                v-if="expandedThinking.has(message.id)"
+                class="mt-1 px-3 py-2 text-xs whitespace-pre-wrap break-words leading-relaxed text-gray-500 dark:text-gray-400 border-l-2 border-solid border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/30 rounded-r-md">
+                {{ message.reasoning }}
+              </div>
+            </div>
+            <!-- Tool call card -->
+            <div
+              v-if="message.role === CHAT_ROLE.TOOL"
+              class="flex flex-col gap-2 w-full px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300 overflow-x-auto">
+              <button
+                type="button"
+                class="flex items-center gap-2 w-full text-left cursor-pointer select-none"
+                @click="toggleToolCard(message.id)">
+                <span class="pi pi-hammer text-xs"></span>
+                <span class="font-medium">{{ message.toolName }}</span>
+                <span
+                  v-if="message.toolStatus === 'running'"
+                  class="pi pi-spin pi-spinner text-xs text-blue-500"></span>
+                <span
+                  v-else-if="message.toolStatus === 'failed' || message.toolStatus === 'error'"
+                  class="pi pi-times text-xs text-red-500"></span>
+                <span
                   v-else
-                  class="w-24 h-24 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">
-                  {{ t('chatBox.imageLoadFailed') }}
+                  class="pi pi-check text-xs text-green-500"></span>
+                <span
+                  v-if="isToolMessage(message)"
+                  :class="[
+                    'pi pi-chevron-down text-xs ml-auto transition-transform duration-200',
+                    { 'rotate-180': expandedToolCards.has(message.id) }
+                  ]"></span>
+              </button>
+              <!-- Expanded details: args + result (expanding to view live args/progress is also
+               allowed while the tool is running) -->
+              <div
+                v-if="expandedToolCards.has(message.id)"
+                class="flex flex-col gap-2 border-t border-solid border-gray-200 dark:border-gray-600 pt-2">
+                <div v-if="message.toolArgs && Object.keys(message.toolArgs).length">
+                  <div class="text-xs font-semibold mb-1">{{ t('chatBox.toolArgs') }}</div>
+                  <pre
+                    class="text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600"
+                    >{{ formatToolArgs(message.toolArgs) }}</pre>
+                </div>
+                <div v-if="message.toolResult">
+                  <div class="text-xs font-semibold mb-1">{{ t('chatBox.toolResult') }}</div>
+                  <pre
+                    class="text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600"
+                    >{{ message.toolResult }}</pre>
+                </div>
+                <div
+                  v-if="message.toolStatus === 'running' && !message.toolResult"
+                  class="flex items-center gap-2 text-xs text-blue-500 dark:text-blue-400">
+                  <span class="pi pi-spin pi-spinner text-xs"></span>{{ t('chatBox.toolRunning') }}
+                </div>
+                <div
+                  v-else-if="!message.toolResult && !(message.toolArgs && Object.keys(message.toolArgs).length)"
+                  class="text-xs text-gray-400 dark:text-gray-500">
+                  {{ t('chatBox.toolNoOutput') }}
+                </div>
+              </div>
+            </div>
+            <!-- Conversation content bubble -->
+            <div
+              v-else
+              :class="[
+                'relative group w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
+                message.role === CHAT_ROLE.USER
+                  ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* Right-side bubble: blue, with custom bottom-left/bottom-right corner radii */
+                  : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* Left-side bubble: white */,
+                { 'rounded-xl': isConsecutive(message.id) }
+              ]">
+              <!-- Copy message button: shown only for user/AI text messages with a non-empty body;
+               fades in when the bubble is hovered or keyboard-focused -->
+              <button
+                v-if="canCopyMessage(message)"
+                type="button"
+                :class="[
+                  'absolute top-2 right-2 flex items-center justify-center w-7 h-7 rounded-full border border-solid cursor-pointer select-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-200',
+                  message.role === CHAT_ROLE.USER
+                    ? 'bg-blue-700/40 hover:bg-blue-600/50 border-white/20 text-blue-100 hover:text-white' /* Floating button on the blue user bubble: translucent light white */
+                    : 'bg-white/70 hover:bg-white border-gray-200 shadow-sm text-gray-400 hover:text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:hover:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200' /* Floating button on the white AI bubble: light gray */
+                ]"
+                :aria-label="t('chatBox.copy')"
+                :title="copiedMessageId === message.id ? t('chatBox.copied') : t('chatBox.copy')"
+                @click="copyMessage(message)">
+                <span
+                  :class="[
+                    'pi text-xs',
+                    copiedMessageId === message.id
+                      ? message.role === CHAT_ROLE.USER
+                        ? 'pi-check text-emerald-300'
+                        : 'pi-check text-green-600'
+                      : 'pi-copy'
+                  ]"></span>
+              </button>
+              <!-- The v-safe-html directive handles markdown rendering + DOMPurify allowlist
+               sanitization internally (app/directives/safeHtml.ts) -->
+              <div v-safe-html="message.content"></div>
+              <template v-if="messageImages(message).length">
+                <div class="flex flex-wrap gap-2 mt-2">
+                  <template
+                    v-for="(src, i) in messageImages(message)"
+                    :key="i">
+                    <!-- Media referenced by historical messages may no longer exist on disk (rows
+                     written before the media feature landed); on load failure, hide the broken
+                     image and show a placeholder block instead of a broken-image icon. -->
+                    <img
+                      v-if="!failedImageSources.has(resolveImageSrc(message, src))"
+                      :src="resolveImageSrc(message, src)"
+                      class="w-24 h-24 object-cover rounded-lg border border-solid border-gray-200 cursor-pointer hover:opacity-80 transition-opacity duration-200"
+                      role="button"
+                      tabindex="0"
+                      :aria-label="t('a11y.previewImage')"
+                      @click="openPreview(resolveImageSrc(message, src))"
+                      @keydown.enter.prevent="openPreview(resolveImageSrc(message, src))"
+                      @keydown.space.prevent="openPreview(resolveImageSrc(message, src))"
+                      @error="onImageError($event, resolveImageSrc(message, src))" />
+                    <div
+                      v-else
+                      class="w-24 h-24 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500">
+                      {{ t('chatBox.imageLoadFailed') }}
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <!-- Audio attachments -->
+              <template v-if="messageAudios(message).length">
+                <div class="flex flex-col gap-2 mt-2 min-w-[200px] max-w-full">
+                  <audio
+                    v-for="(src, i) in messageAudios(message)"
+                    :key="i"
+                    :src="resolveAudioSrc(message, src)"
+                    controls
+                    preload="metadata"
+                    class="w-full max-w-[280px] rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60" />
+                </div>
+              </template>
+              <!-- Video attachments -->
+              <template v-if="messageVideos(message).length">
+                <div class="flex flex-col gap-2 mt-2 max-w-full">
+                  <video
+                    v-for="(src, i) in messageVideos(message)"
+                    :key="i"
+                    :src="resolveVideoSrc(message, src)"
+                    controls
+                    preload="metadata"
+                    class="max-w-[280px] max-h-56 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-black" />
                 </div>
               </template>
             </div>
-          </template>
-          <!-- 音频附件 -->
-          <template v-if="messageAudios(message).length">
-            <div class="flex flex-col gap-2 mt-2 min-w-[200px] max-w-full">
-              <audio
-                v-for="(src, i) in messageAudios(message)"
-                :key="i"
-                :src="resolveAudioSrc(message, src)"
-                controls
-                preload="metadata"
-                class="w-full max-w-[280px] rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60" />
+            <!-- Model metadata (model name + token usage; shown only for AI messages when the fields exist) -->
+            <div
+              v-if="
+                message.role === CHAT_ROLE.AI &&
+                (message.modelName || message.inputTokens !== undefined || message.outputTokens !== undefined)
+              "
+              class="mt-1 text-xs text-[#9CA3AF] dark:text-[#6B7280]">
+              <template v-if="message.modelName">{{ message.modelName }}</template>
+              <template v-if="message.inputTokens !== undefined || message.outputTokens !== undefined">
+                <template v-if="message.modelName"> · </template>
+                {{
+                  t('chatBox.modelMeta', {
+                    input: message.inputTokens ?? 0,
+                    output: message.outputTokens ?? 0
+                  })
+                }}
+              </template>
             </div>
-          </template>
-          <!-- 视频附件 -->
-          <template v-if="messageVideos(message).length">
-            <div class="flex flex-col gap-2 mt-2 max-w-full">
-              <video
-                v-for="(src, i) in messageVideos(message)"
-                :key="i"
-                :src="resolveVideoSrc(message, src)"
-                controls
-                preload="metadata"
-                class="max-w-[280px] max-h-56 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-black" />
-            </div>
-          </template>
-        </div>
-        <!-- 模型元数据（模型名 + token 用量，仅 AI 消息且字段存在时展示） -->
-        <div
-          v-if="message.role === CHAT_ROLE.AI && (message.modelName || message.inputTokens !== undefined || message.outputTokens !== undefined)"
-          class="mt-1 text-xs text-[#9CA3AF] dark:text-[#6B7280]">
-          <template v-if="message.modelName">{{ message.modelName }}</template>
-          <template v-if="message.inputTokens !== undefined || message.outputTokens !== undefined">
-            <template v-if="message.modelName"> · </template>
-            {{ t('chatBox.modelMeta', {
-              input: message.inputTokens ?? 0,
-              output: message.outputTokens ?? 0
-            }) }}
-          </template>
+          </div>
         </div>
       </div>
     </div>
-    </div>
+
+    <!-- Scroll to bottom: floats at the bottom center of the chat list; appears only when the
+         scroll position is more than 80px (NEAR_BOTTOM_THRESHOLD) from the bottom; translucent +
+         frosted glass; clicking scrolls back to the very bottom (the subsequent scroll event
+         auto-hides the button). Centering uses left-0/right-0 + mx-auto (not translate), avoiding
+         conflicts with the Transition's transform animation. -->
+    <Transition name="fade">
+      <button
+        v-if="showScrollBottom"
+        type="button"
+        class="absolute bottom-4 left-0 right-0 mx-auto z-10 flex justify-center items-center w-9 h-9 rounded-full border border-solid border-white/20 bg-black/30 text-white hover:bg-black/45 dark:bg-white/20 dark:border-white/10 dark:hover:bg-white/30 backdrop-blur-sm"
+        :aria-label="t('chatBox.scrollBottom')"
+        :title="t('chatBox.scrollBottom')"
+        @click="scrollToBottom">
+        <i class="pi pi-arrow-down text-sm"></i>
+      </button>
+    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
-// 组件
+// Components
 
-// 方法/类型
+// Methods/types
 import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
 import { formatCompactTimeString } from '@/common/utils';
@@ -234,13 +288,13 @@ const { t } = useI18n();
 
 interface Props {
   messages: MessageItem[] | undefined;
-  /** 用户头像 URL（服务端返回） */
+  /** User avatar URL (returned by the server) */
   userAvatar?: string;
-  /** AI 头像 URL（服务端返回） */
+  /** AI avatar URL (returned by the server) */
   aiAvatar?: string;
-  /** 用户显示名（服务端返回） */
+  /** User display name (returned by the server) */
   userName?: string;
-  /** AI 显示名（服务端返回） */
+  /** AI display name (returned by the server) */
   aiName?: string;
 }
 const props = withDefaults(defineProps<Props>(), {
@@ -251,48 +305,48 @@ const props = withDefaults(defineProps<Props>(), {
   aiName: ''
 });
 
-/** 用户显示名：props 空时回退到 i18n 默认值 */
+/** User display name: falls back to the i18n default when the prop is empty */
 const resolvedUserName = computed(() => props.userName || t('chatBox.defaultUserName'));
-/** AI 显示名：props 空时回退到 i18n 默认值 */
+/** AI display name: falls back to the i18n default when the prop is empty */
 const resolvedAiName = computed(() => props.aiName || t('chatBox.defaultAiName'));
 
-// 图片预览
+// Image preview
 const { openPreview } = useImagePreview();
 
-/** 过滤tool后的消息列表 */
-const isToolCallMsg = (msg: MessageItem) =>
-  (msg as unknown as { tool_calls?: unknown[] }).tool_calls?.length;
 const filteredMessages = computed(() => {
   return props.messages.filter((item: MessageItem) => {
-    // 隐藏「AI 空占位」消息：发送后 AI 尚未产出任何内容（也无工具调用、也无思考内容）时，
-    // 不渲染这个只有名字+空白框的占位气泡，避免「橘雪莉」看起来贴在白框里。
-    // 但持有 reasoning 的空正文消息要放行：思考气泡以它为宿主，否则模型思考块会随
-    // 空占位一起被过滤，导致思考气泡永远渲染不出来。
-    if (
-      item.role === CHAT_ROLE.AI &&
-      !item.content.trim() &&
-      !item.reasoning
-    ) {
+    // Hide "AI empty placeholder" messages: right after sending, when the AI has not produced
+    // any content yet (no tool calls, no thinking content either), do not render this placeholder
+    // bubble containing only a name + an empty box, so "Sherry" does not look glued to a white box.
+    // But empty-body messages carrying reasoning must pass through: the thinking bubble uses them
+    // as its host, otherwise the model thinking block would be filtered out together with the
+    // empty placeholder and the thinking bubble could never render.
+    if (item.role === CHAT_ROLE.AI && !item.content.trim() && !item.reasoning) {
       return false;
     }
     return true;
   });
 });
 
-// [DIAG-CHATBOX] 探针已移除 —— reasoning 渲染链路已验证（root cause 为 i/span 选择器不匹配）。
+// [DIAG-CHATBOX] Probe removed —— the reasoning rendering chain has been verified (root cause was an i/span selector mismatch).
 
 /**
- * 判断一条消息是否应渲染为「连续消息」（不显示头像、紧凑间距、直角紧贴气泡）。
+ * Determine whether a message should be rendered as a "consecutive message"
+ * (no avatar shown, compact spacing, square-cornered bubbles touching each other).
  *
- * 必须在**原始（未过滤）**消息序列上判定，而不是在 `filteredMessages` 上：
- * `filteredMessages` 会把「AI 空占位」消息过滤掉，但空占位是一条真实的轮次边界
- * （handleSend 在每条用户消息后都会追加一个空的 AI 占位）。若在此过滤后的列表上按
- * 相邻同角色判定，会把 [用户A, AI空占位, 用户B] 中的 AI 占位剔除，使「用户B」误判为
- * 前一条「用户A」的连续消息 —— 这正是「打开页面第一次发送消息被当作连续消息」的根因。
+ * The check must be performed on the **original (unfiltered)** message sequence, not on
+ * `filteredMessages`: filteredMessages drops "AI empty placeholder" messages, but an empty
+ * placeholder is a real turn boundary (handleSend appends an empty AI placeholder after every
+ * user message). If adjacency-by-same-role were judged on the filtered list, the AI placeholder
+ * in [userA, AI empty placeholder, userB] would be removed, making userB be misjudged as a
+ * consecutive message of the preceding userA —— exactly the root cause of "the first message
+ * sent after opening the page was treated as a consecutive message".
  *
- * 正确语义：在原始序列里跳过 TOOL 行，只看紧邻的前一条可见消息是否同角色。空 AI 占位
- * 仍保有角色 `ai`，与用户消息不同角色，天然充当轮次分隔符；同一轮次内多条同角色行
- * （如一次 AI 回合内的工具调用 + 最终回复）仍能正确判为连续。
+ * Correct semantics: skip TOOL rows in the original sequence and only check whether the nearest
+ * preceding visible message has the same role. An empty AI placeholder still keeps the `ai` role,
+ * which differs from the user role, so it naturally acts as a turn separator; multiple same-role
+ * rows within one turn (e.g. tool calls + the final reply inside a single AI turn) are still
+ * correctly judged as consecutive.
  */
 const consecutiveIdSet = computed(() => {
   const result = new Set<number>();
@@ -311,52 +365,58 @@ const consecutiveIdSet = computed(() => {
 const isConsecutive = (id: number) => consecutiveIdSet.value.has(id);
 
 /**
- * 将渲染消息按「回合」分组，实现分段间距：
- *  - 用户消息（USER）自成一组：前后都是回合边界，由外层 gap-6(24px) 提供疏离；
- *  - 首条消息后的连续 AI/TOOL 行归入同一组：组内用 gap-3(12px) 收紧
- *    （气泡↔工具卡片↔气泡紧凑贴合，含工具调用区间）。
+ * Group the rendered messages by "turn" to implement segmented spacing:
+ *  - User messages (USER) each form their own group: both neighbors are turn boundaries, with
+ *    the outer gap-6 (24px) providing the separation;
+ *  - Consecutive AI/TOOL rows after the first message are grouped together: the group is
+ *    tightened with gap-3 (12px) (bubble↔tool card↔bubble compactly joined, including
+ *    tool-call spans).
  *
- * 这样相邻两行的间距即满足需求：只有「AI/TOOL → AI/TOOL」是 12px，
- * 任何涉 USER 的边界（user→AI、AI→user、user→user）都是外层 24px 的角色切换间距。
+ * This way the spacing between two adjacent rows meets the requirement: only "AI/TOOL → AI/TOOL"
+ * gets 12px, while any boundary involving USER (user→AI, AI→user, user→user) gets the outer
+ * 24px role-switch spacing.
  *
- * 分组依据**渲染顺序**（filteredMessages）：空 AI 占位消息已被过滤，因此
- * `user → AI占位(过滤) → user` 会在渲染顺序上直接相邻，本行 user 正确开启新回合，
- * 避免下一条 AI 被误并入前一回合。
+ * Grouping is based on the **render order** (filteredMessages): empty AI placeholder messages
+ * have already been filtered out, so `user → AI placeholder (filtered) → user` become directly
+ * adjacent in render order; the second user row correctly starts a new turn, preventing the next
+ * AI message from being merged into the previous turn by mistake.
  */
 const turnGroups = computed<MessageItem[][]>(() => {
   const groups: MessageItem[][] = [];
   for (const item of filteredMessages.value) {
     const last = groups.length ? groups[groups.length - 1] : null;
-    const prevRole = last ? last[last.length - 1].role : null;
-    // 新回合：首条、本行是 user（永远自成一组）、或上一行是 user（AI 回复与用户气泡分隔）
+    const prevRole = last ? (last[last.length - 1]?.role ?? null) : null;
+    // New turn: first message, this row is a user (always forms its own group), or the previous
+    // row is a user (separating the AI reply from the user bubble)
     if (item.role === CHAT_ROLE.USER || groups.length === 0 || prevRole === CHAT_ROLE.USER) {
       groups.push([item]);
     } else {
-      // AI/TOOL 连续行 → 并入最后一个非用户分组
-      groups[groups.length - 1].push(item);
+      // Consecutive AI/TOOL rows → merge into the last non-user group
+      groups[groups.length - 1]?.push(item);
     }
   }
   return groups;
 });
 
 /**
- * 判断某回合内是否应使用 12px 的内部间距（flex gap-3）。
- * 只有「多行且首行非 user」的组（纯 AI/TOOL 连续行）使用 gap-3；
- * 单行组或含 user 的组不需要，其上下间距由外层 gap-6(24px) 提供。
+ * Determine whether a turn group should use the 12px inner spacing (flex gap-3).
+ * Only groups that are "multi-row with a non-user first row" (pure AI/TOOL consecutive rows)
+ * use gap-3; single-row groups or groups containing a user do not need it — their spacing is
+ * provided by the outer gap-6 (24px).
  */
-const turnSpacingClass = (group: MessageItem[]): boolean =>
-  group.length > 1 && group[0].role !== CHAT_ROLE.USER;
+const turnSpacingClass = (group: MessageItem[]): boolean => group.length > 1 && group[0]?.role !== CHAT_ROLE.USER;
 
-/** 聊天列表滚动容器（最外层 overflow-auto div），用于自动滚到底部 */
+/** Chat list scroll container (the outermost overflow-auto div), used for auto-scrolling to the bottom */
 const scrollContainerRef = useTemplateRef<HTMLDivElement>('scrollContainerRef');
 
-/** 「底部附近」判定阈值（px）：距底部不超过该值视为仍在跟随最新消息 */
+/** "Near bottom" threshold (px): a distance to the bottom within this value means the user is still following the latest messages */
 const NEAR_BOTTOM_THRESHOLD = 80;
 
 /**
- * 判定用户当前是否处于列表底部附近。
+ * Determine whether the user is currently near the bottom of the list.
  *
- * 在 DOM 更新前测量（watch 默认 pre flush），读到的是本次变化渲染前的滚动状态。
+ * Measured before the DOM update (watch defaults to pre flush), so what is read is the scroll
+ * state before this change has rendered.
  */
 const isNearBottom = (): boolean => {
   const el = scrollContainerRef.value;
@@ -365,70 +425,89 @@ const isNearBottom = (): boolean => {
 };
 
 /**
- * 将聊天列表滚动到底部（新消息可见）。
+ * Scroll the chat list to the bottom (making new messages visible).
  *
- * 必须在 DOM 更新后（nextTick）再取 scrollHeight，否则测量到的是旧高度，
- * 会导致滚不到最新消息底部。父组件 home/index/[sid].vue 在每次流式块到达时都会
- * 重新赋值 messages 数组（新引用），因此 watch 引用变化即可覆盖「首屏加载」、
- * 「发送消息」与「AI 每回复一块」三种场景。
+ * scrollHeight must be read after the DOM update (nextTick); otherwise the measured value is the
+ * old height and the scroll cannot reach the bottom of the newest messages. The parent component
+ * home/index/[sid].vue reassigns the messages array (new reference) every time a streaming chunk
+ * arrives, so watching the reference change covers all three scenarios: "first page load",
+ * "sending a message", and "each AI reply chunk".
  */
 const scrollToBottom = () => {
   nextTick(() => {
     const el = scrollContainerRef.value;
     if (el) {
       el.scrollTop = el.scrollHeight;
+      updateScrollBottomBtn();
     }
   });
 };
 
+/** "Scroll to bottom" floating button visibility: shown when the scroll position is more than NEAR_BOTTOM_THRESHOLD (80px) from the bottom */
+const showScrollBottom = ref(false);
+
 /**
- * 消息列表变化后的滚动策略：
- * - 新增了 user 消息（发送消息 / 加载历史会话）：始终滚到底部；
- * - 其余变化（AI 流式逐块追加、工具事件等）：仅当用户仍在底部附近时跟随，
- *   避免用户向上回看历史时被流式输出强行拽回底部。
+ * Sync the "scroll to bottom" button visibility on scroll (triggered by the scroll container's
+ * @scroll). The programmatic scroll in scrollToBottom also dispatches a scroll event, so the
+ * button hides accordingly.
+ */
+const updateScrollBottomBtn = () => {
+  const el = scrollContainerRef.value;
+  if (!el) return;
+  showScrollBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight > NEAR_BOTTOM_THRESHOLD;
+};
+
+/**
+ * Scrolling strategy after the message list changes:
+ * - New user messages added (sending a message / loading a history session): always scroll to
+ *   the bottom;
+ * - Other changes (AI streaming chunk-by-chunk appends, tool events, etc.): follow only while
+ *   the user is still near the bottom, preventing streaming output from yanking the user back
+ *   down while they scroll up to review history.
  */
 watch(
   () => props.messages,
   (msgs, oldMsgs) => {
     const added = (msgs ?? []).slice(oldMsgs?.length ?? 0);
-    if (added.some((m) => m.role === CHAT_ROLE.USER) || isNearBottom()) {
+    if (added.some(m => m.role === CHAT_ROLE.USER) || isNearBottom()) {
       scrollToBottom();
     }
   }
 );
 
-// 组件挂载（首屏打开）后滚到底部，让最新消息可见
+// After the component mounts (first page open), scroll to the bottom so the latest messages are visible
 onMounted(() => scrollToBottom());
 
-/** 后端 /media 端点根：从 VITE_API_BACK_URL 推导（去掉尾部斜杠） */
+/** Backend /media endpoint root: derived from VITE_API_BACK_URL (trailing slashes stripped) */
 const backendBaseUrl = ((import.meta.env.VITE_API_BACK_URL as string) ?? '').replace(/\/+$/, '');
 
 /**
- * 将消息里的图片条目解析为可渲染的 <img src>。
- * 语义（见 type.ts MessageItem.images 注释）：
- *  - 用户消息：原始 base64（不含 data: 前缀）→ 本地拼成 data:image/*;base64,<data>
- *  - AI 消息：持久化的绝对文件路径 → 走后端 /media，后端按 session_id + 文件名返回图片；
- *    需取原始 basename（如 <ts>.png），丢弃文件路径中的目录部分。
- * 判定依据：文件路径必然带反斜杠 \，或以常见媒体扩展名结尾；
- * 纯 base64 的字母表恰好含 / 与 +（且通常以 = 补位），
- * 因此绝不能把含 / 当作“文件路径”的判据——那会把用户原始
- * base64 图片误判成 /media 请求（历史 4 次“media not found”根因）。
+ * Resolve the image entries in a message into renderable <img src> values.
+ * Semantics (see the MessageItem.images comment in type.ts):
+ *  - User messages: raw base64 (without the data: prefix) → assembled locally into
+ *    data:image/*;base64,<data>
+ *  - AI messages: persisted absolute file paths → served via the backend /media endpoint, which
+ *    returns the image by session_id + filename; the original basename (e.g. <ts>.png) must be
+ *    taken, dropping the directory part of the file path.
+ * Decision basis: a file path necessarily contains a backslash \ or ends with a common media
+ * extension; the base64 alphabet happens to contain / and + (and is usually padded with =),
+ * so "/" must never be used as the "file path" test —— that would misjudge the user's raw
+ * base64 image as a /media request (the root cause of 4 historical "media not found" bugs).
  */
 const resolveImageSrc = (message: MessageItem, entry: string): string => {
   const s = (entry ?? '').trim();
   if (!s) return '';
-  // 绝对 URL（http/https）直接透传：中间件注入的用户图片是已服务
-  // 出来的 http(s)://…/images/<hash>.png，必须以原样渲染，不能按扩展名
-  // 误判成 /media 文件路径（否则 404 / 破图）。
+  // Absolute URLs (http/https) pass through as-is: user images injected by the middleware are
+  // already-served http(s)://…/images/<hash>.png addresses, which must be rendered verbatim;
+  // do not misjudge them as /media file paths by extension (otherwise 404 / broken image).
   if (/^https?:\/\//i.test(s)) return s;
-  const isFilePath =
-    s.includes('\\') || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(s);
+  const isFilePath = s.includes('\\') || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(s);
   if (isFilePath) {
-    // AI 消息：走 /media 拉取；文件可能带任意目录前缀，取其 basename
+    // AI messages: fetch via /media; the file may carry any directory prefix, so take its basename
     const filename = s.split(/[\\/]/).pop() || '';
     return `${backendBaseUrl}/media?session_id=${encodeURIComponent(message.session_id ?? '')}&filename=${encodeURIComponent(filename)}`;
   }
-  // 用户消息：本地 base64
+  // User messages: local base64
   return `data:image/*;base64,${s}`;
 };
 
@@ -444,10 +523,10 @@ const extractContentImageUrls = (content: string): string[] => {
   if (!content) return [];
   const m = content.match(/Location:\s*([^\]\n]+)/);
   if (!m) return [];
-  return m[1]
+  return (m[1] ?? '')
     .split(/[,\s]+/)
-    .map((u) => u.replace(/[\]\s.,!;:]+$/g, ''))
-    .filter((u) => /^https?:\/\//i.test(u));
+    .map(u => u.replace(/[\]\s.,!;:]+$/g, ''))
+    .filter(u => /^https?:\/\//i.test(u));
 };
 
 /**
@@ -460,61 +539,60 @@ const messageImages = (message: MessageItem): string[] => {
 };
 
 /**
- * 将消息里的音频/视频条目解析为可播放的 src。
- * 语义与 `resolveImageSrc` 完全一致（用户消息 → 本地 base64；AI 消息 → /media 文件路径）：
- *  - 用户消息：原始 base64（不含 data: 前缀）→ 本地拼成 data:audio/*;base64,<data>
- *    或 data:video/*;base64,<data>
- *  - AI 消息：持久化的绝对文件路径 → 走后端 /media，取 basename 拼接 URL
- *  - 绝对 http(s):// URL 直接透传
+ * Resolve the audio/video entries in a message into playable src values.
+ * Semantics are identical to `resolveImageSrc` (user messages → local base64; AI messages →
+ * /media file paths):
+ *  - User messages: raw base64 (without the data: prefix) → assembled locally into
+ *    data:audio/*;base64,<data> or data:video/*;base64,<data>
+ *  - AI messages: persisted absolute file paths → fetched via the backend /media endpoint, with
+ *    the basename used to build the URL
+ *  - Absolute http(s):// URLs pass through as-is
  */
 const resolveMediaSrc = (message: MessageItem, entry: string, mimePrefix: string): string => {
   const s = (entry ?? '').trim();
   if (!s) return '';
-  // 绝对 URL（http/https）直接透传：中间件注入的媒体地址以 http(s):// 开头
+  // Absolute URLs (http/https) pass through as-is: media addresses injected by the middleware start with http(s)://
   if (/^https?:\/\//i.test(s)) return s;
-  const isFilePath =
-    s.includes('\\') ||
-    /\.(mp3|wav|ogg|m4a|aac|flac|mp4|webm|mov|avi|mkv|m4v)$/i.test(s);
+  const isFilePath = s.includes('\\') || /\.(mp3|wav|ogg|m4a|aac|flac|mp4|webm|mov|avi|mkv|m4v)$/i.test(s);
   if (isFilePath) {
-    // AI 消息：走 /media 拉取；文件可能带任意目录前缀，取其 basename
+    // AI messages: fetch via /media; the file may carry any directory prefix, so take its basename
     const filename = s.split(/[\\/]/).pop() || '';
     return `${backendBaseUrl}/media?session_id=${encodeURIComponent(message.session_id ?? '')}&filename=${encodeURIComponent(filename)}`;
   }
-  // 用户消息：本地 base64（data:<mimePrefix>;base64,<data>）
+  // User messages: local base64 (data:<mimePrefix>;base64,<data>)
   return `data:${mimePrefix};base64,${s}`;
 };
 
-/** 解析音频 src（mime 前缀 audio/*） */
-const resolveAudioSrc = (message: MessageItem, entry: string): string =>
-  resolveMediaSrc(message, entry, 'audio/*');
+/** Resolve the audio src (mime prefix audio/*) */
+const resolveAudioSrc = (message: MessageItem, entry: string): string => resolveMediaSrc(message, entry, 'audio/*');
 
-/** 解析视频 src（mime 前缀 video/*） */
-const resolveVideoSrc = (message: MessageItem, entry: string): string =>
-  resolveMediaSrc(message, entry, 'video/*');
+/** Resolve the video src (mime prefix video/*) */
+const resolveVideoSrc = (message: MessageItem, entry: string): string => resolveMediaSrc(message, entry, 'video/*');
 
-/** 该消息携带的音频/视频条目 */
+/** Audio/video entries carried by this message */
 const messageAudios = (message: MessageItem): string[] => message.audios ?? [];
 const messageVideos = (message: MessageItem): string[] => message.videos ?? [];
 
 /**
- * 已加载失败的图片 src 集合（如历史消息指向的 /media 文件在磁盘已不存在 → 404）。
- * 一旦某 src 加载失败即记录，后续重新渲染时不再尝试加载该 src，直接展示占位块。
+ * Set of image srcs that failed to load (e.g. the /media file referenced by a historical message
+ * no longer exists on disk → 404). Once an src fails to load it is recorded here; later
+ * re-renders no longer attempt to load that src and directly show the placeholder block instead.
  */
 const failedImageSources = reactive(new Set<string>());
 
-/** <img> 加载失败（含 404/网络错误）时的回调：把失败的 src 记入集合以隐藏破图。 */
+/** Callback for <img> load failures (including 404/network errors): record the failed src in the set to hide the broken image. */
 const onImageError = (event: Event, src: string) => {
   if (src) {
     failedImageSources.add(src);
   }
 };
 
-// ── 工具调用卡片展开/收起 ────────────────────────────────
+// ── Tool call card expand/collapse ────────────────────────────────
 
-/** 已展开的工具卡片消息 id 集合（默认收起） */
+/** Set of tool-card message ids currently expanded (collapsed by default) */
 const expandedToolCards = reactive(new Set<number>());
 
-/** 切换某张工具卡片的展开/收起状态 */
+/** Toggle the expand/collapse state of a tool card */
 const toggleToolCard = (id: number) => {
   if (expandedToolCards.has(id)) {
     expandedToolCards.delete(id);
@@ -523,12 +601,12 @@ const toggleToolCard = (id: number) => {
   }
 };
 
-// ── 模型思考/推理块展开/收起 ─────────────────────────────
+// ── Model thinking/reasoning block expand/collapse ─────────────────────────────
 
-/** 已展开的思考块消息 id 集合（默认收起） */
+/** Set of thinking-block message ids currently expanded (collapsed by default) */
 const expandedThinking = reactive(new Set<number>());
 
-/** 切换某条消息思考块的展开/收起状态 */
+/** Toggle the expand/collapse state of a message's thinking block */
 const toggleThinking = (id: number) => {
   if (expandedThinking.has(id)) {
     expandedThinking.delete(id);
@@ -537,12 +615,12 @@ const toggleThinking = (id: number) => {
   }
 };
 
-/** 该消息是否为工具调用卡片（工具卡始终可展开，执行中也能查看实时参数/进度） */
+/** Whether this message is a tool call card (tool cards are always expandable; live args/progress can be viewed even while running) */
 const isToolMessage = (message: MessageItem): boolean => {
   return message.role === CHAT_ROLE.TOOL && !!message.toolName;
 };
 
-/** 将工具参数对象格式化为可读的 JSON 文本 */
+/** Format the tool args object into readable JSON text */
 const formatToolArgs = (args: Record<string, unknown>): string => {
   try {
     return JSON.stringify(args, null, 2);
@@ -551,15 +629,15 @@ const formatToolArgs = (args: Record<string, unknown>): string => {
   }
 };
 
-// ── 复制消息正文 ─────────────────────────────────────────
+// ── Copy message body ─────────────────────────────────────────
 
-/** 当前正在显示「已复制 ✓」反馈的消息 id（同一时刻最多一个，避免多个气泡同时闪现） */
+/** Id of the message currently showing the "copied ✓" feedback (at most one at a time, preventing multiple bubbles from flashing simultaneously) */
 const copiedMessageId = ref<number | null>(null);
 
-/** 复制反馈还原计时器句柄（重新点击或组件卸载时需清掉，防止旧计时器提前把新反馈抹掉） */
+/** Handle of the copy-feedback reset timer (must be cleared on re-click or component unmount, preventing an old timer from wiping the new feedback early) */
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 该消息是否展示复制按钮：仅用户/AI 文本消息，且正文非空（工具卡片与空消息不出现在复制逻辑里） */
+/** Whether this message shows a copy button: only user/AI text messages with a non-empty body (tool cards and empty messages are excluded from the copy logic) */
 const canCopyMessage = (message: MessageItem): boolean => {
   return (
     (message.role === CHAT_ROLE.USER || message.role === CHAT_ROLE.AI) &&
@@ -569,9 +647,10 @@ const canCopyMessage = (message: MessageItem): boolean => {
 };
 
 /**
- * 将文本写入剪贴板。
- * 优先使用现代 Clipboard API（需 secure context），不可用或 reject 时
- * 降级到「隐藏 textarea + document.execCommand('copy')」；全部失败返回 false，由调用方只做警告。
+ * Write text to the clipboard.
+ * Prefers the modern Clipboard API (requires a secure context); when it is unavailable or
+ * rejects, fall back to "hidden textarea + document.execCommand('copy')". Returns false when
+ * all paths fail; the caller only logs a warning.
  */
 const copyTextToClipboard = async (text: string): Promise<boolean> => {
   if (navigator.clipboard && window.isSecureContext) {
@@ -579,18 +658,18 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      // Clipboard API 拒绝/异常 → 走下方降级方案
+      // Clipboard API rejected/errored → use the fallback below
     }
   }
   return fallbackCopyText(text);
 };
 
-/** 降级复制：隐藏 textarea + execCommand('copy')（老环境/非安全上下文兜底） */
+/** Fallback copy: hidden textarea + execCommand('copy') (safety net for legacy environments / non-secure contexts) */
 const fallbackCopyText = (text: string): boolean => {
   const textarea = document.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', '');
-  // 置于屏幕外且不可见，避免出现布局跳动或闪现
+  // Positioned off-screen and invisible, avoiding layout jumps or flicker
   textarea.style.position = 'fixed';
   textarea.style.top = '-9999px';
   textarea.style.left = '-9999px';
@@ -602,15 +681,15 @@ const fallbackCopyText = (text: string): boolean => {
   try {
     ok = document.execCommand('copy');
   } catch {
-    // execCommand 可能抛异常：保持 ok=false，视为复制失败
+    // execCommand may throw: keep ok=false, treating it as a copy failure
   }
   document.body.removeChild(textarea);
   return ok;
 };
 
-/** 复制某条消息的原始 Markdown 正文；成功则短暂展示 ✓ 反馈（1500ms 后还原为复制图标） */
+/** Copy a message's raw Markdown body; on success briefly show the ✓ feedback (reverting to the copy icon after 1500ms) */
 const copyMessage = async (message: MessageItem) => {
-  // 清掉上一次的反馈计时器，保证连续点击时只有最新一次反馈生效
+  // Clear the previous feedback timer so that with rapid clicks only the latest feedback takes effect
   if (copyResetTimer) {
     clearTimeout(copyResetTimer);
     copyResetTimer = null;
@@ -623,12 +702,12 @@ const copyMessage = async (message: MessageItem) => {
       copyResetTimer = null;
     }, 1500);
   } else {
-    // 两条路径都失败：只告警，绝不向模板抛错/中断渲染
+    // Both paths failed: only warn, never throw to the template or interrupt rendering
     console.warn('[ChatBox] 复制消息正文失败，暂不支持剪贴板写入。');
   }
 };
 
-// 组件卸载时清理待执行的反馈还原计时器
+// Clear the pending feedback reset timer when the component unmounts
 onBeforeUnmount(() => {
   if (copyResetTimer) {
     clearTimeout(copyResetTimer);
@@ -636,3 +715,18 @@ onBeforeUnmount(() => {
   }
 });
 </script>
+
+<style scoped>
+/* "Scroll to bottom" floating button: fade in/out + slight upward float (Vue Transition) */
+.fade-enter-active,
+.fade-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+</style>

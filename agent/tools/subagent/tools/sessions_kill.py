@@ -9,21 +9,18 @@ from ..control import kill_subagent_run_with_cascade
 
 class SessionsKillSchema(BaseModel):
     """Input schema for the sessions_kill tool."""
-    run_id: str = Field(
-        description="The run_id of the subagent to kill."
-    )
+
+    run_id: str = Field(description="The run_id of the subagent to kill.")
     cascade: bool = Field(
         default=True,
-        description="If true, also kill all descendant subagents of the target. Default true."
+        description="If true, also kill all descendant subagents of the target. Default true.",
     )
-    reason: str = Field(
-        default="killed by parent",
-        description="Reason for killing the subagent."
-    )
+    reason: str = Field(default="killed by parent", description="Reason for killing the subagent.")
 
 
 class SessionsKillTool(BaseTool):
     """LLM tool: kill a running sub-agent, cancelling its execution and marking it as KILLED."""
+
     name: str = "sessions_kill"
     description: str = (
         "Kill a running subagent by its run_id. "
@@ -43,12 +40,16 @@ class SessionsKillTool(BaseTool):
         cascade: bool = True,
         reason: str = "killed by parent",
     ) -> str:
-        logger.info("sessions_kill called: run_id={}, cascade={}, reason={}", run_id, cascade, reason)
+        logger.info(
+            "sessions_kill called: run_id={}, cascade={}, reason={}", run_id, cascade, reason
+        )
 
         requester_session_key = f"agent:main:session:{self.session_id}"
 
         killed = await kill_subagent_run_with_cascade(
-            run_id, reason=reason, cascade=cascade,
+            run_id,
+            reason=reason,
+            cascade=cascade,
             requester_session_key=requester_session_key,
         )
 

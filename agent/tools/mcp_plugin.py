@@ -3,16 +3,16 @@ from __future__ import annotations
 import sys
 import json
 from pathlib import Path
-from loguru import logger
 from pub_func import run_async
 from langchain_core.tools import BaseTool
 
 _HERE_DIR = Path(__file__).resolve().parent  # tools/
-_PROJECT_ROOT = _HERE_DIR.parent             # EMA_AI_agent/
+_PROJECT_ROOT = _HERE_DIR.parent  # EMA_AI_agent/
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config import PLUGINS_PATH
+from config import PLUGINS_PATH  # noqa: E402  (delayed import: after sys.path setup above, which guarantees `config` is importable when this file runs outside the package context)
+
 
 def _load_config() -> dict:
     """Load MCP server configs from JSON, resolve special tokens."""
@@ -38,8 +38,7 @@ def _load_config() -> dict:
         args = server.get("args")
         if args:
             server["args"] = [
-                a.replace("$here/", here_str) if isinstance(a, str) else a
-                for a in args
+                a.replace("$here/", here_str) if isinstance(a, str) else a for a in args
             ]
 
     return config
@@ -47,6 +46,7 @@ def _load_config() -> dict:
 
 def build_mcp_tools() -> list[BaseTool]:
     from langchain_mcp_adapters.client import MultiServerMCPClient
+
     servers = _load_config()
     client = MultiServerMCPClient(servers)
     tools: list[BaseTool] = run_async(client.get_tools())

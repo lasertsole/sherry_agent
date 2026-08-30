@@ -8,12 +8,13 @@
  * | `session_id` | `string` | Yes | Session to query |
  * | `last_turn_count` | `number \| null` | No | Number of recent turns (null = all) |
  */
-export type HistoryRequest = { 
-/**
- * The session ID to query history for.
- */
-session_id: string, 
-/**
- * Number of recent turns to retrieve. `None` = all.
- */
-last_turn_count: number | null, };
+export type HistoryRequest = {
+  /**
+   * The session ID to query history for.
+   */
+  session_id: string;
+  /**
+   * Number of recent turns to retrieve. `None` = all.
+   */
+  last_turn_count: number | null;
+};

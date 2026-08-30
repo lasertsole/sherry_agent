@@ -1,41 +1,35 @@
 <template>
-     <div
-        class="root"
-        tabindex="-1"
-    >
-        <div
-            class="inputBox"
-            contenteditable="true"
-            :contenteditable="!sending && !disabled"
-            :aria-disabled="sending || disabled"
-            role="textbox"
-            aria-multiline="true"
-            :aria-label="t('chatInput.placeholder')"
-            :placeholder="placeholderText"
-            ref="inputDom"
-            @input.stop="inputFunc($event)"
-            @keydown.enter.stop.prevent="handleKeyEnter($event)"
-            @keydown.up.stop.prevent="handleKeyArrowUp($event)"
-            @keydown.down.stop.prevent="handleKeyArrowDown($event)"
-            @keydown.escape.stop.prevent="handleKeyEscape($event)"
-        >
-        </div>
+  <div
+    class="root"
+    tabindex="-1">
+    <div
+      class="inputBox"
+      :contenteditable="!sending && !disabled"
+      :aria-disabled="sending || disabled"
+      role="textbox"
+      aria-multiline="true"
+      :aria-label="t('chatInput.placeholder')"
+      :placeholder="placeholderText"
+      ref="inputDom"
+      @input.stop="inputFunc($event)"
+      @keydown.enter.stop.prevent="handleKeyEnter($event)"
+      @keydown.up.stop.prevent="handleKeyArrowUp"
+      @keydown.down.stop.prevent="handleKeyArrowDown"
+      @keydown.escape.stop.prevent="handleKeyEscape"></div>
 
-        <Button
-            v-if="!sending"
-            v-debounce:click.500="handleSend"
-            :label="t('chatInput.send')"
-            class="send"
-            :disabled="!sendingAllowed || disabled"
-        />
-        <Button
-            v-else
-            v-debounce:click.300="() => emit('stop')"
-            :label="t('chatInput.stop')"
-            class="send"
-            severity="danger"
-        />
-    </div>
+    <Button
+      v-if="!sending"
+      v-debounce:click.500="handleSend"
+      :label="t('chatInput.send')"
+      class="send"
+      :disabled="!sendingAllowed || disabled" />
+    <Button
+      v-else
+      v-debounce:click.300="() => emit('stop')"
+      :label="t('chatInput.stop')"
+      class="send"
+      severity="danger" />
+  </div>
 </template>
 
 <script lang="ts" setup>
@@ -46,43 +40,43 @@ import { vDebounce } from '~/directives/debounce';
 
 const { t } = useI18n();
 
-/** 是否处于 AI 回复生成中（由父组件控制，防止重复发送） */
+/** Whether an AI reply is currently being generated (controlled by the parent to prevent duplicate sends) */
 const props = withDefaults(defineProps<Props>(), {
   sending: false,
   disabled: false,
-  disabledText: '',
+  disabledText: ''
 });
 
 interface Props {
   sending?: boolean;
-  /** 是否禁止输入（如存在待审批的 HITL 请求时，阻断手动输入/发送） */
+  /** Whether input is forbidden (e.g. while a HITL request awaits approval, blocking manual input/sending) */
   disabled?: boolean;
-  /** 禁用状态下显示的 placeholder 文案（如"等待审批…"） */
+  /** Placeholder text shown in the disabled state (e.g. "Waiting for approval…") */
   disabledText?: string;
 }
 
 const emit = defineEmits<{
-  /** 发送消息，载荷为纯文本内容 */
+  /** Send a message; the payload is plain text content */
   (e: 'send', text: string): void;
-  /** 停止当前 AI 回复生成 */
+  /** Stop the current AI reply generation */
   (e: 'stop'): void;
 }>();
 
-/** 输入区 DOM */
+/** Input area DOM */
 const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
 
 /**
- * 受控草稿内容（由父组件通过 `v-model:draft` 双向绑定）。
+ * Controlled draft content (two-way bound from the parent via `v-model:draft`).
  *
- * 父组件（per-session ChatPage）在切换会话时会把该会话的草稿写回，
- * 从而在 KeepAlive 缓存下保留每个会话未发送的输入内容。
+ * The parent (per-session ChatPage) writes the session's draft back when switching sessions,
+ * so each session's unsent input content is preserved under KeepAlive caching.
  */
 const draft = defineModel<string>('draft', { default: '' });
 
-/** 是否允许发送（非空且非生成中） */
+/** Whether sending is allowed (non-empty and not generating) */
 const sendingAllowed = computed(() => !isEmpty(draft.value));
 
-/** 输入区占位文案：生成中→"思考中"，禁用→传入的审批提示，否则默认提示 */
+/** Input placeholder text: generating → "Thinking", disabled → the passed-in approval hint, otherwise the default hint */
 const placeholderText = computed(() => {
   if (props.sending) return t('chatInput.thinking');
   if (props.disabled) return props.disabledText || t('chatInput.placeholder');
@@ -90,36 +84,40 @@ const placeholderText = computed(() => {
 });
 
 /**
- * 本会话已发送用户问题的历史缓存（内存级，跟随本输入框实例/会话生命周期，
- * 由 KeepAlive 按会话隔离）。按发送顺序存储，最新一条在数组末尾，最多保留最近 10 条。
+ * In-memory history cache of user questions already sent in this session (memory-level, following
+ * this input box instance/session lifecycle, isolated per session by KeepAlive). Stored in send
+ * order, newest at the end of the array, keeping at most the 10 most recent entries.
  */
 const questionHistory = ref<string[]>([]);
 
-/** 上下键浏览历史问题的最大缓存条数 */
+/** Max number of cached history questions browsable with the up/down arrow keys */
 const MAX_HISTORY = 10;
 
 /**
- * 当前浏览位置：指向 `questionHistory` 的下标，-1 表示「未在浏览，输入框展示的是
- * 用户自己的实时草稿」。按 ↑ 从最近一条（length-1）开始逐条向前，按 ↓ 向后，
- * 越过「最早一条」后回落到 -1（恢复当前草稿）。
+ * Current browse position: an index into `questionHistory`; -1 means "not browsing — the input box
+ * shows the user's own live draft". Pressing ↑ starts from the most recent entry (length-1) and
+ * steps toward earlier ones one by one; pressing ↓ steps back toward newer ones. After passing the
+ * earliest entry, it falls back to -1 (restoring the current draft).
  */
 const browseIndex = ref(-1);
 
 /**
- * 进入浏览模式前用户正在编辑的草稿备份。按 Escape 退出浏览模式时恢复到该快照；
- * 若用户曾直接编辑输入框（inputFunc 触发），视为放弃该快照，重置为未浏览态。
+ * Backup of the draft the user was editing before entering browse mode. Restored from this snapshot
+ * when browse mode is exited via Escape; if the user edited the input box directly (inputFunc fired),
+ * the snapshot is treated as abandoned and reset to the not-browsing state.
  */
 let browsingSnapshot = '';
 
 /**
- * 将指定文本写入输入框 DOM 并同步受控草稿（供上下键浏览历史时「切换问题」填入）。
- * 直接操作用 `textContent` 赋值会丢失光标并重置历史内容（选中全部替换），
- * 符合「切换问题」的语义——整条替换。浏览期间不触发 autoSend。
+ * Writes the given text into the input DOM and syncs the controlled draft (used to fill in a
+ * "switched question" while browsing history with the up/down keys). Directly assigning `textContent`
+ * loses the cursor and resets the existing content (full selection replaced), which matches the
+ * "switch question" semantics — replacing the whole entry. autoSend is not triggered during browsing.
  */
 function writeDraftToInput(text: string): void {
   if (inputDom.value) {
     inputDom.value.textContent = text;
-    // 把光标移到末尾，方便用户继续编辑或直接 Enter 发送
+    // Move the cursor to the end so the user can keep editing or press Enter to send directly
     try {
       const range = document.createRange();
       const sel = window.getSelection();
@@ -129,56 +127,58 @@ function writeDraftToInput(text: string): void {
       sel?.addRange(range);
       inputDom.value.focus();
     } catch {
-      /* 忽略光标定位异常，不影响文本写入 */
+      /* Ignore cursor positioning errors; they do not affect writing the text */
     }
   }
   draft.value = text;
 }
 
-/** ↑ 键：向上浏览更早的历史问题。最早一条已到头则回到当前草稿（browseIndex = -1）。 */
-function handleKeyArrowUp(event: KeyboardEvent): void {
+/** ↑ key: browse older history questions. When the oldest entry is reached, return to the current draft (browseIndex = -1). */
+function handleKeyArrowUp(): void {
   if (props.sending || props.disabled || questionHistory.value.length === 0) return;
 
-  // 首次按 ↑：进入浏览模式，记住当前草稿，从最近一条历史开始
+  // First ↑ press: enter browse mode, remember the current draft, start from the newest history entry
   if (browseIndex.value === -1) {
     browsingSnapshot = draft.value;
     browseIndex.value = questionHistory.value.length - 1;
   } else if (browseIndex.value > 0) {
-    // 继续向上：命中更早一条
+    // Continue upward: hit an older entry
     browseIndex.value -= 1;
   } else {
-    // 已到最早一条（index === 0），再按 ↑ 回到当前草稿
+    // Already at the oldest entry (index === 0); pressing ↑ again returns to the current draft
     browseIndex.value = -1;
   }
 
-  writeDraftToInput(browseIndex.value === -1 ? browsingSnapshot : questionHistory.value[browseIndex.value]);
+  const nextDraft =
+    browseIndex.value === -1 ? browsingSnapshot : (questionHistory.value[browseIndex.value] ?? browsingSnapshot);
+  writeDraftToInput(nextDraft);
 }
 
-/** ↓ 键：向下浏览更新的历史问题。回到最新草稿（browseIndex = -1）后继续 ↓ 不动作。 */
-function handleKeyArrowDown(event: KeyboardEvent): void {
+/** ↓ key: browse newer history questions. After returning to the latest draft (browseIndex = -1), further ↓ presses do nothing. */
+function handleKeyArrowDown(): void {
   if (props.sending || props.disabled) return;
 
   if (browseIndex.value === -1) return;
-  // 在当前草稿上（browseIndex 已回 -1）：保持现状
+  // On the current draft (browseIndex already back to -1): keep as is
   if (browseIndex.value >= questionHistory.value.length - 1) {
     browseIndex.value = -1;
     writeDraftToInput(browsingSnapshot);
     return;
   }
-  // 向下移动到更新的历史问题
+  // Move down to a newer history question
   browseIndex.value += 1;
-  writeDraftToInput(questionHistory.value[browseIndex.value]);
+  writeDraftToInput(questionHistory.value[browseIndex.value] ?? browsingSnapshot);
 }
 
-/** Escape 键：退出浏览模式，恢复进入浏览前的用户草稿。 */
-function handleKeyEscape(event: KeyboardEvent): void {
+/** Escape key: exit browse mode, restoring the user's draft from before browsing began. */
+function handleKeyEscape(): void {
   if (props.sending || props.disabled) return;
   if (browseIndex.value === -1) return;
   browseIndex.value = -1;
   writeDraftToInput(browsingSnapshot);
 }
 
-/** 输入回调：剥离 contenteditable 的标签，仅保留纯文本用于校验 */
+/** Input callback: strip contenteditable markup, keeping only plain text for validation */
 function inputFunc(event: Event): void {
   if (!(event instanceof InputEvent)) {
     return;
@@ -187,7 +187,7 @@ function inputFunc(event: Event): void {
   const target = event.target as HTMLElement;
   const text = target.textContent ?? '';
 
-  // 仅剩空行/换行时，清空内部内容避免残留 <br>
+  // When only blank lines/newlines remain, clear the inner content to avoid leftover <br>
   if (isEmpty(text) || text.trim() === '') {
     target.innerHTML = '';
     draft.value = '';
@@ -196,30 +196,31 @@ function inputFunc(event: Event): void {
   }
 }
 
-/** Enter 发送（无 Shift），Shift+Enter 保留换行 */
+/** Enter sends (without Shift); Shift+Enter keeps the line break */
 function handleKeyEnter(event: KeyboardEvent): void {
-  if (event.shiftKey) return; // Shift+Enter 换行
+  if (event.shiftKey) return; // Shift+Enter inserts a line break
   handleSend();
 }
 
 /**
- * 将一条已发送的用户问题存入历史缓存（去重、最多保留最近 MAX_HISTORY 条）。
- * 相同文本只在末尾去重：若已存在则移除旧位置再追加到末尾，保证「最新」语义正确。
+ * Stores a sent user question into the history cache (dedup, keeping at most the most recent MAX_HISTORY entries).
+ * Identical text is deduplicated only at the end: if it already exists, remove it from its old position and append
+ * it to the end, keeping the "newest" semantics correct.
  */
 function recordQuestion(text: string): void {
   if (isEmpty(text)) return;
-  const withoutDup = questionHistory.value.filter((q) => q !== text);
+  const withoutDup = questionHistory.value.filter(q => q !== text);
   withoutDup.push(text);
-  // 超过上限：丢弃最旧的一条
+  // Over the limit: drop the oldest entry
   if (withoutDup.length > MAX_HISTORY) withoutDup.splice(0, withoutDup.length - MAX_HISTORY);
   questionHistory.value = withoutDup;
 
-  // 发送即退出浏览模式，回到「实时草稿」态（此刻草稿已清空）
+  // Sending exits browse mode, returning to the "live draft" state (the draft is already cleared at this point)
   browseIndex.value = -1;
   browsingSnapshot = '';
 }
 
-/** 发送：校验→记录历史→清空输入区→向上抛出文本 */
+/** Send: validate → record history → clear the input area → emit the text upward */
 function handleSend(): void {
   if (!sendingAllowed.value || props.sending || props.disabled) return;
   const text = draft.value;
@@ -230,17 +231,18 @@ function handleSend(): void {
   emit('send', text);
 }
 
-/** 清空输入区 */
+/** Clear the input area */
 function clearInput(): void {
   if (inputDom.value) inputDom.value.innerHTML = '';
   draft.value = '';
 }
 
 /**
- * 将外部草稿同步到 contenteditable 输入区。
+ * Syncs the external draft into the contenteditable input area.
  *
- * 父组件在切换会话（KeepAlive 恢复）时调用，把该会话缓存的草稿文本
- * 渲染回输入框。仅在输入区为空时写入，避免覆盖用户正在输入的内容。
+ * Called by the parent when switching sessions (KeepAlive restore) to render the session's cached
+ * draft text back into the input box. Writes only when the input area is empty, to avoid
+ * overwriting content the user is currently typing.
  */
 function syncDraftToDom(): void {
   if (!inputDom.value) return;
@@ -249,19 +251,20 @@ function syncDraftToDom(): void {
   }
 }
 
-// 父组件通过 v-model:draft 写入草稿时，同步到输入区 DOM
+// When the parent writes the draft via v-model:draft, sync it into the input DOM
 watch(draft, () => syncDraftToDom());
 
-// 组件挂载后同步一次（KeepAlive 恢复时也会触发 onMounted）
+// Sync once after the component mounts (onMounted also fires on KeepAlive restore)
 onMounted(() => syncDraftToDom());
 
 /**
- * 清空本会话的历史缓存与浏览态（供父组件在会话被删除时调用）。
+ * Clears this session's history cache and browse state (for the parent to call when a session is deleted).
  *
- * 会话被删除后，其 KeepAlive 缓存槽可能仍驻留内存（仅当删除的是当前激活会话时才
- * 立即释放槽）。若槽继续驻留，本 inputBox 的 `questionHistory` 会随缓存残留，
- * 用户下次手动访问该 sid 时会看到已删除会话的历史。父组件在收到
- * `SESSION_ABORT_STREAM_EVENT` 广播时调用本方法，让历史缓存严格跟随会话删除而清除。
+ * After a session is deleted, its KeepAlive cache slot may still reside in memory (the slot is released
+ * immediately only when the deleted session is the currently active one). If the slot lingers, this
+ * inputBox's `questionHistory` remains with the cache, and the user would see the deleted session's
+ * history the next time they manually visit that sid. The parent calls this method upon receiving the
+ * `SESSION_ABORT_STREAM_EVENT` broadcast, so the history cache is cleared strictly in step with session deletion.
  */
 function clearHistory(): void {
   questionHistory.value = [];
@@ -273,45 +276,44 @@ defineExpose({ clearHistory });
 </script>
 
 <style lang="scss" scoped>
-    @use "sass:math";
-    @use "@/common.scss" as common;
+@use 'sass:math';
+@use '@/common.scss' as common;
 
-    .root{
-        height: 100%;
-        width: 100%;
-        position: relative;
-        // 作为父级（h-40 定高 flex 容器）的 flex 项，必须可收缩以保持定高；
-        // overflow hidden 复合裁剪，杜绝内容过多时把外层页面顶高。
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-        overflow: hidden;
+.root {
+  height: 100%;
+  width: 100%;
+  position: relative;
+  // As a flex item of the parent (a fixed-height h-40 flex container), this must be shrinkable to keep the fixed height;
+  // overflow hidden compounds the clipping, preventing excess content from pushing the outer page taller.
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 
-        >.inputBox{
-            // 占据父级剩余高度，min-height:0 允许收缩，配合 overflow-y:auto 实现内部滚动，
-            // 内容再多也只滚动，不抬高输入区/页面。
-            flex: 1;
-            min-height: 0;
-            width: 100%;
-            box-sizing: border-box;
-            outline: none;
-            word-break: break-all;
-            padding: 0.5rem;
-            overflow-y: auto;
+  > .inputBox {
+    // Takes the parent's remaining height; min-height:0 allows shrinking, and combined with overflow-y:auto enables internal scrolling,
+    // so no matter how much content there is, it only scrolls and never pushes the input area/page taller.
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    box-sizing: border-box;
+    outline: none;
+    word-break: break-all;
+    padding: 0.5rem;
+    overflow-y: auto;
 
-            // contenteditable 占位符（伪元素实现）
-            &:empty::before {
-                content: attr(placeholder);
-                color: #9ca3af;
-                pointer-events: none;
-            }
-        }
-
-        >.send{
-            position: absolute;
-            right: 0.5rem;
-            bottom: 0.5rem;
-        }
+    // contenteditable placeholder (implemented via a pseudo-element)
+    &:empty::before {
+      content: attr(placeholder);
+      color: #9ca3af;
+      pointer-events: none;
     }
-</style>
+  }
 
+  > .send {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 0.5rem;
+  }
+}
+</style>

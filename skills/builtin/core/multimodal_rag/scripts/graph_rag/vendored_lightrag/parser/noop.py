@@ -1,4 +1,4 @@
-﻿"""No-op format handlers for the two "nothing to parse" document formats.
+"""No-op format handlers for the two "nothing to parse" document formats.
 
 These are internal (``user_selectable=False``) parsers dispatched by *format*,
 not by a user engine choice:
@@ -33,14 +33,10 @@ class ReuseParser(BaseParser):
         )
 
         doc_format = ctx.content_data.get("parse_format", FULL_DOCS_FORMAT_LIGHTRAG)
-        merged_text = strip_lightrag_doc_prefix(
-            ctx.content_data.get("content"), doc_format
-        )
+        merged_text = strip_lightrag_doc_prefix(ctx.content_data.get("content"), doc_format)
         # ``sidecar_location`` may be absent on historical/abnormal rows; tolerate
         # it (blocks_path="") rather than failing or re-routing to extraction.
-        blocks_path = (
-            sidecar_blocks_path(ctx.content_data.get("sidecar_location")) or ""
-        )
+        blocks_path = sidecar_blocks_path(ctx.content_data.get("sidecar_location")) or ""
         return ParseResult(
             doc_id=ctx.doc_id,
             file_path=ctx.file_path,

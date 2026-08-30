@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from agent.tools.subagent.orphan.recovery import (
     evaluate_recovery_gate,
     scan_orphaned_sessions,
@@ -23,6 +22,7 @@ def _clean():
     clear()
     recovery_attempts_persisted.clear()
     from agent.tools.subagent.orphan.recovery import _recovery_tasks
+
     for t in _recovery_tasks.values():
         if not t.done():
             t.cancel()
@@ -50,6 +50,7 @@ class TestEvaluateRecoveryGate:
 
     def test_wedged_by_age(self):
         import time
+
         old_time = time.monotonic() - 100000
         run = _make_run(
             execution=ExecutionState(started_at=old_time),

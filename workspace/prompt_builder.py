@@ -106,4 +106,3 @@ def build_system_prompt(
 
     # Join with blank-line separators, skipping any empty parts.
     return "\n\n".join(p for p in parts if p)
-

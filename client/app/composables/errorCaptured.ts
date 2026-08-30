@@ -6,108 +6,114 @@ import { toastError } from '~/composables/toast';
 import { logUtil } from '~/utils/log';
 
 /**
- * errorCaptured 工厂函数（提炼自 03-errorCaptured工厂函数.md，Nuxt 4 适配版）。
+ * errorCaptured factory function (extracted from doc 03, the "errorCaptured factory
+ * function" document; Nuxt 4 adapted version).
  *
- * 捕获链路：
- *   子组件抛出错误
- *     → onErrorCaptured 钩子触发
- *     → 1. 错误信息标准化（Error / string / object → 字符串，兼容循环引用）
- *     → 2. 记录出错组件名 + 日志（logUtil.e；console.error 由 clientLog.ts 持久化）
- *     → 3. Toast 提示（默认全局 toastError，可注入符合 MsgRefType 的自定义 Toast ref）
- *     → 4. return false 阻止错误继续向上传播（避免冒泡到根组件导致整页白屏）
+ * Capture chain:
+ *   A child component throws an error
+ *     → the onErrorCaptured hook fires
+ *     → 1. Normalize the error info (Error / string / object → string, with circular
+ *        reference handling)
+ *     → 2. Log the failing component name + write a log (logUtil.e; console.error is
+ *        persisted by clientLog.ts)
+ *     → 3. Toast notification (global toastError by default; a custom Toast ref
+ *        conforming to MsgRefType can be injected)
+ *     → 4. return false stops the error from propagating further up (avoids bubbling
+ *        to the root component and blanking the whole page)
  *
- * 注意：onErrorCaptured 只捕获**后代组件**的错误（Vue 从 instance.parent 起向上
- * 遍历），本组件自身的错误由更上层的同名钩子捕获——各页面均调用本工厂形成
- * 分层捕获（见 03 文档 §3.3 多层级传播控制）。
+ * Note: onErrorCaptured only captures errors from **descendant components** (Vue
+ * walks up from instance.parent); errors in this component itself are captured by an
+ * identical hook further up — each page calls this factory, forming layered capture
+ * (see doc 03 §3.3 multi-level propagation control).
  */
 
 /**
- * Toast 组件的 ref 类型约定（03 文档 §4）。
- * 任何 Toast/Message 组件只要实现 `open` 方法即可接入。
+ * Ref type contract for Toast components (doc 03 §4).
+ * Any Toast/Message component is plug-compatible as long as it implements `open`.
  */
 export interface MsgRefType {
   /**
-   * 显示提示消息
-   * @param obj.message   消息内容
-   * @param obj.type      消息类型（text / success / error / warning）
-   * @param obj.position  位置（top / bottom / center）
-   * @param obj.duration  显示时长（ms）
+   * Show a notification message
+   * @param obj.message   Message content
+   * @param obj.type      Message type (text / success / error / warning)
+   * @param obj.position  Position (top / bottom / center)
+   * @param obj.duration  Display duration (ms)
    */
-  open: (obj: {
-    message: string;
-    type?: string;
-    position?: string;
-    duration?: number;
-  }) => void;
+  open: (obj: { message: string; type?: string; position?: string; duration?: number }) => void;
 }
 
-/** errors.pageError 的 i18n key（四个 locale 文件均已配置）。 */
+/** i18n key for errors.pageError (configured in all four locale files). */
 const PAGE_ERROR_KEY = 'errors.pageError';
 
 /**
- * 创建页面级 onErrorCaptured 钩子。在页面/组件的 `<script setup>` 顶部调用一次即可。
+ * Create a page-level onErrorCaptured hook. Call once at the top of a page/component's
+ * `<script setup>`.
  *
- * @param msgRef 可选的自定义 Toast ref（须实现 MsgRefType.open）；
- *               缺省时使用项目全局 toast 层（~/composables/toast 的 toastError）。
- * @returns onErrorCaptured 的返回值（可直接在 setup 中使用，一般无需接收）
+ * @param msgRef Optional custom Toast ref (must implement MsgRefType.open);
+ *               when omitted, the project's global toast layer is used
+ *               (toastError from ~/composables/toast).
+ * @returns The return value of onErrorCaptured (usable directly in setup; usually
+ *   no need to keep it)
  *
  * @example
  * ```vue
  * <script setup lang="ts">
- * // 页面级错误捕获：子组件错误 → 日志 + toast，阻断向上冒泡
+ * // Page-level error capture: child component errors → log + toast, blocking upward bubbling
  * useErrorCaptured();
  * </script>
  * ```
  */
 export function useErrorCaptured(msgRef?: Ref<MsgRefType | undefined>) {
-  // setup 阶段捕获 i18n composer 的 t：非 setup 上下文里 nuxt-i18n v10 挂在
-  // nuxtApp.$i18n 上的代理不暴露 t（也没有 .global），toast.ts safeT 的
-  // `$i18n.global.t` 拿不到翻译（返回原始 key）。本工厂只在 setup 中调用，
-  // 故在此先行捕获（与 useSubagentTasks.ts 的 useI18n 用法一致）。
+  // Capture the i18n composer's t during setup: outside a setup context, the proxy
+  // nuxt-i18n v10 attaches at nuxtApp.$i18n exposes no t (and no .global), so
+  // toast.ts's safeT `$i18n.global.t` cannot get a translation (it returns the raw
+  // key). This factory is only called within setup, so capture it here upfront
+  // (same useI18n usage as useSubagentTasks.ts).
   const { t } = useI18n();
 
   return onErrorCaptured((err: unknown, instance: ComponentPublicInstance | null) => {
-    // ---- 1. 错误信息标准化 ----
-    let errMsg = '';
+    // ---- 1. Normalize the error info ----
+    let errMsg: string;
 
     if (err instanceof Error) {
       errMsg = err.message;
     } else if (typeof err === 'string') {
       errMsg = err;
     } else {
-      // 处理对象类型错误（可能包含循环引用）
+      // Handle object-type errors (may contain circular references)
       try {
         errMsg = JSON.stringify(err);
       } catch (e) {
-        // JSON.stringify 遇到循环引用会抛出 TypeError
+        // JSON.stringify throws a TypeError on circular references
         errMsg = String(err);
         logUtil.e(`Failed to serialize err...${String(e)}`);
       }
     }
 
-    // ---- 2. 获取出错组件名 ----
-    // `<script setup>` 的 SFC 编译产物把组件名写在 `__name` 上（`$options.name`
-    // 仅 defineOptions/选项式组件有值），依次回退：name → __name → 'unknown component'
+    // ---- 2. Get the failing component's name ----
+    // The SFC compilation output of `<script setup>` puts the component name on
+    // `__name` (`$options.name` is only populated for defineOptions/Options API
+    // components); fall back in order: name → __name → 'unknown component'
     const opts: Partial<{ name: string; __name: string }> | undefined = instance?.$options;
     const rawName = opts?.name || opts?.__name;
     const target = !isEmpty(rawName) ? String(rawName) : 'unknown component';
 
-    // ---- 3. 记录错误日志 ----
+    // ---- 3. Write the error log ----
     logUtil.e(`${target} happened error...`, errMsg);
 
-    // ---- 4. 显示 Toast 提示 ----
+    // ---- 4. Show the toast notification ----
     if (msgRef) {
       msgRef.value?.open?.({
         message: errMsg,
         type: 'text',
         position: 'bottom',
-        duration: 1500,
+        duration: 1500
       });
     } else {
       toastError(t(PAGE_ERROR_KEY), errMsg);
     }
 
-    // ---- 5. 阻止错误继续向上传播 ----
+    // ---- 5. Stop the error from propagating further up ----
     return false;
   });
 }
