@@ -18,6 +18,7 @@ from .middlewares import (
     HeartbeatStaleness,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
+from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .repetition_guard_wrapper import RepetitionGuardWrapper
 
 # # 只有幂等的工具才能并行执行，非幂等串行执行
@@ -121,6 +122,7 @@ async def built_agent(
                 IterationBudget(90),
                 ToolGuardrails(),
                 ToolCallNormalize(),
+                SubagentCompletionDrainMiddleware(),
                 HeartbeatStaleness(),
                 HumanInTheLoop(HITLConfig()),
                 Summarization(

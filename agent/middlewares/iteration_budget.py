@@ -27,6 +27,8 @@ from langchain.agents.middleware.types import (
 
 from runtime import state_register_mem
 
+from agent.middlewares.subagent_completion_drain import _is_internal_completion
+
 
 class IterationBudget(AgentMiddleware):
     """Enforce a hard cap on the total number of model + tool iterations per turn.
@@ -108,6 +110,9 @@ class IterationBudget(AgentMiddleware):
         request: ModelRequest[ContextT],
     ) -> AIMessage | None:
         """Check budget and return terminal AIMessage if exhausted, or None to proceed."""
+        # Task 7: internal completion-notification turns are not paid iterations.
+        if _is_internal_completion((request.state.get("messages") or [None])[-1]):
+            return None
         session_id = self._get_session_id(request.state)
 
         if not self._consume(session_id):

@@ -73,6 +73,7 @@ from agent.middlewares.output_repetition_guard import (
     _STREAM_WARNING,
     _REASONING_KEYS,
 )
+from agent.middlewares.subagent_completion_drain import _is_internal_completion
 
 # Reasoning keys used to extract reasoning text from ``additional_kwargs``.
 # Re-exported from the middleware module so the wrapper and middleware stay
@@ -283,6 +284,9 @@ class RepetitionGuardWrapper:
         Mirrors ``OutputRepetitionGuard._wrap_model_call_post`` but operates
         on a standalone message instead of a middleware ``ModelRequest``.
         """
+        # Task 7: internal subagent-completion notifications never enter history.
+        if _is_internal_completion(ai_msg):
+            return None
         # Skip if model is making tool calls
         tool_calls = getattr(ai_msg, "tool_calls", None)
         if tool_calls:
