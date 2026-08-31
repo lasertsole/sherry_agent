@@ -112,14 +112,6 @@ class RecordingFakeChatModel(BaseChatModel):
         yield chunk
 
     async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
-        """Async mirror of :meth:`_stream` - native generator, no executor hop."""
-        self.received.append(list(messages))
-        chunk = ChatGenerationChunk(message=AIMessageChunk(content=self.response_text))
-        if run_manager is not None:
-            run_manager.on_llm_new_token(self.response_text, chunk=chunk)
-        yield chunk
-
-    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
         # Streaming path: the production stream filter (messages.py) only
         # forwards AIMessageChunk items — a _generate-only fake arrives as a
         # plain AIMessage and its text is silently dropped. Yield one real
