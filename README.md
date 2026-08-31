@@ -168,7 +168,7 @@ EMA_AI_agent/
 │   ├── timer_call_register.py # Timer registry
 │   └── _callback_executor.py # Async callback executor
 │
-├── scripts/                # Utility scripts (currently no source files)
+├── scripts/                # Utility scripts (run_tests_split.py: process-isolated test runner)
 │
 ├── server/                 # Robyn backend service
 │   ├── __main__.py         # Server entry point (python -m server)
@@ -312,6 +312,45 @@ pnpm tauri dev    # native desktop mode
 ```
 
 The client connects to the Python backend at `http://127.0.0.1:8080` by default (configurable via `VITE_API_BACK_URL` in `client/.env`). See the [client README](client/README.md) for details.
+
+---
+
+## 🧪 Testing
+
+Tests live under `tests/{unit,integration,system,module}` and run with **pytest** via uv (`uv run pytest` for a single test file or a small selection).
+
+### Recommended: the process-isolated runner
+
+For the full suite (and for CI), use the split runner — it executes the suite in **two sequential pytest processes** (never parallel), aggregates their exit codes, and prints a per-group summary plus a final verdict (exit code 0 only if both groups pass):
+
+```bash
+uv run python scripts/run_tests_split.py                  # hermetic suite (default, llm_e2e excluded)
+uv run python scripts/run_tests_split.py --with-llm-e2e   # ONLY the real-LLM e2e tests (dedicated-job mode)
+uv run python scripts/run_tests_split.py -- -k spawn -q   # args after `--` are forwarded to pytest
+```
+
+| Group | Directories | Contents |
+| :---- | :---------- | :------- |
+| **A** | `tests/unit` | unit tests (home of the `sys.modules` stubs described below) |
+| **B** | `tests/integration`, `tests/system`, `tests/module` | hermetic integration / system / module tests |
+
+**Why two processes?** `tests/unit/subagent/conftest.py` installs stub callables into process-global `sys.modules` at conftest *import* time. In a single-process full-suite run, pytest imports every conftest and test module during collection — before any test executes — so those stubs are live for the whole process and leak across directories: lazy (call-time) imports resolve the stub, while modules that bound the real object earlier keep stale bindings. The result is confusing, order-dependent failures in suites far away from `tests/unit` (e.g. skill-scope assertions seeing a stub's fixed skill list, `TypeError` tracebacks naming conftest lambdas). Running the groups in separate processes makes this cross-suite pollution structurally impossible. (The stubs themselves are restore-safe since `c730a46`; the runner is the defense-in-depth operational layer.)
+
+**Windows note:** child pytest processes get `PYTHONIOENCODING=utf-8` in their environment and the runner captures their output with `errors="replace"`, so GBK console codepages can neither corrupt the output nor crash the run.
+
+### Real-LLM e2e tests (`llm_e2e` marker)
+
+Three tests in `tests/integration/` (`test_real_e2e.py`, `test_spawn_direct_e2e.py`) call **real LLM APIs**. They are:
+
+- **deselected by default** (`-m "not llm_e2e"` — set both in `pyproject.toml` addopts and by the runner),
+- bounded by `@pytest.mark.timeout(300)` (pytest-timeout),
+- run explicitly, in a **dedicated job**: `uv run python scripts/run_tests_split.py --with-llm-e2e` (selects `-m llm_e2e`) or `uv run pytest -m llm_e2e`.
+
+**Expected runtimes** (solo, real backend): simple task ≈ 30–60 s; complex worst case ≈ 10 min; concurrent tasks ≈ 2–9 min. A run that exceeds these budgets is a real hang, not normal slowness — the 300 s per-test timeout bounds it.
+
+**CI:** this repository currently has no CI configuration; `scripts/run_tests_split.py` is the **CI-ready entry point** — wire `uv run python scripts/run_tests_split.py` into the primary pipeline (hermetic; two processes ≈ 7 min total) and schedule `--with-llm-e2e` as a separate, slower job (it costs API tokens; never run it in parallel with other suites).
+
+> **Note:** `tests/full/` and `tests/diagnose/` are auxiliary/experimental directories outside the standard groups above. In particular `tests/full/test_main_agent_e2e.py` is a live-network test that is **not** tagged `llm_e2e` — do not wire it into CI without tagging it first.
 
 ---
 
