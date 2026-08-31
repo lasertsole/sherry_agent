@@ -215,9 +215,10 @@ async def test_spawn_direct_custom_tools_disabled():
 
 
 # CI time budget: observed solo runtime ~15s (REPORT.md experiment C: simple+concurrent
-# combined 24.03s solo). 300s gives ample headroom while bounding a future hang —
-# defense-in-depth for CI, NOT a replacement for the teardown fix (commit ea5872a).
-@pytest.mark.timeout(300)
+# combined 24.03s solo). REPORT.md documents the concurrent envelope as ~2-9 min (up to 540s),
+# so 600s sits above it while still bounding a hang at 10 min — defense-in-depth for CI,
+# NOT a replacement for the teardown fix (commit ea5872a).
+@pytest.mark.timeout(600)
 @pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_spawn_direct_concurrent_tasks():

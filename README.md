@@ -343,10 +343,10 @@ uv run python scripts/run_tests_split.py -- -k spawn -q   # args after `--` are 
 Three tests in `tests/integration/` (`test_real_e2e.py`, `test_spawn_direct_e2e.py`) call **real LLM APIs**. They are:
 
 - **deselected by default** (`-m "not llm_e2e"` — set both in `pyproject.toml` addopts and by the runner),
-- bounded by `@pytest.mark.timeout(300)` (pytest-timeout),
+- bounded by `@pytest.mark.timeout` budgets (pytest-timeout): 300 s per simple test, 600 s for the concurrent test,
 - run explicitly, in a **dedicated job**: `uv run python scripts/run_tests_split.py --with-llm-e2e` (selects `-m llm_e2e`) or `uv run pytest -m llm_e2e`.
 
-**Expected runtimes** (solo, real backend): simple task ≈ 30–60 s; complex worst case ≈ 10 min; concurrent tasks ≈ 2–9 min. A run that exceeds these budgets is a real hang, not normal slowness — the 300 s per-test timeout bounds it.
+**Expected runtimes** (solo, real backend): simple task ≈ 30–60 s; complex worst case ≈ 10 min; concurrent tasks ≈ 2–9 min. A run that exceeds these budgets is a real hang, not normal slowness — the per-test timeout bounds it (300 s simple / 600 s concurrent).
 
 **CI:** this repository currently has no CI configuration; `scripts/run_tests_split.py` is the **CI-ready entry point** — wire `uv run python scripts/run_tests_split.py` into the primary pipeline (hermetic; two processes ≈ 7 min total) and schedule `--with-llm-e2e` as a separate, slower job (it costs API tokens; never run it in parallel with other suites).
 
