@@ -60,6 +60,10 @@ async def _poll_run(
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
+# CI time budget: observed solo runtime ~10s (REPORT.md experiment C: simple+concurrent
+# combined 24.03s solo). 300s gives ample headroom while bounding a future hang —
+# defense-in-depth for CI, NOT a replacement for the teardown fix (commit ea5872a).
+@pytest.mark.timeout(300)
 @pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_spawn_direct_simple_task():
@@ -210,6 +214,10 @@ async def test_spawn_direct_custom_tools_disabled():
     logger.info("✓ spawn_subagent_direct blockade handling verified")
 
 
+# CI time budget: observed solo runtime ~15s (REPORT.md experiment C: simple+concurrent
+# combined 24.03s solo). 300s gives ample headroom while bounding a future hang —
+# defense-in-depth for CI, NOT a replacement for the teardown fix (commit ea5872a).
+@pytest.mark.timeout(300)
 @pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_spawn_direct_concurrent_tasks():

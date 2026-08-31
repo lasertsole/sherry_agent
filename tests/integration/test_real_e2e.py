@@ -75,6 +75,10 @@ def _make_run(
     )
 
 
+# CI time budget: observed solo runtime ~13s (REPORT.md experiment A: 13.33s; experiment D: 9.54s).
+# 300s ≈ 20x headroom while bounding a future hang — defense-in-depth for CI, NOT a replacement
+# for the teardown fix (commit ea5872a already eliminated the exit hang without timeout masking).
+@pytest.mark.timeout(300)
 @pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_execute_subagent_simple_task() -> None:
