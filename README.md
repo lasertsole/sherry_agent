@@ -271,7 +271,7 @@ cp .env.example .env
 | `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model) |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |
-| `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector security scanner switches (on by default) |
+| `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector security scanner switch (on by default); LLM semantic analysis is opt-in (off by default) and requires a provider supporting json_schema structured output |
 | `TOOL_CALL_TIMEOUT_MINUTES` / `LOG_LEVEL` | — | Tool timeout (5) and log level (INFO) |
 | `WORKSPACE_TEMPLATE_LANG` | — | Persona template language: `en` / `zh` / `ja` / `ko` (lazy-copied on first use) |
 | `LANGSMITH_*` | — | Optional LangSmith tracing |

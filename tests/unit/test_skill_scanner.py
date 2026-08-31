@@ -16,6 +16,7 @@ required. They exercise:
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
 
 from server.service.skill_scanner import (
     ScanResult,
@@ -25,8 +26,20 @@ from server.service.skill_scanner import (
     _resolve_backend,
     _extract_scan_result,
     _normalise_findings,
+    _llm_env,
+    _cli_timeout,
+    _CLI_TIMEOUT,
     scan_skill,
 )
+
+
+@pytest.fixture(autouse=True)
+def _scanner_gate_open():
+    """Immunity to ambient SKILL_SCANNER_ENABLED: tests control the gate via
+    attribute patches; the runner sets the env var to 0, which would otherwise
+    short-circuit _resolve_backend before patched backends are reached."""
+    with patch("server.service.skill_scanner._ENABLED_ENV", True):
+        yield
 
 
 def _file_skill_dir(tmp_path: Path) -> Path:
@@ -387,3 +400,87 @@ class TestScanResultPredicates:
         assert d["risk_recommendation"] == "CAUTION"
         assert d["backend"] == "cli"
         assert d["findings"][0]["title"] == "x"
+
+
+# ---------------------------------------------------------------------------
+# _llm_env / _cli_timeout — LLM opt-in flag + operator timeout override
+# ---------------------------------------------------------------------------
+
+#: Env vars scrubbed before every _llm_env/_cli_timeout test. The ambient
+#: machine .env sets AUXILIARY_LLM_* (and operator shells may export the
+#: OPENAI_*/SKILLSPECTOR_* overrides), so each test starts from a clean slate.
+_LLM_ENV_SCRUB = (
+    "AUXILIARY_LLM_API_BASE",
+    "AUXILIARY_LLM_API_KEY",
+    "AUXILIARY_LLM_API_NAME",
+    "SKILL_SCANNER_LLM",
+    "SKILL_SCANNER_TIMEOUT",
+    "OPENAI_BASE_URL",
+    "OPENAI_API_KEY",
+    "SKILLSPECTOR_PROVIDER",
+    "SKILLSPECTOR_MODEL",
+)
+
+
+def _scrub_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _LLM_ENV_SCRUB:
+        monkeypatch.delenv(name, raising=False)
+
+
+class TestLlmEnv:
+    def test_flag_unset_returns_empty_even_with_creds(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        # SKILL_SCANNER_LLM defaults to OFF. _LLM_ENABLED_ENV is read once at
+        # import time, so the flag's effect is pinned via the module constant
+        # (an env-only setenv cannot rebind it).
+        monkeypatch.setattr("server.service.skill_scanner._LLM_ENABLED_ENV", False)
+        monkeypatch.setenv("AUXILIARY_LLM_API_BASE", "https://api.example.com/v1")
+        monkeypatch.setenv("AUXILIARY_LLM_API_KEY", "sk-test")
+        assert _llm_env() == {}
+
+    def test_flag_on_with_creds_forwards_env(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        monkeypatch.setattr("server.service.skill_scanner._LLM_ENABLED_ENV", True)
+        monkeypatch.setenv("SKILL_SCANNER_LLM", "1")
+        monkeypatch.setenv("AUXILIARY_LLM_API_BASE", "https://api.example.com/v1")
+        monkeypatch.setenv("AUXILIARY_LLM_API_KEY", "sk-test")
+        monkeypatch.setenv("AUXILIARY_LLM_API_NAME", "glm-test")
+        assert _llm_env() == {
+            "SKILLSPECTOR_PROVIDER": "openai",
+            "OPENAI_BASE_URL": "https://api.example.com/v1",
+            "OPENAI_API_KEY": "sk-test",
+            "SKILLSPECTOR_MODEL": "glm-test",
+        }
+
+    def test_flag_on_without_creds_returns_empty(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        monkeypatch.setattr("server.service.skill_scanner._LLM_ENABLED_ENV", True)
+        monkeypatch.setenv("SKILL_SCANNER_LLM", "1")
+        assert _llm_env() == {}
+
+
+class TestCliTimeout:
+    def test_unset_returns_default(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        assert _CLI_TIMEOUT == 120
+        assert _cli_timeout() == 120
+
+    def test_valid_override(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        monkeypatch.setenv("SKILL_SCANNER_TIMEOUT", "300")
+        assert _cli_timeout() == 300
+
+    def test_zero_clamped_to_one(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        monkeypatch.setenv("SKILL_SCANNER_TIMEOUT", "0")
+        assert _cli_timeout() == 1
+
+    def test_negative_clamped_to_one(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        monkeypatch.setenv("SKILL_SCANNER_TIMEOUT", "-5")
+        assert _cli_timeout() == 1
+
+    def test_invalid_falls_back_to_default(self, monkeypatch):
+        _scrub_llm_env(monkeypatch)
+        monkeypatch.setenv("SKILL_SCANNER_TIMEOUT", "abc")
+        assert _cli_timeout() == 120
