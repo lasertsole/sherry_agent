@@ -1,0 +1,80 @@
+Process-isolated test runner (2 sequential pytest processes)
+  repo root : C:\app\code\project\sherry_agent
+  llm_e2e   : DESELECTED (default)
+
+======================================================================
+GROUP A: tests/unit
+  $ c:\app\code\project\sherry_agent\.venv\Scripts\python.exe -m pytest tests/unit -q -m not llm_e2e
+======================================================================
+[e2e_sitecustomize] skipped (not E2E mode; ROOT SITECUSTOMIZE)
+2026-08-31 23:09:46.067 | INFO     | agent.tools.subagent.registry.state:restore_runs_from_disk:35 - Restored 1952 subagent runs from SQLite
+........................................................................ [  6%]
+........................................................................ [ 12%]
+........................................................................ [ 18%]
+........................................................................ [ 24%]
+........................................................................ [ 31%]
+........................................................................ [ 37%]
+........................................................................ [ 43%]
+...............................s........................................ [ 49%]
+........................................................................ [ 55%]
+........................................................................ [ 62%]
+....................................................................s... [ 68%]
+........................................................................ [ 74%]
+........................................................................ [ 80%]
+........................................................................ [ 86%]
+........................................................................ [ 93%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+============================== warnings summary ===============================
+agent\tools\file_tools\write_file.py:9
+  C:\app\code\project\sherry_agent\agent\tools\file_tools\write_file.py:9: DeprecationWarning: `langchain-community` is being sunset and is no longer actively maintained. See https://github.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages.
+    from langchain_community.tools.file_management import WriteFileTool
+
+agent\tools\python_repl.py:12
+  C:\app\code\project\sherry_agent\agent\tools\python_repl.py:12: DeprecationWarning: `langchain-experimental` is being sunset and is no longer actively maintained. See https://github.com/langchain-ai/langchain-experimental/issues/87 for details.
+    from langchain_experimental.tools import PythonREPLTool
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1157 passed, 2 skipped, 2 warnings in 136.64s (0:02:16)
+
+======================================================================
+GROUP B: integration + system + module
+  $ c:\app\code\project\sherry_agent\.venv\Scripts\python.exe -m pytest tests/integration tests/system tests/module -q -m not llm_e2e
+======================================================================
+[e2e_sitecustomize] skipped (not E2E mode; ROOT SITECUSTOMIZE)
+........................................................................ [ 30%]
+........................................................................ [ 61%]
+........................................................................ [ 91%]
+....................                                                     [100%]
+============================== warnings summary ===============================
+agent\tools\file_tools\write_file.py:9
+  C:\app\code\project\sherry_agent\agent\tools\file_tools\write_file.py:9: DeprecationWarning: `langchain-community` is being sunset and is no longer actively maintained. See https://github.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages.
+    from langchain_community.tools.file_management import WriteFileTool
+
+agent\tools\python_repl.py:12
+  C:\app\code\project\sherry_agent\agent\tools\python_repl.py:12: DeprecationWarning: `langchain-experimental` is being sunset and is no longer actively maintained. See https://github.com/langchain-ai/langchain-experimental/issues/87 for details.
+    from langchain_experimental.tools import PythonREPLTool
+
+tests/integration/test_spawn_direct_e2e.py::test_spawn_direct_complex_multi_step_task
+tests/integration/test_spawn_direct_e2e.py::test_spawn_direct_complex_multi_step_task
+tests/integration/test_spawn_direct_e2e.py::test_spawn_direct_complex_multi_step_task
+tests/integration/test_spawn_direct_e2e.py::test_spawn_direct_complex_multi_step_task
+  c:\app\code\project\sherry_agent\.venv\Lib\site-packages\langchain_community\tools\shell\tool.py:33: UserWarning: The shell tool has no safeguards by default. Use at your own risk.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+236 passed, 3 deselected, 6 warnings in 248.06s (0:04:08)
+
+======================================================================
+PER-GROUP SUMMARY
+======================================================================
+  GROUP A (tests/unit): PASS  [rc=0 all tests passed, 139.0s]
+  GROUP B (integration + system + module): PASS  [rc=0 all tests passed, 250.4s]
+======================================================================
+FINAL VERDICT: PASS - all groups green
+
+===== stderr =====
+[e2e_sitecustomize] skipped (not E2E mode; ROOT SITECUSTOMIZE)
+
+
+[gate=split exit_code=0 elapsed=389.5s]
