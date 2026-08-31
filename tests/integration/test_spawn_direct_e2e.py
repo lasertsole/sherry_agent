@@ -60,6 +60,7 @@ async def _poll_run(
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_spawn_direct_simple_task():
     """spawn_subagent_direct with a trivial task—ensures the full pipeline works."""
@@ -209,6 +210,7 @@ async def test_spawn_direct_custom_tools_disabled():
     logger.info("✓ spawn_subagent_direct blockade handling verified")
 
 
+@pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_spawn_direct_concurrent_tasks():
     """Spawn 3 independent subagents concurrently—validates parallel execution.

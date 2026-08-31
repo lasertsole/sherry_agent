@@ -75,6 +75,7 @@ def _make_run(
     )
 
 
+@pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_execute_subagent_simple_task() -> None:
     """Use a real DeepSeek call to say hello world and verify the result."""

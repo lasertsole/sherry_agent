@@ -12,6 +12,11 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "unit: mark test as unit test")
     config.addinivalue_line("markers", "module: mark test as module test")
     config.addinivalue_line("markers", "system: mark test as system test")
+    config.addinivalue_line(
+        "markers",
+        "llm_e2e: real-LLM network e2e test (slow, costs tokens, order-sensitive; "
+        "deselected by default — run explicitly with `-m llm_e2e`)",
+    )
 
 
 @pytest.fixture

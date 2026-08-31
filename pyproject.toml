@@ -42,6 +42,11 @@ dev = [
     "pytest-asyncio>=1.4.0",
 ]
 
+[tool.pytest.ini_options]
+# Real-LLM network e2e tests are slow, cost API tokens and are order-sensitive:
+# deselect them by default; run them explicitly with `pytest -m llm_e2e`.
+addopts = "-m 'not llm_e2e'"
+
 [tool.uv.sources]
 editdistance = { path = "models/STT_model/editdistance-0.8.1-py3-none-any.whl" }
 
