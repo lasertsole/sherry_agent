@@ -131,8 +131,12 @@ def _setup_subagent_alias():
     # from the package (runtime/state_register.py does
     # `from runtime import Register`, middlewares do
     # `from runtime import state_register_mem`). Register MUST be bound
-    # before importing state_register. `clear_all_register_sessions` stays a
-    # no-op so subagent runs can't wipe session state mid-test.
+    # before importing state_register. `clear_all_register_sessions` binds
+    # the REAL implementation: a 0-arg no-op lambda here used to overwrite
+    # the attribute on the already-real runtime module in full-suite runs
+    # and crash tests/system (TypeError: takes 0 positional arguments but 1
+    # was given). Binding the real function is signature-compatible and
+    # keeps the package alias a pass-through, not a behavior swap.
     import runtime.core  # noqa: F401  (side-effect: must be in sys.modules for aliasing below)
 
     sys.modules["runtime"].Register = sys.modules["runtime.core"].Register
@@ -141,7 +145,9 @@ def _setup_subagent_alias():
     sys.modules["runtime"].state_register_mem = sys.modules[
         "runtime.state_register"
     ].state_register_mem
-    sys.modules["runtime"].clear_all_register_sessions = lambda: None
+    sys.modules["runtime"].clear_all_register_sessions = (
+        sys.modules["runtime.core"].clear_all_register_sessions
+    )
 
     sys.modules["agent"].tools = sys.modules["agent.tools"]
     sys.modules["agent.tools"].build_main_tools = lambda: []
@@ -171,58 +177,69 @@ def _setup_subagent_alias():
     sys.modules["agent.core"].StateSchema = dict
 
     # `agent.tools.subagent.delegate` does `from skills.loader import
-    # get_skills_text, scan_skills` at module scope. The stubbed `skills` is an
-    # empty module, so a real submodule can't be imported. Inject a stub
-    # `skills.loader` module exposing configurable, deterministic functions so
-    # the import chain resolves and tests can assert on injection behavior.
-    _skills_loader = stdlib_types.ModuleType("skills.loader")
+    # get_skills_text, scan_skills` at module scope. When nothing has loaded
+    # the real loader yet (tests/unit/subagent solo), inject a stub
+    # `skills.loader` module exposing configurable, deterministic functions
+    # so the import chain resolves and tests can assert on injection
+    # behavior. If the REAL `skills.loader` is already in sys.modules
+    # (full-suite collection imports it via tests/module + tests/integration
+    # before this conftest loads), leave it untouched: call-time imports
+    # (skill_list.py:42) must resolve the real module so test monkeypatches
+    # stay visible, and unconditionally swapping it here is exactly what
+    # leaked the stub's fixed skill list across suites.
+    if "skills.loader" not in sys.modules:
+        _skills_loader = stdlib_types.ModuleType("skills.loader")
 
-    # Scope data mirrors the real frontmatter: clawhub/skill_creator are
-    # `scope: main_only`, so delegate scope-validation drops them for
-    # subagent callers (replaces the old hardcoded _AUTH_SKILLS mechanism).
-    _SKILL_SCOPES = {
-        "web_search": "all",
-        "code_interpreter": "all",
-        "skill_creator": "main_only",
-        "clawhub": "main_only",
-    }
+        # Scope data mirrors the real frontmatter: clawhub/skill_creator are
+        # `scope: main_only`, so delegate scope-validation drops them for
+        # subagent callers (replaces the old hardcoded _AUTH_SKILLS mechanism).
+        _SKILL_SCOPES = {
+            "web_search": "all",
+            "code_interpreter": "all",
+            "skill_creator": "main_only",
+            "clawhub": "main_only",
+        }
 
-    def _scan_skills_stub(use_cache: bool = True) -> list[dict]:
-        return [
-            {"name": "web_search", "scope": "all"},
-            {"name": "code_interpreter", "scope": "all"},
-            {"name": "skill_creator", "scope": "main_only"},
-            {"name": "clawhub", "scope": "main_only"},
-        ]
+        def _scan_skills_stub(use_cache: bool = True) -> list[dict]:
+            return [
+                {"name": "web_search", "scope": "all"},
+                {"name": "code_interpreter", "scope": "all"},
+                {"name": "skill_creator", "scope": "main_only"},
+                {"name": "clawhub", "scope": "main_only"},
+            ]
 
-    def _get_skills_text_stub(
-        selected_skill_names: list[str] | None = None,
-        *,
-        caller_scope: str = "main",
-    ) -> str:
-        if not selected_skill_names:
-            return ""
-        names = [
-            n
-            for n in sorted(selected_skill_names)
-            if not (caller_scope == "subagent" and _SKILL_SCOPES.get(n) == "main_only")
-        ]
-        return "<skills>\n" + "\n".join(f'  <skill name="{n}"/>' for n in names) + "\n</skills>"
+        def _get_skills_text_stub(
+            selected_skill_names: list[str] | None = None,
+            *,
+            caller_scope: str = "main",
+        ) -> str:
+            if not selected_skill_names:
+                return ""
+            names = [
+                n
+                for n in sorted(selected_skill_names)
+                if not (caller_scope == "subagent" and _SKILL_SCOPES.get(n) == "main_only")
+            ]
+            return (
+                "<skills>\n"
+                + "\n".join(f'  <skill name="{n}"/>' for n in names)
+                + "\n</skills>"
+            )
 
-    _skills_loader.scan_skills = _scan_skills_stub
-    _skills_loader.get_skills_text = _get_skills_text_stub
+        _skills_loader.scan_skills = _scan_skills_stub
+        _skills_loader.get_skills_text = _get_skills_text_stub
 
-    # server/trigger/http/skills.py additionally imports `parse_frontmatter`
-    # from skills.loader — bind the real implementation (pure text parsing
-    # with only stdlib/yaml/config imports).
-    _loader_spec = importlib.util.spec_from_file_location(
-        "_skills_loader_real", _ROOT / "skills" / "loader.py"
-    )
-    _real_loader = importlib.util.module_from_spec(_loader_spec)
-    _loader_spec.loader.exec_module(_real_loader)
-    _skills_loader.parse_frontmatter = _real_loader.parse_frontmatter
+        # server/trigger/http/skills.py additionally imports `parse_frontmatter`
+        # from skills.loader — bind the real implementation (pure text parsing
+        # with only stdlib/yaml/config imports).
+        _loader_spec = importlib.util.spec_from_file_location(
+            "_skills_loader_real", _ROOT / "skills" / "loader.py"
+        )
+        _real_loader = importlib.util.module_from_spec(_loader_spec)
+        _loader_spec.loader.exec_module(_real_loader)
+        _skills_loader.parse_frontmatter = _real_loader.parse_frontmatter
 
-    sys.modules["skills.loader"] = _skills_loader
+        sys.modules["skills.loader"] = _skills_loader
 
     importlib.import_module("agent.tools.subagent")
 
