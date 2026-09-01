@@ -300,7 +300,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 사후(事後)형 출력 반복 감지기로, `WARN → HALT` 에스컬레이션을 가집니다. `agent.middlewares.output_repetition_guard`에서 익스포트되며(`agent/middlewares/__init__.py`에서는 **재익스포트되지 않음**), **워커 파이프라인에만 등록**됩니다.
 
-메인 에이전트에서는 동일한 감지가 **`RepetitionGuardWrapper`**(`agent/repetition_guard_wrapper.py`)를 통해 수행됩니다. 이것은 컴파일된 그래프를 래핑하고, 스트림 수준에서 인터셉트하며(`ainvoke`의 사후 백스톱 포함), 같은 상태 키와 기본값을 재사용합니다. 두 등록 모두 `phantom_stream_guard=True`를 전달합니다.
+메인 에이전트에서는 동일한 감지가 **`RepetitionGuardWrapper`**(`agent/stream_repetition_guard_wrapper.py`)를 통해 수행됩니다. 이것은 컴파일된 그래프를 래핑하고, 스트림 수준에서 인터셉트하며(`ainvoke`의 사후 백스톱 포함), 같은 상태 키와 기본값을 재사용합니다. 두 등록 모두 `phantom_stream_guard=True`를 전달합니다.
 
 **감지 계층**
 
@@ -512,7 +512,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # 이 문서 (+ .zh / .ja / .ko 버전)
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper (이 패키지 바깥에 존재)
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (이 패키지 바깥에 존재)
 ```
 
 ### 익스포트 (`__init__.py`)

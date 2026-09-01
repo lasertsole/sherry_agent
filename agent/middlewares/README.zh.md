@@ -300,7 +300,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 事后式的输出重复检测器，带 `WARN → HALT` 升级。从 `agent.middlewares.output_repetition_guard` 导出（**没有**被 `agent/middlewares/__init__.py` 再导出），且**仅在 worker 流水线中注册**。
 
-主 Agent 的同类检测由 **`RepetitionGuardWrapper`**（`agent/repetition_guard_wrapper.py`）完成：它包装编译后的图，在流式层面拦截（外加 `ainvoke` 事后兜底），复用相同的状态键与默认值。两处注册均传入 `phantom_stream_guard=True`。
+主 Agent 的同类检测由 **`RepetitionGuardWrapper`**（`agent/stream_repetition_guard_wrapper.py`）完成：它包装编译后的图，在流式层面拦截（外加 `ainvoke` 事后兜底），复用相同的状态键与默认值。两处注册均传入 `phantom_stream_guard=True`。
 
 **检测层**
 
@@ -512,7 +512,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # 本文件（+ .zh / .ja / .ko 变体）
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper（位于本包之外）
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper（位于本包之外）
 ```
 
 ### 导出（`__init__.py`）

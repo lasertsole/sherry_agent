@@ -298,7 +298,7 @@ The innermost middleware — closest to the LLM. Extends LangChain's built-in `S
 
 Post-hoc output-repetition detector with `WARN → HALT` escalation. Exported from `agent.middlewares.output_repetition_guard` (it is **not** re-exported by `agent/middlewares/__init__.py`) and registered **only in the worker pipeline**.
 
-For the main agent the same detection runs through **`RepetitionGuardWrapper`** (`agent/repetition_guard_wrapper.py`), which wraps the compiled graph and intercepts at stream level (plus an `ainvoke` post-hoc backstop), reusing the same state keys and defaults. Both registrations pass `phantom_stream_guard=True`.
+For the main agent the same detection runs through **`RepetitionGuardWrapper`** (`agent/stream_repetition_guard_wrapper.py`), which wraps the compiled graph and intercepts at stream level (plus an `ainvoke` post-hoc backstop), reusing the same state keys and defaults. Both registrations pass `phantom_stream_guard=True`.
 
 **Detection layers**
 
@@ -510,7 +510,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # this file (+ .zh / .ja / .ko variants)
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper (lives outside this package)
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (lives outside this package)
 ```
 
 ### Exports (`__init__.py`)

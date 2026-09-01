@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 from langchain_core.messages import AIMessageChunk
 
-from agent.repetition_guard_wrapper import RepetitionGuardWrapper
+from agent.stream_repetition_guard_wrapper import RepetitionGuardWrapper
 from type.message import MultiModalMessage
 from server.service import messages as _messages_mod
 

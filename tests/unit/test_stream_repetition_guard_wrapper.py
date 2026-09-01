@@ -1,22 +1,29 @@
-"""Unit tests for agent/repetition_guard_wrapper.py — RepetitionGuardWrapper.
+"""Unit tests for agent/stream_repetition_guard_wrapper.py — RepetitionGuardWrapper (slim).
 
-Covers ALL OutputRepetitionGuard interception functionality at the wrapper level:
+The slim wrapper handles ONLY what the middleware cannot — real-time
+stream-level internal repetition cutting. Cross-call detection, per-turn
+state reset, post-hoc (ainvoke) detection, reasoning repetition and HALT
+escalation are owned by the ``OutputRepetitionGuard`` middleware on the
+inner agent; these tests pin that delegation contract.
+
+Covers:
 
   * Stream passthrough (normal, non-repetitive text)
   * Stream-level internal repetition (sentence, char-run, phrase) — text cut
-  * Cross-call identical output WARN / HALT at model-call boundaries
-  * Reasoning text repetition (independent history)
-  * Per-turn state reset (astream + ainvoke)
-  * Non-streaming (ainvoke) post-hoc detection + replacement
+  * Cross-call detection delegated to the middleware (no wrapper warning,
+    hash histories untouched)
+  * Reasoning chunks forwarded untouched (middleware-owned tracking)
+  * Per-turn state reset delegated to the middleware (wrapper leaves state)
+  * Non-streaming (ainvoke) pure delegation (no post-hoc replacement)
   * Tool-call chunks pass through unaffected
-  * HALT short-circuit (subsequent calls yield halt message)
-  * Session isolation
-  * Multiple model calls within one turn (model -> tool -> model -> ...)
-  * Short content below threshold skipped
-  * Internal warning dedup (once per session)
+  * HALT short-circuit (middleware-set flag yields halt messages)
+  * Session isolation of the stream cut state
+  * Multiple model calls within one turn (per-call reset, warn-once dedupe)
   * Method delegation (aget_state etc.)
   * Stream-mode passthrough (non-"messages" -> no interception)
   * Command resume input (session_id extracted from resume value)
+  * Configuration (char_run_min threshold)
+  * Phantom-stream guard
 """
 
 import asyncio
@@ -114,8 +121,8 @@ from agent.middlewares.output_repetition_guard import (
     _STREAM_WARNING,
 )
 import agent.middlewares.output_repetition_guard as _org_module
-import agent.repetition_guard_wrapper as _wrapper_module
-from agent.repetition_guard_wrapper import RepetitionGuardWrapper
+import agent.stream_repetition_guard_wrapper as _wrapper_module
+from agent.stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
 
 # ======================================================================
@@ -359,35 +366,15 @@ class TestInternalRepetitionStream:
 
 
 # ======================================================================
-# 3. Cross-call repetition at model-call boundaries
+# 3. Cross-call detection delegated to the middleware
 # ======================================================================
 
 
-class TestCrossCallRepetition:
-    """Cross-call identical output detection at model-call boundaries."""
+class TestCrossCallDelegated:
+    """Cross-call detection moved to the middleware — the wrapper does NOT
+    escalate cross-call repetition and does NOT touch the hash history."""
 
-    _CONTENT = "Long identical content that repeats across multiple calls."
-
-    def _two_call_stream(self, content: str):
-        """Build a stream with two model calls separated by a tools update."""
-        return [
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t2")]),
-        ]
-
-    def test_warn_on_second_identical(self, fresh_state):
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=self._two_call_stream(self._CONTENT)),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        out = _collect_stream(wrapper)
-        assert _has_warning(out)
-        assert fresh_state.get_state("s1", _HALTED_KEY, False) is False
-
-    def test_halt_on_third_identical(self, fresh_state):
+    def test_no_cross_call_warning_from_wrapper(self, fresh_state):
         content = "Long identical content that repeats across multiple calls."
         chunks = [
             msg_chunk(content),
@@ -395,142 +382,57 @@ class TestCrossCallRepetition:
             msg_chunk(content),
             update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t2")]),
             msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t3")]),
-            # Extra content after HALT — should NOT be forwarded
-            msg_chunk("This should never reach the client."),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        out = _collect_stream(wrapper)
-        text = _text_parts(out)
-        assert "[Output Repetition Guard]" in text
-        assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
-        # The stream should be cancelled on HALT — text after the 3rd
-        # boundary (which triggers HALT) must NOT appear.
-        assert "This should never reach the client." not in text
-
-    def test_different_content_breaks_streak(self, fresh_state):
-        c1 = "First long distinct output that is definitely different."
-        c2 = "Second long distinct output that is definitely different."
-        c3 = "Third completely unrelated output, different from both."
-        chunks = [
-            msg_chunk(c1),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(c2),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t2")]),
-            msg_chunk(c3),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        out = _collect_stream(wrapper)
-        assert not _has_warning(out)
-
-    def test_history_recorded(self, fresh_state):
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=self._two_call_stream(self._CONTENT)),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        _collect_stream(wrapper)
-        hist = fresh_state.get_state("s1", _HISTORY_KEY, [])
-        assert len(hist) >= 1
-
-    def test_short_content_skipped_in_cross_call(self, fresh_state):
-        short = "hi"  # below _MIN_CONTENT_LENGTH
-        chunks = [
-            msg_chunk(short),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(short),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=1,
-            max_identical_outputs=2,
-        )
-        out = _collect_stream(wrapper)
-        assert not _has_warning(out)
-        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == []
-
-
-# ======================================================================
-# 4. Reasoning text repetition
-# ======================================================================
-
-
-class TestReasoningRepetition:
-    """Reasoning text tracked independently from visible output."""
-
-    def test_reasoning_history_separate(self, fresh_state):
-        reasoning = "stuck reasoning loop repeated again and again verbatim"
-        visible = "A visible answer that changes each call to be unique."
-        chunks = [
-            msg_chunk(visible, reasoning=reasoning),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk("Different visible text here to avoid output match.", reasoning=reasoning),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t2")]),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        out = _collect_stream(wrapper)
-        # Reasoning repetition should trigger a warning at the boundary
-        assert _has_warning(out)
-        # Reasoning history should have entries
-        rhist = fresh_state.get_state("s1", _REASONING_HISTORY_KEY, [])
-        assert len(rhist) >= 1
-
-    def test_reasoning_short_skipped(self, fresh_state):
-        short_reasoning = "abc"
-        chunks = [
-            msg_chunk("Long enough visible output text.", reasoning=short_reasoning),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk("Different visible output text here.", reasoning=short_reasoning),
         ]
         wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
-        _collect_stream(wrapper)
-        # Below _MIN_CONTENT_LENGTH -> not tracked
+        out = _collect_stream(wrapper)
+        # three identical model calls: the wrapper itself never warns —
+        # cross-call escalation is the middleware's wrap_model_call job
+        assert not _has_warning(out)
+        # the middleware-owned hash history is untouched by the wrapper
+        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == []
+
+    def test_reasoning_chunks_forwarded_untouched(self, fresh_state):
+        reasoning = "some stuck reasoning chain text"
+        chunks = [
+            msg_chunk("A visible answer that is unique.", reasoning=reasoning),
+            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
+            msg_chunk("Another visible answer, also unique.", reasoning=reasoning),
+        ]
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
+        out = _collect_stream(wrapper)
+        assert not _has_warning(out)
+        # reasoning repetition tracking is middleware-owned; untouched here
+        # reasoning repetition tracking is middleware-owned; untouched here
         assert fresh_state.get_state("s1", _REASONING_HISTORY_KEY, []) == []
 
 
 # ======================================================================
-# 5. Per-turn state reset
+# 4. Per-turn state reset delegated to the middleware
 # ======================================================================
 
 
-class TestPerTurnReset:
-    """State is cleared at the start of each astream/ainvoke call."""
+class TestStateResetDelegated:
+    """Per-turn state reset moved to the middleware's before_agent — the
+    wrapper neither resets nor writes cross-call state."""
 
-    def test_astream_resets_state(self, fresh_state):
-        # Seed stale state
+    def test_astream_leaves_existing_state_untouched(self, fresh_state):
         fresh_state.set_state("s1", _HISTORY_KEY, ["stale"])
-        fresh_state.set_state("s1", _HALTED_KEY, True)
         fresh_state.set_state("s1", _INTERNAL_WARNED_KEY, True)
 
         wrapper = RepetitionGuardWrapper(
             MockAgent(stream_chunks=[msg_chunk("Normal varied response text.")])
         )
-        _collect_stream(wrapper)
+        out = _collect_stream(wrapper)
 
-        assert (
-            fresh_state.get_state("s1", _HISTORY_KEY, "X") == []
-            or len(fresh_state.get_state("s1", _HISTORY_KEY, [])) <= 1
-        )
-        # HALTED and INTERNAL_WARNED must be reset before the turn starts
-        # (they may be set again during the turn, but only if repetition
-        # actually occurs — which it won't for clean text).
-        assert fresh_state.get_state("s1", _HALTED_KEY, False) is False
+        assert not _has_warning(out)
+        # wrapper neither reset nor appended to the middleware-owned history
+        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == ["stale"]
+        # internal-warn flag is NOT cleared by the wrapper either
+        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is True
 
-    def test_ainvoke_resets_state(self, fresh_state):
-        fresh_state.set_state("s1", _HISTORY_KEY, ["stale"])
+    def test_ainvoke_leaves_state_untouched(self, fresh_state):
         fresh_state.set_state("s1", _HALTED_KEY, True)
+        fresh_state.set_state("s1", _HISTORY_KEY, ["stale"])
 
         result = {"messages": [AIMessage(content="Normal clean text response.")]}
         wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
@@ -538,32 +440,23 @@ class TestPerTurnReset:
         async def _run():
             return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
-        asyncio.run(_run())
-        assert fresh_state.get_state("s1", _HALTED_KEY, False) is False
-
-    def test_reset_allows_rearming(self, fresh_state):
-        """After per-turn reset, a fresh repetitive stream warns again."""
-        repetitive = "字" * 40
-        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=[msg_chunk(repetitive)]))
-        # First turn — warns
-        out1 = _collect_stream(wrapper, session_id="s1")
-        assert _has_warning(out1)
-        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is True
-
-        # Second turn — reset clears the flag, warns again
-        out2 = _collect_stream(wrapper, session_id="s1")
-        assert _has_warning(out2)
+        out = asyncio.run(_run())
+        # pure delegation: message untouched, state untouched
+        assert out["messages"][-1].content == "Normal clean text response."
+        assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
+        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == ["stale"]
 
 
 # ======================================================================
-# 6. Non-streaming (ainvoke) post-hoc detection
+# 5. Non-streaming (ainvoke) pure delegation
 # ======================================================================
 
 
-class TestNonStreamingPostHoc:
-    """ainvoke path — post-hoc detection on the final AIMessage."""
+class TestAinvokeDelegation:
+    """ainvoke is a pure delegation — post-hoc detection lives in the
+    middleware's wrap_model_call on the inner agent."""
 
-    def test_repetitive_content_replaced(self, fresh_state):
+    def test_repetitive_content_returned_unchanged(self, fresh_state):
         repetitive = "字" * 40
         result = {
             "messages": [AIMessage(content=repetitive)],
@@ -575,23 +468,11 @@ class TestNonStreamingPostHoc:
             return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
         out = asyncio.run(_run())
-        last = out["messages"][-1]
-        assert isinstance(last, AIMessage)
-        assert "[Output Repetition Guard]" in last.content
+        # wrapper performs NO post-hoc replacement — the middleware does
+        assert out["messages"][-1].content == repetitive
+        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is False
 
-    def test_clean_content_passes_through(self, fresh_state):
-        clean = "This is a normal and varied response about multiple topics."
-        result = {"messages": [AIMessage(content=clean)], "session_id": "s1"}
-        wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
-
-        async def _run():
-            return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
-
-        out = asyncio.run(_run())
-        assert out["messages"][-1].content == clean
-
-    def test_tool_call_message_skipped(self, fresh_state):
-        """Messages with tool_calls are not checked."""
+    def test_tool_call_message_returned_unchanged(self, fresh_state):
         msg = AIMessage(
             content="",
             tool_calls=[{"name": "web_search", "args": {}, "id": "tc1"}],
@@ -603,22 +484,7 @@ class TestNonStreamingPostHoc:
             return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
 
         out = asyncio.run(_run())
-        # Should pass through unchanged (tool_calls -> no detection)
         assert out["messages"][-1] is msg
-
-    def test_internal_repetition_in_ainvoke_warns(self, fresh_state):
-        """ainvoke detects internal repetition (char-run) in the result."""
-        repetitive = "字" * 40
-        result = {"messages": [AIMessage(content=repetitive)], "session_id": "s1"}
-        wrapper = RepetitionGuardWrapper(MockAgent(invoke_result=result))
-
-        async def _run():
-            return await wrapper.ainvoke(input={"session_id": "s1", "messages": []}, config={})
-
-        out = asyncio.run(_run())
-        last = out["messages"][-1]
-        assert "[Output Repetition Guard]" in last.content
-        assert "highly repetitive" in last.content
 
 
 # ======================================================================
@@ -662,8 +528,7 @@ class TestHaltedShortCircuit:
         the graph turn), the wrapper yields halt messages instead of
         forwarding model text.
 
-        We simulate this by patching the state check to return True after
-        the per-turn reset.
+        We simulate this by patching the state check to return True.
         """
         chunks = [msg_chunk("This text should be replaced by halt message.")]
         wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
@@ -686,27 +551,6 @@ class TestHaltedShortCircuit:
         # Original text should be suppressed
         assert "This text should be replaced by halt message." not in text
 
-    def test_halt_propagates_after_cross_call_halt(self, fresh_state):
-        """After a cross-call HALT, if the stream somehow continues (e.g.
-        multiple independent model calls not separated by updates), the
-        halt short-circuit kicks in."""
-        content = "Long identical content for cross-call halt detection."
-        chunks = [
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t2")]),
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t3")]),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        _collect_stream(wrapper)
-        assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
-
 
 # ======================================================================
 # 9. Session isolation
@@ -714,28 +558,17 @@ class TestHaltedShortCircuit:
 
 
 class TestSessionIsolation:
-    """Different sessions have independent repetition state."""
+    """Internal-repetition cut state is per-session."""
 
-    def test_independent_sessions(self, fresh_state):
-        content = "Long identical content repeated across calls here."
-        chunks = [
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(content),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        # Session A — warns
+    def test_internal_cut_isolated_per_session(self, fresh_state):
+        repetitive = "字" * 40
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=[msg_chunk(repetitive)]))
+        # Session A — cut + warning
         out_a = _collect_stream(wrapper, session_id="sA")
         assert _has_warning(out_a)
-
-        # Session B — fresh state, no warning (only 2 calls, but B starts fresh)
-        _collect_stream(wrapper, session_id="sB")
-        # B should also warn (same 2 identical calls, warn_after=2)
-        # but its _HALTED_KEY should be independent
+        # Session B — independent state, warns independently
+        out_b = _collect_stream(wrapper, session_id="sB")
+        assert _has_warning(out_b)
         assert fresh_state.get_state("sA", _HALTED_KEY, False) is False
         assert fresh_state.get_state("sB", _HALTED_KEY, False) is False
 
@@ -746,28 +579,25 @@ class TestSessionIsolation:
 
 
 class TestMultipleModelCalls:
-    """model -> tool -> model -> tool -> model: cross-call works across calls."""
+    """model -> tool -> model: per-call tracking resets at boundaries while
+    the internal-warn dedupe persists across calls within a turn."""
 
-    def test_three_calls_progressive_escalation(self, fresh_state):
-        content = "Identical long content repeated across three calls."
+    def test_internal_warning_once_across_calls(self, fresh_state):
+        repetitive = "字" * 40
         chunks = [
-            msg_chunk(content),
+            msg_chunk(repetitive),
             update_chunk("tools", [ToolMessage(content="r1", tool_call_id="t1")]),
-            msg_chunk(content),
+            msg_chunk(repetitive),
             update_chunk("tools", [ToolMessage(content="r2", tool_call_id="t2")]),
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="r3", tool_call_id="t3")]),
+            msg_chunk(repetitive),
         ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
+        wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
         out = _collect_stream(wrapper)
+        # each call trips internal repetition, but the per-session dedupe
+        # flag means the warning is yielded exactly once for the turn
         text = _text_parts(out)
-        # Should have gone through warn -> halt escalation
-        assert "[Output Repetition Guard]" in text
-        assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
+        assert text.count("[Output Repetition Guard]") == 1
+        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is True
 
     def test_tool_updates_forwarded(self, fresh_state):
         content = "Normal varied response text without repetition at all."
@@ -872,7 +702,7 @@ class TestCommandResumeInput:
 
         out = asyncio.run(_run())
         assert not _has_warning(out)
-        # State should have been reset for this session
+        # wrapper never touches _HALTED_KEY (per-turn reset is middleware-owned)
         assert fresh_state.get_state("cmd-session", _HALTED_KEY, False) is False
 
 
@@ -919,44 +749,6 @@ class TestMissingSessionId:
 class TestConfiguration:
     """Custom thresholds are respected."""
 
-    def test_custom_warn_after(self, fresh_state):
-        content = "Long enough identical content for a single call to detect."
-        chunks = [
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(content),
-        ]
-        # warn_after=1 -> first repeat warns
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=1,
-            max_identical_outputs=5,
-        )
-        out = _collect_stream(wrapper)
-        assert _has_warning(out)
-
-    def test_custom_max_identical_outputs(self, fresh_state):
-        content = "Long enough identical content for detection to fire."
-        chunks = [
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t2")]),
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t3")]),
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t4")]),
-            msg_chunk(content),
-        ]
-        # max_identical_outputs=5 -> halt on 5th
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=5,
-        )
-        _collect_stream(wrapper)
-        assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
-
     def test_custom_char_run_min(self, fresh_state):
         # With char_run_min=4, 4+ identical chars trigger.
         # Must be > _MIN_CONTENT_LENGTH(20) chars total.
@@ -971,34 +763,7 @@ class TestConfiguration:
 
 
 # ======================================================================
-# 16. End-of-stream boundary
-# ======================================================================
-
-
-class TestEndOfStreamBoundary:
-    """If the stream ends mid-model-call, the boundary is still processed."""
-
-    def test_boundary_at_stream_end(self, fresh_state):
-        content = "Long identical content for end-of-stream detection."
-        # No updates chunk after the second model call — stream just ends
-        chunks = [
-            msg_chunk(content),
-            update_chunk("tools", [ToolMessage(content="ok", tool_call_id="t1")]),
-            msg_chunk(content),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        out = _collect_stream(wrapper)
-        assert _has_warning(out)
-        hist = fresh_state.get_state("s1", _HISTORY_KEY, [])
-        assert len(hist) >= 2
-
-
-# ======================================================================
-# 17. Non-model messages mode chunks
+# 16. Non-model messages mode chunks
 # ======================================================================
 
 
@@ -1016,24 +781,9 @@ class TestNonModelMessages:
         assert len(out) == 2
         assert not _has_warning(out)
 
-    def test_non_model_node_triggers_boundary(self, fresh_state):
-        content = "Long identical content for boundary detection test."
-        chunks = [
-            msg_chunk(content),
-            msg_chunk("Tool node message", node="tools"),
-            msg_chunk(content),
-        ]
-        wrapper = RepetitionGuardWrapper(
-            MockAgent(stream_chunks=chunks),
-            warn_after=2,
-            max_identical_outputs=3,
-        )
-        out = _collect_stream(wrapper)
-        assert _has_warning(out)
-
 
 # ======================================================================
-# 18. Phantom-stream guard
+# 17. Phantom-stream guard
 # ======================================================================
 
 

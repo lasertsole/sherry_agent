@@ -95,7 +95,7 @@ EMA_AI_agent/
 ├── agent/                  # Agent core logic
 │   ├── core.py             # Main agent loop (LangChain create_agent → LangGraph graph)
 │   ├── smart_tool_node.py  # Tool-node patching (idempotent-tool parallelism)
-│   ├── repetition_guard_wrapper.py # Stream-level output repetition guard
+│   ├── stream_repetition_guard_wrapper.py # Stream-level output repetition guard
 │   ├── checkpointer/       # Thread-safe async SQLite checkpointers
 │   ├── middlewares/        # Middleware pipeline (summarization, guardrails, HITL, ...)
 │   └── tools/              # Agent-accessible tools

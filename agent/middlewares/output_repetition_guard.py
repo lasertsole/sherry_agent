@@ -25,6 +25,7 @@ without calling any tools.
 from __future__ import annotations
 import hashlib
 import re
+import unicodedata
 from typing import Any, Callable, Awaitable
 
 from loguru import logger
@@ -88,6 +89,11 @@ _TAIL_CHARS = 500
 # Minimum content/reasoning length before repetition detection runs at all,
 # preventing false positives on short responses.
 _MIN_CONTENT_LENGTH = 20
+# Minimum content length for **cross-call** repetition detection.  Much lower
+# than ``_MIN_CONTENT_LENGTH`` because even a single short sentence repeated
+# across consecutive model calls is a valid death-loop signal.  Only
+# non-empty content (>= 1 char) is required.
+_MIN_CROSSCALL_LENGTH = 1
 # Default minimum consecutive identical non-whitespace characters (e.g. 8x
 # ``啊``) required to flag a character run as "repetitive".
 _CHAR_RUN_MIN = 8
@@ -166,15 +172,57 @@ class OutputRepetitionGuard(AgentMiddleware):
 
     # ----- hashing helpers -----------------------------------------------
     @staticmethod
-    def _content_hash(content: str) -> str:
-        """Hash the tail of the content for cross-call comparison.
+    def _normalize_for_hash(content: str) -> str:
+        """Normalize content for robust cross-call hash comparison.
 
-        Only the last ``_TAIL_CHARS`` characters are considered so that two
-        outputs whose stable prefix differs but whose closing lines match (the
-        actual "loop tail") still compare equal.
+        Applies three transformations so that near-identical outputs
+        (e.g. ``"好的，我来处理。"``, ``"好的 我来处理"``, ``"好的，我来处理"``)
+        all produce the same hash:
+
+        1. **NFKC normalization** — full-width → half-width (``Ａ`` → ``A``)
+        2. **Whitespace removal** — all spaces, tabs, newlines stripped
+        3. **Punctuation removal** — all non-word characters removed
+
+        The resulting string contains only letters (incl. CJK), digits and
+        underscores, making the hash insensitive to formatting noise that
+        shouldn't prevent repetition detection.
         """
-        tail = content[-_TAIL_CHARS:] if len(content) > _TAIL_CHARS else content
-        return hashlib.md5(tail.strip().encode()).hexdigest()
+        content = unicodedata.normalize("NFKC", content)
+        content = re.sub(r"\s+", "", content)
+        content = re.sub(r"[^\w]", "", content)
+        return content
+
+    @staticmethod
+    def _content_hash(content: str) -> str:
+        """Hash content for cross-call comparison.
+
+        Returns a dual ``"head_hash|tail_hash"`` string:
+
+        * For short content (≤ ``_TAIL_CHARS`` after normalization): both
+          parts are the MD5 of the full normalized content.
+        * For long content: head = MD5 of the first ``_TAIL_CHARS`` chars of
+          the normalized content, tail = MD5 of the last ``_TAIL_CHARS``.
+
+        This dual-hash approach catches repetition at **either** end of the
+        output:
+
+        * Same output → both match.
+        * Same prefix, different suffix → head matches.
+        * Different prefix, same suffix → tail matches.
+
+        The caller should split on ``"|"`` and compare either part.
+        """
+        normalized = OutputRepetitionGuard._normalize_for_hash(content)
+        if not normalized:
+            return "|"
+
+        if len(normalized) <= _TAIL_CHARS:
+            h = hashlib.md5(normalized.encode()).hexdigest()
+            return f"{h}|{h}"
+
+        head = normalized[:_TAIL_CHARS]
+        tail = normalized[-_TAIL_CHARS:]
+        return f"{hashlib.md5(head.encode()).hexdigest()}|{hashlib.md5(tail.encode()).hexdigest()}"
 
     # ----- internal repetition detection -----------------------------------------------
     def _detect_internal_repetition(self, content: str) -> bool:
@@ -335,11 +383,20 @@ class OutputRepetitionGuard(AgentMiddleware):
         history_key: str,
         internal_warned_key: str,
         label: str,
+        check_internal: bool = True,
     ) -> AIMessage | None:
         """Shared cross-call + internal repetition check for any text stream.
 
         Used both for the visible output and for reasoning text, parametrised
         by the state keys and a ``label`` used in log/message text.
+
+        Parameters
+        ----------
+        check_internal : bool
+            Whether to run the internal-repetition sub-detectors on ``text``.
+            Set to ``False`` when the model is making tool calls (text-output
+            guard only) to avoid false positives on tool-call accompanying
+            text.  Cross-call detection always runs regardless.
 
         Escalation ladder (checked in order):
 
@@ -355,13 +412,20 @@ class OutputRepetitionGuard(AgentMiddleware):
         Returns ``None`` if no escalation applies.
         """
         ch = self._content_hash(text)
+        # Dual hash: "head_hash|tail_hash".  Split into parts for comparison.
+        ch_head, _, ch_tail = ch.partition("|")
+
         # Rolling history of content hashes; ``consecutive`` is the length of
-        # the run of hashes equal to the current one at the tail of the list.
+        # the run of hashes matching the current one at the tail of the list.
+        # A previous entry matches if EITHER its head or tail hash equals the
+        # current head or tail hash respectively -- this catches repetition
+        # at either end of long outputs.
         history: list[str] = state_register_mem.get_state(session_id, history_key, [])
 
         consecutive = 0
         for h in reversed(history):
-            if h == ch:
+            h_head, _, h_tail = h.partition("|")
+            if ch_head == h_head or ch_tail == h_tail:
                 consecutive += 1
             else:
                 break
@@ -414,7 +478,7 @@ class OutputRepetitionGuard(AgentMiddleware):
             )
 
         # ---- 3. Internal repetition (at most once per session/label) ----
-        if self._detect_internal_repetition(text):
+        if check_internal and self._detect_internal_repetition(text):
             already_warned: bool = state_register_mem.get_state(
                 session_id, internal_warned_key, False
             )
@@ -453,10 +517,20 @@ class OutputRepetitionGuard(AgentMiddleware):
         if ai_msg is None:
             return None
 
-        # Skip if model is making tool calls -- that's ToolGuardrails' job
-        tool_calls = getattr(ai_msg, "tool_calls", None)
-        if tool_calls:
-            return None
+        # Skip internal completion-drain messages (subagent completion
+        # notifications injected by SubagentCompletionDrainMiddleware).
+        _meta = getattr(ai_msg, "metadata", None)
+        if isinstance(_meta, dict):
+            if _meta.get("internal") is True:
+                return None
+            if _meta.get("provenance") == "subagent_completion":
+                return None
+
+        # Don't skip entirely when tool_calls are present.  Cross-call
+        # repetition detection still runs (the model may loop on the same
+        # text alongside tool calls).  Only internal-repetition detection
+        # is skipped for tool-call messages to avoid false positives.
+        has_tool_calls = bool(getattr(ai_msg, "tool_calls", None))
 
         content = str(ai_msg.content or "").strip()
         reasoning = self._extract_reasoning(ai_msg)
@@ -478,9 +552,11 @@ class OutputRepetitionGuard(AgentMiddleware):
                 )
             )
 
-        # Guard the (cheap-but-nonzero) detection work behind a length
-        # threshold to avoid false positives on short responses.
-        if len(content) >= _MIN_CONTENT_LENGTH:
+        # Cross-call detection uses _MIN_CROSSCALL_LENGTH (1) so even
+        # short repeated outputs are caught.  Internal detection uses the
+        # higher _MIN_CONTENT_LENGTH threshold and is skipped when the
+        # model is making tool calls.
+        if len(content) >= _MIN_CROSSCALL_LENGTH:
             r = self._check_text_repetition(
                 session_id,
                 content,
@@ -488,13 +564,16 @@ class OutputRepetitionGuard(AgentMiddleware):
                 _HISTORY_KEY,
                 _INTERNAL_WARNED_KEY,
                 "output",
+                check_internal=(
+                    len(content) >= _MIN_CONTENT_LENGTH and not has_tool_calls
+                ),
             )
             if r is not None:
                 return r
 
         # Reasoning streams are checked independently and share the visible
         # content as the ``content_prefix`` so a warning keeps context.
-        if len(reasoning) >= _MIN_CONTENT_LENGTH:
+        if len(reasoning) >= _MIN_CROSSCALL_LENGTH:
             r = self._check_text_repetition(
                 session_id,
                 reasoning,
@@ -502,6 +581,9 @@ class OutputRepetitionGuard(AgentMiddleware):
                 _REASONING_HISTORY_KEY,
                 _REASONING_WARNED_KEY,
                 "reasoning",
+                check_internal=(
+                    len(reasoning) >= _MIN_CONTENT_LENGTH and not has_tool_calls
+                ),
             )
 
             if r is not None:

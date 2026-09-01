@@ -328,7 +328,7 @@ class TestMaterializeAttachments:
         result = await materialize_subagent_attachments(attachments, child_workspace=tmp_path)
         assert result.status == "ok"
         assert result.abs_dir is not None
-        assert ".openclaw" in result.abs_dir and "attachments" in result.abs_dir
+        assert ".sherry" in result.abs_dir and "attachments" in result.abs_dir
         assert "Attachments:" in result.system_prompt_suffix
         import json
         from pathlib import Path
@@ -438,7 +438,7 @@ class TestMaterializeAttachments:
         assert result.abs_dir is not None
         assert result.rel_dir is not None
         assert result.rel_dir in suffix
-        assert result.rel_dir.startswith(".openclaw/attachments/")
+        assert result.rel_dir.startswith(".sherry/attachments/")
         # the dir actually exists on disk
         assert Path(result.abs_dir).is_dir()
 

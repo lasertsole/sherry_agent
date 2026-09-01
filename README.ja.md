@@ -95,7 +95,7 @@ EMA_AI_agent/
 ├── agent/                  # エージェントコアロジック
 │   ├── core.py             # メインエージェントループ（LangChain create_agent → LangGraph グラフ）
 │   ├── smart_tool_node.py  # ツールノードパッチ（冪等ツールの並列実行）
-│   ├── repetition_guard_wrapper.py # ストリーム出力の繰り返しガード
+│   ├── stream_repetition_guard_wrapper.py # ストリーム出力の繰り返しガード
 │   ├── checkpointer/       # スレッドセーフ非同期 SQLite チェックポインター
 │   ├── middlewares/        # ミドルウェアパイプライン（要約、ガードレール、HITL など）
 │   └── tools/              # エージェント利用可能なツール

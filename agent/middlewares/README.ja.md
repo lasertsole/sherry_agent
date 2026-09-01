@@ -300,7 +300,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 事後型の出力繰り返し検知器で、`WARN → HALT` エスカレーションを持ちます。`agent.middlewares.output_repetition_guard` からエクスポートされ（`agent/middlewares/__init__.py` からは**再エクスポートされていません**）、**ワーカーパイプラインでのみ登録**されています。
 
-メインエージェントでは同じ検知が **`RepetitionGuardWrapper`**（`agent/repetition_guard_wrapper.py`）を通じて実行されます。これはコンパイル済みグラフをラップし、ストリームレベルでインターセプトし（`ainvoke` の事後バックストップ付き）、同じ状態キーとデフォルトを再利用します。どちらの登録も `phantom_stream_guard=True` を渡します。
+メインエージェントでは同じ検知が **`RepetitionGuardWrapper`**（`agent/stream_repetition_guard_wrapper.py`）を通じて実行されます。これはコンパイル済みグラフをラップし、ストリームレベルでインターセプトし（`ainvoke` の事後バックストップ付き）、同じ状態キーとデフォルトを再利用します。どちらの登録も `phantom_stream_guard=True` を渡します。
 
 **検知レイヤー**
 
@@ -512,7 +512,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # このファイル（+ .zh / .ja / .ko 版）
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper（本パッケージの外に存在）
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper（本パッケージの外に存在）
 ```
 
 ### エクスポート（`__init__.py`）

@@ -95,7 +95,7 @@ EMA_AI_agent/
 ├── agent/                  # Agent 核心逻辑
 │   ├── core.py             # 主 Agent 循环（LangChain create_agent → LangGraph 图）
 │   ├── smart_tool_node.py  # 工具节点补丁（幂等工具并行执行）
-│   ├── repetition_guard_wrapper.py # 流式输出重复防护
+│   ├── stream_repetition_guard_wrapper.py # 流式输出重复防护
 │   ├── checkpointer/       # 线程安全异步 SQLite checkpointer
 │   ├── middlewares/        # 中间件流水线（摘要、护栏、HITL 等）
 │   └── tools/              # Agent 可用工具

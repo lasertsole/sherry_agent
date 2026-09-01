@@ -95,7 +95,7 @@ EMA_AI_agent/
 ├── agent/                  # 에이전트 코어 로직
 │   ├── core.py             # 메인 에이전트 루프(LangChain create_agent → LangGraph 그래프)
 │   ├── smart_tool_node.py  # 도구 노드 패칭(멱등 도구 병렬 실행)
-│   ├── repetition_guard_wrapper.py # 스트림 출력 반복 방지 가드
+│   ├── stream_repetition_guard_wrapper.py # 스트림 출력 반복 방지 가드
 │   ├── checkpointer/       # 스레드 세이프 비동기 SQLite 체크포인터
 │   ├── middlewares/        # 미들웨어 파이프라인(요약, 가드레일, HITL 등)
 │   └── tools/              # 에이전트가 사용하는 도구

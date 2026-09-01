@@ -786,7 +786,7 @@ async def _build_child_agent(
     # The shared ``_INTERNAL_WARNED_KEY`` dedupe gate prevents double
     # warnings, and the wrapper's per-turn state reset bounds any
     # cross-call history duplication.
-    from agent.repetition_guard_wrapper import RepetitionGuardWrapper
+    from agent.stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
     child_agent = RepetitionGuardWrapper(child_agent, phantom_stream_guard=True)
 
