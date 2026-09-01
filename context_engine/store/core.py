@@ -97,6 +97,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                     "model_name": model_name,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "origin": None,
                 }
             )
         elif m.type == "human":
@@ -111,6 +112,24 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             images: list[str] = additional_kwargs.get("images", []) or []
             audios: list[str] = additional_kwargs.get("audios", []) or []
             videos: list[str] = additional_kwargs.get("videos", []) or []
+
+            # Tag background subagent-completion injections. The tag fires
+            # ONLY on a full match of the frozen metadata contract built by
+            # agent/tools/subagent/announce/completion_message.py (mirrors
+            # _is_internal_completion in the completion-drain middleware):
+            # internal must be True (strict bool, not merely truthy) AND
+            # provenance must be exactly "subagent_completion". Everything
+            # else — plain user input, partial-contract metadata — stays
+            # NULL (= real user message). Never an empty string.
+            meta: dict[str, Any] = getattr(m, "metadata", None) or {}
+            origin: str | None = (
+                "subagent_completion"
+                if (
+                    meta.get("internal") is True
+                    and meta.get("provenance") == "subagent_completion"
+                )
+                else None
+            )
 
             insert_rows.append(
                 {
@@ -132,6 +151,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                     "model_name": None,
                     "input_tokens": None,
                     "output_tokens": None,
+                    "origin": origin,
                 }
             )
         elif m.type == "tool":
@@ -156,6 +176,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                     "model_name": None,
                     "input_tokens": None,
                     "output_tokens": None,
+                    "origin": None,
                 }
             )
 
@@ -180,7 +201,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             videos,
             model_name,
             input_tokens,
-            output_tokens
+            output_tokens,
+            origin
         ) VALUES (
             :session_id,
             :turn_num,
@@ -199,7 +221,8 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             :videos,
             :model_name,
             :input_tokens,
-            :output_tokens
+            :output_tokens,
+            :origin
         )
     """,
         insert_rows,
@@ -437,16 +460,18 @@ def get_session_ids() -> list[dict]:
         if not _is_top_level_session(session_id):
             continue
         # Derive a title from the latest human message of the session
-        # (the user's most recent question).
-        # An empty title means that human message had no usable text; the
-        # client renders an i18n placeholder (e.g. "新会话") in that case
-        # instead of leaking the raw session_id.
+        # (the user's most recent question). Background subagent-completion
+        # injections (``origin = 'subagent_completion'``) are excluded, so a
+        # carrier never becomes the session title; a session whose only human
+        # rows are carriers gets an empty title, which the client renders as
+        # an i18n placeholder (e.g. "新会话") instead of leaking the raw
+        # session_id.
         title: str = ""
         with _db:
             last_msg = _db.execute(
                 """
                 SELECT content FROM messages
-                WHERE session_id = ? AND role = 'human'
+                WHERE session_id = ? AND role = 'human' AND origin IS NULL
                 ORDER BY turn_num DESC, id DESC
                 LIMIT 1
             """,
