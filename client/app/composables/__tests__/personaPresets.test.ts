@@ -167,12 +167,7 @@ describe('persona preset db helpers (real Dexie over fake-indexeddb)', () => {
     // Deep-equal roundtrip: every value read back exactly as written.
     expect(stored?.content).toEqual(content);
     // The key set is exactly the four basenames, spelled verbatim.
-    expect(Object.keys(stored?.content ?? {}).sort()).toEqual([
-      'AGENTS.md',
-      'IDENTITY.md',
-      'SOUL.md',
-      'USER.md'
-    ]);
+    expect(Object.keys(stored?.content ?? {}).sort()).toEqual(['AGENTS.md', 'IDENTITY.md', 'SOUL.md', 'USER.md']);
   });
 });
 
@@ -256,7 +251,16 @@ describe('schema upgrade regression (version(9) personaPresets append)', () => {
   it('opens the current schema with personaPresets present and every legacy table readable', async () => {
     await db.open();
     const tableNames = db.tables.map(t => t.name);
-    for (const name of ['messages', 'character', 'sessions', 'drafts', 'background', 'subagentRuns', 'sessionTitles', 'personaPresets']) {
+    for (const name of [
+      'messages',
+      'character',
+      'sessions',
+      'drafts',
+      'background',
+      'subagentRuns',
+      'sessionTitles',
+      'personaPresets'
+    ]) {
       expect(tableNames).toContain(name);
     }
 
