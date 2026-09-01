@@ -204,7 +204,10 @@ def _get_content_list(multi_modal_message: MultiModalMessage) -> list[dict[str, 
 
 
 async def _get_generator(
-    session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True
+    session_id: str,
+    multi_modal_message: MultiModalMessage,
+    is_stream: bool = True,
+    origin: dict | None = None,
 ):
     start_time = time.time()
 
@@ -228,7 +231,14 @@ async def _get_generator(
         f"is_stream={is_stream}, has_images={len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0}"
     )
 
-    input_dict = {"session_id": session_id, "messages": [HumanMessage(content=content_list)]}
+    # origin (Task 4, subagent-origin-tagging): the subagent-completion carrier
+    # tag {internal, provenance, run_id, status} forwarded verbatim from
+    # auto_turn. None (real-user WS/channel paths) is legal — LangChain
+    # metadata is Optional — and leaves the message untagged.
+    input_dict = {
+        "session_id": session_id,
+        "messages": [HumanMessage(content=content_list, metadata=origin)],
+    }
     if is_stream:
         return agent.astream(
             input=input_dict,
@@ -255,7 +265,10 @@ join ``chunk["content"]`` for every item.
 
 
 async def async_generate(
-    session_id: str, multi_modal_message: MultiModalMessage, is_stream: bool = True
+    session_id: str,
+    multi_modal_message: MultiModalMessage,
+    is_stream: bool = True,
+    origin: dict | None = None,
 ) -> AsyncGenerator[dict[str, str], None]:
     start_time = time.time()
     logger.debug(
@@ -283,7 +296,7 @@ async def async_generate(
     try:
         if is_stream:
             # Stream directly from the context-assembled agent
-            generator = await _get_generator(session_id, multi_modal_message)
+            generator = await _get_generator(session_id, multi_modal_message, origin=origin)
             async for chunk in generator:
                 # With stream_mode=["messages", "updates"], each chunk is (mode, data).
                 # Only process the "messages" mode; skip "updates" mode chunks.
@@ -471,7 +484,9 @@ async def async_generate(
                     # End conversation output logic
 
         else:
-            generator = await _get_generator(session_id, multi_modal_message, is_stream=False)
+            generator = await _get_generator(
+                session_id, multi_modal_message, is_stream=False, origin=origin
+            )
             result: dict[str, Any] = await generator
             res: str = result["messages"][-1].content
             ai_text += res
