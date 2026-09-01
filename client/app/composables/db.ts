@@ -205,6 +205,29 @@ export interface CachedSubagentRun {
   delivery: { status?: string | null; attempt_count?: number | null; delivered_at?: string | null } | null;
 }
 
+/**
+ * Locally persisted AI persona preset: a named snapshot of the four workspace persona
+ * files, saved/restored from the "persona dialog".
+ *
+ * `content` maps each persona file basename to its full text; keys are exactly
+ * 'AGENTS.md' / 'IDENTITY.md' / 'SOUL.md' / 'USER.md' (the same basenames used by the
+ * persona dialog tabs and the backend `/system_prompt` API). Uniqueness of `name` is
+ * validated at the application layer (trim + case-insensitive), not by the database
+ * (Dexie has no unique indexes).
+ */
+export interface PersonaPreset {
+  /** Auto-increment primary key assigned by Dexie on insert */
+  id?: number;
+  /** Display name (stored trimmed, original case kept; duplicate check is case-insensitive) */
+  name: string;
+  /** Persona file contents keyed by exact basenames: 'AGENTS.md' | 'IDENTITY.md' | 'SOUL.md' | 'USER.md' */
+  content: Record<string, string>;
+  /** Creation time (epoch ms) */
+  createdAt: number;
+  /** Last content-update time (epoch ms) */
+  updatedAt: number;
+}
+
 /** Primary key of the global pending profile in the character table (not a real session ID) */
 export const GLOBAL_SESSION_KEY = '__global__';
 
@@ -237,6 +260,8 @@ class HistoryDb extends Dexie {
   subagentRuns!: Table<CachedSubagentRun, string>;
   /** Session custom-title override table (primary key session id, see {@link SessionTitleOverride}) */
   sessionTitles!: Table<SessionTitleOverride, string>;
+  /** AI persona preset table (auto-increment primary key id; name uniqueness is validated at the application layer, see {@link PersonaPreset}) */
+  personaPresets!: Table<PersonaPreset, number>;
 
   constructor() {
     super('ema-history-cache');
@@ -287,6 +312,11 @@ class HistoryDb extends Dexie {
       // Separate from the sessions placeholder table: the placeholder table is cleared when a session
       // is promoted to a server-side session, while custom titles must survive promotion.
       sessionTitles: 'id'
+    });
+    this.version(9).stores({
+      // AI persona presets (auto-increment primary key id; indexes support listing by creation
+      // time and by name); adding a table does not break existing table structures.
+      personaPresets: '++id, name, createdAt, updatedAt'
     });
   }
 }
@@ -585,4 +615,81 @@ export async function deleteCachedSubagentRuns(runIds: string[]): Promise<void> 
  */
 export async function clearCachedSubagentRuns(): Promise<void> {
   await db.subagentRuns.clear();
+}
+
+/**
+ * List all persona presets, sorted by `createdAt` ascending (oldest first).
+ *
+ * @returns Array of persona presets in creation order
+ */
+export async function listPersonaPresets(): Promise<PersonaPreset[]> {
+  return await db.personaPresets.orderBy('createdAt').toArray();
+}
+
+/**
+ * Read one persona preset by its id (returns `undefined` when no record exists).
+ *
+ * @param id Persona preset id (Dexie auto-increment primary key)
+ */
+export async function getPersonaPreset(id: number): Promise<PersonaPreset | undefined> {
+  return await db.personaPresets.get(id);
+}
+
+/**
+ * Find a persona preset by name (trim + case-insensitive comparison against every row).
+ *
+ * Dexie indexes are case-sensitive, so name uniqueness must be validated at the
+ * application layer: the given name and every stored name are compared as
+ * `name.trim().toLowerCase()`.
+ *
+ * @param name Name to look up (compared after trim, case-insensitively)
+ */
+export async function findPersonaPresetByName(name: string): Promise<PersonaPreset | undefined> {
+  const target = name.trim().toLowerCase();
+  const rows = await db.personaPresets.toArray();
+  return rows.find(row => row.name.trim().toLowerCase() === target);
+}
+
+/**
+ * Create a persona preset with a unique name and return its new id.
+ *
+ * The name is stored trimmed (original case kept). Duplicate detection runs first via
+ * {@link findPersonaPresetByName} (trim + case-insensitive); on a duplicate an `Error`
+ * whose message contains "duplicate" is thrown, so callers can distinguish it from
+ * infrastructure failures.
+ *
+ * @param name    Preset display name (stored trimmed)
+ * @param content Persona file contents keyed by 'AGENTS.md' / 'IDENTITY.md' / 'SOUL.md' / 'USER.md'
+ * @returns       Auto-increment id of the newly created preset
+ */
+export async function createPersonaPreset(name: string, content: Record<string, string>): Promise<number> {
+  const trimmedName = name.trim();
+  const existing = await findPersonaPresetByName(trimmedName);
+  if (existing) {
+    throw new Error(`Persona preset name duplicate: "${trimmedName}"`);
+  }
+  const now = Date.now();
+  return await db.personaPresets.add({ name: trimmedName, content, createdAt: now, updatedAt: now });
+}
+
+/**
+ * Overwrite a persona preset's content ("direct overwrite" semantics).
+ *
+ * Only `content` and `updatedAt` are written — the preset's `name` is never changed
+ * (the name stays the identity of the preset; renaming is not supported).
+ *
+ * @param id      Persona preset id
+ * @param content New persona file contents (keyed by 'AGENTS.md' / 'IDENTITY.md' / 'SOUL.md' / 'USER.md')
+ */
+export async function updatePersonaPreset(id: number, content: Record<string, string>): Promise<void> {
+  await db.personaPresets.update(id, { content, updatedAt: Date.now() });
+}
+
+/**
+ * Delete a persona preset by its id.
+ *
+ * @param id Persona preset id
+ */
+export async function deletePersonaPreset(id: number): Promise<void> {
+  await db.personaPresets.delete(id);
 }
