@@ -1,5 +1,12 @@
 [
     {
+        "name": "auto-qa",
+        "description": "主会话编排自动修 QA 失败项的波次协议,按 lane 分组派发子代理,以证据台账验收 verified fixes",
+        "location": "./skills/auto-qa/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
         "name": "clawhub",
         "description": "Search and install agent skills from ClawHub, the public skill registry.",
         "location": "./skills/builtin/core/clawhub/SKILL.md",
@@ -18,6 +25,13 @@
         "description": "Schedule reminders and recurring tasks. Actions: add, list, remove or set_context.",
         "location": "./skills/builtin/core/cron/SKILL.md",
         "scope": "all",
+        "active": true
+    },
+    {
+        "name": "gh-pipeline",
+        "description": "主会话编排 GitHub issue 修复管线,从远端仓库解析到 issue 拉取、worker 分支派发、PR 创建的双路径协议,gh CLI 与 REST v3 互为降级",
+        "location": "./skills/gh-pipeline/SKILL.md",
+        "scope": "main_only",
         "active": true
     },
     {
@@ -49,6 +63,13 @@
         "active": true
     },
     {
+        "name": "repair-sweep",
+        "description": "修复清扫舰队编排协议,orchestrator 构建修复队列并把批次派给一组各自持有隔离 git worktree 的 worker 批量修复,授权清单内嵌派发 prompt,worker 可反向质疑关闭决定",
+        "location": "./skills/repair-sweep/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
         "name": "skill_creator",
         "description": "Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.",
         "location": "./skills/builtin/core/skill_creator/SKILL.md",
@@ -63,10 +84,10 @@
         "active": true
     },
     {
-        "name": "subagent-orchestration",
-        "description": "Delegate work to background subagents (sessions_spawn) and reliably collect their results. Use when a task can be split into independent parallel pieces, or when the user explicitly asks to use subagents.",
-        "location": "./skills/auto/workflow/subagent-orchestration/SKILL.md",
-        "scope": "all",
+        "name": "taskflow",
+        "description": "Durable multi-step task flows with optimistic locking, detached subagent step dispatch, waiting and idempotent resume via the taskflow_* tool family",
+        "location": "./skills/taskflow/SKILL.md",
+        "scope": "main_only",
         "active": true
     },
     {
