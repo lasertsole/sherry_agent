@@ -40,6 +40,9 @@
     "copy": "Copy",
     "copied": "Copied"
   },
+  "chat": {
+    "backgroundMessage": "Background task"
+  },
   "errors": {
     "requestFailed": "Request failed",
     "pageError": "Page error",

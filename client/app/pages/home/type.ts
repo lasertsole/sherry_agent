@@ -72,6 +72,14 @@ export interface MessageItem {
   inputTokens?: number;
   /** Output token count (only set for role=AI; from the backend done frame / history row's output_tokens) */
   outputTokens?: number;
+  /**
+   * Origin marker (only on history rows whose backend origin is non-null; see
+   * {@link CachedMessage.origin} in `composables/db.ts`). `"subagent_completion"` marks a
+   * background-task completion carrier: a USER-role row that ChatBox renders as a centered,
+   * muted system card instead of the regular user bubble. Legacy rows (no origin) keep the
+   * existing user-bubble rendering.
+   */
+  origin?: string;
 }
 
 /** Role */

@@ -43,6 +43,15 @@ export interface CachedMessage {
   input_tokens: number | null;
   /** Output token count (from the backend history row's output_tokens) */
   output_tokens: number | null;
+  /**
+   * Origin marker of the message row (backend `messages.origin` column, TEXT NULL).
+   * `null`/`undefined` (missing key on legacy cached rows) = a real user message;
+   * `"subagent_completion"` = a background-task completion carrier injected by the subagent
+   * announce pipeline (rendered as a centered muted system card, not a user bubble).
+   * Non-indexed field: no Dexie version bump or index needed (Dexie is schemaless beyond
+   * the declared indexes), so rows carrying it cache as-is via bulkPut.
+   */
+  origin?: string | null;
 }
 
 /**

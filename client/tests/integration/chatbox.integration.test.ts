@@ -108,3 +108,58 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     expect(wrapper.text()).not.toContain('橘雪莉');
   });
 });
+
+// ── Background-task system card (subagent-origin-tagging Task 5) ─────────────
+// Backend history rows whose origin column is "subagent_completion" are background-task
+// completion carriers (USER-role rows). They must render as a centered, muted system
+// card — never as a user bubble. The carrier's first line "[subagent:<name> <status>]"
+// is self-describing and shown verbatim (no parsing).
+
+/** Realistic carrier content (matches agent/tools/subagent/announce/completion_message.py format) */
+const CARRIER = '[subagent:研究员 done]\n后台检索已完成，结果已送达主会话。';
+
+describe('ChatBox background-task system card (integration, backend mocked)', () => {
+  it('renders a USER message with origin as a centered muted system card, not a user bubble', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 21, content: CARRIER, origin: 'subagent_completion' })]
+      }
+    });
+    // Card marker class present
+    const card = wrapper.find('.background-task-card');
+    expect(card.exists()).toBe(true);
+    // Muted label from chat.backgroundMessage (integration stub resolves zh locale)
+    expect(wrapper.text()).toContain('后台任务');
+    // Carrier text shown verbatim: the [subagent:...] first line is NOT parsed away
+    expect(wrapper.text()).toContain('[subagent:研究员 done]');
+    expect(wrapper.text()).toContain('后台检索已完成，结果已送达主会话。');
+    // User-bubble markup absent: no blue bubble, no right-reversed row flow
+    expect(wrapper.html()).not.toContain('bg-[#2563EB]');
+    expect(wrapper.html()).not.toContain('flex-row-reverse');
+  });
+
+  it('keeps the legacy user bubble for a USER message without origin', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 22, content: '真实的用户消息' })]
+      }
+    });
+    // No system card rendered for legacy rows
+    expect(wrapper.find('.background-task-card').exists()).toBe(false);
+    // The existing user bubble branch is untouched: blue right-side bubble still renders
+    expect(wrapper.html()).toContain('bg-[#2563EB]');
+    expect(wrapper.text()).toContain('真实的用户消息');
+    // The system-card label never leaks into the legacy branch
+    expect(wrapper.text()).not.toContain('后台任务');
+  });
+
+  it('does not treat a null/empty origin as a background task', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 23, content: 'null origin 的用户消息', origin: undefined })]
+      }
+    });
+    expect(wrapper.find('.background-task-card').exists()).toBe(false);
+    expect(wrapper.html()).toContain('bg-[#2563EB]');
+  });
+});
