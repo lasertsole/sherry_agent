@@ -21,6 +21,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -226,6 +227,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - エラー状態の `AIMessage` の `invalid_tool_calls` をクリアし、OpenAI tool_calls としてシリアライズされないようにする。
 
 フックはメッセージ全体の置換を返します：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。
+
+### SubagentCompletionDrainMiddleware
+
+**モジュール：** `agent/middlewares/subagent_completion_drain.py` · **クラス：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**フック：** `before_model` / `abefore_model` のみ
+
+メインエージェントには `ToolCallNormalize` の直後に登録されるため、注入されるメッセージは注入ターンではサニタイズ書き換えをバイパスします。`before_model` でセッションの `SteeringQueue`（親がビジーの間に announce パイプラインが積んだ完了キャリアメッセージ）をリハイドレートして排出（drain）し、`{"messages": [carrier, ...]}` を返すことで、次のモデル呼び出しの直前に再構築された完了キャリア `HumanMessage` を注入します。
+
+- 排出された各キューエントリはキューの SQLite ストアで `CONSUMED` とマークされるため、キャリアは正確に 1 回だけ注入されます（チェックポイント永続化により HITL 再開リプレイも安全）。
+- Fail-open：`session_id` の欠落/空、空のキュー、あらゆる例外は握りつぶされます（ログ + no-op）— drain が親ターンを壊すことはなく、キューは再試行のために保持されます。
+- 注入されたキャリアは `origin='subagent_completion'` として MesMemory に永続化されます。
 
 ### HeartbeatStaleness
 

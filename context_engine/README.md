@@ -111,7 +111,8 @@ CREATE TABLE IF NOT EXISTS messages (
     videos        TEXT,               -- JSON list of video paths/references
     model_name    TEXT,               -- AI messages: model that produced the response
     input_tokens  INTEGER,            -- AI messages: usage_metadata input tokens
-    output_tokens INTEGER             -- AI messages: usage_metadata output tokens
+    output_tokens INTEGER,            -- AI messages: usage_metadata output tokens
+    origin        TEXT                -- Message origin tag ("subagent_completion" for completion carriers; NULL otherwise)
 );
 ```
 
@@ -134,7 +135,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 **FTS5 Triggers:** each FTS table has `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` triggers on `messages` that keep the index in sync automatically. Deleting rows (e.g. `delete_messages_by_session`) therefore needs no separate FTS cleanup.
 
 **Migrations:** schema creation is versioned in a `_migrations` table. The steps, in order:
-`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns`.
+`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns` → `add_origin_column`.
 
 ---
 
@@ -154,6 +155,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` messages persist `tool_calls` (JSON), chain-of-thought from `additional_kwargs["reasoning_content"]` (stored in the `reasoning` column), plus `model_name` / `input_tokens` / `output_tokens` from response & usage metadata (all optional, `None` when absent)
 - `human` messages persist multimodal file references from `additional_kwargs` into the `images` / `audios` / `videos` columns (JSON lists, `None` when empty)
 - `tool` messages persist `tool_call_id`, `tool_name`, and `tool_status` (defaults to `"success"`)
+- A `human` message whose metadata sets `internal: true` and `provenance: "subagent_completion"` (the steering-queue completion carrier) is persisted with `origin = 'subagent_completion'`; every other row keeps `origin = NULL` (never an empty string, never JSON)
 
 ### 2. History Retrieval
 
@@ -378,6 +380,8 @@ Enumerate distinct top-level sessions (subagent sessions containing `:subagent:`
 
 **Returns:** `list[dict]` — Each item: `{"session_id": str, "last_time": str, "title": str}` where `last_time` is the newest `YYYYMMDDHHmmss` timestamp and `title` is derived from the latest `human` message (may be `""`)
 
+The title query only considers rows with `origin IS NULL`; a session whose `human` rows are all `subagent_completion` carriers therefore yields an empty title, and clients render a placeholder.
+
 ---
 
 #### `get_db()` (`context_engine.store.db`)
@@ -430,4 +434,4 @@ This project follows the open-source license of the EMA AI Agent.
 
 ---
 
-**Last updated:** 2026-08-29
+**Last updated:** 2026-09-02

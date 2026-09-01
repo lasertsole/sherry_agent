@@ -305,6 +305,8 @@ Please review the sub-agent execution results above. Provide further instruction
 
 `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` 형태로 `get_event_bus().publish_internal()` 경유로 전달됩니다.
 
+`announce/completion_message.py`가 구축하는 완료 캐리어 `HumanMessage`는 `origin='subagent_completion'`으로 MesMemory에 영속화됩니다. 웹 클라이언트는 origin 태그가 붙은 메시지를 일반 사용자 말풍선 대신 가운데 정렬된 흐린 시스템 카드(i18n 키 `chat.backgroundMessage`)로 렌더링합니다.
+
 ### 5.1 Swarm/Collect 모드
 
 Swarm 시스템은 FIFO 스케줄링과 동시성 제어를 갖춘 하위 작업의 일괄 병렬 실행을 지원합니다.

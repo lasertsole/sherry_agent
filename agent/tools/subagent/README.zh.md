@@ -302,6 +302,8 @@ Please review the sub-agent execution results above. Provide further instruction
 
 以 `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` 经 `get_event_bus().publish_internal()` 交付。
 
+由 `announce/completion_message.py` 构建的完成载体 `HumanMessage` 会以 `origin='subagent_completion'` 持久化到 MesMemory；Web 客户端将这类带 origin 标记的消息渲染为居中的弱化系统卡片（i18n 键 `chat.backgroundMessage`），而非普通用户气泡。
+
 ### 5.1 Swarm/Collect 模式
 
 Swarm 系统支持子任务并发批量执行，带 FIFO 调度与并发控制：

@@ -307,6 +307,8 @@ Please review the sub-agent execution results above. Provide further instruction
 
 `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` として `get_event_bus().publish_internal()` 経由で配信されます。
 
+`announce/completion_message.py` が構築する完了キャリア `HumanMessage` は `origin='subagent_completion'` として MesMemory に永続化されます。Web クライアントは origin タグ付きのメッセージを、通常のユーザー吹き出しではなく中央寄せの控えめなシステムカード（i18n キー `chat.backgroundMessage`）として表示します。
+
 ### 5.1 Swarm/Collect モード
 
 Swarm システムは、FIFO スケジューリングと同時実行制御を備えたサブタスクの一括並列実行を可能にします。

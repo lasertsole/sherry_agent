@@ -21,6 +21,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -226,6 +227,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 오류 상태 `AIMessage`의 `invalid_tool_calls`를 클리어하여 OpenAI tool_calls로 직렬화되지 않도록 함.
 
 후크는 메시지 전체 교체를 반환합니다: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`.
+
+### SubagentCompletionDrainMiddleware
+
+**모듈:** `agent/middlewares/subagent_completion_drain.py` · **클래스:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**후크:** `before_model` / `abefore_model` 전용
+
+메인 에이전트에 `ToolCallNormalize` 바로 뒤에 등록되므로, 주입되는 메시지는 주입 턴에서 sanitize 재작성을 우회합니다. `before_model`에서 세션의 `SteeringQueue`—부모가 바쁜 동안 announce 파이프라인이 적립한 완료 캐리어 메시지—를 재하이드레이트하고 배출(drain)하여 `{"messages": [carrier, ...]}`를 반환함으로써, 다음 모델 호출 직전에 재구축된 완료 캐리어 `HumanMessage`를 주입합니다.
+
+- 배출된 각 큐 항목은 큐의 SQLite 저장소에서 `CONSUMED`로 마킹되므로 캐리어는 정확히 한 번만 주입됩니다(체크포인트 영속화가 HITL 재개 리플레이의 안전성을 보장).
+- Fail-open: `session_id` 누락/빈 값, 빈 큐, 그리고 모든 오류는 삼켜집니다(로그 + no-op) — drain이 부모 턴을 깨뜨리지 않으며, 큐는 재시도를 위해 보존됩니다.
+- 주입된 캐리어는 `origin='subagent_completion'`으로 MesMemory에 영속화됩니다.
 
 ### HeartbeatStaleness
 

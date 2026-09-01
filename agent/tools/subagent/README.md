@@ -303,6 +303,8 @@ Please review the sub-agent execution results above. Provide further instruction
 
 Delivered as `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` via `get_event_bus().publish_internal()`.
 
+The completion carrier `HumanMessage` built by `announce/completion_message.py` is persisted to MesMemory with `origin='subagent_completion'`; the web client renders such origin-tagged rows as a centered muted system card (i18n key `chat.backgroundMessage`) instead of a normal user bubble.
+
 ### 5.1 Swarm/Collect Mode
 
 The Swarm system enables concurrent batch execution of sub-tasks with FIFO scheduling and concurrency control:

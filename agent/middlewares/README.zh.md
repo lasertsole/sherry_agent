@@ -21,6 +21,7 @@ EMA AI Agent 的中间件层：八个 `AgentMiddleware` 组件，作用于每一
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -226,6 +227,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 清除错误状态 `AIMessage` 上的 `invalid_tool_calls`，避免其被序列化成 OpenAI tool_calls。
 
 钩子返回完整的消息替换：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。
+
+### SubagentCompletionDrainMiddleware
+
+**模块：** `agent/middlewares/subagent_completion_drain.py` · **类：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**钩子：** 仅 `before_model` / `abefore_model`
+
+在主 Agent 中注册于 `ToolCallNormalize` 之后，因此它注入的消息在注入回合不会经过 sanitize 重写。它在 `before_model` 时重建并清空（drain）当前会话的 `SteeringQueue`——父会话忙碌期间由 announce 管线排队的完成载体消息——返回 `{"messages": [carrier, ...]}`，在下一次模型调用前注入重建的完成载体 `HumanMessage`。
+
+- 每个被取出的队列条目都会在队列的 SQLite 存储中标记为 `CONSUMED`，因此载体只会被注入一次（检查点持久化保证 HITL 恢复重放安全）。
+- Fail-open：`session_id` 缺失/为空、队列为空或任何异常都会被吞掉（记日志 + 无操作）——drain 绝不会破坏父回合，队列保留以供重试。
+- 注入的载体以 `origin='subagent_completion'` 持久化到 MesMemory。
 
 ### HeartbeatStaleness
 

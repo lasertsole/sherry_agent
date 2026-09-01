@@ -21,6 +21,7 @@ The middleware layer of the EMA AI Agent: eight `AgentMiddleware` components tha
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -226,6 +227,17 @@ Repairs tool-call / tool-result pairing after context trimming to prevent "Messa
 - clears `invalid_tool_calls` on error-status `AIMessage`s so they are not serialized as OpenAI tool calls.
 
 The hook returns a full message replacement: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`.
+
+### SubagentCompletionDrainMiddleware
+
+**Module:** `agent/middlewares/subagent_completion_drain.py` · **Class:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**Hooks:** `before_model` / `abefore_model` only
+
+Registered in the main agent immediately AFTER `ToolCallNormalize`, so the messages it injects bypass the sanitize rewrite on the injection turn. At `before_model` it rehydrates and drains the session's `SteeringQueue` — completion carriers queued by the announce pipeline while the parent was busy — and returns `{"messages": [carrier, ...]}`, injecting the rebuilt completion-carrier `HumanMessage`s right before the next model call.
+
+- Each drained queue item is marked `CONSUMED` in the queue's SQLite store, so a carrier is injected exactly once (checkpoint persistence keeps HITL-resume replays safe).
+- Fail-open: a blank/missing `session_id`, an empty queue, or any error is swallowed (log + no-op) — the drain never breaks the parent turn, and the queue survives for retry.
+- The injected carrier is persisted to MesMemory with `origin='subagent_completion'`.
 
 ### HeartbeatStaleness
 
