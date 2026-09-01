@@ -1,9 +1,33 @@
-from .LLMs import (
-    build_main_llm as build_main_llm,
-    build_reasoner_model as build_reasoner_model,
-    build_auxiliary_llm as build_auxiliary_llm,
-)
-from .ITTT_model import ITTT_model as ITTT_model
-from .VTTT_model import VTTT_model as VTTT_model
-from .embed_model import build_embed_model as build_embed_model
-from .reranker_model import reranker_model as reranker_model
+import importlib
+from typing import Any
+
+_MODULE_MAP = {
+    "build_main_llm": ".LLMs",
+    "build_reasoner_model": ".LLMs",
+    "build_auxiliary_llm": ".LLMs",
+    "NormalizingChatModel": ".LLMs",
+    "ReasoningChatOpenAI": ".LLMs",
+    "build_reasoning_kwargs": ".LLMs",
+    "is_openai_reasoning_model": ".LLMs",
+    "is_zhipu_reasoning_model": ".LLMs",
+    "ITTT_model": ".ITTT_model",
+    "VTTT_model": ".VTTT_model",
+    "build_embed_model": ".embed_model",
+    "reranker_model": ".reranker_model",
+}
+
+__all__ = list(_MODULE_MAP.keys())
+
+
+def __getattr__(name: str) -> Any:
+    if name in _MODULE_MAP:
+        module = importlib.import_module(_MODULE_MAP[name], __package__)
+        attr = getattr(module, name)
+        globals()[name] = attr
+        return attr
+
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+def __dir__() -> list[str]:
+    return __all__
