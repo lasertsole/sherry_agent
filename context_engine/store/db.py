@@ -21,6 +21,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_images_column,
         add_audio_video_columns,
         add_model_token_columns,
+        add_origin_column,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -130,6 +131,24 @@ def add_model_token_columns(db: sqlite3.Connection) -> None:
         pass
     try:
         db.execute("ALTER TABLE messages ADD COLUMN output_tokens INTEGER")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
+
+
+def add_origin_column(db: sqlite3.Connection) -> None:
+    """Add an `origin` column to the messages table (message provenance tag).
+
+    NULL = a real user-visible message; "subagent_completion" = a background
+    subagent-completion injection (written by add_messages per the metadata
+    contract in agent/tools/subagent/announce/completion_message.py). The
+    column is nullable TEXT and pre-existing rows stay NULL, so this is
+    backward compatible with databases created before the column existed.
+    The try/except ignores the error raised when the column is already
+    present, making the migration idempotent.
+    """
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN origin TEXT")
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass
