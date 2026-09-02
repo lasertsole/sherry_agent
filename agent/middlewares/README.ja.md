@@ -273,10 +273,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | パラメータ | 既定値 | 意味 |
 |---|---|---|
-| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` / `OFF` |
+| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` |
 | `timeout` | `60` | 中断決定のタイムアウト |
 | `deny_rules` | `[]` | 明示的な拒否パターン |
-| `yolo_mode` | `False` | すべての承認をスキップ |
 | `write_approval_memory` | `False` | メモリツール書き込みのゲート |
 | `write_approval_skills` | `False` | スキル書き込みのゲート |
 | `clarify_timeout` | `3600` | 澄清質問のタイムアウト |

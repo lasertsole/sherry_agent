@@ -170,39 +170,6 @@ def test_pipeline_deny_rules_layer(tmp_path, unit_test_config):
     assert result.pattern_key.startswith("deny:")
 
 
-def test_pipeline_yolo_bypass(tmp_path, unit_test_config):
-    """Layer 3: YOLO mode bypasses dangerous-pattern escalation for everything."""
-    cfg = HITLConfig(yolo_mode=True)
-    pipeline = ApprovalPipeline(cfg, MagicMock())
-    result = pipeline.check_command("git push --force origin main", "sess-yolo")
-    assert result.approved is True
-    assert "YOLO" in result.reason
-
-
-def test_pipeline_mode_off_is_yolo(tmp_path, unit_test_config):
-    """mode=OFF is treated as YOLO (bypass-all)."""
-    cfg = HITLConfig(mode=ApprovalMode.OFF)
-    pipeline = ApprovalPipeline(cfg, MagicMock())
-    result = pipeline.check_command("git push --force origin main", "sess-off")
-    assert result.approved is True
-
-
-def test_pipeline_mode_off_with_unsafe_password_detection():
-    cfg = HITLConfig(mode=ApprovalMode.OFF)
-    pipeline = ApprovalPipeline(cfg, MagicMock())
-    result = pipeline.check_command("git push --force origin main", "sess-off2")
-    assert result.approved is True
-
-
-def test_pipeline_yolo_env_var(tmp_path, unit_test_config, monkeypatch):
-    """Environment variable SHERRY_YOLO_MODE=1 activates YOLO."""
-    monkeypatch.setenv("SHERRY_YOLO_MODE", "1")
-    cfg = HITLConfig()
-    pipeline = ApprovalPipeline(cfg, MagicMock())
-    result = pipeline.check_command("git push --force origin main", "sess-yoloenv")
-    assert result.approved is True
-
-
 def test_pipeline_permanent_allowlist(tmp_path, unit_test_config):
     """Layer 4: a previously permanently-allowed pattern auto-approves."""
     cfg = HITLConfig()
@@ -812,4 +779,3 @@ def test_write_target_enum_values():
 def test_approval_mode_values():
     assert ApprovalMode.SMART.value == "smart"
     assert ApprovalMode.MANUAL.value == "manual"
-    assert ApprovalMode.OFF.value == "off"
