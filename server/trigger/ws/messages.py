@@ -5,7 +5,10 @@ from typing import Any, AsyncGenerator
 from loguru import logger
 from server.trigger.core import app
 from runtime import state_register_mem
+from agent.tools.subagent.registry.session_state import set_hitl_pending
 from server.service import async_generate, get_pending_interrupt, resume_agent
+from server.service import input_queue_service as iqs
+from server.service import turn_runner
 from type.message import MultiModalMessage
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
@@ -16,7 +19,15 @@ from robyn import WebSocketDisconnect, WebSocketAdapter
 # (both already handle `asyncio.CancelledError` and reset `answering` in their
 # `finally` block), giving an immediate interrupt regardless of whether the
 # agent is mid-token-stream, waiting on model TTFB, or stuck in a tool call.
+#
+# Task 7: generation turns go through the user-input queue (submit_user_input
+# → dispatched WsTurnExecutor); this registry now also covers resume turns and
+# the executor-driven child tasks so `stop` and `detect_state` see them all.
 _active_tasks: dict[str, asyncio.Task] = {}
+
+# Task 7: register the ws TurnExecutor on the default queue registry so the
+# drain orchestrator can execute ws-routed rows (idempotent).
+turn_runner.register_default_ws_executor()
 
 
 async def _send_ws(websocket: WebSocketAdapter, payload: dict[str, Any]) -> None:
@@ -32,12 +43,17 @@ async def _run_stream(
     session_id: str,
     source: AsyncGenerator[dict[str, str], None],
     stream_kind: str,
+    claim_row_id: str | None = None,
 ) -> None:
     """Drive a stream generator to completion, forwarding chunks to ``websocket``.
 
     Handles the post-stream HITL interrupt / done detection that the old inline
     loop performed, so cancellation and cleanup are uniform whether the stream
     finished, errored, or was cancelled via ``task.cancel()``.
+
+    Task 7: ``claim_row_id`` (when set) marks this turn's queue row DELIVERED
+    in the finally block; the TurnRunner then drains any rows queued while the
+    turn was running. Resume turns pass nothing — they own no queue row.
     """
     start_time = time.time()
     meta: dict[str, Any] = {}
@@ -72,6 +88,7 @@ async def _run_stream(
                     "content": interrupt_data,
                 },
             )
+            set_hitl_pending(session_id, True)
         else:
             await _send_ws(
                 websocket,
@@ -116,6 +133,9 @@ async def _run_stream(
         current = _active_tasks.get(session_id)
         if current is asyncio.current_task():
             _active_tasks.pop(session_id, None)
+        # Task 7: the turn's row is marked terminal (when it owns one) and the
+        # TurnRunner drains whatever rows were queued while the turn ran.
+        await turn_runner.on_turn_finished(session_id, claim_row_id)
 
 
 async def _cancel_session(session_id: str) -> None:
@@ -170,6 +190,9 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     )
                     # Cancel any in-flight generation before resuming.
                     await _cancel_session(session_id)
+                    # Task 7: the HITL wait is over — clear the pending flag as
+                    # the resume turn starts.
+                    set_hitl_pending(session_id, False)
                     task = asyncio.ensure_future(
                         _run_stream(
                             websocket,
@@ -213,19 +236,50 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     f"text_preview='{text_preview}', image_count={image_count}, image_path_count={image_path_count}"
                 )
 
-                # Cancel any existing generation for this session before starting
-                # a new one (mirrors the "one answering turn at a time" invariant).
-                await _cancel_session(session_id)
-
-                task = asyncio.ensure_future(
-                    _run_stream(
-                        websocket,
-                        session_id,
-                        async_generate(session_id, multi_modal_message),
-                        "generate",
-                    )
+                # Task 7: queue-then-drain. A busy session never gets its turn
+                # cancelled — the message is queued and executed FIFO when the
+                # current turn finishes (on_turn_finished → TurnRunner drain).
+                submit_result = await iqs.submit_user_input(
+                    session_id,
+                    multi_modal_message.text,
+                    "user",
+                    client_msg_id=obj.get("msg_id"),
                 )
-                _active_tasks[session_id] = task
+                if submit_result.status is iqs.SubmitStatus.QUEUE_FULL:
+                    await _send_ws(
+                        websocket,
+                        {
+                            "event": "error",
+                            "session_id": session_id,
+                            "content": "Input queue full; please try again later",
+                        },
+                    )
+                    continue
+                if submit_result.status is iqs.SubmitStatus.DEDUPED:
+                    # Duplicate msg_id: silently ignored.
+                    continue
+                if submit_result.status is iqs.SubmitStatus.QUEUED:
+                    queue_size = await iqs.get_default_queue().count_active(session_id)
+                    await _send_ws(
+                        websocket,
+                        {
+                            "event": "queued",
+                            "session_id": session_id,
+                            "position": submit_result.position,
+                            "queue_size": queue_size,
+                            "message_id": obj.get("msg_id"),
+                        },
+                    )
+                    continue
+                # STARTED: submit inserted the CLAIMED placeholder row and
+                # dispatched the registered WsTurnExecutor — that dispatched
+                # executor IS this turn's execution; no inline turn here.
+                continue
+            except (WebSocketDisconnect, ConnectionResetError):
+                # The socket is gone — propagate to the outer handler so the
+                # receive loop exits. Swallowing these here would hot-loop on
+                # a closed socket (receive_text raises without awaiting).
+                raise
             except json.JSONDecodeError as e:
                 logger.warning(f"Agent WS JSON decode error: {e}, websocket_id={websocket.id}")
                 await _send_ws(

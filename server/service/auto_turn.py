@@ -31,6 +31,7 @@ from agent.tools.subagent.registry.session_state import detect_state
 from runtime.relation_register import relation_register
 from server.service import get_pending_interrupt
 from server.service.messages import async_generate
+from server.service.turn_runner import on_turn_finished
 from type.message import MultiModalMessage
 
 
@@ -177,3 +178,8 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     except Exception as exc:  # noqa: BLE001 - mirror _run_stream error frame
         logger.error("auto_turn: turn failed for {}: {}", bare, exc)
         await _send_ws(websocket, {"event": "error", "session_id": bare, "content": str(exc)})
+    finally:
+        # Task 7: the auto-turn owns no queue row (claim_row_id=None) — the
+        # TurnRunner defers while a foreign CLAIMED row exists, so this only
+        # kicks the drain for rows queued while the turn was running.
+        await on_turn_finished(bare)
