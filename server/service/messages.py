@@ -5,7 +5,7 @@ import asyncio
 from loguru import logger
 from agent import built_agent
 from langgraph.types import Command
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Literal
 from runtime import state_register_mem
 from context_engine import get_session_ids
 from type.message import MultiModalMessage
@@ -262,6 +262,34 @@ Each yielded item is a dict ``{"type": <str>, "content": <str>}`` where
 Callers that only need the plain text (e.g. channel consumers) can
 join ``chunk["content"]`` for every item.
 """
+
+
+async def _write_interrupt_marker(
+    session_id: str, partial_text: str, reason: Literal["cancelled", "heartbeat_timeout"]
+) -> None:
+    """Persist the interrupted-turn marker on ``async_generate``'s cancellation
+    paths (plan Task 6 / G3-allowed touchpoint: ONE await per handler, placed
+    BEFORE the terminal frame so the partial transcript is reconciled while
+    ``ai_text`` still holds it).
+
+    Best-effort by contract: a failing marker write must never mask the
+    "Request cancelled" frame nor break generator teardown, so every
+    internal failure is logged and swallowed (``write_interrupted_marker``
+    already guards its own body; this outer net also covers the import).
+    """
+    try:
+        from .interrupt_marker import write_interrupted_marker
+
+        await write_interrupted_marker(
+            session_id, build_agent_config(session_id), partial_text, reason
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 - best-effort hook on an exception path
+        logger.warning(
+            f"Interrupted-marker write failed (best-effort): session_id={session_id}, "
+            f"reason={reason}, error={e}"
+        )
 
 
 async def async_generate(
@@ -524,10 +552,17 @@ async def async_generate(
         )
     except asyncio.CancelledError:
         elapsed = time.time() - start_time
+        # Task 6: persist the interrupted marker (best-effort) BEFORE the
+        # cancel frame — reconcile the checkpointer transcript while ai_text
+        # still holds the partial answer. Never masks the frame below.
+        await _write_interrupt_marker(session_id, ai_text, "cancelled")
         yield {"type": "text", "content": "Request cancelled"}
         logger.debug(f"Agent execution cancelled: session_id={session_id}, duration={elapsed:.2f}s")
     except HeartbeatTimeoutError as e:
         elapsed = time.time() - start_time
+        # Task 6: persist the interrupted marker (best-effort) BEFORE the
+        # timeout frame — same contract as the cancel path above.
+        await _write_interrupt_marker(session_id, ai_text, "heartbeat_timeout")
         yield {
             "type": "text",
             "content": "\n\n**[Heartbeat Timeout]** Agent idle timeout exceeded — automatically terminated.",
