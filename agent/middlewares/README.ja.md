@@ -21,6 +21,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -227,6 +228,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 フックはメッセージ全体の置換を返します：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。
 
+### SubagentCompletionDrainMiddleware
+
+**モジュール：** `agent/middlewares/subagent_completion_drain.py` · **クラス：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**フック：** `before_model` / `abefore_model` のみ
+
+メインエージェントには `ToolCallNormalize` の直後に登録されるため、注入されるメッセージは注入ターンではサニタイズ書き換えをバイパスします。`before_model` でセッションの `SteeringQueue`（親がビジーの間に announce パイプラインが積んだ完了キャリアメッセージ）をリハイドレートして排出（drain）し、`{"messages": [carrier, ...]}` を返すことで、次のモデル呼び出しの直前に再構築された完了キャリア `HumanMessage` を注入します。
+
+- 排出された各キューエントリはキューの SQLite ストアで `CONSUMED` とマークされるため、キャリアは正確に 1 回だけ注入されます（チェックポイント永続化により HITL 再開リプレイも安全）。
+- Fail-open：`session_id` の欠落/空、空のキュー、あらゆる例外は握りつぶされます（ログ + no-op）— drain が親ターンを壊すことはなく、キューは再試行のために保持されます。
+- 注入されたキャリアは `origin='subagent_completion'` として MesMemory に永続化されます。
+
 ### HeartbeatStaleness
 
 **モジュール：** `agent/middlewares/heartbeat_staleness.py` · **クラス：** `HeartbeatStaleness(AgentMiddleware)`
@@ -299,7 +311,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 事後型の出力繰り返し検知器で、`WARN → HALT` エスカレーションを持ちます。`agent.middlewares.output_repetition_guard` からエクスポートされ（`agent/middlewares/__init__.py` からは**再エクスポートされていません**）、**ワーカーパイプラインでのみ登録**されています。
 
-メインエージェントでは同じ検知が **`RepetitionGuardWrapper`**（`agent/repetition_guard_wrapper.py`）を通じて実行されます。これはコンパイル済みグラフをラップし、ストリームレベルでインターセプトし（`ainvoke` の事後バックストップ付き）、同じ状態キーとデフォルトを再利用します。どちらの登録も `phantom_stream_guard=True` を渡します。
+メインエージェントでは同じ検知が **`RepetitionGuardWrapper`**（`agent/stream_repetition_guard_wrapper.py`）を通じて実行されます。これはコンパイル済みグラフをラップし、ストリームレベルでインターセプトし（`ainvoke` の事後バックストップ付き）、同じ状態キーとデフォルトを再利用します。どちらの登録も `phantom_stream_guard=True` を渡します。
 
 **検知レイヤー**
 
@@ -511,7 +523,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # このファイル（+ .zh / .ja / .ko 版）
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper（本パッケージの外に存在）
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper（本パッケージの外に存在）
 ```
 
 ### エクスポート（`__init__.py`）

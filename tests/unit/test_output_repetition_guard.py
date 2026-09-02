@@ -2,16 +2,20 @@
 
 Covers:
   * Session helpers (get_session_id)
-  * Hash helpers (_content_hash)
+  * Hash helpers (_content_hash dual head/tail + _normalize_for_hash NFKC/whitespace/punct)
   * Internal repetition detection (_detect_* + _detect_internal_repetition)
   * Reasoning extraction (_extract_reasoning / _extract_inline_reasoning) + strip
   * AI message extraction (_extract_ai_message) across AIMessage / ModelResponse /
     ExtendedModelResponse
   * Cross-call repetition WARN / HALT escalation
+  * Short cross-call repetition (< 20 chars, _MIN_CROSSCALL_LENGTH gate)
+  * Normalized-hash cross-call matching (whitespace/punct/fullwidth variants)
+  * Dual-hash cross-call matching (head OR tail)
+  * Tool-call cross-call tracking (internal detection skipped)
   * Internal-repetition warn (single-shot) respecting the warned flag
   * Reasoning-history tracking (independent of output history)
+  * Internal completion-drain message skip
   * Halted-turn short circuit
-  * tool_calls skip path
   * before_agent / abefore_agent reset
   * wrap_model_call / awrap_model_call passthrough + replacement
   * SESSION_STATE_KEYS exposes the per-session keys for teardown cleanup
@@ -88,27 +92,39 @@ class TestContentHash:
     def test_hash_short_content(self):
         g = OutputRepetitionGuard()
         h = g._content_hash("hello world")
-        # deterministic md5 of stripped content
+        # dual hash: both parts are the md5 of the normalized content
+        # ("hello world" -> "helloworld": whitespace stripped)
         import hashlib
 
-        assert h == hashlib.md5(b"hello world").hexdigest()
+        expected = hashlib.md5("helloworld".encode()).hexdigest()
+        assert h == f"{expected}|{expected}"
 
     def test_hash_uses_tail_only_for_long_content(self):
         g = OutputRepetitionGuard()
         long = "x" * (_TAIL_CHARS + 100) + "TAIL_MARKER"
         h = g._content_hash(long)
-        # content longer than tail -> only last _TAIL_CHARS considered
+        # content longer than tail -> head and tail hashes of the normalized
+        # content, joined with "|"
         import hashlib
 
-        expected = hashlib.md5(long[-_TAIL_CHARS:].strip().encode()).hexdigest()
-        assert h == expected
-        # leading part must NOT influence the hash
+        normalized = OutputRepetitionGuard._normalize_for_hash(long)
+        head = hashlib.md5(normalized[:_TAIL_CHARS].encode()).hexdigest()
+        tail = hashlib.md5(normalized[-_TAIL_CHARS:].encode()).hexdigest()
+        assert h == f"{head}|{tail}"
+        # leading part must NOT influence the tail hash
         h2 = g._content_hash("DIFFERENT_PREFIX" + ("x" * (_TAIL_CHARS)) + "TAIL_MARKER")
-        assert h == h2
+        assert h.split("|")[1] == h2.split("|")[1]
 
     def test_hash_consistent_for_same_content(self):
         g = OutputRepetitionGuard()
         assert g._content_hash("abc  ") == g._content_hash("abc")  # strip whitespace
+
+    def test_normalize_strips_punct_whitespace_fullwidth(self):
+        # NFKC + whitespace removal + punctuation removal (enhancement #2)
+        assert OutputRepetitionGuard._normalize_for_hash("好的，我来处理。") == "好的我来处理"
+        assert OutputRepetitionGuard._normalize_for_hash("Ａ Ｂ") == "AB"  # fullwidth -> ASCII
+        assert OutputRepetitionGuard._normalize_for_hash("a b\tc\nd") == "abcd"
+        assert OutputRepetitionGuard._normalize_for_hash("!!!") == ""  # punct-only -> empty
 
 
 class TestInternalRepetition:
@@ -416,13 +432,6 @@ class TestCrossCallRepetition:
         hist = fresh_state.get_state("s1", _HISTORY_KEY, [])
         assert len(hist) <= _MAX_HISTORY
 
-    def test_short_content_below_min_skipped(self, fresh_state):
-        g = self.make()
-        short = "hi"
-        # not long enough for _MIN_CONTENT_LENGTH -> no history recorded, no warn
-        g._wrap_model_call_post(self._request(), self._result(short))
-        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == []
-
     def test_separate_sessions_independent(self, fresh_state):
         g = self.make(warn_after=2, max_identical_outputs=3)
         content = "Session-scoped long repeated content used to prove isolation between sessions."
@@ -431,14 +440,6 @@ class TestCrossCallRepetition:
         # session B starts fresh -> no warn
         r = g._wrap_model_call_post(self._request("B"), self._result(content))
         assert r is None
-
-    def test_tool_call_skips_guard(self, fresh_state):
-        g = self.make(warn_after=1, max_identical_outputs=2)
-        content = "I will call a tool now with enough long text to be meaningful."
-        msg = self._result(content, tool_calls=[{"name": "web_search", "args": {}, "id": "c1"}])
-        r = g._wrap_model_call_post(self._request(), msg)
-        assert r is None  # no history recorded for tool-call messages
-        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == []
 
 
 class TestInternalWarn:
@@ -513,14 +514,16 @@ class TestReasoningHistory:
         assert r is not None
         assert "repetition" in r.content
 
-    def test_reasoning_short_skipped(self, fresh_state):
+    def test_reasoning_short_tracked_cross_call(self, fresh_state):
         g = self.make()
         reasoning = "abc"
         g._wrap_model_call_post(
             self._request(), self._reasoned_msg("long enough visible output", reasoning)
         )
-        # below _MIN_CONTENT_LENGTH -> not tracked in reasoning history
-        assert fresh_state.get_state("s1", _REASONING_HISTORY_KEY, []) == []
+        # _MIN_CROSSCALL_LENGTH (1): even short reasoning is tracked for
+        # cross-call detection; only internal detection is length-gated
+        hist = fresh_state.get_state("s1", _REASONING_HISTORY_KEY, [])
+        assert len(hist) == 1
 
 
 class TestHaltedTurn:
@@ -780,3 +783,211 @@ class TestNoSessionStateCleanup:
         req = MagicMock(spec=ModelRequest)
         req.state = _make_state(sid)
         return req
+
+
+class TestShortCrossCallRepetition:
+    """Enhancement #1 — short (< 20 char) outputs are covered by cross-call
+    detection via the _MIN_CROSSCALL_LENGTH (1) gate."""
+
+    def make(self, **kw):
+        return OutputRepetitionGuard(**kw)
+
+    def _request(self, session_id="s1"):
+        req = MagicMock(spec=ModelRequest)
+        req.state = _make_state(session_id)
+        return req
+
+    def test_short_repeated_output_warns(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=5)
+        g._wrap_model_call_post(self._request(), AIMessage(content="好的"))
+        # second identical short output -> warn
+        r = g._wrap_model_call_post(self._request(), AIMessage(content="好的"))
+        assert r is not None
+        assert isinstance(r, AIMessage)
+        assert "[Output Repetition Guard]" in r.content
+
+    def test_short_repeated_output_halts(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=3)
+        g._wrap_model_call_post(self._request(), AIMessage(content="hi"))
+        g._wrap_model_call_post(self._request(), AIMessage(content="hi"))
+        # third identical short output -> halt
+        r = g._wrap_model_call_post(self._request(), AIMessage(content="hi"))
+        assert r is not None
+        assert "has been repeated" in r.content
+        assert fresh_state.get_state("s1", _HALTED_KEY, False) is True
+
+    def test_short_distinct_outputs_no_escalation(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=3)
+        assert g._wrap_model_call_post(self._request(), AIMessage(content="好的")) is None
+        assert g._wrap_model_call_post(self._request(), AIMessage(content="hi")) is None
+        assert fresh_state.get_state("s1", _HALTED_KEY, False) is False
+
+
+class TestNormalizedHashCrossCall:
+    """Enhancement #2 — whitespace / punctuation / full-width variants all
+    normalize to the same hash, so near-identical outputs still match
+    cross-call."""
+
+    def make(self, **kw):
+        return OutputRepetitionGuard(**kw)
+
+    def _request(self, session_id="s1"):
+        req = MagicMock(spec=ModelRequest)
+        req.state = _make_state(session_id)
+        return req
+
+    def test_whitespace_punctuation_variants_match(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=5)
+        g._wrap_model_call_post(self._request(), AIMessage(content="好的，我来处理。"))
+        # whitespace/punctuation variants normalize to the same hash
+        r = g._wrap_model_call_post(self._request(), AIMessage(content="好的 我来处理"))
+        assert r is not None
+        assert "[Output Repetition Guard]" in r.content
+
+    def test_fullwidth_halfwidth_match(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=5)
+        g._wrap_model_call_post(self._request(), AIMessage(content="Result: ＡＢＣ test value"))
+        r = g._wrap_model_call_post(self._request(), AIMessage(content="Result: ABC test value"))
+        assert r is not None
+
+    def test_normalize_unit(self):
+        assert OutputRepetitionGuard._normalize_for_hash("好的，我来处理。") == "好的我来处理"
+        assert OutputRepetitionGuard._normalize_for_hash("Ａ Ｂ") == "AB"  # NFKC fullwidth -> ASCII
+        assert OutputRepetitionGuard._normalize_for_hash("!!!") == ""  # punct-only -> empty
+
+
+class TestDualHashCrossCall:
+    """Enhancement #3 — the dual head/tail hash catches repetition at
+    either end of long outputs."""
+
+    _TAIL_SENT = (
+        "The investigation covered many aspects including timeline "
+        "reconstruction witness interviews physical evidence cataloging "
+        "and background research on every person connected to the case. "
+    )
+
+    def make(self, **kw):
+        return OutputRepetitionGuard(**kw)
+
+    def _request(self, session_id="s1"):
+        req = MagicMock(spec=ModelRequest)
+        req.state = _make_state(session_id)
+        return req
+
+    def _long_varied(self) -> str:
+        # ~640 normalized chars with no internal repetition (4 sentence
+        # segments < internal_min_lines=6; no char runs; no repeated phrases)
+        return self._TAIL_SENT * 4
+
+    def test_hash_format_head_and_tail(self):
+        g = self.make()
+        head, _, tail = g._content_hash("short").partition("|")
+        assert head == tail  # short content: both parts identical
+        long = "y" * (_TAIL_CHARS + 50) + "Z" * (_TAIL_CHARS + 50)
+        head, _, tail = g._content_hash(long).partition("|")
+        assert head != tail  # long content: distinct head/tail hashes
+
+    def test_same_prefix_different_suffix_warns(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=5)
+        base = self._long_varied()
+        g._wrap_model_call_post(self._request(), AIMessage(content=base + "ENDING_ONE"))
+        # same normalized head (first 500 chars), different tail -> head match
+        r = g._wrap_model_call_post(self._request(), AIMessage(content=base + "ENDING_TWO"))
+        assert r is not None
+        assert "[Output Repetition Guard]" in r.content
+
+    def test_different_prefix_same_suffix_warns(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=5)
+        tail_part = self._long_varied()
+        g._wrap_model_call_post(self._request(), AIMessage(content="PREFIX_ONE" + tail_part))
+        # different prefix, identical normalized tail (last 500 chars) -> tail match
+        r = g._wrap_model_call_post(self._request(), AIMessage(content="PREFIX_TWO" + tail_part))
+        assert r is not None
+        assert "[Output Repetition Guard]" in r.content
+
+
+class TestToolCallCrossCall:
+    """Enhancement #4 — tool-call messages are no longer skipped entirely:
+    cross-call detection still runs, only internal detection is skipped."""
+
+    def make(self, **kw):
+        return OutputRepetitionGuard(**kw)
+
+    def _request(self, session_id="s1"):
+        req = MagicMock(spec=ModelRequest)
+        req.state = _make_state(session_id)
+        return req
+
+    def _tool_msg(self, content):
+        return AIMessage(
+            content=content,
+            tool_calls=[{"name": "web_search", "args": {}, "id": "c1"}],
+        )
+
+    def test_tool_call_text_recorded_in_history(self, fresh_state):
+        g = self.make()
+        g._wrap_model_call_post(self._request(), self._tool_msg("Calling the search tool now."))
+        # cross-call history IS recorded for tool-call messages
+        hist = fresh_state.get_state("s1", _HISTORY_KEY, [])
+        assert len(hist) == 1
+
+    def test_repeated_tool_call_text_warns(self, fresh_state):
+        g = self.make(warn_after=2, max_identical_outputs=5)
+        content = "Searching for the same thing again and again here."
+        g._wrap_model_call_post(self._request(), self._tool_msg(content))
+        # second identical tool-call text -> cross-call warn
+        r = g._wrap_model_call_post(self._request(), self._tool_msg(content))
+        assert r is not None
+        assert "[Output Repetition Guard]" in r.content
+
+    def test_tool_call_internal_repetition_skipped(self, fresh_state):
+        g = self.make(warn_after=5, max_identical_outputs=10)
+        repetitive = "啊" * 40  # char-run: internally repetitive, 40 chars
+        r = g._wrap_model_call_post(self._request(), self._tool_msg(repetitive))
+        # single occurrence -> no cross-call escalation...
+        assert r is None
+        # ...and internal detection is skipped for tool-call messages
+        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is False
+
+
+class TestInternalMessageSkip:
+    """Enhancement #7 — internal completion-drain messages (injected by
+    SubagentCompletionDrainMiddleware) are skipped entirely: no history
+    bookkeeping, no warning."""
+
+    def make(self, **kw):
+        return OutputRepetitionGuard(**kw)
+
+    def _request(self, session_id="s1"):
+        req = MagicMock(spec=ModelRequest)
+        req.state = _make_state(session_id)
+        return req
+
+    def _internal_ai(self, content, **meta):
+        return AIMessage(
+            content=content,
+            metadata={"internal": True, "provenance": "subagent_completion", **meta},
+        )
+
+    def test_internal_flag_skips_guard(self, fresh_state):
+        g = self.make(warn_after=5, max_identical_outputs=10)
+        msg = self._internal_ai("字" * 40)  # internally repetitive if not skipped
+        r = g._wrap_model_call_post(self._request(), msg)
+        assert r is None
+        # skip happens BEFORE any history bookkeeping
+        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == []
+        assert fresh_state.get_state("s1", _REASONING_HISTORY_KEY, []) == []
+
+    def test_provenance_only_also_skips(self, fresh_state):
+        g = self.make()
+        msg = self._internal_ai("some completion text", internal=False)
+        r = g._wrap_model_call_post(self._request(), msg)
+        assert r is None
+        assert fresh_state.get_state("s1", _HISTORY_KEY, []) == []
+
+    def test_normal_message_still_tracked(self, fresh_state):
+        # negative control: a NORMAL message is recorded as usual
+        g = self.make()
+        r = g._wrap_model_call_post(self._request(), AIMessage(content="normal output text"))
+        assert r is None
+        assert len(fresh_state.get_state("s1", _HISTORY_KEY, [])) == 1

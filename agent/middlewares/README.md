@@ -21,6 +21,7 @@ The middleware layer of the EMA AI Agent: eight `AgentMiddleware` components tha
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -227,6 +228,17 @@ Repairs tool-call / tool-result pairing after context trimming to prevent "Messa
 
 The hook returns a full message replacement: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`.
 
+### SubagentCompletionDrainMiddleware
+
+**Module:** `agent/middlewares/subagent_completion_drain.py` · **Class:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**Hooks:** `before_model` / `abefore_model` only
+
+Registered in the main agent immediately AFTER `ToolCallNormalize`, so the messages it injects bypass the sanitize rewrite on the injection turn. At `before_model` it rehydrates and drains the session's `SteeringQueue` — completion carriers queued by the announce pipeline while the parent was busy — and returns `{"messages": [carrier, ...]}`, injecting the rebuilt completion-carrier `HumanMessage`s right before the next model call.
+
+- Each drained queue item is marked `CONSUMED` in the queue's SQLite store, so a carrier is injected exactly once (checkpoint persistence keeps HITL-resume replays safe).
+- Fail-open: a blank/missing `session_id`, an empty queue, or any error is swallowed (log + no-op) — the drain never breaks the parent turn, and the queue survives for retry.
+- The injected carrier is persisted to MesMemory with `origin='subagent_completion'`.
+
 ### HeartbeatStaleness
 
 **Module:** `agent/middlewares/heartbeat_staleness.py` · **Class:** `HeartbeatStaleness(AgentMiddleware)`
@@ -297,7 +309,7 @@ The innermost middleware — closest to the LLM. Extends LangChain's built-in `S
 
 Post-hoc output-repetition detector with `WARN → HALT` escalation. Exported from `agent.middlewares.output_repetition_guard` (it is **not** re-exported by `agent/middlewares/__init__.py`) and registered **only in the worker pipeline**.
 
-For the main agent the same detection runs through **`RepetitionGuardWrapper`** (`agent/repetition_guard_wrapper.py`), which wraps the compiled graph and intercepts at stream level (plus an `ainvoke` post-hoc backstop), reusing the same state keys and defaults. Both registrations pass `phantom_stream_guard=True`.
+For the main agent the same detection runs through **`RepetitionGuardWrapper`** (`agent/stream_repetition_guard_wrapper.py`), which wraps the compiled graph and intercepts at stream level (plus an `ainvoke` post-hoc backstop), reusing the same state keys and defaults. Both registrations pass `phantom_stream_guard=True`.
 
 **Detection layers**
 
@@ -509,7 +521,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # this file (+ .zh / .ja / .ko variants)
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper (lives outside this package)
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (lives outside this package)
 ```
 
 ### Exports (`__init__.py`)

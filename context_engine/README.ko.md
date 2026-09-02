@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS messages (
     videos        TEXT,               -- 비디오 경로/참조 JSON 목록
     model_name    TEXT,               -- AI 메시지: 응답을 생성한 모델
     input_tokens  INTEGER,            -- AI 메시지: usage_metadata 입력 토큰
-    output_tokens INTEGER             -- AI 메시지: usage_metadata 출력 토큰
+    output_tokens INTEGER,            -- AI 메시지: usage_metadata 출력 토큰
+    origin        TEXT                -- 메시지 출처 태그 (완료 캐리어는 "subagent_completion", 그 외는 NULL)
 );
 ```
 
@@ -133,7 +134,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 **FTS5 트리거:** 각 FTS 테이블은 `messages` 테이블에 `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` 트리거를 두어 인덱스를 자동 동기화합니다. 따라서 행 삭제 시(예: `delete_messages_by_session`) 별도의 FTS 정리가 필요 없습니다.
 
 **마이그레이션:** 스키마 생성은 `_migrations` 테이블로 버전 관리됩니다. 순서는 다음과 같습니다:
-`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns`.
+`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns` → `add_origin_column`.
 
 ---
 
@@ -153,6 +154,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` 메시지는 `tool_calls`(JSON), `additional_kwargs["reasoning_content"]`의 사고 연쇄(`reasoning` 컬럼에 저장), 응답/사용량 메타데이터의 `model_name` / `input_tokens` / `output_tokens`를 영속화합니다 (모두 선택적이며 없으면 `None`)
 - `human` 메시지는 `additional_kwargs`의 멀티모달 파일 참조를 `images` / `audios` / `videos` 컬럼에 영속화합니다 (JSON 목록, 비어 있으면 `None`)
 - `tool` 메시지는 `tool_call_id`, `tool_name`, `tool_status`(기본 `"success"`)를 영속화합니다
+- 메타데이터가 `internal: true`이고 `provenance: "subagent_completion"`인 `human` 메시지(스티어링 큐의 완료 캐리어)는 `origin = 'subagent_completion'`으로 영속화됩니다. 그 외 행의 `origin`은 모두 `NULL`입니다 (빈 문자열도, JSON도 아님)
 
 ### 2. 히스토리 조회
 
@@ -377,6 +379,8 @@ LangChain 메시지 배치를 새 턴 하나로 영속화합니다.
 
 **반환:** `list[dict]` — 각 항목은 `{"session_id": str, "last_time": str, "title": str}`. `last_time`은 최신 `YYYYMMDDHHmmss` 타임스탬프이고, `title`은 최신 `human` 메시지에서 파생됨 (빈 문자열일 수 있음)
 
+제목 쿼리는 `origin IS NULL`인 행만 고려합니다. `human` 행이 모두 `subagent_completion` 캐리어인 세션의 제목은 빈 문자열이 되며, 클라이언트가 플레이스홀더를 렌더링합니다.
+
 ---
 
 #### `get_db()` (`context_engine.store.db`)
@@ -429,4 +433,4 @@ CJK 쿼리의 경우 연산자가 아닌 각 토큰이 개별적으로 검사됩
 
 ---
 
-**마지막 업데이트:** 2026-08-29
+**마지막 업데이트:** 2026-09-02

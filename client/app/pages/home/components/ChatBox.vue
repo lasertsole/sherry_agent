@@ -9,18 +9,42 @@
       ref="scrollContainerRef"
       class="flex flex-col gap-6 flex-1 min-h-0 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]"
       @scroll="updateScrollBottomBtn">
-      <div
-        v-for="group in turnGroups"
-        :key="group[0]?.id"
-        :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(group) }]">
         <div
-          v-for="message in group"
-          :key="message.id"
-          :class="[
-            'flex justify-start gap-3 min-w-0',
-            { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
-            { 'text-left': message.role === CHAT_ROLE.AI }
-          ]">
+          v-for="group in turnGroups"
+          :key="group[0]?.id"
+          :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(group) }]">
+          <!-- Background-task completion carrier (USER row whose backend origin="subagent_completion"):
+               rendered as a centered, muted system card OUTSIDE the user bubble flow — the carrier
+               announces a background subagent completion, it is not something the user said. The
+               first line "[subagent:<name> <status>]" is self-describing and shown verbatim (no
+               parsing). USER rows always form singleton turn groups (see turnGroups), so a group
+               holding a carrier holds nothing else and the two loops below never interleave. -->
+          <div
+            v-for="carrier in backgroundCarriers(group)"
+            :key="carrier.id"
+            class="background-task-card mx-auto flex w-full max-w-2xl flex-col items-center gap-1.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-4 py-3 text-center dark:border-gray-700 dark:bg-gray-800/30">
+            <span
+              class="flex items-center gap-1.5 text-xs font-medium tracking-wide text-[#9CA3AF] dark:text-[#6B7280]">
+              <span
+                aria-hidden="true"
+                class="pi pi-server text-[10px]"></span>
+              {{ t('chat.backgroundMessage') }}
+            </span>
+            <!-- Carrier body: verbatim plain text ({{ }} interpolation, no markdown round-trip);
+                 whitespace preserved so the self-describing first line keeps its own line -->
+            <div
+              class="w-full whitespace-pre-wrap break-words text-left text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+              {{ carrier.content }}
+            </div>
+          </div>
+          <div
+            v-for="message in regularMessages(group)"
+            :key="message.id"
+            :class="[
+              'flex justify-start gap-3 min-w-0',
+              { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
+              { 'text-left': message.role === CHAT_ROLE.AI }
+            ]">
           <div
             class="flex justify-center items-center w-10 h-10 rounded-full overflow-hidden shrink-0 bg-gray-100 dark:bg-gray-800">
             <!-- Avatar area: consecutive messages and tool calls all hide the avatar (hidden img,
@@ -405,6 +429,26 @@ const turnGroups = computed<MessageItem[][]>(() => {
  * provided by the outer gap-6 (24px).
  */
 const turnSpacingClass = (group: MessageItem[]): boolean => group.length > 1 && group[0]?.role !== CHAT_ROLE.USER;
+
+/**
+ * Background-task completion carrier: a USER-role message whose backend origin is
+ * "subagent_completion" (subagent-origin-tagging; see CachedMessage.origin in db.ts).
+ * Carriers render as a centered, muted system card instead of the regular user bubble;
+ * legacy rows without origin (TEXT NULL = a real user message) keep the existing
+ * user-bubble rendering untouched.
+ */
+const isBackgroundTask = (message: MessageItem): boolean => message.role === CHAT_ROLE.USER && !!message.origin;
+
+/**
+ * Messages of a turn group that render as regular rows (background-task carriers excluded).
+ */
+const regularMessages = (group: MessageItem[]): MessageItem[] => group.filter(m => !isBackgroundTask(m));
+
+/**
+ * Background-task carriers of a turn group (USER rows always form singleton groups, so this
+ * is either empty or the whole group).
+ */
+const backgroundCarriers = (group: MessageItem[]): MessageItem[] => group.filter(isBackgroundTask);
 
 /** Chat list scroll container (the outermost overflow-auto div), used for auto-scrolling to the bottom */
 const scrollContainerRef = useTemplateRef<HTMLDivElement>('scrollContainerRef');

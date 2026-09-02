@@ -17,13 +17,13 @@ from langchain_core.messages import AIMessage, HumanMessage
 from agent.middlewares.iteration_budget import IterationBudget
 from agent.middlewares.output_repetition_guard import (
     SESSION_STATE_KEYS,
+    OutputRepetitionGuard,
     _HISTORY_KEY,
     _REASONING_HISTORY_KEY,
 )
 from agent.middlewares.subagent_completion_drain import (
     SubagentCompletionDrainMiddleware,
 )
-from agent.repetition_guard_wrapper import RepetitionGuardWrapper
 from agent.tools.subagent.announce import steering_queue as sq
 from agent.tools.subagent.announce.steering_queue import SteeringQueue
 from agent.tools.subagent.registry.pending_injections import PendingInjectionStore
@@ -109,8 +109,9 @@ def test_internal_message_skips_guard_and_budget():
     """Internal completion messages bypass guard history and budget consumption."""
     internal_ai = _internal_ai()
 
-    guard = RepetitionGuardWrapper(None)
-    assert guard._post_hoc_check(SID_GUARD, internal_ai) is None
+    guard = OutputRepetitionGuard()
+    request = SimpleNamespace(state={"session_id": SID_GUARD, "messages": [internal_ai]})
+    assert guard._wrap_model_call_post(request, internal_ai) is None
     # skip happens BEFORE any history bookkeeping
     assert state_register_mem.get_state(SID_GUARD, _HISTORY_KEY, None) is None
     assert state_register_mem.get_state(SID_GUARD, _REASONING_HISTORY_KEY, None) is None

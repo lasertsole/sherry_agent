@@ -40,6 +40,9 @@
     "copy": "复制",
     "copied": "已复制"
   },
+  "chat": {
+    "backgroundMessage": "后台任务"
+  },
   "errors": {
     "requestFailed": "请求失败",
     "pageError": "页面错误",

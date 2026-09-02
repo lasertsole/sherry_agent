@@ -21,6 +21,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -227,6 +228,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 후크는 메시지 전체 교체를 반환합니다: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`.
 
+### SubagentCompletionDrainMiddleware
+
+**모듈:** `agent/middlewares/subagent_completion_drain.py` · **클래스:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**후크:** `before_model` / `abefore_model` 전용
+
+메인 에이전트에 `ToolCallNormalize` 바로 뒤에 등록되므로, 주입되는 메시지는 주입 턴에서 sanitize 재작성을 우회합니다. `before_model`에서 세션의 `SteeringQueue`—부모가 바쁜 동안 announce 파이프라인이 적립한 완료 캐리어 메시지—를 재하이드레이트하고 배출(drain)하여 `{"messages": [carrier, ...]}`를 반환함으로써, 다음 모델 호출 직전에 재구축된 완료 캐리어 `HumanMessage`를 주입합니다.
+
+- 배출된 각 큐 항목은 큐의 SQLite 저장소에서 `CONSUMED`로 마킹되므로 캐리어는 정확히 한 번만 주입됩니다(체크포인트 영속화가 HITL 재개 리플레이의 안전성을 보장).
+- Fail-open: `session_id` 누락/빈 값, 빈 큐, 그리고 모든 오류는 삼켜집니다(로그 + no-op) — drain이 부모 턴을 깨뜨리지 않으며, 큐는 재시도를 위해 보존됩니다.
+- 주입된 캐리어는 `origin='subagent_completion'`으로 MesMemory에 영속화됩니다.
+
 ### HeartbeatStaleness
 
 **모듈:** `agent/middlewares/heartbeat_staleness.py` · **클래스:** `HeartbeatStaleness(AgentMiddleware)`
@@ -299,7 +311,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 사후(事後)형 출력 반복 감지기로, `WARN → HALT` 에스컬레이션을 가집니다. `agent.middlewares.output_repetition_guard`에서 익스포트되며(`agent/middlewares/__init__.py`에서는 **재익스포트되지 않음**), **워커 파이프라인에만 등록**됩니다.
 
-메인 에이전트에서는 동일한 감지가 **`RepetitionGuardWrapper`**(`agent/repetition_guard_wrapper.py`)를 통해 수행됩니다. 이것은 컴파일된 그래프를 래핑하고, 스트림 수준에서 인터셉트하며(`ainvoke`의 사후 백스톱 포함), 같은 상태 키와 기본값을 재사용합니다. 두 등록 모두 `phantom_stream_guard=True`를 전달합니다.
+메인 에이전트에서는 동일한 감지가 **`RepetitionGuardWrapper`**(`agent/stream_repetition_guard_wrapper.py`)를 통해 수행됩니다. 이것은 컴파일된 그래프를 래핑하고, 스트림 수준에서 인터셉트하며(`ainvoke`의 사후 백스톱 포함), 같은 상태 키와 기본값을 재사용합니다. 두 등록 모두 `phantom_stream_guard=True`를 전달합니다.
 
 **감지 계층**
 
@@ -511,7 +523,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # 이 문서 (+ .zh / .ja / .ko 버전)
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper (이 패키지 바깥에 존재)
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (이 패키지 바깥에 존재)
 ```
 
 ### 익스포트 (`__init__.py`)

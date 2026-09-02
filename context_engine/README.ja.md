@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS messages (
     videos        TEXT,               -- 動画パス/参照の JSON リスト
     model_name    TEXT,               -- AI メッセージ：レスポンスを生成したモデル
     input_tokens  INTEGER,            -- AI メッセージ：usage_metadata の入力トークン
-    output_tokens INTEGER             -- AI メッセージ：usage_metadata の出力トークン
+    output_tokens INTEGER,            -- AI メッセージ：usage_metadata の出力トークン
+    origin        TEXT                -- メッセージの送信元タグ（完了キャリアは "subagent_completion"、それ以外は NULL）
 );
 ```
 
@@ -133,7 +134,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 **FTS5 トリガー：** 各 FTS テーブルには `messages` テーブルに対する `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` トリガーがあり、インデックスを自動的に同期します。したがって、行を削除しても（例：`delete_messages_by_session`）、FTS の別途クリーンアップは不要です。
 
 **マイグレーション：** スキーマ作成は `_migrations` テーブルでバージョン管理されています。手順は次の順序です：
-`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns`。
+`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns` → `add_origin_column`。
 
 ---
 
@@ -153,6 +154,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` メッセージは `tool_calls`（JSON）、`additional_kwargs["reasoning_content"]` からの思考連鎖（`reasoning` 列に保存）、レスポンス/使用量メタデータの `model_name` / `input_tokens` / `output_tokens` を永続化します（いずれも省略可能で、欠落時は `None`）
 - `human` メッセージは `additional_kwargs` 内のマルチモーダルファイル参照を `images` / `audios` / `videos` 列に永続化します（JSON リスト、空の場合は `None`）
 - `tool` メッセージは `tool_call_id`、`tool_name`、`tool_status`（デフォルト `"success"`）を永続化します
+- メタデータが `internal: true` かつ `provenance: "subagent_completion"` である `human` メッセージ（ステアリングキューの完了キャリア）は `origin = 'subagent_completion'` として永続化されます。それ以外の行の `origin` はすべて `NULL` です（空文字列にも JSON にもなりません）
 
 ### 2. 履歴取得
 
@@ -377,6 +379,8 @@ LangChain メッセージのバッチを新しい 1 ターンとして永続化�
 
 **戻り値：** `list[dict]` — 各項目は `{"session_id": str, "last_time": str, "title": str}`。`last_time` は最新の `YYYYMMDDHHmmss` タイムスタンプ、`title` は最新の `human` メッセージから派生（`""` の場合あり）
 
+タイトルクエリは `origin IS NULL` の行のみを対象とします。`human` 行がすべて `subagent_completion` キャリアであるセッションのタイトルは空文字列になり、クライアントがプレースホルダーを表示します。
+
 ---
 
 #### `get_db()`（`context_engine.store.db`）
@@ -429,4 +433,4 @@ CJK クエリでは、演算子以外の各トークンが個別に判定され�
 
 ---
 
-**最終更新：** 2026-08-29
+**最終更新：** 2026-09-02

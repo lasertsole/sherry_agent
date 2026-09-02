@@ -23,7 +23,7 @@ def __getattr__(name: str):
 
         return build_async_sqlite_checkpointer
     if name == "RepetitionGuardWrapper":
-        from .repetition_guard_wrapper import RepetitionGuardWrapper
+        from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
         return RepetitionGuardWrapper
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

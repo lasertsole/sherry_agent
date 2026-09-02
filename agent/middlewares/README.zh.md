@@ -21,6 +21,7 @@ EMA AI Agent 的中间件层：八个 `AgentMiddleware` 组件，作用于每一
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
@@ -227,6 +228,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 钩子返回完整的消息替换：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。
 
+### SubagentCompletionDrainMiddleware
+
+**模块：** `agent/middlewares/subagent_completion_drain.py` · **类：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**钩子：** 仅 `before_model` / `abefore_model`
+
+在主 Agent 中注册于 `ToolCallNormalize` 之后，因此它注入的消息在注入回合不会经过 sanitize 重写。它在 `before_model` 时重建并清空（drain）当前会话的 `SteeringQueue`——父会话忙碌期间由 announce 管线排队的完成载体消息——返回 `{"messages": [carrier, ...]}`，在下一次模型调用前注入重建的完成载体 `HumanMessage`。
+
+- 每个被取出的队列条目都会在队列的 SQLite 存储中标记为 `CONSUMED`，因此载体只会被注入一次（检查点持久化保证 HITL 恢复重放安全）。
+- Fail-open：`session_id` 缺失/为空、队列为空或任何异常都会被吞掉（记日志 + 无操作）——drain 绝不会破坏父回合，队列保留以供重试。
+- 注入的载体以 `origin='subagent_completion'` 持久化到 MesMemory。
+
 ### HeartbeatStaleness
 
 **模块：** `agent/middlewares/heartbeat_staleness.py` · **类：** `HeartbeatStaleness(AgentMiddleware)`
@@ -299,7 +311,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 事后式的输出重复检测器，带 `WARN → HALT` 升级。从 `agent.middlewares.output_repetition_guard` 导出（**没有**被 `agent/middlewares/__init__.py` 再导出），且**仅在 worker 流水线中注册**。
 
-主 Agent 的同类检测由 **`RepetitionGuardWrapper`**（`agent/repetition_guard_wrapper.py`）完成：它包装编译后的图，在流式层面拦截（外加 `ainvoke` 事后兜底），复用相同的状态键与默认值。两处注册均传入 `phantom_stream_guard=True`。
+主 Agent 的同类检测由 **`RepetitionGuardWrapper`**（`agent/stream_repetition_guard_wrapper.py`）完成：它包装编译后的图，在流式层面拦截（外加 `ainvoke` 事后兜底），复用相同的状态键与默认值。两处注册均传入 `phantom_stream_guard=True`。
 
 **检测层**
 
@@ -511,7 +523,7 @@ agent/middlewares/
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # 本文件（+ .zh / .ja / .ko 变体）
 
-agent/repetition_guard_wrapper.py  # RepetitionGuardWrapper（位于本包之外）
+agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper（位于本包之外）
 ```
 
 ### 导出（`__init__.py`）

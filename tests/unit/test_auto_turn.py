@@ -29,8 +29,10 @@ def _injection(run_id="run-1"):
 
 
 def _fake_generate(calls, started, block, finished):
-    async def fake(session_id, multi_modal_message, is_stream=True):
-        calls.append((session_id, multi_modal_message.text))
+    # origin kwarg (Task 4 subagent-origin-tagging): _drive_turn now forwards
+    # the injection's carrier metadata as origin; recorded as calls[i][2].
+    async def fake(session_id, multi_modal_message, is_stream=True, origin=None):
+        calls.append((session_id, multi_modal_message.text, origin))
         started.set()
         if block is not None:
             try:

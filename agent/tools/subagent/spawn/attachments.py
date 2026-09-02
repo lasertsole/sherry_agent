@@ -2,7 +2,7 @@
 
 Pipeline:
 1. Validate: path-traversal prevention, size/count limits
-2. Write: <childWorkspace>/.openclaw/attachments/<uuid>/
+2. Write: <childWorkspace>/.sherry/attachments/<uuid>/
 3. Generate .manifest.json with file metadata
 4. Return result including a systemPromptSuffix informing the child where files are
 """
@@ -107,7 +107,7 @@ async def materialize_subagent_attachments(
 ) -> MaterializeResult:
     """Write attachments into an isolated subdirectory of the child workspace.
 
-    Target location: <childWorkspace>/.openclaw/attachments/<uuid>/
+    Target location: <childWorkspace>/.sherry/attachments/<uuid>/
     Returns a MaterializeResult with a systemPromptSuffix so the child knows
     where its files are.
     """
@@ -123,9 +123,9 @@ async def materialize_subagent_attachments(
         child_workspace = TEMP_DIR
 
     attachment_uuid = str(uuid.uuid4())[:8]  # short UUID for readability in paths
-    root_dir = child_workspace / ".openclaw" / "attachments"
+    root_dir = child_workspace / ".sherry" / "attachments"
     abs_dir = root_dir / attachment_uuid
-    rel_dir = f".openclaw/attachments/{attachment_uuid}"
+    rel_dir = f".sherry/attachments/{attachment_uuid}"
 
     manifest_entries: list[dict] = []
     total_bytes = 0

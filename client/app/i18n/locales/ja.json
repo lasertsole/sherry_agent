@@ -40,6 +40,9 @@
     "copy": "コピー",
     "copied": "コピーしました"
   },
+  "chat": {
+    "backgroundMessage": "バックグラウンドタスク"
+  },
   "errors": {
     "requestFailed": "リクエストに失敗しました",
     "pageError": "ページエラー",

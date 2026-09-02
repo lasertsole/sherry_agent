@@ -140,6 +140,13 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
 
 async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     """Consume the async_generate generator and forward _run_stream frames."""
+    # Task 4 (subagent-origin-tagging): extract the carrier metadata BEFORE the
+    # MultiModalMessage flatten — the flatten to MultiModalMessage drops it, and
+    # this is the only place the {internal, provenance, run_id, status} tag can
+    # be forwarded into the graph input. Passed VERBATIM to async_generate as
+    # origin (getattr-defensive: duck-typed non-BaseMessage injections carry no
+    # metadata; None is legal and means "real user" downstream).
+    inj_meta = getattr(injection, "metadata", None)
     # Duck-typed on purpose: BaseMessage .text (property, core 1.4.7) preferred,
     # str(content) fallback keeps non-BaseMessage injections from Task 9 usable.
     raw_text = getattr(injection, "text", None)
@@ -148,7 +155,7 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     websocket = get_websocket_by_session_id(bare)
     meta: dict[str, Any] = {}
     try:
-        async for chunk in async_generate(bare, message, is_stream=True):
+        async for chunk in async_generate(bare, message, is_stream=True, origin=inj_meta):
             if isinstance(chunk, dict) and chunk.get("type") == "meta":
                 meta.update(chunk)
                 continue

@@ -40,6 +40,9 @@
     "copy": "복사",
     "copied": "복사됨"
   },
+  "chat": {
+    "backgroundMessage": "백그라운드 작업"
+  },
   "errors": {
     "requestFailed": "요청 실패",
     "pageError": "페이지 오류",
