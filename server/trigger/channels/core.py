@@ -2,6 +2,7 @@ import asyncio
 import json
 from collections.abc import Mapping
 from threading import Thread
+from typing import Any
 
 from loguru import logger
 
@@ -62,7 +63,7 @@ def _build_reply_target(message: InboundMessage) -> str:
     )
 
 
-def _parse_reply_target(session_id: str, reply_target: str | None) -> dict | None:
+def _parse_reply_target(session_id: str, reply_target: str | None) -> dict[str, Any] | None:
     """Parse the enqueue-time reply-target JSON.
 
     Returns None for a missing target (nothing to reply to). A present but
@@ -83,7 +84,7 @@ def _parse_reply_target(session_id: str, reply_target: str | None) -> dict | Non
     return target
 
 
-async def _send_reply(target: dict, content: str, message_id: str | None = None) -> None:
+async def _send_reply(target: dict[str, Any], content: str, message_id: str | None = None) -> None:
     """Deliver one outbound frame to the enqueue-time channel/chat.
 
     Best-effort: a vanished channel logs a warning and returns; delivery
@@ -96,7 +97,7 @@ async def _send_reply(target: dict, content: str, message_id: str | None = None)
             "reply target channel {} not registered; dropping outbound frame", channel_name
         )
         return
-    metadata: dict = {"message_id": message_id} if message_id else {}
+    metadata: dict[str, Any] = {"message_id": message_id} if message_id else {}
     try:
         await channel.send(
             OutboundMessage(
@@ -178,7 +179,7 @@ class _ChannelOutboundRouter:
 
     async def send(self, session_id: str, frame: Mapping[str, object]) -> None:
         content = str(frame.get("content", ""))
-        target: dict | None = None
+        target: dict[str, Any] | None = None
         message_id: str | None = None
         reply_target = frame.get("reply_target")
         if reply_target:
@@ -206,7 +207,7 @@ class _ChannelOutboundRouter:
         await _send_reply(target, content)
 
     @staticmethod
-    def _resolve_live_target(session_id: str) -> dict | None:
+    def _resolve_live_target(session_id: str) -> dict[str, Any] | None:
         relation = relation_register.get_channel_chat_id_by_session_id(session_id)
         if relation is None:
             return None

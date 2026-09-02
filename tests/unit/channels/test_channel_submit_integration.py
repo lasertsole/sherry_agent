@@ -31,6 +31,7 @@ import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -104,13 +105,13 @@ class _FakeChannelManager:
 @pytest.fixture(scope="session")
 def core():
     """Load the real core.py under a synthetic name with stubbed deps."""
-    saved: dict[str, object] = {}
+    saved: dict[str, types.ModuleType | None] = {}
 
-    fake_channels = types.ModuleType("channels")
+    fake_channels: Any = types.ModuleType("channels")
     fake_channels.BaseChannel = _FakeBaseChannel
     fake_channels.channel_manager = _FakeChannelManager()
 
-    fake_heartbeat = types.ModuleType("skills.builtin.core.heartbeat")
+    fake_heartbeat: Any = types.ModuleType("skills.builtin.core.heartbeat")
     fake_service = types.SimpleNamespace()
 
     async def _park_forever() -> None:  # pragma: no cover - parked daemon
@@ -157,9 +158,9 @@ class _FakeChannel:
 
 
 def _make_stub_turn_runner():
-    stub = types.ModuleType("server.service.turn_runner")
-    stub.registered_routers: list[tuple[str, object]] = []
-    stub.finished: list[tuple[str, object | None]] = []
+    stub: Any = types.ModuleType("server.service.turn_runner")
+    stub.registered_routers = []
+    stub.finished = []
     stub.finished_event = asyncio.Event()
 
     async def on_turn_finished(session_id, claim_row_id=None):  # noqa: ANN001
