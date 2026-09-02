@@ -27,7 +27,10 @@ from loguru import logger
 
 from agent.tools.subagent.announce.steering_queue import enqueue_steering
 from agent.tools.subagent.registry.session_keys import normalize_session_key
-from agent.tools.subagent.registry.session_state import detect_state
+from agent.tools.subagent.registry.session_state import (
+    REASON_AUTO_TURN_INFLIGHT,
+    detect_state,
+)
 from runtime.relation_register import relation_register
 from server.service import get_pending_interrupt
 from server.service.messages import async_generate
@@ -108,7 +111,16 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
     try:
         await asyncio.sleep(0)  # one yield: an already-received user frame can register first
         st = detect_state(bare)
-        if st.busy:
+        # WHY exclude auto_turn_inflight: at gate time _INFLIGHT[bare] IS this
+        # runner itself — maybe_trigger_auto_turn registered the task BEFORE the
+        # task body ran, and its entry gate (above) already returned BUSY /
+        # ALREADY_PENDING for genuinely busy or already-running sessions, while
+        # _INFLIGHT + _INFLIGHT_LOCK guarantee at most one runner per session.
+        # detect_state's frozen precedence (ws_task > answering > hitl_pending >
+        # auto_turn_inflight) means a real user race still surfaces as a
+        # higher-ranked reason and aborts here. Without the exclusion this gate
+        # always self-trips (55d4457 added the signal; the gate predates it).
+        if st.busy and st.reason != REASON_AUTO_TURN_INFLIGHT:
             logger.info("auto_turn: session {} went busy before start ({}), abandoning", bare, st.reason)
             await _abandon_once()
             return
