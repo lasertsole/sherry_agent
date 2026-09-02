@@ -64,10 +64,13 @@ from agent.tools.subagent.types.registry import (
 from pub_func.build_agent_config import build_agent_config
 from runtime.relation_register import relation_register
 from runtime.state_register import state_register_mem
+from server.queue import UserInputQueue
 from type.message import MultiModalMessage
 
 from server.service import auto_turn as at
+from server.service import input_queue_service as iqs
 from server.service import messages as messages_mod
+from server.service import turn_runner as tr
 
 # pytest-asyncio STRICT mode: every async test in this module is marked.
 pytestmark = pytest.mark.asyncio
@@ -121,7 +124,11 @@ class RecordingFakeChatModel(BaseChatModel):
 
 
 class SyncRecordingWebSocket:
-    """sync send_text - the contract consumed by auto_turn._send_ws.
+    """async send_text - the contract consumed by auto_turn._send_ws.
+
+    Task 8 made production ``_send_ws`` await ``websocket.send_text`` (robyn's
+    send_text is a coroutine); a sync double gets every frame silently dropped
+    by the tolerance except (TypeError: NoneType not awaitable).
 
     ``id`` mirrors the robyn WebSocketAdapter attribute that
     RelationManager.register_websocket keys its bidirectional maps on.
@@ -133,7 +140,7 @@ class SyncRecordingWebSocket:
         self.id = f"fake-ws-{next(self._ids)}"
         self.sent: list[str] = []
 
-    def send_text(self, payload: str) -> None:
+    async def send_text(self, payload: str) -> None:
         self.sent.append(payload)
 
 
@@ -308,6 +315,16 @@ def e2e_env(monkeypatch, tmp_path):
     # module; detect_state / auto_turn logic itself stays REAL.
     active_tasks: dict[str, asyncio.Task] = {}
     monkeypatch.setattr(session_state_mod, "_get_active_tasks", lambda: active_tasks)
+    # Unify the TWO active-task tables: turn_runner's own seam otherwise reads
+    # the real server.trigger.ws.messages._active_tasks, while detect_state
+    # reads the patched dict above - WsTurnExecutor adoption/registration and
+    # busy signals must agree on ONE dict.
+    monkeypatch.setattr(tr, "_get_active_tasks", lambda: active_tasks)
+
+    # Hermetic user-input queue: submit_user_input / the TurnRunner drain must
+    # NEVER touch the real default db (subagent_registry.db).
+    user_queue = UserInputQueue(db_path=tmp_path / "e2e-user-input.db")
+    monkeypatch.setattr(iqs, "get_default_queue", lambda: user_queue)
 
     registry_memory.clear()
     dl._delivered_keys.clear()
@@ -316,15 +333,24 @@ def e2e_env(monkeypatch, tmp_path):
     _drain_event_bus()
 
     yield SimpleNamespace(
-        store=store, queue=queue, db_path=db_path, bind_ws=bind_ws, active_tasks=active_tasks
+        store=store,
+        queue=queue,
+        db_path=db_path,
+        bind_ws=bind_ws,
+        active_tasks=active_tasks,
+        user_queue=user_queue,
     )
 
     for task in list(at._INFLIGHT.values()):
         task.cancel()
+    for task in list(tr._DRAIN_TASKS.values()):
+        task.cancel()
     for task in list(active_tasks.values()):
         task.cancel()
     at._INFLIGHT.clear()
+    tr._DRAIN_TASKS.clear()
     active_tasks.clear()
+    iqs._SESSION_LOCKS.clear()
     for sid in tracked:
         relation_register.clear_session(sid)
         try:
@@ -530,11 +556,26 @@ async def test_user_race_user_wins_pending_stays(monkeypatch, e2e_env):
     ws = e2e_env.bind_ws(sid, SyncRecordingWebSocket())
     injection = _injection("run-race-1", "worker-race", sid)
 
+    # Busy-at-completion shape (new queue semantics): the durable PENDING
+    # steering row exists BEFORE the idle auto turn is triggered - the
+    # completion carrier was persisted while the parent was busy, the session
+    # went idle afterwards, and the auto turn consumes the message as its
+    # turn input.
+    enqueued = await sq.enqueue_steering(f"agent:main:session:{sid}", injection)
+    assert enqueued is not None and enqueued.run_id == "run-race-1"
+
     release = asyncio.Event()
     agent = _BlockingStreamAgent(release)
     _patch_built_agent(monkeypatch, agent)
 
-    # Idle -> auto turn triggered (REAL detect_state sees no ws task, no answering).
+    # Drain infra: a REAL WsTurnExecutor on a fresh registry (never the
+    # process-wide default) - the drain turn below runs through the real
+    # TurnRunner path, not a test double.
+    registry = iqs.TurnExecutorRegistry()
+    registry.register("ws", tr.WsTurnExecutor())
+    monkeypatch.setattr(tr, "get_registry", lambda: registry)
+
+    # Idle -> auto turn triggered (REAL detect_state: no ws task, no answering).
     result = await at.maybe_trigger_auto_turn(f"agent:main:session:{sid}", injection)
     assert result.outcome == at.AutoTurnOutcome.TRIGGERED
     await _wait_until(
@@ -542,41 +583,67 @@ async def test_user_race_user_wins_pending_stays(monkeypatch, e2e_env):
         what="auto turn answering flag",
     )
 
-    # User message arrives mid-turn: a live WS task appears. Under the new
-    # queueing semantics nothing cancels the auto turn - we let it finish.
+    # User message arrives mid-turn through the REAL submit seam: the session
+    # is busy (answering) so the input QUEUES behind the running turn - the
+    # auto turn is never cancelled (new queueing semantics).
+    submit = await iqs.submit_user_input(sid, "user follow-up mid-turn", "user")
+    assert submit.status is iqs.SubmitStatus.QUEUED and submit.position == 1
+
+    # A live WS task appears (the user's stream task); nothing cancels the
+    # auto turn - we let it run to completion.
     user_turn = asyncio.create_task(asyncio.sleep(_TIMEOUT))
     e2e_env.active_tasks[sid] = user_turn
     await _wait_until(agent.reached_block.is_set, what="turn parked mid-stream")
 
-    release.set()
-    await _wait_until(lambda: at._INFLIGHT.get(sid) is None, what="auto turn completed")
-
-    frames = [json.loads(p) for p in ws.sent]
-    assert not any(f.get("event") == "stopped" for f in frames), frames
-    assert frames[-1]["event"] == "done"
+    # Mid-park the carrier row is still PENDING: the running turn never
+    # touches it. (Once the auto turn finishes, its _drive_turn finally calls
+    # the bare-form on_turn_finished and the TurnRunner drain starts
+    # immediately - production behavior - so mid-park is the deterministic
+    # observation point for "the row survives the auto turn".)
     row = await e2e_env.store.get("run-race-1")
     assert row is not None and row.status == PendingInjectionStatus.PENDING
-    await _wait_until(
-        lambda: state_register_mem.get_state(sid, "answering") is not True,
-        timeout=2.0,
-        what="answering flag reset",
-    )
 
-    # User turn ends -> the next turn consumes the pending injection.
+    # Before releasing: remove the fake user task so the drain's executor
+    # adopts nothing, and swap in the drain graph - the auto-started drain
+    # turn must run against the REAL drain middleware (carrier consumption).
     e2e_env.active_tasks.pop(sid, None)
     user_turn.cancel()
     model = RecordingFakeChatModel(response_text="after race")
     _patch_built_agent(monkeypatch, _build_drain_graph(model))
-    await asyncio.wait_for(_consume_generate(sid, "user follow-up"), timeout=_TIMEOUT)
+
+    release.set()
+    await _wait_until(lambda: at._INFLIGHT.get(sid) is None, what="auto turn completed")
+    await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="turn runner drain finished")
+
+    # Bare-form on_turn_finished on a drained queue is an idempotent no-op
+    # (single-flight guard + empty queue): the explicit re-trigger must not
+    # resurrect anything.
+    await asyncio.wait_for(tr.on_turn_finished(sid), timeout=_TIMEOUT)
+    await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="re-trigger drain settled")
+
+    # The drain turn's model call consumed the still-PENDING carrier (drain
+    # middleware) alongside the queued user input.
     injected = [
         m
         for m in model.received[0]
         if isinstance(m, HumanMessage) and str(m.content).startswith("[subagent:worker-race completed]")
     ]
-    assert injected, f"next turn did not receive the pending injection: {model.received!r}"
+    assert injected, f"drain turn did not receive the pending injection: {model.received!r}"
     _assert_completion_carrier(injected[0], "worker-race", "completed", "run-race-1")
     row = await e2e_env.store.get("run-race-1")
     assert row.status == PendingInjectionStatus.CONSUMED
+
+    # The queued user input reached a terminal state in the hermetic queue...
+    assert await e2e_env.user_queue.list_active(sid) == []
+    # ...both turns cleaned up their answering flag...
+    assert state_register_mem.get_state(sid, "answering") is not True
+    # ...and the frame stream shows: auto turn completed (chunk+done, never
+    # stopped) followed by the drain turn completing the same way.
+    frames = [json.loads(p) for p in ws.sent]
+    events = [f.get("event") for f in frames]
+    assert not any(e == "stopped" for e in events), frames
+    assert events[:2] == ["chunk", "done"], events
+    assert events[-2:] == ["chunk", "done"], events
 
 
 # ---------------------------------------------------------------------------
