@@ -519,7 +519,9 @@ async def test_crash_recovery_no_loss_no_dup(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 5. User race: user wins, injection stays PENDING for the next turn
+# 5. User race under NEW queueing semantics (Task 8): user input mid-turn does
+#    NOT cancel the auto turn; it runs to completion and the still-PENDING
+#    injection row is consumed by the next draining turn.
 # ---------------------------------------------------------------------------
 
 
@@ -527,10 +529,10 @@ async def test_user_race_user_wins_pending_stays(monkeypatch, e2e_env):
     sid = "e2e-race"
     ws = e2e_env.bind_ws(sid, SyncRecordingWebSocket())
     injection = _injection("run-race-1", "worker-race", sid)
-    monkeypatch.setattr(at, "_USER_TAKEOVER_POLL_SECONDS", 0.02)
 
     release = asyncio.Event()
-    _patch_built_agent(monkeypatch, _BlockingStreamAgent(release))
+    agent = _BlockingStreamAgent(release)
+    _patch_built_agent(monkeypatch, agent)
 
     # Idle -> auto turn triggered (REAL detect_state sees no ws task, no answering).
     result = await at.maybe_trigger_auto_turn(f"agent:main:session:{sid}", injection)
@@ -540,20 +542,20 @@ async def test_user_race_user_wins_pending_stays(monkeypatch, e2e_env):
         what="auto turn answering flag",
     )
 
-    # User message arrives: a live WS task appears (ws_task wins in detect_state).
+    # User message arrives mid-turn: a live WS task appears. Under the new
+    # queueing semantics nothing cancels the auto turn - we let it finish.
     user_turn = asyncio.create_task(asyncio.sleep(_TIMEOUT))
     e2e_env.active_tasks[sid] = user_turn
+    await _wait_until(agent.reached_block.is_set, what="turn parked mid-stream")
 
-    await _wait_until(lambda: at._INFLIGHT.get(sid) is None, what="auto turn abandoned")
+    release.set()
+    await _wait_until(lambda: at._INFLIGHT.get(sid) is None, what="auto turn completed")
 
     frames = [json.loads(p) for p in ws.sent]
-    assert any(f.get("event") == "stopped" for f in frames), frames
-    assert not any(f.get("event") == "done" for f in frames)
+    assert not any(f.get("event") == "stopped" for f in frames), frames
+    assert frames[-1]["event"] == "done"
     row = await e2e_env.store.get("run-race-1")
     assert row is not None and row.status == PendingInjectionStatus.PENDING
-    # async_generate swallows the first CancelledError, so the answering flag
-    # resets only when the orphaned generator is finalized by the asyncgen
-    # finalizer hook - give that a bounded window.
     await _wait_until(
         lambda: state_register_mem.get_state(sid, "answering") is not True,
         timeout=2.0,

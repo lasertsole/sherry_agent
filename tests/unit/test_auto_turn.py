@@ -105,7 +105,6 @@ async def test_idle_triggers_new_turn(monkeypatch):
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
     monkeypatch.setattr(at, "enqueue_steering", _spy := _make_spy())
-    monkeypatch.setattr(at, "_USER_TAKEOVER_POLL_SECONDS", 0.02)
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished))
 
@@ -140,7 +139,6 @@ async def test_double_trigger_idempotent(monkeypatch):
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
     spy = _make_spy()
     monkeypatch.setattr(at, "enqueue_steering", spy)
-    monkeypatch.setattr(at, "_USER_TAKEOVER_POLL_SECONDS", 0.02)
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished))
 
@@ -175,9 +173,11 @@ async def test_busy_not_triggered(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_user_message_wins_race(monkeypatch, tmp_path):
+async def test_user_input_no_longer_cancels_turn(monkeypatch, tmp_path):
+    """Task 8 new queueing semantics: user input mid-turn queues; the auto
+    turn is NOT cancelled, completes normally, and no PENDING requeue happens."""
     from agent.tools.subagent.announce.steering_queue import SteeringQueue
-    from agent.tools.subagent.registry.pending_injections import PendingInjectionStatus, PendingInjectionStore
+    from agent.tools.subagent.registry.pending_injections import PendingInjectionStore
 
     at = _mod()
     sq = _sq()
@@ -187,23 +187,24 @@ async def test_user_message_wins_race(monkeypatch, tmp_path):
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     ws = _FakeWebSocket()
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
-    monkeypatch.setattr(at, "_USER_TAKEOVER_POLL_SECONDS", 0.02)
+    block = asyncio.Event()
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
-    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished))
+    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, block, finished))
     injection = _injection("run-u1")
 
     result = await at.maybe_trigger_auto_turn("sess-u", injection)
     assert result.outcome == at.AutoTurnOutcome.TRIGGERED
     await _wait_started(started)
-    state_busy = True  # user/HITL takeover: flip detector to ws_task
-    _fake_detect(monkeypatch, at, {"busy": state_busy, "reason": "ws_task"})
+    _fake_detect(monkeypatch, at, {"busy": True, "reason": "ws_task"})  # user frame arrived mid-turn
+    block.set()  # user input queues; the auto turn runs to completion
     await asyncio.wait_for(at._INFLIGHT["sess-u"], timeout=10)
 
     events = [json.loads(p).get("event") for p in ws.sent]
-    assert "stopped" in events  # generate task was cancelled, not completed
-    assert not finished.is_set()
+    assert events[-1] == "done"  # turn completed, not cancelled
+    assert "stopped" not in events
+    assert finished.is_set()
     item = await store.get("run-u1")
-    assert item is not None and item.status == PendingInjectionStatus.PENDING
+    assert item is None  # no PENDING requeue under the new queueing semantics
     assert at._INFLIGHT.get("sess-u") is None
 
 
@@ -223,7 +224,6 @@ async def test_normal_turn_sends_chunk_and_done(monkeypatch):
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     ws = _FakeWebSocket()
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
-    monkeypatch.setattr(at, "_USER_TAKEOVER_POLL_SECONDS", 0.02)
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished))
 

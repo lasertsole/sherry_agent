@@ -5,10 +5,9 @@ session idleness via Task 5 `detect_state`, spawns the turn runner as a
 background asyncio task, and returns immediately — it NEVER awaits the turn
 lifecycle.  The turn itself consumes `server.service.messages.async_generate`
 (an async generator) chunk-by-chunk and mirrors the WS frame contract of
-`_run_stream`.  A live WS task detected mid-turn (`reason == "ws_task"`) is a
-user takeover: the auto turn is cancelled and the injection is re-queued as
-PENDING via the Task 6 steering queue (exactly once, never after normal
-completion), so no injection is ever lost or duplicated.
+`_run_stream`.  Under the new queueing semantics user input arriving during
+an auto turn is queued (Task 5/9): the auto turn is never cancelled by user
+presence and runs to completion — there is no user-takeover branch.
 
 Hard rules honored here: no import of the WS trigger module (it hangs
 standalone), no writes to `_active_tasks` / `answering` / `_pending_args` (all
@@ -50,7 +49,6 @@ class AutoTurnResult:
 
 _INFLIGHT: dict[str, asyncio.Task[None]] = {}  # bare id -> auto-turn runner task
 _INFLIGHT_LOCK = threading.Lock()  # NEVER held across await
-_USER_TAKEOVER_POLL_SECONDS: float = 0.5
 
 
 def get_websocket_by_session_id(session_id: str) -> Any:
@@ -58,12 +56,14 @@ def get_websocket_by_session_id(session_id: str) -> Any:
     return relation_register.get_websocket_by_session_id(session_id)
 
 
-def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
+async def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
     """Best-effort WS delivery; the socket may be gone at any moment."""
     if websocket is None:
         return
     try:
-        websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        # Robyn's WebSocket.send_text is a coroutine — it MUST be awaited or
+        # the frame is silently dropped (fire-and-forget coroutine leak).
+        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001 - delivery must never break the turn
         logger.warning("auto_turn: websocket send failed: {}", exc)
 
@@ -87,11 +87,13 @@ async def maybe_trigger_auto_turn(session_key: str, injection: HumanMessage) -> 
 
 
 async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
-    """Fire-and-forget runner: drive the turn, watch for user takeover, abandon safely."""
+    """Fire-and-forget runner: drive the turn to completion, abandon safely."""
     abandoned = False
 
     async def _abandon_once() -> None:
-        # User-wins: persist the injection as PENDING so the next turn consumes it.
+        # Never-started / shutdown: persist the injection as PENDING so the
+        # next turn consumes it (the turn itself is never abandoned mid-run —
+        # user input queues under the new semantics).
         nonlocal abandoned
         if abandoned:
             return
@@ -102,7 +104,6 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
             logger.error("auto_turn: abandon enqueue failed for {}: {}", bare, exc)
 
     consumer: asyncio.Task[None] | None = None
-    watcher: asyncio.Task[None] | None = None
     try:
         await asyncio.sleep(0)  # one yield: an already-received user frame can register first
         st = detect_state(bare)
@@ -111,15 +112,12 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
             await _abandon_once()
             return
         consumer = asyncio.ensure_future(_drive_turn(bare, injection))
-        watcher = asyncio.ensure_future(_watch_user_takeover(bare, consumer))
         try:
             _done, _pending = await asyncio.wait({consumer})
         except asyncio.CancelledError:
             # The runner itself was cancelled (shutdown): tear down and persist PENDING.
             if not consumer.done():
                 consumer.cancel()
-            if not watcher.done():
-                watcher.cancel()
             if not consumer.done() or consumer.cancelled():
                 try:
                     await asyncio.shield(_abandon_once())
@@ -134,8 +132,6 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
         with _INFLIGHT_LOCK:
             if _INFLIGHT.get(bare) is asyncio.current_task():
                 _INFLIGHT.pop(bare, None)
-        if watcher is not None and not watcher.done():
-            watcher.cancel()
 
 
 async def _drive_turn(bare: str, injection: HumanMessage) -> None:
@@ -159,18 +155,12 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
             if isinstance(chunk, dict) and chunk.get("type") == "meta":
                 meta.update(chunk)
                 continue
-            if detect_state(bare).reason == "ws_task":
-                # Cheap per-chunk takeover check complementing the watcher.
-                task = asyncio.current_task()
-                if task is not None:
-                    task.cancel()
-                break
-            _send_ws(websocket, {"event": "chunk", "session_id": bare, **chunk})
+            await _send_ws(websocket, {"event": "chunk", "session_id": bare, **chunk})
         interrupt_data = await get_pending_interrupt(bare)
         if interrupt_data:
-            _send_ws(websocket, {"event": "hitl_request", "session_id": bare, "content": interrupt_data})
+            await _send_ws(websocket, {"event": "hitl_request", "session_id": bare, "content": interrupt_data})
         else:
-            _send_ws(
+            await _send_ws(
                 websocket,
                 {
                     "event": "done",
@@ -182,20 +172,8 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
                 },
             )
     except asyncio.CancelledError:
-        _send_ws(websocket, {"event": "stopped", "session_id": bare, "content": "Request cancelled"})
+        await _send_ws(websocket, {"event": "stopped", "session_id": bare, "content": "Request cancelled"})
         raise
     except Exception as exc:  # noqa: BLE001 - mirror _run_stream error frame
         logger.error("auto_turn: turn failed for {}: {}", bare, exc)
-        _send_ws(websocket, {"event": "error", "session_id": bare, "content": str(exc)})
-
-
-async def _watch_user_takeover(bare: str, turn_task: asyncio.Task[None]) -> None:
-    """Poll detect_state; a live ws_task during the auto turn means the user took over."""
-    while True:
-        await asyncio.sleep(_USER_TAKEOVER_POLL_SECONDS)
-        if turn_task.done():
-            return
-        if detect_state(bare).reason == "ws_task":
-            logger.info("auto_turn: user takeover detected on {}, cancelling auto turn", bare)
-            turn_task.cancel()
-            return
+        await _send_ws(websocket, {"event": "error", "session_id": bare, "content": str(exc)})

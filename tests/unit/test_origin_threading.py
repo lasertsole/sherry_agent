@@ -238,19 +238,18 @@ async def test_async_generate_stamps_origin_onto_humanmessage(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# (4) Takeover requeue: the ORIGINAL injection object is re-enqueued with
-#     its carrier metadata intact (combines with Task 2's rehydrate locks)
+# (4) User input mid-turn under the NEW queueing semantics (Task 8): the auto
+#     turn is NOT cancelled and NOT re-queued; the original injection keeps
+#     its carrier metadata on the completed turn's async_generate call.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_takeover_requeue_preserves_carrier_metadata(monkeypatch, tmp_path):
-    """User-takeover abandon re-enqueues the original injection; metadata survives."""
+async def test_takeover_no_requeue_turn_completes(monkeypatch, tmp_path):
+    """User input mid-turn no longer abandons the turn (Task 8): no steering
+    requeue, no PENDING mirror; origin metadata still forwarded verbatim."""
     from agent.tools.subagent.announce.steering_queue import SteeringQueue
-    from agent.tools.subagent.registry.pending_injections import (
-        PendingInjectionStatus,
-        PendingInjectionStore,
-    )
+    from agent.tools.subagent.registry.pending_injections import PendingInjectionStore
 
     at = _at()
     sq = _sq()
@@ -259,20 +258,22 @@ async def test_takeover_requeue_preserves_carrier_metadata(monkeypatch, tmp_path
     _fake_detect(monkeypatch, at, {"busy": False, "reason": "idle"})
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
-    monkeypatch.setattr(at, "_USER_TAKEOVER_POLL_SECONDS", 0.02)
 
     calls: list[dict] = []
     started = asyncio.Event()
+    block = asyncio.Event()
+    finished = asyncio.Event()
 
     async def fake_generate(session_id, multi_modal_message, is_stream=True, origin=None):
         calls.append({"session_id": session_id, "origin": origin})
         started.set()
         try:
-            await asyncio.wait_for(asyncio.Event().wait(), timeout=10)
+            await asyncio.wait_for(block.wait(), timeout=10)
         except asyncio.CancelledError:
             raise
         yield {"type": "text", "content": "hello"}
         yield {"type": "meta", "model_name": "fake", "input_tokens": 1, "output_tokens": 1}
+        finished.set()
 
     monkeypatch.setattr(at, "async_generate", fake_generate)
 
@@ -285,21 +286,21 @@ async def test_takeover_requeue_preserves_carrier_metadata(monkeypatch, tmp_path
         await asyncio.sleep(0.01)
     assert started.is_set(), "fake generate never started"
 
-    # User takeover: session flips to ws_task.
+    # User frame arrives mid-turn: detector flips to ws_task — nothing cancels.
     _fake_detect(monkeypatch, at, {"busy": True, "reason": "ws_task"})
+    await asyncio.sleep(0.1)
+    assert not at._INFLIGHT["sess-origin-5"].done(), "auto turn was cancelled by user input"
+
+    block.set()  # user input queues; the auto turn runs to completion
     await asyncio.wait_for(at._INFLIGHT["sess-origin-5"], timeout=10)
+    assert finished.is_set()
 
-    # The ORIGINAL object was re-enqueued (auto_turn _abandon_once) — metadata intact.
+    # The turn consumed the injection itself: origin metadata forwarded verbatim.
+    assert len(calls) == 1
+    assert calls[0]["session_id"] == "sess-origin-5"
+    assert calls[0]["origin"] is injection.metadata
+
+    # No takeover abandon: steering queue stays empty, durable mirror absent.
     queue = sq.get_steering_queue()
-    items = await queue.rehydrate("sess-origin-5")
-    assert len(items) == 1
-    assert items[0].message is injection
-    meta = getattr(items[0].message, "metadata", None) or {}
-    assert meta.get("internal") is True
-    assert meta.get("provenance") == "subagent_completion"
-    assert meta.get("run_id") == "run-origin-5"
-
-    # Durable mirror is PENDING for the later consuming turn.
-    record = await store.get("run-origin-5")
-    assert record is not None
-    assert record.status == PendingInjectionStatus.PENDING
+    assert await queue.rehydrate("sess-origin-5") == []
+    assert await store.get("run-origin-5") is None
