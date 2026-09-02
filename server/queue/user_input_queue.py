@@ -50,6 +50,15 @@ Public API (consumed by Tasks 5/7/9/10 -- signatures are a contract):
     ascending by ``created_at`` (FIFO).
   - ``await recover(session_id) -> int`` -- voids expired (``expires_at <= now``)
     QUEUED/CLAIMED rows (24h crash-recovery expiry), returns how many.
+  - ``await find_active_by_client_msg_id(client_msg_id) -> UserInputQueueRow |
+    None`` -- read-only ACTIVE-row lookup by the dedup key (Task 5 submit
+    pre-check under its per-session lock; the enqueue/insert transactions
+    remain the authoritative dedup).
+  - ``await insert_claimed(session_id, payload, source, reply_target=None,
+    client_msg_id=None) -> UserInputQueueRow`` -- insert a row ALREADY in
+    CLAIMED state (Task 5 idle-branch placeholder: the durable "turn in
+    progress" fact written in the same critical section as the idle check).
+    Same capacity rule as ``enqueue`` (``QueueFullError`` at cap).
 
 Row columns (``user_input_queue``): ``id TEXT PRIMARY KEY`` (uuid4 hex),
 ``session_id TEXT NOT NULL`` (indexed), ``payload TEXT NOT NULL`` (serialized
@@ -152,6 +161,22 @@ _RECOVER_SQL = f"""
 UPDATE user_input_queue
 SET status = 'VOIDED', updated_at = ?
 WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL} AND expires_at <= ?;
+"""
+
+# Task 5 helper: read-only ACTIVE-row lookup by the dedup key.
+_FIND_ACTIVE_BY_CLIENT_MSG_SQL = f"""
+SELECT {_ROW_COLUMNS} FROM user_input_queue
+WHERE client_msg_id = ? AND status IN {_ACTIVE_STATUSES_SQL}
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
+"""
+
+# Task 5 idle-branch placeholder: a row that starts life CLAIMED ("turn in
+# progress" fact), inserted in the same critical section as the idle check.
+_INSERT_CLAIMED_SQL = """
+INSERT INTO user_input_queue
+(id, session_id, payload, source, reply_target, client_msg_id, status, created_at, updated_at, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, 'CLAIMED', ?, ?, ?);
 """
 
 
@@ -553,3 +578,87 @@ class UserInputQueue:
                 session_id,
             )
         return int(voided)
+
+    async def find_active_by_client_msg_id(self, client_msg_id: str) -> UserInputQueueRow | None:
+        """Return the ACTIVE (QUEUED/CLAIMED) row carrying ``client_msg_id``, or None.
+
+        Read-only dedup lookup used by ``submit_user_input`` (Task 5) to
+        classify a repeated ``client_msg_id`` as DEDUPED before any insert or
+        turn dispatch. The authoritative dedup remains inside the
+        ``enqueue``/``insert_claimed`` transactions (partial UNIQUE index);
+        this helper is the pre-check under the caller's per-session lock.
+        """
+        await self._ensure_db()
+        async with self._connect() as db:
+            async with db.execute(
+                _FIND_ACTIVE_BY_CLIENT_MSG_SQL, (client_msg_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        return _row_from_db(row) if row is not None else None
+
+    async def insert_claimed(
+        self,
+        session_id: str,
+        payload: str,
+        source: Literal["user", "cron"],
+        reply_target: str | None = None,
+        client_msg_id: str | None = None,
+    ) -> UserInputQueueRow:
+        """Insert a row ALREADY in CLAIMED state (Task 5 idle-branch placeholder).
+
+        ``submit_user_input`` writes this row inside its per-session lock, in
+        the same critical section as the idle check: the row is the durable
+        "turn in progress" fact that makes any racing submit see the session
+        as busy and enqueue instead of double-dispatching a turn. Task 7's
+        drain consumes CLAIMED rows through the same lifecycle machinery
+        (``mark_terminal``) as QUEUED ones; ``claim_next`` never returns them.
+
+        Single ``BEGIN IMMEDIATE`` transaction: the capacity check
+        (``count_active >= MAX_ACTIVE_PER_SESSION`` -> ``QueueFullError``) and
+        the INSERT are atomic, mirroring ``enqueue``. Dedup is NOT re-checked
+        here -- callers pre-check via ``find_active_by_client_msg_id`` under
+        their own lock; the partial UNIQUE index stays the cross-instance
+        backstop (an IntegrityError from a foreign duplicate propagates).
+        """
+        if source not in ("user", "cron"):
+            raise ValueError(f"source must be 'user' or 'cron', got {source!r}")
+
+        await self._ensure_db()
+        now = time.time()
+        row_id = uuid.uuid4().hex
+        created_at = now
+        expires_at = created_at + _EXPIRY_SECONDS
+
+        async with self._write_transaction() as db:
+            async with db.execute(
+                f"SELECT COUNT(*) FROM user_input_queue WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL}",
+                (session_id,),
+            ) as cursor:
+                count_row = await cursor.fetchone()
+                assert count_row is not None, "COUNT(*) always returns a row"
+                (active_count,) = count_row
+            if active_count >= MAX_ACTIVE_PER_SESSION:
+                raise QueueFullError(
+                    f"input queue full for session {session_id!r}: "
+                    f"{active_count} active rows >= cap {MAX_ACTIVE_PER_SESSION}"
+                )
+            await db.execute(
+                _INSERT_CLAIMED_SQL,
+                (
+                    row_id,
+                    session_id,
+                    payload,
+                    source,
+                    reply_target,
+                    client_msg_id,
+                    created_at,
+                    now,
+                    expires_at,
+                ),
+            )
+            async with db.execute(
+                "SELECT * FROM user_input_queue WHERE id = ?", (row_id,)
+            ) as cursor:
+                inserted = await cursor.fetchone()
+            assert inserted is not None, "inserted row vanished inside its own transaction"
+            return _row_from_db(inserted)
