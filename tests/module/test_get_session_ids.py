@@ -49,7 +49,8 @@ def sid_db():
                 timestamp TEXT NOT NULL,
                 finish_reason TEXT,
                 reasoning TEXT,
-                reasoning_content TEXT
+                reasoning_content TEXT,
+                origin TEXT
             );
         """)
 
