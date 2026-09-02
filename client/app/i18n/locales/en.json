@@ -21,7 +21,8 @@
     "maxAudios": "You can upload at most {count} audio files",
     "maxAudiosExceed": "You can upload at most {count} audio files, {extra} over the limit",
     "maxVideos": "You can upload at most {count} video files",
-    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
+    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit",
+    "queued": "Queued · position {position} of {queueSize}"
   },
   "chatBox": {
     "defaultUserName": "Me",

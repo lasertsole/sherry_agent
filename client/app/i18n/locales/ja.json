@@ -21,7 +21,8 @@
     "maxAudios": "最大 {count} 個の音声をアップロードできます",
     "maxAudiosExceed": "最大 {count} 個の音声をアップロードできます。{extra} 個超過しています",
     "maxVideos": "最大 {count} 個の動画をアップロードできます",
-    "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています"
+    "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています",
+    "queued": "順番待ち · {queueSize} 件中 {position} 番目"
   },
   "chatBox": {
     "defaultUserName": "わたし",

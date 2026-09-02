@@ -6,6 +6,7 @@ import {
   type OnChunkCallback,
   type OnDoneCallback,
   type OnHitlCallback,
+  type OnQueuedCallback,
   type HitlInterruptData
 } from './bridge';
 import { cacheMessages, cachedMaxTurnNum, clearCachedSession, readCachedMessages, type CachedMessage } from './db';
@@ -202,6 +203,8 @@ export async function getPendingInterrupt(session_id: string): Promise<HitlInter
  * @param onData Per-chunk text callback (carries the semantic type: text / tool_start / tool_end)
  * @param onDone Stream-end callback
  * @param onError Error callback
+ * @param onHitl HITL interrupt callback
+ * @param onQueued Queued callback (backend enqueued the message because the session is busy)
  * @returns {AbortController} The caller can abort the request via controller.abort()
  */
 export function postAgentStream(
@@ -210,7 +213,8 @@ export function postAgentStream(
   onData: OnChunkCallback,
   onDone?: OnDoneCallback,
   onError?: (err: unknown) => void,
-  onHitl?: OnHitlCallback
+  onHitl?: OnHitlCallback,
+  onQueued?: OnQueuedCallback
 ): AbortController {
   const controller = new AbortController();
   let stopFn: (() => void) | null = null;
@@ -226,7 +230,8 @@ export function postAgentStream(
     },
     onData,
     onHitl,
-    onDone
+    onDone,
+    onQueued
   );
   stopFn = () => stream.abort();
   const hitlSender = stream.sendHitlResponse ?? null;

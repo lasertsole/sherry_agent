@@ -4,8 +4,8 @@
     tabindex="-1">
     <div
       class="inputBox"
-      :contenteditable="!sending && !disabled"
-      :aria-disabled="sending || disabled"
+      :contenteditable="!disabled"
+      :aria-disabled="disabled"
       role="textbox"
       aria-multiline="true"
       :aria-label="t('chatInput.placeholder')"
@@ -17,18 +17,21 @@
       @keydown.down.stop.prevent="handleKeyArrowDown"
       @keydown.escape.stop.prevent="handleKeyEscape"></div>
 
-    <Button
-      v-if="!sending"
-      v-debounce:click.500="handleSend"
-      :label="t('chatInput.send')"
-      class="send"
-      :disabled="!sendingAllowed || disabled" />
-    <Button
-      v-else
-      v-debounce:click.300="() => emit('stop')"
-      :label="t('chatInput.stop')"
-      class="send"
-      severity="danger" />
+    <div class="sendActions">
+      <!-- Stop: only while generating; Send stays enabled/clickable while streaming —
+          the backend queues the new message (queued frame) instead of rejecting it -->
+      <Button
+        v-if="sending"
+        v-debounce:click.300="() => emit('stop')"
+        :label="t('chatInput.stop')"
+        class="stop"
+        severity="danger" />
+      <Button
+        v-debounce:click.500="handleSend"
+        :label="t('chatInput.send')"
+        class="send"
+        :disabled="!sendingAllowed || disabled" />
+    </div>
   </div>
 </template>
 
@@ -40,7 +43,7 @@ import { vDebounce } from '~/directives/debounce';
 
 const { t } = useI18n();
 
-/** Whether an AI reply is currently being generated (controlled by the parent to prevent duplicate sends) */
+/** Whether an AI reply is currently being generated (controls the stop button; sending while streaming stays allowed — the backend enqueues the new message) */
 const props = withDefaults(defineProps<Props>(), {
   sending: false,
   disabled: false,
@@ -73,7 +76,7 @@ const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
  */
 const draft = defineModel<string>('draft', { default: '' });
 
-/** Whether sending is allowed (non-empty and not generating) */
+/** Whether sending is allowed (non-empty draft; sending during an ongoing generation is allowed — the backend queues it) */
 const sendingAllowed = computed(() => !isEmpty(draft.value));
 
 /** Input placeholder text: generating → "Thinking", disabled → the passed-in approval hint, otherwise the default hint */
@@ -220,9 +223,11 @@ function recordQuestion(text: string): void {
   browsingSnapshot = '';
 }
 
-/** Send: validate → record history → clear the input area → emit the text upward */
+/** Send: validate → record history → clear the input area → emit the text upward.
+ *  Gating note: `sending` no longer blocks the send — while the agent is streaming the backend
+ *  enqueues the new message and reports it back as a `queued` frame (queue badge in [sid].vue). */
 function handleSend(): void {
-  if (!sendingAllowed.value || props.sending || props.disabled) return;
+  if (!sendingAllowed.value || props.disabled) return;
   const text = draft.value;
   if (isEmpty(text)) return;
 
@@ -310,10 +315,14 @@ defineExpose({ clearHistory });
     }
   }
 
-  > .send {
+  // Send/stop buttons cluster: pinned bottom-right; the stop button (rendered only while
+  // generating) sits left of the always-present send button via flex layout
+  > .sendActions {
     position: absolute;
     right: 0.5rem;
     bottom: 0.5rem;
+    display: flex;
+    gap: 0.5rem;
   }
 }
 </style>

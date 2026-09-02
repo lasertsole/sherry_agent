@@ -161,6 +161,22 @@
               }}</span>
             </div>
           </Transition>
+          <!-- Queue badge: shown while the backend has enqueued this send (session busy; browser WS mode);
+              follows the reconnect-banner pattern, disappears when the queued turn starts streaming or ends -->
+          <Transition name="reconn-fade">
+            <div
+              v-if="queueBadge"
+              class="absolute top-0 left-0 right-0 z-20 flex items-center justify-center gap-2 py-1.5 px-3 text-xs font-medium bg-sky-600/90 text-white shadow-sm"
+              role="status"
+              aria-live="polite">
+              <i
+                class="pi pi-clock"
+                aria-hidden="true"></i>
+              <span>{{
+                t('chatInput.queued', { position: queueBadge.position, queueSize: queueBadge.queueSize })
+              }}</span>
+            </div>
+          </Transition>
           <!-- Chat input box area (fixed h-40, keeping the send button position stable) -->
           <div class="flex flex-col h-40">
             <!-- Chat tools -->
@@ -275,7 +291,7 @@ import {
   clearDraftSession
 } from '@/composables/db';
 import { tools } from '../config';
-import { resumeHitl, StreamInterruptedError, type AgentChunkType } from '@/composables/bridge';
+import { resumeHitl, StreamInterruptedError, type AgentChunkType, type QueuedInfo } from '@/composables/bridge';
 import {
   get_history_by_turn_page,
   getPendingInterrupt,
@@ -580,6 +596,32 @@ const onStreamReconnectFailed = () => {
 };
 
 /**
+ * Queue badge state: null = nothing queued; otherwise show 'Queued · position N of M'.
+ * Data source is bridge.sendChatMessageWs forwarding the backend `queued` frame for a send
+ * issued while the session was still streaming (the message will stream once earlier turns finish).
+ * `turn` records which local turn the badge belongs to, so clears are turn-scoped and a
+ * concurrently finishing earlier stream can never wipe a newer queued send's badge.
+ */
+const queueBadge = ref<{ position: number; queueSize: number; turn: number } | null>(null);
+
+/**
+ * `queued` frame → queue badge. Only drives THIS instance's badge: matched against the frozen
+ * `mySid`, not the live `sessionId` computed — the latter reads the globally shared route object
+ * and flips to another sid while this KeepAlive-cached instance sits in the background.
+ */
+const handleQueued = (info: QueuedInfo, turnNum: number) => {
+  if (info.sessionId !== mySid) return;
+  queueBadge.value = { position: info.position, queueSize: info.queueSize, turn: turnNum };
+};
+
+/** Drop the queue badge when it belongs to the given turn (turn-scoped clear helper). */
+const clearQueueBadgeForTurn = (turnNum: number) => {
+  if (queueBadge.value?.turn === turnNum) {
+    queueBadge.value = null;
+  }
+};
+
+/**
  * Post-interrupt delayed reconciliation: Backend only persists this round's messages when agent graph completes,
  * server may still be generating at interruption moment. Wait 25 seconds then pull history (loadSessionHistory has built-in positive/negative id deduplication),
  * replace local negative temporary id rows with server positive turn_num records, recover content generated before interruption.
@@ -629,6 +671,8 @@ const handleAbortStreamOnDelete = (deletedSid: unknown) => {
     activeAgentController = null;
     isSending.value = false;
   }
+  // Session gone: drop the queue badge so it cannot linger on a deleted session's cached instance
+  queueBadge.value = null;
   // Session deleted: clear remaining history cache/draft browsing state in this instance's KeepAlive cache slot
   // (when deleting inactive session slot may not be released immediately, history residing in slot must be actively cleared,
   //   ensuring history strictly follows session deletion, avoiding manually revisiting that sid to see deleted session residues).
@@ -787,6 +831,8 @@ const handleStop = () => {
   }
   // After aborting, the pending-approval card has already been handled by this approval flow; no need to show it again
   hitlRequest.value = null;
+  // The queued badge (if any) belongs to the aborted send: drop it so it cannot linger
+  queueBadge.value = null;
   isSending.value = false;
 };
 
@@ -1148,6 +1194,9 @@ const handleSend = async (text: string) => {
     _sessionId: string,
     meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
   ) => {
+    // First chunk of this turn = the (possibly queued) message started streaming: drop this turn's
+    // queue badge. Turn-scoped, so chunks of an earlier in-flight stream never clear a newer badge.
+    clearQueueBadgeForTurn(turnNum);
     appendStreamChunk(sid, content, type, turnNum, meta);
   };
 
@@ -1166,6 +1215,7 @@ const handleSend = async (text: string) => {
         // as positive turn_num messages, and loadSessionHistory will replace the local negative temporary ids with the positive
         // server ids, deduplicating them.
         // Also attach the model metadata carried by the done frame (modelName/inputTokens/outputTokens) onto this turn's AI message.
+        clearQueueBadgeForTurn(turnNum);
         if (meta) {
           const ai = chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turnNum);
           if (ai) {
@@ -1187,6 +1237,8 @@ const handleSend = async (text: string) => {
         // The draft is **kept** — caching the already-completed greeting/analysis/preliminary tool stage content,
         // so it is not lost because the final result never arrived; the user still sees the pre-failure progress after refresh.
         activeAgentController = null;
+        // This turn will never stream: drop its queue badge (covers both error branches below).
+        clearQueueBadgeForTurn(turnNum);
         if (err instanceof StreamInterruptedError) {
           // Network stream loss (final failure after the reconnect budget is exhausted): content may have partially rendered,
           // so never overwrite existing body text with the failure message; only show the interruption hint when the AI body is empty.
@@ -1206,7 +1258,11 @@ const handleSend = async (text: string) => {
         void writeDraftTurn(sid, turnNum);
         isSending.value = false;
       },
-      handleHitlRequest
+      handleHitlRequest,
+      info => {
+        // Backend enqueued this send (session was busy): show the queue badge above the input box.
+        handleQueued(info, turnNum);
+      }
     );
   } catch (e) {
     // Synchronous throw (rare); the stream never started, so just unlock directly.

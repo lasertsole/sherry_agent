@@ -21,7 +21,8 @@
     "maxAudios": "最多只能上传 {count} 段音频",
     "maxAudiosExceed": "最多只能上传 {count} 段音频，已超出 {extra} 段",
     "maxVideos": "最多只能上传 {count} 段视频",
-    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
+    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段",
+    "queued": "已排队 · 第 {position} 位（共 {queueSize} 个）"
   },
   "chatBox": {
     "defaultUserName": "我",

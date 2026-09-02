@@ -21,7 +21,8 @@
     "maxAudios": "최대 {count}개의 음성을 업로드할 수 있습니다",
     "maxAudiosExceed": "최대 {count}개의 음성을 업로드할 수 있습니다. {extra}개를 초과했습니다",
     "maxVideos": "최대 {count}개의 비디오를 업로드할 수 있습니다",
-    "maxVideosExceed": "최대 {count}개의 비디오를 업로드할 수 있습니다. {extra}개를 초과했습니다"
+    "maxVideosExceed": "최대 {count}개의 비디오를 업로드할 수 있습니다. {extra}개를 초과했습니다",
+    "queued": "대기 중 · {queueSize}개 중 {position}번째"
   },
   "chatBox": {
     "defaultUserName": "나",

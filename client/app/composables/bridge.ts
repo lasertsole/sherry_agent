@@ -45,7 +45,7 @@ export interface ChatRequest {
  * Streaming event frames returned by the backend `/sessions/agent/ws` in browser mode.
  * Corresponds to `{"event": ..., "session_id": ..., "content": ...}` in `server/trigger/ws/messages.py`.
  */
-export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request';
+export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request' | 'queued';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';
@@ -82,6 +82,12 @@ export interface AgentWsEvent {
   input_tokens?: number;
   /** Output token count (carried only on done frames; from the backend output_tokens) */
   output_tokens?: number;
+  /** 1-based position of this message in the session's input queue (carried only on queued frames). */
+  position?: number;
+  /** Current queue depth, this message included (carried only on queued frames). */
+  queue_size?: number;
+  /** Server-assigned id of the enqueued message (carried only on queued frames). */
+  message_id?: string;
 }
 
 /**
@@ -195,6 +201,25 @@ export type OnChunkCallback = (
 
 /** HITL interrupt callback: invoked when the agent pauses for human approval. */
 export type OnHitlCallback = (data: HitlInterruptData) => void;
+
+/**
+ * Queued-notification payload: the backend accepted the message but the session
+ * is busy, so the message was enqueued and will stream once earlier turns finish
+ * (contract: `{"event":"queued","session_id":"...","position":N,"queue_size":M,"message_id":"..."}`).
+ */
+export interface QueuedInfo {
+  /** Session the queued message belongs to (lets KeepAlive-cached pages filter against their frozen sid). */
+  sessionId: string;
+  /** 1-based position of this message in the session's input queue. */
+  position: number;
+  /** Current queue depth, this message included. */
+  queueSize: number;
+  /** Server-assigned id of the enqueued message (optional passthrough). */
+  messageId?: string;
+}
+
+/** Queued callback: invoked when the backend reports a `queued` frame instead of streaming immediately. */
+export type OnQueuedCallback = (info: QueuedInfo) => void;
 
 /** Stream-end callback: carries optional model metadata (model_name/input_tokens/output_tokens, from the done frame). */
 export type OnDoneCallback = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => void;
@@ -318,13 +343,15 @@ export interface StreamController {
  *
  * @param request  The chat payload.
  * @param onChunk  Called with each text fragment, its semantic type, and the session id.
+ * @param onQueued Called when the backend enqueues the message (session busy) instead of streaming immediately.
  * @returns        `{ controller, promise }`.
  */
 export function streamChatMessage(
   request: ChatRequest,
   onChunk: OnChunkCallback,
   onHitl?: OnHitlCallback,
-  onDone?: OnDoneCallback
+  onDone?: OnDoneCallback,
+  onQueued?: OnQueuedCallback
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -336,7 +363,7 @@ export function streamChatMessage(
       promise
     };
   }
-  return sendChatMessageWs(request, onChunk, onHitl, onDone);
+  return sendChatMessageWs(request, onChunk, onHitl, onDone, onQueued);
 }
 
 /**
@@ -445,7 +472,8 @@ function sendChatMessageWs(
   request: ChatRequest,
   onChunk: OnChunkCallback,
   onHitl?: OnHitlCallback,
-  onDone?: OnDoneCallback
+  onDone?: OnDoneCallback,
+  onQueued?: OnQueuedCallback
 ): {
   controller: StreamController;
   promise: Promise<void>;
@@ -675,6 +703,17 @@ function sendChatMessageWs(
           // HITL interrupt: the agent needs human approval; invoke the onHitl callback (silently ignored when absent)
           if (onHitl && data.content) {
             onHitl(data.content as unknown as HitlInterruptData);
+          }
+        } else if (data.event === 'queued') {
+          // Session busy: the backend enqueued this message and will stream it later;
+          // surface the queue position to the UI badge (silently ignored when absent).
+          if (onQueued && typeof data.position === 'number') {
+            onQueued({
+              sessionId: data.session_id ?? sessionId,
+              position: data.position,
+              queueSize: data.queue_size ?? 0,
+              messageId: data.message_id ?? undefined
+            });
           }
         } else if (data.event === 'done') {
           if (!done) {
