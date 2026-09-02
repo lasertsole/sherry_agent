@@ -47,8 +47,6 @@ import itertools
 import json
 import sqlite3
 import time
-from collections import deque
-from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -60,7 +58,6 @@ from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
-from robyn import WebSocketDisconnect
 
 from agent import core as agent_core
 from agent.middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
@@ -219,62 +216,6 @@ class _RecordingSocket:
 
     async def send_text(self, raw: str) -> None:
         self.frames.append(json.loads(raw))
-
-
-class _HandlerSocket:
-    """WS double for driving agent_ws_handler directly.
-
-    receive_text parks on a waiter until the next push; close() surfaces a
-    real WebSocketDisconnect so the handler exits. send_text is a real
-    coroutine recording decoded frames.
-    """
-
-    def __init__(self) -> None:
-        self.id = "test-ws-id"
-        self.frames: list[dict[str, Any]] = []
-        self._inbound: deque[str] = deque()
-        self._waiter: asyncio.Future | None = None
-        self._closed = False
-
-    def push(self, frame: dict[str, Any]) -> None:
-        self._inbound.append(json.dumps(frame))
-        if self._waiter is not None and not self._waiter.done():
-            self._waiter.set_result(None)
-            self._waiter = None
-
-    def close(self) -> None:
-        self._closed = True
-        if self._waiter is not None and not self._waiter.done():
-            self._waiter.set_exception(WebSocketDisconnect())
-            self._waiter = None
-
-    async def receive_text(self) -> str:
-        if not self._inbound:
-            if self._closed:
-                raise WebSocketDisconnect()
-            self._waiter = asyncio.get_running_loop().create_future()
-            try:
-                await self._waiter
-            finally:
-                self._waiter = None
-        return self._inbound.popleft()
-
-    async def send_text(self, raw: str) -> None:
-        self.frames.append(json.loads(raw))
-
-
-@asynccontextmanager
-async def _handler_session(socket: _HandlerSocket):
-    task = asyncio.ensure_future(_wsm().agent_ws_handler(socket))
-    await asyncio.sleep(0.05)
-    try:
-        yield task
-    finally:
-        socket.close()
-        try:
-            await asyncio.wait_for(task, timeout=10)
-        except asyncio.CancelledError:
-            pass
 
 
 # ---------------------------------------------------------------------------
