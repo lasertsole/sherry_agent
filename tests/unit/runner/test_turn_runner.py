@@ -481,3 +481,39 @@ async def test_ws_executor_stop_cancels_child_and_drain_continues_fifo(env, monk
     assert "stopped" in events, "a stopped frame must be sent to the socket"
     assert "echo:second" in [f.get("content") for f in socket.frames if f.get("event") == "chunk"]
     assert env.active_tasks == {}, "child task must be unregistered after cancellation"
+
+
+# ---------------------------------------------------------------------------
+# Claim-row resolution regression (AC-4 / AC-7b e2e composition)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ws_executor_resolves_own_claimed_row_when_queued_row_predates_dispatch(
+    env, monkeypatch
+):
+    """The executor's claim-row identity must survive an older QUEUED row.
+
+    submit_user_input's idle branch may dispatch a turn while older QUEUED
+    rows exist (input queued during hitl_pending, crash-recovery leftovers).
+    The executor must attribute its completion to its OWN CLAIMED placeholder;
+    the QUEUED row belongs to the subsequent drain.
+    """
+    tr, store, registry = env.tr, env.store, env.registry
+    registry.register("ws", tr.WsTurnExecutor())
+
+    older = await _enqueue(store, "s1", "queued-while-busy")  # QUEUED, created first
+    placeholder = await store.insert_claimed("s1", _payload("fresh"), "user")  # newer
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(tr, "async_generate", _fake_generate_factory(calls))
+
+    await tr.WsTurnExecutor().execute("s1", "fresh", "user", None)
+
+    assert calls == [("s1", "fresh")], "the executor drives its own message"
+    assert _status_of(store, placeholder.id) == "DELIVERED", (
+        "the executor's own CLAIMED placeholder must be marked DELIVERED"
+    )
+    assert _status_of(store, older.id) == "QUEUED", (
+        "the older QUEUED row belongs to the drain — it must not be touched here"
+    )

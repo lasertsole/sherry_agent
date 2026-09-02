@@ -320,7 +320,16 @@ class WsTurnExecutor:
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(f"TurnRunner: claim-row lookup failed for {session_id}: {e}")
             return None
-        claim_row_id = rows[0].id if rows else None
+        # list_active is FIFO by created_at: a QUEUED row may predate this
+        # turn's CLAIMED placeholder (input queued under hitl_pending, crash
+        # leftovers). The executor's own row is the CLAIMED one -- exactly one
+        # exists at this point (the idle-branch placeholder / the drain's
+        # single in-flight claim).
+        claimed = next(
+            (row for row in rows if row.status is UserInputQueueStatus.CLAIMED),
+            None,
+        )
+        claim_row_id = claimed.id if claimed is not None else None
         if claim_row_id is None:
             logger.warning(
                 f"TurnRunner: no CLAIMED row found for session {session_id} at turn start"
