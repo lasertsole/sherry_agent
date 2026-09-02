@@ -170,13 +170,19 @@ async def test_prestart_gate_ignores_own_inflight_turn_starts(monkeypatch):
     result = await at.maybe_trigger_auto_turn("sess-7b-self", _injection())
     assert result.outcome == at.AutoTurnOutcome.TRIGGERED
 
+    # Handle captured BEFORE the first await: the runner is registered but has
+    # NOT started (its first action is a yield). Re-reading _INFLIGHT after
+    # _wait_started races the runner's own cleanup - the unblocked fake turn
+    # can run to full completion inside one 10ms poll window.
+    task = at._INFLIGHT["sess-7b-self"]
+    assert not task.done(), "runner task finished before its first yield"
+
     # RED (pre-fix): the runner self-abandons here and generate never starts.
     await _wait_started(started)
     assert not spy.calls, "injection was re-queued as PENDING steering on self-inflight"
-    assert at._INFLIGHT.get("sess-7b-self") is not None and not at._INFLIGHT["sess-7b-self"].done()
 
-    task = at._INFLIGHT["sess-7b-self"]
     await _wait_finished(task)
+    assert not task.cancelled(), "runner task was cancelled during the turn"
     assert finished.is_set(), "turn did not run to completion"
     assert not cancelled.is_set()
     assert calls and calls[0][0] == "sess-7b-self", "injection never consumed by the turn"
