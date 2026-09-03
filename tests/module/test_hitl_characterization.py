@@ -121,14 +121,15 @@ class TestTerminalBlacklist:
         assert out != "__EXECUTED__"
 
     @pytest.mark.parametrize("commands", _BYPASS_TODAY, ids=lambda c: repr(c))
-    def test_element_exact_bypass_reaches_execution(self, commands, monkeypatch):
+    def test_element_exact_bypass_now_blocked_by_regex(self, commands, monkeypatch):
         # # 特征化：当前缺陷，Task 6 将改为正则
-        # # WILL-CHANGE(Task 6)
-        # KNOWN DEFECT, locked on purpose: for list inputs ``bad in commands`` is
-        # ELEMENT-EXACT equality, so a danger embedded in a larger element (or
-        # differing by whitespace/glob) reaches subprocess execution TODAY.
-        # Task 6 replaces this with a regex over the joined command string;
-        # this assertion will then flip to "blocked".
+        # # WILL-CHANGE(Task 6) — UPDATED BY TASK 6: the defect is FIXED.
+        # The element-exact ``bad in commands`` check was replaced by a regex
+        # over the " && "-joined command string (DANGEROUS_COMMAND_REGEX,
+        # re.IGNORECASE), and a hit now RAISES ToolException (surfaces via
+        # handle_tool_error=True) with the historical refusal message format.
+        # _blocked_outcome normalizes both mechanisms; the spawn-point stub
+        # guarantees a broken guard could never execute a real subprocess.
         captured: list = []
 
         def fake_run_with_encoding(self, cmds, encoding, **kwargs):
@@ -138,13 +139,13 @@ class TestTerminalBlacklist:
         monkeypatch.setattr(SafeShellTool, "_run_with_encoding", fake_run_with_encoding)
         tool = build_terminal_tool()
 
-        out = tool._run(commands)  # type: ignore[arg-type]
+        out = _blocked_outcome(tool._run, commands)  # type: ignore[arg-type]
 
-        assert out == "__EXECUTED__", "command should slip past today's blacklist"
-        assert captured == [commands], (
-            f"element-exact blacklist let {commands!r} through to execution "
-            "(known defect, fixed by Task 6 regex)"
+        assert "Blocked: unsafe" in out, (
+            f"regex blacklist must block {commands!r} (Task 5 defect fixed)"
         )
+        assert out != "__EXECUTED__", "blocked input must not reach execution"
+        assert captured == [], "blocked input must never reach the spawn point"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
