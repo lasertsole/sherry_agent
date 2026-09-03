@@ -36,16 +36,37 @@ class StateSchema(AgentState):
     session_id: str
 
 
-# Rebuild skill snapshot at server start to keep skills prompt stable
-# throughout this server run, ensuring reliable model prefix caching.
-build_skills_snapshot()
+# ── Initialization (explicit, idempotent) ────────────────────────────────
+# These three steps used to run at module import time, which made any bare
+# ``import agent.core`` (tests, tooling, type checkers) trigger disk I/O and
+# tool construction unexpectedly and slowly (AUDIT_REPORT item 26). They now
+# live in ``init()``, called once by the service entry point
+# (``server/__main__.py``) — importing this module is side-effect-free.
 
-# Load memory markdown files from disk; keep them unchanged until
-# compression is triggered during this server run.
-memory_store.load_from_disk()
+_tools: list[BaseTool] = []
+_initialized: bool = False
 
-# Build tool list
-_tools: list[BaseTool] = build_main_tools()
+
+def init() -> None:
+    """One-time agent initialization; called by the service entry point.
+
+    - Rebuilds the skill snapshot at server start to keep the skills prompt
+      stable throughout this server run, ensuring reliable model prefix
+      caching.
+    - Loads memory markdown files from disk; they stay unchanged until
+      compression is triggered during this server run.
+    - Builds the main tool list.
+
+    Idempotent: subsequent calls are no-ops.
+    """
+    global _tools, _initialized
+    if _initialized:
+        return
+
+    build_skills_snapshot()
+    memory_store.load_from_disk()
+    _tools = build_main_tools()
+    _initialized = True
 
 
 def get_agent_tools() -> list[BaseTool]:

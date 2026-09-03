@@ -39,7 +39,7 @@ skills/builtin/core/cron/
 
 ## 동작 방식
 
-1. **서비스 시작**: `skills.builtin.core.cron.scripts`를 임포트하면 (스킬 스크립트와 HTTP 라우트 양쪽에서 발생) `cron-service`라는 이름의 데몬 스레드(`_start_cron_service_thread`)가 시작됩니다. 이 스레드는 전용 asyncio 이벤트 루프를 만들어 `cron_service.start()`를 실행한 뒤 계속 루프합니다. `CronService.add_job()` / `register_system_job()`도 서비스가 아직 실행 중이 아니면 자동으로 시작합니다.
+1. **서비스 시작**: 서비스 엔트리포인트가 `skills.builtin.core.cron.scripts.base`의 `init()`을 호출하여 실행 콜백을 연결하고 `cron-service`라는 이름의 데몬 스레드(`_start_cron_service_thread`)를 시작합니다. 이 스레드는 전용 asyncio 이벤트 루프를 만들어 `cron_service.start()`를 실행한 뒤 계속 루프합니다. cron 스크립트 임포트에는 부수 효과가 없습니다. `CronService.add_job()` / `register_system_job()`도 서비스가 아직 실행 중이 아니면 호출자의 이벤트 루프에서 지연 시작합니다.
 2. **타이머 루프**: `_arm_timer()`는 활성 작업 중 가장 이른 `nextRunAtMs`까지의 `asyncio` 슬립을 한 번 예약합니다. 이후 `_on_timer()`가 저장소를 다시 로드하고(외부 수정 사항 반영), `nextRunAtMs <= now`인 활성 작업을 모두 실행한 뒤 저장소를 저장하고 타이머를 재무장합니다.
 3. **실행** (`_execute_job`): `set_on_job`으로 등록된 콜백(즉 `_on_cron_job`)이 작업을 실행합니다. 작업의 `lastStatus` / `lastError`를 기록하고, WS 알림을 보내며, 실행 로그 한 줄을 추가합니다. 일회성(`at`) 작업은 이후 삭제되거나(`deleteAfterRun`인 경우) 비활성화되고, 반복 작업은 다음 실행 시각을 다시 계산합니다.
 
@@ -156,7 +156,7 @@ Python 쪽 대응 모델(`types.py`)은 snake_case를 사용합니다 (`at_ms`, 
 |--------|------|
 | `await start()` | 저장소를 로드하고, 다음 실행 시각을 재계산해 저장한 뒤 타이머를 무장 |
 | `stop()` | 서비스를 중지하고 타이머 태스크를 취소 |
-| `set_on_job(callback)` | 비동기 실행 콜백 등록 (임포트 시 `_on_cron_job`에 연결됨) |
+| `set_on_job(callback)` | 비동기 실행 콜백 등록 (`init()`이 `_on_cron_job`에 연결) |
 | `list_jobs(include_disabled=False)` | 다음 실행 시각 순으로 작업 나열; `include_disabled=True`일 때만 비활성 작업 포함 |
 | `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | 작업 추가 (`payload.kind`는 항상 `"agent_turn"`); 서비스 자동 시작; `CronJob` 반환 |
 | `register_system_job(job)` | `id`를 기준으로 시스템 작업을 멱등하게 (재)등록 (현재 저장소 내 호출부 없음) |

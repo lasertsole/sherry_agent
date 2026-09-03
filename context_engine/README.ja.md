@@ -250,7 +250,7 @@ for r in results:
 | `server/service/messages.py` | `get_session_ids`、`get_history_by_turn_page`、および（`context_engine.curator` からの）`reset_idle_for_seconds` | クライアント向けセッション一覧（トップレベルセッション + 派生タイトル）、ページング履歴、ユーザーターンごとの curator アイドルタイマーリセット |
 | `server/DAO/messages.py` | `delete_messages_by_session` | 「セッションをクリア」操作 |
 | `server/trigger/http/stats.py` | `get_db`（`context_engine.store.db` から） | messages テーブルに基づく利用統計 |
-| `server/__main__.py` | `import context_engine.curator` | curator パッケージのインポートがバックグラウンドのデーモンスレッドを開始する |
+| `server/__main__.py` | `context_engine.curator.init()` | curator のバックグラウンドデーモンスレッドを明示的に開始する（パッケージのインポートに副作用はない） |
 
 ---
 
@@ -259,7 +259,7 @@ for r in results:
 `context_engine/curator/` は**バックグラウンドのスキル保守オーケストレーター**であり、メッセージストレージとは無関係です。確認済みの動作の概要：
 
 - **対象**：`skills/auto/` 配下の Agent 生成スキルのみ。組み込みスキルには一切触れません
-- **トリガー**：`context_engine.curator` のインポートにより、デーモンスレッド（`curator-timer`）が起動し、3600 秒ごとに `maybe_run_curator()` を呼び出します。実行は `should_run_now()` が真（有効・一時停止でない・`interval_hours` 経過）で、Agent が十分アイドル（`min_idle_hours`）の場合にのみ行われます。ユーザーターンごとに `reset_idle_for_seconds()` が呼ばれます（`server/service/messages.py`）
+- **トリガー**：サービスのエントリポイントが `context_engine.curator.init()` を呼び出すと、デーモンスレッド（`curator-timer`）が起動し、3600 秒ごとに `maybe_run_curator()` を呼び出します。実行は `should_run_now()` が真（有効・一時停止でない・`interval_hours` 経過）で、Agent が十分アイドル（`min_idle_hours`）の場合にのみ行われます。ユーザーターンごとに `reset_idle_for_seconds()` が呼ばれます（`server/service/messages.py`）
 - **ライフサイクル**：`active → stale`（`stale_after_days`、デフォルト 30 日間無活動）。`archive_after_days`（デフォルト 90 日）を超えたスキルはディスクから削除されます。stale ウィンドウ内で一度も使われていないスキルは再アクティブ化されます。pinned スキルはすべての遷移をバイパスします
 - **LLM 統合**（`curator.yaml` でオプトイン、デフォルト `consolidate: false`）：重複する狭いスキルを LLM が生成した umbrella スキルへ統合します
 - **状態とレポート**：実行状態は `skills/.curator_state` に保存。レポートは `logs/curator/{timestamp}/` 配下（`run.json` + `REPORT.md`）

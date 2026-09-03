@@ -118,12 +118,14 @@ def child_env() -> dict[str, str]:
     """
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
-    # Hermetic runs must not spawn the SkillSpector CLI (~120s subprocess during
-    # collection: agent/core.py:40 build_skills_snapshot -> _scan_builtin_skills
-    # -> scan_skill fires once per process) nor its LLM API round-trip; the
-    # snapshot-path scan is fire-and-forget log-only and no test asserts it;
-    # scanner unit tests patch module attributes and are immune (see
-    # tests/unit/test_skill_scanner.py autouse fixture).
+    # Defense-in-depth: hermetic runs must never spawn the SkillSpector CLI
+    # (~120s subprocess) nor its LLM API round-trip. The historical trigger —
+    # agent.core import-time build_skills_snapshot -> _scan_builtin_skills ->
+    # scan_skill once per process during collection — is gone (moved into the
+    # explicit agent.core.init(), AUDIT_REPORT item 26), but any residual
+    # snapshot/scanner path stays fire-and-forget log-only and no test
+    # asserts it; scanner unit tests patch module attributes and are immune
+    # (see tests/unit/test_skill_scanner.py autouse fixture).
     env["SKILL_SCANNER_ENABLED"] = "0"
     return env
 

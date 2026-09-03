@@ -586,7 +586,26 @@ async def _on_cron_job(cron_job: CronJob) -> None:
     await bus.publish_inbound(msg)
 
 
-cron_service.set_on_job(_on_cron_job)
 _started = False
 _start_lock = threading.Lock()
-threading.Thread(target=_start_cron_service_thread, daemon=True, name="cron-service").start()
+
+
+def init() -> None:
+    """Wire the job-execution callback and start the cron service thread.
+
+    Used to run at module import time, which made any bare import of the
+    cron scripts (tests, tooling, API consumers) spawn a daemon thread
+    unexpectedly (AUDIT_REPORT item 26). Importing this module is now
+    side-effect-free; the service entry point calls ``init()`` once.
+
+    Idempotent: subsequent calls are no-ops. (``CronService.add_job`` /
+    ``register_system_job`` additionally lazily start the service on the
+    caller's event loop when used without ``init()``.)
+    """
+    global _started
+    cron_service.set_on_job(_on_cron_job)
+    with _start_lock:
+        if _started:
+            return
+        _started = True
+    threading.Thread(target=_start_cron_service_thread, daemon=True, name="cron-service").start()

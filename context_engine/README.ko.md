@@ -250,7 +250,7 @@ for r in results:
 | `server/service/messages.py` | `get_session_ids`, `get_history_by_turn_page`, 그리고 (`context_engine.curator`의) `reset_idle_for_seconds` | 클라이언트용 세션 목록(최상위 세션 + 파생 제목), 페이지네이션 히스토리, 사용자 턴마다 curator 유휴 타이머 리셋 |
 | `server/DAO/messages.py` | `delete_messages_by_session` | "세션 비우기" 작업 |
 | `server/trigger/http/stats.py` | `get_db` (`context_engine.store.db`에서) | messages 테이블 기반 사용 통계 |
-| `server/__main__.py` | `import context_engine.curator` | curator 패키지 임포트가 백그라운드 데몬 스레드를 시작 |
+| `server/__main__.py` | `context_engine.curator.init()` | curator 백그라운드 데몬 스레드를 명시적으로 시작 (패키지 임포트에는 부수 효과 없음) |
 
 ---
 
@@ -259,7 +259,7 @@ for r in results:
 `context_engine/curator/`는 **백그라운드 스킬 유지보수 오케스트레이터**로, 메시지 저장과는 무관합니다. 검증된 동작 요약:
 
 - **범위**: `skills/auto/` 아래의 에이전트 생성 스킬만 대상. 내장 스킬은 절대 건드리지 않음
-- **트리거**: `context_engine.curator`를 임포트하면 데몬 스레드(`curator-timer`)가 시작되어 3600초마다 `maybe_run_curator()`를 호출합니다. 실행은 `should_run_now()`가 참(활성화됨, 일시정지 아님, `interval_hours` 경과)이고 에이전트가 충분히 유휴 상태(`min_idle_hours`)일 때만 수행됩니다. 사용자 턴마다 `reset_idle_for_seconds()`가 호출됩니다 (`server/service/messages.py`)
+- **트리거**: 서비스 엔트리포인트가 `context_engine.curator.init()`을 호출하면 데몬 스레드(`curator-timer`)가 시작되어 3600초마다 `maybe_run_curator()`를 호출합니다. 실행은 `should_run_now()`가 참(활성화됨, 일시정지 아님, `interval_hours` 경과)이고 에이전트가 충분히 유휴 상태(`min_idle_hours`)일 때만 수행됩니다. 사용자 턴마다 `reset_idle_for_seconds()`가 호출됩니다 (`server/service/messages.py`)
 - **라이프사이클**: `active → stale` (`stale_after_days`, 기본 30일간 활동 없음). `archive_after_days`(기본 90일)를 초과한 스킬은 디스크에서 제거됩니다. stale 구간 내에서 한 번도 사용되지 않은 스킬은 재활성화됩니다. pinned 스킬은 모든 전이를 우회합니다
 - **LLM 통합** (`curator.yaml`로 옵트인, 기본 `consolidate: false`): 겹치는 좁은 스킬들을 LLM이 생성한 umbrella 스킬로 병합합니다
 - **상태와 보고서**: 실행 상태는 `skills/.curator_state`에 저장. 보고서는 `logs/curator/{timestamp}/` 아래에 위치 (`run.json` + `REPORT.md`)

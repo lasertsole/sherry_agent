@@ -250,7 +250,7 @@ for r in results:
 | `server/service/messages.py` | `get_session_ids`、`get_history_by_turn_page`，以及（来自 `context_engine.curator` 的）`reset_idle_for_seconds` | 面向客户端的会话列表（顶层会话 + 派生标题）、分页历史，以及每次用户回合重置 curator 空闲计时 |
 | `server/DAO/messages.py` | `delete_messages_by_session` | 「清空会话」操作 |
 | `server/trigger/http/stats.py` | `get_db`（来自 `context_engine.store.db`） | 基于 messages 表的使用统计 |
-| `server/__main__.py` | `import context_engine.curator` | 导入 curator 包即启动其后台守护线程 |
+| `server/__main__.py` | `context_engine.curator.init()` | 显式启动 curator 后台守护线程（导入包本身无副作用） |
 
 ---
 
@@ -259,7 +259,7 @@ for r in results:
 `context_engine/curator/` 是一个**后台技能维护编排器** —— 与消息存储无关。经验证的行为摘要：
 
 - **范围**：只作用于 `skills/auto/` 下的 Agent 自建技能；绝不触碰内置技能
-- **触发**：导入 `context_engine.curator` 即启动守护线程（`curator-timer`），每 3600 秒调用一次 `maybe_run_curator()`；仅当 `should_run_now()` 为真（已启用、未暂停、`interval_hours` 已到期）且 Agent 空闲足够久（`min_idle_hours`）时才执行。每次用户回合都会调用 `reset_idle_for_seconds()`（`server/service/messages.py`）
+- **触发**：服务入口调用 `context_engine.curator.init()` 启动守护线程（`curator-timer`），每 3600 秒调用一次 `maybe_run_curator()`；仅当 `should_run_now()` 为真（已启用、未暂停、`interval_hours` 已到期）且 Agent 空闲足够久（`min_idle_hours`）时才执行。每次用户回合都会调用 `reset_idle_for_seconds()`（`server/service/messages.py`）
 - **生命周期**：`active → stale`（`stale_after_days`，默认 30 天无活动）；超过 `archive_after_days`（默认 90 天）的技能会从磁盘移除；处于 stale 窗口内但从未使用过的技能会被重新激活。被 pinned 的技能跳过所有流转
 - **LLM 合并**（通过 `curator.yaml` 可选开启，默认 `consolidate: false`）：将重叠的窄技能合并为 LLM 生成的 umbrella 技能
 - **状态与报告**：运行状态存于 `skills/.curator_state`；报告位于 `logs/curator/{timestamp}/`（`run.json` + `REPORT.md`）

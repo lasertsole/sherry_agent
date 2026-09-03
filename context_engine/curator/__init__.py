@@ -122,4 +122,21 @@ def reset_idle_for_seconds() -> None:
     _idle_for_seconds = 0
 
 
-_t.Thread(target=_curator_loop, daemon=True, name="curator-timer").start()
+_curator_thread: _t.Thread | None = None
+
+
+def init() -> None:
+    """Start the curator background loop; called by the service entry point.
+
+    Used to run at module import time, which made any bare
+    ``import context_engine.curator`` (tests, tooling, API consumers) spawn a
+    daemon thread unexpectedly (AUDIT_REPORT item 26). Importing this
+    package is now side-effect-free.
+
+    Idempotent: subsequent calls are no-ops while the thread is alive.
+    """
+    global _curator_thread
+    if _curator_thread is not None and _curator_thread.is_alive():
+        return
+    _curator_thread = _t.Thread(target=_curator_loop, daemon=True, name="curator-timer")
+    _curator_thread.start()

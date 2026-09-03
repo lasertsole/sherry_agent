@@ -71,9 +71,17 @@ if not _is_local:
     }
     _model_config = {k: v for k, v in _model_config.items() if v is not None and v != ""}
 
-    ITTT_model = init_chat_model(**_model_config).configurable_fields(
-        temperature=ConfigurableField(id="temperature"),
-    )
+    if not _model_config:
+        # No ITTT_* configuration at all (e.g. hermetic CI: no .env, remote
+        # default). init_chat_model() would raise on an empty config, so leave
+        # the model unbuilt; it is only needed when _vision_model_func (or a
+        # user) actually invokes it on a configured environment.
+        print("[ITTT_model WARNING] no ITTT_* configuration found; model left unbuilt")
+        ITTT_model = None
+    else:
+        ITTT_model = init_chat_model(**_model_config).configurable_fields(
+            temperature=ConfigurableField(id="temperature"),
+        )
 
 else:
     # ======================== Local (GGUF) branch ========================

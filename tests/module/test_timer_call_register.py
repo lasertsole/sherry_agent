@@ -53,6 +53,30 @@ class TestTimerCallRegister:
             if t.get_name().startswith(prefix) and not t.done()
         ]
 
+    def _wait_live(
+        self,
+        reg: TimerCallRegister,
+        session_id: str,
+        name: str = "",
+        count: int = 1,
+        timeout: float = 3.0,
+    ) -> list[asyncio.Task[None]]:
+        """Poll until exactly `count` live tasks exist for one timer (or all
+        timers of a session) — task creation/cancellation are async, never
+        assume timing."""
+        deadline = time.monotonic() + timeout
+        live: list[asyncio.Task[None]] = []
+        while True:
+            live = self._live_timer_tasks(reg, session_id, name)
+            if len(live) == count:
+                return live
+            if time.monotonic() > deadline:
+                pytest.fail(
+                    f"expected {count} live task(s) for timer '{session_id}/{name}', "
+                    f"got {len(live)} after {timeout}s"
+                )
+            time.sleep(0.05)
+
     # --- register ---
 
     def test_register_creates_background_task(self, reg: TimerCallRegister):
@@ -60,9 +84,7 @@ class TestTimerCallRegister:
         assert reg.register("s1", "t1", cb) is True
         timer = reg.session_id_to_timers["s1"]["t1"]
         assert timer.task_name and timer.task_name.startswith("timer_s1_t1_")
-        _settle()
-        live = self._live_timer_tasks(reg, "s1", "t1")
-        assert len(live) == 1
+        live = self._wait_live(reg, "s1", "t1")
         assert live[0].get_name() == timer.task_name
 
     def test_register_duplicate_fails(self, reg: TimerCallRegister):
@@ -84,8 +106,7 @@ class TestTimerCallRegister:
     def test_unregister_cancels_task(self, reg: TimerCallRegister):
         cb = MagicMock()
         reg.register("s1", "t1", cb)
-        _settle()
-        task = self._live_timer_tasks(reg, "s1", "t1")[0]
+        task = self._wait_live(reg, "s1", "t1")[0]
         assert reg.unregister("s1", "t1") is True
         _wait_done(task)
         assert "t1" not in reg.session_id_to_timers.get("s1", {})
@@ -99,17 +120,14 @@ class TestTimerCallRegister:
     def test_reset_cancels_old_generation_task(self, reg: TimerCallRegister):
         cb = MagicMock()
         reg.register("s1", "t1", cb)
-        _settle()
-        old_tasks = self._live_timer_tasks(reg, "s1", "t1")
-        assert len(old_tasks) == 1
+        old_tasks = self._wait_live(reg, "s1", "t1")
         old_name = old_tasks[0].get_name()
 
         assert reg.reset_timer("s1", "t1") is True
         _wait_done(old_tasks[0])
 
         # Old generation is gone, exactly one live task remains
-        live = self._live_timer_tasks(reg, "s1", "t1")
-        assert len(live) == 1
+        live = self._wait_live(reg, "s1", "t1")
         # New generation got a FRESH unique name — never reusable (audit #8)
         assert live[0].get_name() != old_name
         assert live[0].get_name() == reg.session_id_to_timers["s1"]["t1"].task_name
@@ -117,16 +135,15 @@ class TestTimerCallRegister:
     def test_reset_twice_only_newest_generation_survives(self, reg: TimerCallRegister):
         cb = MagicMock()
         reg.register("s1", "t1", cb)
-        _settle()
-        gen1 = self._live_timer_tasks(reg, "s1", "t1")
+        gen1 = self._wait_live(reg, "s1", "t1")
 
         assert reg.reset_timer("s1", "t1") is True
         _wait_done(gen1[0])
-        gen2 = self._live_timer_tasks(reg, "s1", "t1")
+        gen2 = self._wait_live(reg, "s1", "t1")
 
         assert reg.reset_timer("s1", "t1") is True
         _wait_done(gen2[0])
-        gen3 = self._live_timer_tasks(reg, "s1", "t1")
+        gen3 = self._wait_live(reg, "s1", "t1")
 
         assert len(gen3) == 1
         assert gen1[0].done()
@@ -142,9 +159,7 @@ class TestTimerCallRegister:
         cb = MagicMock()
         reg.register("s1", "t1", cb)
         reg.register("s1", "t2", cb)
-        _settle()
-        tasks = self._live_timer_tasks(reg, "s1")
-        assert len(tasks) == 2
+        tasks = self._wait_live(reg, "s1", count=2)
 
         reg.clear_session("s1")
         for t in tasks:
@@ -158,15 +173,13 @@ class TestTimerCallRegister:
     def test_unregister_then_register_same_name(self, reg: TimerCallRegister):
         cb = MagicMock()
         reg.register("s1", "t1", cb)
-        _settle()
-        first = self._live_timer_tasks(reg, "s1", "t1")
+        first = self._wait_live(reg, "s1", "t1")
 
         assert reg.unregister("s1", "t1") is True
         assert reg.register("s1", "t1", cb) is True
         _wait_done(first[0])
 
-        live = self._live_timer_tasks(reg, "s1", "t1")
-        assert len(live) == 1
+        live = self._wait_live(reg, "s1", "t1")
         # The re-registered generation must survive and own a fresh name
         assert live[0].get_name() != first[0].get_name()
         assert first[0].done()

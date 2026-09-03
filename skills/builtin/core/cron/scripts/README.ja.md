@@ -39,7 +39,7 @@ skills/builtin/core/cron/
 
 ## 動作の仕組み
 
-1. **サービス起動**: `skills.builtin.core.cron.scripts` をインポートすると（スキルスクリプトと HTTP ルートの両方で発生）、`cron-service` という名前のデーモンスレッド（`_start_cron_service_thread`）が起動します。このスレッドは専用の asyncio イベントループを作成し、`cron_service.start()` を実行した後ループし続けます。`CronService.add_job()` / `register_system_job()` も、サービスが未起動の場合は自動的に起動します。
+1. **サービス起動**: サービスのエントリポイントが `skills.builtin.core.cron.scripts.base` の `init()` を呼び出し、実行コールバックを接続して `cron-service` という名前のデーモンスレッド（`_start_cron_service_thread`）を起動します。このスレッドは専用の asyncio イベントループを作成し、`cron_service.start()` を実行した後ループし続けます。cron スクリプトのインポートに副作用はありません。`CronService.add_job()` / `register_system_job()` も、サービスが未起動の場合は呼び出し元のイベントループ上で遅延起動します。
 2. **タイマーループ**: `_arm_timer()` は有効なジョブの中で最も早い `nextRunAtMs` までの `asyncio` スリープを 1 回スケジュールします。その後 `_on_timer()` がストアを再ロード（外部変更を取得）し、`nextRunAtMs <= now` の有効なジョブをすべて実行して、ストアを保存し、タイマーを再武装します。
 3. **実行**（`_execute_job`）: `set_on_job` で登録されたコールバック（`_on_cron_job`）がジョブを実行します。ジョブの `lastStatus` / `lastError` を記録し、WS 通知を送信し、実行ログを 1 行追記します。一回限り（`at`）のジョブはその後削除（`deleteAfterRun` 時）または無効化され、定期ジョブは次回実行時刻を再計算します。
 
@@ -156,7 +156,7 @@ Python 側の対応モデル（`types.py`）は snake_case を使用します（
 |---------|------|
 | `await start()` | ストアをロードし、次回実行時刻を再計算して保存し、タイマーを武装 |
 | `stop()` | サービスを停止しタイマータスクをキャンセル |
-| `set_on_job(callback)` | 非同期実行コールバックを登録（インポート時に `_on_cron_job` に接続済み） |
+| `set_on_job(callback)` | 非同期実行コールバックを登録（`init()` によって `_on_cron_job` に接続） |
 | `list_jobs(include_disabled=False)` | 次回実行時刻でソートしてジョブを一覧表示; `include_disabled=True` の場合のみ無効なジョブを含む |
 | `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | ジョブを追加（`payload.kind` は常に `"agent_turn"`）; サービスを自動起動; `CronJob` を返す |
 | `register_system_job(job)` | `id` をキーにシステムジョブを冪等に（再）登録（現在リポジトリ内に呼び出し元なし） |

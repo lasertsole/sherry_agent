@@ -39,7 +39,7 @@ skills/builtin/core/cron/
 
 ## 工作原理
 
-1. **服务启动**：导入 `skills.builtin.core.cron.scripts`（技能脚本和 HTTP 路由都会触发）会启动名为 `cron-service` 的守护线程（`_start_cron_service_thread`）。该线程创建专属 asyncio 事件循环，运行 `cron_service.start()` 后永久循环。`CronService.add_job()` / `register_system_job()` 也会在服务未运行时自动启动它。
+1. **服务启动**：服务入口调用 `skills.builtin.core.cron.scripts.base` 中的 `init()`，绑定执行回调并启动名为 `cron-service` 的守护线程（`_start_cron_service_thread`）。该线程创建专属 asyncio 事件循环，运行 `cron_service.start()` 后永久循环。导入 cron 脚本无副作用；`CronService.add_job()` / `register_system_job()` 也会在服务未运行时于调用方的事件循环上懒启动服务。
 2. **定时循环**：`_arm_timer()` 调度一次 `asyncio` sleep，直到启用任务中最早的 `nextRunAtMs`；随后 `_on_timer()` 重新加载存储（获取外部修改），执行所有 `nextRunAtMs <= now` 的已启用任务，保存存储并重新续订定时器。
 3. **执行**（`_execute_job`）：通过 `set_on_job` 注册的回调（即 `_on_cron_job`）运行任务；记录任务的 `lastStatus` / `lastError`，推送 WS 通知并追加一条执行日志。一次性（`at`）任务随后被删除（若 `deleteAfterRun`）或禁用；周期任务重新计算下次运行时间。
 
@@ -156,7 +156,7 @@ Python 侧对应的模型（`types.py`）使用 snake_case（`at_ms`、`every_ms
 |------|------|
 | `await start()` | 加载存储、重算下次运行时间、保存并续订定时器 |
 | `stop()` | 停止服务并取消定时器任务 |
-| `set_on_job(callback)` | 注册异步执行回调（导入时已绑定为 `_on_cron_job`） |
+| `set_on_job(callback)` | 注册异步执行回调（由 `init()` 绑定为 `_on_cron_job`） |
 | `list_jobs(include_disabled=False)` | 按下次运行时间排序列出任务；仅当 `include_disabled=True` 时包含已禁用任务 |
 | `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | 添加任务（`payload.kind` 恒为 `"agent_turn"`）；自动启动服务；返回 `CronJob` |
 | `register_system_job(job)` | 按 `id` 幂等地（重新）注册系统任务（当前仓库内无调用方） |

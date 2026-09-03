@@ -111,7 +111,15 @@ _GGUF_MODEL_PATH = _WEIGHT_DIR / "bge-m3-q8_0.gguf"
 
 if _use_local and not _GGUF_MODEL_PATH.is_file():
     # First run: download to model_weight/ (no model loading)
-    _ensure_downloaded()
+    # Skipped when llama-cpp-python is absent (e.g. hermetic CI, which never
+    # installs it): _load_model() re-runs _ensure_downloaded() on first use.
+    try:
+        _ensure_downloaded()
+    except ModuleNotFoundError:
+        logger.warning(
+            "llama-cpp-python is not installed; skipping eager GGUF download "
+            "(will be attempted on first embed call)"
+        )
 
 
 # ─────────────────────────────────────────────

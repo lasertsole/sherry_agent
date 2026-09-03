@@ -3,7 +3,7 @@
 **审计范围**：`C:\app\code\project\sherry_agent` 全项目（排除 `.venv`、`node_modules`、`client/`、`future/`、`temp/`、`logs/`、vendored LightRAG/模型权重数据）。
 **审计方法**：4 个并行审计子代理（安全、代码质量/架构、正确性/数据、技能系统与沙箱）+ 对关键发现进行源码直接复核。
 **审计日期**：2026-08-24
-**更新日期**：2026-09-03 — CodeAct 模块已从代码库移除，相关条目（#1、#19、超大模块表）标记为失效并更新引用；#5 回合编号竞态、#7 定时器泄漏、#8 定时器任务名世代歧义、#9 计数器竞态、#10 checkpointer 连接泄漏、#11 无界队列、#28 providers 导入路径、#32 解释器路径跨平台已修复并标记。
+**更新日期**：2026-09-04 — CodeAct 模块已从代码库移除，相关条目（#1、#19、超大模块表）标记为失效并更新引用；#5 回合编号竞态、#7 定时器泄漏、#8 定时器任务名世代歧义、#9 计数器竞态、#10 checkpointer 连接泄漏、#11 无界队列、#26 import 时副作用、#28 providers 导入路径、#32 解释器路径跨平台已修复并标记。
 
 ---
 
@@ -140,8 +140,9 @@ if os.path.exists(file_path):                                        # 第 72 �
 ## 25. `context_engine/store/db.py:20-40` 非线程安全 `get_db()` 单例 + 短超时
 - `if _db:` 双重检查无锁 → 两线程可能各建一个连接，第二个覆盖第一个（泄漏一个）。`timeout=1.0`（第 30 行）过短，并发时抛 `sqlite3.OperationalError: database is locked` 且无重试。**修复：** 加锁、加超时或加重试循环。
 
-## 26. `agent/core.py:29-36` 模块级 import 时副作用
+## 26. ~~`agent/core.py:29-36` 模块级 import 时副作用~~（已修复）
 - 顶层 `build_skills_snapshot()`、`memory_store.load_from_disk()`、`build_main_tools()` 在导入时即触发磁盘写/读与工具构造——对测试/任何 import 都意外且缓慢。**修复：** 移入显式 `init()`，由服务入口调用。
+- **已修复（2026-09-04）**：`agent/core.py` 三个顶层副作用移入显式 `init()`（`_initialized` 标志保证幂等，重复调用为空操作）；工具列表改为经 `get_agent_tools()` 调用时求值（`built_agent` 与 `agent/middlewares/context_engine/nudge.py` 均在运行期获取），`agent/__init__.py` 以 `__getattr__` 惰性转发重属性——裸 `import agent.core` 不再触发任何磁盘 I/O 或工具构造。实际修复范围比原条目更广：curator 后台线程（`context_engine.curator`）、cron 服务后台线程（`skills/builtin/core/cron/scripts`）、路由注册（`server.trigger`）的 import 副作用一并移出，统一由 `server/__main__.py` 在 `__main__` 守卫内按序显式调用四个 `init()`（agent core → curator → cron → trigger），先于任何请求与懒加载消费者。`tests/run_tests_split.py` 的双进程隔离注释中对 import 副作用的引用仍指历史问题，保留作防御性说明。
 
 ## 27. `channels/manager.py:154` `run_forever()` 阻塞调用线程
 - `start_service()` 调用 `self._event_loop.run_forever()` 永久阻塞；模块级 `channel_manager = ChannelManager()`（第 236 行）带导入时副作用。
@@ -213,6 +214,6 @@ from providers.registry import find_by_name     # 第 244 行 (get_api_base)
 4. **数据层**：`context_engine/store/core.py` 回合编号改单事务（#5，✅ 已修复——最终采用加锁方案，见该条目说明）；`_callback_executor.py` 取消 `call_later` handle（#7，✅ 已修复）；`async_sqlite_checkpointer.py` 用 `async with`（#10，✅ 已修复）；`bus/core.py` 限队列（#11，✅ 已修复）。
 5. **注册表并发**：为 `runtime/*_register.py` 与 `context_engine` 共享连接加锁并返回副本（#23/#24/#25）。
 6. **修复 `providers.registry` 悬空导入**（#28）。
-7. **移 `agent/core.py` import 副作用**入 `init()`（#26）。
+7. ~~**移 `agent/core.py` import 副作用**入 `init()`（#26）~~。（✅ 已修复——连同 curator/cron/trigger 一并移出 import 时，见该条目说明。）
 8. **重审 fail-open 扫描策略**（#20-②），并考虑为高风险工具增加确认闸门（#20-③）。
 9. 修复后重新审计，确认以上各域闭合。

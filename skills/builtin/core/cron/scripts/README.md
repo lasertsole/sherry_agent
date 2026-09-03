@@ -39,7 +39,7 @@ Related code outside this skill:
 
 ## How It Works
 
-1. **Service startup**: importing `skills.builtin.core.cron.scripts` (done by the skill scripts and by the HTTP routes) starts a daemon thread named `cron-service` (`_start_cron_service_thread`). The thread creates a dedicated asyncio event loop, runs `cron_service.start()`, then loops forever. `CronService.add_job()` / `register_system_job()` also auto-start the service if it is not running yet.
+1. **Service startup**: the service entry point calls `init()` in `skills.builtin.core.cron.scripts.base`, which wires the execution callback and starts a daemon thread named `cron-service` (`_start_cron_service_thread`). The thread creates a dedicated asyncio event loop, runs `cron_service.start()`, then loops forever. Importing the cron scripts is side-effect-free; `CronService.add_job()` / `register_system_job()` also lazily auto-start the service on the caller's event loop if it is not running yet.
 2. **Timer loop**: `_arm_timer()` schedules one `asyncio` sleep until the earliest `nextRunAtMs` among enabled jobs; `_on_timer()` then reloads the store (picking up external edits), executes every enabled job whose `nextRunAtMs <= now`, saves the store, and re-arms the timer.
 3. **Execution** (`_execute_job`): the callback registered via `set_on_job` (i.e. `_on_cron_job`) runs the job; the job's `lastStatus` / `lastError` are recorded, a WS notification is pushed, and an execution log line is appended. One-shot (`at`) jobs are then deleted (if `deleteAfterRun`) or disabled; recurring jobs get their next run time recomputed.
 
@@ -156,7 +156,7 @@ These are the commands exposed to the agent via [`../SKILL.md`](../SKILL.md), us
 |--------|-------------|
 | `await start()` | Load the store, recompute next runs, save, and arm the timer |
 | `stop()` | Stop the service and cancel the timer task |
-| `set_on_job(callback)` | Register the async execution callback (wired to `_on_cron_job` at import) |
+| `set_on_job(callback)` | Register the async execution callback (wired to `_on_cron_job` by `init()`) |
 | `list_jobs(include_disabled=False)` | List jobs sorted by next run time; disabled jobs only when `include_disabled=True` |
 | `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | Add a job (`payload.kind` is always `"agent_turn"`); auto-starts the service; returns the `CronJob` |
 | `register_system_job(job)` | Idempotently (re-)register a system job by `id` (no in-repo callers at the moment) |
