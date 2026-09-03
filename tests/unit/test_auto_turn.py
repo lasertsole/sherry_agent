@@ -235,3 +235,45 @@ async def test_normal_turn_sends_chunk_and_done(monkeypatch):
     assert frames[0] == {"event": "chunk", "session_id": "sess-2", "type": "text", "content": "hello"}
     assert frames[-1]["event"] == "done" and frames[-1]["model_name"] == "fake"
     assert finished.is_set() and "sess-2" not in at._INFLIGHT
+
+
+@pytest.mark.asyncio
+async def test_cancelled_runner_joins_consumer_unwind(monkeypatch):
+    """F3 regression: a cancelled runner must JOIN its consumer's unwind.
+
+    Pre-fix, the runner's cancel handler cancelled the consumer but returned
+    without waiting for it: the consumer's finally (on_turn_finished, queue
+    I/O) was left to be cut by event-loop teardown, poisoning the
+    UserInputQueue singleton for every later event loop (order-dependent 10 s
+    stall in this very file). The runner task may only complete once the
+    consumer is fully unwound.
+    """
+    at = _mod()
+    _fake_detect(monkeypatch, at, {"busy": False, "reason": "idle"})
+    monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
+    monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
+    monkeypatch.setattr(at, "enqueue_steering", _make_spy())
+    calls, started, finished = [], asyncio.Event(), asyncio.Event()
+    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished))
+
+    unwound = asyncio.Event()
+
+    async def slow_on_turn_finished(session_id, claim_row_id=None):
+        # Stand-in for the real queue I/O: long enough that a runner which
+        # orphaned its consumer is long gone before this completes.
+        await asyncio.sleep(0.2)
+        unwound.set()
+
+    monkeypatch.setattr(at, "on_turn_finished", slow_on_turn_finished)
+
+    result = await at.maybe_trigger_auto_turn("sess-join", _injection())
+    assert result.outcome == at.AutoTurnOutcome.TRIGGERED
+    await _wait_started(started)
+    runner = at._INFLIGHT["sess-join"]
+    runner.cancel()
+    await asyncio.gather(runner, return_exceptions=True)
+
+    assert unwound.is_set(), (
+        "runner finished while its consumer was still unwinding "
+        "(on_turn_finished never completed) - queue singleton poisoning window"
+    )

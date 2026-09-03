@@ -14,6 +14,7 @@ Covers the Task 1 spec behaviors:
 """
 
 import asyncio
+import threading
 from pathlib import Path
 
 import aiosqlite
@@ -392,3 +393,67 @@ async def test_rows_survive_restart_on_same_db_file(tmp_path: Path):
     assert rows[0].client_msg_id == "c1"
     claimed = await store_b.claim_next("s1")
     assert claimed is not None and claimed.id == row.id
+
+
+# ---------------------------------------------------------------------------
+# Cross-event-loop init resilience (F3 order-dependent regression)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning"
+)  # aiosqlite's connector thread may deliver to the (deliberately) closed dead loop
+async def test_ensure_db_reowns_init_when_owning_loop_is_dead(tmp_path: Path):
+    """A first-use init cut by loop death must not stall the next event loop.
+
+    F3 regression (VERDICT-queue.md): a store whose one-time init was
+    cancelled mid-statement by event-loop teardown kept ``_initialized=False``
+    with a DEAD owning loop; the next loop then polled the full
+    _INIT_WAIT_TIMEOUT_S (10 s) for an owner that can never finish, stalling
+    victims into their own timeouts. The store must re-own the init on the
+    new loop instead.
+    """
+    store = UserInputQueue(db_path=tmp_path / "poison.db")
+    dead = asyncio.new_event_loop()
+
+    def run_poison() -> None:
+        async def poison() -> None:
+            # First use happens on `dead`: let _ensure_db reach its first
+            # await (the aiosqlite connector thread), then cancel it — the
+            # exact shape pytest-asyncio teardown inflicts on an orphaned
+            # consumer cut mid-init. This binds _init_loop AND the init lock
+            # to `dead` through a real acquisition, then kills the init.
+            task = asyncio.ensure_future(store._ensure_db())
+            await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        try:
+            dead.run_until_complete(poison())
+        finally:
+            dead.close()
+
+    thread = threading.Thread(target=run_poison)
+    thread.start()
+    thread.join()
+
+    # Poisoned state exactly as the F3 regression left it.
+    assert not store._initialized
+    assert store._init_loop is not None and store._init_loop.is_closed()
+
+    # The live loop must NOT stall for _INIT_WAIT_TIMEOUT_S (2 s budget is
+    # far above a real init and far below the pre-fix 10 s poll).
+    await asyncio.wait_for(store.list_active("s1"), timeout=2.0)
+    assert store._initialized
+    assert store._init_loop is asyncio.get_running_loop()
+
+    # The write path works after the re-own: the asyncio primitives minted on
+    # the dead loop were replaced, not reused (loop-bound locks would raise
+    # "bound to a different event loop" here).
+    row, position = await store.enqueue("s1", _payload("after"), source="user")
+    assert position == 1
+    assert row.status is UserInputQueueStatus.QUEUED

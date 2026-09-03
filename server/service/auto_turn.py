@@ -131,6 +131,17 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
             # The runner itself was cancelled (shutdown): tear down and persist PENDING.
             if not consumer.done():
                 consumer.cancel()
+            # Join the consumer's unwind before abandoning: its finally runs
+            # on_turn_finished (queue I/O). Orphaning it here lets event-loop
+            # teardown cancel it mid-statement — a first-use _ensure_db cut
+            # mid-init poisons the UserInputQueue singleton for every later
+            # event loop (order-dependent 10 s stall; F3 VERDICT-queue.md).
+            # return_exceptions=True: a cancelled/failed child surfaces as a
+            # result, so only OUR re-cancellation raises here.
+            try:
+                await asyncio.gather(consumer, return_exceptions=True)
+            except asyncio.CancelledError:
+                pass  # re-cancelled mid-teardown: abandon stays best-effort
             if not consumer.done() or consumer.cancelled():
                 try:
                     await asyncio.shield(_abandon_once())

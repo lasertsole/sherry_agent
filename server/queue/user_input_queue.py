@@ -360,6 +360,20 @@ class UserInputQueue:
         if self._initialized:
             return
         loop = asyncio.get_running_loop()
+        if (
+            self._init_loop is not None
+            and self._init_loop is not loop
+            and self._init_loop.is_closed()
+        ):
+            # The owning loop died before its one-time init finished (loop
+            # teardown can cancel a first-use init mid-statement). It can
+            # never complete now: re-own the init on THIS loop instead of
+            # pointlessly polling the full _INIT_WAIT_TIMEOUT_S for it.
+            # asyncio primitives are loop-bound once used, so the locks
+            # minted on the dead loop are replaced along with it.
+            self._init_loop = None
+            self._init_lock = asyncio.Lock()
+            self._write_lock = asyncio.Lock()
         if self._init_loop is None:
             self._init_loop = loop
         if self._init_loop is loop:
