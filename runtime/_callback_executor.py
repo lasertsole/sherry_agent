@@ -44,7 +44,9 @@ class CallbackExecutor:
         call_soon_threadsafe.  No result is waited on — the callback
         executes asynchronously.  A timeout timer is registered on the
         background loop via call_later; if the callback does not complete
-        within the given time its task is cancelled.
+        within the given time its task is cancelled.  The TimerHandle is
+        released as soon as the task completes, so a callback that finishes
+        early leaves no pending timeout timer behind (audit #7).
         """
         loop = self.loop
 
@@ -58,7 +60,12 @@ class CallbackExecutor:
 
         def _schedule():
             task = asyncio.create_task(_wrapped())
-            loop.call_later(timeout, lambda: task.cancel() if not task.done() else None)
+            timer = loop.call_later(timeout, lambda: task.cancel() if not task.done() else None)
+            # Release the timer as soon as the task ends (completion,
+            # cancellation or error) — cancelling an already-fired handle is
+            # a safe no-op.  Without this, every finished callback left a
+            # live 3600s timer + closure pending on the loop (audit #7).
+            task.add_done_callback(lambda _t: timer.cancel())
 
         loop.call_soon_threadsafe(_schedule, *())
 
@@ -68,7 +75,9 @@ class CallbackExecutor:
         Returns a threading.Event that is set when the task completes
         (or is cancelled/timed out).  A timeout timer is registered on the
         background loop via call_later; if the coroutine does not complete
-        within the given time its task is cancelled.
+        within the given time its task is cancelled.  The TimerHandle is
+        released as soon as the task completes, so a task that finishes
+        early leaves no pending timeout timer behind (audit #7).
         """
         loop = self.loop
         done = threading.Event()
@@ -83,7 +92,12 @@ class CallbackExecutor:
 
         def _schedule():
             task = asyncio.create_task(_wrapped(), name=name)
-            loop.call_later(timeout, lambda: task.cancel() if not task.done() else None)
+            timer = loop.call_later(timeout, lambda: task.cancel() if not task.done() else None)
+            # Release the timer as soon as the task ends (completion,
+            # cancellation or error) — cancelling an already-fired handle is
+            # a safe no-op.  Without this, every finished task left a live
+            # 3600s timer + closure pending on the loop (audit #7).
+            task.add_done_callback(lambda _t: timer.cancel())
 
         loop.call_soon_threadsafe(_schedule, *())
         return done

@@ -1,3 +1,5 @@
+import os
+
 from .path import (
     ROOT_DIR as ROOT_DIR,
     ENV_PATH as ENV_PATH,
@@ -32,5 +34,8 @@ from .num import (
     COMPRESS_RATIO as COMPRESS_RATIO,
 )
 
-API_HOST: str = "127.0.0.1"
-API_PORT: int = 8080
+# Bind address for the Robyn backend. Both are overridable via env so the
+# server can bind 0.0.0.0 inside containers (Dockerfile sets API_HOST);
+# defaults keep loopback for local development.
+API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
+API_PORT: int = int(os.getenv("API_PORT", "8080"))

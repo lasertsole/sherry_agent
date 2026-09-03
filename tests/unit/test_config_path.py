@@ -1,5 +1,6 @@
 """Unit tests for config/path.py — path constants and resolution."""
 
+import sys
 from pathlib import Path
 
 
@@ -72,9 +73,15 @@ class TestSubPaths:
         assert ENV_PATH == ROOT_DIR / ".env"
 
     def test_interpreter_path(self):
-        from config.path import ROOT_DIR, INTERPRETER_PATH
+        from config.path import INTERPRETER_PATH
 
-        assert INTERPRETER_PATH == ROOT_DIR / ".venv/Scripts/python"
+        # Audit #32: the constant must track the interpreter actually running
+        # this process (cross-platform by construction: Windows Scripts/,
+        # POSIX bin/, conda, system python) instead of a Windows-only venv
+        # layout. The old constant pointed at a file that never existed on
+        # disk — Windows venvs ship python.exe and POSIX venvs use bin/.
+        assert INTERPRETER_PATH == Path(sys.executable)
+        assert INTERPRETER_PATH.exists()
 
     def test_context_engine_path(self):
         from config.path import ROOT_DIR, CONTEXT_ENGINE_PATH

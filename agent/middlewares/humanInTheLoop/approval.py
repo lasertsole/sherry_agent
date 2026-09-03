@@ -1,11 +1,12 @@
-"""Command approval pipeline — 5-layer escalation from hardline to human.
+"""Command approval pipeline — 6-layer escalation from hardline to human.
 
 Layers (executed in order):
     1. Hardline blocklist  — unconditional deny (from :mod:`detection`)
     2. User deny rules      — glob-style patterns configured in :class:`HITLConfig`
-    3. Permanent allowlist  — cross-session approved patterns (persistent state)
-    4. Session allowlist    — per-session approved patterns (in-memory state)
-    5. Dangerous detection  — pattern-match from :mod:`detection`, escalate to human
+    3. YOLO bypass          — skip all checks when YOLO mode is active
+    4. Permanent allowlist  — cross-session approved patterns (persistent state)
+    5. Session allowlist    — per-session approved patterns (in-memory state)
+    6. Dangerous detection  — pattern-match from :mod:`detection`, escalate to human
 
 Smart approval (LLM-assisted) and plugin tool approval are additional layers
 provided as separate methods.
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import Any, Callable
 
 from loguru import logger
@@ -22,6 +24,7 @@ from runtime.state_register import state_register_mem
 
 from .types import (
     ApprovalDecision,
+    ApprovalMode,
     ApprovalResult,
     HITLConfig,
     SmartApprovalResult,
@@ -29,6 +32,21 @@ from .types import (
     BLOCKED_MESSAGE,
 )
 from .detection import detect_hardline_command, detect_dangerous_command
+
+
+def _is_yolo_active(config: HITLConfig) -> bool:
+    """Check whether YOLO (bypass-all) mode is active.
+
+    Activated by any of:
+    - ``config.yolo_mode == True``
+    - ``config.mode == ApprovalMode.OFF``
+    - Environment variable ``SHERRY_YOLO_MODE`` set to ``1`` / ``true`` / ``yes``
+    """
+    if config.yolo_mode:
+        return True
+    if config.mode == ApprovalMode.OFF:
+        return True
+    return os.environ.get("SHERRY_YOLO_MODE", "").strip() in ("1", "true", "yes")
 
 
 def _check_deny_rules(command: str, deny_rules: list[str]) -> str | None:
@@ -72,14 +90,15 @@ def _set_state(session_id: str, key: str, value: Any) -> bool:
 
 
 class ApprovalPipeline:
-    """5-layer command approval pipeline with allowlist management.
+    """6-layer command approval pipeline with allowlist management.
 
     Layers (in order):
     1. Hardline blocklist — unconditional deny
     2. User-configured deny rules (glob patterns)
-    3. Permanent allowlist — cross-session approved patterns
-    4. Session allowlist — per-session approved patterns
-    5. Dangerous pattern detection — escalate dangerous commands to human approval
+    3. YOLO mode bypass — skip all checks
+    4. Permanent allowlist — cross-session approved patterns
+    5. Session allowlist — per-session approved patterns
+    6. Dangerous pattern detection — escalate dangerous commands to human approval
 
     The pipeline is called from :class:`~agent.middlewares.humanInTheLoop.core.HumanInTheLoop`
     middleware. After a human decision, :meth:`_apply_decision` persists the choice
@@ -132,7 +151,15 @@ class ApprovalPipeline:
             self._fire_hooks(session_id, result)
             return result
 
-        # Layer 3: Permanent allowlist
+        # Layer 3: YOLO bypass
+        if _is_yolo_active(self.config):
+            result = ApprovalResult(
+                approved=True, decision=ApprovalDecision.ONCE, reason="YOLO mode active"
+            )
+            self._fire_hooks(session_id, result)
+            return result
+
+        # Layer 4: Permanent allowlist
         permanent: list[str] = _get_state(session_id, "permanent", [])
         import fnmatch
 
@@ -146,7 +173,7 @@ class ApprovalPipeline:
                 self._fire_hooks(session_id, result)
                 return result
 
-        # Layer 4: Session allowlist
+        # Layer 5: Session allowlist
         session_list: list[str] = _get_state(session_id, "session_approved", [])
         for pattern_str in session_list:
             if fnmatch.fnmatch(command, pattern_str):

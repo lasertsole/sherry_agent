@@ -191,10 +191,11 @@ async def get_rag_anything(parser: str = "mineru", parse_method: str = "auto") -
     # Switch to local model mode
     os.environ["MINERU_MODEL_SOURCE"] = "local"
 
-    # Ensure .venv\Scripts is on PATH so subprocess can find "mineru" CLI
-    _venv_scripts = os.path.join(os.path.dirname(sys.executable))
-    if _venv_scripts not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = _venv_scripts + os.pathsep + os.environ.get("PATH", "")
+    # Ensure the interpreter's own directory (Scripts/ on Windows, bin/ on
+    # POSIX) is on PATH so subprocess can find the "mineru" CLI
+    _venv_bin_dir = os.path.dirname(sys.executable)
+    if _venv_bin_dir not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _venv_bin_dir + os.pathsep + os.environ.get("PATH", "")
 
     from . import get_lightrag
 

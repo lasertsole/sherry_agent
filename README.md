@@ -145,14 +145,13 @@ EMA_AI_agent/
 │   ├── STT_model/          # Speech-to-Text model (FunASR)
 │   ├── embed_model/        # Embedding model (local bge-m3 GGUF or cloud API)
 │   ├── reranker_model/     # Cross-encoder reranker (local GGUF or cloud API)
-│   └── extract_model/      # Entity extraction model (third-party weights)
+│   ├── extract_model/      # Entity extraction model (third-party weights)
+│   └── providers/          # LLM provider specifications & registry
+│       └── registry.py    # ProviderSpec entries for 20+ providers
 │
 ├── plugins/                # Plugin system
 │   ├── channels/           # Channel plugins (QQ bot adapter)
 │   └── mcp_server/         # MCP server configuration
-│
-├── providers/              # LLM provider specifications & registry
-│   └── registry.py         # ProviderSpec entries for 20+ providers
 │
 ├── pub_func/               # Common utility functions
 │   ├── format/             # Text formatting utilities
@@ -167,8 +166,6 @@ EMA_AI_agent/
 │   ├── count_call_register.py # Usage/statistics counters
 │   ├── timer_call_register.py # Timer registry
 │   └── _callback_executor.py # Async callback executor
-│
-├── scripts/                # Utility scripts (run_tests_split.py: process-isolated test runner)
 │
 ├── server/                 # Robyn backend service
 │   ├── __main__.py         # Server entry point (python -m server)
@@ -201,7 +198,7 @@ EMA_AI_agent/
 │
 ├── temp/                   # Temporary files
 │
-├── tests/                  # Test suite (pytest)
+├── tests/                  # Test suite (pytest) + run_tests_split.py (process-isolated test runner)
 │
 ├── type/                   # Shared data models
 │   ├── message.py          # MultiModalMessage, Chat, etc.
@@ -290,7 +287,7 @@ Models configured for **local GGUF** mode are downloaded automatically from Hugg
 
 ```bash
 chmod +x start.sh
-./start.sh          # runs .venv/Scripts/python -m server --fast --disable-openapi
+./start.sh          # runs the .venv interpreter: python -m server --fast --disable-openapi
 ```
 
 Manual start (equivalent):
@@ -324,9 +321,9 @@ Tests live under `tests/{unit,integration,system,module}` and run with **pytest*
 For the full suite (and for CI), use the split runner — it executes the suite in **two sequential pytest processes** (never parallel), aggregates their exit codes, and prints a per-group summary plus a final verdict (exit code 0 only if both groups pass):
 
 ```bash
-uv run python scripts/run_tests_split.py                  # hermetic suite (default, llm_e2e excluded)
-uv run python scripts/run_tests_split.py --with-llm-e2e   # ONLY the real-LLM e2e tests (dedicated-job mode)
-uv run python scripts/run_tests_split.py -- -k spawn -q   # args after `--` are forwarded to pytest
+uv run python tests/run_tests_split.py                  # hermetic suite (default, llm_e2e excluded)
+uv run python tests/run_tests_split.py --with-llm-e2e   # ONLY the real-LLM e2e tests (dedicated-job mode)
+uv run python tests/run_tests_split.py -- -k spawn -q   # args after `--` are forwarded to pytest
 ```
 
 | Group | Directories | Contents |
@@ -344,11 +341,11 @@ Three tests in `tests/integration/` (`test_real_e2e.py`, `test_spawn_direct_e2e.
 
 - **deselected by default** (`-m "not llm_e2e"` — set both in `pyproject.toml` addopts and by the runner),
 - bounded by `@pytest.mark.timeout` budgets (pytest-timeout): 300 s per simple test, 600 s for the concurrent test,
-- run explicitly, in a **dedicated job**: `uv run python scripts/run_tests_split.py --with-llm-e2e` (selects `-m llm_e2e`) or `uv run pytest -m llm_e2e`.
+- run explicitly, in a **dedicated job**: `uv run python tests/run_tests_split.py --with-llm-e2e` (selects `-m llm_e2e`) or `uv run pytest -m llm_e2e`.
 
 **Expected runtimes** (solo, real backend): simple task ≈ 30–60 s; complex worst case ≈ 10 min; concurrent tasks ≈ 2–9 min. A run that exceeds these budgets is a real hang, not normal slowness — the per-test timeout bounds it (300 s simple / 600 s concurrent).
 
-**CI:** this repository currently has no CI configuration; `scripts/run_tests_split.py` is the **CI-ready entry point** — wire `uv run python scripts/run_tests_split.py` into the primary pipeline (hermetic; two processes ≈ 7 min total) and schedule `--with-llm-e2e` as a separate, slower job (it costs API tokens; never run it in parallel with other suites).
+**CI:** this repository currently has no CI configuration; `tests/run_tests_split.py` is the **CI-ready entry point** — wire `uv run python tests/run_tests_split.py` into the primary pipeline (hermetic; two processes ≈ 7 min total) and schedule `--with-llm-e2e` as a separate, slower job (it costs API tokens; never run it in parallel with other suites).
 
 > **Note:** `tests/full/` and `tests/diagnose/` are auxiliary/experimental directories outside the standard groups above. In particular `tests/full/test_main_agent_e2e.py` is a live-network test that is **not** tagged `llm_e2e` — do not wire it into CI without tagging it first.
 

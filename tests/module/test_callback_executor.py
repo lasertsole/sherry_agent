@@ -115,3 +115,54 @@ class TestCallbackExecutor:
         assert "b_start" in order
         assert "a" in order
         assert "b_end" in order
+
+    # --- timeout timer lifecycle (audit #7) ---
+
+    def _pending_timers(self, executor):
+        """Non-cancelled handles still pending on the background loop."""
+        return [h for h in list(executor._loop._scheduled) if not h.cancelled()]
+
+    def test_completed_run_coroutine_leaves_no_pending_timer(self, executor):
+        """A fire-and-forget callback that finishes early must not leave its
+        timeout timer pending until the full 3600s (audit #7)."""
+        results = []
+
+        async def work():
+            await asyncio.sleep(0.05)
+            results.append("done")
+
+        executor.run_coroutine(work(), timeout=3600)
+        time.sleep(0.3)  # let the coroutine finish and the loop compact timers
+
+        assert results == ["done"]
+        assert self._pending_timers(executor) == []
+
+    def test_completed_create_task_leaves_no_pending_timer(self, executor):
+        """A create_task coroutine that finishes early must not leave its
+        timeout timer pending until the full 3600s (audit #7)."""
+        done = executor.create_task(asyncio.sleep(0.05), name="quick", timeout=3600)
+        done.wait(timeout=2.0)
+        time.sleep(0.3)  # let the loop compact the cancelled timer handle
+
+        assert self._pending_timers(executor) == []
+
+    def test_create_task_timeout_cancels_slow_task(self, executor):
+        """A task exceeding its timeout is cancelled and the done event fires."""
+        async def slow():
+            await asyncio.sleep(30)
+
+        done = executor.create_task(slow(), name="slow", timeout=0.15)
+        assert done.wait(timeout=2.0) is True
+
+    def test_run_coroutine_timeout_cancels_slow_task(self, executor):
+        """A fire-and-forget callback exceeding its timeout is cancelled."""
+        results = []
+
+        async def slow():
+            await asyncio.sleep(30)
+            results.append("no")
+
+        executor.run_coroutine(slow(), timeout=0.15)
+        time.sleep(0.6)
+        assert results == []
+        assert executor._loop.is_running()

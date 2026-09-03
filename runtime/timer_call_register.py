@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import uuid
 from loguru import logger
 from .core import Register
 from typing import Callable, Any
@@ -71,7 +72,13 @@ class TimerCallRegister(Register):
         args = args or {}
 
         timer = Timer(minutes=minutes, callback=callback, args=args)
-        task_name = f"timer_{session_id}_{name}"
+        # Unique per-generation task name (audit #8): cancel_task matches by
+        # name and stops at the first hit, so a reusable name could hit the
+        # wrong generation when several same-named tasks coexist transiently
+        # (reset/unregister+register while the loop is busy) — cancelling the
+        # NEW task and leaking the old coroutine, which keeps firing forever.
+        # A fresh suffix makes every generation match exactly one task.
+        task_name = f"timer_{session_id}_{name}_{uuid.uuid4().hex[:8]}"
         timer.task_name = task_name
         self.session_id_to_timers[session_id][name] = timer
 
@@ -191,7 +198,9 @@ class TimerCallRegister(Register):
         del timers[name]
 
         new_timer = Timer(minutes=minutes, callback=callback, args=args)
-        task_name = f"timer_{session_id}_{name}"
+        # Fresh unique task name for the new generation — see register()
+        # (audit #8): the old generation's cancel must never hit this task.
+        task_name = f"timer_{session_id}_{name}_{uuid.uuid4().hex[:8]}"
         new_timer.task_name = task_name
         timers[name] = new_timer
 

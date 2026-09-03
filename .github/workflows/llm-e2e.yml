@@ -1,0 +1,74 @@
+# Manual real-LLM e2e gate.
+#
+# tests/run_tests_split.py enforces that --with-llm-e2e runs as a DEDICATED
+# sequential process, never in parallel with other suites - hence a separate
+# workflow with its own concurrency group. Costs real API tokens: dispatch
+# deliberately from the Actions tab.
+#
+# Required repo secret:  MAIN_LLM_API_KEY
+# Optional repo secrets: MAIN_LLM_PROVIDER, MAIN_LLM_NAME, MAIN_LLM_API_BASE,
+#                        MAIN_LLM_MAX_TOKEN, TAVILY_API_KEY, AUXILIARY_LLM_*
+# Only non-empty secrets are exported (empty-string env can shadow config
+# defaults); provider defaults from .env.example apply otherwise.
+
+name: LLM e2e (manual)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: llm-e2e
+  cancel-in-progress: false
+
+jobs:
+  llm-e2e:
+    name: Real-LLM e2e (dedicated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies (minus heavy local-inference packages)
+        # Remove the --no-install-package flags if your e2e profile uses
+        # local models (llama-cpp-python / funasr / torch).
+        run: >
+          uv sync --frozen
+          --no-install-package llama-cpp-python
+          --no-install-package funasr
+          --no-install-package torch
+
+      - name: Export non-empty secrets as env + fail fast if MAIN_LLM_API_KEY missing
+        env:
+          MAIN_LLM_PROVIDER: ${{ secrets.MAIN_LLM_PROVIDER }}
+          MAIN_LLM_NAME: ${{ secrets.MAIN_LLM_NAME }}
+          MAIN_LLM_API_BASE: ${{ secrets.MAIN_LLM_API_BASE }}
+          MAIN_LLM_API_KEY: ${{ secrets.MAIN_LLM_API_KEY }}
+          MAIN_LLM_MAX_TOKEN: ${{ secrets.MAIN_LLM_MAX_TOKEN }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          AUXILIARY_LLM_PROVIDER: ${{ secrets.AUXILIARY_LLM_PROVIDER }}
+          AUXILIARY_LLM_NAME: ${{ secrets.AUXILIARY_LLM_NAME }}
+          AUXILIARY_LLM_API_BASE: ${{ secrets.AUXILIARY_LLM_API_BASE }}
+          AUXILIARY_LLM_API_KEY: ${{ secrets.AUXILIARY_LLM_API_KEY }}
+        run: |
+          have_key=0
+          for v in MAIN_LLM_PROVIDER MAIN_LLM_NAME MAIN_LLM_API_BASE MAIN_LLM_API_KEY MAIN_LLM_MAX_TOKEN TAVILY_API_KEY AUXILIARY_LLM_PROVIDER AUXILIARY_LLM_NAME AUXILIARY_LLM_API_BASE AUXILIARY_LLM_API_KEY; do
+            val="${!v}"
+            if [ -n "$val" ]; then
+              echo "$v=$val" >> "$GITHUB_ENV"
+              if [ "$v" = "MAIN_LLM_API_KEY" ]; then have_key=1; fi
+            fi
+          done
+          if [ "$have_key" -ne 1 ]; then
+            echo "::error::Required repository secret MAIN_LLM_API_KEY is not set. Add the MAIN_LLM_* secrets to the repo before dispatching this workflow."
+            exit 1
+          fi
+
+      - name: Run real-LLM e2e tests
+        run: uv run --no-sync python tests/run_tests_split.py --with-llm-e2e

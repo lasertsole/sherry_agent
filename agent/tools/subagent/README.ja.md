@@ -4,12 +4,6 @@
 
 > Python で実装された多階層サブエージェントシステム。メインエージェントが複雑なタスクを並列サブタスクに分解し、独立した子エージェントに実行を委譲し、Announce パイプラインを通じて結果を確実に親へ返します。SQLite 永続化のランレジストリ、オーファンリカバリ付き Sweeper、Swarm バッチモード、階層的な Depth/Role 権限制御を備えます。本ドキュメントの記載はすべてこのディレクトリのコードに対して検証済みです。
 
-## クイックナビゲーション
-
-| ドキュメント | 用途 |
-|------|------|
-| [architecture.md](./docs/architecture.md) | 全体アーキテクチャ、ディレクトリ構成、モジュール依存グラフ |
-
 ---
 
 ## 実行原則
@@ -665,6 +659,179 @@ Progress フック（hooks/progress.py）：spawned（子が登録）、progress
 | 陳腐コールバック防护 | `TerminalGenerationTracker` + generation ガード + kill reconciliation | steer/kill が旧 generation を安全に取代 |
 | ブロックツール | `DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn, sessions_yield]` + main_only の無条件除外 | 権限昇格を防止。深さのハード上限は回避不可能 |
 | 添付 | `.sherry/attachments/<uuid>/` へ実体化しマニフェスト生成 | 信頼できない入力の分離。サイズ/数量/シンボリックリンク防护付き |
+
+---
+
+## ディレクトリ構成とモジュールの責務
+
+パッケージ内の各モジュールとその責務（本ディレクトリのコードと突き合わせて検証済み）：
+
+```
+agent/tools/subagent/
+├── types/                     データモデルと列挙型
+│   ├── spawn.py               SpawnMode, ContextMode 列挙型
+│   ├── registry.py            SubagentRunRecord とサブ状態モデル（completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version を含む）
+│   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
+│   ├── lifecycle.py           ライフサイクルイベント列挙型（LifecycleEndedReason, LifecycleEndedOutcome）
+│   ├── delivery.py            配信コンテキスト
+│   └── capability.py          ロール列挙型（main/orchestrator/leaf）
+│
+├── registry/                  Run レジストリ（コア状態機械）
+│   ├── memory.py              インメモリストア：dict[str, SubagentRunRecord]
+│   ├── store_sqlite.py        SQLite 永続化（aiosqlite）
+│   ├── queries.py             純粋クエリ関数（list/count/find/index/find_by_task_name）
+│   ├── helpers.py             ユーティリティ（切り詰め、リトライバックオフ、孤児判定、陳腐化検出、添付クリーンアップ、階層式期限切れ）
+│   ├── completion.py          結果判定、フック発火
+│   ├── cleanup.py             クリーンアップ判断
+│   ├── delivery_state.py      Delivery 状態機械アクセサ
+│   ├── run_manager.py         registerRun, markPaused, 深度管理, save/clear_kill_reconciliation
+│   ├── generation.py          世代管理（child_session_key ごとの最新 run）
+│   ├── terminal_gen.py        TerminalGenerationTracker コールバックゲート
+│   ├── settle_wake.py         RequesterSettleWakeBatch バッチ状態機械
+│   ├── work_admission.py      Gateway 非依存のルート作業アドミッション + pending カウント
+│   ├── lifecycle.py           ライフサイクルコントローラ（completeRun/resume/announce/pressurePrune/gracePeriod）
+│   ├── state.py               persist/restore ブリッジ（settle-wake 永続化リカバリを含む）
+│   ├── read.py                外部読み取り専用 API（find_run_by_task_name + run record 主クエリ）
+│   ├── task_refs.py           asyncio.Task 参照管理（register/get/remove/cancel）
+│   ├── yield_events.py        asyncio.Event 管理（yield 起床 / 子孫の決着）
+│   ├── sweeper.py             バックグラウンド 60 秒スキャナ（階層式期限切れ：cron=2h, subagent=6h, interactive=24h）
+│   ├── reconciliation.py      Session 突き合わせ
+│   ├── pending_injections.py  永続化 pending-injection キュー：busy steering / idle 自動配信の両完了注入経路を支えるクラッシュセーフな SQLite ストア
+│   ├── session_keys.py        announce 側と registry 側の間のセッションキー正規化
+│   └── session_state.py       親（main）セッションの読み取り専用 busy/idle 検出
+│
+├── swarm/                     Swarm/Collect スケジューリング
+│   ├── collector.py           reserve/activate/complete + list/count + outputSchema + validate_structured_output（ネスト/配列/patternProps/additionalProps）+ 冪等起動（launch_fingerprint）+ pumpLane スロット活性化
+│   └── fifo.py                SwarmFifoQueue FIFO キュー（peek 含む）
+│
+├── spawn/                     Spawn パイプライン
+│   ├── core.py                spawn_subagent_direct() メインエントリ + SpawnResult
+│   ├── plan.py                thinking 解析、timeout 計算、model+thinking プラン
+│   ├── ownership.py           Spawn 所有権の解決（controller vs completion requester）
+│   ├── target_policy.py       allowAgents 検証
+│   ├── depth.py               深度の計算と制限
+│   ├── attachments.py         子 workspace への添付ファイル実体化（Unicode C0+DEL 制御文字検出、重名検出、厳格な base64 検証を含む）
+│   ├── task_name.py           taskName 正規化
+│   ├── system_prompt.py       子エージェントの system prompt 生成（6 部構成：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
+│   ├── initial_message.py     子エージェントの最初の user message（構造化エンベロープ：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
+│   ├── inherited_tool_policy.py  ツール許可/拒否リストの継承
+│   ├── context.py             isolated/fork コンテキスト構築
+│   ├── thread_binding.py      Thread Binding ライフサイクル管理
+│   ├── runtime_isolation.py   ランタイム分離とセキュリティ境界 + workspace 継承
+│   ├── origin_routing.py      リクエスト元オリジンルーティング解決 + fingerprint 生成（build_origin_fingerprint を外部 API として公開）
+│   ├── gateway_dispatch.py    最小権限 scope 解決 + SubagentLaunchAuthorization + scope→deny マッピング
+│   ├── accepted_note.py       SpawnResult.note の内容生成
+│   └── thinking.py            thinking レベル上書き解析
+│
+├── announce/                  完了通知パイプライン
+│   ├── core.py                runAnnounceFlow() メイン調整
+│   ├── output.py              出力キャプチャ、outcome 待機、統計、重複排除（dedupe_latest_child_completion_rows）、フィルタ（filter_current_direct_child_completion_rows）、子孫チェック
+│   ├── capture.py             リトライ付き出力読み取り
+│   ├── delivery.py            配信実行（デュアルパス + リトライ/保留/冪等/ミラー + delivery_target フック呼び出し + 一時的/恒久的エラー分類 + 段階的リトライスケジューリング）
+│   ├── dispatch.py            配信戦略（steer vs direct）+ AnnounceDeliveryResult
+│   ├── origin.py              オリジン解決（子→子 vs 子→ユーザー）
+│   ├── completion_message.py  合成完了メッセージビルダー（busy steering と idle 自動配信の両経路で使用）
+│   ├── steering_queue.py      サブエージェント完了注入用のセッション別 steering キューランタイム
+│   └── idempotency.py         冪等キー生成（suffix 含む）
+│
+├── control/                   制御と一覧
+│   ├── controller.py          listControlledRuns, resolveController, can_control_run
+│   ├── kill.py                Kill（target-state resolution + cascade + admin + kill_all + scope 検証 + 子ごとの controller 所有権検証を含む）
+│   ├── steer.py               Steer/Restart（abort-settle + suppress_announce + frozen result fallback + new_task 永続化を含む）
+│   ├── send.py                sessions_send 完全実装
+│   └── list.py                buildSubagentList()（visibility フィルタ + model/runtime/pending_descendants を含む）+ build_active_subagents_section()（外部 API）
+│
+├── capabilities/              ロール/能力
+│   └── core.py                resolveSubagentCapabilities()、ロール割り当て
+│
+├── orphan/                    孤児リカバリ
+│   └── recovery.py            scheduleOrphanRecovery()（retry + reclassify + wedged 検出 + wedged_recovery ended_reason + finalize を含む）
+│
+├── session/                   Session ヘルパー
+│   ├── metrics.py             実行時間、状態判定
+│   └── cleanup.py             session 削除
+│
+├── events/                    サブシステム所有の EventBus
+│   ├── core.py                サブエージェント内部メッセージ用のコアイベントバス（サブエージェントシステムが完全に所有）
+│   └── bridge.py              EventBus ↔ ランタイム配信ブリッジ（内部注入と結果をセッションチャネル / プロジェクト全体の MessageBus へルーティング）
+│
+├── tools/                     LLM ツールインターフェース
+│   ├── runtime_tools.py       build_subagent_runtime_tools() — ホストの _MAIN_TOOLS_BUILDERS に登録されるビルダー
+│   ├── sessions_spawn.py      sessions_spawn ツール
+│   ├── sessions_yield.py      sessions_yield ツール
+│   ├── sessions_send.py       sessions_send ツール（A2A フロー含む）
+│   ├── sessions_kill.py       sessions_kill ツール
+│   ├── sessions_steer.py      sessions_steer ツール
+│   ├── agents_list.py         agents_list ツール
+│   └── subagents_list.py      subagents ツール
+│
+├── hooks/                     Channel hooks
+│   ├── base.py                フックプロトコル定義（SubagentStartEvent / SubagentStopEvent）
+│   └── progress.py            ライフサイクル進行フック（spawned / progress / ended / delivery_target + register/clear + fire_delivery_target_hook）
+│
+├── followup/                  Cron followup
+│   └── core.py                タイムアウト/保留の定期チェック
+│
+├── delegate.py                delegate_task() プログラマティック簡易 API（§10 参照）
+│
+├── data/                      subagent_registry.db — SQLite 永続化の場所
+│
+└── config.py                  SubagentConfig（pydantic モデル）
+```
+
+## モジュール依存グラフ
+
+依存の矢印は被依存側を指します：`A ← B` は B が A に依存することを示し、`↑` は下位レイヤーが上位レイヤーに依存することを示します。
+
+```
+types/ ← （依存なし、純粋なデータ定義）
+  ↑
+config.py
+  ↑
+registry/memory.py ← registry/delivery_state.py ← registry/queries.py
+  ↑                                    ↑
+registry/store_sqlite.py         registry/helpers.py
+  ↑                                    ↑
+registry/state.py ← registry/run_manager.py ← registry/completion.py
+  ↑                                    ↑
+registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
+  ↑                    ↑                              ↑
+registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
+                                                         ↑
+                                                    registry/read.py
+
+swarm/fifo.py ← swarm/collector.py ← types/swarm.py
+
+capabilities/core.py ← types/
+  ↑
+spawn/depth.py ← spawn/target_policy.py ← spawn/core.py
+  ↑                    ↑                       ↑
+spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
+  ↑                    ↑                       ↑
+spawn/inherited_tool_policy.py          spawn/attachments.py
+  ↑                                            ↑
+spawn/context.py ← spawn/initial_message.py ← spawn/task_name.py
+  ↑
+spawn/thread_binding.py ← spawn/runtime_isolation.py
+  ↑
+spawn/origin_routing.py ← spawn/gateway_dispatch.py
+
+announce/idempotency.py ← announce/capture.py ← announce/output.py
+  ↑                                                    ↑
+announce/dispatch.py ← announce/origin.py ← announce/delivery.py
+  ↑                                                    ↑
+announce/core.py                              announce/core.py
+
+control/controller.py ← control/kill.py ← control/steer.py
+  ↑                      ↑
+control/send.py    control/list.py
+
+orphan/recovery.py ← announce/core.py + registry/lifecycle.py
+
+hooks/progress.py ← types/registry.py
+
+tools/* ← spawn/core.py + registry/* + announce/* + control/*
+```
 
 ---
 

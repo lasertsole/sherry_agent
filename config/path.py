@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -12,7 +13,14 @@ ENV_PATH = ROOT_DIR / ".env"
 # read from the .env file (idempotent; existing environment variables win).
 load_dotenv(ENV_PATH, override=False)
 
-INTERPRETER_PATH = ROOT_DIR / ".venv/Scripts/python"
+# The interpreter actually running this process (audit #32). Under every
+# supported launch mode (./start.sh or `uv run python -m server`) this IS the
+# project venv's python — on any platform (Windows ``Scripts\``, POSIX
+# ``bin/``, conda, pyenv, system python), with no hardcoded venv layout.
+# Helpers spawned as subprocesses (e.g. the STT daemon) must share the running
+# environment's dependencies, so the running interpreter is the correct
+# target everywhere.
+INTERPRETER_PATH = Path(sys.executable)
 CONTEXT_ENGINE_PATH = ROOT_DIR / "context_engine"
 PLUGINS_PATH = ROOT_DIR / "plugins"
 

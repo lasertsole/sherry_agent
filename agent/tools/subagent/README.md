@@ -4,12 +4,6 @@
 
 > A Python implementation of a multi-level subagent system: the main agent decomposes complex tasks into parallel subtasks, dispatches them to independent child agents, and reliably delivers results back through an announce pipeline. Includes a SQLite-backed run registry, a sweeper with orphan recovery, swarm batch mode, and hierarchical depth/role control. All facts in this document are verified against the code in this directory.
 
-## Quick Navigation
-
-| Document | Purpose |
-|----------|---------|
-| [architecture.md](./docs/architecture.md) | Overall architecture, directory structure, module dependency graph |
-
 ---
 
 ## Execution Principles
@@ -658,6 +652,179 @@ Progress hooks (`hooks/progress.py`): spawned (child registered), progress (duri
 | Stale-callback protection | `TerminalGenerationTracker` + generation guard + kill reconciliation | Steer/kill supersede older generations safely |
 | Blocked tools | `DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn, sessions_yield]` + unconditional main_only drop | Prevents privilege escalation; depth hard limit cannot be bypassed |
 | Attachments | Materialized to `.sherry/attachments/<uuid>/` with manifest | Untrusted-input isolation with size/count/symlink guards |
+
+---
+
+## Directory Structure & Module Responsibilities
+
+Every module in the package and its responsibility (verified against the code in this directory):
+
+```
+agent/tools/subagent/
+├── types/                     Data models & enums
+│   ├── spawn.py               SpawnMode, ContextMode enums
+│   ├── registry.py            SubagentRunRecord + sub-state models (incl. completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version)
+│   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
+│   ├── lifecycle.py           Lifecycle event enums (LifecycleEndedReason, LifecycleEndedOutcome)
+│   ├── delivery.py            Delivery context
+│   └── capability.py          Role enums (main/orchestrator/leaf)
+│
+├── registry/                  Run registry (core state machine)
+│   ├── memory.py              In-memory store: dict[str, SubagentRunRecord]
+│   ├── store_sqlite.py        SQLite persistence (aiosqlite)
+│   ├── queries.py             Pure query functions (list/count/find/index/find_by_task_name)
+│   ├── helpers.py             Utilities (truncation, retry backoff, orphan detection, staleness detection, attachment cleanup, tiered expiry)
+│   ├── completion.py          Outcome adjudication, hook triggering
+│   ├── cleanup.py             Cleanup decisions
+│   ├── delivery_state.py      Delivery state-machine accessors
+│   ├── run_manager.py         registerRun, markPaused, depth management, save/clear_kill_reconciliation
+│   ├── generation.py          Generation management (latest run by child_session_key)
+│   ├── terminal_gen.py        TerminalGenerationTracker callback gating
+│   ├── settle_wake.py         RequesterSettleWakeBatch batch state machine
+│   ├── work_admission.py      Gateway-independent root work admission + pending count
+│   ├── lifecycle.py           Lifecycle controller (completeRun/resume/announce/pressurePrune/gracePeriod)
+│   ├── state.py               persist/restore bridge (incl. settle-wake persistence recovery)
+│   ├── read.py                External read-only API (find_run_by_task_name + run record primary queries)
+│   ├── task_refs.py           asyncio.Task reference management (register/get/remove/cancel)
+│   ├── yield_events.py        asyncio.Event management (yield wake / descendant settle)
+│   ├── sweeper.py             Background 60 s scanner (tiered expiry: cron=2h, subagent=6h, interactive=24h)
+│   ├── reconciliation.py      Session reconciliation
+│   ├── pending_injections.py  Durable pending-injection queue: crash-safe SQLite store behind both completion-injection delivery paths (busy steering / idle auto-turn)
+│   ├── session_keys.py        Session-key normalization between the announce side and the registry side
+│   └── session_state.py       Read-only busy/idle detection for a parent (main) agent session
+│
+├── swarm/                     Swarm/Collect scheduling
+│   ├── collector.py           reserve/activate/complete + list/count + outputSchema + validate_structured_output (nested/array/patternProps/additionalProps) + idempotent launch (launch_fingerprint) + pumpLane slot activation
+│   └── fifo.py                SwarmFifoQueue FIFO queue (incl. peek)
+│
+├── spawn/                     Spawn pipeline
+│   ├── core.py                spawn_subagent_direct() main entry + SpawnResult
+│   ├── plan.py                Thinking parsing, timeout calculation, model+thinking plan
+│   ├── ownership.py           Spawn ownership resolution (controller vs completion requester)
+│   ├── target_policy.py       allowAgents validation
+│   ├── depth.py               Depth calculation & limits
+│   ├── attachments.py         Attachment materialization to the child workspace (incl. Unicode C0+DEL control-char detection, duplicate-name detection, strict base64 validation)
+│   ├── task_name.py           taskName normalization
+│   ├── system_prompt.py       Child-agent system prompt generation (6-part structure: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
+│   ├── initial_message.py     Child-agent first user message (structured envelope: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
+│   ├── inherited_tool_policy.py  Tool allow/deny inheritance
+│   ├── context.py             isolated/fork context building
+│   ├── thread_binding.py      Thread-binding lifecycle management
+│   ├── runtime_isolation.py   Runtime isolation & security boundary + workspace inheritance
+│   ├── origin_routing.py      Requester origin routing resolution + fingerprint generation (build_origin_fingerprint exposed as external API)
+│   ├── gateway_dispatch.py    Least-privilege scope resolution + SubagentLaunchAuthorization + scope→deny mapping
+│   ├── accepted_note.py       SpawnResult.note content generation
+│   └── thinking.py            Thinking-level override parsing
+│
+├── announce/                  Completion notification pipeline
+│   ├── core.py                runAnnounceFlow() main coordination
+│   ├── output.py              Output capture, await outcome, statistics, dedup (dedupe_latest_child_completion_rows), filtering (filter_current_direct_child_completion_rows), descendant checks
+│   ├── capture.py             Output reading with retry
+│   ├── delivery.py            Delivery execution (dual-path + retry/suspension/idempotency/mirror + delivery_target hook invocation + transient/permanent error classification + tiered retry scheduling)
+│   ├── dispatch.py            Delivery strategy (steer vs direct) + AnnounceDeliveryResult
+│   ├── origin.py              Origin resolution (child→child vs child→user)
+│   ├── completion_message.py  Synthetic completion message builder (consumed by both busy-steering and idle auto-turn delivery paths)
+│   ├── steering_queue.py      Per-session steering queue runtime for subagent-completion injections
+│   └── idempotency.py         Idempotency key generation (incl. suffix)
+│
+├── control/                   Control & listing
+│   ├── controller.py          listControlledRuns, resolveController, can_control_run
+│   ├── kill.py                Kill (incl. target-state resolution + cascade + admin + kill_all + scope validation + per-child controller ownership verification)
+│   ├── steer.py               Steer/Restart (incl. abort-settle + suppress_announce + frozen result fallback + new_task persistence)
+│   ├── send.py                sessions_send full implementation
+│   └── list.py                buildSubagentList() (incl. visibility filtering + model/runtime/pending_descendants) + build_active_subagents_section() (external API)
+│
+├── capabilities/              Roles/capabilities
+│   └── core.py                resolveSubagentCapabilities(), role assignment
+│
+├── orphan/                    Orphan recovery
+│   └── recovery.py            scheduleOrphanRecovery() (incl. retry + reclassify + wedged detection + wedged_recovery ended_reason + finalize)
+│
+├── session/                   Session helpers
+│   ├── metrics.py             Runtime duration, status determination
+│   └── cleanup.py             Session deletion
+│
+├── events/                    Subsystem-owned EventBus
+│   ├── core.py                Core event bus for subagent internal messaging (owned entirely by the subagent system)
+│   └── bridge.py              EventBus ↔ runtime delivery bridge (routes internal injections and results into session channels / the project-wide MessageBus)
+│
+├── tools/                     LLM tool interface
+│   ├── runtime_tools.py       build_subagent_runtime_tools() — the builder registered in the host's _MAIN_TOOLS_BUILDERS
+│   ├── sessions_spawn.py      sessions_spawn tool
+│   ├── sessions_yield.py      sessions_yield tool
+│   ├── sessions_send.py       sessions_send tool (incl. A2A flow)
+│   ├── sessions_kill.py       sessions_kill tool
+│   ├── sessions_steer.py      sessions_steer tool
+│   ├── agents_list.py         agents_list tool
+│   └── subagents_list.py      subagents tool
+│
+├── hooks/                     Channel hooks
+│   ├── base.py                Hook protocol definition (SubagentStartEvent / SubagentStopEvent)
+│   └── progress.py            Lifecycle progress hooks (spawned / progress / ended / delivery_target + register/clear + fire_delivery_target_hook)
+│
+├── followup/                  Cron followup
+│   └── core.py                Periodic timeout/suspension checks
+│
+├── delegate.py                delegate_task() programmatic convenience API (see §10)
+│
+├── data/                      subagent_registry.db — SQLite persistence location
+│
+└── config.py                  SubagentConfig (pydantic model)
+```
+
+## Module Dependency Graph
+
+Dependency arrows point at the dependency: `A ← B` means B depends on A; `↑` marks that the layer below depends on the layer above.
+
+```
+types/ ← (no dependencies, pure data definitions)
+  ↑
+config.py
+  ↑
+registry/memory.py ← registry/delivery_state.py ← registry/queries.py
+  ↑                                    ↑
+registry/store_sqlite.py         registry/helpers.py
+  ↑                                    ↑
+registry/state.py ← registry/run_manager.py ← registry/completion.py
+  ↑                                    ↑
+registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
+  ↑                    ↑                              ↑
+registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
+                                                         ↑
+                                                    registry/read.py
+
+swarm/fifo.py ← swarm/collector.py ← types/swarm.py
+
+capabilities/core.py ← types/
+  ↑
+spawn/depth.py ← spawn/target_policy.py ← spawn/core.py
+  ↑                    ↑                       ↑
+spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
+  ↑                    ↑                       ↑
+spawn/inherited_tool_policy.py          spawn/attachments.py
+  ↑                                            ↑
+spawn/context.py ← spawn/initial_message.py ← spawn/task_name.py
+  ↑
+spawn/thread_binding.py ← spawn/runtime_isolation.py
+  ↑
+spawn/origin_routing.py ← spawn/gateway_dispatch.py
+
+announce/idempotency.py ← announce/capture.py ← announce/output.py
+  ↑                                                    ↑
+announce/dispatch.py ← announce/origin.py ← announce/delivery.py
+  ↑                                                    ↑
+announce/core.py                              announce/core.py
+
+control/controller.py ← control/kill.py ← control/steer.py
+  ↑                      ↑
+control/send.py    control/list.py
+
+orphan/recovery.py ← announce/core.py + registry/lifecycle.py
+
+hooks/progress.py ← types/registry.py
+
+tools/* ← spawn/core.py + registry/* + announce/* + control/*
+```
 
 ---
 

@@ -20,9 +20,9 @@ Groups (run SEQUENTIALLY, never in parallel — CPU/model resource contention):
 
 Usage
 -----
-    uv run python scripts/run_tests_split.py
-    uv run python scripts/run_tests_split.py --with-llm-e2e
-    uv run python scripts/run_tests_split.py -- -k spawn -q
+    uv run python tests/run_tests_split.py
+    uv run python tests/run_tests_split.py --with-llm-e2e
+    uv run python tests/run_tests_split.py -- -k spawn -q
 
 Exit codes: 0 = all groups passed; 1 = at least one group failed.
 """

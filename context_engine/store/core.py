@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from .db import get_db
 from typing import Annotated, Any
 from datetime import datetime
@@ -9,6 +10,13 @@ from langchain_core.messages import BaseMessage
 
 # Shared SQLite connection instance used by all store operations in this module.
 _db: sqlite3.Connection = get_db()
+
+# Audit #5: serializes the read-MAX-then-INSERT turn assignment inside
+# ``add_messages``. The store runs on a single shared connection in autocommit
+# mode (``isolation_level=None``), so without this lock two concurrent
+# ``add_messages`` calls on the same session could both observe the same
+# ``MAX(turn_num)`` and silently merge two turns into one.
+_turn_assign_lock = threading.Lock()
 
 
 def get_max_turn_num(session_id: str) -> int:
@@ -36,9 +44,11 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     if messages is None or len(messages) == 0:
         return
 
-    # A turn here is a group of messages. Each add_messages call starts a new turn.
-    current_turn: int = get_max_turn_num(session_id)
-    current_turn += 1
+    # A turn here is a group of messages. Each add_messages call starts a new
+    # turn. Rows are built with a 0 placeholder below; the real turn number is
+    # assigned atomically under _turn_assign_lock right before the INSERT
+    # (audit #5) so a concurrent same-session writer can never share it.
+    current_turn: int = 0
 
     # All messages in this batch share the same timestamp (YYYYMMDDHHmmss).
     base_timestamp: str = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -180,55 +190,68 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 }
             )
 
-    # Bulk-insert all accumulated rows in a single transaction.
-    _db.executemany(
-        """
-        INSERT INTO messages (
-            session_id,
-            turn_num,
-            role,
-            content,
-            tool_call_id,
-            tool_calls,
-            tool_status,
-            tool_name,
-            timestamp,
-            finish_reason,
-            reasoning,
-            reasoning_content,
-            images,
-            audios,
-            videos,
-            model_name,
-            input_tokens,
-            output_tokens,
-            origin
-        ) VALUES (
-            :session_id,
-            :turn_num,
-            :role,
-            :content,
-            :tool_call_id,
-            :tool_calls,
-            :tool_status,
-            :tool_name,
-            :timestamp,
-            :finish_reason,
-            :reasoning,
-            :reasoning_content,
-            :images,
-            :audios,
-            :videos,
-            :model_name,
-            :input_tokens,
-            :output_tokens,
-            :origin
-        )
-    """,
-        insert_rows,
-    )
+    # Audit #5: assign the turn number atomically. Re-read MAX(turn_num) and
+    # insert while holding the module-level lock, so two concurrent writers on
+    # the same session can never observe the same MAX and silently merge two
+    # turns into one. No explicit BEGIN: the connection is in autocommit mode
+    # (isolation_level=None) and a concurrent reader's ``with _db:`` exit would
+    # commit an open transaction early — the lock is what serializes writers.
+    with _turn_assign_lock:
+        current_turn = get_max_turn_num(session_id) + 1
+        for row in insert_rows:
+            row["turn_num"] = current_turn
 
-    # Persist the batch atomically.
+        # Bulk-insert all accumulated rows of this turn (autocommit: each row
+        # commits on execution).
+        _db.executemany(
+            """
+            INSERT INTO messages (
+                session_id,
+                turn_num,
+                role,
+                content,
+                tool_call_id,
+                tool_calls,
+                tool_status,
+                tool_name,
+                timestamp,
+                finish_reason,
+                reasoning,
+                reasoning_content,
+                images,
+                audios,
+                videos,
+                model_name,
+                input_tokens,
+                output_tokens,
+                origin
+            ) VALUES (
+                :session_id,
+                :turn_num,
+                :role,
+                :content,
+                :tool_call_id,
+                :tool_calls,
+                :tool_status,
+                :tool_name,
+                :timestamp,
+                :finish_reason,
+                :reasoning,
+                :reasoning_content,
+                :images,
+                :audios,
+                :videos,
+                :model_name,
+                :input_tokens,
+                :output_tokens,
+                :origin
+            )
+        """,
+            insert_rows,
+        )
+
+    # No-op in autocommit mode; kept so the batch also commits as one unit if
+    # the connection ever switches to implicit-transaction mode.
     _db.commit()
 
 

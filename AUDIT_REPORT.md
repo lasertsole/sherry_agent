@@ -3,21 +3,14 @@
 **审计范围**：`C:\app\code\project\sherry_agent` 全项目（排除 `.venv`、`node_modules`、`client/`、`future/`、`temp/`、`logs/`、vendored LightRAG/模型权重数据）。
 **审计方法**：4 个并行审计子代理（安全、代码质量/架构、正确性/数据、技能系统与沙箱）+ 对关键发现进行源码直接复核。
 **审计日期**：2026-08-24
+**更新日期**：2026-09-03 — CodeAct 模块已从代码库移除，相关条目（#1、#19、超大模块表）标记为失效并更新引用；#5 回合编号竞态、#7 定时器泄漏、#8 定时器任务名世代歧义、#9 计数器竞态、#10 checkpointer 连接泄漏、#11 无界队列、#28 providers 导入路径、#32 解释器路径跨平台已修复并标记。
 
 ---
 
 # 🔴 严重（Critical）— 安全 / RCE
 
-## 1. `eval_sandbox` 用完整内置命名空间执行模型代码 — 无沙箱的远程代码执行
-**文件**：`agent/codeact/utils.py:67,74`（已验证）
-```python
-result = eval(code.strip(), builtins.__dict__, _locals)    # 第 67 行
-exec(code, builtins.__dict__, _locals)                     # 第 74 行
-```
-- `builtins.__dict__` 暴露了 `__import__`、`open`、`eval`、`exec`，并可传递访问 `os`、`subprocess`（`open/__import__` 逃逸链可达）。函数自身 docstring（第 40-42 行）承认这**仅用于测试**，非真实沙箱。
-- **默认接线**：`agent/codeact/__init__.py:32` 设置 `_eval_fn = eval_fn or eval_sandbox`；`agent/codeact/core.py:557-586` 的 Sandbox 图节点直接对**模型生成的代码**调用 `eval_fn(script, context)`，全程**无用户确认**。
-- **影响**：任何诱导 LLM 生成 Python 代码的提示 → 宿主机任意代码执行。
-- **修复**：改用 `langchain-sandbox`、`RestrictedPython`，或容器化子进程 + 真正的内置白名单。**最高优先级。**
+## 1. ~~`eval_sandbox` 用完整内置命名空间执行模型代码 — 无沙箱的远程代码执行~~（已失效）
+> **状态更新（2026-09-03）**：`agent/codeact/` 模块（含 `utils.py` 的 `eval_sandbox`、`core.py` 的 Sandbox 图节点及 `__init__.py` 的 `_eval_fn` 默认接线）已从代码库整体移除，本项不再适用。模型代码执行能力现仅存于 `agent/tools/python_repl.py`，相关风险见 #13。
 
 ## 2. `resolve_path` 无 ROOT_DIR 越界防护 — 任意文件读/写
 **文件**：`agent/tools/pub_base/path_utils.py:8-13`（已验证）
@@ -47,40 +40,40 @@ def resolve_path(file_path):
 
 # 🟠 高（High）— 数据完整性 / 资源泄漏 / 并发
 
-## 5. 非原子回合编号 → 静默数据损坏
+## 5. ~~非原子回合编号 → 静默数据损坏~~（已修复）
 **文件**：`context_engine/store/core.py:39-40`
 - `add_messages` 先 `get_max_turn_num()` 再 `+1`，在事务/锁之外。同一 session 的并发写入得到相同 `turn_num`，静默合并两个对话回合，破坏历史排序与分页。
-- **修复**：单条 `INSERT ... SELECT COALESCE(MAX(turn_num),0)+1` 在同一事务内完成，或按 session 加锁。
+- **已修复（2026-09-03）**：改用模块级 `threading.Lock`（`_turn_assign_lock`）串行化"重读 MAX → 重标行 → INSERT"临界区（取审计建议的"加锁"路线）。未采用单条 `INSERT ... SELECT` 事务方案：连接为共享单连接 + `isolation_level=None` 自提交模式，显式 `BEGIN` 会被并发读取方 `with _db:` 出口的 `commit()` 提前提交，且同连接第二个 `BEGIN` 直接报错——锁才是该连接设计下的正确串行化原语；顺带修正了"单事务批量插入"的误导注释（自提交模式实为逐行提交）。已核实 `messages` 表生产写入方仅 `add_messages` 一处，模块级锁完整覆盖进程内写入。回归测试：新建 `tests/unit/context_engine/test_store_turn_atomicity.py` 3 个用例（并发双写不合并 turn——patch `get_max_turn_num` 加 sleep 拉宽竞态窗口作确定性换牙；顺序递增 1/2/3；同批共享同一 turn）。对照验证：旧实现并发用例红。
 
 ## 6. 异步路径上的阻塞同步 SQLite
 **文件**：`context_engine/store/core.py:11,143,186`；`context_engine/store/db.py`
 - `async` 函数直接在事件循环线程上执行阻塞式 `executemany`/`commit`；模块级共享连接被 WS 循环、cron 线程、子代理线程共用（非线程安全）。
 - **修复**：用 `aiosqlite` 或每线程连接 + 锁。
 
-## 7. 回调执行器中的超时定时器泄漏
-**文件**：`runtime/_callback_executor.py:63,88`
+## 7. ~~回调执行器中的超时定时器泄漏~~（已修复）
+**文件**：`runtime/_callback_executor.py`
 - `loop.call_later(timeout, lambda: task.cancel() ...)` 在任务提前完成时**从不取消** → 每个完成的回调都留下一个存活至完整超时（默认 3600s）的定时器，累积 pending handle + 闭包。
-- **修复**：保存 `TimerHandle`，在任务 `finally` 中 `.cancel()`。
+- **已修复（2026-09-03）**：保存 `TimerHandle`，通过 `task.add_done_callback` 在任务结束（完成/取消/异常）时立即 `.cancel()`——对已触发句柄是安全空操作。回归测试：`tests/module/test_callback_executor.py` 新增 `run_coroutine`/`create_task` 完成后无 pending 定时器（对照验证：旧实现残留 1 个 3600s 句柄）+ 两条超时取消路径共 4 个用例。
 
-## 8. `unregister`/`clear_session` 上的定时器任务泄漏
-**文件**：`runtime/timer_call_register.py:99-100,150-151,174-175`
+## 8. ~~`unregister`/`clear_session` 上的定时器任务泄漏~~（已修复）
+**文件**：`runtime/timer_call_register.py`
 - `cancel_task` 按**名字**匹配任务且只取消第一个匹配项；定时器重置时可能取消错误（新）任务，旧定时器协程泄漏并持续触发。
-- **修复**：直接跟踪任务对象。
+- **已修复（2026-09-03）**：任务名改为每代唯一（`timer_{sid}_{name}_{uuid4[:8]}`）——按名取消从"一对多歧义"变单射，任何交错时序下每代恰好匹配一个任务，旧协程必然被取消（loop 繁忙 + `all_tasks` 集合无序遍历下尤其关键）。逻辑名重复注册拒绝（返回 False）保持不变，公共 API 语义未变。未采用"直接跟踪任务对象"：任务对象要等 loop 线程调度后才存在，且主线程 `task.cancel()` 非线程安全，仍需走同一条 `call_soon_threadsafe` 路径。回归测试：新建 `tests/module/test_timer_call_register.py` 11 个用例（注册/注销/reset 旧代取消/双重 reset 仅最新代存活/clear_session/注销后重注册；轮询等待避免时序赌博）。对照验证：旧实现 3 个用例红。
 
-## 9. 计数器竞态 + 阈值溢出被丢弃
-**文件**：`runtime/count_call_register.py:87-105`
+## 9. ~~计数器竞态 + 阈值溢出被丢弃~~（已修复）
+**文件**：`runtime/count_call_register.py`
 - `now_counter` 的读-改-写非原子；重置丢弃溢出（count=5、threshold=3 → 重置为 0，丢失 2）。
-- **修复**：RMW 加锁；重置为 `now_counter % threshold`。
+- **已修复（2026-09-03）**：`increase()` 的读-改-写与 `reset_count()` 的写回纳入 `threading.Lock`；触发时改用 `now_counter % threshold` 保留溢出；回调移至锁外触发以防重入死锁。回归测试：`tests/module/test_count_call_register.py` 新增并发无丢失计数（8 线程 × 250 增量精确触发）、溢出保留、锁外回调三个用例。
 
-## 10. checkpointer 连接泄漏
-**文件**：`agent/checkpointer/async_sqlite_checkpointer.py:33-36`
+## 10. ~~checkpointer 连接泄漏~~（已修复）
+**文件**：`agent/checkpointer/async_sqlite_checkpointer.py`
 - `delete_thread_history` 中 `aiosqlite.connect` 从不关闭 → 每次 `clear_session` 泄漏一个连接 + 文件句柄。
-- **修复**：`async with aiosqlite.connect(...) as conn:`。
+- **已修复（2026-09-03）**：改用 `async with aiosqlite.connect(...) as conn:`——成功与异常路径均保证关闭（未提交工作随关闭回滚）。回归测试：`tests/module/test_async_sqlite_checkpointer.py` 新增成功路径关闭、异常路径关闭、真实临时库按 thread_id 精确删除（不误伤其他会话）共 3 个用例。
 
-## 11. 无界队列，无背压
-**文件**：`bus/core.py:17-18`
+## 11. ~~无界队列，无背压~~（已修复）
+**文件**：`bus/core.py`
 - `asyncio.Queue()` 无 `maxsize` → agent 慢时内存耗尽。
-- **修复**：限定队列大小，处理 `QueueFull`。
+- **已修复（2026-09-03）**：双队列有界化（`config.num.BUS_QUEUE_MAXSIZE`，默认 1000，构造器可覆盖，`maxsize<=0` 拒绝）；队列满时生产者 `await put()` 阻塞等待（真背压：消息延迟不丢弃——入站承载用户消息与 cron 投递，不可静默丢失），`QueueFull` 在该路径下不会出现。回归测试：`tests/module/test_bus_core.py` 新增有界默认值、自定义上限、非法参数、入/出站满载阻塞并恢复共 5 个用例。
 
 ## 12. `resolve_path` 下游：任意文件读/写（见严重 #2 的利用链）
 - `read_file.py:60`、`patch_file.py:101,133` 经 `resolve_path()` 放行绝对路径；`write_file.py:70` 受 `root_dir` 约束但 LangChain 仅约束相对路径，绝对路径仍可越界。**LLM 触发**。
@@ -114,9 +107,8 @@ def resolve_path(file_path):
 - 把每条 loguru 记录（可能含 API Key、请求头、提示词）流式推给任意未鉴权 WS 客户端。
 - **利用**：连接 `/logs/ws` 从日志帧读取密钥。
 
-## 19. CodeAct 无用户确认自动执行
-**文件**：`agent/codeact/core.py:557-586` + `agent/codeact/__init__.py:32`
-- `sandbox` 节点直接 `eval_fn(script, context)` 执行模型生成的 `script`，`eval_sandbox` 为默认实现，**无审批闸门**。**远程（LLM 触发）。**
+## 19. ~~CodeAct 无用户确认自动执行~~（已失效）
+> **状态更新（2026-09-03）**：CodeAct 模块（`agent/codeact/`）已从代码库移除，本项不再适用。模型代码执行相关风险现以 #13（`agent/tools/python_repl.py`）为准。
 
 ## 20. 技能系统沙箱/供应链
 - **① 技能描述（不可信 SKILL.md frontmatter）注入 LLM 上下文**：`skills/loader.py:92-124` `get_skills_text` 把每个技能的 `description`（解析自 SKILL.md，第 65-67 行）直接拼进 `<available_skills>` XML；`skill_view.py:202-210,391` 只记录注入模式，仍把完整不可信内容返回 LLM。**存在恶意/被植入技能时触发。**
@@ -154,12 +146,13 @@ if os.path.exists(file_path):                                        # 第 72 �
 ## 27. `channels/manager.py:154` `run_forever()` 阻塞调用线程
 - `start_service()` 调用 `self._event_loop.run_forever()` 永久阻塞；模块级 `channel_manager = ChannelManager()`（第 236 行）带导入时副作用。
 
-## 28. `config/schema.py:169,244` 导入不存在的 `providers` 包
+## 28. ~~`config/schema.py:169,244` 导入不存在的 `providers` 包~~（已修复）
 ```python
 from providers.registry import PROVIDERS        # 第 169 行 (_match_provider)
 from providers.registry import find_by_name     # 第 244 行 (get_api_base)
 ```
 - 磁盘上不存在 `providers/` 目录。函数级 import → 仅在运行时调用 `get_provider`/`get_api_key` 等时抛 `ModuleNotFoundError`。这是配置层潜在崩溃。**修复：** 恢复 `providers/` 包，或改用本文件 `ProvidersConfig`（第 65-89 行）推导元数据，而非缺失注册表。
+- **已修复（2026-09-03）**：审计时缺失的 `providers/` 包现已在磁盘上（含 `registry.py` 声明式注册表，22 个 provider）；按用户决定将其整体迁移至 `models/providers/`（`git mv` 保留历史），`config/schema.py` 两处函数级 import 改为 `from models.providers.registry import ...`。回归：`tests/unit/test_config_schema.py` 28 passed、module+system 319 passed、`models.providers` 导入冒烟通过；全仓无残留 `providers.registry` 旧路径引用。
 
 ## 29. `bus/core.py:16-18` 单一全局队列，无按渠道路由
 - `MessageBus` 一个入站 + 一个出站 `asyncio.Queue`，所有渠道共享，路由在下游按 `msg.channel` 判断。高并发多渠道时是瓶颈且无法按渠道背压（当前规模可接受，中级优先）。
@@ -167,8 +160,10 @@ from providers.registry import find_by_name     # 第 244 行 (get_api_base)
 ## 31. `skills/loader.py` 循环导入变通 + 字符串路径检查
 - `scan_skills` 在函数内部做 `from .skills_snapshot import read_skills_snapshot`（循环导入变通）；`_is_third_party` 用字符串 `"./skills/plugins/"` 判断而非 `Path` 解析。
 
-## 32. `config/path.py:15` 写死 Windows 解释器路径
+## 32. ~~`config/path.py:15` 写死 Windows 解释器路径~~（已修复）
+**文件**：`config/path.py`
 - `INTERPRETER_PATH = ROOT_DIR / ".venv/Scripts/python"` 仅适用于 Windows。POSIX 应为 `.venv/bin/python`。**修复：** 用 `sys.executable` 或按平台条件路径。
+- **已修复（2026-09-03）**：`INTERPRETER_PATH = Path(sys.executable)`——直接取当前运行解释器，任何平台（Windows `Scripts\`、POSIX `bin/`、conda、系统 Python）均无需假设 venv 布局，且与仓库既有主流模式一致（pip 安装、python_repl、MCP、测试 runner 共 5+ 处已用 `sys.executable`）。启动方式 `./start.sh` / `uv run python -m server` 下运行解释器即项目 venv 解释器，二者语义等价；子进程辅助程序（如 STT 守护进程）本就应与运行环境共享依赖，故运行解释器是所有场景的正确目标。连带修复：① STT 脚本的死 fallback 删除——旧代码 `.exists()` 探测的两个候选路径在磁盘上都不存在（Windows venv 只有 `python.exe`、POSIX 是 `bin/` 布局），恒走 else 且 else 也不存在；② `start.sh` 原本在 POSIX 上必然失败（POSIX 脚本写死 `Scripts/activate`）——改为 bin/ 与 Scripts/ 自动探测，并新增 `.gitattributes`（`*.sh text eol=lf`）防止 Windows `autocrlf` 检出成 CRLF 后 Git Bash/WSL 无法执行；③ 四份 README 启动注释同步。回归测试：`tests/unit/test_config_path.py::test_interpreter_path` 改为断言 `== Path(sys.executable)` 且 `.exists()`（平台中立；旧常量因缺 `.exe` 且不存在于磁盘，Windows 上旧代码也红）。对照验证：旧实现该用例红。
 
 ## 33. 未鉴权日志文件读取
 **文件**：`server/trigger/http/logs.py:170-198` — `GET /logs?path=...`。路径经 `LOG_DIR` 校验（受控），但端点未鉴权，日志可能含密钥。**利用：** `GET /logs?path=<info 日志>`。
@@ -190,7 +185,6 @@ from providers.registry import find_by_name     # 第 244 行 (get_api_base)
 | 文件 | 行数 |
 |---|---|
 | `agent/tools/skill_tools/skill_manage.py` | 845 |
-| `agent/codeact/core.py` | 712 |
 | `server/service/messages.py` | 611 |
 | `agent/tools/subagent/spawn/core.py` | 585 |
 | `agent/tools/pub_base/skill_usage.py` | 507 |
@@ -213,10 +207,10 @@ from providers.registry import find_by_name     # 第 244 行 (get_api_base)
 ---
 
 # 修复优先级建议
-1. **先修 CRITICAL**：#1 `eval_sandbox`（换真沙箱）、#2/#12 `resolve_path`（加 ROOT_DIR 越界钳制）、#3 `terminal.py`（去 `shell=True` + 允许列表）、#4 `clawhub`（固定版本 + 去 `--yes`）。
+1. **先修 CRITICAL**：#2/#12 `resolve_path`（加 ROOT_DIR 越界钳制）、#3 `terminal.py`（去 `shell=True` + 允许列表）、#4 `clawhub`（固定版本 + 去 `--yes`）。（原 #1 `eval_sandbox` 随 CodeAct 模块移除，已失效。）
 2. **加认证**：`server/trigger/core.py` 加 token/API-key 中间件并作用于所有路由与 WebSocket，去掉通配 CORS。覆盖 #14-#18、#33。
 3. **加固路径处理**：`resolve_path` 拒绝/钳制 ROOT_DIR 外路径；`server/DAO/messages.py` 在 `shutil.rmtree` 前清洗 `session_id`。
-4. **数据层**：`context_engine/store/core.py` 回合编号改单事务（#5）；`_callback_executor.py` 取消 `call_later` handle（#7）；`async_sqlite_checkpointer.py` 用 `async with`（#10）；`bus/core.py` 限队列（#11）。
+4. **数据层**：`context_engine/store/core.py` 回合编号改单事务（#5，✅ 已修复——最终采用加锁方案，见该条目说明）；`_callback_executor.py` 取消 `call_later` handle（#7，✅ 已修复）；`async_sqlite_checkpointer.py` 用 `async with`（#10，✅ 已修复）；`bus/core.py` 限队列（#11，✅ 已修复）。
 5. **注册表并发**：为 `runtime/*_register.py` 与 `context_engine` 共享连接加锁并返回副本（#23/#24/#25）。
 6. **修复 `providers.registry` 悬空导入**（#28）。
 7. **移 `agent/core.py` import 副作用**入 `init()`（#26）。

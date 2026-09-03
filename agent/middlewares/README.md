@@ -273,9 +273,10 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` |
+| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` / `OFF` |
 | `timeout` | `60` | Interrupt decision timeout |
 | `deny_rules` | `[]` | Explicit deny patterns |
+| `yolo_mode` | `False` | Skip all approvals |
 | `write_approval_memory` | `False` | Gate memory-tool writes |
 | `write_approval_skills` | `False` | Gate skill writes |
 | `clarify_timeout` | `3600` | Clarification-question timeout |

@@ -1,4 +1,5 @@
 import inspect
+import threading
 from loguru import logger
 from .core import Register
 from typing import Callable, Any
@@ -24,6 +25,12 @@ class CountCallRegister(Register):
         self.session_id_to_counter: dict[str, dict[str, int]] = {}
         self.session_id_to_trigger: dict[str, dict[str, Trigger]] = {}
         self._callback_executor = _CallbackExecutor()
+
+        # Guards the counter value lifecycle (read-modify-write in increase(),
+        # value writes in reset_count) so concurrent callers cannot lose
+        # increments. Callbacks are fired OUTSIDE this lock — a callback that
+        # re-enters increase() must not deadlock (see test_callback_runs_outside_lock).
+        self._lock: threading.Lock = threading.Lock()
 
         self._initialized = True
 
@@ -95,19 +102,36 @@ class CountCallRegister(Register):
         """
         Increase counter value
         """
-        if name not in self.session_id_to_counter.setdefault(session_id, {}):
-            logger.error(f"{name} is not registered")
-            return False
+        # Snapshot of a threshold-hit callback, fired after the lock is
+        # released so a re-entrant increase() from inside the callback
+        # cannot deadlock on a lock its own caller still holds.
+        pending: tuple[Callable[..., Any], dict[str, Any]] | None = None
 
-        now_counter: int = self.session_id_to_counter.setdefault(session_id, {})[name] + 1
+        with self._lock:
+            counters: dict[str, int] = self.session_id_to_counter.setdefault(session_id, {})
+            if name not in counters:
+                logger.error(f"{name} is not registered")
+                return False
 
-        trigger: Trigger = self.session_id_to_trigger.setdefault(session_id, {})[name]
-        threshold: int = trigger.threshold
+            # Read-modify-write is atomic under the lock: without it, two
+            # threads can read the same value, both increment, and one
+            # update is silently lost (audit #9).
+            now_counter: int = counters[name] + 1
 
-        if now_counter >= threshold:
-            callback: Callable = trigger.callback
-            args: dict[str, Any] = trigger.args
+            trigger: Trigger = self.session_id_to_trigger.setdefault(session_id, {})[name]
+            threshold: int = trigger.threshold
 
+            if now_counter >= threshold:
+                # Carry the overshoot into the next cycle instead of
+                # hard-resetting to 0, which would silently discard it
+                # (audit #9: count=5, threshold=3 -> keep 2, not 0).
+                now_counter %= threshold
+                pending = (trigger.callback, trigger.args)
+
+            counters[name] = now_counter
+
+        if pending is not None:
+            callback, args = pending
             try:
                 result = callback(**args)
                 if inspect.iscoroutine(result):
@@ -115,21 +139,21 @@ class CountCallRegister(Register):
             except Exception:
                 logger.exception(f"Callback '{name}' failed for session {session_id}")
 
-            now_counter = 0
-
-        self.session_id_to_counter.setdefault(session_id, {})[name] = now_counter
-
         return True
 
     def reset_count(self, session_id: str, name: str) -> bool:
         """
         Reset counter to zero
         """
-        if name not in self.session_id_to_counter.get(session_id, {}):
-            logger.error(f"{name} is not registered for session {session_id}")
-            return False
+        # Same lock as increase(): an unlocked writer here could interleave
+        # with increase()'s locked read-modify-write and resurrect a stale value.
+        with self._lock:
+            counters: dict[str, int] = self.session_id_to_counter.get(session_id, {})
+            if name not in counters:
+                logger.error(f"{name} is not registered for session {session_id}")
+                return False
 
-        self.session_id_to_counter[session_id][name] = 0
+            counters[name] = 0
         return True
 
     def clear_session(self, session_id: str):

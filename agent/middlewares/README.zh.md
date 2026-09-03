@@ -273,9 +273,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 参数 | 默认值 | 含义 |
 |---|---|---|
-| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` |
+| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` / `OFF` |
 | `timeout` | `60` | 中断决策超时 |
 | `deny_rules` | `[]` | 显式拒绝规则 |
+| `yolo_mode` | `False` | 跳过所有审批 |
 | `write_approval_memory` | `False` | 记忆工具写入需审批 |
 | `write_approval_skills` | `False` | 技能写入需审批 |
 | `clarify_timeout` | `3600` | 澄清提问超时 |

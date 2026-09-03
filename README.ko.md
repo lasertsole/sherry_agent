@@ -146,13 +146,12 @@ EMA_AI_agent/
 │   ├── embed_model/        # 임베딩 모델(로컬 bge-m3 GGUF 또는 클라우드 API)
 │   ├── reranker_model/     # 크로스 인코더 리랭커(로컬 GGUF 또는 클라우드 API)
 │   └── extract_model/      # 엔티티 추출 모델(서드파티 가중치)
+│   └── providers/          # LLM 프로바이더 사양 및 레지스트리
+│       └── registry.py    # 20개 이상 프로바이더의 ProviderSpec
 │
 ├── plugins/                # 플러그인 시스템
 │   ├── channels/           # 채널 플러그인(QQ 봇 어댑터)
 │   └── mcp_server/         # MCP 서버 설정
-│
-├── providers/              # LLM 프로바이더 사양 및 레지스트리
-│   └── registry.py         # 20개 이상 프로바이더의 ProviderSpec
 │
 ├── pub_func/               # 공용 유틸리티 함수
 │   ├── format/             # 텍스트 포맷 유틸리티
@@ -167,8 +166,6 @@ EMA_AI_agent/
 │   ├── count_call_register.py # 사용량/통계 카운터
 │   ├── timer_call_register.py # 타이머 레지스트리
 │   └── _callback_executor.py # 비동기 콜백 실행기
-│
-├── scripts/                # 유틸리티 스크립트(현재 소스 파일 없음)
 │
 ├── server/                 # Robyn 백엔드 서비스
 │   ├── __main__.py         # 서버 엔트리포인트(python -m server)
@@ -290,7 +287,7 @@ cp .env.example .env
 
 ```bash
 chmod +x start.sh
-./start.sh          # .venv/Scripts/python -m server --fast --disable-openapi 실행
+./start.sh          # .venv 인터프리터로 python -m server --fast --disable-openapi 실행
 ```
 
 수동 시작(동일):

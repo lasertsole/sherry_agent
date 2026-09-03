@@ -1,0 +1,51 @@
+# CI: hermetic test gate.
+#
+# Runs the repo's own 2-process split runner (tests/run_tests_split.py):
+#   GROUP A = tests/unit, GROUP B = tests/integration + system + module.
+# Real-LLM network tests (llm_e2e / tests/full) are excluded by design and
+# have a dedicated manually-dispatched workflow (llm-e2e.yml).
+#
+# Heavy local-inference packages (llama-cpp-python, funasr, torch) are NOT
+# installed: the hermetic suite was verified to pass without them (350 passed,
+# 5 deselected). Skipping them avoids a multi-GB CUDA/torch download and a
+# llama-cpp-python source build on the runner.
+# NOTE: `uv run --no-sync` below is REQUIRED - a plain `uv run` would re-sync
+# the lockfile and silently reinstall the excluded packages.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Hermetic tests (split runner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies (minus heavy local-inference packages)
+        run: >
+          uv sync --frozen
+          --no-install-package llama-cpp-python
+          --no-install-package funasr
+          --no-install-package torch
+
+      - name: Run hermetic test suite
+        run: uv run --no-sync python tests/run_tests_split.py

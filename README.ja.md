@@ -146,13 +146,12 @@ EMA_AI_agent/
 │   ├── embed_model/        # 埋め込みモデル（ローカル bge-m3 GGUF またはクラウド API）
 │   ├── reranker_model/     # リランカーモデル（ローカル GGUF またはクラウド API）
 │   └── extract_model/      # エンティティ抽出モデル（サードパーティ重み）
+│   └── providers/          # LLM プロバイダー仕様とレジストリ
+│       └── registry.py    # 20 以上のプロバイダーの ProviderSpec
 │
 ├── plugins/                # プラグインシステム
 │   ├── channels/           # チャンネルプラグイン（QQ ボットアダプター）
 │   └── mcp_server/         # MCP サーバー設定
-│
-├── providers/              # LLM プロバイダー仕様とレジストリ
-│   └── registry.py         # 20 以上のプロバイダーの ProviderSpec
 │
 ├── pub_func/               # 共通ユーティリティ関数
 │   ├── format/             # テキストフォーマットユーティリティ
@@ -167,8 +166,6 @@ EMA_AI_agent/
 │   ├── count_call_register.py # 使用量/統計カウンター
 │   ├── timer_call_register.py # タイマーレジストリ
 │   └── _callback_executor.py # 非同期コールバック実行器
-│
-├── scripts/                # ユーティリティスクリプト（現在ソースファイルなし）
 │
 ├── server/                 # Robyn バックエンドサービス
 │   ├── __main__.py         # サーバーエントリーポイント（python -m server）
@@ -290,7 +287,7 @@ cp .env.example .env
 
 ```bash
 chmod +x start.sh
-./start.sh          # .venv/Scripts/python -m server --fast --disable-openapi を実行
+./start.sh          # .venv のインタプリタで python -m server --fast --disable-openapi を実行
 ```
 
 手動起動（同等）：

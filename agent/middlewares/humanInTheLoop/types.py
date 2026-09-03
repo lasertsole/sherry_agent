@@ -29,10 +29,12 @@ class ApprovalMode(str, Enum):
 
     - ``SMART``: Use an LLM to auto-approve/deny before escalating to human.
     - ``MANUAL``: Always escalate to human for dangerous commands.
+    - ``OFF``: Bypass all approval gates (equivalent to YOLO mode).
     """
 
     SMART = "smart"
     MANUAL = "manual"
+    OFF = "off"
 
 
 class ApprovalDecision(str, Enum):
@@ -189,9 +191,10 @@ class HITLConfig:
     """Single-source-of-truth configuration for the Human-in-the-Loop middleware.
 
     Attributes:
-        mode: Approval strategy (smart / manual).
+        mode: Approval strategy (smart / manual / off).
         timeout: Default timeout in seconds for approval interrupts.
         deny_rules: Glob-style patterns for unconditional denial.
+        yolo_mode: Bypass all approval when ``True``.
         write_approval_memory: Stage memory writes for human approval.
         write_approval_skills: Stage skill writes for human approval.
         clarify_timeout: Timeout for clarify() interrupts.
@@ -206,6 +209,7 @@ class HITLConfig:
     mode: ApprovalMode = ApprovalMode.SMART
     timeout: int = 60
     deny_rules: list[str] = field(default_factory=list)
+    yolo_mode: bool = False
     write_approval_memory: bool = False
     write_approval_skills: bool = False
     clarify_timeout: int = 3600

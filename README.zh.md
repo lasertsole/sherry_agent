@@ -146,13 +146,12 @@ EMA_AI_agent/
 │   ├── embed_model/        # 向量嵌入模型（本地 bge-m3 GGUF 或云端 API）
 │   ├── reranker_model/     # 重排序模型（本地 GGUF 或云端 API）
 │   └── extract_model/      # 实体抽取模型（第三方权重）
+│   └── providers/          # LLM 提供商规范与注册表
+│       └── registry.py    # 20+ 提供商的 ProviderSpec
 │
 ├── plugins/                # 插件系统
 │   ├── channels/           # 渠道插件（QQ 机器人适配器）
 │   └── mcp_server/         # MCP 服务器配置
-│
-├── providers/              # LLM 提供商规范与注册表
-│   └── registry.py         # 20+ 提供商的 ProviderSpec
 │
 ├── pub_func/               # 通用工具函数
 │   ├── format/             # 文本格式化工具
@@ -167,8 +166,6 @@ EMA_AI_agent/
 │   ├── count_call_register.py # 用量/统计计数器
 │   ├── timer_call_register.py # 定时器注册表
 │   └── _callback_executor.py # 异步回调执行器
-│
-├── scripts/                # 工具脚本（当前无源码文件）
 │
 ├── server/                 # Robyn 后端服务
 │   ├── __main__.py         # 服务入口（python -m server）
@@ -290,7 +287,7 @@ cp .env.example .env
 
 ```bash
 chmod +x start.sh
-./start.sh          # 执行 .venv/Scripts/python -m server --fast --disable-openapi
+./start.sh          # 执行 .venv 内解释器：python -m server --fast --disable-openapi
 ```
 
 手动启动（等效）：

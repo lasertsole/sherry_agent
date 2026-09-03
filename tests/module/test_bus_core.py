@@ -4,6 +4,7 @@ import pytest
 import asyncio
 from type.bus import InboundMessage, OutboundMessage
 from bus.core import MessageBus
+from config.num import BUS_QUEUE_MAXSIZE
 
 
 @pytest.mark.asyncio
@@ -105,3 +106,54 @@ class TestMessageBus:
         )
         await asyncio.wait_for(task, timeout=1.0)
         assert results == ["arrived"]
+
+    # --- Bounded queues / backpressure (audit #11) ---
+
+    async def test_queues_bounded_by_default(self, bus):
+        """Both queues carry BUS_QUEUE_MAXSIZE by default (audit #11)."""
+        assert bus.inbound.maxsize == BUS_QUEUE_MAXSIZE
+        assert bus.outbound.maxsize == BUS_QUEUE_MAXSIZE
+
+    async def test_custom_maxsize(self):
+        bus = MessageBus(maxsize=5)
+        assert bus.inbound.maxsize == 5
+        assert bus.outbound.maxsize == 5
+
+    async def test_invalid_maxsize_rejected(self):
+        """maxsize<=0 would silently recreate the unbounded-queue problem."""
+        with pytest.raises(ValueError):
+            MessageBus(maxsize=0)
+        with pytest.raises(ValueError):
+            MessageBus(maxsize=-1)
+
+    async def test_publish_inbound_blocks_when_full(self):
+        """Full inbound queue: publisher waits (backpressure), resumes after consume."""
+        bus = MessageBus(maxsize=1)
+        m1 = InboundMessage(channel="t", sender_id="u", chat_id="c", content="first")
+        m2 = InboundMessage(channel="t", sender_id="u", chat_id="c", content="second")
+        await bus.publish_inbound(m1)
+
+        task = asyncio.create_task(bus.publish_inbound(m2))
+        await asyncio.sleep(0.05)
+        assert not task.done()  # producer backpressured, no unbounded growth
+        assert bus.inbound.qsize() == 1  # memory bounded at maxsize
+
+        assert (await bus.consume_inbound()) is m1
+        await asyncio.wait_for(task, timeout=1.0)  # resumes once space frees
+        assert (await bus.consume_inbound()) is m2
+
+    async def test_publish_outbound_blocks_when_full(self):
+        """Full outbound queue: publisher waits (backpressure), resumes after consume."""
+        bus = MessageBus(maxsize=1)
+        m1 = OutboundMessage(channel="d", chat_id="c", content="first")
+        m2 = OutboundMessage(channel="d", chat_id="c", content="second")
+        await bus.publish_outbound(m1)
+
+        task = asyncio.create_task(bus.publish_outbound(m2))
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        assert bus.outbound.qsize() == 1
+
+        assert (await bus.consume_outbound()) is m1
+        await asyncio.wait_for(task, timeout=1.0)
+        assert (await bus.consume_outbound()) is m2

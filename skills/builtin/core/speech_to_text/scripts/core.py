@@ -33,9 +33,11 @@ _HTTP_TIMEOUT: float = 60.0
 
 # Where ``main`` lives, so the daemon can be (re)spawned from anywhere.
 _IMPORT_FN = "skills.builtin.core.speech_to_text.scripts.server"
-_INTERPRETER = Path(
-    INTERPRETER_PATH if Path(INTERPRETER_PATH).exists() else ROOT_DIR / ".venv/Scripts/python"
-).as_posix()
+# INTERPRETER_PATH is the interpreter actually running this process
+# (config/path.py, audit #32) — it exists by definition on every platform, so
+# the old exists()-probe fallback (which pointed at a file that never existed
+# on Windows — venvs ship python.exe — nor on POSIX — bin/ layout) is gone.
+_INTERPRETER = Path(INTERPRETER_PATH).as_posix()
 
 
 def _daemon_alive() -> bool:

@@ -273,9 +273,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 파라미터 | 기본값 | 의미 |
 |---|---|---|
-| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` |
+| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` / `OFF` |
 | `timeout` | `60` | 인터럽트 결정 타임아웃 |
 | `deny_rules` | `[]` | 명시적 거부 패턴 |
+| `yolo_mode` | `False` | 모든 승인 건너뛰기 |
 | `write_approval_memory` | `False` | 메모리 도구 쓰기 게이트 |
 | `write_approval_skills` | `False` | 스킬 쓰기 게이트 |
 | `clarify_timeout` | `3600` | 명확화 질문 타임아웃 |
