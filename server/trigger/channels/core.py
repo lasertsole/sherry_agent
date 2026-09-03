@@ -7,6 +7,7 @@ from typing import Any
 from loguru import logger
 
 from runtime import relation_register
+from server.queue.user_input_queue import UserInputQueueStatus
 from server.service import async_generate
 from server.service import input_queue_service as iqs
 from type.message import MultiModalMessage
@@ -146,10 +147,18 @@ class _ChannelTurnExecutor:
     async def _resolve_claim_row_id(self, session_id: str) -> str | None:
         """The CLAIMED placeholder row insert_claimed wrote for this turn."""
         rows = await iqs.get_default_queue().list_active(session_id)
-        if not rows:
+        # list_active is FIFO by created_at: a QUEUED row may predate this
+        # turn's CLAIMED placeholder (input queued under hitl_pending, crash
+        # leftovers). Mirror WsTurnExecutor (turn_runner.py, fix 32a5d2f):
+        # only the CLAIMED row is this turn's placeholder.
+        claimed = next(
+            (row for row in rows if row.status is UserInputQueueStatus.CLAIMED),
+            None,
+        )
+        if claimed is None:
             logger.warning("no CLAIMED placeholder row found for session {}", session_id)
             return None
-        return rows[0].id
+        return claimed.id
 
     async def _drive_turn(self, session_id: str, message: str, reply_target: str | None) -> None:
         target = _parse_reply_target(session_id, reply_target)

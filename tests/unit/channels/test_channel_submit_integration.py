@@ -488,3 +488,38 @@ async def test_outbound_router_delivers_error_frame_to_session_channel_chat(core
     assert env.generate_calls == []
     assert len(env.fake_channel.sent) == sent_before  # no new outbound
     assert env.stub_runner.finished == []
+
+
+@pytest.mark.asyncio
+async def test_channel_executor_resolves_own_claimed_row_when_queued_row_predates_dispatch(
+    core, channel_env
+):
+    """F2 regression: executor must resolve its OWN CLAIMED placeholder.
+
+    A QUEUED row may predate dispatch (input queued under hitl_pending /
+    crash leftovers); list_active is FIFO by created_at, so rows[0] can be
+    that older QUEUED row. Mirrors the WsTurnExecutor regression in
+    tests/unit/runner/test_turn_runner.py (fix 32a5d2f).
+    """
+    env = channel_env
+    relation_register.register_channel_chat(env.sid, "qq", "chat-A")
+
+    older, _ = await env.store.enqueue(env.sid, _payload("queued-while-busy"), "user")
+    placeholder = await env.store.insert_claimed(
+        env.sid, _payload("fresh"), "user", reply_target=_reply_target("chat-B", None)
+    )
+
+    executor = iqs.get_default_registry().resolve("channel")
+    assert executor is not None
+
+    await executor.execute(env.sid, "fresh", "user", _reply_target("chat-B", None))
+    await _wait_until(lambda: env.stub_runner.finished)
+
+    assert env.generate_calls == [(env.sid, "fresh")], "the executor drives its own message"
+    assert env.stub_runner.finished == [(env.sid, placeholder.id)], (
+        "the executor's own CLAIMED placeholder must be resolved, not rows[0]"
+    )
+    rows = {row.id: row.status for row in await env.store.list_active(env.sid)}
+    assert rows[older.id] == UserInputQueueStatus.QUEUED, (
+        "the older QUEUED row belongs to the drain and must not be claimed here"
+    )
