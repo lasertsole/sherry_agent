@@ -105,6 +105,10 @@ async def test_spawn_direct_simple_task():
     logger.info("✓ Simple task passed: {!r}", result_text)
 
 
+# CI time budget: run budget is 300s + 300s poll — 600s bounds the real-LLM
+# worst case (~10 min per README) while still catching a hang.
+@pytest.mark.timeout(600)
+@pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_spawn_direct_complex_multi_step_task():
     """spawn_subagent_direct with a complex multi-step reasoning task.
@@ -177,6 +181,8 @@ async def test_spawn_direct_complex_multi_step_task():
         )
 
 
+@pytest.mark.timeout(300)
+@pytest.mark.llm_e2e
 @pytest.mark.asyncio
 async def test_spawn_direct_custom_tools_disabled():
     """spawn_subagent_direct with a task that requires a blocked tool—verifies graceful handling."""
