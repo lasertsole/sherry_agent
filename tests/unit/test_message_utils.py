@@ -93,12 +93,12 @@ class TestExtractFinalAnswer:
 class TestEstimateMsgTokens:
     def test_string_content(self):
         msg = SimpleNamespace(content="hello world")
-        assert estimate_msg_tokens(msg) == len("hello world")
+        assert estimate_msg_tokens(msg) == len("hello world") // 4
 
     def test_structured_content_uses_json(self):
         content = [{"type": "text", "text": "hi"}]
         msg = SimpleNamespace(content=content)
-        assert estimate_msg_tokens(msg) == len('[{"type": "text", "text": "hi"}]')
+        assert estimate_msg_tokens(msg) == len('[{"type": "text", "text": "hi"}]') // 4
 
     def test_empty_string(self):
         msg = SimpleNamespace(content="")
@@ -110,4 +110,4 @@ class TestEstimateMsgTokens:
 
     def test_real_langchain_message(self):
         msg = AIMessage(content="reasoned")
-        assert estimate_msg_tokens(msg) == len("reasoned")
+        assert estimate_msg_tokens(msg) == len("reasoned") // 4
