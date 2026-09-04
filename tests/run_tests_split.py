@@ -122,7 +122,7 @@ def child_env() -> dict[str, str]:
     # (~120s subprocess) nor its LLM API round-trip. The historical trigger —
     # agent.core import-time build_skills_snapshot -> _scan_builtin_skills ->
     # scan_skill once per process during collection — is gone (moved into the
-    # explicit agent.core.init(), AUDIT_REPORT item 26), but any residual
+    # explicit agent.core.init()), but any residual
     # snapshot/scanner path stays fire-and-forget log-only and no test
     # asserts it; scanner unit tests patch module attributes and are immune
     # (see tests/unit/test_skill_scanner.py autouse fixture).
