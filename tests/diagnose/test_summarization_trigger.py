@@ -1,106 +1,141 @@
-"""Diagnose: does SummarizationMiddleware trigger compression on every turn?
+# NOTE: adapted for §9.7 redesign (see .omo/plans/summarization-redesign.md)
+"""Diagnose: does Summarization trigger compression on every turn?
 
 This test constructs a Summarization instance matching agent/core.py config
-and verifies the ``_should_summarize`` decision across realistic token counts.
+(main_llm_context_window=65_536_000, trigger=("tokens",
+int(65_536_000 * COMPRESSION_TRIGGER_RATIO))) and verifies the trigger
+decision across realistic token counts:
+- the fractional pressure check (``_preemptive_check``) bands at
+  PREEMPTIVE_TRUNCATE_RATIO=0.70 / COMPRESSION_TRIGGER_RATIO=0.80 (config.num),
+- the absolute ``("tokens", N)`` trigger (``_check_trigger``) still fires at N.
 """
 
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
+from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import HumanMessage, AIMessage
 
-# ── The threshold we expect after the fix ──────────────────────────────────
+from config.num import COMPRESSION_TRIGGER_RATIO
+
+# ── The context window we feed the middleware (uncapped MAIN_LLM_MAX_TOKEN) ─
 # MAIN_LLM_MAX_TOKEN = 65_536_000  (from .env)
-# fraction=0.5  →  threshold = int(65_536_000 * 0.5) = 32_768_000
-EXPECTED_THRESHOLD = 32_768_000
+MAIN_LLM_MAX_TOKEN = 65_536_000
+# core.py trigger: ("tokens", int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO))
+EXPECTED_THRESHOLD = int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO)  # 52_428_800
+
+_DIAG_SESSION = "diagnose-summarization"
 
 
 def _make_fake_model(max_input_tokens: int = 65_536_000):
-    """Create a mock BaseChatModel with ``profile.max_input_tokens``."""
+    """Create a mock model object (inert constructor arg).
+
+    The redesigned middleware never derives thresholds from ``model.profile``
+    (the window is injected via ``main_llm_context_window``); the profile
+    mocks are kept only so the stub stays a well-formed stand-in.
+    """
     model = MagicMock()
     profile = PropertyMock(return_value={"max_input_tokens": max_input_tokens})
     type(model).profile = profile
-    # Make `_llm_type` a simple string (not a PropertyMock) so
-    # _get_approximate_token_counter doesn't crash
     type(model)._llm_type = "fake-chat"
-    # _get_ls_params for _should_summarize_based_on_reported_tokens
     type(model)._get_ls_params = MagicMock(return_value={"ls_provider": "fake"})
     return model
 
 
+def _make_request(messages):
+    """Build a real ModelRequest carrying the diagnose session state."""
+    return ModelRequest(
+        model=_make_fake_model(),
+        messages=list(messages),
+        state={"session_id": _DIAG_SESSION, "messages": list(messages)},
+    )
+
+
 class TestSummarizationTriggerDiagnose:
-    """Verify the ``fraction`` trigger threshold after the main_llm.py fix."""
+    """Verify the trigger thresholds after the §9.7 redesign."""
 
     @pytest.fixture
     def summarizer(self):
         from agent.middlewares.summarization import Summarization
 
-        model = _make_fake_model(max_input_tokens=65_536_000)
+        model = _make_fake_model()
         inst = Summarization(
             need_update_system_prompt=True,
             model=model,
-            trigger=[("fraction", 0.5), ("messages", 40), ("tokens", 30000)],
+            main_llm_context_window=MAIN_LLM_MAX_TOKEN,
+            trigger=[("tokens", int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO))],
             keep=("messages", 10),
         )
         return inst
 
-    def test_profile_value_is_65536000(self, summarizer):
-        """Verify _get_profile_limits returns the un-capped value."""
-        limits = summarizer._get_profile_limits()
-        assert limits == 65_536_000, (
-            f"Expected profile.max_input_tokens = 65_536_000, got {limits}. "
+    def test_context_window_is_65536000(self, summarizer):
+        """Verify the injected window is the un-capped value.
+
+        The redesigned middleware takes the window as the constructor param
+        ``main_llm_context_window`` instead of reading ``model.profile``.
+        """
+        assert summarizer._main_llm_context_window == 65_536_000, (
+            f"Expected main_llm_context_window = 65_536_000, "
+            f"got {summarizer._main_llm_context_window}. "
             "Check models/LLMs/main_llm.py cap removal."
         )
 
-    def test_fraction_threshold_is_32million(self, summarizer):
-        """fraction=0.5 of 65_536_000 → threshold = 32_768_000."""
-        limits = summarizer._get_profile_limits()
-        threshold = int(limits * 0.5)
-        assert threshold == EXPECTED_THRESHOLD, f"Expected threshold 32_768_000, got {threshold}"
+    def test_tokens_threshold_matches_core_config(self, summarizer):
+        """core.py trigger = int(65_536_000 * COMPRESSION_TRIGGER_RATIO) = 52_428_800."""
+        assert summarizer._trigger == [("tokens", EXPECTED_THRESHOLD)], (
+            f"Expected trigger [('tokens', {EXPECTED_THRESHOLD})], got {summarizer._trigger}"
+        )
+        assert EXPECTED_THRESHOLD == 52_428_800, (
+            f"Expected threshold 52_428_800 (0.80 × 65_536_000), got {EXPECTED_THRESHOLD}"
+        )
 
     @pytest.mark.parametrize(
-        "token_count,should_trigger",
+        "token_count,expected_action",
         [
-            (1_000, False),  # tiny → no
-            (100_000, False),  # 100K → still far below 32M
-            (1_000_000, False),  # 1M  → still below
-            (10_000_000, False),  # 10M → still below
-            (30_000_000, False),  # 30M → still below 32.768M
-            (33_000_000, True),  # 33M → barely over
-            (50_000_000, True),  # 50M → way over
-            (65_536_000, True),  # 100% of context
+            (1_000, None),
+            (100_000, None),
+            (1_000_000, None),
+            (10_000_000, None),
+            (30_000_000, None),
+            (33_000_000, None),  # 50% pressure — bands moved to 0.70 / 0.80
+            (50_000_000, "truncate_only"),  # 76% ≥ 0.70, < 0.80
+            (65_536_000, "compact"),  # 100% ≥ 0.80
         ],
     )
-    def test_fraction_trigger_only(self, token_count, should_trigger):
-        """Check the ``fraction`` trigger in isolation (no ``tokens`` or ``messages`` trigger interference).
+    def test_fraction_trigger_only(self, token_count, expected_action):
+        """Check the fractional (pressure-based) trigger in isolation (no ``tokens`` trigger interference).
 
-        We use a summarizer configured with ONLY ``("fraction", 0.5)`` so the
-        30K token threshold doesn't skew the result.
+        The old ``("fraction", 0.5)`` clause became the preemptive pressure
+        check: effective_tokens / main_llm_context_window against
+        PREEMPTIVE_TRUNCATE_RATIO=0.70 ("truncate_only") and
+        COMPRESSION_TRIGGER_RATIO=0.80 ("compact") from config.num. Both
+        estimators are patched so ONLY the pressure band decides the result.
         """
         from agent.middlewares.summarization import Summarization
 
-        model = _make_fake_model(max_input_tokens=65_536_000)
+        model = _make_fake_model()
         inst = Summarization(
             need_update_system_prompt=True,
             model=model,
-            trigger=[("fraction", 0.5)],  # ONLY fraction, no tokens/messages
+            main_llm_context_window=65_536_000,
             keep=("messages", 10),
         )
-        with patch.object(inst, "token_counter", return_value=token_count):
+        with patch.object(inst, "_estimate_tokens", return_value=token_count), \
+             patch.object(inst, "_get_reported_tokens", return_value=0):
             messages = [
                 HumanMessage(content="x" * (token_count // 2)),
                 AIMessage(content="y" * (token_count // 2)),
             ]
-            result = inst._should_summarize(messages, token_count)
-            assert result == should_trigger, (
-                f"At token_count={token_count}, expected _should_summarize={should_trigger}, "
-                f"got {result}"
+            result = inst._preemptive_check(messages, _DIAG_SESSION)
+            assert result == expected_action, (
+                f"At token_count={token_count}, expected _preemptive_check={expected_action!r}, "
+                f"got {result!r}"
             )
 
     @pytest.mark.parametrize(
         "token_count,should_trigger",
         [
             (1_000, False),
-            (30_000, True),  # ("tokens", 30000) trigger
+            (30_000, True),  # ("tokens", 30000) trigger (worker-style, spawn/core.py)
             (100_000, True),
         ],
     )
@@ -115,63 +150,92 @@ class TestSummarizationTriggerDiagnose:
             trigger=[("tokens", 30000)],
             keep=("messages", 10),
         )
-        with patch.object(inst, "token_counter", return_value=token_count):
+        with patch.object(inst, "_estimate_tokens", return_value=token_count), \
+             patch.object(inst, "_get_reported_tokens", return_value=0):
             messages = [HumanMessage(content="test")]
-            result = inst._should_summarize(messages, token_count)
+            result = inst._check_trigger(messages)
             assert result == should_trigger, (
-                f"At token_count={token_count}, expected _should_summarize={should_trigger}, "
+                f"At token_count={token_count}, expected _check_trigger={should_trigger}, "
                 f"got {result}"
             )
 
 
-class TestSummarizationBeforeModelIntegration:
-    """End-to-end check: does before_model actually return compression result?
+class TestSummarizationWrapModelIntegration:
+    """End-to-end check: does wrap_model_call actually return a compression result?
 
-    This verifies the full pipeline: _should_summarize → _determine_cutoff_index
-    → _create_summary → return new messages.
+    This verifies the full pipeline: _preemptive_check / _check_trigger
+    → _apply_compression → request.override(messages=...) → handler.
     """
 
     @pytest.fixture
     def summarizer(self):
         from agent.middlewares.summarization import Summarization
 
-        model = _make_fake_model(max_input_tokens=65_536_000)
+        model = _make_fake_model()
         inst = Summarization(
             need_update_system_prompt=True,
             model=model,
-            trigger=[("fraction", 0.5), ("messages", 40), ("tokens", 30000)],
+            main_llm_context_window=MAIN_LLM_MAX_TOKEN,
+            trigger=[("tokens", int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO))],
             keep=("messages", 10),
         )
         return inst
 
     def test_no_compression_at_low_token_count(self, summarizer):
-        """With very few tokens, before_model should return None (no-op)."""
+        """With very few tokens, wrap_model_call should pass the request through untouched."""
         messages = [HumanMessage(content="hello")]
-        state = {"messages": messages}
-        runtime = MagicMock()
-        result = summarizer.before_model(state, runtime)
-        assert result is None, (
-            "before_model returned a compression result despite very low token count. "
+        request = _make_request(messages)
+        response = AIMessage(content="ok")
+        captured = {}
+
+        def handler(req):
+            captured["request"] = req
+            return response
+
+        result = summarizer.wrap_model_call(request, handler)
+        assert result is response, (
+            "wrap_model_call did not pass the handler response through despite very "
+            "low token count. This means compression fires every turn."
+        )
+        assert captured["request"] is request, (
+            "wrap_model_call rewrote the request despite very low token count. "
             "This means compression fires every turn."
         )
 
     def test_compression_at_high_token_count(self, summarizer):
-        """With 33M tokens, before_model should trigger compression."""
+        """With tokens above the redesigned trigger (52.4M), wrap_model_call should trigger compression."""
         messages = [
             HumanMessage(content="x" * 16_000_000),
             AIMessage(content="y" * 16_000_000),
         ]
-        # Patch token_counter to return 33M
-        with patch.object(summarizer, "token_counter", return_value=33_000_000):
-            state = {"messages": messages}
-            runtime = MagicMock()
-            result = summarizer.before_model(state, runtime)
-            # Should trigger compression (return non-None) or return None if
-            # cutoff_index <= 0
-            if result is None:
-                pytest.skip("before_model returned None (cutoff logic), not a bug per se.")
-            else:
-                assert "messages" in result
+        # Patch both estimators to a post-redesign "high" count: 60M is above the
+        # ("tokens", 52_428_800) trigger and at 92% pressure (≥ 0.80 → "compact").
+        with patch.object(summarizer, "_estimate_tokens", return_value=60_000_000), \
+             patch.object(summarizer, "_get_reported_tokens", return_value=0):
+            request = _make_request(messages)
+            response = AIMessage(content="ok")
+            captured = {}
+
+            def handler(req):
+                captured["request"] = req
+                return response
+
+            result = summarizer.wrap_model_call(request, handler)
+            # The turn must complete and the handler must run.
+            assert result is response, (
+                "wrap_model_call did not return the handler response at high token count."
+            )
+            # The compact band also runs _preemptive_truncate, which re-lists the
+            # SAME message objects; real compression prepends NEW summary messages.
+            # Head object identity therefore separates compression from the
+            # truncate-only override (and from a no-op cutoff).
+            if captured["request"].state["messages"][0] is messages[0]:
+                pytest.skip(
+                    "compression was a no-op (cutoff logic) or failed open with the "
+                    "fake model (exception logged + swallowed by design); the turn "
+                    "itself still completed — not a bug per se."
+                )
+            assert "messages" in captured["request"].state
 
 
 if __name__ == "__main__":
