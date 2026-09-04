@@ -1,6 +1,6 @@
 # 第二轮审计 — 2026-09-04 补充
 
-**审计方法**：6 个并行探索子代理覆盖（资源泄漏、错误处理/静默吞没、异步/同步边界违规、SQL 安全/输入校验、安全/路径穿越/SSRF、性能/可扩展性），对关键发现进行源码直接复核。所有条目均为**新增**，不与 `AUDIT_REPORT.md` #1-#36 重复。编号 #1 起。
+**审计方法**：6 个并行探索子代理覆盖（资源泄漏、错误处理/静默吞没、异步/同步边界违规、SQL 安全/输入校验、安全/路径穿越/SSRF、性能/可扩展性），对关键发现进行源码直接复核。所有条目均为**新增**，不与 `AUDIT_REPORT.md` #1-#22 重复。编号 #1 起。
 
 ---
 
@@ -16,7 +16,7 @@ full_path = ROOT_DIR / skill_path          # 无 is_relative_to 检查
 content = full_path.read_text(...)         # 读取任意文件
 ```
 
-- `resolve_path`（AUDIT_REPORT #2）已修复（含 `is_relative_to(ROOT_DIR)` 检查），但此端点**完全绕过** `resolve_path`，直接 `ROOT_DIR / skill_path`。
+- `resolve_path`（AUDIT_REPORT #1）已修复（含 `is_relative_to(ROOT_DIR)` 检查），但此端点**完全绕过** `resolve_path`，直接 `ROOT_DIR / skill_path`。
 - **利用**：`GET /skills/../../.env` → 窃取 `MAIN_LLM_API_KEY`。
 - **修复**：加 `full_path.resolve().is_relative_to(ROOT_DIR.resolve())` 检查。
 
@@ -153,7 +153,7 @@ for sid, task in list(_active_tasks.items()):
 **文件**：`runtime/state_register.py:116-128` + 调用方
 
 - 每个方法都打开**新的** `sqlite3.connect()` + 执行 + 关闭。被 `awrap_model_call`/`awrap_tool_call`/`aafter_agent`（全 async）每次 agent 回合调用**多次**。
-- 未被 AUDIT_REPORT #6/#24/#25 覆盖（不同文件）。
+- 未被 AUDIT_REPORT #4/#14/#15 覆盖（不同文件）。
 - **修复**：改 `aiosqlite` 或在异步路径中用 `asyncio.to_thread` 包装。
 
 ## 12. `summarization.py` — `awrap_model_call` 异步路径中的同步 SQLite + 文件 I/O
@@ -484,7 +484,7 @@ agent = create_agent(model=main_llm, tools=tools)  # 每次重建状态图
 
 **文件**：`agent/checkpointer/async_sqlite_checkpointer.py:16-23` — `ThreadSafeAsyncSqliteSaver` 无 `close()`/`aclose()` 方法，连接永不关闭。
 
-- 注：AUDIT_REPORT #10 已修复 `delete_thread_history` 的连接泄漏，但主 checkpointer 连接是独立问题。
+- 注：原 AUDIT_REPORT #10（条目已移除）已修复 `delete_thread_history` 的连接泄漏，但主 checkpointer 连接是独立问题。
 
 ## 48. `sender_task.cancel()` 未 `await`（2 处）
 
