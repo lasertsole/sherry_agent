@@ -542,12 +542,14 @@ class TestHitlGraphFlow:
         ], "YOLO pass must not produce a deny/error ToolMessage"
 
     def test_python_repl_not_intercepted_by_hitl(self):
-        # # WILL-CHANGE(Task 8) — TODAY python_repl falls through after_model to
-        # the allow-through plugin-tool-approval layer (core.py:469): no
-        # check_command call, no interrupt, straight to execution — even for a
-        # shell-destructive-looking payload. Task 8 routes python_repl (with
-        # sandbox bypass requests) through HITL approval; that task updates this
-        # assertion (e.g. sandbox=False -> interrupt while sandbox=True still passes).
+        # # WILL-CHANGE(Task 8) — RESOLVED (Task 8 done). python_repl now has a
+        # sandbox-bypass gate in after_model (core.py): sandbox=False requires
+        # main-session human approval unless YOLO is active. THIS call omits
+        # the sandbox arg → tool_args.get("sandbox", True) is True → the gate
+        # does NOT fire: still no check_command, no interrupt, straight
+        # through the allow-through plugin-tool-approval layer to execution.
+        # The sandbox=False interrupt path is covered by
+        # tests/module/test_hitl_sandbox_bypass.py (TestMainSessionBypassApproval).
         graph, hitl = _build_graph(
             scripted_calls=[
                 {

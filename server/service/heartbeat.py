@@ -19,6 +19,15 @@ from skills.builtin.core.heartbeat.scripts import move_task_to_completed, list_a
 
 tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 
+# Sandbox-hardening Task 8: heartbeat agents are BACKGROUND callers — stamp
+# every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass in
+# terminal.py / python_repl.py) denies sandbox=False outright (no HITL
+# middleware exists on background graphs to approve it).
+for _t in tools:
+    if not isinstance(_t.metadata, dict):
+        _t.metadata = {}
+    _t.metadata["caller_scope"] = "background"
+
 # The browser WebSocket client connects as `session_id=default`
 # (client/app/composables/ws.ts), so pushes target that session so the UI
 # refreshes live when a heartbeat execution completes.

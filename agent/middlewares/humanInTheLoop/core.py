@@ -13,6 +13,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from langchain_core.messages import ToolCall
 from loguru import logger
 from langgraph.errors import GraphInterrupt
 from runtime.state_register import state_register_mem
@@ -39,7 +40,7 @@ from .types import (
     override,
     interrupt,
 )
-from .approval import ApprovalPipeline
+from .approval import ApprovalPipeline, is_yolo_mode
 from .gates import (
     WriteApprovalGate,
     InterruptManager,
@@ -254,6 +255,79 @@ class HumanInTheLoop(AgentMiddleware):
         self._reset_turn_state(state)
         return None
 
+    def _sandbox_bypass_interrupt(
+        self,
+        tool_call: ToolCall,
+        tool_name: str,
+        action_desc: str = "",
+    ) -> tuple[bool, ToolMessage | None]:
+        """Sandbox-bypass approval (Task 8): gate ``sandbox=False`` tool calls.
+
+        Reuses the ``interrupt(HITLRequest(...))`` template verbatim (the Task 5
+        resume contract): ``Command(resume={"decisions": [{"type": "approve"}]})``
+        proceeds; ``{"type": "reject", "message": ...}`` (or no decision) yields
+        a ``"User denied: <msg>. <BLOCKED_MESSAGE>"`` error ToolMessage with NO
+        second interrupt. ``GraphInterrupt`` is re-raised, never swallowed.
+
+        Contract (plan line 739, Metis ruling): the tool layer's scope/policy
+        denial is NOT repeated here — ``_deny_sandbox_bypass`` in terminal.py /
+        python_repl.py already raises ``ToolException`` for non-main
+        ``caller_scope`` + ``sandbox=False`` and for ``SANDBOX_POLICY=required``
+        + ``sandbox=False``. YOLO mode (``is_yolo_mode``) and ``sandbox=True``
+        calls must never reach the interrupt — callers filter them out BEFORE
+        invoking this helper.
+
+        Returns:
+            ``(approved, deny_message)``: ``approved=True`` → the caller
+            proceeds with the original tool_call; ``approved=False`` →
+            ``deny_message`` (an error ToolMessage) must be appended by the caller.
+        """
+        action_request = ActionRequest(
+            name=tool_name,
+            args=tool_call.get("args", {}),
+            description=(
+                "沙箱绕过审批：该调用请求 sandbox=False"
+                "（经环境清洗后直接执行，无 OS 沙箱隔离）。"
+                + (f" {action_desc}" if action_desc else "")
+            ),
+        )
+        review_config = ReviewConfig(
+            action_name=tool_name,
+            allowed_decisions=["approve", "reject"],
+        )
+        try:
+            hitl_response = interrupt(
+                HITLRequest(
+                    action_requests=[action_request],
+                    review_configs=[review_config],
+                )
+            )
+            decisions = hitl_response.get("decisions", [])
+            if decisions and decisions[0]["type"] == "approve":
+                return True, None
+            msg = (
+                (decisions[0].get("message") or "Rejected by user")
+                if decisions
+                else "No decision"
+            )
+            return False, ToolMessage(
+                content=f"User denied: {msg}. {BLOCKED_MESSAGE}",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+                status="error",
+            )
+        except GraphInterrupt:
+            # Real HITL interrupt: let LangGraph persist it so the frontend
+            # approval dialog can fire. Do NOT swallow it.
+            raise
+        except Exception:
+            return False, ToolMessage(
+                content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+                status="error",
+            )
+
     def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         """Intercept tool calls after model output for HITL approval."""
         messages = state.get("messages", [])
@@ -265,8 +339,8 @@ class HumanInTheLoop(AgentMiddleware):
             return None
 
         session_id = self._session_id(state)
-        revised_tool_calls: list[dict] = []
-        artificial_tool_messages: list = []
+        revised_tool_calls: list[ToolCall] = []
+        artificial_tool_messages: list[ToolMessage] = []
 
         for tool_call in last_ai_msg.tool_calls:
             tool_name: str = tool_call.get("name", "")
@@ -288,6 +362,30 @@ class HumanInTheLoop(AgentMiddleware):
                             status="error",
                         )
                     )
+                    continue
+
+                # ── Sandbox-bypass approval (Task 8) ──
+                # Gate sandbox=False terminal calls: human approval required
+                # unless YOLO is active. Inserted BEFORE smart approval so it
+                # gates ALL sandbox=False executions — including the
+                # dangerous-command interrupt below, whose approve path
+                # (``continue`` inside try) would otherwise skip the bypass.
+                # NOTE: the tool layer's scope/policy denial (subagent /
+                # background caller_scope + SANDBOX_POLICY=required, both with
+                # sandbox=False) is NOT repeated here — _deny_sandbox_bypass
+                # in terminal.py owns it and raises ToolException at execution.
+                if not is_yolo_mode(self.config) and not tool_args.get("sandbox", True):
+                    approved, deny_msg = self._sandbox_bypass_interrupt(
+                        tool_call, tool_name, f"Command: {command}"
+                    )
+                    if not approved:
+                        if deny_msg is not None:
+                            artificial_tool_messages.append(deny_msg)
+                        continue
+                    # Approved bypass → the human explicitly approved THIS
+                    # call (full args shown); skip smart approval and the
+                    # dangerous-command re-prompt.
+                    revised_tool_calls.append(tool_call)
                     continue
 
                 # Smart approval (layer 6)
@@ -360,6 +458,28 @@ class HumanInTheLoop(AgentMiddleware):
                 revised_tool_calls.append(tool_call)
                 continue
 
+            # ── python_repl: sandbox-bypass approval (Task 8) ──
+            # Same gate as terminal: human approval for sandbox=False calls
+            # unless YOLO is active. Approved bypasses FALL THROUGH to the
+            # remaining gates (plugin allow-through) — preserving the Task 5
+            # contract that python_repl is otherwise NOT intercepted. The
+            # tool layer's scope/policy denial is NOT repeated here (owned by
+            # _deny_sandbox_bypass in python_repl.py).
+            if (
+                tool_name == "python_repl"
+                and not is_yolo_mode(self.config)
+                and not tool_args.get("sandbox", True)
+            ):
+                approved, deny_msg = self._sandbox_bypass_interrupt(
+                    tool_call, tool_name, f"Query: {tool_args.get('query', '')}"
+                )
+                if not approved:
+                    if deny_msg is not None:
+                        artificial_tool_messages.append(deny_msg)
+                    continue
+                # Approved → fall through (no append+continue): the plugin
+                # allow-through layer keeps Task 5 pass-through semantics.
+
             # ── Memory tool: write approval gate ──
             if tool_name == "memory" and self.config.write_approval_memory:
                 action = tool_args.get("action", "")
@@ -427,7 +547,7 @@ class HumanInTheLoop(AgentMiddleware):
                         revised_tool_calls.append(tool_call)
                     elif decision["type"] == "edit" and "edit" in allowed:
                         edited = decision.get("edited_action", {})
-                        revised_tc = dict(tool_call)
+                        revised_tc: Any = dict(tool_call)
                         revised_tc["args"] = edited.get("args", tool_args)
                         revised_tc["name"] = edited.get("name", tool_name)
                         revised_tool_calls.append(revised_tc)

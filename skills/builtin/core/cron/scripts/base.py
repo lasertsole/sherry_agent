@@ -562,6 +562,15 @@ async def _on_cron_job(cron_job: CronJob) -> None:
 
     tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 
+    # Sandbox-hardening Task 8: cron agents are BACKGROUND callers — stamp
+    # every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass
+    # in terminal.py / python_repl.py) denies sandbox=False outright (no HITL
+    # middleware on background graphs to approve it).
+    for _t in tools:
+        if not isinstance(_t.metadata, dict):
+            _t.metadata = {}
+        _t.metadata["caller_scope"] = "background"
+
     main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
 
     agent: CompiledStateGraph = create_agent(

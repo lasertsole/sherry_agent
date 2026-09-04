@@ -34,19 +34,28 @@ from .types import (
 from .detection import detect_hardline_command, detect_dangerous_command
 
 
-def _is_yolo_active(config: HITLConfig) -> bool:
+def is_yolo_mode(config: HITLConfig) -> bool:
     """Check whether YOLO (bypass-all) mode is active.
 
     Activated by any of:
     - ``config.yolo_mode == True``
     - ``config.mode == ApprovalMode.OFF``
     - Environment variable ``SHERRY_YOLO_MODE`` set to ``1`` / ``true`` / ``yes``
+
+    Public API (sandbox-hardening Task 8): the sandbox-bypass approval wiring
+    in :mod:`.core` reuses this exact YOLO predicate, so the approval pipeline
+    and the sandbox-bypass gate share one source of truth.
     """
     if config.yolo_mode:
         return True
     if config.mode == ApprovalMode.OFF:
         return True
     return os.environ.get("SHERRY_YOLO_MODE", "").strip() in ("1", "true", "yes")
+
+
+def _is_yolo_active(config: HITLConfig) -> bool:
+    """Backward-compatible alias for :func:`is_yolo_mode` (verbatim logic)."""
+    return is_yolo_mode(config)
 
 
 def _check_deny_rules(command: str, deny_rules: list[str]) -> str | None:
