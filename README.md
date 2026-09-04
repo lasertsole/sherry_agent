@@ -347,7 +347,7 @@ Three tests in `tests/integration/` (`test_real_e2e.py`, `test_spawn_direct_e2e.
 
 **CI:** this repository currently has no CI configuration; `tests/run_tests_split.py` is the **CI-ready entry point** — wire `uv run python tests/run_tests_split.py` into the primary pipeline (hermetic; two processes ≈ 7 min total) and schedule `--with-llm-e2e` as a separate, slower job (it costs API tokens; never run it in parallel with other suites).
 
-> **Note:** `tests/full/` and `tests/diagnose/` are auxiliary/experimental directories outside the standard groups above. In particular `tests/full/test_main_agent_e2e.py` is a live-network test that is **not** tagged `llm_e2e` — do not wire it into CI without tagging it first.
+> **Note:** `tests/full/` is an auxiliary/experimental directory outside the standard groups above. In particular `tests/full/test_main_agent_e2e.py` is a live-network test that is **not** tagged `llm_e2e` — do not wire it into CI without tagging it first.
 
 ---
 
