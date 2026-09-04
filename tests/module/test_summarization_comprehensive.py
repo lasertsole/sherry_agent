@@ -1742,11 +1742,22 @@ class TestSummarizationAsync:
         assert captured[0] == msgs
 
     def test_wrap_model_call_truncate_mode_shrinks_tool(self, sid):
-        mw = make_middleware(main_llm_context_window=1000)
+        # Task 5: wrap-path truncation is now the 4-route budget flow — the
+        # former 2000-char cap (PREEMPTIVE_MARKER_FMT with ctx_window=1000,
+        # where usable = max(1000 - 16000, 0) = 0) is replaced by TTL head/tail
+        # truncation driven by the dynamic window (41600 → usable 25600,
+        # truncate band [17920, 20480) est tokens).
+        mw = make_middleware(main_llm_context_window=41600)
         msgs = [
             HumanMessage(content="q"),
             _ai_with_call("t8-wt-1", "search", {"q": "x"}),
-            _tool("x" * 3000, "t8-wt-1"),
+            _tool("x" * 76000, "t8-wt-1"),
+            HumanMessage(content="filler-1"),
+            AIMessage(content="ok-1"),
+            HumanMessage(content="filler-2"),
+            AIMessage(content="ok-2"),
+            HumanMessage(content="filler-3"),
+            AIMessage(content="ok-3"),
         ]
         req = make_request(msgs, session_id=sid)
         captured = []
@@ -1756,9 +1767,15 @@ class TestSummarizationAsync:
             return "WRAP-SENTINEL"
 
         mw.wrap_model_call(req, handler)
+        # est ≈ 19k tokens ∈ truncate band; the tool result sits outside the
+        # last-6 skip window → candidate; budget 0.6 × 25600 = 15360.
+        assert len(captured[0]) == 9
         out = captured[0][2].content
-        assert out.startswith("x" * 600)
-        assert PREEMPTIVE_MARKER_FMT.format(omitted=1800) in out
+        assert out.startswith("x" * 20000)
+        assert "truncated by context compression" in out
+        assert len(out) < 76000
+        # Pairing intact, no compression pair injected (truncate route only).
+        assert captured[0][2].tool_call_id == "t8-wt-1"
 
     def test_wrap_model_call_missing_session_id_raises(self):
         mw = make_middleware(main_llm_context_window=40000)
@@ -1830,11 +1847,20 @@ class TestSummarizationAsync:
         assert captured[0] == msgs
 
     def test_awrap_model_call_truncate_mode(self, sid):
-        mw = make_middleware(main_llm_context_window=1000)
+        # Task 5: async twin of the budget-based truncate route (see the sync
+        # test above for the rationale — the 2000-char cap is replaced by the
+        # 4-route TTL truncation driven by the dynamic window).
+        mw = make_middleware(main_llm_context_window=41600)
         msgs = [
             HumanMessage(content="q"),
             _ai_with_call("t8-wa-1", "search", {"q": "x"}),
-            _tool("x" * 3000, "t8-wa-1"),
+            _tool("x" * 76000, "t8-wa-1"),
+            HumanMessage(content="filler-1"),
+            AIMessage(content="ok-1"),
+            HumanMessage(content="filler-2"),
+            AIMessage(content="ok-2"),
+            HumanMessage(content="filler-3"),
+            AIMessage(content="ok-3"),
         ]
         req = make_request(msgs, session_id=sid)
         captured = []
@@ -1844,8 +1870,12 @@ class TestSummarizationAsync:
             return "AWRAP-SENTINEL"
 
         asyncio.run(mw.awrap_model_call(req, handler))
+        assert len(captured[0]) == 9
         out = captured[0][2].content
-        assert PREEMPTIVE_MARKER_FMT.format(omitted=1800) in out
+        assert out.startswith("x" * 20000)
+        assert "truncated by context compression" in out
+        assert len(out) < 76000
+        assert captured[0][2].tool_call_id == "t8-wa-1"
 
     def test_awrap_model_call_missing_session_id_raises(self):
         mw = make_middleware(main_llm_context_window=40000)

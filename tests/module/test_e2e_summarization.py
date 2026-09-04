@@ -382,10 +382,17 @@ class TestE2ESummarizationStaticFallback:
         assert len(history) == _TURNS * 3
         assert len(received) - 1 < _TURNS
 
-        # Framework semantics (langchain 1.2.5): the wrap override shapes the model
-        # call; the persisted graph state keeps the raw history plus this turn's
-        # reply. Documented in the deviations log (§14 state-based check adapted).
-        assert len(result["messages"]) == len(history) + 1
+        # Task 5: T1 preflight compacts the PERSISTED state BEFORE the turn —
+        # the graph state now holds the compressed pair + preserved tail +
+        # this turn's reply. (The old T2-only wrap semantics kept the raw
+        # history, because a wrap override never touched graph state.)
+        final_state = result["messages"]
+        assert len(final_state) < len(history) + 1
+        assert any(
+            isinstance(m, HumanMessage) and m.content == "What did we do so far?"
+            for m in final_state
+        )
+        assert isinstance(final_state[-1], AIMessage)
 
         print(
             f"[e2e-t10] model received {len(received)} messages "
