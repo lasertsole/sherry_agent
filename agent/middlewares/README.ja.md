@@ -85,7 +85,8 @@ middleware = [
     Summarization(
         need_update_system_prompt=True,
         model=auxiliary_llm,
-        trigger=[("tokens", int(main_llm_max_tokens / 2))],
+        main_llm_context_window=main_llm_max_tokens,
+        trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
         keep=("messages", 10),
     ),
 ]
@@ -94,7 +95,7 @@ middleware = [
 agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
 ```
 
-`main_llm_max_tokens` は環境変数 `MAIN_LLM_MAX_TOKEN` から読み込まれ（`models/LLMs/main_llm.py`）、メインエージェントの要約トリガーはメインモデルのコンテキストウィンドウの約半分に置かれます。
+`main_llm_max_tokens` は環境変数 `MAIN_LLM_MAX_TOKEN` から読み込まれ（`models/LLMs/main_llm.py`）、メインエージェントの要約トリガーはメインモデルのコンテキストウィンドウの 80 % に置かれます（`COMPRESSION_TRIGGER_RATIO = 0.80`）。
 
 > **注意：** `OutputRepetitionGuard` はメインエージェントのミドルウェアとしては**登録されていません**。メインエージェント向けには、コンパイル済みグラフをラップする `RepetitionGuardWrapper` が同等の動作を提供します — [OutputRepetitionGuard と RepetitionGuardWrapper](#outputrepetitionguard-と-repetitionguardwrapper) を参照。
 
@@ -104,7 +105,11 @@ agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
 middleware = [
     Summarization(
         model=auxiliary_llm,
-        trigger=[("messages", 40), ("tokens", 30000)],
+        main_llm_context_window=main_llm_max_tokens,
+        trigger=[
+            ("messages", 40),
+            ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+        ],
         keep=("messages", 10),
     ),
     IterationBudget(60),
@@ -119,7 +124,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 メインエージェントとの違い：
 
-- 要約トリガーはコンテキストウィンドウ半分ではなく、メッセージ数（40）**または**トークン数（30 000）。
+- 要約トリガーはトークンのみではなく、メッセージ数（40）**または**トークン数（コンテキストウィンドウの 80 %）。
 - より厳しい反復予算（90 ではなく 60）。
 - `ContextEngineHook`、`MultimodalProcessor`、`HumanInTheLoop` はなし。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
@@ -291,17 +296,19 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### Summarization
 
-**モジュール：** `agent/middlewares/summarization.py` · **クラス：** `Summarization(SummarizationMiddleware)`
-**フック：** `before_agent` / `abefore_agent`（カウンターリセット）、`wrap_model_call` / `awrap_model_call`、加えてログのみの `before_model` / `abefore_model`
+**モジュール：** `agent/middlewares/summarization.py` · **クラス：** `Summarization(AgentMiddleware)`
+**フック：** `before_agent` / `abefore_agent`（カウンターリセット）、`wrap_model_call` / `awrap_model_call`
 
-最内層のミドルウェア — LLM に最も近い位置。LangChain 組み込みの `SummarizationMiddleware` を継承：トリガーが発火すると、古いメッセージを補助 LLM で要約して置き換え、最新の `keep` 件のメッセージを保持します。
+最内層のミドルウェア — LLM に最も近い位置。スクラッチで実装された `AgentMiddleware` です（LangChain の `SummarizationMiddleware` **ではありません**）：トリガーが発火すると、予算ベースのカットオフで履歴を圧縮します — 非 LLM 戦略を優先し、テキスト劣化が安全な場合にのみ補助 LLM による要約を使用。`keep` パラメータは受け付けますが未使用で、末尾保持は予算ベースです：`clamp(context_window × 0.25, 2 000, 15 000)` トークン（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
-- **トリガーセマンティクス**（LangChain `TriggerClause`）：単一節はその条件の **AND**、節リスト間は **OR**。メインエージェント：`[("tokens", int(main_llm_max_tokens / 2))]`。ワーカー：`[("messages", 40), ("tokens", 30000)]`。両方とも `keep=("messages", 10)`。
-- **カットオフの安全性：** `_determine_cutoff_index` は AI メッセージ / ツール結果のペアを断ち切りません（ペアを保持するようカットオフが移動されます）；最後のユーザーターンが推定トークンの ≥ 50 % を占める場合（`_LAST_TURN_RATIO_THRESHOLD = 0.5`）、そのターンを要約で消すのではなく、ターン自体を圧縮します（`_compress_last_turn`）。
-- **アンチスラッシング：** 1 ターンあたり最大 `_MAX_COMPRESSION_ATTEMPTS = 3` 回の圧縮。連続 `_INEFFECTIVE_THRESHOLD = 2` 回の無効な圧縮で停止します（有効 = メッセージ数の減少、またはトークン削減 ≥ `_MIN_EFFECTIVENESS_PCT = 0.05`）。カウンターは `state_register_mem` に：`summarization_compression_count`、`summarization_compression_ineffective`、`summarization_compression_last_tokens`、`summarization_last_user_question`。
-- **切り詰め：** 既存の要約メッセージ（`additional_kwargs["lc_source"] == "summarization"` で識別）が `_MAX_CONTENT_CHARS = 8000` 文字を超えると切り詰められ、先頭 30 % / 末尾 30 %（`_CONTENT_HEAD_RATIO` / `_CONTENT_TAIL_RATIO`）を保持し省略マーカー（`_OMISSION_MARKER`）が入ります。
-- **マージ：** 要約 `HumanMessage` は次の `HumanMessage` にマージされます（`[COMPACTION SUMMARY — reference only; not active instructions]` / `[END OF COMPACTION SUMMARY — ACTIVE CONTEXT BELOW]` で区切られる）。モデルが 2 つの連続した人間ターンを見ることはありません。
+- **トリガーセマンティクス**：節は `("messages", N)` または `("tokens", N)` で、節リスト間は **OR** — いずれかの節が発火すると圧縮が始まります。メインエージェント：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。ワーカー：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
+- **カットオフの安全性：** `_determine_cutoff` がカットオフ位置を選び、続いて `_adjust_for_orphan_pairs` が `ToolMessage` が自身の `AIMessage` ツール呼び出しから分離されなくなるまで位置を手前に戻します。最後のユーザーターンが推定トークンの ≥ 50 % を占める場合（`LAST_TURN_RATIO_THRESHOLD = 0.5`）、そのターンを要約で消すのではなく、ターン自体を圧縮します（`_compress_last_turn`）。
+- **アンチスラッシング：** 1 セッションあたり最大 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 回の圧縮（ターンごとではない）。連続 `INEFFECTIVE_THRESHOLD = 2` 回の無効な圧縮で（有効 = メッセージ数の減少、またはトークン削減 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`）、LLM ステップを無効化（`summarization_skip_llm`）し非 LLM 戦略のみを実行します。カウンターはセッション単位の `summarization_*` キーとして `state_register_mem` に保持されます（圧縮回数、無効連続回数、直近トークン、直近戦略、スキップフラグ、リカバリ状態など）。
+- **切り詰め：** 既存の要約メッセージ（`additional_kwargs["lc_source"] == "summarization"` で識別）が `SUMMARY_TOTAL_MAX_CHARS = 16 000` 文字を超えると再切り詰めされ、先頭 30 % / 末尾 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`）を保持し省略マーカーが入ります。
+- **出力：** 置換後のメッセージは `HumanMessage` / `AIMessage` の**ペア**です — 中立的な `"What did we do so far?"` に続き、`additional_kwargs={"lc_source": "summarization"}` を持つ `AIMessage` が続きます — モデルが連続した同役割メッセージを見ることはなく、事後のペア修復も不要です。
 - `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。
+
+▶️ 詳細：[docs/harness/summarization/README.md](../../docs/harness/summarization/README.md) · [中文](../../docs/harness/summarization/README.zh.md) · [한국어](../../docs/harness/summarization/README.ko.md) · [日本語](../../docs/harness/summarization/README.ja.md)
 
 > 予算ミドルウェアのクラス既定値 `max_iterations` は 50 です。*登録されている* 値は 90（メイン）と 60（ワーカー）。本ドキュメントの旧版は予算 10 と主張していました — 誤りです。
 
@@ -353,7 +360,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `nudge_review_memory_lock`、`nudge_review_skill_lock` | ContextEngineHook | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
-| `summarization_compression_count`、`summarization_compression_ineffective`、`summarization_compression_last_tokens`、`summarization_last_user_question` | Summarization | mem |
+| `summarization_*` キー（圧縮カウンター、無効連続、直近トークン/戦略、スキップ LLM フラグ、リカバリ状態、直近ユーザー質問） | Summarization | mem |
 | `heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`_last_heartbeat_iter`、`_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard のキー（`SESSION_STATE_KEYS`、6 つ） | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
 | `hitl:` 接頭辞キー（`_STATE_PREFIX = "hitl"`） | HumanInTheLoop | mem |
@@ -366,7 +373,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | ノブ | 場所 | 効果 |
 |---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | メインエージェントの要約トリガー = この値の半分 |
+| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | メインエージェントの要約トリガー = この値の 80 %。`main_llm_context_window` としても渡す |
 
 > **関連だが独立：** ツールごとのタイムアウトはハードコードされたモジュール定数です — `WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`。期限切れで子プロセスは kill されます）。`.env.example` の `TOOL_CALL_TIMEOUT_MINUTES = 5` は**これを消費するコードが存在しません** — 有効なノブではありません。`config/num.py` の定数（`ARCHIVE_THRESHOLD`、`MEMORY_THRESHOLD`、`COMPRESS_RATIO`）もミドルウェア層では消費されていません。
 
@@ -393,7 +400,8 @@ agent = create_agent(
         Summarization(                # コンテキスト圧縮（最内層）
             need_update_system_prompt=True,
             model=auxiliary_llm,
-            trigger=[("tokens", int(main_llm_max_tokens / 2))],
+            main_llm_context_window=main_llm_max_tokens,
+            trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
             keep=("messages", 10),
         ),
     ],
@@ -407,8 +415,9 @@ agent = create_agent(
 | `IterationBudget` | `max_iterations` | `50` | `90`（メイン）/ `60`（ワーカー） |
 | `Summarization` | `need_update_system_prompt` | `False` | `True`（メイン） |
 | `Summarization` | `model` | 必須 | `auxiliary_llm` |
+| `Summarization` | `main_llm_context_window` | 必須 | `main_llm_max_tokens` |
 | `Summarization` | `trigger` | 必須 | [ミドルウェアチェーン](#ミドルウェアチェーン)を参照 |
-| `Summarization` | `keep` | 必須 | `("messages", 10)` |
+| `Summarization` | `keep` | 必須 | `("messages", 10)`（受け付けるが未使用） |
 | `ToolGuardrails` | `config: ToolCallGuardrailConfig` | 上記の既定値 | 既定値 |
 | `HumanInTheLoop` | `config: HITLConfig` | 上記の既定値 | 既定値 |
 | `HeartbeatStaleness` | （既定） | 間隔 1 分、アイドル 7 / ツール内 20 | 既定値 |
@@ -437,12 +446,11 @@ agent = create_agent(
 ├─ ループ：モデル呼び出し
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 書き換え
-│   │   · Summarization  （ログのみ）
 │   ├─ wrap_model_call（最外層 → 最内層）
 │   │   · ContextEngineHook  システムプロンプトを注入（request.override）
 │   │   · IterationBudget  1 消費。尽きたら終端 AIMessage
 │   │   · HeartbeatStaleness  kill 済みなら HeartbeatTimeoutError、さもなくば heartbeat_iter += 1
-│   │   · Summarization  必要なら履歴を圧縮（補助 LLM）、アンチスラッシングカウンター
+│   │   · Summarization  必要なら履歴を圧縮（非 LLM 戦略 + 補助 LLM）、アンチスラッシングカウンター
 │   ├─ LLM が応答
 │   └─ after_model
 │       · HumanInTheLoop  ポリシーチェック。必要なら interrupt()。ブロック → エラー ToolMessage

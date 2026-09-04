@@ -85,7 +85,8 @@ middleware = [
     Summarization(
         need_update_system_prompt=True,
         model=auxiliary_llm,
-        trigger=[("tokens", int(main_llm_max_tokens / 2))],
+        main_llm_context_window=main_llm_max_tokens,
+        trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
         keep=("messages", 10),
     ),
 ]
@@ -94,7 +95,7 @@ middleware = [
 agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
 ```
 
-`main_llm_max_tokens` 读取自环境变量 `MAIN_LLM_MAX_TOKEN`（`models/LLMs/main_llm.py`），因此主 Agent 的摘要触发点约为主模型上下文窗口的一半。
+`main_llm_max_tokens` 读取自环境变量 `MAIN_LLM_MAX_TOKEN`（`models/LLMs/main_llm.py`），因此主 Agent 的摘要触发点位于主模型上下文窗口的 80 % 处（`COMPRESSION_TRIGGER_RATIO = 0.80`）。
 
 > **注意：** `OutputRepetitionGuard` **没有**注册为主 Agent 的中间件。主 Agent 的相应行为由包装编译图的 `RepetitionGuardWrapper` 提供——见 [OutputRepetitionGuard 与 RepetitionGuardWrapper](#outputrepetitionguard-与-repetitionguardwrapper)。
 
@@ -104,7 +105,11 @@ agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
 middleware = [
     Summarization(
         model=auxiliary_llm,
-        trigger=[("messages", 40), ("tokens", 30000)],
+        main_llm_context_window=main_llm_max_tokens,
+        trigger=[
+            ("messages", 40),
+            ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+        ],
         keep=("messages", 10),
     ),
     IterationBudget(60),
@@ -119,7 +124,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 与主 Agent 的差异：
 
-- 摘要触发条件改为消息数（40）**或** token 数（30 000），而非半个上下文窗口。
+- 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
 - 没有 `ContextEngineHook`、`MultimodalProcessor`、`HumanInTheLoop`。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
@@ -291,17 +296,19 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### Summarization
 
-**模块：** `agent/middlewares/summarization.py` · **类：** `Summarization(SummarizationMiddleware)`
-**钩子：** `before_agent` / `abefore_agent`（计数器重置）、`wrap_model_call` / `awrap_model_call`，以及仅记录日志的 `before_model` / `abefore_model`
+**模块：** `agent/middlewares/summarization.py` · **类：** `Summarization(AgentMiddleware)`
+**钩子：** `before_agent` / `abefore_agent`（计数器重置）、`wrap_model_call` / `awrap_model_call`
 
-最内层的中间件——最贴近 LLM。继承 LangChain 内置的 `SummarizationMiddleware`：触发条件命中后，由辅助 LLM 对较旧的消息做摘要并替换，保留最新的 `keep` 条消息。
+最内层的中间件——最贴近 LLM。从零实现的 `AgentMiddleware`（**并非** LangChain 的 `SummarizationMiddleware`）：触发条件命中后，按预算制截断点压缩历史——优先非 LLM 策略，仅在文本降级安全时才使用辅助 LLM 摘要。`keep` 参数被接受但未使用；尾部保留纯预算制：`clamp(context_window × 0.25, 2 000, 15 000)` 个 token（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
-- **触发语义**（LangChain `TriggerClause`）：单个子句是其条件的 **AND**；子句列表之间是 **OR**。主 Agent：`[("tokens", int(main_llm_max_tokens / 2))]`；worker：`[("messages", 40), ("tokens", 30000)]`。两者均 `keep=("messages", 10)`。
-- **截断点安全：** `_determine_cutoff_index` 不会切进 AI 消息 / 工具结果配对中间（截断点会移动以保持配对完整）；当最后一个用户回合占估算 token 的 ≥ 50 % 时（`_LAST_TURN_RATIO_THRESHOLD = 0.5`），会改为对最后一个回合本身做压缩（`_compress_last_turn`），而不是把它摘要掉。
-- **防抖动：** 每回合至多 `_MAX_COMPRESSION_ATTEMPTS = 3` 次压缩；连续 `_INEFFECTIVE_THRESHOLD = 2` 次无效压缩后停止（有效 = 消息数减少，或 token 缩减 ≥ `_MIN_EFFECTIVENESS_PCT = 0.05`）。计数器存于 `state_register_mem`：`summarization_compression_count`、`summarization_compression_ineffective`、`summarization_compression_last_tokens`、`summarization_last_user_question`。
-- **截断：** 已有的摘要消息（以 `additional_kwargs["lc_source"] == "summarization"` 识别）超过 `_MAX_CONTENT_CHARS = 8000` 字符时被截断，保留头部 30 % / 尾部 30 %（`_CONTENT_HEAD_RATIO` / `_CONTENT_TAIL_RATIO`），并加入省略标记（`_OMISSION_MARKER`）。
-- **合并：** 摘要 `HumanMessage` 会合并进下一条 `HumanMessage`（以 `[COMPACTION SUMMARY — reference only; not active instructions]` / `[END OF COMPACTION SUMMARY — ACTIVE CONTEXT BELOW]` 分隔），确保模型不会看到两条连续的人类消息。
+- **触发语义**：单个子句是 `("messages", N)` 或 `("tokens", N)`；子句列表之间是 **OR**——任一子句命中即开始压缩。主 Agent：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`；worker：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
+- **截断点安全：** `_determine_cutoff` 选定截断点，随后 `_adjust_for_orphan_pairs` 向前回退，直到没有任何 `ToolMessage` 与其 `AIMessage` 工具调用被拆开；当最后一个用户回合占估算 token 的 ≥ 50 % 时（`LAST_TURN_RATIO_THRESHOLD = 0.5`），会改为对最后一个回合本身做压缩（`_compress_last_turn`），而不是把它摘要掉。
+- **防抖动：** 每个**会话**至多 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 次压缩（而非每回合）；连续 `INEFFECTIVE_THRESHOLD = 2` 次无效压缩后（有效 = 消息数减少，或 token 缩减 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`），LLM 步骤被禁用（`summarization_skip_llm`），仅运行非 LLM 策略。计数器以会话级 `summarization_*` 键存于 `state_register_mem`（压缩次数、无效连击、上次 token、上次策略、跳过标志、恢复状态等）。
+- **截断：** 已有的摘要消息（以 `additional_kwargs["lc_source"] == "summarization"` 识别）超过 `SUMMARY_TOTAL_MAX_CHARS = 16 000` 字符时被重新截断，保留头部 30 % / 尾部 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`），并加入省略标记。
+- **输出：** 替换后的消息是 `HumanMessage` / `AIMessage` **成对出现**——一条中性的 `"What did we do so far?"`，后跟携带 `additional_kwargs={"lc_source": "summarization"}` 的 `AIMessage`——因此模型不会看到两条连续同角色消息，也无需事后配对修复。
 - `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。
+
+▶️ 完整文档：[docs/harness/summarization/README.md](../../docs/harness/summarization/README.md) · [中文](../../docs/harness/summarization/README.zh.md) · [한국어](../../docs/harness/summarization/README.ko.md) · [日本語](../../docs/harness/summarization/README.ja.md)
 
 > 预算中间件的类默认值 `max_iterations` 为 50；*实际注册*值是 90（主）与 60（worker）。本文档旧版本声称预算为 10——那是错的。
 
@@ -353,7 +360,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `nudge_review_memory_lock`、`nudge_review_skill_lock` | ContextEngineHook | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
-| `summarization_compression_count`、`summarization_compression_ineffective`、`summarization_compression_last_tokens`、`summarization_last_user_question` | Summarization | mem |
+| `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问） | Summarization | mem |
 | `heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`_last_heartbeat_iter`、`_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard 的键（`SESSION_STATE_KEYS`，六个） | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
 | `hitl:` 前缀键（`_STATE_PREFIX = "hitl"`） | HumanInTheLoop | mem |
@@ -366,7 +373,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 配置项 | 位置 | 作用 |
 |---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的一半 |
+| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的 80 %；同时作为 `main_llm_context_window` 传入 |
 
 > **相关但独立：** 各工具的超时是写死的模块常量——`WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`；超时会杀死子进程）。`.env.example` 中的 `TOOL_CALL_TIMEOUT_MINUTES = 5` **没有任何代码消费**——它不是生效的配置项。`config/num.py` 的常量（`ARCHIVE_THRESHOLD`、`MEMORY_THRESHOLD`、`COMPRESS_RATIO`）也没有被中间件层使用。
 
@@ -393,7 +400,8 @@ agent = create_agent(
         Summarization(                # 上下文压缩（最内层）
             need_update_system_prompt=True,
             model=auxiliary_llm,
-            trigger=[("tokens", int(main_llm_max_tokens / 2))],
+            main_llm_context_window=main_llm_max_tokens,
+            trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
             keep=("messages", 10),
         ),
     ],
@@ -407,8 +415,9 @@ agent = create_agent(
 | `IterationBudget` | `max_iterations` | `50` | `90`（主）/ `60`（worker） |
 | `Summarization` | `need_update_system_prompt` | `False` | `True`（主） |
 | `Summarization` | `model` | 必填 | `auxiliary_llm` |
+| `Summarization` | `main_llm_context_window` | 必填 | `main_llm_max_tokens` |
 | `Summarization` | `trigger` | 必填 | 见[中间件链](#中间件链) |
-| `Summarization` | `keep` | 必填 | `("messages", 10)` |
+| `Summarization` | `keep` | 必填 | `("messages", 10)`（接受但未使用） |
 | `ToolGuardrails` | `config: ToolCallGuardrailConfig` | 见上文默认值 | 默认值 |
 | `HumanInTheLoop` | `config: HITLConfig` | 见上文默认值 | 默认值 |
 | `HeartbeatStaleness` | （默认） | 间隔 1 分钟，空闲 7 / 工具内 20 | 默认值 |
@@ -437,12 +446,11 @@ agent = create_agent(
 ├─ 循环：模型调用
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 重写
-│   │   · Summarization  （仅日志）
 │   ├─ wrap_model_call（最外层 → 最内层）
 │   │   · ContextEngineHook  注入系统提示词（request.override）
 │   │   · IterationBudget  消耗 1；耗尽时返回终止 AIMessage
 │   │   · HeartbeatStaleness  已杀死则抛 HeartbeatTimeoutError；否则 heartbeat_iter += 1
-│   │   · Summarization  视情况压缩历史（辅助 LLM），防抖计数
+│   │   · Summarization  视情况压缩历史（非 LLM 策略 + 辅助 LLM），防抖计数
 │   ├─ LLM 响应
 │   └─ after_model
 │       · HumanInTheLoop  策略检查；必要时 interrupt()；阻止 → 错误 ToolMessage

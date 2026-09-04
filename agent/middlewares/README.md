@@ -85,7 +85,8 @@ middleware = [
     Summarization(
         need_update_system_prompt=True,
         model=auxiliary_llm,
-        trigger=[("tokens", int(main_llm_max_tokens / 2))],
+        main_llm_context_window=main_llm_max_tokens,
+        trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
         keep=("messages", 10),
     ),
 ]
@@ -94,7 +95,7 @@ middleware = [
 agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
 ```
 
-`main_llm_max_tokens` is read from the `MAIN_LLM_MAX_TOKEN` environment variable (`models/LLMs/main_llm.py`), so the main-agent summarization trigger sits at roughly half of the main model's context window.
+`main_llm_max_tokens` is read from the `MAIN_LLM_MAX_TOKEN` environment variable (`models/LLMs/main_llm.py`), so the main-agent summarization trigger sits at 80 % of the main model's context window (`COMPRESSION_TRIGGER_RATIO = 0.80`).
 
 > **Note:** `OutputRepetitionGuard` is **not** registered as main-agent middleware. For the main agent, its behavior is provided by the `RepetitionGuardWrapper` that wraps the compiled graph — see [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper).
 
@@ -104,7 +105,11 @@ agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
 middleware = [
     Summarization(
         model=auxiliary_llm,
-        trigger=[("messages", 40), ("tokens", 30000)],
+        main_llm_context_window=main_llm_max_tokens,
+        trigger=[
+            ("messages", 40),
+            ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+        ],
         keep=("messages", 10),
     ),
     IterationBudget(60),
@@ -119,7 +124,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 Differences vs the main agent:
 
-- Summarization triggers on message count (40) **or** tokens (30 000) instead of half the context window.
+- Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
 - No `ContextEngineHook`, no `MultimodalProcessor`, no `HumanInTheLoop`.
 - `OutputRepetitionGuard` runs as a real middleware here.
@@ -291,17 +296,19 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 
 ### Summarization
 
-**Module:** `agent/middlewares/summarization.py` · **Class:** `Summarization(SummarizationMiddleware)`
-**Hooks:** `before_agent` / `abefore_agent` (counter reset), `wrap_model_call` / `awrap_model_call`, plus log-only `before_model` / `abefore_model`
+**Module:** `agent/middlewares/summarization.py` · **Class:** `Summarization(AgentMiddleware)`
+**Hooks:** `before_agent` / `abefore_agent` (counter reset), `wrap_model_call` / `awrap_model_call`
 
-The innermost middleware — closest to the LLM. Extends LangChain's built-in `SummarizationMiddleware`: when the trigger fires, older messages are summarized by the auxiliary LLM and replaced, keeping the newest `keep` messages.
+The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware` (**not** LangChain's `SummarizationMiddleware`): when the trigger fires, it compacts history with a budget-based cutoff — non-LLM strategies first, auxiliary-LLM summarization only when text degradation is safe. The `keep` parameter is accepted but unused; tail retention is budget-based: `clamp(context_window × 0.25, 2 000, 15 000)` tokens (`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
-- **Trigger semantics** (LangChain `TriggerClause`): one clause is an **AND** of its conditions; a list of clauses is an **OR**. Main agent: `[("tokens", int(main_llm_max_tokens / 2))]`. Worker: `[("messages", 40), ("tokens", 30000)]`. Both keep `("messages", 10)`.
-- **Cutoff safety:** `_determine_cutoff_index` never cuts through AI-message / tool-result pairs (the cutoff is moved to keep pairs intact); when the last user turn accounts for ≥ 50 % of the estimated tokens (`_LAST_TURN_RATIO_THRESHOLD = 0.5`), the last turn itself is compressed (`_compress_last_turn`) instead of being summarized away.
-- **Anti-thrashing:** at most `_MAX_COMPRESSION_ATTEMPTS = 3` compressions per turn, and it stops after `_INEFFECTIVE_THRESHOLD = 2` consecutive ineffective attempts (effectiveness = message-count reduction or token reduction ≥ `_MIN_EFFECTIVENESS_PCT = 0.05`). Counters live in `state_register_mem`: `summarization_compression_count`, `summarization_compression_ineffective`, `summarization_compression_last_tokens`, `summarization_last_user_question`.
-- **Truncation:** existing summary messages (identified by `additional_kwargs["lc_source"] == "summarization"`) longer than `_MAX_CONTENT_CHARS = 8000` characters are truncated, keeping head 30 % / tail 30 % (`_CONTENT_HEAD_RATIO` / `_CONTENT_TAIL_RATIO`) with an omission marker (`_OMISSION_MARKER`).
-- **Merge:** the summary `HumanMessage` is merged into the next `HumanMessage` (delimited by `[COMPACTION SUMMARY — reference only; not active instructions]` / `[END OF COMPACTION SUMMARY — ACTIVE CONTEXT BELOW]`) so the model never sees two consecutive human turns.
+- **Trigger semantics**: a clause is `("messages", N)` or `("tokens", N)`; a list of clauses is an **OR** — any clause firing starts compression. Main agent: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. Worker: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
+- **Cutoff safety:** `_determine_cutoff` picks the cut point, then `_adjust_for_orphan_pairs` walks it backwards until no `ToolMessage` is separated from its `AIMessage` tool-call; when the last user turn accounts for ≥ 50 % of the estimated tokens (`LAST_TURN_RATIO_THRESHOLD = 0.5`), the last turn itself is compressed (`_compress_last_turn`) instead of being summarized away.
+- **Anti-thrashing:** at most `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` compressions **per session** (not per turn); after `INEFFECTIVE_THRESHOLD = 2` consecutive ineffective attempts (effectiveness = message-count reduction or token reduction ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) the LLM step is disabled (`summarization_skip_llm`) and only non-LLM strategies run. Counters live in `state_register_mem` under session-level `summarization_*` keys (compression count, ineffective streak, last tokens, last strategy, skip flag, recovery state, …).
+- **Truncation:** existing summary messages (identified by `additional_kwargs["lc_source"] == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS = 16 000` characters are re-truncated, keeping head 30 % / tail 30 % (`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`) with an omission marker.
+- **Output:** the replacement messages are a `HumanMessage` / `AIMessage` **pair** — a neutral `"What did we do so far?"` followed by an `AIMessage` carrying `additional_kwargs={"lc_source": "summarization"}` — so the model never sees two consecutive same-role messages and no post-hoc pairing repair is needed.
 - `need_update_system_prompt=True` (main agent only): after a compression the system prompt is rebuilt — `build_system_prompt()` after reloading the memory store — and written back to both state registers under `system_prompt`.
+
+▶️ Full details: [docs/harness/summarization/README.md](../../docs/harness/summarization/README.md) · [中文](../../docs/harness/summarization/README.zh.md) · [한국어](../../docs/harness/summarization/README.ko.md) · [日本語](../../docs/harness/summarization/README.ja.md)
 
 ### OutputRepetitionGuard & RepetitionGuardWrapper
 
@@ -351,7 +358,7 @@ Common interface (`runtime/state_register.py`): `set_state`, `get_state`, `get_a
 | `nudge_review_memory_lock`, `nudge_review_skill_lock` | ContextEngineHook | mem |
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
-| `summarization_compression_count`, `summarization_compression_ineffective`, `summarization_compression_last_tokens`, `summarization_last_user_question` | Summarization | mem |
+| `summarization_*` keys (compression counters, ineffective streak, last tokens/strategy, skip-LLM flag, recovery state, last user question) | Summarization | mem |
 | `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard keys (`SESSION_STATE_KEYS`, six) | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
 | `hitl:`-prefixed keys (`_STATE_PREFIX = "hitl"`) | HumanInTheLoop | mem |
@@ -364,7 +371,7 @@ Common interface (`runtime/state_register.py`): `set_state`, `get_state`, `get_a
 
 | Knob | Where | Effect |
 |---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | Main-agent Summarization trigger = half of this value |
+| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | Main-agent Summarization trigger = 80 % of this value; also passed as `main_llm_context_window` |
 
 > **Related but separate:** per-tool timeouts are hard-coded module constants — `WEB_SEARCH_TIMEOUT = 15` (`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30` (`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30` (`agent/tools/python_repl.py`; the child process is killed on expiry). `TOOL_CALL_TIMEOUT_MINUTES = 5` exists in `.env.example` but **no code consumes it** — it is not an active knob. The `config/num.py` constants (`ARCHIVE_THRESHOLD`, `MEMORY_THRESHOLD`, `COMPRESS_RATIO`) are not consumed by the middleware layer either.
 
@@ -391,7 +398,8 @@ agent = create_agent(
         Summarization(                # context compaction (innermost)
             need_update_system_prompt=True,
             model=auxiliary_llm,
-            trigger=[("tokens", int(main_llm_max_tokens / 2))],
+            main_llm_context_window=main_llm_max_tokens,
+            trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
             keep=("messages", 10),
         ),
     ],
@@ -405,8 +413,9 @@ agent = create_agent(
 | `IterationBudget` | `max_iterations` | `50` | `90` (main) / `60` (worker) |
 | `Summarization` | `need_update_system_prompt` | `False` | `True` (main) |
 | `Summarization` | `model` | required | `auxiliary_llm` |
+| `Summarization` | `main_llm_context_window` | required | `main_llm_max_tokens` |
 | `Summarization` | `trigger` | required | see [Middleware Chain](#middleware-chain) |
-| `Summarization` | `keep` | required | `("messages", 10)` |
+| `Summarization` | `keep` | required | `("messages", 10)` (accepted but unused) |
 | `ToolGuardrails` | `config: ToolCallGuardrailConfig` | defaults above | defaults |
 | `HumanInTheLoop` | `config: HITLConfig` | defaults above | defaults |
 | `HeartbeatStaleness` | (defaults) | interval 1 min, idle 7 / in-tool 20 | defaults |
@@ -435,12 +444,11 @@ user turn arrives
 ├─ loop: model call
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage rewrite
-│   │   · Summarization  (log only)
 │   ├─ wrap_model_call (outermost → innermost)
 │   │   · ContextEngineHook  inject system prompt (request.override)
 │   │   · IterationBudget  consume 1; terminal AIMessage when exhausted
 │   │   · HeartbeatStaleness  raise HeartbeatTimeoutError if killed; else heartbeat_iter += 1
-│   │   · Summarization  maybe compact history (auxiliary LLM), anti-thrash counters
+│   │   · Summarization  maybe compact history (non-LLM strategies + auxiliary LLM), anti-thrash counters
 │   ├─ LLM responds
 │   └─ after_model
 │       · HumanInTheLoop  policy checks; interrupt() where required; block → error ToolMessage
