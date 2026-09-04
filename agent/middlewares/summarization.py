@@ -98,6 +98,54 @@ _SUMMARY_LC_SOURCE = "summarization"
 
 
 # ======================================================================
+# T3: reported input-token extraction (Task 6)
+# ======================================================================
+
+
+def extract_reported_input_tokens(response: Any) -> int | None:
+    """Extract the provider-reported input token count from a wrap return.
+
+    Handles the 3-form handler-return union ``ModelResponse | AIMessage |
+    ExtendedModelResponse``:
+
+    - bare ``AIMessage`` (or duck-typed object exposing ``usage_metadata``):
+      ``usage_metadata["input_tokens"]``
+    - ``ModelResponse``: probes its message body (the ``result`` list);
+      the last message carrying usable usage wins
+    - ``ExtendedModelResponse``: unwraps ``model_response`` and recurses
+
+    Returns None when missing/malformed (no usage, non-int or bool value,
+    value <= 0, plain strings, None). NEVER raises — T3 is a post-response
+    re-check that must never break the response path.
+    """
+    try:
+        if response is None:
+            return None
+        usage = getattr(response, "usage_metadata", None)
+        if isinstance(usage, dict):
+            value = usage.get("input_tokens")
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value > 0
+            ):
+                return int(value)
+            return None
+        result = getattr(response, "result", None)
+        if isinstance(result, (list, tuple)):
+            for msg in reversed(list(result)):
+                tokens = extract_reported_input_tokens(msg)
+                if tokens is not None:
+                    return tokens
+        inner = getattr(response, "model_response", None)
+        if inner is not None and inner is not response:
+            return extract_reported_input_tokens(inner)
+        return None
+    except Exception:
+        return None
+
+
+# ======================================================================
 # Summary Templates
 # ======================================================================
 
@@ -750,6 +798,142 @@ class Summarization(AgentMiddleware):
             state_register_mem.set_state(session_id, _COOLDOWN_ROUNDS_KEY, rounds - 1)
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # T3: post-response real-token re-check (Task 6)
+    # ------------------------------------------------------------------
+
+    def _post_response_check(
+        self,
+        request: ModelRequest[ContextT],
+        response: ModelResponse[ResponseT]
+        | AIMessage
+        | ExtendedModelResponse[ResponseT],
+        session_id: str,
+        t2_compressed: bool = False,
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        """Post-response real-token re-check (T3, Task 6).
+
+        Runs AFTER the handler returns inside wrap/awrap_model_call: the
+        provider-reported input tokens are the most accurate overflow signal,
+        and per-call granularity covers multiple model calls within one turn
+        (which the per-turn T1 preflight cannot). Dispatch reuses the Task 5
+        executors (``_dispatch_overflow_route``) — never a second copy — and
+        a failure NEVER loses the original response.
+        """
+        try:
+            if t2_compressed:
+                # T2 dispatched an actual compact in THIS wrap call: exactly
+                # one compression per model call (anti-double-compress).
+                return response
+            reported = extract_reported_input_tokens(response)
+            if reported is None:
+                return response
+            attempts = state_register_mem.get_state(
+                session_id, _TURN_ATTEMPTS_KEY, 0
+            ) or 0
+            if attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN:
+                return response
+            cooldown = state_register_mem.get_state(
+                session_id, _COOLDOWN_ROUNDS_KEY, 0
+            ) or 0
+            if cooldown > 0:
+                # Anti-thrash gate respected: T3 reads the post-tick value.
+                return response
+            ctx_window = self._main_llm_context_window
+            if not ctx_window or ctx_window <= 0:
+                return response
+            usable = self._usable_budget()
+            if usable <= 0:
+                return response
+            messages = list(request.messages)
+            est = self._estimate_tokens(messages)
+            system_est = self._estimate_system_prompt_tokens(session_id)
+            # reported wins (compute_pressure takes the max) — T3 is
+            # real-token driven, NOT estimate-driven like T1/T2.
+            pressure = compute_pressure(est, reported, system_est)
+            if pressure < usable * COMPRESSION_TRIGGER_RATIO:
+                return response
+            truncatable = find_truncatable_tool_results(list(messages))
+            route = decide_route(pressure, int(ctx_window), usable, truncatable)
+            if route == ROUTE_FITS:
+                return response
+            request = self._dispatch_overflow_route(
+                request, route, session_id, trigger="T3"
+            )
+            new_tokens = self._estimate_tokens(list(request.messages))
+            logger.info(
+                "Context compression: trigger=T3, reported_input_tokens={}, "
+                "route={}, old_tokens={}, new_tokens={}, pressure_ratio={:.2f}",
+                reported, route, est, new_tokens, pressure / usable,
+            )
+            return response
+        except Exception as exc:
+            # T3 must never break the response path: original response wins.
+            logger.error(
+                "Context compression: T3 check failed (response preserved): {}",
+                exc,
+            )
+            return response
+
+    async def _apost_response_check(
+        self,
+        request: ModelRequest[ContextT],
+        response: ModelResponse[ResponseT]
+        | AIMessage
+        | ExtendedModelResponse[ResponseT],
+        session_id: str,
+        t2_compressed: bool = False,
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        """Async twin of :meth:`_post_response_check` (parity by shape)."""
+        try:
+            if t2_compressed:
+                return response
+            reported = extract_reported_input_tokens(response)
+            if reported is None:
+                return response
+            attempts = state_register_mem.get_state(
+                session_id, _TURN_ATTEMPTS_KEY, 0
+            ) or 0
+            if attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN:
+                return response
+            cooldown = state_register_mem.get_state(
+                session_id, _COOLDOWN_ROUNDS_KEY, 0
+            ) or 0
+            if cooldown > 0:
+                return response
+            ctx_window = self._main_llm_context_window
+            if not ctx_window or ctx_window <= 0:
+                return response
+            usable = self._usable_budget()
+            if usable <= 0:
+                return response
+            messages = list(request.messages)
+            est = self._estimate_tokens(messages)
+            system_est = self._estimate_system_prompt_tokens(session_id)
+            pressure = compute_pressure(est, reported, system_est)
+            if pressure < usable * COMPRESSION_TRIGGER_RATIO:
+                return response
+            truncatable = find_truncatable_tool_results(list(messages))
+            route = decide_route(pressure, int(ctx_window), usable, truncatable)
+            if route == ROUTE_FITS:
+                return response
+            request = await self._adispatch_overflow_route(
+                request, route, session_id, trigger="T3"
+            )
+            new_tokens = self._estimate_tokens(list(request.messages))
+            logger.info(
+                "Context compression: trigger=T3, reported_input_tokens={}, "
+                "route={}, old_tokens={}, new_tokens={}, pressure_ratio={:.2f}",
+                reported, route, est, new_tokens, pressure / usable,
+            )
+            return response
+        except Exception as exc:
+            logger.error(
+                "Context compression: T3 check failed (response preserved): {}",
+                exc,
+            )
+            return response
 
     # ------------------------------------------------------------------
     # Preemptive truncation (no LLM call)
@@ -1569,8 +1753,17 @@ class Summarization(AgentMiddleware):
                         )
             response = handler(request)
             self._monitor_degradation(response, session_id)
-            return response
+            # T3 post-response re-check (Task 6). Gate path: T2 did NOT
+            # dispatch here, so t2_compressed=False — the check re-reads the
+            # anti-thrash state itself (post-tick cooldown still > 0 blocks).
+            return self._post_response_check(request, response, session_id)
 
+        # T3 anti-double-compress snapshot (Task 6): turn attempts BEFORE the
+        # T2 dispatch; only actual compact executions increment the key, so a
+        # bump means T2 compressed in THIS wrap call.
+        t2_attempts_before = state_register_mem.get_state(
+            session_id, _TURN_ATTEMPTS_KEY, 0
+        )
         # 4-route decision (upgraded _preemptive_check) → single dispatch
         route = self._decide_overflow_route(messages, session_id)
         if route is not None and route != ROUTE_FITS:
@@ -1585,7 +1778,15 @@ class Summarization(AgentMiddleware):
 
         response = handler(request)
         self._monitor_degradation(response, session_id)
-        return response
+        t2_compressed = (
+            state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+            > t2_attempts_before
+        )
+        # T3: post-response real-token re-check (Task 6); T2-compressed calls
+        # skip via the local flag — one compression per model call.
+        return self._post_response_check(
+            request, response, session_id, t2_compressed=t2_compressed
+        )
 
     # ------------------------------------------------------------------
     # awrap_model_call (async)
@@ -1638,8 +1839,15 @@ class Summarization(AgentMiddleware):
                         )
             response = await handler(request)
             self._monitor_degradation(response, session_id)
-            return response
+            # T3 post-response re-check (Task 6); see the sync twin.
+            return await self._apost_response_check(request, response, session_id)
 
+        # T3 anti-double-compress snapshot (Task 6): turn attempts BEFORE the
+        # T2 dispatch; only actual compact executions increment the key, so a
+        # bump means T2 compressed in THIS wrap call.
+        t2_attempts_before = state_register_mem.get_state(
+            session_id, _TURN_ATTEMPTS_KEY, 0
+        )
         # 4-route decision (upgraded _preemptive_check) → single dispatch
         route = self._decide_overflow_route(messages, session_id)
         if route is not None and route != ROUTE_FITS:
@@ -1654,4 +1862,12 @@ class Summarization(AgentMiddleware):
 
         response = await handler(request)
         self._monitor_degradation(response, session_id)
-        return response
+        t2_compressed = (
+            state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+            > t2_attempts_before
+        )
+        # T3: post-response real-token re-check (Task 6); T2-compressed calls
+        # skip via the local flag — one compression per model call.
+        return await self._apost_response_check(
+            request, response, session_id, t2_compressed=t2_compressed
+        )

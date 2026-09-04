@@ -24,7 +24,11 @@ from loguru import logger
 from types import SimpleNamespace
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain.agents.middleware import ModelRequest
+from langchain.agents.middleware import (
+    ExtendedModelResponse,
+    ModelRequest,
+    ModelResponse,
+)
 
 import agent.middlewares.summarization as summarization_module
 from runtime import state_register_mem
@@ -435,6 +439,320 @@ class TestRouteDecision:
         mw = make_middleware(main_llm_context_window=None)
         decide = getattr(mw, "_decide_overflow_route")
         assert decide(soft_overflow_messages(), sid) is None
+
+
+# ======================================================================
+# Task 6 / T3: post-response real-token re-check
+# ======================================================================
+
+T3_TRIGGER_REPORTED = 30000  # >= 20480 (threshold_compact); wins over est 11750
+T3_TRUNCATE_REPORTED = 22000  # hard zone, overflow <= 0 + candidates -> truncate
+T3_BELOW_REPORTED = 10000  # < 20480 -> below threshold
+
+
+def _ai_with_usage(content, input_tokens):
+    return AIMessage(
+        content=content,
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": 100,
+            "total_tokens": input_tokens + 100,
+        },
+    )
+
+
+def t3_low_est_messages():
+    """est = 47000 // 4 = 11750 < 17920 (threshold_truncate) -> T2 complete
+    no-op (route fits, token trigger 80000 unreached). Single-big-message
+    shape proven to compact (same shape as hard_overflow_messages)."""
+    return [HumanMessage(content="h" * 47000)]
+
+
+def t3_truncate_messages():
+    """9-msg shape: ToolMessage est = (66000 + 9) // 4 = 16502 < 17920 -> T2
+    no-op; candidate at idx 2 (2 < 9 - 6); reported 22000 in the hard zone
+    with overflow <= 0 -> T3 truncate_tool_results_only."""
+    return [
+        HumanMessage(content="q1"),
+        _ai_with_call("t3-call-1"),
+        ToolMessage(content="x" * 66000, tool_call_id="t3-call-1"),
+        HumanMessage(content="q2"),
+        AIMessage(content="a2"),
+        HumanMessage(content="q3"),
+        AIMessage(content="a3"),
+        HumanMessage(content="q4"),
+        AIMessage(content="a4"),
+    ]
+
+
+class TestT3Trigger:
+    def test_t3_names_exist_on_module(self):
+        # RED marker: module-level name via module-getattr; the check methods
+        # live on the Summarization class (Task 5 pattern: instance getattr)
+        mget("extract_reported_input_tokens")
+        mw = make_middleware()
+        getattr(mw, "_post_response_check")
+        getattr(mw, "_apost_response_check")
+
+    def test_t3_compact_when_t2_did_not_fire(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        req = make_request(t3_low_est_messages(), session_id=sid, model=stub)
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(req, lambda r: mr)
+
+        # original response object never lost
+        assert resp is mr
+        # T2 must NOT have fired (estimate low)
+        assert not any("trigger=T2" in line for line in lines)
+        # T3 fired: detailed log + route log, both labelled trigger=T3
+        assert any(
+            "trigger=T3" in line and "reported_input_tokens=30000" in line
+            for line in lines
+        )
+        assert any(
+            "trigger=T3" in line and "route=compact_only" in line
+            for line in lines
+        )
+        # actual compact execution bookkeeping
+        attempts_key = mget("_TURN_ATTEMPTS_KEY")
+        assert state_register_mem.get_state(sid, attempts_key) == 1
+        assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) == 3
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
+
+    def test_t3_truncate_route_hard_zone_with_candidates(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        req = make_request(t3_truncate_messages(), session_id=sid, model=stub)
+        captured = {}
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRUNCATE_REPORTED)])
+
+        def handler(r):
+            captured["messages"] = list(r.messages)
+            return mr
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(req, handler)
+
+        assert resp is mr
+        assert not any("trigger=T2" in line for line in lines)
+        assert any(
+            "trigger=T3" in line and "route=truncate_tool_results_only" in line
+            for line in lines
+        )
+        # truncate route ran in place: marker + shrink, NO aux-LLM call
+        tool = captured["messages"][2]
+        assert TTL_MARKER in tool.content
+        assert len(tool.content) < 66000
+        assert stub.calls == []
+        # truncate-only route does NOT consume a turn attempt
+        attempts_key = mget("_TURN_ATTEMPTS_KEY")
+        assert state_register_mem.get_state(sid, attempts_key) in (None, 0)
+
+    def test_t3_async_parity(self, sid):
+        sid2 = sid + "-async"
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
+
+        async def ahandler(r):
+            return mr
+
+        try:
+            with capture_logs() as lines:
+                resp = asyncio.run(
+                    mw.awrap_model_call(
+                        make_request(t3_low_est_messages(), sid2, stub), ahandler
+                    )
+                )
+            assert resp is mr
+            assert not any("trigger=T2" in line for line in lines)
+            assert any(
+                "trigger=T3" in line and "route=compact_only" in line
+                for line in lines
+            )
+            attempts_key = mget("_TURN_ATTEMPTS_KEY")
+            assert state_register_mem.get_state(sid2, attempts_key) == 1
+        finally:
+            try:
+                state_register_mem.clear_session(sid2)
+            except Exception:
+                pass
+
+    def test_apost_response_check_is_real_coroutine(self):
+        import inspect
+
+        assert inspect.iscoroutinefunction(
+            getattr(make_middleware(), "_apost_response_check")
+        )
+
+
+class TestT3ThreeForms:
+    def test_extract_three_forms(self):
+        extract = mget("extract_reported_input_tokens")
+        ai = _ai_with_usage("ok", 123)
+        # bare AIMessage: usage_metadata["input_tokens"]
+        assert extract(ai) == 123
+        # langchain ModelResponse: probe its message body (.result list)
+        assert extract(ModelResponse(result=[ai])) == 123
+        tool = ToolMessage(content="t", tool_call_id="c1")
+        assert extract(ModelResponse(result=[tool, ai])) == 123
+        # duck-typed ModelResponse-like stub
+        assert extract(SimpleNamespace(result=[ai])) == 123
+        # ExtendedModelResponse: nested unwrap
+        ext = ExtendedModelResponse(model_response=ModelResponse(result=[ai]))
+        assert extract(ext) == 123
+        # permissive unwrap: ExtendedModelResponse wrapping a bare message
+        assert extract(ExtendedModelResponse(model_response=ai)) == 123
+
+    def test_extract_none_forms(self):
+        extract = mget("extract_reported_input_tokens")
+        assert extract(AIMessage(content="no usage")) is None
+        # {} / malformed values cannot pass AIMessage pydantic validation —
+        # probe the identical getattr path via model_copy (no revalidation)
+        # and duck-typed stubs.
+        empty = AIMessage(content="x").model_copy(update={"usage_metadata": {}})
+        assert extract(empty) is None
+        malformed = AIMessage(content="x").model_copy(
+            update={
+                "usage_metadata": {
+                    "input_tokens": "abc",
+                    "output_tokens": 1,
+                    "total_tokens": 1,
+                }
+            }
+        )
+        assert extract(malformed) is None
+        null_tokens = AIMessage(content="x").model_copy(
+            update={
+                "usage_metadata": {
+                    "input_tokens": None,
+                    "output_tokens": 1,
+                    "total_tokens": 1,
+                }
+            }
+        )
+        assert extract(null_tokens) is None
+        assert extract(SimpleNamespace(usage_metadata={})) is None
+        assert extract(SimpleNamespace(usage_metadata={"input_tokens": "abc"})) is None
+        assert extract(_ai_with_usage("x", 0)) is None  # degenerate 0 -> None
+        assert extract(ModelResponse(result=[HumanMessage(content="p")])) is None
+        assert extract(ModelResponse(result=[])) is None
+        assert extract("plain string") is None
+        assert extract(None) is None
+        assert extract(object()) is None
+        assert extract(True) is None
+
+    def test_extract_never_raises(self):
+        extract = mget("extract_reported_input_tokens")
+
+        class Boom:
+            @property
+            def usage_metadata(self):
+                raise RuntimeError("boom")
+
+        class SelfLoop:
+            @property
+            def model_response(self):
+                return self
+
+        assert extract(Boom()) is None
+        assert extract(SelfLoop()) is None
+
+
+class TestT3NegativeDouble:
+    def test_t2_just_compressed_t3_skipped(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        req = make_request(hard_overflow_messages(), session_id=sid, model=stub)
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(req, lambda r: mr)
+
+        assert resp is mr
+        # exactly ONE trigger record, and it is T2's
+        trig = [line for line in lines if "trigger=" in line]
+        assert len(trig) == 1
+        assert "trigger=T2" in trig[0]
+        # T3 detailed log never fired (no reported_input_tokens anywhere)
+        assert not any("reported_input_tokens=" in line for line in lines)
+        # single compression this turn
+        attempts_key = mget("_TURN_ATTEMPTS_KEY")
+        assert state_register_mem.get_state(sid, attempts_key) == 1
+        assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) == 3
+
+    def test_cooldown_active_t3_noop(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        state_register_mem.set_state(sid, mget("_COOLDOWN_ROUNDS_KEY"), 2)
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
+            )
+
+        assert resp is mr
+        assert not any("trigger=" in line for line in lines)
+        # T3 read the POST-tick value: 2 -> 1 at wrap entry, T3 sees 1 -> noop
+        assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) == 1
+        attempts_key = mget("_TURN_ATTEMPTS_KEY")
+        assert state_register_mem.get_state(sid, attempts_key) in (None, 0)
+
+    def test_attempts_exhausted_t3_noop(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        attempts_key = mget("_TURN_ATTEMPTS_KEY")
+        state_register_mem.set_state(sid, attempts_key, 3)
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
+            )
+
+        assert resp is mr
+        assert not any("trigger=" in line for line in lines)
+        assert state_register_mem.get_state(sid, attempts_key) == 3
+
+    def test_below_threshold_t3_noop(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_BELOW_REPORTED)])
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
+            )
+
+        assert resp is mr
+        assert not any("trigger=" in line for line in lines)
+        attempts_key = mget("_TURN_ATTEMPTS_KEY")
+        assert state_register_mem.get_state(sid, attempts_key) in (None, 0)
+
+    def test_dispatch_failure_response_preserved(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("dispatch boom")
+
+        mw._dispatch_overflow_route = boom
+        mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
+            )
+
+        assert resp is mr  # original response intact despite dispatch failure
+        assert not any("route=" in line for line in lines)
+        assert any("dispatch boom" in line for line in lines)
+        attempts_key = mget("_TURN_ATTEMPTS_KEY")
+        assert state_register_mem.get_state(sid, attempts_key) in (None, 0)
 
 
 if __name__ == "__main__":
