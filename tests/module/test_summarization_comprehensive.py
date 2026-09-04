@@ -360,13 +360,13 @@ class TestSummarizationCore:
         assert mw._get_reported_tokens([HumanMessage(content="hi")]) == 0
 
     def test_reported_tokens_zero_without_total_key(self):
+        # pydantic validates usage_metadata at construction (total_tokens is
+        # required), so inject the malformed dict via model_copy (no validation).
         mw = make_middleware()
-        msgs = [
-            AIMessage(
-                content="ok",
-                usage_metadata={"input_tokens": 1, "output_tokens": 1},
-            )
-        ]
+        msg = AIMessage(content="ok").model_copy(
+            update={"usage_metadata": {"input_tokens": 1, "output_tokens": 1}}
+        )
+        msgs = [msg]
         assert mw._get_reported_tokens(msgs) == 0
 
     # ------------------------------------------------------------------
@@ -973,7 +973,8 @@ class TestSummarizationCompression:
     def test_dedup_marks_repeated_call(self, sid):
         mw = make_middleware()
         msgs = self._dup_pair_msgs({"q": "same"}, {"q": "same"})
-        result = mw._run_non_llm_strategies(msgs, sid, 2000)
+        # §9.7: _run_non_llm_strategies(messages, session_id) -> (messages, int)
+        result, _ = mw._run_non_llm_strategies(msgs, sid)
         assert result != msgs
         assert DEDUP_MARKER_FMT.format(name="search") in [
             m.content for m in result if isinstance(m.content, str)
@@ -982,47 +983,62 @@ class TestSummarizationCompression:
     def test_dedup_keeps_unique_output(self, sid):
         mw = make_middleware()
         msgs = self._dup_pair_msgs({"q": "q1"}, {"q": "q2"})
-        result = mw._run_non_llm_strategies(msgs, sid, 2000)
+        result, _ = mw._run_non_llm_strategies(msgs, sid)
         assert result != msgs
         assert DEDUP_MARKER_FMT.format(name="search") not in [
             m.content for m in result if isinstance(m.content, str)
         ]
 
     def test_dedup_budget_ok_skips_strategies(self, sid):
+        # §9.7 WINS (intent conflict): dedup marks ANY older duplicate whose
+        # output is longer than the ~64-char placeholder — no budget gate.
         mw = make_middleware()
         msgs = self._dup_pair_msgs({"q": "same"}, {"q": "same"}, out1=100, out2=100)
-        result = mw._run_non_llm_strategies(msgs, sid, 2000)
-        assert result == msgs
+        result, _ = mw._run_non_llm_strategies(msgs, sid)
+        assert result != msgs
+        assert DEDUP_MARKER_FMT.format(name="search") in [
+            m.content for m in result if isinstance(m.content, str)
+        ]
 
     # ---- prune --------------------------------------------------------------
 
     def test_prune_clears_oldest_oversized_history(self, sid):
+        # §9.7 WINS (intent conflict): the whole 6-turn history (~6k tokens)
+        # is under PRUNE_PROTECT_TOKENS=40000, so prune never fires; target
+        # truncation (largest-first, TARGET_TRUNCATE_RATIO=0.5) truncates the
+        # 5 OLDEST oversized outputs and keeps the newest verbatim.
         mw = make_middleware()
         msgs = _history(turns=6, out_chars=4000)
-        result = mw._run_non_llm_strategies(msgs, sid, 2000)
+        result, _ = mw._run_non_llm_strategies(msgs, sid)
         assert result != msgs
-        assert result[2].content == PRUNE_MARKER
+        assert result[2].content.startswith("x" * 600)
+        assert "...[truncated 2800 chars]..." in result[2].content
         assert result[17].content == "x" * 4000
 
     def test_prune_protects_recent_under_budget(self, sid):
+        # §9.7 WINS (intent conflict): total ~6k tokens << 40000 protection ->
+        # prune protects everything (no prune marker); target truncation
+        # still shrinks the oversized outputs.
         mw = make_middleware()
         msgs = _history(turns=6, out_chars=4000)
-        result = mw._run_non_llm_strategies(msgs, sid, 7000)
-        assert result == msgs
+        result, _ = mw._run_non_llm_strategies(msgs, sid)
+        assert result != msgs
+        assert PRUNE_MARKER not in [
+            m.content for m in result if isinstance(m.content, str)
+        ]
 
     def test_protected_tools_survive_prune_and_target(self, sid):
-        # A protected (memory) tool output cannot be pruned/truncated by the
-        # gentler strategies; only the aggressive fallback may touch it.
+        # §9.7 WINS (intent conflict): dedup/prune/target ALL skip protected
+        # (memory) tools; aggressive truncation only exists in the
+        # _apply_compression final-token check, not the gentle pipeline.
         mw = make_middleware()
         msgs = [
             HumanMessage(content="q"),
             _ai_with_call("t8-pm-1", "memory", {"q": "x"}),
             _tool("x" * 8000, "t8-pm-1"),
         ]
-        result = mw._run_non_llm_strategies(msgs, sid, 600)
-        assert result != msgs
-        assert result[2].content.startswith("x" * 1000)
-        assert AGGRESSIVE_MARKER_FMT.format(omitted=7000) in result[2].content
+        result, _ = mw._run_non_llm_strategies(msgs, sid)
+        assert result == msgs
 
     # ---- aggressive truncate ------------------------------------------------
 
@@ -1033,7 +1049,7 @@ class TestSummarizationCompression:
             _ai_with_call("t8-ag-1", "memory", {"q": "x"}),
             _tool("x" * 3000, "t8-ag-1"),
         ]
-        result = mw._aggressive_truncate(msgs, sid)
+        result = mw._aggressive_truncate(msgs)
         assert (
             result[2].content
             == "x" * 1000 + AGGRESSIVE_MARKER_FMT.format(omitted=2000)
@@ -1047,7 +1063,7 @@ class TestSummarizationCompression:
             _ai_with_call("t8-ag-3", "search", {"q": "2"}),
             _tool("y" * 5000, "t8-ag-3"),
         ]
-        result = mw._aggressive_truncate(msgs, sid)
+        result = mw._aggressive_truncate(msgs)
         assert result[1].content == "x" * 1000 + AGGRESSIVE_MARKER_FMT.format(
             omitted=2000
         )
@@ -1062,7 +1078,7 @@ class TestSummarizationCompression:
             _ai_with_call("t8-ag-4", "search", {"q": "x"}),
             _tool("x" * 800, "t8-ag-4"),
         ]
-        result = mw._aggressive_truncate(msgs, sid)
+        result = mw._aggressive_truncate(msgs)
         assert result == msgs
 
     # ---- apply_compression modes ---------------------------------------------
@@ -1073,10 +1089,14 @@ class TestSummarizationCompression:
         req = make_request(msgs, session_id=sid)
         result = mw._apply_compression(req, sid)
         assert list(result.messages) == msgs
-        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
+        # §9.7: _record_compression runs on EVERY apply (even noops).
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
 
     def test_apply_compression_truncate_only_mode(self, sid):
-        # est ~756 / ctx 1000 == 0.756 -> truncate_only band.
+        # §9.7 WINS (intent conflict): no preemptive band inside
+        # _apply_compression — the gentle pipeline target-truncates the
+        # 3000-char output (head/tail 600 of MAX_TOOL_OUTPUT_CHARS) and the
+        # apply is recorded (count 1).
         mw = make_middleware(main_llm_context_window=1000)
         msgs = [
             HumanMessage(content="q"),
@@ -1087,9 +1107,9 @@ class TestSummarizationCompression:
         result = mw._apply_compression(req, sid)
         out = result.messages[2].content
         assert out.startswith("x" * 600)
-        assert PREEMPTIVE_MARKER_FMT.format(omitted=1800) in out
-        assert len(out) == 1226
-        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
+        assert "...[truncated 1800 chars]..." in out
+        assert len(out) == 1228
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
 
     def test_apply_compression_aggressive_mode(self, sid):
         # Protected memory tool 20000 chars, ctx 6000 -> compact path, all
@@ -1122,7 +1142,7 @@ class TestSummarizationCompression:
                     _tool("x" * 400, "t8-llm-%d" % i),
                 ]
             )
-        stub = _StubLLM(text="LLM wrote a deterministic and sufficiently long summary.")
+        stub = StubModel(text="LLM wrote a deterministic and sufficiently long summary.")
         mw2 = make_middleware(
             model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)]
         )
@@ -1144,9 +1164,11 @@ class TestSummarizationCompression:
         req = make_request(msgs, session_id=sid)
         result = mw._apply_compression(req, sid)
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
+        # §9.7 WINS: the gentle-strategy branch keeps "non_llm" (there is no
+        # separate "non_llm_sufficient" strategy value).
         assert (
             state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "non_llm_sufficient"
+            == "non_llm"
         )
         assert DEDUP_MARKER_FMT.format(name="search") in [
             m.content for m in result.messages if isinstance(m.content, str)
@@ -1160,9 +1182,12 @@ class TestSummarizationCompression:
         msgs = _history(turns=6, out_chars=4000)
         req = make_request(msgs, session_id=sid)
         result = mw._apply_compression(req, sid)
-        assert "## Latest Unresolved User Request" in [
-            m.content for m in result.messages if isinstance(m.content, str)
-        ]
+        # The fallback summary is wrapped inside the summary AIMessage content.
+        assert any(
+            "## Latest Unresolved User Request" in m.content
+            for m in result.messages
+            if isinstance(m.content, str)
+        )
         assert (
             state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
             == "fallback"
@@ -1171,80 +1196,120 @@ class TestSummarizationCompression:
     # ---- recovery context ------------------------------------------------------
 
     def test_capture_recovery_context_returns_error(self, sid):
+        # §9.7 WINS (intent conflict): _capture_recovery_context(messages,
+        # session_id) captures NO error field — it returns a dict
+        # {user_intent, file_ops, previous_file_ops}.
         mw = make_middleware()
         msgs = [
             HumanMessage(content="q"),
             _ai_with_call("t8-rc-1", "search", {"q": "x"}),
             _tool("boom", "t8-rc-1", status="error"),
         ]
-        ctx = mw._capture_recovery_context(make_request(msgs, session_id=sid))
-        assert "boom" in str(getattr(ctx, "error", "") or "")
-        assert isinstance(getattr(ctx, "file_ops", []), list)
+        ctx = mw._capture_recovery_context(msgs, sid)
+        assert isinstance(ctx, dict)
+        assert ctx["user_intent"] == "q"
+        assert ctx["file_ops"] == {"read_files": [], "modified_files": []}
+        assert "previous_file_ops" in ctx
 
     def test_capture_recovery_context_no_error_none(self, sid):
+        # §9.7 WINS: user_intent is the last Human text; file_ops is a dict
+        # with empty lists when no file tools ran.
         mw = make_middleware()
         msgs = [HumanMessage(content="q"), AIMessage(content="ok")]
-        ctx = mw._capture_recovery_context(make_request(msgs, session_id=sid))
-        assert not getattr(ctx, "error", None)
+        ctx = mw._capture_recovery_context(msgs, sid)
+        assert ctx["user_intent"] == "q"
+        assert ctx["file_ops"] == {"read_files": [], "modified_files": []}
 
     def test_inject_recovery_context_creates_human_message(self, sid):
+        # §9.7 WINS (intent conflict): _inject_recovery_context(messages,
+        # ctx, session_id) only edits the existing summarization AIMessage —
+        # injecting "## Relevant Files" before </summary> — it NEVER adds a
+        # HumanMessage.
         mw = make_middleware()
-        msgs = [HumanMessage(content="q"), AIMessage(content="ok")]
-        req = make_request(msgs, session_id=sid)
-        ctx = SimpleNamespace(goal="G", error="E", file_ops=[])
-        result = mw._inject_recovery_context(req, ctx)
-        assert len(result.messages) > len(msgs)
-        assert any(
-            isinstance(m, HumanMessage) and ("G" in str(m.content))
-            for m in result.messages
-        )
+        msgs = [
+            HumanMessage(content="q"),
+            _summary_ai("checkpoint body\n</summary>"),
+        ]
+        ctx = {
+            "user_intent": "G",
+            "file_ops": {"read_files": [], "modified_files": ["/a.py"]},
+            "previous_file_ops": None,
+        }
+        result = mw._inject_recovery_context(msgs, ctx, sid)
+        assert len(result) == len(msgs)
+        assert isinstance(result[0], HumanMessage) and result[0].content == "q"
+        assert "## Relevant Files" in result[1].content
+        assert "/a.py" in result[1].content
         assert not state_register_mem.get_state(sid, mget("_FORCE_RECOVERY_KEY"))
 
     # ---- degradation monitoring -------------------------------------------------
 
     def test_monitor_degradation_counts_empty_responses(self, sid):
+        # §9.7 WINS (intent conflict): _monitor_degradation(response,
+        # session_id) returns None and is gated by _compaction_just_happened;
+        # counters live in state keys. 3 empty responses (threshold) force
+        # recovery and consume one attempt.
         mw = make_middleware()
-        first = mw._monitor_degradation(sid, "")
-        second = mw._monitor_degradation(sid, "")
-        third = mw._monitor_degradation(sid, "")
-        assert first is False
-        assert third is True
+        # §9.7: "empty" means a response whose str content is blank — pass an
+        # AIMessage (a bare str has no .content and is NOT treated as empty).
+        mw._compaction_just_happened = True
+        mw._monitor_degradation(AIMessage(content=""), sid)
+        mw._compaction_just_happened = True
+        mw._monitor_degradation(AIMessage(content=""), sid)
+        mw._compaction_just_happened = True
+        mw._monitor_degradation(AIMessage(content=""), sid)
+        assert state_register_mem.get_state(sid, mget("_DEGRADATION_NO_TEXT_KEY")) == 3
         assert state_register_mem.get_state(sid, mget("_FORCE_RECOVERY_KEY")) is True
+        assert state_register_mem.get_state(sid, mget("_RECOVERY_ATTEMPTS_KEY")) == 1
 
     def test_monitor_degradation_resets_on_real_summary(self, sid):
         mw = make_middleware()
-        mw._monitor_degradation(sid, "")
-        mw._monitor_degradation(sid, "")
-        real = mw._monitor_degradation(sid, "A real summary with content.")
-        assert real is False
+        mw._compaction_just_happened = True
+        mw._monitor_degradation(AIMessage(content=""), sid)
+        mw._compaction_just_happened = True
+        mw._monitor_degradation(AIMessage(content=""), sid)
+        mw._compaction_just_happened = True
+        mw._monitor_degradation(AIMessage(content="A real summary with content."), sid)
+        assert state_register_mem.get_state(sid, mget("_DEGRADATION_NO_TEXT_KEY")) == 0
         assert not state_register_mem.get_state(sid, mget("_FORCE_RECOVERY_KEY"))
 
     def test_monitor_degradation_caps_recovery_attempts(self, sid):
         mw = make_middleware()
         state_register_mem.set_state(sid, mget("_RECOVERY_ATTEMPTS_KEY"), 2)
-        third = mw._monitor_degradation(sid, "")
-        assert third is False
+        mw._compaction_just_happened = True
+        mw._monitor_degradation(AIMessage(content=""), sid)
+        assert state_register_mem.get_state(sid, mget("_RECOVERY_ATTEMPTS_KEY")) == 2
         assert not state_register_mem.get_state(sid, mget("_FORCE_RECOVERY_KEY"))
 
     # ---- empty response detection -------------------------------------------------
 
-    def test_is_empty_response_noop_summary_is_empty(self):
-        text = (
-            "### Completed (most recent 5)\n- none\n\n"
-            "### In Progress\n- none\n\n"
-            "### Blocked\n- none"
+    def test_is_empty_response_blank_content_is_empty(self):
+        # §9.7 WINS (intent conflict): _is_empty_response only checks for
+        # blank content — there is no noop-summary pattern detection.
+        assert (
+            summarization_module.Summarization._is_empty_response(
+                AIMessage(content="   \n\t")
+            )
+            is True
         )
-        assert summarization_module.Summarization._is_empty_response(text) is True
 
     def test_is_empty_response_real_summary_not_empty(self):
         text = (
             "## Goal\n- fix the bug\n\n"
             "### Completed (most recent 5)\n- step one"
         )
-        assert summarization_module.Summarization._is_empty_response(text) is False
+        assert (
+            summarization_module.Summarization._is_empty_response(
+                AIMessage(content=text)
+            )
+            is False
+        )
 
     def test_is_empty_response_empty_string_is_empty(self):
-        assert summarization_module.Summarization._is_empty_response("") is True
+        assert (
+            summarization_module.Summarization._is_empty_response(AIMessage(content=""))
+            is True
+        )
 
     # ---- skip compression (restored from 3727399 Core dedup; §9.7-verified) ----
 
@@ -1335,16 +1400,13 @@ class TestSummarizationFallback:
     """Static fallback summary, file-operations extraction/format/parse and
     FIFO list enforcement (PART2 s13)."""
 
-    def _recovery_ctx(self, **kwargs):
-        defaults = dict(goal="finish the task", error="tool exploded", file_ops=[])
-        defaults.update(kwargs)
-        return SimpleNamespace(**defaults)
-
     # ---- static fallback builder ----
+    # §9.7 WINS (signature): _build_static_fallback_summary(messages: list)
+    # takes MESSAGES, not a SimpleNamespace ctx.
 
     def test_static_fallback_contains_all_sections(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build(self._recovery_ctx())
+        text = build([HumanMessage(content="finish the task")])
         for section in (
             "## Latest Unresolved User Request",
             "## Goal",
@@ -1359,36 +1421,53 @@ class TestSummarizationFallback:
 
     def test_static_fallback_goal_and_error(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build(self._recovery_ctx())
+        text = build(
+            [
+                HumanMessage(content="finish the task"),
+                ToolMessage(
+                    content="tool exploded",
+                    tool_call_id="t8-fe-1",
+                    status="error",
+                ),
+            ]
+        )
         assert "finish the task" in text
         assert "tool exploded" in text
 
     def test_static_fallback_missing_ctx_fields(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build(SimpleNamespace())
+        text = build([])
         for section in ("## Goal", "### Completed", "## Relevant Files"):
             assert section in text
 
     def test_static_fallback_fifo_note(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build(self._recovery_ctx())
+        text = build([])
         assert "most recent" in text
 
     def test_static_fallback_file_ops_rendered(self, sid):
         build = mget("_build_static_fallback_summary")
         text = build(
-            self._recovery_ctx(file_ops=[("write_file", "/tmp/a.py", "ok")])
+            [
+                _ai_with_call("t8-ff-1", "write_file", {"path": "/tmp/a.py"}),
+                _tool("ok", "t8-ff-1"),
+            ]
         )
         assert "/tmp/a.py" in text
 
     def test_static_fallback_truncated_to_max_chars(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build(self._recovery_ctx(goal="G" * 20000, error="E" * 20000))
+        text = build(
+            [
+                HumanMessage(content="G" * 20000),
+                AIMessage(content="E" * 20000),
+            ]
+        )
         assert len(text) <= SUMMARY_TOTAL_MAX_CHARS + 500
 
     def test_static_fallback_goal_capped(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build(self._recovery_ctx(goal="G" * 5000))
+        text = build([HumanMessage(content="G" * 5000)])
         assert "G" * 5000 not in text
         assert "G" * (LATEST_USER_REQUEST_MAX_CHARS + 1) not in text
 
@@ -1419,7 +1498,8 @@ class TestSummarizationFallback:
             _ai_with_call("t8-fo-3", "search", {"q": "x"}),
             _tool("out", "t8-fo-3"),
         ]
-        assert not extract(msgs)
+        ops = extract(msgs)
+        assert ops == {"read_files": [], "modified_files": []}
 
     def test_extract_file_ops_dedupes_repeats(self, sid):
         extract = mget("_extract_file_operations")
@@ -1430,33 +1510,37 @@ class TestSummarizationFallback:
             _tool("ok", "t8-fo-5"),
         ]
         ops = extract(msgs)
-        assert len([o for o in ops if "/tmp/dup.py" in str(o)]) == 1
+        assert str(ops).count("/tmp/dup.py") == 1
 
     def test_extract_file_ops_empty_messages(self, sid):
         extract = mget("_extract_file_operations")
-        assert not extract([])
+        ops = extract([])
+        assert ops == {"read_files": [], "modified_files": []}
 
     # ---- file operations formatting ----
 
     def test_format_file_ops_renders_paths(self, sid):
+        # §9.7 WINS (signature): _format_file_ops(file_ops: dict,
+        # previous=None) — renders <read-files>/<modified-files> sections,
+        # never tool names.
         fmt = mget("_format_file_ops")
-        text = fmt([("write_file", "/a.py", "ok")])
+        text = fmt({"modified_files": ["/a.py"]})
         assert "/a.py" in text
-        assert "write_file" in text
+        assert "<modified-files>" in text
 
     def test_format_file_ops_empty(self, sid):
         fmt = mget("_format_file_ops")
-        text = fmt([])
+        text = fmt({})
         assert not text or "none" in str(text).lower()
 
     def test_format_file_ops_caps_length(self, sid):
         fmt = mget("_format_file_ops")
-        ops = [("write_file", "/x/" + "p" * 2000, "ok")]
+        ops = {"modified_files": ["/x/" + "p" * 2000]}
         assert len(fmt(ops)) <= FILE_OPS_LIST_MAX_CHARS + 200
 
     def test_format_file_ops_many_ops_capped(self, sid):
         fmt = mget("_format_file_ops")
-        ops = [("write_file", "/opt%d.py" % i, "ok") for i in range(50)]
+        ops = {"modified_files": ["/opt%d.py" % i for i in range(50)]}
         assert len(fmt(ops)) <= FILE_OPS_LIST_MAX_CHARS + 200
 
     # ---- file operations parsing ----
@@ -1464,7 +1548,7 @@ class TestSummarizationFallback:
     def test_parse_file_ops_roundtrip(self, sid):
         fmt = mget("_format_file_ops")
         parse = mget("_parse_file_ops_from_summary")
-        text = fmt([("write_file", "/rt.py", "ok")])
+        text = fmt({"modified_files": ["/rt.py"]})
         parsed = parse(text)
         assert "/rt.py" in str(parsed)
 
@@ -1535,37 +1619,38 @@ class TestSummarizationAsync:
     # ---- acreate_summary -------------------------------------------------
 
     def test_acreate_summary_returns_text(self, sid):
+        # §9.7: _acreate_summary(messages_to_summarize: list) -> str
         stub = StubModel()
         mw = make_middleware(model=stub)
-        req = make_request(
-            [HumanMessage(content="q"), AIMessage(content="ok")],
-            session_id=sid,
-            model=stub,
+        text = asyncio.run(
+            mw._acreate_summary([HumanMessage(content="q"), AIMessage(content="ok")])
         )
-        text = asyncio.run(mw._acreate_summary(req))
         assert len(stub.calls) >= 1
         assert stub.text in str(text)
 
     def test_acreate_summary_sufficient_length(self, sid):
         stub = StubModel()
         mw = make_middleware(model=stub)
-        req = make_request([HumanMessage(content="q")], session_id=sid, model=stub)
-        text = asyncio.run(mw._acreate_summary(req))
+        text = asyncio.run(mw._acreate_summary([HumanMessage(content="q")]))
         assert len(str(text)) >= 50
 
     def test_acreate_summary_error_propagates(self, sid):
+        # §9.7 WINS (intent conflict): _acreate_summary catches every
+        # Exception and returns the static fallback — nothing propagates.
         stub = StubModel(raise_exc=True)
         mw = make_middleware(model=stub)
-        req = make_request([HumanMessage(content="q")], session_id=sid, model=stub)
-        with pytest.raises(RuntimeError):
-            asyncio.run(mw._acreate_summary(req))
+        text = asyncio.run(mw._acreate_summary([HumanMessage(content="q")]))
+        assert "## Latest Unresolved User Request" in str(text)
 
     def test_acreate_summary_empty_text_passthrough(self, sid):
-        stub = StubModel(text="")
+        # §9.7 WINS (intent conflict): text shorter than 50 chars falls back
+        # to the static fallback summary.
+        # StubModel(text="") would fall back to the default long text (falsy
+        # `or`), so pass a short truthy string (< 50 chars) instead.
+        stub = StubModel(text="too short")
         mw = make_middleware(model=stub)
-        req = make_request([HumanMessage(content="q")], session_id=sid, model=stub)
-        text = asyncio.run(mw._acreate_summary(req))
-        assert str(text) == ""
+        text = asyncio.run(mw._acreate_summary([HumanMessage(content="q")]))
+        assert "## Latest Unresolved User Request" in str(text)
 
     # ---- aapply_compression ------------------------------------------------
 
@@ -1575,7 +1660,8 @@ class TestSummarizationAsync:
         req = make_request(msgs, session_id=sid)
         result = asyncio.run(mw._aapply_compression(req, sid))
         assert list(result.messages) == msgs
-        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
+        # §9.7: _record_compression runs on EVERY apply (even noops).
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
 
     def test_aapply_compression_llm_path_calls_ainvoke(self, sid):
         stub = StubModel(text="Async LLM wrote a deterministic long summary body.")
@@ -1583,7 +1669,8 @@ class TestSummarizationAsync:
             model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)]
         )
         msgs = []
-        for i in range(50):
+        # 100 turns: est ~10800 > budget 10000 -> cutoff > 0 -> async LLM path.
+        for i in range(100):
             msgs.extend(
                 [
                     HumanMessage(content="question %d" % i),
@@ -1609,9 +1696,12 @@ class TestSummarizationAsync:
         msgs = _history(turns=6, out_chars=4000)
         req = make_request(msgs, session_id=sid)
         result = asyncio.run(mw._aapply_compression(req, sid))
-        assert "## Latest Unresolved User Request" in [
-            m.content for m in result.messages if isinstance(m.content, str)
-        ]
+        # The fallback summary is wrapped inside the summary AIMessage content.
+        assert any(
+            "## Latest Unresolved User Request" in m.content
+            for m in result.messages
+            if isinstance(m.content, str)
+        )
         assert (
             state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
             == "fallback"
@@ -1731,10 +1821,10 @@ class TestSummarizationAsync:
             [HumanMessage(content="hi"), AIMessage(content="hello")],
             session_id=sid,
         )
-        assert (
-            asyncio.run(mw.awrap_model_call(req, lambda r: "AWRAP-SENTINEL"))
-            == "AWRAP-SENTINEL"
-        )
+        async def handler(r):
+            return "AWRAP-SENTINEL"
+
+        assert asyncio.run(mw.awrap_model_call(req, handler)) == "AWRAP-SENTINEL"
 
     def test_awrap_model_call_small_history_no_compression(self, sid):
         mw = make_middleware(main_llm_context_window=40000)
@@ -1742,7 +1832,7 @@ class TestSummarizationAsync:
         req = make_request(msgs, session_id=sid)
         captured = []
 
-        def handler(r):
+        async def handler(r):
             captured.append(list(r.messages))
             return "AWRAP-SENTINEL"
 
@@ -1759,7 +1849,7 @@ class TestSummarizationAsync:
         req = make_request(msgs, session_id=sid)
         captured = []
 
-        def handler(r):
+        async def handler(r):
             captured.append(list(r.messages))
             return "AWRAP-SENTINEL"
 
@@ -1783,7 +1873,10 @@ class TestSummarizationAsync:
             model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)]
         )
         msgs = []
-        for i in range(50):
+        # 100 turns: est ~10800 >= trigger 5000 and > budget 10000 -> cutoff
+        # > 0 -> async LLM path fires (50 turns est ~5600 would stay under
+        # budget and noop).
+        for i in range(100):
             msgs.extend(
                 [
                     HumanMessage(content="question %d" % i),
@@ -1792,7 +1885,10 @@ class TestSummarizationAsync:
                 ]
             )
         req = make_request(msgs, session_id=sid, model=stub)
-        asyncio.run(mw.awrap_model_call(req, lambda r: "AWRAP-SENTINEL"))
+        async def handler(r):
+            return "AWRAP-SENTINEL"
+
+        asyncio.run(mw.awrap_model_call(req, handler))
         assert len(stub.calls) >= 1
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
 
@@ -1805,14 +1901,17 @@ class TestSummarizationAsync:
         req = make_request(msgs, session_id=sid)
         captured = []
 
-        def handler(r):
+        async def handler(r):
             captured.append(list(r.messages))
             return "AWRAP-SENTINEL"
 
         asyncio.run(mw.awrap_model_call(req, handler))
-        assert "## Latest Unresolved User Request" in [
-            m.content for m in captured[0] if isinstance(m.content, str)
-        ]
+        # The fallback summary is wrapped inside the summary AIMessage content.
+        assert any(
+            "## Latest Unresolved User Request" in str(m.content)
+            for m in captured[0]
+            if isinstance(m.content, str)
+        )
 
     # ---- before_agent resets ------------------------------------------------
 
@@ -1868,7 +1967,8 @@ class TestSummarizationAsync:
         req = make_request(msgs, session_id=sid)
         mw.wrap_model_call(req, lambda r: "WRAP-SENTINEL")
         mw.wrap_model_call(req, lambda r: "WRAP-SENTINEL")
-        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
+        # No compression ran: the count key is never set (get_state -> None).
+        assert not state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY"))
 
     def test_awrap_and_before_agent_reset_between_calls(self, sid):
         mw = make_middleware(
@@ -1884,7 +1984,10 @@ class TestSummarizationAsync:
             AIMessage(content="done"),
         ]
         req = make_request(msgs, session_id=sid)
-        asyncio.run(mw.awrap_model_call(req, lambda r: "AWRAP-SENTINEL"))
+        async def handler(r):
+            return "AWRAP-SENTINEL"
+
+        asyncio.run(mw.awrap_model_call(req, handler))
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
         mw._before_agent_impl({"session_id": sid})
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
