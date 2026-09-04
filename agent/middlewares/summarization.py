@@ -1808,25 +1808,28 @@ class Summarization(AgentMiddleware):
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, 0)
 
     def _t1_state_update(
-        self, original: list[AnyMessage], request: ModelRequest[ContextT]
+        self, request: ModelRequest[ContextT]
     ) -> dict[str, Any]:
         """Translate a T1-dispatched request into a before_agent state update.
 
-        Same-length list (in-place budget truncation, same message ids) →
-        plain list: add_messages replaces each message by id. Shorter list
-        (compacted/reduced) → MUST clear state messages first, because the
-        add_messages reducer never removes by itself (same pattern as
+        ALWAYS clears the state messages first (RemoveMessage with the
+        REMOVE_ALL_MESSAGES sentinel) and rebuilds from the dispatched
+        request: the add_messages reducer never removes by itself, so a
+        plain-list update leaks every message the compression summarized
+        away — and a compact that swaps a single huge head message for the
+        two-message summary pair even GROWS the list (cutoff=1), which no
+        length-based guard can catch. Rebuilding is exact for every track:
+        in-place truncation keeps the same ids and content, compact replaces
+        the head with the summary pair (same pattern as
         ToolCallNormalize.before_model).
         """
         new_messages = list(request.messages)
-        if len(new_messages) < len(original):
-            return {
-                "messages": cast(
-                    "list[AnyMessage]",
-                    [RemoveMessage(id=REMOVE_ALL_MESSAGES), *new_messages],
-                )
-            }
-        return {"messages": cast("list[AnyMessage]", new_messages)}
+        return {
+            "messages": cast(
+                "list[AnyMessage]",
+                [RemoveMessage(id=REMOVE_ALL_MESSAGES), *new_messages],
+            )
+        }
 
     def _t1_preflight(
         self, state: AgentState, session_id: str
@@ -1857,7 +1860,7 @@ class Summarization(AgentMiddleware):
         request = self._dispatch_overflow_route(
             request, route, session_id, trigger="T1"
         )
-        return self._t1_state_update(messages, request)
+        return self._t1_state_update(request)
 
     async def _at1_preflight(
         self, state: AgentState, session_id: str
@@ -1886,7 +1889,7 @@ class Summarization(AgentMiddleware):
         request = await self._adispatch_overflow_route(
             request, route, session_id, trigger="T1"
         )
-        return self._t1_state_update(messages, request)
+        return self._t1_state_update(request)
 
     def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         logger.debug("Compaction before_agent hook fired")
