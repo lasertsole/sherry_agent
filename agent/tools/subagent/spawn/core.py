@@ -710,6 +710,8 @@ async def _build_child_agent(
     from agent.core import StateSchema
     from langchain.agents import create_agent
     from models import build_main_llm, build_auxiliary_llm
+    from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
+    from config.num import COMPRESSION_TRIGGER_RATIO
     from agent.checkpointer import build_async_sqlite_checkpointer
     from agent.middlewares import (
         IterationBudget,
@@ -752,7 +754,11 @@ async def _build_child_agent(
         middleware=[
             Summarization(
                 model=auxiliary_llm,
-                trigger=[("messages", 40), ("tokens", 30000)],
+                main_llm_context_window=main_llm_max_tokens,
+                trigger=[
+                    ("messages", 40),
+                    ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+                ],
                 keep=("messages", 10),
             ),
             IterationBudget(60),

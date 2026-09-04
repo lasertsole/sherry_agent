@@ -6,6 +6,7 @@ from langgraph.graph.state import CompiledStateGraph
 from models import build_main_llm, build_auxiliary_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
+from config.num import COMPRESSION_TRIGGER_RATIO
 from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (
@@ -151,7 +152,8 @@ async def built_agent(
                 Summarization(
                     need_update_system_prompt=True,
                     model=auxiliary_llm,
-                    trigger=[("tokens", int(main_llm_max_tokens / 2))],
+                    main_llm_context_window=main_llm_max_tokens,
+                    trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
                     keep=("messages", 10),
                 ),
             ],
