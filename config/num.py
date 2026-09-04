@@ -1,7 +1,68 @@
 # Compression and RAG thresholds
 ARCHIVE_THRESHOLD = 8_000
 MEMORY_THRESHOLD = 10_000
-COMPRESS_RATIO = 0.5  # 压缩比例，值越大，旧消息数组（要被压缩的部分）就越大。
+COMPRESS_RATIO = 0.5
+
+# === Trigger Thresholds ===
+PREEMPTIVE_TRUNCATE_RATIO = 0.70
+COMPRESSION_TRIGGER_RATIO = 0.80
+COMPRESSION_RESERVE_TOKENS = 16_000
+
+# === Budget-based Tail ===
+MIN_PRESERVE_TOKENS = 2_000
+MAX_PRESERVE_TOKENS = 15_000
+PRESERVE_RATIO = 0.25
+
+# === Multi-strategy Pipeline ===
+PRUNE_PROTECT_TOKENS = 40_000
+PRUNE_MIN_REDUCTION_TOKENS = 5_000
+TARGET_TRUNCATE_RATIO = 0.5
+MIN_OUTPUT_CHARS_TO_TRUNCATE = 500
+MAX_TOOL_OUTPUT_CHARS = 2_000
+AGGRESSIVE_TRUNCATE_CHARS = 1_000
+
+# === LLM Summary Improvement ===
+SUMMARY_TRIM_TOKENS = 12_000
+SUMMARY_TOTAL_MAX_CHARS = 16_000
+CONTENT_HEAD_RATIO = 0.3
+CONTENT_TAIL_RATIO = 0.3
+
+# === Degradation Monitoring ===
+DEGRADATION_MONITOR_COUNT = 5
+DEGRADATION_NO_TEXT_THRESHOLD = 3
+MAX_RECOVERY_ATTEMPTS = 2
+
+# === Anti-thrashing (progressive escalation) ===
+MAX_TOTAL_COMPRESSION_ATTEMPTS = 5
+INEFFECTIVE_THRESHOLD = 2
+MIN_EFFECTIVENESS_PCT = 0.05
+
+# === Protected Tools ===
+PROTECTED_TOOLS = frozenset({"memory", "skill_view", "skill_list"})
+
+# === Last Turn Detection ===
+LAST_TURN_RATIO_THRESHOLD = 0.5
+
+# === FIFO Section Limits ===
+COMPLETED_MAX_ITEMS = 5
+KEY_DECISIONS_MAX_ITEMS = 5
+CRITICAL_CONTEXT_MAX_ITEMS = 3
+
+# === File Operations Ratchet ===
+FILE_OPS_LIST_MAX_CHARS = 900
+FILE_OPS_SECTION_MAX_CHARS = 2_000
+
+# === Latest User Request ===
+LATEST_USER_REQUEST_MAX_CHARS = 800
+
+# === Auto-continue ===
+AUTO_CONTINUE_PROMPT = (
+    "Continue if you have next steps, or stop and ask for clarification "
+    "if you are unsure how to proceed."
+)
+
+# === Token estimation ===
+CHARS_PER_TOKEN = 4
 
 # Message bus bounded-queue size (bus/core.py MessageBus). When a queue is
 # full the producer awaits free space (backpressure) — messages are delayed,
