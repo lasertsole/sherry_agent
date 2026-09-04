@@ -270,9 +270,9 @@ class SafeShellTool(ShellTool):
     ) -> str:
         """Run command with explicit encoding for stdout/stderr, with timeout.
 
-        BYTE-IDENTICAL Windows fallback (SANDBOX_PLAN.md:546): the command
-        string construction (str join / passthrough) and ``shell=True`` are
-        unchanged vs pre-Task-6; the ONLY addition is ``env=``.
+        BYTE-IDENTICAL Windows fallback: the command string construction
+        (str join / passthrough) and ``shell=True`` are unchanged vs the
+        pre-sandbox-hardening path; the ONLY addition is ``env=``.
         """
         cmd_str = self._join_commands(commands)
         return self._execute_sync(cmd_str, shell=True, env=env, encoding=encoding)

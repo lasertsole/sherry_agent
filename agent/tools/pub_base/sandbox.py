@@ -126,7 +126,7 @@ class SandboxBackend(ABC):
 def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
     """Platform dispatch + probe. Return a usable backend, or ``None``.
 
-    Semantics (mirrors SANDBOX_PLAN.md section 2.1):
+    Semantics:
     - ``OFF``: skip probe entirely (no import, no subprocess) -> ``None``.
     - Linux -> ``BwrapBackend``, Darwin -> ``SeatbeltBackend``, anything else
       (e.g. Windows) -> no native backend -> ``None``.

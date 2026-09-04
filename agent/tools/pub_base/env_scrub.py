@@ -4,8 +4,7 @@
 (terminal / python_repl spawn points). It is a pure function: no IO, no
 logging, no third-party imports (only ``os`` / ``re``).
 
-Filtering rules (source of truth: ``.omo/plans/sandbox-hardening.md`` Task 1
-and ``SANDBOX_PLAN.md`` section 1.1):
+Filtering rules (source of truth: ``.omo/plans/sandbox-hardening.md`` Task 1):
 
 - Substring block (case-insensitive match on the variable NAME): vars whose
   name contains a secret-ish substring (KEY, TOKEN, ...) are dropped.
