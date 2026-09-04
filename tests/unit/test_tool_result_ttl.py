@@ -22,6 +22,9 @@ messages, class grouping, plain asserts. Windows-safe: ASCII only.
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownMemberType=false
 # pyright: reportCallIssue=false
+# pyright: reportMissingTypeArgument=false
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportIndexIssue=false
 
 from langchain_core.messages import (
     AIMessage,

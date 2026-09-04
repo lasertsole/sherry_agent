@@ -28,6 +28,8 @@ ratios (CONTENT_HEAD_RATIO / CONTENT_TAIL_RATIO) and a non-empty omission
 placeholder.
 """
 
+from typing import Any, TypeGuard
+
 from config.num import (
     CONTENT_HEAD_RATIO,
     CONTENT_TAIL_RATIO,
@@ -47,7 +49,7 @@ NON_TEXT_BLOCK_PLACEHOLDER = "[non-text block truncated by context compression]"
 
 
 def record_first_seen(
-    registry: dict, messages: list[BaseMessage], now: float
+    registry: dict[str, float], messages: list[BaseMessage], now: float
 ) -> None:
     """Record wall-clock first-seen for every tool_call_id new to registry.
 
@@ -82,7 +84,7 @@ def record_first_seen(
 
 
 def select_expired(
-    registry: dict,
+    registry: dict[str, float],
     messages: list[BaseMessage],
     ttl_seconds: float,
     now: float,
@@ -174,7 +176,7 @@ def _build_head_tail(text: str, head_len: int, tail_len: int, placeholder: str) 
     return text[:head_len] + placeholder + tail_part
 
 
-def _is_text_block(block) -> bool:
+def _is_text_block(block: object) -> TypeGuard[dict[str, Any]]:
     return (
         isinstance(block, dict)
         and block.get("type") == "text"
@@ -191,7 +193,7 @@ def _truncate_tool_message(msg: BaseMessage, budget_tokens: int) -> int:
     return 0
 
 
-def _truncate_str_content(msg: ToolMessage, budget_tokens: int) -> int:
+def _truncate_str_content(msg: BaseMessage, budget_tokens: int) -> int:
     """Head/tail-truncate a str content in place; returns est. tokens freed.
 
     Keeps head 30% + tail 30% around the placeholder. If the result still
@@ -227,7 +229,7 @@ def _truncate_str_content(msg: ToolMessage, budget_tokens: int) -> int:
     return freed
 
 
-def _truncate_list_content(msg: ToolMessage, budget_tokens: int) -> int:
+def _truncate_list_content(msg: BaseMessage, budget_tokens: int) -> int:
     """Truncate a multimodal block-list content in place.
 
     Text blocks get the same head/tail rule applied to their ``text`` field
