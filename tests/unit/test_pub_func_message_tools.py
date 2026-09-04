@@ -72,7 +72,10 @@ class TestTurnUtils:
         a1 = AIMessage(content="a" * 100)
         a2 = AIMessage(content="b" * 100)
         turn = split_into_turns([HumanMessage(content="q"), a1, a2])[0]
-        estimator = lambda msgs: sum(len(str(m.content)) for m in msgs) // 4
+
+        def estimator(msgs):
+            return sum(len(str(m.content)) for m in msgs) // 4
+
         # Only the last message fits a 25-token budget -> split before a2.
         assert split_turn(turn, 25, estimator) == 2
         # Whole tail fits a 50-token budget -> split right after the Human turn head.

@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
 from langchain.agents.middleware import ModelRequest
@@ -18,20 +17,11 @@ import agent.middlewares.summarization as summarization_module
 from pub_func.message import estimate_msg_tokens, estimate_messages_tokens
 from runtime import state_register_mem
 from config.num import (
-    AGGRESSIVE_TRUNCATE_CHARS,
     COMPLETED_MAX_ITEMS,
     FILE_OPS_LIST_MAX_CHARS,
     KEY_DECISIONS_MAX_ITEMS,
     LATEST_USER_REQUEST_MAX_CHARS,
     CRITICAL_CONTEXT_MAX_ITEMS,
-    DEGRADATION_NO_TEXT_THRESHOLD,
-    INEFFECTIVE_THRESHOLD,
-    MAX_PRESERVE_TOKENS,
-    MAX_RECOVERY_ATTEMPTS,
-    MAX_TOOL_OUTPUT_CHARS,
-    MIN_OUTPUT_CHARS_TO_TRUNCATE,
-    MIN_PRESERVE_TOKENS,
-    PRESERVE_RATIO,
     SUMMARY_TOTAL_MAX_CHARS,
 )
 
@@ -1130,7 +1120,7 @@ class TestSummarizationCompression:
     def test_apply_compression_llm_summary_path(self, sid):
         # 100 turns of small protected tool outputs (400 chars): no strategy
         # can shrink them, est 11000 > budget 10000 -> LLM summary path.
-        mw = make_middleware(
+        make_middleware(
             main_llm_context_window=40000, trigger=[("tokens", 5000)]
         )
         msgs = []
