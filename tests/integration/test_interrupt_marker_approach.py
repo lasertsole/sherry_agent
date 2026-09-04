@@ -468,20 +468,49 @@ async def test_fact_c_marker_swallowed_from_model_view_once_summarized():
     Checkpointer STATE retention is pinned by
     MARKER_IN_STATE_AFTER_SUMMARY_TURN (see module docstring)."""
     model = RecordingFakeChatModel(response_text="R2")
-    aux = FixedSummaryModel(summary_text="SUMMARY-TEXT")
+    # >= 50 chars: the redesigned _create_summary (summarization.py:785-787)
+    # discards summaries shorter than 50 chars into the deterministic static
+    # fallback, which echoes AI-message fragments (the marker text) into the
+    # model view. A long fixed summary keeps the LLM-path semantics the
+    # marker-swallow assertions below were written against.
+    aux = FixedSummaryModel(
+        summary_text="SUMMARY-TEXT (long enough to clear the 50-char minimum gate)"
+    )
     sid = "spike-c2"
     graph = _build_graph(
         model,
         [
             ToolCallNormalize(),
-            Summarization(model=aux, trigger=[("messages", 5)], keep=("messages", 2)),
+            Summarization(
+                model=aux,
+                trigger=[("messages", 5)],
+                keep=("messages", 2),
+                # §9.7 adaptation (T9 pattern): inject the window so the
+                # preserve budget is deterministic — 8000 * PRESERVE_RATIO
+                # (0.25) = 2000 = MIN_PRESERVE_TOKENS. Pressure
+                # (~4115 est tokens / 8000 ~ 0.51) stays below
+                # PREEMPTIVE_TRUNCATE_RATIO (0.70), so the ("messages", 5)
+                # trigger alone drives compression, as before the redesign.
+                main_llm_context_window=8_000,
+            ),
         ],
     )
 
     await graph.ainvoke(_input([HumanMessage("Q1")], session_id=sid), _config())  # 2 msgs
     await graph.aupdate_state(_config(), {"messages": [_marker()]})  # 3 msgs
     await graph.aupdate_state(
-        _config(), {"messages": [HumanMessage("filler question"), AIMessage(content="filler answer")]}
+        _config(),
+        {
+            "messages": [
+                # ~2053 est tokens each (len // CHARS_PER_TOKEN): the pair must
+                # exceed the 2000-token preserve budget; otherwise
+                # _determine_cutoff returns 0 (every turn fits the budget) and
+                # the redesigned middleware no-ops instead of summarizing
+                # (summarization.py:1045-1047 / 1117-1119).
+                HumanMessage("filler question " + "x" * 8200),
+                AIMessage(content="filler answer " + "y" * 8200),
+            ]
+        },
     )  # 5 msgs — marker is now the 3rd of 5
     await graph.ainvoke(_input([HumanMessage("Q-last")], session_id=sid), _config())  # 6 >= 5 -> trigger
 
@@ -500,10 +529,15 @@ async def test_fact_c_marker_swallowed_from_model_view_once_summarized():
         m.content if isinstance(m.content, str) else str(m.content) for m in last_call
     )
     assert "[interrupted]" not in all_text, "marker fragment leaked into the model view"
-    # The view now starts with the summary HumanMessage (lc_source='summarization').
+    # The view now starts with the summary pair. §9.7 tags lc_source on the
+    # summary AIMessage (_build_new_messages, summarization.py:839-845); the
+    # old middleware tagged the summary HumanMessage instead.
     summary_msg = last_call[0]
     assert isinstance(summary_msg, HumanMessage)
-    assert summary_msg.additional_kwargs.get("lc_source") == "summarization"
+    assert summary_msg.content == "What did we do so far?"
+    summary_ai = last_call[1]
+    assert isinstance(summary_ai, AIMessage)
+    assert summary_ai.additional_kwargs.get("lc_source") == "summarization"
     assert last_call[-1].content == "Q-last"
 
     # State retention (pinned observation): the project Summarization subclass
