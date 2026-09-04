@@ -485,13 +485,23 @@ async def test_fact_c_marker_swallowed_from_model_view_once_summarized():
                 model=aux,
                 trigger=[("messages", 5)],
                 keep=("messages", 2),
-                # §9.7 adaptation (T9 pattern): inject the window so the
-                # preserve budget is deterministic — 8000 * PRESERVE_RATIO
-                # (0.25) = 2000 = MIN_PRESERVE_TOKENS. Pressure
-                # (~4115 est tokens / 8000 ~ 0.51) stays below
-                # PREEMPTIVE_TRUNCATE_RATIO (0.70), so the ("messages", 5)
-                # trigger alone drives compression, as before the redesign.
-                main_llm_context_window=8_000,
+                # §9.7b adaptation (T9 gate-repair, 4-route T1 contract from
+                # 5502075): the window MUST exceed COMPRESSION_RESERVE_TOKENS
+                # (16 000) so the usable budget is positive. At 8 000 the
+                # usable budget degenerates to 0, decide_route's threshold
+                # bands collapse to 0 and EVERY turn — including turn 1's
+                # est=0 view — routes compact_only; the T1 preflight then
+                # executes a no-op compact whose _record_compaction_bookkeeping
+                # still arms the 3-round anti-thrash cooldown, suppressing the
+                # ("messages", 5) trigger for this whole 2-turn scenario
+                # ("summarizer never ran"). 26 000 keeps the FACT C semantics:
+                # usable=10 000 → threshold_truncate=7 000, and the full
+                # 6-message transcript (~6 751 est tokens) stays BELOW it, so
+                # T1 preflight routes "fits" both turns (no state commit, no
+                # cooldown) and the messages trigger drives compression at T2
+                # wrap_model_call — request-scoped, exactly as before the
+                # redesign.
+                main_llm_context_window=26_000,
             ),
         ],
     )
@@ -502,13 +512,17 @@ async def test_fact_c_marker_swallowed_from_model_view_once_summarized():
         _config(),
         {
             "messages": [
-                # ~2053 est tokens each (len // CHARS_PER_TOKEN): the pair must
-                # exceed the 2000-token preserve budget; otherwise
-                # _determine_cutoff returns 0 (every turn fits the budget) and
-                # the redesigned middleware no-ops instead of summarizing
-                # (summarization.py:1045-1047 / 1117-1119).
-                HumanMessage("filler question " + "x" * 8200),
-                AIMessage(content="filler answer " + "y" * 8200),
+                # ~3371 est tokens each (len // CHARS_PER_TOKEN): the pair
+                # (~6742 est tokens) must exceed the 6 500-token preserve
+                # budget (26 000 * 0.25) — otherwise _determine_cutoff keeps
+                # the whole filler turn and the marker (still inside the
+                # budget) survives in the model view. 6 743+ is what forces
+                # the cutoff down to the filler-pair turn while the FULL
+                # transcript (~6 751 est tokens) stays under
+                # threshold_truncate (7 000) so T1 preflight never fires
+                # (usable must stay > 0; see the §9.7b note above).
+                HumanMessage("filler question " + "x" * 13468),
+                AIMessage(content="filler answer " + "y" * 13470),
             ]
         },
     )  # 5 msgs — marker is now the 3rd of 5
