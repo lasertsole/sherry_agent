@@ -21,15 +21,16 @@ from langchain_core.messages import HumanMessage, AIMessage
 from config.num import COMPRESSION_TRIGGER_RATIO
 
 # ── The context window we feed the middleware (uncapped MAIN_LLM_MAX_TOKEN) ─
-# MAIN_LLM_MAX_TOKEN = 65_536_000  (from .env)
-MAIN_LLM_MAX_TOKEN = 65_536_000
+# MAIN_LLM_MAX_TOKEN = 65_536  (from .env; Task 1 of the context-compression
+# plan reset it from the historical 65_536_000 placeholder)
+MAIN_LLM_MAX_TOKEN = 65_536
 # core.py trigger: ("tokens", int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO))
-EXPECTED_THRESHOLD = int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO)  # 52_428_800
+EXPECTED_THRESHOLD = int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO)  # 52_428
 
 _TRIGGER_SESSION = "trigger-contract-summarization"
 
 
-def _make_fake_model(max_input_tokens: int = 65_536_000):
+def _make_fake_model(max_input_tokens: int = MAIN_LLM_MAX_TOKEN):
     """Create a mock model object (inert constructor arg).
 
     The redesigned middleware never derives thresholds from ``model.profile``
@@ -70,25 +71,25 @@ class TestSummarizationTriggerContract:
         )
         return inst
 
-    def test_context_window_is_65536000(self, summarizer):
-        """Verify the injected window is the un-capped value.
+    def test_context_window_is_uncapped_env_value(self, summarizer):
+        """Verify the injected window is the un-capped .env value.
 
         The redesigned middleware takes the window as the constructor param
         ``main_llm_context_window`` instead of reading ``model.profile``.
         """
-        assert summarizer._main_llm_context_window == 65_536_000, (
-            f"Expected main_llm_context_window = 65_536_000, "
+        assert summarizer._main_llm_context_window == MAIN_LLM_MAX_TOKEN == 65_536, (
+            f"Expected main_llm_context_window = {MAIN_LLM_MAX_TOKEN}, "
             f"got {summarizer._main_llm_context_window}. "
-            "Check models/LLMs/main_llm.py cap removal."
+            "Check models/LLMs/main_llm.py cap removal and the .env value."
         )
 
     def test_tokens_threshold_matches_core_config(self, summarizer):
-        """core.py trigger = int(65_536_000 * COMPRESSION_TRIGGER_RATIO) = 52_428_800."""
+        """core.py trigger = int(65_536 * COMPRESSION_TRIGGER_RATIO) = 52_428."""
         assert summarizer._trigger == [("tokens", EXPECTED_THRESHOLD)], (
             f"Expected trigger [('tokens', {EXPECTED_THRESHOLD})], got {summarizer._trigger}"
         )
-        assert EXPECTED_THRESHOLD == 52_428_800, (
-            f"Expected threshold 52_428_800 (0.80 × 65_536_000), got {EXPECTED_THRESHOLD}"
+        assert EXPECTED_THRESHOLD == 52_428, (
+            f"Expected threshold 52_428 (0.80 × 65_536), got {EXPECTED_THRESHOLD}"
         )
 
     def test_no_compression_at_low_token_count(self, summarizer):
