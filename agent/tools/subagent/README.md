@@ -101,7 +101,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     ├── Independent async SQLite checkpointer keyed by child_session_key
   │     └── create_agent() with six middlewares:
   │           ├── Summarization(model=<aux LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",30000)], keep=("messages",10))
+  │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
   │           ├── IterationBudget(60)      — max iteration count
   │           ├── ToolGuardrails()         — tool safety guardrails
   │           ├── OutputRepetitionGuard()  — output repetition suppression

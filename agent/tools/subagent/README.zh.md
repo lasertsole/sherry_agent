@@ -101,7 +101,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     ├── 独立的异步 SQLite checkpointer（按 child_session_key 隔离）
   │     └── create_agent() 组装六层中间件：
   │           ├── Summarization(model=<辅助 LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",30000)], keep=("messages",10))
+  │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
   │           ├── IterationBudget(60)      — 最大迭代次数
   │           ├── ToolGuardrails()         — 工具安全护栏
   │           ├── OutputRepetitionGuard()  — 输出重复抑制
