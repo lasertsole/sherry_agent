@@ -22,7 +22,9 @@ from langchain_core.messages import (
     AIMessage,
     HumanMessage,
     ToolMessage,
+    RemoveMessage,
 )
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from pub_func.message.estimate_msg_tokens import estimate_msg_tokens, estimate_messages_tokens
 from pub_func.message.turn_utils import split_into_turns, split_turn
 from pub_func.message.tool_output_dedup import dedup_tool_outputs
@@ -57,7 +59,21 @@ from config.num import (
     FILE_OPS_LIST_MAX_CHARS,
     LATEST_USER_REQUEST_MAX_CHARS,
     AUTO_CONTINUE_PROMPT,
+    COMPACTION_COOLDOWN_ROUNDS,
+    MAX_COMPRESS_ATTEMPTS_PER_TURN,
+    TRUNCATE_BUDGET_RATIO,
+    COMPRESSION_RESERVE_TOKENS,
 )
+from pub_func.message.overflow_router import (
+    ROUTE_FITS,
+    ROUTE_TRUNCATE_TOOL_RESULTS_ONLY,
+    ROUTE_COMPACT_THEN_TRUNCATE,
+    ROUTE_COMPACT_ONLY,
+    compute_pressure,
+    decide_route,
+    find_truncatable_tool_results,
+)
+from pub_func.message.tool_result_ttl import truncate_to_budget
 
 
 # ======================================================================
@@ -74,6 +90,8 @@ _DEGRADATION_NO_TEXT_KEY = "summarization_degradation_no_text"
 _RECOVERY_ATTEMPTS_KEY = "summarization_recovery_attempts"
 _FORCE_RECOVERY_KEY = "summarization_force_recovery"
 _PREVIOUS_FILE_OPS_KEY = "summarization_previous_file_ops"
+_COOLDOWN_ROUNDS_KEY = "summarization_cooldown_rounds"
+_TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
 _PREEMPTIVE_TRUNCATE_MAX_CHARS = 2000
 
 _SUMMARY_LC_SOURCE = "summarization"
@@ -509,6 +527,229 @@ class Summarization(AgentMiddleware):
         if pressure >= PREEMPTIVE_TRUNCATE_RATIO:
             return "truncate_only"
         return None
+
+    # ------------------------------------------------------------------
+    # 4-route overflow routing (Task 5: upgraded _preemptive_check decision)
+    # ------------------------------------------------------------------
+
+    def _usable_budget(self) -> int:
+        """usable_budget = dynamic context window − COMPRESSION_RESERVE_TOKENS.
+
+        The dynamic window is the constructor-injected ``main_llm_context_window``
+        (same source as agent/core.py:156 ``main_llm_max_tokens``) — never a
+        hardcoded value; langchain 1.3.9 ``ModelRequest`` has no model_profile
+        field.
+        """
+        ctx = self._main_llm_context_window or 0
+        return max(int(ctx) - COMPRESSION_RESERVE_TOKENS, 0)
+
+    def _estimate_system_prompt_tokens(self, session_id: str) -> int:
+        prompt = state_register_mem.get_state(session_id, "system_prompt", "")
+        if isinstance(prompt, str) and prompt:
+            return len(prompt) // 4
+        return 0
+
+    def _decide_overflow_route(
+        self, messages: list[AnyMessage], session_id: str
+    ) -> str | None:
+        """4-way route decision (upgrades the former 2-band _preemptive_check).
+
+        Returns one of ROUTE_FITS / ROUTE_TRUNCATE_TOOL_RESULTS_ONLY /
+        ROUTE_COMPACT_THEN_TRUNCATE / ROUTE_COMPACT_ONLY, or None when no
+        dynamic context window is configured. T1/T2 are estimate-driven; the
+        reported-usage input belongs to T3 (Task 6).
+        """
+        ctx_window = self._main_llm_context_window
+        if not ctx_window or ctx_window <= 0:
+            return None
+
+        usable = self._usable_budget()
+        est = self._estimate_tokens(list(messages))
+        system_est = self._estimate_system_prompt_tokens(session_id)
+        pressure = compute_pressure(est, None, system_est)
+        truncatable = find_truncatable_tool_results(list(messages))
+        route = decide_route(pressure, int(ctx_window), usable, truncatable)
+        logger.debug(
+            "Overflow route decision: est={} system_est={} usable={} "
+            "candidates={} route={} session={}",
+            est, system_est, usable, len(truncatable), route, session_id,
+        )
+        return route
+
+    def _run_budget_truncation(
+        self, messages: list[BaseMessage], usable: int
+    ) -> int:
+        """Task 4 budget truncation over Task 3's candidate rule (in place).
+
+        Candidates come from ``find_truncatable_tool_results`` (skips the last
+        TRUNCATABLE_RECENT_SKIP messages, >= MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE)
+        — Task 4's module intentionally does NOT apply that rule itself.
+        """
+        candidates = find_truncatable_tool_results(list(messages))
+        return truncate_to_budget(
+            list(messages), candidates, int(usable * TRUNCATE_BUDGET_RATIO)
+        )
+
+    def _log_route(
+        self, trigger: str, route: str, old_tokens: int, new_tokens: int, usable: int
+    ) -> None:
+        ratio = round(new_tokens / usable, 4) if usable > 0 else 0.0
+        logger.info(
+            "Context compression: trigger={}, route={}, old_tokens={}, "
+            "new_tokens={}, pressure_ratio={}",
+            trigger, route, old_tokens, new_tokens, ratio,
+        )
+
+    def _record_compaction_bookkeeping(self, session_id: str) -> None:
+        """After an ACTUAL compression: arm the cooldown, count the turn attempt."""
+        state_register_mem.set_state(
+            session_id, _COOLDOWN_ROUNDS_KEY, COMPACTION_COOLDOWN_ROUNDS
+        )
+        attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) + 1
+        state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, attempts)
+
+    def _execute_compact(
+        self,
+        request: ModelRequest[ContextT],
+        route: str,
+        session_id: str,
+        trigger: str,
+    ) -> ModelRequest[ContextT]:
+        """compact_only / compact_then_truncate execution (sync)."""
+        messages: list[AnyMessage] = request.state.get("messages", [])
+        old_tokens = self._estimate_tokens(list(messages))
+        usable = self._usable_budget()
+        try:
+            request = self._apply_compression(request, session_id)
+        except Exception as e:
+            logger.error("Compression failed: {}", e)
+            return request
+        self._record_compaction_bookkeeping(session_id)
+        if route == ROUTE_COMPACT_THEN_TRUNCATE:
+            final_messages = list(request.messages)
+            self._run_budget_truncation(
+                cast("list[BaseMessage]", final_messages), usable
+            )
+            request = request.override(
+                messages=cast("list[AnyMessage]", final_messages)
+            )
+        new_tokens = self._estimate_tokens(list(request.messages))
+        self._log_route(trigger, route, old_tokens, new_tokens, usable)
+        return request
+
+    async def _aexecute_compact(
+        self,
+        request: ModelRequest[ContextT],
+        route: str,
+        session_id: str,
+        trigger: str,
+    ) -> ModelRequest[ContextT]:
+        """compact_only / compact_then_truncate execution (async)."""
+        messages: list[AnyMessage] = request.state.get("messages", [])
+        old_tokens = self._estimate_tokens(list(messages))
+        usable = self._usable_budget()
+        try:
+            request = await self._aapply_compression(request, session_id)
+        except Exception as e:
+            logger.error("Compression failed: {}", e)
+            return request
+        self._record_compaction_bookkeeping(session_id)
+        if route == ROUTE_COMPACT_THEN_TRUNCATE:
+            final_messages = list(request.messages)
+            self._run_budget_truncation(
+                cast("list[BaseMessage]", final_messages), usable
+            )
+            request = request.override(
+                messages=cast("list[AnyMessage]", final_messages)
+            )
+        new_tokens = self._estimate_tokens(list(request.messages))
+        self._log_route(trigger, route, old_tokens, new_tokens, usable)
+        return request
+
+    def _dispatch_overflow_route(
+        self,
+        request: ModelRequest[ContextT],
+        route: str,
+        session_id: str,
+        trigger: str = "T2",
+    ) -> ModelRequest[ContextT]:
+        """Single reusable 4-route executor.
+
+        T1 (before_agent) and T2 (wrap/awrap_model_call) both call this —
+        Tasks 6/7 (T3 post-response check, provider-error retry) must reuse
+        it instead of copying a second dispatch.
+        """
+        usable = self._usable_budget()
+        messages: list[AnyMessage] = request.state.get("messages", [])
+
+        if route == ROUTE_TRUNCATE_TOOL_RESULTS_ONLY:
+            old_tokens = self._estimate_tokens(list(messages))
+            self._run_budget_truncation(
+                cast("list[BaseMessage]", list(messages)), usable
+            )
+            request = request.override(
+                messages=cast("list[AnyMessage]", list(messages))
+            )
+            new_tokens = self._estimate_tokens(list(messages))
+            self._log_route(trigger, route, old_tokens, new_tokens, usable)
+            # Recheck: truncation freed less than estimated and pressure is
+            # still at/above threshold_compact → compact backstop; otherwise
+            # pass through WITHOUT compression.
+            if usable > 0 and new_tokens >= usable * COMPRESSION_TRIGGER_RATIO:
+                return self._execute_compact(
+                    request, ROUTE_COMPACT_THEN_TRUNCATE, session_id, trigger
+                )
+            return request
+
+        if route in (ROUTE_COMPACT_ONLY, ROUTE_COMPACT_THEN_TRUNCATE):
+            return self._execute_compact(request, route, session_id, trigger)
+
+        return request
+
+    async def _adispatch_overflow_route(
+        self,
+        request: ModelRequest[ContextT],
+        route: str,
+        session_id: str,
+        trigger: str = "T2",
+    ) -> ModelRequest[ContextT]:
+        """Async twin of :meth:`_dispatch_overflow_route` (parity by shape)."""
+        usable = self._usable_budget()
+        messages: list[AnyMessage] = request.state.get("messages", [])
+
+        if route == ROUTE_TRUNCATE_TOOL_RESULTS_ONLY:
+            old_tokens = self._estimate_tokens(list(messages))
+            self._run_budget_truncation(
+                cast("list[BaseMessage]", list(messages)), usable
+            )
+            request = request.override(
+                messages=cast("list[AnyMessage]", list(messages))
+            )
+            new_tokens = self._estimate_tokens(list(messages))
+            self._log_route(trigger, route, old_tokens, new_tokens, usable)
+            if usable > 0 and new_tokens >= usable * COMPRESSION_TRIGGER_RATIO:
+                return await self._aexecute_compact(
+                    request, ROUTE_COMPACT_THEN_TRUNCATE, session_id, trigger
+                )
+            return request
+
+        if route in (ROUTE_COMPACT_ONLY, ROUTE_COMPACT_THEN_TRUNCATE):
+            return await self._aexecute_compact(request, route, session_id, trigger)
+
+        return request
+
+    def _tick_cooldown(self, session_id: str) -> bool:
+        """Cooldown bookkeeping: EVERY wrap_model_call decrements when >0.
+
+        Returns True when the decrement happened (T2 proactive trigger is
+        suppressed for that call). Cooldown blocks proactive compression
+        only — forced recovery is exempt (caller checks the force flag).
+        """
+        rounds = state_register_mem.get_state(session_id, _COOLDOWN_ROUNDS_KEY, 0) or 0
+        if rounds > 0:
+            state_register_mem.set_state(session_id, _COOLDOWN_ROUNDS_KEY, rounds - 1)
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Preemptive truncation (no LLM call)
@@ -1156,30 +1397,126 @@ class Summarization(AgentMiddleware):
     # before_agent: reset state
     # ------------------------------------------------------------------
 
-    def _before_agent_impl(self, state: AgentState) -> None:
+    def _before_agent_impl(self, state: AgentState) -> dict[str, Any] | None:
         session_id = state.get("session_id", "")
         if session_id.strip():
-            state_register_mem.set_state(session_id, _COMPRESSION_COUNT_KEY, 0)
-            state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
-            state_register_mem.set_state(session_id, _COMPRESSION_LAST_TOKENS_KEY, None)
-            state_register_mem.set_state(session_id, _SKIP_LLM_KEY, False)
-            state_register_mem.set_state(session_id, _LAST_STRATEGY_KEY, "")
-            state_register_mem.set_state(session_id, _DEGRADATION_NO_TEXT_KEY, 0)
-            state_register_mem.set_state(session_id, _RECOVERY_ATTEMPTS_KEY, 0)
-            state_register_mem.set_state(session_id, _FORCE_RECOVERY_KEY, False)
-            state_register_mem.set_state(session_id, _PREVIOUS_FILE_OPS_KEY, None)
+            self._reset_turn_state(session_id)
+            # T1 PREFLIGHT: budget-truncate / compact the OVERFLOWED history
+            # before the turn starts (4-route decision, truncate track is
+            # always allowed; compact routes are cooldown-gated).
+            return self._t1_preflight(state, session_id)
+        return None
+
+    async def _abefore_agent_impl(self, state: AgentState) -> dict[str, Any] | None:
+        session_id = state.get("session_id", "")
+        if session_id.strip():
+            self._reset_turn_state(session_id)
+            return await self._at1_preflight(state, session_id)
+        return None
+
+    def _reset_turn_state(self, session_id: str) -> None:
+        state_register_mem.set_state(session_id, _COMPRESSION_COUNT_KEY, 0)
+        state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
+        state_register_mem.set_state(session_id, _COMPRESSION_LAST_TOKENS_KEY, None)
+        state_register_mem.set_state(session_id, _SKIP_LLM_KEY, False)
+        state_register_mem.set_state(session_id, _LAST_STRATEGY_KEY, "")
+        state_register_mem.set_state(session_id, _DEGRADATION_NO_TEXT_KEY, 0)
+        state_register_mem.set_state(session_id, _RECOVERY_ATTEMPTS_KEY, 0)
+        state_register_mem.set_state(session_id, _FORCE_RECOVERY_KEY, False)
+        state_register_mem.set_state(session_id, _PREVIOUS_FILE_OPS_KEY, None)
+        # NEW (Task 5): per-turn proactive-compression attempt counter.
+        state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+
+    def _t1_state_update(
+        self, original: list[AnyMessage], request: ModelRequest[ContextT]
+    ) -> dict[str, Any]:
+        """Translate a T1-dispatched request into a before_agent state update.
+
+        Same-length list (in-place budget truncation, same message ids) →
+        plain list: add_messages replaces each message by id. Shorter list
+        (compacted/reduced) → MUST clear state messages first, because the
+        add_messages reducer never removes by itself (same pattern as
+        ToolCallNormalize.before_model).
+        """
+        new_messages = list(request.messages)
+        if len(new_messages) < len(original):
+            return {
+                "messages": cast(
+                    "list[AnyMessage]",
+                    [RemoveMessage(id=REMOVE_ALL_MESSAGES), *new_messages],
+                )
+            }
+        return {"messages": cast("list[AnyMessage]", new_messages)}
+
+    def _t1_preflight(
+        self, state: AgentState, session_id: str
+    ) -> dict[str, Any] | None:
+        messages: list[AnyMessage] = list(state.get("messages", []) or [])
+        if not messages:
+            return None
+        route = self._decide_overflow_route(messages, session_id)
+        if route is None or route == ROUTE_FITS:
+            return None
+        # Cooldown blocks the PROACTIVE compact routes at T1; the cheap
+        # truncate track still runs (it is the recovery mechanism itself).
+        cooldown = state_register_mem.get_state(
+            session_id, _COOLDOWN_ROUNDS_KEY, 0
+        ) or 0
+        if cooldown > 0 and route in (ROUTE_COMPACT_ONLY, ROUTE_COMPACT_THEN_TRUNCATE):
+            logger.debug(
+                "T1 compact route suppressed by cooldown ({} rounds left), "
+                "session={}",
+                cooldown, session_id,
+            )
+            return None
+        request = ModelRequest(
+            model=self._model,
+            messages=cast("list[AnyMessage]", messages),
+            state=state,
+        )
+        request = self._dispatch_overflow_route(
+            request, route, session_id, trigger="T1"
+        )
+        return self._t1_state_update(messages, request)
+
+    async def _at1_preflight(
+        self, state: AgentState, session_id: str
+    ) -> dict[str, Any] | None:
+        messages: list[AnyMessage] = list(state.get("messages", []) or [])
+        if not messages:
+            return None
+        route = self._decide_overflow_route(messages, session_id)
+        if route is None or route == ROUTE_FITS:
+            return None
+        cooldown = state_register_mem.get_state(
+            session_id, _COOLDOWN_ROUNDS_KEY, 0
+        ) or 0
+        if cooldown > 0 and route in (ROUTE_COMPACT_ONLY, ROUTE_COMPACT_THEN_TRUNCATE):
+            logger.debug(
+                "T1 compact route suppressed by cooldown ({} rounds left), "
+                "session={}",
+                cooldown, session_id,
+            )
+            return None
+        request = ModelRequest(
+            model=self._model,
+            messages=cast("list[AnyMessage]", messages),
+            state=state,
+        )
+        request = await self._adispatch_overflow_route(
+            request, route, session_id, trigger="T1"
+        )
+        return self._t1_state_update(messages, request)
 
     def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         logger.debug("Compaction before_agent hook fired")
-        self._before_agent_impl(state)
-        return None
+        return self._before_agent_impl(state)
 
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
         logger.debug("Compaction abefore_agent hook fired")
-        self._before_agent_impl(state)
-        return None
+        return await self._abefore_agent_impl(state)
 
     # ------------------------------------------------------------------
     # wrap_model_call (sync)
@@ -1195,6 +1532,12 @@ class Summarization(AgentMiddleware):
         messages: list[AnyMessage] = request.state.get("messages", [])
         self._check_last_turn_ratio(messages, session_id)
 
+        # T2 anti-thrash bookkeeping (EVERY call): tick the cooldown down
+        # before anything else. The force flag is read BEFORE the skip check
+        # because _should_skip_compression consumes it.
+        forced = state_register_mem.get_state(session_id, _FORCE_RECOVERY_KEY, False)
+        cooldown_active = self._tick_cooldown(session_id)
+
         if self._should_skip_compression(session_id):
             self._compress_last_turn = False
             self._compaction_just_happened = False
@@ -1202,20 +1545,43 @@ class Summarization(AgentMiddleware):
             self._monitor_degradation(response, session_id)
             return response
 
-        action = self._preemptive_check(messages, session_id)
-        if action in ("truncate_only", "compact"):
-            truncated = self._preemptive_truncate(messages, session_id)
-            request = request.override(messages=cast("list[AnyMessage]", truncated))
+        attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+        if not forced and (
+            cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN
+        ):
+            # T2 anti-thrash gate: cooldown / per-turn attempt cap suppress
+            # the PROACTIVE trigger only (forced recovery is exempt above).
+            self._compress_last_turn = False
+            if self._compaction_just_happened:
+                # T1 compacted earlier this turn: a second compression is
+                # exactly the thrash the cooldown prevents, but the rebuilt
+                # system prompt must still reach the model (chains without
+                # ContextEngineHook rely on this middleware delivering it),
+                # and the response still needs degradation monitoring — the
+                # flag is left for _monitor_degradation to consume.
+                if self._need_update_system_prompt:
+                    rebuilt = state_register_mem.get_state(
+                        session_id, "system_prompt", ""
+                    )
+                    if rebuilt:
+                        request = request.override(
+                            system_message=SystemMessage(content=rebuilt)
+                        )
+            response = handler(request)
+            self._monitor_degradation(response, session_id)
+            return response
 
-        need_compress = (action == "compact") or self._check_trigger(
-            request.state.get("messages", [])
-        )
-
-        if need_compress:
-            try:
-                request = self._apply_compression(request, session_id)
-            except Exception as e:
-                logger.error("Compression failed: {}", e)
+        # 4-route decision (upgraded _preemptive_check) → single dispatch
+        route = self._decide_overflow_route(messages, session_id)
+        if route is not None and route != ROUTE_FITS:
+            request = self._dispatch_overflow_route(
+                request, route, session_id, trigger="T2"
+            )
+        elif self._check_trigger(request.state.get("messages", [])):
+            # legacy trigger-clause fallback (e.g. ("messages", N) triggers)
+            request = self._dispatch_overflow_route(
+                request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
+            )
 
         response = handler(request)
         self._monitor_degradation(response, session_id)
@@ -1235,6 +1601,12 @@ class Summarization(AgentMiddleware):
         messages: list[AnyMessage] = request.state.get("messages", [])
         self._check_last_turn_ratio(messages, session_id)
 
+        # T2 anti-thrash bookkeeping (EVERY call): tick the cooldown down
+        # before anything else. The force flag is read BEFORE the skip check
+        # because _should_skip_compression consumes it.
+        forced = state_register_mem.get_state(session_id, _FORCE_RECOVERY_KEY, False)
+        cooldown_active = self._tick_cooldown(session_id)
+
         if self._should_skip_compression(session_id):
             self._compress_last_turn = False
             self._compaction_just_happened = False
@@ -1242,20 +1614,43 @@ class Summarization(AgentMiddleware):
             self._monitor_degradation(response, session_id)
             return response
 
-        action = self._preemptive_check(messages, session_id)
-        if action in ("truncate_only", "compact"):
-            truncated = self._preemptive_truncate(messages, session_id)
-            request = request.override(messages=cast("list[AnyMessage]", truncated))
+        attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+        if not forced and (
+            cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN
+        ):
+            # T2 anti-thrash gate: cooldown / per-turn attempt cap suppress
+            # the PROACTIVE trigger only (forced recovery is exempt above).
+            self._compress_last_turn = False
+            if self._compaction_just_happened:
+                # T1 compacted earlier this turn: a second compression is
+                # exactly the thrash the cooldown prevents, but the rebuilt
+                # system prompt must still reach the model (chains without
+                # ContextEngineHook rely on this middleware delivering it),
+                # and the response still needs degradation monitoring — the
+                # flag is left for _monitor_degradation to consume.
+                if self._need_update_system_prompt:
+                    rebuilt = state_register_mem.get_state(
+                        session_id, "system_prompt", ""
+                    )
+                    if rebuilt:
+                        request = request.override(
+                            system_message=SystemMessage(content=rebuilt)
+                        )
+            response = await handler(request)
+            self._monitor_degradation(response, session_id)
+            return response
 
-        need_compress = (action == "compact") or self._check_trigger(
-            request.state.get("messages", [])
-        )
-
-        if need_compress:
-            try:
-                request = await self._aapply_compression(request, session_id)
-            except Exception as e:
-                logger.error("Compression failed: {}", e)
+        # 4-route decision (upgraded _preemptive_check) → single dispatch
+        route = self._decide_overflow_route(messages, session_id)
+        if route is not None and route != ROUTE_FITS:
+            request = await self._adispatch_overflow_route(
+                request, route, session_id, trigger="T2"
+            )
+        elif self._check_trigger(request.state.get("messages", [])):
+            # legacy trigger-clause fallback (e.g. ("messages", N) triggers)
+            request = await self._adispatch_overflow_route(
+                request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
+            )
 
         response = await handler(request)
         self._monitor_degradation(response, session_id)
