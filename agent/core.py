@@ -40,7 +40,7 @@ class StateSchema(AgentState):
 # ── Initialization (explicit, idempotent) ────────────────────────────────
 # These three steps used to run at module import time, which made any bare
 # ``import agent.core`` (tests, tooling, type checkers) trigger disk I/O and
-# tool construction unexpectedly and slowly (AUDIT_REPORT item 26). They now
+# tool construction unexpectedly and slowly. They now
 # live in ``init()``, called once by the service entry point
 # (``server/__main__.py``) — importing this module is side-effect-free.
 

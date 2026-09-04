@@ -8,8 +8,8 @@ def init() -> None:
 
     Used to run at module import time (``import server.trigger`` pulled in
     every route module for side-effect registration), which made any bare
-    import of this package register routes unexpectedly (AUDIT_REPORT
-    item 26). Importing the package now only constructs the app object;
+    import of this package register routes unexpectedly. Importing the
+    package now only constructs the app object;
     the service entry point calls ``init()`` once.
 
     Idempotent: module caching makes the imports below no-ops on

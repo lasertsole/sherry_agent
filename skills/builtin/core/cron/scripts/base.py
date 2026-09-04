@@ -604,7 +604,7 @@ def init() -> None:
 
     Used to run at module import time, which made any bare import of the
     cron scripts (tests, tooling, API consumers) spawn a daemon thread
-    unexpectedly (AUDIT_REPORT item 26). Importing this module is now
+    unexpectedly. Importing this module is now
     side-effect-free; the service entry point calls ``init()`` once.
 
     Idempotent: subsequent calls are no-ops. (``CronService.add_job`` /

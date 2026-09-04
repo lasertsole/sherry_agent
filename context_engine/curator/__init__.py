@@ -130,8 +130,8 @@ def init() -> None:
 
     Used to run at module import time, which made any bare
     ``import context_engine.curator`` (tests, tooling, API consumers) spawn a
-    daemon thread unexpectedly (AUDIT_REPORT item 26). Importing this
-    package is now side-effect-free.
+    daemon thread unexpectedly. Importing this package is now
+    side-effect-free.
 
     Idempotent: subsequent calls are no-ops while the thread is alive.
     """
