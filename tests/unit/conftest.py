@@ -12,9 +12,12 @@ tmp storage for every unit test.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +31,20 @@ def _isolated_skill_scan_cache(tmp_path):
     ``subprocess.run`` calls that test_skill_scanner.py counts with
     ``assert_called_once``.
     """
+    try:
+        import server.service.skill_scanner  # noqa: F401
+    except Exception:
+        # PART2 §12: a broken skill_scanner import (e.g. langgraph
+        # ExecutionInfo environment issues) must not crash every unit
+        # test at fixture setup; degrade to no-patching so unrelated
+        # tests keep running.
+        logger.warning(
+            "server.service.skill_scanner import failed; "
+            "SkillSpector scan-cache isolation patches skipped",
+            exc_info=True,
+        )
+        yield
+        return
     with (
         patch(
             "server.service.skill_scanner._CACHE_PATH",
