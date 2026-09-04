@@ -68,3 +68,13 @@ CHARS_PER_TOKEN = 4
 # full the producer awaits free space (backpressure) — messages are delayed,
 # never dropped, and memory stays bounded (audit #11).
 BUS_QUEUE_MAXSIZE = 1000
+
+# === Context compression: multi-trigger + dual-track (T1-T5) ===
+MAX_OVERFLOW_RETRIES = 3  # T4/T5 溢出处理重试上限
+MAX_COMPRESS_ATTEMPTS_PER_TURN = 3  # 单轮内最大压缩尝试次数
+COMPACTION_COOLDOWN_ROUNDS = 3  # 压缩后冷却的模型调用轮数
+PRUNE_TTL_SECONDS = 300  # 工具结果 TTL（5 分钟）
+TRUNCATE_BUDGET_RATIO = 0.6  # 工具结果截断预算占 usable_budget 比例
+MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE = 200  # 低于此 token 数不值得截断
+TRUNCATABLE_RECENT_SKIP = 6  # 跳过最近 6 条消息（约 2 轮）
+TTL_REGISTRY_MAX_ENTRIES = 512  # TTL 注册表容量上限，防无界增长

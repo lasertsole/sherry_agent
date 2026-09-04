@@ -42,6 +42,14 @@ from config.num import (
     FILE_OPS_LIST_MAX_CHARS,
     LATEST_USER_REQUEST_MAX_CHARS,
     AUTO_CONTINUE_PROMPT,
+    MAX_OVERFLOW_RETRIES,
+    MAX_COMPRESS_ATTEMPTS_PER_TURN,
+    COMPACTION_COOLDOWN_ROUNDS,
+    PRUNE_TTL_SECONDS,
+    TRUNCATE_BUDGET_RATIO,
+    MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE,
+    TRUNCATABLE_RECENT_SKIP,
+    TTL_REGISTRY_MAX_ENTRIES,
 )
 
 CONTRACT_NAMES = [
@@ -73,6 +81,14 @@ CONTRACT_NAMES = [
     "FILE_OPS_LIST_MAX_CHARS",
     "LATEST_USER_REQUEST_MAX_CHARS",
     "AUTO_CONTINUE_PROMPT",
+    "MAX_OVERFLOW_RETRIES",
+    "MAX_COMPRESS_ATTEMPTS_PER_TURN",
+    "COMPACTION_COOLDOWN_ROUNDS",
+    "PRUNE_TTL_SECONDS",
+    "TRUNCATE_BUDGET_RATIO",
+    "MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE",
+    "TRUNCATABLE_RECENT_SKIP",
+    "TTL_REGISTRY_MAX_ENTRIES",
 ]
 
 
@@ -219,14 +235,48 @@ class TestAutoContinue:
         )
 
 
+class TestContextCompressionMultiTriggerDualTrack:
+    def test_max_overflow_retries(self):
+        assert MAX_OVERFLOW_RETRIES == 3
+        assert isinstance(MAX_OVERFLOW_RETRIES, int)
+
+    def test_max_compress_attempts_per_turn(self):
+        assert MAX_COMPRESS_ATTEMPTS_PER_TURN == 3
+        assert isinstance(MAX_COMPRESS_ATTEMPTS_PER_TURN, int)
+
+    def test_compaction_cooldown_rounds(self):
+        assert COMPACTION_COOLDOWN_ROUNDS == 3
+        assert isinstance(COMPACTION_COOLDOWN_ROUNDS, int)
+
+    def test_prune_ttl_seconds(self):
+        assert PRUNE_TTL_SECONDS == 300
+        assert isinstance(PRUNE_TTL_SECONDS, int)
+
+    def test_truncate_budget_ratio(self):
+        assert TRUNCATE_BUDGET_RATIO == 0.6
+        assert isinstance(TRUNCATE_BUDGET_RATIO, float)
+
+    def test_min_tool_result_tokens_to_truncate(self):
+        assert MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE == 200
+        assert isinstance(MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE, int)
+
+    def test_truncatable_recent_skip(self):
+        assert TRUNCATABLE_RECENT_SKIP == 6
+        assert isinstance(TRUNCATABLE_RECENT_SKIP, int)
+
+    def test_ttl_registry_max_entries(self):
+        assert TTL_REGISTRY_MAX_ENTRIES == 512
+        assert isinstance(TTL_REGISTRY_MAX_ENTRIES, int)
+
+
 class TestContract:
-    def test_all_28_contract_names_importable(self):
+    def test_all_36_contract_names_importable(self):
         num = importlib.import_module("config.num")
         missing = [name for name in CONTRACT_NAMES if not hasattr(num, name)]
         assert missing == [], f"missing contract constants: {missing}"
 
     def test_contract_name_count(self):
-        assert len(CONTRACT_NAMES) == 28
+        assert len(CONTRACT_NAMES) == 36
 
 
 class TestPreservedConstants:
