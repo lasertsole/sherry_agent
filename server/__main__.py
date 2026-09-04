@@ -32,27 +32,27 @@ else:
 
 if __name__ == "__main__":
     # Explicit agent-core initialization: skills snapshot + memory store +
-    # main tools. Moved out of agent.core import time (AUDIT_REPORT item 26)
-    # so tests/tooling can import agent.core without disk I/O. Must run
+    # main tools. Moved out of agent.core import time so tests/tooling can
+    # import agent.core without disk I/O. Must run
     # before serving requests and before any lazy agent.core consumer.
     from agent.core import init as init_agent_core
 
     init_agent_core()
 
     # run curator to maintain auto-skills — starts the curator background
-    # thread (moved out of context_engine.curator import time, item 26)
+    # thread (moved out of context_engine.curator import time)
     from context_engine.curator import init as init_curator
 
     init_curator()
 
     # run core service thread — starts the cron-service background thread
-    # (moved out of cron.scripts.base import time, item 26)
+    # (moved out of cron.scripts.base import time)
     from skills.builtin.core.cron.scripts import init as init_cron
 
     init_cron()
 
     # Register all HTTP/WS/channel/subagent routes and handlers explicitly
-    # (moved out of server.trigger import time, item 26)
+    # (moved out of server.trigger import time)
     from .trigger import app, init as init_trigger
 
     init_trigger()
