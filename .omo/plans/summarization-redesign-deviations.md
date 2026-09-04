@@ -68,3 +68,24 @@ Deviations, decisions, and adjustments from .omo/plans/summarization-redesign.md
 - 2026-09-04: Added 5 UNGUARDED TestSkipGuardProbe pure-logic tests beyond the 2 e2e tests so guard behavior is verifiable on config-less machines (they run everywhere); probe takes explicit provider/name args instead of monkeypatching os.environ (the module-level guard is computed once from the raw snapshot). asyncio.run inside sync tests (no pytest-asyncio strict markers configured).
 - 2026-09-04: QA scenario 1: uv run pytest tests/module/test_e2e_summarization.py -q -s = 7 passed / 0 failed / exit 0; pipeline logs show the full redesigned flow (awrap hook, last-turn ratio 3.3%, preemptive truncate 30 tool outputs, target truncation -28050 tokens, "LLM summary failed: stub auxiliary LLM outage, using fallback", pair + rebuilt system prompt 11196 chars delivered and written to mem+db). Evidence: .omo/evidence/task-10-e2e.txt
 - 2026-09-04: QA scenario 2: env-injected subprocess (blank MAIN_LLM_PROVIDER) = 5 passed / 2 skipped / 0 failed / exit 0 with explicit skip reason "MAIN_LLM_PROVIDER is injected as an empty/blank value - effective MAIN_LLM config missing" (task-10-skip-guard.txt; the SKIPPED lines show the GBK-console mojibake of the reason dash - cosmetic only). Zero-network grep (APITimeoutError|ConnectionError|httpx|urllib|socket|ReadTimeout|ConnectError) over both evidence files = 0 matches; only "http" occurrences are DeprecationWarning text URLs (adjudication lines appended to both evidence files).
+
+## Final Review Fix (post F2/F4 dispatch) - 2026-09-04
+
+### Deviation F1 - integration test adapted to S9.7 semantics (T9 pattern)
+- File: tests/integration/test_interrupt_marker_approach.py (C2 test only; C1 and all other facts untouched).
+- Root cause: C2 built Summarization without main_llm_context_window; the redesigned preserve budget clamps to MIN_PRESERVE_TOKENS=2000 and 6 tiny messages fit, so _determine_cutoff returned 0 and the middleware no-oped ("summarizer never ran") (summarization.py:1045-1047/1117-1119).
+- Adaptation (marker assertions untouched): (1) main_llm_context_window=8_000 -> budget = 8000*PRESERVE_RATIO(0.25) = 2000; (2) filler pair enlarged to ~2053 est tokens each so history exceeds the budget (cutoff=5, Q-last preserved); pressure ~0.51 < PREEMPTIVE_TRUNCATE_RATIO(0.70), so the ("messages", 5) trigger alone drives compression as before; (3) fixed summary lengthened >= 50 chars so _create_summary keeps the LLM path (summarization.py:785-787: the deterministic static fallback echoes AI fragments - the marker text - into the model view, which would falsely break the "[interrupted] not in model view" pin); (4) lc_source assertion moved from the summary HumanMessage to the summary AIMessage - S9.7 _build_new_messages (summarization.py:839-845) tags the AIMessage; the old middleware tagged the HumanMessage.
+- Adjudication: S9.7 WINS (final design, doc-verbatim). Intent preserved: marker swallowed from model view, shown to summarizer, retained in state. QA: full file 11 passed / 0 failed, exit 0 (.omo/evidence/review-fix-interrupt.txt).
+
+### Deviation F2 - review lint cleanup in test files (12 implementer-introduced findings)
+- tests/module/test_summarization_comprehensive.py: removed unused SystemMessage import + 9 unused config.num imports (AGGRESSIVE_TRUNCATE_CHARS, DEGRADATION_NO_TEXT_THRESHOLD, INEFFECTIVE_THRESHOLD, MAX_PRESERVE_TOKENS, MAX_RECOVERY_ATTEMPTS, MAX_TOOL_OUTPUT_CHARS, MIN_OUTPUT_CHARS_TO_TRUNCATE, MIN_PRESERVE_TOKENS, PRESERVE_RATIO); F841 `mw =` -> bare make_middleware(...) call. No assertion changes.
+- tests/unit/test_pub_func_message_tools.py: E731 lambda -> def estimator (L75). Same semantics.
+- Post-fix ruff on the 5 reviewed files: 2 test files 0 findings; exactly the 6 doc-verbatim KEEP findings remain (summarization.py L2 json, L3 hashlib, L43 SUMMARY_TRIM_TOKENS, L59 AUTO_CONTINUE_PROMPT, L360 E741 `l` - provenance PART2 L501/502/542/558/859; tool_output_prune.py L5 HumanMessage - provenance PART1 L331). QA: 160 passed / 0 failed, exit 0 (.omo/evidence/review-fix-lint.txt).
+
+### Adjudicated KEEP - 6 doc-verbatim ruff findings (no # noqa per orchestrator)
+- Protected files are doc-verbatim ports of SUMMARIZATION_CHANGES_PART1/PART2; touching them (or silencing findings) risks drift from the source docs. Findings are permanent by design; filter them when gating lint on these paths.
+
+### Coverage deltas noted during F4 review (accepted, logged for the record)
+- T8 dedup: direct coverage lost for 3 behaviors (noop-warn / aggressive-truncate-cap / feedback-loop-inject - now covered only indirectly via integration/monitor paths).
+- T3: degradation logger.warning(..., exc_info=True) kept (sanctioned - aids postmortem; stdout noise acceptable in tests).
+- T4: wiring files passing literal default args (e.g. keep_n=3) left as-is - behavior-neutral duplication.
