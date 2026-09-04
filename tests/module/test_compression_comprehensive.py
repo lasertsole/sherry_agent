@@ -755,5 +755,303 @@ class TestT3NegativeDouble:
         assert state_register_mem.get_state(sid, attempts_key) in (None, 0)
 
 
+# ======================================================================
+# Task 7 / T4-T5: bounded forced-compression recovery loop
+# ======================================================================
+
+
+class Provider413Error(Exception):
+    """413-shaped provider error (classifier channel 1: status_code attr)."""
+
+    status_code = 413
+
+
+T5_OVERFLOW_TEXT = "This model's maximum context length is 65536 tokens"
+
+
+class TestT4T5Recovery:
+    """Plan QA scenarios (.omo/plans/context-compression.md): T4 recover,
+    T5 recover, exhaust->propagate, negative passthrough, sync/async parity,
+    plus independent per-class counters and gate/skip bypass coverage.
+
+    Fixture shape (t3_low_est_messages): T2 is a complete no-op on it
+    (est 11750 < 17920 threshold_truncate; token trigger 80000 unreached),
+    so every compression observed here is the FORCED recovery one and the
+    bookkeeping assertions are unambiguous.
+    """
+
+    @staticmethod
+    def _recording_monitor(mw):
+        seen = []
+        mw._monitor_degradation = lambda response, session_id: seen.append(response)
+        return seen
+
+    def test_t4_forced_compression_recover(self, sid):
+        """Scenario T4: first 413 -> forced compression (gates bypassed) ->
+        retry succeeds. handler called twice, monitor only on final success."""
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        err = Provider413Error("413 payload too large")
+        calls = []
+        requests = []
+
+        def handler(r):
+            calls.append(1)
+            requests.append(r)
+            if len(calls) == 1:
+                raise err
+            return AIMessage(content="ok")
+
+        monitor = self._recording_monitor(mw)
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), handler
+            )
+
+        assert len(calls) == 2
+        assert resp.content == "ok"
+        # degradation monitor ran exactly once, on the final successful response
+        assert len(monitor) == 1 and monitor[0] is resp
+        t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")  # AttributeError-RED probe
+        t5_key = mget("_OVERFLOW_RETRIES_T5_KEY")
+        assert state_register_mem.get_state(sid, t4_key) == 1
+        assert state_register_mem.get_state(sid, t5_key) in (None, 0)
+        # exactly one compression this session = the forced recovery one
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
+        # forced path does NOT arm cooldown / per-turn attempts
+        assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) in (
+            None,
+            0,
+        )
+        assert state_register_mem.get_state(sid, mget("_TURN_ATTEMPTS_KEY")) in (
+            None,
+            0,
+        )
+        # retry used a REBUILT request (request.override), not the original
+        assert requests[1] is not requests[0]
+        assert any("trigger=T4" in line and "attempt=1/3" in line for line in lines)
+        assert any("error_class=payload_too_large" in line for line in lines)
+        assert any("old_tokens=" in line and "new_tokens=" in line for line in lines)
+
+    def test_t5_context_overflow_recover(self, sid):
+        """Scenario T5: context-window string error classified as
+        context_overflow -> same recovery (trigger=T5)."""
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        calls = []
+
+        def handler(r):
+            calls.append(1)
+            if len(calls) == 1:
+                raise Exception(T5_OVERFLOW_TEXT)
+            return AIMessage(content="ok")
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), handler
+            )
+
+        assert len(calls) == 2
+        assert resp.content == "ok"
+        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T5_KEY")) == 1
+        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T4_KEY")) in (
+            None,
+            0,
+        )
+        assert any("trigger=T5" in line and "attempt=1/3" in line for line in lines)
+        assert any("error_class=context_overflow" in line for line in lines)
+
+    def test_exhausted_retries_propagate_original_error(self, sid):
+        """Scenario exhaust: every call 413s -> handler exactly 4 times
+        (1 initial + 3 retries), a forced compression before EVERY retry,
+        the ORIGINAL exception object re-raised, monitor never called."""
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        err = Provider413Error("413 payload too large")
+        calls = []
+
+        def handler(r):
+            calls.append(1)
+            raise err
+
+        monitor = self._recording_monitor(mw)
+        with capture_logs() as lines:
+            with pytest.raises(Provider413Error) as ei:
+                mw.wrap_model_call(
+                    make_request(t3_low_est_messages(), sid, stub), handler
+                )
+
+        assert ei.value is err  # same object: never wrapped, never replaced
+        assert len(calls) == 4
+        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T4_KEY")) == 3
+        # one _apply_compression execution per retry = 3 total
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 3
+        assert monitor == []  # failed calls never pollute degradation stats
+        assert any("trigger=T4" in line and "attempt=1/3" in line for line in lines)
+        assert any("trigger=T4" in line and "attempt=2/3" in line for line in lines)
+        assert any("trigger=T4" in line and "attempt=3/3" in line for line in lines)
+
+    def test_non_overflow_error_passthrough_zero_retries(self, sid):
+        """Scenario negative: TimeoutError is not a target error -> exactly
+        1 handler call, re-raised as-is, zero retry-key writes, no compression."""
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        err = TimeoutError("timed out")
+        calls = []
+
+        def handler(r):
+            calls.append(1)
+            raise err
+
+        monitor = self._recording_monitor(mw)
+        with capture_logs() as lines:
+            with pytest.raises(TimeoutError) as ei:
+                mw.wrap_model_call(
+                    make_request(t3_low_est_messages(), sid, stub), handler
+                )
+
+        assert ei.value is err
+        assert len(calls) == 1
+        assert monitor == []
+        for key in (
+            mget("_OVERFLOW_RETRIES_T4_KEY"),
+            mget("_OVERFLOW_RETRIES_T5_KEY"),
+        ):
+            assert state_register_mem.get_state(sid, key) in (None, 0)
+        assert state_register_mem.get_state(
+            sid, mget("_COMPRESSION_COUNT_KEY")
+        ) in (None, 0)
+        assert not any("trigger=T4" in line or "trigger=T5" in line for line in lines)
+
+    def test_sync_async_recovery_parity(self, sid):
+        """Scenario parity: same 413-then-success through wrap and awrap ->
+        identical handler call counts, retry keys and final results."""
+        sid2 = sid + "-async"
+        stub1, stub2 = StubModel(), StubModel()
+        mw1 = make_middleware(model=stub1)
+        mw2 = make_middleware(model=stub2)
+        calls = []
+
+        def handler(r):
+            calls.append("s")
+            if calls.count("s") == 1:
+                raise Provider413Error("413 payload too large")
+            return AIMessage(content="ok")
+
+        async def ahandler(r):
+            calls.append("a")
+            if calls.count("a") == 1:
+                raise Provider413Error("413 payload too large")
+            return AIMessage(content="ok")
+
+        resp_s = mw1.wrap_model_call(
+            make_request(t3_low_est_messages(), sid, stub1), handler
+        )
+        resp_a = asyncio.run(
+            mw2.awrap_model_call(
+                make_request(t3_low_est_messages(), sid2, stub2), ahandler
+            )
+        )
+
+        try:
+            t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")
+            assert calls.count("s") == calls.count("a") == 2
+            assert resp_s.content == resp_a.content == "ok"
+            assert state_register_mem.get_state(sid, t4_key) == 1
+            assert state_register_mem.get_state(sid2, t4_key) == 1
+        finally:
+            try:
+                state_register_mem.clear_session(sid2)
+            except Exception:
+                pass
+
+    def test_t4_then_t5_independent_counters(self, sid):
+        """Extra: T4 on call 1, T5 on call 2, success on call 3 - the two
+        error classes count against INDEPENDENT session keys."""
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        calls = []
+
+        def handler(r):
+            calls.append(1)
+            if len(calls) == 1:
+                raise Provider413Error("413 payload too large")
+            if len(calls) == 2:
+                raise Exception(T5_OVERFLOW_TEXT)
+            return AIMessage(content="ok")
+
+        with capture_logs() as lines:
+            resp = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), handler
+            )
+
+        assert len(calls) == 3
+        assert resp.content == "ok"
+        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T4_KEY")) == 1
+        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T5_KEY")) == 1
+        assert any("trigger=T4" in line and "attempt=1/3" in line for line in lines)
+        assert any("trigger=T5" in line and "attempt=1/3" in line for line in lines)
+
+    def test_recovery_bypasses_cooldown_gate_and_skip_gate(self, sid):
+        """Extra: recovery still works when the wrap call enters via the
+        cooldown-gated path (Part A) or the session-skip path (Part B) -
+        forced compression bypasses those gates by construction."""
+        # Part A: cooldown-gated path
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        state_register_mem.set_state(sid, mget("_COOLDOWN_ROUNDS_KEY"), 2)
+        calls_a = []
+
+        def handler_a(r):
+            calls_a.append(1)
+            if len(calls_a) == 1:
+                raise Provider413Error("413 payload too large")
+            return AIMessage(content="ok")
+
+        with capture_logs():
+            resp_a = mw.wrap_model_call(
+                make_request(t3_low_est_messages(), sid, stub), handler_a
+            )
+
+        t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")
+        assert resp_a.content == "ok"
+        assert len(calls_a) == 2
+        assert state_register_mem.get_state(sid, t4_key) == 1
+        # cooldown ticked 2 -> 1 at wrap entry, NOT re-armed by the forced path
+        assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) == 1
+        assert state_register_mem.get_state(sid, mget("_TURN_ATTEMPTS_KEY")) in (
+            None,
+            0,
+        )
+
+        # Part B: skip-gated path (session compression total exhausted)
+        sid2 = sid + "-skip"
+        stub2 = StubModel()
+        mw2 = make_middleware(model=stub2)
+        state_register_mem.set_state(sid2, mget("_COMPRESSION_COUNT_KEY"), 5)
+        calls_b = []
+
+        def handler_b(r):
+            calls_b.append(1)
+            if len(calls_b) == 1:
+                raise Provider413Error("413 payload too large")
+            return AIMessage(content="ok")
+
+        try:
+            with capture_logs() as lines:
+                resp_b = mw2.wrap_model_call(
+                    make_request(t3_low_est_messages(), sid2, stub2), handler_b
+                )
+            assert resp_b.content == "ok"
+            assert len(calls_b) == 2
+            assert state_register_mem.get_state(sid2, t4_key) == 1
+            assert any("attempt=1/3" in line for line in lines)
+        finally:
+            try:
+                state_register_mem.clear_session(sid2)
+            except Exception:
+                pass
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

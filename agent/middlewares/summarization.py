@@ -61,6 +61,7 @@ from config.num import (
     AUTO_CONTINUE_PROMPT,
     COMPACTION_COOLDOWN_ROUNDS,
     MAX_COMPRESS_ATTEMPTS_PER_TURN,
+    MAX_OVERFLOW_RETRIES,
     TRUNCATE_BUDGET_RATIO,
     COMPRESSION_RESERVE_TOKENS,
 )
@@ -74,6 +75,11 @@ from pub_func.message.overflow_router import (
     find_truncatable_tool_results,
 )
 from pub_func.message.tool_result_ttl import truncate_to_budget
+from pub_func.message.llm_error_classifier import (
+    CONTEXT_OVERFLOW,
+    PAYLOAD_TOO_LARGE,
+    classify_provider_error,
+)
 
 
 # ======================================================================
@@ -92,9 +98,25 @@ _FORCE_RECOVERY_KEY = "summarization_force_recovery"
 _PREVIOUS_FILE_OPS_KEY = "summarization_previous_file_ops"
 _COOLDOWN_ROUNDS_KEY = "summarization_cooldown_rounds"
 _TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
+# T4/T5 per-error-class retry counters (Task 7): session-level, one key per
+# classified error, same state_register_mem pattern as the keys above.
+_OVERFLOW_RETRIES_T4_KEY = "summarization_overflow_retries_t4"
+_OVERFLOW_RETRIES_T5_KEY = "summarization_overflow_retries_t5"
 _PREEMPTIVE_TRUNCATE_MAX_CHARS = 2000
 
 _SUMMARY_LC_SOURCE = "summarization"
+
+# Classified provider error -> (recovery trigger label, session retry key).
+# Any future classifier value missing from these maps is treated as a
+# non-target error (original exception re-raised untouched).
+_TRIGGER_BY_ERROR_CLASS: dict[str, str] = {
+    PAYLOAD_TOO_LARGE: "T4",
+    CONTEXT_OVERFLOW: "T5",
+}
+_RETRY_KEY_BY_ERROR_CLASS: dict[str, str] = {
+    PAYLOAD_TOO_LARGE: _OVERFLOW_RETRIES_T4_KEY,
+    CONTEXT_OVERFLOW: _OVERFLOW_RETRIES_T5_KEY,
+}
 
 
 # ======================================================================
@@ -936,6 +958,180 @@ class Summarization(AgentMiddleware):
             return response
 
     # ------------------------------------------------------------------
+    # T4/T5: provider-error recovery loop (Task 7)
+    # ------------------------------------------------------------------
+
+    def _forced_recovery_request(
+        self,
+        request: ModelRequest[ContextT],
+        session_id: str,
+        error_class: str,
+    ) -> ModelRequest[ContextT]:
+        """One forced-compression step for the T4/T5 recovery loop (sync).
+
+        compact_only equivalent + budget truncation, bypassing ALL
+        anti-thrash gates by construction (``_should_skip_compression``,
+        cooldown rounds and the per-turn attempt cap are simply never
+        consulted here — the forced semantics of ``_FORCE_RECOVERY_KEY``
+        without setting the key). Reuses ``_apply_compression`` and
+        ``_run_budget_truncation`` (Task 3 candidate rule; TTL=0 semantics
+        = every candidate truncatable; budget = usable *
+        TRUNCATE_BUDGET_RATIO) — no second dispatch copy. Pairing
+        invariants stay intact (Task 4 truncation is pairing-safe; the
+        summary output is a Human/AI pair).
+
+        Does NOT arm the cooldown or count a turn attempt (error recovery
+        bypasses those gates by design); it DOES go through
+        ``_record_compression`` inside ``_apply_compression`` so the
+        session-level compression stats stay truthful. The per-class retry
+        counter is incremented AFTER a successful compression step.
+        """
+        trigger = _TRIGGER_BY_ERROR_CLASS[error_class]
+        retry_key = _RETRY_KEY_BY_ERROR_CLASS[error_class]
+        retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
+        attempt = retries + 1
+        old_tokens = self._estimate_tokens(list(request.messages))
+        request = self._apply_compression(request, session_id)
+        usable = self._usable_budget()
+        final_messages = list(request.messages)
+        self._run_budget_truncation(cast("list[BaseMessage]", final_messages), usable)
+        request = request.override(messages=cast("list[AnyMessage]", final_messages))
+        new_tokens = self._estimate_tokens(list(final_messages))
+        state_register_mem.set_state(session_id, retry_key, attempt)
+        logger.warning(
+            "Context compression: trigger={}, attempt={}/{}, error_class={}, "
+            "old_tokens={}, new_tokens={}",
+            trigger, attempt, MAX_OVERFLOW_RETRIES, error_class,
+            old_tokens, new_tokens,
+        )
+        return request
+
+    async def _aforced_recovery_request(
+        self,
+        request: ModelRequest[ContextT],
+        session_id: str,
+        error_class: str,
+    ) -> ModelRequest[ContextT]:
+        """Async twin of :meth:`_forced_recovery_request` (parity by shape)."""
+        trigger = _TRIGGER_BY_ERROR_CLASS[error_class]
+        retry_key = _RETRY_KEY_BY_ERROR_CLASS[error_class]
+        retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
+        attempt = retries + 1
+        old_tokens = self._estimate_tokens(list(request.messages))
+        request = await self._aapply_compression(request, session_id)
+        usable = self._usable_budget()
+        final_messages = list(request.messages)
+        self._run_budget_truncation(cast("list[BaseMessage]", final_messages), usable)
+        request = request.override(messages=cast("list[AnyMessage]", final_messages))
+        new_tokens = self._estimate_tokens(list(final_messages))
+        state_register_mem.set_state(session_id, retry_key, attempt)
+        logger.warning(
+            "Context compression: trigger={}, attempt={}/{}, error_class={}, "
+            "old_tokens={}, new_tokens={}",
+            trigger, attempt, MAX_OVERFLOW_RETRIES, error_class,
+            old_tokens, new_tokens,
+        )
+        return request
+
+    def _execute_with_recovery(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+        session_id: str,
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        """Run ``handler`` inside the T4/T5 bounded recovery loop (sync).
+
+        - Non-target errors (``classify_provider_error`` -> None): the
+          ORIGINAL exception re-raises untouched — zero retries, zero
+          state writes, never swallowed.
+        - ``payload_too_large`` (T4) / ``context_overflow`` (T5): forced
+          compression + ``request.override(messages=...)`` rebuild +
+          handler retry, at most MAX_OVERFLOW_RETRIES times per error
+          class (independent session-level counters). When the counter is
+          exhausted the ORIGINAL exception re-raises (error-frame
+          propagation via the existing messages.py -> turn_runner.py
+          chain) — never an empty response.
+        - A failure of the forced-compression step itself also propagates
+          the ORIGINAL exception (never the compression error).
+        - ``_monitor_degradation`` is NOT called here: wrap calls it once,
+          AFTER this helper returns, on the final successful response only
+          (Metis lock: failed retry calls must not pollute degradation
+          statistics). T3 post-response checks run after the recovered
+          final response (Task 6 wiring preserved).
+        """
+        while True:
+            try:
+                return handler(request)
+            except BaseException as exc:
+                error_class = classify_provider_error(exc)
+                if error_class is None:
+                    raise
+                trigger = _TRIGGER_BY_ERROR_CLASS.get(error_class)
+                retry_key = _RETRY_KEY_BY_ERROR_CLASS.get(error_class)
+                if trigger is None or retry_key is None:
+                    # Unknown future classifier value: treat as non-target.
+                    raise
+                retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
+                if retries >= MAX_OVERFLOW_RETRIES:
+                    logger.error(
+                        "Context compression: trigger={} retries exhausted "
+                        "({}, error_class={}) - propagating original error",
+                        trigger, retries, error_class,
+                    )
+                    raise
+                try:
+                    request = self._forced_recovery_request(
+                        request, session_id, error_class
+                    )
+                except Exception as compression_exc:
+                    logger.error(
+                        "Context compression: trigger={} forced compression "
+                        "failed ({}) - propagating original error",
+                        trigger, compression_exc,
+                    )
+                    raise exc from compression_exc
+
+    async def _aexecute_with_recovery(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[
+            [ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]
+        ],
+        session_id: str,
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        """Async twin of :meth:`_execute_with_recovery` (parity by shape)."""
+        while True:
+            try:
+                return await handler(request)
+            except BaseException as exc:
+                error_class = classify_provider_error(exc)
+                if error_class is None:
+                    raise
+                trigger = _TRIGGER_BY_ERROR_CLASS.get(error_class)
+                retry_key = _RETRY_KEY_BY_ERROR_CLASS.get(error_class)
+                if trigger is None or retry_key is None:
+                    raise
+                retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
+                if retries >= MAX_OVERFLOW_RETRIES:
+                    logger.error(
+                        "Context compression: trigger={} retries exhausted "
+                        "({}, error_class={}) - propagating original error",
+                        trigger, retries, error_class,
+                    )
+                    raise
+                try:
+                    request = await self._aforced_recovery_request(
+                        request, session_id, error_class
+                    )
+                except Exception as compression_exc:
+                    logger.error(
+                        "Context compression: trigger={} forced compression "
+                        "failed ({}) - propagating original error",
+                        trigger, compression_exc,
+                    )
+                    raise exc from compression_exc
+
+    # ------------------------------------------------------------------
     # Preemptive truncation (no LLM call)
     # ------------------------------------------------------------------
 
@@ -1725,7 +1921,7 @@ class Summarization(AgentMiddleware):
         if self._should_skip_compression(session_id):
             self._compress_last_turn = False
             self._compaction_just_happened = False
-            response = handler(request)
+            response = self._execute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             return response
 
@@ -1751,7 +1947,7 @@ class Summarization(AgentMiddleware):
                         request = request.override(
                             system_message=SystemMessage(content=rebuilt)
                         )
-            response = handler(request)
+            response = self._execute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check (Task 6). Gate path: T2 did NOT
             # dispatch here, so t2_compressed=False — the check re-reads the
@@ -1776,7 +1972,7 @@ class Summarization(AgentMiddleware):
                 request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
             )
 
-        response = handler(request)
+        response = self._execute_with_recovery(request, handler, session_id)
         self._monitor_degradation(response, session_id)
         t2_compressed = (
             state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
@@ -1811,7 +2007,9 @@ class Summarization(AgentMiddleware):
         if self._should_skip_compression(session_id):
             self._compress_last_turn = False
             self._compaction_just_happened = False
-            response = await handler(request)
+            response = await self._aexecute_with_recovery(
+                request, handler, session_id
+            )
             self._monitor_degradation(response, session_id)
             return response
 
@@ -1837,7 +2035,9 @@ class Summarization(AgentMiddleware):
                         request = request.override(
                             system_message=SystemMessage(content=rebuilt)
                         )
-            response = await handler(request)
+            response = await self._aexecute_with_recovery(
+                request, handler, session_id
+            )
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check (Task 6); see the sync twin.
             return await self._apost_response_check(request, response, session_id)
@@ -1860,7 +2060,9 @@ class Summarization(AgentMiddleware):
                 request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
             )
 
-        response = await handler(request)
+        response = await self._aexecute_with_recovery(
+            request, handler, session_id
+        )
         self._monitor_degradation(response, session_id)
         t2_compressed = (
             state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
