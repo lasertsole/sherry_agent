@@ -948,497 +948,6 @@ def fresh_sid(prefix="t8-s"):
 
 
 # ======================================================================
-# Core: reported tokens, preemptive bands, slicing, cutoff, rebuild,
-# summary chaining, serialization
-# ======================================================================
-
-
-class TestSummarizationCore:
-    """Cutoff logic, budget tail, new message format, summary chaining and
-    serialization (PART2 s13 middleware groups)."""
-
-    # ---- reported tokens ------------------------------------------------
-
-    def test_reported_tokens_uses_last_ai_metadata(self):
-        mw = make_middleware()
-        msgs = [
-            AIMessage(
-                content="a",
-                usage_metadata={
-                    "input_tokens": 1,
-                    "output_tokens": 1,
-                    "total_tokens": 123,
-                },
-            ),
-            HumanMessage(content="b"),
-            AIMessage(
-                content="c",
-                usage_metadata={
-                    "input_tokens": 2,
-                    "output_tokens": 2,
-                    "total_tokens": 456,
-                },
-            ),
-        ]
-        assert mw._get_reported_tokens(msgs) == 456
-
-    def test_reported_tokens_missing_metadata_returns_zero(self):
-        mw = make_middleware()
-        assert mw._get_reported_tokens([AIMessage(content="no metadata")]) == 0
-
-    def test_reported_tokens_no_ai_message_returns_zero(self):
-        mw = make_middleware()
-        assert mw._get_reported_tokens([HumanMessage(content="only human")]) == 0
-
-    # ---- preemptive check bands ------------------------------------------
-
-    def test_preemptive_check_no_context_window_returns_none(self):
-        mw = make_middleware(main_llm_context_window=None)
-        assert mw._preemptive_check([HumanMessage(content="hi")], "t8-s1") is None
-
-    def test_preemptive_check_below_truncate_returns_none(self):
-        # 1000 est / 2500 ctx == 0.4 < PREEMPTIVE_TRUNCATE_RATIO (0.70).
-        mw = make_middleware(main_llm_context_window=2500)
-        assert mw._preemptive_check([HumanMessage(content="z" * 4000)], "t8-s2") is None
-
-    def test_preemptive_check_truncate_only_band(self):
-        # 1000 / 1400 == 0.714 -> truncate_only band [0.70, 0.80).
-        mw = make_middleware(main_llm_context_window=1400)
-        assert (
-            mw._preemptive_check([HumanMessage(content="z" * 4000)], "t8-s3")
-            == "truncate_only"
-        )
-
-    def test_preemptive_check_compact_band(self):
-        # 1000 / 1200 == 0.833 >= COMPRESSION_TRIGGER_RATIO (0.80).
-        mw = make_middleware(main_llm_context_window=1200)
-        assert mw._preemptive_check([HumanMessage(content="z" * 4000)], "t8-s4") == "compact"
-
-    # ---- preemptive truncate ---------------------------------------------
-
-    def test_preemptive_truncate_head_tail_marker(self):
-        # 3000-char tool output -> head 600 + marker(1800) + tail 600.
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="q"),
-            _ai_with_call("t8-pt-1", "search", {"q": "x"}),
-            _tool("x" * 3000, "t8-pt-1"),
-        ]
-        result = mw._preemptive_truncate(msgs, "t8-pt")
-        out = result[2].content
-        assert out.startswith("x" * 600)
-        assert out.endswith("x" * 600)
-        assert PREEMPTIVE_MARKER_FMT.format(omitted=1800) in out
-        assert len(out) == 1226
-
-    def test_preemptive_truncate_short_output_unchanged(self):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="q"),
-            _ai_with_call("t8-pt-2", "search", {"q": "x"}),
-            _tool("x" * 500, "t8-pt-2"),
-        ]
-        result = mw._preemptive_truncate(msgs, "t8-pt")
-        assert result[2].content == "x" * 500
-
-    def test_preemptive_truncate_protected_tool_skipped(self):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="q"),
-            _ai_with_call("t8-pt-3", "memory", {"q": "x"}),
-            _tool("x" * 3000, "t8-pt-3"),
-        ]
-        result = mw._preemptive_truncate(msgs, "t8-pt")
-        assert result[2].content == "x" * 3000
-
-    def test_preemptive_truncate_non_tool_untouched(self):
-        mw = make_middleware()
-        msgs = [HumanMessage(content="y" * 3000)]
-        result = mw._preemptive_truncate(msgs, "t8-pt")
-        assert result[0].content == "y" * 3000
-
-    # ---- find tool name ----------------------------------------------------
-
-    def test_find_tool_name_found(self):
-        msgs = [
-            HumanMessage(content="q"),
-            _ai_with_call("t8-fn-1", "search", {"q": "x"}),
-            _tool("out", "t8-fn-1"),
-        ]
-        name = summarization_module.Summarization._find_tool_name(msgs, "t8-fn-1")
-        assert name == "search"
-
-    def test_find_tool_name_unknown_or_empty(self):
-        msgs = [
-            HumanMessage(content="q"),
-            _ai_with_call("t8-fn-2", "search", {"q": "x"}),
-            _tool("out", "t8-fn-2"),
-        ]
-        assert summarization_module.Summarization._find_tool_name(msgs, "t8-nope") in (
-            "",
-            "unknown_tool",
-        )
-
-    # ---- slice last turn ----------------------------------------------------
-
-    def test_slice_last_turn_from_last_human(self):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="a"),
-            AIMessage(content="b"),
-            _tool("c", "t8-sl-1"),
-            HumanMessage(content="d"),
-            AIMessage(content="e"),
-            _tool("f", "t8-sl-2"),
-        ]
-        assert mw._slice_last_turn(msgs) == msgs[3:]
-
-    def test_slice_last_turn_empty_returns_empty(self):
-        mw = make_middleware()
-        assert mw._slice_last_turn([]) == []
-
-    def test_slice_last_turn_no_human_returns_empty(self):
-        mw = make_middleware()
-        msgs = [AIMessage(content="b"), _tool("c", "t8-sl-3")]
-        assert mw._slice_last_turn(msgs) == []
-
-    # ---- session validation -------------------------------------------------
-
-    def test_get_session_or_raise_returns_id(self):
-        req = make_request([HumanMessage(content="hi")], session_id="t8-sess-1")
-        assert (
-            summarization_module.Summarization._get_session_or_raise(req)
-            == "t8-sess-1"
-        )
-
-    def test_get_session_or_raise_missing_raises(self):
-        req = make_request([HumanMessage(content="hi")], session_id="")
-        with pytest.raises(RuntimeError):
-            summarization_module.Summarization._get_session_or_raise(req)
-
-    def test_get_session_or_raise_whitespace_raises(self):
-        req = ModelRequest(
-            model=StubModel(),
-            messages=[HumanMessage(content="hi")],
-            state={"session_id": "   "},
-        )
-        with pytest.raises(RuntimeError):
-            summarization_module.Summarization._get_session_or_raise(req)
-
-    # ---- last-turn ratio ------------------------------------------------------
-
-    def test_last_turn_ratio_compress_true_stores_question(self, sid):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="q1"),
-            AIMessage(content="r1"),
-            HumanMessage(content="y" * 2000),
-            AIMessage(content="ok"),
-        ]
-        assert mw._check_last_turn_ratio(msgs, sid) is True
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_USER_QUESTION_KEY"))
-            == "y" * 2000
-        )
-
-    def test_last_turn_ratio_below_threshold_clears_question(self, sid):
-        mw = make_middleware()
-        state_register_mem.set_state(sid, mget("_LAST_USER_QUESTION_KEY"), "old")
-        msgs = [
-            HumanMessage(content="y" * 2000),
-            AIMessage(content="a" * 100),
-            HumanMessage(content="short"),
-            AIMessage(content="b"),
-        ]
-        assert mw._check_last_turn_ratio(msgs, sid) is False
-        assert not state_register_mem.get_state(sid, mget("_LAST_USER_QUESTION_KEY"))
-
-    def test_last_turn_ratio_empty_messages_false(self, sid):
-        mw = make_middleware()
-        assert mw._check_last_turn_ratio([], sid) is False
-
-    def test_last_turn_ratio_single_human_turn_true(self, sid):
-        mw = make_middleware()
-        assert (
-            mw._check_last_turn_ratio([HumanMessage(content="z" * 2000)], sid) is True
-        )
-
-    # ---- skip compression ----------------------------------------------------
-
-    def test_skip_when_max_attempts_reached(self, sid):
-        mw = make_middleware()
-        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 5)
-        assert mw._should_skip_compression(sid) is True
-
-    def test_skip_false_below_thresholds(self, sid):
-        mw = make_middleware()
-        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 2)
-        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 0)
-        assert mw._should_skip_compression(sid) is False
-
-    def test_ineffective_switches_to_skip_llm(self, sid):
-        mw = make_middleware()
-        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 1)
-        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 2)
-        assert mw._should_skip_compression(sid) is False
-        assert state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY")) is True
-
-    def test_force_recovery_resets_counters(self, sid):
-        mw = make_middleware()
-        state_register_mem.set_state(sid, mget("_FORCE_RECOVERY_KEY"), True)
-        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 5)
-        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 2)
-        assert mw._should_skip_compression(sid) is False
-        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
-        assert (
-            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
-        )
-        assert not state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY"))
-
-    def test_force_recovery_checked_before_max_attempts(self, sid):
-        mw = make_middleware()
-        state_register_mem.set_state(sid, mget("_FORCE_RECOVERY_KEY"), True)
-        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 99)
-        assert mw._should_skip_compression(sid) is False
-
-    # ---- record compression --------------------------------------------------
-
-    def test_record_compression_increments_count(self, sid):
-        mw = make_middleware()
-        before = [HumanMessage(content="a"), AIMessage(content="b")]
-        after = [HumanMessage(content="summary")]
-        mw._record_compression(sid, before, after)
-        mw._record_compression(sid, before, after)
-        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 2
-
-    def test_record_compression_records_strategy(self, sid):
-        mw = make_middleware()
-        before = [HumanMessage(content="a"), AIMessage(content="b")]
-        after = [HumanMessage(content="summary")]
-        mw._record_compression(sid, before, after, strategy_used="llm_summary")
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "llm_summary"
-        )
-
-    def test_record_compression_ineffective_accumulates(self, sid):
-        mw = make_middleware()
-        msgs = [HumanMessage(content="a"), AIMessage(content="b")]
-        mw._record_compression(sid, msgs, list(msgs))
-        mw._record_compression(sid, msgs, list(msgs))
-        assert (
-            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 2
-        )
-
-    def test_record_compression_effective_resets_and_unskips(self, sid):
-        mw = make_middleware()
-        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 2)
-        state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
-        before = [HumanMessage(content="a"), AIMessage(content="b")]
-        after = [HumanMessage(content="summary")]
-        mw._record_compression(sid, before, after, strategy_used="dedup")
-        assert (
-            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
-        )
-        assert not state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY"))
-
-    # ---- determine cutoff ----
-
-    def test_determine_cutoff_keeps_recent_turns_within_budget(self, sid):
-        mw = make_middleware(main_llm_context_window=8000)
-        msgs = _history(turns=6, out_chars=2000)
-        cutoff = mw._determine_cutoff(msgs, sid)
-        assert cutoff == 9
-        assert mw._estimate_tokens(msgs[9:]) <= 2000
-        assert mw._estimate_tokens(msgs[6:]) > 2000
-
-    def test_determine_cutoff_nothing_fits_returns_zero(self, sid):
-        mw = make_middleware(main_llm_context_window=6000)
-        msgs = [
-            HumanMessage(content="q"),
-            _ai_with_call("t8-z1", "memory", {"q": "x"}),
-            _tool("x" * 20000, "t8-z1"),
-        ]
-        assert mw._determine_cutoff(msgs, sid) == 0
-
-    def test_determine_cutoff_empty_messages_zero(self, sid):
-        mw = make_middleware(main_llm_context_window=8000)
-        assert mw._determine_cutoff([], sid) == 0
-
-    # ---- orphan pairs ----
-
-    def test_adjust_for_orphan_moves_cutoff_to_include_ai(self, sid):
-        mw = make_middleware(main_llm_context_window=8000)
-        msgs = [
-            HumanMessage(content="a"),
-            _ai_with_call("t8-o1", "search", {"q": "x"}),
-            _tool("out", "t8-o1"),
-        ]
-        assert mw._adjust_for_orphan_pairs(msgs, 2, 2000) == 1
-
-    def test_adjust_for_orphan_budget_respected(self, sid):
-        mw = make_middleware(main_llm_context_window=8000)
-        msgs = [
-            HumanMessage(content="a"),
-            _ai_with_call("t8-o2", "search", {"q": "x"}, content="x" * 8000),
-            _tool("x" * 1000, "t8-o2"),
-        ]
-        assert mw._adjust_for_orphan_pairs(msgs, 2, 2000) == 2
-
-    # ---- build new messages ----
-
-    def test_build_new_messages_pair_format(self, sid):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="a"),
-            _ai_with_call("t8-b1", "search", {"q": "x"}),
-            _tool("R", "t8-b1"),
-            HumanMessage(content="b"),
-            AIMessage(content="m2"),
-        ]
-        new = mw._build_new_messages(msgs, 2, "S")
-        assert len(new) == 3
-        assert new[0].type == "human"
-        assert "> search:" in new[1].content
-        assert "R" in new[1].content
-        open_tag, close_tag = _summary_tags()
-        assert open_tag in new[2].content
-        assert close_tag in new[2].content
-        assert "S" in new[2].content
-
-    def test_build_new_messages_wraps_summary_with_tags(self, sid):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="a"),
-            _ai_with_call("t8-b2", "search", {"q": "x"}),
-            _tool("out", "t8-b2"),
-        ]
-        new = mw._build_new_messages(msgs, 0, "the summary body")
-        assert len(new) == 2
-        open_tag, close_tag = _summary_tags()
-        assert open_tag in new[1].content
-        assert close_tag in new[1].content
-        assert "the summary body" in new[1].content
-
-    def test_build_new_messages_oversize_summary_truncated(self, sid):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="a"),
-            _ai_with_call("t8-b3", "search", {"q": "x"}),
-            _tool("out", "t8-b3"),
-        ]
-        huge = "S" * (SUMMARY_TOTAL_MAX_CHARS + 5000)
-        new = mw._build_new_messages(msgs, 0, huge)
-        assert len(new) == 2
-        notice = mget("_SUMMARY_TRUNCATION_NOTICE")
-        assert notice in new[1].content
-        assert len(new[1].content) < SUMMARY_TOTAL_MAX_CHARS + 5000
-
-    def test_build_new_messages_enforces_fifo_limits(self, sid):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="a"),
-            _ai_with_call("t8-b4", "search", {"q": "x"}),
-            _tool("out", "t8-b4"),
-        ]
-        lines = "\n".join("- item%d" % i for i in range(8))
-        summary = "### Completed (most recent 5)\n" + lines
-        new = mw._build_new_messages(msgs, 0, summary)
-        text = new[1].content
-        assert "- item7" in text
-        assert "- item2" not in text
-
-    # ---- previous summary extraction ----
-
-    def test_extract_previous_summary_inner_text(self, sid):
-        mw = make_middleware()
-        open_tag, close_tag = _summary_tags()
-        msg = HumanMessage(content="pre " + open_tag + "INNER" + close_tag + " post")
-        extracted = mw._extract_previous_summary([msg])
-        assert extracted is not None
-        assert "INNER" in extracted
-
-    def test_extract_previous_summary_without_tags(self, sid):
-        mw = make_middleware()
-        assert not mw._extract_previous_summary([HumanMessage(content="plain")])
-
-    def test_extract_previous_summary_none(self, sid):
-        mw = make_middleware()
-        assert not mw._extract_previous_summary([])
-
-    # ---- summary prompt ----
-
-    def test_build_summary_prompt_structure_and_sections(self):
-        mw = make_middleware()
-        prompt = mw._build_summary_prompt("transcript body")
-        assert isinstance(prompt, list)
-        assert len(prompt) == 2
-        assert isinstance(prompt[0], SystemMessage)
-        assert isinstance(prompt[1], HumanMessage)
-        assert "Goal" in prompt[0].content
-
-    def test_build_summary_prompt_update_includes_prior(self):
-        mw = make_middleware()
-        prompt = mw._build_summary_prompt("transcript body", "PRIOR-SUM")
-        assert "PRIOR-SUM" in prompt[1].content
-
-    # ---- serialize ----
-
-    def test_serialize_labels_roles_and_tool_calls(self):
-        mw = make_middleware()
-        msgs = [
-            HumanMessage(content="H"),
-            AIMessage(content="A"),
-            _ai_with_call("t8-se-1", "t", {"a": 1}),
-            _tool("T", "t8-se-1"),
-        ]
-        text = mw._serialize_for_summary(msgs)
-        assert mget("_SERIALIZE_HUMAN_LABEL") in text
-        assert mget("_SERIALIZE_AI_LABEL") in text
-        assert "> t:" in text
-        assert "T" in text
-
-    def test_serialize_tool_error_label(self):
-        mw = make_middleware()
-        msgs = [_tool("boom", "t8-se-2", status="error")]
-        text = mw._serialize_for_summary(msgs)
-        assert mget("_SERIALIZE_TOOL_ERROR_LABEL") in text
-
-    def test_serialize_truncates_long_tool_output(self):
-        mw = make_middleware()
-        msgs = [_tool("x" * 3000, "t8-se-3")]
-        text = mw._serialize_for_summary(msgs)
-        assert "x" * 3000 not in text
-        assert "truncated" in text
-
-    # ---- truncate helpers ----
-
-    def test_truncate_summary_messages_caps_summary_only(self):
-        mw = make_middleware()
-        s1 = _summary_ai("a" * 15000)
-        s2 = _summary_ai("b" * 5000)
-        msgs = [s1, HumanMessage(content="h1"), s2]
-        result = mw._truncate_summary_messages(msgs, 1500)
-        assert len(result) == 1
-        assert result[0].type == "ai"
-
-    def test_truncate_summary_messages_leaves_plain_messages(self):
-        mw = make_middleware()
-        msgs = [HumanMessage(content="a" * 10000), AIMessage(content="b")]
-        result = mw._truncate_summary_messages(msgs, 10)
-        assert len(result) == 2
-
-    def test_truncate_content_short_unchanged(self):
-        assert (
-            summarization_module.Summarization._truncate_content("abc", 2000) == "abc"
-        )
-
-    def test_truncate_content_head_tail_marker_exact(self):
-        out = summarization_module.Summarization._truncate_content("y" * 3000, 2000)
-        assert out == "y" * 600 + TRUNCATE_MARKER_FMT.format(omitted=1774) + "y" * 600
-
-
-# ======================================================================
 # Compression: strategy pipeline, aggressive truncate, apply modes,
 # recovery context, degradation monitoring, empty-response detection
 # ======================================================================
@@ -1736,6 +1245,85 @@ class TestSummarizationCompression:
 
     def test_is_empty_response_empty_string_is_empty(self):
         assert summarization_module.Summarization._is_empty_response("") is True
+
+    # ---- skip compression (restored from 3727399 Core dedup; §9.7-verified) ----
+
+    def test_skip_when_max_attempts_reached(self, sid):
+        mw = make_middleware()
+        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 5)
+        assert mw._should_skip_compression(sid) is True
+
+    def test_skip_false_below_thresholds(self, sid):
+        mw = make_middleware()
+        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 2)
+        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 0)
+        assert mw._should_skip_compression(sid) is False
+
+    def test_ineffective_switches_to_skip_llm(self, sid):
+        mw = make_middleware()
+        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 1)
+        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 2)
+        assert mw._should_skip_compression(sid) is False
+        assert state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY")) is True
+
+    def test_force_recovery_resets_counters(self, sid):
+        mw = make_middleware()
+        state_register_mem.set_state(sid, mget("_FORCE_RECOVERY_KEY"), True)
+        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 5)
+        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 2)
+        assert mw._should_skip_compression(sid) is False
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
+        assert (
+            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
+        )
+        assert not state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY"))
+
+    def test_force_recovery_checked_before_max_attempts(self, sid):
+        mw = make_middleware()
+        state_register_mem.set_state(sid, mget("_FORCE_RECOVERY_KEY"), True)
+        state_register_mem.set_state(sid, mget("_COMPRESSION_COUNT_KEY"), 99)
+        assert mw._should_skip_compression(sid) is False
+
+    # ---- record compression (restored from 3727399 Core dedup; §9.7-verified) --
+
+    def test_record_compression_increments_count(self, sid):
+        mw = make_middleware()
+        before = [HumanMessage(content="a"), AIMessage(content="b")]
+        after = [HumanMessage(content="summary")]
+        mw._record_compression(sid, before, after)
+        mw._record_compression(sid, before, after)
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 2
+
+    def test_record_compression_records_strategy(self, sid):
+        mw = make_middleware()
+        before = [HumanMessage(content="a"), AIMessage(content="b")]
+        after = [HumanMessage(content="summary")]
+        mw._record_compression(sid, before, after, strategy_used="llm_summary")
+        assert (
+            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
+            == "llm_summary"
+        )
+
+    def test_record_compression_ineffective_accumulates(self, sid):
+        mw = make_middleware()
+        msgs = [HumanMessage(content="a"), AIMessage(content="b")]
+        mw._record_compression(sid, msgs, list(msgs))
+        mw._record_compression(sid, msgs, list(msgs))
+        assert (
+            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 2
+        )
+
+    def test_record_compression_effective_resets_and_unskips(self, sid):
+        mw = make_middleware()
+        state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 2)
+        state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
+        before = [HumanMessage(content="a"), AIMessage(content="b")]
+        after = [HumanMessage(content="summary")]
+        mw._record_compression(sid, before, after, strategy_used="dedup")
+        assert (
+            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
+        )
+        assert not state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY"))
 
 
 # ======================================================================
