@@ -1,8 +1,10 @@
-"""Task 2 (TDD): config.num 28-constant summarization contract.
+"""TDD contract tests: config.num summarization constant contract.
 
-Import contract is authoritative from SUMMARIZATION_CHANGES_PART2.md:530-559
-(the exact ``from config.num import (...)`` block Task 6 will use verbatim).
-Values transcribed from SUMMARIZATION_CHANGES_PART1.md §1 (NEW code).
+The ``from config.num import (...)`` block below is the authoritative import
+contract for the summarization middleware
+(``agent/middlewares/summarization.py``); expected values match
+``config/num.py``, whose semantics are documented in
+``docs/harness/summarization/README.md``.
 
 Also guards the pre-existing constants of the old config/num.py baseline
 (ARCHIVE_THRESHOLD, MEMORY_THRESHOLD, COMPRESS_RATIO, BUS_QUEUE_MAXSIZE)

@@ -35,8 +35,8 @@ mechanism Task 5 locked in the characterization suite. Resume shape:
 ``"User denied: <msg>. <BLOCKED_MESSAGE>"`` error ToolMessage and there is NO
 second interrupt.
 
-Env-scrub guarantee on the APPROVE path (user's original design,
-SANDBOX_PLAN.md:565 — "沙箱绕过后仍有防护： env scrub + 黑名单 + cwd 钳制"):
+Env-scrub guarantee on the APPROVE path (user's original design —
+"沙箱绕过后仍有防护： env scrub + 黑名单 + cwd 钳制"):
 ``subprocess.Popen`` is patched GLOBALLY (``monkeypatch.setattr(subprocess,
 "Popen", ...)``), the resumed graph runs the REAL tool, and the recorded
 ``env=`` kwarg must contain no ``SHERRY_SECRET_NAMES`` member (e.g. no

@@ -7,7 +7,7 @@ Covers (plan lines 557-568):
 - env scrub wiring: ``scrub_env()`` result reaches BOTH sync and async spawns,
 - sandbox wrap structure: backend present -> list-exec via ``backend.wrap``;
   backend None -> BYTE-IDENTICAL Windows fallback (str join + shell=True),
-- Windows fallback byte-identity (SANDBOX_PLAN.md:546): args[0] is a plain str,
+- Windows fallback byte-identity: args[0] is a plain str,
   shell=True, only ``env=`` added,
 - dangerous-command regex: old 4 blacklist entries still rejected, the joined
   malicious list ``["echo ok", "rm -rf /"]`` (Task 5 defect) now BLOCKED,
@@ -399,7 +399,7 @@ class TestDangerousCommandRegex:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Windows fallback byte-identity (plan line 565: 逐字保持现有路径, only env=
-#    added; SANDBOX_PLAN.md:546)
+#    added)
 # ─────────────────────────────────────────────────────────────────────────────
 class TestWindowsFallback:
     def test_sync_fallback_string_shell_true_and_env(self, monkeypatch):
