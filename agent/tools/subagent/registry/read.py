@@ -52,3 +52,8 @@ def get_snapshot_readonly() -> dict[str, SubagentRunRecord]:
 def build_read_index_readonly() -> dict[str, list[SubagentRunRecord]]:
     """Build a requester-keyed index without modifying state."""
     return queries.build_read_index()
+
+
+def count_all_active_runs_readonly() -> int:
+    """Count all active runs globally without modifying state."""
+    return queries.count_all_active_runs()

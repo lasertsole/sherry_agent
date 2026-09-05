@@ -67,3 +67,23 @@ class TestQueries:
 
     def test_get_run_by_child_session_key_missing(self):
         assert get_run_by_child_session_key("nonexistent") is None
+
+
+def test_count_all_active_runs_global():
+    from agent.tools.subagent.registry import (  # package-root import also proves re-export
+        register_run,
+        count_all_active_runs,
+        count_all_active_runs_readonly,
+        clear as clear_registry,
+    )
+    from agent.tools.subagent.types.registry import ExecutionStatus
+
+    clear_registry()
+    try:
+        r1 = register_run(child_session_key="agent:main:subagent:g1", requester_session_key="agent:main:session:s1", task="t1", depth=1)
+        r2 = register_run(child_session_key="agent:main:subagent:g2", requester_session_key="agent:main:session:s2", task="t2", depth=1)
+        r2.execution.status = ExecutionStatus.INTERRUPTED
+        assert count_all_active_runs() == 1
+        assert count_all_active_runs_readonly() == 1
+    finally:
+        clear_registry()

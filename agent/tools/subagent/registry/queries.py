@@ -82,3 +82,12 @@ def list_runs_for_controller(controller_session_key: str) -> list[SubagentRunRec
         if run.requester_session_key == controller_session_key
         or run.child_session_key == controller_session_key
     ]
+
+
+def count_all_active_runs() -> int:
+    """Count all RUNNING-status runs across all sessions (global concurrency view)."""
+    return sum(
+        1
+        for run in memory.values()
+        if run.execution.status == ExecutionStatus.RUNNING
+    )
