@@ -38,7 +38,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── task non-empty; task_name normalized ([^a-zA-Z0-9_-] → _,
   │     │   repeats collapsed, truncated to 64 chars — task_name.py)
   │     ├── target_policy: agent_id in allow_agents whitelist (wildcard *)
-  │     ├── depth = parent_depth + 1, must be ≤ max_spawn_depth (3)
+  │     ├── depth = parent_depth + 1, must be ≤ max_spawn_depth (2)
   │     ├── active children < max_children_per_agent (5)
   │     └── runtime isolation: cross-runtime spawn rejected
   │
@@ -51,7 +51,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 3. Model & Thinking Plan (spawn/plan.py, spawn/thinking.py)
   │     ├── thinking precedence: explicit → requester → target agent default
-  │     └── timeout: per-spawn override or run_timeout_seconds (300 s)
+  │     └── timeout: per-spawn override or run_timeout_seconds (0 = no timeout)
   │
   ├── 4. Thread Binding & Origin Routing
   │     ├── SESSION mode only: bind_thread_for_subagent_spawn() creates a
@@ -413,7 +413,7 @@ depth 2:  ORCHESTRATOR         → control_scope = CHILDREN (if max_depth > 2)
 depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 ```
 
-Default `max_spawn_depth = 3`, forming a three-level tree: MAIN → ORCHESTRATOR → LEAF.
+Default `max_spawn_depth = 2`, forming a three-level tree: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
 
 **Depth Calculation**: Extract parent depth from `requester_session_key`; child depth = parent depth + 1. The number of `:subagent:` occurrences in the session key format `agent:{id}:subagent:{uuid}` equals the depth.
 
@@ -516,7 +516,7 @@ followup/core.py — loop at sweeper_interval_seconds × 2 (default 120 s)
 
 Each check executes:
   1. Iterate all runs; keep live unended runs
-  2. Flag runs whose elapsed time exceeds run_timeout_seconds (300 s)
+  2. When run_timeout_seconds > 0, flag runs whose elapsed time exceeds it; 0 disables the timeout check
   3. If any → recover_orphaned_runs() batch recovery
 ```
 
@@ -843,9 +843,10 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `max_spawn_depth` | 3 | Maximum nesting depth |
+| `max_spawn_depth` | 2 | Maximum nesting depth (hard cap 2, cannot exceed) |
+| `max_concurrent` | 8 | Global concurrent subagent cap; excess spawns return forbidden |
 | `max_children_per_agent` | 5 | Max concurrent children per agent |
-| `run_timeout_seconds` | 300.0 | Child agent execution timeout |
+| `run_timeout_seconds` | 0.0 | Child agent execution timeout (0 = no timeout; background sweeps provide the safety net) |
 | `require_agent_id` | False | Whether agent_id is mandatory |
 | `allow_agents` | `["*"]` | Allowed agent_id whitelist |
 | `default_cleanup` | "delete" | Default cleanup policy |
@@ -864,7 +865,7 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `stale_unended_threshold_seconds` | 7200 | Stale unended run threshold |
 | `recent_ended_window_seconds` | 1800 | Recent ended window for display |
 | `steer_rate_limit_ms` | 2000 | Steer rate limit |
-| `archive_after_minutes` | 1440 | Auto-archive after minutes |
+| `archive_after_minutes` | 60 | Auto-archive after minutes |
 | `attachments_enabled` | True | Whether attachments are allowed |
 | `attachments_max_files` | 50 | Max files per spawn |
 | `attachments_max_file_bytes` | 1MB | Max single file size |

@@ -39,7 +39,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   ([^a-zA-Z0-9_-] → _, 반복 압축, 64자 절단 — task_name.py)
   │     ├── target_policy: agent_id는 allow_agents 화이트리스트 내여야 함
   │     │   (* 와일드카드 지원)
-  │     ├── depth = 부모 깊이 + 1, max_spawn_depth(3) 이하
+  │     ├── depth = 부모 깊이 + 1, max_spawn_depth(2) 이하
   │     ├── 활성 자식 에이전트 수 < max_children_per_agent(5)
   │     └── 런타임 격리: 런타임을 넘나드는 spawn은 거부됨
   │
@@ -53,7 +53,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 3. 모델 및 사고 계획 (Model & Thinking Plan, spawn/plan.py,
   │     spawn/thinking.py)
   │     ├── thinking 우선순위: 명시 지정 → 요청자 → 대상 에이전트 기본값
-  │     └── 타임아웃: spawn별 재정의 가능, 없으면 run_timeout_seconds(300초)
+  │     └── 타임아웃: spawn별 재정의 가능, 없으면 run_timeout_seconds(0 = 타임아웃 없음)
   │
   ├── 4. 스레드 바인딩 및 원본 라우팅 (Thread Binding & Origin Routing)
   │     ├── SESSION 모드 전용: bind_thread_for_subagent_spawn()이 채널
@@ -415,7 +415,7 @@ depth 2:  ORCHESTRATOR         → control_scope = CHILDREN (max_depth > 2인 �
 depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 ```
 
-기본 `max_spawn_depth = 3`으로 MAIN → ORCHESTRATOR → LEAF의 3계층 트리를 구성합니다.
+기본 `max_spawn_depth = 2`로 MAIN(0) → ORCHESTRATOR(1) → LEAF(2)의 3계층 트리를 구성합니다.
 
 **깊이 계산**: `requester_session_key`에서 부모 깊이를 추출하고, 자식 깊이 = 부모 깊이 + 1입니다. 세션 키 형식 `agent:{id}:subagent:{uuid}`에서 `:subagent:`의 출현 횟수가 곧 깊이입니다.
 
@@ -518,7 +518,7 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 
 매 확인에서 실행:
   1. 전체 run을 순회하고 살아 있는 미종료 run을 유지
-  2. 경과 시간이 run_timeout_seconds(300초)를 초과한 run을 플래그
+  2. run_timeout_seconds > 0이면 경과 시간이 그 값을 초과한 run을 플래그 (0 = 타임아웃 검사 비활성화)
   3. 존재하면 → recover_orphaned_runs() 일괄 복구
 ```
 
@@ -845,9 +845,10 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 
 | 파라미터 | 기본값 | 설명 |
 |------|--------|------|
-| `max_spawn_depth` | 3 | 최대 중첩 깊이 |
+| `max_spawn_depth` | 2 | 최대 중첩 깊이 (하드 상한 2, 초과 불가) |
+| `max_concurrent` | 8 | 전역 동시 하위 에이전트 상한, 초과 spawn은 forbidden 반환 |
 | `max_children_per_agent` | 5 | 에이전트별 최대 동시 자식 수 |
-| `run_timeout_seconds` | 300.0 | 자식 에이전트 실행 타임아웃 |
+| `run_timeout_seconds` | 0.0 | 자식 에이전트 실행 타임아웃 (0 = 타임아웃 없음, 백그라운드 스윕이 안전망) |
 | `require_agent_id` | False | agent_id 필수 여부 |
 | `allow_agents` | `["*"]` | 허용 agent_id 화이트리스트 |
 | `default_cleanup` | "delete" | 기본 정리 정책 |
@@ -866,7 +867,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 가동 미종료 run의 stale 임계값 |
 | `recent_ended_window_seconds` | 1800 | 최근 종료 표시 윈도우 |
 | `steer_rate_limit_ms` | 2000 | Steer 레이트 리밋 |
-| `archive_after_minutes` | 1440 | 자동 아카이브까지의 분 |
+| `archive_after_minutes` | 60 | 자동 아카이브까지의 분 |
 | `attachments_enabled` | True | 첨부 허용 여부 |
 | `attachments_max_files` | 50 | spawn당 최대 파일 수 |
 | `attachments_max_file_bytes` | 1MB | 단일 파일 크기 상한 |

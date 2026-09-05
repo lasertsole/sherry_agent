@@ -38,7 +38,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── task 非空；task_name 规范化（[^a-zA-Z0-9_-] → _、重复压缩、
   │     │   截断至 64 字符 — task_name.py）
   │     ├── target_policy：agent_id 必须在 allow_agents 白名单内（支持 * 通配）
-  │     ├── depth = 父深度 + 1，不得超过 max_spawn_depth（3）
+  │     ├── depth = 父深度 + 1，不得超过 max_spawn_depth（2）
   │     ├── 活跃子 Agent 数 < max_children_per_agent（5）
   │     └── 运行时隔离：跨运行时 spawn 会被拒绝
   │
@@ -51,7 +51,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 3. 模型与思考计划（Model & Thinking Plan，spawn/plan.py、spawn/thinking.py）
   │     ├── thinking 优先级：显式指定 → 请求方 → 目标 Agent 默认
-  │     └── 超时：每次 spawn 可覆盖，否则用 run_timeout_seconds（300 秒）
+  │     └── 超时：每次 spawn 可覆盖，否则用 run_timeout_seconds（0 = 无超时）
   │
   ├── 4. 线程绑定与来源路由（Thread Binding & Origin Routing）
   │     ├── 仅 SESSION 模式：bind_thread_for_subagent_spawn() 创建频道线程
@@ -412,7 +412,7 @@ depth 2:  ORCHESTRATOR         → control_scope = CHILDREN（max_depth > 2 时�
 depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 ```
 
-默认 `max_spawn_depth = 3`，构成三级树：MAIN → ORCHESTRATOR → LEAF。
+默认 `max_spawn_depth = 2`，构成三级树：MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
 
 **深度计算**：从 `requester_session_key` 提取父深度，子深度 = 父深度 + 1。会话键格式 `agent:{id}:subagent:{uuid}` 中 `:subagent:` 的出现次数即为深度。
 
@@ -513,7 +513,7 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 
 每轮执行：
   1. 遍历所有 run，保留存活未结束的 run
-  2. 标记运行时长超过 run_timeout_seconds（300 秒）的 run
+  2. run_timeout_seconds > 0 时，标记运行时长超过它的 run；0 = 禁用该超时检查
   3. 若存在 → recover_orphaned_runs() 批量恢复
 ```
 
@@ -840,9 +840,10 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `max_spawn_depth` | 3 | 最大嵌套深度 |
+| `max_spawn_depth` | 2 | 最大嵌套深度（硬上限 2，不可超过） |
+| `max_concurrent` | 8 | 全局并发子 Agent 上限，超限 spawn 返回 forbidden |
 | `max_children_per_agent` | 5 | 每 Agent 最大并发子 Agent 数 |
-| `run_timeout_seconds` | 300.0 | 子 Agent 执行超时 |
+| `run_timeout_seconds` | 0.0 | 子 Agent 执行超时（0 = 无超时，依赖 sweeper stale 检测兜底） |
 | `require_agent_id` | False | 是否强制 agent_id |
 | `allow_agents` | `["*"]` | 允许的 agent_id 白名单 |
 | `default_cleanup` | "delete" | 默认清理策略 |
@@ -861,7 +862,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 存活未结束 run 的 stale 阈值 |
 | `recent_ended_window_seconds` | 1800 | 近期结束展示窗口 |
 | `steer_rate_limit_ms` | 2000 | Steer 限流 |
-| `archive_after_minutes` | 1440 | 自动归档分钟数 |
+| `archive_after_minutes` | 60 | 自动归档分钟数 |
 | `attachments_enabled` | True | 是否允许附件 |
 | `attachments_max_files` | 50 | 每次 spawn 最大文件数 |
 | `attachments_max_file_bytes` | 1MB | 单文件大小上限 |

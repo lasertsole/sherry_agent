@@ -39,7 +39,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   64 文字に切り詰め — task_name.py）
   │     ├── target_policy：agent_id は allow_agents ホワイトリスト内
   │     │   （* ワイルドカード対応）
-  │     ├── depth = 親の深さ + 1、max_spawn_depth（3）以下
+  │     ├── depth = 親の深さ + 1、max_spawn_depth（2）以下
   │     ├── アクティブな子エージェント数 < max_children_per_agent（5）
   │     └── ランタイム分離：ランタイムをまたぐ spawn は拒否
   │
@@ -53,7 +53,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 3. モデルと思考プラン（Model & Thinking Plan、spawn/plan.py、
   │     spawn/thinking.py）
   │     ├── thinking の優先順位：明示指定 → リクエスタ → 対象エージェントの既定
-  │     └── タイムアウト：spawn ごとの上書き、なければ run_timeout_seconds（300 秒）
+  │     └── タイムアウト：spawn ごとの上書き、なければ run_timeout_seconds（0 = タイムアウトなし）
   │
   ├── 4. スレッドバインディングとオリジンルーティング（Thread Binding &
   │     Origin Routing）
@@ -419,7 +419,7 @@ depth 2:  ORCHESTRATOR         → control_scope = CHILDREN（max_depth > 2 の�
 depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 ```
 
-デフォルトの `max_spawn_depth = 3` により、MAIN → ORCHESTRATOR → LEAF の 3 層ツリーを構成します。
+デフォルトの `max_spawn_depth = 2` により、MAIN(0) → ORCHESTRATOR(1) → LEAF(2) の 3 層ツリーを構成します。
 
 **深さの計算**：`requester_session_key` から親の深さを抽出し、子の深さ = 親の深さ + 1 とします。セッションキー形式 `agent:{id}:subagent:{uuid}` における `:subagent:` の出現回数がそのまま深さになります。
 
@@ -523,7 +523,7 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 
 各チェックで実行：
   1. 全 run を走査し、稼働中の未終了 run を保持
-  2. 経過時間が run_timeout_seconds（300 秒）超過の run をフラグ
+  2. run_timeout_seconds > 0 のとき、経過時間がその値を超過する run をフラグ（0 = タイムアウトチェック無効）
   3. 存在すれば → recover_orphaned_runs() による一括復旧
 ```
 
@@ -850,9 +850,10 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 
 | パラメータ | 既定値 | 説明 |
 |------|--------|------|
-| `max_spawn_depth` | 3 | 最大ネスト深さ |
+| `max_spawn_depth` | 2 | 最大ネスト深さ（ハード上限 2、超過不可） |
+| `max_concurrent` | 8 | グローバルな同時サブエージェント上限、超過 spawn は forbidden を返す |
 | `max_children_per_agent` | 5 | エージェントあたりの最大同時子数 |
-| `run_timeout_seconds` | 300.0 | 子エージェント実行タイムアウト |
+| `run_timeout_seconds` | 0.0 | 子エージェント実行タイムアウト（0 = タイムアウトなし、バックグラウンドスイープが安全網） |
 | `require_agent_id` | False | agent_id を必須にするか |
 | `allow_agents` | `["*"]` | 許可する agent_id ホワイトリスト |
 | `default_cleanup` | "delete" | 既定のクリーンアップポリシー |
@@ -871,7 +872,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 稼働未終了ランの stale 閾値 |
 | `recent_ended_window_seconds` | 1800 | 直近終了の表示ウィンドウ |
 | `steer_rate_limit_ms` | 2000 | Steer のレート制限 |
-| `archive_after_minutes` | 1440 | 自動アーカイブまでの分数 |
+| `archive_after_minutes` | 60 | 自動アーカイブまでの分数 |
 | `attachments_enabled` | True | 添付を許可するか |
 | `attachments_max_files` | 50 | spawn あたりの最大ファイル数 |
 | `attachments_max_file_bytes` | 1MB | 単一ファイルのサイズ上限 |
