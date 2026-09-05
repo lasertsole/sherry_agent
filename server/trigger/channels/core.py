@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import json
 from collections.abc import Mapping
 from threading import Thread
@@ -327,12 +328,47 @@ heartbeat_service.on_notify = _process_heartbeat_notify
 """End heartbeat event handler"""
 
 
+def _schedule_sweeper(event_loop) -> concurrent.futures.Future[None] | None:
+    """Schedule the subagent registry sweeper on the channel event loop.
+
+    Lazy import seam: the subagent registry import chain is heavy, and
+    deferring it to call time keeps core.py loadable in isolation (the same
+    reason ``_get_turn_runner`` is lazy) and gives tests a single patch point.
+    The done-callback logs exceptions from the future so a crashed sweeper
+    task can never be silently swallowed by GC.
+    """
+    from agent.tools.subagent.registry import start_sweeper
+
+    sweeper_coro = start_sweeper()
+    try:
+        future = asyncio.run_coroutine_threadsafe(sweeper_coro, event_loop)
+    except RuntimeError:
+        # Loop closed before scheduling: close the bare coroutine so it does
+        # not leak a "never awaited" RuntimeWarning through GC.
+        sweeper_coro.close()
+        logger.warning("Event loop closed; subagent sweeper not started")
+        return None
+
+    def _log_sweeper_failure(done: concurrent.futures.Future[None]) -> None:
+        try:
+            exc = done.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            logger.warning("Subagent sweeper task raised: {}", exc)
+
+    future.add_done_callback(_log_sweeper_failure)
+    return future
+
+
 def _run() -> None:
     # Get the event loop from the channel manager so heartbeat and cron services share the same loop
     event_loop = channel_manager.get_event_loop()
 
     # Start heartbeat service
     asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)
+    # Start subagent registry sweeper (orphan recovery / delivery finalization)
+    _schedule_sweeper(event_loop)
     # Start channel manager (internally calls run_forever)
     channel_manager.start_service()
 
