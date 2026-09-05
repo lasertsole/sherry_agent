@@ -5,13 +5,14 @@ import time
 import uuid
 import asyncio
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from loguru import logger
 from bus import MessageBus
 from config import ROOT_DIR
 from datetime import datetime
 from models import build_main_llm
-from type.bus import InboundMessage
+from type.bus import InboundMessage, OutboundMessage
 from channels import channel_manager
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
@@ -54,6 +55,24 @@ async def _push_cron_notification(job: CronJob) -> None:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+@dataclass
+class CronJobFailureState:
+    """In-memory failure tracking for one cron job (cron breaker, §5.3).
+
+    Deliberately memory-only: ``cron_jobs.json`` keeps its schema and the
+    breaker never persists failure counters — only the pre-existing
+    ``enabled`` job flag is ever written back via ``_save_store()``.
+    """
+
+    consecutive_failures: int = 0
+    last_error: str = ""
+    # time.monotonic() timestamp marking the start of the current backoff
+    # window (set when degradation is first reached, refreshed on every
+    # further failure while degraded).
+    degraded_since: float | None = None
+    backoff_ms: int = 0
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
@@ -107,6 +126,15 @@ class CronService:
 
     _MAX_RUN_HISTORY = 20
 
+    # Cron breaker thresholds (cron-breaker-defense.md §5.3.1): after
+    # DEGRADED_THRESHOLD consecutive failures a job degrades into an
+    # exponential-backoff mode; at DISABLED_THRESHOLD it is auto-disabled
+    # and a notification is published.
+    DEGRADED_THRESHOLD = 5
+    DISABLED_THRESHOLD = 10
+    DEGRADE_BACKOFF_BASE_MS = 5000
+    DEGRADE_BACKOFF_MAX_MS = 300000
+
     def __init__(self):
         self.store_path = cron_store_path
         self.on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None
@@ -114,6 +142,9 @@ class CronService:
         self._last_mtime: float = 0.0
         self._timer_task: asyncio.Task | None = None
         self._running = False
+        # Per-job failure tracking for the breaker. Memory-only by design:
+        # never persisted, never passed to _save_store's serialization.
+        self._failure_states: dict[str, CronJobFailureState] = {}
 
     def set_on_job(self, callback: Callable[[CronJob], Coroutine[Any, Any, str | None]]) -> None:
         self.on_job = callback
@@ -364,6 +395,179 @@ class CronService:
 
         logger.info("Cron: execution log written to %s", log_file)
 
+    # ========== Failure breaker (cron-breaker-defense.md §5.3) ==========
+
+    async def _on_cron_job(self, cron_job: CronJob) -> None:
+        """Agent callback executed by ``_execute_job``, wrapped with the breaker.
+
+        Gates: disabled jobs are skipped; degraded jobs (>= DEGRADED_THRESHOLD
+        consecutive failures) are skipped while inside their exponential
+        backoff window. On success the failure state resets. On failure the
+        failure is recorded FIRST and the exception is re-raised afterwards
+        (record-then-re-raise) so ``_execute_job`` still records
+        ``last_status="error"`` and pushes the WS bell notification.
+        """
+        payload: CronPayload = cron_job.payload
+
+        # Breaker gate 1: disabled jobs never execute here.
+        if not cron_job.enabled:
+            logger.info("Cron: job {} is disabled, skipping execution", cron_job.id)
+            return
+
+        # Breaker gate 2: degraded mode — skip while inside the backoff window.
+        state = self._failure_states.get(cron_job.id)
+        if state is not None and state.consecutive_failures >= self.DEGRADED_THRESHOLD:
+            backoff_ms = min(
+                self.DEGRADE_BACKOFF_BASE_MS
+                * (2 ** (state.consecutive_failures - self.DEGRADED_THRESHOLD)),
+                self.DEGRADE_BACKOFF_MAX_MS,
+            )
+            elapsed_ms = (time.monotonic() - (state.degraded_since or time.monotonic())) * 1000
+            if elapsed_ms < backoff_ms:
+                logger.info(
+                    "Cron: job {} degraded, backing off ({:.1f}s/{:.1f}s elapsed) — skipping",
+                    cron_job.id,
+                    elapsed_ms / 1000,
+                    backoff_ms / 1000,
+                )
+                return
+
+        start = time.monotonic()
+        try:
+            # --- existing agent invocation logic (unchanged semantics) ---
+            message: str = payload.message
+            channel: str = payload.channel
+            to: str = payload.to
+
+            from agent.tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
+
+            tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
+
+            # Sandbox-hardening Task 8: cron agents are BACKGROUND callers — stamp
+            # every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass
+            # in terminal.py / python_repl.py) denies sandbox=False outright (no HITL
+            # middleware on background graphs to approve it).
+            for _t in tools:
+                if not isinstance(_t.metadata, dict):
+                    _t.metadata = {}
+                _t.metadata["caller_scope"] = "background"
+
+            main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
+
+            agent: CompiledStateGraph = create_agent(
+                system_prompt=build_system_prompt(),
+                model=main_llm,
+                tools=tools,
+            )
+
+            result: dict[str, Any] = await agent.ainvoke(
+                input={"messages": [HumanMessage(content=message)]}
+            )
+            res: str = result["messages"][-1].content
+
+            bus: MessageBus = channel_manager.get_bus()
+
+            msg: InboundMessage = InboundMessage(
+                channel=channel,
+                sender_id="cron tool",
+                chat_id=to,
+                content=res,
+            )
+            await bus.publish_inbound(msg)
+
+        except Exception as e:
+            # One-shot `at` jobs are handled by _execute_job (disable/delete
+            # after run) — they are never breaker-counted.
+            if cron_job.schedule.kind != "at":
+                await self._record_failure(cron_job, str(e))
+            raise
+
+        # Success: reset the breaker state and record the measured duration.
+        duration_s = time.monotonic() - start
+        self._failure_states[cron_job.id] = CronJobFailureState()
+        logger.info("Cron: job {} agent turn succeeded in {:.2f}s", cron_job.id, duration_s)
+        self._save_store()
+
+    async def _record_failure(self, job: CronJob, error: str) -> None:
+        """Record one failure for ``job`` and apply the breaker transitions.
+
+        Degrade: at DEGRADED_THRESHOLD the job enters backoff mode; the backoff
+        doubles with each further failure (capped at DEGRADE_BACKOFF_MAX_MS).
+        Disable: at DISABLED_THRESHOLD the job is disabled, the store is saved
+        (persisting the ``enabled=False`` flag) and a best-effort notification
+        is published to the job's payload channel.
+        """
+        state = self._failure_states.setdefault(job.id, CronJobFailureState())
+        state.consecutive_failures += 1
+        state.last_error = error
+
+        if state.consecutive_failures >= self.DEGRADED_THRESHOLD:
+            state.backoff_ms = min(
+                self.DEGRADE_BACKOFF_BASE_MS
+                * (2 ** (state.consecutive_failures - self.DEGRADED_THRESHOLD)),
+                self.DEGRADE_BACKOFF_MAX_MS,
+            )
+            # Start of the current backoff window (refreshed per failure).
+            state.degraded_since = time.monotonic()
+            logger.warning(
+                "Cron: job {} degraded (failures={}, backoff={:.1f}s)",
+                job.id,
+                state.consecutive_failures,
+                state.backoff_ms / 1000,
+            )
+
+        if state.consecutive_failures >= self.DISABLED_THRESHOLD:
+            job.enabled = False
+            job.updated_at_ms = _now_ms()
+            self._save_store()
+            logger.error(
+                "Cron: job {} auto-disabled after {} consecutive failures (last error: {})",
+                job.id,
+                state.consecutive_failures,
+                error[:200],
+            )
+            await self._notify_cron_disabled(job, job.payload, state)
+
+    async def _notify_cron_disabled(
+        self, job: CronJob, payload: CronPayload, state: CronJobFailureState
+    ) -> None:
+        """Best-effort outbound notification that ``job`` was auto-disabled.
+
+        Uses the job's payload channel/to (there is no ``job.channel_id``
+        field). A missing channel degrades to an error log: no publish, no
+        crash. Publish failures are logged and never mask the breaker's
+        original exception (the caller re-raises it).
+        """
+        if not payload.channel:
+            logger.error(
+                "Cron: job {} auto-disabled after {} consecutive failures "
+                "(no payload channel configured — notification skipped)",
+                job.id,
+                state.consecutive_failures,
+            )
+            return
+
+        content = (
+            f"Cron job '{job.name}' ({job.id}) has been auto-disabled after "
+            f"{state.consecutive_failures} consecutive failures. "
+            f"Last error: {state.last_error[:200]}. "
+            f"Check the job configuration or re-enable it manually."
+        )
+        try:
+            bus: MessageBus = channel_manager.get_bus()
+            await bus.publish_outbound(
+                OutboundMessage(
+                    channel=payload.channel,
+                    chat_id=payload.to or "",
+                    content=content,
+                    metadata={"job_id": job.id},
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Cron: failed to publish auto-disable notification for job {}: {}", job.id, e
+            )
+
     # ========== Public API ==========
 
     def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
@@ -479,6 +683,10 @@ class CronService:
         store = self._load_store()
         for job in store.jobs:
             if job.id == job_id:
+                if enabled:
+                    # Manual re-enable clears the breaker's failure state
+                    # (deliberate reset semantics: enabling means trusting the job again).
+                    self._failure_states[job_id] = CronJobFailureState()
                 job.enabled = enabled
                 job.updated_at_ms = _now_ms()
                 if enabled:
@@ -507,6 +715,51 @@ class CronService:
         """Get a job by ID."""
         store = self._load_store()
         return next((j for j in store.jobs if j.id == job_id), None)
+
+    def get_failure_state(self, job_id: str) -> dict | None:
+        """Return the job's failure-tracking state as a plain dict, or None.
+
+        Public breaker API (consumed by the REST layer, Task 10). Returns a
+        zeroed view once the state has been reset — entries are never removed.
+        """
+        state = self._failure_states.get(job_id)
+        if state is None:
+            return None
+        return {
+            "consecutive_failures": state.consecutive_failures,
+            "last_error": state.last_error,
+            "degraded_since": state.degraded_since,
+            "backoff_ms": state.backoff_ms,
+        }
+
+    def reset_failures(self, job_id: str) -> bool:
+        """Reset the job's breaker state; restore it if the breaker disabled it.
+
+        Returns False when the job does not exist. Re-enables the job only for
+        the breaker's own fingerprint (failure count reached DISABLED_THRESHOLD
+        while the job is disabled) — manual disables with low failure counts
+        are preserved. Re-enabling mirrors ``enable_job``: next run recomputed
+        and the timer re-armed.
+        """
+        store = self._load_store()
+        job = next((j for j in store.jobs if j.id == job_id), None)
+        if job is None:
+            return False
+
+        state = self._failure_states.get(job_id)
+        if (
+            state is not None
+            and not job.enabled
+            and state.consecutive_failures >= self.DISABLED_THRESHOLD
+        ):
+            job.enabled = True
+            job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+            job.updated_at_ms = _now_ms()
+            self._arm_timer()
+
+        self._failure_states[job_id] = CronJobFailureState()
+        self._save_store()
+        return True
 
     def status(self) -> dict:
         """Get service status."""
@@ -553,46 +806,13 @@ def _start_cron_service_thread():
 
 
 async def _on_cron_job(cron_job: CronJob) -> None:
-    payload: CronPayload = cron_job.payload
-    message: str = payload.message
-    channel: str = payload.channel
-    to: str = payload.to
+    """Backward-compatible module-level shim delegating to the singleton.
 
-    from agent.tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
-
-    tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
-
-    # Sandbox-hardening Task 8: cron agents are BACKGROUND callers — stamp
-    # every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass
-    # in terminal.py / python_repl.py) denies sandbox=False outright (no HITL
-    # middleware on background graphs to approve it).
-    for _t in tools:
-        if not isinstance(_t.metadata, dict):
-            _t.metadata = {}
-        _t.metadata["caller_scope"] = "background"
-
-    main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
-
-    agent: CompiledStateGraph = create_agent(
-        system_prompt=build_system_prompt(),
-        model=main_llm,
-        tools=tools,
-    )
-
-    result: dict[str, Any] = await agent.ainvoke(
-        input={"messages": [HumanMessage(content=message)]}
-    )
-    res: str = result["messages"][-1].content
-
-    bus: MessageBus = channel_manager.get_bus()
-
-    msg: InboundMessage = InboundMessage(
-        channel=channel,
-        sender_id="cron tool",
-        chat_id=to,
-        content=res,
-    )
-    await bus.publish_inbound(msg)
+    ``init()`` wires this as the execution callback and legacy callers/tests
+    invoke it directly; the implementation now lives in
+    ``CronService._on_cron_job`` (failure-breaker-wrapped agent callback).
+    """
+    await cron_service._on_cron_job(cron_job)
 
 
 _started = False
