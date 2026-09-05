@@ -37,10 +37,10 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 
 ### 3. 🤖 マルチレベルサブエージェントシステム
 - **7 つのランタイムツール**：`sessions_spawn`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
-- **階層ロール**：深度制限付きネスト（デフォルト最大 3 深度）、MAIN → ORCHESTRATOR → LEAF ロールと最小権限のツールスコープ
+- **階層ロール**：深度制限付きネスト（デフォルト最大 2 深度、ハード上限 2）、MAIN → ORCHESTRATOR → LEAF ロールと最小権限のツールスコープ
 - **コンテキストモード**：ISOLATED（新しいコンテキスト）または FORK（親トランスクリプトのコピー）、ファイル添付にも対応
 - **信頼性の高い配信**：結果は冪等チェックと指数バックオフリトライを備えた EventBus announce パイプラインで返却
-- **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーがタイムアウトを強制
+- **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーはランタイムアウトが設定された場合のみ強制（デフォルト: なし）
 - **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
 - ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
 

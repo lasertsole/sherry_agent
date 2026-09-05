@@ -37,10 +37,10 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 
 ### 3. 🤖 멀티레벨 서브에이전트 시스템
 - **7개 런타임 도구**: `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list`
-- **계층적 역할**: 깊이 제한 중첩(기본 최대 3단계), MAIN → ORCHESTRATOR → LEAF 역할과 최소 권한 도구 스코프
+- **계층적 역할**: 깊이 제한 중첩(기본 최대 2단계, 하드 상한 2), MAIN → ORCHESTRATOR → LEAF 역할과 최소 권한 도구 스코프
 - **컨텍스트 모드**: ISOLATED(새 컨텍스트) 또는 FORK(부모 트랜스크립트 복사), 파일 첨부 지원
 - **신뢰성 있는 전달**: 결과는 멱등성 검사와 지수 백오프 재시도를 갖춘 EventBus announce 파이프라인을 통해 반환
-- **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커가 타임아웃을 강제
+- **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커는 런 타임아웃이 설정된 경우에만 이를 강제 (기본값: 없음)
 - **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
 - ▶️ _전체 아키텍처는 [Subagent System README](agent/tools/subagent/README.md) 참조_
 

@@ -37,10 +37,10 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 
 ### 3. 🤖 Multi-level Subagent System
 - **7 Runtime Tools**: `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list`
-- **Hierarchical Roles**: depth-limited nesting (default max depth 3) with MAIN → ORCHESTRATOR → LEAF roles and least-privilege tool scoping
+- **Hierarchical Roles**: depth-limited nesting (default max depth 2, hard cap 2) with MAIN → ORCHESTRATOR → LEAF roles and least-privilege tool scoping
 - **Context Modes**: ISOLATED (fresh context) or FORK (copy of the parent transcript), plus file attachments
 - **Reliable Delivery**: results return through an EventBus announce pipeline with idempotency checks and exponential-backoff retries
-- **Durable Registry**: run records persisted to SQLite; a sweeper recovers orphaned runs and a followup checker enforces timeouts
+- **Durable Registry**: run records persisted to SQLite; a sweeper recovers orphaned runs and a followup checker enforces run timeouts when configured (default: none)
 - **Swarm Mode**: batch sub-task execution with FIFO scheduling and configurable concurrency
 - ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for the full architecture_
 

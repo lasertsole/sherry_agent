@@ -37,10 +37,10 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 
 ### 3. 🤖 多层级子代理系统
 - **7 个运行时工具**：`sessions_spawn`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
-- **层级角色**：深度受限的嵌套（默认最大 3 层），MAIN → ORCHESTRATOR → LEAF 角色与最小权限工具作用域
+- **层级角色**：深度受限的嵌套（默认最大 2 层，硬上限 2），MAIN → ORCHESTRATOR → LEAF 角色与最小权限工具作用域
 - **上下文模式**：ISOLATED（全新上下文）或 FORK（复制父级对话记录），支持文件附件
 - **可靠投递**：结果通过 EventBus announce 流水线回传，具备幂等校验与指数退避重试
-- **持久化注册表**：运行记录持久化到 SQLite；sweeper 负责恢复孤儿任务，followup 检查器强制超时
+- **持久化注册表**：运行记录持久化到 SQLite；sweeper 负责恢复孤儿任务，followup 检查器在配置了运行超时时强制超时（默认不配置）
 - **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
 - ▶️ _详见 [Subagent System README](agent/tools/subagent/README.md) 了解完整架构_
 
