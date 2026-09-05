@@ -202,16 +202,26 @@ async def _execute_steered_subagent(
     try:
         from pub_func import build_agent_config
 
-        agent_result = await asyncio.wait_for(
-            child_agent.ainvoke(
+        # run_timeout_seconds <= 0 means "no timeout" — only wrap in wait_for when a positive timeout is set.
+        if timeout_seconds > 0:
+            agent_result = await asyncio.wait_for(
+                child_agent.ainvoke(
+                    input={
+                        "session_id": run.child_session_key,
+                        "messages": [HumanMessage(content=steer_message)],
+                    },
+                    config=build_agent_config(session_id=run.child_session_key),
+                ),
+                timeout=timeout_seconds,
+            )
+        else:
+            agent_result = await child_agent.ainvoke(
                 input={
                     "session_id": run.child_session_key,
                     "messages": [HumanMessage(content=steer_message)],
                 },
                 config=build_agent_config(session_id=run.child_session_key),
-            ),
-            timeout=timeout_seconds,
-        )
+            )
 
         if agent_result and "messages" in agent_result:
             last_msg = agent_result["messages"][-1] if agent_result["messages"] else None

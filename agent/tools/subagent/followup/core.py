@@ -36,6 +36,10 @@ async def _check_timeouts() -> None:
     config = get_config()
     import time
 
+    # run_timeout_seconds <= 0 means "no timeout" — the followup timeout check is disabled.
+    if config.run_timeout_seconds <= 0:
+        return
+
     timed_out = 0
     for run in all_runs():
         if not is_live_unended_run(run):
