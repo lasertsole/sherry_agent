@@ -23,11 +23,11 @@ from ..types.spawn import SpawnMode, ContextMode
 from ..types.capability import SubagentSessionRole
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
 from ..registry import register_run
-from ..registry.read import count_active_runs_readonly
+from ..registry.read import count_active_runs_readonly, count_all_active_runs_readonly
 from ..registry.reconciliation import resolve_run_orphan_reason
 from ..session.cleanup import delete_subagent_session_for_cleanup
 from ..capabilities import resolve_subagent_capabilities
-from .depth import get_subagent_depth, validate_spawn_depth, validate_concurrent_children
+from .depth import get_subagent_depth, validate_spawn_depth, validate_concurrent_children, validate_global_concurrent
 from .target_policy import validate_target_policy
 from .plan import resolve_run_timeout_seconds, resolve_model_and_thinking_plan
 from .task_name import normalize_subagent_task_name
@@ -238,6 +238,11 @@ async def spawn_subagent_direct(
 
     active_count = count_active_runs_readonly(requester_session_key)
     allowed, reason = validate_concurrent_children(active_count)
+    if not allowed:
+        return SpawnResult(status="forbidden", error=reason)
+
+    global_active = count_all_active_runs_readonly()
+    allowed, reason = validate_global_concurrent(global_active)
     if not allowed:
         return SpawnResult(status="forbidden", error=reason)
 
@@ -550,17 +555,20 @@ async def _execute_subagent(
         if run.spawned_cwd:
             agent_config["cwd"] = run.spawned_cwd
 
-        # Invoke the child agent under a wall-clock timeout
-        agent_result = await asyncio.wait_for(
-            child_agent.ainvoke(
-                input={
-                    "session_id": run.child_session_key,
-                    "messages": messages,
-                },
+        # Invoke the child agent under a wall-clock timeout (0 disables the timeout)
+        if timeout_seconds > 0:
+            agent_result = await asyncio.wait_for(
+                child_agent.ainvoke(
+                    input={"session_id": run.child_session_key, "messages": messages},
+                    config=agent_config,
+                ),
+                timeout=timeout_seconds,
+            )
+        else:
+            agent_result = await child_agent.ainvoke(
+                input={"session_id": run.child_session_key, "messages": messages},
                 config=agent_config,
-            ),
-            timeout=timeout_seconds,
-        )
+            )
 
         # Extract the last substantive assistant text as the result text.
         # The last message in the returned state is frequently an AIMessage with

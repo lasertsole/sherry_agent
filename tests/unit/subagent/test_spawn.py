@@ -3,6 +3,7 @@ from agent.tools.subagent.spawn.depth import (
     get_subagent_depth,
     validate_spawn_depth,
     validate_concurrent_children,
+    validate_global_concurrent,
 )
 from agent.tools.subagent.spawn.target_policy import validate_target_policy, is_target_allowed
 from agent.tools.subagent.spawn.plan import resolve_run_timeout_seconds, split_model_ref
@@ -54,6 +55,18 @@ class TestDepth:
         ok, reason = validate_concurrent_children(get_config().max_children_per_agent)
         assert not ok
 
+    def test_validate_global_concurrent_ok(self):
+        ok, reason = validate_global_concurrent(0)
+        assert ok
+        assert reason == ""
+
+    def test_validate_global_concurrent_exceeded(self):
+        from agent.tools.subagent.config import get_config
+
+        ok, reason = validate_global_concurrent(get_config().max_concurrent)
+        assert not ok
+        assert "already at max" in reason
+
 
 class TestTargetPolicy:
     def test_wildcard_allowed(self):
@@ -75,13 +88,13 @@ class TestTargetPolicy:
 
 class TestPlan:
     def test_default_timeout(self):
-        assert resolve_run_timeout_seconds() == 300.0
+        assert resolve_run_timeout_seconds() == 0.0
 
     def test_custom_timeout(self):
         assert resolve_run_timeout_seconds(600.0) == 600.0
 
     def test_invalid_timeout_uses_default(self):
-        assert resolve_run_timeout_seconds(-1) == 300.0
+        assert resolve_run_timeout_seconds(-1) == 0.0
 
     def test_split_model_ref_with_provider(self):
         provider, model = split_model_ref("openai/gpt-4")
@@ -565,7 +578,7 @@ class TestSpawnSubagentDirect:
     async def test_spawn_exceeds_max_depth(self):
         from agent.tools.subagent.spawn.core import spawn_subagent_direct
 
-        deep_key = "agent:main:subagent:a:subagent:b:subagent:c"
+        deep_key = "agent:main:subagent:a:subagent:b"
         result = await spawn_subagent_direct(
             task="Too deep",
             requester_session_key=deep_key,
@@ -659,6 +672,39 @@ class TestSpawnSubagentDirect:
             )
             assert result.status == "forbidden"
             assert "Concurrent" in result.error
+        finally:
+            set_config(orig_config)
+            clear_registry()
+
+    @pytest.mark.asyncio
+    async def test_global_concurrent_limit(self):
+        from agent.tools.subagent.spawn.core import spawn_subagent_direct
+        from agent.tools.subagent.config import get_config, set_config
+        from agent.tools.subagent.registry import clear as clear_registry, register_run
+        from agent.tools.subagent.types.registry import ExecutionStatus
+
+        orig_config = get_config()
+        try:
+            limited_config = get_config().model_copy(update={"max_concurrent": 2})
+            set_config(limited_config)
+            clear_registry()
+            # CRITICAL: fake runs registered under a DIFFERENT requester key, so the
+            # per-session children check passes (0 < 5) and the GLOBAL gate fires.
+            for i in range(2):
+                fake_run = register_run(
+                    child_session_key=f"agent:main:subagent:gc{i}",
+                    requester_session_key="agent:main:session:gc_other",
+                    task=f"Fake task {i}",
+                    depth=1,
+                )
+                fake_run.execution.status = ExecutionStatus.RUNNING
+
+            result = await spawn_subagent_direct(
+                task="Blocked task",
+                requester_session_key="agent:main:session:gc_test",
+            )
+            assert result.status == "forbidden"
+            assert "Global concurrent" in result.error
         finally:
             set_config(orig_config)
             clear_registry()

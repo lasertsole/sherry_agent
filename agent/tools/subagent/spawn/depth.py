@@ -39,3 +39,14 @@ def validate_concurrent_children(current_count: int) -> tuple[bool, str]:
             f"Concurrent children {current_count} already at max {config.max_children_per_agent}",
         )
     return True, ""
+
+
+def validate_global_concurrent(current_count: int) -> tuple[bool, str]:
+    """Check whether the global subagent concurrency has reached the configured max."""
+    config = get_config()
+    if current_count >= config.max_concurrent:
+        return (
+            False,
+            f"Global concurrent subagents {current_count} already at max {config.max_concurrent}",
+        )
+    return True, ""
