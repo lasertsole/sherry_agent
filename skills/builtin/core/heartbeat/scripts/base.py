@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 from config import HEARTBEAT_PATH
 from models import build_auxiliary_llm
+from runtime import PeriodicBackoff
 from .evaluate import evaluate_response
 from typing import Any, Callable, Coroutine
 from pydantic import BaseModel, Field
@@ -78,6 +79,14 @@ class HeartbeatService:
         self.timezone = timezone
         self._running = False
         self._task: asyncio.Task | None = None
+        # Exponential backoff on consecutive tick failures; base interval follows
+        # this service's own default so there is a single source of truth.
+        self._backoff: PeriodicBackoff = PeriodicBackoff(
+            base_interval=float(interval_s),
+            factor=2.0,
+            max_interval=7200.0,
+            max_consecutive_failures=5,
+        )
 
     @staticmethod
     def _read_heartbeat_file() -> str | None:
@@ -165,8 +174,15 @@ class HeartbeatService:
     async def _run_loop(self) -> None:
         """Main heartbeat loop."""
         while self._running:
+            if self._backoff.is_exhausted():
+                logger.critical(
+                    "Heartbeat paused after {} consecutive failures (last: {}); manual recovery required",
+                    self._backoff.consecutive_failures,
+                    self._backoff.reason,
+                )
+                return
             try:
-                await asyncio.sleep(self.interval_s)
+                await asyncio.sleep(self._backoff.current_interval)
 
                 if self._running:
                     await self._tick()
@@ -190,6 +206,7 @@ class HeartbeatService:
 
             if action != "run":
                 logger.info("Heartbeat: OK (nothing to report)")
+                self._backoff.record_success()
                 return
 
             logger.info("Heartbeat: tasks found, executing...")
@@ -202,8 +219,18 @@ class HeartbeatService:
                         await self.on_notify(response)
                     else:
                         logger.info("Heartbeat: silenced by post-run evaluation")
-        except Exception:
+            # Clean tick completion → full backoff reset. Lives INSIDE _tick (not
+            # after the call in _run_loop): _tick swallows its own exceptions, so
+            # _run_loop cannot tell success from failure.
+            self._backoff.record_success()
+        except Exception as e:
             logger.exception("Heartbeat execution failed")
+            self._backoff.record_failure(repr(e))
+            logger.warning(
+                "Heartbeat tick failed ({} consecutive); next interval stretched to {:.0f}s",
+                self._backoff.consecutive_failures,
+                self._backoff.current_interval,
+            )
 
     async def trigger_now(self) -> str | None:
         """Manually trigger a heartbeat."""
