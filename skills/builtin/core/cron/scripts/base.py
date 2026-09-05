@@ -127,7 +127,7 @@ class CronService:
 
     _MAX_RUN_HISTORY = 20
 
-    # Cron breaker thresholds (cron-breaker-defense.md §5.3.1): after
+    # Cron breaker thresholds (see docs/harness/loop-prevention/README.md): after
     # DEGRADED_THRESHOLD consecutive failures a job degrades into an
     # exponential-backoff mode; at DISABLED_THRESHOLD it is auto-disabled
     # and a notification is published.
@@ -396,7 +396,7 @@ class CronService:
 
         logger.info("Cron: execution log written to %s", log_file)
 
-    # ========== Failure breaker (cron-breaker-defense.md §5.3) ==========
+    # ========== Failure breaker (see docs/harness/loop-prevention/README.md) ==========
 
     async def _on_cron_job(self, cron_job: CronJob) -> None:
         """Agent callback executed by ``_execute_job``, wrapped with the breaker.

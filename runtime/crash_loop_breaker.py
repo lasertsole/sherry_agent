@@ -6,7 +6,7 @@ supervisor cannot resurrect a crash-looping backend forever.
 
 Reference: openclaw gateway-boot-lifecycle.ts (unclean threshold 3, 5 min window).
 
-Design notes (cron-breaker-defense.md §7.3-§7.5 + audit corrections):
+Design notes (see docs/harness/loop-prevention/README.md + audit corrections):
 - Storage lives under ``config.path.SRC_DIR / "data"`` (NOT ``Path.cwd()/data``).
 - A corrupted/unreadable state file is treated as an empty (first-boot) state:
   the breaker must never block startup because of its own bookkeeping.
