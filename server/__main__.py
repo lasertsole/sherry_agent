@@ -31,25 +31,59 @@ else:
 
 
 if __name__ == "__main__":
+    # Crash-loop gate (runtime.crash_loop_breaker): record this boot before
+    # any background service is allowed to start. The clean-exit marker is
+    # ONE-SHOT, so it must be read BEFORE record_boot consumes it.
+    import atexit
+
+    from loguru import logger
+
+    import runtime.crash_loop_breaker as breaker
+    from runtime.crash_loop_breaker import mark_clean_exit, was_last_exit_clean
+
+    _prev_exit_clean = was_last_exit_clean()
+    tripped = breaker.record_boot(clean=_prev_exit_clean, reason="startup")
+    # Clean-exit self-heal: a graceful shutdown marks the next boot clean, so
+    # normal restarts never accumulate unclean boots. No auto-reset otherwise.
+    atexit.register(mark_clean_exit)
+
+    if tripped:
+        # Crash loop (3+ unclean boots in 5 min): enter HTTP-only mode.
+        # The curator and cron imports below are skipped entirely (their
+        # background threads are the crash loop's fuel); the trigger import
+        # is kept so HTTP/WS routes stay available for inspection and
+        # manual intervention.
+        os.environ["SHERRY_HTTP_ONLY"] = "1"
+        logger.critical(
+            "CrashLoopBreaker TRIPPED (3+ unclean boots within 5 min): entering "
+            "HTTP-only mode -- curator and cron background services are DISABLED, "
+            "HTTP/WS still served. Self-heal: exit cleanly once (atexit marker "
+            "clears the trip on next boot). Manual reset: delete {}",
+            SRC_DIR / "data" / "boot_lifecycle.json",
+        )
+
     # Explicit agent-core initialization: skills snapshot + memory store +
     # main tools. Moved out of agent.core import time so tests/tooling can
     # import agent.core without disk I/O. Must run
     # before serving requests and before any lazy agent.core consumer.
+    # Runs unconditionally (also in HTTP-only mode): HTTP requests still
+    # need the agent core.
     from agent.core import init as init_agent_core
 
     init_agent_core()
 
-    # run curator to maintain auto-skills — starts the curator background
-    # thread (moved out of context_engine.curator import time)
-    from context_engine.curator import init as init_curator
+    if not tripped:
+        # run curator to maintain auto-skills — starts the curator background
+        # thread (moved out of context_engine.curator import time)
+        from context_engine.curator import init as init_curator
 
-    init_curator()
+        init_curator()
 
-    # run core service thread — starts the cron-service background thread
-    # (moved out of cron.scripts.base import time)
-    from skills.builtin.core.cron.scripts import init as init_cron
+        # run core service thread — starts the cron-service background thread
+        # (moved out of cron.scripts.base import time)
+        from skills.builtin.core.cron.scripts import init as init_cron
 
-    init_cron()
+        init_cron()
 
     # Register all HTTP/WS/channel/subagent routes and handlers explicitly
     # (moved out of server.trigger import time)

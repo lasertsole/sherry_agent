@@ -1,6 +1,7 @@
 """Cron service for scheduling agent tasks."""
 
 import json
+import os
 import time
 import uuid
 import asyncio
@@ -819,6 +820,19 @@ _started = False
 _start_lock = threading.Lock()
 
 
+def _http_only_mode() -> bool:
+    """True when crash-loop HTTP-only mode is active (SHERRY_HTTP_ONLY=1).
+
+    ``server.__main__`` sets the env var when the CrashLoopBreaker trips
+    (3+ unclean boots within 5 min) BEFORE importing/serving anything, so a
+    plain env read here is reliable. In that mode the cron scheduler daemon
+    thread must NOT start -- but the REST routes stay usable: ``GET /cron``
+    inspection and manual ``run_job`` / ``/cron/trigger`` are explicit user
+    actions, so they remain available.
+    """
+    return os.environ.get("SHERRY_HTTP_ONLY") == "1"
+
+
 def init() -> None:
     """Wire the job-execution callback and start the cron service thread.
 
@@ -837,4 +851,17 @@ def init() -> None:
         if _started:
             return
         _started = True
+
+    if _http_only_mode():
+        # Crash-loop HTTP-only mode: skip the daemon-thread start so the
+        # scheduler cannot feed the crash loop. REST routes remain usable
+        # (GET /cron inspection, manual run_job = explicit user action); the
+        # job-execution callback above is still wired for them.
+        logger.warning(
+            "Cron: SHERRY_HTTP_ONLY=1 (crash-loop tripped) -- cron-service "
+            "daemon thread NOT started; REST routes remain usable "
+            "(GET /cron, manual run_job)",
+        )
+        return
+
     threading.Thread(target=_start_cron_service_thread, daemon=True, name="cron-service").start()
