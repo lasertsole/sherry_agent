@@ -3,8 +3,19 @@
 import asyncio
 import time
 from loguru import logger
+from runtime.periodic_backoff import PeriodicBackoff
 from ..config import get_config
 from ..types.registry import ExecutionStatus
+
+_backoff: PeriodicBackoff | None = None
+
+
+def _get_backoff() -> PeriodicBackoff:
+    """Lazily build the sweeper's backoff state from the configured base interval (avoids reading config at import time)."""
+    global _backoff
+    if _backoff is None:
+        _backoff = PeriodicBackoff(base_interval=float(get_config().sweeper_interval_seconds))
+    return _backoff
 
 
 async def _sweep_loop() -> None:
@@ -17,11 +28,27 @@ async def _sweep_loop() -> None:
     logger.info("Subagent sweeper started (interval={}s)", interval)
 
     while _running:
-        await asyncio.sleep(interval)
+        await asyncio.sleep(_get_backoff().current_interval)
         try:
             await _do_sweep()
         except Exception as e:
-            logger.error("Sweeper error: {}", e)
+            backoff = _get_backoff()
+            backoff.record_failure(repr(e))
+            logger.warning(
+                "Sweeper failed (consecutive={}, next_interval={}s): {}",
+                backoff.consecutive_failures,
+                backoff.current_interval,
+                e,
+            )
+            if backoff.is_exhausted():
+                logger.critical(
+                    "Sweeper backoff exhausted after {} consecutive failures; stopping loop: {}",
+                    backoff.consecutive_failures,
+                    backoff.reason,
+                )
+                _running = False
+        else:
+            _get_backoff().record_success()
 
 
 async def _do_sweep() -> None:
@@ -152,7 +179,7 @@ async def start_sweeper() -> None:
 
 async def stop_sweeper() -> None:
     """Stop the sweeper background task and wait for cancellation."""
-    global _running, _sweeper_task
+    global _running, _sweeper_task, _backoff
     _running = False
     if _sweeper_task is not None:
         _sweeper_task.cancel()
@@ -161,6 +188,8 @@ async def stop_sweeper() -> None:
         except asyncio.CancelledError:
             pass
         _sweeper_task = None
+    # Fresh backoff state on next start (conservative direction).
+    _backoff = None
 
 
 _sweeper_task: asyncio.Task | None = None
