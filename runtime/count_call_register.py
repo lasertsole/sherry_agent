@@ -60,14 +60,18 @@ class CountCallRegister(Register):
         if args is None:
             args = {}
 
-        if name in self.session_id_to_counter.setdefault(session_id, {}):
-            logger.debug(f"{name} is already registered for session {session_id}")
-            return False
+        # Same lock as increase()/reset_count(): an unlocked writer here could
+        # interleave with a locked increase() between its counter check and
+        # trigger fetch and crash it with KeyError (audit #13).
+        with self._lock:
+            if name in self.session_id_to_counter.setdefault(session_id, {}):
+                logger.debug(f"{name} is already registered for session {session_id}")
+                return False
 
-        self.session_id_to_counter.setdefault(session_id, {})[name] = 0
-        self.session_id_to_trigger.setdefault(session_id, {})[name] = Trigger(
-            threshold=threshold, callback=callback, args=args
-        )
+            self.session_id_to_counter.setdefault(session_id, {})[name] = 0
+            self.session_id_to_trigger.setdefault(session_id, {})[name] = Trigger(
+                threshold=threshold, callback=callback, args=args
+            )
 
         # Execute immediately if requested
         if execute_now:
@@ -89,12 +93,15 @@ class CountCallRegister(Register):
         """
         Unregister a counter
         """
-        if name not in self.session_id_to_counter.setdefault(session_id, {}):
-            logger.error(f"{name} is not registered for session {session_id}")
-            return False
+        # Lock pairs the counter/trigger deletions and keeps them from tearing
+        # a concurrent locked increase() (audit #13).
+        with self._lock:
+            if name not in self.session_id_to_counter.setdefault(session_id, {}):
+                logger.error(f"{name} is not registered for session {session_id}")
+                return False
 
-        del self.session_id_to_counter.setdefault(session_id, {})[name]
-        del self.session_id_to_trigger.setdefault(session_id, {})[name]
+            del self.session_id_to_counter.setdefault(session_id, {})[name]
+            del self.session_id_to_trigger.setdefault(session_id, {})[name]
 
         return True
 
@@ -157,8 +164,9 @@ class CountCallRegister(Register):
         return True
 
     def clear_session(self, session_id: str):
-        self.session_id_to_counter.pop(session_id, None)
-        self.session_id_to_trigger.pop(session_id, None)
+        with self._lock:
+            self.session_id_to_counter.pop(session_id, None)
+            self.session_id_to_trigger.pop(session_id, None)
 
 
 count_call_register = CountCallRegister()

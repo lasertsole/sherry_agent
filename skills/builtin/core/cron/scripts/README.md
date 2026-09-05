@@ -262,7 +262,7 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 | Kind | Behavior |
 |------|----------|
 | `at` | Fires once at `atMs`. If the timestamp is already in the past when computed, `nextRunAtMs` becomes `null` and the job never fires. After a run it is deleted (`deleteAfterRun=true`) or disabled (`enabled=false`, `nextRunAtMs=null`) |
-| `every` | Next run = current time + `everyMs`, recomputed after each execution |
+| `every` | Fixed-phase grid: next run = consumed slot + `everyMs` (skipping slots missed by job overruns or downtime), recomputed after each execution. The job's duration never shifts the schedule; a manual run consumes the pending slot. Restarts preserve still-future persisted slots. |
 | `cron` | `croniter` computes the next run from the expression; the base time is evaluated in `tz` if set, otherwise in the system's local timezone |
 
 Validation: `tz` is only accepted with `kind: "cron"`; unknown IANA timezone names are rejected (`ValueError`) in both the service and the facade.

@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import threading
 import uuid
 from loguru import logger
 from .core import Register
@@ -33,6 +34,10 @@ class TimerCallRegister(Register):
 
         self.session_id_to_timers: dict[str, dict[str, Timer]] = {}
         self._executor = CallbackExecutor(name="timer-register-loop")
+        # Guards session_id_to_timers: register/unregister/reset_timer/
+        # clear_session and the _run_timer cleanup all read-then-delete the
+        # same entries; unlocked, the loser raises KeyError (audit #13).
+        self._timers_lock = threading.Lock()
 
         self._initialized = True
 
@@ -63,24 +68,25 @@ class TimerCallRegister(Register):
             logger.error(f"[timer_call_register] minutes must be between 1 and 60, got {minutes}")
             return False
 
-        if name in self.session_id_to_timers.setdefault(session_id, {}):
-            logger.warning(
-                f"[timer_call_register] {name} is already registered in session {session_id}"
-            )
-            return False
-
         args = args or {}
 
-        timer = Timer(minutes=minutes, callback=callback, args=args)
-        # Unique per-generation task name (audit #8): cancel_task matches by
-        # name and stops at the first hit, so a reusable name could hit the
-        # wrong generation when several same-named tasks coexist transiently
-        # (reset/unregister+register while the loop is busy) — cancelling the
-        # NEW task and leaking the old coroutine, which keeps firing forever.
-        # A fresh suffix makes every generation match exactly one task.
-        task_name = f"timer_{session_id}_{name}_{uuid.uuid4().hex[:8]}"
-        timer.task_name = task_name
-        self.session_id_to_timers[session_id][name] = timer
+        with self._timers_lock:
+            if name in self.session_id_to_timers.setdefault(session_id, {}):
+                logger.warning(
+                    f"[timer_call_register] {name} is already registered in session {session_id}"
+                )
+                return False
+
+            timer = Timer(minutes=minutes, callback=callback, args=args)
+            # Unique per-generation task name (audit #8): cancel_task matches by
+            # name and stops at the first hit, so a reusable name could hit the
+            # wrong generation when several same-named tasks coexist transiently
+            # (reset/unregister+register while the loop is busy) — cancelling the
+            # NEW task and leaking the old coroutine, which keeps firing forever.
+            # A fresh suffix makes every generation match exactly one task.
+            task_name = f"timer_{session_id}_{name}_{uuid.uuid4().hex[:8]}"
+            timer.task_name = task_name
+            self.session_id_to_timers[session_id][name] = timer
 
         # Execute immediately if requested
         if execute_now:
@@ -111,19 +117,20 @@ class TimerCallRegister(Register):
         """
         Cancel a countdown timer
         """
-        timers = self.session_id_to_timers.get(session_id)
-        if not timers or name not in timers:
-            logger.warning(
-                f"[timer_call_register] {name} is not registered in session {session_id}"
-            )
-            return False
+        with self._timers_lock:
+            timers = self.session_id_to_timers.get(session_id)
+            if not timers or name not in timers:
+                logger.warning(
+                    f"[timer_call_register] {name} is not registered in session {session_id}"
+                )
+                return False
 
-        timer = timers.pop(name, None)
-        if timer is None:
-            logger.warning(
-                f"[timer_call_register] {name} already removed from session {session_id}"
-            )
-            return False
+            timer = timers.pop(name, None)
+            if timer is None:
+                logger.warning(
+                    f"[timer_call_register] {name} already removed from session {session_id}"
+                )
+                return False
 
         if timer.task_name:
             self._executor.cancel_task(timer.task_name)
@@ -165,9 +172,10 @@ class TimerCallRegister(Register):
                 break
 
         # Clean up registration on cancel — only if still the same timer object
-        timers = self.session_id_to_timers.get(session_id)
-        if timers and name in timers and timers[name] is timer_obj:
-            del timers[name]
+        with self._timers_lock:
+            timers = self.session_id_to_timers.get(session_id)
+            if timers and name in timers and timers[name] is timer_obj:
+                del timers[name]
 
     def reset_timer(self, session_id: str, name: str) -> bool:
         """
@@ -180,30 +188,29 @@ class TimerCallRegister(Register):
         Returns:
             whether reset succeeded
         """
-        timers = self.session_id_to_timers.get(session_id)
-        if not timers or name not in timers:
-            logger.warning(
-                f"[timer_call_register] {name} is not registered in session {session_id}"
-            )
-            return False
+        with self._timers_lock:
+            timers = self.session_id_to_timers.get(session_id)
+            if not timers or name not in timers:
+                logger.warning(
+                    f"[timer_call_register] {name} is not registered in session {session_id}"
+                )
+                return False
 
-        old_timer = timers[name]
-        minutes = old_timer.minutes
-        callback = old_timer.callback
-        args = old_timer.args
+            old_timer = timers[name]
+            minutes = old_timer.minutes
+            callback = old_timer.callback
+            args = old_timer.args
 
-        if old_timer.task_name:
-            self._executor.cancel_task(old_timer.task_name)
+            del timers[name]
 
-        del timers[name]
+            new_timer = Timer(minutes=minutes, callback=callback, args=args)
+            # Fresh unique task name for the new generation — see register()
+            # (audit #8): the old generation's cancel must never hit this task.
+            task_name = f"timer_{session_id}_{name}_{uuid.uuid4().hex[:8]}"
+            new_timer.task_name = task_name
+            timers[name] = new_timer
 
-        new_timer = Timer(minutes=minutes, callback=callback, args=args)
-        # Fresh unique task name for the new generation — see register()
-        # (audit #8): the old generation's cancel must never hit this task.
-        task_name = f"timer_{session_id}_{name}_{uuid.uuid4().hex[:8]}"
-        new_timer.task_name = task_name
-        timers[name] = new_timer
-
+        self._executor.cancel_task(old_timer.task_name)
         self._executor.create_task(
             self._run_timer(session_id, name, minutes, callback, args, new_timer),
             name=task_name,
@@ -218,7 +225,8 @@ class TimerCallRegister(Register):
         """
         Clear all timers for a session
         """
-        timers = self.session_id_to_timers.pop(session_id, {})
+        with self._timers_lock:
+            timers = self.session_id_to_timers.pop(session_id, {})
         for name, timer in timers.items():
             if timer.task_name:
                 self._executor.cancel_task(timer.task_name)

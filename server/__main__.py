@@ -91,6 +91,14 @@ if __name__ == "__main__":
 
     init_trigger()
 
+    # Pin robyn to a single worker process. `--fast` sets processes=(cpu*2)+1,
+    # spawning a process pool; every in-memory registry (relation_register,
+    # state registers, input queues, subagent registry) lives per-process, so
+    # a WS connection registered in one worker is invisible to a turn running
+    # in another — chunk/done frames get silently dropped (websocket=None).
+    app.config.processes = 1
+    app.config.workers = 1
+
     # Configuring Static File Directory Hosting
     app.serve_directory(
         route="/static",  # URL prefix accessed by the client.

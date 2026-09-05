@@ -16,6 +16,9 @@ class CallbackExecutor:
         self._thread: threading.Thread | None = None
         self._start_event = threading.Event()
         self._name = name
+        # First use must spawn exactly ONE loop thread; loop reads are
+        # ordered via _start_event (audit #13).
+        self._ensure_lock = threading.Lock()
 
     def _run_loop(self):
         """Thread target: create and run a persistent event loop."""
@@ -26,7 +29,11 @@ class CallbackExecutor:
 
     def _ensure_running(self):
         """Lazy-start the background thread and loop."""
-        if self._thread is None or not self._thread.is_alive():
+        if self._thread is not None and self._thread.is_alive():
+            return
+        with self._ensure_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
             self._start_event.clear()
             self._thread = threading.Thread(target=self._run_loop, daemon=True, name=self._name)
             self._thread.start()

@@ -76,16 +76,28 @@ class CronJobFailureState:
     backoff_ms: int = 0
 
 
-def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
-    """Compute next run time in ms."""
+def _compute_next_run(schedule: CronSchedule, now_ms: int, anchor_ms: int | None = None) -> int | None:
+    """Compute next run time in ms.
+
+    For ``every`` schedules, ``anchor_ms`` pins the interval grid to the
+    slot the job just consumed, so the job's own duration never pushes the
+    schedule out (audit #22: fixed-phase intervals). Without an anchor the
+    grid starts at ``now_ms`` (first schedule).
+    """
     if schedule.kind == "at":
         return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
 
     if schedule.kind == "every":
         if not schedule.every_ms or schedule.every_ms <= 0:
             return None
-        # Next interval from now
-        return now_ms + schedule.every_ms
+        base = anchor_ms if anchor_ms and anchor_ms > 0 else now_ms
+        next_ms = base + schedule.every_ms
+        if next_ms <= now_ms:
+            # Jump to the first grid point strictly after now — missed slots
+            # (job overrun, service pause) are skipped, never burst-fired.
+            missed = (now_ms - next_ms) // schedule.every_ms + 1
+            next_ms += missed * schedule.every_ms
+        return next_ms
 
     if schedule.kind == "cron" and schedule.expr:
         try:
@@ -267,12 +279,23 @@ class CronService:
             self._timer_task = None
 
     def _recompute_next_runs(self) -> None:
-        """Recompute next run times for all enabled jobs."""
+        """Recompute next run times for all enabled jobs.
+
+        ``every`` jobs keep a still-future persisted slot: the interval grid
+        anchored at the last scheduled run survives restarts (audit #22).
+        Slots that are missing or already past are re-anchored from now.
+        """
         if not self._store:
             return
         now = _now_ms()
         for job in self._store.jobs:
             if job.enabled:
+                if (
+                    job.schedule.kind == "every"
+                    and job.state.next_run_at_ms
+                    and job.state.next_run_at_ms > now
+                ):
+                    continue
                 job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
 
     def _get_next_wake_ms(self) -> int | None:
@@ -362,8 +385,11 @@ class CronService:
                 job.enabled = False
                 job.state.next_run_at_ms = None
         else:
-            # Compute next run
-            job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+            # Re-anchor to the slot just consumed (audit #22): the grid phase
+            # survives job duration; manual runs consume the pending slot.
+            job.state.next_run_at_ms = _compute_next_run(
+                job.schedule, _now_ms(), anchor_ms=job.state.next_run_at_ms
+            )
 
     def _write_execution_log(self, job: CronJob, start_ms: int, end_ms: int) -> None:
         """Write job execution log to logs/output/cron/ instead of in-memory run_history."""

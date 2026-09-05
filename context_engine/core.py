@@ -1,5 +1,6 @@
 import re
 import json
+import asyncio
 import sqlite3
 import threading
 from typing import Any
@@ -8,9 +9,26 @@ from pub_func import contains_cjk, count_cjk
 from .store import get_db, get_messages_by_lastest_n_turns
 
 
-_db: sqlite3.Connection = get_db()
+# Lazy shared connection; created on first DB access, not at import (audit #14).
+_db: sqlite3.Connection | None = None
 _lock = threading.Lock()
 _CONTENT_JSON_PREFIX = "\x00json:"
+
+# FTS5 MATCH cost caps (audit #20). Measured on a 50k-row table: a 20k-term
+# OR chain costs ~1s of parse/eval per query, 100k terms ~49s. SQLite offers
+# no per-query limit that reaches the FTS5 parser (EXPR_DEPTH and
+# LIKE_PATTERN_LENGTH leave MATCH unchanged; LENGTH is connection-global and
+# would break big-content writes) — bounds are enforced on the input instead.
+_MAX_QUERY_TOKENS = 64
+_MAX_TOKEN_CHARS = 64
+_MAX_WILDCARD_TERMS = 4
+
+
+def _shared_db() -> sqlite3.Connection:
+    global _db
+    if _db is None:
+        _db = get_db()
+    return _db
 
 
 def retrieve_history_by_last_n_prompt(session_id: str, n: int = 5) -> str:
@@ -75,7 +93,19 @@ def _sanitize_fts5_query(query: str) -> str:
     - Wrap unquoted hyphenated and dotted terms in quotes so FTS5
       matches them as exact phrases instead of splitting on the
       hyphen/dot (e.g. ``chat-send``, ``P2.2``, ``my-app.config.ts``)
+    - Cap input size: token count, per-token length, wildcard terms
+      (audit #20 — bounds MATCH parse/eval cost)
     """
+    tokens = query.split()[:_MAX_QUERY_TOKENS]
+    wildcard_seen = 0
+    capped: list[str] = []
+    for token in tokens:
+        if "*" in token:
+            wildcard_seen += 1
+            if wildcard_seen > _MAX_WILDCARD_TERMS:
+                token = token.replace("*", "")
+        capped.append(token[:_MAX_TOKEN_CHARS])
+    query = " ".join(capped)
     # Step 1: Extract balanced double-quoted phrases and protect them
     # from further processing via numbered placeholders.
     _quoted_parts: list = []
@@ -212,7 +242,7 @@ def search_messages(
             tri_params.extend([limit, offset])
             with _lock:
                 try:
-                    tri_cursor = _db.execute(tri_sql, tri_params)
+                    tri_cursor = _shared_db().execute(tri_sql, tri_params)
                 except sqlite3.OperationalError:
                     matches = []
                 else:
@@ -260,7 +290,7 @@ def search_messages(
             """
             like_params.extend([limit, offset])
             with _lock:
-                like_cursor = _db.execute(like_sql, like_params)
+                like_cursor = _shared_db().execute(like_sql, like_params)
                 matches = [dict(row) for row in like_cursor.fetchall()]
     else:
         with _lock:
@@ -293,7 +323,7 @@ def search_messages(
                     ORDER BY rank
                     LIMIT ? OFFSET ?
                 """
-                cursor = _db.execute(sql, params)
+                cursor = _shared_db().execute(sql, params)
             except sqlite3.OperationalError:
                 # FTS5 query syntax error despite sanitization — return empty
                 return []
@@ -311,7 +341,7 @@ def search_messages(
     for match in matches:
         try:
             with _lock:
-                ctx_cursor = _db.execute(
+                ctx_cursor = _shared_db().execute(
                     """WITH target AS (
                            SELECT session_id, timestamp, id
                            FROM messages
@@ -372,3 +402,25 @@ def search_messages(
         match.pop("content", None)
 
     return matches
+
+
+async def search_messages_async(
+    query: str,
+    session_id: str,
+    role_filter: list[str] | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Async entrypoint: runs the blocking FTS5/LIKE search in an executor thread.
+
+    The threading.Lock and sqlite3 I/O then live on a worker thread, so the
+    event loop stays responsive (audit #14).
+    """
+    return await asyncio.to_thread(
+        search_messages,
+        query,
+        session_id,
+        role_filter=role_filter,
+        limit=limit,
+        offset=offset,
+    )

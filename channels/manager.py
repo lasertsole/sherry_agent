@@ -21,13 +21,14 @@ class ChannelManager:
     - Route outbound messages
     """
 
-    _bus: MessageBus = None
-    _channels: dict[str, BaseChannel] = {}
-    _dispatch_task: asyncio.Task | None = None
-    _config: dict[str, str] = None
-    _event_loop: AbstractEventLoop | None = None
-    _inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]] | None = None
-    _outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]] | None = None
+    _bus: MessageBus | None
+    _channels: dict[str, BaseChannel]
+    _dispatch_task: asyncio.Task | None
+    _config: dict[str, str] | None
+    _event_loop: AbstractEventLoop | None
+    _inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]] | None
+    _outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]] | None
+    _started: bool
 
     async def _inbound_consume_loop(self):
         logger.info("Inbound message consumer loop started")
@@ -73,6 +74,16 @@ class ChannelManager:
         self._outbound_consumer = outbound_consumer
 
     def __init__(self, config: dict[str, str] | None = None, bus: MessageBus | None = None):
+        # Set BEFORE the early return below: config-less managers stay usable.
+        self._bus = None
+        self._channels = {}
+        self._dispatch_task = None
+        self._config = None
+        self._event_loop = None
+        self._inbound_consumer = None
+        self._outbound_consumer = None
+        self._started = False
+
         if config is None:
             channels_json = PLUGINS_PATH / "channels/config.json"
             if not channels_json.exists():
@@ -133,31 +144,36 @@ class ChannelManager:
             logger.exception(f"Failed to start channel {name}: {e}")
 
     def start_service(self) -> None:
-        """Start all channels and the outbound dispatcher."""
-        if not self._event_loop.is_running():
-            if not self._channels:
-                logger.warning("No channels enabled")
-                return
+        """Schedule all channels and the dispatcher on the event loop, then return.
 
-            logger.info(f"Starting channel manager service: channel_count={len(self._channels)}")
+        Non-blocking (audit #16): the calling thread is never parked here —
+        the caller owns running ``self._event_loop`` (``run_forever()``).
+        """
+        if self._started:
+            return
 
-            # Start outbound dispatcher
-            self._dispatch_task = self._event_loop.create_task(self._dispatch_outbound())
+        if not self._channels:
+            logger.warning("No channels enabled")
+            return
 
-            # Start inbound/outbound consumers
-            self._event_loop.create_task(self._inbound_consume_loop())
-            self._event_loop.create_task(self._outbound_consume_loop())
+        if self._event_loop is None:
+            logger.warning("Channel manager has no event loop; cannot start service")
+            return
 
-            # Start channels
-            for name, channel in self._channels.items():
-                logger.info(f"Starting {name} channel...")
-                self._event_loop.create_task(self._start_channel(name, channel))
+        self._started = True
+        logger.info(f"Starting channel manager service: channel_count={len(self._channels)}")
 
-            # 防止重复运行报错
-            try:
-                self._event_loop.run_forever()
-            except Exception:
-                pass
+        # Start outbound dispatcher
+        self._dispatch_task = self._event_loop.create_task(self._dispatch_outbound())
+
+        # Start inbound/outbound consumers
+        self._event_loop.create_task(self._inbound_consume_loop())
+        self._event_loop.create_task(self._outbound_consume_loop())
+
+        # Start channels
+        for name, channel in self._channels.items():
+            logger.info(f"Starting {name} channel...")
+            self._event_loop.create_task(self._start_channel(name, channel))
 
     async def stop_service(self) -> None:
         """Stop all channels and the dispatcher."""
@@ -180,8 +196,10 @@ class ChannelManager:
         logger.info(f"All channels stopped: channel_count={len(self._channels)}")
 
         # Stop event loop
-        self._event_loop.stop()
-        self._event_loop = None
+        if self._event_loop is not None:
+            self._event_loop.stop()
+            self._event_loop = None
+        self._started = False
         logger.debug("Channel manager service stopped")
 
     async def _dispatch_outbound(self) -> None:
@@ -231,4 +249,18 @@ class ChannelManager:
         return list(self._channels.keys())
 
 
-channel_manager: ChannelManager = ChannelManager()
+_channel_manager: ChannelManager | None = None
+
+
+def get_channel_manager() -> ChannelManager:
+    """Lazy singleton accessor (audit #16: no instantiation at import time)."""
+    global _channel_manager
+    if _channel_manager is None:
+        _channel_manager = ChannelManager()
+    return _channel_manager
+
+
+def __getattr__(name: str) -> Any:
+    if name == "channel_manager":
+        return get_channel_manager()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

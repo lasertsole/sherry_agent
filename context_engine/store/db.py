@@ -1,3 +1,4 @@
+import threading
 import time
 import sqlite3
 from pathlib import Path
@@ -5,6 +6,14 @@ from config import SRC_DIR
 
 _db_path: Path = SRC_DIR / "store/mes_memory/mes_memory.db"
 _db: sqlite3.Connection | None = None
+# Guards singleton creation (audit #15: unlocked double-check leaked connections).
+_db_lock = threading.Lock()
+
+# Busy-wait budget before "database is locked"; 1.0s starved under contention.
+SQLITE_BUSY_TIMEOUT_S = 10.0
+# Retries for transient "database is locked" during connect/migrate.
+_CONNECT_ATTEMPTS = 5
+_RETRY_DELAY_S = 0.2
 
 
 def _migrate(db: sqlite3.Connection) -> None:
@@ -22,6 +31,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_audio_video_columns,
         add_model_token_columns,
         add_origin_column,
+        add_turn_ts_ms_column,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -29,25 +39,51 @@ def _migrate(db: sqlite3.Connection) -> None:
     db.commit()
 
 
+def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
+    msg = str(exc).lower()
+    return "locked" in msg or "busy" in msg
+
+
+def _connect_with_retry() -> sqlite3.Connection:
+    for attempt in range(1, _CONNECT_ATTEMPTS + 1):
+        db: sqlite3.Connection | None = None
+        try:
+            db = sqlite3.connect(
+                _db_path.resolve(),
+                check_same_thread=False,
+                timeout=SQLITE_BUSY_TIMEOUT_S,
+                isolation_level=None,
+            )
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA foreign_keys=ON")
+            _migrate(db)
+            return db
+        except sqlite3.OperationalError as exc:
+            if not _is_locked_error(exc):
+                raise
+            if db is not None:
+                try:
+                    db.close()
+                except sqlite3.Error:
+                    pass
+            if attempt == _CONNECT_ATTEMPTS:
+                raise
+            time.sleep(_RETRY_DELAY_S * attempt)
+    raise sqlite3.OperationalError("database is locked")
+
+
 def get_db():
     global _db
-    if _db:
+    if _db is not None:
         return _db
 
-    _db_path.parent.mkdir(parents=True, exist_ok=True)
+    with _db_lock:
+        if _db is not None:
+            return _db
 
-    _db = sqlite3.connect(
-        _db_path.resolve(),
-        check_same_thread=False,
-        timeout=1.0,
-        isolation_level=None,
-    )
-
-    _db.row_factory = sqlite3.Row
-    _db.execute("PRAGMA journal_mode=WAL")
-    _db.execute("PRAGMA foreign_keys=ON")
-
-    _migrate(_db)
+        _db_path.parent.mkdir(parents=True, exist_ok=True)
+        _db = _connect_with_retry()
 
     return _db
 
@@ -152,6 +188,48 @@ def add_origin_column(db: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass
+
+
+def _legacy_ts_to_ms(ts: str | None) -> int:
+    """Convert a stored timestamp string to epoch milliseconds (0 on failure)."""
+    if not ts:
+        return 0
+    try:
+        from datetime import datetime
+
+        if len(ts) > 14:
+            dt = datetime.strptime(ts[:14], "%Y%m%d%H%M%S").replace(
+                microsecond=int(ts[14:17].ljust(3, "0")) * 1000
+            )
+        else:
+            dt = datetime.strptime(ts, "%Y%m%d%H%M%S")
+        return int(dt.timestamp() * 1000)
+    except (ValueError, TypeError):
+        return 0
+
+
+def add_turn_ts_ms_column(db: sqlite3.Connection) -> None:
+    """Add a `ts_ms` INTEGER column (epoch ms) and backfill it (audit #21).
+
+    The 14-char `timestamp` column has 1-second resolution, so turns written
+    in the same second tie and `MAX(timestamp)` cannot order sessions. `ts_ms`
+    is strictly increasing per writer process and gives `get_session_ids` a
+    total order. The visible `timestamp` column keeps its legacy 14-char
+    format — the client parses it strictly.
+    """
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN ts_ms INTEGER")
+    except sqlite3.OperationalError:
+        # Column already exists — fall through: the backfill below is
+        # idempotent (targets ts_ms IS NULL rows only) and still needs to run.
+        pass
+
+    rows = db.execute("SELECT id, timestamp FROM messages WHERE ts_ms IS NULL").fetchall()
+    for row in rows:
+        db.execute(
+            "UPDATE messages SET ts_ms = ? WHERE id = ?",
+            (_legacy_ts_to_ms(row["timestamp"]), row["id"]),
+        )
 
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:

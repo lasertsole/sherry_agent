@@ -2,6 +2,7 @@
 
 import json
 import yaml
+from pathlib import Path
 from typing import Any
 from config import ROOT_DIR, SKILLS_DIR, SKILLS_STATE_FILE
 
@@ -39,7 +40,21 @@ def _read_skills_state() -> dict[str, dict[str, bool]]:
 
 def _is_third_party(location: str) -> bool:
     """Return True if the skill location is under skills/plugins/."""
-    return "./skills/plugins/" in location
+    return Path(location).parts[:2] == ("skills", "plugins")
+
+
+def read_skills_snapshot() -> list[dict[str, str]] | None:
+    """Read the cached skills snapshot written by build_skills_snapshot().
+
+    Returns None when the snapshot file does not exist. Lives on the loader
+    (its only consumer is scan_skills) so skills_snapshot can depend on the
+    loader one-directionally instead of forming an import cycle (audit #18).
+    """
+    file_path = SKILLS_DIR / "skills_snapshot.json"
+    if not file_path.exists():
+        return None
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.loads(f.read())
 
 
 # Scope visibility values for the ``scope:`` frontmatter field. The canonical
@@ -80,13 +95,11 @@ def _skill_visible_to(skill: dict[str, Any], caller_scope: str) -> bool:
 
 
 def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
-    from .skills_snapshot import read_skills_snapshot
-
     if use_cache:
-        skills_snapshot: list[dict[str, str]] | None = read_skills_snapshot()
+        cached: list[dict[str, str]] | None = read_skills_snapshot()
 
-        if skills_snapshot:
-            return skills_snapshot
+        if cached:
+            return cached
 
     state = _read_skills_state()
 

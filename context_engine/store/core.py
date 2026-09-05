@@ -3,7 +3,7 @@ import sqlite3
 import threading
 from .db import get_db
 from typing import Annotated, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import Field, validate_call
 from langchain_core.messages import BaseMessage
 
@@ -17,6 +17,30 @@ _db: sqlite3.Connection = get_db()
 # ``add_messages`` calls on the same session could both observe the same
 # ``MAX(turn_num)`` and silently merge two turns into one.
 _turn_assign_lock = threading.Lock()
+
+# Audit #21: strictly-increasing turn stamps. Two turns in the same second
+# (or even the same millisecond) must never share a stamp, or session
+# ordering (MAX(ts_ms)) ties. Same-ms calls are bumped 1ms apart.
+_turn_stamp_lock = threading.Lock()
+_last_turn_ms: int | None = None
+
+
+def _next_turn_stamp() -> tuple[int, str]:
+    """Return (epoch-ms, 14-char display stamp) for a new turn.
+
+    The epoch-ms value is strictly increasing across calls within this
+    process: same-millisecond calls are bumped 1ms apart so session ordering
+    (MAX(ts_ms)) can never tie.
+    """
+    global _last_turn_ms
+    with _turn_stamp_lock:
+        now = datetime.now()
+        ms = int(now.timestamp() * 1000)
+        if _last_turn_ms is not None and ms <= _last_turn_ms:
+            now = datetime.fromtimestamp(_last_turn_ms / 1000) + timedelta(milliseconds=1)
+            ms = int(now.timestamp() * 1000)
+        _last_turn_ms = ms
+    return ms, now.strftime("%Y%m%d%H%M%S")
 
 
 def get_max_turn_num(session_id: str) -> int:
@@ -50,8 +74,11 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     # (audit #5) so a concurrent same-session writer can never share it.
     current_turn: int = 0
 
-    # All messages in this batch share the same timestamp (YYYYMMDDHHmmss).
-    base_timestamp: str = datetime.now().strftime("%Y%m%d%H%M%S")
+    # All messages in this batch share the same timestamp (YYYYMMDDHHmmss)
+    # and the same ts_ms ordering key (audit #21: strictly increasing).
+    turn_ms: int
+    base_timestamp: str
+    turn_ms, base_timestamp = _next_turn_stamp()
 
     # Rows to be bulk-inserted by executemany.
     insert_rows: list[dict] = []
@@ -98,6 +125,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                     "tool_status": None,
                     "tool_name": None,
                     "timestamp": base_timestamp,
+                    "ts_ms": turn_ms,
                     "finish_reason": None,
                     "reasoning": reasoning_text,
                     "reasoning_content": None,
@@ -152,6 +180,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                     "tool_status": None,
                     "tool_name": None,
                     "timestamp": base_timestamp,
+                    "ts_ms": turn_ms,
                     "finish_reason": None,
                     "reasoning": None,
                     "reasoning_content": None,
@@ -180,6 +209,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                     "reasoning": None,
                     "reasoning_content": None,
                     "timestamp": base_timestamp,
+                    "ts_ms": turn_ms,
                     "images": None,
                     "audios": None,
                     "videos": None,
@@ -215,6 +245,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 tool_status,
                 tool_name,
                 timestamp,
+                ts_ms,
                 finish_reason,
                 reasoning,
                 reasoning_content,
@@ -235,6 +266,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 :tool_status,
                 :tool_name,
                 :timestamp,
+                :ts_ms,
                 :finish_reason,
                 :reasoning,
                 :reasoning_content,
@@ -296,6 +328,8 @@ def get_turns_by_turn_num_scope(
         result: list[dict] = []
         for row in rows:
             row = dict(row)
+            # Internal ordering column — not part of the client-facing shape.
+            row.pop("ts_ms", None)
             if isinstance(row["content"], str):
                 row["content"] = json.loads(row["content"])
             if isinstance(row["tool_calls"], str):
@@ -365,6 +399,8 @@ def get_history_by_turn_page(
         result: list[dict] = []
         for row in rows:
             row = dict(row)
+            # Internal ordering column — not part of the client-facing shape.
+            row.pop("ts_ms", None)
             if isinstance(row["content"], str):
                 row["content"] = json.loads(row["content"])
             if isinstance(row["tool_calls"], str):
@@ -469,11 +505,11 @@ def get_session_ids() -> list[dict]:
         rows = _db.execute("""
             SELECT m.session_id, m.last_time
             FROM (
-                SELECT session_id, MAX(timestamp) AS last_time
+                SELECT session_id, MAX(timestamp) AS last_time, MAX(ts_ms) AS last_sort
                 FROM messages
                 GROUP BY session_id
             ) m
-            ORDER BY m.last_time DESC
+            ORDER BY m.last_sort DESC
         """).fetchall()
 
     result: list[dict] = []

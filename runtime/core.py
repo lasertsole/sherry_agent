@@ -1,17 +1,22 @@
-from venv import logger
+import threading
 from typing import final
 from abc import ABC, abstractmethod
+from loguru import logger
 
 
 class Register(ABC):
     _instances = {}
+    # RLock: clear_all_register_sessions re-enters it via subclass().__new__.
+    # Guards singleton creation and registry scans (audit #13).
+    _registry_lock = threading.RLock()
 
     def __new__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            instance = super().__new__(cls)
-            instance._initialized = False
-            cls._instances[cls] = instance
-        return cls._instances[cls]
+        with Register._registry_lock:
+            if cls not in cls._instances:
+                instance = super().__new__(cls)
+                instance._initialized = False
+                cls._instances[cls] = instance
+            return cls._instances[cls]
 
     @abstractmethod
     def clear_session(self, session_id: str):
@@ -20,10 +25,11 @@ class Register(ABC):
     @classmethod
     @final
     def clear_all_register_sessions(cls, session_id: str) -> None:
-        for subclass in cls.__subclasses__():
-            if subclass in cls._instances and cls._instances[subclass] is not None:
-                instance = subclass()
-                instance.clear_session(session_id)
+        with Register._registry_lock:
+            for subclass in cls.__subclasses__():
+                if subclass in cls._instances and cls._instances[subclass] is not None:
+                    instance = subclass()
+                    instance.clear_session(session_id)
 
 
 def clear_all_register_sessions(session_id: str, clear_persistent_states: bool = False) -> None:
