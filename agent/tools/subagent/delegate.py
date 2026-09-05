@@ -44,7 +44,7 @@ from typing import Any, Literal
 
 from skills.loader import get_skills_text, scan_skills
 
-from .config import SubagentConfig, get_config
+from .config import SubagentConfig, MAX_SPAWN_DEPTH_CAP, get_config
 from .registry import get_run
 from .spawn import SpawnResult, spawn_subagent_direct
 from .types import SpawnMode, ContextMode
@@ -261,19 +261,25 @@ async def _dispatch_async(
     model: str | None,
     max_spawn_depth: int | None,
     max_children_per_agent: int | None,
+    max_concurrent: int | None = None,
 ) -> SpawnResult:
     """Run the async spawn pipeline with per-call config overrides applied and
     restored on a throwaway basis (never mutating lasting global state)."""
     cfg: SubagentConfig = get_config()
+    if max_spawn_depth is not None and max_spawn_depth > MAX_SPAWN_DEPTH_CAP:
+        raise ValueError(f"max_spawn_depth cannot exceed {MAX_SPAWN_DEPTH_CAP}")
     prev_max_depth = cfg.max_spawn_depth
     prev_max_children = cfg.max_children_per_agent
     prev_timeout = cfg.run_timeout_seconds
+    prev_max_concurrent = cfg.max_concurrent
     if max_spawn_depth is not None:
         cfg.max_spawn_depth = max_spawn_depth
     if max_children_per_agent is not None:
         cfg.max_children_per_agent = max_children_per_agent
     if run_timeout_seconds is not None:
         cfg.run_timeout_seconds = run_timeout_seconds
+    if max_concurrent is not None:
+        cfg.max_concurrent = max_concurrent
     try:
         return await spawn_subagent_direct(
             task=task,
@@ -293,6 +299,7 @@ async def _dispatch_async(
         cfg.max_spawn_depth = prev_max_depth
         cfg.max_children_per_agent = prev_max_children
         cfg.run_timeout_seconds = prev_timeout
+        cfg.max_concurrent = prev_max_concurrent
 
 
 def _to_handle(result: SpawnResult, background: bool) -> DelegatedTaskHandle:
@@ -329,6 +336,7 @@ def delegate_task(
     run_in_background: bool = True,
     max_spawn_depth: int | None = None,
     max_children_per_agent: int | None = None,
+    max_concurrent: int | None = None,
     run_timeout_seconds: float | None = None,
     context_mode: ContextMode | str = ContextMode.ISOLATED,
     model_override: str | None = None,
@@ -364,6 +372,8 @@ def delegate_task(
             :data:`SubagentConfig.max_spawn_depth`). Applied per-call.
         max_children_per_agent: Override concurrency cap (falls back to
             :data:`SubagentConfig.max_children_per_agent`). Applied per-call.
+        max_concurrent: Override global concurrent subagent cap (falls back to
+            :data:`SubagentConfig.max_concurrent`). Applied per-call.
         run_timeout_seconds: Wall-clock child timeout (falls back to
             :data:`SubagentConfig.run_timeout_seconds`). Applied per-call.
         context_mode: :class:`ContextMode` or its string name. Only
@@ -422,6 +432,7 @@ def delegate_task(
         model=model_override,
         max_spawn_depth=max_spawn_depth,
         max_children_per_agent=max_children_per_agent,
+        max_concurrent=max_concurrent,
     )
 
     if run_in_background:

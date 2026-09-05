@@ -102,6 +102,15 @@ class TestValidation:
                 context_mode="nonsense",
             )
 
+    def test_max_spawn_depth_cap_rejected(self):
+        with pytest.raises(ValueError, match="cannot exceed") as excinfo:
+            delegate_task("do something", requester_session_key="agent:main:session:x", max_spawn_depth=3)
+        # Plain ValueError from the delegate-level hard cap — NOT pydantic's
+        # validate_assignment ValidationError (a ValueError subclass whose
+        # message also contains "cannot exceed"); asserting the exact type is
+        # what makes the mutation-QA (deleting the cap check) turn red.
+        assert type(excinfo.value) is ValueError
+
     def test_context_mode_accepts_enum_isolated(self, monkeypatch):
         async def _fake(*args, **kwargs):
             return _accepted_result()
@@ -254,6 +263,27 @@ class TestDispatchModes:
         assert seen["run_timeout_seconds"] == 42.0
         # Global config restored after dispatch.
         assert cfg.run_timeout_seconds == orig
+
+    def test_max_concurrent_override_restored(self, monkeypatch):
+        seen = {}
+
+        async def _fake(*args, **kwargs):
+            seen["max_concurrent"] = get_config().max_concurrent
+            return _accepted_result()
+
+        monkeypatch.setattr(delegate, "spawn_subagent_direct", _fake)
+        from agent.tools.subagent.config import get_config
+
+        orig = get_config().max_concurrent
+        delegate_task(
+            "do something",
+            requester_session_key="agent:main:session:x",
+            max_concurrent=3,
+            run_in_background=True,
+        )
+        assert seen["max_concurrent"] == 3
+        # Global singleton restored after dispatch.
+        assert get_config().max_concurrent == orig
 
 
 class TestHandleHelpers:
