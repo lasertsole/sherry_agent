@@ -14,7 +14,7 @@ A lightweight, file-based cron service for scheduling and executing one-shot, in
 - Per-job execution logs written as JSON Lines to `logs/output/cron/<job_id>.log`
 - Protected system jobs (`payload.kind == "system_event"`) cannot be removed
 - Timezone support for cron expressions (IANA names via `zoneinfo`)
-- REST API (Robyn) at `GET/POST/PUT/DELETE /cron`, `POST /cron/trigger`, `POST /cron/enable` for the desktop client
+- REST API (Robyn) at `GET/POST/PUT/DELETE /cron`, `POST /cron/trigger`, `POST /cron/enable`, `POST /cron/failure-state`, `POST /cron/reset-failures` for the desktop client
 
 ## Module Structure
 
@@ -175,7 +175,24 @@ These are the commands exposed to the agent via [`../SKILL.md`](../SKILL.md), us
 | `PUT /cron` | Update: applied as remove + re-add while preserving `id` and `createdAtMs` |
 | `POST /cron/trigger` | Run now: `{"id", "force"}` (400 if disabled and no `force`) |
 | `POST /cron/enable` | Enable/disable: `{"id", "enabled"}` |
+| `POST /cron/failure-state` | Inspect the failure breaker state: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; unknown job → `404`, never-failed job → zeroed state |
+| `POST /cron/reset-failures` | Reset the failure breaker state: `{"id"}`; re-enables only jobs the breaker itself disabled (operator disables preserved) |
 | `DELETE /cron` | Remove: `{"id"}`; `403` for protected system jobs |
+
+## Failure Breaker
+
+Every recurring job is guarded by a per-job failure breaker (`CronJobFailureState` in `base.py`): consecutive failures escalate from degrade to auto-disable, so a permanently broken job cannot fire forever. The breaker state is memory-only; `cron_jobs.json` keeps its schema, and the only thing the breaker ever writes back is the job's pre-existing `enabled` flag.
+
+| Consecutive failures | Effect |
+|----------------------|--------|
+| 1-4 | Job fails normally: status marked error, WS bell notification |
+| ≥ 5 (degraded) | Triggers are skipped while inside the backoff window: `min(5000ms × 2^(n-5), 300000ms)` since the last failure (n = consecutive failure count) |
+| ≥ 10 | `enabled=False` is persisted to the job store; a best-effort notification is sent to the job's payload channel |
+
+- **Record-then-re-raise:** the failure is recorded first, then the exception is re-raised, so `lastStatus` / `lastError` reporting and the WS bell stay intact.
+- **One-shot `at` jobs are exempt** (they can never fire twice, so a single failure is not a loop).
+- Success resets the state completely; a manual `enable_job` clears it. `POST /cron/reset-failures` re-enables only jobs the breaker itself disabled, so operator disables are preserved.
+- The in-memory counters do not survive a process restart (the persisted `enabled` flag does).
 
 ## Usage Examples
 
@@ -266,3 +283,5 @@ Jobs with `payload.kind == "system_event"` are protected: `CronService.remove_jo
 - External edits to `cron_jobs.json` are detected by file modification time and picked up on the next timer tick; the store is re-saved after every execution.
 - The service runs on its own event loop in the `cron-service` daemon thread, independent of the main server loop; `run_job()` and `start()` must be awaited from a running loop.
 - The WebSocket notification targets session `"default"` (the browser client session), so desktop notifications only arrive while a client is connected.
+
+▶️ Full details: [docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)

@@ -463,7 +463,13 @@ materialize_subagent_attachments(attachments, child_workspace, ...)
 #### Sweeper（注册表扫描器）
 
 ```
-registry/sweeper.py — 以 sweeper_interval_seconds（默认 60 秒）为周期循环
+registry/sweeper.py — 循环睡眠 backoff.current_interval（基准 =
+sweeper_interval_seconds，默认 60 秒）
+
+失败退避（runtime/periodic_backoff.PeriodicBackoff）：每轮 sweep 失败会把
+下次睡眠翻倍（min(60 秒 × 2ⁿ, 7200 秒)，并记录 warning 日志）；连续失败
+5 次后循环自行停止（CRITICAL 日志，不会自动恢复）。成功的 sweep 会完整
+重置退避；stop_sweeper() 会丢弃退避状态，下次启动从零开始。
 
 每轮执行：
   1. recover_orphaned_runs()              — 恢复孤儿运行
@@ -478,6 +484,8 @@ registry/sweeper.py — 以 sweeper_interval_seconds（默认 60 秒）为周期
   8. _finalize_killed_unterminated()      — 强制完成已 kill 但未终止的运行
   9. persist_runs_to_disk()               — 内存全量快照写入 SQLite
 ```
+
+▶️ 完整文档：[docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
 
 #### 孤儿恢复（orphan/recovery.py）
 
@@ -685,7 +693,7 @@ agent/tools/subagent/
 │   ├── read.py                外部只读 API（find_run_by_task_name + run record 主查询）
 │   ├── task_refs.py           asyncio.Task 引用管理（register/get/remove/cancel）
 │   ├── yield_events.py        asyncio.Event 管理（yield 唤醒 / 后代结算）
-│   ├── sweeper.py             后台 60s 扫描器（分层过期：cron=2h, subagent=6h, interactive=24h）
+│   ├── sweeper.py             带失败退避的后台扫描器（分层过期：cron=2h, subagent=6h, interactive=24h）
 │   ├── reconciliation.py      Session 对账
 │   ├── pending_injections.py  持久化 pending-injection 队列：崩溃安全的 SQLite 存储，支撑 busy steering / idle 自动补发两条完成注入路径
 │   ├── session_keys.py        announce 侧与 registry 侧之间的 session key 规范化
@@ -845,7 +853,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `delivery_suspend_hard_cap` | 50 | 挂起硬上限 |
 | `delivery_suspend_target` | 10 | 压力修剪目标数 |
 | `lifecycle_grace_period_seconds` | 15.0 | error/timeout 收尾前的宽限期 |
-| `sweeper_interval_seconds` | 60 | Sweeper 扫描间隔（followup 为 2×） |
+| `sweeper_interval_seconds` | 60 | Sweeper 扫描间隔兼退避基准（followup 为 2×） |
 | `orphan_recovery_delay_seconds` | 120 | 孤儿恢复延迟 |
 | `announce_expiry_ms` | 7,200,000 | 交付软过期（2 小时） |
 | `announce_hard_expiry_ms` | 86,400,000 | 交付硬过期（24 小时） |

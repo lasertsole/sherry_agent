@@ -23,7 +23,7 @@ Heartbeat provides a **lightweight polling mechanism** that enables the Agent to
 ┌──────────────────────────────────────────┐
 │            HeartbeatService              │
 ├──────────────────────────────────────────┤
-│  asyncio loop (sleep interval_s → tick)  │
+│  asyncio loop (sleep backoff → tick)     │
 │  ├─ Phase 1: Read HEARTBEAT.md           │
 │  ├─ Phase 2: LLM decision (skip/run)     │
 │  └─ Phase 3: Execute + notification gate │
@@ -68,7 +68,7 @@ Parsing rules (implemented in `scripts/core.py`):
 
 ```
 start() → asyncio task
-   └─ loop: sleep(interval_s) → tick()   # first tick happens after one full interval
+   └─ loop: sleep(backoff.current_interval) → tick()   # first tick happens after one full interval
         ↓
    Read HEARTBEAT.md (empty/missing → skip tick)
         ↓
@@ -79,6 +79,10 @@ start() → asyncio task
               response non-empty → evaluate_response():
                 ├─ True  → on_notify(response)   # server: channel delivery
                 └─ False → silenced (logged)
+
+tick failure → backoff.record_failure(): next sleep doubles (interval_s × 2ⁿ,
+capped at 7200 s); after 5 consecutive failures the loop exits (CRITICAL log).
+Clean tick → backoff.record_success(): full reset to interval_s.
 ```
 
 ### Phase 1: Read
@@ -88,7 +92,7 @@ content = Path(HEARTBEAT_PATH).read_text(encoding="utf-8")
 ```
 
 - Empty file → the tick is skipped (debug log).
-- Missing file → `read_text()` raises `FileNotFoundError`; the loop logs the error and continues with the next interval.
+- Missing file → `read_text()` raises `FileNotFoundError`; the loop logs the error and continues with the next interval. This is **not** recorded as a backoff failure (the file read sits outside the tick's backoff-accounted `try/except`).
 
 ### Phase 2: Decision (`_decide`)
 
@@ -141,7 +145,8 @@ if self.on_execute:
 ```
 
 - `run` → `on_execute(tasks)` runs the task; only a **non-empty** response is evaluated by `evaluate_response()`; only a positive verdict reaches `on_notify()`.
-- The whole tick is wrapped in `try/except`: an exception is logged (`logger.exception`) and the loop keeps running.
+- An exception inside the tick is logged (`logger.exception`) and recorded as a **backoff failure**: the next sleep doubles (interval_s × 2ⁿ, capped at 7200 s) and the failure reason is kept. A clean tick fully resets the backoff.
+- After **5 consecutive failures** the loop stops itself with a CRITICAL log ("Heartbeat paused ... manual recovery required"). Only a process restart resumes the schedule; `trigger_now()` still fires one-shot ticks. See [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) and the [loop-prevention harness doc](../../../../docs/harness/loop-prevention/README.md).
 
 ---
 
@@ -239,7 +244,8 @@ heartbeat_service.stop()  # sets _running = False and cancels the asyncio task
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `interval_s` | `30 * 60` (1800 s) | Seconds between ticks; the loop sleeps **before** each tick, so the first check happens one interval after `start()` |
+| `interval_s` | `30 * 60` (1800 s) | Seconds between ticks; the loop sleeps **before** each tick, so the first check happens one interval after `start()`. Also the base interval of the failure backoff |
+| Failure backoff | `factor=2.0`, cap `7200 s`, stop after `5` | Hardcoded `PeriodicBackoff` parameters (`HeartbeatService.__init__`, `runtime/periodic_backoff.py`); consecutive tick failures stretch the sleep up to 2 h, then the service stops until restart |
 | `enabled` | `True` | When `False`, `start()` logs "Heartbeat disabled" and does nothing |
 | `timezone` | `None` | Passed to `current_time_str()` for the "Current Time" line of the decision prompt |
 | `on_execute` / `on_notify` | `None` | Async callbacks; execution / delivery are skipped when unset |

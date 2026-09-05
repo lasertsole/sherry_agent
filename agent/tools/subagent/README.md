@@ -465,7 +465,14 @@ materialize_subagent_attachments(attachments, child_workspace, ...)
 #### Sweeper (Registry Scanner)
 
 ```
-registry/sweeper.py — loop at sweeper_interval_seconds (default 60 s)
+registry/sweeper.py — loop sleeping backoff.current_interval (base =
+sweeper_interval_seconds, default 60 s)
+
+Failure backoff (runtime/periodic_backoff.PeriodicBackoff): each failed
+sweep doubles the next sleep (min(60 s × 2ⁿ, 7200 s), warning logged);
+after 5 consecutive failures the loop stops itself (CRITICAL log, no
+auto re-arm). A successful sweep fully resets the backoff, and
+stop_sweeper() discards it so the next start begins fresh.
 
 Each sweep executes:
   1. recover_orphaned_runs()              — recover orphaned runs
@@ -480,6 +487,8 @@ Each sweep executes:
   8. _finalize_killed_unterminated()      — force-complete killed-but-running runs
   9. persist_runs_to_disk()               — full memory snapshot to SQLite
 ```
+
+▶️ Full details: [docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
 
 #### Orphan Recovery (orphan/recovery.py)
 
@@ -687,7 +696,7 @@ agent/tools/subagent/
 │   ├── read.py                External read-only API (find_run_by_task_name + run record primary queries)
 │   ├── task_refs.py           asyncio.Task reference management (register/get/remove/cancel)
 │   ├── yield_events.py        asyncio.Event management (yield wake / descendant settle)
-│   ├── sweeper.py             Background 60 s scanner (tiered expiry: cron=2h, subagent=6h, interactive=24h)
+│   ├── sweeper.py             Background scanner with failure backoff (tiered expiry: cron=2h, subagent=6h, interactive=24h)
 │   ├── reconciliation.py      Session reconciliation
 │   ├── pending_injections.py  Durable pending-injection queue: crash-safe SQLite store behind both completion-injection delivery paths (busy steering / idle auto-turn)
 │   ├── session_keys.py        Session-key normalization between the announce side and the registry side
@@ -847,7 +856,7 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `delivery_suspend_hard_cap` | 50 | Hard suspension threshold |
 | `delivery_suspend_target` | 10 | Target count for pressure pruning |
 | `lifecycle_grace_period_seconds` | 15.0 | Grace period before error/timeout finalization |
-| `sweeper_interval_seconds` | 60 | Sweeper scan interval (followup runs at 2×) |
+| `sweeper_interval_seconds` | 60 | Sweeper scan interval and backoff base (followup runs at 2×) |
 | `orphan_recovery_delay_seconds` | 120 | Orphan recovery delay |
 | `announce_expiry_ms` | 7,200,000 | Delivery soft expiry (2 h) |
 | `announce_hard_expiry_ms` | 86,400,000 | Delivery hard expiry (24 h) |

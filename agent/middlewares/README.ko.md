@@ -204,20 +204,26 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/tool_guardrails.py` · **클래스:** `ToolGuardrails(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_tool_call` / `awrap_tool_call`
 
-세 가지 실패 병리를 감지하고 4단계 에스컬레이션 `ALLOW → WARN → BLOCK → HALT`(`GuardrailAction` 열거형)으로 대응합니다:
+다섯 가지 실패 병리를 감지하고 4단계 에스컬레이션 `ALLOW → WARN → BLOCK → HALT`(`GuardrailAction` 열거형)으로 대응합니다:
 
-| 병리 | 트리거 | 기본 대응 |
-|---|---|---|
-| 완전한 실패 반복 | 동일 도구 + 동일 인자(인자 JSON을 `sort_keys`한 MD5)의 실패 | ≥ 2회 경고, ≥ 5회 차단 (`exact_failure_warn_after=2`, `exact_failure_block_after=5`) |
-| 동일 도구 실패 누적 | 동일 도구가 **다른** 인자로 반복 실패 | ≥ 3회 경고, ≥ 8회 정지 (`same_tool_failure_warn_after=3`, `same_tool_failure_halt_after=8`) |
-| 멱등 무진행 | 메타데이터 `idempotent: true` 도구가 동일한 결과 해시를 반환 | ≥ 2회 경고, ≥ 5회 차단 (`no_progress_warn_after=2`, `no_progress_block_after=5`) |
+| 병리 | 트리거 | WARN 이후 | BLOCK 이후 | hard-stop 모드 |
+|---|---|---|---|---|
+| 완전한 실패 반복 | 동일 도구 + 동일 인자(인자 JSON을 `sort_keys`한 MD5)의 실패 | 2 (`exact_failure_warn_after`) | 5 (`exact_failure_block_after`) | 5에서 HALT |
+| 동일 도구 실패 누적 | 동일 도구가 **다른** 인자로 반복 실패 | 3 (`same_tool_failure_warn_after`) | 8 (`same_tool_failure_halt_after`) | 8에서 HALT |
+| 멱등 무진행 | 메타데이터 `idempotent: true` 도구가 동일한 결과 해시를 반환 | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | 5에서 HALT |
+| 핑퐁 | 두 도구 사이의 끊김 없는 읽기 전용 A → B → A → B 왕복 | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | 6에서 HALT |
+| 인자 갱신 | 같은 멱등 도구가 인자 변형을 순환 | 3개 변형 (`arg_churn_warn_after`) | 5개 변형 (`arg_churn_block_after`) | 5에서 HALT |
 
-- `before_agent`는 턴 단위 가드 상태를 리셋합니다(`state_register_mem`의 키 `tool_guardrail_state`).
+- `before_agent`는 턴 단위 가드 상태를 리셋합니다(`state_register_mem`의 키 `tool_guardrail_state`) — 엄격히 턴 범위이므로 새 턴은 깨끗하게 시작합니다.
 - `wrap_tool_call`은 차단된 도구와 정지 상태를 사전 점검(실행하지 않고 오류 `ToolMessage` 반환)한 뒤 도구를 실행하고 결과를 평가합니다:
   - `warn`은 `ToolMessage`에 경고를 덧붙임;
   - `block`은 도구를 `blocked_tools`에 기록;
   - `halt`는 턴의 나머지 기간에 대한 스티키 정지를 설정(`halt_decision`).
-- `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False` — `hard_stop_enabled=True`이면 *차단* 수준도 정지로 에스컬레이션됩니다.
+- **복구 모드** (`recovery_mode_enabled=True` 기본값): 첫 BLOCK은 턴을 벽돌로 만들지 않습니다. 턴은 복구 상태로 들어가고, *precheck* 경로가 차단된 도구를 풀어주어 재시도가 새로 평가됩니다. 이후 BLOCK마다 위반 카운터가 증가하고, 카운터가 `recovery_max_violations`(기본 1)를 초과하면 HALT로 격상됩니다 — 즉석 벽이 아니라 관리되는 재시도 창입니다.
+- **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, *연속된 두* 호출이 모두 성공한 멱등 호출일 때(두 기록 모두 결과 해시 보유)만 누적됩니다. 에러가 하나라도 있거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 결과 내용은 비교하지 않습니다: 끊김 없는 읽기 전용 왕복은 그 자체로 루프 신호입니다. 비멱등 도구의 성공 역시 인자 갱신 상태를 리셋합니다.
+- `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — `hard_stop_enabled=True`이면 모든 *차단* 임계값이 HALT로 변환되고(이전의 엄격한 벽), `recovery_mode_enabled=False`이면 즉시 차단 동작으로 돌아갑니다.
+
+▶️ 전체 문서: [docs/harness/loop-prevention/README.md](../../docs/harness/loop-prevention/README.md) · [中文](../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../docs/harness/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -301,8 +307,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 최내곽 미들웨어 — LLM에 가장 가까운 위치. 처음부터 직접 구현한 `AgentMiddleware`입니다(LangChain의 `SummarizationMiddleware` **아님**): 트리거가 발동하면 예산 기반 컷오프로 히스토리를 압축합니다 — 비(非)LLM 전략 우선, 텍스트 저하가 안전할 때만 보조 LLM 요약 사용. `keep` 파라미터는 받아들이지만 사용하지 않으며, 꼬리 보존은 예산 기반입니다: `clamp(context_window × 0.25, 2 000, 15 000)` 토큰(`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
+- **라이프사이클과 라우팅:** 미들웨어는 이제 다섯 개의 트리거 지점(T1–T5)을 아우릅니다 — T1 사전 점검(`before_agent` / `abefore_agent`), T2 호출 전 디스패치(`wrap_model_call` / `awrap_model_call`), T3 응답 후 재확인(실제 보고 토큰), T4(413 Payload Too Large)/T5(컨텍스트 오버플로) 에러 복구 링 — 모든 트리거는 4-경로 오버플로 라우팅 결정(truncate / compact / both / pass)을 실행하며 `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, `pub_func/message/llm_error_classifier.py`에 위임됩니다. 상태는 세션 단위 `summarization_*` 키(총 14개, 턴마다 10개 리셋)로 유지됩니다. 전체 문서는 아래 링크를 참조하세요.
 - **트리거 시맨틱스**: 절은 `("messages", N)` 또는 `("tokens", N)`이며, 절 리스트 사이는 **OR** — 절이 하나라도 발동하면 압축이 시작됩니다. 메인 에이전트: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. 워커: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
-- **컷오프 안전성:** `_determine_cutoff`가 컷오프 지점을 고르고, 이어서 `_adjust_for_orphan_pairs`가 `ToolMessage`가 자신의 `AIMessage` 도구 호출과 분리되지 않을 때까지 위치를 뒤로 이동시킵니다. 마지막 사용자 턴이 추정 토큰의 ≥ 50%를 차지하면(`LAST_TURN_RATIO_THRESHOLD = 0.5`), 그 턴을 요약으로 없애는 대신 턴 자체를 압축합니다(`_compress_last_turn`).
+- **컷오프 안전성:** `_determine_cutoff`가 컷오프 지점을 고르고, 이어서 `_adjust_for_orphan_pairs`가 `ToolMessage`가 자신의 `AIMessage` 도구 호출과 분리되지 않을 때까지 위치를 뒤로 이동시킵니다. 마지막 사용자 턴이 추정 토큰의 ≥ 50%를 차지하면(`LAST_TURN_RATIO_THRESHOLD = 0.5`), 그 턴을 요약으로 없애는 대신 턴 자체를 압축합니다(`self._compress_last_turn` 플래그).
 - **안티스래싱:** 세션당 최대 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5`회 압축(턴당이 아님). 연속 `INEFFECTIVE_THRESHOLD = 2`회 무효 압축이면(유효 = 메시지 수 감소 또는 토큰 절감 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) LLM 단계를 비활성화(`summarization_skip_llm`)하고 비(非)LLM 전략만 실행합니다. 카운터는 세션 단위 `summarization_*` 키로 `state_register_mem`에 저장됩니다(압축 횟수, 무효 연속, 마지막 토큰, 마지막 전략, 스킵 플래그, 복구 상태 등).
 - **절단:** 기존 요약 메시지(`additional_kwargs["lc_source"] == "summarization"`로 식별)가 `SUMMARY_TOTAL_MAX_CHARS = 16 000`자를 넘으면 재절단되어, 머리 30% / 꼬리 30%(`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`)를 유지하고 생략 마커가 삽입됩니다.
 - **출력:** 교체 메시지는 `HumanMessage` / `AIMessage` **쌍**입니다 — 중립적인 `"What did we do so far?"` 뒤에 `additional_kwargs={"lc_source": "summarization"}`을 담은 `AIMessage`가 이어집니다 — 모델이 연속된 같은 역할 메시지를 보는 일이 없어 사후 페어링 복구도 필요 없습니다.

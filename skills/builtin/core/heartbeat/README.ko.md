@@ -23,7 +23,7 @@ Heartbeat는 유휴 시간 동안 에이전트가 자발적으로 작업할 수 
 ┌──────────────────────────────────────────┐
 │            HeartbeatService              │
 ├──────────────────────────────────────────┤
-│  asyncio loop (sleep interval_s → tick)  │
+│  asyncio loop (sleep backoff → tick)     │
 │  ├─ Phase 1: Read HEARTBEAT.md           │
 │  ├─ Phase 2: LLM decision (skip/run)     │
 │  └─ Phase 3: Execute + notification gate │
@@ -68,7 +68,7 @@ Heartbeat는 유휴 시간 동안 에이전트가 자발적으로 작업할 수 
 
 ```
 start() → asyncio task
-   └─ loop: sleep(interval_s) → tick()   # first tick happens after one full interval
+   └─ loop: sleep(backoff.current_interval) → tick()   # first tick happens after one full interval
         ↓
    Read HEARTBEAT.md (empty/missing → skip tick)
         ↓
@@ -79,6 +79,10 @@ start() → asyncio task
               response non-empty → evaluate_response():
                 ├─ True  → on_notify(response)   # server: channel delivery
                 └─ False → silenced (logged)
+
+tick 예외 → backoff.record_failure(): 다음 sleep은 2배 (interval_s × 2ⁿ,
+상한 7200초). 연속 5회 실패 시 루프 종료 (CRITICAL 로그).
+tick 성공 → backoff.record_success(): interval_s로 완전 리셋.
 ```
 
 ### Phase 1: 읽기
@@ -88,7 +92,7 @@ content = Path(HEARTBEAT_PATH).read_text(encoding="utf-8")
 ```
 
 - 파일이 비어 있음 → 해당 tick은 건너뜀(디버그 로그).
-- 파일이 없음 → `read_text()`가 `FileNotFoundError`를 발생시키며, 루프는 오류를 기록하고 다음 주기로 계속 진행합니다.
+- 파일이 없음 → `read_text()`가 `FileNotFoundError`를 발생시키며, 루프는 오류를 기록하고 다음 주기로 계속 진행합니다. 이는 백오프 실패로 **기록되지 않습니다**(파일 읽기는 tick의 백오프 집계 `try/except` 밖에 있습니다).
 
 ### Phase 2: 결정 (`_decide`)
 
@@ -141,7 +145,8 @@ if self.on_execute:
 ```
 
 - `run` → `on_execute(tasks)`가 작업을 실행합니다. **비어 있지 않은** 응답만 `evaluate_response()`로 평가되며, 긍정 판정일 때만 `on_notify()`에 도달합니다.
-- tick 전체가 `try/except`로 감싸여 있어 예외는 기록되고(`logger.exception`) 루프는 계속 실행됩니다.
+- tick 내부의 예외는 기록되고(`logger.exception`) **백오프 실패**로 집계됩니다: 다음 sleep은 2배(interval_s × 2ⁿ, 상한 7200초)가 되며 실패 사유가 유지됩니다. tick이 성공하면 백오프는 완전히 리셋됩니다.
+- **연속 5회** 실패 시 루프가 스스로 멈추고 CRITICAL 로그를 남깁니다("Heartbeat paused ... manual recovery required"). 일정 재개는 프로세스 재시작뿐입니다. `trigger_now()`는 여전히 1회성 tick을 실행할 수 있습니다. [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py)와 [무한 루프 방지 문서](../../../../docs/harness/loop-prevention/README.md)를 참조하세요.
 
 ---
 
@@ -239,7 +244,8 @@ heartbeat_service.stop()  # _running = False로 설정하고 asyncio 태스크�
 
 | 매개변수 | 기본값 | 설명 |
 |-----------|---------|-------------|
-| `interval_s` | `30 * 60` (1800초) | tick 사이의 초 단위 간격. 루프는 각 tick **전에 sleep하므로** 첫 확인은 `start()` 후 한 주기 뒤에 발생합니다 |
+| `interval_s` | `30 * 60` (1800초) | tick 사이의 초 단위 간격. 루프는 각 tick **전에 sleep하므로** 첫 확인은 `start()` 후 한 주기 뒤에 발생합니다. 실패 백오프의 기준 간격이기도 합니다 |
+| 실패 백오프 | `factor=2.0`, 상한 `7200초`, `5`회 후 중지 | `HeartbeatService.__init__`에 하드코딩된 `PeriodicBackoff` 매개변수(`runtime/periodic_backoff.py`). 연속 tick 실패 시 sleep이 최대 2시간까지 늘어나고, 이후에는 재시작까지 서비스가 중지됩니다 |
 | `enabled` | `True` | `False`이면 `start()`가 "Heartbeat disabled"를 기록하고 아무것도 하지 않습니다 |
 | `timezone` | `None` | 결정 프롬프트의 "Current Time" 행을 위해 `current_time_str()`에 전달됩니다 |
 | `on_execute` / `on_notify` | `None` | 비동기 콜백. 설정되지 않으면 실행 / 전달이 건너뛰어집니다 |

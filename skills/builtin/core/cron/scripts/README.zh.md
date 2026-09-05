@@ -14,7 +14,7 @@ EMA AI Agent 系统内的轻量级、基于文件的定时任务服务，支持�
 - 每个任务的执行日志以 JSON Lines 格式追加写入 `logs/output/cron/<job_id>.log`
 - 受保护的系统任务（`payload.kind == "system_event"`）无法删除
 - Cron 表达式时区支持（通过 `zoneinfo` 使用 IANA 时区名）
-- REST API（Robyn）：`GET/POST/PUT/DELETE /cron`、`POST /cron/trigger`、`POST /cron/enable`，供桌面客户端使用
+- REST API（Robyn）：`GET/POST/PUT/DELETE /cron`、`POST /cron/trigger`、`POST /cron/enable`、`POST /cron/failure-state`、`POST /cron/reset-failures`，供桌面客户端使用
 
 ## 模块结构
 
@@ -175,7 +175,24 @@ Python 侧对应的模型（`types.py`）使用 snake_case（`at_ms`、`every_ms
 | `PUT /cron` | 更新：以"删除 + 重建"实现，保留原 `id` 和 `createdAtMs` |
 | `POST /cron/trigger` | 立即运行：`{"id", "force"}`（已禁用且未传 `force` 时返回 400） |
 | `POST /cron/enable` | 启用/禁用：`{"id", "enabled"}` |
+| `POST /cron/failure-state` | 查看失败熔断器状态：`{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`；未知任务 → `404`，从未失败的任务 → 全零状态 |
+| `POST /cron/reset-failures` | 重置失败熔断器状态：`{"id"}`；只重新启用被熔断器自己停用的任务（运维人员的主动停用得以保留） |
 | `DELETE /cron` | 删除：`{"id"}`；受保护的系统任务返回 `403` |
+
+## 失败熔断器
+
+每个周期任务都受按任务的失败熔断器保护（`base.py` 中的 `CronJobFailureState`）：连续失败会逐级升级，先退化（degrade）、再自动停用（auto-disable），保证彻底坏掉的任务不会永远触发。熔断器状态仅存内存；`cron_jobs.json` 的模式保持不变，熔断器唯一会写回的是任务原有的 `enabled` 标志。
+
+| 连续失败次数 | 效果 |
+|--------------|------|
+| 1-4 | 任务正常失败：状态标记为 error，WS 铃铛通知 |
+| ≥ 5（退化） | 退避窗口内跳过触发：距上次失败 `min(5000ms × 2^(n-5), 300000ms)`（n = 连续失败次数） |
+| ≥ 10 | 持久化 `enabled=False` 到任务存储；尽力而为的通知发往任务的 payload 频道 |
+
+- **先记录再抛出：** 失败先被记录，然后异常原样重新抛出，`lastStatus` / `lastError` 报告与 WS 铃铛因此完好无损。
+- **一次性 `at` 任务豁免**（它们不可能触发两次，所以单次失败不成其为循环）。
+- 成功会彻底重置状态；手动 `enable_job` 会清除它。`POST /cron/reset-failures` 只重新启用被熔断器自己停用的任务，运维人员的主动停用因此得以保留。
+- 内存中的失败计数器不会在进程重启后保留（持久化的 `enabled` 标志会）。
 
 ## 使用示例
 
@@ -266,3 +283,5 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - 对 `cron_jobs.json` 的外部修改通过文件修改时间检测，在下一个定时器 tick 生效；每次执行后存储都会重新保存。
 - 服务运行在 `cron-service` 守护线程的独立事件循环上，与主服务器循环相互独立；`run_job()` 和 `start()` 必须在运行中的事件循环内 await。
 - WebSocket 通知目标是会话 `"default"`（浏览器客户端会话），因此仅在客户端连接期间才能收到桌面通知。
+
+▶️ 完整文档：[docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)

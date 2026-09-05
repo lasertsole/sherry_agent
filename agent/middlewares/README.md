@@ -204,20 +204,26 @@ Hard cap on **model calls + tool calls combined** within one turn. Constructor: 
 **Module:** `agent/middlewares/tool_guardrails.py` · **Class:** `ToolGuardrails(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_tool_call` / `awrap_tool_call`
 
-Detects three failure pathologies and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
+Detects five failure pathologies and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
 
-| Pathology | Trigger | Default reaction |
-|---|---|---|
-| Exact failure repetition | Same tool + same arguments (MD5 of the JSON args, `sort_keys`) failing | Warn at ≥ 2, block at ≥ 5 (`exact_failure_warn_after=2`, `exact_failure_block_after=5`) |
-| Same-tool failure accumulation | Same tool failing with **different** arguments | Warn at ≥ 3, halt at ≥ 8 (`same_tool_failure_warn_after=3`, `same_tool_failure_halt_after=8`) |
-| Idempotent no-progress | Tool with metadata `idempotent: true` returning an identical result hash | Warn at ≥ 2, block at ≥ 5 (`no_progress_warn_after=2`, `no_progress_block_after=5`) |
+| Pathology | Trigger | WARN after | BLOCK after | hard-stop mode |
+|---|---|---|---|---|
+| Exact failure repetition | Same tool + same arguments (MD5 of the JSON args, `sort_keys`) failing | 2 (`exact_failure_warn_after`) | 5 (`exact_failure_block_after`) | HALT at 5 |
+| Same-tool failure accumulation | Same tool failing with **different** arguments | 3 (`same_tool_failure_warn_after`) | 8 (`same_tool_failure_halt_after`) | HALT at 8 |
+| Idempotent no-progress | Tool with metadata `idempotent: true` returning an identical result hash | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | HALT at 5 |
+| Ping-pong | Unbroken read-only A → B → A → B bouncing between two tools | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | HALT at 6 |
+| Argument churn | Same idempotent tool cycling through argument variants | 3 variants (`arg_churn_warn_after`) | 5 variants (`arg_churn_block_after`) | HALT at 5 |
 
-- `before_agent` resets the per-turn guard state (key `tool_guardrail_state` in `state_register_mem`).
+- `before_agent` resets the per-turn guard state (key `tool_guardrail_state` in `state_register_mem`) — strictly turn-scoped, so a fresh turn starts clean.
 - `wrap_tool_call` pre-checks blocked tools and halt state (returns an error `ToolMessage` without executing), runs the tool, then evaluates the result:
   - `warn` appends a warning to the `ToolMessage`;
   - `block` records the tool in `blocked_tools`;
   - `halt` sets a sticky halt for the rest of the turn (`halt_decision`).
-- `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False` — with `hard_stop_enabled=True` the *block* levels also escalate to halt.
+- **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the *precheck* path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT — a managed retry window instead of an immediate wall.
+- **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are successful idempotent calls (both records carry a result hash). Any error, or any successful non-idempotent (mutating) call, zeroes every accumulated pair streak. Result content is never compared: unbroken read-only bouncing is a loop signal on its own. A non-idempotent tool success likewise resets argument-churn state.
+- `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — with `hard_stop_enabled=True` every *block* threshold converts into HALT (the old strict wall); `recovery_mode_enabled=False` restores the immediate block behavior.
+
+▶️ Full details: [docs/harness/loop-prevention/README.md](../../docs/harness/loop-prevention/README.md) · [中文](../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../docs/harness/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -301,8 +307,9 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 
 The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware` (**not** LangChain's `SummarizationMiddleware`): when the trigger fires, it compacts history with a budget-based cutoff — non-LLM strategies first, auxiliary-LLM summarization only when text degradation is safe. The `keep` parameter is accepted but unused; tail retention is budget-based: `clamp(context_window × 0.25, 2 000, 15 000)` tokens (`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
+- **Lifecycle & routing:** the middleware now spans five trigger points (T1–T5) — T1 preflight (`before_agent` / `abefore_agent`), T2 pre-call dispatch (`wrap_model_call` / `awrap_model_call`), T3 post-response re-check on real (reported) tokens, and the T4 (413 Payload Too Large) / T5 (context overflow) error-recovery ring — and every trigger runs the four-route overflow decision (truncate / compact / both / pass), delegated to `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, and `pub_func/message/llm_error_classifier.py`. State lives in session-scoped `summarization_*` keys (14 total, 10 reset per turn). Full docs: see the link row below.
 - **Trigger semantics**: a clause is `("messages", N)` or `("tokens", N)`; a list of clauses is an **OR** — any clause firing starts compression. Main agent: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. Worker: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
-- **Cutoff safety:** `_determine_cutoff` picks the cut point, then `_adjust_for_orphan_pairs` walks it backwards until no `ToolMessage` is separated from its `AIMessage` tool-call; when the last user turn accounts for ≥ 50 % of the estimated tokens (`LAST_TURN_RATIO_THRESHOLD = 0.5`), the last turn itself is compressed (`_compress_last_turn`) instead of being summarized away.
+- **Cutoff safety:** `_determine_cutoff` picks the cut point, then `_adjust_for_orphan_pairs` walks it backwards until no `ToolMessage` is separated from its `AIMessage` tool-call; when the last user turn accounts for ≥ 50 % of the estimated tokens (`LAST_TURN_RATIO_THRESHOLD = 0.5`), the last turn itself is compressed (the `self._compress_last_turn` flag) instead of being summarized away.
 - **Anti-thrashing:** at most `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` compressions **per session** (not per turn); after `INEFFECTIVE_THRESHOLD = 2` consecutive ineffective attempts (effectiveness = message-count reduction or token reduction ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) the LLM step is disabled (`summarization_skip_llm`) and only non-LLM strategies run. Counters live in `state_register_mem` under session-level `summarization_*` keys (compression count, ineffective streak, last tokens, last strategy, skip flag, recovery state, …).
 - **Truncation:** existing summary messages (identified by `additional_kwargs["lc_source"] == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS = 16 000` characters are re-truncated, keeping head 30 % / tail 30 % (`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`) with an omission marker.
 - **Output:** the replacement messages are a `HumanMessage` / `AIMessage` **pair** — a neutral `"What did we do so far?"` followed by an `AIMessage` carrying `additional_kwargs={"lc_source": "summarization"}` — so the model never sees two consecutive same-role messages and no post-hoc pairing repair is needed.

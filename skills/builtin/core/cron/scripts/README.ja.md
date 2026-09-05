@@ -14,7 +14,7 @@ EMA AI Agent システム向けの軽量なファイルベース cron サービ�
 - ジョブごとの実行ログを JSON Lines 形式で `logs/output/cron/<job_id>.log` に追記
 - 保護されたシステムジョブ（`payload.kind == "system_event"`）は削除不可
 - cron 式のタイムゾーンサポート（`zoneinfo` による IANA タイムゾーン名）
-- REST API（Robyn）: `GET/POST/PUT/DELETE /cron`、`POST /cron/trigger`、`POST /cron/enable` — デスクトップクライアント向け
+- REST API（Robyn）: `GET/POST/PUT/DELETE /cron`、`POST /cron/trigger`、`POST /cron/enable`、`POST /cron/failure-state`、`POST /cron/reset-failures` — デスクトップクライアント向け
 
 ## モジュール構成
 
@@ -175,7 +175,24 @@ Python 側の対応モデル（`types.py`）は snake_case を使用します（
 | `PUT /cron` | 更新: 削除 + 再追加として適用され、`id` と `createdAtMs` は保持される |
 | `POST /cron/trigger` | 即時実行: `{"id", "force"}`（無効かつ `force` なしの場合は 400） |
 | `POST /cron/enable` | 有効/無効化: `{"id", "enabled"}` |
+| `POST /cron/failure-state` | 失敗ブレーカー状態の照会: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; 未知のジョブ → `404`、失敗したことのないジョブ → ゼロの状態 |
+| `POST /cron/reset-failures` | 失敗ブレーカー状態のリセット: `{"id"}`; ブレーカー自身が無効化したジョブだけを再有効化（オペレータによる無効化は保持） |
 | `DELETE /cron` | 削除: `{"id"}`; 保護されたシステムジョブは `403` |
+
+## 失敗ブレーカー
+
+すべての定期ジョブはジョブごとの失敗ブレーカー（`base.py` の `CronJobFailureState`）で保護されています。連続失敗は降格を経て自動無効化へ段階的にエスカレートし、完全に壊れたジョブが永遠に発火し続けるのを防ぎます。ブレーカー状態はメモリ専用です。`cron_jobs.json` のスキーマはそのままで、ブレーカーが書き戻すのはジョブの既存 `enabled` フラグだけです。
+
+| 連続失敗 | 効果 |
+|----------|------|
+| 1-4 | ジョブは普段どおり失敗: ステータスを error にマーク、WS ベル通知 |
+| ≥ 5 (降格) | バックオフウィンドウ内はトリガーをスキップ: 最後の失敗から `min(5000ms × 2^(n-5), 300000ms)`（n = 連続失敗回数） |
+| ≥ 10 | `enabled=False` をジョブストアに永続化; 最善努力の通知をジョブの payload チャンネルへ |
+
+- **記録してから再スロー:** 失敗をまず記録し、それから例外をそのまま再スローするので、`lastStatus` / `lastError` の報告と WS ベルは無傷のまま保たれます。
+- **一回きりの `at` ジョブは免除** (二度発火し得ないため、単一の失敗はループではない)。
+- 成功は状態を完全にリセットし、手動の `enable_job` はこれを消します。`POST /cron/reset-failures` はブレーカー自身が無効化したジョブだけを再有効化するので、オペレータによる無効化は保持されます。
+- メモリ上の失敗カウンタはプロセス再起動で失われます（永続化された `enabled` フラグは残ります）。
 
 ## 使用例
 
@@ -266,3 +283,5 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - `cron_jobs.json` への外部変更はファイルの更新時刻で検出され、次のタイマーティックで反映されます。ストアは実行のたびに再保存されます。
 - サービスは `cron-service` デーモンスレッド上の独立したイベントループで動作し、メインサーバーのループとは独立しています。`run_job()` と `start()` は実行中のイベントループから await する必要があります。
 - WebSocket 通知はセッション `"default"`（ブラウザクライアントのセッション）宛てのため、クライアント接続中のみデスクトップ通知が届きます。
+
+▶️ 詳細：[docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)

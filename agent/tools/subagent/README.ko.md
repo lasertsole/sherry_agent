@@ -466,7 +466,14 @@ materialize_subagent_attachments(attachments, child_workspace, ...)
 #### Sweeper (레지스트리 스캐너)
 
 ```
-registry/sweeper.py — sweeper_interval_seconds(기본 60초) 주기 루프
+registry/sweeper.py — backoff.current_interval을 sleep하는 루프
+(기준 = sweeper_interval_seconds, 기본 60초)
+
+실패 백오프(runtime/periodic_backoff.PeriodicBackoff): 스윕이 실패할 때마다
+다음 sleep이 2배(min(60초 × 2ⁿ, 7200초), warning 로그). 연속 5회 실패 시
+루프가 스스로 중지(CRITICAL 로그, 자동 재개 없음). 성공한 스윕은 백오프를
+완전히 리셋. stop_sweeper()는 상태를 폐기하므로 다음 시작은 새 상태로
+시작합니다.
 
 매 스윕에서 실행:
   1. recover_orphaned_runs()              — 고아 런 복구
@@ -481,6 +488,8 @@ registry/sweeper.py — sweeper_interval_seconds(기본 60초) 주기 루프
   8. _finalize_killed_unterminated()      — kill됐지만 미종료인 런 강제 완료
   9. persist_runs_to_disk()               — 메모리 전체 스냅샷을 SQLite에 기록
 ```
+
+▶️ 전체 문서: [docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
 
 #### 고아 복구 (orphan/recovery.py)
 
@@ -689,7 +698,7 @@ agent/tools/subagent/
 │   ├── read.py                외부 읽기 전용 API(find_run_by_task_name + run record 주요 쿼리)
 │   ├── task_refs.py           asyncio.Task 참조 관리(register/get/remove/cancel)
 │   ├── yield_events.py        asyncio.Event 관리(yield 깨우기 / 자손 정산)
-│   ├── sweeper.py             백그라운드 60초 스캐너(계층형 만료: cron=2h, subagent=6h, interactive=24h)
+│   ├── sweeper.py             실패 백오프가 있는 백그라운드 스캐너(계층형 만료: cron=2h, subagent=6h, interactive=24h)
 │   ├── reconciliation.py      Session 대조
 │   ├── pending_injections.py  영속화된 pending-injection 큐: busy steering / idle 자동 전달 두 완료 주입 경로를 뒷받침하는 크래시 세이프 SQLite 저장소
 │   ├── session_keys.py        announce 측과 registry 측 간 세션 키 정규화
@@ -849,7 +858,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `delivery_suspend_hard_cap` | 50 | suspend 하드 한도 |
 | `delivery_suspend_target` | 10 | 압력 가지치기 목표 수 |
 | `lifecycle_grace_period_seconds` | 15.0 | error/timeout 수습 전 유예 기간 |
-| `sweeper_interval_seconds` | 60 | Sweeper 스캔 간격 (followup은 2×) |
+| `sweeper_interval_seconds` | 60 | Sweeper 스캔 간격 겸 백오프 기준 (followup은 2×) |
 | `orphan_recovery_delay_seconds` | 120 | 고아 복구 지연 |
 | `announce_expiry_ms` | 7,200,000 | 전달 소프트 만료 (2시간) |
 | `announce_hard_expiry_ms` | 86,400,000 | 전달 하드 만료 (24시간) |

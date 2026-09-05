@@ -204,20 +204,26 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/tool_guardrails.py` · **类：** `ToolGuardrails(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_tool_call` / `awrap_tool_call`
 
-检测三种失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
+检测五种失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
 
-| 病理 | 触发条件 | 默认反应 |
-|---|---|---|
-| 精确失败重复 | 相同工具 + 相同参数（参数 JSON `sort_keys` 后取 MD5）失败 | ≥ 2 次警告，≥ 5 次阻止（`exact_failure_warn_after=2`、`exact_failure_block_after=5`） |
-| 同工具失败累积 | 相同工具以**不同**参数反复失败 | ≥ 3 次警告，≥ 8 次终止（`same_tool_failure_warn_after=3`、`same_tool_failure_halt_after=8`） |
-| 幂等无进展 | 元数据 `idempotent: true` 的工具返回相同的结果哈希 | ≥ 2 次警告，≥ 5 次阻止（`no_progress_warn_after=2`、`no_progress_block_after=5`） |
+| 病理 | 触发条件 | WARN 阈值 | BLOCK 阈值 | hard-stop 模式 |
+|---|---|---|---|---|
+| 精确失败重复 | 相同工具 + 相同参数（参数 JSON `sort_keys` 后取 MD5）失败 | 2（`exact_failure_warn_after`） | 5（`exact_failure_block_after`） | 5 次时 HALT |
+| 同工具失败累积 | 相同工具以**不同**参数反复失败 | 3（`same_tool_failure_warn_after`） | 8（`same_tool_failure_halt_after`） | 8 次时 HALT |
+| 幂等无进展 | 元数据 `idempotent: true` 的工具返回相同的结果哈希 | 2（`no_progress_warn_after`） | 5（`no_progress_block_after`） | 5 次时 HALT |
+| 乒乓 | 两个工具之间不间断的只读 A → B → A → B 往返 | 4（`ping_pong_warn_after`） | 6（`ping_pong_block_after`） | 6 次时 HALT |
+| 参数翻新 | 同一幂等工具轮换不同参数变体 | 3 种变体（`arg_churn_warn_after`） | 5 种变体（`arg_churn_block_after`） | 5 种时 HALT |
 
-- `before_agent` 重置回合级护栏状态（`state_register_mem` 中的键 `tool_guardrail_state`）。
+- `before_agent` 重置回合级护栏状态（`state_register_mem` 中的键 `tool_guardrail_state`）——严格回合作用域，新回合从干净状态开始。
 - `wrap_tool_call` 先做拦截预检（对被阻止的工具/终止状态直接返回错误 `ToolMessage`，不执行），再运行工具，然后评估结果：
   - `warn` 在 `ToolMessage` 后附加警告；
   - `block` 将工具记入 `blocked_tools`；
   - `halt` 为本回合剩余时间设置粘性终止（`halt_decision`）。
-- `ToolCallGuardrailConfig` 默认值：`warnings_enabled=True`、`hard_stop_enabled=False`——当 `hard_stop_enabled=True` 时，*阻止*级别也会升级为终止。
+- **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，*precheck* 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT——一个受管的重试窗口，而不是一堵立即竖起的墙。
+- **乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都是成功的幂等调用（两条记录都带结果哈希）时才累加。任何错误，或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。结果内容从不参与比较：不间断的只读往返本身就是循环信号。非幂等工具的成功同样会重置参数翻新状态。
+- `ToolCallGuardrailConfig` 默认值：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1`——当 `hard_stop_enabled=True` 时，每个*阻止*阈值都会变成 HALT（旧的严格之墙）；`recovery_mode_enabled=False` 则恢复立即阻止的行为。
+
+▶️ 完整文档：[docs/harness/loop-prevention/README.md](../../docs/harness/loop-prevention/README.md) · [中文](../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../docs/harness/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -301,8 +307,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 最内层的中间件——最贴近 LLM。从零实现的 `AgentMiddleware`（**并非** LangChain 的 `SummarizationMiddleware`）：触发条件命中后，按预算制截断点压缩历史——优先非 LLM 策略，仅在文本降级安全时才使用辅助 LLM 摘要。`keep` 参数被接受但未使用；尾部保留纯预算制：`clamp(context_window × 0.25, 2 000, 15 000)` 个 token（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
+- **生命周期与路由**：中间件现覆盖五个触发点（T1–T5）——T1 预检（`before_agent` / `abefore_agent`）、T2 调用前派发（`wrap_model_call` / `awrap_model_call`）、T3 响应后复检（真实上报 token）、T4（413 Payload Too Large）/ T5（上下文溢出）错误恢复环——每次触发都运行四路溢出路由决策（truncate / compact / both / pass），并委托给 `pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/llm_error_classifier.py`。状态存于会话级 `summarization_*` 键（共 14 个，每回合重置 10 个）。完整文档见下方链接。
 - **触发语义**：单个子句是 `("messages", N)` 或 `("tokens", N)`；子句列表之间是 **OR**——任一子句命中即开始压缩。主 Agent：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`；worker：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
-- **截断点安全：** `_determine_cutoff` 选定截断点，随后 `_adjust_for_orphan_pairs` 向前回退，直到没有任何 `ToolMessage` 与其 `AIMessage` 工具调用被拆开；当最后一个用户回合占估算 token 的 ≥ 50 % 时（`LAST_TURN_RATIO_THRESHOLD = 0.5`），会改为对最后一个回合本身做压缩（`_compress_last_turn`），而不是把它摘要掉。
+- **截断点安全：** `_determine_cutoff` 选定截断点，随后 `_adjust_for_orphan_pairs` 向前回退，直到没有任何 `ToolMessage` 与其 `AIMessage` 工具调用被拆开；当最后一个用户回合占估算 token 的 ≥ 50 % 时（`LAST_TURN_RATIO_THRESHOLD = 0.5`），会改为对最后一个回合本身做压缩（`self._compress_last_turn` 标志），而不是把它摘要掉。
 - **防抖动：** 每个**会话**至多 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 次压缩（而非每回合）；连续 `INEFFECTIVE_THRESHOLD = 2` 次无效压缩后（有效 = 消息数减少，或 token 缩减 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`），LLM 步骤被禁用（`summarization_skip_llm`），仅运行非 LLM 策略。计数器以会话级 `summarization_*` 键存于 `state_register_mem`（压缩次数、无效连击、上次 token、上次策略、跳过标志、恢复状态等）。
 - **截断：** 已有的摘要消息（以 `additional_kwargs["lc_source"] == "summarization"` 识别）超过 `SUMMARY_TOTAL_MAX_CHARS = 16 000` 字符时被重新截断，保留头部 30 % / 尾部 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`），并加入省略标记。
 - **输出：** 替换后的消息是 `HumanMessage` / `AIMessage` **成对出现**——一条中性的 `"What did we do so far?"`，后跟携带 `additional_kwargs={"lc_source": "summarization"}` 的 `AIMessage`——因此模型不会看到两条连续同角色消息，也无需事后配对修复。

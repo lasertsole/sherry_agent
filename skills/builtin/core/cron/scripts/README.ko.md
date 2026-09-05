@@ -14,7 +14,7 @@ EMA AI Agent 시스템을 위한 경량 파일 기반 cron 서비스입니다. �
 - 작업별 실행 로그를 JSON Lines 형식으로 `logs/output/cron/<job_id>.log`에 추가 기록
 - 보호된 시스템 작업 (`payload.kind == "system_event"`)은 제거 불가
 - cron 표현식용 시간대 지원 (`zoneinfo`를 통한 IANA 시간대 이름)
-- REST API (Robyn): `GET/POST/PUT/DELETE /cron`, `POST /cron/trigger`, `POST /cron/enable` — 데스크톱 클라이언트용
+- REST API (Robyn): `GET/POST/PUT/DELETE /cron`, `POST /cron/trigger`, `POST /cron/enable`, `POST /cron/failure-state`, `POST /cron/reset-failures` — 데스크톱 클라이언트용
 
 ## 모듈 구조
 
@@ -175,7 +175,24 @@ Python 쪽 대응 모델(`types.py`)은 snake_case를 사용합니다 (`at_ms`, 
 | `PUT /cron` | 수정: 제거 + 재추가로 적용되며 `id`와 `createdAtMs`는 유지됨 |
 | `POST /cron/trigger` | 즉시 실행: `{"id", "force"}` (비활성 상태이고 `force`가 없으면 400) |
 | `POST /cron/enable` | 활성/비활성화: `{"id", "enabled"}` |
+| `POST /cron/failure-state` | 실패 브레이커 상태 조회: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; 모르는 작업 → `404`, 한 번도 실패한 적 없는 작업 → 0으로 초기화된 상태 |
+| `POST /cron/reset-failures` | 실패 브레이커 상태 리셋: `{"id"}`; 브레이커 자신이 비활성화한 작업만 재활성화 (운영자의 비활성화는 보존됨) |
 | `DELETE /cron` | 제거: `{"id"}`; 보호된 시스템 작업은 `403` |
+
+## 실패 브레이커
+
+모든 반복 작업은 작업별 실패 브레이커(`base.py`의 `CronJobFailureState`)로 보호됩니다. 연속 실패가 강등을 거쳐 자동 비활성화로 단계적으로 이어져, 완전히 고장 난 작업이 영원히 발화하는 일을 막습니다. 브레이커 상태는 메모리 전용입니다. `cron_jobs.json`의 스키마는 그대로 유지되며, 브레이커가 쓰는 것은 작업의 기존 `enabled` 플래그뿐입니다.
+
+| 연속 실패 | 효과 |
+|-----------|------|
+| 1-4 | 작업이 평소처럼 실패: 상태를 error로 표시, WS 벨 알림 |
+| ≥ 5 (강등) | 백오프 창 안에서는 트리거가 건너뛰어짐: 마지막 실패로부터 `min(5000ms × 2^(n-5), 300000ms)` (n = 연속 실패 횟수) |
+| ≥ 10 | `enabled=False`를 작업 저장소에 영속화; 최선의 노력으로 작업의 payload 채널에 알림 |
+
+- **기록 후 재던지기:** 실패를 먼저 기록한 다음 예외를 그대로 다시 던지므로 `lastStatus` / `lastError` 보고와 WS 벨이 온전하게 유지됩니다.
+- **일회성 `at` 작업은 면제** (두 번 발화할 수 없으므로 단일 실패는 루프가 아님).
+- 성공은 상태를 완전히 리셋하고, 수동 `enable_job`이 이를 지웁니다. `POST /cron/reset-failures`는 브레이커 자신이 비활성화한 작업만 재활성화하므로 운영자의 비활성화는 보존됩니다.
+- 메모리의 실패 카운터는 프로세스 재시작 후 유지되지 않습니다 (영속화된 `enabled` 플래그는 유지됨).
 
 ## 사용 예시
 
@@ -266,3 +283,5 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - `cron_jobs.json`의 외부 수정은 파일 수정 시간으로 감지되어 다음 타이머 틱에 반영되며, 저장소는 실행마다 다시 저장됩니다.
 - 서비스는 `cron-service` 데몬 스레드의 독립적인 이벤트 루프에서 동작하며 메인 서버 루프와 별개입니다. `run_job()`과 `start()`는 실행 중인 이벤트 루프에서 await해야 합니다.
 - WebSocket 알림은 세션 `"default"`(브라우저 클라이언트 세션)를 대상으로 하므로, 클라이언트가 연결된 동안에만 데스크톱 알림이 도착합니다.
+
+▶️ 전체 문서: [docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)

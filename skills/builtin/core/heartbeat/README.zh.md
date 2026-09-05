@@ -23,7 +23,7 @@ Heartbeat 提供一个**轻量级定时轮询机制**，让 Agent 在空闲期�
 ┌──────────────────────────────────────────┐
 │            HeartbeatService              │
 ├──────────────────────────────────────────┤
-│  asyncio loop (sleep interval_s → tick)  │
+│  asyncio loop (sleep backoff → tick)     │
 │  ├─ Phase 1: Read HEARTBEAT.md           │
 │  ├─ Phase 2: LLM decision (skip/run)     │
 │  └─ Phase 3: Execute + notification gate │
@@ -68,7 +68,7 @@ Heartbeat 提供一个**轻量级定时轮询机制**，让 Agent 在空闲期�
 
 ```
 start() → asyncio task
-   └─ loop: sleep(interval_s) → tick()   # first tick happens after one full interval
+   └─ loop: sleep(backoff.current_interval) → tick()   # first tick happens after one full interval
         ↓
    Read HEARTBEAT.md (empty/missing → skip tick)
         ↓
@@ -79,6 +79,10 @@ start() → asyncio task
               response non-empty → evaluate_response():
                 ├─ True  → on_notify(response)   # server: channel delivery
                 └─ False → silenced (logged)
+
+tick 异常 → backoff.record_failure()：下次 sleep 翻倍（interval_s × 2ⁿ，
+上限 7200 秒）；连续失败 5 次后循环退出（CRITICAL 日志）。
+tick 成功 → backoff.record_success()：完整重置回 interval_s。
 ```
 
 ### Phase 1: 读取
@@ -88,7 +92,7 @@ content = Path(HEARTBEAT_PATH).read_text(encoding="utf-8")
 ```
 
 - 文件为空 → 跳过本次 tick（debug 日志）。
-- 文件缺失 → `read_text()` 抛出 `FileNotFoundError`；循环记录错误并继续下一个周期。
+- 文件缺失 → `read_text()` 抛出 `FileNotFoundError`；循环记录错误并继续下一个周期。这**不会**记为退避失败（文件读取位于 tick 的退避统计 `try/except` 之外）。
 
 ### Phase 2: 决策（`_decide`）
 
@@ -141,7 +145,8 @@ if self.on_execute:
 ```
 
 - `run` → `on_execute(tasks)` 执行任务；只有**非空**响应才会交给 `evaluate_response()` 评估；只有评估为真才会到达 `on_notify()`。
-- 整个 tick 包裹在 `try/except` 中：异常被记录（`logger.exception`），循环继续运行。
+- tick 内部的异常会被记录（`logger.exception`）并记为一次**退避失败**：下次 sleep 翻倍（interval_s × 2ⁿ，上限 7200 秒），并保留失败原因。tick 成功则完整重置退避。
+- 连续失败 **5 次**后，循环自行停止并输出 CRITICAL 日志（"Heartbeat paused ... manual recovery required"）。只有重启进程才能恢复调度；`trigger_now()` 仍可触发单次 tick。参见 [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) 与[防失控循环文档](../../../../docs/harness/loop-prevention/README.md)。
 
 ---
 
@@ -239,7 +244,8 @@ heartbeat_service.stop()  # 置 _running = False 并取消 asyncio 任务
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `interval_s` | `30 * 60`（1800 秒） | 两次 tick 的间隔秒数；循环**先 sleep 再 tick**，因此首次检查发生在 `start()` 后一个完整间隔 |
+| `interval_s` | `30 * 60`（1800 秒） | 两次 tick 的间隔秒数；循环**先 sleep 再 tick**，因此首次检查发生在 `start()` 后一个完整间隔。同时是失败退避的基准间隔 |
+| 失败退避 | `factor=2.0`、上限 `7200 秒`、`5` 次后停止 | 硬编码的 `PeriodicBackoff` 参数（`HeartbeatService.__init__`，`runtime/periodic_backoff.py`）；连续 tick 失败会把 sleep 拉长至最多 2 小时，之后服务停止直到重启 |
 | `enabled` | `True` | 为 `False` 时，`start()` 记录 "Heartbeat disabled" 并直接返回 |
 | `timezone` | `None` | 传给 `current_time_str()`，用于决策提示词中的 "Current Time" 行 |
 | `on_execute` / `on_notify` | `None` | 异步回调；未设置时跳过执行 / 投递 |

@@ -471,7 +471,14 @@ materialize_subagent_attachments(attachments, child_workspace, ...)
 #### Sweeper（レジストリスキャナ）
 
 ```
-registry/sweeper.py — sweeper_interval_seconds（既定 60 秒）周期のループ
+registry/sweeper.py — backoff.current_interval を sleep するループ
+（基底 = sweeper_interval_seconds、既定 60 秒）
+
+失敗バックオフ（runtime/periodic_backoff.PeriodicBackoff）：スイープが
+失敗するたびに次の sleep が 2 倍（min(60 秒 × 2ⁿ, 7200 秒)、warning ログ）。
+連続 5 回の失敗でループは自ら停止（CRITICAL ログ、自動再開なし）。成功した
+スイープはバックオフを完全リセット。stop_sweeper() は状態を破棄するため、
+次回起動時は初期状態から始まります。
 
 各スイープで実行：
   1. recover_orphaned_runs()              — オーファンランの復旧
@@ -486,6 +493,8 @@ registry/sweeper.py — sweeper_interval_seconds（既定 60 秒）周期のル�
   8. _finalize_killed_unterminated()      — kill 済み未終了ランの強制完了
   9. persist_runs_to_disk()               — メモリ全体のスナップショットを SQLite へ
 ```
+
+▶️ 詳細：[docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
 
 #### オーファンリカバリ（orphan/recovery.py）
 
@@ -694,7 +703,7 @@ agent/tools/subagent/
 │   ├── read.py                外部読み取り専用 API（find_run_by_task_name + run record 主クエリ）
 │   ├── task_refs.py           asyncio.Task 参照管理（register/get/remove/cancel）
 │   ├── yield_events.py        asyncio.Event 管理（yield 起床 / 子孫の決着）
-│   ├── sweeper.py             バックグラウンド 60 秒スキャナ（階層式期限切れ：cron=2h, subagent=6h, interactive=24h）
+│   ├── sweeper.py             失敗バックオフ付きバックグラウンドスキャナ（階層式期限切れ：cron=2h, subagent=6h, interactive=24h）
 │   ├── reconciliation.py      Session 突き合わせ
 │   ├── pending_injections.py  永続化 pending-injection キュー：busy steering / idle 自動配信の両完了注入経路を支えるクラッシュセーフな SQLite ストア
 │   ├── session_keys.py        announce 側と registry 側の間のセッションキー正規化
@@ -854,7 +863,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `delivery_suspend_hard_cap` | 50 | suspend ハード上限 |
 | `delivery_suspend_target` | 10 | 圧力剪定の目標数 |
 | `lifecycle_grace_period_seconds` | 15.0 | error/timeout 収束前の猶予期間 |
-| `sweeper_interval_seconds` | 60 | Sweeper スキャン間隔（followup は 2×） |
+| `sweeper_interval_seconds` | 60 | Sweeper スキャン間隔とバックオフ基底（followup は 2×） |
 | `orphan_recovery_delay_seconds` | 120 | オーファンリカバリの遅延 |
 | `announce_expiry_ms` | 7,200,000 | 配信ソフト期限（2 時間） |
 | `announce_hard_expiry_ms` | 86,400,000 | 配信ハード期限（24 時間） |
