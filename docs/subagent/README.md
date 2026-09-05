@@ -2,6 +2,19 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+## Update Notes (2026-09-05)
+
+> Subagent limits aligned with OpenClaw (commits `794df0e..d200beb`):
+
+- **Global concurrency cap added**: `max_concurrent = 8` — enforced in the spawn pipeline; excess spawns return `forbidden` ("Global concurrent ..."). New registry queries: `count_all_active_runs` / `count_all_active_runs_readonly`.
+- **`max_spawn_depth` default 3 → 2, now a hard cap**: values > 2 are rejected at construction and assignment; `delegate_task(max_spawn_depth=...)` raises `ValueError` beyond the cap. Depth tree: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
+- **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net.
+- **`archive_after_minutes` 1440 → 60**.
+- **`delegate_task`**: new per-call `max_concurrent` override (restored after dispatch).
+- All configuration tables and diagrams in these docs (en/zh/ko/ja) plus the root READMEs were synced to the new defaults.
+
+---
+
 > A Python implementation of a multi-level subagent system: the main agent decomposes complex tasks into parallel subtasks, dispatches them to independent child agents, and reliably delivers results back through an announce pipeline. Includes a SQLite-backed run registry, a sweeper with orphan recovery, swarm batch mode, and hierarchical depth/role control. All facts in this document are verified against the code in this directory.
 
 ---
@@ -488,7 +501,7 @@ Each sweep executes:
   9. persist_runs_to_disk()               — full memory snapshot to SQLite
 ```
 
-▶️ Full details: [docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
+▶️ Full details: [docs/harness/loop-prevention/README.md](../harness/loop-prevention/README.md) · [中文](../harness/loop-prevention/README.zh.md) · [한국어](../harness/loop-prevention/README.ko.md) · [日本語](../harness/loop-prevention/README.ja.md)
 
 #### Orphan Recovery (orphan/recovery.py)
 

@@ -42,7 +42,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **信頼性の高い配信**：結果は冪等チェックと指数バックオフリトライを備えた EventBus announce パイプラインで返却
 - **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーはランタイムアウトが設定された場合のみ強制（デフォルト: なし）
 - **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
-- ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
+- ▶️ _完全なアーキテクチャは [Subagent System README](docs/subagent/README.md) を参照_
 
 ### 4. 🌐 マルチチャンネルアクセス
 - **Robyn バックエンド**（[server/](server/)）：非同期 HTTP API + WebSocket（`/sessions/ws`）、`127.0.0.1:8080` でリッスンし、アップロードされたメディアを `/static`、`/images`、`/audio`、`/video` で配信
@@ -233,7 +233,7 @@ EMA_AI_agent/
 | サブモジュール | 説明 | ドキュメント |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
+| **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
 | **デスクトップクライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) |

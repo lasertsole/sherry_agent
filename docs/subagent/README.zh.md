@@ -2,6 +2,19 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+## 更新记录（2026-09-05）
+
+> 子代理限制已对齐 OpenClaw（提交 `794df0e..d200beb`）：
+
+- **新增全局并发上限**：`max_concurrent = 8` —— 在 spawn 管线中强制执行；超限返回 `forbidden`（"Global concurrent ..."）。registry 新增查询：`count_all_active_runs` / `count_all_active_runs_readonly`。
+- **`max_spawn_depth` 默认 3 → 2，现为硬上限**：构造与赋值均拒绝 > 2；`delegate_task(max_spawn_depth=...)` 超限抛出 `ValueError`。深度树：MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
+- **`run_timeout_seconds` 默认 300 → 0.0（无超时）**：spawn 与 steer 直接调用子代理；followup 超时检查跳过；sweeper 的 2 小时 stale 检测仍是兜底。
+- **`archive_after_minutes` 1440 → 60**。
+- **`delegate_task`**：新增 per-call `max_concurrent` 覆盖（调用后恢复）。
+- 本目录文档（en/zh/ko/ja）及根 README 的全部配置表与图示已同步新默认值。
+
+---
+
 > 一个 Python 实现的多层级子 Agent 系统：主 Agent 将复杂任务拆解为并行子任务，分发给独立的子 Agent 执行，并通过 Announce 管线可靠地回传结果。内置 SQLite 持久化的运行注册表、带孤儿恢复的 Sweeper、Swarm 批量模式与层级化的 Depth/Role 权限控制。本文所有事实均与本目录下的代码逐项核对。
 
 ---
@@ -485,7 +498,7 @@ sweeper_interval_seconds，默认 60 秒）
   9. persist_runs_to_disk()               — 内存全量快照写入 SQLite
 ```
 
-▶️ 完整文档：[docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
+▶️ 完整文档：[docs/harness/loop-prevention/README.md](../harness/loop-prevention/README.md) · [中文](../harness/loop-prevention/README.zh.md) · [한국어](../harness/loop-prevention/README.ko.md) · [日本語](../harness/loop-prevention/README.ja.md)
 
 #### 孤儿恢复（orphan/recovery.py）
 

@@ -2,6 +2,19 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+## 업데이트 노트 (2026-09-05)
+
+> 서브에이전트 제한이 OpenClaw와 정렬되었습니다 (커밋 `794df0e..d200beb`):
+
+- **전역 동시성 상한 추가**: `max_concurrent = 8` — spawn 파이프라인에서 강제; 초과 spawn은 `forbidden` 반환 ("Global concurrent ..."). registry에 `count_all_active_runs` / `count_all_active_runs_readonly` 쿼리 추가.
+- **`max_spawn_depth` 기본값 3 → 2, 하드 상한화**: 2 초과 값은 생성과 할당 모두에서 거부; `delegate_task(max_spawn_depth=...)`는 상한 초과 시 `ValueError` 발생. 깊이 트리: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
+- **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망.
+- **`archive_after_minutes` 1440 → 60**.
+- **`delegate_task`**: 호출별 `max_concurrent` 오버라이드 추가 (디스패치 후 복원).
+- 이 문서들(en/zh/ko/ja)과 루트 README의 모든 설정 테이블과 다이어그램이 새 기본값으로 동기화되었습니다.
+
+---
+
 > Python으로 구현된 다계층 하위 에이전트 시스템입니다. 메인 에이전트가 복잡한 작업을 병렬 하위 작업으로 분해하고, 독립적인 자식 에이전트에 실행을 위임하며, Announce 파이프라인을 통해 결과를 부모에게 안정적으로 반환합니다. SQLite 영속화 런 레지스트리, 고아 복구(orphan recovery)가 포함된 Sweeper, Swarm 배치 모드, 계층화된 Depth/Role 권한 제어를 갖추고 있습니다. 이 문서의 모든 내용은 이 디렉터리의 코드와 대조하여 검증되었습니다.
 
 ---
@@ -489,7 +502,7 @@ registry/sweeper.py — backoff.current_interval을 sleep하는 루프
   9. persist_runs_to_disk()               — 메모리 전체 스냅샷을 SQLite에 기록
 ```
 
-▶️ 전체 문서: [docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
+▶️ 전체 문서: [docs/harness/loop-prevention/README.md](../harness/loop-prevention/README.md) · [中文](../harness/loop-prevention/README.zh.md) · [한국어](../harness/loop-prevention/README.ko.md) · [日本語](../harness/loop-prevention/README.ja.md)
 
 #### 고아 복구 (orphan/recovery.py)
 

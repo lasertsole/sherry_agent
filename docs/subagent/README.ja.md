@@ -2,6 +2,19 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+## 更新ノート（2026-09-05）
+
+> サブエージェント制限を OpenClaw に整合させました（コミット `794df0e..d200beb`）:
+
+- **グローバル同時実行上限を追加**: `max_concurrent = 8` — spawn パイプラインで強制。超過 spawn は `forbidden` を返す（"Global concurrent ..."）。registry に `count_all_active_runs` / `count_all_active_runs_readonly` を追加。
+- **`max_spawn_depth` デフォルト 3 → 2、ハード上限化**：2 超過の値は構築時と代入時の両方で拒否。`delegate_task(max_spawn_depth=...)` は上限超過で `ValueError` を送出。深度ツリー: MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
+- **`run_timeout_seconds` デフォルト 300 → 0.0（タイムアウトなし）**：spawn と steer は子を直接呼び出し。followup のタイムアウト検査はスキップ。sweeper の 2 時間 stale 検出が安全網。
+- **`archive_after_minutes` 1440 → 60**。
+- **`delegate_task`**：呼び出し毎の `max_concurrent` オーバーライドを追加（ディスパッチ後に復元）。
+- 本ドキュメント群（en/zh/ko/ja）とルート README の全設定テーブル・図を新デフォルト値に同期済み。
+
+---
+
 > Python で実装された多階層サブエージェントシステム。メインエージェントが複雑なタスクを並列サブタスクに分解し、独立した子エージェントに実行を委譲し、Announce パイプラインを通じて結果を確実に親へ返します。SQLite 永続化のランレジストリ、オーファンリカバリ付き Sweeper、Swarm バッチモード、階層的な Depth/Role 権限制御を備えます。本ドキュメントの記載はすべてこのディレクトリのコードに対して検証済みです。
 
 ---
@@ -494,7 +507,7 @@ registry/sweeper.py — backoff.current_interval を sleep するループ
   9. persist_runs_to_disk()               — メモリ全体のスナップショットを SQLite へ
 ```
 
-▶️ 詳細：[docs/harness/loop-prevention/README.md](../../../docs/harness/loop-prevention/README.md) · [中文](../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../docs/harness/loop-prevention/README.ja.md)
+▶️ 詳細：[docs/harness/loop-prevention/README.md](../harness/loop-prevention/README.md) · [中文](../harness/loop-prevention/README.zh.md) · [한국어](../harness/loop-prevention/README.ko.md) · [日本語](../harness/loop-prevention/README.ja.md)
 
 #### オーファンリカバリ（orphan/recovery.py）
 

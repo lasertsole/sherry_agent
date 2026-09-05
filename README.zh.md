@@ -42,7 +42,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **可靠投递**：结果通过 EventBus announce 流水线回传，具备幂等校验与指数退避重试
 - **持久化注册表**：运行记录持久化到 SQLite；sweeper 负责恢复孤儿任务，followup 检查器在配置了运行超时时强制超时（默认不配置）
 - **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
-- ▶️ _详见 [Subagent System README](agent/tools/subagent/README.md) 了解完整架构_
+- ▶️ _详见 [Subagent System README](docs/subagent/README.md) 了解完整架构_
 
 ### 4. 🌐 多渠道接入
 - **Robyn 后端**（[server/](server/)）：异步 HTTP API + WebSocket（`/sessions/ws`），监听 `127.0.0.1:8080`，并通过 `/static`、`/images`、`/audio`、`/video` 提供上传媒体文件
@@ -233,7 +233,7 @@ EMA_AI_agent/
 | 子模块 | 说明 | 文档 |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
+| **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **渠道** | 渠道接口与适配器系统 | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
 | **桌面客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [EN](client/README.md) · [ZH](client/README.zh.md) |

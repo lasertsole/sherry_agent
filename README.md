@@ -42,7 +42,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Reliable Delivery**: results return through an EventBus announce pipeline with idempotency checks and exponential-backoff retries
 - **Durable Registry**: run records persisted to SQLite; a sweeper recovers orphaned runs and a followup checker enforces run timeouts when configured (default: none)
 - **Swarm Mode**: batch sub-task execution with FIFO scheduling and configurable concurrency
-- ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for the full architecture_
+- ▶️ _See the [Subagent System README](docs/subagent/README.md) for the full architecture_
 
 ### 4. 🌐 Multi-Channel Access
 - **Robyn Backend** ([server/](server/)): async HTTP API + WebSocket (`/sessions/ws`) on `127.0.0.1:8080`, serving uploaded media under `/static`, `/images`, `/audio`, `/video`
@@ -233,7 +233,7 @@ Each major subsystem has its own detailed README:
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
 | **Context Engine** | Short-term session message memory (MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
+| **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
 | **Desktop Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client/README.md) · [ZH](client/README.zh.md) |
