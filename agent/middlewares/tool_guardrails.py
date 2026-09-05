@@ -47,6 +47,11 @@ class ToolCallGuardrailConfig:
     same_tool_failure_halt_after: int = 8
     no_progress_warn_after: int = 2
     no_progress_block_after: int = 5
+    ping_pong_warn_after: int = 4
+    ping_pong_block_after: int = 6
+    arg_churn_min_calls_per_variant: int = 3
+    arg_churn_warn_after: int = 3
+    arg_churn_block_after: int = 5
 
 
 @dataclass
@@ -65,9 +70,20 @@ class _TurnGuardrailState:
     no_progress_counts: dict[str, int] = field(default_factory=dict)
     blocked_tools: set[str] = field(default_factory=set)
     halt_decision: GuardrailAction | None = None
+    ping_pong_counts: dict[str, int] = field(default_factory=dict)
+    arg_churn_variants: dict[tuple[str, str], int] = field(default_factory=dict)
+    arg_churn_last_result: str = ""
+    last_pathology: tuple[str, int, int] | None = None
 
 
 _GUARDRAIL_STATE_KEY = "tool_guardrail_state"
+
+_ACTION_RANK = {
+    GuardrailAction.ALLOW: 0,
+    GuardrailAction.WARN: 1,
+    GuardrailAction.BLOCK: 2,
+    GuardrailAction.HALT: 3,
+}
 
 
 class ToolGuardrails(AgentMiddleware):
@@ -125,6 +141,8 @@ class ToolGuardrails(AgentMiddleware):
         is_error: bool,
         is_idempotent: bool,
     ) -> GuardrailAction:
+        gs.last_pathology = None
+
         if gs.halt_decision is not None:
             return GuardrailAction.HALT
 
@@ -192,10 +210,98 @@ class ToolGuardrails(AgentMiddleware):
                             action = GuardrailAction.WARN
                         break
 
+        if action in (GuardrailAction.ALLOW, GuardrailAction.WARN):
+            action = self._evaluate_pair_pathologies(
+                gs, tool_name, args_hash, result_hash, is_error, action
+            )
+
         if action == GuardrailAction.HALT:
             gs.halt_decision = action
         elif action == GuardrailAction.BLOCK:
             gs.blocked_tools.add(tool_name)
+
+        return action
+
+    def _chain_action(self, count: int, warn_after: int, block_after: int) -> GuardrailAction | None:
+        """Standard escalation chain; None when no threshold is crossed."""
+        if self.config.hard_stop_enabled and count >= block_after:
+            return GuardrailAction.HALT
+        if count >= block_after:
+            return GuardrailAction.BLOCK
+        if self.config.warnings_enabled and count >= warn_after:
+            return GuardrailAction.WARN
+        return None
+
+    def _evaluate_pair_pathologies(
+        self,
+        gs: _TurnGuardrailState,
+        tool_name: str,
+        args_hash: str,
+        result_hash: str | None,
+        is_error: bool,
+        action: GuardrailAction,
+    ) -> GuardrailAction:
+        """Steps 4-5: ping-pong and argument-churn detection (escalation-only).
+
+        Only invoked when the legacy three pathologies produced ALLOW/WARN; the
+        returned action may only move UP the chain (ALLOW < WARN < BLOCK < HALT).
+        """
+        # --- step 4: ping-pong (current AND previous record both without progress)
+        if len(gs.records) >= 2:
+            prev_rec = gs.records[-2]
+            curr_no = result_hash is not None
+            prev_no = prev_rec.result_hash is not None
+            pair_key = ",".join(sorted([prev_rec.name, tool_name]))
+            if curr_no and prev_no:
+                gs.ping_pong_counts[pair_key] = gs.ping_pong_counts.get(pair_key, 0) + 1
+                pp_count = gs.ping_pong_counts[pair_key]
+                pp_action = self._chain_action(
+                    pp_count,
+                    self.config.ping_pong_warn_after,
+                    self.config.ping_pong_block_after,
+                )
+                if pp_action is not None:
+                    gs.last_pathology = ("ping_pong", pp_count, self.config.ping_pong_block_after)
+                    if _ACTION_RANK[pp_action] > _ACTION_RANK[action]:
+                        action = pp_action
+            else:
+                # Pair broken (error or real progress): every accumulating pair
+                # streak restarts from zero, not just the current pair key.
+                for broken_key in gs.ping_pong_counts:
+                    gs.ping_pong_counts[broken_key] = 0
+                gs.ping_pong_counts[pair_key] = 0
+
+        # --- step 5: arg-churn (same tool churning through argument variants)
+        if is_error:
+            return action
+
+        if result_hash is not None:
+            variant_key = (tool_name, args_hash)
+            gs.arg_churn_variants[variant_key] = gs.arg_churn_variants.get(variant_key, 0) + 1
+            gs.arg_churn_last_result = result_hash
+            if action in (GuardrailAction.ALLOW, GuardrailAction.WARN):
+                distinct = sum(
+                    1
+                    for c in gs.arg_churn_variants.values()
+                    if c >= self.config.arg_churn_min_calls_per_variant
+                )
+                ac_action = self._chain_action(
+                    distinct,
+                    self.config.arg_churn_warn_after,
+                    self.config.arg_churn_block_after,
+                )
+                if ac_action is not None:
+                    gs.last_pathology = (
+                        "argument_churn",
+                        distinct,
+                        self.config.arg_churn_block_after,
+                    )
+                    if _ACTION_RANK[ac_action] > _ACTION_RANK[action]:
+                        action = ac_action
+        else:
+            # non-idempotent success = real progress → churn state fully reset
+            gs.arg_churn_variants.clear()
+            gs.arg_churn_last_result = ""
 
         return action
 
@@ -274,7 +380,13 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.HALT:
             logger.error("ToolGuardrails HALT: session={} tool={}", session_id, tool_name)
-            halt_msg = self._halt_message(tool_name, "excessive repetition")
+            if gs.last_pathology is not None:
+                kind = gs.last_pathology[0]
+                halt_msg = self._halt_message(
+                    tool_name, "ping-pong loop" if kind == "ping_pong" else "argument churn"
+                )
+            else:
+                halt_msg = self._halt_message(tool_name, "excessive repetition")
             return ToolMessage(
                 content=halt_msg,
                 tool_call_id=request.tool_call["id"],
@@ -284,7 +396,10 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.BLOCK:
             logger.error("ToolGuardrails BLOCK: session={} tool={}", session_id, tool_name)
-            if is_error:
+            if gs.last_pathology is not None:
+                kind, count, limit = gs.last_pathology
+                pathology = "ping-pong loop" if kind == "ping_pong" else "argument churn"
+            elif is_error:
                 exact_key = f"{tool_name}:{args_hash}"
                 exact_count = gs.exact_failure_counts.get(exact_key, 0)
                 same_count = gs.same_tool_failure_counts.get(tool_name, 0)
@@ -311,7 +426,11 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.WARN:
             logger.error("ToolGuardrails WARN: session={} tool={}", session_id, tool_name)
-            if is_error:
+            if gs.last_pathology is not None:
+                kind, count, limit = gs.last_pathology
+                pathology = "ping-pong loop" if kind == "ping_pong" else "argument churn"
+                warning = self._warning_message(tool_name, pathology, count, limit)
+            elif is_error:
                 exact_key = f"{tool_name}:{args_hash}"
                 exact_count = gs.exact_failure_counts.get(exact_key, 0)
                 same_count = gs.same_tool_failure_counts.get(tool_name, 0)
