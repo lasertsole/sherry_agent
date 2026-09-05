@@ -325,6 +325,64 @@ async def enable_cron_job_handler(request):
     return _ok({"success": True, "job": _job_to_dict(job)})
 
 
+@app.post("/cron/failure-state")
+async def get_failure_state_handler(request):
+    """Inspect a job's failure-tracking (breaker) state.
+
+    Body: {"id": str (required)}.
+    Returns the failure-state dict from `cron_service.get_failure_state`.
+    When the job exists but has never failed, a zeroed view is returned
+    instead of a 404 — friendlier for polling clients.
+    """
+    body = _read_body(request)
+    if body is None:
+        return _bad_request("Invalid JSON body")
+
+    job_id = body.get("id")
+    if not job_id or not isinstance(job_id, str) or not job_id.strip():
+        return _bad_request("Missing or invalid 'id'")
+
+    if cron_service.get_job(job_id) is None:
+        return _not_found(f"Cron job '{job_id}' not found")
+
+    state = cron_service.get_failure_state(job_id)
+    if state is None:
+        state = {
+            "consecutive_failures": 0,
+            "last_error": None,
+            "degraded_since": None,
+            "backoff_ms": 0,
+        }
+
+    logger.info(
+        f"Cron failure state: id={job_id}, consecutive_failures={state.get('consecutive_failures')}"
+    )
+    return _ok({"success": True, "job_id": job_id, **state})
+
+
+@app.post("/cron/reset-failures")
+async def reset_failures_handler(request):
+    """Reset a job's failure-tracking (breaker) state.
+
+    Body: {"id": str (required)}. Mirrors `cron_service.reset_failures`:
+    False means the job does not exist (404); True resets the breaker,
+    re-enabling it when the breaker itself had disabled it.
+    """
+    body = _read_body(request)
+    if body is None:
+        return _bad_request("Invalid JSON body")
+
+    job_id = body.get("id")
+    if not job_id or not isinstance(job_id, str) or not job_id.strip():
+        return _bad_request("Missing or invalid 'id'")
+
+    if not cron_service.reset_failures(job_id):
+        return _not_found(f"Cron job '{job_id}' not found")
+
+    logger.info(f"Cron failures reset: id={job_id}")
+    return _ok({"success": True, "reset": True, "job_id": job_id})
+
+
 @app.delete("/cron")
 async def delete_cron_job_handler(request):
     """Remove a cron job.
