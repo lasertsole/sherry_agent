@@ -52,6 +52,8 @@ class ToolCallGuardrailConfig:
     arg_churn_min_calls_per_variant: int = 3
     arg_churn_warn_after: int = 3
     arg_churn_block_after: int = 5
+    recovery_mode_enabled: bool = True
+    recovery_max_violations: int = 1
 
 
 @dataclass
@@ -74,6 +76,8 @@ class _TurnGuardrailState:
     arg_churn_variants: dict[tuple[str, str], int] = field(default_factory=dict)
     arg_churn_last_result: str = ""
     last_pathology: tuple[str, int, int] | None = None
+    recovery_mode: bool = False
+    recovery_violation_count: int = 0
 
 
 _GUARDRAIL_STATE_KEY = "tool_guardrail_state"
@@ -214,6 +218,16 @@ class ToolGuardrails(AgentMiddleware):
             action = self._evaluate_pair_pathologies(
                 gs, tool_name, args_hash, result_hash, is_error, action
             )
+
+        if action == GuardrailAction.BLOCK and self.config.recovery_mode_enabled:
+            # Recovery mode: the first BLOCK enters recovery; further BLOCKs count
+            # as violations and escalate to HALT once the limit is exceeded.
+            if not gs.recovery_mode:
+                gs.recovery_mode = True
+            else:
+                gs.recovery_violation_count += 1
+                if gs.recovery_violation_count > self.config.recovery_max_violations:
+                    action = GuardrailAction.HALT
 
         if action == GuardrailAction.HALT:
             gs.halt_decision = action
@@ -380,7 +394,9 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.HALT:
             logger.error("ToolGuardrails HALT: session={} tool={}", session_id, tool_name)
-            if gs.last_pathology is not None:
+            if gs.recovery_mode:
+                halt_msg = self._halt_message(tool_name, "recovery mode violation limit exceeded")
+            elif gs.last_pathology is not None:
                 kind = gs.last_pathology[0]
                 halt_msg = self._halt_message(
                     tool_name, "ping-pong loop" if kind == "ping_pong" else "argument churn"
@@ -399,6 +415,17 @@ class ToolGuardrails(AgentMiddleware):
             if gs.last_pathology is not None:
                 kind, count, limit = gs.last_pathology
                 pathology = "ping-pong loop" if kind == "ping_pong" else "argument churn"
+            elif gs.recovery_mode:
+                return ToolMessage(
+                    content=(
+                        f"⚠️ Tool [{tool_name}] blocked; recovery mode active — retry allowed "
+                        f"once (violations: {gs.recovery_violation_count}/"
+                        f"{self.config.recovery_max_violations})."
+                    ),
+                    tool_call_id=request.tool_call["id"],
+                    name=tool_name,
+                    status="error",
+                )
             elif is_error:
                 exact_key = f"{tool_name}:{args_hash}"
                 exact_count = gs.exact_failure_counts.get(exact_key, 0)
@@ -488,6 +515,16 @@ class ToolGuardrails(AgentMiddleware):
                 name=tool_name,
                 status="error",
             )
+
+        if (
+            self.config.recovery_mode_enabled
+            and gs.recovery_mode
+            and tool_name in gs.blocked_tools
+        ):
+            # Recovery mode: release the blocked tool once so the retry goes
+            # through full evaluation — release lives ONLY here (precheck).
+            gs.blocked_tools.discard(tool_name)
+            return None
 
         if tool_name in gs.blocked_tools:
             return ToolMessage(

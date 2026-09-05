@@ -237,3 +237,115 @@ def test_wrap_message_routing_arg_churn_block():
     gs = mw._get_state(sess)
     assert gs.last_pathology == ("argument_churn", 5, 5)
     assert "T" in gs.blocked_tools
+
+
+# --------------------------------------------------------- new: recovery mode (Task 6)
+def _mkreq(sess, name, args, call_id):
+    return ToolCallRequest(
+        tool_call={"name": name, "args": args, "id": call_id},
+        tool=IDEMPOTENT_TOOL,
+        state={"session_id": sess},
+        runtime=None,
+    )
+
+
+def _drive_to_first_block(mw, sess, tool="T", args=None, content="same"):
+    """5 identical idempotent successes → no-progress BLOCK on the 5th call."""
+    args = args if args is not None else {"a": 1}
+    outs = []
+    for i in range(1, 6):
+        outs.append(wrap_call(mw, sess, tool, args, content, f"c{i}"))
+    return outs
+
+
+def test_recovery_first_block_enters_mode_and_precheck_releases():
+    mw = make_mw()
+    sess = "sess-rec-unblock"
+    outs = _drive_to_first_block(mw, sess)
+    assert outs[0].content == "same"  # sanity: call 1 passes through untouched
+    gs = mw._get_state(sess)
+    assert gs.recovery_mode is True  # first BLOCK entered recovery
+    assert "T" in gs.blocked_tools
+    assert gs.recovery_violation_count == 0
+    assert "recovery mode active" in outs[-1].content  # wrap-level recovery BLOCK message
+    assert "⚠" in outs[-1].content
+    # precheck releases the blocked tool (returns None) and removes it from the set
+    assert mw._wrap_tool_call_precheck(_mkreq(sess, "T", {"a": 1}, "c10")) is None
+    gs = mw._get_state(sess)
+    assert "T" not in gs.blocked_tools
+
+
+def test_recovery_violations_block_then_halt():
+    mw = make_mw()
+    sess = "sess-rec-halt"
+    _drive_to_first_block(mw, sess)
+    gs = mw._get_state(sess)
+    assert gs.recovery_mode is True
+    # released retry BLOCKs again → violation 1/1, still BLOCK (NOT HALT, max=1), re-blocked
+    assert mw._wrap_tool_call_precheck(_mkreq(sess, "T", {"a": 1}, "c6")) is None
+    out6 = wrap_call(mw, sess, "T", {"a": 1}, "same", "c6")
+    gs = mw._get_state(sess)
+    assert gs.recovery_violation_count == 1
+    assert gs.halt_decision is None
+    assert "T" in gs.blocked_tools  # re-blocked
+    assert out6.status == "error"
+    assert "recovery mode active" in out6.content
+    # released again → 3rd BLOCK exceeds recovery_max_violations=1 → HALT (recovery message)
+    assert mw._wrap_tool_call_precheck(_mkreq(sess, "T", {"a": 1}, "c7")) is None
+    out7 = wrap_call(mw, sess, "T", {"a": 1}, "same", "c7")
+    gs = mw._get_state(sess)
+    assert gs.recovery_violation_count == 2
+    assert gs.halt_decision == HALT
+    assert "recovery mode violation limit exceeded" in out7.content
+    assert "🔴" in out7.content
+
+
+def test_recovery_disabled_legacy_behavior():
+    mw = make_mw(recovery_mode_enabled=False)
+    sess = "sess-rec-off"
+    outs = _drive_to_first_block(mw, sess)
+    gs = mw._get_state(sess)
+    assert gs.recovery_mode is False  # never enters recovery
+    assert gs.recovery_violation_count == 0
+    assert "T" in gs.blocked_tools
+    assert "recovery mode active" not in outs[-1].content  # legacy block text preserved
+    assert "🚫" in outs[-1].content
+    # legacy precheck short-circuit: "previously blocked" message, NO release
+    blocked = mw._wrap_tool_call_precheck(_mkreq(sess, "T", {"a": 1}, "c10"))
+    assert blocked is not None
+    assert blocked.status == "error"
+    assert "previously blocked" in blocked.content
+    gs = mw._get_state(sess)
+    assert "T" in gs.blocked_tools  # tool stays blocked — no release
+
+
+def test_recovery_released_call_participates_in_pathology_counting():
+    mw = make_mw()
+    sess = "sess-rec-count"
+    _drive_to_first_block(mw, sess)
+    gs = mw._get_state(sess)
+    np_key = f"T:{mod.ToolGuardrails._result_hash('same')}"
+    assert gs.no_progress_counts[np_key] == 5
+    # release + retry: counter keeps incrementing — released call gets FULL evaluation
+    assert mw._wrap_tool_call_precheck(_mkreq(sess, "T", {"a": 1}, "c6")) is None
+    out6 = wrap_call(mw, sess, "T", {"a": 1}, "same", "c6")
+    gs = mw._get_state(sess)
+    assert gs.no_progress_counts[np_key] == 6  # no suppression anywhere
+    assert len(gs.records) == 6
+    assert out6.status == "error"  # legitimately BLOCKed again by the counter
+
+
+def test_recovery_state_resets_per_turn():
+    mw = make_mw()
+    sess = "sess-rec-reset"
+    _drive_to_first_block(mw, sess)
+    gs = mw._get_state(sess)
+    assert gs.recovery_mode is True
+    assert gs.blocked_tools
+    # before_agent-equivalent per-turn reset (production hook: ToolGuardrails.before_agent)
+    mw.before_agent({"session_id": sess}, None)
+    fresh = mw._get_state(sess)
+    assert fresh is not gs
+    assert fresh.recovery_mode is False
+    assert fresh.recovery_violation_count == 0
+    assert fresh.blocked_tools == set()
