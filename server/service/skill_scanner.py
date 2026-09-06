@@ -72,13 +72,13 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from server.utils.atomic_io import atomic_write_text
 
 # Sentinel used by the CLI/Python backends to signal "scanner could not run".
 _UNSET = object()
@@ -662,9 +662,10 @@ def _store_scan_cache(key: str, result: ScanResult) -> None:
     DO_NOT_INSTALL verdicts (they carry SCANNED status; the rc==1-forced
     hard-gate verdict is post-processed before storage and MUST survive warm
     starts). UNAVAILABLE results are never stored. The file is written
-    atomically (tempfile in the same dir + ``os.replace``, mirroring
-    :func:`pub_func.atomic_replace`); any error is swallowed so the cache can
-    never slow down or break the real scan.
+    atomically (:func:`server.utils.atomic_io.atomic_write_text` — tempfile in
+    the same dir + ``os.replace``, mirroring :func:`pub_func.atomic_replace`);
+    any error is swallowed so the cache can never slow down or break the real
+    scan.
     """
     if result.status is not ScanStatus.SCANNED:
         return
@@ -685,17 +686,7 @@ def _store_scan_cache(key: str, result: ScanResult) -> None:
             "result": result.to_dict(),
             "cached_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
-        fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False)
-            os.replace(tmp_name, path)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        atomic_write_text(path, json.dumps(data, ensure_ascii=False))
     except Exception as exc:
         logger.warning("SkillSpector scan cache write failed (ignoring): {}", exc)
 

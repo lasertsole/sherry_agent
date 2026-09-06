@@ -287,6 +287,29 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     _db.commit()
 
 
+def _decode_json_columns(row: dict) -> dict:
+    """Decode a message row's JSON-encoded cells in place and return it (audit 3.1.5).
+
+    Shared by :func:`get_turns_by_turn_num_scope` and
+    :func:`get_history_by_turn_page`: decodes the ``content``/``tool_calls``/
+    ``images``/``audios``/``videos`` columns back into Python objects and pops
+    the internal ordering column ``ts_ms``.
+    """
+    # Internal ordering column — not part of the client-facing shape.
+    row.pop("ts_ms", None)
+    if isinstance(row["content"], str):
+        row["content"] = json.loads(row["content"])
+    if isinstance(row["tool_calls"], str):
+        row["tool_calls"] = json.loads(row["tool_calls"])
+    if isinstance(row["images"], str):
+        row["images"] = json.loads(row["images"])
+    if isinstance(row["audios"], str):
+        row["audios"] = json.loads(row["audios"])
+    if isinstance(row["videos"], str):
+        row["videos"] = json.loads(row["videos"])
+    return row
+
+
 def get_turns_by_turn_num_scope(
     session_id: str, target_turn_num: int, half_scope: int = 5
 ) -> list[dict]:
@@ -325,22 +348,7 @@ def get_turns_by_turn_num_scope(
             return []
 
         # Decode JSON-encoded content and tool_calls back into Python objects.
-        result: list[dict] = []
-        for row in rows:
-            row = dict(row)
-            # Internal ordering column — not part of the client-facing shape.
-            row.pop("ts_ms", None)
-            if isinstance(row["content"], str):
-                row["content"] = json.loads(row["content"])
-            if isinstance(row["tool_calls"], str):
-                row["tool_calls"] = json.loads(row["tool_calls"])
-            if isinstance(row["images"], str):
-                row["images"] = json.loads(row["images"])
-            if isinstance(row["audios"], str):
-                row["audios"] = json.loads(row["audios"])
-            if isinstance(row["videos"], str):
-                row["videos"] = json.loads(row["videos"])
-            result.append(row)
+        result: list[dict] = [_decode_json_columns(dict(row)) for row in rows]
 
         return result
 
@@ -396,22 +404,7 @@ def get_history_by_turn_page(
             return []
 
         # Decode JSON-encoded content and tool_calls back into Python objects.
-        result: list[dict] = []
-        for row in rows:
-            row = dict(row)
-            # Internal ordering column — not part of the client-facing shape.
-            row.pop("ts_ms", None)
-            if isinstance(row["content"], str):
-                row["content"] = json.loads(row["content"])
-            if isinstance(row["tool_calls"], str):
-                row["tool_calls"] = json.loads(row["tool_calls"])
-            if isinstance(row["images"], str):
-                row["images"] = json.loads(row["images"])
-            if isinstance(row["audios"], str):
-                row["audios"] = json.loads(row["audios"])
-            if isinstance(row["videos"], str):
-                row["videos"] = json.loads(row["videos"])
-            result.append(row)
+        result: list[dict] = [_decode_json_columns(dict(row)) for row in rows]
 
         return result
 

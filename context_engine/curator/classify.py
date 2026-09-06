@@ -4,15 +4,16 @@ from typing import Any
 from context_engine.curator.helpers import _needle_in_path_component
 
 
-def _classify_removed_skills(
-    removed: list[str],
-    added: list[str],
-    after_names: set[str],
-    tool_calls: list[dict[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    consolidated: list[dict[str, Any]] = []
-    pruned: list[dict[str, Any]] = []
+def _parse_skill_manage_args(
+    tool_calls: list[dict[str, Any]] | None, *, keep_raw_on_error: bool = False
+) -> list[dict[str, Any]]:
+    """Parse the ``arguments`` of every ``skill_manage`` tool call (audit 3.1.6).
 
+    Shared by :func:`_classify_removed_skills` (which keeps unparseable string
+    payloads as ``{"_raw": ...}`` so the raw text stays searchable as
+    consolidation evidence) and :func:`_extract_absorbed_into_declarations`
+    (which skips them).
+    """
     parsed_calls: list[dict[str, Any]] = []
     for tc in tool_calls or []:
         if not isinstance(tc, dict) or tc.get("name") != "skill_manage":
@@ -25,9 +26,27 @@ def _classify_removed_skills(
             try:
                 args = json.loads(raw)
             except Exception:
-                args = {"_raw": raw}
+                if keep_raw_on_error:
+                    args = {"_raw": raw}
+                else:
+                    continue
         if isinstance(args, dict):
             parsed_calls.append(args)
+    return parsed_calls
+
+
+def _classify_removed_skills(
+    removed: list[str],
+    added: list[str],
+    after_names: set[str],
+    tool_calls: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    consolidated: list[dict[str, Any]] = []
+    pruned: list[dict[str, Any]] = []
+
+    parsed_calls: list[dict[str, Any]] = _parse_skill_manage_args(
+        tool_calls, keep_raw_on_error=True
+    )
 
     destinations = set(after_names) | set(added or [])
 
@@ -125,19 +144,8 @@ def _extract_absorbed_into_declarations(
     tool_calls: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
-    for tc in tool_calls or []:
-        if not isinstance(tc, dict) or tc.get("name") != "skill_manage":
-            continue
-        raw = tc.get("arguments") or ""
-        args: dict[str, Any] = {}
-        if isinstance(raw, dict):
-            args = raw
-        elif isinstance(raw, str):
-            try:
-                args = json.loads(raw)
-            except Exception:
-                continue
-        if not isinstance(args, dict) or args.get("action") != "delete":
+    for args in _parse_skill_manage_args(tool_calls):
+        if args.get("action") != "delete":
             continue
         name = args.get("name")
         if not isinstance(name, str) or not name.strip() or "absorbed_into" not in args:

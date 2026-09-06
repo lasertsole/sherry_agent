@@ -1,4 +1,3 @@
-import time
 import json
 import asyncio
 from typing import Any, AsyncGenerator
@@ -9,6 +8,8 @@ from agent.tools.subagent.registry.session_state import set_hitl_pending
 from server.service import async_generate, get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs
 from server.service import turn_runner
+from server.service.stream_driver import StreamDriver
+from server.utils.ws_helpers import send_ws_json
 from type.message import MultiModalMessage
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
@@ -31,11 +32,12 @@ turn_runner.register_default_ws_executor()
 
 
 async def _send_ws(websocket: WebSocketAdapter, payload: dict[str, Any]) -> None:
-    """Best-effort send; swallows send failures (socket may be closing)."""
-    try:
-        await websocket.send_text(json.dumps(payload))
-    except Exception as e:
-        logger.warning(f"Agent WS send failed: {e}")
+    """Best-effort send; swallows send failures (socket may be closing).
+
+    Audit 2.1.2: delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
+    (original log wording preserved via ``warn_prefix``).
+    """
+    await send_ws_json(websocket, payload, warn_prefix="Agent WS send failed")
 
 
 async def _run_stream(
@@ -54,88 +56,64 @@ async def _run_stream(
     Task 7: ``claim_row_id`` (when set) marks this turn's queue row DELIVERED
     in the finally block; the TurnRunner then drains any rows queued while the
     turn was running. Resume turns pass nothing — they own no queue row.
-    """
-    start_time = time.time()
-    meta: dict[str, Any] = {}
-    try:
-        async for chunk in source:
-            if chunk.get("type") == "meta":
-                # Model metadata travels to the client on the done frame, not
-                # as a regular chunk.
-                meta = {k: v for k, v in chunk.items() if k != "type"}
-                continue
-            await _send_ws(
-                websocket,
-                {
-                    "event": "chunk",
-                    "session_id": session_id,
-                    **chunk,
-                },
-            )
 
-        # After the stream ends, check if the agent paused for HITL approval.
-        interrupt_data = await get_pending_interrupt(session_id)
-        if interrupt_data:
-            logger.info(
-                f"Agent WS HITL interrupt detected: session_id={session_id}, "
-                f"tool={interrupt_data.get('tool_name')}"
-            )
-            await _send_ws(
-                websocket,
-                {
-                    "event": "hitl_request",
-                    "session_id": session_id,
-                    "content": interrupt_data,
-                },
-            )
-            set_hitl_pending(session_id, True)
-        else:
-            await _send_ws(
-                websocket,
-                {
-                    "event": "done",
-                    "session_id": session_id,
-                    "content": "",
-                    "model_name": meta.get("model_name", ""),
-                    "input_tokens": meta.get("input_tokens", 0),
-                    "output_tokens": meta.get("output_tokens", 0),
-                },
-            )
-    except asyncio.CancelledError:
-        # asyncio.Task.cancel() landed; the generator already yields
-        # "Request cancelled" (left inside the stream) and resets answering.
-        logger.info(f"Agent WS {stream_kind} cancelled: session_id={session_id}")
-        await _send_ws(
-            websocket,
-            {
-                "event": "stopped",
-                "session_id": session_id,
-                "content": "Request cancelled",
-            },
+    Audit 2.1.3: the loop itself is the shared :class:`StreamDriver` template;
+    ``_AgentWsStreamDriver`` carries this site's knobs.
+    """
+    await _AgentWsStreamDriver(session_id, websocket, claim_row_id, stream_kind).drive(source)
+
+
+class _AgentWsStreamDriver(StreamDriver):
+    """Driver for the agent WS handler's turns (resume turns via _run_stream).
+
+    ``on_finish`` releases the session's task slot (when owned by this task)
+    and marks the turn's queue row terminal (when it owns one), kicking the
+    TurnRunner drain.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        websocket: WebSocketAdapter,
+        claim_row_id: str | None,
+        stream_kind: str,
+    ) -> None:
+        super().__init__(session_id, websocket)
+        self.claim_row_id = claim_row_id
+        self.stream_kind = stream_kind
+
+    async def send_frame(self, payload: dict[str, Any]) -> None:
+        await _send_ws(self.websocket, payload)
+
+    async def check_interrupt(self) -> dict[str, Any] | None:
+        return await get_pending_interrupt(self.session_id)
+
+    def apply_hitl_pending(self) -> None:
+        set_hitl_pending(self.session_id, True)
+
+    def log_interrupt(self, interrupt: dict[str, Any]) -> None:
+        logger.info(
+            f"Agent WS HITL interrupt detected: session_id={self.session_id}, "
+            f"tool={interrupt.get('tool_name')}"
         )
-        raise
-    except Exception as e:
-        elapsed = time.time() - start_time
+
+    def log_cancelled(self) -> None:
+        logger.info(f"Agent WS {self.stream_kind} cancelled: session_id={self.session_id}")
+
+    def log_error(self, exc: Exception, elapsed: float) -> None:
         logger.error(
-            f"Agent WS {stream_kind} failed: session_id={session_id}, "
-            f"duration={elapsed:.2f}s, error={str(e)}"
+            f"Agent WS {self.stream_kind} failed: session_id={self.session_id}, "
+            f"duration={elapsed:.2f}s, error={str(exc)}"
         )
-        await _send_ws(
-            websocket,
-            {
-                "event": "error",
-                "session_id": session_id,
-                "content": str(e),
-            },
-        )
-    finally:
+
+    async def on_finish(self) -> None:
         # Gracefully release the session's task slot if this is the current one.
-        current = _active_tasks.get(session_id)
+        current = _active_tasks.get(self.session_id)
         if current is asyncio.current_task():
-            _active_tasks.pop(session_id, None)
+            _active_tasks.pop(self.session_id, None)
         # Task 7: the turn's row is marked terminal (when it owns one) and the
         # TurnRunner drains whatever rows were queued while the turn ran.
-        await turn_runner.on_turn_finished(session_id, claim_row_id)
+        await turn_runner.on_turn_finished(self.session_id, self.claim_row_id)
 
 
 async def _cancel_session(session_id: str) -> None:

@@ -39,6 +39,8 @@ from typing import Any
 from loguru import logger
 
 from server.queue.user_input_queue import UserInputQueueStatus
+from server.service.stream_driver import StreamDriver
+from server.utils.ws_helpers import send_ws_json
 from type.message import MultiModalMessage
 
 # ---------------------------------------------------------------------------
@@ -127,13 +129,12 @@ def register_default_ws_executor() -> None:
 
 
 async def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
-    """Send a JSON frame, tolerating a missing socket (frames are skippable)."""
-    if websocket is None:
-        return
-    try:
-        await websocket.send_text(json.dumps(payload))
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"TurnRunner: ws send failed: {e}")
+    """Send a JSON frame, tolerating a missing socket (frames are skippable).
+
+    Audit 2.1.2: delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
+    (original log wording preserved via ``warn_prefix``).
+    """
+    await send_ws_json(websocket, payload, warn_prefix="TurnRunner: ws send failed")
 
 
 def _parse_payload_text(payload: str) -> str:
@@ -337,66 +338,45 @@ class WsTurnExecutor:
         return claim_row_id
 
     async def _drive(self, session_id: str, message: str, websocket: Any) -> None:
-        """Drive one generation, forwarding frames (runs as the child task)."""
+        """Drive one generation, forwarding frames (runs as the child task).
+
+        Audit 2.1.3: the loop itself is the shared :class:`StreamDriver`
+        template; ``_WsTurnStreamDriver`` carries this site's knobs. Cleanup
+        lives in :meth:`execute`'s finally, so ``on_finish`` is a no-op here.
+        """
         active = _get_active_tasks()
         active[session_id] = asyncio.current_task()
-        meta: dict[str, Any] = {}
-        try:
-            async for chunk in async_generate(session_id, MultiModalMessage(text=message)):
-                if not isinstance(chunk, dict):
-                    continue
-                if chunk.get("type") == "meta":
-                    meta = {k: v for k, v in chunk.items() if k != "type"}
-                    continue
-                await _send_ws(
-                    websocket, {"event": "chunk", "session_id": session_id, **chunk}
-                )
+        await _WsTurnStreamDriver(session_id, websocket).drive(
+            async_generate(session_id, MultiModalMessage(text=message))
+        )
 
-            interrupt = await get_pending_interrupt(session_id)
-            if interrupt:
-                logger.info(
-                    f"TurnRunner: HITL interrupt for session {session_id}, "
-                    f"tool={interrupt.get('tool_name')}"
-                )
-                await _send_ws(
-                    websocket,
-                    {
-                        "event": "hitl_request",
-                        "session_id": session_id,
-                        "content": interrupt,
-                    },
-                )
-                set_hitl_pending(session_id, True)
-            else:
-                await _send_ws(
-                    websocket,
-                    {
-                        "event": "done",
-                        "session_id": session_id,
-                        "content": "",
-                        "model_name": meta.get("model_name", ""),
-                        "input_tokens": meta.get("input_tokens", 0),
-                        "output_tokens": meta.get("output_tokens", 0),
-                    },
-                )
-        except asyncio.CancelledError:
-            logger.info(f"TurnRunner: generation cancelled: session_id={session_id}")
-            await _send_ws(
-                websocket,
-                {
-                    "event": "stopped",
-                    "session_id": session_id,
-                    "content": "Request cancelled",
-                },
-            )
-            raise
-        except Exception as e:
-            # The error frame is surfaced here; the row is still delivered so
-            # the drain never double-sends an error for the same row.
-            logger.warning(
-                f"TurnRunner: generation failed: session_id={session_id}, error={e}"
-            )
-            await _send_ws(
-                websocket,
-                {"event": "error", "session_id": session_id, "content": str(e)},
-            )
+
+class _WsTurnStreamDriver(StreamDriver):
+    """Driver for the queue executor's generation turns (WsTurnExecutor._drive).
+
+    The error frame is surfaced here; the row is still delivered so the drain
+    never double-sends an error for the same row.
+    """
+
+    async def send_frame(self, payload: dict[str, Any]) -> None:
+        await _send_ws(self.websocket, payload)
+
+    async def check_interrupt(self) -> dict[str, Any] | None:
+        return await get_pending_interrupt(self.session_id)
+
+    def apply_hitl_pending(self) -> None:
+        set_hitl_pending(self.session_id, True)
+
+    def log_interrupt(self, interrupt: dict[str, Any]) -> None:
+        logger.info(
+            f"TurnRunner: HITL interrupt for session {self.session_id}, "
+            f"tool={interrupt.get('tool_name')}"
+        )
+
+    def log_cancelled(self) -> None:
+        logger.info(f"TurnRunner: generation cancelled: session_id={self.session_id}")
+
+    def log_error(self, exc: Exception, elapsed: float) -> None:
+        logger.warning(
+            f"TurnRunner: generation failed: session_id={self.session_id}, error={exc}"
+        )

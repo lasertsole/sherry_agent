@@ -10,35 +10,11 @@ from context_engine.curator.constants import (
     PINNED_FILE,
     STATE_ACTIVE,
 )
-from context_engine.curator.helpers import _ensure_dir, _read_skill_description
+from context_engine.curator.helpers import _ensure_dir, _read_skill_description, _skill_dir
 
 
 def _skill_record_path(name: str) -> Path:
     return USAGE_DIR / f"{name}.json"
-
-
-def _skill_dir(name: str) -> Path | None:
-    """Resolve a skill directory by its leaf name, recursing into category subdirs.
-
-    Skills under ``skills/auto/`` use a two-level layout::
-
-        skills/auto/<category>/<skill>/SKILL.md
-
-    The name is the leaf dir (e.g. ``docker``).  A flat ``AUTO_SKILLS_DIR / name``
-    lookup misses nested skills, so we walk ``**/SKILL.md`` and match by parent dir
-    name (mirrors ``skill_manage._find_skill``).
-    """
-    from context_engine.curator.constants import AUTO_SKILLS_DIR
-
-    candidate = AUTO_SKILLS_DIR / name
-    if candidate.is_dir() and (candidate / "SKILL.md").exists():
-        return candidate
-    if not AUTO_SKILLS_DIR.exists():
-        return None
-    for skill_md in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
-        if skill_md.parent.name == name:
-            return skill_md.parent
-    return None
 
 
 def _default_record(name: str) -> dict[str, Any]:

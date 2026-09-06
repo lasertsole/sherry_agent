@@ -1,6 +1,6 @@
 import json
-from typing import Any
 from pathlib import Path
+from typing import Any
 from loguru import logger
 from config import PLUGINS_PATH
 from config.path import HEARTBEAT_PATH
@@ -15,6 +15,7 @@ from runtime import relation_register
 from workspace.prompt_builder import build_system_prompt
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
 from agent.tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
+from server.service.file_store import FileStore
 from skills.builtin.core.heartbeat.scripts import move_task_to_completed, list_active_tasks
 
 tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
@@ -201,26 +202,33 @@ def heartbeat_content_length(content: str) -> int:
     return total
 
 
+class _HeartbeatFileStore(FileStore):
+    """The single heartbeat file (audit 2.1.7 template).
+
+    The length budget counts task text only (``heartbeat_content_length``),
+    not the raw content length.
+    """
+
+    def __init__(self) -> None:
+        self.file_names = [HEARTBEAT_FILE_NAME]
+        self.max_content_length = HEARTBEAT_MAX_CONTENT_LENGTH
+        self.error_noun = "heartbeat file"
+
+    def _content_length(self, content: str) -> int:
+        return heartbeat_content_length(content)
+
+    def _file_path(self, file_name: str) -> Path:
+        return HEARTBEAT_PATH
+
+
+_heartbeat_store = _HeartbeatFileStore()
+
+
 def read_heartbeat_file() -> dict[str, str]:
     """Read the heartbeat file (workspace/HEARTBEAT.md)."""
-    if HEARTBEAT_PATH.exists():
-        with open(HEARTBEAT_PATH, "r", encoding="utf-8") as file:
-            return {HEARTBEAT_FILE_NAME: file.read()}
-
-    return {}
+    return _heartbeat_store.read_files()
 
 
 def write_heartbeat_file(file_to_content: dict[str, str]) -> None:
     """Write the heartbeat file (only the provided file, leave others unchanged)."""
-    for file_name, content in file_to_content.items():
-        if file_name != HEARTBEAT_FILE_NAME:
-            raise ValueError(f"Invalid heartbeat file name: {file_name}")
-        elif not isinstance(content, str):
-            raise ValueError(f"Invalid content type for heartbeat file: {file_name}")
-        elif len(content.strip()) == 0:
-            raise ValueError(f"Content is empty for heartbeat file: {file_name}")
-        elif heartbeat_content_length(content) > HEARTBEAT_MAX_CONTENT_LENGTH:
-            raise ValueError(f"Content too long for heartbeat file: {file_name}")
-
-        with open(HEARTBEAT_PATH, "w", encoding="utf-8") as file:
-            file.write(content)
+    _heartbeat_store.write_files(file_to_content)

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from loguru import logger
 from server.trigger.core import app
+from server.utils.atomic_io import atomic_write_text
 from channels.registry import discover_channel_names, load_channel_class
 from config.path import PLUGINS_PATH
 from config import API_HOST, API_PORT
@@ -22,28 +23,14 @@ def _load_channel_config() -> dict:
 def _save_channel_config(config_path: Path, data: dict) -> bool:
     """Atomically persist channel config.json. Returns False on any failure.
 
-    Writes to a temporary file in the same directory then os.replace()s it
-    so a failed/interrupted write never leaves a truncated config behind.
+    Audit 2.1.8: delegates to the shared :func:`server.utils.atomic_io.atomic_write_text`
+    (tempfile in the same directory + ``os.replace`` + fsync, so a
+    failed/interrupted write never leaves a truncated config behind).
     """
-    import os
-    import tempfile
-
     try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(dir=str(config_path.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, str(config_path))
-        except Exception:
-            # Best-effort cleanup of the temp file on failure.
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-            raise
+        atomic_write_text(
+            config_path, json.dumps(data, ensure_ascii=False, indent=2), fsync=True
+        )
         return True
     except Exception as e:
         logger.error(f"Failed to save channel config: {e}")

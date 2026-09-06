@@ -1,16 +1,14 @@
 """QQ channel implementation using botpy SDK."""
 
-import sys
 import json
 import time
-import shutil
 import asyncio
 import importlib
-import subprocess
 from pathlib import Path
 from loguru import logger
 from pydantic import Field
 from bus import MessageBus
+from channels.deps import install_requirements
 from collections import deque
 from config.schema import Base
 from type.bus import OutboundMessage
@@ -75,9 +73,10 @@ def _install_deps() -> bool:
     """Install plugin-local requirements.txt (qq-botpy) into the running env.
 
     Uses ``uv`` when available (consistent with the project toolchain),
-    otherwise falls back to ``sys.executable -m pip``.  Installation is
-    idempotent -- already-satisfied packages are skipped.  Returns ``True``
-    once the dependencies are importable, ``False`` otherwise.
+    otherwise falls back to ``sys.executable -m pip`` (shared subprocess
+    mechanics via :func:`channels.deps.install_requirements`, audit 3.1.4).
+    Installation is idempotent -- already-satisfied packages are skipped.
+    Returns ``True`` once the dependencies are importable, ``False`` otherwise.
 
     After ``_COOLDOWN_THRESHOLD`` consecutive failures the install is skipped
     for ``_COOLDOWN_WINDOW`` seconds (see cooldown helpers above), so a
@@ -92,31 +91,22 @@ def _install_deps() -> bool:
         logger.warning("No requirements.txt for QQ channel: {}", req_file)
         return False
 
-    if shutil.which("uv"):
-        cmd = ["uv", "pip", "install", "-q", "-r", str(req_file)]
-    else:
-        cmd = [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)]
-
     logger.info("Installing QQ dependencies ({}): ...", req_file.name)
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
+    ok, timed_out, stderr = install_requirements(req_file)
+    if timed_out:
         logger.error("Timed out installing QQ dependencies from {}", req_file)
         _record_install_failure()
         return False
 
-    if result.returncode != 0:
+    if not ok:
         logger.error(
             "Failed to install QQ dependencies ({}): {}",
             req_file,
-            (result.stderr or result.stdout or "").strip(),
+            stderr,
         )
         _record_install_failure()
         return False
 
-    # A pip subprocess may not be visible to the freshly-created importers,
-    # so clear the module resolution cache before re-importing.
-    importlib.invalidate_caches()
     _reset_cooldown()
     logger.info("QQ dependency install succeeded")
     return True

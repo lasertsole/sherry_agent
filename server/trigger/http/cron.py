@@ -11,10 +11,7 @@ same shape to `_load_store`. The routes below rebuild each job via the same
 camelCase mapping so the client receives a consistent, JSON-safe payload.
 """
 
-import json
-
 from loguru import logger
-from robyn import Response
 
 from server.trigger.core import app
 from skills.builtin.core.cron.scripts import cron_service, CronSchedule
@@ -22,28 +19,18 @@ from skills.builtin.core.cron.scripts import cron_service, CronSchedule
 
 # =============================================================================
 # Serialization helpers
+#
+# Audit 2.1.6: the implementations live in server/trigger/http/helpers.py;
+# the original private names are kept as aliases so call sites are unchanged.
 # =============================================================================
 
-
-def _to_text_response(status_code: int, payload: dict) -> Response:
-    """Build a JSON Robyn Response."""
-    return Response(
-        status_code=status_code,
-        headers={"Content-Type": "application/json"},
-        description=json.dumps(payload, ensure_ascii=False),
-    )
-
-
-def _ok(payload: dict) -> Response:
-    return _to_text_response(200, payload)
-
-
-def _bad_request(message: str) -> Response:
-    return _to_text_response(400, {"success": False, "message": message})
-
-
-def _not_found(message: str) -> Response:
-    return _to_text_response(404, {"success": False, "message": message})
+from server.trigger.http.helpers import (
+    to_text_response as _to_text_response,
+    ok as _ok,
+    bad_request as _bad_request,
+    not_found as _not_found,
+    read_body as _read_body,
+)
 
 
 def _job_to_dict(job) -> dict:
@@ -111,15 +98,6 @@ def _valid_schedule(body: dict) -> CronSchedule | None:
         expr=expr,
         tz=tz,
     )
-
-
-def _read_body(request) -> dict | None:
-    """Parse a JSON request body defensively."""
-    try:
-        body = request.json()
-    except Exception:
-        return None
-    return body if isinstance(body, dict) else None
 
 
 # =============================================================================

@@ -1,10 +1,11 @@
 import json
-import os
 import tempfile
 from pathlib import Path
 
 from robyn import Response
 from server.trigger.core import app
+from server.utils.atomic_io import atomic_write_text
+from server.trigger.http.helpers import to_text_response
 from loguru import logger
 from skills.loader import scan_skills, parse_frontmatter
 from config import PLUGIN_SKILLS_DIR, SKILLS_STATE_FILE
@@ -169,23 +170,15 @@ def _read_skills_state() -> dict[str, dict[str, bool]]:
 
 
 def _write_skills_state(state: dict[str, dict[str, bool]]) -> None:
-    """Write the skills state file atomically (temp file + os.replace)."""
-    SKILLS_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(
-        dir=str(SKILLS_STATE_FILE.parent),
-        prefix=f".{SKILLS_STATE_FILE.name}.tmp.",
-        suffix="",
+    """Write the skills state file atomically (temp file + os.replace).
+
+    Audit 2.1.8: delegates to the shared
+    :func:`server.utils.atomic_io.atomic_write_text` (temp cleanup on failure
+    is handled inside the helper; the exception still propagates).
+    """
+    atomic_write_text(
+        SKILLS_STATE_FILE, json.dumps(state, ensure_ascii=False, indent=4)
     )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=4)
-        os.replace(temp_path, SKILLS_STATE_FILE)
-    except Exception:
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            logger.error("Failed to remove temp state file %s", temp_path, exc_info=True)
-        raise
 
 
 def _rebuild_snapshot() -> None:
@@ -444,11 +437,7 @@ async def toggle_skill_handler(request):
 
 
 def _json_response(status_code: int, payload: dict[str, object]) -> Response:
-    return Response(
-        status_code=status_code,
-        headers={"Content-Type": "application/json"},
-        description=json.dumps(payload, ensure_ascii=False),
-    )
+    return to_text_response(status_code, payload)
 
 
 @app.post("/skills/delete")

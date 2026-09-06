@@ -6,12 +6,11 @@ read-only query wrappers. It also supports deleting a run's entire subtree
 (root + all descendants), purging both the in-memory registry and SQLite.
 """
 
-import json
-
 from loguru import logger
-from robyn import Response
 
 from server.trigger.core import app
+from server.trigger.subagent_serialize import PUBLIC_FIELDS as _PUBLIC_FIELDS
+from server.trigger.subagent_serialize import serialize_run as _serialize_run
 
 from agent.tools.subagent.registry.read import (
     list_descendant_runs_readonly,
@@ -28,63 +27,24 @@ from agent.tools.subagent.registry.helpers import safe_remove_attachments_dir
 from agent.tools.subagent.control.steer import steer_subagent_run
 from agent.tools.subagent import delegate_task
 
-# Fields that are safe / useful to surface to the UI. Everything else (paths,
-# attachment dirs, internal policy vectors) is omitted from the wire payload.
-_PUBLIC_FIELDS = (
-    "run_id",
-    "child_session_key",
-    "requester_session_key",
-    "task",
-    "task_name",
-    "label",
-    "spawn_mode",
-    "context_mode",
-    "agent_id",
-    "depth",
-    "role",
-    "control_scope",
-    "generation",
-    "swarm_group_id",
-    "swarm_run_state",
-    "ended_reason",
-    "pause_reason",
-    "execution",
-    "completion",
-    "delivery",
-)
-
-
-def _serialize_run(run) -> dict:
-    """Convert a SubagentRunRecord into a JSON-serializable dict with only public fields."""
-    # model_dump(..., mode="json") recursively converts nested pydantic models
-    # (execution / completion / delivery) and enums into plain JSON-safe values.
-    return run.model_dump(include=set(_PUBLIC_FIELDS), mode="json")
+# Audit 2.1.5: _PUBLIC_FIELDS / _serialize_run are imported from the shared
+# server.trigger.subagent_serialize module (aliases keep call sites unchanged).
 
 
 # =============================================================================
 # Response helpers (mirrors cron.py)
+#
+# Audit 2.1.6: the implementations live in server/trigger/http/helpers.py;
+# the original private names are kept as aliases so call sites are unchanged.
 # =============================================================================
 
-
-def _to_text_response(status_code: int, payload: dict) -> Response:
-    """Build a JSON Robyn Response."""
-    return Response(
-        status_code=status_code,
-        headers={"Content-Type": "application/json"},
-        description=json.dumps(payload, ensure_ascii=False),
-    )
-
-
-def _ok(payload: dict) -> Response:
-    return _to_text_response(200, payload)
-
-
-def _bad_request(message: str) -> Response:
-    return _to_text_response(400, {"success": False, "message": message})
-
-
-def _not_found(message: str) -> Response:
-    return _to_text_response(404, {"success": False, "message": message})
+from server.trigger.http.helpers import (
+    to_text_response as _to_text_response,
+    ok as _ok,
+    bad_request as _bad_request,
+    not_found as _not_found,
+    read_body as _read_body,
+)
 
 
 def _coerce_bool(value) -> bool:
@@ -94,15 +54,6 @@ def _coerce_bool(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ("true", "1", "yes", "on")
     return bool(value)
-
-
-def _read_body(request) -> dict | None:
-    """Parse a JSON request body defensively."""
-    try:
-        body = request.json()
-    except Exception:
-        return None
-    return body if isinstance(body, dict) else None
 
 
 @app.get("/subagents/runs")

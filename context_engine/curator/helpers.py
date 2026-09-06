@@ -56,3 +56,30 @@ def _needle_in_path_component(needle: str, path: str) -> bool:
         if stem.replace("-", "_") == norm_needle:
             return True
     return False
+
+
+def _skill_dir(name: str) -> Path | None:
+    """Resolve a skill directory by its leaf name, recursing into category subdirs.
+
+    Skills under ``skills/auto/`` use a two-level layout::
+
+        skills/auto/<category>/<skill>/SKILL.md
+
+    The name is the leaf dir (e.g. ``docker``).  A flat ``AUTO_SKILLS_DIR / name``
+    lookup misses nested skills, so we walk ``**/SKILL.md`` and match by parent dir
+    name (mirrors ``skill_manage._find_skill``).
+
+    Canonical implementation (audit 3.1.3): ``curator.usage._skill_dir`` and
+    ``curator.orchestrator._resolve_skill_dir`` are aliases of this function.
+    """
+    from context_engine.curator.constants import AUTO_SKILLS_DIR
+
+    candidate = AUTO_SKILLS_DIR / name
+    if candidate.is_dir() and (candidate / "SKILL.md").exists():
+        return candidate
+    if not AUTO_SKILLS_DIR.exists():
+        return None
+    for skill_md in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
+        if skill_md.parent.name == name:
+            return skill_md.parent
+    return None

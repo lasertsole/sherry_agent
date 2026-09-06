@@ -537,7 +537,11 @@ class SessionState:
 
 ### 2.1 代码重复
 
+> **✅ 完成标记（2026-09-06）**：2.1.1–2.1.8 全部落地。共享件：`server/service/stream_dispatch.py`（`StreamTurn` 模板引擎 + pending-args 状态/helpers）、`server/service/stream_driver.py`（`StreamDriver` 模板）、`server/utils/ws_helpers.py`（`send_ws_json`）、`server/utils/atomic_io.py`（`atomic_write_text`）、`server/trigger/http/helpers.py`（响应辅助）、`server/trigger/subagent_serialize.py`（`serialize_run`）、`server/service/file_store.py`（`FileStore` 模板）、`server/trigger/ws/push_channel.py`（`WSPushChannel`）。行为 pin 测试 122 个（tests/unit/server 7 文件 + tests/unit/service + tests/unit/channels 2 文件 + tests/unit/context_engine 2 文件）。回归：tests/unit 1742+ 通过；tests/integration+system+module 795 通过；tests/regression 74 通过。两个既有 flaky（`test_store_timestamp_ordering.py::test_display_stamp_is_14_chars` 的 `_last_turn_ms` 跨测试泄漏、`test_ws_queue_integration.py::test_hitl_interrupt_sets_hitl_pending` 的断言竞态）与两个环境性收集失败（test_rag_anything_integration / test_snkv_storage 的网络依赖）均在未改动的 HEAD 上复现，与本次改动无关。各条目差异说明见对应小节。
+
 #### 2.1.1 `async_generate` / `resume_agent` 流分发循环完整复制
+
+> **✅ 已完成（2026-09-06）**：`server/service/stream_dispatch.py` 创建——`StreamTurn` 模板方法 + 从 messages.py 迁入的 pending-args 状态机（`_pending_args`/`_pending_raw` + accumulate/get/pop/clear）与 `_reasoning_delta`/`_normalize_text`（messages.py 以别名 re-import，模块状态对象恒等，既有 `tests/unit/test_messages_pending_args.py` 零改动通过）。`messages.py` 中 `_GenerateTurn`/`_ResumeTurn` 仅覆盖真实差异钩子：`_create_source`（astream vs `Command(resume=...)` / ainvoke）、`_extra_messages_frames`（resume 独有的 HITL 拒绝 tool_result 路径）、`_note_tool_start`（generate 独有的 ai_text 工具标注）、`_invoke_frames`（非流分支）、`_final_frames`（generate 独有 meta chunk）、`_on_cancelled`/`_on_heartbeat_timeout`（generate 独有中断标记）、`_cleanup`（generate 独有 aclose）。公共 API 签名与帧序逐帧保持；行为 pin 测试 `tests/unit/server/test_stream_dispatch.py`（24 个）。
 
 - **文件**: `server/service/messages.py:328-511` vs `711-859`
 - **问题**: updates-mode tool 处理、messages-mode tool_call 跟踪 + args 累积、text/reasoning 发射、finally 清理——几乎逐行复制
@@ -565,10 +569,14 @@ class ResumeTurn(TurnRunner):
 
 #### 2.1.2 `_send_ws` 函数跨多模块重复
 
+> **✅ 已完成（2026-09-06）**：`server/utils/ws_helpers.py::send_ws_json` 已创建——None-socket 跳过 + 异常吞掉告警 + `ensure_ascii`/`warn_prefix` 参数化，三处调用点各自保留原日志文案（"Agent WS send failed" / "TurnRunner: ws send failed" / "auto_turn: websocket send failed"）与 auto_turn 的 `ensure_ascii=False`。三模块 `_send_ws` 名字保留为薄委托。
+
 - **文件**: `server/trigger/ws/messages.py:33`; `server/service/turn_runner.py:129`; `server/service/auto_turn.py:63`
 - **模式**: 提取到 `server/utils/ws_helpers.py`
 
 #### 2.1.3 流驱动逻辑在 3 处重复
+
+> **✅ 已完成（2026-09-06）**：`server/service/stream_driver.py::StreamDriver` 模板已创建（仅 stdlib+loguru，turn_runner 可安全 eager import）。三处各自保留 8-15 行子类仅覆盖站点差异：send_frame（各自 _send_ws）、check_interrupt（各自 import 缝隙/模块全局，测试 monkeypatch 点不变）、apply_hitl_pending（auto_turn 保持不置位）、done 帧缺省（ws 路径 ""/0 vs auto_turn null —— 原线上形状）、log 钩子（原文案与级别）、on_finish（ws 释放任务槽 + on_turn_finished(claim_row_id)；executor 无（cleanup 在 execute 的 finally）；auto_turn on_turn_finished(bare)）。行为 pin 测试 `tests/unit/server/test_stream_driver.py`（13 个）。
 
 - **文件**: `ws/messages.py::_run_stream:41-138`; `auto_turn.py::_drive_turn:161-208`; `turn_runner.py::WsTurnExecutor._drive:339-402`
 - **问题**: 三者都做"遍历 async_generate → 转发 chunk → 检查 HITL → 发 done/error/stopped → on_turn_finished"
@@ -576,22 +584,30 @@ class ResumeTurn(TurnRunner):
 
 #### 2.1.4 WS push 广播模式重复
 
+> **✅ 已完成（2026-09-06）**：`server/trigger/ws/push_channel.py::WSPushChannel` 已创建（锁保护订阅集 + 有界 deque 丢旧 + sender task + serve() 处理骨架：注册 → ready 帧 → receive 循环 → 反注册/取消）。logs.py / subagent_ws.py 各自保留序列化与幂等注册钩子（loguru sink / subagent hooks）及日志文案。行为 pin 测试 `tests/unit/server/test_push_channel.py`（8 个）。
+
 - **文件**: `server/trigger/ws/logs.py` 和 `server/trigger/ws/subagent_ws.py`
 - **问题**: 相同的 `_subscribers`/`_subscribers_lock`/`_pending`/`_MAX_PENDING`/`_broadcast`/`_sender`/`_ensure_*_registered`
 - **模式**: Observer — `WSPushChannel` 基类
 
 #### 2.1.5 `_serialize_run` 和 `_PUBLIC_FIELDS` 重复
 
+> **✅ 已完成（2026-09-06）**：`server/trigger/subagent_serialize.py` 已创建（`PUBLIC_FIELDS` + `serialize_run`），http/subagent.py 与 ws/subagent_ws.py 以原名别名引用（调用点零改动）。
+
 - **文件**: `server/trigger/http/subagent.py:33-61`; `server/trigger/ws/subagent_ws.py:38-88`
 - **模式**: 提取到共享序列化模块
 
 #### 2.1.6 HTTP 响应辅助函数重复
+
+> **✅ 已完成（2026-09-06）**：`server/trigger/http/helpers.py` 已创建（`to_text_response`/`ok`/`bad_request`/`not_found`/`read_body`），subagent.py / cron.py 以原私有名别名引用，skills.py `_json_response` 改为委托。测试 `tests/unit/server/test_http_helpers.py`（11 个，含别名恒等断言）。
 
 - **文件**: `server/trigger/http/subagent.py:69-105`; `cron.py:28-122`; `skills.py:446-451`
 - **问题**: 相同的 `_to_text_response`/`_ok`/`_bad_request`/`_not_found`/`_read_body` 模式
 - **模式**: 提取 `server/trigger/http/helpers.py`
 
 #### 2.1.7 文件读写校验模式重复
+
+> **✅ 已完成（2026-09-06）**：`server/service/file_store.py::FileStore` 模板已创建。三服务保留原公共函数名并委托 store 实例。语义逐项保持：错误文案按 `error_noun`（"file"/"memory file"/"heartbeat file"）；校验与写按条目交错（无效后条目不回滚先写条目——原行为）；workplace 的 update 走 `update_files`（合并后全量重校验——原行为）；memory 的 write 走 `merge_files`（仅校验提供条目、不重校验存量——原行为）；heartbeat 的长度预算按任务文本计（`_content_length` 钩子）；`_file_path` 调用时解析（monkeypatch 路径仍生效）。测试 `tests/unit/service/test_file_store.py`（18 个）。
 
 - **文件**: `server/service/workplace.py`; `memory.py`; `heartbeat.py`
 - **问题**: 三者都有相同的 `read_*_file()` → 遍历允许文件名 + open/read，`write_*_file()` → 验证文件名/类型/非空/长度 + write
@@ -617,6 +633,8 @@ class FileStore(ABC):
 ```
 
 #### 2.1.8 原子文件写入模式重复
+
+> **✅ 已完成（2026-09-06）**：`server/utils/atomic_io.py::atomic_write_text` 已创建（同目录 tempfile + os.replace + 可选 fsync + 失败清理后重抛），channels.py（fsync=True）/ skill_scanner.py（fail-open 告警）/ skills.py（重抛）已接线。**修正原清单（2026-09-06）**：`env.py::write_env_file` 并非该模式——它是 `.bak` 备份 + 原地整写（无 tempfile/os.replace），改造会改变其崩溃/备份语义，故不纳入（同 1.1.4 的行为保持原则）。临时文件命名统一为 `.{name}.tmp.*`（瞬态文件，无行为影响）。测试 `tests/unit/server/test_atomic_io.py`（6 个）。
 
 - **文件**: `channels.py::_save_channel_config:22-50`; `skill_scanner.py::_store_scan_cache:658-700`; `skills.py::_write_skills_state:171-188`; `env.py::write_env_file:116-179`
 - **模式**: 提取 `atomic_write(path, content)` 工具函数
@@ -694,7 +712,15 @@ class FileStore(ABC):
 
 ### 3.1 代码重复
 
+> **✅ 完成标记（2026-09-06）**：3.1.1–3.1.7 全部落地。共享件：`channels/deps.py`（`install_requirements`）、`context_engine/curator/helpers.py::_skill_dir`（规范实现）、`context_engine/curator/report.py`（`_compute_diff` + `_classify_archived`）、`context_engine/curator/classify.py::_parse_skill_manage_args`、`context_engine/curator/config.py::_get_config_value`、`context_engine/store/core.py::_decode_json_columns`、`channels/manager.py::_consume_loop`。行为 pin 测试 30 个（tests/unit/channels 2 文件 + tests/unit/context_engine 2 文件）。回归同 2.1 完成标记（1743 + 795 + 74 通过，环境性失败与 HEAD 一致）。
+
 #### 3.1.1 ChannelManager 消费循环重复
+
+> **✅ 已完成（2026-09-06）**：泛化为 `_consume_loop(direction)`；`_inbound_consume_loop`/`_outbound_consume_loop` 保留为薄委托（外部引用兼容）。入/出站 debug 日志字段与 warning 文案逐字保持（loguru `{}` 与 f-string 输出等价，统一为 f-string）；consumer 仍每轮循环内解析（原行为）。测试 `tests/unit/channels/test_consume_loop.py`（4 个）。
+
+- **文件**: `channels/manager.py:32-46` (`_inbound_consume_loop`) vs `48-63` (`_outbound_consume_loop`)
+- **问题**: 近乎相同，仅 bus 方法/消息类型/consumer 不同
+- **模式**: Template Method — 泛化 `_consume_loop(direction)`
 
 - **文件**: `channels/manager.py:32-46` (`_inbound_consume_loop`) vs `48-63` (`_outbound_consume_loop`)
 - **问题**: 近乎相同，仅 bus 方法/消息类型/consumer 不同
@@ -702,16 +728,22 @@ class FileStore(ABC):
 
 #### 3.1.2 curator report.py diff 计算重复
 
+> **✅ 已完成（2026-09-06）**：提取 `_compute_diff(before_names, after_report)`（after_names/removed/added）与 `_classify_archived(...)`（heuristic + model block + absorbed_into 声明的完整分类管道），`_build_rename_summary` 与 `_write_run_report` 共用；run.json 内容逐字段一致。测试并入 `tests/unit/context_engine/test_curator_shared.py`。
+
 - **文件**: `context_engine/curator/report.py:24-25` (`_build_rename_summary`) vs `93-96` (`_write_run_report`)
 - **问题**: 两处独立计算 `after_names`/`removed`/`added` 并调用相同的分类管道
 - **模式**: DRY — 提取 `_compute_diff(before, after)` 公共函数
 
 #### 3.1.3 `_skill_dir` 函数重复
 
+> **✅ 已完成（2026-09-06）**：规范实现迁入 `context_engine/curator/helpers.py::_skill_dir`；`usage._skill_dir`（`curator/__init__.py` 再导出路径不变）与 `orchestrator._resolve_skill_dir` 均为同对象别名。扁平/嵌套/缺失/SKILL.md 缺失四种解析路径 pin 测试并入 `tests/unit/context_engine/test_curator_shared.py`。
+
 - **文件**: `context_engine/curator/orchestrator.py:13-31`; `context_engine/curator/usage.py:20-41`
 - **模式**: DRY — 提取到公共模块
 
 #### 3.1.4 依赖安装逻辑重复
+
+> **✅ 已完成（2026-09-06）**：`channels/deps.py::install_requirements` 已创建（uv 优先 / pip 回退 / 120s 超时 / 成功后 invalidate_caches），registry 与 qq 插件各自保留预检、日志文案与失败策略（registry：直接失败；qq：cooldown 记账 + 无 requirements.txt 返回 False——原差异保持）。测试 `tests/unit/channels/test_deps.py`（8 个，含 qq 插件按原加载方式 spec 加载验证）。
 
 - **文件**: `channels/registry.py:27-64`; `plugins/channels/qq/core.py:74-122`
 - **问题**: 相同的 requirements.txt 检查 + uv/pip 选择 + subprocess + timeout + invalidate_caches
@@ -719,16 +751,22 @@ class FileStore(ABC):
 
 #### 3.1.5 JSON 列解码重复
 
+> **✅ 已完成（2026-09-06）**：提取 `_decode_json_columns(row)`（content/tool_calls/images/audios/videos 五列 + 弹出 ts_ms），`get_turns_by_turn_num_scope` 与 `get_history_by_turn_page` 共用；测试 `tests/unit/context_engine/test_store_decode.py`（5 个，含真实 SQLite 端到端轮次查询）。
+
 - **文件**: `context_engine/store/core.py:296-309` 和 `365-378`
 - **问题**: 相同的 `json.loads` 对 content/tool_calls/images/audios/videos 列的解码块
 - **模式**: 提取 `_decode_json_columns(row)` 辅助函数
 
 #### 3.1.6 tool_call 参数解析重复
 
+> **✅ 已完成（2026-09-06）**：提取 `classify.py::_parse_skill_manage_args(tool_calls, *, keep_raw_on_error)`——分类器以 `keep_raw_on_error=True` 保留 `{"_raw": ...}` 证据（原行为），声明提取器跳过解析失败（原行为）。
+
 - **文件**: `context_engine/curator/classify.py:16-30` 和 `128-139`
 - **模式**: 提取 `parse_skill_manage_args(tool_calls)` 辅助函数
 
 #### 3.1.7 curator config getter 重复
+
+> **✅ 已完成（2026-09-06）**：6 个 getter 收敛为 `_get_config_value(key, type_, default)`——bool 强转不 try（原 bool() 不捕获）；int/float 捕获 (TypeError, ValueError) 回落默认（如 yaml 值为 null）；is_enabled 缺省 True、get_consolidate 缺省 DEFAULT_CONSOLIDATE。测试并入 `tests/unit/context_engine/test_curator_shared.py`。
 
 - **文件**: `context_engine/curator/config.py:43-76`（6 个同构函数）
 - **模式**: 泛型函数 `get_config_value(key, type_, default)`

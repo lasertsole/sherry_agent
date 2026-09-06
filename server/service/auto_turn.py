@@ -16,7 +16,6 @@ persistence door), loguru-only logging.
 """
 
 import asyncio
-import json
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -25,6 +24,8 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
+from server.utils.ws_helpers import send_ws_json
+from server.service.stream_driver import StreamDriver
 from agent.tools.subagent.announce.steering_queue import enqueue_steering
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from agent.tools.subagent.registry.session_state import (
@@ -61,15 +62,17 @@ def get_websocket_by_session_id(session_id: str) -> Any:
 
 
 async def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
-    """Best-effort WS delivery; the socket may be gone at any moment."""
-    if websocket is None:
-        return
-    try:
-        # Robyn's WebSocket.send_text is a coroutine — it MUST be awaited or
-        # the frame is silently dropped (fire-and-forget coroutine leak).
-        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-    except Exception as exc:  # noqa: BLE001 - delivery must never break the turn
-        logger.warning("auto_turn: websocket send failed: {}", exc)
+    """Best-effort WS delivery; the socket may be gone at any moment.
+
+    Audit 2.1.2: delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
+    (the auto-turn path historically serialized with ``ensure_ascii=False``).
+    """
+    await send_ws_json(
+        websocket,
+        payload,
+        ensure_ascii=False,
+        warn_prefix="auto_turn: websocket send failed",
+    )
 
 
 async def maybe_trigger_auto_turn(session_key: str, injection: HumanMessage) -> AutoTurnResult:
@@ -159,7 +162,11 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
 
 
 async def _drive_turn(bare: str, injection: HumanMessage) -> None:
-    """Consume the async_generate generator and forward _run_stream frames."""
+    """Consume the async_generate generator and forward the shared StreamDriver frames.
+
+    Audit 2.1.3: the loop itself is the shared :class:`StreamDriver` template;
+    ``_AutoTurnStreamDriver`` carries this site's knobs.
+    """
     # Task 4 (subagent-origin-tagging): extract the carrier metadata BEFORE the
     # MultiModalMessage flatten — the flatten to MultiModalMessage drops it, and
     # this is the only place the {internal, provenance, run_id, status} tag can
@@ -173,36 +180,36 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     text = raw_text if isinstance(raw_text, str) else str(getattr(injection, "content", injection))
     message = MultiModalMessage(text=text)
     websocket = get_websocket_by_session_id(bare)
-    meta: dict[str, Any] = {}
-    try:
-        async for chunk in async_generate(bare, message, is_stream=True, origin=inj_meta):
-            if isinstance(chunk, dict) and chunk.get("type") == "meta":
-                meta.update(chunk)
-                continue
-            await _send_ws(websocket, {"event": "chunk", "session_id": bare, **chunk})
-        interrupt_data = await get_pending_interrupt(bare)
-        if interrupt_data:
-            await _send_ws(websocket, {"event": "hitl_request", "session_id": bare, "content": interrupt_data})
-        else:
-            await _send_ws(
-                websocket,
-                {
-                    "event": "done",
-                    "session_id": bare,
-                    "content": "",
-                    "model_name": meta.get("model_name"),
-                    "input_tokens": meta.get("input_tokens"),
-                    "output_tokens": meta.get("output_tokens"),
-                },
-            )
-    except asyncio.CancelledError:
-        await _send_ws(websocket, {"event": "stopped", "session_id": bare, "content": "Request cancelled"})
-        raise
-    except Exception as exc:  # noqa: BLE001 - mirror _run_stream error frame
-        logger.error("auto_turn: turn failed for {}: {}", bare, exc)
-        await _send_ws(websocket, {"event": "error", "session_id": bare, "content": str(exc)})
-    finally:
+    await _AutoTurnStreamDriver(bare, websocket).drive(
+        async_generate(bare, message, is_stream=True, origin=inj_meta)
+    )
+
+
+class _AutoTurnStreamDriver(StreamDriver):
+    """Driver for the idle auto turn (Task 8).
+
+    Hard rules honored: never touches ``_active_tasks`` / ``answering`` /
+    ``_pending_args`` (all owned by ``async_generate``) and never sets the
+    HITL-pending flag (the auto turn historically never did). The done frame
+    falls back to ``null`` (not ``""``/``0``) when no meta chunk arrived —
+    the original wire shape of this path.
+    """
+
+    done_model_name = None
+    done_input_tokens = None
+    done_output_tokens = None
+
+    async def send_frame(self, payload: dict[str, Any]) -> None:
+        await _send_ws(self.websocket, payload)
+
+    async def check_interrupt(self) -> dict[str, Any] | None:
+        return await get_pending_interrupt(self.session_id)
+
+    def log_error(self, exc: Exception, elapsed: float) -> None:
+        logger.error("auto_turn: turn failed for {}: {}", self.session_id, exc)
+
+    async def on_finish(self) -> None:
         # Task 7: the auto-turn owns no queue row (claim_row_id=None) — the
         # TurnRunner defers while a foreign CLAIMED row exists, so this only
         # kicks the drain for rows queued while the turn was running.
-        await on_turn_finished(bare)
+        await on_turn_finished(self.session_id)

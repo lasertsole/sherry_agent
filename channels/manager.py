@@ -30,38 +30,45 @@ class ChannelManager:
     _outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]] | None
     _started: bool
 
-    async def _inbound_consume_loop(self):
-        logger.info("Inbound message consumer loop started")
+    async def _consume_loop(self, direction: str) -> None:
+        """Shared consumer loop (audit 3.1.1): drain one bus queue forever,
+        invoking the direction's registered consumer once per configured
+        channel. ``direction`` is ``"inbound"`` or ``"outbound"``.
+        """
+        consume = (
+            self._bus.consume_inbound
+            if direction == "inbound"
+            else self._bus.consume_outbound
+        )
+        logger.info(f"{direction.capitalize()} message consumer loop started")
         while True:
-            msg: InboundMessage = await self._bus.consume_inbound()
-            logger.debug(
-                f"Processing inbound message: channel={msg.channel}, chat_id={msg.chat_id}"
-            )
+            msg = await consume()
+            if direction == "inbound":
+                logger.debug(
+                    f"Processing inbound message: channel={msg.channel}, chat_id={msg.chat_id}"
+                )
+            else:
+                logger.debug(
+                    f"Processing outbound message: channel={msg.channel}, "
+                    f"content_length={len(getattr(msg, 'content', ''))}"
+                )
 
-            if self._inbound_consumer is not None:
+            consumer = (
+                self._inbound_consumer if direction == "inbound" else self._outbound_consumer
+            )
+            if consumer is not None:
                 for channel_name, c in self._config.items():
                     channel = self._channels.get(channel_name)
                     if channel:
-                        await self._inbound_consumer(msg, channel)
+                        await consumer(msg, channel)
                     else:
                         logger.warning(f"Channel {channel_name} not found")
 
-    async def _outbound_consume_loop(self):
-        logger.info("Outbound message consumer loop started")
-        while True:
-            msg: OutboundMessage = await self._bus.consume_outbound()
-            logger.debug(
-                f"Processing outbound message: channel={msg.channel}, "
-                f"content_length={len(getattr(msg, 'content', ''))}"
-            )
+    async def _inbound_consume_loop(self):
+        await self._consume_loop("inbound")
 
-            if self._outbound_consumer is not None:
-                for name, func in self._config.items():
-                    channel = self._channels.get(name)
-                    if channel:
-                        await self._outbound_consumer(msg, channel)
-                    else:
-                        logger.warning("Channel {} not found", name)
+    async def _outbound_consume_loop(self):
+        await self._consume_loop("outbound")
 
     def set_inbound_consumer(
         self, inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]]

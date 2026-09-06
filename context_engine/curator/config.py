@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Callable
 from loguru import logger
 from dotenv import load_dotenv
 
@@ -40,40 +40,46 @@ def _load_config() -> dict[str, Any]:
     return {}
 
 
+def _get_config_value(key: str, type_: Callable[[Any], Any], default: Any) -> Any:
+    """Read *key* from curator.yaml, coerced via *type_*, falling back to *default*.
+
+    Shared body of the six config getters (audit 3.1.7). ``bool`` coercion
+    never fails (mirrors the original ``bool(...)`` getters); int/float
+    coercion failures (``TypeError``/``ValueError`` — e.g. a null or
+    non-numeric yaml value) fall back to the default (mirrors the original
+    try/except getters).
+    """
+    raw = _load_config().get(key, default)
+    if type_ is bool:
+        return bool(raw)
+    try:
+        return type_(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 def is_enabled() -> bool:
-    return bool(_load_config().get("enabled", True))
+    return _get_config_value("enabled", bool, True)
 
 
 def get_interval_hours() -> int:
-    try:
-        return int(_load_config().get("interval_hours", DEFAULT_INTERVAL_HOURS))
-    except (TypeError, ValueError):
-        return DEFAULT_INTERVAL_HOURS
+    return _get_config_value("interval_hours", int, DEFAULT_INTERVAL_HOURS)
 
 
 def get_min_idle_hours() -> float:
-    try:
-        return float(_load_config().get("min_idle_hours", DEFAULT_MIN_IDLE_HOURS))
-    except (TypeError, ValueError):
-        return DEFAULT_MIN_IDLE_HOURS
+    return _get_config_value("min_idle_hours", float, DEFAULT_MIN_IDLE_HOURS)
 
 
 def get_stale_after_days() -> int:
-    try:
-        return int(_load_config().get("stale_after_days", DEFAULT_STALE_AFTER_DAYS))
-    except (TypeError, ValueError):
-        return DEFAULT_STALE_AFTER_DAYS
+    return _get_config_value("stale_after_days", int, DEFAULT_STALE_AFTER_DAYS)
 
 
 def get_archive_after_days() -> int:
-    try:
-        return int(_load_config().get("archive_after_days", DEFAULT_ARCHIVE_AFTER_DAYS))
-    except (TypeError, ValueError):
-        return DEFAULT_ARCHIVE_AFTER_DAYS
+    return _get_config_value("archive_after_days", int, DEFAULT_ARCHIVE_AFTER_DAYS)
 
 
 def get_consolidate() -> bool:
-    return bool(_load_config().get("consolidate", DEFAULT_CONSOLIDATE))
+    return _get_config_value("consolidate", bool, DEFAULT_CONSOLIDATE)
 
 
 def _clamp_interval_days(days: Any) -> int | None:

@@ -13,26 +13,41 @@ from context_engine.curator.classify import (
 )
 
 
-def _build_rename_summary(
-    *,
-    before_names: set[str],
-    after_report: list[dict[str, Any]],
-    tool_calls: list[dict[str, Any]],
-    model_final: str,
-) -> str:
+def _compute_diff(
+    *, before_names: set[str], after_report: list[dict[str, Any]]
+) -> tuple[set[str], list[str], list[str]]:
+    """Compute the shared before/after skill-name diff (audit 3.1.2).
+
+    Returns ``(after_names, removed, added)`` with ``removed``/``added``
+    sorted — previously computed independently by :func:`_build_rename_summary`
+    and :func:`_write_run_report`.
+    """
     after_names = {r.get("name") for r in after_report if isinstance(r, dict)}
     removed = sorted(before_names - after_names)
     added = sorted(after_names - before_names)
-    if not removed:
-        return ""
+    return after_names, removed, added
 
+
+def _classify_archived(
+    *,
+    removed: list[str],
+    added: list[str],
+    after_names: set[str],
+    tool_calls: list[dict[str, Any]],
+    llm_final: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Run the shared removed-skill classification pipeline (audit 3.1.2).
+
+    Heuristic tool-call audit + model structured block + absorbed_into
+    declarations, reconciled — the exact pipeline both report builders used.
+    """
     heuristic = _classify_removed_skills(
         removed=removed, added=added, after_names=after_names, tool_calls=tool_calls
     )
-    model_block = _parse_structured_summary(model_final)
+    model_block = _parse_structured_summary(llm_final)
     destinations = set(after_names) | set(added)
     absorbed_declarations = _extract_absorbed_into_declarations(tool_calls)
-    classification = _reconcile_classification(
+    return _reconcile_classification(
         removed=removed,
         heuristic=heuristic,
         model_block=model_block,
@@ -40,6 +55,27 @@ def _build_rename_summary(
         absorbed_declarations=absorbed_declarations,
     )
 
+
+def _build_rename_summary(
+    *,
+    before_names: set[str],
+    after_report: list[dict[str, Any]],
+    tool_calls: list[dict[str, Any]],
+    model_final: str,
+) -> str:
+    after_names, removed, added = _compute_diff(
+        before_names=before_names, after_report=after_report
+    )
+    if not removed:
+        return ""
+
+    classification = _classify_archived(
+        removed=removed,
+        added=added,
+        after_names=after_names,
+        tool_calls=tool_calls,
+        llm_final=model_final,
+    )
     consolidated = classification["consolidated"]
     pruned = classification["pruned"]
 
@@ -90,9 +126,9 @@ def _write_run_report(
         return None
 
     after_by_name = {r.get("name"): r for r in after_report if isinstance(r, dict)}
-    after_names = set(after_by_name.keys())
-    removed = sorted(before_names - after_names)
-    added = sorted(after_names - before_names)
+    after_names, removed, added = _compute_diff(
+        before_names=before_names, after_report=after_report
+    )
     before_by_name = {r.get("name"): r for r in before_report if isinstance(r, dict)}
 
     transitions: list[dict[str, str]] = []
@@ -107,23 +143,12 @@ def _write_run_report(
         name = tc.get("name", "unknown")
         tc_counts[name] = tc_counts.get(name, 0) + 1
 
-    heuristic = _classify_removed_skills(
+    classification = _classify_archived(
         removed=removed,
         added=added,
         after_names=after_names,
         tool_calls=llm_meta.get("tool_calls", []) or [],
-    )
-    model_block = _parse_structured_summary(llm_meta.get("final", "") or "")
-    destinations = set(after_names) | set(added or [])
-    absorbed_declarations = _extract_absorbed_into_declarations(
-        llm_meta.get("tool_calls", []) or []
-    )
-    classification = _reconcile_classification(
-        removed=removed,
-        heuristic=heuristic,
-        model_block=model_block,
-        destinations=destinations,
-        absorbed_declarations=absorbed_declarations,
+        llm_final=llm_meta.get("final", "") or "",
     )
     consolidated = classification["consolidated"]
     pruned = classification["pruned"]

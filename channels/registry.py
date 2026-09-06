@@ -13,14 +13,11 @@ contain a ``core.py`` — no ``__init__.py`` is required. Flat single-file modul
 """
 
 import os
-import sys
-import shutil
-import importlib
-import subprocess
 import importlib.util
 from pathlib import Path
 from loguru import logger
 from channels.base import BaseChannel
+from channels.deps import install_requirements
 from config.path import PLUGINS_PATH
 
 
@@ -28,7 +25,9 @@ def _ensure_deps(plugin_dir: Path, plugin_name: str) -> bool:
     """Install plugin-local requirements.txt if present.
     Uses *uv* when available (consistent with the project toolchain), otherwise
     falls back to ``python -m pip``.  Installation is idempotent -- already
-    satisfied packages are skipped by pip/uv.
+    satisfied packages are skipped by pip/uv.  The subprocess mechanics are
+    shared with the QQ plugin via :func:`channels.deps.install_requirements`
+    (audit 3.1.4).
 
     Returns ``True`` if deps are ready (or no requirements.txt found).
     """
@@ -36,30 +35,18 @@ def _ensure_deps(plugin_dir: Path, plugin_name: str) -> bool:
     if not req_file.is_file():
         return True
 
-    if shutil.which("uv"):
-        cmd = ["uv", "pip", "install", "-q", "-r", str(req_file)]
-    else:
-        cmd = [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)]
-
     logger.info("Installing dependencies for channel '{}'...", plugin_name)
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
+    ok, timed_out, stderr = install_requirements(req_file)
+    if timed_out:
         logger.error("Timed out installing dependencies for channel '{}'", plugin_name)
         return False
-
-    if result.returncode != 0:
-        # Use string formatting (not a {} placeholder) so Windows-GBK terminals
-        # never choke decoding arbitrary pip stderr bytes inside loguru.
-        stderr = (result.stderr or result.stdout or "").strip()
+    if not ok:
         logger.error(
             "Failed to install dependencies for channel '{}':\n{}",
             plugin_name,
             stderr,
         )
         return False
-
-    importlib.invalidate_caches()
     logger.info("Dependencies for channel '{}' ready", plugin_name)
     return True
 

@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 from loguru import logger
 from typing import Any, Callable
 from datetime import datetime, timezone
@@ -10,26 +9,7 @@ from context_engine.curator.report import _build_rename_summary, _write_run_repo
 from context_engine.curator.transitions import should_run_now, apply_automatic_transitions
 
 
-def _resolve_skill_dir(name: str) -> Path | None:
-    """Resolve a skill directory by leaf name, recursing into category subdirs.
-
-    Skills under ``skills/auto/`` live at depth 2
-    (``skills/auto/<category>/<skill>/SKILL.md``), so a flat
-    ``AUTO_SKILLS_DIR / name`` lookup misses nested skills.  Walk ``**/SKILL.md``
-    and match by parent dir name (mirrors ``skill_manage._find_skill``).
-    """
-    from context_engine.curator.constants import AUTO_SKILLS_DIR
-
-    candidate = AUTO_SKILLS_DIR / name
-    if candidate.is_dir() and (candidate / "SKILL.md").exists():
-        return candidate
-    if not AUTO_SKILLS_DIR.exists():
-        return None
-    for skill_md in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
-        if skill_md.parent.name == name:
-            return skill_md.parent
-    return None
-
+from context_engine.curator.helpers import _skill_dir as _resolve_skill_dir
 
 CURATOR_REVIEW_PROMPT = (
     "You are running as the background skill CURATOR. This is an "
