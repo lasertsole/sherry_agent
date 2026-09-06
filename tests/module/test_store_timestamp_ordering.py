@@ -122,6 +122,9 @@ class TestNextTurnStamp:
                 return frozen
 
         monkeypatch.setattr(store_core, "datetime", _FrozenDatetime)
+        # isolate from earlier real-time stamps: a leftover _last_turn_ms
+        # would outrun the frozen clock and trigger the monotonic bump branch
+        monkeypatch.setattr(store_core, "_last_turn_ms", None)
 
         first_ms, first_stamp = store_core._next_turn_stamp()
         second_ms, second_stamp = store_core._next_turn_stamp()
@@ -143,6 +146,7 @@ class TestNextTurnStamp:
                 return frozen
 
         monkeypatch.setattr(store_core, "datetime", _FrozenDatetime)
+        monkeypatch.setattr(store_core, "_last_turn_ms", None)
 
         _, stamp = store_core._next_turn_stamp()
 
