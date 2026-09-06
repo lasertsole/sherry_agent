@@ -47,6 +47,7 @@ def sid_db():
                 tool_status TEXT,
                 tool_name TEXT,
                 timestamp TEXT NOT NULL,
+                ts_ms INTEGER,
                 finish_reason TEXT,
                 reasoning TEXT,
                 reasoning_content TEXT,

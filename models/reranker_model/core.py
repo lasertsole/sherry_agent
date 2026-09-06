@@ -24,21 +24,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import requests
 from config import ENV_PATH
+from models.utils import read_env_file_value as _read_dotenv
 
 
-def _read_dotenv(key: str, default: str = "") -> str:
-    try:
-        text = ENV_PATH.read_text(encoding="utf-8")
-        for mobj in re.finditer(
-            rf"^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$", text, re.MULTILINE
-        ):
-            raw = mobj.group(1)
-            raw = raw.strip("\"'").strip()
-            if raw:
-                return raw
-    except Exception:
-        pass
-    return default
 
 
 def _is_local() -> bool:

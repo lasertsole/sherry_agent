@@ -27,10 +27,11 @@ from langchain.agents.middleware.types import (
 
 from runtime import state_register_mem
 
+from agent.middlewares.base import BeforeAgentHooksMixin, require_session_id
 from agent.middlewares.subagent_completion_drain import _is_internal_completion
 
 
-class IterationBudget(AgentMiddleware):
+class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
     """Enforce a hard cap on the total number of model + tool iterations per turn.
 
     The budget counter is stored in ``state_register_mem`` under the key
@@ -52,10 +53,7 @@ class IterationBudget(AgentMiddleware):
         self.max_iterations = max_iterations
 
     def _get_session_id(self, state: AgentState) -> str:
-        session_id: str = state.get("session_id", "")
-        if not session_id.strip():
-            raise RuntimeError("IterationBudget: session_id is required")
-        return session_id
+        return require_session_id(state, "IterationBudget: session_id is required")
 
     def _consume(self, session_id: str) -> bool:
         logger.debug("[IB_TRACE] _consume enter session_id={}", session_id)
@@ -92,19 +90,6 @@ class IterationBudget(AgentMiddleware):
         state_register_mem.set_state(session_id, self._USED_KEY, 0)
 
     @override
-    def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        logger.debug("{} before_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
-        return None
-
-    @override
-    async def abefore_agent(
-        self, state: AgentState, runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
-        logger.debug("{} abefore_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
-        return None
-
     def _wrap_model_call_impl(
         self,
         request: ModelRequest[ContextT],

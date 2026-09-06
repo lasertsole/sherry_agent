@@ -20,20 +20,17 @@ Usage:
 """
 
 import os
-import atexit
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
 
 from config import ENV_PATH
+from typing import Any, Dict
 from dotenv import load_dotenv
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     SystemMessage,
 )
-from langchain_core.outputs import ChatGeneration, ChatResult
+from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
 from langchain_core.runnables import ConfigurableField
 
 # ---------------------------------------------------------------------------
@@ -85,9 +82,7 @@ if not _is_local:
 
 else:
     # ======================== Local (GGUF) branch ========================
-    from llama_cpp import Llama
-    from llama_cpp.llama_chat_format import Qwen25VLChatHandler
-
+        
     _GGUF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"
     _MMPROJ_FILENAME = "mmproj-Qwen3.5-9B-BF16.gguf"
     _HF_REPO_ID = "lmstudio-community/Qwen3.5-9B-GGUF"
@@ -106,71 +101,31 @@ else:
     # ------------------------------------------------------------------
 
     def _resolve_model_path() -> str:
-        """Return the local GGUF path, downloading from Hugging Face if needed.
+        """Local GGUF path: local hit -> auxiliary fallback copy -> HF download."""
+        from models.utils import resolve_gguf_path
 
-        Checks in order:
-          1. ITTT_model/model_weight/
-          2. auxiliary_llm/model_weight/ (copy to ITTT dir if found)
-          3. Download from Hugging Face
-        """
-        if _gguf_path.is_file():
-            return str(_gguf_path)
-
-        # Check auxiliary_llm fallback location
-        if _fallback_gguf_path.is_file():
-            print(f"Copying GGUF from {_fallback_gguf_path} -> {_gguf_path} ...")
-            import shutil
-
-            _MODEL_WEIGHT_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(_fallback_gguf_path), str(_gguf_path))
-            return str(_gguf_path)
-
-        try:
-            from huggingface_hub import hf_hub_download
-        except ImportError:
-            raise ImportError(
-                "Model file not found locally and 'huggingface_hub' is not installed. "
-                "Run: pip install huggingface_hub"
-            ) from None
-
-        print(f"Downloading {_HF_REPO_ID}/{_GGUF_FILENAME} -> {_MODEL_WEIGHT_DIR} ...")
-        hf_hub_download(
-            repo_id=_HF_REPO_ID,
-            filename=_GGUF_FILENAME,
-            local_dir=str(_MODEL_WEIGHT_DIR),
+        return resolve_gguf_path(
+            _gguf_path, _HF_REPO_ID, _GGUF_FILENAME, _MODEL_WEIGHT_DIR,
+            fallback_path=_fallback_gguf_path,
         )
-        return str(_gguf_path)
 
     # ------------------------------------------------------------------
     # 2b.  Helper: resolve mmproj path (download if missing)
     # ------------------------------------------------------------------
 
     def _resolve_mmproj_path() -> str:
-        """Return the local mmproj path, downloading from HF if needed."""
-        if _mmproj_path.is_file():
-            return str(_mmproj_path)
+        """Local mmproj path, downloading from HF if needed."""
+        from models.utils import resolve_gguf_path
 
-        try:
-            from huggingface_hub import hf_hub_download
-        except ImportError:
-            raise ImportError(
-                "mmproj file not found locally and 'huggingface_hub' is not installed. "
-                "Run: pip install huggingface_hub"
-            ) from None
-
-        print(f"Downloading {_HF_REPO_ID}/{_MMPROJ_FILENAME} -> {_MODEL_WEIGHT_DIR} ...")
-        hf_hub_download(
-            repo_id=_HF_REPO_ID,
-            filename=_MMPROJ_FILENAME,
-            local_dir=str(_MODEL_WEIGHT_DIR),
+        return resolve_gguf_path(
+            _mmproj_path, _HF_REPO_ID, _MMPROJ_FILENAME, _MODEL_WEIGHT_DIR
         )
-        return str(_mmproj_path)
 
     # ------------------------------------------------------------------
     # 2c.  Message converter (supports multimodal HumanMessage)
     # ------------------------------------------------------------------
 
-    def _convert_message_to_dict(message: BaseMessage) -> Dict[str, Any]:
+    def _convert_message_to_dict_impl(message: BaseMessage) -> Dict[str, Any]:
         """Convert a LangChain ``BaseMessage`` to the dict expected by
         ``llama_cpp.Llama.create_chat_completion()``.
 
@@ -216,90 +171,25 @@ else:
     #      with Qwen25VLChatHandler for multimodal vision support
     # ------------------------------------------------------------------
 
-    class LocalLlamaChatModel(BaseChatModel):
-        """LangChain ``BaseChatModel`` wrapping ``llama_cpp.Llama`` with
-        ``Qwen25VLChatHandler`` for local GGUF multimodal inference."""
+    class LocalLlamaChatModel(LocalMultimodalLlamaChatBase):
+        """ITTT variant: delegates conversion/resolution to this
+        module's closures; lifecycle/fields live on the multimodal base
+        (audit 1.1.1)."""
 
-        model_path: str = ""
-        mmproj_path: str = ""
         n_ctx: int = 8192
-        temperature: float = 0.0
-        max_tokens: int = 4096
-        verbose: bool = False
-        n_gpu_layers: int = -1  # -1 = offload all layers to GPU
 
-        _client: Optional[Llama] = None
-        _resolved_model_path: str = ""
-        _resolved_mmproj_path: str = ""
+        def _resolve_model_path(self) -> str:
+            return _resolve_model_path()
 
-        def __init__(self, **kwargs: Any) -> None:
-            super().__init__(**kwargs)
-            self._resolved_model_path = self.model_path or _resolve_model_path()
-            self._resolved_mmproj_path = self.mmproj_path or _resolve_mmproj_path()
+        def _resolve_mmproj_path(self) -> str:
+            return _resolve_mmproj_path()
 
-        def _ensure_client(self) -> Llama:
-            if self._client is None:
-                chat_handler = Qwen25VLChatHandler(
-                    clip_model_path=self._resolved_mmproj_path,
-                    verbose=self.verbose,
-                )
-                self._client = Llama(
-                    model_path=self._resolved_model_path,
-                    chat_handler=chat_handler,
-                    n_ctx=self.n_ctx,
-                    n_batch=self.n_ctx,
-                    n_ubatch=self.n_ctx,  # Must match or exceed n_tokens per encoder step
-                    n_gpu_layers=self.n_gpu_layers,
-                    verbose=self.verbose,
-                )
-                atexit.register(self._release_client)
-            return self._client
-
-        def _release_client(self) -> None:
-            if self._client is not None:
-                self._client.close()
-                self._client = None
+        def _convert_message_to_dict(self, message: BaseMessage) -> Dict[str, Any]:
+            return _convert_message_to_dict_impl(message)
 
         @property
         def _llm_type(self) -> str:
             return "local-llama-cpp-multimodal"
-
-        @property
-        def _identifying_params(self) -> Mapping[str, Any]:
-            return {
-                "model_path": self.model_path,
-                "mmproj_path": self.mmproj_path,
-                "n_ctx": self.n_ctx,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-            }
-
-        def _generate(
-            self,
-            messages: List[BaseMessage],
-            stop: Optional[List[str]] = None,
-            run_manager: Optional[CallbackManagerForLLMRun] = None,
-            **kwargs: Any,
-        ) -> ChatResult:
-            client = self._ensure_client()
-            try:
-                llama_messages = [_convert_message_to_dict(m) for m in messages]
-                response = client.create_chat_completion(
-                    messages=llama_messages,
-                    stop=stop or [],
-                    temperature=kwargs.get("temperature", self.temperature),
-                    max_tokens=kwargs.get("max_tokens", self.max_tokens),
-                )
-                choice = response["choices"][0]
-                message = choice["message"]
-                content = message.get("content", "")
-            finally:
-                self._release_client()
-            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
-
-        @property
-        def lc_attributes(self) -> Mapping[str, Any]:
-            return self._identifying_params
 
     # ------------------------------------------------------------------
     # 2e.  Instantiate the singleton

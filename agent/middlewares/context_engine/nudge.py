@@ -10,6 +10,11 @@ from langchain.agents.middleware import AgentMiddleware
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages import BaseMessage, ToolMessage
 
+# Lazy import to avoid circular dependency with IterationBudget
+def _get_iteration_budget():
+    from agent.middlewares import IterationBudget
+    return IterationBudget
+
 _MEMORY_REVIEW_PROMPT = (
     "Review the conversation above and consider saving to memory if appropriate.\n\n"
     "Focus on:\n"
@@ -233,17 +238,18 @@ class StateSchema(AgentState):
 async def _create_nudge_agent(system_prompt: str):
     from agent import get_agent_tools
     from models import build_main_llm
-    from agent.middlewares import ToolCallNormalize, ToolGuardrails, IterationBudget
 
-    main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
+    main_llm = build_main_llm()
     return create_agent(
         model=main_llm,
         state_schema=StateSchema,
         system_prompt=system_prompt,
-        # ToolCallNormalize strips orphaned ToolMessages (e.g. those produced by
-        # a HITL reject) before building the LLM input, preventing the LangChain
-        # 400 "Messages with role 'tool' must be a response to a preceding message".
-        middleware=[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()],
+        middleware=[
+            _NudgeLimitTool(),
+            ToolCallNormalize(),
+            ToolGuardrails(),
+            _get_iteration_budget(),
+        ],
         tools=get_agent_tools(),
     )
 

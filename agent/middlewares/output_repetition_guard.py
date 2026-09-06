@@ -113,7 +113,9 @@ _THINK_PATTERNS = [
 ]
 
 
-class OutputRepetitionGuard(AgentMiddleware):
+from agent.middlewares.base import BeforeAgentHooksMixin, AfterAgentHooksMixin
+
+class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
     """Detect and break text-output death loops.
 
     Parameters
@@ -604,26 +606,6 @@ class OutputRepetitionGuard(AgentMiddleware):
         state_register_mem.set_state(session_id, _HALTED_KEY, False)
         state_register_mem.set_state(session_id, _REASONING_HISTORY_KEY, [])
         state_register_mem.set_state(session_id, _REASONING_WARNED_KEY, False)
-
-    @override
-    def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        """Synchronous lifecycle hook: reset repetition state for this turn.
-
-        Delegates to :func:`_before_agent_impl` and returns ``None``, leaving
-        the agent state unchanged.
-        """
-        logger.debug("{} before_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
-        return None
-
-    @override
-    async def abefore_agent(
-        self, state: AgentState, runtime: Runtime[ContextT]
-    ) -> dict[str, Any] | None:
-        """Async lifecycle hook: same as :func:`before_agent` for async runs."""
-        logger.debug("{} abefore_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
-        return None
 
     @override
     def wrap_model_call(

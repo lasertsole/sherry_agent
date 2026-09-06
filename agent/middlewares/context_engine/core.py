@@ -131,12 +131,7 @@ class ContextEngineHook(AgentMiddleware):
     # ------------------------------------------------------------------
     @staticmethod
     def _get_session_id_or_raise(state: Any) -> str:
-        session_id: str = state.get("session_id", "")
-        if session_id.strip() == "":
-            err_text: str = "Not pass session_id"
-            logger.error(err_text)
-            raise RuntimeError(err_text)
-        return session_id
+        return require_session_id(state, "Not pass session_id")
 
     # ------------------------------------------------------------------
     # Shared: system prompt injection (called by both sync and async)

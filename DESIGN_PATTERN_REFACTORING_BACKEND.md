@@ -110,55 +110,69 @@
 
 ### 1.1 代码重复
 
+> **✅ 完成标记（2026-09-06）**：1.1.1–1.1.10 全部落地。共享件：`models/utils.py`（`read_env_file_value` + `resolve_gguf_path`）、`models/LLMs/base_local_llama.py`（`LocalLlamaChatBase` + `LocalMultimodalLlamaChatBase`）、`agent/tools/pub_base/{schema_utils,tool_utils,sandbox_guard}.py`、`agent/middlewares/base.py`（`require_session_id` + `args_hash`）+ `agent/middlewares/mixins.py`（钩子桥接）。TDD 测试 79 个（unit/skills 15 + unit/middlewares 13+17+… + module 组），回归 145+ 通过。1.1.9 采用范围说明见 1.1.9 条目。
+
 #### 1.1.1 `LocalLlamaChatModel` 类跨 3 文件近乎逐行复制
 
 - **文件**: `models/LLMs/auxiliary_llm/core.py:140-419`; `models/ITTT_model/core.py:219-302`; `models/VTTT_model/core.py:225-308`
-- **问题**: 三个文件各自定义几乎相同的 `LocalLlamaChatModel(BaseChatModel)` 类，包含相同的 `_ensure_client`/`_release_client`/`_generate` 方法。VTTT 与 ITTT 差异仅在于多一个 `video_url` 分支。
+- **问题**: 三个文件各自定义几乎相同的 `LocalLlamaChatModel(BaseChatModel)` 类，包含相同的 `_ensure_client`/`_release_client`/`_generate` 方法。
+- **实际差异（2026-09-05 核实）**: 三个类均非顶层定义——auxiliary 的嵌套在 `build_auxiliary_llm()` 工厂内并闭包 `temperature`；ITTT/VTTT 定义在模块级 local 分支的 else 块中。auxiliary 为纯文本模型（含 reasoning 提取、`bind_tools`、`with_structured_output`）；ITTT/VTTT 为多模态（`mmproj_path` + `Qwen25VLChatHandler` + `n_batch/n_ubatch`，无 reasoning 提取），二者仅差 VTTT 多一个 `video_url` → 文本占位分支。字段默认值亦不同（`n_ctx` 40960 vs 8192；`max_tokens` 32768 vs 4096）。
 - **模式**: Template Method
-- **建议**: 提取 `models/LLMs/base_local_llama.py` 基类，子类只覆盖 `_convert_message_to_dict` 和 `_llm_type`
+- **✅ 已完成（2026-09-06）**: `models/LLMs/base_local_llama.py` 已创建（`LocalLlamaChatBase` + `LocalMultimodalLlamaChatBase`），三个模型类缩为钩子子类；行为 pin 测试 `tests/module/test_base_local_llama.py`（13 个，假 client，无 GGUF 下载）。
+- **建议**: 提取 `models/LLMs/base_local_llama.py`：`LocalLlamaChatBase`（公共字段/`_release_client`/`_generate` 骨架，reasoning 提取做成 `extract_reasoning` 类开关）+ `LocalMultimodalLlamaChatBase`（`mmproj_path` + chat_handler 版 `_ensure_client`，ITTT/VTTT 共享）。子类仅覆盖 `_convert_message_to_dict`、`_ensure_client`、`_resolve_model_path` 钩子与 `_llm_type`；auxiliary 的 `bind_tools`/`with_structured_output` 保留在子类。
 
 ```python
 # models/LLMs/base_local_llama.py
 class LocalLlamaChatBase(BaseChatModel):
     """Base for all local GGUF chat models."""
-    model_path: str
+    model_path: str = ""
     n_ctx: int = 4096
 
     def _generate(self, messages, stop=None, **kwargs):
         client = self._ensure_client()
-        msg_dicts = [self._convert(m) for m in messages]
+        msg_dicts = [self._convert_message_to_dict(m) for m in messages]
         # ... shared generate logic ...
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
 
-    @abstractmethod
-    def _convert(self, msg: BaseMessage) -> dict: ...
+    def _convert_message_to_dict(self, msg: BaseMessage) -> dict: ...  # hook
 
 # models/ITTT_model/core.py
-class ITTTModel(LocalLlamaChatBase):
-    def _convert(self, msg): ...  # text-only variant
+class LocalLlamaChatModel(LocalMultimodalLlamaChatBase):
+    def _convert_message_to_dict(self, msg): ...  # image_url blocks
+# models/VTTT_model/core.py
+class LocalLlamaChatModel(LocalMultimodalLlamaChatBase):
+    def _convert_message_to_dict(self, msg): ...  # + video_url placeholder
 ```
 
 #### 1.1.2 `_convert_message_to_dict` 重复
 
-- **文件**: `auxiliary_llm/core.py:128-136`; `ITTT_model/core.py:173-209`; `VTTT_model/core.py:170-218`
-- **模式**: 提取到 `models/utils.py` 的共享工具函数
+- **文件**: `auxiliary_llm/core.py:128-136`（工厂内嵌套、纯文本）; `ITTT_model/core.py:168-208`; `VTTT_model/core.py:165-215`（模块级 local 分支、多模态块转换，VTTT 多 video_url 占位）
+- **模式**: 随 1.1.1 的基类一并解决——成为 `LocalLlamaChatBase._convert_message_to_dict` 方法（默认纯文本实现），多模态/视频变体在子类覆盖；不再放入 `models/utils.py` 自由函数（三种变体与各自模型强耦合）。
+- **✅ 已完成（2026-09-06）**: 转换逻辑逐字保留（ITTT/VTTT 模块函数重命名为 `_convert_message_to_dict_impl`，子类方法委托），diff 验证零语义变化。
 
 #### 1.1.3 `_resolve_model_path` 下载逻辑重复
 
-- **文件**: `auxiliary_llm/core.py:107-126`; `ITTT_model/core.py:108-142`; `VTTT_model/core.py:105-139`
-- **模式**: 提取 `ModelWeightResolver` 工具类
+- **文件**: `auxiliary_llm/core.py:107-126`（直接 HF 下载，无回退拷贝）; `ITTT_model/core.py:108-142` 与 `VTTT_model/core.py:105-139`（含 auxiliary 目录回退拷贝 + 独立 `_resolve_mmproj_path`，两者除闭包常量外逐行相同）
+- **模式**: 提取参数化工具函数 `resolve_gguf_path(local_path, hf_repo, hf_filename, local_dir, fallback_path=None)` 放入 `models/utils.py`——三处调用点各保留一行薄包装（闭包常量作参数传入）。
+- **✅ 已完成（2026-09-06）**: `models/utils.py::resolve_gguf_path` 已创建（含 auxiliary 目录回退拷贝分支），测试 4 个（本地命中/回退拷贝/HF 下载/缺 hub 报错）。
 
 #### 1.1.4 `_read_dotenv` 完全重复
 
 - **文件**: `models/embed_model/core.py:17-30`; `models/reranker_model/core.py:29-41`
-- **模式**: 删除两个副本，统一使用 `config` 模块的 `load_dotenv` + `os.getenv`
+- **问题**: 两份逐字相同。
+- **修正原建议（2026-09-05）**: 原建议"统一使用 config 模块的 `load_dotenv` + `os.getenv`"会**改变行为**——函数 docstring 明确"Parse from .env file only, avoiding os.environ (to skip load_dotenv side effects)"（os.environ 可能含与 .env 不一致的导出值，且 load_dotenv 有全局副作用）。按行为保持原则：提取 `models/utils.py::read_env_file_value(key, default)`（保留 .env 文件解析语义），两个模型模块改为导入使用。
+- **✅ 已完成（2026-09-06）**: 测试 10 个全过。**顺带修复发现的原有缺陷**：原实现 `\s*` 跨行匹配，`EMPTY=`（空值行）会吞掉下一行作为值——共享版改用 `[ \t]*` 修复。
 
 #### 1.1.5 `_ClassOrInstanceSchema` 描述符重复
+
+> **✅ 已完成（2026-09-06）**: `agent/tools/pub_base/schema_utils.py::class_or_instance_schema(parent_cls)` 工厂已创建（参数化父类，修复两份副本各自硬编码工具类的问题）；terminal.py / python_repl.py 已接线。注意 pathlib 规范化：`Path` 的 parts 不含开头的 `.`。
 
 - **文件**: `agent/tools/terminal.py:92-109`; `agent/tools/python_repl.py:83-100`
 - **模式**: 泛化为 `ClassOrInstanceSchema(parent_cls)` 工厂函数，放到 `agent/tools/pub_base/schema_utils.py`
 
 #### 1.1.6 `_deny_sandbox_bypass` 方法重复
+
+> **✅ 已完成（2026-09-06）**: `agent/tools/pub_base/sandbox_guard.py::SandboxGuardMixin` 已创建（含 read_policy 注入点），terminal.py / python_repl.py 已接线；既有沙箱绕过测试全过。
 
 - **文件**: `agent/tools/terminal.py:151-172`; `agent/tools/python_repl.py:193-213`
 - **模式**: Mixin — 定义 `SandboxGuardMixin`，两个工具类继承
@@ -173,15 +187,21 @@ class SandboxGuardMixin:
 
 #### 1.1.7 `_tool_error` 函数重复
 
+> **✅ 已完成（2026-09-06）**: `agent/tools/pub_base/tool_utils.py::tool_error` 已创建；memory.py / message_search.py 以 `_tool_error = tool_error` 别名接线（调用点零改动）。
+
 - **文件**: `agent/tools/memory.py:474-485`; `agent/tools/message_search.py:31-42`
 - **模式**: 提取到 `agent/tools/pub_base/tool_utils.py`
 
 #### 1.1.8 `_args_hash` 函数重复
 
+> **✅ 已完成（2026-09-06）**: `agent/middlewares/base.py::args_hash` 共享实现已创建；tool_guardrails.py 静态方法与 humanInTheLoop/approval.py 模块函数均改为委托。测试：确定性/顺序无关/不可序列化回退/md5 长度。
+
 - **文件**: `agent/middlewares/humanInTheLoop/approval.py:73-79`; `agent/middlewares/tool_guardrails.py:107-113`
 - **模式**: 提取到公共工具模块
 
 #### 1.1.9 中间件 sync/async 钩子模式重复
+
+> **✅ 部分完成（2026-09-06）**：`agent/middlewares/base.py::BeforeAgentHooksMixin` / `AfterAgentHooksMixin`（由 `mixins.py` 实现并再导出）已创建并接入 **multimodal_processor / heartbeat_staleness / output_repetition_guard / iteration_budget**（四处 before/after 钩子对完全符合纯委托形态）。**不采用**并记录原因：summarization（sync/async 是两套独立 impl，非仅差 await）、context_engine（after 钩子含 nudge 分发 + 持久化等额外逻辑，sync/async 互异）、humanInTheLoop（委托目标名不同且无日志行）、全部 wrap_* 钩子族（sync handler 与 async handler 结构性不同，无法仅差 await 桥接）。原文档"sync 和 async 钩子体完全相同（仅差 await）"的断言经核实仅对 before/after 纯委托子集成立。
 
 - **文件**: 所有中间件 (`heartbeat_staleness.py:187-209`; `iteration_budget.py`; `output_repetition_guard.py`; `multimodal_processor.py`; `summarization.py`; `context_engine/core.py`)
 - **问题**: 每个中间件遵循 `_impl` + `sync_hook` + `async_hook` 三方法模式，sync 和 async 钩子体完全相同（仅差 `await`）
@@ -202,6 +222,8 @@ class AsyncSyncMiddleware(AgentMiddleware):
 ```
 
 #### 1.1.10 `session_id` 提取逻辑重复
+
+> **✅ 已完成（2026-09-06）**: `agent/middlewares/base.py::require_session_id(state, error_message)` 已创建——保留各中间件错误文案（"Not pass session_id" / "Xxx: session_id is required"），context_engine 保留 raise 前的 logger.error。已接入：tool_guardrails / heartbeat_staleness / iteration_budget / context_engine / summarization / multimodal_processor（6 处）。
 
 - **文件**: 7+ 中间件各自实现 `_get_session_id`/`_sid`/`_get_session_or_raise`（`output_repetition_guard.py:157-171`; `heartbeat_staleness.py:90-94`; `iteration_budget.py:54-58`; `tool_guardrails.py:95-99`; `multimodal_processor.py:151-155`; `summarization.py:427-434`; `context_engine/core.py:132-139`）
 - **模式**: `SessionStateMixin` 或工具函数 `require_session_id(state)`，放到 `agent/middlewares/base.py`

@@ -1,16 +1,3 @@
-"""Tool-call loop detection and circuit breaking.
-
-Equivalent to hermes-agent's ``agent/tool_guardrails.py``.
-
-Detects three distinct tool-loop pathologies and can warn or hard-stop:
-
-1. **Exact failure repetition** — same tool + same arguments failing repeatedly.
-2. **Same-tool failure accumulation** — same tool failing with different args.
-3. **Idempotent no-progress** — read-only tool returning identical results repeatedly.
-
-Decision actions: ``allow`` → ``warn`` → ``block`` → ``halt``.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -28,6 +15,8 @@ from langchain_core.messages import ToolMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from runtime import state_register_mem
+from agent.middlewares.base import require_session_id
+from agent.middlewares.base import require_session_id
 
 
 class GuardrailAction(str, Enum):
@@ -113,10 +102,7 @@ class ToolGuardrails(AgentMiddleware):
         return False
 
     def _get_session_id(self, state: dict[str, Any]) -> str:
-        session_id: str = state.get("session_id", "")
-        if not session_id.strip():
-            raise RuntimeError("ToolGuardrails: session_id is required")
-        return session_id
+        return require_session_id(state, "ToolGuardrails: session_id is required")
 
     def _get_state(self, session_id: str) -> _TurnGuardrailState:
         return state_register_mem.get_state(session_id, _GUARDRAIL_STATE_KEY, _TurnGuardrailState())
@@ -126,11 +112,8 @@ class ToolGuardrails(AgentMiddleware):
 
     @staticmethod
     def _args_hash(args: dict[str, Any]) -> str:
-        try:
-            serialized = json.dumps(args, sort_keys=True, default=str)
-        except (TypeError, ValueError):
-            serialized = str(args)
-        return hashlib.md5(serialized.encode()).hexdigest()
+        from agent.middlewares.base import args_hash
+        return args_hash(args)
 
     @staticmethod
     def _result_hash(content: str) -> str:

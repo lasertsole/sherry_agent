@@ -41,6 +41,11 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ModelRequest, ModelResponse, ExtendedModelResponse
 
 from runtime import state_register_mem, timer_call_register
+from agent.middlewares.base import (
+    BeforeAgentHooksMixin,
+    AfterAgentHooksMixin,
+    require_session_id,
+)
 
 
 _HEARTBEAT_INTERVAL_MINUTES = 1
@@ -60,7 +65,7 @@ class HeartbeatTimeoutError(RuntimeError):
     pass
 
 
-class HeartbeatStaleness(AgentMiddleware):
+class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddleware):
     """Detect and terminate agents that make no progress.
 
     Parameters
@@ -88,10 +93,7 @@ class HeartbeatStaleness(AgentMiddleware):
         self.stale_cycles_in_tool = stale_cycles_in_tool
 
     def _sid(self, state: AgentState) -> str:
-        session_id: str = state.get("session_id", "")
-        if not session_id.strip():
-            raise RuntimeError("HeartbeatStaleness: session_id is required")
-        return session_id
+        return require_session_id(state, "HeartbeatStaleness: session_id is required")
 
     def _is_killed(self, session_id: str) -> bool:
         return state_register_mem.get_state(session_id, _STATE_KEY_KILLED, False)
@@ -183,30 +185,6 @@ class HeartbeatStaleness(AgentMiddleware):
     def _after_agent_impl(self, state: AgentState) -> None:
         session_id = self._sid(state)
         self._stop_heartbeat(session_id)
-
-    @override
-    def before_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
-        logger.debug("{} before_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
-        return None
-
-    @override
-    async def abefore_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
-        logger.debug("{} abefore_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
-        return None
-
-    @override
-    def after_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
-        logger.debug("{} after_agent hook fired", type(self).__name__)
-        self._after_agent_impl(state)
-        return None
-
-    @override
-    async def aafter_agent(self, state: AgentState, runtime: Any) -> dict[str, Any] | None:
-        logger.debug("{} aafter_agent hook fired", type(self).__name__)
-        self._after_agent_impl(state)
-        return None
 
     def _wrap_model_call_impl(self, request: ModelRequest) -> AIMessage | None:
         session_id = self._sid(request.state)

@@ -37,6 +37,8 @@ from contextlib import contextmanager
 from pydantic import BaseModel, Field
 from typing import Any, Literal, Type, override
 
+from agent.tools.pub_base.tool_utils import tool_error as _tool_error
+
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 msvcrt = None
 try:
@@ -471,18 +473,7 @@ class MemoryStore:
             raise RuntimeError(f"Failed to write memory file {path}: {e}")
 
 
-def _tool_error(message, **extra) -> str:
-    """Return a JSON error string for tool handlers.
 
-    >>> _tool_error("file not found")
-    '{"error": "file not found"}'
-    >>> _tool_error("bad input", success=False)
-    '{"error": "bad input", "success": false}'
-    """
-    result = {"error": str(message)}
-    if extra:
-        result.update(extra)
-    return json.dumps(result, ensure_ascii=False)
 
 
 memory_store: MemoryStore = MemoryStore()

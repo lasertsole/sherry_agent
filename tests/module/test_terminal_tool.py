@@ -30,7 +30,14 @@ import pytest
 from loguru import logger
 from pydantic import BaseModel
 
+import agent.tools.pub_base.sandbox_guard as sandbox_guard
 import agent.tools.terminal as terminal
+def _set_policy(monkeypatch, policy):
+    """Set the policy at BOTH consumption points: the SandboxGuardMixin guard
+    and terminal's own _resolve_sandbox_argv read."""
+    monkeypatch.setattr(sandbox_guard, "read_policy", lambda: policy)
+    monkeypatch.setattr(terminal, "read_policy", lambda: policy)
+
 from agent.tools.pub_base.sandbox import SandboxPolicy
 from agent.tools.terminal import SafeShellTool, build_terminal_tool
 from config import ROOT_DIR
@@ -203,7 +210,7 @@ class TestEnvScrubWiring:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.OFF)
+        _set_policy(monkeypatch, SandboxPolicy.OFF)
         tool = _tool()
 
         tool._run(["echo ok"])
@@ -222,7 +229,7 @@ class TestEnvScrubWiring:
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.OFF)
+        _set_policy(monkeypatch, SandboxPolicy.OFF)
         tool = _tool()
 
         asyncio.run(tool._arun(["echo ok"]))
@@ -236,7 +243,7 @@ class TestEnvScrubWiring:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         tool = _tool()  # main scope -> sandbox=False allowed today
 
         tool._run(["echo ok"], sandbox=False)
@@ -255,7 +262,7 @@ class TestSandboxBypassGuards:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _sentinel_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         tool = _tool(caller_scope="subagent")
 
         from langchain_core.tools import ToolException
@@ -271,7 +278,7 @@ class TestSandboxBypassGuards:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _sentinel_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.REQUIRED)
+        _set_policy(monkeypatch, SandboxPolicy.REQUIRED)
         tool = _tool()  # main scope: scope guard passes, policy guard must deny
 
         from langchain_core.tools import ToolException
@@ -287,7 +294,7 @@ class TestSandboxBypassGuards:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         tool = _tool()
 
         out = tool._run(["echo ok"], sandbox=False)
@@ -299,7 +306,7 @@ class TestSandboxBypassGuards:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.OFF)
+        _set_policy(monkeypatch, SandboxPolicy.OFF)
         tool = _tool(caller_scope="subagent")
 
         out = tool._run(["echo ok"], sandbox=True)
@@ -315,7 +322,7 @@ class TestSandboxBypassGuards:
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         tool = _tool(caller_scope="background")
 
         from langchain_core.tools import ToolException
@@ -354,7 +361,7 @@ class TestDangerousCommandRegex:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _sentinel_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.OFF)
+        _set_policy(monkeypatch, SandboxPolicy.OFF)
         tool = _tool()
 
         from langchain_core.tools import ToolException
@@ -368,7 +375,7 @@ class TestDangerousCommandRegex:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.OFF)
+        _set_policy(monkeypatch, SandboxPolicy.OFF)
         tool = _tool()
 
         tool._run(commands)  # type: ignore[arg-type]
@@ -381,7 +388,7 @@ class TestDangerousCommandRegex:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _sentinel_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.OFF)
+        _set_policy(monkeypatch, SandboxPolicy.OFF)
         tool = _tool()
 
         from langchain_core.tools import ToolException
@@ -409,7 +416,7 @@ class TestWindowsFallback:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         monkeypatch.setattr(terminal, "get_backend", lambda policy: None)
         tool = _tool()
 
@@ -436,7 +443,7 @@ class TestWindowsFallback:
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         monkeypatch.setattr(terminal, "get_backend", lambda policy: None)
         tool = _tool()
 
@@ -456,7 +463,7 @@ class TestWindowsFallback:
         def _boom(policy):
             raise AssertionError("get_backend must not be called when policy is OFF")
 
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.OFF)
+        _set_policy(monkeypatch, SandboxPolicy.OFF)
         monkeypatch.setattr(terminal, "get_backend", _boom)
         tool = _tool()
 
@@ -467,7 +474,7 @@ class TestWindowsFallback:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         monkeypatch.setattr(terminal, "get_backend", lambda policy: None)
         tool = _tool()
 
@@ -488,7 +495,7 @@ class TestSandboxWrap:
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         backend = _FakeBackend()
         monkeypatch.setattr(terminal, "get_backend", lambda policy: backend)
         tool = _tool()
@@ -523,7 +530,7 @@ class TestSandboxWrap:
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
         backend = _FakeBackend()
         monkeypatch.setattr(terminal, "get_backend", lambda policy: backend)
         tool = _tool()
@@ -546,7 +553,7 @@ class TestSandboxWrap:
         def _raise(policy):
             raise RuntimeError("Required sandbox unavailable on Windows")
 
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.REQUIRED)
+        _set_policy(monkeypatch, SandboxPolicy.REQUIRED)
         monkeypatch.setattr(terminal, "get_backend", _raise)
         tool = _tool()
 
@@ -564,7 +571,7 @@ class TestSandboxWrap:
         def _raise(policy):
             raise RuntimeError("Required sandbox unavailable on Windows")
 
-        monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.REQUIRED)
+        _set_policy(monkeypatch, SandboxPolicy.REQUIRED)
         monkeypatch.setattr(terminal, "get_backend", _raise)
         tool = _tool()
 

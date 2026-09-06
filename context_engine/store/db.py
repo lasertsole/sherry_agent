@@ -225,10 +225,10 @@ def add_turn_ts_ms_column(db: sqlite3.Connection) -> None:
         pass
 
     rows = db.execute("SELECT id, timestamp FROM messages WHERE ts_ms IS NULL").fetchall()
-    for row in rows:
+    for row_id, ts in rows:
         db.execute(
             "UPDATE messages SET ts_ms = ? WHERE id = ?",
-            (_legacy_ts_to_ms(row["timestamp"]), row["id"]),
+            (_legacy_ts_to_ms(ts), row_id),
         )
 
 

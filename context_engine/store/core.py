@@ -509,7 +509,7 @@ def get_session_ids() -> list[dict]:
                 FROM messages
                 GROUP BY session_id
             ) m
-            ORDER BY m.last_sort DESC
+            ORDER BY m.last_sort DESC, m.last_time DESC
         """).fetchall()
 
     result: list[dict] = []

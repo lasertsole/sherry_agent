@@ -25,8 +25,6 @@ import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -34,9 +32,9 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_core.runnables import Runnable, RunnableLambda
-from langchain_core.outputs import ChatGeneration, ChatResult
 
 from config import ENV_PATH
+from models.LLMs.base_local_llama import LocalLlamaChatBase
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 
 
@@ -105,54 +103,26 @@ def build_auxiliary_llm(temperature: float | None = None):
         _HF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"
 
         def _resolve_model_path() -> str:
-            if _model_path.is_file():
-                return str(_model_path)
-            try:
-                from huggingface_hub import hf_hub_download
-            except ImportError:
-                raise ImportError(
-                    "Model file not found locally and 'huggingface_hub' is not installed. "
-                    "Run: pip install huggingface_hub"
-                ) from None
-            # ── hf_hub_download(local_files_only=True) does NOT work with
-            #    local_dir — it only looks in HF's own cache (~/.cache/huggingface/hub).
-            #    So we skip it entirely and go straight to remote download. ──
-            print(f"Downloading {_HF_REPO_ID}/{_HF_FILENAME} -> {model_weight_dir} ...")
-            hf_hub_download(
-                repo_id=_HF_REPO_ID,
-                filename=_HF_FILENAME,
-                local_dir=str(model_weight_dir),
-            )
-            return str(_model_path)
+            # Shared resolver (audit 1.1.3); hf_hub_download(local_files_only=True)
+            # does NOT work with local_dir — go straight to remote download.
+            from models.utils import resolve_gguf_path
 
-        def _convert_message_to_dict(message: BaseMessage) -> Dict[str, Any]:
-            if isinstance(message, HumanMessage):
-                return {"role": "user", "content": message.content}
-            elif isinstance(message, AIMessage):
-                return {"role": "assistant", "content": message.content}
-            elif isinstance(message, SystemMessage):
-                return {"role": "system", "content": message.content}
-            else:
-                return {"role": "user", "content": message.content}
+            return resolve_gguf_path(_model_path, _HF_REPO_ID, _HF_FILENAME, model_weight_dir)
 
         _local_temperature = temperature if temperature is not None else 0.0
 
-        class LocalLlamaChatModel(BaseChatModel):
-            """LangChain BaseChatModel wrapping llama_cpp.Llama for local GGUF models."""
+        class LocalLlamaChatModel(LocalLlamaChatBase):
+            """Auxiliary variant: plain Llama client + reasoning extraction.
 
-            model_path: str = ""
-            n_ctx: int = 40960
-            temperature: float = _local_temperature
-            max_tokens: int = 32768
-            verbose: bool = False
-            n_gpu_layers: int = -1  # -1 = offload all layers to GPU
+            Common lifecycle/fields live on LocalLlamaChatBase (audit 1.1.1);
+            this subclass only wires the plain-LLama client and the
+            prompt-injection bind_tools / structured-output adapters.
+            """
 
-            _client: Optional[Llama] = None
-            _resolved_path: str = ""
+            extract_reasoning: bool = True
 
-            def __init__(self, **kwargs: Any) -> None:
-                super().__init__(**kwargs)
-                self._resolved_path = self.model_path or _resolve_model_path()
+            def _resolve_model_path(self) -> str:
+                return _resolve_model_path()
 
             def _ensure_client(self) -> Llama:
                 if self._client is None:
@@ -165,58 +135,9 @@ def build_auxiliary_llm(temperature: float | None = None):
                     atexit.register(self._release_client)
                 return self._client
 
-            def _release_client(self) -> None:
-                if self._client is not None:
-                    self._client.close()
-                    self._client = None
-
             @property
             def _llm_type(self) -> str:
                 return "local-llama-cpp"
-
-            @property
-            def _identifying_params(self) -> Mapping[str, Any]:
-                return {
-                    "model_path": self.model_path,
-                    "n_ctx": self.n_ctx,
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
-                }
-
-            def _generate(
-                self,
-                messages: List[BaseMessage],
-                stop: Optional[List[str]] = None,
-                run_manager: Optional[CallbackManagerForLLMRun] = None,
-                **kwargs: Any,
-            ) -> ChatResult:
-                client = self._ensure_client()
-                try:
-                    llama_messages = [_convert_message_to_dict(m) for m in messages]
-                    response = client.create_chat_completion(
-                        messages=llama_messages,
-                        stop=stop or [],
-                        temperature=kwargs.get("temperature", self.temperature),
-                        max_tokens=kwargs.get("max_tokens", self.max_tokens),
-                    )
-                    choice = response["choices"][0]
-                    message = choice["message"]
-                    content = message.get("content", "")
-                    reason = message.get("reasoning_content")
-                    if reason is None:
-                        reason = message.get("reasoning")
-                finally:
-                    self._release_client()
-                ai_kwargs: Dict[str, Any] = {}
-                if isinstance(reason, str) and reason:
-                    ai_kwargs.setdefault("reasoning_content", reason)
-                return ChatResult(
-                    generations=[
-                        ChatGeneration(
-                            message=AIMessage(content=content, additional_kwargs=ai_kwargs)
-                        )
-                    ]
-                )
 
             def bind_tools(
                 self,
@@ -406,7 +327,7 @@ def build_auxiliary_llm(temperature: float | None = None):
                         )
 
                         return create(
-                            messages=[_convert_message_to_dict(m) for m in msgs],
+                            messages=[self._convert_message_to_dict(m) for m in msgs],
                             response_model=schema,
                         )
                     finally:
@@ -418,7 +339,7 @@ def build_auxiliary_llm(temperature: float | None = None):
             def lc_attributes(self) -> Mapping[str, Any]:
                 return self._identifying_params
 
-        model = LocalLlamaChatModel()
+        model = LocalLlamaChatModel(n_ctx=40960, temperature=_local_temperature, max_tokens=32768)
         model = NormalizingChatModel(inner=model)
 
     return model

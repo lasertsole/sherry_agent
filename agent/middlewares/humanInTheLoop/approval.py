@@ -1,20 +1,5 @@
-"""Command approval pipeline — 6-layer escalation from hardline to human.
-
-Layers (executed in order):
-    1. Hardline blocklist  — unconditional deny (from :mod:`detection`)
-    2. User deny rules      — glob-style patterns configured in :class:`HITLConfig`
-    3. YOLO bypass          — skip all checks when YOLO mode is active
-    4. Permanent allowlist  — cross-session approved patterns (persistent state)
-    5. Session allowlist    — per-session approved patterns (in-memory state)
-    6. Dangerous detection  — pattern-match from :mod:`detection`, escalate to human
-
-Smart approval (LLM-assisted) and plugin tool approval are additional layers
-provided as separate methods.
-"""
-
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from typing import Any, Callable
@@ -32,6 +17,9 @@ from .types import (
     BLOCKED_MESSAGE,
 )
 from .detection import detect_hardline_command, detect_dangerous_command
+
+# Use shared args_hash from middlewares.base (audit 1.1.8)
+from agent.middlewares.base import args_hash
 
 
 def is_yolo_mode(config: HITLConfig) -> bool:
@@ -79,13 +67,8 @@ def _extract_pattern(command: str) -> str:
     return f"{parts[0]}*" if parts else command
 
 
-def _args_hash(args: dict[str, Any]) -> str:
-    """Return an MD5 hash of serialized tool arguments for deduplication."""
-    try:
-        serialized = json.dumps(args, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        serialized = str(args)
-    return hashlib.md5(serialized.encode()).hexdigest()
+# Use shared args_hash from middlewares.base (audit 1.1.8)
+_args_hash = args_hash
 
 
 def _get_state(session_id: str, key: str, default: Any = None) -> Any:

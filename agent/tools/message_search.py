@@ -7,6 +7,8 @@ from loguru import logger
 import concurrent.futures
 from pub_func import run_async
 from typing import Any, Annotated
+
+from agent.tools.pub_base.tool_utils import tool_error as _tool_error
 from models import build_main_llm
 from langchain.tools import BaseTool, tool
 from pydantic import BaseModel, Field
@@ -28,18 +30,7 @@ class MessageSearchSchema(BaseModel):
     limit: int = Field(default=3, description="Max sessions to summarize (default: 3, max: 5).")
 
 
-def _tool_error(message, **extra) -> str:
-    """Return a JSON error string for tool handlers.
 
-    >>> tool_error("file not found")
-    '{"error": "file not found"}'
-    >>> tool_error("bad input", success=False)
-    '{"error": "bad input", "success": false}'
-    """
-    result = {"error": str(message)}
-    if extra:
-        result.update(extra)
-    return json.dumps(result, ensure_ascii=False)
 
 
 def _format_conversation(messages: list[dict[str, Any]]) -> str:

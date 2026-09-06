@@ -32,11 +32,12 @@ import subprocess
 from loguru import logger
 from langchain_experimental.tools import PythonREPLTool
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
-from langchain_core.tools import ToolException
 
 from config.path import ROOT_DIR
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
+from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
+from agent.tools.pub_base.schema_utils import class_or_instance_schema
 
 PYTHON_REPL_TIMEOUT = 30  # seconds
 
@@ -80,24 +81,7 @@ except Exception as e:
 """)
 
 
-class _ClassOrInstanceSchema:
-    """Descriptor letting ``tool_call_schema`` be read from the class too.
 
-    langchain_core defines ``tool_call_schema`` as a plain instance
-    ``@property``, so class-level access (``TimedPythonREPLTool.tool_call_schema``)
-    would return the bare property object instead of the schema model. The
-    Task 7 acceptance one-liner reads the schema from the class; this
-    descriptor forwards BOTH access forms to the inherited property getter,
-    so the signature-based auto-derivation mechanism is preserved unchanged
-    (still no explicit ``args_schema`` anywhere on the class chain).
-    """
-
-    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        # Class access synthesizes a throwaway instance (cheap: all-defaults
-        # pydantic model) so the inherited getter runs on a real self.
-        owner = objtype if objtype is not None else type(obj)
-        target = obj if obj is not None else owner()
-        return PythonREPLTool.tool_call_schema.__get__(target, type(target))
 
 
 def _run_with_timeout(
@@ -176,7 +160,7 @@ def _run_with_timeout(
     return result["out"] or "(no output)"
 
 
-class TimedPythonREPLTool(PythonREPLTool):
+class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
     """PythonREPLTool with a timeout on each execution.
 
     Uses subprocess to run code in an isolated Python process and kills it
@@ -188,29 +172,7 @@ class TimedPythonREPLTool(PythonREPLTool):
     args_schema subclassing.
     """
 
-    tool_call_schema: ClassVar[Any] = _ClassOrInstanceSchema()
-
-    def _deny_sandbox_bypass(self, sandbox: bool) -> None:
-        """Guard sandbox=False calls: subagents are denied, REQUIRED denies all.
-
-        Matrix cells (agent/tools/pub_base/sandbox.py docstring): required +
-        sandbox=False → DENIED outright (no approval path until Task 8);
-        subagent scope + sandbox=False → DENIED (bypass is a main-session,
-        human-approved decision only). ``sandbox=True`` is never gated here.
-        """
-        if sandbox:
-            return
-        metadata = self.metadata if isinstance(self.metadata, dict) else {}
-        scope = metadata.get("caller_scope", "main")
-        if scope != "main":
-            raise ToolException(
-                f"沙箱绕过仅限主会话人工审批；当前 scope={scope}"
-            )
-        if read_policy() is SandboxPolicy.REQUIRED:
-            raise ToolException(
-                "SANDBOX_POLICY=required 拒绝未沙箱执行："
-                "sandbox=False 需要主会话（main）人工审批"
-            )
+    tool_call_schema: ClassVar[Any] = class_or_instance_schema(PythonREPLTool)
 
     def _run(
         self,

@@ -28,8 +28,15 @@ import pytest
 from config.path import ROOT_DIR
 from langchain_core.tools import ToolException
 
+import agent.tools.pub_base.sandbox_guard as sandbox_guard
 import agent.tools.python_repl as python_repl
 from agent.tools.python_repl import TimedPythonREPLTool, build_python_repl_tool
+def _set_policy(monkeypatch, policy):
+    """Set the policy at BOTH consumption points: the SandboxGuardMixin guard
+    and python_repl's own _resolve_sandbox_argv read."""
+    monkeypatch.setattr(sandbox_guard, "read_policy", lambda: policy)
+    monkeypatch.setattr(python_repl, "read_policy", lambda: policy)
+
 from agent.tools.pub_base.sandbox import SandboxPolicy
 
 # ---------------------------------------------------------------------------
@@ -156,9 +163,7 @@ def test_backend_wrap_path_uses_list_exec(monkeypatch: pytest.MonkeyPatch):
     calls = _install_fake_popen(monkeypatch)
     backend = _FakeBackend()
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: backend)
-    monkeypatch.setattr(
-        python_repl, "read_policy", lambda: SandboxPolicy.AUTO
-    )
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     tool = build_python_repl_tool()
     tool.run({"query": "print(1+1)"})
@@ -184,7 +189,7 @@ def test_backend_none_keeps_direct_list_with_env_cwd(
 ):
     calls = _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
-    monkeypatch.setattr(python_repl, "read_policy", lambda: SandboxPolicy.AUTO)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     tool = build_python_repl_tool()
     tool.run({"query": "print(1+1)"})
@@ -206,7 +211,7 @@ def test_policy_off_never_touches_backend(monkeypatch: pytest.MonkeyPatch):
         raise AssertionError("get_backend must not be called under policy=off")
 
     monkeypatch.setattr(python_repl, "get_backend", _forbidden)
-    monkeypatch.setattr(python_repl, "read_policy", lambda: SandboxPolicy.OFF)
+    _set_policy(monkeypatch, SandboxPolicy.OFF)
 
     tool = build_python_repl_tool()
     tool.run({"query": "print(1+1)"})
@@ -218,7 +223,7 @@ def test_policy_off_never_touches_backend(monkeypatch: pytest.MonkeyPatch):
 def test_auto_degrade_emits_one_loguru_warning(monkeypatch: pytest.MonkeyPatch):
     _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
-    monkeypatch.setattr(python_repl, "read_policy", lambda: SandboxPolicy.AUTO)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     records: list[str] = []
     sink_id = python_repl.logger.add(records.append, level="WARNING")
@@ -254,7 +259,7 @@ def test_scope_deny_subagent_sandbox_false():
 def test_scope_deny_main_sandbox_false_allowed(monkeypatch: pytest.MonkeyPatch):
     calls = _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
-    monkeypatch.setattr(python_repl, "read_policy", lambda: SandboxPolicy.AUTO)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     tool = build_python_repl_tool()  # default metadata → caller_scope=main
     out = tool._run("print(1)", sandbox=False)
@@ -263,9 +268,7 @@ def test_scope_deny_main_sandbox_false_allowed(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_required_policy_deny_sandbox_false(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        python_repl, "read_policy", lambda: SandboxPolicy.REQUIRED
-    )
+    _set_policy(monkeypatch, SandboxPolicy.REQUIRED)
     tool = build_python_repl_tool()  # main scope, but REQUIRED denies anyway
     with pytest.raises(ToolException) as excinfo:
         tool._run("print(1)", sandbox=False)
@@ -276,7 +279,7 @@ def test_required_policy_deny_sandbox_false(monkeypatch: pytest.MonkeyPatch):
 def test_scope_subagent_sandbox_true_unaffected(monkeypatch: pytest.MonkeyPatch):
     calls = _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
-    monkeypatch.setattr(python_repl, "read_policy", lambda: SandboxPolicy.AUTO)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     tool = _subagent_tool()
     out = tool._run("print(1)", sandbox=True)
@@ -288,9 +291,7 @@ def test_scope_deny_via_public_run(monkeypatch: pytest.MonkeyPatch):
     # handle_tool_error=True (langchain_core 1.4.7) returns the exception
     # message as a plain string — the deny must surface, never raise.
     _install_fake_popen(monkeypatch)
-    monkeypatch.setattr(
-        python_repl, "read_policy", lambda: SandboxPolicy.REQUIRED
-    )
+    _set_policy(monkeypatch, SandboxPolicy.REQUIRED)
     tool = build_python_repl_tool()
     out = tool.run({"query": "print(1)", "sandbox": False})
     assert "主会话" in out or "main" in out
@@ -304,7 +305,7 @@ def test_scope_deny_via_public_run(monkeypatch: pytest.MonkeyPatch):
 def test_arun_supports_sandbox_passthrough(monkeypatch: pytest.MonkeyPatch):
     calls = _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
-    monkeypatch.setattr(python_repl, "read_policy", lambda: SandboxPolicy.AUTO)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     tool = build_python_repl_tool()
     out = asyncio.run(tool._arun("print(1)", sandbox=True))
@@ -315,7 +316,7 @@ def test_arun_supports_sandbox_passthrough(monkeypatch: pytest.MonkeyPatch):
 def test_arun_scope_guard_applies(monkeypatch: pytest.MonkeyPatch):
     _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
-    monkeypatch.setattr(python_repl, "read_policy", lambda: SandboxPolicy.AUTO)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     tool = _subagent_tool()
     with pytest.raises(ToolException):

@@ -50,6 +50,8 @@ from langchain_core.tools import ToolException
 
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
+from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
+from agent.tools.pub_base.schema_utils import class_or_instance_schema
 
 TERMINAL_TIMEOUT = 30  # seconds
 
@@ -89,33 +91,13 @@ class SafeShellInput(ShellInput):
     )
 
 
-class _ClassOrInstanceSchema:
-    """Descriptor letting ``tool_call_schema`` be read from the class too.
-
-    langchain_core defines ``tool_call_schema`` as a plain instance
-    ``@property``, so class-level access (``SafeShellTool.tool_call_schema``)
-    would return the bare property object instead of the schema model. The
-    Task 6 acceptance one-liner reads the schema from the class; this
-    descriptor forwards BOTH access forms to the inherited property getter
-    (class access synthesizes a throwaway instance). The explicit
-    ``args_schema`` mechanism is untouched.
-    """
-
-    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        # Class access synthesizes a throwaway instance (cheap: all-defaults
-        # pydantic model) so the inherited getter runs on a real self.
-        owner = objtype if objtype is not None else type(obj)
-        target = obj if obj is not None else owner()
-        return ShellTool.tool_call_schema.__get__(target, type(target))
-
-
-class SafeShellTool(ShellTool):
+class SafeShellTool(SandboxGuardMixin, ShellTool):
     """
     name: str = "terminal"
     description: str = "Run shell commands in a sandboxed workspace."
     """
 
-    tool_call_schema: ClassVar[Any] = _ClassOrInstanceSchema()
+    tool_call_schema: ClassVar[Any] = class_or_instance_schema(ShellTool)
 
     # ShellTool sets args_schema=ShellInput EXPLICITLY — signature-only changes
     # never propagate; the subclass must be wired here (plan line 559).
@@ -147,29 +129,6 @@ class SafeShellTool(ShellTool):
         if isinstance(commands, list):
             return " && ".join(commands)
         return commands
-
-    def _deny_sandbox_bypass(self, sandbox: bool) -> None:
-        """Guard sandbox=False calls: subagents are denied, REQUIRED denies all.
-
-        Matrix cells (agent/tools/pub_base/sandbox.py docstring): required +
-        sandbox=False → DENIED outright; subagent scope + sandbox=False →
-        DENIED (bypass is a main-session, human-approved decision only —
-        the interrupt() wiring itself is Task 8). ``sandbox=True`` is never
-        gated here.
-        """
-        if sandbox:
-            return
-        metadata = self.metadata if isinstance(self.metadata, dict) else {}
-        scope = metadata.get("caller_scope", "main")
-        if scope != "main":
-            raise ToolException(
-                f"沙箱绕过仅限主会话人工审批；当前 scope={scope}"
-            )
-        if read_policy() is SandboxPolicy.REQUIRED:
-            raise ToolException(
-                "SANDBOX_POLICY=required 拒绝未沙箱执行："
-                "sandbox=False 需要主会话（main）人工审批"
-            )
 
     @staticmethod
     def _check_dangerous(joined: str) -> None:

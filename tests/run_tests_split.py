@@ -44,6 +44,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUPS: list[tuple[str, str, list[str]]] = [
     ("A", "tests/unit", ["tests/unit"]),
     ("B", "integration + system + module", ["tests/integration", "tests/system", "tests/module"]),
+    ("C", "regression", ["tests/regression"]),
 ]
 
 # pytest exit codes (see `pytest --help` / _pytest.main.ExitCode)

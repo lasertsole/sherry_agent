@@ -12,6 +12,8 @@ from langgraph.runtime import Runtime
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import BaseMessage, HumanMessage
 
+from agent.middlewares.mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
+
 # Magic byte signatures → file extension
 # Ordered by specificity (more bytes = earlier check)
 _AUDIO_MAGIC: dict[bytes, str] = {
@@ -125,7 +127,7 @@ def _unwrap_media_bytes(item: Any) -> bytes | None:
     return bytes(media_bytes)
 
 
-class MultimodalProcessor(AgentMiddleware):
+class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddleware):
     @staticmethod
     def _strip_image_url_from_content(content: Any) -> str:
         """Extract text from a multimodal content list, stripping image_url items.

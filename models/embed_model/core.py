@@ -7,6 +7,7 @@ import requests
 from pathlib import Path
 from loguru import logger
 from config import ENV_PATH
+from models.utils import read_env_file_value as _read_dotenv
 from langchain_core.embeddings import Embeddings
 
 
@@ -14,20 +15,6 @@ _MODEL_DIR = Path(__file__).resolve().parent
 _WEIGHT_DIR = _MODEL_DIR / "model_weight"
 
 
-def _read_dotenv(key: str, default: str = "") -> str:
-    """Parse from .env file only, avoiding os.environ (to skip load_dotenv side effects)."""
-    try:
-        text = ENV_PATH.read_text(encoding="utf-8")
-        for mobj in re.finditer(
-            rf"^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$", text, re.MULTILINE
-        ):
-            raw = mobj.group(1)
-            raw = raw.strip("\"'").strip()
-            if raw:
-                return raw
-    except Exception:
-        pass
-    return default
 
 
 def _abort(msg: str) -> None:
