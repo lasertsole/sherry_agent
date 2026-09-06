@@ -151,12 +151,18 @@ class TestMultimodalBase:
             def close(self):
                 pass
 
-        # _ensure_client lazy-imports from llama_cpp — patch at the source
-        import llama_cpp
-        import llama_cpp.llama_chat_format as fmt
+        # _ensure_client lazy-imports from llama_cpp — inject stub modules so
+        # this passes where llama-cpp-python isn't installed (hermetic CI).
+        import sys
+        import types
 
-        monkeypatch.setattr(fmt, "Qwen25VLChatHandler", _FakeHandler)
-        monkeypatch.setattr(llama_cpp, "Llama", _FakeLlama)
+        llama_stub = types.ModuleType("llama_cpp")
+        fmt_stub = types.ModuleType("llama_cpp.llama_chat_format")
+        llama_stub.Llama = _FakeLlama
+        fmt_stub.Qwen25VLChatHandler = _FakeHandler
+        llama_stub.llama_chat_format = fmt_stub
+        monkeypatch.setitem(sys.modules, "llama_cpp", llama_stub)
+        monkeypatch.setitem(sys.modules, "llama_cpp.llama_chat_format", fmt_stub)
 
         class _MM(LocalMultimodalLlamaChatBase):
             def _resolve_model_path(self) -> str:
