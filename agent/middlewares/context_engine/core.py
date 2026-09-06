@@ -14,6 +14,7 @@ from pub_func import sanitize_tool_use_result_pairing, slice_last_turn, run_asyn
 from langchain.agents.middleware import AgentMiddleware, ModelResponse, ModelRequest
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, SystemMessage
 from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse, StateT
+from agent.middlewares.base import require_session_id
 
 
 # Nudge config keys

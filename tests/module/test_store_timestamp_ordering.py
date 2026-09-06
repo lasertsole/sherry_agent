@@ -19,6 +19,7 @@ Migration steps list is in ``context_engine/store/db.py``.
 import asyncio
 import sqlite3
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -40,7 +41,9 @@ T0_STAMP = datetime.fromtimestamp(T0_S).strftime("%Y%m%d%H%M%S")
 def migrated_db():
     """Fully-migrated store on a temp file (production schema shape)."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        db = sqlite3.connect(str(Path(tmpdir) / "store.db"))
+        # check_same_thread=False mirrors production get_db() — the
+        # stamp/turn race test drives two writer threads through one connection.
+        db = sqlite3.connect(str(Path(tmpdir) / "store.db"), check_same_thread=False)
         db.row_factory = sqlite3.Row
         _migrate(db)
         yield db
@@ -224,3 +227,148 @@ class TestHistoryApiShape:
         assert len(rows) == 1
         assert "ts_ms" not in rows[0], "internal ordering column must not leak to the API"
         assert len(rows[0]["timestamp"]) == 14
+
+
+# ---------------------------------------------------------------------------
+# add_messages: stamp order == turn order even under writer interleaving
+# ---------------------------------------------------------------------------
+
+
+class TestStampTurnAtomicity:
+    def test_stamp_order_matches_turn_order_under_interleaving(self, migrated_db, monkeypatch):
+        """The turn stamp must be taken atomically with turn assignment.
+
+        Regression guard for the history-jumble race: ``add_messages`` used to
+        call ``_next_turn_stamp()`` while building rows, BEFORE acquiring
+        ``_turn_assign_lock`` for the turn number. Two concurrent writers could
+        interleave as: A stamps (early) → B stamps (late) → B wins the lock and
+        gets turn N → A gets turn N+1 — persisting turn N+1 with an EARLIER
+        ts_ms than turn N, inverting the timeline against ``ORDER BY turn_num``.
+
+        This test forces exactly that interleaving deterministically: the first
+        stamping thread (A) is held out of the assign lock until the second
+        writer (B) has fully committed its turn.
+        """
+        monkeypatch.setattr(store_core, "_db", migrated_db)
+
+        a_stamped = threading.Event()
+        b_done = threading.Event()
+        gated = {"done": False}
+        state = {"first_stamper": None}
+
+        # Stamp 1 goes to whichever thread stamps first (A), stamp 2 to the
+        # next one (B) — the earlier ts must pair with the EARLIER turn once
+        # the fix lands.
+        stamps = iter([
+            (T0_S * 1000, T0_STAMP),
+            (T0_S * 1000 + 1, T0_STAMP),
+        ])
+
+        def fake_stamp():
+            if state["first_stamper"] is None:
+                state["first_stamper"] = threading.current_thread()
+                a_stamped.set()
+            return next(stamps)
+
+        monkeypatch.setattr(store_core, "_next_turn_stamp", fake_stamp)
+
+        real_lock = store_core._turn_assign_lock
+
+        class GatedLock:
+            """Context-manager shim that holds the first stamper out of the
+            assign lock until the other writer has fully committed."""
+
+            def __enter__(self):
+                if (
+                    state["first_stamper"] is threading.current_thread()
+                    and not gated["done"]
+                ):
+                    gated["done"] = True
+                    assert b_done.wait(timeout=10), "interleaving gate timed out"
+                real_lock.acquire()
+                return real_lock
+
+            def __exit__(self, *exc_info):
+                real_lock.release()
+                return False
+
+        monkeypatch.setattr(store_core, "_turn_assign_lock", GatedLock())
+
+        def run_add(sid: str) -> None:
+            asyncio.run(store_core.add_messages(sid, [HumanMessage(content=sid)]))
+
+        thread_a = threading.Thread(target=run_add, args=("s_race",), name="writer-A")
+        thread_a.start()
+        assert a_stamped.wait(timeout=10), "writer A never stamped"
+
+        thread_b = threading.Thread(target=run_add, args=("s_race",), name="writer-B")
+        thread_b.start()
+        thread_b.join(timeout=10)
+        assert not thread_b.is_alive(), "writer B deadlocked"
+        b_done.set()
+        thread_a.join(timeout=10)
+        assert not thread_a.is_alive(), "writer A deadlocked"
+
+        rows = migrated_db.execute(
+            "SELECT turn_num, ts_ms FROM messages WHERE session_id = 's_race' ORDER BY turn_num"
+        ).fetchall()
+        assert [r["turn_num"] for r in rows] == [1, 2], "two turns must persist"
+        assert rows[0]["ts_ms"] < rows[1]["ts_ms"], (
+            "timestamp order must follow turn order even when the first "
+            "stamper is descheduled before turn assignment"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Migration step: re-backfill ts_ms rows left NULL by older writers
+# ---------------------------------------------------------------------------
+
+
+class TestBackfillMissingTsMs:
+    def test_backfills_null_and_preserves_non_null(self, migrated_db):
+        """NULL ts_ms rows get backfilled from the 14-char stamp; non-NULL
+        values and unparseable stamps keep the legacy step-8 semantics."""
+        from context_engine.store.db import backfill_missing_ts_ms
+
+        _insert_legacy_row(migrated_db, session_id="null_row", stamp=T0_STAMP)  # ts_ms NULL
+        _insert_legacy_row(migrated_db, session_id="kept_row", stamp=T0_STAMP, ts_ms=123456)
+        migrated_db.execute(
+            "INSERT INTO messages (session_id, turn_num, role, content, timestamp, ts_ms)"
+            " VALUES ('garbage_row', 1, 'ai', '\"x\"', 'not-a-date', NULL)"
+        )
+        migrated_db.commit()
+
+        backfill_missing_ts_ms(migrated_db)
+
+        null_row = migrated_db.execute(
+            "SELECT ts_ms FROM messages WHERE session_id='null_row'"
+        ).fetchone()
+        kept_row = migrated_db.execute(
+            "SELECT ts_ms FROM messages WHERE session_id='kept_row'"
+        ).fetchone()
+        garbage_row = migrated_db.execute(
+            "SELECT ts_ms FROM messages WHERE session_id='garbage_row'"
+        ).fetchone()
+        assert null_row["ts_ms"] == T0_S * 1000
+        assert kept_row["ts_ms"] == 123456, "non-NULL ts_ms must not be touched"
+        assert garbage_row["ts_ms"] == 0, "unparseable stamps backfill to 0"
+
+    def test_migrate_reruns_backfill_for_databases_past_step_8(self, migrated_db):
+        """The live-repair path: a DB that already recorded every step-8-era
+        migration but carries NULL ts_ms rows (written by an older in-memory
+        build) gets them backfilled by the new versioned step on next start."""
+        from context_engine.store.db import _migrate
+
+        # Simulate the production DB: migrated through step 8, then rows
+        # written NULL by the stale build. Drop the v>=9 records so the next
+        # _migrate runs exactly the new step.
+        _insert_legacy_row(migrated_db, session_id="late_null", stamp=T0_STAMP)
+        migrated_db.execute("DELETE FROM _migrations WHERE v >= 9")
+        migrated_db.commit()
+
+        _migrate(migrated_db)
+
+        row = migrated_db.execute(
+            "SELECT ts_ms FROM messages WHERE session_id='late_null'"
+        ).fetchone()
+        assert row["ts_ms"] == T0_S * 1000

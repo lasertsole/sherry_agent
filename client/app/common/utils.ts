@@ -10,7 +10,7 @@ dayjs.extend(customParseFormat);
  * @param format The desired output format, e.g. 'YYYY-MM-DD HH:mm:ss'
  * @returns The formatted time string, or an empty string when the input is invalid
  */
-export const formatCompactTimeString = (timeStr: string | number, format: string = 'YYYY-MM-DD HH:ss'): string => {
+export const formatCompactTimeString = (timeStr: string | number, format: string = 'YYYY-MM-DD HH:mm'): string => {
   if (!timeStr) return '';
 
   // Normalize to a string and trim leading/trailing whitespace

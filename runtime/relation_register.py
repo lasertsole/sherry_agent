@@ -42,9 +42,13 @@ class RelationManager(Register):
         try:
             with self._rm_lock:
                 session_id: str = self.websocket_id_to_session_id.pop(websocket.id, None)
-                if session_id:
+                self.websocket_id_to_ws.pop(websocket.id, None)
+                # Last-writer-wins guard: a newer socket may have re-registered
+                # the same session (per-message agent WS pattern). A stale
+                # disconnect must only clear the binding it still owns, or the
+                # live socket silently loses its streamed frames.
+                if session_id and self.session_id_to_websocket_id.get(session_id) == websocket.id:
                     self.session_id_to_websocket_id.pop(session_id, None)
-                    self.websocket_id_to_ws.pop(websocket.id, None)
         except Exception:
             logger.exception("unregister_websocket_by_websocket failed")
 
@@ -53,7 +57,8 @@ class RelationManager(Register):
             with self._rm_lock:
                 self.websocket_id_to_ws.pop(websocket_id, None)
                 session_id: str = self.websocket_id_to_session_id.pop(websocket_id, None)
-                if session_id:
+                # Same last-writer-wins guard as unregister_websocket_by_websocket.
+                if session_id and self.session_id_to_websocket_id.get(session_id) == websocket_id:
                     self.session_id_to_websocket_id.pop(session_id, None)
         except Exception:
             logger.exception(

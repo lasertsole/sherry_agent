@@ -32,6 +32,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_model_token_columns,
         add_origin_column,
         add_turn_ts_ms_column,
+        backfill_missing_ts_ms,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -208,6 +209,24 @@ def _legacy_ts_to_ms(ts: str | None) -> int:
         return 0
 
 
+def backfill_missing_ts_ms(db: sqlite3.Connection) -> None:
+    """Backfill ``ts_ms`` for every row that still carries NULL.
+
+    Idempotent by construction (targets ``ts_ms IS NULL`` rows only) and
+    shared by two callers: ``add_turn_ts_ms_column`` (fresh column) and the
+    versioned migration step of the same name — rows persisted NULL by an
+    in-memory build predating the ts_ms write (``add_messages`` runs from the
+    code loaded at process start, so a backend restarted before the audit-#21
+    change kept writing NULL until its next restart).
+    """
+    rows = db.execute("SELECT id, timestamp FROM messages WHERE ts_ms IS NULL").fetchall()
+    for row_id, ts in rows:
+        db.execute(
+            "UPDATE messages SET ts_ms = ? WHERE id = ?",
+            (_legacy_ts_to_ms(ts), row_id),
+        )
+
+
 def add_turn_ts_ms_column(db: sqlite3.Connection) -> None:
     """Add a `ts_ms` INTEGER column (epoch ms) and backfill it (audit #21).
 
@@ -223,13 +242,7 @@ def add_turn_ts_ms_column(db: sqlite3.Connection) -> None:
         # Column already exists — fall through: the backfill below is
         # idempotent (targets ts_ms IS NULL rows only) and still needs to run.
         pass
-
-    rows = db.execute("SELECT id, timestamp FROM messages WHERE ts_ms IS NULL").fetchall()
-    for row_id, ts in rows:
-        db.execute(
-            "UPDATE messages SET ts_ms = ? WHERE id = ?",
-            (_legacy_ts_to_ms(ts), row_id),
-        )
+    backfill_missing_ts_ms(db)
 
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:

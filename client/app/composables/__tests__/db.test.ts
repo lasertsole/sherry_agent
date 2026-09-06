@@ -26,6 +26,11 @@ interface DraftsWhereResult {
   equals: (key: string) => { delete: () => Promise<number> };
 }
 
+/** Mirror of db.ts's private isValidTurnNum: only finite numbers are trusted (poisoned-cache guard). */
+function isValidTurnNum(turnNum: unknown): turnNum is number {
+  return typeof turnNum === 'number' && Number.isFinite(turnNum);
+}
+
 // Mock every table the `../db` wrappers touch (messages, sessions, drafts,
 // background, subagentRuns) at the collection level. `character` is already
 // covered by character.db.test.ts. Each table exposes the chain methods
@@ -103,11 +108,14 @@ vi.mock('../db', () => ({
     await messagesTable.bulkPut(rows);
   },
   readCachedMessages: async (sessionId: string) => {
-    return messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
+    const rows = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
+    return rows.filter((row) => isValidTurnNum(row.turn_num));
   },
   cachedMaxTurnNum: async (sessionId: string) => {
     const last = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).last();
-    return last ? last.turn_num : 0;
+    if (last && isValidTurnNum(last.turn_num)) return last.turn_num;
+    const rows = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
+    return rows.reduce((max, row) => (isValidTurnNum(row.turn_num) && row.turn_num > max ? row.turn_num : max), 0);
   },
   clearCachedSession: async (sessionId: string) => {
     await messagesTable.where('session_id').equals(sessionId).delete();
@@ -284,6 +292,23 @@ describe('readCachedMessages', () => {
     expect(messagesTable.where).toHaveBeenCalledWith('_');
     expect(messagesTable.between).toHaveBeenCalledWith(['ses_A', -Infinity], ['ses_A', Infinity]);
   });
+
+  it('drops rows with a non-numeric turn_num (poisoned rows must not reach sorters)', async () => {
+    const poisoned = [
+      msg({ id: 1, turn_num: 1 }),
+      msg({ id: 2, turn_num: 'corrupt' as unknown as number }),
+      msg({ id: 3, turn_num: Number.NaN }),
+      msg({ id: 4, turn_num: 2 })
+    ];
+    messagesTable.between.mockReturnValue({
+      toArray: vi.fn(async () => poisoned),
+      last: vi.fn(async () => undefined)
+    });
+
+    // Only the finite-number rows survive: one NaN/garbage turn_num makes
+    // `(a.turn_num - b.turn_num)` NaN and destabilizes the whole sort.
+    await expect(readCachedMessages('ses_A')).resolves.toEqual([poisoned[0], poisoned[3]]);
+  });
 });
 
 describe('cachedMaxTurnNum', () => {
@@ -297,6 +322,26 @@ describe('cachedMaxTurnNum', () => {
 
   it('returns 0 when the session has no cached rows', async () => {
     messagesTable.between.mockReturnValue({ toArray: vi.fn(async () => []), last: vi.fn(async () => undefined) });
+    await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(0);
+  });
+
+  it('falls back to the max over valid rows when the last row is poisoned', async () => {
+    const corrupt = msg({ id: 2, turn_num: 'corrupt' as unknown as number });
+    messagesTable.between.mockReturnValue({
+      toArray: vi.fn(async () => [msg({ id: 1, turn_num: 3 }), corrupt]),
+      last: vi.fn(async () => corrupt)
+    });
+    // Strings sort after all numbers in IndexedDB, so a poisoned row lands
+    // last; the numeric max must come from a scan over valid rows instead.
+    await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(3);
+  });
+
+  it('returns 0 when every cached row is poisoned (forces a full refetch)', async () => {
+    const corrupt = msg({ id: 1, turn_num: 'corrupt' as unknown as number });
+    messagesTable.between.mockReturnValue({
+      toArray: vi.fn(async () => [corrupt]),
+      last: vi.fn(async () => corrupt)
+    });
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(0);
   });
 });

@@ -347,16 +347,35 @@ export async function cacheMessages(rows: CachedMessage[]): Promise<void> {
 }
 
 /**
+ * A cached `turn_num` is trustworthy only when it is a real finite number.
+ *
+ * Rows cached by older client builds may carry a non-numeric/NaN `turn_num`;
+ * IndexedDB sorts string keys after all numbers, so such rows surface at the
+ * END of an index query, and a single bad value poisons numeric sort
+ * comparators downstream (`a.turn_num - b.turn_num` evaluates to NaN, which
+ * destabilizes the whole array order — the "history jumble" bug).
+ */
+function isValidTurnNum(turnNum: unknown): turnNum is number {
+  return typeof turnNum === 'number' && Number.isFinite(turnNum);
+}
+
+/**
  * Read all messages of a session from the local cache, sorted by `turn_num` ascending then `id` ascending.
  *
  * Uses a prefix query on the compound index `[session_id+turn_num]`: Dexie returns results
  * ordered ascending by the compound `(session_id, turn_num)`, avoiding a second sort in JS.
+ * Rows with a non-numeric `turn_num` (poisoned by older buggy builds) are dropped so
+ * downstream sorters never receive a NaN-producing value.
  *
  * @param sessionId Session ID
  * @returns         Array of the session's cached messages
  */
 export async function readCachedMessages(sessionId: string): Promise<CachedMessage[]> {
-  return await db.messages.where('[session_id+turn_num]').between([sessionId, MIN_KEY], [sessionId, MAX_KEY]).toArray();
+  const rows = await db.messages
+    .where('[session_id+turn_num]')
+    .between([sessionId, MIN_KEY], [sessionId, MAX_KEY])
+    .toArray();
+  return rows.filter((row) => isValidTurnNum(row.turn_num));
 }
 
 /**
@@ -368,6 +387,8 @@ export async function readCachedMessages(sessionId: string): Promise<CachedMessa
  *
  * Returns `0` when the cache is empty (the backend requires `min_turn_num >= 1`;
  * the client does not send an upper bound for this value, leaving that to server logic).
+ * A poisoned last row (non-numeric `turn_num`) falls back to scanning the session's
+ * rows and taking the max over valid ones only.
  *
  * @param sessionId Session ID
  * @returns         Max cached turn_num (0 when nothing is cached)
@@ -377,7 +398,15 @@ export async function cachedMaxTurnNum(sessionId: string): Promise<number> {
     .where('[session_id+turn_num]')
     .between([sessionId, MIN_KEY], [sessionId, MAX_KEY])
     .last();
-  return last ? last.turn_num : 0;
+  // A valid numeric last row IS the true max: IndexedDB sorts string keys after
+  // all numbers, so any poisoned row would have sorted after it instead.
+  if (last && isValidTurnNum(last.turn_num)) return last.turn_num;
+  // Poisoned last row (or empty cache): scan and take the max over valid rows.
+  const rows = await db.messages
+    .where('[session_id+turn_num]')
+    .between([sessionId, MIN_KEY], [sessionId, MAX_KEY])
+    .toArray();
+  return rows.reduce((max, row) => (isValidTurnNum(row.turn_num) && row.turn_num > max ? row.turn_num : max), 0);
 }
 
 /**

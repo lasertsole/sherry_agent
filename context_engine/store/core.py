@@ -76,9 +76,13 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
 
     # All messages in this batch share the same timestamp (YYYYMMDDHHmmss)
     # and the same ts_ms ordering key (audit #21: strictly increasing).
-    turn_ms: int
-    base_timestamp: str
-    turn_ms, base_timestamp = _next_turn_stamp()
+    # The REAL stamp is taken atomically with turn assignment under
+    # _turn_assign_lock below — stamping earlier would let a concurrent
+    # writer slip between "stamped" and "turn-assigned" and invert
+    # timestamp order against turn order (the history-jumble race).
+    # These are placeholders; every row is rewritten inside the lock.
+    turn_ms: int = 0
+    base_timestamp: str = ""
 
     # Rows to be bulk-inserted by executemany.
     insert_rows: list[dict] = []
@@ -227,9 +231,16 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     # (isolation_level=None) and a concurrent reader's ``with _db:`` exit would
     # commit an open transaction early — the lock is what serializes writers.
     with _turn_assign_lock:
+        # Stamp here, not before row building (history-jumble race): stamping
+        # inside the same critical section as the turn assignment makes
+        # (stamp order == turn order) atomic, so a concurrent writer can never
+        # persist turn N+1 with an earlier ts_ms than turn N.
+        turn_ms, base_timestamp = _next_turn_stamp()
         current_turn = get_max_turn_num(session_id) + 1
         for row in insert_rows:
             row["turn_num"] = current_turn
+            row["timestamp"] = base_timestamp
+            row["ts_ms"] = turn_ms
 
         # Bulk-insert all accumulated rows of this turn (autocommit: each row
         # commits on execution).

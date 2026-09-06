@@ -56,8 +56,11 @@ class _HandlerSocket:
     (T8 lesson) that records decoded frames.
     """
 
-    def __init__(self) -> None:
-        self.id = "test-ws-id"  # messages.py logs websocket.id at handler entry
+    def __init__(self, ws_id: str = "test-ws-id") -> None:
+        # Production Robyn assigns unique websocket ids; the default exists for
+        # older tests. Tests driving MULTIPLE sockets concurrently must pass
+        # distinct ws_id values or register/unregister will collide on id.
+        self.id = ws_id  # messages.py logs websocket.id at handler entry
         self.frames: list[dict[str, Any]] = []
         self._inbound: deque[str] = deque()
         self._waiter: asyncio.Future | None = None
@@ -454,3 +457,160 @@ async def test_hitl_interrupt_sets_hitl_pending(ws_env, monkeypatch):
     rows = await store.list_active("s1")
     assert rows == [], "the hitl turn's row must be terminal (DELIVERED)"
     assert "done" not in _events(socket), "no done frame may follow a hitl_request"
+
+
+# ---------------------------------------------------------------------------
+# Socket registration (relation_register) — streaming frame routing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generation_streams_via_relation_register_registration(ws_env, monkeypatch):
+    """The handler must register the agent WS socket in relation_register.
+
+    Regression (2026-09-06): the Task 7 executor resolves the reply socket via
+    relation_register.get_websocket_by_session_id, but the handler never
+    registered the per-message agent WS — every executor frame went to
+    _send_ws(None, ...) and was silently dropped, so the client never saw any
+    streaming output. This test runs the REAL registry lookup end to end.
+    """
+    from runtime.relation_register import relation_register
+
+    monkeypatch.setattr(
+        turn_runner,
+        "get_websocket_by_session_id",
+        relation_register.get_websocket_by_session_id,
+    )
+    saved = (
+        dict(relation_register.websocket_id_to_session_id),
+        dict(relation_register.session_id_to_websocket_id),
+        dict(relation_register.websocket_id_to_ws),
+    )
+    try:
+        socket = _HandlerSocket()
+        async with _handler_session(socket):
+            socket.push(_msg_frame("s1", "m1", "hello"))
+            await _wait_until(
+                lambda: any(f.get("event") == "done" for f in socket.frames),
+                what="done frame streamed through relation_register lookup",
+            )
+            assert relation_register.get_websocket_by_session_id("s1") is socket, (
+                "the live handler socket must be registered under the session"
+            )
+            assert any(
+                f.get("event") == "chunk" and f.get("content") == "echo:hello"
+                for f in socket.frames
+            ), "chunk frames must reach the registered socket"
+        assert relation_register.get_websocket_by_session_id("s1") is None, (
+            "handler exit must unregister the socket"
+        )
+    finally:
+        relation_register.websocket_id_to_session_id.clear()
+        relation_register.session_id_to_websocket_id.clear()
+        relation_register.websocket_id_to_ws.clear()
+        relation_register.websocket_id_to_session_id.update(saved[0])
+        relation_register.session_id_to_websocket_id.update(saved[1])
+        relation_register.websocket_id_to_ws.update(saved[2])
+
+
+@pytest.mark.asyncio
+async def test_stop_frame_does_not_hijack_session_binding(ws_env, monkeypatch):
+    """Only generation frames may register the socket.
+
+    The client sends ``stop`` on a separate connection that never reads stream
+    frames; if a stop frame registered that socket, a concurrently streaming
+    turn would have its frames routed into a dead end.
+    """
+    from runtime.relation_register import relation_register
+
+    # Stream the first turn through the REAL registry lookup (ws_env patches
+    # this seam to an empty holder, which would starve socket_a of frames).
+    monkeypatch.setattr(
+        turn_runner,
+        "get_websocket_by_session_id",
+        relation_register.get_websocket_by_session_id,
+    )
+
+    saved = (
+        dict(relation_register.websocket_id_to_session_id),
+        dict(relation_register.session_id_to_websocket_id),
+        dict(relation_register.websocket_id_to_ws),
+    )
+    try:
+        socket_a = _HandlerSocket(ws_id="ws-a")
+        async with _handler_session(socket_a):
+            socket_a.push(_msg_frame("s1", "m1", "hello"))
+            await _wait_until(
+                lambda: any(f.get("event") == "done" for f in socket_a.frames),
+                what="first turn done",
+            )
+            assert relation_register.get_websocket_by_session_id("s1") is socket_a, (
+                "the generation socket must be registered under the session"
+            )
+
+            socket_b = _HandlerSocket(ws_id="ws-b")
+            async with _handler_session(socket_b):
+                socket_b.push({"type": "stop", "session_id": "s1"})
+                await _wait_until(
+                    lambda: any(f.get("event") == "stopped" for f in socket_b.frames),
+                    what="stop ack on the separate socket",
+                )
+                assert relation_register.get_websocket_by_session_id("s1") is socket_a, (
+                    "a stop frame on a separate socket must not hijack the binding"
+                )
+            assert relation_register.get_websocket_by_session_id("s1") is socket_a, (
+                "the stop socket's disconnect must not clear the generation socket's binding"
+            )
+        assert relation_register.get_websocket_by_session_id("s1") is None, (
+            "handler exit must unregister the socket"
+        )
+    finally:
+        relation_register.websocket_id_to_session_id.clear()
+        relation_register.session_id_to_websocket_id.clear()
+        relation_register.websocket_id_to_ws.clear()
+        relation_register.websocket_id_to_session_id.update(saved[0])
+        relation_register.session_id_to_websocket_id.update(saved[1])
+        relation_register.websocket_id_to_ws.update(saved[2])
+
+
+@pytest.mark.asyncio
+async def test_handler_catchall_failure_sends_error_frame(ws_env, monkeypatch):
+    """Failures inside the receive loop's catch-all must reach the client.
+
+    The per-message socket sends one generate frame and then waits for stream
+    frames; an exception swallowed with only a log line (e.g. submit_user_input
+    or MultiModalMessage construction raising) would leave the socket hanging
+    forever with neither a done nor an error terminal state.
+    """
+    from runtime.relation_register import relation_register
+
+    saved = (
+        dict(relation_register.websocket_id_to_session_id),
+        dict(relation_register.session_id_to_websocket_id),
+        dict(relation_register.websocket_id_to_ws),
+    )
+    try:
+        socket = _HandlerSocket(ws_id="ws-err")
+
+        async def boom(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("queue store unavailable")
+
+        monkeypatch.setattr(iqs, "submit_user_input", boom)
+
+        async with _handler_session(socket):
+            socket.push(_msg_frame("s1", "m1", "hello"))
+            await _wait_until(
+                lambda: any(f.get("event") == "error" for f in socket.frames),
+                what="error frame on submit_user_input failure",
+            )
+        err = next(f for f in socket.frames if f.get("event") == "error")
+        assert err["session_id"] == "s1"
+        assert "queue store unavailable" in err["content"]
+        assert "queued" not in _events(socket), "failed submit must not fake a queued ack"
+    finally:
+        relation_register.websocket_id_to_session_id.clear()
+        relation_register.session_id_to_websocket_id.clear()
+        relation_register.websocket_id_to_ws.clear()
+        relation_register.websocket_id_to_session_id.update(saved[0])
+        relation_register.session_id_to_websocket_id.update(saved[1])
+        relation_register.websocket_id_to_ws.update(saved[2])

@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator
 from loguru import logger
 from server.trigger.core import app
 from runtime import state_register_mem
+from runtime.relation_register import relation_register
 from agent.tools.subagent.registry.session_state import set_hitl_pending
 from server.service import async_generate, get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs
@@ -137,6 +138,9 @@ async def _cancel_session(session_id: str) -> None:
 @app.websocket("/sessions/agent/ws")
 async def agent_ws_handler(websocket: WebSocketAdapter):
     logger.info(f"Agent WebSocket handler started: websocket_id={websocket.id}")
+    # Bound before the loop so the receive-loop catch-all can always reference
+    # it when composing an error frame (never unbound there).
+    session_id: str | None = None
     try:
         while True:
             try:
@@ -197,6 +201,14 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     continue
 
                 multi_modal_message = MultiModalMessage(**multi_modal_message_data)
+
+                # Task 7: the WsTurnExecutor resolves the reply socket through
+                # relation_register, so THIS connection must be registered under
+                # the session — otherwise every streamed chunk/done frame is
+                # silently dropped (_send_ws(None) is a no-op). Only generation
+                # frames register: stop/hitl arrive on separate sockets that
+                # never read stream frames.
+                relation_register.register_websocket(session_id, websocket)
 
                 text_preview = multi_modal_message.text[:50] if multi_modal_message.text else ""
                 image_count = (
@@ -265,10 +277,21 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                 )
             except Exception as e:
                 logger.warning(f"Error in agent_ws_handler: {e}, websocket_id={websocket.id}")
+                # The client socket is parked waiting for stream frames; without
+                # this frame it would hang forever with no terminal state
+                # (chunk/done/error). Best-effort: _send_ws swallows send failures.
+                await _send_ws(
+                    websocket,
+                    {"event": "error", "session_id": session_id, "content": str(e)},
+                )
     except (WebSocketDisconnect, ConnectionResetError) as e:
         logger.warning(f"Agent WS client {websocket.id} disconnected: {e}")
     except Exception as e:
         logger.warning(f"Agent WS client {websocket.id} disconnected: {e}")
+
+    # Release the session→socket binding. The unregister is last-writer-wins
+    # safe: a newer socket's binding survives this (possibly stale) exit.
+    relation_register.unregister_websocket_by_websocket(websocket)
 
     # Clean up any task that was bound to this now-closed socket.
     for sid, task in list(_active_tasks.items()):
