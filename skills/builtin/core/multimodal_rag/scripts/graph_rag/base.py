@@ -9,8 +9,6 @@ if _project_root not in sys.path:
 from graph_rag.vendored_lightrag import LightRAG
 from config.path import SRC_DIR
 from graph_rag.vendored_lightrag.utils import EmbeddingFunc
-from models.reranker_model import reranker_model
-from models import build_embed_model, build_auxiliary_llm
 from langchain_core.messages import SystemMessage, HumanMessage
 
 # 设置 LightRAG 知识图谱大小控制的环境变量，缓解图谱无限膨胀
@@ -27,6 +25,8 @@ async def _llm_model_func(
     **kwargs,
 ) -> str:
     """将本地 auxiliary_llm 适配为 LightRAG 需要的格式"""
+    from models import build_auxiliary_llm
+
     messages = []
     if system_prompt:
         messages.append(SystemMessage(content=system_prompt))
@@ -41,6 +41,8 @@ async def _llm_model_func(
 
 async def _embedding_func(texts: list[str]) -> np.ndarray:
     """将本地 embed_model 适配为 LightRAG 需要的格式"""
+    from models import build_embed_model
+
     embed_model = build_embed_model()
     embeddings = embed_model.embed_documents(texts)
     return np.array(embeddings)
@@ -54,6 +56,8 @@ async def _rerank_model_func(
     LightRAG apply_rerank_if_enabled expects:
     New format: [{"index": int, "relevance_score": float}, ...]
     """
+    from models.reranker_model import reranker_model
+
     results = reranker_model.rank(query=query, documents=documents, top_k=top_n)
     return [
         {

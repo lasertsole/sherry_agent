@@ -140,8 +140,25 @@ def _alias_vendored_raganything() -> None:
 
 _alias_vendored_raganything()
 
-from .base import get_lightrag
-from .core import get_rag_anything
 from .ensure_mineru_models import ensure_mineru_models
 
 __all__ = ["get_lightrag", "get_rag_anything", "ensure_mineru_models"]
+
+
+def __getattr__(name: str):
+    # Lazy on purpose: .base/.core import the model stack (llama_cpp); eager
+    # exports broke hermetic CI and loaded GGUF weights at import time.
+    # Runtime API unchanged — attribute access triggers the import.
+    if name == "get_lightrag":
+        from .base import get_lightrag
+
+        return get_lightrag
+    if name == "get_rag_anything":
+        from .core import get_rag_anything
+
+        return get_rag_anything
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return list(__all__)

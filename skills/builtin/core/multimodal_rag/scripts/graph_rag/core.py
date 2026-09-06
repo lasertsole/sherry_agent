@@ -5,7 +5,6 @@ import nest_asyncio
 from typing import Any
 from pathlib import Path
 from loguru import logger
-from models import ITTT_model
 from config import MODELS_DIR, SRC_DIR
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
@@ -35,6 +34,8 @@ async def _vision_model_func(
     messages: list[dict[str, Any]] = [],
     **kwargs,
 ) -> str:
+    from models import ITTT_model
+
     # 如果提供了messages格式（用于多模态VLM增强查询），直接使用
     if messages:
         result = ITTT_model.invoke(messages)
