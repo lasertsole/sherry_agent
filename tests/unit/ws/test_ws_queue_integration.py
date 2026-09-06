@@ -455,7 +455,13 @@ async def test_hitl_interrupt_sets_hitl_pending(ws_env, monkeypatch):
     }
     assert session_state._is_hitl_pending("s1") is True, "hitl_pending must be set for real"
     rows = await store.list_active("s1")
-    assert rows == [], "the hitl turn's row must be terminal (DELIVERED)"
+    # The row can still be CLAIMED right after the frame arrives — wait for
+    # the terminal transition instead of asserting it racefully.
+    await _wait_until(
+        lambda: all(_status_of(store, r.id) == "DELIVERED" for r in rows),
+        what="hitl turn's row delivered",
+    )
+    assert await store.list_active("s1") == [], "the hitl turn's row must be terminal (DELIVERED)"
     assert "done" not in _events(socket), "no done frame may follow a hitl_request"
 
 
