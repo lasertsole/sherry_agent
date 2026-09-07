@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_status   TEXT,               -- Tool execution status (default "success")
     tool_name     TEXT,               -- Tool name
     timestamp     TEXT NOT NULL,      -- Timestamp YYYYMMDDHHmmss (shared by the whole batch)
-    ts_ms         INTEGER,            -- Epoch-ms ordering key, strictly increasing per turn (audit #21)
+    ts_ms         INTEGER NOT NULL,   -- Epoch-ms ordering key, strictly increasing per turn (audit #21)
     finish_reason TEXT,               -- AI response finish reason
     reasoning     TEXT,               -- Chain-of-thought (additional_kwargs["reasoning_content"])
     reasoning_content TEXT,           -- Reasoning process
@@ -136,7 +136,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 **FTS5 Triggers:** each FTS table has `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` triggers on `messages` that keep the index in sync automatically. Deleting rows (e.g. `delete_messages_by_session`) therefore needs no separate FTS cleanup.
 
 **Migrations:** schema creation is versioned in a `_migrations` table. The steps, in order:
-`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns` → `add_origin_column` → `add_turn_ts_ms_column` → `backfill_missing_ts_ms`.
+`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns` → `add_origin_column`.
+
 
 ---
 

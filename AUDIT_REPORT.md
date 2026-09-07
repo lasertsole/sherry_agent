@@ -158,6 +158,8 @@ if os.path.exists(file_path):                                        # 第 72 �
 > - **API 兼容**：历史行 decode 时 `pop("ts_ms")`，行形状字节级不变；`timestamp` 列格式永久 14 位，无新旧混排的字典序问题；`stats.py` 严格解析不受影响。
 > 测试：`tests/module/test_store_timestamp_ordering.py`（8 个：迁移回填/空坏值容错、同毫秒严格递增、14 位契约、add_messages 双回合递增、同秒会话按活动排序、last_time 14 位、历史行不泄漏 ts_ms）。回归 123 通过。诚实边界：跨进程严格递增不成立（robyn 已固定单进程，见 #16 附带发现）；ts_ms 为 0 的历史脏行排序时沉底。
 
+> **状态更新（2026-09-07）：迁移与回填代码已移除**。所有已跟踪数据库均已应用 v8/v9 迁移且无 `ts_ms IS NULL` 行，`add_turn_ts_ms_column` / `backfill_missing_ts_ms` / `_legacy_ts_to_ms` 从 `db.py` 删除；`ts_ms INTEGER NOT NULL` 直接进入基础 schema（`build_messages_tb`）——新库开箱即含完整结构，已存库（v9）经版本门控不受影响。测试同步删除迁移/回填用例（迁移加列、空坏值回填、step-8 后重跑、`_legacy_ts_to_ms` 边界），保留生成/排序/API 形状用例。
+
 ## 22. cron"every"间隔漂移
 **文件**：`skills/builtin/core/cron/scripts/base.py:57-81` — interval 任务从 `now` 而非上次运行时间推算下次运行。作业耗时过长时定时漂移。
 
