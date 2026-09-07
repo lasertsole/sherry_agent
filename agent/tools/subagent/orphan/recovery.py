@@ -201,11 +201,7 @@ async def _read_chat_history(child_session_key: str) -> dict | None:
             ):
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
                 result["last_human_message"] = content
-                if (
-                    ".env" in content
-                    or "character.json" in content
-                    or "server restart" in content
-                ):
+                if (".env" in content or "server restart" in content):
                     result["config_changes"] = (
                         True  # Detect config-change patterns that caused the interruption
                     )
