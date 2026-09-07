@@ -31,11 +31,14 @@ from langchain_core.tools import ToolException
 import agent.tools.pub_base.sandbox_guard as sandbox_guard
 import agent.tools.python_repl as python_repl
 from agent.tools.python_repl import TimedPythonREPLTool, build_python_repl_tool
+
+
 def _set_policy(monkeypatch, policy):
     """Set the policy at BOTH consumption points: the SandboxGuardMixin guard
     and python_repl's own _resolve_sandbox_argv read."""
     monkeypatch.setattr(sandbox_guard, "read_policy", lambda: policy)
     monkeypatch.setattr(python_repl, "read_policy", lambda: policy)
+
 
 from agent.tools.pub_base.sandbox import SandboxPolicy
 
@@ -65,7 +68,18 @@ class _FakeProc:
 
 
 def _install_fake_popen(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Patch subprocess.Popen used by python_repl; return the call record list."""
+    """Patch subprocess.Popen used by python_repl; return the call record list.
+
+    Warms the sandbox probe cache with the REAL subprocess first: on hosts
+    where bwrap is usable, get_backend() issues a probe Popen call (env =
+    full os.environ) that would otherwise be recorded by the fake below and
+    break the ``len(calls) == 1`` assertions. The probe result is cached for
+    the process lifetime, so the warm-up makes every test environment-agnostic.
+    """
+    from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend
+
+    get_backend(SandboxPolicy.AUTO)
+
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
         python_repl.subprocess, "Popen", lambda *a, **kw: _FakeProc(calls, *a, **kw)
@@ -340,8 +354,6 @@ def test_run_with_timeout_absorbs_unexpected_kwargs():
     # contract so future callers know it does not raise.
     calls = []
     proc = _FakeProc(calls, [sys.executable, "-c", "pass"])
-    with unittest.mock.patch.object(
-        python_repl.subprocess, "Popen", return_value=proc
-    ):
+    with unittest.mock.patch.object(python_repl.subprocess, "Popen", return_value=proc):
         out = python_repl._run_with_timeout("pass", 5, True, future_flag="x")
     assert isinstance(out, str)

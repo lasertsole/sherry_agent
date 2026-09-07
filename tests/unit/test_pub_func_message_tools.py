@@ -1,4 +1,4 @@
-"""Unit tests for the four pub_func/message tool utilities.
+"""Unit tests for the pub_func/message tool utilities.
 
 Covers the tool-level test classes documented in PART2 section 13 of the
 summarization redesign:
@@ -11,6 +11,9 @@ summarization redesign:
                                    minimum-reduction gate
 - TestTargetTruncation  (5 cases): largest-first ordering, stop at target,
                                    small outputs skipped
+- TestToolArgsTruncation (9 cases): AIMessage tool_calls args head+tail
+                                   truncation, protected/skip-recent rules,
+                                   no-mutation & pairing safety
 
 All tests use real langchain_core messages (the tools dispatch on
 isinstance checks) and plain asserts, following the style of
@@ -24,6 +27,8 @@ tests/unit/test_message_utils.py. Windows-safe: ASCII only, no network.
 # pyright: reportUnknownMemberType=false
 # pyright: reportCallIssue=false
 
+import json
+
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -32,6 +37,7 @@ from langchain_core.messages import (
 )
 
 from pub_func.message.target_truncation import target_truncate_tool_outputs
+from pub_func.message.tool_args_truncate import truncate_tool_args
 from pub_func.message.tool_output_dedup import dedup_tool_outputs
 from pub_func.message.tool_output_prune import prune_tool_outputs
 from pub_func.message.turn_utils import split_into_turns, split_turn
@@ -332,3 +338,117 @@ class TestTargetTruncation:
 
     def test_empty_messages_list(self):
         assert target_truncate_tool_outputs([], target_reduction_tokens=100) == ([], 0)
+
+
+# --- TestToolArgsTruncation ---
+
+
+def _pad_to_recent(messages: list) -> list:
+    """Pad with filler HumanMessages so len(messages) - 6 == 1.
+
+    With the default skip_recent=6 the first entry stays truncatable and
+    every later entry falls inside the protected recent window.
+    """
+    pad = 6 - (len(messages) - 1)
+    return messages + [HumanMessage(content=f"pad{i}") for i in range(pad)]
+
+
+class TestToolArgsTruncation:
+    def test_large_args_head_tail_format(self):
+        # args JSON > min threshold -> head 600 + tail 600 + omission marker.
+        args = {"content": "x" * 10000}
+        args_str = json.dumps(args, ensure_ascii=False)
+        messages = _pad_to_recent([_ai_with_call("c1", "write_file", args)])
+        result, freed = truncate_tool_args(messages)
+        tc = result[0].tool_calls[0]
+        assert tc["id"] == "c1"
+        assert set(tc["args"].keys()) == {"_truncated_args"}
+        truncated = tc["args"]["_truncated_args"]
+        head = args_str[:600]
+        tail = args_str[-600:]
+        omitted = len(args_str) - 1200
+        expected = head + f"...[args truncated, omitted {omitted} chars]..." + tail
+        assert truncated == expected
+        new_args_str = json.dumps(tc["args"], ensure_ascii=False)
+        assert freed == (len(args_str) - len(new_args_str)) // 4
+
+    def test_small_args_skipped(self):
+        # args JSON <= 500 chars -> unchanged, freed 0.
+        args = {"q": "y" * 400}
+        messages = _pad_to_recent([_ai_with_call("c1", "search", args)])
+        result, freed = truncate_tool_args(messages)
+        assert result[0].tool_calls[0]["args"] == args
+        assert "_truncated_args" not in result[0].tool_calls[0]["args"]
+        assert freed == 0
+
+    def test_freed_tokens_never_negative(self):
+        # Args just above the min threshold: the head+tail replacement can be
+        # longer than the original; freed must clamp to 0 (no fake savings).
+        args = {"content": "z" * 600}
+        messages = _pad_to_recent([_ai_with_call("c1", "bash", args)])
+        result, freed = truncate_tool_args(messages)
+        assert freed == 0
+        # Truncation still applies; only the token saving clamps to 0.
+        assert "_truncated_args" in result[0].tool_calls[0]["args"]
+
+    def test_protected_tools_skipped(self):
+        # Tool name in protected_tools -> args untouched.
+        args = {"content": "m" * 5000}
+        messages = _pad_to_recent([_ai_with_call("c1", "memory", args)])
+        result, freed = truncate_tool_args(messages, protected_tools={"memory"})
+        assert result[0].tool_calls[0]["args"] == args
+        assert freed == 0
+
+    def test_skip_recent_messages(self):
+        # AIMessage inside the last skip_recent messages -> args unchanged.
+        old = _ai_with_call("c1", "bash", {"script": "s" * 5000})
+        recent = _ai_with_call("c2", "bash", {"script": "t" * 5000})
+        messages = [HumanMessage(content="q"), old]
+        messages += [HumanMessage(content=f"m{i}") for i in range(5)]
+        messages.append(recent)
+        assert len(messages) == 8  # keep_until = 8 - 6 = 2
+        result, freed = truncate_tool_args(messages)
+        assert "_truncated_args" in result[1].tool_calls[0]["args"]
+        assert result[7].tool_calls[0]["args"] == {"script": "t" * 5000}
+        assert freed > 0
+
+    def test_empty_messages_list(self):
+        assert truncate_tool_args([]) == ([], 0)
+
+    def test_multiple_tool_calls_in_one_message(self):
+        # One large + one small in the same AIMessage -> only large truncated;
+        # ids preserved for both (pairing safety).
+        msg = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "bash", "args": {"script": "a" * 5000}, "id": "c1"},
+                {"name": "bash", "args": {"cmd": "ls"}, "id": "c2"},
+            ],
+        )
+        messages = _pad_to_recent([msg])
+        result, freed = truncate_tool_args(messages)
+        tcs = result[0].tool_calls
+        assert tcs[0]["id"] == "c1"
+        assert "_truncated_args" in tcs[0]["args"]
+        assert tcs[1]["id"] == "c2"
+        assert tcs[1]["args"] == {"cmd": "ls"}
+        assert freed > 0
+
+    def test_no_tool_calls_aimessage(self):
+        # AIMessage with content but no tool_calls -> untouched.
+        messages = _pad_to_recent([AIMessage(content="hello " * 100)])
+        result, freed = truncate_tool_args(messages)
+        assert result[0].content == messages[0].content
+        assert result[0].tool_calls == []
+        assert freed == 0
+
+    def test_original_list_and_message_not_mutated(self):
+        # model_copy replacement: original list, AIMessage and args survive.
+        args = {"content": "x" * 5000}
+        messages = _pad_to_recent([_ai_with_call("c1", "write_file", args)])
+        result, _ = truncate_tool_args(messages)
+        assert result is not messages
+        assert result[0] is not messages[0]
+        assert messages[0].tool_calls[0]["args"] == args
+        assert "_truncated_args" in result[0].tool_calls[0]["args"]
+        assert result[0].tool_calls[0]["id"] == "c1"

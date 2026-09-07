@@ -179,6 +179,7 @@
       "user": "사용자 정보",
       "character": "캐릭터 설정",
       "env": "환경 설정",
+      "sherry": "앱 설정",
       "memoryAgent": "메모리·Agent",
       "memoryUser": "메모리·사용자"
     },

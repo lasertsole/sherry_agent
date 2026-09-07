@@ -5,11 +5,15 @@ from logs import init_logger
 from dotenv import load_dotenv
 from config import STATIC_DIR, SRC_DIR
 from config import API_HOST, API_PORT, ENV_PATH
+from config.sherry_settings import get_sherry_setting
 
 # Fix UnicodeEncodeError for emoji in Windows GBK terminal
-if sys.stdout.encoding and sys.stdout.encoding.lower() in ("gbk", "gb2312", "gb18030"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+for _stream in (sys.stdout, sys.stderr):
+    _encoding = str(getattr(_stream, "encoding", "") or "").lower()
+    if _encoding in ("gbk", "gb2312", "gb18030"):
+        _reconfigure = getattr(_stream, "reconfigure", None)
+        if callable(_reconfigure):
+            _reconfigure(encoding="utf-8", errors="replace")
 
 # Fix nested event loop conflicts
 nest_asyncio.apply()
@@ -17,16 +21,19 @@ nest_asyncio.apply()
 # Initialize logging
 init_logger()
 
-# Load .env and init LangSmith (must be before any LangChain imports)
+# Load .env and init LangSmith (must be before any LangChain imports).
+# LangSmith settings live in sherry.jsonc (see config/sherry_settings.py).
 load_dotenv(ENV_PATH, override=True)
-if os.getenv("LANGSMITH_TRACING_V2") == "true" and os.getenv("LANGSMITH_API_KEY"):
+if bool(get_sherry_setting("LANGSMITH_TRACING_V2")) and str(
+    get_sherry_setting("LANGSMITH_API_KEY")
+):
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ["LANGSMITH_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
-    os.environ["LANGSMITH_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "EMA_AI_agent")
+    os.environ["LANGSMITH_API_KEY"] = str(get_sherry_setting("LANGSMITH_API_KEY"))
+    os.environ["LANGSMITH_PROJECT"] = str(get_sherry_setting("LANGSMITH_PROJECT"))
     print("🔍 LangSmith tracing enabled -> project:", os.environ["LANGSMITH_PROJECT"])
 else:
     print(
-        "ℹ️  LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY to enable)"
+        "ℹ️  LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY in sherry.jsonc to enable)"
     )
 
 

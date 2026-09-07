@@ -1,8 +1,9 @@
-import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from config.sherry_settings import get_sherry_setting
 
 ROOT_DIR = Path(__file__).parent
 ROOT_DIR = ROOT_DIR / ".."
@@ -51,8 +52,8 @@ KNOWLEDGE_INDEX_DIR = KNOWLEDGE_DIR / "index"
 # Kept in sync with the client locales: en (default), zh, ja, ko.
 WORKSPACE_TEMPLATE_LANGS: tuple[str, ...] = ("zh", "en", "ja", "ko")
 # Fallback language used when a requested locale has no template directory.
-# Configurable via the WORKSPACE_TEMPLATE_LANG environment variable (.env).
-DEFAULT_WORKSPACE_TEMPLATE_LANG = os.getenv("WORKSPACE_TEMPLATE_LANG", "en").strip().lower()
+# Configurable via WORKSPACE_TEMPLATE_LANG in the project-root sherry.jsonc.
+DEFAULT_WORKSPACE_TEMPLATE_LANG = str(get_sherry_setting("WORKSPACE_TEMPLATE_LANG")).strip().lower()
 
 
 def resolve_workspace_template_lang(lang: str | None = None) -> str:

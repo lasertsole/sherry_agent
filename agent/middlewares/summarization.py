@@ -1,6 +1,5 @@
 import re
 import json
-import hashlib
 from loguru import logger
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
@@ -30,6 +29,7 @@ from pub_func.message.turn_utils import split_into_turns, split_turn
 from pub_func.message.tool_output_dedup import dedup_tool_outputs
 from pub_func.message.tool_output_prune import prune_tool_outputs
 from pub_func.message.target_truncation import target_truncate_tool_outputs
+from pub_func.message.tool_args_truncate import truncate_tool_args
 from config.num import (
     PREEMPTIVE_TRUNCATE_RATIO,
     COMPRESSION_TRIGGER_RATIO,
@@ -41,8 +41,9 @@ from config.num import (
     TARGET_TRUNCATE_RATIO,
     MIN_OUTPUT_CHARS_TO_TRUNCATE,
     MAX_TOOL_OUTPUT_CHARS,
+    MIN_ARGS_CHARS_TO_TRUNCATE,
+    MAX_TOOL_ARGS_CHARS,
     AGGRESSIVE_TRUNCATE_CHARS,
-    SUMMARY_TRIM_TOKENS,
     SUMMARY_TOTAL_MAX_CHARS,
     CONTENT_HEAD_RATIO,
     CONTENT_TAIL_RATIO,
@@ -58,7 +59,6 @@ from config.num import (
     CRITICAL_CONTEXT_MAX_ITEMS,
     FILE_OPS_LIST_MAX_CHARS,
     LATEST_USER_REQUEST_MAX_CHARS,
-    AUTO_CONTINUE_PROMPT,
     COMPACTION_COOLDOWN_ROUNDS,
     MAX_COMPRESS_ATTEMPTS_PER_TURN,
     MAX_OVERFLOW_RETRIES,
@@ -146,11 +146,7 @@ def extract_reported_input_tokens(response: Any) -> int | None:
         usage = getattr(response, "usage_metadata", None)
         if isinstance(usage, dict):
             value = usage.get("input_tokens")
-            if (
-                isinstance(value, int)
-                and not isinstance(value, bool)
-                and value > 0
-            ):
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
                 return int(value)
             return None
         result = getattr(response, "result", None)
@@ -178,8 +174,7 @@ _SUMMARY_PREFIX = (
     "Respond ONLY to the latest user message that appears AFTER this summary."
 )
 _SUMMARY_SUFFIX = (
-    "\n\n--- END OF CONTEXT SUMMARY — respond to the message below, "
-    "not the summary above ---"
+    "\n\n--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---"
 )
 _SUMMARY_OPEN_TAG = "<summary>"
 _SUMMARY_CLOSE_TAG = "</summary>"
@@ -189,29 +184,29 @@ _SUMMARY_TEMPLATE = (
     "Use terse bullets, not prose paragraphs.\n"
     "Preserve exact file paths, commands, error strings, identifiers.\n\n"
     f"## Latest Unresolved User Request\n"
-    f"- Quote the user's most recent unanswered request (max {LATEST_USER_REQUEST_MAX_CHARS} chars), or \"(none)\"\n\n"
+    f'- Quote the user\'s most recent unanswered request (max {LATEST_USER_REQUEST_MAX_CHARS} chars), or "(none)"\n\n'
     "## Goal\n"
-    "- [one or two brief sentences, or \"(none)\"]\n\n"
+    '- [one or two brief sentences, or "(none)"]\n\n'
     "## Constraints & Preferences\n"
-    "- [constraints/preferences/decisions, or \"(none)\"]\n\n"
+    '- [constraints/preferences/decisions, or "(none)"]\n\n'
     "## Progress\n"
     f"### Completed (most recent {COMPLETED_MAX_ITEMS})\n"
-    "- [finished work, or \"(none)\"]\n\n"
+    '- [finished work, or "(none)"]\n\n'
     "### In Progress\n"
-    "- [current work, or \"(none)\"]\n\n"
+    '- [current work, or "(none)"]\n\n'
     "### Blocked\n"
-    "- [blockers, or \"(none)\"]\n\n"
+    '- [blockers, or "(none)"]\n\n'
     f"## Key Decisions (most recent {KEY_DECISIONS_MAX_ITEMS})\n"
-    "- **[decision]**: [reason, or \"(none)\"]\n\n"
+    '- **[decision]**: [reason, or "(none)"]\n\n'
     "## Next Steps\n"
-    "1. [immediate action, or \"(none)\"]\n\n"
+    '1. [immediate action, or "(none)"]\n\n'
     f"## Critical Context (most recent {CRITICAL_CONTEXT_MAX_ITEMS})\n"
-    "- [exact values, error strings, config, or \"(none)\"]\n\n"
+    '- [exact values, error strings, config, or "(none)"]\n\n'
     "## Relevant Files\n"
-    "- [file path: why it matters, or \"(none)\"]\n\n"
+    '- [file path: why it matters, or "(none)"]\n\n'
     "Rules:\n"
     "- Keep every section, even when empty.\n"
-    f"- For \"Completed\" and \"Key Decisions\", keep only the most recent "
+    f'- For "Completed" and "Key Decisions", keep only the most recent '
     f"{COMPLETED_MAX_ITEMS}/{KEY_DECISIONS_MAX_ITEMS} items.\n"
     '  Append "(N earlier items omitted for brevity)" when truncating.\n'
     "- Do not mention the summary process or that context was compacted."
@@ -226,7 +221,7 @@ _SUMMARY_UPDATE_INSTRUCTIONS = (
     "  the <conversation> does not mention them.\n"
     "- The <conversation> is more recent. Where they conflict, the conversation wins.\n"
     '- Move completed work from "In Progress" to "Completed".\n'
-    f"- Apply FIFO limits: keep only the most recent {COMPLETED_MAX_ITEMS} items in \"Completed\"\n"
+    f'- Apply FIFO limits: keep only the most recent {COMPLETED_MAX_ITEMS} items in "Completed"\n'
     f'  and {KEY_DECISIONS_MAX_ITEMS} in "Key Decisions". Append "(N earlier items omitted)".\n'
     '- Remove items that are finished and no longer needed from "In Progress" and "Blocked".'
 )
@@ -252,6 +247,7 @@ _SUMMARY_PROMPT_UPDATE = (
 # Serialization for summary LLM
 # ======================================================================
 
+
 def _serialize_for_summary(messages: list[AnyMessage]) -> str:
     lines: list[str] = []
     for msg in messages:
@@ -264,7 +260,14 @@ def _serialize_for_summary(messages: list[AnyMessage]) -> str:
                 lines.append(f"[Assistant]: {content[:2000]}")
             for tc in getattr(msg, "tool_calls", []) or []:
                 name = tc.get("name", "")
-                args = str(tc.get("args", ""))[:500]
+                args_str = str(tc.get("args", ""))
+                if len(args_str) > 500:
+                    head = args_str[:300]
+                    tail = args_str[-150:]
+                    omitted = len(args_str) - len(head) - len(tail)
+                    args = f"{head}...[args truncated, omitted {omitted} chars]...{tail}"
+                else:
+                    args = args_str
                 lines.append(f"[Assistant tool call]: {name}({args})")
         elif isinstance(msg, ToolMessage):
             tc_id = getattr(msg, "tool_call_id", "")
@@ -282,6 +285,7 @@ def _serialize_for_summary(messages: list[AnyMessage]) -> str:
 # ======================================================================
 # Deterministic Fallback (inspired by hermes-agent)
 # ======================================================================
+
 
 def _build_static_fallback_summary(messages: list[AnyMessage]) -> str:
     user_requests: list[str] = []
@@ -307,8 +311,10 @@ def _build_static_fallback_summary(messages: list[AnyMessage]) -> str:
                 completed_actions.append(f"- {name}({args_str[:200]})")
                 for word in args_str.replace("'", " ").replace('"', " ").split():
                     cleaned = word.strip("'\".,;:()[]{}")
-                    if "/" in cleaned or "\\" in cleaned or cleaned.endswith(
-                        (".py", ".md", ".js", ".ts", ".json")
+                    if (
+                        "/" in cleaned
+                        or "\\" in cleaned
+                        or cleaned.endswith((".py", ".md", ".js", ".ts", ".json"))
                     ):
                         if len(cleaned) > 2 and not cleaned.startswith(("http", "//")):
                             key_files.add(cleaned)
@@ -334,25 +340,29 @@ def _build_static_fallback_summary(messages: list[AnyMessage]) -> str:
         parts.append(
             f"({len(completed_actions) - COMPLETED_MAX_ITEMS} earlier completed actions omitted for brevity)"
         )
-    parts.extend([
-        "",
-        "### In Progress",
-        "- (continue previous work)",
-        "",
-        "### Blocked",
-        f"- {errors[-1]}" if errors else "- (none)",
-        "",
-        f"## Key Decisions (most recent {KEY_DECISIONS_MAX_ITEMS})",
-    ])
+    parts.extend(
+        [
+            "",
+            "### In Progress",
+            "- (continue previous work)",
+            "",
+            "### Blocked",
+            f"- {errors[-1]}" if errors else "- (none)",
+            "",
+            f"## Key Decisions (most recent {KEY_DECISIONS_MAX_ITEMS})",
+        ]
+    )
     for d in decisions[-KEY_DECISIONS_MAX_ITEMS:]:
         parts.append(f"- {d}")
-    parts.extend([
-        "",
-        "## Next Steps",
-        "1. (continue previous work)",
-        "",
-        f"## Critical Context (most recent {CRITICAL_CONTEXT_MAX_ITEMS})",
-    ])
+    parts.extend(
+        [
+            "",
+            "## Next Steps",
+            "1. (continue previous work)",
+            "",
+            f"## Critical Context (most recent {CRITICAL_CONTEXT_MAX_ITEMS})",
+        ]
+    )
     for e in errors[-CRITICAL_CONTEXT_MAX_ITEMS:]:
         parts.append(f"- {e}")
     parts.extend(["", "## Relevant Files"])
@@ -367,6 +377,7 @@ def _build_static_fallback_summary(messages: list[AnyMessage]) -> str:
 # ======================================================================
 # FIFO Enforcement
 # ======================================================================
+
 
 def _enforce_fifo_limits(summary_text: str) -> str:
     def _fifo_section(text: str, header_pattern: str, max_items: int) -> str:
@@ -386,12 +397,8 @@ def _enforce_fifo_limits(summary_text: str) -> str:
         new_block = "\n".join(kept) + "\n" + omitted_line + "\n"
         return text[:header_end] + new_block + text[block_end:]
 
-    summary_text = _fifo_section(
-        summary_text, r"### Completed[^\n]*\n", COMPLETED_MAX_ITEMS
-    )
-    summary_text = _fifo_section(
-        summary_text, r"## Key Decisions[^\n]*\n", KEY_DECISIONS_MAX_ITEMS
-    )
+    summary_text = _fifo_section(summary_text, r"### Completed[^\n]*\n", COMPLETED_MAX_ITEMS)
+    summary_text = _fifo_section(summary_text, r"## Key Decisions[^\n]*\n", KEY_DECISIONS_MAX_ITEMS)
     summary_text = _fifo_section(
         summary_text, r"## Critical Context[^\n]*\n", CRITICAL_CONTEXT_MAX_ITEMS
     )
@@ -401,6 +408,7 @@ def _enforce_fifo_limits(summary_text: str) -> str:
 # ======================================================================
 # File Operations Ratchet (inspired by openclaw)
 # ======================================================================
+
 
 def _extract_file_operations(messages: list[AnyMessage]) -> dict[str, list[str]]:
     read_files: set[str] = set()
@@ -414,12 +422,37 @@ def _extract_file_operations(messages: list[AnyMessage]) -> dict[str, list[str]]
                 paths: set[str] = set()
                 for word in args_str.replace("'", " ").replace('"', " ").replace(",", " ").split():
                     cleaned = word.strip("'\".,;:()[]{}")
-                    if "/" in cleaned or "\\" in cleaned or cleaned.endswith(
-                        (".py", ".md", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml", ".toml", ".cfg")
+                    if (
+                        "/" in cleaned
+                        or "\\" in cleaned
+                        or cleaned.endswith(
+                            (
+                                ".py",
+                                ".md",
+                                ".js",
+                                ".ts",
+                                ".tsx",
+                                ".json",
+                                ".yaml",
+                                ".yml",
+                                ".toml",
+                                ".cfg",
+                            )
+                        )
                     ):
                         if len(cleaned) > 2 and not cleaned.startswith(("http", "//")):
                             paths.add(cleaned)
-                if name in ("read_file", "read", "cat", "view", "edit", "write_file", "write", "patch_file", "create_file"):
+                if name in (
+                    "read_file",
+                    "read",
+                    "cat",
+                    "view",
+                    "edit",
+                    "write_file",
+                    "write",
+                    "patch_file",
+                    "create_file",
+                ):
                     if name in ("write_file", "write", "patch_file", "edit", "create_file"):
                         modified_files.update(paths)
                         read_files.update(paths)
@@ -445,7 +478,7 @@ def _format_file_ops(file_ops: dict[str, list[str]], previous: dict | None = Non
 
     def _fmt(files: set[str], max_chars: int) -> str:
         lines = [f"- {f}" for f in sorted(files)]
-        total = sum(len(l) for l in lines)
+        total = sum(len(line) for line in lines)
         while total > max_chars and lines:
             dropped = lines.pop(0)
             total -= len(dropped)
@@ -486,6 +519,7 @@ def _parse_file_ops_from_summary(summary_text: str) -> dict | None:
 # ======================================================================
 # Main Middleware Class
 # ======================================================================
+
 
 class Summarization(AgentMiddleware):
     """Context compaction middleware — written from scratch.
@@ -541,9 +575,7 @@ class Summarization(AgentMiddleware):
         return estimate_messages_tokens(list(messages))
 
     def _get_reported_tokens(self, messages: list[AnyMessage]) -> int:
-        last_ai = next(
-            (m for m in reversed(messages) if isinstance(m, AIMessage)), None
-        )
+        last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
         if last_ai and last_ai.usage_metadata:
             return int(last_ai.usage_metadata.get("total_tokens", 0))
         return 0
@@ -576,9 +608,7 @@ class Summarization(AgentMiddleware):
                     return True
         return False
 
-    def _preemptive_check(
-        self, messages: list[AnyMessage], session_id: str
-    ) -> str | None:
+    def _preemptive_check(self, messages: list[AnyMessage], session_id: str) -> str | None:
         """Pre-prompt token pressure estimation.
 
         Returns None / 'truncate_only' / 'compact'.
@@ -619,9 +649,7 @@ class Summarization(AgentMiddleware):
             return len(prompt) // 4
         return 0
 
-    def _decide_overflow_route(
-        self, messages: list[AnyMessage], session_id: str
-    ) -> str | None:
+    def _decide_overflow_route(self, messages: list[AnyMessage], session_id: str) -> str | None:
         """4-way route decision (upgrades the former 2-band _preemptive_check).
 
         Returns one of ROUTE_FITS / ROUTE_TRUNCATE_TOOL_RESULTS_ONLY /
@@ -642,23 +670,39 @@ class Summarization(AgentMiddleware):
         logger.debug(
             "Overflow route decision: est={} system_est={} usable={} "
             "candidates={} route={} session={}",
-            est, system_est, usable, len(truncatable), route, session_id,
+            est,
+            system_est,
+            usable,
+            len(truncatable),
+            route,
+            session_id,
         )
         return route
 
     def _run_budget_truncation(
         self, messages: list[BaseMessage], usable: int
-    ) -> int:
-        """Task 4 budget truncation over Task 3's candidate rule (in place).
+    ) -> tuple[list[BaseMessage], int]:
+        """Task 4 budget truncation over Task 3's candidate rule.
 
-        Candidates come from ``find_truncatable_tool_results`` (skips the last
-        TRUNCATABLE_RECENT_SKIP messages, >= MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE)
-        — Task 4's module intentionally does NOT apply that rule itself.
+        Step 1 truncates oversized tool-call args (returns new AIMessages
+        via model_copy — the input list is not mutated for AIMessages).
+        Step 2 truncates tool results over ``find_truncatable_tool_results``
+        candidates (skips the last TRUNCATABLE_RECENT_SKIP messages, >=
+        MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE) — that module mutates
+        ToolMessages in place. Callers MUST use the returned list for
+        ``request.override`` — the args step does NOT touch the input list.
         """
+        messages, args_freed = truncate_tool_args(
+            list(messages),
+            max_args_chars=MAX_TOOL_ARGS_CHARS,
+            min_args_chars=MIN_ARGS_CHARS_TO_TRUNCATE,
+            protected_tools=set(PROTECTED_TOOLS),
+        )
         candidates = find_truncatable_tool_results(list(messages))
-        return truncate_to_budget(
+        result_freed = truncate_to_budget(
             list(messages), candidates, int(usable * TRUNCATE_BUDGET_RATIO)
         )
+        return messages, args_freed + result_freed
 
     def _log_route(
         self, trigger: str, route: str, old_tokens: int, new_tokens: int, usable: int
@@ -667,14 +711,16 @@ class Summarization(AgentMiddleware):
         logger.info(
             "Context compression: trigger={}, route={}, old_tokens={}, "
             "new_tokens={}, pressure_ratio={}",
-            trigger, route, old_tokens, new_tokens, ratio,
+            trigger,
+            route,
+            old_tokens,
+            new_tokens,
+            ratio,
         )
 
     def _record_compaction_bookkeeping(self, session_id: str) -> None:
         """After an ACTUAL compression: arm the cooldown, count the turn attempt."""
-        state_register_mem.set_state(
-            session_id, _COOLDOWN_ROUNDS_KEY, COMPACTION_COOLDOWN_ROUNDS
-        )
+        state_register_mem.set_state(session_id, _COOLDOWN_ROUNDS_KEY, COMPACTION_COOLDOWN_ROUNDS)
         attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) + 1
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, attempts)
 
@@ -697,12 +743,10 @@ class Summarization(AgentMiddleware):
         self._record_compaction_bookkeeping(session_id)
         if route == ROUTE_COMPACT_THEN_TRUNCATE:
             final_messages = list(request.messages)
-            self._run_budget_truncation(
+            final_messages, _ = self._run_budget_truncation(
                 cast("list[BaseMessage]", final_messages), usable
             )
-            request = request.override(
-                messages=cast("list[AnyMessage]", final_messages)
-            )
+            request = request.override(messages=cast("list[AnyMessage]", final_messages))
         new_tokens = self._estimate_tokens(list(request.messages))
         self._log_route(trigger, route, old_tokens, new_tokens, usable)
         return request
@@ -726,12 +770,10 @@ class Summarization(AgentMiddleware):
         self._record_compaction_bookkeeping(session_id)
         if route == ROUTE_COMPACT_THEN_TRUNCATE:
             final_messages = list(request.messages)
-            self._run_budget_truncation(
+            final_messages, _ = self._run_budget_truncation(
                 cast("list[BaseMessage]", final_messages), usable
             )
-            request = request.override(
-                messages=cast("list[AnyMessage]", final_messages)
-            )
+            request = request.override(messages=cast("list[AnyMessage]", final_messages))
         new_tokens = self._estimate_tokens(list(request.messages))
         self._log_route(trigger, route, old_tokens, new_tokens, usable)
         return request
@@ -754,13 +796,11 @@ class Summarization(AgentMiddleware):
 
         if route == ROUTE_TRUNCATE_TOOL_RESULTS_ONLY:
             old_tokens = self._estimate_tokens(list(messages))
-            self._run_budget_truncation(
+            final_msgs, _ = self._run_budget_truncation(
                 cast("list[BaseMessage]", list(messages)), usable
             )
-            request = request.override(
-                messages=cast("list[AnyMessage]", list(messages))
-            )
-            new_tokens = self._estimate_tokens(list(messages))
+            request = request.override(messages=cast("list[AnyMessage]", final_msgs))
+            new_tokens = self._estimate_tokens(list(final_msgs))
             self._log_route(trigger, route, old_tokens, new_tokens, usable)
             # Recheck: truncation freed less than estimated and pressure is
             # still at/above threshold_compact → compact backstop; otherwise
@@ -789,13 +829,11 @@ class Summarization(AgentMiddleware):
 
         if route == ROUTE_TRUNCATE_TOOL_RESULTS_ONLY:
             old_tokens = self._estimate_tokens(list(messages))
-            self._run_budget_truncation(
+            final_msgs, _ = self._run_budget_truncation(
                 cast("list[BaseMessage]", list(messages)), usable
             )
-            request = request.override(
-                messages=cast("list[AnyMessage]", list(messages))
-            )
-            new_tokens = self._estimate_tokens(list(messages))
+            request = request.override(messages=cast("list[AnyMessage]", final_msgs))
+            new_tokens = self._estimate_tokens(list(final_msgs))
             self._log_route(trigger, route, old_tokens, new_tokens, usable)
             if usable > 0 and new_tokens >= usable * COMPRESSION_TRIGGER_RATIO:
                 return await self._aexecute_compact(
@@ -828,9 +866,7 @@ class Summarization(AgentMiddleware):
     def _post_response_check(
         self,
         request: ModelRequest[ContextT],
-        response: ModelResponse[ResponseT]
-        | AIMessage
-        | ExtendedModelResponse[ResponseT],
+        response: ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT],
         session_id: str,
         t2_compressed: bool = False,
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
@@ -851,14 +887,10 @@ class Summarization(AgentMiddleware):
             reported = extract_reported_input_tokens(response)
             if reported is None:
                 return response
-            attempts = state_register_mem.get_state(
-                session_id, _TURN_ATTEMPTS_KEY, 0
-            ) or 0
+            attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) or 0
             if attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN:
                 return response
-            cooldown = state_register_mem.get_state(
-                session_id, _COOLDOWN_ROUNDS_KEY, 0
-            ) or 0
+            cooldown = state_register_mem.get_state(session_id, _COOLDOWN_ROUNDS_KEY, 0) or 0
             if cooldown > 0:
                 # Anti-thrash gate respected: T3 reads the post-tick value.
                 return response
@@ -880,14 +912,16 @@ class Summarization(AgentMiddleware):
             route = decide_route(pressure, int(ctx_window), usable, truncatable)
             if route == ROUTE_FITS:
                 return response
-            request = self._dispatch_overflow_route(
-                request, route, session_id, trigger="T3"
-            )
+            request = self._dispatch_overflow_route(request, route, session_id, trigger="T3")
             new_tokens = self._estimate_tokens(list(request.messages))
             logger.info(
                 "Context compression: trigger=T3, reported_input_tokens={}, "
                 "route={}, old_tokens={}, new_tokens={}, pressure_ratio={:.2f}",
-                reported, route, est, new_tokens, pressure / usable,
+                reported,
+                route,
+                est,
+                new_tokens,
+                pressure / usable,
             )
             return response
         except Exception as exc:
@@ -901,9 +935,7 @@ class Summarization(AgentMiddleware):
     async def _apost_response_check(
         self,
         request: ModelRequest[ContextT],
-        response: ModelResponse[ResponseT]
-        | AIMessage
-        | ExtendedModelResponse[ResponseT],
+        response: ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT],
         session_id: str,
         t2_compressed: bool = False,
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
@@ -914,14 +946,10 @@ class Summarization(AgentMiddleware):
             reported = extract_reported_input_tokens(response)
             if reported is None:
                 return response
-            attempts = state_register_mem.get_state(
-                session_id, _TURN_ATTEMPTS_KEY, 0
-            ) or 0
+            attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) or 0
             if attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN:
                 return response
-            cooldown = state_register_mem.get_state(
-                session_id, _COOLDOWN_ROUNDS_KEY, 0
-            ) or 0
+            cooldown = state_register_mem.get_state(session_id, _COOLDOWN_ROUNDS_KEY, 0) or 0
             if cooldown > 0:
                 return response
             ctx_window = self._main_llm_context_window
@@ -940,14 +968,16 @@ class Summarization(AgentMiddleware):
             route = decide_route(pressure, int(ctx_window), usable, truncatable)
             if route == ROUTE_FITS:
                 return response
-            request = await self._adispatch_overflow_route(
-                request, route, session_id, trigger="T3"
-            )
+            request = await self._adispatch_overflow_route(request, route, session_id, trigger="T3")
             new_tokens = self._estimate_tokens(list(request.messages))
             logger.info(
                 "Context compression: trigger=T3, reported_input_tokens={}, "
                 "route={}, old_tokens={}, new_tokens={}, pressure_ratio={:.2f}",
-                reported, route, est, new_tokens, pressure / usable,
+                reported,
+                route,
+                est,
+                new_tokens,
+                pressure / usable,
             )
             return response
         except Exception as exc:
@@ -994,15 +1024,21 @@ class Summarization(AgentMiddleware):
         request = self._apply_compression(request, session_id)
         usable = self._usable_budget()
         final_messages = list(request.messages)
-        self._run_budget_truncation(cast("list[BaseMessage]", final_messages), usable)
+        final_messages, _ = self._run_budget_truncation(
+            cast("list[BaseMessage]", final_messages), usable
+        )
         request = request.override(messages=cast("list[AnyMessage]", final_messages))
         new_tokens = self._estimate_tokens(list(final_messages))
         state_register_mem.set_state(session_id, retry_key, attempt)
         logger.warning(
             "Context compression: trigger={}, attempt={}/{}, error_class={}, "
             "old_tokens={}, new_tokens={}",
-            trigger, attempt, MAX_OVERFLOW_RETRIES, error_class,
-            old_tokens, new_tokens,
+            trigger,
+            attempt,
+            MAX_OVERFLOW_RETRIES,
+            error_class,
+            old_tokens,
+            new_tokens,
         )
         return request
 
@@ -1021,15 +1057,21 @@ class Summarization(AgentMiddleware):
         request = await self._aapply_compression(request, session_id)
         usable = self._usable_budget()
         final_messages = list(request.messages)
-        self._run_budget_truncation(cast("list[BaseMessage]", final_messages), usable)
+        final_messages, _ = self._run_budget_truncation(
+            cast("list[BaseMessage]", final_messages), usable
+        )
         request = request.override(messages=cast("list[AnyMessage]", final_messages))
         new_tokens = self._estimate_tokens(list(final_messages))
         state_register_mem.set_state(session_id, retry_key, attempt)
         logger.warning(
             "Context compression: trigger={}, attempt={}/{}, error_class={}, "
             "old_tokens={}, new_tokens={}",
-            trigger, attempt, MAX_OVERFLOW_RETRIES, error_class,
-            old_tokens, new_tokens,
+            trigger,
+            attempt,
+            MAX_OVERFLOW_RETRIES,
+            error_class,
+            old_tokens,
+            new_tokens,
         )
         return request
 
@@ -1076,27 +1118,26 @@ class Summarization(AgentMiddleware):
                     logger.error(
                         "Context compression: trigger={} retries exhausted "
                         "({}, error_class={}) - propagating original error",
-                        trigger, retries, error_class,
+                        trigger,
+                        retries,
+                        error_class,
                     )
                     raise
                 try:
-                    request = self._forced_recovery_request(
-                        request, session_id, error_class
-                    )
+                    request = self._forced_recovery_request(request, session_id, error_class)
                 except Exception as compression_exc:
                     logger.error(
                         "Context compression: trigger={} forced compression "
                         "failed ({}) - propagating original error",
-                        trigger, compression_exc,
+                        trigger,
+                        compression_exc,
                     )
                     raise exc from compression_exc
 
     async def _aexecute_with_recovery(
         self,
         request: ModelRequest[ContextT],
-        handler: Callable[
-            [ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]
-        ],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
         session_id: str,
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         """Async twin of :meth:`_execute_with_recovery` (parity by shape)."""
@@ -1116,18 +1157,19 @@ class Summarization(AgentMiddleware):
                     logger.error(
                         "Context compression: trigger={} retries exhausted "
                         "({}, error_class={}) - propagating original error",
-                        trigger, retries, error_class,
+                        trigger,
+                        retries,
+                        error_class,
                     )
                     raise
                 try:
-                    request = await self._aforced_recovery_request(
-                        request, session_id, error_class
-                    )
+                    request = await self._aforced_recovery_request(request, session_id, error_class)
                 except Exception as compression_exc:
                     logger.error(
                         "Context compression: trigger={} forced compression "
                         "failed ({}) - propagating original error",
-                        trigger, compression_exc,
+                        trigger,
+                        compression_exc,
                     )
                     raise exc from compression_exc
 
@@ -1151,7 +1193,7 @@ class Summarization(AgentMiddleware):
                 content = str(getattr(m, "content", ""))
                 if len(content) > _PREEMPTIVE_TRUNCATE_MAX_CHARS:
                     head = content[: int(_PREEMPTIVE_TRUNCATE_MAX_CHARS * CONTENT_HEAD_RATIO)]
-                    tail = content[-int(_PREEMPTIVE_TRUNCATE_MAX_CHARS * CONTENT_TAIL_RATIO):]
+                    tail = content[-int(_PREEMPTIVE_TRUNCATE_MAX_CHARS * CONTENT_TAIL_RATIO) :]
                     omitted = len(content) - len(head) - len(tail)
                     truncated = f"{head}...[omitted {omitted} chars]...{tail}"
                     result.append(m.model_copy(update={"content": truncated}))
@@ -1164,14 +1206,13 @@ class Summarization(AgentMiddleware):
         if truncated_count > 0:
             logger.debug(
                 "Preemptive truncation: {} tool outputs, session={}",
-                truncated_count, session_id,
+                truncated_count,
+                session_id,
             )
         return result
 
     @staticmethod
-    def _find_tool_name(
-        messages: list[BaseMessage], tool_msg: ToolMessage, tc_id: str
-    ) -> str:
+    def _find_tool_name(messages: list[BaseMessage], tool_msg: ToolMessage, tc_id: str) -> str:
         if not tc_id:
             return ""
         idx = messages.index(tool_msg)
@@ -1223,7 +1264,9 @@ class Summarization(AgentMiddleware):
             state_register_mem.set_state(session_id, _LAST_USER_QUESTION_KEY, "")
         logger.debug(
             "Compaction: last-turn ratio={:.1f}%, compress_last_turn={}, session={}",
-            ratio * 100, compress, session_id,
+            ratio * 100,
+            compress,
+            session_id,
         )
         return compress
 
@@ -1273,7 +1316,9 @@ class Summarization(AgentMiddleware):
         effective = msg_reduced or token_reduction_pct >= MIN_EFFECTIVENESS_PCT
 
         if not effective:
-            ineffective = state_register_mem.get_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0) + 1
+            ineffective = (
+                state_register_mem.get_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0) + 1
+            )
             state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, ineffective)
         else:
             state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
@@ -1308,7 +1353,11 @@ class Summarization(AgentMiddleware):
 
         if not self._compress_last_turn:
             last_user_idx = next(
-                (i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], HumanMessage)),
+                (
+                    i
+                    for i in range(len(messages) - 1, -1, -1)
+                    if isinstance(messages[i], HumanMessage)
+                ),
                 None,
             )
             if last_user_idx is not None and cutoff > last_user_idx:
@@ -1340,7 +1389,11 @@ class Summarization(AgentMiddleware):
                 adjusted = earliest_orphan_ai
             else:
                 prev_user_idx = next(
-                    (i for i in range(adjusted - 1, -1, -1) if isinstance(messages[i], HumanMessage)),
+                    (
+                        i
+                        for i in range(adjusted - 1, -1, -1)
+                        if isinstance(messages[i], HumanMessage)
+                    ),
                     None,
                 )
                 if prev_user_idx is None:
@@ -1354,16 +1407,22 @@ class Summarization(AgentMiddleware):
 
     def _extract_previous_summary(self, messages: list[AnyMessage]) -> str | None:
         for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and getattr(msg, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE:
+            if (
+                isinstance(msg, AIMessage)
+                and getattr(msg, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE
+            ):
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
                 if _SUMMARY_CLOSE_TAG in content:
                     start = content.find(_SUMMARY_OPEN_TAG)
                     end = content.find(_SUMMARY_CLOSE_TAG)
                     if start >= 0 and end > start:
-                        return content[start + len(_SUMMARY_OPEN_TAG):end].strip()
+                        return content[start + len(_SUMMARY_OPEN_TAG) : end].strip()
                 return content
         for msg in reversed(messages):
-            if isinstance(msg, HumanMessage) and getattr(msg, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE:
+            if (
+                isinstance(msg, HumanMessage)
+                and getattr(msg, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE
+            ):
                 return msg.content if isinstance(msg.content, str) else str(msg.content)
         return None
 
@@ -1372,14 +1431,18 @@ class Summarization(AgentMiddleware):
     # ------------------------------------------------------------------
 
     def _build_summary_prompt(self, messages_text: str, previous_summary: str | None) -> str:
-        conversation = f"Here is the conversation so far:\n\n<conversation>\n{messages_text}\n</conversation>"
+        conversation = (
+            f"Here is the conversation so far:\n\n<conversation>\n{messages_text}\n</conversation>"
+        )
         if previous_summary:
-            return "\n\n".join([
-                conversation,
-                f"Here is the summary of the conversation before the <conversation> above:\n\n"
-                f"<prior-summary>\n{previous_summary}\n</prior-summary>",
-                _SUMMARY_PROMPT_UPDATE,
-            ])
+            return "\n\n".join(
+                [
+                    conversation,
+                    f"Here is the summary of the conversation before the <conversation> above:\n\n"
+                    f"<prior-summary>\n{previous_summary}\n</prior-summary>",
+                    _SUMMARY_PROMPT_UPDATE,
+                ]
+            )
         return "\n\n".join([conversation, _SUMMARY_PROMPT_FIRST])
 
     # ------------------------------------------------------------------
@@ -1445,7 +1508,7 @@ class Summarization(AgentMiddleware):
 
         if len(summary) > SUMMARY_TOTAL_MAX_CHARS:
             head = summary[: int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_HEAD_RATIO)]
-            tail = summary[-int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_TAIL_RATIO):]
+            tail = summary[-int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_TAIL_RATIO) :]
             omitted = len(summary) - len(head) - len(tail)
             summary = f"{head}...[summary truncated, omitted {omitted} chars]...{tail}"
 
@@ -1503,6 +1566,16 @@ class Summarization(AgentMiddleware):
         if reduced > 0:
             logger.debug("Target truncation reduced ~{} tokens, session={}", reduced, session_id)
 
+        current, reduced = truncate_tool_args(
+            current,
+            max_args_chars=MAX_TOOL_ARGS_CHARS,
+            min_args_chars=MIN_ARGS_CHARS_TO_TRUNCATE,
+            protected_tools=set(PROTECTED_TOOLS),
+        )
+        total_reduced += reduced
+        if reduced > 0:
+            logger.debug("Tool args truncation reduced ~{} tokens, session={}", reduced, session_id)
+
         return current, total_reduced
 
     def _aggressive_truncate(self, messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -1515,6 +1588,27 @@ class Summarization(AgentMiddleware):
                         f"...[aggressively truncated, {len(content) - AGGRESSIVE_TRUNCATE_CHARS} chars omitted]"
                     )
                     msg = msg.model_copy(update={"content": truncated})
+            elif isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                new_tcs = []
+                for tc in msg.tool_calls:
+                    name = tc.get("name", "")
+                    if name in PROTECTED_TOOLS:
+                        new_tcs.append(tc)
+                        continue
+                    args = tc.get("args", {})
+                    try:
+                        args_str = json.dumps(args, ensure_ascii=False)
+                    except (TypeError, ValueError):
+                        args_str = str(args)
+                    if len(args_str) > AGGRESSIVE_TRUNCATE_CHARS:
+                        truncated = args_str[:AGGRESSIVE_TRUNCATE_CHARS] + (
+                            f"...[args aggressively truncated, "
+                            f"{len(args_str) - AGGRESSIVE_TRUNCATE_CHARS} chars omitted]"
+                        )
+                        new_tcs.append({**tc, "args": {"_truncated_args": truncated}})
+                    else:
+                        new_tcs.append(tc)
+                msg = msg.model_copy(update={"tool_calls": new_tcs})
             result.append(msg)
         return result
 
@@ -1523,9 +1617,7 @@ class Summarization(AgentMiddleware):
     # ------------------------------------------------------------------
 
     def _capture_recovery_context(self, messages: list[BaseMessage], session_id: str) -> dict:
-        last_human = next(
-            (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
-        )
+        last_human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         user_intent = ""
         if last_human and isinstance(last_human.content, str):
             user_intent = last_human.content[:LATEST_USER_REQUEST_MAX_CHARS]
@@ -1546,7 +1638,10 @@ class Summarization(AgentMiddleware):
         file_ops_section = _format_file_ops(ctx.get("file_ops", {}), ctx.get("previous_file_ops"))
 
         for i, m in enumerate(messages):
-            if isinstance(m, AIMessage) and getattr(m, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE:
+            if (
+                isinstance(m, AIMessage)
+                and getattr(m, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE
+            ):
                 existing = m.content if isinstance(m.content, str) else str(m.content)
                 pattern = r"## Relevant Files\n.*?(?=\n---|\n</summary>|\Z)"
                 if re.search(pattern, existing, re.DOTALL):
@@ -1571,7 +1666,7 @@ class Summarization(AgentMiddleware):
         if len(content) <= max_chars:
             return content
         head = content[: int(max_chars * CONTENT_HEAD_RATIO)]
-        tail = content[-int(max_chars * CONTENT_TAIL_RATIO):]
+        tail = content[-int(max_chars * CONTENT_TAIL_RATIO) :]
         omitted = len(content) - len(head) - len(tail)
         return f"{head}...[omitted {omitted} chars]...{tail}"
 
@@ -1634,7 +1729,9 @@ class Summarization(AgentMiddleware):
     # ------------------------------------------------------------------
 
     def _apply_compression(
-        self, request: ModelRequest[ContextT], session_id: str,
+        self,
+        request: ModelRequest[ContextT],
+        session_id: str,
     ) -> ModelRequest[ContextT]:
         original_messages: list[AnyMessage] = request.state.get("messages", [])
         recovery_ctx = self._capture_recovery_context(original_messages, session_id)
@@ -1677,9 +1774,7 @@ class Summarization(AgentMiddleware):
         final_messages = self._truncate_summary_messages(final_messages)
 
         if recovery_ctx:
-            final_messages = self._inject_recovery_context(
-                final_messages, recovery_ctx, session_id
-            )
+            final_messages = self._inject_recovery_context(final_messages, recovery_ctx, session_id)
 
         self._record_compression(session_id, original_messages, final_messages, strategy_used)
         self._compaction_just_happened = True
@@ -1689,6 +1784,7 @@ class Summarization(AgentMiddleware):
         system_prompt: str | None = None
         if self._need_update_system_prompt:
             from agent.tools import memory_store
+
             memory_store.load_from_disk()
             system_prompt = build_system_prompt(session_id=session_id)
             state_register_mem.set_state(session_id, "system_prompt", system_prompt)
@@ -1706,7 +1802,9 @@ class Summarization(AgentMiddleware):
     # ------------------------------------------------------------------
 
     async def _aapply_compression(
-        self, request: ModelRequest[ContextT], session_id: str,
+        self,
+        request: ModelRequest[ContextT],
+        session_id: str,
     ) -> ModelRequest[ContextT]:
         original_messages: list[AnyMessage] = request.state.get("messages", [])
         recovery_ctx = self._capture_recovery_context(original_messages, session_id)
@@ -1749,9 +1847,7 @@ class Summarization(AgentMiddleware):
         final_messages = self._truncate_summary_messages(final_messages)
 
         if recovery_ctx:
-            final_messages = self._inject_recovery_context(
-                final_messages, recovery_ctx, session_id
-            )
+            final_messages = self._inject_recovery_context(final_messages, recovery_ctx, session_id)
 
         self._record_compression(session_id, original_messages, final_messages, strategy_used)
         self._compaction_just_happened = True
@@ -1761,6 +1857,7 @@ class Summarization(AgentMiddleware):
         system_prompt: str | None = None
         if self._need_update_system_prompt:
             from agent.tools import memory_store
+
             memory_store.load_from_disk()
             system_prompt = build_system_prompt(session_id=session_id)
             state_register_mem.set_state(session_id, "system_prompt", system_prompt)
@@ -1807,9 +1904,7 @@ class Summarization(AgentMiddleware):
         # NEW (Task 5): per-turn proactive-compression attempt counter.
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, 0)
 
-    def _t1_state_update(
-        self, request: ModelRequest[ContextT]
-    ) -> dict[str, Any]:
+    def _t1_state_update(self, request: ModelRequest[ContextT]) -> dict[str, Any]:
         """Translate a T1-dispatched request into a before_agent state update.
 
         ALWAYS clears the state messages first (RemoveMessage with the
@@ -1831,9 +1926,7 @@ class Summarization(AgentMiddleware):
             )
         }
 
-    def _t1_preflight(
-        self, state: AgentState, session_id: str
-    ) -> dict[str, Any] | None:
+    def _t1_preflight(self, state: AgentState, session_id: str) -> dict[str, Any] | None:
         messages: list[AnyMessage] = list(state.get("messages", []) or [])
         if not messages:
             return None
@@ -1842,14 +1935,12 @@ class Summarization(AgentMiddleware):
             return None
         # Cooldown blocks the PROACTIVE compact routes at T1; the cheap
         # truncate track still runs (it is the recovery mechanism itself).
-        cooldown = state_register_mem.get_state(
-            session_id, _COOLDOWN_ROUNDS_KEY, 0
-        ) or 0
+        cooldown = state_register_mem.get_state(session_id, _COOLDOWN_ROUNDS_KEY, 0) or 0
         if cooldown > 0 and route in (ROUTE_COMPACT_ONLY, ROUTE_COMPACT_THEN_TRUNCATE):
             logger.debug(
-                "T1 compact route suppressed by cooldown ({} rounds left), "
-                "session={}",
-                cooldown, session_id,
+                "T1 compact route suppressed by cooldown ({} rounds left), session={}",
+                cooldown,
+                session_id,
             )
             return None
         request = ModelRequest(
@@ -1857,28 +1948,22 @@ class Summarization(AgentMiddleware):
             messages=cast("list[AnyMessage]", messages),
             state=state,
         )
-        request = self._dispatch_overflow_route(
-            request, route, session_id, trigger="T1"
-        )
+        request = self._dispatch_overflow_route(request, route, session_id, trigger="T1")
         return self._t1_state_update(request)
 
-    async def _at1_preflight(
-        self, state: AgentState, session_id: str
-    ) -> dict[str, Any] | None:
+    async def _at1_preflight(self, state: AgentState, session_id: str) -> dict[str, Any] | None:
         messages: list[AnyMessage] = list(state.get("messages", []) or [])
         if not messages:
             return None
         route = self._decide_overflow_route(messages, session_id)
         if route is None or route == ROUTE_FITS:
             return None
-        cooldown = state_register_mem.get_state(
-            session_id, _COOLDOWN_ROUNDS_KEY, 0
-        ) or 0
+        cooldown = state_register_mem.get_state(session_id, _COOLDOWN_ROUNDS_KEY, 0) or 0
         if cooldown > 0 and route in (ROUTE_COMPACT_ONLY, ROUTE_COMPACT_THEN_TRUNCATE):
             logger.debug(
-                "T1 compact route suppressed by cooldown ({} rounds left), "
-                "session={}",
-                cooldown, session_id,
+                "T1 compact route suppressed by cooldown ({} rounds left), session={}",
+                cooldown,
+                session_id,
             )
             return None
         request = ModelRequest(
@@ -1886,9 +1971,7 @@ class Summarization(AgentMiddleware):
             messages=cast("list[AnyMessage]", messages),
             state=state,
         )
-        request = await self._adispatch_overflow_route(
-            request, route, session_id, trigger="T1"
-        )
+        request = await self._adispatch_overflow_route(request, route, session_id, trigger="T1")
         return self._t1_state_update(request)
 
     def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
@@ -1929,9 +2012,7 @@ class Summarization(AgentMiddleware):
             return response
 
         attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-        if not forced and (
-            cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN
-        ):
+        if not forced and (cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN):
             # T2 anti-thrash gate: cooldown / per-turn attempt cap suppress
             # the PROACTIVE trigger only (forced recovery is exempt above).
             self._compress_last_turn = False
@@ -1943,13 +2024,9 @@ class Summarization(AgentMiddleware):
                 # and the response still needs degradation monitoring — the
                 # flag is left for _monitor_degradation to consume.
                 if self._need_update_system_prompt:
-                    rebuilt = state_register_mem.get_state(
-                        session_id, "system_prompt", ""
-                    )
+                    rebuilt = state_register_mem.get_state(session_id, "system_prompt", "")
                     if rebuilt:
-                        request = request.override(
-                            system_message=SystemMessage(content=rebuilt)
-                        )
+                        request = request.override(system_message=SystemMessage(content=rebuilt))
             response = self._execute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check (Task 6). Gate path: T2 did NOT
@@ -1960,15 +2037,11 @@ class Summarization(AgentMiddleware):
         # T3 anti-double-compress snapshot (Task 6): turn attempts BEFORE the
         # T2 dispatch; only actual compact executions increment the key, so a
         # bump means T2 compressed in THIS wrap call.
-        t2_attempts_before = state_register_mem.get_state(
-            session_id, _TURN_ATTEMPTS_KEY, 0
-        )
+        t2_attempts_before = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
         # 4-route decision (upgraded _preemptive_check) → single dispatch
         route = self._decide_overflow_route(messages, session_id)
         if route is not None and route != ROUTE_FITS:
-            request = self._dispatch_overflow_route(
-                request, route, session_id, trigger="T2"
-            )
+            request = self._dispatch_overflow_route(request, route, session_id, trigger="T2")
         elif self._check_trigger(request.state.get("messages", [])):
             # legacy trigger-clause fallback (e.g. ("messages", N) triggers)
             request = self._dispatch_overflow_route(
@@ -1978,14 +2051,11 @@ class Summarization(AgentMiddleware):
         response = self._execute_with_recovery(request, handler, session_id)
         self._monitor_degradation(response, session_id)
         t2_compressed = (
-            state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-            > t2_attempts_before
+            state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) > t2_attempts_before
         )
         # T3: post-response real-token re-check (Task 6); T2-compressed calls
         # skip via the local flag — one compression per model call.
-        return self._post_response_check(
-            request, response, session_id, t2_compressed=t2_compressed
-        )
+        return self._post_response_check(request, response, session_id, t2_compressed=t2_compressed)
 
     # ------------------------------------------------------------------
     # awrap_model_call (async)
@@ -2010,16 +2080,12 @@ class Summarization(AgentMiddleware):
         if self._should_skip_compression(session_id):
             self._compress_last_turn = False
             self._compaction_just_happened = False
-            response = await self._aexecute_with_recovery(
-                request, handler, session_id
-            )
+            response = await self._aexecute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             return response
 
         attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-        if not forced and (
-            cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN
-        ):
+        if not forced and (cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN):
             # T2 anti-thrash gate: cooldown / per-turn attempt cap suppress
             # the PROACTIVE trigger only (forced recovery is exempt above).
             self._compress_last_turn = False
@@ -2031,16 +2097,10 @@ class Summarization(AgentMiddleware):
                 # and the response still needs degradation monitoring — the
                 # flag is left for _monitor_degradation to consume.
                 if self._need_update_system_prompt:
-                    rebuilt = state_register_mem.get_state(
-                        session_id, "system_prompt", ""
-                    )
+                    rebuilt = state_register_mem.get_state(session_id, "system_prompt", "")
                     if rebuilt:
-                        request = request.override(
-                            system_message=SystemMessage(content=rebuilt)
-                        )
-            response = await self._aexecute_with_recovery(
-                request, handler, session_id
-            )
+                        request = request.override(system_message=SystemMessage(content=rebuilt))
+            response = await self._aexecute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check (Task 6); see the sync twin.
             return await self._apost_response_check(request, response, session_id)
@@ -2048,28 +2108,21 @@ class Summarization(AgentMiddleware):
         # T3 anti-double-compress snapshot (Task 6): turn attempts BEFORE the
         # T2 dispatch; only actual compact executions increment the key, so a
         # bump means T2 compressed in THIS wrap call.
-        t2_attempts_before = state_register_mem.get_state(
-            session_id, _TURN_ATTEMPTS_KEY, 0
-        )
+        t2_attempts_before = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
         # 4-route decision (upgraded _preemptive_check) → single dispatch
         route = self._decide_overflow_route(messages, session_id)
         if route is not None and route != ROUTE_FITS:
-            request = await self._adispatch_overflow_route(
-                request, route, session_id, trigger="T2"
-            )
+            request = await self._adispatch_overflow_route(request, route, session_id, trigger="T2")
         elif self._check_trigger(request.state.get("messages", [])):
             # legacy trigger-clause fallback (e.g. ("messages", N) triggers)
             request = await self._adispatch_overflow_route(
                 request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
             )
 
-        response = await self._aexecute_with_recovery(
-            request, handler, session_id
-        )
+        response = await self._aexecute_with_recovery(request, handler, session_id)
         self._monitor_degradation(response, session_id)
         t2_compressed = (
-            state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-            > t2_attempts_before
+            state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) > t2_attempts_before
         )
         # T3: post-response real-token re-check (Task 6); T2-compressed calls
         # skip via the local flag — one compression per model call.

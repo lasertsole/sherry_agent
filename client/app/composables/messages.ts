@@ -186,7 +186,7 @@ export async function getPendingInterrupt(session_id: string): Promise<HitlInter
   } catch (error) {
     // When the request fails (the session may have been cleared / the backend is not running),
     // silently treat it as no interrupt and do not block chat.
-    console.warn('[getPendingInterrupt] 查询待审批中断失败：', error);
+    console.warn('[getPendingInterrupt] Failed to query pending approval interrupt:', error);
     return null;
   }
 }

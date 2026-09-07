@@ -179,6 +179,7 @@
       "user": "用户信息",
       "character": "角色配置",
       "env": "环境配置",
+      "sherry": "应用配置",
       "memoryAgent": "记忆·Agent",
       "memoryUser": "记忆·用户"
     },

@@ -32,7 +32,7 @@ def store_db(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# EC-01 / EC-02 add_messages 边界
+# EC-01 / EC-02 add_messages bounds
 # ---------------------------------------------------------------------------
 
 
@@ -54,7 +54,7 @@ class TestAddMessagesBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-03 历史分页边界
+# EC-03 history paging bounds
 # ---------------------------------------------------------------------------
 
 
@@ -76,7 +76,7 @@ class TestHistoryPagingBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-04 FTS5 查询边界（恶意/畸形输入有界返回）
+# EC-04 FTS5 query bounds (bounded returns for malicious/malformed input)
 # ---------------------------------------------------------------------------
 
 
@@ -106,7 +106,7 @@ class TestFtsQueryBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-05 状态注册表边界 + clear_all 联动
+# EC-05 state register bounds + clear_all interplay
 # ---------------------------------------------------------------------------
 
 
@@ -151,7 +151,7 @@ class TestStateRegisterBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-06 cron 调度边界
+# EC-06 cron schedule bounds
 # ---------------------------------------------------------------------------
 
 
@@ -176,7 +176,7 @@ class TestCronScheduleBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-08 预算边界
+# EC-08 budget bounds
 # ---------------------------------------------------------------------------
 
 
@@ -204,7 +204,7 @@ class TestBudgetBoundary:
 
 
 # ---------------------------------------------------------------------------
-# EC-09 总线边界
+# EC-09 bus bounds
 # ---------------------------------------------------------------------------
 
 
@@ -217,7 +217,7 @@ class TestBusBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-10 护栏各病理
+# EC-10 guardrail pathologies
 # ---------------------------------------------------------------------------
 
 
@@ -258,20 +258,20 @@ class TestGuardrailsPathologies:
         mw.wrap_tool_call(ra, lambda r: ok_a)
         mw.wrap_tool_call(rb, lambda r: ok_b)
         mw.wrap_tool_call(ra, lambda r: ok_a)
-        # 非幂等成功打断 ping-pong 累计
+        # Non-idempotent success breaks the ping-pong streak
         mw.wrap_tool_call(
             self._request("terminal", {"command": "mutate"}, tool=mutating),
             lambda r: ToolMessage(content="done", tool_call_id="c3", name="terminal"),
         )
         mw.wrap_tool_call(rb, lambda r: ok_b)
         mw.wrap_tool_call(ra, lambda r: ok_a)
-        # 若累计未重置，此处会触发 ping-pong 警告/升级——重置后应放行
+        # If the streak were not reset, this would trigger a ping-pong warn/escalation — after reset it should pass
         r = mw.wrap_tool_call(rb, lambda r: ok_b)
         assert "halt" not in r.content.lower()
 
 
 # ---------------------------------------------------------------------------
-# EC-11 时间戳边界
+# EC-11 timestamp bounds
 # ---------------------------------------------------------------------------
 
 
@@ -285,7 +285,7 @@ class TestTimestampBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-12 技能加载边界
+# EC-12 skill loader bounds
 # ---------------------------------------------------------------------------
 
 
@@ -316,7 +316,7 @@ class TestLoaderBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-13 .env 解析语义
+# EC-13 .env parsing semantics
 # ---------------------------------------------------------------------------
 
 
@@ -337,7 +337,7 @@ class TestEnvFileSemantics:
 
 
 # ---------------------------------------------------------------------------
-# EC-14 快照缺失/损坏
+# EC-14 snapshot missing/corrupt
 # ---------------------------------------------------------------------------
 
 
@@ -351,7 +351,7 @@ class TestSnapshotBounds:
 
 
 # ---------------------------------------------------------------------------
-# EC-15 HITL deny_rules 优先级
+# EC-15 HITL deny_rules priority
 # ---------------------------------------------------------------------------
 
 
@@ -376,7 +376,7 @@ class TestDenyRulesPriority:
 
 
 # ---------------------------------------------------------------------------
-# EC-16 多模态清理边界（在 user_flows UC-09 覆盖，此处引用以保持矩阵完整）
+# EC-16 multimodal cleanup bounds (covered in user_flows UC-09; referenced here to keep the matrix complete)
 # ---------------------------------------------------------------------------
 
 

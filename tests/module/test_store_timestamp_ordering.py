@@ -218,7 +218,7 @@ class TestStampTurnAtomicity:
         a_stamped = threading.Event()
         b_done = threading.Event()
         gated = {"done": False}
-        state = {"first_stamper": None}
+        state: dict[str, threading.Thread | None] = {"first_stamper": None}
 
         # Stamp 1 goes to whichever thread stamps first (A), stamp 2 to the
         # next one (B) — the earlier ts must pair with the EARLIER turn once

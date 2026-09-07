@@ -26,6 +26,22 @@ GROUP_PREFIXES: list[str] = [
 ]
 OTHER_GROUP = "other"
 
+# Keys split out of .env into the project-root sherry.jsonc (see
+# config/sherry_settings.py) — never surfaced or written here again.
+# TAVILY_API_KEY stays in .env on purpose: it is a secret-class value and .env
+# is gitignored, unlike the tracked sherry.jsonc.
+SPLIT_OUT_KEYS = frozenset(
+    {
+        "TOOL_CALL_TIMEOUT_MINUTES",
+        "LOG_LEVEL",
+        "SUBAGENT_TODO_DONE_FUNC",
+        "WORKSPACE_TEMPLATE_LANG",
+        "LANGSMITH_TRACING_V2",
+        "LANGSMITH_API_KEY",
+        "LANGSMITH_PROJECT",
+    }
+)
+
 # Simple env-line parser: KEY = VALUE  (allow surrounding whitespace, quoted values).
 _ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 _COMMENT_RE = re.compile(r"^\s*#")
@@ -92,6 +108,8 @@ def read_env_file() -> dict:
     # Preserve insertion order of groups while following the canonical ordering.
     groups: dict[str, list[EnvEntry]] = {}
     for entry in entries:
+        if entry.key in SPLIT_OUT_KEYS:
+            continue
         groups.setdefault(_group_of(entry.key), []).append(entry)
 
     ordered_groups: list[dict] = []
@@ -138,6 +156,11 @@ def write_env_file(changes: dict[str, str]) -> None:
     entries, lines = _parse_dotenv(text)
 
     known_keys = {e.key for e in entries}
+    moved = sorted(k for k in changes if k in SPLIT_OUT_KEYS)
+    if moved:
+        raise ValueError(
+            f"Keys moved to sherry.jsonc — edit them there (or via /sherry-config): {', '.join(moved)}"
+        )
     unknown = [k for k in changes if k not in known_keys]
     if unknown:
         raise ValueError(f"Unknown environment keys: {', '.join(sorted(unknown))}")

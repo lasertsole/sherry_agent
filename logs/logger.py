@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 from dotenv import load_dotenv
 from config import ROOT_DIR, ENV_PATH
+from config.sherry_settings import get_sherry_setting
 
 load_dotenv(ENV_PATH, override=True)
 
@@ -24,8 +25,8 @@ def _clean_expired_logs(log_dir: Path, timeout_days: int = 7):
 
 
 def _resolve_level() -> str:
-    """从 .env 读取 LOG_LEVEL，无效值回退 INFO。"""
-    raw = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    """Read LOG_LEVEL from sherry.jsonc, fall back to INFO on invalid values."""
+    raw = str(get_sherry_setting("LOG_LEVEL")).strip().upper()
     valid = {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"}
     return raw if raw in valid else "INFO"
 

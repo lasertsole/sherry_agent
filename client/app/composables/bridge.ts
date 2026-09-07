@@ -407,9 +407,9 @@ const KIND_DEFAULT_CONTENT_TYPE: Record<UploadMediaKind, string> = {
 
 /** Human-readable kind label used in error messages. */
 const KIND_LABEL: Record<UploadMediaKind, string> = {
-  image: '图片',
-  audio: '音频',
-  video: '视频'
+  image: 'Image',
+  audio: 'Audio',
+  video: 'Video'
 };
 
 /**
@@ -445,22 +445,22 @@ async function uploadBase64ToUrls(kind: UploadMediaKind, base64List: string[], b
         body: bytes
       });
     } catch (e) {
-      throw new Error(`${label}上传网络错误: ${e}`, { cause: e });
+      throw new Error(`${label} upload network error: ${e}`, { cause: e });
     }
 
     if (!resp.ok) {
-      throw new Error(`${label}上传失败: HTTP ${resp.status}`);
+      throw new Error(`${label} upload failed: HTTP ${resp.status}`);
     }
 
     let json: { success?: boolean; url?: string; filename?: string };
     try {
       json = await resp.json();
     } catch {
-      throw new Error(`${label}上传失败: 服务器返回非 JSON 响应`);
+      throw new Error(`${label} upload failed: server returned non-JSON response`);
     }
 
     if (!json.success || !json.url) {
-      throw new Error(`${label}上传失败: ${JSON.stringify(json)}`);
+      throw new Error(`${label} upload failed: ${JSON.stringify(json)}`);
     }
 
     urls.push(json.url);
@@ -579,7 +579,7 @@ function sendChatMessageWs(
       } catch (e) {
         if (!done) {
           done = true;
-          release(`图片上传失败: ${e}`);
+          release(`Image upload failed: ${e}`);
         }
         return;
       }
@@ -594,7 +594,7 @@ function sendChatMessageWs(
       } catch (e) {
         if (!done) {
           done = true;
-          release(`音频上传失败: ${e}`);
+          release(`Audio upload failed: ${e}`);
         }
         return;
       }
@@ -609,7 +609,7 @@ function sendChatMessageWs(
       } catch (e) {
         if (!done) {
           done = true;
-          release(`视频上传失败: ${e}`);
+          release(`Video upload failed: ${e}`);
         }
         return;
       }

@@ -15,7 +15,9 @@ from langchain_core.messages import BaseMessage, ToolMessage
 def _get_iteration_budget():
     from agent.middlewares import IterationBudget
 
-    return IterationBudget
+    # Mirrors the main agent's wiring (agent/core.py): middleware lists take
+    # instances, not classes.
+    return IterationBudget(90)
 
 
 _MEMORY_REVIEW_PROMPT = (

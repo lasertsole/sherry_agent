@@ -85,7 +85,7 @@ async function loadSubagentValidSessions(): Promise<void> {
     subagentSessionsLoaded = true;
   } catch (error) {
     // A fetch failure must not block the UI: it is equivalent to "unable to confirm the target session", so the button is simply hidden as if there were no valid target.
-    console.warn('[useSubagentTasks] 拉取会话列表失败，无法校验「返回会话」目标：', error);
+    console.warn('[useSubagentTasks] Failed to fetch session list, cannot validate "back to session" target:', error);
   }
 }
 
@@ -285,7 +285,7 @@ async function loadTaskRuns(sid?: string): Promise<void> {
     // Global view sync: regardless of whether there is a target, the global task list always comes from the full cache
     allTaskRuns.value = cached.map(toSubagentRun);
   } catch (e) {
-    console.warn('[useSubagentTasks] 读取本地子任务缓存失败，回退服务端：', e);
+    console.warn('[useSubagentTasks] Failed to read local subtask cache, falling back to server:', e);
   }
   // 2) Server-side gap filling: fetch the whole run tree and write it to Dexie, recovering events missed while the WS was disconnected
   if (target) {
@@ -299,7 +299,7 @@ async function loadTaskRuns(sid?: string): Promise<void> {
       lastTasksFetchedAt.value = Date.now();
     } catch (e) {
       // Network failure: keep the Dexie cache as fallback instead of clearing the list, avoiding first-paint flicker
-      console.error('[useSubagentTasks] 拉取子 Agent 运行记录失败（以本地缓存兜底）', e);
+      console.error('[useSubagentTasks] Failed to fetch subagent run records (falling back to local cache)', e);
     }
   }
   taskLoading.value = false;
@@ -597,7 +597,7 @@ export function useSubagentTasks() {
       await refreshFromCache();
       lastTasksFetchedAt.value = Date.now();
     } catch (e) {
-      console.error('[useSubagentTasks] 刷新聚焦 task box 子树失败：', e);
+      console.error('[useSubagentTasks] Failed to refresh focused task box subtree:', e);
       // Backend failure (including run-not-found / network-layer failures): likewise exit focus and fall back to the full view, avoiding the UI getting stuck on a dead run
       focusedRunId.value = undefined;
       selectedRunId.value = undefined;
@@ -712,7 +712,7 @@ export function useSubagentTasks() {
       try {
         await deleteCachedSubagentRuns(targetIds);
       } catch (e) {
-        console.warn('[useSubagentTasks] 清除本地子任务缓存失败：', e);
+        console.warn('[useSubagentTasks] Failed to clear local subtask cache:', e);
       }
       // If the focused / expanded / selected nodes were deleted, clean up the related state too
       if (focusedRunId.value && removed.has(focusedRunId.value)) focusedRunId.value = undefined;
@@ -722,7 +722,7 @@ export function useSubagentTasks() {
       }
       selectedRunIds.value = new Set([...selectedRunIds.value].filter(id => !removed.has(id)));
     } catch (e) {
-      console.error('[useSubagentTasks] 删除子 Agent 子树失败：', e);
+      console.error('[useSubagentTasks] Failed to delete subagent subtree:', e);
       throw e;
     } finally {
       deletingRunIds.value = new Set(deletingRunIds.value);

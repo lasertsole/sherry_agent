@@ -27,6 +27,9 @@ async def write_env_handler(request):
         return {"success": False, "message": "'changes' must be an object mapping key to value"}
 
     logger.info(f"Updating environment config: keys={list(changes.keys())}")
-    write_env_file(changes)
+    try:
+        write_env_file(changes)
+    except ValueError as e:
+        return {"success": False, "message": str(e)}
     logger.info(f"Environment config updated: keys={len(changes)}")
     return {"success": True, "message": "Environment config updated"}

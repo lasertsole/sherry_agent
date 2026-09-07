@@ -227,6 +227,43 @@
               </template>
             </div>
           </TabPanel>
+
+          <!-- Sherry config tab: reads/edits the project root sherry.jsonc (app-level settings
+               split out of .env). Same lazy-load + snapshot/diff save flow as the env tab. -->
+          <TabPanel
+            value="sherry"
+            :header="t('config.tabs.sherry')">
+            <div class="flex flex-col gap-4">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.sherry.restartHint') }}
+              </p>
+
+              <div
+                v-if="sherryLoadError"
+                class="flex">
+                <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ sherryLoadError }}</p>
+              </div>
+
+              <template v-else-if="sherryEntries.length === 0">
+                <p class="m-0 text-sm text-gray-400">{{ t('config.sherry.noConfigFile') }}</p>
+              </template>
+
+              <template v-else>
+                <div
+                  v-for="entry in sherryEntries"
+                  :key="entry.key"
+                  class="flex flex-col gap-1">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                  <InputText
+                    v-model="entry.value"
+                    :class="entry.value !== originalSherryValues[entry.key] ? 'border-amber-400' : ''"
+                    class="w-full font-mono text-xs"
+                    autocomplete="off"
+                    spellcheck="false" />
+                </div>
+              </template>
+            </div>
+          </TabPanel>
         </TabView>
       </template>
     </div>
@@ -270,6 +307,8 @@ import {
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { EnvGroup } from '@/composables/env';
 import { readEnvConfig, writeEnvConfig } from '@/composables/env';
+import type { SherryEntry } from '@/composables/sherryConfig';
+import { readSherryConfig, writeSherryConfig } from '@/composables/sherryConfig';
 
 /** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
 const { backgroundOpacity, setBackground } = useChatBackground();
@@ -349,6 +388,60 @@ const resetEnvState = () => {
   envLoaded.value = false;
 };
 
+// ── Sherry config state (sherry.jsonc) ───────────────────────
+// Mirrors the env tab: snapshot taken once on load; edits directly modify
+// entry.value inside sherryEntries; on save the changes are diffed against
+// the snapshot and PUT to /sherry-config (backend coerces types).
+const sherryEntries = ref<SherryEntry[]>([]);
+const originalSherryValues = ref<Record<string, string>>({});
+const sherryLoadError = ref('');
+const sherryLoaded = ref(false);
+
+const sherryHasChanges = computed(() =>
+  sherryEntries.value.some(entry => entry.value !== originalSherryValues.value[entry.key])
+);
+
+/** Lazily loads the sherry.jsonc config when the sherry tab is opened (backend GET /sherry-config) */
+const loadSherryConfig = async () => {
+  if (sherryLoaded.value) return;
+  sherryLoaded.value = true;
+  sherryLoadError.value = '';
+  try {
+    const payload = await readSherryConfig();
+    sherryEntries.value = payload.entries || [];
+    const snap: Record<string, string> = {};
+    for (const e of sherryEntries.value) snap[e.key] = e.value;
+    originalSherryValues.value = snap;
+  } catch (e) {
+    console.error('[ConfigDialog] Failed to load sherry config:', e);
+    sherryLoadError.value = t('config.sherry.loadError');
+    sherryLoaded.value = false;
+  }
+};
+
+/** Writes sherry changes back to the backend (sherry.jsonc PUT); returns true on success */
+const persistSherryChanges = async (): Promise<boolean> => {
+  const changes: Record<string, string> = {};
+  for (const e of sherryEntries.value) {
+    if (e.value !== originalSherryValues.value[e.key]) changes[e.key] = e.value;
+  }
+  if (Object.keys(changes).length === 0) return true;
+  const ok = await writeSherryConfig(changes);
+  if (ok) {
+    // Sync the snapshot to serve as the baseline for the next diff
+    for (const e of sherryEntries.value) originalSherryValues.value[e.key] = e.value;
+  }
+  return ok;
+};
+
+/** Resets the sherry tab every time the dialog hides (cancel or save): reloads on next open */
+const resetSherryState = () => {
+  sherryEntries.value = [];
+  originalSherryValues.value = {};
+  sherryLoadError.value = '';
+  sherryLoaded.value = false;
+};
+
 // ── Env config load trigger (setup scope) ──────────────
 // Previously loadEnvConfig was called from the PrimeVue TabPanel @show event: event callbacks run in a
 // non-setup context where getCurrentInstance() is null, so Nuxt useFetch(server:true) never sent a request
@@ -360,6 +453,7 @@ watch(
   [() => props.modelValue, activeTab],
   ([dialogVisible, tab]) => {
     if (dialogVisible && tab === 2) void loadEnvConfig();
+    if (dialogVisible && tab === 3) void loadSherryConfig();
   },
   // The dialog goes hidden→visible via v-model, so no immediate trigger is needed; resetEnvState already resets envLoaded on hide
   { flush: 'post' }
@@ -401,6 +495,8 @@ const canSave = computed(() => {
   if (loading.value || saving.value) return false;
   // Tab 2: env config; saveable only when there are changes
   if (activeTab.value === 2) return envHasChanges.value;
+  // Tab 3: sherry config; saveable only when there are changes
+  if (activeTab.value === 3) return sherryHasChanges.value;
   // Tab 0: character config — both character names must be non-empty
   if (activeTab.value === 0) {
     return charUser.value.name.trim().length > 0 && charAssistant.value.name.trim().length > 0;
@@ -629,6 +725,15 @@ const handleSave = async () => {
       }
     }
 
+    // Sherry config: same contract as the env tab — abort on save failure without closing the dialog.
+    if (activeTab.value === 3 && sherryHasChanges.value) {
+      const ok = await persistSherryChanges();
+      if (!ok) {
+        sherryLoadError.value = t('config.sherry.saveFailed');
+        return;
+      }
+    }
+
     // Discard the env edit state after the dialog closes (resetEnvState in onHide) so the .env is re-read on next open
     emits('saved');
     visible.value = false;
@@ -644,6 +749,7 @@ const onHide = () => {
   backgroundOpacityValue.value = backgroundOpacity.value;
   // Env config changes are kept only after a successful save; canceling / closing on a non-env tab always discards them → reloaded on next open
   resetEnvState();
+  resetSherryState();
 };
 </script>
 
@@ -677,6 +783,12 @@ const onHide = () => {
         "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
         "noEnvFile": "未找到 .env 文件。"
+      },
+      "sherry": {
+        "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
+        "saveFailed": "应用配置保存失败，请检查值是否合法。",
+        "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
+        "noConfigFile": "未找到 sherry.jsonc 文件。"
       }
     }
   },
@@ -708,6 +820,12 @@ const onHide = () => {
         "saveFailed": "Failed to save environment config.",
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
         "noEnvFile": "No .env file found."
+      },
+      "sherry": {
+        "loadError": "Failed to load app config. Please check the backend service.",
+        "saveFailed": "Failed to save app config.",
+        "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
+        "noConfigFile": "No sherry.jsonc file found."
       }
     }
   },
@@ -739,6 +857,12 @@ const onHide = () => {
         "saveFailed": "環境設定の保存に失敗しました。",
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
         "noEnvFile": ".env ファイルが見つかりません。"
+      },
+      "sherry": {
+        "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+        "saveFailed": "アプリ設定の保存に失敗しました。",
+        "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
+        "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
       }
     }
   },
@@ -770,6 +894,12 @@ const onHide = () => {
         "saveFailed": "환경 설정을 저장하지 못했습니다.",
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
         "noEnvFile": ".env 파일을 찾을 수 없습니다."
+      },
+      "sherry": {
+        "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+        "saveFailed": "앱 설정을 저장하지 못했습니다.",
+        "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
+        "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
       }
     }
   }

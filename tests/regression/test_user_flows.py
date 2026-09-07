@@ -9,10 +9,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 import time
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from PIL import Image
@@ -25,7 +23,7 @@ pytestmark = [pytest.mark.module, pytest.mark.timeout(120)]
 
 
 # ---------------------------------------------------------------------------
-# 共享夹具
+# Shared fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -69,7 +67,7 @@ def _run(coro):
 
 
 # ---------------------------------------------------------------------------
-# UC-01 对话持久化流
+# UC-01 chat persistence flow
 # ---------------------------------------------------------------------------
 
 
@@ -96,7 +94,7 @@ class TestUC01ChatPersistence:
 
 
 # ---------------------------------------------------------------------------
-# UC-02 会话列表
+# UC-02 session list
 # ---------------------------------------------------------------------------
 
 
@@ -118,7 +116,7 @@ class TestUC02SessionList:
 
 
 # ---------------------------------------------------------------------------
-# UC-03 清空会话
+# UC-03 clear session
 # ---------------------------------------------------------------------------
 
 
@@ -135,7 +133,7 @@ class TestUC03ClearSession:
 
 
 # ---------------------------------------------------------------------------
-# UC-04 历史分页
+# UC-04 history paging
 # ---------------------------------------------------------------------------
 
 
@@ -151,7 +149,7 @@ class TestUC04HistoryPaging:
         assert [r["turn_num"] for r in p1] == [5, 4]
         assert [r["turn_num"] for r in p2] == [3, 2]
         assert [r["turn_num"] for r in p3] == [1]
-        # 页序 newest-first 且无重叠
+        # Page order newest-first with no overlap
         all_turns = [r["turn_num"] for r in (*p1, *p2, *p3)]
         assert all_turns == [5, 4, 3, 2, 1]
 
@@ -165,7 +163,7 @@ class TestUC04HistoryPaging:
 
 
 # ---------------------------------------------------------------------------
-# UC-05 全文搜索流
+# UC-05 full-text search flow
 # ---------------------------------------------------------------------------
 
 
@@ -175,7 +173,11 @@ class TestUC05SearchFlow:
 
         monkeypatch.setattr(ce, "_db", store_db)
         monkeypatch.setattr(ce, "_lock", __import__("threading").Lock())
-        _run(store_core.add_messages("uc05", [HumanMessage(content="我们讨论了 docker compose 部署")]))
+        _run(
+            store_core.add_messages(
+                "uc05", [HumanMessage(content="我们讨论了 docker compose 部署")]
+            )
+        )
         _run(store_core.add_messages("uc05", [AIMessage(content="kubernetes 是另一回事")]))
 
         from context_engine import search_messages
@@ -209,7 +211,7 @@ class TestUC05SearchFlow:
 
 
 # ---------------------------------------------------------------------------
-# UC-06 HITL 命令审批
+# UC-06 HITL command approval
 # ---------------------------------------------------------------------------
 
 
@@ -231,7 +233,7 @@ class TestUC06HitlApproval:
 
     def test_dangerous_command_escalates(self, pipeline):
         res = pipeline.check_command("DROP TABLE users", "uc06")
-        assert res.approved is False  # 升级人工审批（decision None）
+        assert res.approved is False  # escalated to human approval (decision None)
 
     def test_yolo_bypasses_dangerous_but_not_hardline(self):
         from agent.middlewares.humanInTheLoop.approval import ApprovalPipeline
@@ -251,7 +253,7 @@ class TestUC06HitlApproval:
 
 
 # ---------------------------------------------------------------------------
-# UC-07 / UC-08 cron 用户操作
+# UC-07 / UC-08 cron user operations
 # ---------------------------------------------------------------------------
 
 
@@ -290,7 +292,9 @@ def cron_svc(tmp_path, monkeypatch):
             schedule=schedule,
             payload=CronPayload(message="tick"),
             state=CronJobState(
-                next_run_at_ms=cron_base._compute_next_run(schedule, cron_base._now_ms(), anchor_ms=cron_base._now_ms())
+                next_run_at_ms=cron_base._compute_next_run(
+                    schedule, cron_base._now_ms(), anchor_ms=cron_base._now_ms()
+                )
                 if kind == "every"
                 else at_ms
             ),
@@ -356,8 +360,8 @@ class TestUC08CronDueBatch:
         asyncio.run(cron_svc.svc._on_timer())
 
         assert sorted(cron_svc.ran) == ["due1", "due2"]
-        # 固定相位网格：触发后槽位必须回到 now 之后（漂移修复回归 #22）
-        # 注意 _on_timer 会 reload store —— 从重载后的对象断言
+        # Fixed-phase grid: after firing, the slot must land after now (drift-fix regression #22)
+        # Note: _on_timer reloads the store — assert against the reloaded objects
         j1_after = cron_svc.svc.get_job("due1")
         j2_after = cron_svc.svc.get_job("due2")
         assert j1_after.state.next_run_at_ms > now
@@ -365,7 +369,7 @@ class TestUC08CronDueBatch:
 
 
 # ---------------------------------------------------------------------------
-# UC-09 多模态消息流
+# UC-09 multimodal message flow
 # ---------------------------------------------------------------------------
 
 
@@ -390,13 +394,13 @@ class TestUC09MultimodalFlow:
 
         mw._before_agent_impl(state)
 
-        # 落盘（temp + media 双份）
+        # Persisted to disk (both temp + media copies)
         saved = list((src / "uc09" / "media").glob("*.png"))
         assert len(saved) == 1
-        # 提示词注入
+        # Prompt injection
         text_block = msg.content[0]["text"]
         assert "image_to_text" in text_block and "1 image(s)" in text_block
-        # kwargs 持久化路径
+        # Persisted path in kwargs
         assert msg.additional_kwargs["images"] == [saved[0].as_posix()]
 
     def test_old_image_blocks_stripped_from_history(self, mm):
@@ -433,7 +437,7 @@ class TestUC09MultimodalFlow:
 
 
 # ---------------------------------------------------------------------------
-# UC-10 消息总线
+# UC-10 message bus
 # ---------------------------------------------------------------------------
 
 
@@ -472,7 +476,7 @@ class TestUC10MessageBus:
 
 
 # ---------------------------------------------------------------------------
-# UC-11 预算耗尽
+# UC-11 budget exhaustion
 # ---------------------------------------------------------------------------
 
 
@@ -482,7 +486,7 @@ class TestUC11BudgetExhaustion:
 
         mw = IterationBudget(2)
         state = {"session_id": "uc11", "messages": [HumanMessage(content="x")]}
-        mw.before_agent(state, None)  # mixin：重置预算
+        mw.before_agent(state, None)  # mixin: reset budget
 
         req = SimpleNamespace(state=state)
         calls = []
@@ -509,12 +513,12 @@ class TestUC11BudgetExhaustion:
 
         assert isinstance(mw.wrap_model_call(req, lambda r: "R1"), AIMessage) is False
 
-        mw.before_agent(state, None)  # 新回合重置
+        mw.before_agent(state, None)  # new turn resets the budget
         assert mw.wrap_model_call(req, lambda r: "R2") == "R2"
 
 
 # ---------------------------------------------------------------------------
-# UC-12 守护升级流
+# UC-12 guardrail escalation flow
 # ---------------------------------------------------------------------------
 
 
@@ -536,13 +540,13 @@ class TestUC12GuardrailsEscalation:
         def failing_handler(r):
             return ToolMessage(content="boom", status="error", tool_call_id="c1", name="terminal")
 
-        # 失败 ×1：放行
+        # Failure x1: pass through
         r1 = mw.wrap_tool_call(request, failing_handler)
         assert r1.content == "boom"
-        # 失败 ×2：WARN（警告追加）
+        # Failure x2: WARN (warning appended)
         r2 = mw.wrap_tool_call(request, failing_handler)
         assert "boom" in r2.content and len(r2.content) > len("boom")
-        # 失败累积到 block 阈值：预检拦截，handler 不再调用
+        # Failures reach the block threshold: pre-check intercepts, handler no longer called
         for _ in range(3):
             mw.wrap_tool_call(request, failing_handler)
         called = []
@@ -552,7 +556,7 @@ class TestUC12GuardrailsEscalation:
 
 
 # ---------------------------------------------------------------------------
-# UC-13 重复输出守卫
+# UC-13 output repetition guard
 # ---------------------------------------------------------------------------
 
 
@@ -576,7 +580,7 @@ class TestUC13RepetitionGuard:
 
 
 # ---------------------------------------------------------------------------
-# UC-14 心跳看门狗
+# UC-14 heartbeat watchdog
 # ---------------------------------------------------------------------------
 
 
@@ -592,13 +596,12 @@ class TestUC14HeartbeatKill:
         session = "uc14"
 
         for _ in range(8):
-            hw._check_progress(session)  # 无进展 → 停滞累计
+            hw._check_progress(session)  # no progress → stale count accumulates
 
         assert state_register_mem.get_state(session, "heartbeat_killed", False) is True
 
         req = SimpleNamespace(state={"session_id": session})
         with pytest.raises(HeartbeatTimeoutError):
-            mw_state = req
             hw.wrap_model_call(req, lambda r: "SHOULD_NOT_RUN")
 
     def test_progress_resets_stale_counter(self, monkeypatch):
@@ -608,20 +611,20 @@ class TestUC14HeartbeatKill:
         hw = HeartbeatStaleness()
         session = "uc14b"
 
-        hw._check_progress(session)  # 基线
+        hw._check_progress(session)  # baseline
         state_register_mem.set_state(session, "heartbeat_iter", 5)
-        hw._check_progress(session)  # 有进展
+        hw._check_progress(session)  # progress made
         assert state_register_mem.get_state(session, "heartbeat_stale", 0) == 0
 
 
 # ---------------------------------------------------------------------------
-# UC-15 同秒会话排序（#21 回归）
+# UC-15 same-second session ordering (#21 regression)
 # ---------------------------------------------------------------------------
 
 
 class TestUC15SameSecondOrdering:
     def test_rapid_sessions_stable_order(self, store_db):
-        # 连续快速写入（大概率同一秒）——ts_ms 单调保证顺序确定
+        # Rapid consecutive writes (likely the same second) — ts_ms monotonicity guarantees deterministic order
         _run(store_core.add_messages("uc15_first", [HumanMessage(content="first")]))
         _run(store_core.add_messages("uc15_second", [HumanMessage(content="second")]))
 
@@ -631,7 +634,7 @@ class TestUC15SameSecondOrdering:
 
 
 # ---------------------------------------------------------------------------
-# UC-16 总线背压
+# UC-16 bus backpressure
 # ---------------------------------------------------------------------------
 
 
@@ -652,7 +655,7 @@ class TestUC16BusBackpressure:
             assert bus.inbound.qsize() == 1, "队列满时发布挂起"
 
             got0 = await bus.consume_inbound()
-            await task  # 挂起的发布恢复
+            await task  # the pending publish resumes
             got1 = await bus.consume_inbound()
             return got0, got1
 

@@ -22,7 +22,8 @@ type StreamImpl = (
   request: bridge.ChatRequest,
   onChunk: bridge.OnChunkCallback,
   onHitl?: bridge.OnHitlCallback,
-  onDone?: bridge.OnDoneCallback
+  onDone?: bridge.OnDoneCallback,
+  onQueued?: bridge.OnQueuedCallback
 ) => { controller: bridge.StreamController; promise: Promise<void> };
 
 const mutable = vi.hoisted(() => ({

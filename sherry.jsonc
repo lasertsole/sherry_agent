@@ -1,0 +1,23 @@
+// 应用级运行配置（从 .env 环境配置拆分而来），JSON5 格式：支持注释与尾逗号。
+// 修改后重启后端生效（可通过前端「系统配置 → 应用配置」编辑）。
+{
+  // Timeout for a single tool call, in minutes. Prevents deadlock.
+  // 单次工具调用超时（分钟），防止死锁。
+  "TOOL_CALL_TIMEOUT_MINUTES": 5,
+
+  // Log level for console output and info log files: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL
+  // 控制台与 info 日志文件的日志级别
+  "LOG_LEVEL": "INFO",
+
+  // subagent
+  "SUBAGENT_TODO_DONE_FUNC": "archive",
+
+  // Default workspace template language (lazy-copied persona files from workspace/template/{lang}/): en / zh / ja / ko
+  // 人设模板语言（首次使用时从 workspace/template/{lang}/ 懒拷贝）
+  "WORKSPACE_TEMPLATE_LANG": "en",
+
+  // LangSmith tracing
+  "LANGSMITH_TRACING_V2": false,
+  "LANGSMITH_API_KEY": "",
+  "LANGSMITH_PROJECT": "EMA_AI_agent"
+}

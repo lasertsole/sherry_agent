@@ -27,7 +27,7 @@ export class SimpleLogger {
   /** Error log: downgraded to warn in dev; otherwise outputs console.error (goes into the clientLog error bucket). */
   e(...args: unknown[]): void {
     if (import.meta.dev) {
-      console.warn('dev环境报错', ...args);
+      console.warn('[dev error]', ...args);
     } else {
       console.error(...args);
     }

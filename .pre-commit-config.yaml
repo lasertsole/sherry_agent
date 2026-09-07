@@ -22,7 +22,22 @@ repos:
         # hand-formatted (client eslint config also disables prettier on md).
         types_or: [python, pyi, jupyter]
 
-  # ---- frontend: prettier + eslint (client/ pnpm toolchain) ---------------
+  # ---- backend: basedpyright type gate (config in pyproject) --------------
+  # Per-file semantics: a commit only has to keep the files it TOUCHES
+  # type-clean. The exclude mirrors the type-debt registry in pyproject
+  # ([tool.basedpyright] ignore) — keep the two lists in sync; shrink both as
+  # the debt subtrees get typed.
+  - repo: local
+    hooks:
+      - id: basedpyright
+        name: basedpyright (types)
+        entry: uv run --no-sync basedpyright
+        language: system
+        types: [python]
+        exclude: ^(tests|agent|models|skills|plugins|channels|runtime|docs)/
+        require_serial: true
+
+  # ---- frontend: prettier + eslint + vue-tsc (client/ pnpm toolchain) -----
   - repo: local
     hooks:
       - id: prettier
@@ -39,3 +54,10 @@ repos:
         require_serial: true
         files: ^client/
         types_or: [ts, tsx, vue, javascript, jsx]
+      - id: vue-tsc
+        name: vue-tsc (client types, whole project)
+        entry: bash scripts/hooks/frontend-style.sh vue-tsc --noEmit -p .nuxt/tsconfig.app.json
+        language: system
+        pass_filenames: false
+        require_serial: true
+        files: ^client/.*\.(ts|tsx|vue|js|mjs|json)$

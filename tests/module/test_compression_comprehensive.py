@@ -96,9 +96,7 @@ def make_middleware(**overrides):
         model=overrides.pop("model", StubModel()),
         trigger=overrides.pop("trigger", [("tokens", 80000)]),
         keep=overrides.pop("keep", ("messages", 10)),
-        main_llm_context_window=overrides.pop(
-            "main_llm_context_window", CTX_WINDOW
-        ),
+        main_llm_context_window=overrides.pop("main_llm_context_window", CTX_WINDOW),
         need_update_system_prompt=overrides.pop("need_update_system_prompt", False),
     )
     kwargs.update(overrides)
@@ -281,9 +279,7 @@ class TestT2Cooldown:
             return AIMessage(content="ok")
 
         with capture_logs() as lines:
-            mw.wrap_model_call(
-                make_request(hard_overflow_messages(), sid, stub), handler
-            )
+            mw.wrap_model_call(make_request(hard_overflow_messages(), sid, stub), handler)
         # cap reached → proactive compression stopped for the rest of the turn
         assert state_register_mem.get_state(sid, count_key) == 3
         assert state_register_mem.get_state(sid, attempts_key) == 3
@@ -353,17 +349,11 @@ class TestSyncAsyncParity:
         with capture_logs():
             mw1.wrap_model_call(make_request(sync_messages, sid, stub1), handler)
         with capture_logs():
-            asyncio.run(
-                mw2.awrap_model_call(
-                    make_request(async_messages, sid2, stub2), ahandler
-                )
-            )
+            asyncio.run(mw2.awrap_model_call(make_request(async_messages, sid2, stub2), ahandler))
 
         try:
             assert len(captured_sync) == len(captured_async) == 9
-            assert [m.content for m in captured_sync] == [
-                m.content for m in captured_async
-            ]
+            assert [m.content for m in captured_sync] == [m.content for m in captured_async]
             assert TTL_MARKER in captured_sync[2].content
             assert TTL_MARKER in captured_async[2].content
             assert stub1.calls == [] and stub2.calls == []
@@ -406,9 +396,7 @@ class TestT1Preflight:
 
     def test_t1_fits_returns_none(self, sid):
         mw = make_middleware()
-        result = mw.before_agent(
-            {"session_id": sid, "messages": low_pressure_messages()}, None
-        )
+        result = mw.before_agent({"session_id": sid, "messages": low_pressure_messages()}, None)
         assert result is None
 
     def test_t1_resets_turn_attempts_per_turn(self, sid):
@@ -426,9 +414,7 @@ class TestT1Preflight:
         count_key = mget("_COMPRESSION_COUNT_KEY")
         state_register_mem.set_state(sid, cooldown_key, 2)
 
-        result = mw.before_agent(
-            {"session_id": sid, "messages": hard_overflow_messages()}, None
-        )
+        result = mw.before_agent({"session_id": sid, "messages": hard_overflow_messages()}, None)
         assert result is None
         assert stub.calls == []
         assert state_register_mem.get_state(sid, count_key) in (None, 0)
@@ -523,14 +509,8 @@ class TestT3Trigger:
         # T2 must NOT have fired (estimate low)
         assert not any("trigger=T2" in line for line in lines)
         # T3 fired: detailed log + route log, both labelled trigger=T3
-        assert any(
-            "trigger=T3" in line and "reported_input_tokens=30000" in line
-            for line in lines
-        )
-        assert any(
-            "trigger=T3" in line and "route=compact_only" in line
-            for line in lines
-        )
+        assert any("trigger=T3" in line and "reported_input_tokens=30000" in line for line in lines)
+        assert any("trigger=T3" in line and "route=compact_only" in line for line in lines)
         # actual compact execution bookkeeping
         attempts_key = mget("_TURN_ATTEMPTS_KEY")
         assert state_register_mem.get_state(sid, attempts_key) == 1
@@ -554,8 +534,7 @@ class TestT3Trigger:
         assert resp is mr
         assert not any("trigger=T2" in line for line in lines)
         assert any(
-            "trigger=T3" in line and "route=truncate_tool_results_only" in line
-            for line in lines
+            "trigger=T3" in line and "route=truncate_tool_results_only" in line for line in lines
         )
         # truncate route ran in place: marker + shrink, NO aux-LLM call
         tool = captured["messages"][2]
@@ -578,16 +557,11 @@ class TestT3Trigger:
         try:
             with capture_logs() as lines:
                 resp = asyncio.run(
-                    mw.awrap_model_call(
-                        make_request(t3_low_est_messages(), sid2, stub), ahandler
-                    )
+                    mw.awrap_model_call(make_request(t3_low_est_messages(), sid2, stub), ahandler)
                 )
             assert resp is mr
             assert not any("trigger=T2" in line for line in lines)
-            assert any(
-                "trigger=T3" in line and "route=compact_only" in line
-                for line in lines
-            )
+            assert any("trigger=T3" in line and "route=compact_only" in line for line in lines)
             attempts_key = mget("_TURN_ATTEMPTS_KEY")
             assert state_register_mem.get_state(sid2, attempts_key) == 1
         finally:
@@ -599,9 +573,7 @@ class TestT3Trigger:
     def test_apost_response_check_is_real_coroutine(self):
         import inspect
 
-        assert inspect.iscoroutinefunction(
-            getattr(make_middleware(), "_apost_response_check")
-        )
+        assert inspect.iscoroutinefunction(getattr(make_middleware(), "_apost_response_check"))
 
 
 class TestT3ThreeForms:
@@ -706,9 +678,7 @@ class TestT3NegativeDouble:
         mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
 
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), lambda r: mr)
 
         assert resp is mr
         assert not any("trigger=" in line for line in lines)
@@ -725,9 +695,7 @@ class TestT3NegativeDouble:
         mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
 
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), lambda r: mr)
 
         assert resp is mr
         assert not any("trigger=" in line for line in lines)
@@ -739,9 +707,7 @@ class TestT3NegativeDouble:
         mr = ModelResponse(result=[_ai_with_usage("ok", T3_BELOW_REPORTED)])
 
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), lambda r: mr)
 
         assert resp is mr
         assert not any("trigger=" in line for line in lines)
@@ -759,9 +725,7 @@ class TestT3NegativeDouble:
         mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
 
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), lambda r: mr)
 
         assert resp is mr  # original response intact despite dispatch failure
         assert not any("route=" in line for line in lines)
@@ -819,9 +783,7 @@ class TestT4T5Recovery:
 
         monitor = self._recording_monitor(mw)
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), handler
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler)
 
         assert len(calls) == 2
         assert resp.content == "ok"
@@ -862,9 +824,7 @@ class TestT4T5Recovery:
             return AIMessage(content="ok")
 
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), handler
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler)
 
         assert len(calls) == 2
         assert resp.content == "ok"
@@ -892,9 +852,7 @@ class TestT4T5Recovery:
         monitor = self._recording_monitor(mw)
         with capture_logs() as lines:
             with pytest.raises(Provider413Error) as ei:
-                mw.wrap_model_call(
-                    make_request(t3_low_est_messages(), sid, stub), handler
-                )
+                mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler)
 
         assert ei.value is err  # same object: never wrapped, never replaced
         assert len(calls) == 4
@@ -921,9 +879,7 @@ class TestT4T5Recovery:
         monitor = self._recording_monitor(mw)
         with capture_logs() as lines:
             with pytest.raises(TimeoutError) as ei:
-                mw.wrap_model_call(
-                    make_request(t3_low_est_messages(), sid, stub), handler
-                )
+                mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler)
 
         assert ei.value is err
         assert len(calls) == 1
@@ -933,9 +889,7 @@ class TestT4T5Recovery:
             mget("_OVERFLOW_RETRIES_T5_KEY"),
         ):
             assert state_register_mem.get_state(sid, key) in (None, 0)
-        assert state_register_mem.get_state(
-            sid, mget("_COMPRESSION_COUNT_KEY")
-        ) in (None, 0)
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) in (None, 0)
         assert not any("trigger=T4" in line or "trigger=T5" in line for line in lines)
 
     def test_sync_async_recovery_parity(self, sid):
@@ -959,13 +913,9 @@ class TestT4T5Recovery:
                 raise Provider413Error("413 payload too large")
             return AIMessage(content="ok")
 
-        resp_s = mw1.wrap_model_call(
-            make_request(t3_low_est_messages(), sid, stub1), handler
-        )
+        resp_s = mw1.wrap_model_call(make_request(t3_low_est_messages(), sid, stub1), handler)
         resp_a = asyncio.run(
-            mw2.awrap_model_call(
-                make_request(t3_low_est_messages(), sid2, stub2), ahandler
-            )
+            mw2.awrap_model_call(make_request(t3_low_est_messages(), sid2, stub2), ahandler)
         )
 
         try:
@@ -996,9 +946,7 @@ class TestT4T5Recovery:
             return AIMessage(content="ok")
 
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), handler
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler)
 
         assert len(calls) == 3
         assert resp.content == "ok"
@@ -1024,9 +972,7 @@ class TestT4T5Recovery:
             return AIMessage(content="ok")
 
         with capture_logs():
-            resp_a = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), handler_a
-            )
+            resp_a = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler_a)
 
         t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")
         assert resp_a.content == "ok"
@@ -1142,9 +1088,7 @@ class TestAntiThrashMatrix:
 
         # compression #1: 0% reduction -> counted ineffective
         with capture_logs() as lines1:
-            mw.wrap_model_call(
-                make_request(ineffective_noop_messages(), sid, stub), handler
-            )
+            mw.wrap_model_call(make_request(ineffective_noop_messages(), sid, stub), handler)
         assert state_register_mem.get_state(sid, count_key) == 1
         assert state_register_mem.get_state(sid, ineff_key) == 1
         assert state_register_mem.get_state(sid, strategy_key) == "noop"
@@ -1158,9 +1102,7 @@ class TestAntiThrashMatrix:
         # ineffective attempt can be driven)
         state_register_mem.set_state(sid, cooldown_key, 0)
         with capture_logs():
-            mw.wrap_model_call(
-                make_request(ineffective_noop_messages(), sid, stub), handler
-            )
+            mw.wrap_model_call(make_request(ineffective_noop_messages(), sid, stub), handler)
         assert state_register_mem.get_state(sid, count_key) == 2
         assert state_register_mem.get_state(sid, ineff_key) == 2
         assert state_register_mem.get_state(sid, attempts_key) == 2
@@ -1170,9 +1112,7 @@ class TestAntiThrashMatrix:
         # summary source inside _apply_compression)
         state_register_mem.set_state(sid, cooldown_key, 0)
         with capture_logs() as lines3:
-            mw.wrap_model_call(
-                make_request(ineffective_noop_messages(), sid, stub), handler
-            )
+            mw.wrap_model_call(make_request(ineffective_noop_messages(), sid, stub), handler)
         assert state_register_mem.get_state(sid, skip_key) is True
         assert state_register_mem.get_state(sid, count_key) == 3
         assert state_register_mem.get_state(sid, ineff_key) == 3
@@ -1198,15 +1138,11 @@ class TestAntiThrashMatrix:
             return AIMessage(content="ok")
 
         with capture_logs() as lines:
-            mw.wrap_model_call(
-                make_request(compact_then_truncate_messages(), sid, stub), handler
-            )
+            mw.wrap_model_call(make_request(compact_then_truncate_messages(), sid, stub), handler)
 
         assert any("route=compact_then_truncate" in line for line in lines)
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
-        assert state_register_mem.get_state(
-            sid, mget("_COMPRESSION_INEFFECTIVE_KEY")
-        ) == 0
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
         assert state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY")) is False
         assert state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY")) == "fallback"
         assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) == 3
@@ -1240,12 +1176,8 @@ class TestAntiThrashMatrix:
             assert not any("trigger=" in line for line in lines)
             assert not any("route=" in line for line in lines)
             assert state_register_mem.get_state(sid, count_key) == 5
-            assert state_register_mem.get_state(
-                sid, mget("_TURN_ATTEMPTS_KEY")
-            ) in (None, 0)
-            assert state_register_mem.get_state(
-                sid, mget("_COOLDOWN_ROUNDS_KEY")
-            ) in (None, 0)
+            assert state_register_mem.get_state(sid, mget("_TURN_ATTEMPTS_KEY")) in (None, 0)
+            assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) in (None, 0)
         assert stub.calls == []
 
     def test_session_cap_short_circuits_t3_post_check(self, sid):
@@ -1258,9 +1190,7 @@ class TestAntiThrashMatrix:
         mr = ModelResponse(result=[_ai_with_usage("ok", T3_TRIGGER_REPORTED)])
 
         with capture_logs() as lines:
-            resp = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), lambda r: mr
-            )
+            resp = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), lambda r: mr)
 
         assert resp is mr
         assert not any("trigger=" in line for line in lines)
@@ -1316,9 +1246,7 @@ class TestAntiThrashMatrix:
             return AIMessage(content="ok")
 
         with capture_logs() as lines_b:
-            resp_b = mw.wrap_model_call(
-                make_request(t3_low_est_messages(), sid, stub), handler_b
-            )
+            resp_b = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler_b)
 
         assert len(calls_b) == 2
         assert resp_b.content == "ok"
@@ -1328,9 +1256,7 @@ class TestAntiThrashMatrix:
         # cooldown ticked again (1 -> 0), never re-armed by the forced path
         assert state_register_mem.get_state(sid, cooldown_key) == 0
         assert state_register_mem.get_state(sid, attempts_key) == 3
-        assert state_register_mem.get_state(
-            sid, mget("_FORCE_RECOVERY_KEY")
-        ) in (None, False)
+        assert state_register_mem.get_state(sid, mget("_FORCE_RECOVERY_KEY")) in (None, False)
         assert len(monitor) == 1 and monitor[0] is resp_b
         assert any("trigger=T4" in line and "attempt=1/3" in line for line in lines_b)
         assert any("error_class=payload_too_large" in line for line in lines_b)
@@ -1361,9 +1287,9 @@ class TestAntiThrashMatrix:
 
     def test_middleware_truncation_pairing_at_513_pair_scale(self):
         """_run_budget_truncation at 513 tool pairs: budget respected
-        (freed >= usable * TRUNCATE_BUDGET_RATIO), in place (length
-        unchanged), AI-tool-call/tool-result pairing intact, and no
-        ToolMessage ever emptied (non-empty placeholder guarantee)."""
+        (freed >= usable * TRUNCATE_BUDGET_RATIO), no message dropped,
+        AI-tool-call/tool-result pairing intact, and no ToolMessage ever
+        emptied (non-empty placeholder guarantee)."""
         stub = StubModel()
         mw = make_middleware(model=stub)
         msgs = []
@@ -1373,18 +1299,16 @@ class TestAntiThrashMatrix:
             msgs.append(_ai_with_call(tc))
             msgs.append(ToolMessage(content="x" * 8000, tool_call_id=tc))
         usable = 25600  # ctx 41600 - reserve 16000 (make_middleware defaults)
-        freed = mw._run_budget_truncation(msgs, usable)
+        final_msgs, freed = mw._run_budget_truncation(msgs, usable)
         assert freed >= int(usable * TRUNCATE_BUDGET_RATIO)  # >= 15360 (probe: 15620)
-        assert len(msgs) == (TTL_REGISTRY_MAX_ENTRIES + 1) * 3  # none dropped
+        assert len(final_msgs) == (TTL_REGISTRY_MAX_ENTRIES + 1) * 3  # none dropped
         ai_ids = []
-        for msg in msgs:
+        for msg in final_msgs:
             for tc in getattr(msg, "tool_calls", None) or []:
-                ai_ids.append(
-                    tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                )
-        tool_ids = [m.tool_call_id for m in msgs if isinstance(m, ToolMessage)]
+                ai_ids.append(tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None))
+        tool_ids = [m.tool_call_id for m in final_msgs if isinstance(m, ToolMessage)]
         assert ai_ids == tool_ids
-        assert all(str(m.content).strip() for m in msgs if isinstance(m, ToolMessage))
+        assert all(str(m.content).strip() for m in final_msgs if isinstance(m, ToolMessage))
 
 
 # ======================================================================
@@ -1410,16 +1334,27 @@ _PARITY_T5 = Exception(T5_OVERFLOW_TEXT)
 # parity only).
 _PARITY_SCENARIOS = {
     "s1_fits": dict(
-        msgs=low_pressure_messages, reported=None, errors=None,
-        calls=1, aux=0, state={},
+        msgs=low_pressure_messages,
+        reported=None,
+        errors=None,
+        calls=1,
+        aux=0,
+        state={},
     ),
     "s2_truncate_only": dict(
-        msgs=soft_overflow_messages, reported=None, errors=None,
-        calls=1, aux=0, state={},
+        msgs=soft_overflow_messages,
+        reported=None,
+        errors=None,
+        calls=1,
+        aux=0,
+        state={},
     ),
     "s3_compact_only": dict(
-        msgs=hard_overflow_messages, reported=None, errors=None,
-        calls=1, aux=0,
+        msgs=hard_overflow_messages,
+        reported=None,
+        errors=None,
+        calls=1,
+        aux=0,
         state={
             "_COMPRESSION_COUNT_KEY": 1,
             "_TURN_ATTEMPTS_KEY": 1,
@@ -1427,8 +1362,11 @@ _PARITY_SCENARIOS = {
         },
     ),
     "s4_compact_then_truncate": dict(
-        msgs=compact_then_truncate_messages, reported=None, errors=None,
-        calls=1, aux=1,
+        msgs=compact_then_truncate_messages,
+        reported=None,
+        errors=None,
+        calls=1,
+        aux=1,
         state={
             "_COMPRESSION_COUNT_KEY": 1,
             "_TURN_ATTEMPTS_KEY": 1,
@@ -1436,8 +1374,11 @@ _PARITY_SCENARIOS = {
         },
     ),
     "s5_t3_compact": dict(
-        msgs=t3_low_est_messages, reported=T3_TRIGGER_REPORTED, errors=None,
-        calls=1, aux=0,
+        msgs=t3_low_est_messages,
+        reported=T3_TRIGGER_REPORTED,
+        errors=None,
+        calls=1,
+        aux=0,
         state={
             "_COMPRESSION_COUNT_KEY": 1,
             "_TURN_ATTEMPTS_KEY": 1,
@@ -1445,22 +1386,35 @@ _PARITY_SCENARIOS = {
         },
     ),
     "s6_t3_truncate": dict(
-        msgs=t3_truncate_messages, reported=T3_TRUNCATE_REPORTED, errors=None,
-        calls=1, aux=0, state={},
+        msgs=t3_truncate_messages,
+        reported=T3_TRUNCATE_REPORTED,
+        errors=None,
+        calls=1,
+        aux=0,
+        state={},
     ),
     "s7_t4_recover": dict(
-        msgs=t3_low_est_messages, reported=None, errors=[_PARITY_413, None],
-        calls=2, aux=0,
+        msgs=t3_low_est_messages,
+        reported=None,
+        errors=[_PARITY_413, None],
+        calls=2,
+        aux=0,
         state={"_OVERFLOW_RETRIES_T4_KEY": 1, "_COMPRESSION_COUNT_KEY": 1},
     ),
     "s8_t5_recover": dict(
-        msgs=t3_low_est_messages, reported=None, errors=[_PARITY_T5, None],
-        calls=2, aux=0,
+        msgs=t3_low_est_messages,
+        reported=None,
+        errors=[_PARITY_T5, None],
+        calls=2,
+        aux=0,
         state={"_OVERFLOW_RETRIES_T5_KEY": 1, "_COMPRESSION_COUNT_KEY": 1},
     ),
     "s9_t4_exhaust": dict(
-        msgs=t3_low_est_messages, reported=None, errors=[_PARITY_413],
-        calls=4, aux=0,
+        msgs=t3_low_est_messages,
+        reported=None,
+        errors=[_PARITY_413],
+        calls=4,
+        aux=0,
         state={"_OVERFLOW_RETRIES_T4_KEY": 3, "_COMPRESSION_COUNT_KEY": 3},
     ),
 }
@@ -1483,13 +1437,7 @@ def _trigger_facts(lines):
         if "trigger=" not in line:
             continue
         facts.append(
-            tuple(
-                sorted(
-                    p
-                    for p in line.split()
-                    if "=" in p and not p.startswith("session=")
-                )
-            )
+            tuple(sorted(p for p in line.split() if "=" in p and not p.startswith("session=")))
         )
     return facts
 
@@ -1522,14 +1470,10 @@ def _run_parity_twin(mw, stub, sid, spec):
     try:
         with capture_logs() as lines:
             if spec["mode"] == "sync":
-                resp = mw.wrap_model_call(
-                    make_request(spec["msgs"](), sid, stub), handler
-                )
+                resp = mw.wrap_model_call(make_request(spec["msgs"](), sid, stub), handler)
             else:
                 resp = asyncio.run(
-                    mw.awrap_model_call(
-                        make_request(spec["msgs"](), sid, stub), ahandler
-                    )
+                    mw.awrap_model_call(make_request(spec["msgs"](), sid, stub), ahandler)
                 )
         return ("ok", _resp_text(resp)), seen, len(stub.calls), _trigger_facts(lines)
     except Exception as exc:  # noqa: BLE001 - parity probe records raise kind

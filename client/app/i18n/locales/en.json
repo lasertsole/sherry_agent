@@ -179,6 +179,7 @@
       "user": "User Profile",
       "character": "Character Setup",
       "env": "Environment",
+      "sherry": "App Config",
       "memoryAgent": "Memory · Agent",
       "memoryUser": "Memory · User"
     },

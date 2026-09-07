@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 load_dotenv(ENV_PATH, override=True)
 
+# Secret-class value: TAVILY_API_KEY deliberately stays in the gitignored .env
+# (NOT in the tracked sherry.jsonc).
 tavily_api_key = os.getenv("TAVILY_API_KEY")
 
 WEB_SEARCH_TIMEOUT = 15  # seconds

@@ -19,4 +19,8 @@ from .messages import (
     resume_agent as resume_agent,
 )
 from .env import read_env_file as read_env_file, write_env_file as write_env_file
+from .sherry_config import (
+    read_sherry_config as read_sherry_config,
+    write_sherry_config as write_sherry_config,
+)
 from .memory import read_memory_files as read_memory_files, write_memory_files as write_memory_files
