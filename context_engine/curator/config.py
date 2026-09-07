@@ -83,7 +83,7 @@ def get_consolidate() -> bool:
 
 
 def _clamp_interval_days(days: Any) -> int | None:
-    """Clamp a raw override value to the allowed 1..7 day range.
+    """Clamp a raw override value to the allowed 1..5 day range.
 
     Returns ``None`` for ``None``/empty/out-of-range inputs so the caller can
     treat it as "no override -> use curator.yaml interval_hours".
@@ -100,10 +100,10 @@ def _clamp_interval_days(days: Any) -> int | None:
 
 
 def get_interval_override_days() -> int | None:
-    """Return the UI-configured maintenance interval (days, 1..7) or None.
+    """Return the UI-configured maintenance interval (days, 1..5) or None.
 
     Reads the override persisted in ``.curator_state`` under
-    ``auto_interval_days``. Only values within the allowed 1..7 range are
+    ``auto_interval_days``.     Only values within the allowed 1..5 range are
     considered a valid override.
     """
     try:
@@ -134,7 +134,7 @@ def get_effective_interval_hours() -> int:
     """Effective interval between curator runs, in hours.
 
     A UI-configured ``auto_interval_days`` override (1..5) takes precedence over
-    the ``interval_hours`` from curator.yaml (default 7 days = 168h).
+    the ``interval_hours`` from curator.yaml (default 5 days = 120h).
     """
     override = get_interval_override_days()
     if override is not None:

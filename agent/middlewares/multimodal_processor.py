@@ -401,7 +401,7 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
             logger.debug(f"Cleaned up {deleted_count} expired cached images")
 
     # ------------------------------------------------------------------
-    # Sync before_agent
+    # before_agent / abefore_agent
     # ------------------------------------------------------------------
     @override
     def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
@@ -416,7 +416,7 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         return None
 
     # ------------------------------------------------------------------
-    # Sync after_agent
+    # after_agent / aafter_agent
     # ------------------------------------------------------------------
     @override
     def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:

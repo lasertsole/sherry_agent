@@ -111,7 +111,7 @@ class ChannelManager:
             self._event_loop = asyncio.new_event_loop()
 
     def _init_channels(self) -> None:
-        """Initialize channels discovered via pkgutil scan + entry_points plugins."""
+        """Initialize channels discovered via plugins directory scan + entry_points plugins."""
         from channels.registry import discover_all
 
         for name, cls in discover_all().items():

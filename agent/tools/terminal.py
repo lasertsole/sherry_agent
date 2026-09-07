@@ -6,10 +6,10 @@ lines 554-568):
 - ``SafeShellInput`` subclass: the ``sandbox`` flag is exposed to the LLM via
   an explicit ``args_schema`` override (ShellTool declares args_schema
   explicitly, so signature-only changes never propagate — the schema must be
-  subclassed). The ClassVar ``_ClassOrInstanceSchema`` descriptor lets
-  ``tool_call_schema`` be read from the class too (langchain_core 1.4.7
-  defines it as a bare instance ``@property``; pattern mirrored from
-  python_repl.py Task 7).
+  subclassed). The ClassVar ``tool_call_schema`` is assigned through the
+  shared factory ``class_or_instance_schema(ShellTool)`` (pub_base/
+  schema_utils.py), so it can be read from the class too (langchain_core
+  1.4.7 defines it as a bare instance ``@property``).
 - ``sandbox`` parameter on ``_run``/``_arun`` (langchain injects schema fields
   by name), with scope/policy guards: ``caller_scope != "main"`` +
   ``sandbox=False`` is denied outright; ``SANDBOX_POLICY=required`` +

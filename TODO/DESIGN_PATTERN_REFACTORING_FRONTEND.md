@@ -230,19 +230,17 @@ interface ChatController extends AbortController {
 
 | Pattern                     | 适用发现                          | 核心收益                         |
 | --------------------------- | --------------------------------- | -------------------------------- |
-| **Template Method**         | #1, #17, #19, 2.1.1, 2.1.3, 3.1.1 | 消除跨函数/跨模块重复，统一骨架  |
-| **Strategy + Registry**     | #3, #10, #11, #12, 1.4.1, 4.3.4   | 消除 if-elif 链，开闭原则        |
-| **State Pattern**           | #2, #21, 2.3.2                    | 封装隐式状态机为显式状态类       |
-| **Chain of Responsibility** | #2, 1.4.4                         | 拆解嵌套分发为独立 handler 链    |
-| **Builder**                 | 1.5.3 (built_agent)               | 逐步组装复杂对象                 |
-| **Facade + Service Layer**  | 1.5.1, 1.5.2, 3.3.1               | 中间件委托给服务，只协调         |
-| **Repository**              | #14, #41, 2.2.3, 3.3.2            | 封装 SQL，分离数据访问与业务逻辑 |
-| **Mixin / 工具函数**        | #7, 1.1.6, 1.1.9, 1.1.10          | 消除跨中间件/工具重复            |
-| **Dependency Injection**    | 2.3.3, 1.7.3, 1.7.4, 3.3.5        | 消除 lazy import 缝隙和跨层依赖  |
-| **Observer / Event Bus**    | 2.1.4, 4.1.4                      | 被动观察者不侵入核心流           |
-| **Adapter / Mapper**        | 3.3.4, 4.5.3                      | 隔离框架类型与持久化/展示层      |
+| **Strategy + Registry**     | #2, #7, #8, #9, 1.3.1, 4.3.4     | 消除 if-elif 链，开闭原则        |
+| **State Pattern**           | #1, #15, 2.2.2                    | 封装隐式状态机为显式状态类       |
+| **Chain of Responsibility** | #1, 1.3.4                         | 拆解嵌套分发为独立 handler 链    |
+| **Builder**                 | 1.4.3 (built_agent)               | 逐步组装复杂对象                 |
+| **Facade + Service Layer**  | 1.4.1, 1.4.2, 3.2.1               | 中间件委托给服务，只协调         |
+| **Repository**              | #11, #25, 2.1.3, 3.2.2            | 封装 SQL，分离数据访问与业务逻辑 |
+| **Dependency Injection**    | 2.2.3, 1.6.3, 1.6.4, 3.2.5        | 消除 lazy import 缝隙和跨层依赖  |
+| **Observer / Event Bus**    | 4.1.4                             | 被动观察者不侵入核心流           |
+| **Adapter / Mapper**        | 3.2.4, 4.5.3                      | 隔离框架类型与持久化/展示层      |
 | **Command Registry**        | 4.4.1, 4.4.2                      | 消除 switch/case，开闭原则       |
-| **Parameterized Factory**   | 1.1.1, 4.1.3                      | 泛化同构函数族                   |
+| **Parameterized Factory**   | 4.1.3                             | 泛化同构函数族                   |
 
 ---
 

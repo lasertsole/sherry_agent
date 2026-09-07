@@ -1,6 +1,6 @@
 """Heartbeat staleness detection middleware.
 
-Monitors subagent progress via periodic heartbeat checks. If an agent
+Monitors agent progress via periodic heartbeat checks. If an agent
 shows no progress (iteration count or current tool unchanged) for a
 configurable number of heartbeat cycles, it is considered stale and
 will be terminated.
@@ -15,7 +15,7 @@ Two thresholds control when a stale agent is killed:
 
 Progress detection
 ------------------
-Every ``heartbeat_interval_seconds`` a background timer fires and
+Every ``heartbeat_interval_minutes`` a background timer fires and
 compares the agent's current ``(iteration_count, current_tool)`` pair
 against the previously observed values.  If **either** has advanced the
 stale counter is reset to zero; otherwise it increments by one.
