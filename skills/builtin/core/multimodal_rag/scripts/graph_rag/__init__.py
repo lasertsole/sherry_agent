@@ -142,21 +142,24 @@ _alias_vendored_raganything()
 
 from .ensure_mineru_models import ensure_mineru_models
 
+_LAZY_EXPORTS = {
+    "get_lightrag": ".base",
+    "get_rag_anything": ".core",
+}
+
 __all__ = ["get_lightrag", "get_rag_anything", "ensure_mineru_models"]
 
 
 def __getattr__(name: str):
     # Lazy on purpose: .base/.core import the model stack (llama_cpp); eager
     # exports broke hermetic CI and loaded GGUF weights at import time.
-    # Runtime API unchanged — attribute access triggers the import.
-    if name == "get_lightrag":
-        from .base import get_lightrag
-
-        return get_lightrag
-    if name == "get_rag_anything":
-        from .core import get_rag_anything
-
-        return get_rag_anything
+    # Same recipe as models/__init__.py: resolve on first attribute access,
+    # then cache into globals() so repeat lookups take the fast path.
+    if name in _LAZY_EXPORTS:
+        module = importlib.import_module(_LAZY_EXPORTS[name], __package__)
+        attr = getattr(module, name)
+        globals()[name] = attr
+        return attr
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
