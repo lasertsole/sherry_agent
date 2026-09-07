@@ -87,7 +87,9 @@ class TestFtsQueryBounds:
 
         monkeypatch.setattr(ce, "_db", store_db)
         monkeypatch.setattr(ce, "_lock", __import__("threading").Lock())
-        asyncio.run(store_core.add_messages("s1", [HumanMessage(content="部署 docker compose 服务")]))
+        asyncio.run(
+            store_core.add_messages("s1", [HumanMessage(content="部署 docker compose 服务")])
+        )
         return ce.search_messages
 
     @pytest.mark.parametrize(
@@ -140,7 +142,7 @@ class TestStateRegisterBounds:
         assert db.delete_state("s", "k") is False
 
     def test_clear_all_register_sessions_wipes_mem(self):
-        from runtime import state_register_mem, relation_register
+        from runtime import state_register_mem
         from runtime.core import clear_all_register_sessions
 
         state_register_mem.set_state("ec05c", "k", "v")
@@ -227,9 +229,7 @@ class TestGuardrailsPathologies:
             ToolGuardrails,
         )
 
-        return ToolGuardrails(
-            config=ToolCallGuardrailConfig(recovery_mode_enabled=False)
-        )
+        return ToolGuardrails(config=ToolCallGuardrailConfig(recovery_mode_enabled=False))
 
     def _request(self, tool_name, args, tool=None):
         return SimpleNamespace(
@@ -282,17 +282,6 @@ class TestTimestampBounds:
             ms, stamp = store_core._next_turn_stamp()
             stamps.append((ms, stamp))
         assert stamps[1][0] > stamps[0][0], "同毫秒必须 +1ms 错开"
-
-    def test_legacy_garbage_backfills_zero(self):
-        import sqlite3
-        from context_engine.store.db import _legacy_ts_to_ms, add_turn_ts_ms_column
-
-        assert _legacy_ts_to_ms("20231114231320") == 1699974800000 or _legacy_ts_to_ms(
-            "20231114231320"
-        ) > 0
-        assert _legacy_ts_to_ms("garbage") == 0
-        assert _legacy_ts_to_ms("") == 0
-        assert _legacy_ts_to_ms(None) == 0
 
 
 # ---------------------------------------------------------------------------

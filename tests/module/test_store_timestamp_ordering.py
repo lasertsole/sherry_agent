@@ -9,11 +9,12 @@ Frontend impact analysis (pinned the design): the client parses ``createTime``
 with a STRICT 14-digit format (``sessionFilter.parseSessionCreateTime``) and
 ``formatCompactTimeString`` rejects anything with ``length !== 14`` — so the
 API surface (``last_time``, history row ``timestamp``) must stay 14 chars.
-The fix therefore ADDS a ``ts_ms`` INTEGER column (epoch ms, strictly
-increasing per process) via the store's versioned migration and orders
+The fix therefore carries a ``ts_ms`` INTEGER NOT NULL column (epoch ms,
+strictly increasing per process) in the base schema and orders
 ``get_session_ids`` by ``MAX(ts_ms)``; the visible formats never change.
-
-Migration steps list is in ``context_engine/store/db.py``.
+The migration/backfill steps that once added the column to pre-existing
+databases were removed once every tracked database had them applied —
+fresh databases get ``ts_ms`` straight from ``build_messages_tb``.
 """
 
 import asyncio
@@ -33,7 +34,7 @@ pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 
 T0_S = 1_700_000_000  # fixed epoch seconds
 # Local-timezone stamp of T0_S — strptime().timestamp() round-trips in the
-# same tz, so backfill expectations stay self-consistent.
+# same tz, so stamp expectations stay self-consistent.
 T0_STAMP = datetime.fromtimestamp(T0_S).strftime("%Y%m%d%H%M%S")
 
 
@@ -50,8 +51,8 @@ def migrated_db():
         db.close()
 
 
-def _insert_legacy_row(db: sqlite3.Connection, *, session_id: str, stamp: str, ts_ms: int | None = None):
-    """Insert one row the legacy way (timestamp only; ts_ms optional)."""
+def _insert_raw_row(db: sqlite3.Connection, *, session_id: str, stamp: str, ts_ms: int):
+    """Insert one row directly via SQL (bypassing add_messages)."""
     cur = db.execute(
         "INSERT INTO messages (session_id, turn_num, role, content, timestamp, ts_ms)"
         " VALUES (?, 1, 'human', ?, ?, ?)",
@@ -59,47 +60,6 @@ def _insert_legacy_row(db: sqlite3.Connection, *, session_id: str, stamp: str, t
     )
     db.commit()
     return cur.lastrowid
-
-
-# ---------------------------------------------------------------------------
-# Migration: ts_ms column + backfill
-# ---------------------------------------------------------------------------
-
-
-class TestTsMsMigration:
-    def test_migration_adds_column_and_backfills(self, migrated_db):
-        """The new migration step backfills epoch-ms from legacy 14-char stamps."""
-        _insert_legacy_row(migrated_db, session_id="s1", stamp=T0_STAMP)
-
-        from context_engine.store.db import add_turn_ts_ms_column
-
-        add_turn_ts_ms_column(migrated_db)
-
-        row = migrated_db.execute(
-            "SELECT ts_ms FROM messages WHERE session_id = 's1'"
-        ).fetchone()
-        assert row["ts_ms"] == T0_S * 1000
-
-    def test_backfill_handles_empty_and_garbage(self, migrated_db):
-        from context_engine.store.db import add_turn_ts_ms_column
-
-        migrated_db.execute(
-            "INSERT INTO messages (session_id, turn_num, role, content, timestamp)"
-            " VALUES ('s1', 1, 'ai', '\"x\"', '')"
-        )
-        migrated_db.execute(
-            "INSERT INTO messages (session_id, turn_num, role, content, timestamp)"
-            " VALUES ('s2', 1, 'ai', '\"x\"', 'not-a-date')"
-        )
-        migrated_db.commit()
-
-        add_turn_ts_ms_column(migrated_db)
-
-        ms_vals = [
-            r["ts_ms"]
-            for r in migrated_db.execute("SELECT ts_ms FROM messages ORDER BY id")
-        ]
-        assert ms_vals == [0, 0], "unparseable/empty stamps must backfill to 0, not crash"
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +153,8 @@ class TestSessionOrdering:
         """
         monkeypatch.setattr(store_core, "_db", migrated_db)
 
-        _insert_legacy_row(migrated_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
-        _insert_legacy_row(migrated_db, session_id="second", stamp=T0_STAMP, ts_ms=T0_S * 1000 + 5)
+        _insert_raw_row(migrated_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
+        _insert_raw_row(migrated_db, session_id="second", stamp=T0_STAMP, ts_ms=T0_S * 1000 + 5)
 
         sessions = store_core.get_session_ids()
 
@@ -204,7 +164,7 @@ class TestSessionOrdering:
         """``last_time`` is client-facing — must keep the legacy 14-char format."""
         monkeypatch.setattr(store_core, "_db", migrated_db)
 
-        _insert_legacy_row(migrated_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
+        _insert_raw_row(migrated_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
 
         sessions = store_core.get_session_ids()
 
@@ -263,10 +223,12 @@ class TestStampTurnAtomicity:
         # Stamp 1 goes to whichever thread stamps first (A), stamp 2 to the
         # next one (B) — the earlier ts must pair with the EARLIER turn once
         # the fix lands.
-        stamps = iter([
-            (T0_S * 1000, T0_STAMP),
-            (T0_S * 1000 + 1, T0_STAMP),
-        ])
+        stamps = iter(
+            [
+                (T0_S * 1000, T0_STAMP),
+                (T0_S * 1000 + 1, T0_STAMP),
+            ]
+        )
 
         def fake_stamp():
             if state["first_stamper"] is None:
@@ -283,10 +245,7 @@ class TestStampTurnAtomicity:
             assign lock until the other writer has fully committed."""
 
             def __enter__(self):
-                if (
-                    state["first_stamper"] is threading.current_thread()
-                    and not gated["done"]
-                ):
+                if state["first_stamper"] is threading.current_thread() and not gated["done"]:
                     gated["done"] = True
                     assert b_done.wait(timeout=10), "interleaving gate timed out"
                 real_lock.acquire()
@@ -321,58 +280,3 @@ class TestStampTurnAtomicity:
             "timestamp order must follow turn order even when the first "
             "stamper is descheduled before turn assignment"
         )
-
-
-# ---------------------------------------------------------------------------
-# Migration step: re-backfill ts_ms rows left NULL by older writers
-# ---------------------------------------------------------------------------
-
-
-class TestBackfillMissingTsMs:
-    def test_backfills_null_and_preserves_non_null(self, migrated_db):
-        """NULL ts_ms rows get backfilled from the 14-char stamp; non-NULL
-        values and unparseable stamps keep the legacy step-8 semantics."""
-        from context_engine.store.db import backfill_missing_ts_ms
-
-        _insert_legacy_row(migrated_db, session_id="null_row", stamp=T0_STAMP)  # ts_ms NULL
-        _insert_legacy_row(migrated_db, session_id="kept_row", stamp=T0_STAMP, ts_ms=123456)
-        migrated_db.execute(
-            "INSERT INTO messages (session_id, turn_num, role, content, timestamp, ts_ms)"
-            " VALUES ('garbage_row', 1, 'ai', '\"x\"', 'not-a-date', NULL)"
-        )
-        migrated_db.commit()
-
-        backfill_missing_ts_ms(migrated_db)
-
-        null_row = migrated_db.execute(
-            "SELECT ts_ms FROM messages WHERE session_id='null_row'"
-        ).fetchone()
-        kept_row = migrated_db.execute(
-            "SELECT ts_ms FROM messages WHERE session_id='kept_row'"
-        ).fetchone()
-        garbage_row = migrated_db.execute(
-            "SELECT ts_ms FROM messages WHERE session_id='garbage_row'"
-        ).fetchone()
-        assert null_row["ts_ms"] == T0_S * 1000
-        assert kept_row["ts_ms"] == 123456, "non-NULL ts_ms must not be touched"
-        assert garbage_row["ts_ms"] == 0, "unparseable stamps backfill to 0"
-
-    def test_migrate_reruns_backfill_for_databases_past_step_8(self, migrated_db):
-        """The live-repair path: a DB that already recorded every step-8-era
-        migration but carries NULL ts_ms rows (written by an older in-memory
-        build) gets them backfilled by the new versioned step on next start."""
-        from context_engine.store.db import _migrate
-
-        # Simulate the production DB: migrated through step 8, then rows
-        # written NULL by the stale build. Drop the v>=9 records so the next
-        # _migrate runs exactly the new step.
-        _insert_legacy_row(migrated_db, session_id="late_null", stamp=T0_STAMP)
-        migrated_db.execute("DELETE FROM _migrations WHERE v >= 9")
-        migrated_db.commit()
-
-        _migrate(migrated_db)
-
-        row = migrated_db.execute(
-            "SELECT ts_ms FROM messages WHERE session_id='late_null'"
-        ).fetchone()
-        assert row["ts_ms"] == T0_S * 1000

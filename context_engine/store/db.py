@@ -31,8 +31,6 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_audio_video_columns,
         add_model_token_columns,
         add_origin_column,
-        add_turn_ts_ms_column,
-        backfill_missing_ts_ms,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -102,6 +100,7 @@ def build_messages_tb(db: sqlite3.Connection) -> None:
         tool_status TEXT,
         tool_name TEXT,
         timestamp TEXT NOT NULL,
+        ts_ms INTEGER NOT NULL,
         finish_reason TEXT,
         reasoning TEXT,
         reasoning_content TEXT,
@@ -189,60 +188,6 @@ def add_origin_column(db: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass
-
-
-def _legacy_ts_to_ms(ts: str | None) -> int:
-    """Convert a stored timestamp string to epoch milliseconds (0 on failure)."""
-    if not ts:
-        return 0
-    try:
-        from datetime import datetime
-
-        if len(ts) > 14:
-            dt = datetime.strptime(ts[:14], "%Y%m%d%H%M%S").replace(
-                microsecond=int(ts[14:17].ljust(3, "0")) * 1000
-            )
-        else:
-            dt = datetime.strptime(ts, "%Y%m%d%H%M%S")
-        return int(dt.timestamp() * 1000)
-    except (ValueError, TypeError):
-        return 0
-
-
-def backfill_missing_ts_ms(db: sqlite3.Connection) -> None:
-    """Backfill ``ts_ms`` for every row that still carries NULL.
-
-    Idempotent by construction (targets ``ts_ms IS NULL`` rows only) and
-    shared by two callers: ``add_turn_ts_ms_column`` (fresh column) and the
-    versioned migration step of the same name — rows persisted NULL by an
-    in-memory build predating the ts_ms write (``add_messages`` runs from the
-    code loaded at process start, so a backend restarted before the audit-#21
-    change kept writing NULL until its next restart).
-    """
-    rows = db.execute("SELECT id, timestamp FROM messages WHERE ts_ms IS NULL").fetchall()
-    for row_id, ts in rows:
-        db.execute(
-            "UPDATE messages SET ts_ms = ? WHERE id = ?",
-            (_legacy_ts_to_ms(ts), row_id),
-        )
-
-
-def add_turn_ts_ms_column(db: sqlite3.Connection) -> None:
-    """Add a `ts_ms` INTEGER column (epoch ms) and backfill it (audit #21).
-
-    The 14-char `timestamp` column has 1-second resolution, so turns written
-    in the same second tie and `MAX(timestamp)` cannot order sessions. `ts_ms`
-    is strictly increasing per writer process and gives `get_session_ids` a
-    total order. The visible `timestamp` column keeps its legacy 14-char
-    format — the client parses it strictly.
-    """
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN ts_ms INTEGER")
-    except sqlite3.OperationalError:
-        # Column already exists — fall through: the backfill below is
-        # idempotent (targets ts_ms IS NULL rows only) and still needs to run.
-        pass
-    backfill_missing_ts_ms(db)
 
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:

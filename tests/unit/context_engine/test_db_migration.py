@@ -45,9 +45,7 @@ def _connect() -> sqlite3.Connection:
 def _origin_columns(db: sqlite3.Connection) -> list[tuple[int, str, str, int, Any, int]]:
     """PRAGMA table_info rows for the ``origin`` column of ``messages``."""
     return [
-        row
-        for row in db.execute("PRAGMA table_info(messages)").fetchall()
-        if row[1] == "origin"
+        row for row in db.execute("PRAGMA table_info(messages)").fetchall() if row[1] == "origin"
     ]
 
 
@@ -63,8 +61,7 @@ def _build_pre_origin_schema(db: sqlite3.Connection) -> None:
     add_audio_video_columns(db)
     add_model_token_columns(db)
     db.execute(
-        "CREATE TABLE IF NOT EXISTS _migrations "
-        "(v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
     )
     db.execute("INSERT INTO _migrations (v, at) VALUES (?, ?)", (6, 0))
     db.commit()
@@ -80,9 +77,10 @@ class TestOriginMigration:
         assert _origin_columns(db) == []
 
         # A legacy row written before the migration must survive it.
+        # ts_ms is part of the base schema (NOT NULL) — provide it explicitly.
         db.execute(
-            "INSERT INTO messages (turn_num, session_id, role, content, timestamp) "
-            "VALUES (1, 's_old', 'human', 'legacy message', '20260101000000')"
+            "INSERT INTO messages (turn_num, session_id, role, content, timestamp, ts_ms) "
+            "VALUES (1, 's_old', 'human', 'legacy message', '20260101000000', 1767225600000)"
         )
 
         _migrate(db)
@@ -99,9 +97,7 @@ class TestOriginMigration:
         assert db.execute("SELECT MAX(v) FROM _migrations").fetchone()[0] > 6
 
         # Backward compatible: pre-existing rows stay NULL (= real user msg).
-        row = db.execute(
-            "SELECT origin FROM messages WHERE session_id = 's_old'"
-        ).fetchone()
+        row = db.execute("SELECT origin FROM messages WHERE session_id = 's_old'").fetchone()
         assert row is not None
         assert row[0] is None
 
