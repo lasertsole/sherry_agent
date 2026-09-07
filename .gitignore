@@ -1,5 +1,7 @@
 # Tools
 .playwright-mcp
+# OpenCode AI tool config — local dev-tool, kept out of the repo
+opencode.json
 
 # Env / deps
 .venv
