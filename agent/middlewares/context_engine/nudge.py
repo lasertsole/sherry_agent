@@ -10,10 +10,13 @@ from langchain.agents.middleware import AgentMiddleware
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages import BaseMessage, ToolMessage
 
+
 # Lazy import to avoid circular dependency with IterationBudget
 def _get_iteration_budget():
     from agent.middlewares import IterationBudget
+
     return IterationBudget
+
 
 _MEMORY_REVIEW_PROMPT = (
     "Review the conversation above and consider saving to memory if appropriate.\n\n"
@@ -237,6 +240,7 @@ class StateSchema(AgentState):
 
 async def _create_nudge_agent(system_prompt: str):
     from agent import get_agent_tools
+    from agent.middlewares import ToolCallNormalize, ToolGuardrails
     from models import build_main_llm
 
     main_llm = build_main_llm()
