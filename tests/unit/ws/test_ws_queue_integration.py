@@ -231,8 +231,7 @@ def _hermetic_state():
 
 @pytest.mark.asyncio
 async def test_idle_message_starts_turn_and_completes_without_queued_frame(ws_env):
-    store, wsm, drain_calls, inline_calls = (
-        ws_env.store,
+    wsm, drain_calls, inline_calls = (
         ws_env.wsm,
         ws_env.drain_calls,
         ws_env.inline_calls,
@@ -379,9 +378,7 @@ async def test_stop_cancels_current_turn_and_drain_continues_fifo(ws_env):
     assert "echo:second" in [f.get("content") for f in socket.frames if f.get("event") == "chunk"]
     assert events[-1] == "done", "the drained turn finishes with a done frame"
     assert wsm._active_tasks == {}
-    await _wait_until(
-        lambda: turn_runner._DRAIN_TASKS == {}, what="drain task self-cleanup"
-    )
+    await _wait_until(lambda: turn_runner._DRAIN_TASKS == {}, what="drain task self-cleanup")
 
 
 @pytest.mark.asyncio

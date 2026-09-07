@@ -1,0 +1,41 @@
+# Style gates for every commit: backend = ruff, frontend = prettier + eslint.
+#
+# One-time setup per clone:
+#   uv sync                      # provides pre-commit in the project venv
+#   uv run pre-commit install    # writes .git/hooks/pre-commit
+#
+# All hooks are check-only (no mutation): a failing hook lists the offending
+# files; run `ruff format` / `ruff check --fix` / `prettier --write` /
+# `eslint --fix` manually to clean up. Frontend hooks delegate to the client/
+# pnpm toolchain via scripts/hooks/frontend-style.sh so tool versions and the
+# flat-config live in client/package.json instead of being duplicated here.
+
+repos:
+  # ---- backend: ruff (rule set pinned in pyproject [tool.ruff.lint]) ------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff
+      - id: ruff-format
+        args: [--check]
+        # v0.16.6 adds markdown to the hook's types; this repo keeps docs
+        # hand-formatted (client eslint config also disables prettier on md).
+        types_or: [python, pyi, jupyter]
+
+  # ---- frontend: prettier + eslint (client/ pnpm toolchain) ---------------
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (client/)
+        entry: bash scripts/hooks/frontend-style.sh prettier --check
+        language: system
+        require_serial: true
+        files: ^client/
+        types_or: [ts, tsx, vue, javascript, jsx, css, scss, json]
+      - id: eslint
+        name: eslint (client/)
+        entry: bash scripts/hooks/frontend-style.sh eslint
+        language: system
+        require_serial: true
+        files: ^client/
+        types_or: [ts, tsx, vue, javascript, jsx]

@@ -38,6 +38,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.2",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "pytest-timeout>=2.4.0",
@@ -63,7 +64,9 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# Keep default rule set (E4/E7/E9 + F: pyflakes)
+# Pin the rule set explicitly: ruff's built-in defaults expand across versions
+# (0.16 pulled in I/B/C4/RUF/FURB/PLC/PYI), which made the gate unrunnable.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
 # Vendored LightRAG / RAG-Anything code - keep close to upstream, don't chase style
