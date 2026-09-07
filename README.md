@@ -211,7 +211,6 @@ EMA_AI_agent/
 │   ├── AGENTS.md           # Tool usage priorities, safety boundaries
 │   ├── USER.md             # User-specific interaction preferences
 │   ├── HEARTBEAT.md        # Pending tasks for heartbeat service
-│   ├── character.json      # Character configuration
 │   ├── prompt_builder.py   # Profile-to-prompt builder
 │   ├── file_sync.py        # Lazy workspace template sync (per language)
 │   ├── template/           # Persona templates (en / zh / ja / ko)
@@ -360,7 +359,6 @@ The Agent's behavior is driven by the files under `workspace/`:
 - **AGENTS.md**: Defines tool usage priorities, safety boundaries, and ethical guidelines.
 - **USER.md**: Stores user-specific interaction preferences and known facts.
 - **HEARTBEAT.md**: Lists pending tasks for the heartbeat scheduled service.
-- **character.json**: Structured character configuration (JSON).
 - **prompt_builder.py**: Builds the system prompt from the profile files.
 - **file_sync.py**: Lazily copies any missing persona files from `workspace/template/<lang>/` (selected via `WORKSPACE_TEMPLATE_LANG`) without ever overwriting user edits.
 

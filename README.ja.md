@@ -211,7 +211,6 @@ EMA_AI_agent/
 │   ├── AGENTS.md           # ツール使用の優先順位、安全境界
 │   ├── USER.md             # ユーザー固有の対話設定
 │   ├── HEARTBEAT.md        # Heartbeat サービスの未完了タスク
-│   ├── character.json      # キャラクター設定（JSON）
 │   ├── prompt_builder.py   # プロファイルからプロンプトを構築
 │   ├── file_sync.py        # ワークスペーステンプレートの遅延同期（言語別）
 │   ├── template/           # ペルソナテンプレート（en / zh / ja / ko）
@@ -321,7 +320,6 @@ pnpm tauri dev    # ネイティブデスクトップモード
 - **AGENTS.md**：ツール使用の優先順位、安全境界、倫理ガイドラインを定義。
 - **USER.md**：ユーザー固有の対話設定や既知情報を保存。
 - **HEARTBEAT.md**：Heartbeat 定時サービスの未完了タスクを列挙。
-- **character.json**：構造化されたキャラクター設定（JSON）。
 - **prompt_builder.py**：プロファイルファイルからシステムプロンプトを構築。
 - **file_sync.py**：不足しているペルソナファイルを `workspace/template/<lang>/`（`WORKSPACE_TEMPLATE_LANG` で選択）から遅延コピー。ユーザーの編集を上書きすることはありません。
 

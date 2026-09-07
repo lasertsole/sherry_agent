@@ -211,7 +211,6 @@ EMA_AI_agent/
 │   ├── AGENTS.md           # 工具使用优先级、安全边界
 │   ├── USER.md             # 用户偏好与已知信息
 │   ├── HEARTBEAT.md        # Heartbeat 服务的待办任务
-│   ├── character.json      # 角色配置（JSON）
 │   ├── prompt_builder.py   # 档案到系统提示词的构建器
 │   ├── file_sync.py        # 工作区模板懒同步（按语言）
 │   ├── template/           # 人设模板（en / zh / ja / ko）
@@ -321,7 +320,6 @@ Agent 的行为由 `workspace/` 下的文件驱动：
 - **AGENTS.md**：定义工具使用优先级、安全边界与伦理准则。
 - **USER.md**：存储用户相关的交互偏好与已知信息。
 - **HEARTBEAT.md**：列出 Heartbeat 定时服务的待办任务。
-- **character.json**：结构化角色配置（JSON）。
 - **prompt_builder.py**：将档案文件构建为系统提示词。
 - **file_sync.py**：按需从 `workspace/template/<lang>/`（由 `WORKSPACE_TEMPLATE_LANG` 选择）懒拷贝缺失的人设文件，且绝不覆盖用户修改。
 

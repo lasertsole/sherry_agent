@@ -211,7 +211,6 @@ EMA_AI_agent/
 │   ├── AGENTS.md           # 도구 사용 우선순위, 안전 경계
 │   ├── USER.md             # 사용자별 상호작용 선호
 │   ├── HEARTBEAT.md        # heartbeat 서비스의 미완료 작업
-│   ├── character.json      # 캐릭터 설정(JSON)
 │   ├── prompt_builder.py   # 프로파일 → 프롬프트 빌더
 │   ├── file_sync.py        # 워크스페이스 템플릿 지연 동기화(언어별)
 │   ├── template/           # 페르소나 템플릿(en / zh / ja / ko)
@@ -321,7 +320,6 @@ pnpm tauri dev    # 네이티브 데스크톱 모드
 - **AGENTS.md**: 도구 사용 우선순위, 안전 경계, 윤리 지침을 정의합니다.
 - **USER.md**: 사용자별 상호작용 선호도와 알려진 정보를 저장합니다.
 - **HEARTBEAT.md**: heartbeat 예약 서비스의 미완료 작업을 나열합니다.
-- **character.json**: 구조화된 캐릭터 설정(JSON)입니다.
 - **prompt_builder.py**: 프로파일 파일로부터 시스템 프롬프트를 만듭니다.
 - **file_sync.py**: 누락된 페르소나 파일을 `workspace/template/<lang>/`(`WORKSPACE_TEMPLATE_LANG`으로 선택)에서 지연 복사하며, 사용자의 수정을 절대 덮어쓰지 않습니다.
 
