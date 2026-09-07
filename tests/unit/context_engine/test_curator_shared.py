@@ -4,8 +4,6 @@ helpers.py, _parse_skill_manage_args in classify.py, generic config getter in
 config.py).
 """
 
-import asyncio
-
 import pytest
 
 from context_engine.curator import classify, config, helpers, report, usage
@@ -149,7 +147,7 @@ class TestConfigGetter317:
         assert config.get_min_idle_hours() == DEFAULT_MIN_IDLE_HOURS
 
     def test_days_getters(self, monkeypatch):
-        from context_engine.curator.constants import DEFAULT_STALE_AFTER_DAYS, DEFAULT_ARCHIVE_AFTER_DAYS
+        from context_engine.curator.constants import DEFAULT_ARCHIVE_AFTER_DAYS
 
         self._with_config(monkeypatch, {"stale_after_days": 7, "archive_after_days": "bad"})
         assert config.get_stale_after_days() == 7

@@ -7,7 +7,8 @@ implementation class through the ``STORAGES`` registry.
 from __future__ import annotations
 
 import importlib
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from graph_rag.vendored_lightrag.kg import STORAGES
 

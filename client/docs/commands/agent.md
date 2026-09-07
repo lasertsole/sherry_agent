@@ -11,41 +11,41 @@ LangGraph pipeline (context building -> LLM call -> tool execution -> response g
 
 ```typescript
 const chunks = await invoke<ChatChunk[]>('agent_chat', {
-  request: ChatRequest,
+  request: ChatRequest
 });
 ```
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `request` | [`ChatRequest`](/types/reference#chatrequest) | Yes | Multi-modal message payload |
+| Parameter | Type                                          | Required | Description                 |
+| --------- | --------------------------------------------- | -------- | --------------------------- |
+| `request` | [`ChatRequest`](/types/reference#chatrequest) | Yes      | Multi-modal message payload |
 
 #### ChatRequest
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `session_id` | `string` | Yes | Unique session identifier |
-| `text` | `string \| null` | No | Text message content |
-| `image_base64_list` | `string[]` | No | Base64-encoded images for multi-modal input |
+| Field               | Type             | Required | Description                                 |
+| ------------------- | ---------------- | -------- | ------------------------------------------- |
+| `session_id`        | `string`         | Yes      | Unique session identifier                   |
+| `text`              | `string \| null` | No       | Text message content                        |
+| `image_base64_list` | `string[]`       | No       | Base64-encoded images for multi-modal input |
 
 ### Returns
 
 `ChatChunk[]` — Array of response chunks.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `content` | `string` | Text fragment for this chunk |
-| `done` | `boolean` | `true` if this is the final chunk |
+| Field     | Type      | Description                       |
+| --------- | --------- | --------------------------------- |
+| `content` | `string`  | Text fragment for this chunk      |
+| `done`    | `boolean` | `true` if this is the final chunk |
 
 ### Errors
 
-| Code | Description | Retryable |
-|------|-------------|-----------|
-| `AGENT_ERROR` | Agent pipeline failure (tool loop, LangGraph error) | No |
-| `MODEL_ERROR` | LLM API call failed (timeout, connection refused) | Yes |
-| `SESSION_ERROR` | Invalid or expired session ID | No |
-| `RAG_ERROR` | Knowledge retrieval failure | No |
+| Code            | Description                                         | Retryable |
+| --------------- | --------------------------------------------------- | --------- |
+| `AGENT_ERROR`   | Agent pipeline failure (tool loop, LangGraph error) | No        |
+| `MODEL_ERROR`   | LLM API call failed (timeout, connection refused)   | Yes       |
+| `SESSION_ERROR` | Invalid or expired session ID                       | No        |
+| `RAG_ERROR`     | Knowledge retrieval failure                         | No        |
 
 ### Example
 
@@ -58,8 +58,8 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
     session_id: 'default',
     text: 'Hello, how are you?',
-    image_base64_list: [],
-  },
+    image_base64_list: []
+  }
 });
 
 // Display the full response
@@ -71,8 +71,8 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
     session_id: 'default',
     text: 'Describe this image',
-    image_base64_list: [base64ImageData],
-  },
+    image_base64_list: [base64ImageData]
+  }
 });
 ```
 
@@ -94,21 +94,21 @@ The SSE stream will terminate and emit `agent:stream:end`.
 
 ```typescript
 await invoke('agent_stop', {
-  request: StopRequest,
+  request: StopRequest
 });
 ```
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `request` | [`StopRequest`](/types/reference#stoprequest) | Yes | Session to stop |
+| Parameter | Type                                          | Required | Description     |
+| --------- | --------------------------------------------- | -------- | --------------- |
+| `request` | [`StopRequest`](/types/reference#stoprequest) | Yes      | Session to stop |
 
 #### StopRequest
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `session_id` | `string` | Yes | Session whose generation should be cancelled |
+| Field        | Type     | Required | Description                                  |
+| ------------ | -------- | -------- | -------------------------------------------- |
+| `session_id` | `string` | Yes      | Session whose generation should be cancelled |
 
 ### Returns
 
@@ -121,7 +121,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 // Stop generation for the current session
 await invoke('agent_stop', {
-  request: { session_id: 'default' },
+  request: { session_id: 'default' }
 });
 ```
 

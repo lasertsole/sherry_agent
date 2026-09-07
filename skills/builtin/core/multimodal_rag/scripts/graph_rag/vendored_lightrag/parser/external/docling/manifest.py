@@ -10,7 +10,7 @@ Wraps the generic :class:`Manifest` schema with docling-specific knowledge:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 from graph_rag.vendored_lightrag.parser.external._common import compute_size_and_hash
@@ -116,7 +116,7 @@ def build_and_write_docling_manifest(
         endpoint_signature=endpoint_signature,
         engine_version=engine_version,
         options_signature=options_signature,
-        downloaded_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        downloaded_at=datetime.now(UTC).isoformat(timespec="seconds"),
         extras={"fixed_constants": dict(fixed_constants)},
     )
     write_manifest(raw_dir, manifest)

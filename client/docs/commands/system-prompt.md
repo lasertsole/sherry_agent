@@ -21,16 +21,16 @@ None.
 
 `PromptFileResponse` — A map of filenames to content.
 
-| Field | Type | Description |
-|-------|------|-------------|
+| Field             | Type                     | Description                     |
+| ----------------- | ------------------------ | ------------------------------- |
 | `file_to_content` | `Record<string, string>` | Map of filename to file content |
 
 ### Errors
 
-| Code | Description | Retryable |
-|------|-------------|-----------|
-| `IO_ERROR` | Failed to read prompt files | Yes |
-| `CONFIG_ERROR` | Invalid prompt file format | No |
+| Code           | Description                 | Retryable |
+| -------------- | --------------------------- | --------- |
+| `IO_ERROR`     | Failed to read prompt files | Yes       |
+| `CONFIG_ERROR` | Invalid prompt file format  | No        |
 
 ### Example
 
@@ -53,20 +53,20 @@ the payload are left unchanged.
 
 ```typescript
 await invoke('system_prompt_write', {
-  payload: PromptFilePayload,
+  payload: PromptFilePayload
 });
 ```
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `payload` | [`PromptFilePayload`](/types/reference#promptfilepayload) | Yes | Files to write |
+| Parameter | Type                                                      | Required | Description    |
+| --------- | --------------------------------------------------------- | -------- | -------------- |
+| `payload` | [`PromptFilePayload`](/types/reference#promptfilepayload) | Yes      | Files to write |
 
 #### PromptFilePayload
 
-| Field | Type | Description |
-|-------|------|-------------|
+| Field             | Type                     | Description                    |
+| ----------------- | ------------------------ | ------------------------------ |
 | `file_to_content` | `Record<string, string>` | Map of filename to new content |
 
 ### Returns
@@ -75,10 +75,10 @@ await invoke('system_prompt_write', {
 
 ### Errors
 
-| Code | Description | Retryable |
-|------|-------------|-----------|
-| `IO_ERROR` | Failed to write prompt files | Yes |
-| `CONFIG_ERROR` | Invalid file content | No |
+| Code           | Description                  | Retryable |
+| -------------- | ---------------------------- | --------- |
+| `IO_ERROR`     | Failed to write prompt files | Yes       |
+| `CONFIG_ERROR` | Invalid file content         | No        |
 
 ### Example
 
@@ -89,9 +89,9 @@ await invoke('system_prompt_write', {
   payload: {
     file_to_content: {
       'AGENTS.md': '# Updated Agent Configuration\n...',
-      'SOUL.md': '# Updated Soul\n...',
-    },
-  },
+      'SOUL.md': '# Updated Soul\n...'
+    }
+  }
 });
 ```
 
@@ -106,7 +106,7 @@ are updated; existing content in other files is preserved.
 
 ```typescript
 await invoke('system_prompt_update', {
-  payload: PromptFilePayload,
+  payload: PromptFilePayload
 });
 ```
 
@@ -130,8 +130,8 @@ import { invoke } from '@tauri-apps/api/core';
 await invoke('system_prompt_update', {
   payload: {
     file_to_content: {
-      'AGENTS.md': '# Appended content...',
-    },
-  },
+      'AGENTS.md': '# Appended content...'
+    }
+  }
 });
 ```

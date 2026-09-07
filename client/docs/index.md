@@ -1,8 +1,8 @@
 ---
 layout: home
 hero:
-  name: "EMA AI Agent"
-  text: "Backend API Documentation"
+  name: 'EMA AI Agent'
+  text: 'Backend API Documentation'
   tagline: Tauri IPC command reference for frontend developers
   actions:
     - theme: brand

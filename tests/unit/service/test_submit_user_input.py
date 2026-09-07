@@ -25,7 +25,6 @@ on a tmp SQLite file, fake TurnExecutors injected through a real
 import asyncio
 import json
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -139,9 +138,7 @@ def _channel_executor(registry: TurnExecutorRegistry) -> FakeTurnExecutor:
 async def test_idle_session_starts_turn_and_persists_claimed_row(
     store: UserInputQueue, registry: TurnExecutorRegistry, detector: FakeStateDetector
 ):
-    result = await submit_user_input(
-        "s1", "hello", "user", queue=store, executor_registry=registry
-    )
+    result = await submit_user_input("s1", "hello", "user", queue=store, executor_registry=registry)
 
     assert result.status is SubmitStatus.STARTED
     rows = await store.list_active("s1")
@@ -202,9 +199,7 @@ async def test_missing_executor_registration_raises_without_mutating_queue(
     """Idle dispatch with no executor for the route fails fast BEFORE any state write."""
     bare_registry = TurnExecutorRegistry()  # nothing registered
     with pytest.raises(RuntimeError, match="ws"):
-        await submit_user_input(
-            "s1", "hello", "user", queue=store, executor_registry=bare_registry
-        )
+        await submit_user_input("s1", "hello", "user", queue=store, executor_registry=bare_registry)
 
     assert await store.count_active("s1") == 0, "no placeholder row may be orphaned"
     assert detector.calls, "state was detected before failing"
@@ -223,9 +218,7 @@ async def test_busy_session_enqueues_with_position_and_skips_executor(
     monkeypatch.setattr(iqs, "detect_state", detector)
 
     await store.enqueue("s1", '{"text": "earlier", "image_base64_list": []}', "user")
-    result = await submit_user_input(
-        "s1", "hello", "user", queue=store, executor_registry=registry
-    )
+    result = await submit_user_input("s1", "hello", "user", queue=store, executor_registry=registry)
 
     assert result.status is SubmitStatus.QUEUED
     assert result.position == 2, "1-based FIFO position among QUEUED rows"
@@ -271,9 +264,7 @@ async def test_auto_turn_inflight_session_enqueues_like_any_busy_reason(
     detector = FakeStateDetector(busy=True, reason="auto_turn_inflight")
     monkeypatch.setattr(iqs, "detect_state", detector)
 
-    result = await submit_user_input(
-        "s1", "hello", "user", queue=store, executor_registry=registry
-    )
+    result = await submit_user_input("s1", "hello", "user", queue=store, executor_registry=registry)
 
     assert result.status is SubmitStatus.QUEUED
     await _settle()
@@ -450,9 +441,7 @@ async def test_empty_session_id_raises_value_error(
     store: UserInputQueue, registry: TurnExecutorRegistry, detector: FakeStateDetector
 ):
     with pytest.raises(ValueError, match="session_id"):
-        await submit_user_input(
-            "", "hello", "user", queue=store, executor_registry=registry
-        )
+        await submit_user_input("", "hello", "user", queue=store, executor_registry=registry)
     assert await store.count_active("") == 0
     await _settle()
     assert _ws_executor(registry).calls == []
@@ -464,6 +453,10 @@ async def test_invalid_source_raises_value_error(
 ):
     with pytest.raises(ValueError, match="source"):
         await submit_user_input(
-            "s1", "hello", "system", queue=store, executor_registry=registry  # pyright: ignore[reportArgumentType]
+            "s1",
+            "hello",
+            "system",
+            queue=store,
+            executor_registry=registry,  # pyright: ignore[reportArgumentType]
         )
     assert await store.count_active("s1") == 0

@@ -44,9 +44,7 @@ async def taskflow_summary(flow_id: str) -> str:
     lines.append(f"results: {len(results)}")
     for item in results:
         if isinstance(item, dict):
-            lines.append(
-                f"  - [{item.get('child_session_key')}] {str(item.get('result'))[:400]}"
-            )
+            lines.append(f"  - [{item.get('child_session_key')}] {str(item.get('result'))[:400]}")
     if flow["wait"] is not None:
         lines.append(f"wait: {json.dumps(flow['wait'], ensure_ascii=False)}")
     else:

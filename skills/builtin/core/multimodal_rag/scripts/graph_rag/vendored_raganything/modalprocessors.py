@@ -13,7 +13,7 @@ import re
 import json
 import time
 import base64
-from typing import Dict, Any, Tuple, List
+from typing import Any
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -45,7 +45,7 @@ class ContextConfig:
     max_context_tokens: int = 2000  # Maximum context tokens
     include_headers: bool = True  # Whether to include headers/titles
     include_captions: bool = True  # Whether to include image/table captions
-    filter_content_types: List[str] = None  # Content types to include
+    filter_content_types: list[str] = None  # Content types to include
 
     def __post_init__(self):
         if self.filter_content_types is None:
@@ -68,7 +68,7 @@ class ContextExtractor:
     def extract_context(
         self,
         content_source: Any,
-        current_item_info: Dict[str, Any],
+        current_item_info: dict[str, Any],
         content_format: str = "auto",
     ) -> str:
         """Extract context for current item from content source
@@ -107,7 +107,7 @@ class ContextExtractor:
             logger.error(f"Error extracting context: {e}")
             return ""
 
-    def _extract_from_content_list(self, content_list: List[Dict], current_item_info: Dict) -> str:
+    def _extract_from_content_list(self, content_list: list[dict], current_item_info: dict) -> str:
         """Extract context from MinerU-style content list
 
         Args:
@@ -124,7 +124,7 @@ class ContextExtractor:
         else:
             return self._extract_page_context(content_list, current_item_info)
 
-    def _extract_page_context(self, content_list: List[Dict], current_item_info: Dict) -> str:
+    def _extract_page_context(self, content_list: list[dict], current_item_info: dict) -> str:
         """Extract context based on page boundaries
 
         Args:
@@ -159,7 +159,7 @@ class ContextExtractor:
         context = "\n".join(context_texts)
         return self._truncate_context(context)
 
-    def _extract_chunk_context(self, content_list: List[Dict], current_item_info: Dict) -> str:
+    def _extract_chunk_context(self, content_list: list[dict], current_item_info: dict) -> str:
         """Extract context based on content chunks
 
         Args:
@@ -190,7 +190,7 @@ class ContextExtractor:
         context = "\n".join(context_texts)
         return self._truncate_context(context)
 
-    def _extract_text_from_item(self, item: Dict) -> str:
+    def _extract_text_from_item(self, item: dict) -> str:
         """Extract text content from a content item
 
         Args:
@@ -222,7 +222,7 @@ class ContextExtractor:
 
         return ""
 
-    def _extract_from_dict_source(self, dict_source: Dict, current_item_info: Dict) -> str:
+    def _extract_from_dict_source(self, dict_source: dict, current_item_info: dict) -> str:
         """Extract context from dictionary-based content source
 
         Args:
@@ -247,7 +247,7 @@ class ContextExtractor:
 
         return self._truncate_context(context)
 
-    def _extract_from_text_source(self, text_source: str, current_item_info: Dict) -> str:
+    def _extract_from_text_source(self, text_source: str, current_item_info: dict) -> str:
         """Extract context from plain text source
 
         Args:
@@ -259,7 +259,7 @@ class ContextExtractor:
         """
         return self._truncate_context(text_source)
 
-    def _extract_from_text_chunks(self, text_chunks: List[str], current_item_info: Dict) -> str:
+    def _extract_from_text_chunks(self, text_chunks: list[str], current_item_info: dict) -> str:
         """Extract context from simple text chunks list
 
         Args:
@@ -395,7 +395,7 @@ class BaseModalProcessor:
         self.content_format = content_format
         logger.info(f"Content source set with format: {content_format}")
 
-    def _get_context_for_item(self, item_info: Dict[str, Any]) -> str:
+    def _get_context_for_item(self, item_info: dict[str, Any]) -> str:
         """Get context for current processing item
 
         Args:
@@ -422,9 +422,9 @@ class BaseModalProcessor:
         self,
         modal_content,
         content_type: str,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         entity_name: str = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """
         Generate text description and entity info only, without entity relation extraction.
         Used for batch processing stage 1.
@@ -444,12 +444,12 @@ class BaseModalProcessor:
     async def _create_entity_and_chunk(
         self,
         modal_chunk: str,
-        entity_info: Dict[str, Any],
+        entity_info: dict[str, Any],
         file_path: str,
         batch_mode: bool = False,
         doc_id: str = None,
         chunk_order_index: int = 0,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Create entity and text chunk"""
         # Create chunk
         chunk_id = compute_mdhash_id(str(modal_chunk), prefix="chunk-")
@@ -822,9 +822,9 @@ class ImageModalProcessor(BaseModalProcessor):
         self,
         modal_content,
         content_type: str,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         entity_name: str = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """
         Generate image description and entity info only, without entity relation extraction.
         Used for batch processing stage 1.
@@ -924,11 +924,11 @@ class ImageModalProcessor(BaseModalProcessor):
         content_type: str,
         file_path: str = "manual_creation",
         entity_name: str = None,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         batch_mode: bool = False,
         doc_id: str = None,
         chunk_order_index: int = 0,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Process image content with context support"""
         try:
             # Generate description and entity info
@@ -977,7 +977,7 @@ class ImageModalProcessor(BaseModalProcessor):
             }
             return str(modal_content), fallback_entity
 
-    def _parse_response(self, response: str, entity_name: str = None) -> Tuple[str, Dict[str, Any]]:
+    def _parse_response(self, response: str, entity_name: str = None) -> tuple[str, dict[str, Any]]:
         """Parse model response"""
         try:
             response_data = self._robust_json_parse(response)
@@ -1020,9 +1020,9 @@ class TableModalProcessor(BaseModalProcessor):
         self,
         modal_content,
         content_type: str,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         entity_name: str = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """
         Generate table description and entity info only, without entity relation extraction.
         Used for batch processing stage 1.
@@ -1106,11 +1106,11 @@ class TableModalProcessor(BaseModalProcessor):
         content_type: str,
         file_path: str = "manual_creation",
         entity_name: str = None,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         batch_mode: bool = False,
         doc_id: str = None,
         chunk_order_index: int = 0,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Process table content with context support"""
         try:
             # Generate description and entity info
@@ -1164,7 +1164,7 @@ class TableModalProcessor(BaseModalProcessor):
 
     def _parse_table_response(
         self, response: str, entity_name: str = None
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Parse table analysis response"""
         try:
             response_data = self._robust_json_parse(response)
@@ -1207,9 +1207,9 @@ class EquationModalProcessor(BaseModalProcessor):
         self,
         modal_content,
         content_type: str,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         entity_name: str = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """
         Generate equation description and entity info only, without entity relation extraction.
         Used for batch processing stage 1.
@@ -1290,11 +1290,11 @@ class EquationModalProcessor(BaseModalProcessor):
         content_type: str,
         file_path: str = "manual_creation",
         entity_name: str = None,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         batch_mode: bool = False,
         doc_id: str = None,
         chunk_order_index: int = 0,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Process equation content with context support"""
         try:
             # Generate description and entity info
@@ -1343,7 +1343,7 @@ class EquationModalProcessor(BaseModalProcessor):
 
     def _parse_equation_response(
         self, response: str, entity_name: str = None
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Parse equation analysis response with robust JSON handling"""
         try:
             response_data = self._robust_json_parse(response)
@@ -1386,9 +1386,9 @@ class GenericModalProcessor(BaseModalProcessor):
         self,
         modal_content,
         content_type: str,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         entity_name: str = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """
         Generate generic modal description and entity info only, without entity relation extraction.
         Used for batch processing stage 1.
@@ -1460,11 +1460,11 @@ class GenericModalProcessor(BaseModalProcessor):
         content_type: str,
         file_path: str = "manual_creation",
         entity_name: str = None,
-        item_info: Dict[str, Any] = None,
+        item_info: dict[str, Any] = None,
         batch_mode: bool = False,
         doc_id: str = None,
         chunk_order_index: int = 0,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Process generic modal content with context support"""
         try:
             # Generate description and entity info
@@ -1502,7 +1502,7 @@ class GenericModalProcessor(BaseModalProcessor):
 
     def _parse_generic_response(
         self, response: str, entity_name: str = None, content_type: str = "content"
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Parse generic analysis response"""
         try:
             response_data = self._robust_json_parse(response)

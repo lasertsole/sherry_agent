@@ -108,8 +108,10 @@ def big_fts5_db():
         db.executemany(
             "INSERT INTO messages (turn_num, session_id, role, content, timestamp)"
             " VALUES (?, ?, ?, ?, ?)",
-            ((i % 10, "s1", "ai", f"tok{i} alpha beta gamma delta echo folge", "20260905120000")
-             for i in range(50_000)),
+            (
+                (i % 10, "s1", "ai", f"tok{i} alpha beta gamma delta echo folge", "20260905120000")
+                for i in range(50_000)
+            ),
         )
         db.commit()
         yield db

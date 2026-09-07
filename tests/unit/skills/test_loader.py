@@ -166,9 +166,7 @@ class TestScanSkillsBehavior:
 
     def test_state_file_activates_third_party(self, skills_tree, monkeypatch):
         state_file = skills_tree / "skills_state.json"
-        state_file.write_text(
-            json.dumps({"uploaded_one": {"active": True}}), encoding="utf-8"
-        )
+        state_file.write_text(json.dumps({"uploaded_one": {"active": True}}), encoding="utf-8")
 
         skills = {s["name"]: s for s in loader_mod.scan_skills(use_cache=False)}
 
@@ -182,7 +180,15 @@ class TestScanSkillsBehavior:
     def test_cache_hit_returns_snapshot_without_scan(self, skills_tree, monkeypatch):
         """use_cache=True with a snapshot file returns its content verbatim."""
         snapshot_file = skills_tree / "skills" / "skills_snapshot.json"
-        sentinel = [{"name": "cached", "description": "", "location": "./skills/builtin/cached/SKILL.md", "scope": "all", "active": True}]
+        sentinel = [
+            {
+                "name": "cached",
+                "description": "",
+                "location": "./skills/builtin/cached/SKILL.md",
+                "scope": "all",
+                "active": True,
+            }
+        ]
         snapshot_file.write_text(json.dumps(sentinel), encoding="utf-8")
 
         monkeypatch.setattr(loader_mod, "read_skills_snapshot", lambda: sentinel)

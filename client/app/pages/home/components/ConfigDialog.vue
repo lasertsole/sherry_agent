@@ -309,6 +309,7 @@ import type { EnvGroup } from '@/composables/env';
 import { readEnvConfig, writeEnvConfig } from '@/composables/env';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { readSherryConfig, writeSherryConfig } from '@/composables/sherryConfig';
+import { logUtil } from '~/utils/log';
 
 /** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
 const { backgroundOpacity, setBackground } = useChatBackground();
@@ -355,7 +356,7 @@ const loadEnvConfig = async () => {
     }
     originalEnvValues.value = snap;
   } catch (e) {
-    console.error('[ConfigDialog] Failed to load env config:', e);
+    logUtil.e('[ConfigDialog] Failed to load env config:', e);
     envLoadError.value = t('config.env.loadError');
     envLoaded.value = false;
   }
@@ -413,7 +414,7 @@ const loadSherryConfig = async () => {
     for (const e of sherryEntries.value) snap[e.key] = e.value;
     originalSherryValues.value = snap;
   } catch (e) {
-    console.error('[ConfigDialog] Failed to load sherry config:', e);
+    logUtil.e('[ConfigDialog] Failed to load sherry config:', e);
     sherryLoadError.value = t('config.sherry.loadError');
     sherryLoaded.value = false;
   }
@@ -562,7 +563,7 @@ const openCrop = async (target: 'user' | 'assistant' | 'background', file: File)
     cropSource.value = await readFileAsDataUrl(file);
     cropVisible.value = true;
   } catch (e) {
-    console.error('[ConfigDialog] Image read failed:', e);
+    logUtil.e('[ConfigDialog] Image read failed:', e);
   }
 };
 
@@ -669,7 +670,7 @@ const loadContent = async () => {
     originalBackgroundUrl.value = bgConfig.backgroundUrl;
     backgroundOpacityValue.value = bgConfig.backgroundOpacity;
   } catch (e) {
-    console.error('[ConfigDialog] Failed to load content:', e);
+    logUtil.e('[ConfigDialog] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -738,7 +739,7 @@ const handleSave = async () => {
     emits('saved');
     visible.value = false;
   } catch (e) {
-    console.error('[ConfigDialog] Failed to save:', e);
+    logUtil.e('[ConfigDialog] Failed to save:', e);
   } finally {
     saving.value = false;
   }

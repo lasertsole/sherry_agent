@@ -204,7 +204,7 @@ class DoclingRawClient:
 
     async def _submit(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         source_file_path: Path,
         *,
         filename: str,
@@ -226,7 +226,7 @@ class DoclingRawClient:
 
     async def _poll_until_done(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         task_id: str,
     ) -> None:
         url = f"{self.endpoint}{POLL_PATH.format(task_id=task_id)}"
@@ -265,7 +265,7 @@ class DoclingRawClient:
 
     async def _download_zip_bytes(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         task_id: str,
     ) -> bytes:
         url = f"{self.endpoint}{RESULT_PATH.format(task_id=task_id)}"

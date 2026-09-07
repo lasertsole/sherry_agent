@@ -38,9 +38,8 @@ module eagerly without the circular-import poison described in its docstring.
 
 import asyncio
 import time
-from typing import Any, AsyncGenerator
-
-from loguru import logger
+from typing import Any
+from collections.abc import AsyncGenerator
 
 
 class StreamDriver:
@@ -77,7 +76,7 @@ class StreamDriver:
 
     # ---- template -------------------------------------------------------
 
-    async def drive(self, source: AsyncGenerator[dict[str, str], None]) -> None:
+    async def drive(self, source: AsyncGenerator[dict[str, str]]) -> None:
         """Consume *source* to completion, forwarding the turn's WS frames."""
         start_time = time.time()
         meta: dict[str, Any] = {}
@@ -90,9 +89,7 @@ class StreamDriver:
                     # not as a regular chunk.
                     meta = {k: v for k, v in chunk.items() if k != "type"}
                     continue
-                await self.send_frame(
-                    {"event": "chunk", "session_id": self.session_id, **chunk}
-                )
+                await self.send_frame({"event": "chunk", "session_id": self.session_id, **chunk})
 
             # After the stream ends, check if the agent paused for HITL approval.
             interrupt = await self.check_interrupt()

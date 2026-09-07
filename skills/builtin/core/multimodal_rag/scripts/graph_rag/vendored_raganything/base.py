@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class DocStatus(str, Enum):
+class DocStatus(StrEnum):
     """Document processing status"""
 
     READY = "ready"

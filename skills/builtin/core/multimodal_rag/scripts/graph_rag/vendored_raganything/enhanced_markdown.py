@@ -13,7 +13,7 @@ This module provides improved Markdown to PDF conversion with:
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any
 from dataclasses import dataclass
 import tempfile
 import subprocess
@@ -47,8 +47,8 @@ class MarkdownConfig:
     """Configuration for Markdown to PDF conversion"""
 
     # Styling options
-    css_file: Optional[str] = None
-    template_file: Optional[str] = None
+    css_file: str | None = None
+    template_file: str | None = None
     page_size: str = "A4"
     margin: str = "1in"
     font_size: str = "12pt"
@@ -62,11 +62,11 @@ class MarkdownConfig:
 
     # Output options
     output_format: str = "pdf"  # pdf, html, docx
-    output_dir: Optional[str] = None
+    output_dir: str | None = None
 
     # Advanced options
-    custom_css: Optional[str] = None
-    metadata: Optional[Dict[str, str]] = None
+    custom_css: str | None = None
+    metadata: dict[str, str] | None = None
 
 
 class EnhancedMarkdownConverter:
@@ -79,7 +79,7 @@ class EnhancedMarkdownConverter:
     - ReportLab (fallback, basic styling)
     """
 
-    def __init__(self, config: Optional[MarkdownConfig] = None):
+    def __init__(self, config: MarkdownConfig | None = None):
         """
         Initialize the converter
 
@@ -93,7 +93,7 @@ class EnhancedMarkdownConverter:
         self.available_backends = self._check_backends()
         self.logger.info(f"Available backends: {list(self.available_backends.keys())}")
 
-    def _check_backends(self) -> Dict[str, bool]:
+    def _check_backends(self) -> dict[str, bool]:
         """Check which conversion backends are available"""
         backends = {
             "weasyprint": WEASYPRINT_AVAILABLE,
@@ -384,7 +384,7 @@ class EnhancedMarkdownConverter:
             return False
 
     def convert_file_to_pdf(
-        self, input_path: str, output_path: Optional[str] = None, method: str = "auto"
+        self, input_path: str, output_path: str | None = None, method: str = "auto"
     ) -> bool:
         """
         Convert Markdown file to PDF
@@ -404,13 +404,13 @@ class EnhancedMarkdownConverter:
 
         # Read markdown content
         try:
-            with open(input_path_obj, "r", encoding="utf-8") as f:
+            with open(input_path_obj, encoding="utf-8") as f:
                 markdown_content = f.read()
         except UnicodeDecodeError:
             # Try with different encodings
             for encoding in ["gbk", "latin-1", "cp1252"]:
                 try:
-                    with open(input_path_obj, "r", encoding=encoding) as f:
+                    with open(input_path_obj, encoding=encoding) as f:
                         markdown_content = f.read()
                     break
                 except UnicodeDecodeError:
@@ -426,7 +426,7 @@ class EnhancedMarkdownConverter:
 
         return self.convert_markdown_to_pdf(markdown_content, output_path, method)
 
-    def get_backend_info(self) -> Dict[str, Any]:
+    def get_backend_info(self) -> dict[str, Any]:
         """Get information about available backends"""
         return {
             "available_backends": self.available_backends,

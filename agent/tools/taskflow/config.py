@@ -1,6 +1,6 @@
 """TaskFlow shared constants: table name, initial revision, and status enum."""
 
-from enum import Enum
+from enum import StrEnum
 
 TABLE_NAME = "task_flows"
 
@@ -8,7 +8,7 @@ TABLE_NAME = "task_flows"
 INITIAL_REVISION = 1
 
 
-class TaskFlowStatus(str, Enum):
+class TaskFlowStatus(StrEnum):
     """Lifecycle status of a task flow (openclaw managedFlows semantics)."""
 
     RUNNING = "running"

@@ -108,7 +108,13 @@ function queuedFrame(sessionId = 's1', position = 2, queueSize = 5): object {
 describe('streamChatMessage queued dispatch (onQueued)', () => {
   it('invokes onQueued with camelCase fields on a queued frame', async () => {
     const onQueued = vi.fn();
-    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, vi.fn(), undefined, undefined, onQueued);
+    const { promise } = bridge.streamChatMessage(
+      { session_id: 's1', text: 'hi' },
+      vi.fn(),
+      undefined,
+      undefined,
+      onQueued
+    );
     const ws = await awaitSocket();
 
     ws.frame(queuedFrame('s1', 2, 5));
@@ -125,7 +131,13 @@ describe('streamChatMessage queued dispatch (onQueued)', () => {
 
   it('falls back to the request session id when the frame omits session_id', async () => {
     const onQueued = vi.fn();
-    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, vi.fn(), undefined, undefined, onQueued);
+    const { promise } = bridge.streamChatMessage(
+      { session_id: 's1', text: 'hi' },
+      vi.fn(),
+      undefined,
+      undefined,
+      onQueued
+    );
     const ws = await awaitSocket();
 
     ws.frame({ event: 'queued', position: 1, queue_size: 1 });
@@ -145,7 +157,13 @@ describe('streamChatMessage queued dispatch (onQueued)', () => {
   it('does not consume the stream: queued frame then chunk then done resolves normally', async () => {
     const onChunk = vi.fn();
     const onQueued = vi.fn();
-    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, onChunk, undefined, undefined, onQueued);
+    const { promise } = bridge.streamChatMessage(
+      { session_id: 's1', text: 'hi' },
+      onChunk,
+      undefined,
+      undefined,
+      onQueued
+    );
     const ws = await awaitSocket();
 
     ws.frame(queuedFrame('s1', 1, 3));

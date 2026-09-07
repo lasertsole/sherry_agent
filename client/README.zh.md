@@ -174,28 +174,28 @@ client/
 
 ## 技术栈
 
-| 层 | 技术 | 用途 |
-|-------|-----------|---------|
-| **跨平台外壳** | [Tauri 2](https://v2.tauri.app/)（`2.0.0-rc.17`、`@tauri-apps/api` ^2.11.1、`@tauri-apps/cli` 2.11.4） | 原生桌面打包 + 配置/能力/图标 |
-| **前端框架** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41 | SPA 模式（`ssr: false`）、Composition API + `<script setup lang="ts">` |
-| **UI 组件** | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0（`@primevue/nuxt-module`） | Dialog、Button、Select、ToggleSwitch、Toast 等 |
-| **状态管理** | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | 全局 UI 状态（侧边栏、主题入口） |
-| **样式** | [Tailwind CSS](https://tailwindcss.com/) v4（经 `@tailwindcss/vite`）+ SCSS（`sass`） | 原子化 CSS + `@theme` 设计令牌 + SCSS mixin 库 |
-| **颜色模式** | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/) | 深色/浅色主题切换（`.dark` 类） |
-| **国际化** | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0 | zh / en / ja / ko，`no_prefix` 策略 |
-| **Markdown 渲染** | [markdown-it](https://github.com/markdown-it/markdown-it) ^15 | 聊天消息 markdown → HTML（ChatBox.vue） |
-| **XSS 防护** | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4 | 净化渲染后的 HTML |
-| **日期格式化** | [dayjs](https://day.js.org/) | 紧凑时间戳（`YYYYMMDDHHmmss`）解析/格式化 |
-| **离线存储** | [Dexie.js](https://dexie.org/) ^4.4.4 | IndexedDB 封装：消息、角色、背景图、子智能体运行、客户端日志 |
-| **事件总线** | [mitt](https://github.com/developit/mitt) ^3 | 轻量跨组件通信 |
-| **图表 / 图谱** | [@antv/g2](https://g2.antv.antgroup.com/) ^5、[@antv/g6](https://g6.antv.antgroup.com/) ^5 | 统计图表、子智能体流程图、知识图谱 |
-| **图片裁剪** | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6 | 头像上传与裁剪 |
-| **工具库** | [lodash-es](https://lodash.com/) ^4.18 | 常用工具函数 |
-| **单元 / 集成测试** | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8 | composable 单元测试 + SFC 集成测试 |
-| **E2E repro** | [@playwright/test](https://playwright.dev/) ^1.62 | 面向开发服务器的 repro 测试（Desktop Edge） |
-| **Lint / 格式化** | ESLint ^10（flat config）+ Prettier | 代码质量 |
-| **类型检查** | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9 | `pnpm typecheck` |
-| **后端语言** | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94） | Tauri 外壳（src-tauri/，目前为占位模块） |
+| 层                  | 技术                                                                                                     | 用途                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **跨平台外壳**      | [Tauri 2](https://v2.tauri.app/)（`2.0.0-rc.17`、`@tauri-apps/api` ^2.11.1、`@tauri-apps/cli` 2.11.4）   | 原生桌面打包 + 配置/能力/图标                                          |
+| **前端框架**        | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                                 | SPA 模式（`ssr: false`）、Composition API + `<script setup lang="ts">` |
+| **UI 组件**         | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0（`@primevue/nuxt-module`）                  | Dialog、Button、Select、ToggleSwitch、Toast 等                         |
+| **状态管理**        | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | 全局 UI 状态（侧边栏、主题入口）                                       |
+| **样式**            | [Tailwind CSS](https://tailwindcss.com/) v4（经 `@tailwindcss/vite`）+ SCSS（`sass`）                    | 原子化 CSS + `@theme` 设计令牌 + SCSS mixin 库                         |
+| **颜色模式**        | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                     | 深色/浅色主题切换（`.dark` 类）                                        |
+| **国际化**          | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                          | zh / en / ja / ko，`no_prefix` 策略                                    |
+| **Markdown 渲染**   | [markdown-it](https://github.com/markdown-it/markdown-it) ^15                                            | 聊天消息 markdown → HTML（ChatBox.vue）                                |
+| **XSS 防护**        | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4                                                    | 净化渲染后的 HTML                                                      |
+| **日期格式化**      | [dayjs](https://day.js.org/)                                                                             | 紧凑时间戳（`YYYYMMDDHHmmss`）解析/格式化                              |
+| **离线存储**        | [Dexie.js](https://dexie.org/) ^4.4.4                                                                    | IndexedDB 封装：消息、角色、背景图、子智能体运行、客户端日志           |
+| **事件总线**        | [mitt](https://github.com/developit/mitt) ^3                                                             | 轻量跨组件通信                                                         |
+| **图表 / 图谱**     | [@antv/g2](https://g2.antv.antgroup.com/) ^5、[@antv/g6](https://g6.antv.antgroup.com/) ^5               | 统计图表、子智能体流程图、知识图谱                                     |
+| **图片裁剪**        | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6                                              | 头像上传与裁剪                                                         |
+| **工具库**          | [lodash-es](https://lodash.com/) ^4.18                                                                   | 常用工具函数                                                           |
+| **单元 / 集成测试** | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8                     | composable 单元测试 + SFC 集成测试                                     |
+| **E2E repro**       | [@playwright/test](https://playwright.dev/) ^1.62                                                        | 面向开发服务器的 repro 测试（Desktop Edge）                            |
+| **Lint / 格式化**   | ESLint ^10（flat config）+ Prettier                                                                      | 代码质量                                                               |
+| **类型检查**        | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                                | `pnpm typecheck`                                                       |
+| **后端语言**        | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri 外壳（src-tauri/，目前为占位模块）                               |
 
 ### 关键配置
 
@@ -228,25 +228,25 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 
 `bridge.ts` 提供在 Tauri 桌面与浏览器两种模式下均可工作的统一 API。所有后端访问都经由它（或经 `requestApi.ts` 中的 `fetchApi`）：
 
-| API | 说明 |
-|-----|-------------|
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)` | 流式智能体聊天；返回 `{ controller, promise }`（Tauri Events 或 `/sessions/agent/ws`） |
-| `sendChatMessage(request, onChunk)` | `streamChatMessage` 的便捷封装 |
-| `stopChatMessage(sessionId)` | 停止正在进行的生成（`agent_stop` IPC 或 WS `stop` 帧） |
-| `resumeHitl(sessionId, decision, ...)` | 通过新建 WebSocket 恢复暂停的 HITL 智能体 |
-| `clearSession(sessionId)` | 清空会话状态（`session_clear` IPC 或 `DELETE /sessions`） |
-| `getHistory(sessionId, lastTurnCount)` | 获取历史（`session_history` IPC 或 `GET /n_turns_history_messages`） |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun` | 后台子智能体任务管理 |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate` | 系统提示词文件 CRUD |
-| `readMemory` / `writeMemory` | 长期记忆文件（`workspace/memory/*`） |
-| `readHeartbeat` / `writeHeartbeat` | `workspace/HEARTBEAT.md`（始终走 HTTP） |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | 定时任务管理 |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill` | 技能管理 |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig` | 通道设置 |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings` | 自动技能 curator 控制 |
-| `listLogFiles` / `readLogFile` / `openLogStream` | 后端日志读取 + 实时 `/logs/ws` 流 |
-| `readEnvConfig` / `writeEnvConfig`（`env.ts`） | 后端 `.env` 读取/更新（`GET/PUT /env`） |
-| `checkHealth()` | 后端可达性（`system_health` IPC 或 `GET /system_prompt`） |
+| API                                                                                                | 说明                                                                                   |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | 流式智能体聊天；返回 `{ controller, promise }`（Tauri Events 或 `/sessions/agent/ws`） |
+| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage` 的便捷封装                                                         |
+| `stopChatMessage(sessionId)`                                                                       | 停止正在进行的生成（`agent_stop` IPC 或 WS `stop` 帧）                                 |
+| `resumeHitl(sessionId, decision, ...)`                                                             | 通过新建 WebSocket 恢复暂停的 HITL 智能体                                              |
+| `clearSession(sessionId)`                                                                          | 清空会话状态（`session_clear` IPC 或 `DELETE /sessions`）                              |
+| `getHistory(sessionId, lastTurnCount)`                                                             | 获取历史（`session_history` IPC 或 `GET /n_turns_history_messages`）                   |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | 后台子智能体任务管理                                                                   |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | 系统提示词文件 CRUD                                                                    |
+| `readMemory` / `writeMemory`                                                                       | 长期记忆文件（`workspace/memory/*`）                                                   |
+| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`（始终走 HTTP）                                                |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | 定时任务管理                                                                           |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | 技能管理                                                                               |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 通道设置                                                                               |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 自动技能 curator 控制                                                                  |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 后端日志读取 + 实时 `/logs/ws` 流                                                      |
+| `readEnvConfig` / `writeEnvConfig`（`env.ts`）                                                     | 后端 `.env` 读取/更新（`GET/PUT /env`）                                                |
+| `checkHealth()`                                                                                    | 后端可达性（`system_health` IPC 或 `GET /system_prompt`）                              |
 
 浏览器模式聊天流细节：
 
@@ -260,10 +260,10 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 
 两个相互独立的模块级单例连接（均在 5 秒后自动重连）：
 
-| 连接 | 端点 | 经 mitt 派发的事件 |
-|-----------|----------|-----------------|
-| 会话推送 | `/sessions/ws?session_id=default` | `ws:connected`、`ws:notification`、`ws:message`、`ws:disconnected` |
-| 子智能体推送 | `/subagents/ws` | `ws:subagents:connected`、`ws:subagents:ready`、`ws:subagent_spawned`、`ws:subagent_ended`、`ws:subagents:message`、`ws:subagents:disconnected` |
+| 连接         | 端点                              | 经 mitt 派发的事件                                                                                                                              |
+| ------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 会话推送     | `/sessions/ws?session_id=default` | `ws:connected`、`ws:notification`、`ws:message`、`ws:disconnected`                                                                              |
+| 子智能体推送 | `/subagents/ws`                   | `ws:subagents:connected`、`ws:subagents:ready`、`ws:subagent_spawned`、`ws:subagent_ended`、`ws:subagents:message`、`ws:subagents:disconnected` |
 
 两者均从 `VITE_API_BACK_URL` 解析基础 URL（`http://` → `ws://`，`https://` → `wss://`）。
 
@@ -271,29 +271,29 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 
 REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 
-| 端点 | 方法 | 用途 |
-|----------|-----------|---------|
-| `/sessions` | DELETE | 清空会话 |
-| `/n_turns_history_messages` | GET | 最近 N 轮历史 |
-| `/get_history_by_turn_page` | GET | 分页历史（经 Dexie 缓存优先） |
-| `/sessions/agent/ws` | WS | 聊天流、停止、HITL 恢复 |
-| `/sessions/ws` | WS | 服务端推送通知 |
-| `/subagents/ws` | WS | 子智能体生成/结束推送 |
-| `/subagents/runs` | GET / DELETE | 子智能体运行记录（列表/子树/删除） |
-| `/subagents/steer` | POST | 操控/恢复子智能体运行 |
-| `/system_prompt` | GET / POST / PATCH / PUT | 系统提示词读取/写入/更新 |
-| `/system_prompt/template` | GET | 人格模板文件 |
-| `/memory` | GET / PUT | 长期记忆文件 |
-| `/heartbeat` | GET / PUT | HEARTBEAT.md |
-| `/cron`、`/cron/trigger`、`/cron/enable` | GET/POST/PUT/DELETE | 定时任务 CRUD + 触发 |
-| `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST | 技能管理 |
-| `/curator/run`、`/curator/settings` | POST / GET / PUT | Curator 审查与设置 |
-| `/channels`、`/channels/{name}`、`/channels/{name}/config` | GET / PUT | 通道开关与配置 |
-| `/env` | GET / PUT | 后端 `.env` 读取/更新 |
-| `/logs/files`、`/logs` | GET | 日志文件列表与尾部读取 |
-| `/logs/ws` | WS | 实时日志流 |
-| `/images/upload`、`/audio/upload`、`/video/upload` | POST | Base64 媒体上传 → URL |
-| `/media` | GET | 渲染持久化的媒体文件 |
+| 端点                                                                                             | 方法                     | 用途                               |
+| ------------------------------------------------------------------------------------------------ | ------------------------ | ---------------------------------- |
+| `/sessions`                                                                                      | DELETE                   | 清空会话                           |
+| `/n_turns_history_messages`                                                                      | GET                      | 最近 N 轮历史                      |
+| `/get_history_by_turn_page`                                                                      | GET                      | 分页历史（经 Dexie 缓存优先）      |
+| `/sessions/agent/ws`                                                                             | WS                       | 聊天流、停止、HITL 恢复            |
+| `/sessions/ws`                                                                                   | WS                       | 服务端推送通知                     |
+| `/subagents/ws`                                                                                  | WS                       | 子智能体生成/结束推送              |
+| `/subagents/runs`                                                                                | GET / DELETE             | 子智能体运行记录（列表/子树/删除） |
+| `/subagents/steer`                                                                               | POST                     | 操控/恢复子智能体运行              |
+| `/system_prompt`                                                                                 | GET / POST / PATCH / PUT | 系统提示词读取/写入/更新           |
+| `/system_prompt/template`                                                                        | GET                      | 人格模板文件                       |
+| `/memory`                                                                                        | GET / PUT                | 长期记忆文件                       |
+| `/heartbeat`                                                                                     | GET / PUT                | HEARTBEAT.md                       |
+| `/cron`、`/cron/trigger`、`/cron/enable`                                                         | GET/POST/PUT/DELETE      | 定时任务 CRUD + 触发               |
+| `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST                 | 技能管理                           |
+| `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | Curator 审查与设置                 |
+| `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | 通道开关与配置                     |
+| `/env`                                                                                           | GET / PUT                | 后端 `.env` 读取/更新              |
+| `/logs/files`、`/logs`                                                                           | GET                      | 日志文件列表与尾部读取             |
+| `/logs/ws`                                                                                       | WS                       | 实时日志流                         |
+| `/images/upload`、`/audio/upload`、`/video/upload`                                               | POST                     | Base64 媒体上传 → URL              |
+| `/media`                                                                                         | GET                      | 渲染持久化的媒体文件               |
 
 ---
 

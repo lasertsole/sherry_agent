@@ -6,7 +6,7 @@ different parts of the LightRAG system. Centralizing these values ensures
 consistency and makes maintenance easier.
 """
 
-from typing import Literal, TypeAlias
+from typing import Literal
 
 # Default values for server settings
 DEFAULT_WOKERS = 2
@@ -176,7 +176,7 @@ PROCESS_OPTION_IMAGES = "i"  # Enable VLM analysis for drawings/images
 PROCESS_OPTION_TABLES = "t"  # Enable VLM analysis for tables
 PROCESS_OPTION_EQUATIONS = "e"  # Enable VLM analysis for equations
 PROCESS_OPTION_SKIP_KG = "!"  # Skip entity/relation extraction (no KG build)
-ProcessChunkingOption: TypeAlias = Literal["F", "R", "V", "P"]
+type ProcessChunkingOption = Literal["F", "R", "V", "P"]
 PROCESS_OPTION_CHUNK_FIXED: ProcessChunkingOption = (
     "F"  # Fixed-length / separator chunking (default)
 )

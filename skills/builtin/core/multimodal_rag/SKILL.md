@@ -13,7 +13,9 @@ if __name__ == "__main__":
     _classify_folder: str = "{placeholder}"  # <- replace with the knowledge graph category
 
     # Use this when the input is an entire folder
-    _input_folder_path: str = "{placeholder}"  # <- replace with the absolute path of the input folder
+    _input_folder_path: str = (
+        "{placeholder}"  # <- replace with the absolute path of the input folder
+    )
     coro = folder_index(_input_folder_path, _classify_folder)
 
     # Use this when the input is a single file

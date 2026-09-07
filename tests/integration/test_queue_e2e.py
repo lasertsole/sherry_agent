@@ -61,21 +61,12 @@ from pydantic import Field
 
 from agent import core as agent_core
 from agent.middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
-from agent.middlewares.tool_call_normalize import ToolCallNormalize
 from agent.tools.subagent.announce import steering_queue as sq
 from agent.tools.subagent.announce.completion_message import build_completion_message
 from agent.tools.subagent.registry import session_state
 from agent.tools.subagent.registry.pending_injections import (
     PendingInjectionStatus,
     PendingInjectionStore,
-)
-from agent.tools.subagent.types.registry import (
-    CompletionState,
-    ExecutionState,
-    ExecutionStatus,
-    RunOutcome,
-    RunOutcomeStatus,
-    SubagentRunRecord,
 )
 from context_engine.store import core as mes_store_core
 from context_engine.store.db import _migrate as mes_migrate
@@ -228,9 +219,7 @@ def _text_of(msg: Any) -> str:
     content = getattr(msg, "content", msg)
     if isinstance(content, str):
         return content
-    return "".join(
-        block.get("text", "") for block in content if isinstance(block, dict)
-    )
+    return "".join(block.get("text", "") for block in content if isinstance(block, dict))
 
 
 async def _wait_until(predicate, timeout: float = _TIMEOUT, what: str = "condition") -> None:
@@ -326,9 +315,7 @@ def e2e_env(monkeypatch, tmp_path):
     # middleware and the announce path reach it through the module-level
     # singleton holder -- swap the holder entry, never the production DB.
     injection_store = PendingInjectionStore(db_path=tmp_path / "e2e-injections.db")
-    monkeypatch.setitem(
-        sq._QUEUE_HOLDER, "queue", sq.SteeringQueue(store=injection_store)
-    )
+    monkeypatch.setitem(sq._QUEUE_HOLDER, "queue", sq.SteeringQueue(store=injection_store))
 
     holder: dict[str, Any] = {"graph": None}
 
@@ -375,7 +362,7 @@ def e2e_env(monkeypatch, tmp_path):
 
 async def test_ac1_reply_binding_message_sequence(e2e_env):
     sid = "e2e-ac1"
-    socket = e2e_env.bind_ws(sid, _RecordingSocket())
+    e2e_env.bind_ws(sid, _RecordingSocket())
     model = _ScriptedStreamModel(
         texts=["final"],
         holds={0: asyncio.Event()},
@@ -595,9 +582,7 @@ async def test_ac6_cron_row_and_completion_carrier_no_cross_duplication(e2e_env)
         holds={0: asyncio.Event()},
         reached={0: asyncio.Event()},
     )
-    e2e_env.holder["graph"] = _build_graph(
-        model, middleware=[SubagentCompletionDrainMiddleware()]
-    )
+    e2e_env.holder["graph"] = _build_graph(model, middleware=[SubagentCompletionDrainMiddleware()])
 
     first = await iqs.submit_user_input(sid, "busy-turn", "user")
     assert first.status is iqs.SubmitStatus.STARTED
@@ -659,9 +644,7 @@ async def test_ac7a_orphan_claimed_row_keeps_session_busy(e2e_env):
 
     # Crash leftover: a CLAIMED placeholder row with no live turn behind it
     # (exactly what submit_user_input's idle branch writes before dispatch).
-    orphan = await e2e_env.user_queue.insert_claimed(
-        sid, iqs._payload_json("ghost-turn"), "user"
-    )
+    orphan = await e2e_env.user_queue.insert_claimed(sid, iqs._payload_json("ghost-turn"), "user")
 
     # No detect_state signal at all: the CLAIMED row is the ONLY busy fact.
     state = session_state.detect_state(sid)
@@ -693,9 +676,7 @@ async def test_ac7b_expired_orphan_recovered_then_leftovers_drain_fifo(e2e_env):
     model = _ScriptedStreamModel()
     e2e_env.holder["graph"] = _build_graph(model)
 
-    orphan = await e2e_env.user_queue.insert_claimed(
-        sid, iqs._payload_json("ghost-turn"), "user"
-    )
+    orphan = await e2e_env.user_queue.insert_claimed(sid, iqs._payload_json("ghost-turn"), "user")
     leftover_row, leftover_pos = await e2e_env.user_queue.enqueue(
         sid, iqs._payload_json("leftover"), "user"
     )
@@ -730,9 +711,7 @@ async def test_ac7b_expired_orphan_recovered_then_leftovers_drain_fifo(e2e_env):
     assert [_text_of(call[-1]) for call in model.received] == ["fresh", "leftover"]
     rows = {
         row_id: status
-        for row_id, status, _source in _sqlite_user_input_rows(
-            e2e_env.user_queue._db_path
-        )
+        for row_id, status, _source in _sqlite_user_input_rows(e2e_env.user_queue._db_path)
     }
     assert rows[orphan.id] == "VOIDED"
     assert rows[leftover_row.id] == "DELIVERED"

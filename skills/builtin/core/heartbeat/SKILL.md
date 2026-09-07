@@ -11,8 +11,12 @@ HEARTBEAT.md is the task manifest for the heartbeat service. Every tick, the ser
 ```python
 from skills.builtin.core.heartbeat.scripts import add_task_to_heartbeat
 
-task_text: str = "{placeholder}" # <- The task description to add (as a Markdown list item or paragraph)
-index: int | None = int("{placeholder}") # <- Optional 0-based insertion position within Active Tasks content lines (skipping blanks and HTML comments). ``None`` (default) appends at end.
+task_text: str = (
+    "{placeholder}"  # <- The task description to add (as a Markdown list item or paragraph)
+)
+index: int | None = int(
+    "{placeholder}"
+)  # <- Optional 0-based insertion position within Active Tasks content lines (skipping blanks and HTML comments). ``None`` (default) appends at end.
 
 res = add_task_to_heartbeat(task_text, index)
 print(res)
@@ -28,12 +32,14 @@ Example values for `task_text`:
 ### List active tasks
 ```python
 from skills.builtin.core.heartbeat.scripts import list_active_tasks
+
 print(list_active_tasks())
 ```
 
 ### List completed tasks
 ```python
 from skills.builtin.core.heartbeat.scripts import list_completed_tasks
+
 print(list_completed_tasks())
 ```
 
@@ -41,7 +47,10 @@ print(list_completed_tasks())
 Use this when a task is done and won't be executed again — it moves the task from Active Tasks to Completed.
 ```python
 from skills.builtin.core.heartbeat.scripts import move_task_to_completed
-task_text: str = "{placeholder}" # <- The task description to add (as a Markdown list item or paragraph)
+
+task_text: str = (
+    "{placeholder}"  # <- The task description to add (as a Markdown list item or paragraph)
+)
 res = move_task_to_completed(task_text)
 print(res)
 ```
@@ -73,6 +82,7 @@ print(res)
 
 ```python
 from skills.builtin.core.heartbeat.scripts import clear_completed_tasks
+
 # all
 res = clear_completed_tasks()
 print(res)

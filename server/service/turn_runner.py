@@ -180,13 +180,13 @@ async def on_turn_finished(session_id: str, claim_row_id: str | None = None) -> 
     """
     if claim_row_id is not None:
         try:
-            await _iqs().get_default_queue().mark_terminal(
-                claim_row_id, UserInputQueueStatus.DELIVERED
+            await (
+                _iqs()
+                .get_default_queue()
+                .mark_terminal(claim_row_id, UserInputQueueStatus.DELIVERED)
             )
         except Exception as e:
-            logger.warning(
-                f"TurnRunner: failed to mark row {claim_row_id} DELIVERED: {e}"
-            )
+            logger.warning(f"TurnRunner: failed to mark row {claim_row_id} DELIVERED: {e}")
     else:
         try:
             rows = await _iqs().get_default_queue().list_active(session_id)
@@ -230,13 +230,10 @@ async def _execute_claimed_row(session_id: str, row: Any) -> None:
     executor = get_registry().resolve(route)
     if executor is None:
         logger.warning(
-            f"TurnRunner: no executor registered for route '{route}'; "
-            f"marking row {row.id} FAILED"
+            f"TurnRunner: no executor registered for route '{route}'; marking row {row.id} FAILED"
         )
         await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
-        await _send_turn_error(
-            session_id, route, f"No executor registered for route '{route}'"
-        )
+        await _send_turn_error(session_id, route, f"No executor registered for route '{route}'")
         return
 
     message = _parse_payload_text(row.payload)
@@ -244,8 +241,7 @@ async def _execute_claimed_row(session_id: str, row: Any) -> None:
         await executor.execute(session_id, message, row.source, row.reply_target)
     except Exception as e:
         logger.warning(
-            f"TurnRunner: executor '{route}' failed for session {session_id} "
-            f"row {row.id}: {e}"
+            f"TurnRunner: executor '{route}' failed for session {session_id} row {row.id}: {e}"
         )
         await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
         await _send_turn_error(session_id, route, str(e))
@@ -291,7 +287,8 @@ class WsTurnExecutor:
                 try:
                     await existing
                 except asyncio.CancelledError:
-                    if asyncio.current_task().cancelling():
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling():
                         raise
                     # The adopted turn was stopped, not us — keep going.
 
@@ -300,7 +297,8 @@ class WsTurnExecutor:
             try:
                 await child
             except asyncio.CancelledError:
-                if asyncio.current_task().cancelling():
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
                     raise
                 # Child was cancelled (stop): "stopped" already sent; row fate
                 # is decided by the T6 marker / drain loop, not here.
@@ -345,7 +343,9 @@ class WsTurnExecutor:
         lives in :meth:`execute`'s finally, so ``on_finish`` is a no-op here.
         """
         active = _get_active_tasks()
-        active[session_id] = asyncio.current_task()
+        current = asyncio.current_task()
+        if current is not None:
+            active[session_id] = current
         await _WsTurnStreamDriver(session_id, websocket).drive(
             async_generate(session_id, MultiModalMessage(text=message))
         )
@@ -377,6 +377,4 @@ class _WsTurnStreamDriver(StreamDriver):
         logger.info(f"TurnRunner: generation cancelled: session_id={self.session_id}")
 
     def log_error(self, exc: Exception, elapsed: float) -> None:
-        logger.warning(
-            f"TurnRunner: generation failed: session_id={self.session_id}, error={exc}"
-        )
+        logger.warning(f"TurnRunner: generation failed: session_id={self.session_id}, error={exc}")

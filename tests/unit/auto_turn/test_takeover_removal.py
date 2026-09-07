@@ -49,7 +49,12 @@ def _state_mod():
 def _injection(run_id="run-t8"):
     return HumanMessage(
         content="[subagent:run-t8] child finished: done",
-        metadata={"internal": True, "provenance": "subagent_completion", "run_id": run_id, "status": "completed"},
+        metadata={
+            "internal": True,
+            "provenance": "subagent_completion",
+            "run_id": run_id,
+            "status": "completed",
+        },
     )
 
 
@@ -176,7 +181,9 @@ async def test_takeover_user_input_mid_turn_does_not_cancel(monkeypatch):
         asyncio.Event(),
         asyncio.Event(),
     )
-    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, block, finished, cancelled))
+    monkeypatch.setattr(
+        at, "async_generate", _fake_generate(calls, started, block, finished, cancelled)
+    )
 
     result = await at.maybe_trigger_auto_turn("sess-t8", _injection())
     assert result.outcome == at.AutoTurnOutcome.TRIGGERED
@@ -211,7 +218,9 @@ async def test_send_text_closed_socket_tolerated_and_delivered(monkeypatch):
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
     monkeypatch.setattr(at, "enqueue_steering", _make_spy())
     calls, started, finished, cancelled = [], asyncio.Event(), asyncio.Event(), asyncio.Event()
-    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished, cancelled))
+    monkeypatch.setattr(
+        at, "async_generate", _fake_generate(calls, started, None, finished, cancelled)
+    )
 
     result = await at.maybe_trigger_auto_turn("sess-t8s", _injection())
     assert result.outcome == at.AutoTurnOutcome.TRIGGERED
@@ -249,7 +258,9 @@ async def test_inflight_observable_by_detect_state_during_turn(monkeypatch):
         asyncio.Event(),
         asyncio.Event(),
     )
-    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, block, finished, cancelled))
+    monkeypatch.setattr(
+        at, "async_generate", _fake_generate(calls, started, block, finished, cancelled)
+    )
 
     result = await at.maybe_trigger_auto_turn("sess-t8i", _injection())
     assert result.outcome == at.AutoTurnOutcome.TRIGGERED

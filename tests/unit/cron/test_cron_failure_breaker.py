@@ -104,7 +104,14 @@ def env(tmp_path, monkeypatch):
     return SimpleNamespace(svc=svc, bus=bus, agent=fake_agent, tmp_path=tmp_path)
 
 
-def _add_job(env, *, channel: str | None = "qq", to: str | None = "u1", kind: str = "every", enabled: bool = True) -> CronJob:
+def _add_job(
+    env,
+    *,
+    channel: str | None = "qq",
+    to: str | None = "u1",
+    kind: str = "every",
+    enabled: bool = True,
+) -> CronJob:
     """Insert one recurring job into the tmp store and persist it."""
     if kind == "at":
         schedule = CronSchedule(kind="at", at_ms=4102444800000)  # far future
@@ -340,6 +347,13 @@ def test_failure_state_never_persisted_to_store(env):
     _fail(env, job, times=6)
     data = json.loads(env.svc.store_path.read_text(encoding="utf-8"))
     assert set(data["jobs"][0].keys()) == {
-        "id", "name", "enabled", "schedule", "payload", "state",
-        "createdAtMs", "updatedAtMs", "deleteAfterRun",
+        "id",
+        "name",
+        "enabled",
+        "schedule",
+        "payload",
+        "state",
+        "createdAtMs",
+        "updatedAtMs",
+        "deleteAfterRun",
     }

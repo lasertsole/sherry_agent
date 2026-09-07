@@ -64,8 +64,8 @@ class SandboxPolicy(Enum):
     """Three-state sandbox configuration (``SANDBOX_POLICY`` env var)."""
 
     REQUIRED = "required"  # backend unavailable => reject the command
-    AUTO = "auto"          # backend unavailable => degrade to unsandboxed (default)
-    OFF = "off"            # sandboxing disabled entirely
+    AUTO = "auto"  # backend unavailable => degrade to unsandboxed (default)
+    OFF = "off"  # sandboxing disabled entirely
 
 
 def parse_policy(raw: str | None) -> SandboxPolicy:

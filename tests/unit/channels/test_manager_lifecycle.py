@@ -151,8 +151,7 @@ class TestLazySingleton:
     def test_import_channels_does_not_load_manager(self):
         """``import channels`` must not import channels.manager or build the singleton."""
         code = (
-            _STUB_REGISTRY
-            + "import channels\n"
+            _STUB_REGISTRY + "import channels\n"
             "assert 'channels.manager' not in sys.modules, (\n"
             "    'importing channels eagerly loaded channels.manager'\n"
             ")\n"
@@ -169,8 +168,7 @@ class TestLazySingleton:
     def test_import_manager_does_not_instantiate_singleton(self):
         """``import channels.manager`` must leave the singleton unset."""
         code = (
-            _STUB_REGISTRY
-            + "import channels.manager as m\n"
+            _STUB_REGISTRY + "import channels.manager as m\n"
             "assert m._channel_manager is None, (\n"
             "    f'import instantiated the singleton: {m._channel_manager!r}'\n"
             ")\n"

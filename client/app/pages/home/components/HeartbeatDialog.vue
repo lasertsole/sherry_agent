@@ -146,6 +146,7 @@ import { useI18n } from 'vue-i18n';
 import { readHeartbeat, writeHeartbeat } from '@/composables/bridge';
 import { on, off } from '@/composables/mitt';
 import type { Handler } from 'mitt';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -299,7 +300,7 @@ const loadContent = async () => {
       completed: [...parsed.completed]
     };
   } catch (e) {
-    console.error('[HeartbeatDialog] Failed to load content:', e);
+    logUtil.e('[HeartbeatDialog] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -356,7 +357,7 @@ const handleSave = async () => {
     emits('saved');
     visible.value = false;
   } catch (e) {
-    console.error('[HeartbeatDialog] Failed to save:', e);
+    logUtil.e('[HeartbeatDialog] Failed to save:', e);
   } finally {
     saving.value = false;
   }

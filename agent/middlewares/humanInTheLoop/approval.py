@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from loguru import logger
 from runtime.state_register import state_register_mem

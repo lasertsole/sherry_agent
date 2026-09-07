@@ -146,6 +146,7 @@ import type { G2Spec } from '@antv/g2';
 import GChart from './GChart.vue';
 import { fetchApi } from '~/composables/requestApi';
 import { vDebounce } from '~/directives/debounce';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -401,7 +402,7 @@ const loadStats = async () => {
     }
     days.value = mapped;
   } catch (e) {
-    console.error('[Stats] Failed to load token usage:', e);
+    logUtil.e('[Stats] Failed to load token usage:', e);
     error.value = true;
     days.value = [];
   } finally {

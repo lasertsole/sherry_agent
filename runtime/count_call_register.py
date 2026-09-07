@@ -2,7 +2,8 @@ import inspect
 import threading
 from loguru import logger
 from .core import Register
-from typing import Callable, Any
+from typing import Any
+from collections.abc import Callable
 from pydantic import BaseModel, Field
 from ._callback_executor import CallbackExecutor as _CallbackExecutor
 

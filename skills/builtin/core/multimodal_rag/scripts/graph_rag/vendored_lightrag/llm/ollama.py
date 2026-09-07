@@ -25,7 +25,7 @@ from graph_rag.vendored_lightrag.exceptions import (
 from graph_rag.vendored_lightrag._version import __api_version__
 
 import numpy as np
-from typing import Any, Optional, Union
+from typing import Any
 from graph_rag.vendored_lightrag.utils import (
     wrap_embedding_func_with_attrs,
     logger,
@@ -36,7 +36,7 @@ _OLLAMA_CLOUD_HOST = "https://ollama.com"
 _CLOUD_MODEL_SUFFIX_PATTERN = re.compile(r"(?:-cloud|:cloud)$")
 
 
-def _coerce_host_for_cloud_model(host: Optional[str], model: object) -> Optional[str]:
+def _coerce_host_for_cloud_model(host: str | None, model: object) -> str | None:
     if host:
         return host
     try:
@@ -91,7 +91,7 @@ async def _ollama_model_if_cache(
     enable_cot: bool = False,
     image_inputs: list[Any] | None = None,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     """Call Ollama chat API with OpenAI-style structured-output compatibility.
 
     Structured output note:
@@ -218,7 +218,7 @@ async def ollama_model_complete(
     keyword_extraction=False,
     entity_extraction=False,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     # Forward legacy extraction flags as kwargs so _ollama_model_if_cache can
     # emit a single DeprecationWarning with the correct stack frame.
     if keyword_extraction:

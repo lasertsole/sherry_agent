@@ -63,7 +63,7 @@ class NativeParserBase(BaseParser):
         document_name: str,
         asset_dir_name: str,
         metadata: dict[str, Any],
-    ) -> "IRDoc": ...
+    ) -> IRDoc: ...
 
     def surface_warnings(self, warnings: dict[str, Any], source: Path) -> dict[str, Any] | None:
         """Map parser warnings to the ``parse_warnings`` result field (opt)."""

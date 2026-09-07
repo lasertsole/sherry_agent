@@ -6,10 +6,10 @@ Roles are determined by nesting depth:
 - depth >= max: LEAF (cannot spawn, controls NONE)
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class SubagentSessionRole(str, Enum):
+class SubagentSessionRole(StrEnum):
     """Sub-agent role. MAIN = top-level agent; ORCHESTRATOR = mid-layer that can spawn; LEAF = terminal node that cannot spawn."""
 
     MAIN = "main"
@@ -17,7 +17,7 @@ class SubagentSessionRole(str, Enum):
     LEAF = "leaf"
 
 
-class ControlScope(str, Enum):
+class ControlScope(StrEnum):
     """Control scope. CHILDREN = can control direct child sub-agents; NONE = no control authority."""
 
     CHILDREN = "children"

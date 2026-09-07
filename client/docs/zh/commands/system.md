@@ -20,12 +20,12 @@ const info = await invoke<AppInfo>('system_info');
 
 `AppInfo`
 
-| 字段 | 类型 | 说明 |
-|-------|------|-------------|
-| `name` | `string` | 应用名称（来自 `Cargo.toml`） |
-| `version` | `string` | 语义化版本号（如 `"0.1.0"`） |
-| `tauri_version` | `string` | Tauri 运行时版本 |
-| `debug` | `boolean` | debug 构建时为 `true` |
+| 字段            | 类型      | 说明                          |
+| --------------- | --------- | ----------------------------- |
+| `name`          | `string`  | 应用名称（来自 `Cargo.toml`） |
+| `version`       | `string`  | 语义化版本号（如 `"0.1.0"`）  |
+| `tauri_version` | `string`  | Tauri 运行时版本              |
+| `debug`         | `boolean` | debug 构建时为 `true`         |
 
 ### 示例
 
@@ -60,10 +60,10 @@ const health = await invoke<HealthStatus>('system_health');
 
 `HealthStatus`
 
-| 字段 | 类型 | 说明 |
-|-------|------|-------------|
+| 字段      | 类型      | 说明                      |
+| --------- | --------- | ------------------------- |
 | `healthy` | `boolean` | 所有子系统正常时为 `true` |
-| `message` | `string` | 人类可读的状态描述 |
+| `message` | `string`  | 人类可读的状态描述        |
 
 ### 示例
 

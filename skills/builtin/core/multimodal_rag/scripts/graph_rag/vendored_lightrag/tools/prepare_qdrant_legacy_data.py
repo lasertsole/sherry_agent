@@ -43,7 +43,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pipmaster as pm
 from dotenv import load_dotenv
@@ -100,7 +100,7 @@ class CopyStats:
     total_records: int = 0
     copied_records: int = 0
     failed_records: int = 0
-    errors: List[Dict[str, Any]] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
     elapsed_time: float = 0.0
 
     def add_error(self, batch_idx: int, error: Exception, batch_size: int):
@@ -140,7 +140,7 @@ class QdrantLegacyDataPreparationTool:
         self.batch_size = batch_size
         self.dry_run = dry_run
         self.clear_target = clear_target
-        self._client: Optional[QdrantClient] = None
+        self._client: QdrantClient | None = None
 
     def _get_client(self) -> QdrantClient:
         """Get or create QdrantClient instance"""
@@ -184,7 +184,7 @@ class QdrantLegacyDataPreparationTool:
             print(f"{BOLD_RED}✗{RESET} Qdrant connection failed: {e}")
             return False
 
-    def get_collection_info(self, collection_name: str) -> Optional[Dict[str, Any]]:
+    def get_collection_info(self, collection_name: str) -> dict[str, Any] | None:
         """
         Get collection information.
 
@@ -474,7 +474,7 @@ class QdrantLegacyDataPreparationTool:
 
         return stats
 
-    def process_collection_type(self, collection_type: str) -> Optional[CopyStats]:
+    def process_collection_type(self, collection_type: str) -> CopyStats | None:
         """
         Process a single collection type.
 
@@ -546,7 +546,7 @@ class QdrantLegacyDataPreparationTool:
 
         return stats
 
-    def print_summary(self, all_stats: List[CopyStats]):
+    def print_summary(self, all_stats: list[CopyStats]):
         """Print summary of all operations"""
         print("\n" + "=" * 60)
         print("Summary")
@@ -588,7 +588,7 @@ class QdrantLegacyDataPreparationTool:
 
         print("=" * 60)
 
-    async def run(self, collection_types: Optional[List[str]] = None):
+    async def run(self, collection_types: list[str] | None = None):
         """
         Run the data preparation tool.
 

@@ -23,7 +23,7 @@ console.log(`运行 ${info.name} v${info.version}`);
 
 // 带参数的命令
 const history = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'default', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 }
 });
 ```
 
@@ -31,17 +31,17 @@ const history = await invoke<HistoryMessage[]>('session_history', {
 
 所有命令名使用 `snake_case`，与 Rust 函数名一致：
 
-| 命令名 | 模块 | 说明 |
-|---|---|---|
-| `agent_chat` | agent | 发送消息，获取流式 Agent 回复 |
-| `agent_stop` | agent | 停止正在进行的 Agent 生成 |
-| `session_clear` | session | 清除会话状态 |
-| `session_history` | session | 获取对话历史 |
-| `system_prompt_read` | system_prompt | 读取所有提示词文件 |
-| `system_prompt_write` | system_prompt | 覆写提示词文件 |
-| `system_prompt_update` | system_prompt | 增量更新提示词文件 |
-| `system_info` | system | 获取应用元数据 |
-| `system_health` | system | 健康检查 |
+| 命令名                 | 模块          | 说明                          |
+| ---------------------- | ------------- | ----------------------------- |
+| `agent_chat`           | agent         | 发送消息，获取流式 Agent 回复 |
+| `agent_stop`           | agent         | 停止正在进行的 Agent 生成     |
+| `session_clear`        | session       | 清除会话状态                  |
+| `session_history`      | session       | 获取对话历史                  |
+| `system_prompt_read`   | system_prompt | 读取所有提示词文件            |
+| `system_prompt_write`  | system_prompt | 覆写提示词文件                |
+| `system_prompt_update` | system_prompt | 增量更新提示词文件            |
+| `system_info`          | system        | 获取应用元数据                |
+| `system_health`        | system        | 健康检查                      |
 
 ## 参数传递
 
@@ -51,7 +51,7 @@ Tauri 命令以对象形式接收参数。Rust 函数中的参数名即为 invok
 // Rust: fn session_clear(request: ClearSessionRequest)
 // TypeScript:
 await invoke('session_clear', {
-  request: { session_id: 'default' }  // <-- "request" 与 Rust 参数名对应
+  request: { session_id: 'default' } // <-- "request" 与 Rust 参数名对应
 });
 ```
 
@@ -79,10 +79,7 @@ try {
 import { sendChatMessage, clearSession, checkHealth } from '~/composables/bridge';
 
 // Tauri 桌面模式和浏览器开发模式均可使用
-await sendChatMessage(
-  { session_id: 'default', text: '你好！', image_base64_list: [] },
-  (chunk) => appendToChat(chunk),
-);
+await sendChatMessage({ session_id: 'default', text: '你好！', image_base64_list: [] }, chunk => appendToChat(chunk));
 ```
 
 **Tauri 模式**下，`bridge.ts` 调用 `invoke()` 并通过 Tauri Events 接收流式数据。

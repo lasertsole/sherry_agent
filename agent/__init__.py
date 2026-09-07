@@ -5,6 +5,8 @@ Using ``__getattr__`` avoids triggering heavy dependency chains
 collection or when only a specific submodule is needed.
 """
 
+from typing import Any
+
 __all__ = [
     "built_agent",
     "get_agent_tools",
@@ -13,7 +15,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in ("built_agent", "get_agent_tools"):
         from . import core
 

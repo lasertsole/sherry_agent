@@ -1,10 +1,6 @@
-import sys
 import warnings
 
-if sys.version_info < (3, 9):
-    from typing import AsyncIterator
-else:
-    from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator
 import pipmaster as pm  # Pipmaster for dynamic library install
 
 if not pm.is_installed("aiohttp"):
@@ -24,7 +20,7 @@ from graph_rag.vendored_lightrag.exceptions import (
     APITimeoutError,
 )
 
-from typing import Any, List, Union
+from typing import Any
 import numpy as np
 
 from graph_rag.vendored_lightrag.utils import (
@@ -46,7 +42,7 @@ async def lollms_model_if_cache(
     base_url="http://localhost:9600",
     image_inputs: list[Any] | None = None,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     """Client implementation for lollms generation.
 
     Structured output note:
@@ -148,7 +144,7 @@ async def lollms_model_complete(
     keyword_extraction=False,
     entity_extraction=False,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     """Complete function for lollms model generation."""
 
     # Forward legacy extraction flags as kwargs so lollms_model_if_cache can
@@ -173,7 +169,7 @@ async def lollms_model_complete(
     embedding_dim=1024, max_token_size=8192, model_name="lollms_embedding_model"
 )
 async def lollms_embed(
-    texts: List[str], embed_model=None, base_url="http://localhost:9600", **kwargs
+    texts: list[str], embed_model=None, base_url="http://localhost:9600", **kwargs
 ) -> np.ndarray:
     """
     Generate embeddings for a list of texts using lollms server.

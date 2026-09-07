@@ -80,8 +80,18 @@ def test_count_all_active_runs_global():
 
     clear_registry()
     try:
-        r1 = register_run(child_session_key="agent:main:subagent:g1", requester_session_key="agent:main:session:s1", task="t1", depth=1)
-        r2 = register_run(child_session_key="agent:main:subagent:g2", requester_session_key="agent:main:session:s2", task="t2", depth=1)
+        register_run(
+            child_session_key="agent:main:subagent:g1",
+            requester_session_key="agent:main:session:s1",
+            task="t1",
+            depth=1,
+        )
+        r2 = register_run(
+            child_session_key="agent:main:subagent:g2",
+            requester_session_key="agent:main:session:s2",
+            task="t2",
+            depth=1,
+        )
         r2.execution.status = ExecutionStatus.INTERRUPTED
         assert count_all_active_runs() == 1
         assert count_all_active_runs_readonly() == 1

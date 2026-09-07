@@ -120,7 +120,7 @@ class _BlockBuilder:
     # used to look up the matching entry in ``block_table_headers``.
     table_position: int = 0
 
-    def replace_table(self, match: "re.Match[str]") -> str:
+    def replace_table(self, match: re.Match[str]) -> str:
         table_body_raw = match.group(1)
         try:
             rows = json.loads(table_body_raw)
@@ -167,7 +167,7 @@ class _BlockBuilder:
         )
         return f"{{{{TBL:{placeholder}}}}}"
 
-    def replace_equation(self, match: "re.Match[str]") -> str:
+    def replace_equation(self, match: re.Match[str]) -> str:
         latex = match.group(1)
         source = match.string
         start, end = match.start(), match.end()
@@ -187,7 +187,7 @@ class _BlockBuilder:
         token = "EQ" if is_block else "EQI"
         return f"{{{{{token}:{placeholder}}}}}"
 
-    def replace_drawing(self, match: "re.Match[str]") -> str:
+    def replace_drawing(self, match: re.Match[str]) -> str:
         attrs = parse_drawing_attributes(match.group(0))
         path_val = attrs.get("path", "") or ""
         src_val = attrs.get("src", "") or ""

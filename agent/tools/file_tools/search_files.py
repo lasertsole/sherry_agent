@@ -12,7 +12,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Type, override
+from typing import override
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -173,7 +173,7 @@ class SearchFilesTool(BaseTool):
     """
 
     name: str = "search_files"
-    args_schema: Type[BaseModel] = SearchFilesInput
+    args_schema: type[BaseModel] = SearchFilesInput
     description: str = (
         "Search for a regex pattern inside files (target='content') or "
         "find files by name pattern (target='files'). "

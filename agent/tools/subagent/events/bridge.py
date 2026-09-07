@@ -31,7 +31,7 @@ from .core import InboundMessage as FSInboundMessage, get_event_bus
 
 # ── Bridge state ────────────────────────────────────────────────────────
 
-_bridge_task: "asyncio.Task[None] | None" = None
+_bridge_task: asyncio.Task[None] | None = None
 _running = False
 
 

@@ -120,7 +120,9 @@ class TestScanCacheKey:
 
 class TestScanCacheHit:
     def test_miss_then_store_then_warm_hit(self, tmp_path):
-        finding = ScanFinding(title="Obfuscated code", category="suspicious", severity=Severity.HIGH)
+        finding = ScanFinding(
+            title="Obfuscated code", category="suspicious", severity=Severity.HIGH
+        )
         with patch(
             f"{MODULE}._run_cli",
             return_value=_scanned("CAUTION", 40, [finding]),
@@ -153,8 +155,9 @@ class TestScanCacheHit:
 
     def test_scanner_version_change_forces_rescan(self, tmp_path):
         skill_dir = _skill_dir(tmp_path)
-        with patch(f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)) as run_cli, patch(
-            f"{MODULE}._scanner_version_fingerprint", return_value="v1"
+        with (
+            patch(f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)) as run_cli,
+            patch(f"{MODULE}._scanner_version_fingerprint", return_value="v1"),
         ):
             scan_skill(skill_dir)
             with patch(f"{MODULE}._scanner_version_fingerprint", return_value="v2"):
@@ -163,8 +166,9 @@ class TestScanCacheHit:
 
     def test_llm_mode_change_forces_miss(self, tmp_path):
         skill_dir = _skill_dir(tmp_path)
-        with patch(f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)) as run_cli, patch(
-            f"{MODULE}._llm_env", return_value={}
+        with (
+            patch(f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)) as run_cli,
+            patch(f"{MODULE}._llm_env", return_value={}),
         ):
             scan_skill(skill_dir)
             with patch(
@@ -177,9 +181,7 @@ class TestScanCacheHit:
 
 class TestScanCachePolicy:
     def test_do_not_install_verdict_is_cached_and_served(self, tmp_path):
-        with patch(
-            f"{MODULE}._run_cli", return_value=_scanned("DO_NOT_INSTALL", 90)
-        ) as run_cli:
+        with patch(f"{MODULE}._run_cli", return_value=_scanned("DO_NOT_INSTALL", 90)) as run_cli:
             scan_skill(_skill_dir(tmp_path))
             second = scan_skill(_skill_dir(tmp_path))
         assert run_cli.call_count == 1  # DO_NOT_INSTALL is SCANNED, so cached
@@ -200,9 +202,7 @@ class TestScanCachePolicy:
     def test_corrupt_cache_file_fails_open(self, tmp_path):
         ss._CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         ss._CACHE_PATH.write_text("not json{", encoding="utf-8")
-        with patch(
-            f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)
-        ) as run_cli:
+        with patch(f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)) as run_cli:
             result = scan_skill(_skill_dir(tmp_path))
         assert run_cli.call_count == 1
         assert result.risk_recommendation == "SAFE"
@@ -211,16 +211,15 @@ class TestScanCachePolicy:
         assert raw["version"] == ss._CACHE_VERSION
 
     def test_cache_write_failure_fails_open(self, tmp_path):
-        with patch(
-            f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)
-        ), patch(f"{MODULE}.os.replace", side_effect=OSError("disk full")):
+        with (
+            patch(f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)),
+            patch(f"{MODULE}.os.replace", side_effect=OSError("disk full")),
+        ):
             result = scan_skill(_skill_dir(tmp_path))  # must not raise
         assert result.risk_recommendation == "SAFE"
 
     def test_reset_scan_cache_removes_file(self, tmp_path):
-        with patch(
-            f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)
-        ) as run_cli:
+        with patch(f"{MODULE}._run_cli", return_value=_scanned("SAFE", 5)) as run_cli:
             scan_skill(_skill_dir(tmp_path))
             assert ss._CACHE_PATH.exists()
             reset_scan_cache()

@@ -74,7 +74,13 @@ def fts5_db():
             (1, "human", json.dumps("how do I use docker compose?", ensure_ascii=False)),
             (1, "ai", json.dumps("Docker compose runs multi-container apps.", ensure_ascii=False)),
             (2, "human", json.dumps("what about kubernetes?", ensure_ascii=False)),
-            (2, "ai", json.dumps("Kubernetes orchestrates containers at cluster scale.", ensure_ascii=False)),
+            (
+                2,
+                "ai",
+                json.dumps(
+                    "Kubernetes orchestrates containers at cluster scale.", ensure_ascii=False
+                ),
+            ),
         ]
         for turn_num, role, content in rows:
             db.execute(

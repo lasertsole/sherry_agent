@@ -17,6 +17,7 @@
 - IterationBudget 硬上限 → 本中间件是更细粒度的模型级检测
 - 两者互补，不冲突
 """
+
 from __future__ import annotations
 import logging
 import time
@@ -83,9 +84,7 @@ class ModelCircuitBreaker(AgentMiddleware):
 
     def _before_agent_impl(self, state: dict) -> None:
         session_id = self._get_session_id(state)
-        state_register_mem.set_state(
-            session_id, _MODEL_CB_STATE_KEY, _ModelCircuitBreakerState()
-        )
+        state_register_mem.set_state(session_id, _MODEL_CB_STATE_KEY, _ModelCircuitBreakerState())
         logger.debug("ModelCircuitBreaker: 状态已重置 (session=%s)", session_id)
 
     def before_agent(self, state, runtime) -> dict | None:
@@ -107,7 +106,10 @@ class ModelCircuitBreaker(AgentMiddleware):
         self._save_state(session_id, st)
 
     def record_failure(
-        self, session_id: str, provider: str = "", reason: str = "",
+        self,
+        session_id: str,
+        provider: str = "",
+        reason: str = "",
     ) -> bool:
         """记录模型调用失败，递增失败计数。返回 True 表示已跳闸。"""
         st = self._get_state(session_id)
@@ -128,15 +130,18 @@ class ModelCircuitBreaker(AgentMiddleware):
                 st.blocked_providers.add(provider)
             logger.warning(
                 "ModelCircuitBreaker: 断路器跳闸 (failures=%d, reason=%s)",
-                st.consecutive_failures, reason,
+                st.consecutive_failures,
+                reason,
             )
             self._save_state(session_id, st)
             return True
 
         logger.warning(
             "ModelCircuitBreaker: 连续失败 %d/%d (provider=%s, reason=%s)",
-            st.consecutive_failures, self.config.max_consecutive_failures,
-            provider, reason,
+            st.consecutive_failures,
+            self.config.max_consecutive_failures,
+            provider,
+            reason,
         )
         self._save_state(session_id, st)
         return False
@@ -158,19 +163,21 @@ class ModelCircuitBreaker(AgentMiddleware):
 # 修改 agent/core.py 第 116-137 行
 # 在 IterationBudget 之后、ToolGuardrails 之前插入
 
-middleware=[
-    ContextEngineHook(),
-    MultimodalProcessor(),
-    IterationBudget(90),
-    ModelCircuitBreaker(),                    # 【新增】模型断路器
-    ToolGuardrails(),
-    ToolCallNormalize(),
-    SubagentCompletionDrainMiddleware(),
-    OutputRepetitionGuard(),
-    HeartbeatStaleness(),
-    HumanInTheLoop(HITLConfig()),
-    Summarization(...),
-],
+middleware = (
+    [
+        ContextEngineHook(),
+        MultimodalProcessor(),
+        IterationBudget(90),
+        ModelCircuitBreaker(),  # 【新增】模型断路器
+        ToolGuardrails(),
+        ToolCallNormalize(),
+        SubagentCompletionDrainMiddleware(),
+        OutputRepetitionGuard(),
+        HeartbeatStaleness(),
+        HumanInTheLoop(HITLConfig()),
+        Summarization(...),
+    ],
+)
 ```
 
 ### 4.3 与 FallbackChatModel 联动
@@ -189,9 +196,11 @@ class FallbackChatModel(BaseChatModel):
         # 前置检查：断路器是否已跳闸
         if self.circuit_breaker and session_id:
             if self.circuit_breaker.is_blocked(session_id, provider):
-                return ChatResult(generations=[ChatGeneration(
-                    message=AIMessage(content="模型断路器已跳闸，请稍后重试")
-                )])
+                return ChatResult(
+                    generations=[
+                        ChatGeneration(message=AIMessage(content="模型断路器已跳闸，请稍后重试"))
+                    ]
+                )
 
         try:
             result = self._try_fallback_chain(messages, stop, run_manager, **kwargs)
@@ -201,7 +210,8 @@ class FallbackChatModel(BaseChatModel):
         except FailoverError as e:
             if self.circuit_breaker and session_id:
                 self.circuit_breaker.record_failure(
-                    session_id, provider=provider,
+                    session_id,
+                    provider=provider,
                     reason=str(e.primary_reason or "all_candidates_exhausted"),
                 )
             raise

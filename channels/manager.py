@@ -7,7 +7,8 @@ from bus import MessageBus
 from .base import BaseChannel
 from config import PLUGINS_PATH
 from asyncio import AbstractEventLoop
-from typing import Any, Callable, Awaitable
+from typing import Any
+from collections.abc import Callable, Awaitable
 from type.bus import InboundMessage, OutboundMessage
 
 
@@ -36,9 +37,7 @@ class ChannelManager:
         channel. ``direction`` is ``"inbound"`` or ``"outbound"``.
         """
         consume = (
-            self._bus.consume_inbound
-            if direction == "inbound"
-            else self._bus.consume_outbound
+            self._bus.consume_inbound if direction == "inbound" else self._bus.consume_outbound
         )
         logger.info(f"{direction.capitalize()} message consumer loop started")
         while True:
@@ -53,9 +52,7 @@ class ChannelManager:
                     f"content_length={len(getattr(msg, 'content', ''))}"
                 )
 
-            consumer = (
-                self._inbound_consumer if direction == "inbound" else self._outbound_consumer
-            )
+            consumer = self._inbound_consumer if direction == "inbound" else self._outbound_consumer
             if consumer is not None:
                 for channel_name, c in self._config.items():
                     channel = self._channels.get(channel_name)
@@ -226,7 +223,7 @@ class ChannelManager:
                 else:
                     logger.warning(f"Unknown channel: {msg.channel}")
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break

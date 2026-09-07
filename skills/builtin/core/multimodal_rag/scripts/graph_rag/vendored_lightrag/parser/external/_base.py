@@ -48,11 +48,11 @@ class ExternalParserBase(BaseParser):
         ...
 
     @abstractmethod
-    def build_ir(self, raw_dir: Path, document_name: str) -> "IRDoc":
+    def build_ir(self, raw_dir: Path, document_name: str) -> IRDoc:
         """Convert the raw bundle to an :class:`IRDoc`."""
         ...
 
-    def validate_ir(self, ir: "IRDoc", *, file_path: str, raw_dir: Path) -> None:
+    def validate_ir(self, ir: IRDoc, *, file_path: str, raw_dir: Path) -> None:
         """Optional post-build validation hook (default no-op)."""
 
     # --- template ------------------------------------------------------------

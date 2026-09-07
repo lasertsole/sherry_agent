@@ -19,7 +19,7 @@ def export(model, quantize: bool = False, opset_version: int = 14, type="onnx", 
                 export_dir=export_dir,
                 **kwargs,
             )
-        print("output dir: {}".format(export_dir))
+        print(f"output dir: {export_dir}")
 
     return export_dir
 

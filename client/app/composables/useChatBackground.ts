@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue';
 import { readBackgroundConfig, saveBackground } from '@/composables/db';
+import { logUtil } from '~/utils/log';
 
 /**
  * Shared singleton for the chat-area background image (module-level reactive state).
@@ -58,7 +59,7 @@ const loadBackground = async () => {
     backgroundUrl.value = cfg?.backgroundUrl ?? '';
     backgroundOpacity.value = cfg?.backgroundOpacity ?? 0;
   } catch (e) {
-    console.error('[useChatBackground] Failed to load background:', e);
+    logUtil.e('[useChatBackground] Failed to load background:', e);
   } finally {
     backgroundLoaded.value = true;
   }
@@ -75,7 +76,7 @@ const setBackground = async (url: string, opacity: number = backgroundOpacity.va
   try {
     await saveBackground(url, opacity);
   } catch (e) {
-    console.error('[useChatBackground] Failed to save background:', e);
+    logUtil.e('[useChatBackground] Failed to save background:', e);
   }
 };
 
@@ -85,7 +86,7 @@ const setBackgroundOpacity = async (opacity: number) => {
   try {
     await saveBackground(backgroundUrl.value, opacity);
   } catch (e) {
-    console.error('[useChatBackground] Failed to save background opacity:', e);
+    logUtil.e('[useChatBackground] Failed to save background opacity:', e);
   }
 };
 

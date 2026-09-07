@@ -152,7 +152,7 @@ def _row_to_flow(row: tuple) -> dict:
 
 
 @asynccontextmanager
-async def _connect() -> AsyncGenerator[aiosqlite.Connection, None]:
+async def _connect() -> AsyncGenerator[aiosqlite.Connection]:
     """Open a short-lived connection; busy_timeout is always the FIRST statement."""
     db = await aiosqlite.connect(_DB_PATH)
     try:
@@ -288,9 +288,7 @@ async def get_flow(flow_id: str) -> dict | None:
     """Read one flow with parsed JSON columns; None when absent."""
     await ensure_db()
     async with _connect() as db:
-        async with db.execute(
-            _SELECT_COLUMNS_SQL + " WHERE flow_id = ?", (flow_id,)
-        ) as cursor:
+        async with db.execute(_SELECT_COLUMNS_SQL + " WHERE flow_id = ?", (flow_id,)) as cursor:
             row = await cursor.fetchone()
     if row is None:
         return None
@@ -377,9 +375,7 @@ def get_flow_sync(flow_id: str) -> dict | None:
         _ensure_tables_sync()
         conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
         try:
-            row = conn.execute(
-                _SELECT_COLUMNS_SQL + " WHERE flow_id = ?", (flow_id,)
-            ).fetchone()
+            row = conn.execute(_SELECT_COLUMNS_SQL + " WHERE flow_id = ?", (flow_id,)).fetchone()
         finally:
             conn.close()
         if row is not None:

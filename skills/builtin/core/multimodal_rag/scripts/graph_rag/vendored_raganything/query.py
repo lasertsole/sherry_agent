@@ -8,7 +8,7 @@ import json
 import hashlib
 import re
 import time
-from typing import Dict, List, Any
+from typing import Any
 from pathlib import Path
 from lightrag import QueryParam
 from lightrag.utils import always_get_an_event_loop
@@ -24,7 +24,7 @@ class QueryMixin:
     """QueryMixin class containing query functionality for RAGAnything"""
 
     def _generate_multimodal_cache_key(
-        self, query: str, multimodal_content: List[Dict[str, Any]], mode: str, **kwargs
+        self, query: str, multimodal_content: list[dict[str, Any]], mode: str, **kwargs
     ) -> str:
         """
         Generate cache key for multimodal query
@@ -188,7 +188,7 @@ class QueryMixin:
     async def aquery_with_multimodal(
         self,
         query: str,
-        multimodal_content: List[Dict[str, Any]] = None,
+        multimodal_content: list[dict[str, Any]] = None,
         mode: str = "mix",
         system_prompt: str | None = None,
         **kwargs,
@@ -324,7 +324,7 @@ class QueryMixin:
         query: str,
         mode: str = "mix",
         system_prompt: str | None = None,
-        extra_safe_dirs: List[str] = None,
+        extra_safe_dirs: list[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -390,7 +390,7 @@ class QueryMixin:
         return result
 
     async def _process_multimodal_query_content(
-        self, base_query: str, multimodal_content: List[Dict[str, Any]]
+        self, base_query: str, multimodal_content: list[dict[str, Any]]
     ) -> str:
         """
         Process multimodal query content to generate enhanced query text
@@ -439,7 +439,7 @@ class QueryMixin:
         return enhanced_query
 
     async def _generate_query_content_description(
-        self, processor, content: Dict[str, Any], content_type: str
+        self, processor, content: dict[str, Any], content_type: str
     ) -> str:
         """
         Generate content description for query
@@ -466,7 +466,7 @@ class QueryMixin:
             self.logger.error(f"Error generating {content_type} description: {str(e)}")
             return f"{content_type} content: {str(content)[:100]}"
 
-    async def _describe_image_for_query(self, processor, content: Dict[str, Any]) -> str:
+    async def _describe_image_for_query(self, processor, content: dict[str, Any]) -> str:
         """Generate image description for query"""
         image_path = content.get("img_path")
         captions = content.get("image_caption", content.get("img_caption", []))
@@ -495,7 +495,7 @@ class QueryMixin:
 
         return "; ".join(parts) if parts else "Image content information incomplete"
 
-    async def _describe_table_for_query(self, processor, content: Dict[str, Any]) -> str:
+    async def _describe_table_for_query(self, processor, content: dict[str, Any]) -> str:
         """Generate table description for query"""
         table_data = content.get("table_data", "")
         table_caption = content.get("table_caption", "")
@@ -510,7 +510,7 @@ class QueryMixin:
 
         return description
 
-    async def _describe_equation_for_query(self, processor, content: Dict[str, Any]) -> str:
+    async def _describe_equation_for_query(self, processor, content: dict[str, Any]) -> str:
         """Generate equation description for query"""
         latex = content.get("latex", "")
         equation_caption = content.get("equation_caption", "")
@@ -526,7 +526,7 @@ class QueryMixin:
         return description
 
     async def _describe_generic_for_query(
-        self, processor, content: Dict[str, Any], content_type: str
+        self, processor, content: dict[str, Any], content_type: str
     ) -> str:
         """Generate generic content description for query"""
         content_str = str(content)
@@ -543,7 +543,7 @@ class QueryMixin:
         return description
 
     async def _process_image_paths_for_vlm(
-        self, prompt: str, extra_safe_dirs: List[str] = None
+        self, prompt: str, extra_safe_dirs: list[str] = None
     ) -> tuple[str, int]:
         """
         Process image paths in prompt, keeping original paths and adding VLM markers
@@ -657,7 +657,7 @@ class QueryMixin:
 
     def _build_vlm_messages_with_images(
         self, enhanced_prompt: str, user_query: str, system_prompt: str
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Build VLM message format, using markers to correspond images with text positions
 
@@ -737,7 +737,7 @@ class QueryMixin:
             },
         ]
 
-    async def _call_vlm_with_multimodal_content(self, messages: List[Dict]) -> str:
+    async def _call_vlm_with_multimodal_content(self, messages: list[dict]) -> str:
         """
         Call VLM to process multimodal content
 
@@ -790,7 +790,7 @@ class QueryMixin:
     def query_with_multimodal(
         self,
         query: str,
-        multimodal_content: List[Dict[str, Any]] = None,
+        multimodal_content: list[dict[str, Any]] = None,
         mode: str = "mix",
         **kwargs,
     ) -> str:

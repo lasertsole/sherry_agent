@@ -32,11 +32,14 @@ from pydantic import BaseModel
 
 import agent.tools.pub_base.sandbox_guard as sandbox_guard
 import agent.tools.terminal as terminal
+
+
 def _set_policy(monkeypatch, policy):
     """Set the policy at BOTH consumption points: the SandboxGuardMixin guard
     and terminal's own _resolve_sandbox_argv read."""
     monkeypatch.setattr(sandbox_guard, "read_policy", lambda: policy)
     monkeypatch.setattr(terminal, "read_policy", lambda: policy)
+
 
 from agent.tools.pub_base.sandbox import SandboxPolicy
 from agent.tools.terminal import SafeShellTool, build_terminal_tool
@@ -94,6 +97,7 @@ def _no_spawn_popen(record: list[dict[str, Any]]):
 
 def _sentinel_popen(record: list[dict[str, Any]]):
     """Popen that MUST NOT be reached in blocked tests."""
+
     def _popen(*args: Any, **kwargs: Any) -> _FakeProc:
         record.append({"args": args, "kwargs": kwargs})
         raise AssertionError(
@@ -113,9 +117,7 @@ class _FakeBackend:
     def probe(self) -> bool:
         return True
 
-    def wrap(
-        self, cmd: list[str], env: dict[str, str]
-    ) -> tuple[list[str], dict[str, str]]:
+    def wrap(self, cmd: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
         self.calls.append((list(cmd), dict(env)))
         return [self._wrapper, *cmd], {**env, "WRAPPED": "1"}
 
@@ -344,11 +346,11 @@ _BLOCKED_COMMANDS = [
     "mkfs.ext4 /dev/sda",
     "shutdown -h now",
     "reboot",
-    ["echo ok", "rm -rf /"],      # joined malicious — Task 5 defect, now blocked
-    "echo hi && rm -rf /",        # raw str chain
-    "ls; rm -rf /",               # semicolon chain
+    ["echo ok", "rm -rf /"],  # joined malicious — Task 5 defect, now blocked
+    "echo hi && rm -rf /",  # raw str chain
+    "ls; rm -rf /",  # semicolon chain
     ["ls -la", "shutdown -h now"],
-    "RM -RF /",                   # case-insensitive
+    "RM -RF /",  # case-insensitive
     "rm -r /tmp/x",
 ]
 
@@ -405,7 +407,7 @@ class TestDangerousCommandRegex:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Windows fallback byte-identity (plan line 565: 逐字保持现有路径, only env=
+# 5. Windows fallback byte-identity (plan line 565: keep existing path verbatim, only env=
 #    added)
 # ─────────────────────────────────────────────────────────────────────────────
 class TestWindowsFallback:
@@ -481,9 +483,7 @@ class TestWindowsFallback:
         tool._run(["echo ok"])
 
         warnings = [m for m in log_capture if "degrad" in m.lower()]
-        assert len(warnings) == 1, (
-            f"exactly ONE degrade warning expected, got {warnings!r}"
-        )
+        assert len(warnings) == 1, f"exactly ONE degrade warning expected, got {warnings!r}"
         assert len(record) == 1, "degrade still executes via the fallback path"
 
 

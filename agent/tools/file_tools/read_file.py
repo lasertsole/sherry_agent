@@ -3,7 +3,7 @@
 import json
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-from typing import Type, override
+from typing import override
 from agent.tools.pub_base import resolve_path, PathOutOfBoundsError
 from langchain_core.callbacks import CallbackManagerForToolRun
 
@@ -46,7 +46,7 @@ class ReadFileTool(BaseTool):
     """
 
     name: str = "read_file"
-    args_schema: Type[BaseModel] = ReadFileInput
+    args_schema: type[BaseModel] = ReadFileInput
     description: str = (
         "Read a file with pagination and line numbers. "
         "Use offset and limit to read specific sections of large files."

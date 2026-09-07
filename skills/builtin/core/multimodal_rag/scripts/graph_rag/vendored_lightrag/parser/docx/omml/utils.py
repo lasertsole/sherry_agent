@@ -37,4 +37,4 @@ def qn(tag):
     """
     prefix, tag_root = tag.split(":")
     uri = ns_map[prefix]
-    return "{{{}}}{}".format(uri, tag_root)
+    return f"{{{uri}}}{tag_root}"

@@ -9,12 +9,11 @@ once-only schema init + tolerant check-first WAL switch).
 """
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow.config import INITIAL_REVISION, TABLE_NAME, TaskFlowStatus
+from agent.tools.taskflow.config import INITIAL_REVISION, TaskFlowStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.registry.store_sqlite import (
     FlowConflictError,
@@ -109,9 +108,7 @@ async def test_update_keeps_unset_fields(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_update_can_clear_wait_json(isolated_db: Path):
     await store_sqlite.create_flow("flow-1", _make_state())
-    await store_sqlite.update_flow(
-        "flow-1", INITIAL_REVISION, wait={"reason": "awaiting child"}
-    )
+    await store_sqlite.update_flow("flow-1", INITIAL_REVISION, wait={"reason": "awaiting child"})
 
     updated = await store_sqlite.update_flow("flow-1", 2, wait=None)
 
@@ -122,9 +119,7 @@ async def test_update_can_clear_wait_json(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_update_conflict_error_carries_latest_revision(isolated_db: Path):
     await store_sqlite.create_flow("flow-1", _make_state())
-    await store_sqlite.update_flow(
-        "flow-1", INITIAL_REVISION, status=TaskFlowStatus.WAITING.value
-    )
+    await store_sqlite.update_flow("flow-1", INITIAL_REVISION, status=TaskFlowStatus.WAITING.value)
 
     # Stale writer still holds revision 1 while the row is at revision 2.
     with pytest.raises(FlowConflictError) as excinfo:

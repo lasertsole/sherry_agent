@@ -85,7 +85,9 @@ class RecordingFakeChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         self.received.append(list(messages))
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.response_text))])
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content=self.response_text))]
+        )
 
 
 class _TestState(AgentState):
@@ -309,9 +311,14 @@ async def test_idempotent_rewrite_skips_writes_but_still_voids_claimed(
 
     rows = _interrupted_rows(SESSION_ID)
     assert len(rows) == len(rows_after_first), "MesMemory insert skipped on rewrite"
-    assert sum(
-        1 for r in rows if r.get("role") == "ai" and str(r.get("content", "")).startswith("[interrupted:")
-    ) == 1
+    assert (
+        sum(
+            1
+            for r in rows
+            if r.get("role") == "ai" and str(r.get("content", "")).startswith("[interrupted:")
+        )
+        == 1
+    )
 
     # The cleanup still ran on the skipped path.
     statuses = _queue_statuses(queue._db_path)

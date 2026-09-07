@@ -174,28 +174,28 @@ client/
 
 ## 技術スタック
 
-| レイヤー | 技術 | 目的 |
-|-------|-----------|---------|
-| **クロスプラットフォームシェル** | [Tauri 2](https://v2.tauri.app/)（`2.0.0-rc.17`、`@tauri-apps/api` ^2.11.1、`@tauri-apps/cli` 2.11.4） | ネイティブデスクトップパッケージング + 設定/ケイパビリティ/アイコン |
-| **フロントエンドフレームワーク** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41 | SPA モード（`ssr: false`）、Composition API + `<script setup lang="ts">` |
-| **UI コンポーネント** | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0（`@primevue/nuxt-module`） | Dialog、Button、Select、ToggleSwitch、Toast など |
-| **状態管理** | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | グローバル UI 状態（サイドバー、テーマエントリ） |
-| **スタイリング** | [Tailwind CSS](https://tailwindcss.com/) v4（`@tailwindcss/vite` 経由）+ SCSS（`sass`） | ユーティリティファースト CSS + `@theme` トークン + SCSS ミックスインライブラリ |
-| **カラーモード** | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/) | ダーク/ライトテーマ切替（`.dark` クラス） |
-| **国際化** | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0 | zh / en / ja / ko、`no_prefix` ストラテジー |
-| **Markdown レンダリング** | [markdown-it](https://github.com/markdown-it/markdown-it) ^15 | チャットメッセージの markdown → HTML（ChatBox.vue） |
-| **XSS 対策** | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4 | レンダリング HTML のサニタイズ |
-| **日付フォーマット** | [dayjs](https://day.js.org/) | コンパクトタイムスタンプ（`YYYYMMDDHHmmss`）の解析/フォーマット |
-| **オフラインストレージ** | [Dexie.js](https://dexie.org/) ^4.4.4 | IndexedDB ラッパー: メッセージ、キャラクター、背景、サブエージェント実行、クライアントログ |
-| **イベントバス** | [mitt](https://github.com/developit/mitt) ^3 | 軽量なコンポーネント間通信 |
-| **チャート / グラフ** | [@antv/g2](https://g2.antv.antgroup.com/) ^5、[@antv/g6](https://g6.antv.antgroup.com/) ^5 | 統計チャート、サブエージェントフローグラフ、ナレッジグラフ |
-| **画像クロップ** | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6 | アバターのアップロードと切り抜き |
-| **ユーティリティ** | [lodash-es](https://lodash.com/) ^4.18 | 汎用ユーティリティ関数 |
-| **ユニット / 統合テスト** | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8 | コンポーザブルのユニットテスト + SFC 統合テスト |
-| **E2E repro** | [@playwright/test](https://playwright.dev/) ^1.62 | 開発サーバーに対する repro テスト（Desktop Edge） |
-| **Lint / フォーマット** | ESLint ^10（flat config）+ Prettier | コード品質 |
-| **型チェック** | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9 | `pnpm typecheck` |
-| **バックエンド言語** | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94） | Tauri シェル（src-tauri/、現在はプレースホルダーモジュール） |
+| レイヤー                         | 技術                                                                                                     | 目的                                                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **クロスプラットフォームシェル** | [Tauri 2](https://v2.tauri.app/)（`2.0.0-rc.17`、`@tauri-apps/api` ^2.11.1、`@tauri-apps/cli` 2.11.4）   | ネイティブデスクトップパッケージング + 設定/ケイパビリティ/アイコン                        |
+| **フロントエンドフレームワーク** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                                 | SPA モード（`ssr: false`）、Composition API + `<script setup lang="ts">`                   |
+| **UI コンポーネント**            | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0（`@primevue/nuxt-module`）                  | Dialog、Button、Select、ToggleSwitch、Toast など                                           |
+| **状態管理**                     | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | グローバル UI 状態（サイドバー、テーマエントリ）                                           |
+| **スタイリング**                 | [Tailwind CSS](https://tailwindcss.com/) v4（`@tailwindcss/vite` 経由）+ SCSS（`sass`）                  | ユーティリティファースト CSS + `@theme` トークン + SCSS ミックスインライブラリ             |
+| **カラーモード**                 | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                     | ダーク/ライトテーマ切替（`.dark` クラス）                                                  |
+| **国際化**                       | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                          | zh / en / ja / ko、`no_prefix` ストラテジー                                                |
+| **Markdown レンダリング**        | [markdown-it](https://github.com/markdown-it/markdown-it) ^15                                            | チャットメッセージの markdown → HTML（ChatBox.vue）                                        |
+| **XSS 対策**                     | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4                                                    | レンダリング HTML のサニタイズ                                                             |
+| **日付フォーマット**             | [dayjs](https://day.js.org/)                                                                             | コンパクトタイムスタンプ（`YYYYMMDDHHmmss`）の解析/フォーマット                            |
+| **オフラインストレージ**         | [Dexie.js](https://dexie.org/) ^4.4.4                                                                    | IndexedDB ラッパー: メッセージ、キャラクター、背景、サブエージェント実行、クライアントログ |
+| **イベントバス**                 | [mitt](https://github.com/developit/mitt) ^3                                                             | 軽量なコンポーネント間通信                                                                 |
+| **チャート / グラフ**            | [@antv/g2](https://g2.antv.antgroup.com/) ^5、[@antv/g6](https://g6.antv.antgroup.com/) ^5               | 統計チャート、サブエージェントフローグラフ、ナレッジグラフ                                 |
+| **画像クロップ**                 | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6                                              | アバターのアップロードと切り抜き                                                           |
+| **ユーティリティ**               | [lodash-es](https://lodash.com/) ^4.18                                                                   | 汎用ユーティリティ関数                                                                     |
+| **ユニット / 統合テスト**        | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8                     | コンポーザブルのユニットテスト + SFC 統合テスト                                            |
+| **E2E repro**                    | [@playwright/test](https://playwright.dev/) ^1.62                                                        | 開発サーバーに対する repro テスト（Desktop Edge）                                          |
+| **Lint / フォーマット**          | ESLint ^10（flat config）+ Prettier                                                                      | コード品質                                                                                 |
+| **型チェック**                   | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                                | `pnpm typecheck`                                                                           |
+| **バックエンド言語**             | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri シェル（src-tauri/、現在はプレースホルダーモジュール）                               |
 
 ### 主要な設定
 
@@ -228,25 +228,25 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 
 `bridge.ts` は Tauri デスクトップとブラウザの両モードで動作する統一 API を提供します。バックエンドへのアクセスはすべてこれ（または `requestApi.ts` の `fetchApi`）経由です：
 
-| API | 説明 |
-|-----|-------------|
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)` | ストリーミングエージェントチャット；`{ controller, promise }` を返す（Tauri Events または `/sessions/agent/ws`） |
-| `sendChatMessage(request, onChunk)` | `streamChatMessage` の簡易ラッパー |
-| `stopChatMessage(sessionId)` | 進行中の生成を停止（`agent_stop` IPC または WS `stop` フレーム） |
-| `resumeHitl(sessionId, decision, ...)` | 新しい WebSocket で一時停止中の HITL エージェントを再開 |
-| `clearSession(sessionId)` | セッション状態をクリア（`session_clear` IPC または `DELETE /sessions`） |
-| `getHistory(sessionId, lastTurnCount)` | 履歴を取得（`session_history` IPC または `GET /n_turns_history_messages`） |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun` | バックグラウンドのサブエージェントタスク管理 |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate` | システムプロンプトファイルの CRUD |
-| `readMemory` / `writeMemory` | 長期メモリファイル（`workspace/memory/*`） |
-| `readHeartbeat` / `writeHeartbeat` | `workspace/HEARTBEAT.md`（常に直接 HTTP） |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | cron ジョブ管理 |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill` | スキル管理 |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig` | チャネル設定 |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings` | 自動スキル curator の制御 |
-| `listLogFiles` / `readLogFile` / `openLogStream` | バックエンドログの読み取り + ライブ `/logs/ws` ストリーム |
-| `readEnvConfig` / `writeEnvConfig`（`env.ts`） | バックエンド `.env` の読み取り/更新（`GET/PUT /env`） |
-| `checkHealth()` | バックエンド到達性（`system_health` IPC または `GET /system_prompt`） |
+| API                                                                                                | 説明                                                                                                             |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | ストリーミングエージェントチャット；`{ controller, promise }` を返す（Tauri Events または `/sessions/agent/ws`） |
+| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage` の簡易ラッパー                                                                               |
+| `stopChatMessage(sessionId)`                                                                       | 進行中の生成を停止（`agent_stop` IPC または WS `stop` フレーム）                                                 |
+| `resumeHitl(sessionId, decision, ...)`                                                             | 新しい WebSocket で一時停止中の HITL エージェントを再開                                                          |
+| `clearSession(sessionId)`                                                                          | セッション状態をクリア（`session_clear` IPC または `DELETE /sessions`）                                          |
+| `getHistory(sessionId, lastTurnCount)`                                                             | 履歴を取得（`session_history` IPC または `GET /n_turns_history_messages`）                                       |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | バックグラウンドのサブエージェントタスク管理                                                                     |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | システムプロンプトファイルの CRUD                                                                                |
+| `readMemory` / `writeMemory`                                                                       | 長期メモリファイル（`workspace/memory/*`）                                                                       |
+| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`（常に直接 HTTP）                                                                        |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | cron ジョブ管理                                                                                                  |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | スキル管理                                                                                                       |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | チャネル設定                                                                                                     |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 自動スキル curator の制御                                                                                        |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | バックエンドログの読み取り + ライブ `/logs/ws` ストリーム                                                        |
+| `readEnvConfig` / `writeEnvConfig`（`env.ts`）                                                     | バックエンド `.env` の読み取り/更新（`GET/PUT /env`）                                                            |
+| `checkHealth()`                                                                                    | バックエンド到達性（`system_health` IPC または `GET /system_prompt`）                                            |
 
 ブラウザモードのチャットストリーミング詳細：
 
@@ -260,10 +260,10 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 
 互いに独立した 2 つのモジュールレベル シングルトン接続（どちらも 5 秒後に自動再接続）：
 
-| 接続 | エンドポイント | mitt 経由で発行されるイベント |
-|-----------|----------|-----------------|
-| セッション push | `/sessions/ws?session_id=default` | `ws:connected`、`ws:notification`、`ws:message`、`ws:disconnected` |
-| サブエージェント push | `/subagents/ws` | `ws:subagents:connected`、`ws:subagents:ready`、`ws:subagent_spawned`、`ws:subagent_ended`、`ws:subagents:message`、`ws:subagents:disconnected` |
+| 接続                  | エンドポイント                    | mitt 経由で発行されるイベント                                                                                                                   |
+| --------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| セッション push       | `/sessions/ws?session_id=default` | `ws:connected`、`ws:notification`、`ws:message`、`ws:disconnected`                                                                              |
+| サブエージェント push | `/subagents/ws`                   | `ws:subagents:connected`、`ws:subagents:ready`、`ws:subagent_spawned`、`ws:subagent_ended`、`ws:subagents:message`、`ws:subagents:disconnected` |
 
 両方とも `VITE_API_BACK_URL` からベース URL を解決（`http://` → `ws://`、`https://` → `wss://`）。
 
@@ -271,29 +271,29 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 
 REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:8080`）：
 
-| エンドポイント | メソッド | 目的 |
-|----------|-----------|---------|
-| `/sessions` | DELETE | セッションをクリア |
-| `/n_turns_history_messages` | GET | 直近 N ターンの履歴 |
-| `/get_history_by_turn_page` | GET | ページ分割された履歴（Dexie でキャッシュ優先） |
-| `/sessions/agent/ws` | WS | チャットストリーミング、停止、HITL 再開 |
-| `/sessions/ws` | WS | サーバー push 通知 |
-| `/subagents/ws` | WS | サブエージェントの生成/終了 push |
-| `/subagents/runs` | GET / DELETE | サブエージェント実行レコード（一覧/サブツリー/削除） |
-| `/subagents/steer` | POST | サブエージェント実行のステア/再開 |
-| `/system_prompt` | GET / POST / PATCH / PUT | システムプロンプトの読み取り/書き込み/更新 |
-| `/system_prompt/template` | GET | ペルソナテンプレートファイル |
-| `/memory` | GET / PUT | 長期メモリファイル |
-| `/heartbeat` | GET / PUT | HEARTBEAT.md |
-| `/cron`、`/cron/trigger`、`/cron/enable` | GET/POST/PUT/DELETE | cron ジョブ CRUD + トリガー |
-| `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST | スキル管理 |
-| `/curator/run`、`/curator/settings` | POST / GET / PUT | curator レビューと設定 |
-| `/channels`、`/channels/{name}`、`/channels/{name}/config` | GET / PUT | チャネル切替と設定 |
-| `/env` | GET / PUT | バックエンド `.env` の読み取り/更新 |
-| `/logs/files`、`/logs` | GET | ログファイル一覧と末尾読み取り |
-| `/logs/ws` | WS | ライブログストリーム |
-| `/images/upload`、`/audio/upload`、`/video/upload` | POST | Base64 メディアアップロード → URL |
-| `/media` | GET | 保存済みメディアファイルの表示 |
+| エンドポイント                                                                                   | メソッド                 | 目的                                                 |
+| ------------------------------------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------- |
+| `/sessions`                                                                                      | DELETE                   | セッションをクリア                                   |
+| `/n_turns_history_messages`                                                                      | GET                      | 直近 N ターンの履歴                                  |
+| `/get_history_by_turn_page`                                                                      | GET                      | ページ分割された履歴（Dexie でキャッシュ優先）       |
+| `/sessions/agent/ws`                                                                             | WS                       | チャットストリーミング、停止、HITL 再開              |
+| `/sessions/ws`                                                                                   | WS                       | サーバー push 通知                                   |
+| `/subagents/ws`                                                                                  | WS                       | サブエージェントの生成/終了 push                     |
+| `/subagents/runs`                                                                                | GET / DELETE             | サブエージェント実行レコード（一覧/サブツリー/削除） |
+| `/subagents/steer`                                                                               | POST                     | サブエージェント実行のステア/再開                    |
+| `/system_prompt`                                                                                 | GET / POST / PATCH / PUT | システムプロンプトの読み取り/書き込み/更新           |
+| `/system_prompt/template`                                                                        | GET                      | ペルソナテンプレートファイル                         |
+| `/memory`                                                                                        | GET / PUT                | 長期メモリファイル                                   |
+| `/heartbeat`                                                                                     | GET / PUT                | HEARTBEAT.md                                         |
+| `/cron`、`/cron/trigger`、`/cron/enable`                                                         | GET/POST/PUT/DELETE      | cron ジョブ CRUD + トリガー                          |
+| `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST                 | スキル管理                                           |
+| `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | curator レビューと設定                               |
+| `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | チャネル切替と設定                                   |
+| `/env`                                                                                           | GET / PUT                | バックエンド `.env` の読み取り/更新                  |
+| `/logs/files`、`/logs`                                                                           | GET                      | ログファイル一覧と末尾読み取り                       |
+| `/logs/ws`                                                                                       | WS                       | ライブログストリーム                                 |
+| `/images/upload`、`/audio/upload`、`/video/upload`                                               | POST                     | Base64 メディアアップロード → URL                    |
+| `/media`                                                                                         | GET                      | 保存済みメディアファイルの表示                       |
 
 ---
 

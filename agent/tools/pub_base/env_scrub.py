@@ -110,9 +110,7 @@ _KEEP_PREFIXES_UPPER = tuple(prefix.upper() for prefix in _KEEP_NAME_PREFIXES)
 
 def _is_kept(upper_name: str) -> bool:
     """Name-keep rule: exact name or prefix match (case-insensitive)."""
-    return upper_name in _KEEP_EXACT_NAMES or upper_name.startswith(
-        _KEEP_PREFIXES_UPPER
-    )
+    return upper_name in _KEEP_EXACT_NAMES or upper_name.startswith(_KEEP_PREFIXES_UPPER)
 
 
 def scrub_env(base_env: dict[str, str] | None = None) -> dict[str, str]:

@@ -50,7 +50,7 @@ class TestFollowupZeroTimeout:
             )
             run.execution.status = ExecutionStatus.RUNNING
             await fc._check_timeouts()
-            assert called["n"] == 0  # 0 超时：不得触发批量 recovery
+            assert called["n"] == 0  # 0 timeouts: batch recovery must not trigger
         finally:
             set_config(orig)
             clear_registry()
@@ -75,9 +75,10 @@ class TestSteerZeroTimeout:
             got = get_run(run.run_id)
             assert got is not None
             assert got.execution.outcome is not None
-            assert str(
-                getattr(got.execution.outcome.status, "value", got.execution.outcome.status)
-            ) != "timeout"
+            assert (
+                str(getattr(got.execution.outcome.status, "value", got.execution.outcome.status))
+                != "timeout"
+            )
         finally:
             set_config(orig)
             clear_registry()
@@ -99,9 +100,10 @@ class TestSteerZeroTimeout:
             set_run(run)  # complete_subagent_run resolves the run from registry memory
             await _execute_steered_subagent(run, _SlowAgent(), "[STEER] go", 0.05)
             got = get_run(run.run_id)
-            assert str(
-                getattr(got.execution.outcome.status, "value", got.execution.outcome.status)
-            ) == "timeout"
+            assert (
+                str(getattr(got.execution.outcome.status, "value", got.execution.outcome.status))
+                == "timeout"
+            )
         finally:
             set_config(orig)
             clear_registry()

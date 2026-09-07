@@ -131,9 +131,7 @@ class SteeringQueue:
     """
 
     def __init__(self, store: PendingInjectionStore | None = None) -> None:
-        self._store: PendingInjectionStore = (
-            store if store is not None else PendingInjectionStore()
-        )
+        self._store: PendingInjectionStore = store if store is not None else PendingInjectionStore()
         self._states: dict[str, _SessionState] = {}
         self._states_lock: threading.Lock = threading.Lock()
 
@@ -146,7 +144,9 @@ class SteeringQueue:
         """The task 3 store backing this queue (exposed for tests/verification)."""
         return self._store
 
-    async def enqueue_steering(self, session_key: str, injection: BaseMessage) -> SteeringItem | None:
+    async def enqueue_steering(
+        self, session_key: str, injection: BaseMessage
+    ) -> SteeringItem | None:
         """Queue one injection for ``session_key``: memory first, then SQLite.
 
         ``injection`` is the task 4 builder product; its frozen metadata must

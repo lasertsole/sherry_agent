@@ -13,7 +13,7 @@ hooks (``_ensure_client`` / ``_convert_message_to_dict`` / resolvers /
 ``_llm_type``). Behavior pinned with a fake client — no GGUF download.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -104,7 +104,9 @@ class TestBaseClass:
     def test_generate_params_forwarded(self):
         model = _make(_TextModel)
         fake = model._ensure_client()  # capture before generate
-        model._generate([HumanMessage(content="hi")], stop=["STOP"], temperature=0.7, max_tokens=128)
+        model._generate(
+            [HumanMessage(content="hi")], stop=["STOP"], temperature=0.7, max_tokens=128
+        )
         call = fake.calls[0]
         assert call["stop"] == ["STOP"]
         assert call["temperature"] == 0.7
@@ -119,9 +121,18 @@ class TestBaseClass:
 
     def test_convert_message_roles(self):
         model = _make(_TextModel)
-        assert model._convert_message_to_dict(HumanMessage(content="a")) == {"role": "user", "content": "a"}
-        assert model._convert_message_to_dict(AIMessage(content="b")) == {"role": "assistant", "content": "b"}
-        assert model._convert_message_to_dict(SystemMessage(content="c")) == {"role": "system", "content": "c"}
+        assert model._convert_message_to_dict(HumanMessage(content="a")) == {
+            "role": "user",
+            "content": "a",
+        }
+        assert model._convert_message_to_dict(AIMessage(content="b")) == {
+            "role": "assistant",
+            "content": "b",
+        }
+        assert model._convert_message_to_dict(SystemMessage(content="c")) == {
+            "role": "system",
+            "content": "c",
+        }
 
     def test_identifying_params_shape(self):
         model = _make(_TextModel, n_ctx=1234)

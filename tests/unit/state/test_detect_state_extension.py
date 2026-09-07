@@ -225,9 +225,7 @@ class TestIdleUnchanged:
         assert state.reason == "idle"
         assert state.session_id == "abc"
 
-    def test_stale_done_ws_task_falls_through_to_hitl_pending(
-        self, active_tasks, state_register
-    ):
+    def test_stale_done_ws_task_falls_through_to_hitl_pending(self, active_tasks, state_register):
         # Existing fall-through behavior extended one level: done ws task ->
         # answering (absent) -> hitl_pending.
         active_tasks["abc"] = make_done_task()

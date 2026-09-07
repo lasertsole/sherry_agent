@@ -19,7 +19,8 @@ import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-from typing import Any, Iterator, List, Optional
+from typing import Any
+from collections.abc import Iterator
 
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 
@@ -27,7 +28,7 @@ from models.LLMs.reasoning_normalizer import NormalizingChatModel
 class _FakeStreamingModel(BaseChatModel):
     """Emits canned per-chunk reasoning DELTAS (DeepSeek/GLM native shape)."""
 
-    deltas: List[dict[str, str]] = []
+    deltas: list[dict[str, str]] = []
 
     @property
     def _llm_type(self) -> str:
@@ -35,8 +36,8 @@ class _FakeStreamingModel(BaseChatModel):
 
     def _generate(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
         run_manager: Any = None,
         **kwargs: Any,
     ) -> ChatResult:
@@ -46,8 +47,8 @@ class _FakeStreamingModel(BaseChatModel):
 
     def _stream(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
         run_manager: Any = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
@@ -56,7 +57,7 @@ class _FakeStreamingModel(BaseChatModel):
             yield ChatGenerationChunk(message=chunk)
 
 
-def _make_model(deltas: List[dict[str, str]]) -> NormalizingChatModel:
+def _make_model(deltas: list[dict[str, str]]) -> NormalizingChatModel:
     return NormalizingChatModel(inner=_FakeStreamingModel(deltas=deltas))
 
 

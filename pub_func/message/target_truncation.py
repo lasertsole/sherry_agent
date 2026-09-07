@@ -18,14 +18,12 @@ def _truncate_content(
     if len(content) <= max_chars:
         return content
     head = content[: int(max_chars * head_ratio)]
-    tail = content[-int(max_chars * tail_ratio):]
+    tail = content[-int(max_chars * tail_ratio) :]
     omitted = len(content) - len(head) - len(tail)
     return f"{head}{_OMISSION_TEMPLATE.format(omitted=omitted)}{tail}"
 
 
-def _find_tool_name(
-    messages: list[BaseMessage], target_idx: int, tc_id: str
-) -> str:
+def _find_tool_name(messages: list[BaseMessage], target_idx: int, tc_id: str) -> str:
     if not tc_id:
         return ""
     for i in range(target_idx - 1, -1, -1):

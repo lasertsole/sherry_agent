@@ -17,7 +17,7 @@ def resolve_path(file_path):
     p = Path(os.path.expanduser(file_path))
     if not p.is_absolute():
         p = ROOT_DIR / p
-    return p.resolve()   # 绝对路径原样放行
+    return p.resolve()  # 绝对路径原样放行
 ```
 - 下游：`read_file.py:60`（读任意文件 → 窃取含 API Key 的 `.env`）；`patch_file.py:101,133`（`write_text` → 改任意文件）；`write_file.py:70`（LangChain `WriteFileTool` 只约束相对路径）。
 - **影响**：LLM 触发的任意文件读取/覆写 → 密钥泄露 + 持久化植入。

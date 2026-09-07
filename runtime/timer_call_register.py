@@ -4,7 +4,8 @@ import threading
 import uuid
 from loguru import logger
 from .core import Register
-from typing import Callable, Any
+from typing import Any
+from collections.abc import Callable
 from pydantic import BaseModel, Field
 from ._callback_executor import CallbackExecutor
 
@@ -12,10 +13,10 @@ from ._callback_executor import CallbackExecutor
 class Timer(BaseModel):
     """Timer configuration"""
 
-    minutes: int = Field(ge=1, le=60)  # 倒计时分钟(1-60)
-    callback: Callable  # 触发回调
+    minutes: int = Field(ge=1, le=60)  # Countdown minutes (1-60)
+    callback: Callable  # Callback to fire
     args: dict[str, Any] = Field(default_factory=dict)
-    task_name: str | None = None  # 后台 task name, 用于查找/取消
+    task_name: str | None = None  # Background task name, for lookup/cancel
 
 
 class TimerCallRegister(Register):

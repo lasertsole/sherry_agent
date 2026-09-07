@@ -301,6 +301,7 @@ import {
 import { on, off } from '@/composables/mitt';
 import { useSubagentTasks } from '@/composables/useSubagentTasks';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
+import { logUtil } from '~/utils/log';
 
 // Image preview
 const { openPreview } = useImagePreview();
@@ -449,7 +450,7 @@ const ensureSessionCharacter = async (sessionId: string) => {
     applyCharacterSnapshot(locked);
   } catch (error) {
     // On Dexie read/write exceptions, preserve current display and don't block chat.
-    console.warn('[ensureSessionCharacter] 读取角色快照失败：', error);
+    logUtil.w('[ensureSessionCharacter] 读取角色快照失败：', error);
   }
 };
 
@@ -1038,7 +1039,7 @@ const writeDraftTurn = async (sid: string, turnNum: number) => {
   try {
     await saveDraftTurn({ session_id: sid, turn_num: turnNum, messages: snapshot });
   } catch (e) {
-    console.warn('[writeDraftTurn] 草稿写入失败：', sid, turnNum, e);
+    logUtil.w('[writeDraftTurn] 草稿写入失败：', sid, turnNum, e);
   }
 };
 
@@ -1335,7 +1336,7 @@ const onImageSelected = async (event: Event) => {
       const base64 = dataUrl.split(',')[1] ?? '';
       selectedImages.value.push({ base64, name: file.name });
     } catch (e) {
-      console.warn('[onImageSelected] 读取图片失败：', file.name, e);
+      logUtil.w('[onImageSelected] 读取图片失败：', file.name, e);
     }
   }
   selectedImages.value = [...selectedImages.value];
@@ -1402,7 +1403,7 @@ const onAudioSelected = async (event: Event) => {
       const base64 = dataUrl.split(',')[1] ?? '';
       selectedAudios.value.push({ base64, name: file.name });
     } catch (e) {
-      console.warn('[onAudioSelected] 读取音频失败：', file.name, e);
+      logUtil.w('[onAudioSelected] 读取音频失败：', file.name, e);
     }
   }
   selectedAudios.value = [...selectedAudios.value];
@@ -1467,7 +1468,7 @@ const onVideoSelected = async (event: Event) => {
       const base64 = dataUrl.split(',')[1] ?? '';
       selectedVideos.value.push({ base64, name: file.name });
     } catch (e) {
-      console.warn('[onVideoSelected] 读取视频失败：', file.name, e);
+      logUtil.w('[onVideoSelected] 读取视频失败：', file.name, e);
     }
   }
   selectedVideos.value = [...selectedVideos.value];

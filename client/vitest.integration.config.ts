@@ -27,8 +27,8 @@ export default defineConfig({
       // resolvable in this pnpm workspace (see vitest.config.ts for the unit
       // suite's identity stub). SFCs import it explicitly, so alias it to a
       // zh-locale-backed stub — integration tests assert rendered Chinese copy.
-      'vue-i18n': fileURLToPath(new URL('./tests/integration/stubs/vue-i18n.ts', import.meta.url)),
-    },
+      'vue-i18n': fileURLToPath(new URL('./tests/integration/stubs/vue-i18n.ts', import.meta.url))
+    }
   },
   test: {
     environment: 'happy-dom',
@@ -37,13 +37,13 @@ export default defineConfig({
     setupFiles: ['tests/integration/setup.ts'],
     // `messages.ts` reads `import.meta.env.VITE_API_BACK_URL`.
     env: {
-      VITE_API_BACK_URL: 'http://localhost:8080',
+      VITE_API_BACK_URL: 'http://localhost:8080'
     },
     css: false,
     deps: {
       optimizer: {
-        include: ['vue', '@vue/test-utils'],
-      },
-    },
-  },
+        include: ['vue', '@vue/test-utils']
+      }
+    }
+  }
 });

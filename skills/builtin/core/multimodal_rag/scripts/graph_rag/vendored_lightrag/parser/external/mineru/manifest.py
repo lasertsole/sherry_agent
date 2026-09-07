@@ -78,7 +78,7 @@ class Manifest:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "Manifest":
+    def from_dict(cls, payload: dict) -> Manifest:
         critical_raw = payload.get("critical_file") or {}
         files_raw = payload.get("files") or []
         return cls(

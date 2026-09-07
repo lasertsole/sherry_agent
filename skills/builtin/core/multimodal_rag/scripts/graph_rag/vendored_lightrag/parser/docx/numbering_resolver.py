@@ -6,7 +6,6 @@ ABOUTME: Parses numbering.xml and computes rendered number strings
 
 import zipfile
 from defusedxml import ElementTree as ET
-from typing import Dict
 
 NSMAP = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
@@ -36,12 +35,12 @@ class NumberingResolver:
     }
 
     def __init__(self, docx_path: str):
-        self.abstract_nums: Dict[str, dict] = {}  # abstractNumId -> level definitions
-        self.num_to_abstract: Dict[str, str] = {}  # numId -> abstractNumId
-        self.counters: Dict[str, Dict[int, int]] = {}  # numId -> {ilvl -> current_count}
-        self.start_overrides: Dict[str, Dict[int, int]] = {}  # numId -> {ilvl -> start_value}
-        self.style_numpr: Dict[str, dict] = {}  # styleId -> {numId, ilvl} from styles.xml
-        self.style_based_on: Dict[str, str] = {}  # styleId -> basedOn styleId
+        self.abstract_nums: dict[str, dict] = {}  # abstractNumId -> level definitions
+        self.num_to_abstract: dict[str, str] = {}  # numId -> abstractNumId
+        self.counters: dict[str, dict[int, int]] = {}  # numId -> {ilvl -> current_count}
+        self.start_overrides: dict[str, dict[int, int]] = {}  # numId -> {ilvl -> start_value}
+        self.style_numpr: dict[str, dict] = {}  # styleId -> {numId, ilvl} from styles.xml
+        self.style_based_on: dict[str, str] = {}  # styleId -> basedOn styleId
         # Smart numbering merge state (Word's rendering behavior)
         self.last_numId: str = None  # Previous paragraph's numId
         self.last_abstract_id: str = None  # Previous paragraph's abstractNumId

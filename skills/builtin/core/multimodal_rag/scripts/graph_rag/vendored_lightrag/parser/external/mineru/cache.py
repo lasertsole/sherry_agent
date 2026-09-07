@@ -194,7 +194,7 @@ class MinerUParserOptions:
     local_end_page_id: int
 
     @classmethod
-    def from_env(cls, *, api_mode: str | None = None) -> "MinerUParserOptions":
+    def from_env(cls, *, api_mode: str | None = None) -> MinerUParserOptions:
         mode = _normalize_api_mode(api_mode) if api_mode is not None else _current_api_mode()
         page_ranges = os.getenv("MINERU_PAGE_RANGES", "").strip()
         local_start = _env_int("MINERU_LOCAL_START_PAGE_ID", DEFAULT_MINERU_LOCAL_START_PAGE_ID)

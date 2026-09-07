@@ -24,14 +24,9 @@ from pathlib import Path
 from typing import (
     Any,
     Protocol,
-    Callable,
     TYPE_CHECKING,
-    List,
-    Optional,
-    Iterable,
-    Sequence,
-    Collection,
 )
+from collections.abc import Callable, Iterable, Sequence, Collection
 import numpy as np
 from dotenv import load_dotenv
 
@@ -141,7 +136,7 @@ async def safe_vdb_operation_with_exception(
     entity_name: str = "",
     max_retries: int = 3,
     retry_delay: float = 0.2,
-    logger_func: Optional[Callable] = None,
+    logger_func: Callable | None = None,
     timeout_seconds: float | None = None,
     log_start: bool = False,
     success_log_threshold_seconds: float = 10.0,
@@ -196,7 +191,7 @@ async def safe_vdb_operation_with_exception(
                     attempt_label,
                 )
             return  # Success, return immediately
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             elapsed = time.perf_counter() - start_ts
             timeout_msg = (
                 f"VDB {operation_name} timeout for {entity_name or '<unknown>'} "
@@ -910,7 +905,7 @@ def priority_limit_async_func_call(
                                 args,
                                 kwargs,
                             ) = await asyncio.wait_for(queue.get(), timeout=1.0)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             continue
 
                         # Get task state and mark worker as started
@@ -943,7 +938,7 @@ def priority_limit_async_func_call(
                             if not task_state.future.done():
                                 task_state.future.set_result(result)
 
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             # Worker-level timeout (max_execution_timeout exceeded)
                             logger.warning(
                                 f"{queue_name}: Worker timeout for task {task_id} after {max_execution_timeout}s"
@@ -1142,7 +1137,7 @@ def priority_limit_async_func_call(
                     effective_timeout = max_task_duration if max_task_duration is not None else 30.0
                 try:
                     await asyncio.wait_for(queue.join(), timeout=effective_timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     drain_timed_out = True
                     logger.warning(
                         f"{queue_name}: Graceful drain timed out after "
@@ -1259,7 +1254,7 @@ def priority_limit_async_func_call(
                     else:
                         await queue.put((_priority, current_count, task_id, args, kwargs))
                     submitted_total += 1
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     raise QueueFullError(
                         f"{queue_name}: Queue full, timeout after {_queue_timeout} seconds"
                     )
@@ -1277,7 +1272,7 @@ def priority_limit_async_func_call(
                         result = await future
                     completed_total += 1
                     return result
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # This is user-level timeout (asyncio.wait_for caused)
                     # Mark cancellation request
                     async with task_states_lock:
@@ -1472,8 +1467,7 @@ class SanitizingJSONEncoder(json.JSONEncoder):
         sanitized = self._sanitize_for_encoding(o)
 
         # Call parent's iterencode with sanitized data
-        for chunk in super().iterencode(sanitized, _one_shot):
-            yield chunk
+        yield from super().iterencode(sanitized, _one_shot)
 
     def _sanitize_for_encoding(self, obj):
         """
@@ -1569,11 +1563,11 @@ class TokenizerInterface(Protocol):
     Defines the interface for a tokenizer, requiring encode and decode methods.
     """
 
-    def encode(self, content: str) -> List[int]:
+    def encode(self, content: str) -> list[int]:
         """Encodes a string into a list of tokens."""
         ...
 
-    def decode(self, tokens: List[int]) -> str:
+    def decode(self, tokens: list[int]) -> str:
         """Decodes a list of tokens into a string."""
         ...
 
@@ -1594,7 +1588,7 @@ class Tokenizer:
         self.model_name: str = model_name
         self.tokenizer: TokenizerInterface = tokenizer
 
-    def encode(self, content: str) -> List[int]:
+    def encode(self, content: str) -> list[int]:
         """
         Encodes a string into a list of tokens using the underlying tokenizer.
 
@@ -1623,7 +1617,7 @@ class Tokenizer:
             except TypeError:
                 raise e
 
-    def decode(self, tokens: List[int]) -> str:
+    def decode(self, tokens: list[int]) -> str:
         """
         Decodes a list of tokens into a string using the underlying tokenizer.
 
@@ -2447,7 +2441,7 @@ def lazy_external_import(module_name: str, class_name: str) -> Callable[..., Any
 
 async def update_chunk_cache_list(
     chunk_id: str,
-    text_chunks_storage: "BaseKVStorage",
+    text_chunks_storage: BaseKVStorage,
     cache_keys: list[str],
     cache_scenario: str = "batch_update",
 ) -> None:
@@ -2506,7 +2500,7 @@ def remove_think_tags(text: str) -> str:
 async def use_llm_func_with_cache(
     user_prompt: str,
     use_llm_func: callable,
-    llm_response_cache: "BaseKVStorage | None" = None,
+    llm_response_cache: BaseKVStorage | None = None,
     system_prompt: str | None = None,
     max_tokens: int = None,
     history_messages: list[dict[str, str]] = None,
@@ -3067,8 +3061,8 @@ def pick_by_weighted_polling(
 
 async def pick_by_vector_similarity(
     query: str,
-    text_chunks_storage: "BaseKVStorage",
-    chunks_vdb: "BaseVectorStorage",
+    text_chunks_storage: BaseKVStorage,
+    chunks_vdb: BaseVectorStorage,
     num_of_chunks: int,
     entity_info: list[dict[str, Any]],
     embedding_func: callable,
@@ -3324,7 +3318,7 @@ async def apply_rerank_if_enabled(
 async def process_chunks_unified(
     query: str,
     unique_chunks: list[dict],
-    query_param: "QueryParam",
+    query_param: QueryParam,
     global_config: dict,
     source_type: str = "mixed",
     chunk_token_limit: int = None,  # Add parameter for dynamic token limit

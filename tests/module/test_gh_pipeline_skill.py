@@ -185,7 +185,10 @@ def test_phase3_report_protocol_via_announce(skill_body):
 
 
 def test_phase4_gh_cli_path(skill_body):
-    assert "gh pr create --repo <owner>/<repo> --head gh-pipeline/<issue-number> --base main" in skill_body
+    assert (
+        "gh pr create --repo <owner>/<repo> --head gh-pipeline/<issue-number> --base main"
+        in skill_body
+    )
 
 
 def test_phase4_rest_fallback_needs_token(skill_body):

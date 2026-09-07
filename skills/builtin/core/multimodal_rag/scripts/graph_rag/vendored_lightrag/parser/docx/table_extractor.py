@@ -8,7 +8,6 @@ ABOUTME: Preserves superscript/subscript formatting with <sup>/<sub> markup
 
 from docx.table import Table
 from docx.oxml.ns import qn
-from typing import List
 
 from .drawing_image_extractor import (
     DrawingExtractionContext,
@@ -176,7 +175,7 @@ class TableExtractor:
         table: Table,
         numbering_resolver=None,
         drawing_context: DrawingExtractionContext = None,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         """
         Extract table to 2D string array.
 

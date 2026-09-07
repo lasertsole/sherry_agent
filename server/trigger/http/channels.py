@@ -12,7 +12,7 @@ def _load_channel_config() -> dict:
     """Load plugins/channels/config.json, returning {} on any failure."""
     config_path = PLUGINS_PATH / "channels" / "config.json"
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
     except Exception as e:
@@ -28,9 +28,7 @@ def _save_channel_config(config_path: Path, data: dict) -> bool:
     failed/interrupted write never leaves a truncated config behind).
     """
     try:
-        atomic_write_text(
-            config_path, json.dumps(data, ensure_ascii=False, indent=2), fsync=True
-        )
+        atomic_write_text(config_path, json.dumps(data, ensure_ascii=False, indent=2), fsync=True)
         return True
     except Exception as e:
         logger.error(f"Failed to save channel config: {e}")
@@ -173,7 +171,7 @@ def _load_channel_local_config(channel_name: str) -> dict:
     """Load plugins/channels/<name>/config.json, returning {} on any failure."""
     path = _channel_config_path(channel_name)
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
     except Exception as e:

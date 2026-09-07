@@ -11,7 +11,7 @@ from config.path import SRC_DIR
 from graph_rag.vendored_lightrag.utils import EmbeddingFunc
 from langchain_core.messages import SystemMessage, HumanMessage
 
-# 设置 LightRAG 知识图谱大小控制的环境变量，缓解图谱无限膨胀
+# Set environment variables that control LightRAG knowledge-graph size to curb unbounded graph growth
 os.environ.setdefault("MAX_SOURCE_IDS_PER_ENTITY", "50")
 os.environ.setdefault("MAX_SOURCE_IDS_PER_RELATION", "50")
 os.environ.setdefault("SOURCE_IDS_LIMIT_METHOD", "FIFO")
@@ -78,7 +78,7 @@ async def get_lightrag() -> LightRAG:
         working_dir=working_dir,
         llm_model_func=_llm_model_func,
         embedding_func=EmbeddingFunc(
-            embedding_dim=1024,  # BGE-M3 模型的维度
+            embedding_dim=1024,  # Dimension of the BGE-M3 model
             max_token_size=8192,
             func=_embedding_func,
         ),

@@ -188,7 +188,13 @@ def ws_env(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(iqs, "detect_state", fake_detect)
     # The generate path must go through the queue executor; an inline
     # async_generate call would be the double-turn regression this guards.
-    monkeypatch.setattr(wsm, "async_generate", _simple_generate_factory(inline_calls))
+    # raising=False: async_generate is no longer a direct call site in wsm
+    # (moved to turn_runner); the patch stays as a regression tripwire — if
+    # anything starts calling it inline from the wsm namespace again, the
+    # fake increments inline_calls and these tests fail.
+    monkeypatch.setattr(
+        wsm, "async_generate", _simple_generate_factory(inline_calls), raising=False
+    )
     monkeypatch.setattr(turn_runner, "async_generate", _simple_generate_factory(drain_calls))
     monkeypatch.setattr(wsm, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(turn_runner, "get_pending_interrupt", _no_interrupt)

@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 
 from config import ENV_PATH
-from typing import Any, Dict
+from typing import Any
 from dotenv import load_dotenv
 from langchain_core.messages import (
     AIMessage,
@@ -82,7 +82,7 @@ if not _is_local:
 
 else:
     # ======================== Local (GGUF) branch ========================
-        
+
     _GGUF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"
     _MMPROJ_FILENAME = "mmproj-Qwen3.5-9B-BF16.gguf"
     _HF_REPO_ID = "lmstudio-community/Qwen3.5-9B-GGUF"
@@ -105,7 +105,10 @@ else:
         from models.utils import resolve_gguf_path
 
         return resolve_gguf_path(
-            _gguf_path, _HF_REPO_ID, _GGUF_FILENAME, _MODEL_WEIGHT_DIR,
+            _gguf_path,
+            _HF_REPO_ID,
+            _GGUF_FILENAME,
+            _MODEL_WEIGHT_DIR,
             fallback_path=_fallback_gguf_path,
         )
 
@@ -117,15 +120,13 @@ else:
         """Local mmproj path, downloading from HF if needed."""
         from models.utils import resolve_gguf_path
 
-        return resolve_gguf_path(
-            _mmproj_path, _HF_REPO_ID, _MMPROJ_FILENAME, _MODEL_WEIGHT_DIR
-        )
+        return resolve_gguf_path(_mmproj_path, _HF_REPO_ID, _MMPROJ_FILENAME, _MODEL_WEIGHT_DIR)
 
     # ------------------------------------------------------------------
     # 2c.  Message converter (supports multimodal HumanMessage)
     # ------------------------------------------------------------------
 
-    def _convert_message_to_dict_impl(message: BaseMessage) -> Dict[str, Any]:
+    def _convert_message_to_dict_impl(message: BaseMessage) -> dict[str, Any]:
         """Convert a LangChain ``BaseMessage`` to the dict expected by
         ``llama_cpp.Llama.create_chat_completion()``.
 
@@ -184,7 +185,7 @@ else:
         def _resolve_mmproj_path(self) -> str:
             return _resolve_mmproj_path()
 
-        def _convert_message_to_dict(self, message: BaseMessage) -> Dict[str, Any]:
+        def _convert_message_to_dict(self, message: BaseMessage) -> dict[str, Any]:
             return _convert_message_to_dict_impl(message)
 
         @property

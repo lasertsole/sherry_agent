@@ -57,9 +57,7 @@ async def taskflow_resume(
     result_hash = _result_hash(child_session_key, result)
     state = dict(flow["state"])
     results = list(state.get("results") or [])
-    if any(
-        isinstance(r, dict) and r.get("result_hash") == result_hash for r in results
-    ):
+    if any(isinstance(r, dict) and r.get("result_hash") == result_hash for r in results):
         return (
             f"TaskFlow resume skipped (already resumed): flow_id={flow_id}, "
             f"result_hash={result_hash}, results={len(results)}"
@@ -77,9 +75,7 @@ async def taskflow_resume(
 
     # Resuming a waiting flow returns it to running; a running flow stays running.
     new_status = (
-        TaskFlowStatus.RUNNING.value
-        if flow["status"] == TaskFlowStatus.WAITING.value
-        else None
+        TaskFlowStatus.RUNNING.value if flow["status"] == TaskFlowStatus.WAITING.value else None
     )
 
     try:

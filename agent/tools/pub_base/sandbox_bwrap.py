@@ -21,7 +21,7 @@ import subprocess
 
 from config.path import ROOT_DIR, TEMP_DIR
 
-try:  # Task 2 产出优先；Task 2 未落地时回退到本地 ABC 形状（见 notepad problems.md）
+try:  # Prefer the Task 2 output; fall back to the local ABC shape when Task 2 hasn't landed (see notepad problems.md)
     from agent.tools.pub_base.sandbox import SandboxBackend
 except ImportError:  # pragma: no cover
     from abc import ABC, abstractmethod
@@ -36,15 +36,19 @@ except ImportError:  # pragma: no cover
         def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]: ...
 
 
-#: probe 冒烟超时（秒）
+#: Probe smoke-test timeout (seconds)
 _PROBE_TIMEOUT_SECONDS = 3
 
-#: 冒烟命令：最小但仍触发 user-namespace/uid-map 建立的调用
+#: Smoke-test command: a minimal call that still triggers user-namespace/uid-map setup
 _PROBE_ARGV = [
     "bwrap",
-    "--ro-bind", "/", "/",
-    "--proc", "/proc",
-    "--dev", "/dev",
+    "--ro-bind",
+    "/",
+    "/",
+    "--proc",
+    "/proc",
+    "--dev",
+    "/dev",
     "true",
 ]
 
@@ -52,7 +56,7 @@ _PROBE_ARGV = [
 class BwrapBackend(SandboxBackend):
     """Linux bubblewrap backend. bwrap 不接受 env 字典，env 经 --setenv 注入。"""
 
-    _probe_cache: bool | None = None  # 类级缓存：进程生命周期内只探测一次
+    _probe_cache: bool | None = None  # Class-level cache: probe only once per process lifetime
 
     def probe(self) -> bool:
         """冒烟测试 bwrap 可用性；异常/非零返回码/超时一律 False，结果类级缓存。"""
@@ -66,7 +70,7 @@ class BwrapBackend(SandboxBackend):
                 check=False,
             )
             ok = result.returncode == 0
-        except Exception:  # FileNotFoundError / TimeoutExpired / OSError 等
+        except Exception:  # FileNotFoundError / TimeoutExpired / OSError, etc.
             ok = False
         BwrapBackend._probe_cache = ok
         return ok
@@ -75,14 +79,19 @@ class BwrapBackend(SandboxBackend):
         """把 cmd 包装进 bwrap argv；env 白名单经 --setenv 注入。"""
         argv: list[str] = [
             "bwrap",
-            "--ro-bind", "/", "/",
+            "--ro-bind",
+            "/",
+            "/",
         ]
         for path in _writable_paths():
             argv += ["--bind", path, path]
         argv += [
-            "--tmpfs", "/tmp",
-            "--dev", "/dev",
-            "--proc", "/proc",
+            "--tmpfs",
+            "/tmp",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
             "--unshare-all",
             "--die-with-parent",
             "--new-session",

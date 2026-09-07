@@ -1,17 +1,17 @@
 """Swarm/Collect mode type definitions: execution mode, run state, and group configuration."""
 
-from enum import Enum
+from enum import StrEnum
 from pydantic import BaseModel
 
 
-class SwarmMode(str, Enum):
+class SwarmMode(StrEnum):
     """Swarm execution mode. COLLECT = gather results from children; DISTRIBUTE = fan-out tasks to children."""
 
     COLLECT = "collect"
     DISTRIBUTE = "distribute"
 
 
-class SwarmRunState(str, Enum):
+class SwarmRunState(StrEnum):
     """Lifecycle state of a swarm participant."""
 
     RESERVED = "reserved"

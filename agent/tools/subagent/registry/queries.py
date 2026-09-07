@@ -86,8 +86,4 @@ def list_runs_for_controller(controller_session_key: str) -> list[SubagentRunRec
 
 def count_all_active_runs() -> int:
     """Count all RUNNING-status runs across all sessions (global concurrency view)."""
-    return sum(
-        1
-        for run in memory.values()
-        if run.execution.status == ExecutionStatus.RUNNING
-    )
+    return sum(1 for run in memory.values() if run.execution.status == ExecutionStatus.RUNNING)

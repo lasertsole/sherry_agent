@@ -15,7 +15,8 @@ import functools
 import logging
 import threading
 import time
-from typing import Any, Callable, Optional, Sequence, Type, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 # Local programming errors (TypeError, ValueError, KeyError, etc.) and most
 # OSError subclasses (FileNotFoundError, PermissionError, ...) should not be
 # retried by default.
-_DEFAULT_RETRYABLE: tuple[Type[BaseException], ...] = (
+_DEFAULT_RETRYABLE: tuple[type[BaseException], ...] = (
     ConnectionError,
     TimeoutError,
 )
@@ -62,8 +63,8 @@ def retry(
     max_delay: float = 60.0,
     exponential_base: float = 2.0,
     jitter: bool = True,
-    retryable_exceptions: Optional[Sequence[Type[BaseException]]] = None,
-    on_retry: Optional[Callable[[BaseException, int, float], None]] = None,
+    retryable_exceptions: Sequence[type[BaseException]] | None = None,
+    on_retry: Callable[[BaseException, int, float], None] | None = None,
 ) -> Callable[[F], F]:
     """Decorator that retries a **synchronous** function on transient failures.
 
@@ -149,8 +150,8 @@ def async_retry(
     max_delay: float = 60.0,
     exponential_base: float = 2.0,
     jitter: bool = True,
-    retryable_exceptions: Optional[Sequence[Type[BaseException]]] = None,
-    on_retry: Optional[Callable[[BaseException, int, float], Any]] = None,
+    retryable_exceptions: Sequence[type[BaseException]] | None = None,
+    on_retry: Callable[[BaseException, int, float], Any] | None = None,
 ) -> Callable[[F], F]:
     """Decorator that retries an **async** function on transient failures.
 
@@ -253,7 +254,7 @@ class CircuitBreaker:
         failure_threshold: int = 5,
         reset_timeout: float = 60.0,
         name: str = "default",
-        failure_exceptions: Optional[Sequence[Type[BaseException]]] = None,
+        failure_exceptions: Sequence[type[BaseException]] | None = None,
     ) -> None:
         self.failure_threshold = failure_threshold
         self.reset_timeout = reset_timeout
@@ -262,7 +263,7 @@ class CircuitBreaker:
         # Exceptions that are treated as upstream failures.
         # By default these mirror the retry helpers so application bugs do not
         # open the breaker unless explicitly configured to do so.
-        self._failure_exceptions: tuple[Type[BaseException], ...] = tuple(
+        self._failure_exceptions: tuple[type[BaseException], ...] = tuple(
             failure_exceptions or _DEFAULT_RETRYABLE
         )
 

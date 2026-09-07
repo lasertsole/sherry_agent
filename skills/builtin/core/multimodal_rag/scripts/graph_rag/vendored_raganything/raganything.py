@@ -8,7 +8,8 @@ This script integrates:
 """
 
 import os
-from typing import Dict, Any, Optional, Callable
+from typing import Any
+from collections.abc import Callable
 import sys
 import asyncio
 import atexit
@@ -53,24 +54,24 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
 
     # Core Components
     # ---
-    lightrag: Optional[LightRAG] = field(default=None)
+    lightrag: LightRAG | None = field(default=None)
     """Optional pre-initialized LightRAG instance."""
 
-    llm_model_func: Optional[Callable] = field(default=None)
+    llm_model_func: Callable | None = field(default=None)
     """LLM model function for text analysis."""
 
-    vision_model_func: Optional[Callable] = field(default=None)
+    vision_model_func: Callable | None = field(default=None)
     """Vision model function for image analysis."""
 
-    embedding_func: Optional[Callable] = field(default=None)
+    embedding_func: Callable | None = field(default=None)
     """Embedding function for text vectorization."""
 
-    config: Optional[RAGAnythingConfig] = field(default=None)
+    config: RAGAnythingConfig | None = field(default=None)
     """Configuration object, if None will create with environment variables."""
 
     # LightRAG Configuration
     # ---
-    lightrag_kwargs: Dict[str, Any] = field(default_factory=dict)
+    lightrag_kwargs: dict[str, Any] = field(default_factory=dict)
     """Additional keyword arguments for LightRAG initialization when lightrag is not provided.
     This allows passing all LightRAG configuration parameters like:
     - kv_storage, vector_storage, graph_storage, doc_status_storage
@@ -85,16 +86,16 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
 
     # Internal State
     # ---
-    modal_processors: Dict[str, Any] = field(default_factory=dict, init=False)
+    modal_processors: dict[str, Any] = field(default_factory=dict, init=False)
     """Dictionary of multimodal processors."""
 
-    context_extractor: Optional[ContextExtractor] = field(default=None, init=False)
+    context_extractor: ContextExtractor | None = field(default=None, init=False)
     """Context extractor for providing surrounding content to modal processors."""
 
-    parse_cache: Optional[Any] = field(default=None, init=False)
+    parse_cache: Any | None = field(default=None, init=False)
     """Parse result cache storage using LightRAG KV storage."""
 
-    multimodal_status_cache: Optional[Any] = field(default=None, init=False)
+    multimodal_status_cache: Any | None = field(default=None, init=False)
     """Compatibility KV storage for multimodal completion state."""
 
     callback_manager: CallbackManager = field(
@@ -470,7 +471,7 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
             self.logger.info(f"Parser '{self.config.parser}' installation verified")
         return True
 
-    def get_config_info(self) -> Dict[str, Any]:
+    def get_config_info(self) -> dict[str, Any]:
         """Get current configuration information"""
         config_info = {
             "directory": {
@@ -575,7 +576,7 @@ class RAGAnything(QueryMixin, ProcessorMixin, BatchMixin):
             except Exception as e:
                 self.logger.error(f"Failed to update context configuration: {e}")
 
-    def get_processor_info(self) -> Dict[str, Any]:
+    def get_processor_info(self) -> dict[str, Any]:
         """Get processor information"""
         base_info = {
             "mineru_installed": MineruParser.check_installation(MineruParser()),

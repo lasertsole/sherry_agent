@@ -253,11 +253,7 @@ class _LogCapture:
         return False
 
     def route_lines(self) -> list[str]:
-        return [
-            line
-            for line in self.lines
-            if "Context compression" in line and "route=" in line
-        ]
+        return [line for line in self.lines if "Context compression" in line and "route=" in line]
 
     def compression_lines(self) -> list[str]:
         return [line for line in self.lines if "Context compression" in line]
@@ -282,18 +278,14 @@ def _assert_pairing(messages) -> None:
                 ai_ids.add(tc["id"])
         elif isinstance(msg, ToolMessage):
             tool_ids.add(msg.tool_call_id)
-            assert msg.content, (
-                f"empty ToolMessage content for {msg.tool_call_id!r}"
-            )
+            assert msg.content, f"empty ToolMessage content for {msg.tool_call_id!r}"
     assert ai_ids == tool_ids, (
         f"pairing broken: ai_only={ai_ids - tool_ids} tool_only={tool_ids - ai_ids}"
     )
 
 
 def _find_tool_message(messages, tc_id: str) -> ToolMessage:
-    matches = [
-        m for m in messages if isinstance(m, ToolMessage) and m.tool_call_id == tc_id
-    ]
+    matches = [m for m in messages if isinstance(m, ToolMessage) and m.tool_call_id == tc_id]
     assert len(matches) == 1, f"expected exactly one ToolMessage for {tc_id!r}"
     return matches[0]
 
@@ -439,9 +431,7 @@ def test_e2e_b_hard_overflow_compact_llm_summary(order, sid):
 
     # --- round 1: T1 preflight compacts BEFORE any model call ---
     with _LogCapture() as cap:
-        result1 = asyncio.run(
-            agent.ainvoke({"messages": round1_input, "session_id": sid})
-        )
+        result1 = asyncio.run(agent.ainvoke({"messages": round1_input, "session_id": sid}))
 
     # --- route log: exactly one compact_then_truncate ---
     routes = cap.route_lines()
@@ -472,17 +462,17 @@ def test_e2e_b_hard_overflow_compact_llm_summary(order, sid):
     assert pair_idx >= 1 and isinstance(compacted[pair_idx - 1], HumanMessage)
     assert compacted[pair_idx - 1].content == "What did we do so far?"
     assert _est(compacted) < USABLE_BUDGET
-    assert all(
-        m.content != "y" * 104000 for m in compacted
-    ), "huge human message must be summarized away"
+    assert all(m.content != "y" * 104000 for m in compacted), (
+        "huge human message must be summarized away"
+    )
     _assert_pairing(compacted)
 
     # --- T1 rewrote the graph state too: summary + preserved tail + reply ---
     assert len(result1["messages"]) == 12
     assert result1["messages"][-1].content == "Final answer for E2E-B."
-    assert all(
-        m.content != "y" * 104000 for m in result1["messages"]
-    ), "huge human message must not survive in state"
+    assert all(m.content != "y" * 104000 for m in result1["messages"]), (
+        "huge human message must not survive in state"
+    )
     _assert_pairing(result1["messages"])
 
     # --- anti-thrash bookkeeping: one compression, cooldown armed ---
@@ -490,8 +480,7 @@ def test_e2e_b_hard_overflow_compact_llm_summary(order, sid):
     # The compact armed the cooldown at COMPACTION_COOLDOWN_ROUNDS during the
     # T1 preflight; the round-1 wrap_model_call then ticked it down by one.
     assert (
-        state_register_mem.get_state(sid, _COOLDOWN_ROUNDS_KEY, 0)
-        == COMPACTION_COOLDOWN_ROUNDS - 1
+        state_register_mem.get_state(sid, _COOLDOWN_ROUNDS_KEY, 0) == COMPACTION_COOLDOWN_ROUNDS - 1
     )
 
     # --- round 2: caller passes the compacted state back; no new triggers ---
@@ -545,10 +534,8 @@ def test_e2e_c_t3_reported_usage_truncate_reduces_next_round(order, sid):
 
     # T3 logs twice at INFO: the _log_route line plus the post-response
     # line carrying reported_input_tokens - count only the former.
-    routes = [l for l in cap.route_lines() if "reported_input_tokens" not in l]
-    assert len(routes) == 1, (
-        f"expected exactly one route log, got {cap.route_lines()}"
-    )
+    routes = [line for line in cap.route_lines() if "reported_input_tokens" not in line]
+    assert len(routes) == 1, f"expected exactly one route log, got {cap.route_lines()}"
     assert "trigger=T3" in routes[0]
     assert "reported_input_tokens=26000" in " ".join(cap.compression_lines())
     assert "route=truncate_tool_results_only" in routes[0]
@@ -573,9 +560,7 @@ def test_e2e_c_t3_reported_usage_truncate_reduces_next_round(order, sid):
                 }
             )
         )
-    assert cap2.route_lines() == [], (
-        f"round 2 must not trigger compression: {cap2.route_lines()}"
-    )
+    assert cap2.route_lines() == [], f"round 2 must not trigger compression: {cap2.route_lines()}"
     assert len(result2["messages"]) == 12
     big2 = _find_tool_message(result2["messages"], big_tc)
     assert big2.content == big1.content, "round 2 must not re-truncate"
@@ -620,9 +605,7 @@ def test_e2e_d_t4_provider_413_recovery(order, sid):
         for line in cap.compression_lines()
         if "attempt=1/3" in line and "error_class=payload_too_large" in line
     ]
-    assert len(attempt_lines) == 1, (
-        f"expected one T4 attempt log, got {cap.compression_lines()}"
-    )
+    assert len(attempt_lines) == 1, f"expected one T4 attempt log, got {cap.compression_lines()}"
     assert "trigger=T4" in attempt_lines[0]
 
     # --- per-class retry counter armed; forced compression was recorded ---
@@ -670,9 +653,7 @@ def test_e2e_e_t4_exhaustion_propagates_original_error(order, sid):
     agent = _build_agent(order, main_model, aux_model)
 
     with _LogCapture() as cap, pytest.raises(Provider413Error) as excinfo:
-        asyncio.run(
-            agent.ainvoke({"messages": [HumanMessage("h" * 47000)], "session_id": sid})
-        )
+        asyncio.run(agent.ainvoke({"messages": [HumanMessage("h" * 47000)], "session_id": sid}))
 
     # --- the original exception OBJECT propagated (not a copy/wrap) ---
     assert excinfo.value is err
@@ -689,9 +670,7 @@ def test_e2e_e_t4_exhaustion_propagates_original_error(order, sid):
             marker in line and "error_class=payload_too_large" in line
             for line in cap.compression_lines()
         ), f"missing T4 attempt log {marker}: {cap.compression_lines()}"
-    exhausted = [
-        line for line in cap.compression_lines() if "retries exhausted" in line
-    ]
+    exhausted = [line for line in cap.compression_lines() if "retries exhausted" in line]
     assert len(exhausted) == 1 and "trigger=T4" in exhausted[0]
 
     # retry views keep the user message: noop compact never drops it
@@ -733,9 +712,7 @@ def test_e2e_f_ttl_clock_and_multi_round_stability(order, sid):
     assert registry == {big_tc: 1000.0}
 
     with _LogCapture() as cap:
-        result1 = asyncio.run(
-            agent.ainvoke({"messages": round1_input, "session_id": sid})
-        )
+        result1 = asyncio.run(agent.ainvoke({"messages": round1_input, "session_id": sid}))
 
     # --- T1 truncate route fired once, in place, LLM-free ---
     routes = cap.route_lines()

@@ -2,13 +2,13 @@ import type { FetchError } from 'ofetch';
 
 export type Response = {
   code?: number;
-  data?: any;
+  data?: unknown;
   msg?: string;
 };
 
 export type UseFetchResponse = {
-  data: Ref;
-  error: Ref<FetchError<any> | null, FetchError<any> | null>;
+  data: Ref<unknown>;
+  error: Ref<FetchError<unknown> | null, FetchError<unknown> | null>;
   status: Ref<string>;
   refresh: () => Promise<void>;
   clear: () => void;

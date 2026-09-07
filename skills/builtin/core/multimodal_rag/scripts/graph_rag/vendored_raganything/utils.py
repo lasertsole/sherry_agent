@@ -6,12 +6,12 @@ Contains helper functions for content separation, text insertion, and other util
 
 import base64
 import inspect
-from typing import Dict, List, Any, Tuple
+from typing import Any
 from pathlib import Path
 from lightrag.utils import logger
 
 
-def normalize_caption_list(value: Any) -> List[str]:
+def normalize_caption_list(value: Any) -> list[str]:
     """Return captions and footnotes as a clean list of strings."""
     if value is None:
         return []
@@ -22,7 +22,7 @@ def normalize_caption_list(value: Any) -> List[str]:
     return []
 
 
-def get_table_body(item: Dict[str, Any]) -> Any:
+def get_table_body(item: dict[str, Any]) -> Any:
     """Read table content across common content-list alias fields."""
     if item.get("table_body") not in (None, ""):
         return item.get("table_body")
@@ -57,7 +57,7 @@ def format_table_body(table_body: Any) -> str:
     return str(table_body)
 
 
-def get_equation_text_and_format(item: Dict[str, Any]) -> Tuple[str, str]:
+def get_equation_text_and_format(item: dict[str, Any]) -> tuple[str, str]:
     """Read equation content while preserving LaTeX aliases from content lists.
 
     Field priority follows MinerU first (``text`` + ``text_format``), then
@@ -86,8 +86,8 @@ def get_equation_text_and_format(item: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def separate_content(
-    content_list: List[Dict[str, Any]],
-) -> Tuple[str, List[Dict[str, Any]]]:
+    content_list: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
     """
     Separate text content and multimodal content
 
@@ -320,7 +320,7 @@ async def insert_text_content_with_multimodal_content(
     logger.info("Text content insertion complete")
 
 
-def get_processor_for_type(modal_processors: Dict[str, Any], content_type: str):
+def get_processor_for_type(modal_processors: dict[str, Any], content_type: str):
     """
     Get appropriate processor based on content type
 
@@ -343,7 +343,7 @@ def get_processor_for_type(modal_processors: Dict[str, Any], content_type: str):
         return modal_processors.get("generic")
 
 
-def get_processor_supports(proc_type: str) -> List[str]:
+def get_processor_supports(proc_type: str) -> list[str]:
     """Get processor supported features"""
     supports_map = {
         "image": [

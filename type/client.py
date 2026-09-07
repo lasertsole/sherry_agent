@@ -21,4 +21,4 @@ class Chat(BaseModel):
 class File(TypedDict):
     content: bytes
     type: FileType
-    extension: str  # 后缀
+    extension: str  # File extension

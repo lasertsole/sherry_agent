@@ -78,9 +78,10 @@ context_engine/
 
 ```python
 # context_engine/__init__.py
-from .store import *   # get_db, add_messages, get_messages_by_lastest_n_turns,
-                       # get_turns_by_turn_num_scope, get_history_by_turn_page,
-                       # get_session_ids, delete_messages_by_session
+from .store import *  # get_db, add_messages, get_messages_by_lastest_n_turns,
+
+# get_turns_by_turn_num_scope, get_history_by_turn_page,
+# get_session_ids, delete_messages_by_session
 from .core import retrieve_history_by_last_n_prompt, search_messages
 ```
 
@@ -219,8 +220,8 @@ results = search_messages(
 )
 
 for r in results:
-    print(r["snippet"])        # 高亮片段（标记：>>> match <<<）
-    print(r["context"])        # 最多 3 条：上一条消息、匹配消息、下一条消息
+    print(r["snippet"])  # 高亮片段（标记：>>> match <<<）
+    print(r["context"])  # 最多 3 条：上一条消息、匹配消息、下一条消息
 ```
 
 **搜索特性：**

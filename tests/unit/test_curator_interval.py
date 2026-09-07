@@ -33,7 +33,7 @@ curator config/transition/orchestrator function reads/writes state through
 
 import json
 import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from unittest.mock import patch
 
 import context_engine.curator.config as curator_config
@@ -172,7 +172,7 @@ def test_should_run_missing_last_run_runs(isolated_state):
 
 def test_should_run_within_interval_no_run(isolated_state):
     """Now is less than the effective interval since last run -> no trigger."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     curator_state.save_state(
         {"last_run_at": (now - timedelta(hours=24)).isoformat()}
     )  # default 120h
@@ -181,7 +181,7 @@ def test_should_run_within_interval_no_run(isolated_state):
 
 def test_should_run_over_interval_runs(isolated_state):
     """Now exceeds the effective (default) interval -> trigger."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     curator_state.save_state({"last_run_at": (now - timedelta(days=8)).isoformat()})  # > 5 days
     assert should_run_now(now=now) is True
 
@@ -189,7 +189,7 @@ def test_should_run_over_interval_runs(isolated_state):
 def test_should_run_override_shorter_window_no_run(isolated_state):
     """With a 1-day override, 2 days since last run -> already eligible."""
     set_interval_override_days(1)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     st = curator_state.load_state()
     st["last_run_at"] = (now - timedelta(days=2)).isoformat()
     curator_state.save_state(st)
@@ -199,7 +199,7 @@ def test_should_run_override_shorter_window_no_run(isolated_state):
 def test_should_run_override_shorter_window_not_yet(isolated_state):
     """With a 2-day override, 1 day since last run -> not yet eligible."""
     set_interval_override_days(2)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     curator_state.save_state({"last_run_at": (now - timedelta(days=1)).isoformat()})
     assert should_run_now(now=now) is False
 
@@ -207,7 +207,7 @@ def test_should_run_override_shorter_window_not_yet(isolated_state):
 def test_should_run_override_longer_window(isolated_state):
     """With a 3-day override, 2 days since last run -> not yet eligible."""
     set_interval_override_days(3)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     curator_state.save_state({"last_run_at": (now - timedelta(days=2)).isoformat()})
     assert should_run_now(now=now) is False
 
@@ -246,7 +246,7 @@ def test_run_review_increments_run_count(isolated_state):
 
 def test_last_maintenance_set_and_read(isolated_state):
     """set_last_maintenance_at persists to state file."""
-    stamp = datetime.now(timezone.utc).isoformat()
+    stamp = datetime.now(UTC).isoformat()
     set_last_maintenance_at(stamp)
     assert get_last_maintenance_at() == stamp
     raw = json.loads(curator_state.CURATOR_STATE_FILE.read_text(encoding="utf-8"))

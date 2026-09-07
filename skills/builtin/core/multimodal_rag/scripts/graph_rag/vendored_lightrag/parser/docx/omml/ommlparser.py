@@ -1,4 +1,4 @@
-from xml.etree.cElementTree import Element
+from xml.etree.ElementTree import Element
 
 from .utils import qn
 

@@ -35,7 +35,7 @@ from graph_rag.vendored_lightrag._version import __api_version__
 
 import numpy as np
 import base64
-from typing import Any, Union
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -759,7 +759,7 @@ async def openai_complete(
     keyword_extraction=False,
     entity_extraction=False,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     if history_messages is None:
         history_messages = []
     # Pop entity_extraction from kwargs if also passed there (avoid duplication)

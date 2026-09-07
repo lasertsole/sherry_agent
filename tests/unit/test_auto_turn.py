@@ -24,7 +24,12 @@ def _sq():
 def _injection(run_id="run-1"):
     return HumanMessage(
         content="[subagent:run-1] child finished: done",
-        metadata={"internal": True, "provenance": "subagent_completion", "run_id": run_id, "status": "completed"},
+        metadata={
+            "internal": True,
+            "provenance": "subagent_completion",
+            "run_id": run_id,
+            "status": "completed",
+        },
     )
 
 
@@ -106,7 +111,9 @@ async def test_idle_triggers_new_turn(monkeypatch):
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
     monkeypatch.setattr(at, "enqueue_steering", _spy := _make_spy())
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
-    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished))
+    monkeypatch.setattr(
+        at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished)
+    )
 
     result = await at.maybe_trigger_auto_turn("sess-1", _injection())
 
@@ -140,7 +147,9 @@ async def test_double_trigger_idempotent(monkeypatch):
     spy = _make_spy()
     monkeypatch.setattr(at, "enqueue_steering", spy)
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
-    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished))
+    monkeypatch.setattr(
+        at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished)
+    )
 
     r1 = await at.maybe_trigger_auto_turn("sess-1", _injection())
     r2 = await at.maybe_trigger_auto_turn("sess-1", _injection())
@@ -195,7 +204,9 @@ async def test_user_input_no_longer_cancels_turn(monkeypatch, tmp_path):
     result = await at.maybe_trigger_auto_turn("sess-u", injection)
     assert result.outcome == at.AutoTurnOutcome.TRIGGERED
     await _wait_started(started)
-    _fake_detect(monkeypatch, at, {"busy": True, "reason": "ws_task"})  # user frame arrived mid-turn
+    _fake_detect(
+        monkeypatch, at, {"busy": True, "reason": "ws_task"}
+    )  # user frame arrived mid-turn
     block.set()  # user input queues; the auto turn runs to completion
     await asyncio.wait_for(at._INFLIGHT["sess-u"], timeout=10)
 
@@ -232,7 +243,12 @@ async def test_normal_turn_sends_chunk_and_done(monkeypatch):
     await asyncio.wait_for(at._INFLIGHT["sess-2"], timeout=10)
 
     frames = [json.loads(p) for p in ws.sent]
-    assert frames[0] == {"event": "chunk", "session_id": "sess-2", "type": "text", "content": "hello"}
+    assert frames[0] == {
+        "event": "chunk",
+        "session_id": "sess-2",
+        "type": "text",
+        "content": "hello",
+    }
     assert frames[-1]["event"] == "done" and frames[-1]["model_name"] == "fake"
     assert finished.is_set() and "sess-2" not in at._INFLIGHT
 
@@ -254,7 +270,9 @@ async def test_cancelled_runner_joins_consumer_unwind(monkeypatch):
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
     monkeypatch.setattr(at, "enqueue_steering", _make_spy())
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
-    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished))
+    monkeypatch.setattr(
+        at, "async_generate", _fake_generate(calls, started, asyncio.Event(), finished)
+    )
 
     unwound = asyncio.Event()
 

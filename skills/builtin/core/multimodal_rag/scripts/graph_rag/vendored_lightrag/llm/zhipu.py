@@ -1,11 +1,7 @@
-import sys
 import warnings
 from ..utils import verbose_debug
 
-if sys.version_info < (3, 9):
-    pass
-else:
-    pass
+pass
 import pipmaster as pm  # Pipmaster for dynamic library install
 
 # install specific modules
@@ -30,7 +26,6 @@ from graph_rag.vendored_lightrag.utils import (
 )
 
 import numpy as np
-from typing import Union, List, Optional, Dict
 
 
 @retry(
@@ -39,15 +34,14 @@ from typing import Union, List, Optional, Dict
     retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
 )
 async def zhipu_complete_if_cache(
-    prompt: Union[str, List[Dict[str, str]]],
+    prompt: str | list[dict[str, str]],
     model: str = "glm-4-flashx",  # The most cost/performance balance model in glm-4 series
-    api_key: Optional[str] = None,
-    system_prompt: Optional[str] = None,
-    history_messages: List[Dict[str, str]] = [],
+    api_key: str | None = None,
+    system_prompt: str | None = None,
+    history_messages: list[dict[str, str]] = [],
     enable_cot: bool = False,  # LightRAG output switch: include reasoning_content as <think>...</think>
-    thinking: Optional[
-        Dict[str, object]
-    ] = None,  # Zhipu request param: use {"type": "enabled"} to enable thinking
+    thinking: dict[str, object]
+    | None = None,  # Zhipu request param: use {"type": "enabled"} to enable thinking
     **kwargs,
 ) -> str:
     """Call Zhipu chat completions with optional official thinking support.

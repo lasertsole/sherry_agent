@@ -21,7 +21,7 @@ def _truncate_msg(msg: BaseMessage) -> BaseMessage:
     if not isinstance(content, str):
         text: str = json.dumps(content) if content is not None else ""
     else:
-        text: str = content
+        text = content
 
     if len(text) <= TOKEN_MAX:
         return msg

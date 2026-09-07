@@ -176,28 +176,28 @@ client/
 
 ## Tech Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Cross-platform shell** | [Tauri 2](https://v2.tauri.app/) (`2.0.0-rc.17`, `@tauri-apps/api` ^2.11.1, `@tauri-apps/cli` 2.11.4) | Native desktop packaging + config/capabilities/icons |
-| **Frontend framework** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41 | SPA mode (`ssr: false`), Composition API + `<script setup lang="ts">` |
-| **UI components** | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0 (`@primevue/nuxt-module`) | Dialog, Button, Select, ToggleSwitch, Toast, etc. |
-| **State management** | [Pinia](https://pinia.vuejs.org/) ^4.0.3 (`@pinia/nuxt`) + `pinia-plugin-persistedstate` (localStorage) | Global UI state (sidebar, theme entry) |
-| **Styling** | [Tailwind CSS](https://tailwindcss.com/) v4 via `@tailwindcss/vite` + SCSS (`sass`) | Utility-first CSS + `@theme` tokens + SCSS mixin library |
-| **Color mode** | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/) | Dark/Light theme switching (`.dark` class) |
-| **Internationalization** | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0 | zh / en / ja / ko, `no_prefix` strategy |
-| **Markdown rendering** | [markdown-it](https://github.com/markdown-it/markdown-it) ^15 | Chat message markdown → HTML (ChatBox.vue) |
-| **XSS protection** | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4 | Sanitize rendered HTML |
-| **Date formatting** | [dayjs](https://day.js.org/) | Compact timestamps (`YYYYMMDDHHmmss`) parsing/formatting |
-| **Offline storage** | [Dexie.js](https://dexie.org/) ^4.4.4 | IndexedDB wrapper: messages, characters, background, subagent runs, client logs |
-| **Event bus** | [mitt](https://github.com/developit/mitt) ^3 | Lightweight cross-component communication |
-| **Charts / graphs** | [@antv/g2](https://g2.antv.antgroup.com/) ^5, [@antv/g6](https://g6.antv.antgroup.com/) ^5 | Statistics charts, subagent flow graph, knowledge graph |
-| **Image cropping** | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6 | Avatar upload & crop |
-| **Utilities** | [lodash-es](https://lodash.com/) ^4.18 | Common utility functions |
-| **Unit / integration tests** | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8 | Composable unit tests + SFC integration tests |
-| **E2E repros** | [@playwright/test](https://playwright.dev/) ^1.62 | Repro tests against the dev server (Desktop Edge) |
-| **Lint / format** | ESLint ^10 (flat config) + Prettier | Code quality |
-| **Type checking** | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9 | `pnpm typecheck` |
-| **Backend language** | [Rust](https://www.rust-lang.org/) 2021 edition (MSRV 1.94) | Tauri shell (src-tauri/, currently placeholder modules) |
+| Layer                        | Technology                                                                                              | Purpose                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **Cross-platform shell**     | [Tauri 2](https://v2.tauri.app/) (`2.0.0-rc.17`, `@tauri-apps/api` ^2.11.1, `@tauri-apps/cli` 2.11.4)   | Native desktop packaging + config/capabilities/icons                            |
+| **Frontend framework**       | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                                | SPA mode (`ssr: false`), Composition API + `<script setup lang="ts">`           |
+| **UI components**            | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0 (`@primevue/nuxt-module`)                  | Dialog, Button, Select, ToggleSwitch, Toast, etc.                               |
+| **State management**         | [Pinia](https://pinia.vuejs.org/) ^4.0.3 (`@pinia/nuxt`) + `pinia-plugin-persistedstate` (localStorage) | Global UI state (sidebar, theme entry)                                          |
+| **Styling**                  | [Tailwind CSS](https://tailwindcss.com/) v4 via `@tailwindcss/vite` + SCSS (`sass`)                     | Utility-first CSS + `@theme` tokens + SCSS mixin library                        |
+| **Color mode**               | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                    | Dark/Light theme switching (`.dark` class)                                      |
+| **Internationalization**     | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                         | zh / en / ja / ko, `no_prefix` strategy                                         |
+| **Markdown rendering**       | [markdown-it](https://github.com/markdown-it/markdown-it) ^15                                           | Chat message markdown → HTML (ChatBox.vue)                                      |
+| **XSS protection**           | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4                                                   | Sanitize rendered HTML                                                          |
+| **Date formatting**          | [dayjs](https://day.js.org/)                                                                            | Compact timestamps (`YYYYMMDDHHmmss`) parsing/formatting                        |
+| **Offline storage**          | [Dexie.js](https://dexie.org/) ^4.4.4                                                                   | IndexedDB wrapper: messages, characters, background, subagent runs, client logs |
+| **Event bus**                | [mitt](https://github.com/developit/mitt) ^3                                                            | Lightweight cross-component communication                                       |
+| **Charts / graphs**          | [@antv/g2](https://g2.antv.antgroup.com/) ^5, [@antv/g6](https://g6.antv.antgroup.com/) ^5              | Statistics charts, subagent flow graph, knowledge graph                         |
+| **Image cropping**           | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6                                             | Avatar upload & crop                                                            |
+| **Utilities**                | [lodash-es](https://lodash.com/) ^4.18                                                                  | Common utility functions                                                        |
+| **Unit / integration tests** | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8                    | Composable unit tests + SFC integration tests                                   |
+| **E2E repros**               | [@playwright/test](https://playwright.dev/) ^1.62                                                       | Repro tests against the dev server (Desktop Edge)                               |
+| **Lint / format**            | ESLint ^10 (flat config) + Prettier                                                                     | Code quality                                                                    |
+| **Type checking**            | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                               | `pnpm typecheck`                                                                |
+| **Backend language**         | [Rust](https://www.rust-lang.org/) 2021 edition (MSRV 1.94)                                             | Tauri shell (src-tauri/, currently placeholder modules)                         |
 
 ### Key Configuration
 
@@ -230,25 +230,25 @@ app.vue (root: toast layer, connection banner, locale restore)
 
 `bridge.ts` provides a unified API that works in both Tauri desktop and browser modes. All backend access flows through it (or through `fetchApi` in `requestApi.ts`):
 
-| API | Description |
-|-----|-------------|
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)` | Streaming agent chat; returns `{ controller, promise }` (Tauri Events or `/sessions/agent/ws`) |
-| `sendChatMessage(request, onChunk)` | Convenience wrapper around `streamChatMessage` |
-| `stopChatMessage(sessionId)` | Stop ongoing generation (`agent_stop` IPC or WS `stop` frame) |
-| `resumeHitl(sessionId, decision, ...)` | Resume a paused HITL agent over a fresh WebSocket |
-| `clearSession(sessionId)` | Clear session state (`session_clear` IPC or `DELETE /sessions`) |
-| `getHistory(sessionId, lastTurnCount)` | Retrieve history (`session_history` IPC or `GET /n_turns_history_messages`) |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun` | Background subagent task management |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate` | System prompt files CRUD |
-| `readMemory` / `writeMemory` | Long-term memory files (`workspace/memory/*`) |
-| `readHeartbeat` / `writeHeartbeat` | `workspace/HEARTBEAT.md` (always direct HTTP) |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | Cron job management |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill` | Skill management |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig` | Channel settings |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings` | Auto-skill curator control |
-| `listLogFiles` / `readLogFile` / `openLogStream` | Backend log reading + live `/logs/ws` stream |
-| `readEnvConfig` / `writeEnvConfig` (`env.ts`) | Backend `.env` read/update (`GET/PUT /env`) |
-| `checkHealth()` | Backend reachability (`system_health` IPC or `GET /system_prompt`) |
+| API                                                                                                | Description                                                                                    |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | Streaming agent chat; returns `{ controller, promise }` (Tauri Events or `/sessions/agent/ws`) |
+| `sendChatMessage(request, onChunk)`                                                                | Convenience wrapper around `streamChatMessage`                                                 |
+| `stopChatMessage(sessionId)`                                                                       | Stop ongoing generation (`agent_stop` IPC or WS `stop` frame)                                  |
+| `resumeHitl(sessionId, decision, ...)`                                                             | Resume a paused HITL agent over a fresh WebSocket                                              |
+| `clearSession(sessionId)`                                                                          | Clear session state (`session_clear` IPC or `DELETE /sessions`)                                |
+| `getHistory(sessionId, lastTurnCount)`                                                             | Retrieve history (`session_history` IPC or `GET /n_turns_history_messages`)                    |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | Background subagent task management                                                            |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | System prompt files CRUD                                                                       |
+| `readMemory` / `writeMemory`                                                                       | Long-term memory files (`workspace/memory/*`)                                                  |
+| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md` (always direct HTTP)                                                  |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | Cron job management                                                                            |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | Skill management                                                                               |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | Channel settings                                                                               |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | Auto-skill curator control                                                                     |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | Backend log reading + live `/logs/ws` stream                                                   |
+| `readEnvConfig` / `writeEnvConfig` (`env.ts`)                                                      | Backend `.env` read/update (`GET/PUT /env`)                                                    |
+| `checkHealth()`                                                                                    | Backend reachability (`system_health` IPC or `GET /system_prompt`)                             |
 
 Browser-mode chat streaming details:
 
@@ -262,10 +262,10 @@ Browser-mode chat streaming details:
 
 Two independent, module-level singleton connections (both auto-reconnect after 5 seconds):
 
-| Connection | Endpoint | Events via mitt |
-|-----------|----------|-----------------|
-| Session push | `/sessions/ws?session_id=default` | `ws:connected`, `ws:notification`, `ws:message`, `ws:disconnected` |
-| Subagent push | `/subagents/ws` | `ws:subagents:connected`, `ws:subagents:ready`, `ws:subagent_spawned`, `ws:subagent_ended`, `ws:subagents:message`, `ws:subagents:disconnected` |
+| Connection    | Endpoint                          | Events via mitt                                                                                                                                 |
+| ------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session push  | `/sessions/ws?session_id=default` | `ws:connected`, `ws:notification`, `ws:message`, `ws:disconnected`                                                                              |
+| Subagent push | `/subagents/ws`                   | `ws:subagents:connected`, `ws:subagents:ready`, `ws:subagent_spawned`, `ws:subagent_ended`, `ws:subagents:message`, `ws:subagents:disconnected` |
 
 Both resolve the base URL from `VITE_API_BACK_URL` (`http://` → `ws://`, `https://` → `wss://`).
 
@@ -273,29 +273,29 @@ Both resolve the base URL from `VITE_API_BACK_URL` (`http://` → `ws://`, `http
 
 REST (base URL `VITE_API_BACK_URL`, default `http://localhost:8080`):
 
-| Endpoint | Method(s) | Purpose |
-|----------|-----------|---------|
-| `/sessions` | DELETE | Clear a session |
-| `/n_turns_history_messages` | GET | Last-N-turns history |
-| `/get_history_by_turn_page` | GET | Paginated history (cache-first via Dexie) |
-| `/sessions/agent/ws` | WS | Chat streaming, stop, HITL resume |
-| `/sessions/ws` | WS | Server push notifications |
-| `/subagents/ws` | WS | Subagent spawn/end pushes |
-| `/subagents/runs` | GET / DELETE | Subagent run records (list/subtree/delete) |
-| `/subagents/steer` | POST | Steer/resume a subagent run |
-| `/system_prompt` | GET / POST / PATCH / PUT | System prompt read/write/update |
-| `/system_prompt/template` | GET | Persona template files |
-| `/memory` | GET / PUT | Long-term memory files |
-| `/heartbeat` | GET / PUT | HEARTBEAT.md |
-| `/cron`, `/cron/trigger`, `/cron/enable` | GET/POST/PUT/DELETE | Cron job CRUD + trigger |
-| `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST | Skill management |
-| `/curator/run`, `/curator/settings` | POST / GET / PUT | Curator review & settings |
-| `/channels`, `/channels/{name}`, `/channels/{name}/config` | GET / PUT | Channel toggles & config |
-| `/env` | GET / PUT | Backend `.env` read/update |
-| `/logs/files`, `/logs` | GET | Log file list & tail read |
-| `/logs/ws` | WS | Live log stream |
-| `/images/upload`, `/audio/upload`, `/video/upload` | POST | Base64 media upload → URL |
-| `/media` | GET | Render persisted media files |
+| Endpoint                                                                                         | Method(s)                | Purpose                                    |
+| ------------------------------------------------------------------------------------------------ | ------------------------ | ------------------------------------------ |
+| `/sessions`                                                                                      | DELETE                   | Clear a session                            |
+| `/n_turns_history_messages`                                                                      | GET                      | Last-N-turns history                       |
+| `/get_history_by_turn_page`                                                                      | GET                      | Paginated history (cache-first via Dexie)  |
+| `/sessions/agent/ws`                                                                             | WS                       | Chat streaming, stop, HITL resume          |
+| `/sessions/ws`                                                                                   | WS                       | Server push notifications                  |
+| `/subagents/ws`                                                                                  | WS                       | Subagent spawn/end pushes                  |
+| `/subagents/runs`                                                                                | GET / DELETE             | Subagent run records (list/subtree/delete) |
+| `/subagents/steer`                                                                               | POST                     | Steer/resume a subagent run                |
+| `/system_prompt`                                                                                 | GET / POST / PATCH / PUT | System prompt read/write/update            |
+| `/system_prompt/template`                                                                        | GET                      | Persona template files                     |
+| `/memory`                                                                                        | GET / PUT                | Long-term memory files                     |
+| `/heartbeat`                                                                                     | GET / PUT                | HEARTBEAT.md                               |
+| `/cron`, `/cron/trigger`, `/cron/enable`                                                         | GET/POST/PUT/DELETE      | Cron job CRUD + trigger                    |
+| `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST                 | Skill management                           |
+| `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | Curator review & settings                  |
+| `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | Channel toggles & config                   |
+| `/env`                                                                                           | GET / PUT                | Backend `.env` read/update                 |
+| `/logs/files`, `/logs`                                                                           | GET                      | Log file list & tail read                  |
+| `/logs/ws`                                                                                       | WS                       | Live log stream                            |
+| `/images/upload`, `/audio/upload`, `/video/upload`                                               | POST                     | Base64 media upload → URL                  |
+| `/media`                                                                                         | GET                      | Render persisted media files               |
 
 ---
 

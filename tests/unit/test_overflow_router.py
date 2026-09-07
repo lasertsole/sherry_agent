@@ -84,8 +84,7 @@ class TestDecideRoute:
 
     def test_fits_half_budget(self):
         assert (
-            decide_route(int(USABLE_BUDGET * 0.5), CONTEXT_WINDOW, USABLE_BUDGET, [])
-            == ROUTE_FITS
+            decide_route(int(USABLE_BUDGET * 0.5), CONTEXT_WINDOW, USABLE_BUDGET, []) == ROUTE_FITS
         )
 
     def test_fits_just_below_truncate_threshold(self):
@@ -107,8 +106,7 @@ class TestDecideRoute:
 
     def test_soft_zone_empty_candidates_fits(self):
         assert (
-            decide_route(int(USABLE_BUDGET * 0.75), CONTEXT_WINDOW, USABLE_BUDGET, [])
-            == ROUTE_FITS
+            decide_route(int(USABLE_BUDGET * 0.75), CONTEXT_WINDOW, USABLE_BUDGET, []) == ROUTE_FITS
         )
 
     def test_soft_lower_boundary_exactly_at_truncate_threshold(self):
@@ -195,19 +193,25 @@ class TestDecideRoute:
             USABLE_BUDGET * COMPRESSION_TRIGGER_RATIO
         )
         # Just below the 0.80*B band (float threshold 39628.8) -> soft zone.
-        assert decide_route(
-            int(USABLE_BUDGET * COMPRESSION_TRIGGER_RATIO) - 1,
-            CONTEXT_WINDOW,
-            USABLE_BUDGET,
-            [],
-        ) == ROUTE_FITS
+        assert (
+            decide_route(
+                int(USABLE_BUDGET * COMPRESSION_TRIGGER_RATIO) - 1,
+                CONTEXT_WINDOW,
+                USABLE_BUDGET,
+                [],
+            )
+            == ROUTE_FITS
+        )
         # Clearly above the band -> hard overflow, no candidates.
-        assert decide_route(
-            int(USABLE_BUDGET * 0.90),
-            CONTEXT_WINDOW,
-            USABLE_BUDGET,
-            [],
-        ) == ROUTE_COMPACT_ONLY
+        assert (
+            decide_route(
+                int(USABLE_BUDGET * 0.90),
+                CONTEXT_WINDOW,
+                USABLE_BUDGET,
+                [],
+            )
+            == ROUTE_COMPACT_ONLY
+        )
 
 
 # ---------------------------------------------------------------------------

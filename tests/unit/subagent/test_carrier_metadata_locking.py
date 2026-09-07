@@ -58,17 +58,13 @@ def test_sanitize_preserves_carrier_metadata():
     non-AIMessage is appended to the output unchanged, so the frozen metadata
     contract {internal, provenance, run_id, status} cannot be stripped.
     """
-    carrier = build_completion_message(
-        _make_run(run_id="run-san-1"), "child finished", "completed"
-    )
+    carrier = build_completion_message(_make_run(run_id="run-san-1"), "child finished", "completed")
     carrier_meta = getattr(carrier, "metadata", None) or {}
     assert carrier_meta.get("provenance") == PROVENANCE  # sanity: frozen contract
 
     ai = AIMessage(
         content="",
-        tool_calls=[
-            {"name": "search", "args": {"q": "x"}, "id": "call-1", "type": "tool_call"}
-        ],
+        tool_calls=[{"name": "search", "args": {"q": "x"}, "id": "call-1", "type": "tool_call"}],
     )
     tool = ToolMessage(content="result", tool_call_id="call-1")
 

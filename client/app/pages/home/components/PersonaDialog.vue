@@ -189,6 +189,7 @@ import { readSystemPrompt, writeSystemPrompt, readSystemPromptTemplate } from '@
 import { toastSuccess, toastError } from '@/composables/toast';
 import { usePersonaPresets } from '@/composables/usePersonaPresets';
 import type { PersonaPreset } from '@/composables/db';
+import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n({ useScope: 'local' });
 
@@ -299,7 +300,7 @@ const loadContent = async () => {
     editContent.value = { ...content };
     originalContent.value = { ...content };
   } catch (e) {
-    console.error('[PersonaDialog] Failed to load content:', e);
+    logUtil.e('[PersonaDialog] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -340,7 +341,7 @@ const restoreDefault = async (tab: PersonaTab) => {
     const content = await readSystemPromptTemplate(locale.value);
     editContent.value[tab.key] = content[tab.file] ?? '';
   } catch (e) {
-    console.error('[PersonaDialog] Failed to restore default:', e);
+    logUtil.e('[PersonaDialog] Failed to restore default:', e);
   } finally {
     restoring.value = false;
   }
@@ -356,7 +357,7 @@ const selectDefault = async () => {
     editingPresetId.value = null;
     activeDefault.value = true;
   } catch (e) {
-    console.error('[PersonaDialog] Failed to load persona template:', e);
+    logUtil.e('[PersonaDialog] Failed to load persona template:', e);
   } finally {
     restoring.value = false;
   }
@@ -487,7 +488,7 @@ const handleApply = async () => {
     visible.value = false;
     toastSuccess(t('config.persona.preset.toast.applySuccess'));
   } catch (e) {
-    console.error('[PersonaDialog] Failed to apply persona:', e);
+    logUtil.e('[PersonaDialog] Failed to apply persona:', e);
     toastError(t('config.persona.preset.toast.applyFailed'));
   } finally {
     applying.value = false;

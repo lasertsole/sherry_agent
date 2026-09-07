@@ -40,14 +40,9 @@ import urllib.request
 import shutil
 from pathlib import Path
 from typing import (
-    Dict,
-    List,
-    Optional,
-    Union,
-    Tuple,
     Any,
-    Iterator,
 )
+from collections.abc import Iterator
 
 from raganything.asset_urls import attach_public_media_urls
 
@@ -163,7 +158,7 @@ class Parser:
         pass
 
     @staticmethod
-    def _unique_output_dir(base_dir: Union[str, Path], file_path: Union[str, Path]) -> Path:
+    def _unique_output_dir(base_dir: str | Path, file_path: str | Path) -> Path:
         """Create a unique output subdirectory for a file to prevent same-name collisions.
 
         When multiple files share the same name (e.g. dir1/paper.pdf and dir2/paper.pdf),
@@ -183,9 +178,7 @@ class Parser:
         return Path(base_dir) / f"{stem}_{path_hash}"
 
     @classmethod
-    def convert_office_to_pdf(
-        cls, doc_path: Union[str, Path], output_dir: Optional[str] = None
-    ) -> Path:
+    def convert_office_to_pdf(cls, doc_path: str | Path, output_dir: str | None = None) -> Path:
         """
         Convert Office document (.doc, .docx, .ppt, .pptx, .xls, .xlsx) to PDF.
         Requires LibreOffice to be installed.
@@ -322,9 +315,7 @@ class Parser:
             raise
 
     @classmethod
-    def convert_text_to_pdf(
-        cls, text_path: Union[str, Path], output_dir: Optional[str] = None
-    ) -> Path:
+    def convert_text_to_pdf(cls, text_path: str | Path, output_dir: str | None = None) -> Path:
         """
         Convert text file (.txt, .md) to PDF using ReportLab with full markdown support.
 
@@ -347,13 +338,13 @@ class Parser:
 
             # Read the text content
             try:
-                with open(text_path, "r", encoding="utf-8") as f:
+                with open(text_path, encoding="utf-8") as f:
                     text_content = f.read()
             except UnicodeDecodeError:
                 # Try with different encodings
                 for encoding in ["gbk", "latin-1", "cp1252"]:
                     try:
-                        with open(text_path, "r", encoding=encoding) as f:
+                        with open(text_path, encoding=encoding) as f:
                             text_content = f.read()
                         cls.logger.info(f"Successfully read file with {encoding} encoding")
                         break
@@ -580,12 +571,12 @@ class Parser:
 
     def parse_pdf(
         self,
-        pdf_path: Union[str, Path],
-        output_dir: Optional[str] = None,
+        pdf_path: str | Path,
+        output_dir: str | None = None,
         method: str = "auto",
-        lang: Optional[str] = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Abstract method to parse PDF document.
         Must be implemented by subclasses.
@@ -604,11 +595,11 @@ class Parser:
 
     def parse_image(
         self,
-        image_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        image_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Abstract method to parse image document.
         Must be implemented by subclasses.
@@ -629,12 +620,12 @@ class Parser:
 
     def parse_document(
         self,
-        file_path: Union[str, Path],
+        file_path: str | Path,
         method: str = "auto",
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Abstract method to parse a document.
         Must be implemented by subclasses.
@@ -684,19 +675,19 @@ class MineruParser(Parser):
     @classmethod
     def _run_mineru_command(
         cls,
-        input_path: Union[str, Path],
-        output_dir: Union[str, Path],
+        input_path: str | Path,
+        output_dir: str | Path,
         method: str = "auto",
-        lang: Optional[str] = None,
-        backend: Optional[str] = None,
-        start_page: Optional[int] = None,
-        end_page: Optional[int] = None,
+        lang: str | None = None,
+        backend: str | None = None,
+        start_page: int | None = None,
+        end_page: int | None = None,
         formula: bool = True,
         table: bool = True,
-        device: Optional[str] = None,
-        source: Optional[str] = None,
-        vlm_url: Optional[str] = None,
-        timeout: Optional[int] = None,
+        device: str | None = None,
+        source: str | None = None,
+        vlm_url: str | None = None,
+        timeout: int | None = None,
         **kwargs,
     ) -> None:
         """
@@ -943,7 +934,7 @@ class MineruParser(Parser):
     @classmethod
     def _read_output_files(
         cls, output_dir: Path, file_stem: str, method: str = "auto"
-    ) -> Tuple[List[Dict[str, Any]], str]:
+    ) -> tuple[list[dict[str, Any]], str]:
         """
         Read the output files generated by mineru
 
@@ -991,7 +982,7 @@ class MineruParser(Parser):
         md_content = ""
         if md_file.exists():
             try:
-                with open(md_file, "r", encoding="utf-8") as f:
+                with open(md_file, encoding="utf-8") as f:
                     md_content = f.read()
             except Exception as e:
                 cls.logger.warning(f"Could not read markdown file {md_file}: {e}")
@@ -1000,7 +991,7 @@ class MineruParser(Parser):
         content_list = []
         if json_file.exists():
             try:
-                with open(json_file, "r", encoding="utf-8") as f:
+                with open(json_file, encoding="utf-8") as f:
                     content_list = json.load(f)
 
                 # Normalize MinerU 2.0 field names to expected names for backward compatibility.
@@ -1057,12 +1048,12 @@ class MineruParser(Parser):
 
     def parse_pdf(
         self,
-        pdf_path: Union[str, Path],
-        output_dir: Optional[str] = None,
+        pdf_path: str | Path,
+        output_dir: str | None = None,
         method: str = "auto",
-        lang: Optional[str] = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse PDF document using MinerU 2.0
 
@@ -1130,11 +1121,11 @@ class MineruParser(Parser):
 
     def parse_image(
         self,
-        image_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        image_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse image document using MinerU 2.0
 
@@ -1277,11 +1268,11 @@ class MineruParser(Parser):
 
     def parse_office_doc(
         self,
-        doc_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        doc_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse office document by first converting to PDF, then parsing with MinerU 2.0
 
@@ -1312,11 +1303,11 @@ class MineruParser(Parser):
 
     def parse_text_file(
         self,
-        text_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        text_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse text file by first converting to PDF, then parsing with MinerU 2.0
 
@@ -1344,12 +1335,12 @@ class MineruParser(Parser):
 
     def parse_document(
         self,
-        file_path: Union[str, Path],
+        file_path: str | Path,
         method: str = "auto",
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse document using MinerU 2.0 based on file extension
 
@@ -1475,17 +1466,17 @@ class DoclingParser(Parser):
         # The lock guards concurrent first-use from creating duplicate
         # converters (and re-loading models) when the same DoclingParser
         # instance is shared across threads.
-        self._converter_cache: Dict[Tuple, Any] = {}
+        self._converter_cache: dict[tuple, Any] = {}
         self._converter_cache_lock = threading.Lock()
 
     def parse_pdf(
         self,
-        pdf_path: Union[str, Path],
-        output_dir: Optional[str] = None,
+        pdf_path: str | Path,
+        output_dir: str | None = None,
         method: str = "auto",
-        lang: Optional[str] = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse PDF document using Docling
 
@@ -1536,12 +1527,12 @@ class DoclingParser(Parser):
 
     def parse_document(
         self,
-        file_path: Union[str, Path],
+        file_path: str | Path,
         method: str = "auto",
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse document using Docling based on file extension
 
@@ -1671,11 +1662,11 @@ class DoclingParser(Parser):
 
     def _run_docling_python(
         self,
-        input_path: Union[str, Path],
-        output_dir: Union[str, Path],
+        input_path: str | Path,
+        output_dir: str | Path,
         file_stem: str,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Parse `input_path` through the Docling Python API and return the
         exported document dict.
@@ -1765,8 +1756,8 @@ class DoclingParser(Parser):
         output_dir: Path,
         cnt: int,
         num: str,
-        docling_content: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        docling_content: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         content_list = []
         if not block.get("children"):
             cnt += 1
@@ -1807,7 +1798,7 @@ class DoclingParser(Parser):
 
     def read_from_block(
         self, block, type: str, output_dir: Path, cnt: int, num: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if type == "texts":
             if block["label"] == "formula":
                 return {
@@ -1870,11 +1861,11 @@ class DoclingParser(Parser):
 
     def parse_office_doc(
         self,
-        doc_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        doc_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse office document directly using Docling
 
@@ -1927,11 +1918,11 @@ class DoclingParser(Parser):
 
     def parse_html(
         self,
-        html_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        html_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Parse HTML document using Docling
 
@@ -2016,7 +2007,7 @@ class PaddleOCRParser(Parser):
     def __init__(self, default_lang: str = "en") -> None:
         super().__init__()
         self.default_lang = default_lang
-        self._ocr_instances: Dict[str, Any] = {}
+        self._ocr_instances: dict[str, Any] = {}
 
     def _require_paddleocr(self):
         try:
@@ -2031,7 +2022,7 @@ class PaddleOCRParser(Parser):
             ) from exc
         return PaddleOCR
 
-    def _get_ocr(self, lang: Optional[str] = None):
+    def _get_ocr(self, lang: str | None = None):
         PaddleOCR = self._require_paddleocr()
         language = (lang or self.default_lang).strip() or self.default_lang
         cached = self._ocr_instances.get(language)
@@ -2057,8 +2048,8 @@ class PaddleOCRParser(Parser):
             f"Unable to initialize PaddleOCR for language '{language}': {last_exception}"
         )
 
-    def _extract_text_lines(self, result: Any) -> List[str]:
-        lines: List[str] = []
+    def _extract_text_lines(self, result: Any) -> list[str]:
+        lines: list[str] = []
 
         def append_text(text: str) -> None:
             clean_text = text.strip()
@@ -2144,8 +2135,8 @@ class PaddleOCRParser(Parser):
         return lines
 
     def _ocr_input(
-        self, input_data: Any, lang: Optional[str] = None, cls_enabled: bool = True
-    ) -> List[str]:
+        self, input_data: Any, lang: str | None = None, cls_enabled: bool = True
+    ) -> list[str]:
         ocr = self._get_ocr(lang=lang)
 
         if hasattr(ocr, "ocr"):
@@ -2161,7 +2152,7 @@ class PaddleOCRParser(Parser):
 
         raise RuntimeError("Unsupported PaddleOCR API: expected `ocr` or `predict` method.")
 
-    def _extract_pdf_page_inputs(self, pdf_path: Path) -> Iterator[Tuple[int, Any]]:
+    def _extract_pdf_page_inputs(self, pdf_path: Path) -> Iterator[tuple[int, Any]]:
         try:
             import pypdfium2 as pdfium
         except ImportError as exc:
@@ -2192,10 +2183,10 @@ class PaddleOCRParser(Parser):
                 pdf.close()
 
     def _ocr_rendered_page(
-        self, rendered_page: Any, lang: Optional[str] = None, cls_enabled: bool = True
-    ) -> List[str]:
+        self, rendered_page: Any, lang: str | None = None, cls_enabled: bool = True
+    ) -> list[str]:
         if hasattr(rendered_page, "save"):
-            temp_image_path: Optional[Path] = None
+            temp_image_path: Path | None = None
             try:
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp:
                     temp_image_path = Path(temp.name)
@@ -2212,19 +2203,19 @@ class PaddleOCRParser(Parser):
 
     def parse_pdf(
         self,
-        pdf_path: Union[str, Path],
-        output_dir: Optional[str] = None,
+        pdf_path: str | Path,
+        output_dir: str | None = None,
         method: str = "auto",
-        lang: Optional[str] = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         del output_dir, method
         pdf_path = Path(pdf_path)
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF file does not exist: {pdf_path}")
 
         cls_enabled = kwargs.get("cls", True)
-        content_list: List[Dict[str, Any]] = []
+        content_list: list[dict[str, Any]] = []
         page_inputs = self._extract_pdf_page_inputs(pdf_path)
         try:
             for page_idx, rendered_page in page_inputs:
@@ -2242,11 +2233,11 @@ class PaddleOCRParser(Parser):
 
     def parse_image(
         self,
-        image_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        image_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         del output_dir
         image_path = Path(image_path)
         if not image_path.exists():
@@ -2265,32 +2256,32 @@ class PaddleOCRParser(Parser):
 
     def parse_office_doc(
         self,
-        doc_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        doc_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         pdf_path = self.convert_office_to_pdf(doc_path, output_dir)
         return self.parse_pdf(pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs)
 
     def parse_text_file(
         self,
-        text_path: Union[str, Path],
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        text_path: str | Path,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         pdf_path = self.convert_text_to_pdf(text_path, output_dir)
         return self.parse_pdf(pdf_path=pdf_path, output_dir=output_dir, lang=lang, **kwargs)
 
     def parse_document(
         self,
-        file_path: Union[str, Path],
+        file_path: str | Path,
         method: str = "auto",
-        output_dir: Optional[str] = None,
-        lang: Optional[str] = None,
+        output_dir: str | None = None,
+        lang: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         del method
         file_path = Path(file_path)
         if not file_path.exists():
@@ -2330,7 +2321,7 @@ def _normalize_parser_name(name: str) -> str:
 
 
 # Custom parser registry for Bring-Your-Own-Parser support (see #151)
-_CUSTOM_PARSERS: Dict[str, type] = {}
+_CUSTOM_PARSERS: dict[str, type] = {}
 
 
 def register_parser(name: str, parser_class: type) -> None:
@@ -2406,14 +2397,14 @@ def unregister_parser(name: str) -> None:
     Parser.logger.info("Unregistered custom parser: '%s'", normalized_name)
 
 
-def list_parsers() -> Dict[str, str]:
+def list_parsers() -> dict[str, str]:
     """Return a mapping of all available parser names to their class names.
 
     Returns:
         Dict mapping parser name to the fully-qualified class name.
         Includes both built-in and custom parsers.
     """
-    result: Dict[str, str] = {
+    result: dict[str, str] = {
         "mineru": "MineruParser",
         "docling": "DoclingParser",
         "paddleocr": "PaddleOCRParser",

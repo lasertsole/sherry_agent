@@ -16,7 +16,7 @@ than copy-pasting parallel stubs into each call site.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 
@@ -89,7 +89,7 @@ def build_debug_rag():
     return _DebugRag()
 
 
-_FROZEN_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_FROZEN_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 class FrozenDateTime(datetime):

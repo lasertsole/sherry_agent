@@ -1,7 +1,8 @@
 import asyncio
 from loguru import logger
-from typing import Any, Callable
-from datetime import datetime, timezone
+from typing import Any
+from collections.abc import Callable
+from datetime import datetime, UTC
 from context_engine.curator.usage import agent_created_report
 from context_engine.curator.state import load_state, save_state
 from context_engine.curator.config import get_consolidate, get_min_idle_hours
@@ -103,7 +104,7 @@ def run_curator_review(
 ) -> dict[str, Any]:
     if consolidate is None:
         consolidate = get_consolidate()
-    start = datetime.now(timezone.utc)
+    start = datetime.now(UTC)
 
     if dry_run:
         try:
@@ -144,11 +145,21 @@ def run_curator_review(
         before_report = agent_created_report()
     except Exception:
         before_report = []
-    before_names = {r.get("name") for r in before_report if isinstance(r, dict)}
+    before_names = {
+        r["name"] for r in before_report if isinstance(r, dict) and isinstance(r.get("name"), str)
+    }
+    llm_meta: dict[str, Any] = {
+        "final": "",
+        "summary": "",
+        "model": "",
+        "provider": "",
+        "tool_calls": [],
+        "error": None,
+    }
 
     if not consolidate:
         final_summary = f"{prefix}{auto_summary}; llm: skipped (consolidation off)"
-        llm_meta: dict[str, Any] = {
+        llm_meta = {
             "final": "",
             "summary": "skipped (consolidation off)",
             "model": "",
@@ -156,7 +167,7 @@ def run_curator_review(
             "tool_calls": [],
             "error": None,
         }
-        elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+        elapsed = (datetime.now(UTC) - start).total_seconds()
         try:
             after_report = agent_created_report()
         except Exception:
@@ -192,7 +203,7 @@ def run_curator_review(
             "summary_so_far": auto_summary,
         }
 
-    llm_meta: dict[str, Any] = {
+    llm_meta = {
         "final": "",
         "summary": "",
         "model": "",
@@ -241,7 +252,7 @@ def run_curator_review(
         except Exception as e:
             logger.debug("Curator consolidation apply failed: {}", e)
 
-    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+    elapsed = (datetime.now(UTC) - start).total_seconds()
     try:
         after_report = agent_created_report()
     except Exception:

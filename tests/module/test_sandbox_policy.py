@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Stub backend helpers
 # --------------------------------------------------------------------------
 
+
 class ProbeRecorder:
     """Mutable probe-call counter shared with stub backends."""
 
@@ -71,21 +72,28 @@ def _mock_platform(monkeypatch: pytest.MonkeyPatch, system: str) -> None:
 # parse_policy
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("raw,expected", [
-    ("required", SandboxPolicy.REQUIRED),
-    ("auto", SandboxPolicy.AUTO),
-    ("off", SandboxPolicy.OFF),
-])
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("required", SandboxPolicy.REQUIRED),
+        ("auto", SandboxPolicy.AUTO),
+        ("off", SandboxPolicy.OFF),
+    ],
+)
 def test_parse_policy_three_states(raw: str, expected: SandboxPolicy):
     assert parse_policy(raw) is expected
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("  AUTO  ", SandboxPolicy.AUTO),
-    ("Off", SandboxPolicy.OFF),
-    ("\tRequired\n", SandboxPolicy.REQUIRED),
-    ("OFF", SandboxPolicy.OFF),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("  AUTO  ", SandboxPolicy.AUTO),
+        ("Off", SandboxPolicy.OFF),
+        ("\tRequired\n", SandboxPolicy.REQUIRED),
+        ("OFF", SandboxPolicy.OFF),
+    ],
+)
 def test_parse_policy_strips_and_lowers(raw: str, expected: SandboxPolicy):
     assert parse_policy(raw) is expected
 
@@ -111,6 +119,7 @@ def test_parse_policy_returns_enum_members():
 # --------------------------------------------------------------------------
 # read_policy
 # --------------------------------------------------------------------------
+
 
 def test_read_policy_default_auto_when_env_unset(monkeypatch):
     monkeypatch.delenv("SANDBOX_POLICY", raising=False)
@@ -138,6 +147,7 @@ def test_read_policy_strips_and_lowers_env_value(monkeypatch):
 # SandboxBackend contract
 # --------------------------------------------------------------------------
 
+
 def test_sandbox_backend_is_abstract():
     with pytest.raises(TypeError):
         SandboxBackend()  # type: ignore[abstract]
@@ -155,6 +165,7 @@ def test_sandbox_backend_requires_probe_and_wrap():
 # --------------------------------------------------------------------------
 # get_backend: platform dispatch (all mocked)
 # --------------------------------------------------------------------------
+
 
 def test_get_backend_linux_returns_bwrap_backend(monkeypatch):
     _mock_platform(monkeypatch, "Linux")
@@ -190,6 +201,7 @@ def test_get_backend_windows_required_raises_runtimeerror(monkeypatch):
 # --------------------------------------------------------------------------
 # get_backend: probe-failure semantics x 3 policies
 # --------------------------------------------------------------------------
+
 
 def test_get_backend_required_probe_fail_raises(monkeypatch):
     _mock_platform(monkeypatch, "Linux")
@@ -238,6 +250,7 @@ def test_get_backend_off_never_calls_probe(monkeypatch):
 # get_backend: lazy-import robustness (backend modules may not exist yet)
 # --------------------------------------------------------------------------
 
+
 def test_get_backend_import_error_treated_as_unavailable_auto(monkeypatch):
     """sysmodules entry None => 'from x import y' raises ImportError; AUTO must
     degrade to None instead of crashing."""
@@ -257,12 +270,10 @@ def test_get_backend_import_error_required_raises(monkeypatch):
 # .env.example documentation
 # --------------------------------------------------------------------------
 
+
 def test_env_example_contains_sandbox_policy_line():
     content = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
-    matching = [
-        line for line in content.splitlines()
-        if line.strip().startswith("SANDBOX_POLICY")
-    ]
+    matching = [line for line in content.splitlines() if line.strip().startswith("SANDBOX_POLICY")]
     assert matching, "SANDBOX_POLICY missing from .env.example"
     line = matching[-1].strip()
     assert line.replace(" ", "") == "SANDBOX_POLICY=auto"

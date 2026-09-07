@@ -25,15 +25,13 @@ const NoirPreset = definePreset(Aura, {
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
 
-  app:{
-    head:{
+  app: {
+    head: {
       title: process.env.VITE_APP_NAME,
-      link: [
-          { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }
-      ],
+      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
       meta: [
-          { name: 'viewport', content: 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no' }
-      ],
+        { name: 'viewport', content: 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no' }
+      ]
     }
   },
 
@@ -58,8 +56,8 @@ export default defineNuxtConfig({
       // Tauri requires a consistent port
       host: '0.0.0.0',
       port: 3000,
-      strictPort: true,
-    },
+      strictPort: true
+    }
   },
 
   // Import third-party modules
@@ -119,13 +117,13 @@ export default defineNuxtConfig({
   },
 
   ignore: ['**/src-tauri/**'],
-  css:['~/assets/css/main.css', '~/assets/css/main.scss'],
+  css: ['~/assets/css/main.css', '~/assets/css/main.scss'],
 
   // Global directives
   vue: {
     compilerOptions: {
       // Enable directive transforms
-      isCustomElement: (tag) => tag.startsWith('p-')
+      isCustomElement: tag => tag.startsWith('p-')
     }
   },
 
@@ -140,7 +138,7 @@ export default defineNuxtConfig({
       redirect: {
         to: '/home',
         statusCode: 301
-      },
+      }
     }
   }
-})
+});

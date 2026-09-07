@@ -1,4 +1,4 @@
-﻿"""Durable per-session FIFO user-input queue: SQLite-backed store (Task 1).
+"""Durable per-session FIFO user-input queue: SQLite-backed store (Task 1).
 
 The crash-safe store behind "busy-time input queueing": while a session's turn
 is running, newly submitted user input is persisted here and drained AFTER the
@@ -76,7 +76,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -119,8 +119,7 @@ CREATE TABLE IF NOT EXISTS user_input_queue (
 
 _CREATE_INDEX_SQLS = (
     # FIFO scans are per-session.
-    "CREATE INDEX IF NOT EXISTS idx_user_input_queue_session "
-    "ON user_input_queue (session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_user_input_queue_session ON user_input_queue (session_id)",
     # Idempotency: at most one ACTIVE row per client_msg_id (dedup key).
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_input_queue_client_msg_active "
     "ON user_input_queue (client_msg_id) "
@@ -212,7 +211,7 @@ class QueueFullError(Exception):
     """A session's user-input queue is at capacity (MAX_ACTIVE_PER_SESSION)."""
 
 
-class UserInputQueueStatus(str, Enum):
+class UserInputQueueStatus(StrEnum):
     """Lifecycle of a queued user input.
 
     QUEUED -> CLAIMED -> DELIVERED (drained into a turn)
@@ -307,7 +306,7 @@ class UserInputQueue:
         self._initialized: bool = False
 
     @asynccontextmanager
-    async def _connect(self) -> AsyncGenerator[aiosqlite.Connection, None]:
+    async def _connect(self) -> AsyncGenerator[aiosqlite.Connection]:
         """Open a short-lived connection; busy_timeout is always the FIRST statement."""
         db = await aiosqlite.connect(self._db_path)
         try:
@@ -317,7 +316,7 @@ class UserInputQueue:
             await db.close()
 
     @asynccontextmanager
-    async def _transaction(self) -> AsyncGenerator[aiosqlite.Connection, None]:
+    async def _transaction(self) -> AsyncGenerator[aiosqlite.Connection]:
         """One connection + one BEGIN IMMEDIATE transaction, committed on success.
 
         An exception inside the block rolls the transaction back before the
@@ -334,7 +333,7 @@ class UserInputQueue:
                 await db.commit()
 
     @asynccontextmanager
-    async def _write_transaction(self) -> AsyncGenerator[aiosqlite.Connection, None]:
+    async def _write_transaction(self) -> AsyncGenerator[aiosqlite.Connection]:
         """Serialize same-loop writers, then run one BEGIN IMMEDIATE transaction.
 
         The per-instance lock keeps SQLite-level write-lock contention (and its
@@ -604,9 +603,7 @@ class UserInputQueue:
         """
         await self._ensure_db()
         async with self._connect() as db:
-            async with db.execute(
-                _FIND_ACTIVE_BY_CLIENT_MSG_SQL, (client_msg_id,)
-            ) as cursor:
+            async with db.execute(_FIND_ACTIVE_BY_CLIENT_MSG_SQL, (client_msg_id,)) as cursor:
                 row = await cursor.fetchone()
         return _row_from_db(row) if row is not None else None
 

@@ -55,7 +55,7 @@ class FileStore:
         for file_name in self.file_names:
             file_path = self._file_path(file_name)
             if file_path.exists():
-                with open(file_path, "r", encoding="utf-8") as file:
+                with open(file_path, encoding="utf-8") as file:
                     file_to_content[file_name] = file.read()
         return file_to_content
 

@@ -27,8 +27,8 @@ def _load_config() -> dict:
         config = json.load(f)
 
     # -- Resolve placeholders ---
-    # "$sys.executable"  → 当前虚拟环境的 Python 解释器路径
-    # "$here/"          → JSON 文件所在目录（plugins/mcp_server）
+    # "$sys.executable"  → Path to the current virtualenv's Python interpreter
+    # "$here/"          → Directory containing the JSON file (plugins/mcp_server)
     here_str = f"{PLUGINS_PATH.as_posix()}/mcp_server/"
 
     for name, server in config.items():

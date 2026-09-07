@@ -55,7 +55,7 @@ class PositionwiseFeedForward(torch.nn.Module):
 
     def __init__(self, idim, hidden_units, dropout_rate, activation=torch.nn.ReLU()):
         """Construct an PositionwiseFeedForward object."""
-        super(PositionwiseFeedForward, self).__init__()
+        super().__init__()
         self.w_1 = torch.nn.Linear(idim, hidden_units)
         self.w_2 = torch.nn.Linear(hidden_units, idim)
         self.dropout = torch.nn.Dropout(dropout_rate)
@@ -299,7 +299,7 @@ class EncoderLayerSANM(nn.Module):
         stochastic_depth_rate=0.0,
     ):
         """Construct an EncoderLayer object."""
-        super(EncoderLayerSANM, self).__init__()
+        super().__init__()
         self.self_attn = self_attn
         self.feed_forward = feed_forward
         self.norm1 = LayerNorm(in_size)

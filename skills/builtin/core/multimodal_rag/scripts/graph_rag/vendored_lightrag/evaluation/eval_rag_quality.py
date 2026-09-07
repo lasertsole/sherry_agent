@@ -48,7 +48,7 @@ import time
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
@@ -145,7 +145,7 @@ class RAGEvaluator:
         # Configure evaluation LLM (for RAGAS scoring)
         eval_llm_api_key = os.getenv("EVAL_LLM_BINDING_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not eval_llm_api_key:
-            raise EnvironmentError(
+            raise OSError(
                 "EVAL_LLM_BINDING_API_KEY or OPENAI_API_KEY is required for evaluation. "
                 "Set EVAL_LLM_BINDING_API_KEY to use a custom API key, "
                 "or ensure OPENAI_API_KEY is set."
@@ -270,7 +270,7 @@ class RAGEvaluator:
         logger.info("  • LightRAG API:         %s", self.rag_api_url)
         logger.info("  • Results Directory:    %s", self.results_dir.name)
 
-    def _load_test_dataset(self) -> List[Dict[str, str]]:
+    def _load_test_dataset(self) -> list[dict[str, str]]:
         """Load test cases from JSON file"""
         if not self.test_dataset_path.exists():
             raise FileNotFoundError(f"Test dataset not found: {self.test_dataset_path}")
@@ -284,7 +284,7 @@ class RAGEvaluator:
         self,
         question: str,
         client: httpx.AsyncClient,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate RAG response by calling LightRAG API.
 
@@ -382,14 +382,14 @@ class RAGEvaluator:
     async def evaluate_single_case(
         self,
         idx: int,
-        test_case: Dict[str, str],
+        test_case: dict[str, str],
         rag_semaphore: asyncio.Semaphore,
         eval_semaphore: asyncio.Semaphore,
         client: httpx.AsyncClient,
-        progress_counter: Dict[str, int],
+        progress_counter: dict[str, int],
         position_pool: asyncio.Queue,
         pbar_creation_lock: asyncio.Lock,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Evaluate a single test case with two-stage pipeline concurrency control
 
@@ -534,7 +534,7 @@ class RAGEvaluator:
                     if position is not None:
                         await position_pool.put(position)
 
-    async def evaluate_responses(self) -> List[Dict[str, Any]]:
+    async def evaluate_responses(self) -> list[dict[str, Any]]:
         """
         Evaluate all test cases in parallel with two-stage pipeline and return metrics
 
@@ -601,7 +601,7 @@ class RAGEvaluator:
 
         return list(results)
 
-    def _export_to_csv(self, results: List[Dict[str, Any]]) -> Path:
+    def _export_to_csv(self, results: list[dict[str, Any]]) -> Path:
         """
         Export evaluation results to CSV file
 
@@ -674,7 +674,7 @@ class RAGEvaluator:
             return "N/A".center(width)
         return f"{value:.4f}".rjust(width)
 
-    def _display_results_table(self, results: List[Dict[str, Any]]):
+    def _display_results_table(self, results: list[dict[str, Any]]):
         """
         Display evaluation results in a formatted table
 
@@ -746,7 +746,7 @@ class RAGEvaluator:
 
         logger.info("%s", "=" * 115)
 
-    def _calculate_benchmark_stats(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _calculate_benchmark_stats(self, results: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Calculate benchmark statistics from evaluation results
 
@@ -839,7 +839,7 @@ class RAGEvaluator:
             "max_ragas_score": round(max_score, 4),
         }
 
-    async def run(self) -> Dict[str, Any]:
+    async def run(self) -> dict[str, Any]:
         """Run complete evaluation pipeline"""
 
         start_time = time.time()

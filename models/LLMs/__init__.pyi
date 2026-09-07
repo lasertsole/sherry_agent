@@ -6,7 +6,7 @@ from .reasoning_normalizer import NormalizingChatModel as NormalizingChatModel
 from .reasoning_payload import (
     build_reasoning_kwargs as build_reasoning_kwargs,
     is_openai_reasoning_model as is_openai_reasoning_model,
-    is_zhipu_reasoning_model
+    is_zhipu_reasoning_model,
 )
 
 __all__ = [
@@ -17,5 +17,5 @@ __all__ = [
     "ReasoningChatOpenAI",
     "build_reasoning_kwargs",
     "is_openai_reasoning_model",
-    "is_zhipu_reasoning_model"
+    "is_zhipu_reasoning_model",
 ]

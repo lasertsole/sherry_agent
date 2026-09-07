@@ -18,7 +18,7 @@ persistence door), loguru-only logging.
 import asyncio
 import threading
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -39,7 +39,7 @@ from server.service.turn_runner import on_turn_finished
 from type.message import MultiModalMessage
 
 
-class AutoTurnOutcome(str, Enum):
+class AutoTurnOutcome(StrEnum):
     TRIGGERED = "triggered"
     ALREADY_PENDING = "already_pending"
     BUSY = "busy"
@@ -124,7 +124,9 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
         # higher-ranked reason and aborts here. Without the exclusion this gate
         # always self-trips (55d4457 added the signal; the gate predates it).
         if st.busy and st.reason != REASON_AUTO_TURN_INFLIGHT:
-            logger.info("auto_turn: session {} went busy before start ({}), abandoning", bare, st.reason)
+            logger.info(
+                "auto_turn: session {} went busy before start ({}), abandoning", bare, st.reason
+            )
             await _abandon_once()
             return
         consumer = asyncio.ensure_future(_drive_turn(bare, injection))

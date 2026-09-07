@@ -170,14 +170,18 @@ CREATE TABLE IF NOT EXISTS todos (
 async def replace_all(session_id: str, todos: list[dict]) -> None:
     """全量替换：DELETE + INSERT（事务）"""
 
+
 async def get_todos(session_id: str) -> list[dict]:
     """按 position 排序读取"""
+
 
 def get_todos_sync(session_id: str) -> list[dict]:
     """同步路径，用于系统提示词注入（无事件循环场景）"""
 
+
 async def get_todos_by_wave(session_id: str, wave_index: int) -> list[dict]:
     """按波次读取"""
+
 
 async def get_dependency_frontier(session_id: str) -> list[dict]:
     """返回当前可执行的 TODO（依赖已满足的 pending 项）"""
@@ -219,7 +223,9 @@ class TodoService:
     async def get_wave_frontier(session_id: str) -> list[dict]:
         """返回当前波次中可执行的 TODO（依赖已满足）"""
         todos = await store.get_todos(session_id)
-        completed_positions = {t["position"] for t in todos if t["status"] in ("completed", "cancelled")}
+        completed_positions = {
+            t["position"] for t in todos if t["status"] in ("completed", "cancelled")
+        }
         frontier = []
         for t in todos:
             if t["status"] != "pending":
@@ -260,13 +266,14 @@ class EvidenceLedger:
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
     from runtime import relation_register
     import json
+
     ws = relation_register.get_websocket_by_session_id(session_id)
     if ws:
-        await ws.send_text(json.dumps({
-            "event": "todo_updated",
-            "session_id": session_id,
-            "content": {"todos": todos}
-        }))
+        await ws.send_text(
+            json.dumps(
+                {"event": "todo_updated", "session_id": session_id, "content": {"todos": todos}}
+            )
+        )
 ```
 
 ---
@@ -323,6 +330,7 @@ async def todoread(
 
 ```python
 _TODOLIST_TOOLS = [todowrite, todoread]
+
 
 def build_todolist_tools() -> list[BaseTool]:
     for t in _TODOLIST_TOOLS:
@@ -461,6 +469,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional
 
+
 class DagNodeState(str, Enum):
     PENDING = "pending"
     BLOCKED = "blocked"
@@ -471,6 +480,7 @@ class DagNodeState(str, Enum):
     CANCELLED = "cancelled"
     SKIPPED = "skipped"
 
+
 class DagRunStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -478,6 +488,7 @@ class DagRunStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
 
 @dataclass
 class DagNode:
@@ -492,10 +503,12 @@ class DagNode:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
 
+
 @dataclass
 class DagWave:
     index: int
     node_ids: list[str]
+
 
 @dataclass
 class DagRun:
@@ -539,11 +552,15 @@ class DagScheduler:
 
     def get_frontier(self, run: DagRun) -> list[DagNode]:
         """返回当前可执行的节点（pending 且依赖已满足）"""
-        completed = {n.id for n in run.nodes if n.state in (DagNodeState.COMPLETED, DagNodeState.CANCELLED, DagNodeState.SKIPPED)}
+        completed = {
+            n.id
+            for n in run.nodes
+            if n.state in (DagNodeState.COMPLETED, DagNodeState.CANCELLED, DagNodeState.SKIPPED)
+        }
         return [
-            n for n in run.nodes
-            if n.state == DagNodeState.PENDING
-            and all(dep in completed for dep in n.depends_on)
+            n
+            for n in run.nodes
+            if n.state == DagNodeState.PENDING and all(dep in completed for dep in n.depends_on)
         ]
 
     def get_critical_path(self, run: DagRun) -> list[str]:
@@ -560,7 +577,10 @@ class DagScheduler:
                     dep = next((n for n in run.nodes if n.id == dep_id), None)
                     if dep and dep.state != DagNodeState.COMPLETED:
                         blocked_count[dep_id] = blocked_count.get(dep_id, 0) + 1
-        return [{"node_id": k, "blocked_count": v} for k, v in sorted(blocked_count.items(), key=lambda x: -x[1])]
+        return [
+            {"node_id": k, "blocked_count": v}
+            for k, v in sorted(blocked_count.items(), key=lambda x: -x[1])
+        ]
 ```
 
 ### 节点状态转换
@@ -600,6 +620,7 @@ sherry_agent 的 `build_system_prompt()` 在每次上下文压缩后都会被 `S
 def _build_todo_block(session_id: str) -> str:
     """从 DB 读取当前 todos，注入系统提示词"""
     from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
     todos = get_todos_sync(session_id)
     if not todos:
         return ""
@@ -617,13 +638,17 @@ def _build_todo_block(session_id: str) -> str:
         tag = f"({', '.join(tag_parts)})"
         lines.append(f"- [{icon.get(t['status'], '○')}] {tag} {t['content']} ({t['priority']})")
     lines.append("\nUpdate todos via the todowrite tool. Pass the COMPLETE list each time.")
-    lines.append("Your todo list is tracked by the continuation system. "
-                 "Incomplete todos will trigger automatic continuation.")
+    lines.append(
+        "Your todo list is tracked by the continuation system. "
+        "Incomplete todos will trigger automatic continuation."
+    )
     return "\n".join(lines)
+
 
 def _build_boulder_block(session_id: str) -> str:
     """注入 boulder 状态（活跃工作信息）"""
     import json, os
+
     boulder_path = ".omo/boulder.json"
     if not os.path.exists(boulder_path):
         return ""
@@ -635,7 +660,9 @@ def _build_boulder_block(session_id: str) -> str:
     lines = ["## Active Work"]
     lines.append(f"- Plan: {active.get('active_plan', '?')}")
     lines.append(f"- Status: {active.get('status', '?')}")
-    incomplete = [t for t in get_todos_sync(session_id) if t["status"] in ("pending", "in_progress")]
+    incomplete = [
+        t for t in get_todos_sync(session_id) if t["status"] in ("pending", "in_progress")
+    ]
     lines.append(f"- Remaining: {len(incomplete)} unchecked checkboxes")
     return "\n".join(lines)
 ```
@@ -692,12 +719,11 @@ def _build_boulder_block(session_id: str) -> str:
 # server/trigger/core.py 中新增 todo_refresh 消息处理
 async def handle_todo_refresh(session_id: str, websocket):
     from agent.tools.todolist.service import TodoService
+
     todos = await TodoService.get_todos(session_id)
-    await websocket.send_text(json.dumps({
-        "event": "todo_updated",
-        "session_id": session_id,
-        "content": {"todos": todos}
-    }))
+    await websocket.send_text(
+        json.dumps({"event": "todo_updated", "session_id": session_id, "content": {"todos": todos}})
+    )
 ```
 
 ---

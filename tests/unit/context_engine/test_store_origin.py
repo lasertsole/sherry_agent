@@ -85,9 +85,7 @@ class TestOriginTagging:
         """HumanMessage with the full metadata contract → origin tag lands."""
         await store_core.add_messages("s_tag", [_carrier_message()])
 
-        row = store_db.execute(
-            "SELECT origin FROM messages WHERE session_id = 's_tag'"
-        ).fetchone()
+        row = store_db.execute("SELECT origin FROM messages WHERE session_id = 's_tag'").fetchone()
         assert row is not None
         assert row["origin"] == "subagent_completion"
 
@@ -176,9 +174,7 @@ class TestSessionTitleExcludesOrigin:
     @pytest.mark.asyncio
     async def test_title_ignores_carrier_row(self, store_db):
         """[user "hello", later carrier] → title comes from "hello"."""
-        await store_core.add_messages(
-            "s_title", [HumanMessage("hello"), AIMessage("hi there")]
-        )
+        await store_core.add_messages("s_title", [HumanMessage("hello"), AIMessage("hi there")])
         # Carrier lands in a LATER turn (drain middleware injects per turn).
         await store_core.add_messages("s_title", [_carrier_message()])
 

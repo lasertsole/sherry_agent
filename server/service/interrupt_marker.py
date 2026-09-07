@@ -87,7 +87,9 @@ async def write_interrupted_marker(
     failures are logged and swallowed — the caller is an exception handler.
     """
     try:
-        await _write_interrupted_marker_inner(session_id, config, partial_text, reason, graph, queue)
+        await _write_interrupted_marker_inner(
+            session_id, config, partial_text, reason, graph, queue
+        )
     except asyncio.CancelledError:
         # A re-delivered cancellation must keep propagating (never absorbed).
         raise
@@ -250,7 +252,11 @@ async def _persist_to_mesmemory(
         rows = []
 
     for row in rows:
-        if row.get("role") == "ai" and isinstance(row.get("content"), str) and row["content"].startswith(prefix):
+        if (
+            row.get("role") == "ai"
+            and isinstance(row.get("content"), str)
+            and row["content"].startswith(prefix)
+        ):
             logger.info(
                 "interrupt_marker: MesMemory already holds an interrupted "
                 "row for session {!r} (reason {!r}); skipping insert",

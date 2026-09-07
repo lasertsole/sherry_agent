@@ -30,12 +30,12 @@ class DoclingParser(ExternalParserBase):
         # (the IR builder locates it via that canonical stem).
         await DoclingRawClient().download_into(raw_dir, source_path, upload_filename=upload_name)
 
-    def build_ir(self, raw_dir: Path, document_name: str) -> "IRDoc":
+    def build_ir(self, raw_dir: Path, document_name: str) -> IRDoc:
         from graph_rag.vendored_lightrag.parser.external.docling import DoclingIRBuilder
 
         return DoclingIRBuilder().normalize_from_workdir(raw_dir, document_name=document_name)
 
-    def validate_ir(self, ir: "IRDoc", *, file_path: str, raw_dir: Path) -> None:
+    def validate_ir(self, ir: IRDoc, *, file_path: str, raw_dir: Path) -> None:
         if not ir.blocks:
             raise ValueError(
                 f"Docling IR builder produced zero blocks for {file_path} (raw_dir={raw_dir})"

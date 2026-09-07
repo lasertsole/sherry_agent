@@ -76,9 +76,9 @@ from workspace.prompt_builder import build_system_prompt  # noqa: E402
 # §14 fixture shape
 # ======================================================================
 
-_TURNS = 30          # §14: 30 turns of Human+AI+Tool = 90 messages
-_TURN_CHARS = 5000   # §14: every message ~5000 chars (ASCII: the //4 estimator
-                     # has a KNOWN CJK underestimation limitation — forbidden to fix)
+_TURNS = 30  # §14: 30 turns of Human+AI+Tool = 90 messages
+_TURN_CHARS = 5000  # §14: every message ~5000 chars (ASCII: the //4 estimator
+# has a KNOWN CJK underestimation limitation — forbidden to fix)
 _MAIN_LLM_CONTEXT_WINDOW = 32_000
 # T7 ratio form with a scaled-down window: the real MAIN_LLM_MAX_TOKEN on this
 # machine is 65_536_000 (uncapped), which would need a physically impossible
@@ -92,8 +92,7 @@ def _build_history() -> list[BaseMessage]:
     for i in range(_TURNS):
         history.append(
             HumanMessage(
-                content=f"[turn {i:02d}] please investigate topic-{i}: "
-                + "x" * (_TURN_CHARS - 40)
+                content=f"[turn {i:02d}] please investigate topic-{i}: " + "x" * (_TURN_CHARS - 40)
             )
         )
         history.append(
@@ -194,10 +193,10 @@ def _build_agent():
         middleware=[
             Summarization(
                 need_update_system_prompt=True,  # agent/core.py:153
-                model=aux_model,                 # agent/core.py:154 — stubbed auxiliary
+                model=aux_model,  # agent/core.py:154 — stubbed auxiliary
                 main_llm_context_window=window,  # agent/core.py:155
                 trigger=[("tokens", int(window * COMPRESSION_TRIGGER_RATIO))],  # core.py:156
-                keep=("messages", 10),           # agent/core.py:157
+                keep=("messages", 10),  # agent/core.py:157
             ),
         ],
     )
@@ -222,7 +221,9 @@ def _run_e2e(sid: str):
 # ======================================================================
 
 
-def _probe_main_llm_config(provider=None, name=None, env_path: Path | None = None) -> tuple[bool, str]:
+def _probe_main_llm_config(
+    provider=None, name=None, env_path: Path | None = None
+) -> tuple[bool, str]:
     """Return (config_present, reason).
 
     ``provider``/``name`` default to the RAW (pre-dotenv) environment snapshot —
@@ -247,9 +248,7 @@ def _probe_main_llm_config(provider=None, name=None, env_path: Path | None = Non
             "effective MAIN_LLM config missing"
         )
     if provider and name:
-        return True, (
-            f"MAIN_LLM config present via environment (provider={provider!r})"
-        )
+        return True, (f"MAIN_LLM config present via environment (provider={provider!r})")
     path = env_path if env_path is not None else Path(ENV_PATH)
     if path.exists():
         return True, f"MAIN_LLM config assumed present: .env found at {path} (contents not read)"
@@ -294,17 +293,13 @@ class TestSkipGuardProbe:
     """The guard itself: blank/absent MAIN_LLM config must read as MISSING."""
 
     def test_blank_env_injection_counts_as_missing(self):
-        ok, reason = _probe_main_llm_config(
-            provider="   ", env_path=Path("Z:/nonexistent/.env")
-        )
+        ok, reason = _probe_main_llm_config(provider="   ", env_path=Path("Z:/nonexistent/.env"))
         assert ok is False
         assert "MAIN_LLM_PROVIDER" in reason and "missing" in reason
 
     def test_zero_length_env_injection_counts_as_missing(self):
         # POSIX machines CAN carry zero-length env vars; same verdict.
-        ok, reason = _probe_main_llm_config(
-            provider="", env_path=Path("Z:/nonexistent/.env")
-        )
+        ok, reason = _probe_main_llm_config(provider="", env_path=Path("Z:/nonexistent/.env"))
         assert ok is False
         assert "MAIN_LLM_PROVIDER" in reason and "missing" in reason
 

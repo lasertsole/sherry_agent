@@ -99,28 +99,30 @@ content = Path(HEARTBEAT_PATH).read_text(encoding="utf-8")
 보조 LLM(`models`의 `build_auxiliary_llm()`)은 현재 시각(`current_time_str(self.timezone)`)과 HEARTBEAT.md 전체 내용을 받아 **가상 tool-call**로 판단을 보고합니다. 신뢰할 수 없는 자유 텍스트 파싱을 회피합니다:
 
 ```python
-_HEARTBEAT_TOOL = [{
-    "type": "function",
-    "function": {
-        "name": "heartbeat",
-        "description": "Report heartbeat decision after reviewing tasks.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["skip", "run"],
-                    "description": "skip = nothing to do, run = has active tasks",
+_HEARTBEAT_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "heartbeat",
+            "description": "Report heartbeat decision after reviewing tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["skip", "run"],
+                        "description": "skip = nothing to do, run = has active tasks",
+                    },
+                    "tasks": {
+                        "type": "string",
+                        "description": "Natural-language summary of active tasks (required for run)",
+                    },
                 },
-                "tasks": {
-                    "type": "string",
-                    "description": "Natural-language summary of active tasks (required for run)",
-                },
+                "required": ["action"],
             },
-            "required": ["action"],
         },
-    },
-}]
+    }
+]
 ```
 
 - 우선 `bind_tools` 경로를 시도합니다. `tool_calls`가 비어 있으면 `skip`으로 처리합니다.
@@ -172,7 +174,7 @@ if self.on_execute:
 서비스는 채널 계층의 `server/trigger/channels/core.py`가 연결과 시작을 담당합니다:
 
 ```python
-heartbeat_service.on_execute = _process_heartbeat_task   # → server.service.process_heartbeat_task
+heartbeat_service.on_execute = _process_heartbeat_task  # → server.service.process_heartbeat_task
 heartbeat_service.on_notify = _process_heartbeat_notify  # → server.service.process_heartbeat_notify
 asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)  # channel manager loop
 ```
@@ -200,7 +202,7 @@ asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)  # chann
 from skills.builtin.core.heartbeat import heartbeat_service
 
 heartbeat_service.on_execute = my_task_executor  # async (tasks: str) -> str
-heartbeat_service.on_notify = my_notifier        # async (response: str) -> None
+heartbeat_service.on_notify = my_notifier  # async (response: str) -> None
 
 await heartbeat_service.start()  # 기본 간격: 1800초 (30분)
 ```

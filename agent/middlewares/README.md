@@ -307,7 +307,7 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 
 The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware` (**not** LangChain's `SummarizationMiddleware`): when the trigger fires, it compacts history with a budget-based cutoff — non-LLM strategies first, auxiliary-LLM summarization only when text degradation is safe. The `keep` parameter is accepted but unused; tail retention is budget-based: `clamp(context_window × 0.25, 2 000, 15 000)` tokens (`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
-- **Lifecycle & routing:** the middleware now spans five trigger points (T1–T5) — T1 preflight (`before_agent` / `abefore_agent`), T2 pre-call dispatch (`wrap_model_call` / `awrap_model_call`), T3 post-response re-check on real (reported) tokens, and the T4 (413 Payload Too Large) / T5 (context overflow) error-recovery ring — and every trigger runs the four-route overflow decision (truncate / compact / both / pass), delegated to `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, and `pub_func/message/llm_error_classifier.py`. State lives in session-scoped `summarization_*` keys (14 total, 10 reset per turn). Full docs: see the link row below.
+- **Lifecycle & routing:** the middleware now spans five trigger points (T1–T5) — T1 preflight (`before_agent` / `abefore_agent`), T2 pre-call dispatch (`wrap_model_call` / `awrap_model_call`), T3 post-response re-check on real (reported) tokens, and the T4 (413 Payload Too Large) / T5 (context overflow) error-recovery ring — and every trigger runs the four-route overflow decision (truncate / compact / both / pass), delegated to `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, `pub_func/message/tool_args_truncate.py` (tool-call args truncation), and `pub_func/message/llm_error_classifier.py`. State lives in session-scoped `summarization_*` keys (14 total, 10 reset per turn). Full docs: see the link row below.
 - **Trigger semantics**: a clause is `("messages", N)` or `("tokens", N)`; a list of clauses is an **OR** — any clause firing starts compression. Main agent: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. Worker: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
 - **Cutoff safety:** `_determine_cutoff` picks the cut point, then `_adjust_for_orphan_pairs` walks it backwards until no `ToolMessage` is separated from its `AIMessage` tool-call; when the last user turn accounts for ≥ 50 % of the estimated tokens (`LAST_TURN_RATIO_THRESHOLD = 0.5`), the last turn itself is compressed (the `self._compress_last_turn` flag) instead of being summarized away.
 - **Anti-thrashing:** at most `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` compressions **per session** (not per turn); after `INEFFECTIVE_THRESHOLD = 2` consecutive ineffective attempts (effectiveness = message-count reduction or token reduction ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) the LLM step is disabled (`summarization_skip_llm`) and only non-LLM strategies run. Counters live in `state_register_mem` under session-level `summarization_*` keys (compression count, ineffective streak, last tokens, last strategy, skip flag, recovery state, …).
@@ -387,22 +387,29 @@ Common interface (`runtime/state_register.py`): `set_state`, `get_state`, `get_a
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    ContextEngineHook, MultimodalProcessor, IterationBudget, ToolGuardrails,
-    ToolCallNormalize, HeartbeatStaleness, HumanInTheLoop, HITLConfig, Summarization,
+    ContextEngineHook,
+    MultimodalProcessor,
+    IterationBudget,
+    ToolGuardrails,
+    ToolCallNormalize,
+    HeartbeatStaleness,
+    HumanInTheLoop,
+    HITLConfig,
+    Summarization,
 )
 
 agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),          # system prompt + nudge + persistence
-        MultimodalProcessor(),        # multimodal input normalization
-        IterationBudget(90),          # per-turn call budget
-        ToolGuardrails(),             # failure-pathology detection
-        ToolCallNormalize(),          # tool_use/tool_result repair
-        HeartbeatStaleness(),         # stuck-turn watchdog
-        HumanInTheLoop(HITLConfig()), # approval gates
-        Summarization(                # context compaction (innermost)
+        ContextEngineHook(),  # system prompt + nudge + persistence
+        MultimodalProcessor(),  # multimodal input normalization
+        IterationBudget(90),  # per-turn call budget
+        ToolGuardrails(),  # failure-pathology detection
+        ToolCallNormalize(),  # tool_use/tool_result repair
+        HeartbeatStaleness(),  # stuck-turn watchdog
+        HumanInTheLoop(HITLConfig()),  # approval gates
+        Summarization(  # context compaction (innermost)
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

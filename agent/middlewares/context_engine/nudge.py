@@ -1,9 +1,10 @@
 from loguru import logger
 from langgraph.types import Command
-from typing_extensions import override
+from typing import override
 from runtime import state_register_mem
 from langchain.agents import create_agent
-from typing import Callable, Awaitable, Any
+from typing import Any
+from collections.abc import Callable, Awaitable
 from langchain_core.messages import HumanMessage
 from langchain.agents.middleware import AgentState
 from langchain.agents.middleware import AgentMiddleware

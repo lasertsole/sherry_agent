@@ -33,7 +33,7 @@ def split_turn(
     if turn.end_idx - turn.start_idx <= 1:
         return None
     for start in range(turn.start_idx + 1, turn.end_idx):
-        remaining = turn.messages[start - turn.start_idx:]
+        remaining = turn.messages[start - turn.start_idx :]
         size = estimator(remaining)
         if size <= budget_tokens:
             return start

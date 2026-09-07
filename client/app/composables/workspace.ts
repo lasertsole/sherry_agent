@@ -7,7 +7,7 @@ export async function read_system_prompt_handler(): Promise<Record<string, strin
       opts: {},
       method: 'get'
     });
-    return res.data || {};
+    return (res.data as Record<string, string> | undefined) || {};
   } catch {
     return {};
   }

@@ -1,4 +1,3 @@
-# -*- encoding: utf-8 -*-
 import copy
 import numpy as np
 from pathlib import Path
@@ -123,7 +122,7 @@ class WavFrontend:
     def load_cmvn(
         self,
     ) -> np.ndarray:
-        with open(self.cmvn_file, "r", encoding="utf-8") as f:
+        with open(self.cmvn_file, encoding="utf-8") as f:
             lines = f.readlines()
 
         means_list = []

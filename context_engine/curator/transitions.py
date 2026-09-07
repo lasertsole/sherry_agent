@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 
 from context_engine.curator.constants import STATE_ACTIVE, STATE_STALE
@@ -31,16 +31,16 @@ def should_run_now(now: datetime | None = None) -> bool:
         return True
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if last.tzinfo is None:
-        last = last.replace(tzinfo=timezone.utc)
+        last = last.replace(tzinfo=UTC)
     interval = timedelta(hours=get_effective_interval_hours())
     return (now - last) >= interval
 
 
 def apply_automatic_transitions(now: datetime | None = None) -> dict[str, int]:
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     stale_cutoff = now - timedelta(days=get_stale_after_days())
     archive_cutoff = now - timedelta(days=get_archive_after_days())
 
@@ -66,7 +66,7 @@ def apply_automatic_transitions(now: datetime | None = None) -> dict[str, int]:
         last_activity = _parse_iso(row.get("last_activity_at"))
         anchor = last_activity or _parse_iso(row.get("created_at")) or now
         if anchor.tzinfo is None:
-            anchor = anchor.replace(tzinfo=timezone.utc)
+            anchor = anchor.replace(tzinfo=UTC)
 
         current = row.get("state", STATE_ACTIVE)
 

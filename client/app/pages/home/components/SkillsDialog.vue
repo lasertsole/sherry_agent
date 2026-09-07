@@ -535,6 +535,7 @@ import {
 } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 import { vDebounce } from '~/directives/debounce';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -716,7 +717,7 @@ const loadSkills = async () => {
     // Refresh curator settings (interval override + last maintenance) alongside skills.
     await loadCuratorSettings();
   } catch (e) {
-    console.error('[SkillsDialog] Failed to load skills:', e);
+    logUtil.e('[SkillsDialog] Failed to load skills:', e);
   } finally {
     loading.value = false;
   }
@@ -735,7 +736,7 @@ const loadCuratorSettings = async () => {
       intervalError.value = true;
     }
   } catch (e) {
-    console.error('[SkillsDialog] Failed to load curator settings:', e);
+    logUtil.e('[SkillsDialog] Failed to load curator settings:', e);
     intervalMessage.value = t('skills.tabs.autoMaintenanceLoadFailed');
     intervalError.value = true;
   }
@@ -762,7 +763,7 @@ const onAutoIntervalChange = async (event: { value: number | null; originalEvent
       intervalError.value = true;
     }
   } catch (e) {
-    console.error('[SkillsDialog] Failed to update curator interval:', e);
+    logUtil.e('[SkillsDialog] Failed to update curator interval:', e);
     intervalMessage.value = t('skills.tabs.autoMaintenanceSaveFailed');
     intervalError.value = true;
   } finally {
@@ -793,7 +794,7 @@ const handleUpload = async (event: Event) => {
       uploadError.value = resp.message || t('skills.uploadFailed');
     }
   } catch (e) {
-    console.error('[SkillsDialog] Upload failed:', e);
+    logUtil.e('[SkillsDialog] Upload failed:', e);
     uploadError.value = t('skills.uploadFailed');
   } finally {
     uploading.value = false;
@@ -814,7 +815,7 @@ const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: bool
       toggleError.value = resp.message || t('skills.toggleFailed');
     }
   } catch (e) {
-    console.error('[SkillsDialog] Toggle failed:', e);
+    logUtil.e('[SkillsDialog] Toggle failed:', e);
     skill.active = prev;
     toggleError.value = t('skills.toggleFailed');
   } finally {
@@ -838,7 +839,7 @@ const togglePin = async (skill: SkillInfo, current: boolean) => {
       toggleError.value = resp.message || t('skills.toggleFailed');
     }
   } catch (e) {
-    console.error('[SkillsDialog] Pin toggle failed:', e);
+    logUtil.e('[SkillsDialog] Pin toggle failed:', e);
     skill.pinned = prev;
     toggleError.value = t('skills.toggleFailed');
   } finally {
@@ -874,7 +875,7 @@ const performDelete = async () => {
       deleteError.value = resp.message || t('skills.tabs.deleteFailed');
     }
   } catch (e) {
-    console.error('[SkillsDialog] Delete skill failed:', e);
+    logUtil.e('[SkillsDialog] Delete skill failed:', e);
     deleteError.value = t('skills.tabs.deleteFailed');
   } finally {
     deleteSaving.value = false;
@@ -894,7 +895,7 @@ const selectSkill = async (skill: SkillInfo) => {
     const rootMd = detail.files?.find(f => f.path === 'SKILL.md') ?? null;
     selectedFile.value = rootMd ?? null;
   } catch (e) {
-    console.error('[SkillsDialog] Failed to read skill:', e);
+    logUtil.e('[SkillsDialog] Failed to read skill:', e);
   } finally {
     detailLoading.value = false;
   }
@@ -915,7 +916,7 @@ const runCurator = async () => {
       curatorError.value = resp.error || t('skills.tabs.curatorFailed');
     }
   } catch (e) {
-    console.error('[SkillsDialog] Curator run failed:', e);
+    logUtil.e('[SkillsDialog] Curator run failed:', e);
     curatorError.value = t('skills.tabs.curatorFailed');
   } finally {
     curatorRunning.value = false;

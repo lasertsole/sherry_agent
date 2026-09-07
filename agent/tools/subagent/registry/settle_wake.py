@@ -4,11 +4,11 @@ State machine: IDLE → COMPLETING → SETTLED → DONE, with rearm and retry sc
 """
 
 import asyncio
-from enum import Enum
+from enum import StrEnum
 from loguru import logger
 
 
-class SettleWakeState(str, Enum):
+class SettleWakeState(StrEnum):
     """States for the settle-wake lifecycle per requester session."""
 
     IDLE = "idle"

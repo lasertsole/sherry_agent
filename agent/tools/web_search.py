@@ -48,7 +48,7 @@ def build_web_search_tool():
                         original_arun(*args, **kwargs),
                         timeout=WEB_SEARCH_TIMEOUT,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     last_error = f"timed out after {WEB_SEARCH_TIMEOUT}s"
                     logger.warning(
                         "web_search attempt {}/{} {}", attempt + 1, RETRY_MAX_ATTEMPTS, last_error

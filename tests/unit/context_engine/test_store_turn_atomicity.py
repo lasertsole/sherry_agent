@@ -42,7 +42,7 @@ def _turns(conn: sqlite3.Connection, session_id: str) -> list[int]:
 
 
 @pytest.fixture()
-def store_db(monkeypatch, tmp_path) -> Generator[sqlite3.Connection, None, None]:
+def store_db(monkeypatch, tmp_path) -> Generator[sqlite3.Connection]:
     """An isolated, fully migrated DB wired into ``store.core._db``.
 
     Same pattern as ``test_store_origin.py``: mirrors ``get_db()``'s key

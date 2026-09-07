@@ -8,14 +8,14 @@ import json
 from pathlib import Path
 from loguru import logger
 
-# 动态定位项目根目录 (skills/builtin/code_wiki/scripts/ 向上4层)
+# Dynamically locate the project root (4 levels up from skills/builtin/code_wiki/scripts/)
 current_file = Path(__file__).resolve()
 project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
-WIKI_SUBDIR = "wiki"  # 放在 src/data/wiki/ 下
+WIKI_SUBDIR = "wiki"  # placed under src/data/wiki/
 
 
 def get_wiki_path() -> Path:

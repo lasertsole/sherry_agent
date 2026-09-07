@@ -132,7 +132,7 @@ def test_repetition_guard_surfaces_marker_in_live_path():
 
     # The marker must reach the client as a text frame.
     assert "[Output Repetition Guard]" in joined, (
-        "guard marker missing from text frames: %r" % text_frames
+        f"guard marker missing from text frames: {text_frames!r}"
     )
 
     # The repetitive tail must be CUT (suppressed before reaching client).

@@ -18,7 +18,8 @@ from __future__ import annotations
 import importlib
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from graph_rag.vendored_lightrag.constants import (
     PARSER_ENGINE_DOCLING,
@@ -222,7 +223,7 @@ _REGISTRY: dict[str, ParserSpec] = {
 
 # (engine_name, impl) -> instance.  Keyed on impl so a re-registration with a
 # different implementation is not served a stale cached instance.
-_INSTANCE_CACHE: dict[tuple[str, str], "BaseParser"] = {}
+_INSTANCE_CACHE: dict[tuple[str, str], BaseParser] = {}
 
 
 def register_parser(spec: ParserSpec) -> None:

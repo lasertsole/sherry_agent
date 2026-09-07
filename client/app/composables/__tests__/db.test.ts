@@ -109,7 +109,7 @@ vi.mock('../db', () => ({
   },
   readCachedMessages: async (sessionId: string) => {
     const rows = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
-    return rows.filter((row) => isValidTurnNum(row.turn_num));
+    return rows.filter(row => isValidTurnNum(row.turn_num));
   },
   cachedMaxTurnNum: async (sessionId: string) => {
     const last = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).last();

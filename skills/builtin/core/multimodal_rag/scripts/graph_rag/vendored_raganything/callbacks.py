@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 import threading
 
 logger = logging.getLogger(__name__)
@@ -37,14 +37,14 @@ class ProcessingEvent:
 
     event_type: str
     timestamp: float = field(default_factory=time.time)
-    file_path: Optional[str] = None
-    doc_id: Optional[str] = None
-    stage: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
-    duration_seconds: Optional[float] = None
-    error: Optional[str] = None
+    file_path: str | None = None
+    doc_id: str | None = None
+    stage: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+    duration_seconds: float | None = None
+    error: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dictionary."""
         return {
             "event_type": self.event_type,
@@ -190,7 +190,7 @@ class MetricsCallback(ProcessingCallback):
     """
 
     def __init__(self) -> None:
-        self.metrics: Dict[str, Any] = {
+        self.metrics: dict[str, Any] = {
             "documents_processed": 0,
             "documents_failed": 0,
             "total_content_blocks": 0,
@@ -284,8 +284,8 @@ class CallbackManager:
     """
 
     def __init__(self) -> None:
-        self._callbacks: List[ProcessingCallback] = []
-        self._event_log: List[ProcessingEvent] = []
+        self._callbacks: list[ProcessingCallback] = []
+        self._event_log: list[ProcessingEvent] = []
         self._log_events: bool = False
         self._lock = threading.RLock()
 
@@ -318,7 +318,7 @@ class CallbackManager:
             self._log_events = enabled
 
     @property
-    def event_log(self) -> List[ProcessingEvent]:
+    def event_log(self) -> list[ProcessingEvent]:
         """Read-only access to the internal event log."""
         with self._lock:
             return list(self._event_log)

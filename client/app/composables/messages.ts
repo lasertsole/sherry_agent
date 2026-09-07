@@ -1,15 +1,21 @@
 import type { MultiModalMessage } from '@/types/message';
 import type { Response } from '@/types/response';
 import type { SessionRecord } from '@/pages/home/type';
+
+type AbortControllerWithHitl = AbortController & {
+  sendHitlResponse?: ((response: HitlResponse) => void) | null;
+};
 import {
   streamChatMessage,
   type OnChunkCallback,
   type OnDoneCallback,
   type OnHitlCallback,
   type OnQueuedCallback,
-  type HitlInterruptData
+  type HitlInterruptData,
+  type HitlResponse
 } from './bridge';
 import { cacheMessages, cachedMaxTurnNum, clearCachedSession, readCachedMessages, type CachedMessage } from './db';
+import { logUtil } from '~/utils/log';
 
 /**
  * Event name for "abort streaming generation" when a session is deleted.
@@ -75,7 +81,9 @@ export async function get_history_by_turn_page(
     // (list[dict]), not a { data: [...] } wrapper object. Compatibility handling here: if the
     // response itself is an array, use it directly; otherwise fall back to reading res.data
     // (for the legacy wrapped format).
-    const fetched: CachedMessage[] = Array.isArray(res) ? (res as unknown as CachedMessage[]) : res.data || [];
+    const fetched: CachedMessage[] = Array.isArray(res)
+      ? (res as unknown as CachedMessage[])
+      : (res.data as CachedMessage[] | undefined) || [];
 
     // Write to the cache (bulkPut deduplicates by the id primary key)
     await cacheMessages(fetched);
@@ -136,7 +144,7 @@ export async function getSessionList(): Promise<SessionRecord[]> {
     // otherwise fall back to reading res.data.
     const rows: Array<{ session_id: string; last_time: string; title: string }> = Array.isArray(res)
       ? (res as unknown as Array<{ session_id: string; last_time: string; title: string }>)
-      : res.data || [];
+      : (res.data as Array<{ session_id: string; last_time: string; title: string }> | undefined) || [];
     return rows.map(row => ({
       id: row.session_id,
       title: row.title ?? row.session_id,
@@ -186,7 +194,7 @@ export async function getPendingInterrupt(session_id: string): Promise<HitlInter
   } catch (error) {
     // When the request fails (the session may have been cleared / the backend is not running),
     // silently treat it as no interrupt and do not block chat.
-    console.warn('[getPendingInterrupt] Failed to query pending approval interrupt:', error);
+    logUtil.w('[getPendingInterrupt] Failed to query pending approval interrupt:', error);
     return null;
   }
 }
@@ -237,7 +245,7 @@ export function postAgentStream(
   const hitlSender = stream.sendHitlResponse ?? null;
 
   // Attach sendHitlResponse onto the returned AbortController
-  (controller as any).sendHitlResponse = hitlSender;
+  (controller as AbortControllerWithHitl).sendHitlResponse = hitlSender;
 
   // User-initiated abort → trigger the stream stop
   controller.signal.addEventListener('abort', () => stopFn?.());

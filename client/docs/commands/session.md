@@ -9,21 +9,21 @@ and cached context.
 
 ```typescript
 await invoke('session_clear', {
-  request: ClearSessionRequest,
+  request: ClearSessionRequest
 });
 ```
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `request` | [`ClearSessionRequest`](/types/reference#clearsessionrequest) | Yes | Session to clear |
+| Parameter | Type                                                          | Required | Description      |
+| --------- | ------------------------------------------------------------- | -------- | ---------------- |
+| `request` | [`ClearSessionRequest`](/types/reference#clearsessionrequest) | Yes      | Session to clear |
 
 #### ClearSessionRequest
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `session_id` | `string` | Yes | Session ID to clear |
+| Field        | Type     | Required | Description         |
+| ------------ | -------- | -------- | ------------------- |
+| `session_id` | `string` | Yes      | Session ID to clear |
 
 ### Returns
 
@@ -31,10 +31,10 @@ await invoke('session_clear', {
 
 ### Errors
 
-| Code | Description | Retryable |
-|------|-------------|-----------|
-| `SESSION_ERROR` | Session not found or already cleared | No |
-| `DATABASE_ERROR` | Failed to delete session data | Yes |
+| Code             | Description                          | Retryable |
+| ---------------- | ------------------------------------ | --------- |
+| `SESSION_ERROR`  | Session not found or already cleared | No        |
+| `DATABASE_ERROR` | Failed to delete session data        | Yes       |
 
 ### Example
 
@@ -42,7 +42,7 @@ await invoke('session_clear', {
 import { invoke } from '@tauri-apps/api/core';
 
 await invoke('session_clear', {
-  request: { session_id: 'default' },
+  request: { session_id: 'default' }
 });
 console.log('Session cleared');
 ```
@@ -58,39 +58,39 @@ as an ordered list of messages, oldest first.
 
 ```typescript
 const messages = await invoke<HistoryMessage[]>('session_history', {
-  request: HistoryRequest,
+  request: HistoryRequest
 });
 ```
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `request` | [`HistoryRequest`](/types/reference#historyrequest) | Yes | Query parameters |
+| Parameter | Type                                                | Required | Description      |
+| --------- | --------------------------------------------------- | -------- | ---------------- |
+| `request` | [`HistoryRequest`](/types/reference#historyrequest) | Yes      | Query parameters |
 
 #### HistoryRequest
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `session_id` | `string` | Yes | Session ID to query |
-| `last_turn_count` | `number \| null` | No | Number of recent turns (`null` = all) |
+| Field             | Type             | Required | Description                           |
+| ----------------- | ---------------- | -------- | ------------------------------------- |
+| `session_id`      | `string`         | Yes      | Session ID to query                   |
+| `last_turn_count` | `number \| null` | No       | Number of recent turns (`null` = all) |
 
 ### Returns
 
 `HistoryMessage[]` — Ordered list of messages.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `role` | `string` | `"user"` or `"assistant"` |
-| `content` | `string` | Message text |
+| Field       | Type                  | Description                        |
+| ----------- | --------------------- | ---------------------------------- |
+| `role`      | `string`              | `"user"` or `"assistant"`          |
+| `content`   | `string`              | Message text                       |
 | `timestamp` | `string \| undefined` | ISO 8601 timestamp (may be absent) |
 
 ### Errors
 
-| Code | Description | Retryable |
-|------|-------------|-----------|
-| `SESSION_ERROR` | Session not found | No |
-| `DATABASE_ERROR` | Failed to query history | Yes |
+| Code             | Description             | Retryable |
+| ---------------- | ----------------------- | --------- |
+| `SESSION_ERROR`  | Session not found       | No        |
+| `DATABASE_ERROR` | Failed to query history | Yes       |
 
 ### Example
 
@@ -100,7 +100,7 @@ import type { HistoryMessage } from '@/types/backend/HistoryMessage';
 
 // Get last 10 turns
 const messages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'default', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 }
 });
 
 // Render chat UI
@@ -110,6 +110,6 @@ messages.forEach(msg => {
 
 // Get all history
 const allMessages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'default', last_turn_count: null },
+  request: { session_id: 'default', last_turn_count: null }
 });
 ```

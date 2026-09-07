@@ -6,7 +6,7 @@ from llama_index.core.llms import (
     MessageRole,
     ChatResponse,
 )
-from typing import Any, List, Optional
+from typing import Any
 from graph_rag.vendored_lightrag.utils import logger
 
 # Install required dependencies
@@ -84,8 +84,8 @@ def format_chat_messages(messages):
 async def llama_index_complete_if_cache(
     model: str,
     prompt: str,
-    system_prompt: Optional[str] = None,
-    history_messages: List[dict] = [],
+    system_prompt: str | None = None,
+    history_messages: list[dict] = [],
     enable_cot: bool = False,
     chat_kwargs={},
 ) -> str:

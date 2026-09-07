@@ -124,7 +124,6 @@ class TestUpdateVariants:
 
 class TestServiceWiring:
     def test_memory_write_merges_into_existing(self, tmp_path, monkeypatch):
-        from config import path as config_path
         from server.service import memory as memory_service
 
         fake_dir = tmp_path / "memory"
@@ -148,9 +147,7 @@ class TestServiceWiring:
         from server.service import workplace as workplace_service
 
         monkeypatch.setattr(workplace_service, "WORKSPACE_DIR", tmp_path)
-        monkeypatch.setattr(
-            workplace_service, "ensure_workspace_system_files", lambda: None
-        )
+        monkeypatch.setattr(workplace_service, "ensure_workspace_system_files", lambda: None)
 
         name = workplace_service.ALL_SYSTEM_FILE_NAMES[0]
         workplace_service.write_system_prompt_file({name: "content"})

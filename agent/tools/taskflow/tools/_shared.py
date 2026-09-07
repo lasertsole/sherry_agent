@@ -34,8 +34,7 @@ def not_found_error(flow_id: str) -> str:
 
 def terminal_error(flow_id: str, status: str) -> str:
     return (
-        f"Error: TaskFlow '{flow_id}' is terminal (status={status}); "
-        "no further mutations allowed"
+        f"Error: TaskFlow '{flow_id}' is terminal (status={status}); no further mutations allowed"
     )
 
 

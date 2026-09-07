@@ -95,9 +95,7 @@ def test_full_chain_create_run_resume_finish_across_restart(
     tools = _tool_map()
 
     async def phase1() -> None:
-        out = await tools["taskflow_create"].coroutine(
-            flow_id="flow-1", description="demo chain"
-        )
+        out = await tools["taskflow_create"].coroutine(flow_id="flow-1", description="demo chain")
         assert "flow-1" in out
         assert "revision=1" in out
 
@@ -205,8 +203,12 @@ def test_taskflow_skill_discovered_and_scoped(scan_skills_real, skill_visible_to
 
 
 @pytest.mark.asyncio
-async def test_resume_idempotent_no_double_injection(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(taskflow_run_task_module, "_dispatch_child", _fake_dispatch("agent:main:subagent:child-1"))
+async def test_resume_idempotent_no_double_injection(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        taskflow_run_task_module, "_dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
+    )
     tools = _tool_map()
 
     await tools["taskflow_create"].coroutine(flow_id="flow-1", description="resume probe")
@@ -274,7 +276,9 @@ async def test_create_rejects_duplicate(isolated_db: Path):
 
 @pytest.mark.asyncio
 async def test_set_waiting_then_resume_cycle(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(taskflow_run_task_module, "_dispatch_child", _fake_dispatch("agent:main:subagent:child-2"))
+    monkeypatch.setattr(
+        taskflow_run_task_module, "_dispatch_child", _fake_dispatch("agent:main:subagent:child-2")
+    )
     tools = _tool_map()
     await tools["taskflow_create"].coroutine(flow_id="flow-1")
 
@@ -301,7 +305,9 @@ async def test_set_waiting_then_resume_cycle(isolated_db: Path, monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_run_task_registers_step_and_dispatch_args(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_run_task_registers_step_and_dispatch_args(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
     dispatched: list = []
 
     async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:

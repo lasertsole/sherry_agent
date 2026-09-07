@@ -30,7 +30,7 @@ import logging
 import tempfile
 from typing import Any
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from config import AUTO_SKILLS_DIR
 
@@ -86,7 +86,7 @@ def _usage_file_lock():
             try:
                 fd.seek(0)
                 msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-            except (OSError, IOError):
+            except OSError:
                 pass
         fd.close()
 
@@ -96,7 +96,7 @@ def _archive_dir() -> Path:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _parse_iso_timestamp(value: Any) -> datetime | None:
@@ -108,7 +108,7 @@ def _parse_iso_timestamp(value: Any) -> datetime | None:
     except (TypeError, ValueError):
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -507,9 +507,7 @@ def archive_skill(skill_name: str) -> tuple[bool, str]:
     # are simple. If a collision exists, append a timestamp.
     dest = archive_root / skill_dir.name
     if dest.exists():
-        dest = (
-            archive_root / f"{skill_dir.name}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-        )
+        dest = archive_root / f"{skill_dir.name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
 
     try:
         skill_dir.rename(dest)

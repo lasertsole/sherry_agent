@@ -60,7 +60,7 @@ async def test_enqueue_positions_are_fifo_sequential(store: UserInputQueue):
     """Sequential enqueues get positions 1, 2, 3... (drain order)."""
     ids = []
     for i in range(3):
-        row, position = await store.enqueue(f"s1", _payload(f"msg-{i}"), source="user")
+        row, position = await store.enqueue("s1", _payload(f"msg-{i}"), source="user")
         ids.append(row.id)
         assert position == i + 1
     assert len(set(ids)) == 3

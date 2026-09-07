@@ -1,3 +1,4 @@
+import { logUtil } from '~/utils/log';
 /**
  * Compare two string or number values and pick the larger one
  *
@@ -79,7 +80,7 @@ export function stringToDate(dateString: string): Date | null {
     const date = new Date(timestamp);
 
     if (isNaN(date.getTime())) {
-      console.error('Invalid date:', dateString);
+      logUtil.e('Invalid date:', dateString);
       return null; // or return some other default value
     }
 
@@ -90,7 +91,7 @@ export function stringToDate(dateString: string): Date | null {
   dateString = dateString.replace(/T/gi, ' ').replace(/Z/gi, '');
   const date = new Date(dateString);
   if (isNaN(date.getTime())) {
-    console.error('Invalid date:', dateString);
+    logUtil.e('Invalid date:', dateString);
     return null; // or return some other default value
   }
 

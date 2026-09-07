@@ -33,8 +33,8 @@ unblocked.
 """
 
 from loguru import logger
-from typing_extensions import override
-from typing import Any, Callable, Awaitable
+from typing import override
+from collections.abc import Callable, Awaitable
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain.agents.middleware import AgentMiddleware, AgentState

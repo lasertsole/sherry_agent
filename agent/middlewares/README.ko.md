@@ -307,7 +307,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 최내곽 미들웨어 — LLM에 가장 가까운 위치. 처음부터 직접 구현한 `AgentMiddleware`입니다(LangChain의 `SummarizationMiddleware` **아님**): 트리거가 발동하면 예산 기반 컷오프로 히스토리를 압축합니다 — 비(非)LLM 전략 우선, 텍스트 저하가 안전할 때만 보조 LLM 요약 사용. `keep` 파라미터는 받아들이지만 사용하지 않으며, 꼬리 보존은 예산 기반입니다: `clamp(context_window × 0.25, 2 000, 15 000)` 토큰(`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
-- **라이프사이클과 라우팅:** 미들웨어는 이제 다섯 개의 트리거 지점(T1–T5)을 아우릅니다 — T1 사전 점검(`before_agent` / `abefore_agent`), T2 호출 전 디스패치(`wrap_model_call` / `awrap_model_call`), T3 응답 후 재확인(실제 보고 토큰), T4(413 Payload Too Large)/T5(컨텍스트 오버플로) 에러 복구 링 — 모든 트리거는 4-경로 오버플로 라우팅 결정(truncate / compact / both / pass)을 실행하며 `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, `pub_func/message/llm_error_classifier.py`에 위임됩니다. 상태는 세션 단위 `summarization_*` 키(총 14개, 턴마다 10개 리셋)로 유지됩니다. 전체 문서는 아래 링크를 참조하세요.
+- **라이프사이클과 라우팅:** 미들웨어는 이제 다섯 개의 트리거 지점(T1–T5)을 아우릅니다 — T1 사전 점검(`before_agent` / `abefore_agent`), T2 호출 전 디스패치(`wrap_model_call` / `awrap_model_call`), T3 응답 후 재확인(실제 보고 토큰), T4(413 Payload Too Large)/T5(컨텍스트 오버플로) 에러 복구 링 — 모든 트리거는 4-경로 오버플로 라우팅 결정(truncate / compact / both / pass)을 실행하며 `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, `pub_func/message/tool_args_truncate.py`(도구 호출 인자 절단), `pub_func/message/llm_error_classifier.py`에 위임됩니다. 상태는 세션 단위 `summarization_*` 키(총 14개, 턴마다 10개 리셋)로 유지됩니다. 전체 문서는 아래 링크를 참조하세요.
 - **트리거 시맨틱스**: 절은 `("messages", N)` 또는 `("tokens", N)`이며, 절 리스트 사이는 **OR** — 절이 하나라도 발동하면 압축이 시작됩니다. 메인 에이전트: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. 워커: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
 - **컷오프 안전성:** `_determine_cutoff`가 컷오프 지점을 고르고, 이어서 `_adjust_for_orphan_pairs`가 `ToolMessage`가 자신의 `AIMessage` 도구 호출과 분리되지 않을 때까지 위치를 뒤로 이동시킵니다. 마지막 사용자 턴이 추정 토큰의 ≥ 50%를 차지하면(`LAST_TURN_RATIO_THRESHOLD = 0.5`), 그 턴을 요약으로 없애는 대신 턴 자체를 압축합니다(`self._compress_last_turn` 플래그).
 - **안티스래싱:** 세션당 최대 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5`회 압축(턴당이 아님). 연속 `INEFFECTIVE_THRESHOLD = 2`회 무효 압축이면(유효 = 메시지 수 감소 또는 토큰 절감 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) LLM 단계를 비활성화(`summarization_skip_llm`)하고 비(非)LLM 전략만 실행합니다. 카운터는 세션 단위 `summarization_*` 키로 `state_register_mem`에 저장됩니다(압축 횟수, 무효 연속, 마지막 토큰, 마지막 전략, 스킵 플래그, 복구 상태 등).
@@ -389,22 +389,29 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    ContextEngineHook, MultimodalProcessor, IterationBudget, ToolGuardrails,
-    ToolCallNormalize, HeartbeatStaleness, HumanInTheLoop, HITLConfig, Summarization,
+    ContextEngineHook,
+    MultimodalProcessor,
+    IterationBudget,
+    ToolGuardrails,
+    ToolCallNormalize,
+    HeartbeatStaleness,
+    HumanInTheLoop,
+    HITLConfig,
+    Summarization,
 )
 
 agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),          # 시스템 프롬프트 + nudge + 영속화
-        MultimodalProcessor(),        # 멀티모달 입력 정규화
-        IterationBudget(90),          # 턴 단위 호출 예산
-        ToolGuardrails(),             # 실패 병리 감지
-        ToolCallNormalize(),          # tool_use/tool_result 복구
-        HeartbeatStaleness(),         # 멈춘 턴 워치독
-        HumanInTheLoop(HITLConfig()), # 승인 게이트
-        Summarization(                # 컨텍스트 압축 (최내곽)
+        ContextEngineHook(),  # 시스템 프롬프트 + nudge + 영속화
+        MultimodalProcessor(),  # 멀티모달 입력 정규화
+        IterationBudget(90),  # 턴 단위 호출 예산
+        ToolGuardrails(),  # 실패 병리 감지
+        ToolCallNormalize(),  # tool_use/tool_result 복구
+        HeartbeatStaleness(),  # 멈춘 턴 워치독
+        HumanInTheLoop(HITLConfig()),  # 승인 게이트
+        Summarization(  # 컨텍스트 압축 (최내곽)
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

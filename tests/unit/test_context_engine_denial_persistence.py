@@ -43,9 +43,7 @@ class TestReconcileDenials:
     def test_full_reject_pair_survives_sanitize(self):
         """The E2E bug: orphaned denial must survive sanitize after re-pairing."""
         msgs = [HumanMessage("hi"), _stripped_ai(), _denial()]
-        repaired = sanitize_tool_use_result_pairing(
-            _reconcile_denials_for_persistence(msgs)
-        )
+        repaired = sanitize_tool_use_result_pairing(_reconcile_denials_for_persistence(msgs))
         ai = [m for m in repaired if isinstance(m, AIMessage)]
         tools = [m for m in repaired if isinstance(m, ToolMessage)]
         assert len(ai) == 1
@@ -101,7 +99,12 @@ class TestReconcileDenials:
         ai = AIMessage(
             content="working",
             tool_calls=[
-                {"name": "terminal", "args": {"commands": "ls"}, "id": "call_x", "type": "tool_call"}
+                {
+                    "name": "terminal",
+                    "args": {"commands": "ls"},
+                    "id": "call_x",
+                    "type": "tool_call",
+                }
             ],
         )
         err = ToolMessage(content="boom", name="terminal", tool_call_id="call_x", status="error")
@@ -119,9 +122,7 @@ class TestReconcileDenials:
             _stripped_ai(),
             ToolMessage(content="data", name="read", tool_call_id="call_orphan"),
         ]
-        repaired = sanitize_tool_use_result_pairing(
-            _reconcile_denials_for_persistence(msgs)
-        )
+        repaired = sanitize_tool_use_result_pairing(_reconcile_denials_for_persistence(msgs))
         assert not [m for m in repaired if isinstance(m, ToolMessage)]
 
     def test_empty_error_orphan_ignored(self):

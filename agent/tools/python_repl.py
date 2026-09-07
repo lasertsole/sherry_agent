@@ -81,12 +81,7 @@ except Exception as e:
 """)
 
 
-
-
-
-def _run_with_timeout(
-    command: str, timeout: int, sandbox: bool = True, **_kwargs: Any
-) -> str:
+def _run_with_timeout(command: str, timeout: int, sandbox: bool = True, **_kwargs: Any) -> str:
     """Execute Python code in a subprocess with timeout. Kill on timeout.
 
     Spawn-point hardening (Task 7):
@@ -192,9 +187,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         import asyncio
 
         self._deny_sandbox_bypass(sandbox)
-        return await asyncio.to_thread(
-            _run_with_timeout, query, PYTHON_REPL_TIMEOUT, sandbox
-        )
+        return await asyncio.to_thread(_run_with_timeout, query, PYTHON_REPL_TIMEOUT, sandbox)
 
 
 def build_python_repl_tool() -> TimedPythonREPLTool:

@@ -24,7 +24,9 @@ import threading
 from loguru import logger
 
 from server.trigger.core import app
-from server.trigger.subagent_serialize import PUBLIC_FIELDS as _PUBLIC_FIELDS
+
+# noqa: F401 -- re-export contract asserted by test_subagent_serialize (audit 2.1.5)
+from server.trigger.subagent_serialize import PUBLIC_FIELDS as _PUBLIC_FIELDS  # noqa: F401
 from server.trigger.subagent_serialize import serialize_run as _serialize_run
 from server.trigger.ws.push_channel import WSPushChannel
 from robyn import WebSocketAdapter

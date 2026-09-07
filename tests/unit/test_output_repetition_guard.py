@@ -96,7 +96,7 @@ class TestContentHash:
         # ("hello world" -> "helloworld": whitespace stripped)
         import hashlib
 
-        expected = hashlib.md5("helloworld".encode()).hexdigest()
+        expected = hashlib.md5(b"helloworld").hexdigest()
         assert h == f"{expected}|{expected}"
 
     def test_hash_uses_tail_only_for_long_content(self):

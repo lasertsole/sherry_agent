@@ -1,7 +1,6 @@
 import json
-from typing import Type
 from pydantic import BaseModel, Field
-from typing_extensions import override
+from typing import override
 from config import ROOT_DIR, SKILLS_DIR
 from langchain_core.tools import BaseTool
 from agent.tools.pub_base import sort_skills, skill_visible_to
@@ -21,7 +20,7 @@ class SkillList(BaseTool):
     description: str = (
         "List available skills (name + description). Use skill_view(name) to load full content."
     )
-    args_schema: Type[BaseModel] = SkillListSchema
+    args_schema: type[BaseModel] = SkillListSchema
     metadata: dict = {"idempotent": True, "nudge": True}
 
     @override

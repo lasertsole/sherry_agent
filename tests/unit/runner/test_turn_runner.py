@@ -62,12 +62,16 @@ class FakeSocket:
 class RecordingExecutor:
     """TurnExecutor double recording (session_id, text, source, reply_target)."""
 
-    def __init__(self, *, fail_texts: set[str] | None = None, gate: asyncio.Event | None = None) -> None:
+    def __init__(
+        self, *, fail_texts: set[str] | None = None, gate: asyncio.Event | None = None
+    ) -> None:
         self.calls: list[tuple[str, str, str, str | None]] = []
         self.fail_texts = fail_texts or set()
         self.gate = gate
 
-    async def execute(self, session_id: str, message: str, source: str, reply_target: str | None) -> None:
+    async def execute(
+        self, session_id: str, message: str, source: str, reply_target: str | None
+    ) -> None:
         self.calls.append((session_id, message, source, reply_target))
         if message in self.fail_texts:
             raise RuntimeError(f"boom: {message}")
@@ -79,9 +83,13 @@ def _payload(text: str) -> str:
     return json.dumps({"text": text, "image_base64_list": []}, ensure_ascii=False)
 
 
-async def _enqueue(store: UserInputQueue, session_id: str, text: str, *, reply_target: str | None = None):
+async def _enqueue(
+    store: UserInputQueue, session_id: str, text: str, *, reply_target: str | None = None
+):
     """enqueue() returns (row, position); tests only need the row."""
-    row, _position = await store.enqueue(session_id, _payload(text), "user", reply_target=reply_target)
+    row, _position = await store.enqueue(
+        session_id, _payload(text), "user", reply_target=reply_target
+    )
     return row
 
 
@@ -115,10 +123,14 @@ def env(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(iqs, "get_default_queue", lambda: store)
     monkeypatch.setattr(tr, "get_registry", lambda: registry)
-    monkeypatch.setattr(tr, "get_websocket_by_session_id", lambda session_id: sockets.get(session_id))
+    monkeypatch.setattr(
+        tr, "get_websocket_by_session_id", lambda session_id: sockets.get(session_id)
+    )
     monkeypatch.setattr(tr, "_get_active_tasks", lambda: active_tasks)
     monkeypatch.setattr(tr, "get_pending_interrupt", _noop_pending_interrupt)
-    monkeypatch.setattr(tr, "set_hitl_pending", lambda session_id, value: hitl_sets.append((session_id, value)))
+    monkeypatch.setattr(
+        tr, "set_hitl_pending", lambda session_id, value: hitl_sets.append((session_id, value))
+    )
 
     return SimpleNamespace(
         tr=tr,
@@ -167,9 +179,7 @@ async def test_on_turn_finished_marks_claimed_row_and_drains_one_queued(env):
     await _wait_until(lambda: _status_of(store, r1.id) == "DELIVERED", what="queued row drained")
     assert _status_of(store, r0.id) == "DELIVERED", "given CLAIMED row must be marked DELIVERED"
     assert executor.calls == [("s1", "second", "user", None)], "only the queued row must execute"
-    await _wait_until(
-        lambda: tr._DRAIN_TASKS == {}, what="drain task self-cleanup"
-    )
+    await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="drain task self-cleanup")
 
 
 @pytest.mark.asyncio
@@ -198,7 +208,9 @@ async def test_drain_executes_with_no_socket_still_marks_delivered(env):
 
     await tr.on_turn_finished("s1")
 
-    await _wait_until(lambda: _status_of(store, row.id) == "DELIVERED", what="row drained without socket")
+    await _wait_until(
+        lambda: _status_of(store, row.id) == "DELIVERED", what="row drained without socket"
+    )
     assert len(executor.calls) == 1
 
 
@@ -253,7 +265,9 @@ async def test_channel_row_without_executor_fails_and_does_not_block_ws_rows(env
         logger.remove(hid)
 
     assert _status_of(store, channel_row.id) == "FAILED"
-    assert _status_of(store, ws_row.id) == "DELIVERED", "missing channel executor must not block ws rows"
+    assert _status_of(store, ws_row.id) == "DELIVERED", (
+        "missing channel executor must not block ws rows"
+    )
     # loguru plain-callable sinks receive the formatted string, not a record dict
     assert any("channel" in rec for rec in records), "a warning must be logged"
 
@@ -326,7 +340,9 @@ async def test_drain_defers_when_claimed_row_is_foreign_then_picks_up_after(env)
 
     await store.mark_terminal(r0.id, "DELIVERED")
     await tr.on_turn_finished("s1")  # the live turn's completion re-triggers
-    await _wait_until(lambda: _status_of(store, r1.id) == "DELIVERED", what="deferred row picked up")
+    await _wait_until(
+        lambda: _status_of(store, r1.id) == "DELIVERED", what="deferred row picked up"
+    )
     assert executor.calls == [("s1", "queued", "user", None)]
 
 
@@ -401,10 +417,14 @@ async def test_ws_executor_adopts_inline_turn_instead_of_double_running(env, mon
     await tr.on_turn_finished("s1")
     await asyncio.sleep(0.05)
     assert calls == [], "an adopted turn must NOT drive async_generate again"
-    assert _status_of(store, row.id) != "DELIVERED", "row is delivered only after the adopted turn finishes"
+    assert _status_of(store, row.id) != "DELIVERED", (
+        "row is delivered only after the adopted turn finishes"
+    )
 
     gate.set()
-    await _wait_until(lambda: _status_of(store, row.id) == "DELIVERED", what="adopted turn delivered")
+    await _wait_until(
+        lambda: _status_of(store, row.id) == "DELIVERED", what="adopted turn delivered"
+    )
     assert env.active_tasks == {}
     await asyncio.wait_for(live, timeout=5)
 

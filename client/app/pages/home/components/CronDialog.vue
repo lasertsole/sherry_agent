@@ -248,6 +248,7 @@ import {
   type CronSchedule
 } from '@/composables/bridge';
 import { vDebounce } from '~/directives/debounce';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -435,7 +436,7 @@ async function handleSaveJob() {
     editingId.value = null;
     await loadJobs();
   } catch (e) {
-    console.error('[CronDialog] Failed to save job:', e);
+    logUtil.e('[CronDialog] Failed to save job:', e);
   } finally {
     saving.value = false;
   }
@@ -449,7 +450,7 @@ async function toggleJob(job: CronJob) {
     await enableCronJob(job.id, !job.enabled);
     await loadJobs();
   } catch (e) {
-    console.error('[CronDialog] Failed to toggle job:', e);
+    logUtil.e('[CronDialog] Failed to toggle job:', e);
   } finally {
     busyToggleIds.value = new Set(busyToggleIds.value);
     busyToggleIds.value.delete(job.id);
@@ -461,7 +462,7 @@ async function runJob(job: CronJob) {
     await runCronJob(job.id, true);
     await loadJobs();
   } catch (e) {
-    console.error('[CronDialog] Failed to run job:', e);
+    logUtil.e('[CronDialog] Failed to run job:', e);
   }
 }
 
@@ -470,7 +471,7 @@ async function removeJob(job: CronJob) {
     await deleteCronJob(job.id);
     await loadJobs();
   } catch (e) {
-    console.error('[CronDialog] Failed to delete job:', e);
+    logUtil.e('[CronDialog] Failed to delete job:', e);
   }
 }
 
@@ -506,7 +507,7 @@ async function loadJobs() {
     const data = await listCronJobs(true);
     jobs.value = data.jobs ?? [];
   } catch (e) {
-    console.error('[CronDialog] Failed to load jobs:', e);
+    logUtil.e('[CronDialog] Failed to load jobs:', e);
     jobs.value = [];
   } finally {
     loading.value = false;

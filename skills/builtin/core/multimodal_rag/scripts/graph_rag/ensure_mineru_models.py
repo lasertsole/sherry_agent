@@ -20,16 +20,16 @@ from loguru import logger
 from config import MODELS_DIR
 
 # ──────────────────────────────────────────────
-# 0. 项目路径
+# 0. Project paths
 # ──────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VENV_DIR = PROJECT_ROOT / ".venv"
 MINERU_DOWNLOAD_SCRIPT = VENV_DIR / "Scripts" / "mineru-models-download.exe"
 
-# 模型存放目录（项目内）
+# Model storage directory (inside the project)
 EXTRACT_MODELS_DIR = MODELS_DIR / "extract_model"
 
-# 项目内 MinerU 配置文件路径
+# Project-local MinerU config file path
 PROJECT_CONFIG_FILE = EXTRACT_MODELS_DIR / "mineru_config.json"
 
 HOME_DIR = Path.home()
@@ -37,7 +37,7 @@ USER_CONFIG_FILE = HOME_DIR / "mineru.json"
 
 
 # ──────────────────────────────────────────────
-# 1. 配置读写
+# 1. Config read/write
 # ──────────────────────────────────────────────
 def _read_config(path: Path) -> dict:
     if path.exists():
@@ -70,7 +70,7 @@ def _ensure_config_has_version(config: dict) -> dict:
 
 
 # ──────────────────────────────────────────────
-# 2. 模型发现（先查项目内，再查缓存）
+# 2. Model discovery (project first, then cache)
 # ──────────────────────────────────────────────
 def _find_model_in_project(model_type: str) -> str | None:
     """Check if model already exists in project's models/ directory."""
@@ -170,7 +170,7 @@ def _resolve_cache_path(source: str, model_type: str) -> str:
 
 
 # ──────────────────────────────────────────────
-# 3. 从缓存复制到项目目录
+# 3. Copy from cache to project directory
 # ──────────────────────────────────────────────
 def _copy_cache_to_project(model_type: str, cache_path: str) -> str:
     """Copy model from cache directory to project models/ directory.
@@ -195,7 +195,7 @@ def _copy_cache_to_project(model_type: str, cache_path: str) -> str:
 
 
 # ──────────────────────────────────────────────
-# 4. 下载 + 复制到项目目录
+# 4. Download + copy to project directory
 # ──────────────────────────────────────────────
 def _run_download_and_migrate(source: str, model_type: str) -> str:
     """Run mineru-models-download, then copy from cache to project dir.
@@ -204,13 +204,13 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
 
     Returns the project-internal model path.
     """
-    # 先检查是否已在项目内
+    # First check whether the model already exists in the project
     project_path = _find_model_in_project(model_type)
     if project_path:
         logger.debug(f"{model_type} model already exists in project: {project_path}")
         return project_path
 
-    # 再检查是否有缓存（匹配指定的 source）
+    # Then check the cache (matching the given source)
     try:
         cache_path = _resolve_cache_path(source, model_type)
         logger.debug(f"Found {model_type} model in cache: {cache_path}")
@@ -218,7 +218,7 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
     except RuntimeError:
         logger.debug(f"No cached {model_type} model found, downloading from {source} ...")
 
-    # 下载（如果 huggingface 失败，fallback 到 modelscope）
+    # Download (if huggingface fails, fall back to modelscope)
     sources_to_try = [source]
     if source == "huggingface":
         sources_to_try.append("modelscope")
@@ -245,7 +245,7 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
             if result.stderr:
                 logger.debug(f"stderr:\n{result.stderr}")
 
-            # 下载后从缓存找到路径并复制到项目
+            # After download, locate the path in the cache and copy it into the project
             cache_path = _resolve_cache_path(attempt_source, model_type)
             return _copy_cache_to_project(model_type, cache_path)
 
@@ -253,7 +253,7 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
         logger.warning(f"stdout: {result.stdout}")
         logger.warning(f"stderr: {result.stderr}")
 
-    # 所有源都失败
+    # All sources failed
     raise RuntimeError(
         f"MinerU {model_type} model download failed. "
         f"Tried sources: {sources_to_try}. "
@@ -262,18 +262,18 @@ def _run_download_and_migrate(source: str, model_type: str) -> str:
 
 
 # ──────────────────────────────────────────────
-# 5. 更新配置文件
+# 5. Update config files
 # ──────────────────────────────────────────────
 def _write_mineru_configs(model_type: str, project_model_path: str) -> None:
     """Update both project-local and user-homedir config pointing to project model path."""
-    # 更新项目内配置文件
+    # Update the project-local config file
     config = _read_config(PROJECT_CONFIG_FILE)
     config = _update_models_dir(config, model_type, project_model_path)
     config = _ensure_config_has_version(config)
     _write_config(PROJECT_CONFIG_FILE, config)
     logger.debug(f"Updated {PROJECT_CONFIG_FILE}")
 
-    # 同时也更新 ~/mineru.json 保持一致性
+    # Also update ~/mineru.json to keep it consistent
     user_config = _read_config(USER_CONFIG_FILE)
     user_config = _update_models_dir(user_config, model_type, project_model_path)
     user_config = _ensure_config_has_version(user_config)

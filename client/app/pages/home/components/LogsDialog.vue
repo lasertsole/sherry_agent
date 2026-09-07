@@ -381,6 +381,7 @@ import {
   type ClientLogEntry,
   type ClientLogType
 } from '@/composables/clientLog';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -455,7 +456,7 @@ const loadTypeList = async () => {
     logTypes.value = infos.map(i => i.type);
     await onTypeChange(selectedType.value);
   } catch (e) {
-    console.error('[LogsDialog] Failed to load client log types:', e);
+    logUtil.e('[LogsDialog] Failed to load client log types:', e);
     logTypes.value = ['all', 'log', 'error'];
     frontendLines.value = [];
   } finally {
@@ -477,7 +478,7 @@ const loadBucketsForType = async (type: ClientLogType) => {
       frontendLines.value = [];
     }
   } catch (e) {
-    console.error('[LogsDialog] Failed to load client log buckets:', e);
+    logUtil.e('[LogsDialog] Failed to load client log buckets:', e);
     frontendLines.value = [];
   } finally {
     loadingBucketContent.value = false;
@@ -493,7 +494,7 @@ const loadBucketContent = async () => {
     frontendLines.value = await readClientLogBucket(bucket, MAX_LINES);
     scrollFrontendToBottom();
   } catch (e) {
-    console.error('[LogsDialog] Failed to read client log bucket:', e);
+    logUtil.e('[LogsDialog] Failed to read client log bucket:', e);
     frontendLines.value = [];
   } finally {
     loadingBucketContent.value = false;
@@ -542,7 +543,7 @@ const clearFrontend = async () => {
   try {
     await clearClientLogs();
   } catch (e) {
-    console.error('[LogsDialog] Failed to clear client log history:', e);
+    logUtil.e('[LogsDialog] Failed to clear client log history:', e);
   }
   if (typeof window !== 'undefined' && window.console && typeof window.console.clear === 'function') {
     window.console.clear();
@@ -734,7 +735,7 @@ const loadServerBucketsForType = async (type: ClientLogType) => {
       lines.value = [];
     }
   } catch (e) {
-    console.error('[LogsDialog] Failed to build server log buckets:', e);
+    logUtil.e('[LogsDialog] Failed to build server log buckets:', e);
     lines.value = [];
   } finally {
     loadingFiles.value = false;
@@ -798,7 +799,7 @@ const loadFileList = async () => {
     logFiles.value = resp.files ?? [];
     await loadServerBucketsForType(serverSelectedType.value);
   } catch (e) {
-    console.error('[LogsDialog] Failed to load log files:', e);
+    logUtil.e('[LogsDialog] Failed to load log files:', e);
     lines.value = [];
   } finally {
     loadingFiles.value = false;
@@ -822,7 +823,7 @@ const loadContent = async () => {
       lines.value = [];
     }
   } catch (e) {
-    console.error('[LogsDialog] Failed to read log file:', e);
+    logUtil.e('[LogsDialog] Failed to read log file:', e);
     lines.value = [];
   } finally {
     loadingContent.value = false;
@@ -866,7 +867,7 @@ const startLive = () => {
       }
     },
     e => {
-      console.error('[LogsDialog] Log stream error:', e);
+      logUtil.e('[LogsDialog] Log stream error:', e);
       wsStatus.value = 'idle';
     }
   );

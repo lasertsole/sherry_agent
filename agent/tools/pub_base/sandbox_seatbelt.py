@@ -42,8 +42,8 @@ class SeatbeltBackend(SandboxBackend):
             "(version 1)",
             "(allow default)",
             "(deny file-write*)",
-            f'(allow file-write* (subpath {json.dumps(str(ROOT_DIR))}))',
-            f'(allow file-write* (subpath {json.dumps(str(TEMP_DIR))}))',
+            f"(allow file-write* (subpath {json.dumps(str(ROOT_DIR))}))",
+            f"(allow file-write* (subpath {json.dumps(str(TEMP_DIR))}))",
             '(allow file-write* (literal "/dev/null"))',
             '(allow file-write* (literal "/dev/tty"))',
         ]

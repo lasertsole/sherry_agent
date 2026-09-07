@@ -12,7 +12,7 @@ Defines the core data model for the Human-in-the-Loop middleware:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 _STATE_PREFIX = "hitl"
@@ -24,7 +24,7 @@ BLOCKED_MESSAGE = (
 )
 
 
-class ApprovalMode(str, Enum):
+class ApprovalMode(StrEnum):
     """Approval strategy for the HITL pipeline.
 
     - ``SMART``: Use an LLM to auto-approve/deny before escalating to human.
@@ -37,7 +37,7 @@ class ApprovalMode(str, Enum):
     OFF = "off"
 
 
-class ApprovalDecision(str, Enum):
+class ApprovalDecision(StrEnum):
     """Decision type returned after a command is approved or denied.
 
     - ``ONCE``: Single-use approval — next invocation re-evaluates.
@@ -74,7 +74,7 @@ class ApprovalResult:
         return not self.approved
 
 
-class WriteTarget(str, Enum):
+class WriteTarget(StrEnum):
     """Target for write-approval staging.
 
     - ``MEMORY``: Memory write (user profile / long-term storage).
@@ -85,7 +85,7 @@ class WriteTarget(str, Enum):
     SKILLS = "skills"
 
 
-class TriageStatus(str, Enum):
+class TriageStatus(StrEnum):
     """Status for the Kanban triage workflow.
 
     - ``TODO`` / ``IN_PROGRESS`` / ``BLOCKED`` / ``DONE``: Standard task lifecycle.
@@ -102,7 +102,7 @@ class TriageStatus(str, Enum):
 BLOCK_RECURRENCE_LIMIT = 3
 
 
-class SmartApprovalResult(str, Enum):
+class SmartApprovalResult(StrEnum):
     """Result of a smart-approval LLM assessment.
 
     - ``APPROVE``: LLM deemed the command safe.
@@ -136,7 +136,7 @@ try:
     from langgraph.prebuilt.tool_node import ToolCallRequest
     from langgraph.runtime import Runtime
     from langgraph.types import interrupt as _lg_interrupt
-    from typing_extensions import override
+    from typing import override
 
     LANGCHAIN_AVAILABLE = True
 except ImportError:
@@ -217,5 +217,5 @@ class HITLConfig:
     mcp_reload_confirm: bool = True
     destructive_slash_confirm: bool = True
     smart_approval_llm: Any | None = None
-    interrupted_tools: dict[str, bool | "InterruptOnConfig"] = field(default_factory=dict)
+    interrupted_tools: dict[str, bool | InterruptOnConfig] = field(default_factory=dict)
     description_prefix: str = "Action requires human approval"

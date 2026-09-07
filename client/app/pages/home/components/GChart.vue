@@ -8,6 +8,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Chart } from '@antv/g2';
 import type { G2Spec } from '@antv/g2';
+import { logUtil } from '~/utils/log';
 
 const props = defineProps<{ options: G2Spec }>();
 
@@ -85,7 +86,7 @@ const render = async () => {
     await chart.render();
   } catch (e: unknown) {
     // Only surface the newest render's error; stale failures are noise.
-    if (token === renderToken) console.error('[GChart] render failed:', e);
+    if (token === renderToken) logUtil.e('[GChart] render failed:', e);
   } finally {
     renderInFlight = false;
   }

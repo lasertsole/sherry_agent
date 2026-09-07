@@ -68,12 +68,13 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import importlib
 import json
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field, asdict
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -189,7 +190,7 @@ def _cli_timeout() -> int:
         return _CLI_TIMEOUT
 
 
-class ScanStatus(str, Enum):
+class ScanStatus(StrEnum):
     """Top-level outcome of a skill scan."""
 
     #: Scanner ran and returned a verdict (SAFE / CAUTION / DO_NOT_INSTALL).
@@ -198,7 +199,7 @@ class ScanStatus(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -341,7 +342,7 @@ def _is_available(backend: str) -> bool:
         return shutil.which("skillspector") is not None
     if backend == "python":
         try:
-            import skillspector  # noqa: F401  (guarded import is the probe)
+            importlib.import_module("skillspector")
 
             return True
         except Exception:
@@ -684,7 +685,7 @@ def _store_scan_cache(key: str, result: ScanResult) -> None:
         entries = data.setdefault("entries", {})
         entries[key] = {
             "result": result.to_dict(),
-            "cached_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "cached_at": datetime.datetime.now(datetime.UTC).isoformat(),
         }
         atomic_write_text(path, json.dumps(data, ensure_ascii=False))
     except Exception as exc:

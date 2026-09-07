@@ -9,7 +9,6 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import time
 
@@ -22,11 +21,11 @@ from .parser import get_parser
 class BatchProcessingResult:
     """Result of batch processing operation"""
 
-    successful_files: List[str]
-    failed_files: List[str]
+    successful_files: list[str]
+    failed_files: list[str]
     total_files: int
     processing_time: float
-    errors: Dict[str, str]
+    errors: dict[str, str]
     output_dir: str
     dry_run: bool = False
 
@@ -98,7 +97,7 @@ class BatchParser:
                 )
                 # Don't raise an error, just warn - the parser might still work
 
-    def get_supported_extensions(self) -> List[str]:
+    def get_supported_extensions(self) -> list[str]:
         """Get list of supported file extensions"""
         return list(
             self.parser.OFFICE_FORMATS
@@ -107,7 +106,7 @@ class BatchParser:
             | {".pdf"}
         )
 
-    def filter_supported_files(self, file_paths: List[str], recursive: bool = True) -> List[str]:
+    def filter_supported_files(self, file_paths: list[str], recursive: bool = True) -> list[str]:
         """
         Filter file paths to only include supported file types
 
@@ -149,7 +148,7 @@ class BatchParser:
 
     def process_single_file(
         self, file_path: str, output_dir: str, parse_method: str = "auto", **kwargs
-    ) -> Tuple[bool, str, Optional[str]]:
+    ) -> tuple[bool, str, str | None]:
         """
         Process a single file
 
@@ -194,7 +193,7 @@ class BatchParser:
 
     def process_batch(
         self,
-        file_paths: List[str],
+        file_paths: list[str],
         output_dir: str,
         parse_method: str = "auto",
         recursive: bool = True,
@@ -326,7 +325,7 @@ class BatchParser:
 
     async def process_batch_async(
         self,
-        file_paths: List[str],
+        file_paths: list[str],
         output_dir: str,
         parse_method: str = "auto",
         recursive: bool = True,

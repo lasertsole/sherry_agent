@@ -34,7 +34,7 @@ import os
 import stat
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger("lightrag")
 

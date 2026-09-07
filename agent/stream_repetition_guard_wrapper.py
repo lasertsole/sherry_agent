@@ -44,8 +44,8 @@ Integration (in ``agent/core.py``)::
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any, AsyncGenerator
+from typing import Any
+from collections.abc import AsyncGenerator
 
 from loguru import logger
 from langchain_core.messages import AIMessageChunk
@@ -60,7 +60,6 @@ from agent.middlewares.output_repetition_guard import (
     _MIN_CONTENT_LENGTH,
     _CHAR_RUN_MIN,
     _STREAM_WARNING,
-    _REASONING_KEYS,
 )
 
 # Reasoning keys used to extract reasoning text from ``additional_kwargs``.
@@ -198,7 +197,7 @@ class RepetitionGuardWrapper:
     # ------------------------------------------------------------------
     # Streaming interception (astream)
     # ------------------------------------------------------------------
-    async def astream(self, *args, **kwargs) -> AsyncGenerator[tuple, None]:
+    async def astream(self, *args, **kwargs) -> AsyncGenerator[tuple]:
         """Intercepted streaming with stream-level internal repetition cutting.
 
         Accepts the same arguments as ``CompiledStateGraph.astream`` and

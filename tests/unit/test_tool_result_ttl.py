@@ -48,9 +48,7 @@ from pub_func.message.tool_result_ttl import (
 def _ai_with_calls(*tc_ids: str) -> AIMessage:
     return AIMessage(
         content="calling tools",
-        tool_calls=[
-            {"name": "bash", "args": {"cmd": "ls"}, "id": tc_id} for tc_id in tc_ids
-        ],
+        tool_calls=[{"name": "bash", "args": {"cmd": "ls"}, "id": tc_id} for tc_id in tc_ids],
     )
 
 
@@ -188,11 +186,10 @@ class TestTruncateExpiredStr:
         return "H" * 300 + "M" * 20000 + "T" * 300
 
     def test_head_tail_and_placeholder(self):
-        now = 1000.0
         content = self._content()
         msgs = [_ai_with_calls("tc1"), _tool("tc1", content)]
         head = content[: int(len(content) * 0.3)]
-        tail = content[-int(len(content) * 0.3):]
+        tail = content[-int(len(content) * 0.3) :]
 
         freed = truncate_expired(msgs, [1], budget_tokens=10**9)
 
@@ -205,7 +202,6 @@ class TestTruncateExpiredStr:
         assert freed > 0
 
     def test_in_place_no_removal_no_reorder(self):
-        now = 1000.0
         msgs = [
             SystemMessage(content="sys"),
             HumanMessage(content="q"),
@@ -220,7 +216,6 @@ class TestTruncateExpiredStr:
         assert msgs[3].tool_call_id == "tc1"
 
     def test_freed_tokens_positive_and_estimated(self):
-        now = 1000.0
         msgs = [_ai_with_calls("tc1"), _tool("tc1", self._content())]
         est_before = estimate_msg_tokens(msgs[1])
         freed = truncate_expired(msgs, [1], budget_tokens=10**9)
@@ -229,7 +224,6 @@ class TestTruncateExpiredStr:
         assert freed > 0
 
     def test_tail_shrunk_when_over_budget_head_kept(self):
-        now = 1000.0
         content = self._content()
         msgs = [_ai_with_calls("tc1"), _tool("tc1", content)]
         head = content[: int(len(content) * 0.3)]
@@ -244,14 +238,12 @@ class TestTruncateExpiredStr:
 
     def test_small_content_left_untouched(self):
         # Truncating would GROW the content (placeholder overhead) -> no-op.
-        now = 1000.0
         msgs = [_ai_with_calls("tc1"), _tool("tc1", "short result")]
         freed = truncate_expired(msgs, [1], budget_tokens=10**9)
         assert msgs[1].content == "short result"
         assert freed == 0
 
     def test_out_of_range_and_non_tool_indices_ignored(self):
-        now = 1000.0
         msgs = [_ai_with_calls("tc1"), _tool("tc1", self._content())]
         original = msgs[0].content
         freed = truncate_expired(msgs, [-5, 0, 99], budget_tokens=100)
@@ -266,7 +258,6 @@ class TestTruncateExpiredStr:
 
 class TestTruncateExpiredMultimodal:
     def test_text_block_truncated_image_block_replaced(self):
-        now = 1000.0
         blocks = _multimodal_blocks()
         msgs = [_ai_with_calls("tc1"), _tool("tc1", blocks)]
 
@@ -283,7 +274,6 @@ class TestTruncateExpiredMultimodal:
         assert freed > 0
 
     def test_list_structure_preserved_not_str(self):
-        now = 1000.0
         blocks = _multimodal_blocks()
         msgs = [_ai_with_calls("tc1"), _tool("tc1", blocks)]
         truncate_expired(msgs, [1], budget_tokens=10)
@@ -291,7 +281,6 @@ class TestTruncateExpiredMultimodal:
         assert len(msgs[1].content) == 2
 
     def test_text_block_shrunk_in_place(self):
-        now = 1000.0
         blocks = _multimodal_blocks()
         original_text = blocks[0]["text"]
         msgs = [_ai_with_calls("tc1"), _tool("tc1", blocks)]
@@ -304,7 +293,6 @@ class TestTruncateExpiredMultimodal:
         assert TTL_PLACEHOLDER in content[0]["text"]
 
     def test_multimodal_budget_shrink_keeps_head(self):
-        now = 1000.0
         original_text = _multimodal_blocks()[0]["text"]
         head = original_text[: int(len(original_text) * 0.3)]
         msgs = [_ai_with_calls("tc1"), _tool("tc1", _multimodal_blocks())]
@@ -314,7 +302,6 @@ class TestTruncateExpiredMultimodal:
         assert TTL_PLACEHOLDER in first_text
 
     def test_non_text_dict_and_non_dict_blocks_replaced(self):
-        now = 1000.0
         blocks = [
             {"type": "text", "text": "T" * 20000},
             "not-even-a-dict",  # malformed block
@@ -348,7 +335,9 @@ class TestTruncateToBudget:
         ]
 
     def _candidates(self, msgs) -> list:
-        return [(i, estimate_msg_tokens(m)) for i, m in enumerate(msgs) if isinstance(m, ToolMessage)]
+        return [
+            (i, estimate_msg_tokens(m)) for i, m in enumerate(msgs) if isinstance(m, ToolMessage)
+        ]
 
     def test_largest_first_until_budget_met(self):
         msgs = self._transcript()
@@ -425,7 +414,9 @@ class TestPairingInvariant:
         assert len(expired) == 3
         snapshot = list(msgs)
         freed = truncate_expired(msgs, expired, budget_tokens=1000)
-        candidates = [(i, estimate_msg_tokens(m)) for i, m in enumerate(msgs) if isinstance(m, ToolMessage)]
+        candidates = [
+            (i, estimate_msg_tokens(m)) for i, m in enumerate(msgs) if isinstance(m, ToolMessage)
+        ]
         freed += truncate_to_budget(msgs, candidates, budget_tokens=1000)
 
         # 1. message list untouched: same length, same objects, same slots
@@ -437,9 +428,7 @@ class TestPairingInvariant:
         for msg in msgs:
             for tc in getattr(msg, "tool_calls", None) or []:
                 ai_call_ids.add(tc["id"])
-        result_ids = {
-            m.tool_call_id for m in msgs if isinstance(m, ToolMessage)
-        }
+        result_ids = {m.tool_call_id for m in msgs if isinstance(m, ToolMessage)}
         assert ai_call_ids == {"tc1", "tc2", "tc3"}
         assert result_ids == ai_call_ids  # nothing dropped, nothing missing
 

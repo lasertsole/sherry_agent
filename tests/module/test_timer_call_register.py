@@ -28,7 +28,7 @@ class TestTimerCallRegister:
     """Test the countdown timer register (audit #8: per-generation task names)."""
 
     @pytest.fixture
-    def reg(self) -> Generator[TimerCallRegister, None, None]:
+    def reg(self) -> Generator[TimerCallRegister]:
         """Fresh TimerCallRegister instance; its loop is stopped afterwards."""
         if TimerCallRegister in Register._instances:
             del Register._instances[TimerCallRegister]

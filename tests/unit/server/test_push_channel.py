@@ -156,7 +156,9 @@ class TestServeSkeleton:
             def _ensure():
                 order.append("register")
 
-            await channel.serve(socket, ensure_registered=_ensure, handler_label="X", client_label="X")
+            await channel.serve(
+                socket, ensure_registered=_ensure, handler_label="X", client_label="X"
+            )
 
             assert order == ["register", "ready"]
 

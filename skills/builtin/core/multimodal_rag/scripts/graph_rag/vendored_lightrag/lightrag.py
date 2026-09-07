@@ -12,23 +12,15 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     httpx = None
 from dataclasses import InitVar, asdict, dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from functools import partial
 from typing import (
     Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Iterator,
     cast,
     final,
     Literal,
-    Mapping,
-    Optional,
-    List,
-    Dict,
-    Union,
 )
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from graph_rag.vendored_lightrag.prompt import (
     PROMPTS,
     get_default_entity_extraction_prompt_profile,
@@ -290,7 +282,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
     snapshots are persisted to ``full_docs[doc_id]['chunk_options']``
     at enqueue time."""
 
-    tokenizer: Optional[Tokenizer] = field(default=None)
+    tokenizer: Tokenizer | None = field(default=None)
     """
     A function that returns a Tokenizer instance.
     If None, and a `tiktoken_model_name` is provided, a TiktokenTokenizer will be created.
@@ -304,12 +296,12 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         [
             Tokenizer,
             str,
-            Optional[str],
+            str | None,
             bool,
             int,
             int,
         ],
-        Union[List[Dict[str, Any]], Awaitable[List[Dict[str, Any]]]],
+        list[dict[str, Any]] | Awaitable[list[dict[str, Any]]],
     ] = field(default_factory=lambda: chunking_by_token_size)
     """
     Legacy chunking-function customization point. Synchronous or async.
@@ -601,7 +593,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
     cosine_better_than_threshold: float = field(default=float(os.getenv("COSINE_THRESHOLD", 0.2)))
 
-    ollama_server_infos: Optional[OllamaServerInfos] = field(default=None)
+    ollama_server_infos: OllamaServerInfos | None = field(default=None)
     """Configuration for Ollama server information."""
 
     _storages_status: StoragesStatus = field(default=StoragesStatus.NOT_CREATED)
@@ -2321,7 +2313,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         updated_metadata = dict(metadata)
         if retry_cache_ids:
             updated_metadata["deletion_llm_cache_ids"] = retry_cache_ids
-        updated_metadata["last_deletion_attempt_at"] = datetime.now(timezone.utc).isoformat()
+        updated_metadata["last_deletion_attempt_at"] = datetime.now(UTC).isoformat()
 
         if failed:
             updated_metadata["deletion_failed"] = True
@@ -2332,7 +2324,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
 
         updated_status_data = {
             **doc_status_data,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             "metadata": updated_metadata,
             "error_msg": error_message if failed else "",
         }
@@ -2434,7 +2426,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         tasks = [self.doc_status.get_by_id(doc_id) for doc_id in id_list]
         # Execute tasks concurrently and gather the results. Results maintain order.
         # Type hint indicates results can be DocProcessingStatus or None if not found.
-        results_list: list[Optional[DocProcessingStatus]] = await asyncio.gather(*tasks)
+        results_list: list[DocProcessingStatus | None] = await asyncio.gather(*tasks)
 
         # Build the result dictionary, mapping found IDs to their statuses
         found_statuses: dict[str, DocProcessingStatus] = {}
@@ -2892,7 +2884,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     {
                         "busy": True,
                         "job_name": "Single document deletion",
-                        "job_start": datetime.now(timezone.utc).isoformat(),
+                        "job_start": datetime.now(UTC).isoformat(),
                         "docs": 1,
                         "batchs": 1,
                         "cur_batch": 0,

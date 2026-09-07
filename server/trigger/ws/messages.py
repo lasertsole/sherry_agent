@@ -1,12 +1,13 @@
 import json
 import asyncio
-from typing import Any, AsyncGenerator
+from typing import Any
+from collections.abc import AsyncGenerator
 from loguru import logger
 from server.trigger.core import app
 from runtime import state_register_mem
 from runtime.relation_register import relation_register
 from agent.tools.subagent.registry.session_state import set_hitl_pending
-from server.service import async_generate, get_pending_interrupt, resume_agent
+from server.service import get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs
 from server.service import turn_runner
 from server.service.stream_driver import StreamDriver
@@ -44,7 +45,7 @@ async def _send_ws(websocket: WebSocketAdapter, payload: dict[str, Any]) -> None
 async def _run_stream(
     websocket: WebSocketAdapter,
     session_id: str,
-    source: AsyncGenerator[dict[str, str], None],
+    source: AsyncGenerator[dict[str, str]],
     stream_kind: str,
     claim_row_id: str | None = None,
 ) -> None:
@@ -128,7 +129,7 @@ async def _cancel_session(session_id: str) -> None:
         # stream is expected to surface promptly after cancel().
         try:
             await asyncio.wait_for(task, timeout=5.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+        except (TimeoutError, asyncio.CancelledError, Exception):
             pass
     else:
         state_register_mem.set_state(session_id, "answering", False)
@@ -147,7 +148,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                 msg: str = await websocket.receive_text()
                 obj: dict[str, Any] = json.loads(msg)
 
-                session_id: str | None = obj.get("session_id", None)
+                session_id = obj.get("session_id", None)
                 if session_id is None:
                     await _send_ws(
                         websocket,

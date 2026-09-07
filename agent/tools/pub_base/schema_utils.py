@@ -7,7 +7,7 @@ that forwards BOTH access forms to the inherited property getter (class access
 synthesizes a throwaway instance), replacing the per-tool hardcoded copies.
 """
 
-from typing import Any, Type
+from typing import Any
 
 
 def class_or_instance_schema(parent_cls: type) -> Any:
@@ -23,7 +23,7 @@ def class_or_instance_schema(parent_cls: type) -> Any:
     """
 
     class _ClassOrInstanceSchema:
-        def __get__(self, obj: Any, objtype: Type | None = None) -> Any:
+        def __get__(self, obj: Any, objtype: type | None = None) -> Any:
             # Class access synthesizes a throwaway instance (cheap: all-defaults
             # pydantic model) so the inherited getter runs on a real self.
             target = obj if obj is not None else (objtype or parent_cls)()

@@ -16,17 +16,13 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import requests
-from config import ENV_PATH
 from models.utils import read_env_file_value as _read_dotenv
-
-
 
 
 def _is_local() -> bool:

@@ -97,7 +97,9 @@ def parse_args() -> tuple[RunnerOptions, list[str]]:
     return options, passthrough
 
 
-def build_group_cmd(group_paths: list[str], with_llm_e2e: bool, passthrough: list[str]) -> list[str]:
+def build_group_cmd(
+    group_paths: list[str], with_llm_e2e: bool, passthrough: list[str]
+) -> list[str]:
     """Build the pytest command line for one group."""
     cmd: list[str] = [sys.executable, "-m", "pytest", *group_paths, "-q"]
     # Marker selection. Passed on the CLI (after pyproject addopts) so the
@@ -182,7 +184,9 @@ def main() -> int:
 
     print("Process-isolated test runner (2 sequential pytest processes)")
     print(f"  repo root : {REPO_ROOT}")
-    print(f"  llm_e2e   : {'SELECTED ONLY (dedicated job)' if options.with_llm_e2e else 'DESELECTED (default)'}")
+    print(
+        f"  llm_e2e   : {'SELECTED ONLY (dedicated job)' if options.with_llm_e2e else 'DESELECTED (default)'}"
+    )
     if passthrough:
         print(f"  passthrough: {passthrough}")
 
@@ -203,7 +207,9 @@ def main() -> int:
         else:
             status = "FAIL"
             any_failed = True
-        print(f"  GROUP {name} ({desc}): {status}  [rc={rc} {RC_NAMES.get(rc, '?')}, {elapsed:.1f}s]")
+        print(
+            f"  GROUP {name} ({desc}): {status}  [rc={rc} {RC_NAMES.get(rc, '?')}, {elapsed:.1f}s]"
+        )
 
     print("=" * 70)
     verdict = "FAIL - see failing group output above" if any_failed else "PASS - all groups green"

@@ -1,25 +1,24 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Awaitable
+from enum import StrEnum
+from typing import Any
+from collections.abc import Callable, Awaitable
 
 from loguru import logger
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from langgraph.prebuilt.tool_node import ToolCallRequest
-from typing_extensions import override
+from typing import override
 from langchain_core.messages import ToolMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from runtime import state_register_mem
 from agent.middlewares.base import require_session_id
-from agent.middlewares.base import require_session_id
 
 
-class GuardrailAction(str, Enum):
+class GuardrailAction(StrEnum):
     ALLOW = "allow"
     WARN = "warn"
     BLOCK = "block"
@@ -113,6 +112,7 @@ class ToolGuardrails(AgentMiddleware):
     @staticmethod
     def _args_hash(args: dict[str, Any]) -> str:
         from agent.middlewares.base import args_hash
+
         return args_hash(args)
 
     @staticmethod
@@ -219,7 +219,9 @@ class ToolGuardrails(AgentMiddleware):
 
         return action
 
-    def _chain_action(self, count: int, warn_after: int, block_after: int) -> GuardrailAction | None:
+    def _chain_action(
+        self, count: int, warn_after: int, block_after: int
+    ) -> GuardrailAction | None:
         """Standard escalation chain; None when no threshold is crossed."""
         if self.config.hard_stop_enabled and count >= block_after:
             return GuardrailAction.HALT
@@ -499,11 +501,7 @@ class ToolGuardrails(AgentMiddleware):
                 status="error",
             )
 
-        if (
-            self.config.recovery_mode_enabled
-            and gs.recovery_mode
-            and tool_name in gs.blocked_tools
-        ):
+        if self.config.recovery_mode_enabled and gs.recovery_mode and tool_name in gs.blocked_tools:
             # Recovery mode: release the blocked tool once so the retry goes
             # through full evaluation — release lives ONLY here (precheck).
             gs.blocked_tools.discard(tool_name)

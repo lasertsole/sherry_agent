@@ -57,7 +57,7 @@ class NativeDocxParser(NativeParserBase):
         document_name: str,
         asset_dir_name: str,
         metadata: dict[str, Any],
-    ) -> "IRDoc":
+    ) -> IRDoc:
         from graph_rag.vendored_lightrag.parser.docx.ir_builder import NativeDocxIRBuilder
 
         return NativeDocxIRBuilder().normalize(

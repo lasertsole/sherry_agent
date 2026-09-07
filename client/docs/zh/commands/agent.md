@@ -11,41 +11,41 @@
 
 ```typescript
 const chunks = await invoke<ChatChunk[]>('agent_chat', {
-  request: ChatRequest,
+  request: ChatRequest
 });
 ```
 
 ### 参数
 
-| 参数 | 类型 | 必填 | 说明 |
-|-----------|------|----------|-------------|
-| `request` | [`ChatRequest`](/zh/types/reference#chatrequest) | 是 | 多模态消息载体 |
+| 参数      | 类型                                             | 必填 | 说明           |
+| --------- | ------------------------------------------------ | ---- | -------------- |
+| `request` | [`ChatRequest`](/zh/types/reference#chatrequest) | 是   | 多模态消息载体 |
 
 #### ChatRequest
 
-| 字段 | 类型 | 必填 | 说明 |
-|-------|------|----------|-------------|
-| `session_id` | `string` | 是 | 唯一会话标识符 |
-| `text` | `string \| null` | 否 | 文本消息内容 |
-| `image_base64_list` | `string[]` | 否 | Base64 编码的图片，用于多模态输入 |
+| 字段                | 类型             | 必填 | 说明                              |
+| ------------------- | ---------------- | ---- | --------------------------------- |
+| `session_id`        | `string`         | 是   | 唯一会话标识符                    |
+| `text`              | `string \| null` | 否   | 文本消息内容                      |
+| `image_base64_list` | `string[]`       | 否   | Base64 编码的图片，用于多模态输入 |
 
 ### 返回值
 
 `ChatChunk[]` — 响应块数组。
 
-| 字段 | 类型 | 说明 |
-|-------|------|-------------|
-| `content` | `string` | 该块的文本片段 |
-| `done` | `boolean` | 是否为最后一个块 |
+| 字段      | 类型      | 说明             |
+| --------- | --------- | ---------------- |
+| `content` | `string`  | 该块的文本片段   |
+| `done`    | `boolean` | 是否为最后一个块 |
 
 ### 可能的错误
 
-| 错误码 | 说明 | 可重试 |
-|------|-------------|-----------|
-| `AGENT_ERROR` | Agent 管道失败（工具循环、LangGraph 错误） | 否 |
-| `MODEL_ERROR` | LLM API 调用失败（超时、连接拒绝） | 是 |
-| `SESSION_ERROR` | 无效或过期的 session ID | 否 |
-| `RAG_ERROR` | 知识检索失败 | 否 |
+| 错误码          | 说明                                       | 可重试 |
+| --------------- | ------------------------------------------ | ------ |
+| `AGENT_ERROR`   | Agent 管道失败（工具循环、LangGraph 错误） | 否     |
+| `MODEL_ERROR`   | LLM API 调用失败（超时、连接拒绝）         | 是     |
+| `SESSION_ERROR` | 无效或过期的 session ID                    | 否     |
+| `RAG_ERROR`     | 知识检索失败                               | 否     |
 
 ### 示例
 
@@ -58,8 +58,8 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
     session_id: 'default',
     text: '你好，今天怎么样？',
-    image_base64_list: [],
-  },
+    image_base64_list: []
+  }
 });
 
 // 显示完整响应
@@ -71,8 +71,8 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
   request: {
     session_id: 'default',
     text: '描述这张图片',
-    image_base64_list: [base64ImageData],
-  },
+    image_base64_list: [base64ImageData]
+  }
 });
 ```
 
@@ -94,21 +94,21 @@ SSE 流将终止并发出 `agent:stream:end` 事件。
 
 ```typescript
 await invoke('agent_stop', {
-  request: StopRequest,
+  request: StopRequest
 });
 ```
 
 ### 参数
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `request` | [`StopRequest`](/zh/types/reference#stoprequest) | 是 | 要停止的会话 |
+| 参数      | 类型                                             | 必填 | 说明         |
+| --------- | ------------------------------------------------ | ---- | ------------ |
+| `request` | [`StopRequest`](/zh/types/reference#stoprequest) | 是   | 要停止的会话 |
 
 #### StopRequest
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `session_id` | `string` | 是 | 要取消生成的会话 ID |
+| 字段         | 类型     | 必填 | 说明                |
+| ------------ | -------- | ---- | ------------------- |
+| `session_id` | `string` | 是   | 要取消生成的会话 ID |
 
 ### 返回值
 
@@ -121,7 +121,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 // 停止当前会话的生成
 await invoke('agent_stop', {
-  request: { session_id: 'default' },
+  request: { session_id: 'default' }
 });
 ```
 

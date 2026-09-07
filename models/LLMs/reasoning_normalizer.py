@@ -46,7 +46,8 @@ call it replaced.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Iterator, List, Mapping, Optional, Sequence, Union
+from typing import Any
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 
 from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
@@ -115,9 +116,9 @@ class NormalizingChatModel(BaseChatModel):
     # -- Generation ---------------------------------------------------------
     def _generate(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         result = self.inner._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
@@ -127,9 +128,9 @@ class NormalizingChatModel(BaseChatModel):
 
     async def _agenerate(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         result = await self.inner._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
@@ -140,9 +141,9 @@ class NormalizingChatModel(BaseChatModel):
     # -- Streaming ----------------------------------------------------------
     def _stream(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
         for chunk in self.inner._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
@@ -151,9 +152,9 @@ class NormalizingChatModel(BaseChatModel):
 
     async def _astream(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
         async for chunk in self.inner._astream(
@@ -189,9 +190,9 @@ class NormalizingChatModel(BaseChatModel):
     # -- Tool / structured-output delegation ---------------------------------
     def bind_tools(
         self,
-        tools: Sequence[Union[type, Any]],
+        tools: Sequence[type | Any],
         *,
-        tool_choice: Optional[Union[str, dict, bool]] = None,
+        tool_choice: str | dict | bool | None = None,
         **kwargs: Any,
     ) -> Any:
         """Delegate tool binding to the inner model."""
@@ -199,7 +200,7 @@ class NormalizingChatModel(BaseChatModel):
 
     def with_structured_output(
         self,
-        schema: Union[type, dict[str, Any]],
+        schema: type | dict[str, Any],
         *,
         include_raw: bool = False,
         **kwargs: Any,
@@ -208,13 +209,13 @@ class NormalizingChatModel(BaseChatModel):
         return self.inner.with_structured_output(schema, include_raw=include_raw, **kwargs)
 
     # -- Message-parsing helpers (delegate to inner to keep behaviour aligned) --
-    def _convert_input(self, input: Any) -> List[BaseMessage]:
+    def _convert_input(self, input: Any) -> list[BaseMessage]:
         return self.inner._convert_input(input)
 
     def get_num_tokens(self, text: str) -> int:
         return self.inner.get_num_tokens(text)
 
-    def get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
+    def get_num_tokens_from_messages(self, messages: list[BaseMessage]) -> int:
         return self.inner.get_num_tokens_from_messages(messages)
 
 

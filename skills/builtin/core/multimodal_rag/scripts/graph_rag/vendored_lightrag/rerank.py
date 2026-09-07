@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import aiohttp
-from typing import Any, List, Dict, Optional, Tuple
+from typing import Any
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -20,11 +20,11 @@ load_dotenv(dotenv_path=".env", override=False)
 
 
 def chunk_documents_for_rerank(
-    documents: List[str],
+    documents: list[str],
     max_tokens: int = 480,
     overlap_tokens: int = 32,
     tokenizer_model: str = "gpt-4o-mini",
-) -> Tuple[List[str], List[int]]:
+) -> tuple[list[str], list[int]]:
     """
     Chunk documents that exceed token limit for reranking.
 
@@ -112,11 +112,11 @@ def chunk_documents_for_rerank(
 
 
 def aggregate_chunk_scores(
-    chunk_results: List[Dict[str, Any]],
-    doc_indices: List[int],
+    chunk_results: list[dict[str, Any]],
+    doc_indices: list[int],
     num_original_docs: int,
     aggregation: str = "max",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Aggregate rerank scores from document chunks back to original documents.
 
@@ -130,7 +130,7 @@ def aggregate_chunk_scores(
         List of results for original documents [{"index": doc_idx, "relevance_score": score}, ...]
     """
     # Group scores by original document index
-    doc_scores: Dict[int, List[float]] = {i: [] for i in range(num_original_docs)}
+    doc_scores: dict[int, list[float]] = {i: [] for i in range(num_original_docs)}
 
     for result in chunk_results:
         chunk_idx = result["index"]
@@ -179,18 +179,18 @@ def aggregate_chunk_scores(
 )
 async def generic_rerank_api(
     query: str,
-    documents: List[str],
+    documents: list[str],
     model: str,
     base_url: str,
-    api_key: Optional[str],
-    top_n: Optional[int] = None,
-    return_documents: Optional[bool] = None,
-    extra_body: Optional[Dict[str, Any]] = None,
+    api_key: str | None,
+    top_n: int | None = None,
+    return_documents: bool | None = None,
+    extra_body: dict[str, Any] | None = None,
     response_format: str = "standard",  # "standard" (Jina/Cohere) or "aliyun"
     request_format: str = "standard",  # "standard" (Jina/Cohere) or "aliyun"
     enable_chunking: bool = False,
     max_tokens_per_doc: int = 480,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Generic rerank API call for Jina/Cohere/Aliyun models.
 
@@ -357,15 +357,15 @@ async def generic_rerank_api(
 
 async def cohere_rerank(
     query: str,
-    documents: List[str],
-    top_n: Optional[int] = None,
-    api_key: Optional[str] = None,
+    documents: list[str],
+    top_n: int | None = None,
+    api_key: str | None = None,
     model: str = "rerank-v3.5",
     base_url: str = "https://api.cohere.com/v2/rerank",
-    extra_body: Optional[Dict[str, Any]] = None,
+    extra_body: dict[str, Any] | None = None,
     enable_chunking: bool = False,
     max_tokens_per_doc: int = 4096,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Rerank documents using Cohere API.
 
@@ -424,13 +424,13 @@ async def cohere_rerank(
 
 async def jina_rerank(
     query: str,
-    documents: List[str],
-    top_n: Optional[int] = None,
-    api_key: Optional[str] = None,
+    documents: list[str],
+    top_n: int | None = None,
+    api_key: str | None = None,
     model: str = "jina-reranker-v2-base-multilingual",
     base_url: str = "https://api.jina.ai/v1/rerank",
-    extra_body: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
+    extra_body: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """
     Rerank documents using Jina AI API.
 
@@ -464,13 +464,13 @@ async def jina_rerank(
 
 async def ali_rerank(
     query: str,
-    documents: List[str],
-    top_n: Optional[int] = None,
-    api_key: Optional[str] = None,
+    documents: list[str],
+    top_n: int | None = None,
+    api_key: str | None = None,
     model: str = "gte-rerank-v2",
     base_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
-    extra_body: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
+    extra_body: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """
     Rerank documents using Aliyun DashScope API.
 

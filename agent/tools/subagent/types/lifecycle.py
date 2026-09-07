@@ -1,9 +1,9 @@
 """Sub-agent lifecycle end-reason and outcome enums, plus a mapping helper."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class LifecycleEndedReason(str, Enum):
+class LifecycleEndedReason(StrEnum):
     """Why a sub-agent lifecycle ended."""
 
     COMPLETE = "complete"
@@ -13,7 +13,7 @@ class LifecycleEndedReason(str, Enum):
     ORPHANED = "orphaned"
 
 
-class LifecycleEndedOutcome(str, Enum):
+class LifecycleEndedOutcome(StrEnum):
     """Terminal outcome category mirrored from RunOutcomeStatus for lifecycle events."""
 
     OK = "ok"

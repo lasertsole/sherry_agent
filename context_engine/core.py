@@ -63,10 +63,14 @@ def retrieve_history_by_last_n_prompt(session_id: str, n: int = 5) -> str:
                     user_text = ""
                     for item in query:
                         if item.get("type", None) == "text":
-                            user_text = item.get("text", None)
-                            break
+                            text = item.get("text", None)
+                            if isinstance(text, str):
+                                user_text = text
+                                break
                 elif isinstance(query, dict):
-                    user_text = query.get("text", None)
+                    dict_text = query.get("text", None)
+                    if isinstance(dict_text, str):
+                        user_text = dict_text
                 else:
                     user_text = query
 
@@ -158,7 +162,7 @@ def _decode_content(content: Any) -> Any:
 def search_messages(
     query: str,
     session_id: str,
-    role_filter: list[str] = None,
+    role_filter: list[str] | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> list[dict[str, Any]]:

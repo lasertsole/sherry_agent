@@ -1,7 +1,7 @@
 """Base definitions and registration/firing mechanism for sub-agent lifecycle hooks."""
 
 from pydantic import BaseModel
-from typing import Callable, Awaitable
+from collections.abc import Callable, Awaitable
 
 
 class SubagentStartEvent(BaseModel):

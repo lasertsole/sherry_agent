@@ -23,7 +23,7 @@ console.log(`Running ${info.name} v${info.version}`);
 
 // Command with parameters
 const history = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'default', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 }
 });
 ```
 
@@ -31,17 +31,17 @@ const history = await invoke<HistoryMessage[]>('session_history', {
 
 All command names use `snake_case` matching the Rust function names:
 
-| Command Name | Module | Description |
-|---|---|---|
-| `agent_chat` | agent | Send a message, get streamed agent response |
-| `agent_stop` | agent | Stop an ongoing agent generation |
-| `session_clear` | session | Clear session state |
-| `session_history` | session | Get conversation history |
-| `system_prompt_read` | system_prompt | Read all prompt files |
-| `system_prompt_write` | system_prompt | Overwrite prompt files |
-| `system_prompt_update` | system_prompt | Merge-update prompt files |
-| `system_info` | system | Get app metadata |
-| `system_health` | system | Health check |
+| Command Name           | Module        | Description                                 |
+| ---------------------- | ------------- | ------------------------------------------- |
+| `agent_chat`           | agent         | Send a message, get streamed agent response |
+| `agent_stop`           | agent         | Stop an ongoing agent generation            |
+| `session_clear`        | session       | Clear session state                         |
+| `session_history`      | session       | Get conversation history                    |
+| `system_prompt_read`   | system_prompt | Read all prompt files                       |
+| `system_prompt_write`  | system_prompt | Overwrite prompt files                      |
+| `system_prompt_update` | system_prompt | Merge-update prompt files                   |
+| `system_info`          | system        | Get app metadata                            |
+| `system_health`        | system        | Health check                                |
 
 ## Parameter Passing
 
@@ -52,7 +52,7 @@ becomes the key in the invoke call:
 // Rust: fn session_clear(request: ClearSessionRequest)
 // TypeScript:
 await invoke('session_clear', {
-  request: { session_id: 'default' }  // <-- "request" matches the Rust parameter name
+  request: { session_id: 'default' } // <-- "request" matches the Rust parameter name
 });
 ```
 
@@ -80,10 +80,7 @@ It auto-detects Tauri desktop mode vs browser dev mode:
 import { sendChatMessage, clearSession, checkHealth } from '~/composables/bridge';
 
 // Works in both Tauri desktop and browser dev mode
-await sendChatMessage(
-  { session_id: 'default', text: 'Hello!', image_base64_list: [] },
-  (chunk) => appendToChat(chunk),
-);
+await sendChatMessage({ session_id: 'default', text: 'Hello!', image_base64_list: [] }, chunk => appendToChat(chunk));
 ```
 
 In **Tauri mode**, `bridge.ts` calls `invoke()` and listens for Tauri Events for streaming.

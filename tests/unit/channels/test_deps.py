@@ -38,7 +38,9 @@ class TestInstallRequirements:
             recorded["kwargs"] = kwargs
             return _FakeResult(0)
 
-        monkeypatch.setattr(deps.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+        monkeypatch.setattr(
+            deps.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None
+        )
         monkeypatch.setattr(deps.subprocess, "run", _fake_run)
         invalidated: list[bool] = []
         monkeypatch.setattr(deps.importlib, "invalidate_caches", lambda: invalidated.append(True))
@@ -46,7 +48,14 @@ class TestInstallRequirements:
         ok, timed_out, stderr = install_requirements(tmp_path / "requirements.txt")
 
         assert (ok, timed_out, stderr) == (True, False, "")
-        assert recorded["cmd"] == ["uv", "pip", "install", "-q", "-r", str(tmp_path / "requirements.txt")]
+        assert recorded["cmd"] == [
+            "uv",
+            "pip",
+            "install",
+            "-q",
+            "-r",
+            str(tmp_path / "requirements.txt"),
+        ]
         assert invalidated == [True]
 
     def test_falls_back_to_python_m_pip(self, monkeypatch, tmp_path):
@@ -61,7 +70,15 @@ class TestInstallRequirements:
         ok, _, _ = install_requirements(tmp_path / "requirements.txt")
 
         assert ok is True
-        assert recorded["cmd"] == [sys.executable, "-m", "pip", "install", "-q", "-r", str(tmp_path / "requirements.txt")]
+        assert recorded["cmd"] == [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "-r",
+            str(tmp_path / "requirements.txt"),
+        ]
 
     def test_timeout_returns_false_true(self, monkeypatch, tmp_path):
         def _fake_run(cmd, **kwargs):
@@ -74,7 +91,9 @@ class TestInstallRequirements:
         assert (ok, timed_out, stderr) == (False, True, "")
 
     def test_failure_returns_stderr_summary(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(deps.subprocess, "run", lambda *a, **k: _FakeResult(1, stderr="no such package\n"))
+        monkeypatch.setattr(
+            deps.subprocess, "run", lambda *a, **k: _FakeResult(1, stderr="no such package\n")
+        )
         invalidated: list[bool] = []
         monkeypatch.setattr(deps.importlib, "invalidate_caches", lambda: invalidated.append(True))
 
@@ -85,7 +104,9 @@ class TestInstallRequirements:
         assert invalidated == []  # caches only invalidated on success
 
     def test_stderr_falls_back_to_stdout(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(deps.subprocess, "run", lambda *a, **k: _FakeResult(1, stdout="out only"))
+        monkeypatch.setattr(
+            deps.subprocess, "run", lambda *a, **k: _FakeResult(1, stdout="out only")
+        )
 
         _, _, stderr = install_requirements(tmp_path / "requirements.txt")
 
@@ -107,15 +128,21 @@ class TestRegistryWiring:
         sink_id = logger.add(lambda m: logs.append(str(m)), level="DEBUG")
 
         try:
-            monkeypatch.setattr(registry, "install_requirements", lambda req, **k: (False, True, ""))
+            monkeypatch.setattr(
+                registry, "install_requirements", lambda req, **k: (False, True, "")
+            )
             assert registry._ensure_deps(tmp_path, "c1") is False
             assert any("Timed out installing dependencies for channel 'c1'" in m for m in logs)
 
-            monkeypatch.setattr(registry, "install_requirements", lambda req, **k: (False, False, "bad"))
+            monkeypatch.setattr(
+                registry, "install_requirements", lambda req, **k: (False, False, "bad")
+            )
             assert registry._ensure_deps(tmp_path, "c1") is False
             assert any("Failed to install dependencies for channel 'c1'" in m for m in logs)
 
-            monkeypatch.setattr(registry, "install_requirements", lambda req, **k: (True, False, ""))
+            monkeypatch.setattr(
+                registry, "install_requirements", lambda req, **k: (True, False, "")
+            )
             assert registry._ensure_deps(tmp_path, "c1") is True
             assert any("Dependencies for channel 'c1' ready" in m for m in logs)
         finally:
@@ -133,7 +160,11 @@ class TestQQWiring:
         spec.loader.exec_module(qq)
 
         recorded: list[str] = []
-        monkeypatch.setattr(qq, "install_requirements", lambda req, **k: recorded.append("call") or (True, False, ""))
+        monkeypatch.setattr(
+            qq,
+            "install_requirements",
+            lambda req, **k: recorded.append("call") or (True, False, ""),
+        )
         monkeypatch.setattr(qq, "_reset_cooldown", lambda: recorded.append("reset"))
 
         ok = qq._install_deps()

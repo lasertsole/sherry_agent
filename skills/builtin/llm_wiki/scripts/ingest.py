@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import date
 from loguru import logger
 
-# 动态加载 core 模块
+# Dynamically load the core module
 _scripts_dir = Path(__file__).resolve().parent
 _core_spec = importlib.util.spec_from_file_location("wiki_core", str(_scripts_dir / "core.py"))
 _core = importlib.util.module_from_spec(_core_spec)
@@ -33,17 +33,17 @@ def save_source(content: str, category: str = "articles", filename: str = None) 
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     if not filename:
-        # 用内容前20字 + 日期生成文件名
+        # Generate the filename from the first 20 chars of content + date
         prefix = content[:20].strip().replace(" ", "-").replace("\n", "")
         today = date.today().isoformat()
         filename = f"{prefix}-{today}.md"
 
     file_path = raw_dir / filename
 
-    # 计算sha256
+    # Compute sha256
     sha256_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    # 写入文件（带frontmatter）
+    # Write the file (with frontmatter)
     frontmatter = f"""---
 source_url: manual
 ingested: {date.today().isoformat()}

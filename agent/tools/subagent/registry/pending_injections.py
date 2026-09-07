@@ -25,7 +25,7 @@ import asyncio
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -91,7 +91,7 @@ async def _switch_to_wal_if_needed(db: aiosqlite.Connection) -> None:
             )
 
 
-class PendingInjectionStatus(str, Enum):
+class PendingInjectionStatus(StrEnum):
     """Lifecycle of an injection record: queued → delivered/consumed by a delivery path."""
 
     PENDING = "pending"
@@ -141,7 +141,7 @@ class PendingInjectionStore:
         self._initialized = False
 
     @asynccontextmanager
-    async def _connect(self) -> AsyncGenerator[aiosqlite.Connection, None]:
+    async def _connect(self) -> AsyncGenerator[aiosqlite.Connection]:
         """Open a short-lived connection; busy_timeout is always the FIRST statement."""
         db = await aiosqlite.connect(self._db_path)
         try:

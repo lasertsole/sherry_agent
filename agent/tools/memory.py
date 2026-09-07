@@ -35,7 +35,7 @@ from pub_func import atomic_replace
 from langchain.tools import BaseTool
 from contextlib import contextmanager
 from pydantic import BaseModel, Field
-from typing import Any, Literal, Type, override
+from typing import Any, Literal, override
 
 from agent.tools.pub_base.tool_utils import tool_error as _tool_error
 
@@ -186,7 +186,7 @@ class MemoryStore:
                 try:
                     fd.seek(0)
                     msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-                except (OSError, IOError):
+                except OSError:
                     pass
             fd.close()
 
@@ -432,7 +432,7 @@ class MemoryStore:
             return []
         try:
             raw = path.read_text(encoding="utf-8")
-        except (OSError, IOError):
+        except OSError:
             return []
 
         if not raw.strip():
@@ -469,11 +469,8 @@ class MemoryStore:
                 except OSError:
                     pass
                 raise
-        except (OSError, IOError) as e:
+        except OSError as e:
             raise RuntimeError(f"Failed to write memory file {path}: {e}")
-
-
-
 
 
 memory_store: MemoryStore = MemoryStore()
@@ -592,7 +589,7 @@ class MemoryTool(BaseTool):
         "remove (delete -- old_text identifies it).\n\n"
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state."
     )
-    args_schema: Type[BaseModel] = MemoryActionSchema
+    args_schema: type[BaseModel] = MemoryActionSchema
     # scope="main_only": usable ONLY by the main agent; subagents can never get
     # this tool (enforced non-overridably by
     # agent/tools/subagent/spawn/inherited_tool_policy.apply_tool_policy).

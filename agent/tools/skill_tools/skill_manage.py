@@ -8,8 +8,8 @@ import tempfile
 from pathlib import Path
 from loguru import logger
 from pydantic import BaseModel, Field
-from typing import Literal, Type, Any
-from typing_extensions import override
+from typing import Literal, Any
+from typing import override
 from langchain_core.tools import BaseTool
 from config import AUTO_SKILLS_DIR, ROOT_DIR
 from agent.tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
@@ -662,9 +662,7 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
         result["category"] = category
     result["hint"] = (
         "To add reference files, templates, or scripts, use "
-        "skill_manage(action='write_file', name='{}', file_path='references/example.md', file_content='...')".format(
-            name
-        )
+        f"skill_manage(action='write_file', name='{name}', file_path='references/example.md', file_content='...')"
     )
     return result
 
@@ -896,7 +894,7 @@ class SkillManage(BaseTool):
         "Patches and edits go through on pinned skills so you can still improve them as "
         "pitfalls come up; pin only guards against irrecoverable loss."
     )
-    args_schema: Type[BaseModel] = SkillManageSchema
+    args_schema: type[BaseModel] = SkillManageSchema
     metadata: dict = {"idempotent": False, "nudge": True}
 
     @override

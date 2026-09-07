@@ -119,7 +119,9 @@ class _ChannelTurnExecutor:
     the session's QUEUED rows).
     """
 
-    async def execute(self, session_id: str, message: str, source: str, reply_target: str | None) -> None:
+    async def execute(
+        self, session_id: str, message: str, source: str, reply_target: str | None
+    ) -> None:
         claim_row_id = await self._resolve_claim_row_id(session_id)
         completed = False
         try:
@@ -171,7 +173,9 @@ class _ChannelTurnExecutor:
 
         user_input: MultiModalMessage = MultiModalMessage(text=message)
         ai_reply: str = ""
-        stream = async_generate(session_id=session_id, multi_modal_message=user_input, is_stream=False)
+        stream = async_generate(
+            session_id=session_id, multi_modal_message=user_input, is_stream=False
+        )
         async for item in stream:
             ai_reply += item["content"]
 

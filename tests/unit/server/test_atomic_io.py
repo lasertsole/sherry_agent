@@ -19,7 +19,10 @@ class TestAtomicWriteText:
     def test_writes_text_utf8(self, tmp_path):
         target = tmp_path / "config.json"
 
-        atomic_write_text(target, '{"a": "小兰"}', )
+        atomic_write_text(
+            target,
+            '{"a": "小兰"}',
+        )
 
         assert target.read_text(encoding="utf-8") == '{"a": "小兰"}'
 

@@ -230,9 +230,7 @@ from .context_limit_guard_wrapper import ContextLimitGuardWrapper
 # ... create_agent(...) ...
 
 _agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
-_agent = ContextLimitGuardWrapper(
-    _agent, context_window=main_llm_max_tokens
-)
+_agent = ContextLimitGuardWrapper(_agent, context_window=main_llm_max_tokens)
 ```
 
 ### 5.2 `agent/__init__.py`
@@ -244,10 +242,12 @@ __all__ = [
     "ContextLimitGuardWrapper",
 ]
 
+
 def __getattr__(name: str):
     ...
     if name == "ContextLimitGuardWrapper":
         from .context_limit_guard_wrapper import ContextLimitGuardWrapper
+
         return ContextLimitGuardWrapper
     ...
 ```

@@ -81,7 +81,7 @@ def _deserialize_run(data: str) -> SubagentRunRecord:
 
 
 @asynccontextmanager
-async def _connect() -> AsyncGenerator[aiosqlite.Connection, None]:
+async def _connect() -> AsyncGenerator[aiosqlite.Connection]:
     """Open a short-lived connection; busy_timeout is always the FIRST statement."""
     db = await aiosqlite.connect(_DB_PATH)
     try:

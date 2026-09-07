@@ -15,7 +15,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 
-# 解决同一事件在不同事件循环的报错
+# Work around errors caused by the same event loop being reused across event loops
 nest_asyncio.apply()
 
 os.environ["HF_HUB_OFFLINE"] = "0"
@@ -36,11 +36,11 @@ async def _vision_model_func(
 ) -> str:
     from models import ITTT_model
 
-    # 如果提供了messages格式（用于多模态VLM增强查询），直接使用
+    # If the messages format is provided (for multimodal VLM-enhanced queries), use it directly
     if messages:
         result = ITTT_model.invoke(messages)
         return result.content
-    # 传统单图片格式
+    # Legacy single-image format
     elif image_data:
         messages = [
             {"role": "system", "content": system_prompt} if system_prompt else None,

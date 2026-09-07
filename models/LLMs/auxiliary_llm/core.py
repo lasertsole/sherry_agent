@@ -24,7 +24,8 @@ import instructor
 import uuid
 from pathlib import Path
 from dotenv import load_dotenv
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any
+from collections.abc import Mapping, Sequence
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -141,9 +142,9 @@ def build_auxiliary_llm(temperature: float | None = None):
 
             def bind_tools(
                 self,
-                tools: Sequence[Union[Dict[str, Any], type, Any]],
+                tools: Sequence[dict[str, Any] | type | Any],
                 *,
-                tool_choice: Optional[str] = None,
+                tool_choice: str | None = None,
                 **kwargs: Any,
             ) -> Runnable:
                 """Bind tools by injecting a tool-calling system prompt.
@@ -221,7 +222,7 @@ def build_auxiliary_llm(temperature: float | None = None):
 
                 def _invoke_with_tools(input_data: Any) -> AIMessage:
                     if isinstance(input_data, str):
-                        msgs: List[BaseMessage] = [
+                        msgs: list[BaseMessage] = [
                             HumanMessage(content=input_data),
                         ]
                     elif isinstance(input_data, list):
@@ -277,7 +278,7 @@ def build_auxiliary_llm(temperature: float | None = None):
                         except json.JSONDecodeError:
                             pass
 
-                    tool_kwargs: Dict[str, Any] = {}
+                    tool_kwargs: dict[str, Any] = {}
                     if isinstance(source_reasoning, str) and source_reasoning:
                         tool_kwargs.setdefault("reasoning_content", source_reasoning)
                     return AIMessage(
@@ -290,7 +291,7 @@ def build_auxiliary_llm(temperature: float | None = None):
 
             def with_structured_output(
                 self,
-                schema: Union[type, Dict[str, Any]],
+                schema: type | dict[str, Any],
                 *,
                 include_raw: bool = False,
                 **kwargs: Any,
@@ -311,7 +312,7 @@ def build_auxiliary_llm(temperature: float | None = None):
                     input_data: Any,
                 ) -> Any:
                     if isinstance(input_data, str):
-                        msgs: List[BaseMessage] = [
+                        msgs: list[BaseMessage] = [
                             HumanMessage(content=input_data),
                         ]
                     elif isinstance(input_data, list):

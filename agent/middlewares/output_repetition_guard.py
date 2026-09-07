@@ -26,12 +26,12 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from typing import Any, Callable, Awaitable
+from typing import Any
+from collections.abc import Callable, Awaitable
 
 from loguru import logger
-from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
-from typing_extensions import override
+from typing import override
 from langchain_core.messages import AIMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import (
@@ -41,6 +41,7 @@ from langchain.agents.middleware.types import (
     ExtendedModelResponse,
 )
 
+from agent.middlewares.base import BeforeAgentHooksMixin
 from runtime import state_register_mem
 
 # ---------------------------------------------------------------------------
@@ -112,8 +113,6 @@ _THINK_PATTERNS = [
     re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL),
 ]
 
-
-from agent.middlewares.base import BeforeAgentHooksMixin, AfterAgentHooksMixin
 
 class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
     """Detect and break text-output death loops.
@@ -566,9 +565,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
                 _HISTORY_KEY,
                 _INTERNAL_WARNED_KEY,
                 "output",
-                check_internal=(
-                    len(content) >= _MIN_CONTENT_LENGTH and not has_tool_calls
-                ),
+                check_internal=(len(content) >= _MIN_CONTENT_LENGTH and not has_tool_calls),
             )
             if r is not None:
                 return r
@@ -583,9 +580,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
                 _REASONING_HISTORY_KEY,
                 _REASONING_WARNED_KEY,
                 "reasoning",
-                check_internal=(
-                    len(reasoning) >= _MIN_CONTENT_LENGTH and not has_tool_calls
-                ),
+                check_internal=(len(reasoning) >= _MIN_CONTENT_LENGTH and not has_tool_calls),
             )
 
             if r is not None:

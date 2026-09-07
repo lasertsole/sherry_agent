@@ -104,7 +104,9 @@ class TestValidation:
 
     def test_max_spawn_depth_cap_rejected(self):
         with pytest.raises(ValueError, match="cannot exceed") as excinfo:
-            delegate_task("do something", requester_session_key="agent:main:session:x", max_spawn_depth=3)
+            delegate_task(
+                "do something", requester_session_key="agent:main:session:x", max_spawn_depth=3
+            )
         # Plain ValueError from the delegate-level hard cap — NOT pydantic's
         # validate_assignment ValidationError (a ValueError subclass whose
         # message also contains "cannot exceed"); asserting the exact type is

@@ -127,7 +127,9 @@ class RelationManager(Register):
     def unregister_channel_chat_by_session_id(self, session_id: str):
         try:
             with self._rm_lock:
-                channel_id, chat_id = self.session_id_to_channel_chat_id.pop(session_id, (None, None))
+                channel_id, chat_id = self.session_id_to_channel_chat_id.pop(
+                    session_id, (None, None)
+                )
                 if channel_id and chat_id:
                     self.channel_chat_id_to_session_id.pop((channel_id, chat_id), None)
         except Exception:
@@ -138,7 +140,9 @@ class RelationManager(Register):
     def unregister_channel_chat_by_channel_chat_id(self, channel_id: str, chat_id: str):
         try:
             with self._rm_lock:
-                session_id: str = self.channel_chat_id_to_session_id.pop((channel_id, chat_id), None)
+                session_id: str = self.channel_chat_id_to_session_id.pop(
+                    (channel_id, chat_id), None
+                )
                 if session_id:
                     self.session_id_to_channel_chat_id.pop(session_id, None)
         except Exception:

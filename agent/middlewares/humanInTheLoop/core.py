@@ -306,9 +306,7 @@ class HumanInTheLoop(AgentMiddleware):
             if decisions and decisions[0]["type"] == "approve":
                 return True, None
             msg = (
-                (decisions[0].get("message") or "Rejected by user")
-                if decisions
-                else "No decision"
+                (decisions[0].get("message") or "Rejected by user") if decisions else "No decision"
             )
             return False, ToolMessage(
                 content=f"User denied: {msg}. {BLOCKED_MESSAGE}",

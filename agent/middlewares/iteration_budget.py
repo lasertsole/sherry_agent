@@ -11,10 +11,10 @@ a graceful stop.
 from __future__ import annotations
 
 from loguru import logger
-from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
-from typing_extensions import override
-from typing import Any, Callable, Awaitable
+from typing import override
+from typing import Any
+from collections.abc import Callable, Awaitable
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest, Command
 from langchain.agents.middleware import AgentMiddleware, AgentState

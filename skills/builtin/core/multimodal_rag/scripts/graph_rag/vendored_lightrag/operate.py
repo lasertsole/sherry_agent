@@ -6,7 +6,8 @@ import asyncio
 import json
 import re
 import json_repair
-from typing import Any, AsyncIterator, overload, Literal
+from typing import Any, overload, Literal
+from collections.abc import AsyncIterator
 from collections import Counter, defaultdict
 
 from graph_rag.vendored_lightrag.exceptions import (
@@ -159,7 +160,7 @@ def _truncate_entity_identifier(
 
 def _truncate_section_context(
     heading_path: str,
-    tokenizer: "Tokenizer | None",
+    tokenizer: Tokenizer | None,
     max_tokens: int,
 ) -> str:
     """Token-budget the `---Section Context---` breadcrumb before injection.

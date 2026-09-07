@@ -22,9 +22,7 @@ from pathlib import Path
 
 from loguru import logger
 
-CORE_PATH = (
-    Path(__file__).resolve().parents[3] / "server" / "trigger" / "channels" / "core.py"
-)
+CORE_PATH = Path(__file__).resolve().parents[3] / "server" / "trigger" / "channels" / "core.py"
 REGISTRY_MODULE = "agent.tools.subagent.registry"
 
 
@@ -47,9 +45,7 @@ def _load_schedule_sweeper():
             func = ns["_schedule_sweeper"]
             assert callable(func), "AST extraction did not yield a callable"
             return func
-    raise AssertionError(
-        "_schedule_sweeper not found in server/trigger/channels/core.py"
-    )
+    raise AssertionError("_schedule_sweeper not found in server/trigger/channels/core.py")
 
 
 def _install_registry_stub(monkeypatch):

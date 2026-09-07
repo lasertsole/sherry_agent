@@ -182,9 +182,7 @@ def detect_state(session_key: str) -> SessionState:
     if _is_hitl_pending(session_id):
         return SessionState(session_id=session_id, busy=True, reason=REASON_HITL_PENDING)
     if _is_auto_turn_inflight(session_id):
-        return SessionState(
-            session_id=session_id, busy=True, reason=REASON_AUTO_TURN_INFLIGHT
-        )
+        return SessionState(session_id=session_id, busy=True, reason=REASON_AUTO_TURN_INFLIGHT)
     return SessionState(session_id=session_id, busy=False, reason=REASON_IDLE)
 
 

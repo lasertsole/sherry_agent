@@ -164,6 +164,7 @@ import { useI18n } from 'vue-i18n';
 import { listChannels } from '@/composables/bridge';
 import type { ChannelInfo } from '@/composables/bridge';
 import ChannelSettingsDialog from './ChannelSettingsDialog.vue';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -197,7 +198,7 @@ const loadChannels = async () => {
     const resp = await listChannels();
     channels.value = resp.channels ?? [];
   } catch (e) {
-    console.error('[ExtendDialog] Failed to load channels:', e);
+    logUtil.e('[ExtendDialog] Failed to load channels:', e);
   } finally {
     loading.value = false;
   }

@@ -99,28 +99,30 @@ content = Path(HEARTBEAT_PATH).read_text(encoding="utf-8")
 The auxiliary LLM (`build_auxiliary_llm()` from `models`) receives the current time (`current_time_str(self.timezone)`) and the full HEARTBEAT.md content, and answers through a **virtual tool call** — avoiding unreliable free-text parsing:
 
 ```python
-_HEARTBEAT_TOOL = [{
-    "type": "function",
-    "function": {
-        "name": "heartbeat",
-        "description": "Report heartbeat decision after reviewing tasks.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["skip", "run"],
-                    "description": "skip = nothing to do, run = has active tasks",
+_HEARTBEAT_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "heartbeat",
+            "description": "Report heartbeat decision after reviewing tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["skip", "run"],
+                        "description": "skip = nothing to do, run = has active tasks",
+                    },
+                    "tasks": {
+                        "type": "string",
+                        "description": "Natural-language summary of active tasks (required for run)",
+                    },
                 },
-                "tasks": {
-                    "type": "string",
-                    "description": "Natural-language summary of active tasks (required for run)",
-                },
+                "required": ["action"],
             },
-            "required": ["action"],
         },
-    },
-}]
+    }
+]
 ```
 
 - `bind_tools` path first; an empty `tool_calls` list is treated as `skip`.
@@ -172,7 +174,7 @@ All of these are exported from `skills.builtin.core.heartbeat.scripts`; the pack
 The service is wired and started by the channel layer in `server/trigger/channels/core.py`:
 
 ```python
-heartbeat_service.on_execute = _process_heartbeat_task   # → server.service.process_heartbeat_task
+heartbeat_service.on_execute = _process_heartbeat_task  # → server.service.process_heartbeat_task
 heartbeat_service.on_notify = _process_heartbeat_notify  # → server.service.process_heartbeat_notify
 asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)  # channel manager loop
 ```
@@ -200,7 +202,7 @@ Note the layering: the WebSocket events above are pushed by `process_heartbeat_t
 from skills.builtin.core.heartbeat import heartbeat_service
 
 heartbeat_service.on_execute = my_task_executor  # async (tasks: str) -> str
-heartbeat_service.on_notify = my_notifier        # async (response: str) -> None
+heartbeat_service.on_notify = my_notifier  # async (response: str) -> None
 
 await heartbeat_service.start()  # default interval: 1800 s (30 min)
 ```

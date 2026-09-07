@@ -5,7 +5,6 @@ Contains configuration dataclasses with environment variable support
 """
 
 from dataclasses import dataclass, field
-from typing import List
 from lightrag.utils import get_env_value
 
 
@@ -54,7 +53,7 @@ class RAGAnythingConfig:
     max_concurrent_files: int = field(default=get_env_value("MAX_CONCURRENT_FILES", 1, int))
     """Maximum number of files to process concurrently."""
 
-    supported_file_extensions: List[str] = field(
+    supported_file_extensions: list[str] = field(
         default_factory=lambda: [
             x.strip()
             for x in get_env_value(
@@ -88,7 +87,7 @@ class RAGAnythingConfig:
     include_captions: bool = field(default=get_env_value("INCLUDE_CAPTIONS", True, bool))
     """Whether to include image/table captions in context."""
 
-    context_filter_content_types: List[str] = field(
+    context_filter_content_types: list[str] = field(
         default_factory=lambda: [
             x.strip() for x in get_env_value("CONTEXT_FILTER_CONTENT_TYPES", "text", str).split(",")
         ]

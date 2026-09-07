@@ -22,7 +22,9 @@ def _compute_diff(
     sorted — previously computed independently by :func:`_build_rename_summary`
     and :func:`_write_run_report`.
     """
-    after_names = {r.get("name") for r in after_report if isinstance(r, dict)}
+    after_names = {
+        r["name"] for r in after_report if isinstance(r, dict) and isinstance(r.get("name"), str)
+    }
     removed = sorted(before_names - after_names)
     added = sorted(after_names - before_names)
     return after_names, removed, added
@@ -94,7 +96,13 @@ def _build_rename_summary(
         lines.append(f"  ... and {total - SHOW} more")
     lines.append("full report: check curator status")
     if consolidated:
-        umbrellas = sorted({e.get("into") for e in consolidated if e.get("into")})
+        umbrellas = sorted(
+            {
+                e["into"]
+                for e in consolidated
+                if isinstance(e, dict) and isinstance(e.get("into"), str)
+            }
+        )
         if umbrellas:
             lines.append(f"keep an umbrella stable: curator pin {umbrellas[0]}")
     return "\n".join(lines)

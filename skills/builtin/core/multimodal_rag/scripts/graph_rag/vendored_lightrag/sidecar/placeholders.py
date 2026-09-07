@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable
+from collections.abc import Callable
 
 _TOKEN_RE = re.compile(r"\{\{(TBL|IMG|EQ|EQI):([A-Za-z0-9_\-]+)\}\}")
 
@@ -96,7 +96,7 @@ def render_template(
     the rendered XML-style tag.
     """
 
-    def _replace(match: "re.Match[str]") -> str:
+    def _replace(match: re.Match[str]) -> str:
         kind, key = match.group(1), match.group(2)
         if kind == "TBL":
             return table_renderer(key)

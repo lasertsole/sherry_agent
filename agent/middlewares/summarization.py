@@ -13,7 +13,8 @@ from langchain.agents.middleware import (
 )
 from workspace.prompt_builder import build_system_prompt
 from runtime import state_register_db, state_register_mem
-from typing import Any, Callable, Awaitable, Sequence, cast
+from typing import Any, cast
+from collections.abc import Callable, Awaitable, Sequence
 from langchain_core.messages import (
     AnyMessage,
     BaseMessage,

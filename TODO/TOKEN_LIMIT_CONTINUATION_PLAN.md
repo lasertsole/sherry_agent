@@ -109,14 +109,16 @@ if len(tool_calls) > 0:
 **`_GenerateTurn._final_frames()`** — meta chunk 增加 `finish_reason` 字段：
 
 ```python
-return [{
-    "type": "meta",
-    "content": "",
-    "model_name": self.meta_model_name or "",
-    "input_tokens": self.meta_input_tokens or 0,
-    "output_tokens": self.meta_output_tokens or 0,
-    "finish_reason": self.meta_finish_reason or "",
-}]
+return [
+    {
+        "type": "meta",
+        "content": "",
+        "model_name": self.meta_model_name or "",
+        "input_tokens": self.meta_input_tokens or 0,
+        "output_tokens": self.meta_output_tokens or 0,
+        "finish_reason": self.meta_finish_reason or "",
+    }
+]
 ```
 
 #### `context_engine/store/core.py`
@@ -177,6 +179,7 @@ done frame 增加 `finish_reason` 字段。
 def _should_text_continue(self) -> bool:
     """Whether to inject a continuation prompt and re-stream after truncation."""
     return False
+
 
 def _prepare_continuation(self) -> None:
     """Prepare state for a continuation re-restream (e.g., set a flag)."""
@@ -352,19 +355,21 @@ _STREAM_FLAG = "is_stream_turn"
 middleware 列表添加 `MaxTokensBoostMiddleware()`，位置在 `OutputRepetitionGuard()` 之后、`HeartbeatStaleness()` 之前：
 
 ```python
-middleware=[
-    ContextEngineHook(),
-    MultimodalProcessor(),
-    IterationBudget(90),
-    ToolGuardrails(),
-    ToolCallNormalize(),
-    SubagentCompletionDrainMiddleware(),
-    OutputRepetitionGuard(),
-    MaxTokensBoostMiddleware(),  # 新增
-    HeartbeatStaleness(),
-    HumanInTheLoop(HITLConfig()),
-    Summarization(...),
-],
+middleware = (
+    [
+        ContextEngineHook(),
+        MultimodalProcessor(),
+        IterationBudget(90),
+        ToolGuardrails(),
+        ToolCallNormalize(),
+        SubagentCompletionDrainMiddleware(),
+        OutputRepetitionGuard(),
+        MaxTokensBoostMiddleware(),  # 新增
+        HeartbeatStaleness(),
+        HumanInTheLoop(HITLConfig()),
+        Summarization(...),
+    ],
+)
 ```
 
 #### `server/service/stream_dispatch.py`

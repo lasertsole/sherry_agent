@@ -156,7 +156,7 @@ def _read_skills_state() -> dict[str, dict[str, bool]]:
     try:
         if not SKILLS_STATE_FILE.exists():
             return {}
-        with open(SKILLS_STATE_FILE, "r", encoding="utf-8") as f:
+        with open(SKILLS_STATE_FILE, encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return {}
@@ -176,9 +176,7 @@ def _write_skills_state(state: dict[str, dict[str, bool]]) -> None:
     :func:`server.utils.atomic_io.atomic_write_text` (temp cleanup on failure
     is handled inside the helper; the exception still propagates).
     """
-    atomic_write_text(
-        SKILLS_STATE_FILE, json.dumps(state, ensure_ascii=False, indent=4)
-    )
+    atomic_write_text(SKILLS_STATE_FILE, json.dumps(state, ensure_ascii=False, indent=4))
 
 
 def _rebuild_snapshot() -> None:

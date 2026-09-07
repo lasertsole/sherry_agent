@@ -14,6 +14,6 @@ export default defineConfig({
     ...devices['Desktop Edge'],
     channel: 'msedge', // use installed Edge, not a Playwright-bundled browser
     baseURL: 'http://localhost:3000',
-    trace: 'retain-on-failure',
-  },
+    trace: 'retain-on-failure'
+  }
 });

@@ -2,7 +2,7 @@ import json
 import shutil
 from typing import Any
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from loguru import logger
 
 from context_engine.curator.constants import (
@@ -26,7 +26,7 @@ def _default_record(name: str) -> dict[str, Any]:
         "view_count": 0,
         "patch_count": 0,
         "activity_count": 0,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "last_activity_at": None,
     }
 

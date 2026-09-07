@@ -8,21 +8,21 @@
 
 ```typescript
 await invoke('session_clear', {
-  request: ClearSessionRequest,
+  request: ClearSessionRequest
 });
 ```
 
 ### 参数
 
-| 参数 | 类型 | 必填 | 说明 |
-|-----------|------|----------|-------------|
-| `request` | [`ClearSessionRequest`](/zh/types/reference#clearsessionrequest) | 是 | 要清除的会话 |
+| 参数      | 类型                                                             | 必填 | 说明         |
+| --------- | ---------------------------------------------------------------- | ---- | ------------ |
+| `request` | [`ClearSessionRequest`](/zh/types/reference#clearsessionrequest) | 是   | 要清除的会话 |
 
 #### ClearSessionRequest
 
-| 字段 | 类型 | 必填 | 说明 |
-|-------|------|----------|-------------|
-| `session_id` | `string` | 是 | 要清除的会话 ID |
+| 字段         | 类型     | 必填 | 说明            |
+| ------------ | -------- | ---- | --------------- |
+| `session_id` | `string` | 是   | 要清除的会话 ID |
 
 ### 返回值
 
@@ -30,10 +30,10 @@ await invoke('session_clear', {
 
 ### 可能的错误
 
-| 错误码 | 说明 | 可重试 |
-|------|-------------|-----------|
-| `SESSION_ERROR` | 会话不存在或已被清除 | 否 |
-| `DATABASE_ERROR` | 删除会话数据失败 | 是 |
+| 错误码           | 说明                 | 可重试 |
+| ---------------- | -------------------- | ------ |
+| `SESSION_ERROR`  | 会话不存在或已被清除 | 否     |
+| `DATABASE_ERROR` | 删除会话数据失败     | 是     |
 
 ### 示例
 
@@ -41,7 +41,7 @@ await invoke('session_clear', {
 import { invoke } from '@tauri-apps/api/core';
 
 await invoke('session_clear', {
-  request: { session_id: 'default' },
+  request: { session_id: 'default' }
 });
 console.log('会话已清除');
 ```
@@ -56,39 +56,39 @@ console.log('会话已清除');
 
 ```typescript
 const messages = await invoke<HistoryMessage[]>('session_history', {
-  request: HistoryRequest,
+  request: HistoryRequest
 });
 ```
 
 ### 参数
 
-| 参数 | 类型 | 必填 | 说明 |
-|-----------|------|----------|-------------|
-| `request` | [`HistoryRequest`](/zh/types/reference#historyrequest) | 是 | 查询参数 |
+| 参数      | 类型                                                   | 必填 | 说明     |
+| --------- | ------------------------------------------------------ | ---- | -------- |
+| `request` | [`HistoryRequest`](/zh/types/reference#historyrequest) | 是   | 查询参数 |
 
 #### HistoryRequest
 
-| 字段 | 类型 | 必填 | 说明 |
-|-------|------|----------|-------------|
-| `session_id` | `string` | 是 | 要查询的会话 ID |
-| `last_turn_count` | `number \| null` | 否 | 最近轮次数（`null` = 全部） |
+| 字段              | 类型             | 必填 | 说明                        |
+| ----------------- | ---------------- | ---- | --------------------------- |
+| `session_id`      | `string`         | 是   | 要查询的会话 ID             |
+| `last_turn_count` | `number \| null` | 否   | 最近轮次数（`null` = 全部） |
 
 ### 返回值
 
 `HistoryMessage[]` — 有序消息列表。
 
-| 字段 | 类型 | 说明 |
-|-------|------|-------------|
-| `role` | `string` | `"user"` 或 `"assistant"` |
-| `content` | `string` | 消息文本 |
+| 字段        | 类型                  | 说明                          |
+| ----------- | --------------------- | ----------------------------- |
+| `role`      | `string`              | `"user"` 或 `"assistant"`     |
+| `content`   | `string`              | 消息文本                      |
 | `timestamp` | `string \| undefined` | ISO 8601 时间戳（可能不存在） |
 
 ### 可能的错误
 
-| 错误码 | 说明 | 可重试 |
-|------|-------------|-----------|
-| `SESSION_ERROR` | 会话不存在 | 否 |
-| `DATABASE_ERROR` | 查询历史失败 | 是 |
+| 错误码           | 说明         | 可重试 |
+| ---------------- | ------------ | ------ |
+| `SESSION_ERROR`  | 会话不存在   | 否     |
+| `DATABASE_ERROR` | 查询历史失败 | 是     |
 
 ### 示例
 
@@ -98,7 +98,7 @@ import type { HistoryMessage } from '@/types/backend/HistoryMessage';
 
 // 获取最近 10 轮对话
 const messages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'default', last_turn_count: 10 },
+  request: { session_id: 'default', last_turn_count: 10 }
 });
 
 // 渲染聊天 UI
@@ -108,6 +108,6 @@ messages.forEach(msg => {
 
 // 获取全部历史
 const allMessages = await invoke<HistoryMessage[]>('session_history', {
-  request: { session_id: 'default', last_turn_count: null },
+  request: { session_id: 'default', last_turn_count: null }
 });
 ```

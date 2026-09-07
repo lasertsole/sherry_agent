@@ -1,4 +1,5 @@
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 from loguru import logger
 from dotenv import load_dotenv
 
@@ -31,7 +32,7 @@ def _load_config() -> dict[str, Any]:
 
         cfg_path = ROOT_DIR / "curator.yaml"
         if cfg_path.exists():
-            with open(cfg_path, "r", encoding="utf-8") as f:
+            with open(cfg_path, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             if isinstance(cfg, dict):
                 return cfg

@@ -104,6 +104,7 @@
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { readMemory, writeMemory } from '@/composables/bridge';
+import { logUtil } from '~/utils/log';
 
 /**
  * Memory files are stored on disk as a header line + a list of entries
@@ -233,7 +234,7 @@ const loadContent = async () => {
       ...Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, [...v]]))
     };
   } catch (e) {
-    console.error('[MemoryDialog] Failed to load content:', e);
+    logUtil.e('[MemoryDialog] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -274,7 +275,7 @@ const handleSave = async () => {
     emits('saved');
     visible.value = false;
   } catch (e) {
-    console.error('[MemoryDialog] Failed to save:', e);
+    logUtil.e('[MemoryDialog] Failed to save:', e);
   } finally {
     saving.value = false;
   }

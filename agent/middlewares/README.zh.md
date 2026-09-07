@@ -307,7 +307,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 最内层的中间件——最贴近 LLM。从零实现的 `AgentMiddleware`（**并非** LangChain 的 `SummarizationMiddleware`）：触发条件命中后，按预算制截断点压缩历史——优先非 LLM 策略，仅在文本降级安全时才使用辅助 LLM 摘要。`keep` 参数被接受但未使用；尾部保留纯预算制：`clamp(context_window × 0.25, 2 000, 15 000)` 个 token（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
-- **生命周期与路由**：中间件现覆盖五个触发点（T1–T5）——T1 预检（`before_agent` / `abefore_agent`）、T2 调用前派发（`wrap_model_call` / `awrap_model_call`）、T3 响应后复检（真实上报 token）、T4（413 Payload Too Large）/ T5（上下文溢出）错误恢复环——每次触发都运行四路溢出路由决策（truncate / compact / both / pass），并委托给 `pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/llm_error_classifier.py`。状态存于会话级 `summarization_*` 键（共 14 个，每回合重置 10 个）。完整文档见下方链接。
+- **生命周期与路由**：中间件现覆盖五个触发点（T1–T5）——T1 预检（`before_agent` / `abefore_agent`）、T2 调用前派发（`wrap_model_call` / `awrap_model_call`）、T3 响应后复检（真实上报 token）、T4（413 Payload Too Large）/ T5（上下文溢出）错误恢复环——每次触发都运行四路溢出路由决策（truncate / compact / both / pass），并委托给 `pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/tool_args_truncate.py`（工具调用参数截断）、`pub_func/message/llm_error_classifier.py`。状态存于会话级 `summarization_*` 键（共 14 个，每回合重置 10 个）。完整文档见下方链接。
 - **触发语义**：单个子句是 `("messages", N)` 或 `("tokens", N)`；子句列表之间是 **OR**——任一子句命中即开始压缩。主 Agent：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`；worker：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
 - **截断点安全：** `_determine_cutoff` 选定截断点，随后 `_adjust_for_orphan_pairs` 向前回退，直到没有任何 `ToolMessage` 与其 `AIMessage` 工具调用被拆开；当最后一个用户回合占估算 token 的 ≥ 50 % 时（`LAST_TURN_RATIO_THRESHOLD = 0.5`），会改为对最后一个回合本身做压缩（`self._compress_last_turn` 标志），而不是把它摘要掉。
 - **防抖动：** 每个**会话**至多 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 次压缩（而非每回合）；连续 `INEFFECTIVE_THRESHOLD = 2` 次无效压缩后（有效 = 消息数减少，或 token 缩减 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`），LLM 步骤被禁用（`summarization_skip_llm`），仅运行非 LLM 策略。计数器以会话级 `summarization_*` 键存于 `state_register_mem`（压缩次数、无效连击、上次 token、上次策略、跳过标志、恢复状态等）。
@@ -389,22 +389,29 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    ContextEngineHook, MultimodalProcessor, IterationBudget, ToolGuardrails,
-    ToolCallNormalize, HeartbeatStaleness, HumanInTheLoop, HITLConfig, Summarization,
+    ContextEngineHook,
+    MultimodalProcessor,
+    IterationBudget,
+    ToolGuardrails,
+    ToolCallNormalize,
+    HeartbeatStaleness,
+    HumanInTheLoop,
+    HITLConfig,
+    Summarization,
 )
 
 agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),          # 系统提示词 + nudge + 持久化
-        MultimodalProcessor(),        # 多模态输入规范化
-        IterationBudget(90),          # 回合级调用预算
-        ToolGuardrails(),             # 失败病理检测
-        ToolCallNormalize(),          # tool_use/tool_result 修复
-        HeartbeatStaleness(),         # 卡死回合看门狗
-        HumanInTheLoop(HITLConfig()), # 审批门控
-        Summarization(                # 上下文压缩（最内层）
+        ContextEngineHook(),  # 系统提示词 + nudge + 持久化
+        MultimodalProcessor(),  # 多模态输入规范化
+        IterationBudget(90),  # 回合级调用预算
+        ToolGuardrails(),  # 失败病理检测
+        ToolCallNormalize(),  # tool_use/tool_result 修复
+        HeartbeatStaleness(),  # 卡死回合看门狗
+        HumanInTheLoop(HITLConfig()),  # 审批门控
+        Summarization(  # 上下文压缩（最内层）
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

@@ -51,7 +51,7 @@ def render_template_file(file_path: str, variables: dict[str, Any]) -> str:
     Returns:
         Rendered string.
     """
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         template_content = f.read()
 
     return template_render(template_content, variables)

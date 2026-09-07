@@ -41,8 +41,10 @@ def _make_message(
     content: str = "subagent finished the task",
 ) -> HumanMessage:
     """Build a Task-4-shaped completion message (frozen metadata contract)."""
-    text = f"[subagent:{child_name} {status}]\n{content}" if content else (
-        f"[subagent:{child_name} {status}]"
+    text = (
+        f"[subagent:{child_name} {status}]\n{content}"
+        if content
+        else (f"[subagent:{child_name} {status}]")
     )
     return HumanMessage(
         content=text,
@@ -235,7 +237,9 @@ async def test_child_keys_pass_through_unchanged(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_drain_reports_failed_consumption_per_item(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_drain_reports_failed_consumption_per_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """If mark_consumed fails for one run_id, that item is still returned with consumed=False."""
     queue = _make_queue(tmp_path)
     _ = await queue.enqueue_steering("sess-4", _make_message(run_id="run-ok"))

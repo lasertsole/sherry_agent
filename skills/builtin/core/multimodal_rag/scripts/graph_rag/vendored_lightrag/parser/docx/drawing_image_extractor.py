@@ -13,7 +13,6 @@ import zipfile
 from dataclasses import dataclass, field
 from html import escape, unescape
 from pathlib import Path, PurePosixPath
-from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 try:
@@ -49,9 +48,9 @@ class DrawingRelationship:
     target: str
     target_mode: str
     rel_type: str
-    part_name: Optional[str] = None
-    content_type: Optional[str] = None
-    image_format: Optional[str] = None
+    part_name: str | None = None
+    content_type: str | None = None
+    image_format: str | None = None
 
 
 @dataclass
@@ -59,17 +58,17 @@ class DrawingExtractionContext:
     """Context used to resolve and export drawing images for one DOCX file."""
 
     docx_path: Path
-    blocks_output_path: Optional[Path] = None
-    export_dir_name: Optional[str] = None
-    export_dir_path: Optional[Path] = None
-    relationships: Dict[str, DrawingRelationship] = field(default_factory=dict)
-    _exported_part_to_relpath: Dict[str, str] = field(default_factory=dict)
-    _used_filenames: Dict[str, str] = field(default_factory=dict)
+    blocks_output_path: Path | None = None
+    export_dir_name: str | None = None
+    export_dir_path: Path | None = None
+    relationships: dict[str, DrawingRelationship] = field(default_factory=dict)
+    _exported_part_to_relpath: dict[str, str] = field(default_factory=dict)
+    _used_filenames: dict[str, str] = field(default_factory=dict)
 
-    def resolve_relationship(self, rel_id: str) -> Optional[DrawingRelationship]:
+    def resolve_relationship(self, rel_id: str) -> DrawingRelationship | None:
         return self.relationships.get(rel_id)
 
-    def export_embedded_image(self, rel: DrawingRelationship) -> Optional[str]:
+    def export_embedded_image(self, rel: DrawingRelationship) -> str | None:
         """
         Export an embedded image relationship target to export_dir.
 
@@ -117,7 +116,7 @@ class DrawingExtractionContext:
             index += 1
 
 
-def _normalize_image_format(ext_or_type: str) -> Optional[str]:
+def _normalize_image_format(ext_or_type: str) -> str | None:
     if not ext_or_type:
         return None
     value = ext_or_type.strip().lower()
@@ -139,7 +138,7 @@ def _normalize_image_format(ext_or_type: str) -> Optional[str]:
     return value or None
 
 
-def _infer_format_from_target(target: str) -> Optional[str]:
+def _infer_format_from_target(target: str) -> str | None:
     if not target:
         return None
     parsed = urlparse(target)
@@ -161,7 +160,7 @@ def _resolve_part_name(source_part_name: str, target: str) -> str:
 
 def create_drawing_context(
     docx_path: str,
-    blocks_output_path: Optional[str] = None,
+    blocks_output_path: str | None = None,
 ) -> DrawingExtractionContext:
     """
     Create extraction context for a DOCX file.
@@ -191,8 +190,8 @@ def load_relationships(ctx: DrawingExtractionContext) -> None:
     rels_xml = "word/_rels/document.xml.rels"
     content_types_xml = "[Content_Types].xml"
 
-    overrides: Dict[str, str] = {}
-    defaults: Dict[str, str] = {}
+    overrides: dict[str, str] = {}
+    defaults: dict[str, str] = {}
 
     try:
         with zipfile.ZipFile(ctx.docx_path, "r") as zf:
@@ -251,7 +250,7 @@ def load_relationships(ctx: DrawingExtractionContext) -> None:
         )
 
 
-def _extract_blip_relationship(drawing_elem) -> Optional[Tuple[str, str]]:
+def _extract_blip_relationship(drawing_elem) -> tuple[str, str] | None:
     for blip in drawing_elem.findall(".//a:blip", NS):
         # Prefer explicit external links when both link/embed are present on one blip.
         # Word may keep an embedded cache for linked pictures.
@@ -264,7 +263,7 @@ def _extract_blip_relationship(drawing_elem) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _extract_imagedata_relationship(container_elem) -> Optional[str]:
+def _extract_imagedata_relationship(container_elem) -> str | None:
     """Find an image relationship id from a w:pict / w:object via v:imagedata.
 
     These legacy VML containers are how Word references EMF/WMF metafiles
@@ -281,7 +280,7 @@ def _extract_imagedata_relationship(container_elem) -> Optional[str]:
     return None
 
 
-def _build_placeholder(attrs: Dict[str, str]) -> str:
+def _build_placeholder(attrs: dict[str, str]) -> str:
     ordered_keys = ["id", "name", "path", "format"]
     pieces = []
     for key in ordered_keys:
@@ -299,7 +298,7 @@ def _build_placeholder(attrs: Dict[str, str]) -> str:
 
 def extract_drawing_placeholder_from_element(
     drawing_elem,
-    context: Optional[DrawingExtractionContext] = None,
+    context: DrawingExtractionContext | None = None,
     include_extended_attrs: bool = True,
 ) -> str:
     """
@@ -340,7 +339,7 @@ def extract_drawing_placeholder_from_element(
 
 def extract_vml_image_placeholder_from_element(
     container_elem,
-    context: Optional[DrawingExtractionContext] = None,
+    context: DrawingExtractionContext | None = None,
     include_extended_attrs: bool = True,
 ) -> str:
     """
@@ -389,7 +388,7 @@ def extract_vml_image_placeholder_from_element(
     return _build_placeholder(attrs)
 
 
-def parse_drawing_attributes(placeholder: str) -> Dict[str, str]:
+def parse_drawing_attributes(placeholder: str) -> dict[str, str]:
     """Parse attributes from a <drawing ... /> placeholder."""
     return {name: unescape(value) for name, value in DRAWING_ATTR_PATTERN.findall(placeholder)}
 

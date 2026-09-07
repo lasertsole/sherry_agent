@@ -6,6 +6,7 @@ import {
   updatePersonaPreset,
   type PersonaPreset
 } from '@/composables/db';
+import { logUtil } from '~/utils/log';
 
 /**
  * Result of creating a persona preset through {@link usePersonaPresets}.
@@ -59,7 +60,7 @@ const refresh = async (): Promise<void> => {
   try {
     presets.value = await listPersonaPresets();
   } catch (e) {
-    console.error('[usePersonaPresets] Failed to load persona presets:', e);
+    logUtil.e('[usePersonaPresets] Failed to load persona presets:', e);
   } finally {
     loading.value = false;
   }
@@ -81,7 +82,7 @@ const create = async (name: string, content: Record<string, string>): Promise<Pe
     if (e instanceof Error && e.message.includes('duplicate')) {
       return { ok: false, reason: 'duplicate' };
     }
-    console.error('[usePersonaPresets] Failed to create persona preset:', e);
+    logUtil.e('[usePersonaPresets] Failed to create persona preset:', e);
     return { ok: false, reason: 'error' };
   }
 };
@@ -96,7 +97,7 @@ const update = async (id: number, content: Record<string, string>): Promise<bool
     await refresh();
     return true;
   } catch (e) {
-    console.error('[usePersonaPresets] Failed to update persona preset:', e);
+    logUtil.e('[usePersonaPresets] Failed to update persona preset:', e);
     return false;
   }
 };
@@ -111,7 +112,7 @@ const remove = async (id: number): Promise<boolean> => {
     await refresh();
     return true;
   } catch (e) {
-    console.error('[usePersonaPresets] Failed to delete persona preset:', e);
+    logUtil.e('[usePersonaPresets] Failed to delete persona preset:', e);
     return false;
   }
 };

@@ -8,7 +8,7 @@ import os
 import time
 import hashlib
 import json
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Any
 from pathlib import Path
 
 from raganything.base import DocStatus
@@ -105,14 +105,14 @@ class ProcessorMixin:
         *,
         scheme_name: str | None = None,
         status: DocStatus = DocStatus.READY,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a minimal doc_status entry when LightRAG has not created one yet."""
         current_doc_status = await self.lightrag.doc_status.get_by_id(doc_id)
         if current_doc_status:
             return current_doc_status
 
         timestamp = self._current_doc_status_timestamp()
-        doc_status_payload: Dict[str, Any] = {
+        doc_status_payload: dict[str, Any] = {
             "status": status,
             "content": "",
             "content_summary": "",
@@ -138,7 +138,7 @@ class ProcessorMixin:
         *,
         scheme_name: str | None = None,
         **updates,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Merge doc_status updates while preserving any existing LightRAG fields."""
         current_doc_status = await self._ensure_doc_status_record(
             doc_id,
@@ -154,7 +154,7 @@ class ProcessorMixin:
         await self.lightrag.doc_status.index_done_callback()
         return updated_doc_status
 
-    async def _get_multimodal_status_record(self, doc_id: str) -> Dict[str, Any] | None:
+    async def _get_multimodal_status_record(self, doc_id: str) -> dict[str, Any] | None:
         """Get compatibility multimodal completion state when doc_status cannot store it."""
         if not hasattr(self, "multimodal_status_cache") or self.multimodal_status_cache is None:
             return None
@@ -177,7 +177,7 @@ class ProcessorMixin:
         await self.multimodal_status_cache.index_done_callback()
 
     async def _get_multimodal_processed_flag(
-        self, doc_id: str, doc_status: Dict[str, Any] | None = None
+        self, doc_id: str, doc_status: dict[str, Any] | None = None
     ) -> bool:
         """Read multimodal completion state from doc_status or compatibility cache."""
         if doc_status is not None and "multimodal_processed" in doc_status:
@@ -189,7 +189,7 @@ class ProcessorMixin:
 
         return False
 
-    def _generate_content_based_doc_id(self, content_list: List[Dict[str, Any]]) -> str:
+    def _generate_content_based_doc_id(self, content_list: list[dict[str, Any]]) -> str:
         """
         Generate doc_id based on document content
 
@@ -230,7 +230,7 @@ class ProcessorMixin:
 
     async def _get_cached_result(
         self, cache_key: str, file_path: Path, parse_method: str = None, **kwargs
-    ) -> tuple[List[Dict[str, Any]], str] | None:
+    ) -> tuple[list[dict[str, Any]], str] | None:
         """
         Get cached parsing result if available and valid
 
@@ -306,7 +306,7 @@ class ProcessorMixin:
     async def _store_cached_result(
         self,
         cache_key: str,
-        content_list: List[Dict[str, Any]],
+        content_list: list[dict[str, Any]],
         doc_id: str,
         file_path: Path,
         parse_method: str = None,
@@ -378,7 +378,7 @@ class ProcessorMixin:
         parse_method: str = None,
         display_stats: bool = None,
         **kwargs,
-    ) -> tuple[List[Dict[str, Any]], str]:
+    ) -> tuple[list[dict[str, Any]], str]:
         """
         Parse document with caching support
 
@@ -559,7 +559,7 @@ class ProcessorMixin:
             self.logger.info(f"* Total blocks in content_list: {len(content_list)}")
 
             # Count elements by type
-            block_types: Dict[str, int] = {}
+            block_types: dict[str, int] = {}
             for block in content_list:
                 if isinstance(block, dict):
                     block_type = block.get("type", "unknown")
@@ -584,11 +584,11 @@ class ProcessorMixin:
 
     async def _process_multimodal_content(
         self,
-        multimodal_items: List[Dict[str, Any]],
+        multimodal_items: list[dict[str, Any]],
         file_path: str,
         doc_id: str,
-        pipeline_status: Optional[Any] = None,
-        pipeline_status_lock: Optional[Any] = None,
+        pipeline_status: Any | None = None,
+        pipeline_status_lock: Any | None = None,
     ):
         """
         Process multimodal content (using specialized processors)
@@ -693,7 +693,7 @@ class ProcessorMixin:
             await self._mark_multimodal_processing_complete(doc_id)
 
     async def _process_multimodal_content_individual(
-        self, multimodal_items: List[Dict[str, Any]], file_path: str, doc_id: str
+        self, multimodal_items: list[dict[str, Any]], file_path: str, doc_id: str
     ):
         """
         Process multimodal content individually (fallback method)
@@ -845,7 +845,7 @@ class ProcessorMixin:
         await self._mark_multimodal_processing_complete(doc_id)
 
     async def _process_multimodal_content_batch_type_aware(
-        self, multimodal_items: List[Dict[str, Any]], file_path: str, doc_id: str
+        self, multimodal_items: list[dict[str, Any]], file_path: str, doc_id: str
     ):
         """
         Type-aware batch processing that selects correct processors based on content type.
@@ -882,7 +882,7 @@ class ProcessorMixin:
 
         # Stage 1: Concurrent generation of descriptions using correct processors for each type
         async def process_single_item_with_correct_processor(
-            item: Dict[str, Any], index: int, file_path: str
+            item: dict[str, Any], index: int, file_path: str
         ):
             """Process single item using the correct processor for its type"""
             nonlocal completed_count
@@ -1014,8 +1014,8 @@ class ProcessorMixin:
         await self._update_doc_status_with_chunks_type_aware(doc_id, chunk_ids)
 
     def _convert_to_lightrag_chunks_type_aware(
-        self, multimodal_data_list: List[Dict[str, Any]], file_path: str, doc_id: str
-    ) -> Dict[str, Any]:
+        self, multimodal_data_list: list[dict[str, Any]], file_path: str, doc_id: str
+    ) -> dict[str, Any]:
         """Convert multimodal data to LightRAG standard chunks format"""
 
         chunks = {}
@@ -1060,7 +1060,7 @@ class ProcessorMixin:
         return chunks
 
     def _apply_chunk_template(
-        self, content_type: str, original_item: Dict[str, Any], description: str
+        self, content_type: str, original_item: dict[str, Any], description: str
     ) -> str:
         """
         Apply the appropriate chunk template based on content type
@@ -1129,7 +1129,7 @@ class ProcessorMixin:
             # Fallback to just the description if template fails
             return description
 
-    async def _store_chunks_to_lightrag_storage_type_aware(self, chunks: Dict[str, Any]):
+    async def _store_chunks_to_lightrag_storage_type_aware(self, chunks: dict[str, Any]):
         """Store chunks to storage"""
         try:
             # Store in text_chunks storage (required for extract_entities)
@@ -1146,8 +1146,8 @@ class ProcessorMixin:
 
     async def _store_multimodal_main_entities(
         self,
-        multimodal_data_list: List[Dict[str, Any]],
-        lightrag_chunks: Dict[str, Any],
+        multimodal_data_list: list[dict[str, Any]],
+        lightrag_chunks: dict[str, Any],
         file_path: str,
         doc_id: str = None,
     ):
@@ -1239,7 +1239,7 @@ class ProcessorMixin:
                 raise
 
     async def _store_multimodal_entities_to_full_entities(
-        self, entities_to_store: Dict[str, Any], doc_id: str
+        self, entities_to_store: dict[str, Any], doc_id: str
     ):
         """
         Store multimodal main entities to full_entities storage.
@@ -1294,8 +1294,8 @@ class ProcessorMixin:
             raise
 
     async def _batch_extract_entities_lightrag_style_type_aware(
-        self, lightrag_chunks: Dict[str, Any]
-    ) -> List[Tuple]:
+        self, lightrag_chunks: dict[str, Any]
+    ) -> list[tuple]:
         """Use LightRAG's extract_entities for batch entity relation extraction"""
         from lightrag.kg.shared_storage import (
             get_namespace_data,
@@ -1321,8 +1321,8 @@ class ProcessorMixin:
         return chunk_results
 
     async def _batch_add_belongs_to_relations_type_aware(
-        self, chunk_results: List[Tuple], multimodal_data_list: List[Dict[str, Any]]
-    ) -> List[Tuple]:
+        self, chunk_results: list[tuple], multimodal_data_list: list[dict[str, Any]]
+    ) -> list[tuple]:
         """Add belongs_to relations for multimodal entities"""
         # Create mapping from chunk_id to modal_entity_name
         chunk_to_modal_entity = {}
@@ -1383,7 +1383,7 @@ class ProcessorMixin:
         return enhanced_chunk_results
 
     async def _batch_merge_lightrag_style_type_aware(
-        self, enhanced_chunk_results: List[Tuple], file_path: str, doc_id: str = None
+        self, enhanced_chunk_results: list[tuple], file_path: str, doc_id: str = None
     ):
         """Use LightRAG's merge_nodes_and_edges for batch merge"""
         from lightrag.kg.shared_storage import (
@@ -1419,7 +1419,7 @@ class ProcessorMixin:
 
         await self.lightrag._insert_done()
 
-    async def _update_doc_status_with_chunks_type_aware(self, doc_id: str, chunk_ids: List[str]):
+    async def _update_doc_status_with_chunks_type_aware(self, doc_id: str, chunk_ids: list[str]):
         """Update document status with multimodal chunks"""
         try:
             # Get current document status
@@ -1521,7 +1521,7 @@ class ProcessorMixin:
             self.logger.error(f"Error checking document processing status for {doc_id}: {e}")
             return False
 
-    async def get_document_processing_status(self, doc_id: str) -> Dict[str, Any]:
+    async def get_document_processing_status(self, doc_id: str) -> dict[str, Any]:
         """
         Get detailed processing status for a document.
 
@@ -1997,7 +1997,7 @@ class ProcessorMixin:
 
     async def insert_content_list(
         self,
-        content_list: List[Dict[str, Any]],
+        content_list: list[dict[str, Any]],
         file_path: str = "unknown_document",
         split_by_character: str | None = None,
         split_by_character_only: bool = False,
@@ -2059,7 +2059,7 @@ class ProcessorMixin:
             self.logger.info(f"* Total blocks in content_list: {len(content_list)}")
 
             # Count elements by type
-            block_types: Dict[str, int] = {}
+            block_types: dict[str, int] = {}
             for block in content_list:
                 if isinstance(block, dict):
                     block_type = block.get("type", "unknown")

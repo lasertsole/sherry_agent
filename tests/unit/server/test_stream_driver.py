@@ -252,7 +252,9 @@ class TestSiteWiring:
 
         monkeypatch.setattr(wsm.turn_runner, "on_turn_finished", _fake_on_turn_finished)
 
-        driver = wsm._AgentWsStreamDriver("s1", websocket=None, claim_row_id="row-1", stream_kind="resume")
+        driver = wsm._AgentWsStreamDriver(
+            "s1", websocket=None, claim_row_id="row-1", stream_kind="resume"
+        )
 
         async def _scenario():
             current = asyncio.current_task()

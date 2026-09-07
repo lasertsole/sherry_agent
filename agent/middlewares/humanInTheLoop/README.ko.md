@@ -205,15 +205,17 @@ LLM 출력 → after_model
 ```python
 from agent.middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig, ApprovalMode
 
-middleware = HumanInTheLoop(HITLConfig(
-    mode=ApprovalMode.SMART,
-    interrupted_tools={
-        "terminal": {"allowed_decisions": ["approve", "reject"]},
-        "memory": True,
-    },
-    write_approval_memory=True,
-    kanban_recurrence_limit=3,
-))
+middleware = HumanInTheLoop(
+    HITLConfig(
+        mode=ApprovalMode.SMART,
+        interrupted_tools={
+            "terminal": {"allowed_decisions": ["approve", "reject"]},
+            "memory": True,
+        },
+        write_approval_memory=True,
+        kanban_recurrence_limit=3,
+    )
+)
 ```
 
 ---
@@ -225,6 +227,7 @@ middleware = HumanInTheLoop(HITLConfig(
 ```python
 def log_approval(session_id: str, result: ApprovalResult):
     print(f"[{session_id}] {result.decision}: {result.reason}")
+
 
 middleware.register_approval_hook(log_approval)
 ```

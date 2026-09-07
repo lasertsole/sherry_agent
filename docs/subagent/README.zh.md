@@ -625,19 +625,26 @@ Hook 机制允许外部代码监听子 Agent 生命周期事件：
 
 ```python
 from agent.tools.subagent.hooks.base import (
-    register_start_hook, register_stop_hook,
-    SubagentStartEvent, SubagentStopEvent,
+    register_start_hook,
+    register_stop_hook,
+    SubagentStartEvent,
+    SubagentStopEvent,
 )
 from agent.tools.subagent.hooks.progress import (
-    register_spawned_hook, register_progress_hook,
-    register_ended_hook, register_delivery_target_hook,
+    register_spawned_hook,
+    register_progress_hook,
+    register_ended_hook,
+    register_delivery_target_hook,
 )
+
 
 async def on_start(event: SubagentStartEvent):
     print(f"Subagent started: {event.child_session_key}")
 
+
 async def on_delivery_target(run, target_session_key):
     return None  # 返回 session_key 重定向，或返回 None
+
 
 register_start_hook(on_start)
 register_delivery_target_hook(on_delivery_target)

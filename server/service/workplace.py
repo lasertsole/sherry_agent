@@ -54,7 +54,7 @@ def read_system_prompt_template(lang: str | None = None) -> dict[str, str]:
     for file_name in ALL_SYSTEM_FILE_NAMES:
         file_path = template_dir / file_name
         if file_path.is_file():
-            with open(file_path, "r", encoding="utf-8") as file:
+            with open(file_path, encoding="utf-8") as file:
                 file_to_content[file_name] = file.read()
 
     return file_to_content

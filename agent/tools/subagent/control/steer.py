@@ -230,7 +230,7 @@ async def _execute_steered_subagent(
                     last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
                 )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         outcome = RunOutcome(
             status=RunOutcomeStatus.TIMEOUT,
             error=f"Steered subagent timed out after {timeout_seconds}s",

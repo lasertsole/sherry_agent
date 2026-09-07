@@ -11,7 +11,7 @@ actual indentation pattern.
 
 import json
 import difflib
-from typing import Type, override
+from typing import override
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
@@ -88,7 +88,7 @@ class PatchFileInput(BaseModel):
 
 class PatchFileTool(BaseTool):
     name: str = "patch_file"
-    args_schema: Type[BaseModel] = PatchFileInput
+    args_schema: type[BaseModel] = PatchFileInput
     description: str = (
         "Patch a file by replacing old_string with new_string. "
         "Uses fuzzy matching to handle minor whitespace/indentation differences. "

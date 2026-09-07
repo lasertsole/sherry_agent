@@ -18,7 +18,7 @@ from tenacity import (
 )
 
 from collections.abc import AsyncIterator
-from typing import Any, Union
+from typing import Any
 
 from graph_rag.vendored_lightrag.utils import wrap_embedding_func_with_attrs
 
@@ -178,7 +178,7 @@ async def bedrock_complete_if_cache(
     endpoint_url: str | None = None,
     image_inputs: list[Any] | None = None,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     """Call Amazon Bedrock Converse API with LightRAG-compatible shims.
 
     Structured output note:
@@ -431,7 +431,7 @@ async def bedrock_complete(
     keyword_extraction=False,
     entity_extraction=False,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     # Bedrock Converse API has no JSON mode; the shim booleans are absorbed
     # and forwarded so bedrock_complete_if_cache can emit DeprecationWarnings
     # with accurate stack frames.

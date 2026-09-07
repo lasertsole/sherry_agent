@@ -51,10 +51,7 @@ class TestReadEnvFileValue:
         assert read_env_file_value("EMPTY", "fallback", env_path=env_file) == "fallback"
 
     def test_missing_file_returns_default(self, tmp_path):
-        assert (
-            read_env_file_value("ANY", "fallback", env_path=tmp_path / "nope.env")
-            == "fallback"
-        )
+        assert read_env_file_value("ANY", "fallback", env_path=tmp_path / "nope.env") == "fallback"
 
     def test_first_match_wins(self, tmp_path):
         p = tmp_path / ".env"

@@ -99,28 +99,30 @@ content = Path(HEARTBEAT_PATH).read_text(encoding="utf-8")
 辅助 LLM（来自 `models` 的 `build_auxiliary_llm()`）收到当前时间（`current_time_str(self.timezone)`）和完整的 HEARTBEAT.md 内容，通过**虚拟 tool-call** 给出结论，避免了不可靠的自由文本解析：
 
 ```python
-_HEARTBEAT_TOOL = [{
-    "type": "function",
-    "function": {
-        "name": "heartbeat",
-        "description": "Report heartbeat decision after reviewing tasks.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["skip", "run"],
-                    "description": "skip = nothing to do, run = has active tasks",
+_HEARTBEAT_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "heartbeat",
+            "description": "Report heartbeat decision after reviewing tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["skip", "run"],
+                        "description": "skip = nothing to do, run = has active tasks",
+                    },
+                    "tasks": {
+                        "type": "string",
+                        "description": "Natural-language summary of active tasks (required for run)",
+                    },
                 },
-                "tasks": {
-                    "type": "string",
-                    "description": "Natural-language summary of active tasks (required for run)",
-                },
+                "required": ["action"],
             },
-            "required": ["action"],
         },
-    },
-}]
+    }
+]
 ```
 
 - 首选 `bind_tools` 路径；`tool_calls` 为空时按 `skip` 处理。
@@ -172,7 +174,7 @@ if self.on_execute:
 服务由渠道层 `server/trigger/channels/core.py` 负责绑定和启动：
 
 ```python
-heartbeat_service.on_execute = _process_heartbeat_task   # → server.service.process_heartbeat_task
+heartbeat_service.on_execute = _process_heartbeat_task  # → server.service.process_heartbeat_task
 heartbeat_service.on_notify = _process_heartbeat_notify  # → server.service.process_heartbeat_notify
 asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)  # channel manager loop
 ```
@@ -200,7 +202,7 @@ asyncio.run_coroutine_threadsafe(heartbeat_service.start(), event_loop)  # chann
 from skills.builtin.core.heartbeat import heartbeat_service
 
 heartbeat_service.on_execute = my_task_executor  # async (tasks: str) -> str
-heartbeat_service.on_notify = my_notifier        # async (response: str) -> None
+heartbeat_service.on_notify = my_notifier  # async (response: str) -> None
 
 await heartbeat_service.start()  # 默认间隔：1800 秒（30 分钟）
 ```

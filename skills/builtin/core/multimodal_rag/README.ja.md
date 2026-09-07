@@ -29,6 +29,7 @@
 import asyncio
 from skills.builtin.core.multimodal_rag.scripts import folder_index, file_index, query
 
+
 async def main():
     # 1) フォルダ全体をナレッジグラフのカテゴリとしてインデックス
     await folder_index("/path/to/documents", "my_docs")
@@ -39,6 +40,7 @@ async def main():
     # 3) グラフに問い合わせ（マルチホップ検索）
     answer = await query("巨学力と源野漢娜の関係は何ですか？")
     print(answer)
+
 
 asyncio.run(main())
 ```

@@ -25,6 +25,10 @@ _turn_stamp_lock = threading.Lock()
 _last_turn_ms: int | None = None
 
 
+def _as_str_list(value: Any) -> list[str]:
+    return [str(p) for p in value] if isinstance(value, list) else []
+
+
 def _next_turn_stamp() -> tuple[int, str]:
     """Return (epoch-ms, 14-char display stamp) for a new turn.
 
@@ -151,9 +155,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 continue
 
             # Persist any media file paths declared by the multimodal processor.
-            images: list[str] = additional_kwargs.get("images", []) or []
-            audios: list[str] = additional_kwargs.get("audios", []) or []
-            videos: list[str] = additional_kwargs.get("videos", []) or []
+            images: list[str] = _as_str_list(additional_kwargs.get("images", []))
+            audios: list[str] = _as_str_list(additional_kwargs.get("audios", []))
+            videos: list[str] = _as_str_list(additional_kwargs.get("videos", []))
 
             # Tag background subagent-completion injections. The tag fires
             # ONLY on a full match of the frozen metadata contract built by
@@ -167,8 +171,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             origin: str | None = (
                 "subagent_completion"
                 if (
-                    meta.get("internal") is True
-                    and meta.get("provenance") == "subagent_completion"
+                    meta.get("internal") is True and meta.get("provenance") == "subagent_completion"
                 )
                 else None
             )

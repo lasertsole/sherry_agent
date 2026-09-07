@@ -104,6 +104,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FallbackAttempt:
     """单次回退尝试记录。"""
+
     provider: str
     model: str
     error: Optional[Exception] = None
@@ -149,11 +150,13 @@ class FallbackChatModel(BaseChatModel):
 
             if self.cooldown_registry.is_cooled_down(provider):
                 logger.warning("模型 %s 处于冷却中，跳过", provider)
-                attempts.append(FallbackAttempt(
-                    provider=provider,
-                    model=getattr(model, "model", "unknown"),
-                    reason="cooldown",
-                ))
+                attempts.append(
+                    FallbackAttempt(
+                        provider=provider,
+                        model=getattr(model, "model", "unknown"),
+                        reason="cooldown",
+                    )
+                )
                 continue
 
             for attempt in range(self.max_retries + 1):
@@ -163,15 +166,18 @@ class FallbackChatModel(BaseChatModel):
                     return result
                 except Exception as e:
                     from agent.failover.classifier import classify_error
+
                     classification = classify_error(e, provider=provider)
 
-                    attempts.append(FallbackAttempt(
-                        provider=provider,
-                        model=getattr(model, "model", "unknown"),
-                        error=e,
-                        reason=classification.reason.value,
-                        cooldown_until=time.time() + classification.cooldown_suggested,
-                    ))
+                    attempts.append(
+                        FallbackAttempt(
+                            provider=provider,
+                            model=getattr(model, "model", "unknown"),
+                            error=e,
+                            reason=classification.reason.value,
+                            cooldown_until=time.time() + classification.cooldown_suggested,
+                        )
+                    )
 
                     if not classification.retryable:
                         self.cooldown_registry.mark_cooldown(
@@ -180,13 +186,19 @@ class FallbackChatModel(BaseChatModel):
                         break
 
                     if attempt < self.max_retries:
-                        delay = min(
-                            self.backoff_base_ms * (2 ** attempt),
-                            self.backoff_max_ms,
-                        ) / 1000
+                        delay = (
+                            min(
+                                self.backoff_base_ms * (2**attempt),
+                                self.backoff_max_ms,
+                            )
+                            / 1000
+                        )
                         logger.warning(
                             "模型 %s 第 %d 次失败 (%s), %.1fs 后重试",
-                            provider, attempt + 1, classification.reason.value, delay,
+                            provider,
+                            attempt + 1,
+                            classification.reason.value,
+                            delay,
                         )
                         time.sleep(delay)
                     else:
@@ -195,6 +207,7 @@ class FallbackChatModel(BaseChatModel):
                         )
 
         from agent.failover.error import FailoverError
+
         raise FailoverError("所有模型候选均已耗尽", attempts=attempts)
 
     async def _agenerate(
@@ -212,11 +225,13 @@ class FallbackChatModel(BaseChatModel):
 
             if self.cooldown_registry.is_cooled_down(provider):
                 logger.warning("模型 %s 处于冷却中，跳过", provider)
-                attempts.append(FallbackAttempt(
-                    provider=provider,
-                    model=getattr(model, "model", "unknown"),
-                    reason="cooldown",
-                ))
+                attempts.append(
+                    FallbackAttempt(
+                        provider=provider,
+                        model=getattr(model, "model", "unknown"),
+                        reason="cooldown",
+                    )
+                )
                 continue
 
             for attempt in range(self.max_retries + 1):
@@ -226,15 +241,18 @@ class FallbackChatModel(BaseChatModel):
                     return result
                 except Exception as e:
                     from agent.failover.classifier import classify_error
+
                     classification = classify_error(e, provider=provider)
 
-                    attempts.append(FallbackAttempt(
-                        provider=provider,
-                        model=getattr(model, "model", "unknown"),
-                        error=e,
-                        reason=classification.reason.value,
-                        cooldown_until=time.time() + classification.cooldown_suggested,
-                    ))
+                    attempts.append(
+                        FallbackAttempt(
+                            provider=provider,
+                            model=getattr(model, "model", "unknown"),
+                            error=e,
+                            reason=classification.reason.value,
+                            cooldown_until=time.time() + classification.cooldown_suggested,
+                        )
+                    )
 
                     if not classification.retryable:
                         self.cooldown_registry.mark_cooldown(
@@ -243,13 +261,19 @@ class FallbackChatModel(BaseChatModel):
                         break
 
                     if attempt < self.max_retries:
-                        delay = min(
-                            self.backoff_base_ms * (2 ** attempt),
-                            self.backoff_max_ms,
-                        ) / 1000
+                        delay = (
+                            min(
+                                self.backoff_base_ms * (2**attempt),
+                                self.backoff_max_ms,
+                            )
+                            / 1000
+                        )
                         logger.warning(
                             "模型 %s 第 %d 次失败 (%s), %.1fs 后重试",
-                            provider, attempt + 1, classification.reason.value, delay,
+                            provider,
+                            attempt + 1,
+                            classification.reason.value,
+                            delay,
                         )
                         await asyncio.sleep(delay)
                     else:
@@ -258,6 +282,7 @@ class FallbackChatModel(BaseChatModel):
                         )
 
         from agent.failover.error import FailoverError
+
         raise FailoverError("所有模型候选均已耗尽", attempts=attempts)
 
     def bind_tools(self, tools, **kwargs):
@@ -344,8 +369,7 @@ class CooldownRegistry:
     def _evict_expired(self) -> None:
         now = time.time()
         expired = [
-            key for key, entry in self._store.items()
-            if now - entry.cooldown_until > self.TTL_S
+            key for key, entry in self._store.items() if now - entry.cooldown_until > self.TTL_S
         ]
         for key in expired:
             del self._store[key]
@@ -415,6 +439,7 @@ def build_main_llm(temperature: float | None = None) -> BaseChatModel:
     if candidates:
         from models.LLMs.fallback import FallbackChatModel
         from agent.failover.cooldown import get_cooldown_registry
+
         primary = FallbackChatModel(
             primary=primary,
             candidates=candidates,
@@ -480,22 +505,23 @@ CooldownRegistry (全局单例)
 ```python
 from enum import Enum
 
+
 class FailoverReason(str, Enum):
-    AUTH = "auth"                          # 认证失败（可重试：token 过期）
-    AUTH_PERMANENT = "auth_permanent"      # 永久认证失败（不可重试）
-    BILLING = "billing"                    # 计费问题（不可重试）
-    RATE_LIMIT = "rate_limit"              # 速率限制（可重试）
-    OVERLOADED = "overloaded"              # 服务过载（可重试）
-    TIMEOUT = "timeout"                    # 超时（可重试）
-    SERVER_ERROR = "server_error"          # 服务器内部错误（可重试）
-    TLS_CERTIFICATE = "tls_certificate"    # TLS 证书问题（不可重试）
+    AUTH = "auth"  # 认证失败（可重试：token 过期）
+    AUTH_PERMANENT = "auth_permanent"  # 永久认证失败（不可重试）
+    BILLING = "billing"  # 计费问题（不可重试）
+    RATE_LIMIT = "rate_limit"  # 速率限制（可重试）
+    OVERLOADED = "overloaded"  # 服务过载（可重试）
+    TIMEOUT = "timeout"  # 超时（可重试）
+    SERVER_ERROR = "server_error"  # 服务器内部错误（可重试）
+    TLS_CERTIFICATE = "tls_certificate"  # TLS 证书问题（不可重试）
     CONTEXT_OVERFLOW = "context_overflow"  # 上下文溢出（不切换模型，压缩上下文）
-    MODEL_NOT_FOUND = "model_not_found"    # 模型不存在（不可重试）
-    SESSION_EXPIRED = "session_expired"    # 会话过期（可重试）
-    EMPTY_RESPONSE = "empty_response"     # 空响应（可重试）
+    MODEL_NOT_FOUND = "model_not_found"  # 模型不存在（不可重试）
+    SESSION_EXPIRED = "session_expired"  # 会话过期（可重试）
+    EMPTY_RESPONSE = "empty_response"  # 空响应（可重试）
     NO_ERROR_DETAILS = "no_error_details"  # 无错误详情（不可重试）
-    UNCLASSIFIED = "unclassified"           # 未分类（不可重试）
-    UNKNOWN = "unknown"                     # 未知错误（不可重试）
+    UNCLASSIFIED = "unclassified"  # 未分类（不可重试）
+    UNKNOWN = "unknown"  # 未知错误（不可重试）
 ```
 
 ### 3.2 可重试性矩阵
@@ -522,13 +548,17 @@ class FailoverReason(str, Enum):
 
 ```python
 """故障转移子系统。"""
+
 from agent.failover.classifier import classify_error, FailoverClassification
 from agent.failover.error import FailoverError
 from agent.failover.signal import FailoverSignal, FailoverReason
 
 __all__ = [
-    "classify_error", "FailoverClassification", "FailoverError",
-    "FailoverSignal", "FailoverReason",
+    "classify_error",
+    "FailoverClassification",
+    "FailoverError",
+    "FailoverSignal",
+    "FailoverReason",
 ]
 ```
 
@@ -536,6 +566,7 @@ __all__ = [
 
 ```python
 """故障转移信号类型定义。"""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
@@ -587,6 +618,7 @@ class FailoverSignal:
 参考 openclaw failover/message-patterns.ts + provider-patterns.ts。
 用字符串 key 避免循环导入，classifier.py 在使用时做转换。
 """
+
 from __future__ import annotations
 import re
 
@@ -742,16 +774,22 @@ RETRYABILITY = {
 多维度分类：HTTP 状态码 + 异常类型 + Provider 特定模式 + 通用消息模式。
 参考 openclaw src/agents/failover/classify.ts。
 """
+
 from __future__ import annotations
 import logging
 from typing import Optional
 
 from agent.failover.patterns import (
-    MESSAGE_PATTERNS, PROVIDER_PATTERNS, EXCEPTION_TYPE_MAP,
-    HTTP_STATUS_MAP, RETRYABILITY,
+    MESSAGE_PATTERNS,
+    PROVIDER_PATTERNS,
+    EXCEPTION_TYPE_MAP,
+    HTTP_STATUS_MAP,
+    RETRYABILITY,
 )
 from agent.failover.signal import (
-    FailoverClassification, FailoverReason, FailoverSignal,
+    FailoverClassification,
+    FailoverReason,
+    FailoverSignal,
 )
 
 logger = logging.getLogger(__name__)
@@ -825,9 +863,7 @@ def classify_error(
     if signal.reason == FailoverReason.UNKNOWN:
         signal.evidence = f"无法分类: {error_type}: {error_message[:200]}"
 
-    retryable, cooldown_suggested = RETRYABILITY.get(
-        signal.reason.value, (False, 60)
-    )
+    retryable, cooldown_suggested = RETRYABILITY.get(signal.reason.value, (False, 60))
 
     if signal.reason == FailoverReason.CONTEXT_OVERFLOW:
         retryable = False
@@ -847,6 +883,7 @@ def classify_error(
 
 ```python
 """FailoverError 异常类。携带结构化元数据。"""
+
 from __future__ import annotations
 from typing import Optional
 
@@ -871,9 +908,7 @@ class FailoverError(Exception):
         if self.attempts:
             parts.append(f"attempts={len(self.attempts)}")
             for i, att in enumerate(self.attempts):
-                parts.append(
-                    f"  [{i}] {att.provider}/{att.model}: reason={att.reason}"
-                )
+                parts.append(f"  [{i}] {att.provider}/{att.model}: reason={att.reason}")
         return "\n".join(parts)
 ```
 

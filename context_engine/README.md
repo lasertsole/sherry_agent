@@ -79,9 +79,10 @@ context_engine/
 
 ```python
 # context_engine/__init__.py
-from .store import *   # get_db, add_messages, get_messages_by_lastest_n_turns,
-                       # get_turns_by_turn_num_scope, get_history_by_turn_page,
-                       # get_session_ids, delete_messages_by_session
+from .store import *  # get_db, add_messages, get_messages_by_lastest_n_turns,
+
+# get_turns_by_turn_num_scope, get_history_by_turn_page,
+# get_session_ids, delete_messages_by_session
 from .core import retrieve_history_by_last_n_prompt, search_messages
 ```
 
@@ -222,8 +223,8 @@ results = search_messages(
 )
 
 for r in results:
-    print(r["snippet"])        # Highlighted snippet (markers: >>> match <<<)
-    print(r["context"])        # Up to 3 entries: previous message, match, next message
+    print(r["snippet"])  # Highlighted snippet (markers: >>> match <<<)
+    print(r["context"])  # Up to 3 entries: previous message, match, next message
 ```
 
 **Search Features:**

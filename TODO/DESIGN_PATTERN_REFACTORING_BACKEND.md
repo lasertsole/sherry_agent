@@ -104,16 +104,26 @@ class ToolApprovalHandler(ABC):
     @abstractmethod
     def build_action_requests(self, tool_call, config) -> list[dict]: ...
 
+
 class TerminalApprovalHandler(ToolApprovalHandler): ...
+
+
 class MemoryWriteApprovalHandler(ToolApprovalHandler): ...
+
+
 class InterruptOnApprovalHandler(ToolApprovalHandler): ...
+
 
 class ApprovalHandlerRegistry:
     def __init__(self):
         self._handlers: list[ToolApprovalHandler] = []
-    def register(self, handler): self._handlers.append(handler)
+
+    def register(self, handler):
+        self._handlers.append(handler)
+
     def resolve(self, tool_name, config):
         return next(h for h in self._handlers if h.matches(tool_name, config))
+
 
 # after_model 简化为:
 def after_model(self, state, runtime):
@@ -154,10 +164,18 @@ for item in content:
 # 拆分为:
 # repetition_detectors.py — 纯检测逻辑
 class SentenceRepetitionDetector: ...
+
+
 class CharRunDetector: ...
+
+
 class PhraseRepetitionDetector: ...
+
+
 # repetition_state.py — 状态管理
 class RepetitionState: ...
+
+
 # output_repetition_guard.py — 中间件壳，只含钩子
 class OutputRepetitionGuard(AgentMiddleware):
     def __init__(self):
@@ -215,9 +233,16 @@ class StreamGuardState(ABC):
     @abstractmethod
     def on_chunk(self, chunk, ctx) -> list[dict]: ...
 
+
 class FreshState(StreamGuardState): ...
+
+
 class UpdatesSeenState(StreamGuardState): ...
+
+
 class ModelTextState(StreamGuardState): ...
+
+
 class CutState(StreamGuardState): ...
 ```
 
@@ -241,6 +266,7 @@ class CutState(StreamGuardState): ...
 class ReasoningPayloadStrategy(ABC):
     @abstractmethod
     def build(self, **kwargs) -> dict: ...
+
 
 _PAYLOAD_STRATEGIES: dict[str, ReasoningPayloadStrategy] = {
     "deepseek": DeepSeekStrategy(),
@@ -294,7 +320,11 @@ return strategy.build(**kwargs)
 
 ```python
 class AgentBuilder:
-    def __init__(self): self._middlewares = []; self._tools = []; ...
+    def __init__(self):
+        self._middlewares = []
+        self._tools = []
+        ...
+
     def with_checkpointer(self, cp): ...
     def with_llm(self, llm): ...
     def with_middleware(self, mw): ...
@@ -323,6 +353,7 @@ class SessionStateKey(str, Enum):
     CURRENT_TOOL_NAME = "current_tool_name"
     CURRENT_TOOL_ID = "current_tool_id"
     # ...
+
 
 class SessionState:
     def __init__(self, session_id: str): ...
@@ -481,14 +512,21 @@ class SearchStrategy(ABC):
     @abstractmethod
     def search(self, query: str, limit: int) -> list[dict]: ...
 
+
 class TrigramStrategy(SearchStrategy): ...
+
+
 class LikeStrategy(SearchStrategy): ...
+
+
 class FtsStrategy(SearchStrategy): ...
+
 
 class SearchStrategyFactory:
     def select(self, query: str) -> SearchStrategy:
         for s in [TrigramStrategy(), LikeStrategy(), FtsStrategy()]:
-            if s.matches(query): return s
+            if s.matches(query):
+                return s
 ```
 
 #### 3.1.4 `store/core.py::add_messages` — 222 行 God Function
@@ -502,9 +540,15 @@ class MessageRowBuilder(ABC):
     @abstractmethod
     def build(self, msg, turn_num) -> dict: ...
 
+
 class AIMessageRowBuilder(MessageRowBuilder): ...
+
+
 class HumanMessageRowBuilder(MessageRowBuilder): ...
+
+
 class ToolMessageRowBuilder(MessageRowBuilder): ...
+
 
 _BUILDERS: dict[str, MessageRowBuilder] = {
     "ai": AIMessageRowBuilder(),

@@ -133,10 +133,13 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 在 `prompt_builder.py` 的 `_build_todo_block()` 末尾追加（心理威慑）：
 
 ```python
-lines.append("\nYour todo list is tracked by the continuation system. "
-             "Incomplete todos will trigger automatic continuation.")
-lines.append("Completion is verified by the Sisyphus contract — "
-             "unverified claims will be rejected.")
+lines.append(
+    "\nYour todo list is tracked by the continuation system. "
+    "Incomplete todos will trigger automatic continuation."
+)
+lines.append(
+    "Completion is verified by the Sisyphus contract — unverified claims will be rejected."
+)
 ```
 
 ---
@@ -181,6 +184,7 @@ If not, it's too big — split it.
 - wave_index: wave number for parallel execution
 - depends_on: JSON array of positions this todo depends on
 """
+
 
 def build_todolist_tools() -> list[BaseTool]:
     for t in _TODOLIST_TOOLS:
@@ -243,18 +247,18 @@ def build_todolist_tools() -> list[BaseTool]:
 
 import time
 
-_MAX_STAGNATION = 3              # 连续 3 次无变化 → 停止
-_BASE_COOLDOWN_S = 2.0           # 基础冷却秒数
-_MAX_COOLDOWN_S = 60.0           # 最大冷却秒数
-_FAILURE_RESET_WINDOW_S = 300    # 5 分钟内无失败 → 重置计数
-_MAX_RECOVERY_ATTEMPTS = 2       # 恢复模式最大尝试次数
+_MAX_STAGNATION = 3  # 连续 3 次无变化 → 停止
+_BASE_COOLDOWN_S = 2.0  # 基础冷却秒数
+_MAX_COOLDOWN_S = 60.0  # 最大冷却秒数
+_FAILURE_RESET_WINDOW_S = 300  # 5 分钟内无失败 → 重置计数
+_MAX_RECOVERY_ATTEMPTS = 2  # 恢复模式最大尝试次数
 
 # per-session 状态
 _stagnation_count: dict[str, int] = {}
-_last_snapshot: dict[str, str] = {}         # session_id → "content=status|content=status" 快照
-_last_inject_time: dict[str, float] = {}    # session_id → 上次注入的 timestamp
-_last_failure_time: dict[str, float] = {}   # session_id → 上次失败（停滞）的 timestamp
-_recovery_attempts: dict[str, int] = {}    # session_id → 恢复模式尝试次数
+_last_snapshot: dict[str, str] = {}  # session_id → "content=status|content=status" 快照
+_last_inject_time: dict[str, float] = {}  # session_id → 上次注入的 timestamp
+_last_failure_time: dict[str, float] = {}  # session_id → 上次失败（停滞）的 timestamp
+_recovery_attempts: dict[str, int] = {}  # session_id → 恢复模式尝试次数
 
 
 def check_stagnation(session_id: str, todos: list[dict]) -> bool:
@@ -321,8 +325,11 @@ def is_abort_error(error: Exception) -> bool:
     """
     error_str = str(error).lower()
     abort_markers = [
-        "abort", "cancelled", "interrupted by user",
-        "operation cancelled", "timeout",
+        "abort",
+        "cancelled",
+        "interrupted by user",
+        "operation cancelled",
+        "timeout",
     ]
     return any(marker in error_str for marker in abort_markers)
 ```
@@ -350,8 +357,13 @@ def is_abort_error(error: Exception) -> bool:
 from langgraph.types import AgentState
 from agent.tools.todolist.registry.store_sqlite import get_todos_sync
 from agent.tools.todolist.stagnation_tracker import (
-    check_stagnation, is_in_cooldown, mark_injected, reset,
-    should_enter_recovery, enter_recovery, is_abort_error,
+    check_stagnation,
+    is_in_cooldown,
+    mark_injected,
+    reset,
+    should_enter_recovery,
+    enter_recovery,
+    is_abort_error,
 )
 
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: TODO CONTINUATION]
@@ -430,12 +442,11 @@ class TodoContinuationEnforcer:
             # 恢复模式
             if should_enter_recovery(session_id):
                 enter_recovery(session_id)
-                prompt = _RECOVERY_PROMPT.format(
-                    todo_status=_build_status_block(todos)
-                )
+                prompt = _RECOVERY_PROMPT.format(todo_status=_build_status_block(todos))
                 mark_injected(session_id)
                 try:
                     from server.service.auto_turn import maybe_trigger_auto_turn
+
                     session_key = f"agent:main:session:{session_id}"
                     await maybe_trigger_auto_turn(session_key, prompt)
                 except Exception:
@@ -448,14 +459,13 @@ class TodoContinuationEnforcer:
             return result
 
         # 构建续作 prompt
-        prompt = _CONTINUATION_PROMPT.format(
-            todo_status=_build_status_block(todos)
-        )
+        prompt = _CONTINUATION_PROMPT.format(todo_status=_build_status_block(todos))
 
         # 复用 auto_turn 基础设施注入消息
         mark_injected(session_id)
         try:
             from server.service.auto_turn import maybe_trigger_auto_turn
+
             session_key = f"agent:main:session:{session_id}"
             await maybe_trigger_auto_turn(session_key, prompt)
         except Exception:
@@ -546,6 +556,7 @@ turn 结束（model 无 tool_call，agent loop 退出）
 ```python
 # agent/tools/todolist/service.py
 
+
 async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
     validated = _validate_todos(todos)
 
@@ -567,6 +578,7 @@ async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
 async def _is_subagent_running(child_session_key: str) -> bool:
     """检查 subagent 是否仍在运行（RUNNING 或 INTERRUPTED）。"""
     from agent.tools.subagent.registry import get_run_by_child_session_key, has_run_ended
+
     run = get_run_by_child_session_key(child_session_key)
     if run is None:
         return False  # 找不到 run record，不阻断
@@ -626,7 +638,6 @@ from agent.tools.todolist.evidence_ledger import EvidenceLedger
 
 
 class SisyphusVerifier:
-
     @staticmethod
     async def verify_checkbox(
         session_id: str,
@@ -699,6 +710,7 @@ _VERIFICATION_REMINDER = (
     "Unverified completion = SISYPHUS VIOLATION = Lost progress."
 )
 
+
 async def abefore_model(self, handler, request, config, *, key, state):
     # 现有逻辑：drain steering queue
     carriers = await drain_steering(session_id)
@@ -761,6 +773,7 @@ _FANOUT_REMINDER = """
 
 _reminded_sessions: set[str] = set()  # 模块级，每 session 仅触发一次
 
+
 @tool("todowrite")
 async def todowrite(todos, session_id=""):
     result = await service.update_todos(session_id, todos)
@@ -783,6 +796,7 @@ async def todowrite(todos, session_id=""):
 ```python
 _VALID_CATEGORIES = {"quick", "deep", "ultrabrain", "visual", "git", "writing"}
 _VALID_DELEGATIONS = {"self", "subagent"}
+
 
 def _validate_todos(todos: list[dict]) -> list[dict]:
     for t in todos:
@@ -901,13 +915,47 @@ import re
 
 _TASK_KEYWORDS = {
     # English
-    "implement", "fix", "create", "add", "refactor", "build", "deploy",
-    "test", "update", "migrate", "write", "setup", "configure", "integrate",
-    "optimize", "debug", "resolve", "enhance", "rewrite", "convert",
+    "implement",
+    "fix",
+    "create",
+    "add",
+    "refactor",
+    "build",
+    "deploy",
+    "test",
+    "update",
+    "migrate",
+    "write",
+    "setup",
+    "configure",
+    "integrate",
+    "optimize",
+    "debug",
+    "resolve",
+    "enhance",
+    "rewrite",
+    "convert",
     # Chinese
-    "实现", "修复", "创建", "添加", "重构", "构建", "部署",
-    "测试", "更新", "迁移", "编写", "设置", "配置", "集成",
-    "优化", "调试", "解决", "增强", "重写", "转换",
+    "实现",
+    "修复",
+    "创建",
+    "添加",
+    "重构",
+    "构建",
+    "部署",
+    "测试",
+    "更新",
+    "迁移",
+    "编写",
+    "设置",
+    "配置",
+    "集成",
+    "优化",
+    "调试",
+    "解决",
+    "增强",
+    "重写",
+    "转换",
 }
 
 _QUESTION_PATTERNS = [
@@ -1079,7 +1127,9 @@ class TaskIntentMiddleware(AgentMiddleware):
             # 每条用户消息都追加（非 once-per-session）
             if _has_active_boulder():
                 reminder = HumanMessage(content=_PLAN_ACTIVE_REMINDER.strip())
-                logger.info("TaskIntentMiddleware E7b: plan-active reminder for session {}", session_id)
+                logger.info(
+                    "TaskIntentMiddleware E7b: plan-active reminder for session {}", session_id
+                )
                 return {"messages": [reminder]}
 
             # ── E7a: 首次 arming / 短提醒 ──────────────────────────
@@ -1092,12 +1142,16 @@ class TaskIntentMiddleware(AgentMiddleware):
             if is_armed:
                 # 已 armed: 注入短提醒（不重复完整 prompt）
                 steering = HumanMessage(content=_TASK_STEERING_REMINDER)
-                logger.info("TaskIntentMiddleware E7a: re-arming reminder for session {}", session_id)
+                logger.info(
+                    "TaskIntentMiddleware E7a: re-arming reminder for session {}", session_id
+                )
             else:
                 # 首次: 注入完整引导
                 _armed_sessions.add(session_id)
                 steering = HumanMessage(content=_TASK_STEERING_PROMPT)
-                logger.info("TaskIntentMiddleware E7a: first-arm steering for session {}", session_id)
+                logger.info(
+                    "TaskIntentMiddleware E7a: first-arm steering for session {}", session_id
+                )
 
             return {"messages": [steering]}
         except Exception:
@@ -1106,6 +1160,7 @@ class TaskIntentMiddleware(AgentMiddleware):
 
     def before_model(self, state: AgentState, runtime=None) -> dict[str, Any] | None:
         import asyncio
+
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -1136,6 +1191,7 @@ def _has_active_boulder() -> bool:
     - getPlanChecklist(planPath).total > 0
     """
     import json, os
+
     boulder_path = ".omo/boulder.json"
     if not os.path.exists(boulder_path):
         return False
@@ -1181,7 +1237,7 @@ _agent = create_agent(
     middleware=[
         ContextEngineHook(),
         MultimodalProcessor(),
-        TaskIntentMiddleware(),   # ← E7: 意图识别，在多模态处理之后
+        TaskIntentMiddleware(),  # ← E7: 意图识别，在多模态处理之后
         IterationBudget(90),
         ToolGuardrails(),
         ToolCallNormalize(),
@@ -1202,6 +1258,7 @@ Summarization 中间件压缩成功后，调用 `rearm_after_compact(session_id)
 ```python
 # 在 Summarization 中间件或 TodoContinuationEnforcer 的 aafter_agent 中:
 from agent.middlewares.task_intent import rearm_after_compact
+
 if compression_happened:
     rearm_after_compact(session_id)
 ```

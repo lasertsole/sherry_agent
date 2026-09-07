@@ -244,8 +244,8 @@ job = cron_service.add_job(
 jobs = cron_service.list_jobs()
 print([j.name for j in jobs])
 
-await cron_service.run_job(job.id, force=True)   # 手動トリガー
-cron_service.remove_job(job.id)                   # "removed" | "protected" | "not_found"
+await cron_service.run_job(job.id, force=True)  # 手動トリガー
+cron_service.remove_job(job.id)  # "removed" | "protected" | "not_found"
 ```
 
 HTTP:

@@ -146,7 +146,9 @@ def _pending_tasks(graph, config):
     return list(graph.get_state(config).tasks or [])
 
 
-def _single_sandbox_false_call(tool_name: str, args: dict[str, Any], call_id: str) -> dict[str, Any]:
+def _single_sandbox_false_call(
+    tool_name: str, args: dict[str, Any], call_id: str
+) -> dict[str, Any]:
     payload = dict(args)
     payload["sandbox"] = False
     return {"name": tool_name, "args": payload, "id": call_id, "type": "tool_call"}

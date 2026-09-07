@@ -7,7 +7,8 @@ from config import HEARTBEAT_PATH
 from models import build_auxiliary_llm
 from runtime import PeriodicBackoff
 from .evaluate import evaluate_response
-from typing import Any, Callable, Coroutine
+from typing import Any
+from collections.abc import Callable, Coroutine
 from pydantic import BaseModel, Field
 
 

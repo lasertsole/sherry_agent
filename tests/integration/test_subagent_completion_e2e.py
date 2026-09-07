@@ -231,7 +231,9 @@ def _make_run(
 
 
 def _injection(run_id: str, label: str, sid: str, status: str = "completed") -> HumanMessage:
-    return build_completion_message(_make_run(run_id, label, f"agent:main:session:{sid}"), "All done", status)
+    return build_completion_message(
+        _make_run(run_id, label, f"agent:main:session:{sid}"), "All done", status
+    )
 
 
 async def _wait_until(predicate, timeout: float = _TIMEOUT, what: str = "condition") -> None:
@@ -413,7 +415,8 @@ async def test_busy_injection_reaches_next_model_call(monkeypatch, e2e_env):
     injected = [
         m
         for m in model.received[0]
-        if isinstance(m, HumanMessage) and str(m.content).startswith("[subagent:worker-busy completed]")
+        if isinstance(m, HumanMessage)
+        and str(m.content).startswith("[subagent:worker-busy completed]")
     ]
     assert injected, f"next model call never received the injection: {model.received!r}"
     _assert_completion_carrier(injected[0], "worker-busy", "completed", run.run_id)
@@ -425,7 +428,8 @@ async def test_busy_injection_reaches_next_model_call(monkeypatch, e2e_env):
     persisted = [
         m
         for m in state.values.get("messages", [])
-        if isinstance(m, HumanMessage) and str(m.content).startswith("[subagent:worker-busy completed]")
+        if isinstance(m, HumanMessage)
+        and str(m.content).startswith("[subagent:worker-busy completed]")
     ]
     assert persisted, "injected message missing from the session checkpoint history"
     assert _meta_of(persisted[0]).get("provenance") == "subagent_completion"
@@ -626,7 +630,8 @@ async def test_user_race_user_wins_pending_stays(monkeypatch, e2e_env):
     injected = [
         m
         for m in model.received[0]
-        if isinstance(m, HumanMessage) and str(m.content).startswith("[subagent:worker-race completed]")
+        if isinstance(m, HumanMessage)
+        and str(m.content).startswith("[subagent:worker-race completed]")
     ]
     assert injected, f"drain turn did not receive the pending injection: {model.received!r}"
     _assert_completion_carrier(injected[0], "worker-race", "completed", "run-race-1")

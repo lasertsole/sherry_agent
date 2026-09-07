@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
 from loguru import logger
-from typing import Any, Type
+from typing import Any
 from config import SKILLS_DIR
 from pydantic import BaseModel, Field
-from typing_extensions import override
+from typing import override
 from langchain_core.tools import BaseTool
 from pathlib import PurePosixPath, PureWindowsPath
 from agent.tools.pub_base import (
@@ -452,7 +452,7 @@ class SkillView(BaseTool):
         "First call returns SKILL.md content plus a 'linked_files' dict showing available references/templates/scripts. "
         "To access those, call again with file_path parameter."
     )
-    args_schema: Type[BaseModel] = SkillViewSchema
+    args_schema: type[BaseModel] = SkillViewSchema
     metadata: dict = {"idempotent": True, "nudge": True}
 
     @override

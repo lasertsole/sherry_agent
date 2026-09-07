@@ -25,7 +25,7 @@ import hashlib
 import json
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
@@ -196,7 +196,7 @@ def write_sidecar(
             continue
 
         blockid = hashlib.md5(
-            f"{doc_id}:{block_index}:{block.heading}:{rendered}".encode("utf-8")
+            f"{doc_id}:{block_index}:{block.heading}:{rendered}".encode()
         ).hexdigest()
 
         # Realize per-block sidecar item dicts now that blockid is known.
@@ -281,7 +281,7 @@ def write_sidecar(
     # Stage 3: doc-level metadata.
     merged_text = "\n\n".join(p for p in merged_parts if p.strip())
     document_hash = hashlib.sha256(merged_text.encode("utf-8")).hexdigest()
-    parse_time = datetime.now(timezone.utc).isoformat()
+    parse_time = datetime.now(UTC).isoformat()
 
     asset_dir_present = assets_dir.exists() and any(assets_dir.iterdir())
     if not asset_dir_present and assets_dir.exists():

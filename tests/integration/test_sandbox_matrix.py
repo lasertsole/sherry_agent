@@ -107,9 +107,7 @@ class _RecordingBackend:
     def probe(self) -> bool:
         return True
 
-    def wrap(
-        self, cmd: list[str], env: dict[str, str]
-    ) -> tuple[list[str], dict[str, str]]:
+    def wrap(self, cmd: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
         self.calls.append((list(cmd), dict(env)))
         return [self._wrapper, *cmd], {**env, "FAKE_SANDBOX": "1"}
 
@@ -169,7 +167,9 @@ def _install_never_spawn_popen(monkeypatch: pytest.MonkeyPatch, label: str) -> l
 
     def _boom(*args: Any, **kwargs: Any):
         recorder.append({"args": args, "kwargs": kwargs})
-        raise AssertionError(f"{label}: subprocess must never spawn (got {args!r} kwargs={kwargs!r})")
+        raise AssertionError(
+            f"{label}: subprocess must never spawn (got {args!r} kwargs={kwargs!r})"
+        )
 
     monkeypatch.setattr(subprocess, "Popen", _boom)
     return recorder
@@ -230,7 +230,9 @@ class _HarnessState(AgentState):
     session_id: str
 
 
-def _build_graph(scripted_calls: list[dict[str, Any]], tools=(), hitl_config: HITLConfig | None = None):
+def _build_graph(
+    scripted_calls: list[dict[str, Any]], tools=(), hitl_config: HITLConfig | None = None
+):
     """Real create_agent + real HumanInTheLoop; the stub model drives it."""
     _ScriptedModel.calls = 0
     _ScriptedModel.scripted_calls = list(scripted_calls)
@@ -451,9 +453,7 @@ class TestCell4AutoSandboxFalseNonYoloGraphInterrupt:
         out, config = _invoke(graph, f"mx-{call_id}", f"mx-{call_id}")
 
         error_msgs = [m for m in _tool_messages(out) if getattr(m, "status", None) == "error"]
-        assert not error_msgs, (
-            "GraphInterrupt must not be swallowed into a deny/error ToolMessage"
-        )
+        assert not error_msgs, "GraphInterrupt must not be swallowed into a deny/error ToolMessage"
 
         tasks = _pending_tasks(graph, config)
         assert len(tasks) == 1, f"expected 1 pending interrupt task, got {len(tasks)}"
@@ -500,9 +500,7 @@ class TestCell5AutoSandboxTrueUnavailableDegradedOneWarning:
         assert "FAKE_SANDBOX" not in kwargs["env"], "no backend -> no wrapped env markers"
         assert kwargs.get("cwd") == str(ROOT_DIR), "cwd clamp stays unconditional"
 
-    def test_python_repl_degrade_direct_exec_env_and_argv(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_python_repl_degrade_direct_exec_env_and_argv(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("SANDBOX_POLICY", "auto")
         monkeypatch.setattr(python_repl_mod, "get_backend", lambda policy: None)
         _seed_fake_secrets(monkeypatch)
@@ -548,9 +546,7 @@ class TestCell6OffNeverSandboxNeverApproved:
         assert calls[0]["kwargs"].get("shell") is True
         _assert_scrubbed_env(calls[0]["kwargs"].get("env"))
 
-    def test_off_python_repl_sandbox_false_executes_directly(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_off_python_repl_sandbox_false_executes_directly(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("SANDBOX_POLICY", "off")
         monkeypatch.setattr(python_repl_mod, "get_backend", _forbidden_get_backend)
         calls = _install_fake_popen(monkeypatch, _FakeReplProc)

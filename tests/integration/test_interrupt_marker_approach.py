@@ -150,7 +150,9 @@ class RecordingFakeChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         self.received.append(list(messages))
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.response_text))])
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content=self.response_text))]
+        )
 
 
 class StrictProviderFakeChatModel(RecordingFakeChatModel):
@@ -170,7 +172,9 @@ class StrictProviderFakeChatModel(RecordingFakeChatModel):
             raise SimulatedProvider400(
                 f"HTTP 400 (simulated): tool_call ids {dangling} have no following ToolMessage"
             )
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.response_text))])
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content=self.response_text))]
+        )
 
 
 class FixedSummaryModel(BaseChatModel):
@@ -191,7 +195,9 @@ class FixedSummaryModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         self.received.append(list(messages))
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.summary_text))])
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content=self.summary_text))]
+        )
 
 
 class _SpikeState(AgentState):
@@ -235,7 +241,9 @@ def _dangling_ai() -> AIMessage:
     return AIMessage(
         content="",
         id=DANGLING_AI_ID,
-        tool_calls=[{"name": "echo", "args": {"x": 1}, "id": DANGLING_CALL_ID, "type": "tool_call"}],
+        tool_calls=[
+            {"name": "echo", "args": {"x": 1}, "id": DANGLING_CALL_ID, "type": "tool_call"}
+        ],
     )
 
 
@@ -526,7 +534,9 @@ async def test_fact_c_marker_swallowed_from_model_view_once_summarized():
             ]
         },
     )  # 5 msgs — marker is now the 3rd of 5
-    await graph.ainvoke(_input([HumanMessage("Q-last")], session_id=sid), _config())  # 6 >= 5 -> trigger
+    await graph.ainvoke(
+        _input([HumanMessage("Q-last")], session_id=sid), _config()
+    )  # 6 >= 5 -> trigger
 
     assert aux.received, "summarizer never ran"
     # The summarizer LLM is shown the marker content (survival there is its call).
@@ -654,8 +664,7 @@ def queue(tmp_path: Path) -> UserInputQueue:
 def _interrupted_rows(session_id: str, limit: int = 5) -> list[dict[str, Any]]:
     """MesMemory rows of the session (newest turn first), decoded."""
     return [
-        dict(r)
-        for r in mes_store_core.get_messages_by_lastest_n_turns(session_id, last_n=limit)
+        dict(r) for r in mes_store_core.get_messages_by_lastest_n_turns(session_id, last_n=limit)
     ]
 
 
@@ -703,8 +712,7 @@ async def test_production_write_interrupted_marker_binds_reply_sequence(
     interrupted = [
         r
         for r in _interrupted_rows(PROD_SESSION)
-        if r.get("role") == "ai"
-        and str(r.get("content", "")).startswith("[interrupted:")
+        if r.get("role") == "ai" and str(r.get("content", "")).startswith("[interrupted:")
     ]
     assert len(interrupted) == 1
     assert interrupted[0]["content"] == "[interrupted:cancelled] 部分回答"

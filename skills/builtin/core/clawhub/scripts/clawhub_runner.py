@@ -42,7 +42,7 @@ def _read_state() -> dict[str, dict[str, bool]]:
     try:
         if not SKILLS_STATE_FILE.exists():
             return {}
-        with open(SKILLS_STATE_FILE, "r", encoding="utf-8") as f:
+        with open(SKILLS_STATE_FILE, encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return {}

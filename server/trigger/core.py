@@ -1,7 +1,8 @@
 import json
 from loguru import logger
 from robyn import Response
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 from robyn import Robyn, ALLOW_CORS
 from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
@@ -38,13 +39,13 @@ def handle_exception(error: Exception):
     )
 
 
-ws_event_processor_dict: dict[str, Callable[[str, str | dict[str, Any]], str]] = {}
+ws_event_processor_dict: dict[str, Callable[[str, str | dict[str, Any]], str | dict[str, Any]]] = {}
 
 
 async def ws_processor(session_id: str, event: str, content: str | dict[str, Any]) -> Any:
     try:
-        processor: Callable[[str, str | dict[str, Any]], str] | None = ws_event_processor_dict.get(
-            event, None
+        processor: Callable[[str, str | dict[str, Any]], str | dict[str, Any]] | None = (
+            ws_event_processor_dict.get(event)
         )
         if processor is None:
             logger.debug(f"No processor registered for event: {event}, session_id={session_id}")
@@ -118,7 +119,7 @@ async def ws_handler(websocket: WebSocketAdapter):
         logger.warning(f"Client {websocket.id} disconnected: {e}")
 
 
-@ws_handler.on_connect
+@getattr(ws_handler, "on_connect")
 async def handle_connect(websocket: WebSocketAdapter):
     logger.info(f"Client {websocket.id} connected")
 
@@ -141,7 +142,7 @@ async def handle_connect(websocket: WebSocketAdapter):
     relation_register.register_websocket(session_id=session_id, websocket=websocket)
 
 
-@ws_handler.on_close
+@getattr(ws_handler, "on_close")
 async def handle_disconnect(websocket: WebSocketAdapter):
     logger.info(f"Client {websocket.id} disconnected")
 

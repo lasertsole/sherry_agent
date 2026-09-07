@@ -111,7 +111,7 @@ def compress_image_if_needed(
         if scale < 1.0:
             new_width = int(original_width * scale)
             new_height = int(original_height * scale)
-            img = img.resize((new_width, new_height), Image.LANCZOS)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
             logger.debug(f"Resized to: {new_width}x{new_height} (scale: {scale:.2f})")
 
         # Convert to RGB (if RGBA or P mode)
@@ -351,13 +351,6 @@ def download_and_convert_to_base64(
 
         logger.debug(traceback.format_exc())
         return None
-
-    except Exception as e:
-        logger.error(f"Check failed: {e}")
-        import traceback
-
-        logger.debug(traceback.format_exc())
-        return False, None, None, None
 
 
 def check_if_image_and_convert_to_base64(

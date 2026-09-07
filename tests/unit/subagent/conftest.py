@@ -145,9 +145,9 @@ def _setup_subagent_alias():
     sys.modules["runtime"].state_register_mem = sys.modules[
         "runtime.state_register"
     ].state_register_mem
-    sys.modules["runtime"].clear_all_register_sessions = (
-        sys.modules["runtime.core"].clear_all_register_sessions
-    )
+    sys.modules["runtime"].clear_all_register_sessions = sys.modules[
+        "runtime.core"
+    ].clear_all_register_sessions
 
     sys.modules["agent"].tools = sys.modules["agent.tools"]
     sys.modules["agent.tools"].build_main_tools = lambda: []
@@ -220,11 +220,7 @@ def _setup_subagent_alias():
                 for n in sorted(selected_skill_names)
                 if not (caller_scope == "subagent" and _SKILL_SCOPES.get(n) == "main_only")
             ]
-            return (
-                "<skills>\n"
-                + "\n".join(f'  <skill name="{n}"/>' for n in names)
-                + "\n</skills>"
-            )
+            return "<skills>\n" + "\n".join(f'  <skill name="{n}"/>' for n in names) + "\n</skills>"
 
         _skills_loader.scan_skills = _scan_skills_stub
         _skills_loader.get_skills_text = _get_skills_text_stub

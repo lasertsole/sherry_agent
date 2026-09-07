@@ -17,13 +17,13 @@ from .middlewares import (
     ToolGuardrails,
     IterationBudget,
     HeartbeatStaleness,
-    OutputRepetitionGuard
+    OutputRepetitionGuard,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
-# # 只有幂等的工具才能并行执行，非幂等串行执行
+# # Only idempotent tools may run in parallel; non-idempotent ones run serially
 # patch_tool_node()
 
 # ── Extended state schema ────────────────────────────────────────────────
@@ -98,7 +98,7 @@ _agent_loop = None
 async def built_agent(
     temperature: float = 0.8,
     force_rebuild: bool = False,
-) -> CompiledStateGraph:
+) -> RepetitionGuardWrapper:
     global _agent, _agent_loop
     import asyncio
 

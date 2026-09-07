@@ -4,12 +4,12 @@ Implements a strategy-based dispatch (currently direct-primary only, extensible
 to steer-primary → direct-primary → steer-fallback).
 """
 
-from enum import Enum
+from enum import StrEnum
 from loguru import logger
 from ..types.registry import SubagentRunRecord
 
 
-class AnnounceDispatchType(str, Enum):
+class AnnounceDispatchType(StrEnum):
     """Enumeration of dispatch strategy types."""
 
     DIRECT = "direct"

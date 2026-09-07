@@ -309,6 +309,7 @@ import { useI18n } from 'vue-i18n';
 import { Graph, NodeEvent } from '@antv/g6';
 import type { GraphData, IElementEvent, NodeData, EdgeData } from '@antv/g6';
 import { fetchApi } from '~/composables/requestApi';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 const localePath = useLocalePath();
@@ -756,7 +757,7 @@ const uploadFiles = async (files: File[]) => {
       uploadMessage.value = payload?.message ?? t('knowledgeGraph.uploadError');
     }
   } catch (e) {
-    console.error('[KnowledgeGraph] Failed to upload:', e);
+    logUtil.e('[KnowledgeGraph] Failed to upload:', e);
     uploadMessage.value = t('knowledgeGraph.uploadError');
   } finally {
     uploading.value = false;
@@ -785,7 +786,7 @@ const loadGraph = async () => {
     loadedGraphData.value = mapped;
     renderGraph(mapped);
   } catch (e) {
-    console.error('[KnowledgeGraph] Failed to load graph:', e);
+    logUtil.e('[KnowledgeGraph] Failed to load graph:', e);
     error.value = true;
     graphRef.value?.destroy();
     graphRef.value = null;

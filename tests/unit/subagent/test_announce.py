@@ -39,7 +39,7 @@ class TestBuildCompletionFindings:
         )
         findings = build_child_completion_findings(run)
         assert "worker-1" in findings
-        assert "OK" in findings
+        assert "ok" in findings
         assert "All done" in findings
 
 

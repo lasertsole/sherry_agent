@@ -1,8 +1,8 @@
 ---
 layout: home
 hero:
-  name: "EMA AI Agent"
-  text: "后端 API 文档"
+  name: 'EMA AI Agent'
+  text: '后端 API 文档'
   tagline: 面向前端开发者的 Tauri IPC 命令参考
   actions:
     - theme: brand

@@ -1,11 +1,14 @@
 import json
 import hashlib
+from collections.abc import Mapping
+from typing import Any
+
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage
 
 DEFAULT_PROTECTED_TOOLS: set[str] = set()
 
 
-def _tool_signature(tool_call: dict) -> str:
+def _tool_signature(tool_call: Mapping[str, Any]) -> str:
     name = tool_call.get("name", "")
     args = tool_call.get("args", {})
     try:
@@ -37,9 +40,7 @@ def dedup_tool_outputs(
                     tc_id_to_sig[tc_id] = sig
                     sig_to_tc_ids.setdefault(sig, []).append(tc_id)
 
-    sigs_with_dupes = {
-        sig for sig, ids in sig_to_tc_ids.items() if len(ids) > 1
-    }
+    sigs_with_dupes = {sig for sig, ids in sig_to_tc_ids.items() if len(ids) > 1}
     if not sigs_with_dupes:
         return messages, 0
 

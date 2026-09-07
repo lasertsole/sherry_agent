@@ -49,7 +49,7 @@ import asyncio
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Literal, Protocol, runtime_checkable
 
 from agent.tools.subagent.registry.session_keys import normalize_session_key
@@ -85,7 +85,7 @@ ROUTE_WS = "ws"  # reply_target is None (websocket session)
 ROUTE_CHANNEL = "channel"  # reply_target carries channel routing JSON
 
 
-class SubmitStatus(str, Enum):
+class SubmitStatus(StrEnum):
     """Outcome of one ``submit_user_input`` call."""
 
     STARTED = "STARTED"
@@ -273,7 +273,9 @@ async def submit_user_input(
             client_msg_id is not None
             and await store.find_active_by_client_msg_id(client_msg_id) is not None
         ):
-            logger.debug("submit_user_input: dedup hit for client_msg_id {} ({})", client_msg_id, bare)
+            logger.debug(
+                "submit_user_input: dedup hit for client_msg_id {} ({})", client_msg_id, bare
+            )
             return DEDUPED
 
         # 2. Busy decision, inside the lock: detect_state OR a live CLAIMED
@@ -282,8 +284,7 @@ async def submit_user_input(
         #    fact covering exactly that gap).
         state: SessionState = detect_state(session_id)
         placeholder_in_flight = any(
-            row.status is UserInputQueueStatus.CLAIMED
-            for row in await store.list_active(bare)
+            row.status is UserInputQueueStatus.CLAIMED for row in await store.list_active(bare)
         )
         if state.busy or placeholder_in_flight:
             try:

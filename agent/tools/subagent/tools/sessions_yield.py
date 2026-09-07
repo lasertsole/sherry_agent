@@ -58,7 +58,7 @@ class SessionsYieldTool(BaseTool):
             # Wait for the event to be set (triggered by announce/core.py wake_yield)
             await asyncio.wait_for(event.wait(), timeout=timeout_seconds)
             return "All subagents have completed. Their results have been delivered to you."
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "sessions_yield timed out after {}s for session {}", timeout_seconds, session_key
             )

@@ -4,7 +4,8 @@ import base64
 from loguru import logger
 from agent import built_agent
 from langgraph.types import Command
-from typing import AsyncGenerator, Any, Literal
+from typing import Any, Literal
+from collections.abc import AsyncGenerator
 from runtime import state_register_mem
 from context_engine import get_session_ids
 from type.message import MultiModalMessage
@@ -17,20 +18,14 @@ from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 
 from .stream_dispatch import (
     StreamTurn,
-    _accumulate_pending_args,
-    _clear_pending_args,
-    _get_pending_args,
     _normalize_text,
-    _pending_args,
-    _pending_raw,
     _pop_pending_args,
-    _reasoning_delta,
 )
 
 
-def _get_content_list(multi_modal_message: MultiModalMessage) -> list[dict[str, str]]:
+def _get_content_list(multi_modal_message: MultiModalMessage) -> list[str | dict[str, Any]]:
     user_text: str = multi_modal_message.text
-    content_list: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
+    content_list: list[str | dict[str, Any]] = [{"type": "text", "text": user_text}]
 
     ##** Image handling logic **##
     if multi_modal_message.image_path_list:
@@ -111,7 +106,7 @@ async def _get_generator(
     agent = await built_agent(force_rebuild=True)
 
     # Prepare the content_list
-    content_list: list[dict[str, str]] = _get_content_list(multi_modal_message)
+    content_list: list[str | dict[str, Any]] = _get_content_list(multi_modal_message)
 
     elapsed = time.time() - start_time
     logger.debug(
@@ -392,7 +387,9 @@ class _ResumeTurn(StreamTurn):
         ]
 
     def _log_completed(self, elapsed: float) -> None:
-        logger.debug(f"Agent resume completed: session_id={self.session_id}, duration={elapsed:.2f}s")
+        logger.debug(
+            f"Agent resume completed: session_id={self.session_id}, duration={elapsed:.2f}s"
+        )
 
     def _log_cancelled(self, elapsed: float) -> None:
         logger.debug(f"Agent resume cancelled: session_id={self.session_id}")
@@ -418,7 +415,7 @@ async def async_generate(
     multi_modal_message: MultiModalMessage,
     is_stream: bool = True,
     origin: dict | None = None,
-) -> AsyncGenerator[dict[str, str], None]:
+) -> AsyncGenerator[dict[str, str]]:
     engine = _GenerateTurn(session_id, multi_modal_message, is_stream, origin)
     async for frame in engine.run():
         yield frame
@@ -429,7 +426,7 @@ async def resume_agent(
     decision: str,
     message: str = "",
     edited_args: dict[str, Any] | None = None,
-) -> AsyncGenerator[dict[str, str], None]:
+) -> AsyncGenerator[dict[str, str]]:
     """Resume the agent after a HITL interrupt.
 
     Args:

@@ -205,15 +205,17 @@ All configuration is passed through the `HITLConfig` dataclass (defined in `type
 ```python
 from agent.middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig, ApprovalMode
 
-middleware = HumanInTheLoop(HITLConfig(
-    mode=ApprovalMode.SMART,
-    interrupted_tools={
-        "terminal": {"allowed_decisions": ["approve", "reject"]},
-        "memory": True,
-    },
-    write_approval_memory=True,
-    kanban_recurrence_limit=3,
-))
+middleware = HumanInTheLoop(
+    HITLConfig(
+        mode=ApprovalMode.SMART,
+        interrupted_tools={
+            "terminal": {"allowed_decisions": ["approve", "reject"]},
+            "memory": True,
+        },
+        write_approval_memory=True,
+        kanban_recurrence_limit=3,
+    )
+)
 ```
 
 ---
@@ -225,6 +227,7 @@ Register external callbacks that fire after every approval decision:
 ```python
 def log_approval(session_id: str, result: ApprovalResult):
     print(f"[{session_id}] {result.decision}: {result.reason}")
+
 
 middleware.register_approval_hook(log_approval)
 ```

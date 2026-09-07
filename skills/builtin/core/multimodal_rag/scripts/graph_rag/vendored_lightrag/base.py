@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 import os
 from dotenv import load_dotenv
 from dataclasses import dataclass, field
@@ -10,11 +10,8 @@ from typing import (
     Literal,
     TypedDict,
     TypeVar,
-    Optional,
-    Dict,
-    List,
-    AsyncIterator,
 )
+from collections.abc import AsyncIterator
 from .utils import EmbeddingFunc
 from .types import KnowledgeGraph
 from .constants import (
@@ -774,7 +771,7 @@ class BaseGraphStorage(StorageNameSpace, ABC):
         """
 
 
-class DocStatus(str, Enum):
+class DocStatus(StrEnum):
     """Document processing status.
     Pipeline order: PENDING -> PARSING -> ANALYZING (optional) -> PROCESSING -> PROCESSED | FAILED.
     PREPROCESSED is deprecated, kept for backward compatibility.
@@ -956,7 +953,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         """
 
 
-class StoragesStatus(str, Enum):
+class StoragesStatus(StrEnum):
     """Storages status"""
 
     NOT_CREATED = "not_created"
@@ -991,13 +988,13 @@ class QueryResult:
         is_streaming: Whether this is a streaming result
     """
 
-    content: Optional[str] = None
-    response_iterator: Optional[AsyncIterator[str]] = None
-    raw_data: Optional[Dict[str, Any]] = None
+    content: str | None = None
+    response_iterator: AsyncIterator[str] | None = None
+    raw_data: dict[str, Any] | None = None
     is_streaming: bool = False
 
     @property
-    def reference_list(self) -> List[Dict[str, str]]:
+    def reference_list(self) -> list[dict[str, str]]:
         """
         Convenient property to extract reference list from raw_data.
 
@@ -1010,7 +1007,7 @@ class QueryResult:
         return []
 
     @property
-    def metadata(self) -> Dict[str, Any]:
+    def metadata(self) -> dict[str, Any]:
         """
         Convenient property to extract metadata from raw_data.
 
@@ -1033,9 +1030,9 @@ class QueryContextResult:
     """
 
     context: str
-    raw_data: Dict[str, Any]
+    raw_data: dict[str, Any]
 
     @property
-    def reference_list(self) -> List[Dict[str, str]]:
+    def reference_list(self) -> list[dict[str, str]]:
         """Convenient property to extract reference list from raw_data."""
         return self.raw_data.get("data", {}).get("references", [])

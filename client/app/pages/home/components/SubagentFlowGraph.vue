@@ -45,8 +45,9 @@ import type { GraphData, IElementEvent, NodeData } from '@antv/g6';
 import { on, off } from '@/composables/mitt';
 import { fetchSubagentRuns, type SubagentRun } from '@/composables/bridge';
 import { useSubagentWs } from '@/composables/ws';
+import { logUtil } from '~/utils/log';
 
-  const { t } = useI18n();
+const { t } = useI18n();
 
 /** Current session id (two-way synced from the parent via v-model:current-session-id) */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');
@@ -425,7 +426,7 @@ const loadFlow = async () => {
   } catch (e) {
     // The race guard applies to the error branch too: when superseded by a newer request, do not pollute the current state
     if (seq !== loadFlowSeq || sid !== currentSessionId.value) return;
-    console.error('[SubagentFlowGraph] 拉取子 Agent 运行树失败：', e);
+    logUtil.e('[SubagentFlowGraph] 拉取子 Agent 运行树失败：', e);
     error.value = true;
     destroyGraph();
   } finally {
@@ -529,4 +530,3 @@ onBeforeUnmount(() => {
   destroyGraph();
 });
 </script>
-

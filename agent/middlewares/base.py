@@ -11,6 +11,7 @@ from loguru import logger
 # 1.1.10 require_session_id
 # ---------------------------------------------------------------------------
 
+
 def require_session_id(state: dict[str, Any], error_message: str) -> str:
     """Extract and validate session_id from state.
 
@@ -34,10 +35,10 @@ def require_session_id(state: dict[str, Any], error_message: str) -> str:
     return session_id
 
 
-
 # ---------------------------------------------------------------------------
 # 1.1.9 Sync/Async hook bridge mixins
 # ---------------------------------------------------------------------------
+
 
 class BeforeAgentHooksMixin:
     """Mixin providing sync/async before_agent hooks that delegate to
@@ -82,6 +83,7 @@ class AfterAgentHooksMixin:
 # ---------------------------------------------------------------------------
 # 1.1.8 _args_hash
 # ---------------------------------------------------------------------------
+
 
 def args_hash(args: dict[str, Any]) -> str:
     """Return an MD5 hash of serialized tool arguments for deduplication.

@@ -21,7 +21,9 @@ from agent.tools.subagent.registry import store_sqlite
 from agent.tools.subagent.types.registry import SubagentRunRecord
 
 
-def _make_run(run_id: str = "run-abc-123", task: str = "subagent task payload") -> SubagentRunRecord:
+def _make_run(
+    run_id: str = "run-abc-123", task: str = "subagent task payload"
+) -> SubagentRunRecord:
     return SubagentRunRecord(
         run_id=run_id,
         child_session_key=f"agent:main:subagent:{run_id}",

@@ -136,6 +136,8 @@ def run_async(coro, timeout: float = 300):
     # lifetime — preventing "Event loop is closed" on GC cleanup.
     if threading.current_thread() is not threading.main_thread():
         worker_loop = _get_worker_loop()
+        if worker_loop is None:
+            raise RuntimeError("worker event loop unavailable")
         if timeout is not None:
             coro = asyncio.wait_for(coro, timeout=timeout)
         return worker_loop.run_until_complete(coro)

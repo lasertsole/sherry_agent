@@ -27,7 +27,7 @@ class MinerUParser(ExternalParserBase):
 
         await MinerURawClient().download_into(raw_dir, source_path, upload_name=upload_name)
 
-    def build_ir(self, raw_dir: Path, document_name: str) -> "IRDoc":
+    def build_ir(self, raw_dir: Path, document_name: str) -> IRDoc:
         from graph_rag.vendored_lightrag.parser.external.mineru import MinerUIRBuilder
 
         return MinerUIRBuilder().normalize_from_workdir(raw_dir, document_name=document_name)

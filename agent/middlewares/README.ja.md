@@ -307,7 +307,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 最内層のミドルウェア — LLM に最も近い位置。スクラッチで実装された `AgentMiddleware` です（LangChain の `SummarizationMiddleware` **ではありません**）：トリガーが発火すると、予算ベースのカットオフで履歴を圧縮します — 非 LLM 戦略を優先し、テキスト劣化が安全な場合にのみ補助 LLM による要約を使用。`keep` パラメータは受け付けますが未使用で、末尾保持は予算ベースです：`clamp(context_window × 0.25, 2 000, 15 000)` トークン（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
-- **ライフサイクルとルーティング：** ミドルウェアは 5つのトリガーポイント（T1–T5）を網羅します — T1 事前点検（`before_agent` / `abefore_agent`）、T2 呼び出し前ディスパッチ（`wrap_model_call` / `awrap_model_call`）、T3 応答後の再確認（実際の報告トークン）、T4（413 Payload Too Large）/ T5（コンテキストオーバーフロー）エラー復帰リング — どのトリガーも 4ルート・オーバーフロー判定（truncate / compact / both / pass）を実行し、`pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/llm_error_classifier.py` に委譲します。状態はセッション単位の `summarization_*` キー（計 14 個、ターンごとに 10 個をリセット）に保持されます。詳細は下記のリンクを参照。
+- **ライフサイクルとルーティング：** ミドルウェアは 5つのトリガーポイント（T1–T5）を網羅します — T1 事前点検（`before_agent` / `abefore_agent`）、T2 呼び出し前ディスパッチ（`wrap_model_call` / `awrap_model_call`）、T3 応答後の再確認（実際の報告トークン）、T4（413 Payload Too Large）/ T5（コンテキストオーバーフロー）エラー復帰リング — どのトリガーも 4ルート・オーバーフロー判定（truncate / compact / both / pass）を実行し、`pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/tool_args_truncate.py`（ツール呼び出し引数の切り詰め）、`pub_func/message/llm_error_classifier.py` に委譲します。状態はセッション単位の `summarization_*` キー（計 14 個、ターンごとに 10 個をリセット）に保持されます。詳細は下記のリンクを参照。
 - **トリガーセマンティクス**：節は `("messages", N)` または `("tokens", N)` で、節リスト間は **OR** — いずれかの節が発火すると圧縮が始まります。メインエージェント：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。ワーカー：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
 - **カットオフの安全性：** `_determine_cutoff` がカットオフ位置を選び、続いて `_adjust_for_orphan_pairs` が `ToolMessage` が自身の `AIMessage` ツール呼び出しから分離されなくなるまで位置を手前に戻します。最後のユーザーターンが推定トークンの ≥ 50 % を占める場合（`LAST_TURN_RATIO_THRESHOLD = 0.5`）、そのターンを要約で消すのではなく、ターン自体を圧縮します（`self._compress_last_turn` フラグ）。
 - **アンチスラッシング：** 1 セッションあたり最大 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 回の圧縮（ターンごとではない）。連続 `INEFFECTIVE_THRESHOLD = 2` 回の無効な圧縮で（有効 = メッセージ数の減少、またはトークン削減 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`）、LLM ステップを無効化（`summarization_skip_llm`）し非 LLM 戦略のみを実行します。カウンターはセッション単位の `summarization_*` キーとして `state_register_mem` に保持されます（圧縮回数、無効連続回数、直近トークン、直近戦略、スキップフラグ、リカバリ状態など）。
@@ -389,22 +389,29 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    ContextEngineHook, MultimodalProcessor, IterationBudget, ToolGuardrails,
-    ToolCallNormalize, HeartbeatStaleness, HumanInTheLoop, HITLConfig, Summarization,
+    ContextEngineHook,
+    MultimodalProcessor,
+    IterationBudget,
+    ToolGuardrails,
+    ToolCallNormalize,
+    HeartbeatStaleness,
+    HumanInTheLoop,
+    HITLConfig,
+    Summarization,
 )
 
 agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),          # システムプロンプト + nudge + 永続化
-        MultimodalProcessor(),        # マルチモーダル入力の正規化
-        IterationBudget(90),          # ターン単位の呼び出し予算
-        ToolGuardrails(),             # 失敗病理の検知
-        ToolCallNormalize(),          # tool_use/tool_result の修復
-        HeartbeatStaleness(),         # スタックターンのウォッチドッグ
-        HumanInTheLoop(HITLConfig()), # 承認ゲート
-        Summarization(                # コンテキスト圧縮（最内層）
+        ContextEngineHook(),  # システムプロンプト + nudge + 永続化
+        MultimodalProcessor(),  # マルチモーダル入力の正規化
+        IterationBudget(90),  # ターン単位の呼び出し予算
+        ToolGuardrails(),  # 失敗病理の検知
+        ToolCallNormalize(),  # tool_use/tool_result の修復
+        HeartbeatStaleness(),  # スタックターンのウォッチドッグ
+        HumanInTheLoop(HITLConfig()),  # 承認ゲート
+        Summarization(  # コンテキスト圧縮（最内層）
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

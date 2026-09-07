@@ -20,12 +20,12 @@ None.
 
 `AppInfo`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `string` | Application name (from `Cargo.toml`) |
-| `version` | `string` | Semantic version (e.g., `"0.1.0"`) |
-| `tauri_version` | `string` | Tauri runtime version |
-| `debug` | `boolean` | `true` in debug builds |
+| Field           | Type      | Description                          |
+| --------------- | --------- | ------------------------------------ |
+| `name`          | `string`  | Application name (from `Cargo.toml`) |
+| `version`       | `string`  | Semantic version (e.g., `"0.1.0"`)   |
+| `tauri_version` | `string`  | Tauri runtime version                |
+| `debug`         | `boolean` | `true` in debug builds               |
 
 ### Example
 
@@ -60,10 +60,10 @@ None.
 
 `HealthStatus`
 
-| Field | Type | Description |
-|-------|------|-------------|
+| Field     | Type      | Description                              |
+| --------- | --------- | ---------------------------------------- |
 | `healthy` | `boolean` | `true` if all subsystems are operational |
-| `message` | `string` | Human-readable status description |
+| `message` | `string`  | Human-readable status description        |
 
 ### Example
 

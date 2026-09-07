@@ -139,7 +139,7 @@ def test_worker_fleet_sizing_and_swarm_limits(skill_body):
 
 
 # ---------------------------------------------------------------------------
-# Six-step workflow (plan §3.4 item 1, 流程章)
+# Six-step workflow (plan §3.4 item 1, workflow chapter)
 # ---------------------------------------------------------------------------
 
 

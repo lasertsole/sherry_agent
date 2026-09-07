@@ -101,9 +101,12 @@ class TestEstimateMsgTokens:
     def test_class_level_estimate_msg_tokens_delegates(self):
         # Staticmethod on the NEW class: 11 chars // 4 == 2.
         # Red on the old middleware: AttributeError (name does not exist).
-        assert summarization_module.Summarization._estimate_msg_tokens(
-            AIMessage(content="hello world")
-        ) == 2
+        assert (
+            summarization_module.Summarization._estimate_msg_tokens(
+                AIMessage(content="hello world")
+            )
+            == 2
+        )
 
     def test_instance_estimate_msg_tokens(self):
         mw = make_middleware()
@@ -126,9 +129,7 @@ class TestEstimateMsgTokens:
         messages = [
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_file", "args": {"path": "a.py"}, "id": "call_1"}
-                ],
+                tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "call_1"}],
             ),
             ToolMessage(content="x", tool_call_id="call_1"),
         ]
@@ -209,9 +210,7 @@ class TestNeedUpdateSystemPrompt:
                 raise RuntimeError("boom")
             return f"T8PROMPT::{session_id}"
 
-        monkeypatch.setattr(
-            summarization_module, "build_system_prompt", fake_build_system_prompt
-        )
+        monkeypatch.setattr(summarization_module, "build_system_prompt", fake_build_system_prompt)
 
         # The middleware does a call-time `from agent.tools import
         # memory_store; memory_store.load_from_disk()`. memory_store is the
@@ -225,9 +224,7 @@ class TestNeedUpdateSystemPrompt:
         monkeypatch.setattr(
             summarization_module,
             "state_register_db",
-            SimpleNamespace(
-                set_state=lambda s, k, v: recorder.append((s, k, v))
-            ),
+            SimpleNamespace(set_state=lambda s, k, v: recorder.append((s, k, v))),
         )
 
     def test_true_dual_write_and_override(self, monkeypatch):
@@ -247,8 +244,7 @@ class TestNeedUpdateSystemPrompt:
             # the real state_register_mem).
             assert (sid_value, "system_prompt", f"T8PROMPT::{sid_value}") in recorder
             assert (
-                state_register_mem.get_state(sid_value, "system_prompt")
-                == f"T8PROMPT::{sid_value}"
+                state_register_mem.get_state(sid_value, "system_prompt") == f"T8PROMPT::{sid_value}"
             )
             # The returned request carries the rebuilt prompt override.
             assert result.system_message is not None
@@ -284,9 +280,7 @@ class TestNeedUpdateSystemPrompt:
     def test_failure_propagates(self, monkeypatch):
         sid_value = "t8-hreq-fail"
         recorder = []
-        self._patch_pipeline(
-            monkeypatch, recorder, sid_value, raise_exc=True
-        )
+        self._patch_pipeline(monkeypatch, recorder, sid_value, raise_exc=True)
         try:
             state_register_mem.clear_session(sid_value)
             mw = make_middleware(need_update_system_prompt=True)
@@ -402,9 +396,7 @@ class TestSummarizationCore:
             HumanMessage(content="q"),
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_file", "args": {"path": "a.py"}, "id": "call_1"}
-                ],
+                tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "call_1"}],
             ),
             ToolMessage(content="x" * 10000, tool_call_id="call_1"),
         ]
@@ -435,9 +427,7 @@ class TestSummarizationCore:
             HumanMessage(content="q"),
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "memory", "args": {}, "id": "call_3"}
-                ],
+                tool_calls=[{"name": "memory", "args": {}, "id": "call_3"}],
             ),
             ToolMessage(content="y" * 5000, tool_call_id="call_3"),
         ]
@@ -460,9 +450,7 @@ class TestSummarizationCore:
             HumanMessage(content="q"),
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_file", "args": {"path": "a.py"}, "id": "call_1"}
-                ],
+                tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "call_1"}],
             ),
             ToolMessage(content="out", tool_call_id="call_1"),
         ]
@@ -499,9 +487,7 @@ class TestSummarizationCore:
             HumanMessage(content="h"),
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_file", "args": {}, "id": "call_1"}
-                ],
+                tool_calls=[{"name": "read_file", "args": {}, "id": "call_1"}],
             ),
             ToolMessage(content="out", tool_call_id="call_1"),
         ]
@@ -518,9 +504,7 @@ class TestSummarizationCore:
 
     def test_get_session_valid_state(self):
         assert (
-            summarization_module.Summarization._get_session_or_raise(
-                {"session_id": "t8-x"}
-            )
+            summarization_module.Summarization._get_session_or_raise({"session_id": "t8-x"})
             == "t8-x"
         )
 
@@ -532,9 +516,7 @@ class TestSummarizationCore:
         # None value → falsy-session guard path (RuntimeError per §9.7;
         # legacy shape raises AttributeError — both count as Red/lock).
         with pytest.raises((RuntimeError, AttributeError)):
-            summarization_module.Summarization._get_session_or_raise(
-                {"session_id": None}
-            )
+            summarization_module.Summarization._get_session_or_raise({"session_id": None})
 
     # ------------------------------------------------------------------
     # _determine_cutoff (§9.7 L1167): budget-based tail selection.
@@ -591,9 +573,7 @@ class TestSummarizationCore:
             HumanMessage(content="h1"),
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_file", "args": {}, "id": "call_1"}
-                ],
+                tool_calls=[{"name": "read_file", "args": {}, "id": "call_1"}],
             ),
             ToolMessage(content="out", tool_call_id="call_1"),
             HumanMessage(content="h2"),
@@ -608,9 +588,7 @@ class TestSummarizationCore:
             HumanMessage(content="h1"),
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_file", "args": {}, "id": "call_1"}
-                ],
+                tool_calls=[{"name": "read_file", "args": {}, "id": "call_1"}],
             ),
             ToolMessage(content="out", tool_call_id="call_1"),
             HumanMessage(content="h2"),
@@ -763,9 +741,7 @@ class TestSummarizationCore:
 
     def test_serialize_role_labels(self):
         serialize = mget("_serialize_for_summary")
-        out = serialize(
-            [HumanMessage(content="hello"), AIMessage(content="hi there")]
-        )
+        out = serialize([HumanMessage(content="hello"), AIMessage(content="hi there")])
         assert "[User]: hello" in out
         assert "[Assistant]: hi there" in out
 
@@ -791,9 +767,7 @@ class TestSummarizationCore:
 
     def test_serialize_tool_result_truncation_marker(self):
         serialize = mget("_serialize_for_summary")
-        out = serialize(
-            [ToolMessage(content="x" * 3000, tool_call_id="call_9")]
-        )
+        out = serialize([ToolMessage(content="x" * 3000, tool_call_id="call_9")])
         assert "[Tool result] (call_9): " in out
         # 3000 chars → keep 1800 + "...[truncated 1200 chars]...".
         assert "...[truncated 1200 chars]..." in out
@@ -802,9 +776,7 @@ class TestSummarizationCore:
         serialize = mget("_serialize_for_summary")
         out = serialize(
             [
-                ToolMessage(
-                    content="boom", tool_call_id="e1", status="error"
-                ),
+                ToolMessage(content="boom", tool_call_id="e1", status="error"),
                 HumanMessage(content="q"),
             ]
         )
@@ -817,9 +789,7 @@ class TestSummarizationCore:
             HumanMessage(content="hello"),
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_file", "args": {}, "id": "call_1"}
-                ],
+                tool_calls=[{"name": "read_file", "args": {}, "id": "call_1"}],
             ),
             ToolMessage(content="out", tool_call_id="call_1"),
         ]
@@ -852,9 +822,7 @@ class TestSummarizationCore:
         mw = make_middleware()
         msgs = [
             HumanMessage(content="h"),
-            AIMessage(
-                content="a", additional_kwargs={"lc_source": "summarization"}
-            ),
+            AIMessage(content="a", additional_kwargs={"lc_source": "summarization"}),
         ]
         result = mw._truncate_summary_messages(msgs)
         assert len(result) == 2
@@ -875,9 +843,7 @@ TRUNCATE_MARKER_FMT = "...[truncated {omitted} chars]..."
 
 
 def _ai_with_call(tc_id, name, args, content=""):
-    return AIMessage(
-        content=content, tool_calls=[{"name": name, "args": args, "id": tc_id}]
-    )
+    return AIMessage(content=content, tool_calls=[{"name": name, "args": args, "id": tc_id}])
 
 
 def _tool(content, tc_id, status=None):
@@ -889,10 +855,10 @@ def _tool(content, tc_id, status=None):
 def _turn(i, tool_name="search", out_chars=2000, protect=False):
     """One Human -> AI(tool call) -> Tool(result) turn."""
     name = "memory" if protect else tool_name
-    tc_id = "t8-call-%d" % i
+    tc_id = f"t8-call-{i}"
     return [
-        HumanMessage(content="question %d" % i),
-        _ai_with_call(tc_id, name, {"q": "query-%d" % i}),
+        HumanMessage(content=f"question {i}"),
+        _ai_with_call(tc_id, name, {"q": f"query-{i}"}),
         _tool("x" * out_chars, tc_id),
     ]
 
@@ -915,9 +881,7 @@ def _summary_tags():
         ("_SUMMARY_PREFIX", "_SUMMARY_SUFFIX"),
         ("_SUMMARY_OPEN_TAG", "_SUMMARY_CLOSE_TAG"),
     ):
-        if hasattr(summarization_module, open_name) and hasattr(
-            summarization_module, close_name
-        ):
+        if hasattr(summarization_module, open_name) and hasattr(summarization_module, close_name):
             return getattr(summarization_module, open_name), getattr(
                 summarization_module, close_name
             )
@@ -929,7 +893,7 @@ def _summary_tags():
 
 def fresh_sid(prefix="t8-s"):
     """Unique session id string, defensively cleared from the mem register."""
-    s = "%s-%s" % (prefix, uuid.uuid4().hex[:8])
+    s = f"{prefix}-{uuid.uuid4().hex[:8]}"
     try:
         state_register_mem.clear_session(s)
     except Exception:
@@ -1013,9 +977,7 @@ class TestSummarizationCompression:
         msgs = _history(turns=6, out_chars=4000)
         result, _ = mw._run_non_llm_strategies(msgs, sid)
         assert result != msgs
-        assert PRUNE_MARKER not in [
-            m.content for m in result if isinstance(m.content, str)
-        ]
+        assert PRUNE_MARKER not in [m.content for m in result if isinstance(m.content, str)]
 
     def test_protected_tools_survive_prune_and_target(self, sid):
         # §9.7 WINS (intent conflict): dedup/prune/target ALL skip protected
@@ -1040,10 +1002,7 @@ class TestSummarizationCompression:
             _tool("x" * 3000, "t8-ag-1"),
         ]
         result = mw._aggressive_truncate(msgs)
-        assert (
-            result[2].content
-            == "x" * 1000 + AGGRESSIVE_MARKER_FMT.format(omitted=2000)
-        )
+        assert result[2].content == "x" * 1000 + AGGRESSIVE_MARKER_FMT.format(omitted=2000)
 
     def test_aggressive_truncates_multiple_tools(self, sid):
         mw = make_middleware()
@@ -1054,12 +1013,8 @@ class TestSummarizationCompression:
             _tool("y" * 5000, "t8-ag-3"),
         ]
         result = mw._aggressive_truncate(msgs)
-        assert result[1].content == "x" * 1000 + AGGRESSIVE_MARKER_FMT.format(
-            omitted=2000
-        )
-        assert result[3].content == "y" * 1000 + AGGRESSIVE_MARKER_FMT.format(
-            omitted=4000
-        )
+        assert result[1].content == "x" * 1000 + AGGRESSIVE_MARKER_FMT.format(omitted=2000)
+        assert result[3].content == "y" * 1000 + AGGRESSIVE_MARKER_FMT.format(omitted=4000)
 
     def test_aggressive_untouched_history_left_alone(self, sid):
         mw = make_middleware()
@@ -1120,54 +1075,40 @@ class TestSummarizationCompression:
     def test_apply_compression_llm_summary_path(self, sid):
         # 100 turns of small protected tool outputs (400 chars): no strategy
         # can shrink them, est 11000 > budget 10000 -> LLM summary path.
-        make_middleware(
-            main_llm_context_window=40000, trigger=[("tokens", 5000)]
-        )
+        make_middleware(main_llm_context_window=40000, trigger=[("tokens", 5000)])
         msgs = []
         for i in range(100):
             msgs.extend(
                 [
-                    HumanMessage(content="question %d" % i),
-                    _ai_with_call("t8-llm-%d" % i, "memory", {"q": "x"}),
-                    _tool("x" * 400, "t8-llm-%d" % i),
+                    HumanMessage(content=f"question {i}"),
+                    _ai_with_call(f"t8-llm-{i}", "memory", {"q": "x"}),
+                    _tool("x" * 400, f"t8-llm-{i}"),
                 ]
             )
         stub = StubModel(text="LLM wrote a deterministic and sufficiently long summary.")
-        mw2 = make_middleware(
-            model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)]
-        )
+        mw2 = make_middleware(model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)])
         req = make_request(msgs, session_id=sid, model=stub)
         result = mw2._apply_compression(req, sid)
         assert len(stub.calls) >= 1
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "llm_summary"
-        )
+        assert state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY")) == "llm_summary"
         assert len(result.messages) < len(msgs)
 
     def test_apply_compression_non_llm_sufficient_strategy(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=8000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=8000, trigger=[("tokens", 500)])
         msgs = self._dup_pair_msgs({"q": "same"}, {"q": "same"})
         req = make_request(msgs, session_id=sid)
         result = mw._apply_compression(req, sid)
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
         # §9.7 WINS: the gentle-strategy branch keeps "non_llm" (there is no
         # separate "non_llm_sufficient" strategy value).
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "non_llm"
-        )
+        assert state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY")) == "non_llm"
         assert DEDUP_MARKER_FMT.format(name="search") in [
             m.content for m in result.messages if isinstance(m.content, str)
         ]
 
     def test_apply_compression_skip_llm_fallback(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=8000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=8000, trigger=[("tokens", 500)])
         state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
         msgs = _history(turns=6, out_chars=4000)
         req = make_request(msgs, session_id=sid)
@@ -1178,10 +1119,7 @@ class TestSummarizationCompression:
             for m in result.messages
             if isinstance(m.content, str)
         )
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "fallback"
-        )
+        assert state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY")) == "fallback"
 
     # ---- recovery context ------------------------------------------------------
 
@@ -1277,29 +1215,18 @@ class TestSummarizationCompression:
         # §9.7 WINS (intent conflict): _is_empty_response only checks for
         # blank content — there is no noop-summary pattern detection.
         assert (
-            summarization_module.Summarization._is_empty_response(
-                AIMessage(content="   \n\t")
-            )
+            summarization_module.Summarization._is_empty_response(AIMessage(content="   \n\t"))
             is True
         )
 
     def test_is_empty_response_real_summary_not_empty(self):
-        text = (
-            "## Goal\n- fix the bug\n\n"
-            "### Completed (most recent 5)\n- step one"
-        )
+        text = "## Goal\n- fix the bug\n\n### Completed (most recent 5)\n- step one"
         assert (
-            summarization_module.Summarization._is_empty_response(
-                AIMessage(content=text)
-            )
-            is False
+            summarization_module.Summarization._is_empty_response(AIMessage(content=text)) is False
         )
 
     def test_is_empty_response_empty_string_is_empty(self):
-        assert (
-            summarization_module.Summarization._is_empty_response(AIMessage(content=""))
-            is True
-        )
+        assert summarization_module.Summarization._is_empty_response(AIMessage(content="")) is True
 
     # ---- skip compression (restored from 3727399 Core dedup; §9.7-verified) ----
 
@@ -1328,9 +1255,7 @@ class TestSummarizationCompression:
         state_register_mem.set_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"), 2)
         assert mw._should_skip_compression(sid) is False
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
-        assert (
-            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
-        )
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
         assert not state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY"))
 
     def test_force_recovery_checked_before_max_attempts(self, sid):
@@ -1354,19 +1279,14 @@ class TestSummarizationCompression:
         before = [HumanMessage(content="a"), AIMessage(content="b")]
         after = [HumanMessage(content="summary")]
         mw._record_compression(sid, before, after, strategy_used="llm_summary")
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "llm_summary"
-        )
+        assert state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY")) == "llm_summary"
 
     def test_record_compression_ineffective_accumulates(self, sid):
         mw = make_middleware()
         msgs = [HumanMessage(content="a"), AIMessage(content="b")]
         mw._record_compression(sid, msgs, list(msgs))
         mw._record_compression(sid, msgs, list(msgs))
-        assert (
-            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 2
-        )
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 2
 
     def test_record_compression_effective_resets_and_unskips(self, sid):
         mw = make_middleware()
@@ -1375,9 +1295,7 @@ class TestSummarizationCompression:
         before = [HumanMessage(content="a"), AIMessage(content="b")]
         after = [HumanMessage(content="summary")]
         mw._record_compression(sid, before, after, strategy_used="dedup")
-        assert (
-            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
-        )
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
         assert not state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY"))
 
 
@@ -1530,7 +1448,7 @@ class TestSummarizationFallback:
 
     def test_format_file_ops_many_ops_capped(self, sid):
         fmt = mget("_format_file_ops")
-        ops = {"modified_files": ["/opt%d.py" % i for i in range(50)]}
+        ops = {"modified_files": [f"/opt{i}.py" for i in range(50)]}
         assert len(fmt(ops)) <= FILE_OPS_LIST_MAX_CHARS + 200
 
     # ---- file operations parsing ----
@@ -1550,11 +1468,7 @@ class TestSummarizationFallback:
 
     def test_fifo_caps_completed_list(self, sid):
         fifo = mget("_enforce_fifo_limits")
-        text = (
-            "### Completed (most recent 5)\n"
-            + "\n".join("- item%d" % i for i in range(8))
-            + "\n"
-        )
+        text = "### Completed (most recent 5)\n" + "\n".join(f"- item{i}" for i in range(8)) + "\n"
         out = fifo(text)
         assert "- item7" in out
         assert "- item2" not in out
@@ -1563,7 +1477,7 @@ class TestSummarizationFallback:
         fifo = mget("_enforce_fifo_limits")
         text = (
             "## Key Decisions (most recent 5)\n"
-            + "\n".join("- decision%d" % i for i in range(8))
+            + "\n".join(f"- decision{i}" for i in range(8))
             + "\n"
         )
         out = fifo(text)
@@ -1573,9 +1487,7 @@ class TestSummarizationFallback:
     def test_fifo_caps_critical_context(self, sid):
         fifo = mget("_enforce_fifo_limits")
         text = (
-            "## Critical Context (most recent 3)\n"
-            + "\n".join("- c%d" % i for i in range(6))
-            + "\n"
+            "## Critical Context (most recent 3)\n" + "\n".join(f"- c{i}" for i in range(6)) + "\n"
         )
         out = fifo(text)
         assert "- c5" in out
@@ -1588,11 +1500,7 @@ class TestSummarizationFallback:
 
     def test_fifo_idempotent(self, sid):
         fifo = mget("_enforce_fifo_limits")
-        text = (
-            "### Completed (most recent 5)\n"
-            + "\n".join("- item%d" % i for i in range(8))
-            + "\n"
-        )
+        text = "### Completed (most recent 5)\n" + "\n".join(f"- item{i}" for i in range(8)) + "\n"
         once = fifo(text)
         assert fifo(once) == once
 
@@ -1655,33 +1563,26 @@ class TestSummarizationAsync:
 
     def test_aapply_compression_llm_path_calls_ainvoke(self, sid):
         stub = StubModel(text="Async LLM wrote a deterministic long summary body.")
-        mw = make_middleware(
-            model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)]
-        )
+        mw = make_middleware(model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)])
         msgs = []
         # 100 turns: est ~10800 > budget 10000 -> cutoff > 0 -> async LLM path.
         for i in range(100):
             msgs.extend(
                 [
-                    HumanMessage(content="question %d" % i),
-                    _ai_with_call("t8-alm-%d" % i, "memory", {"q": "x"}),
-                    _tool("x" * 400, "t8-alm-%d" % i),
+                    HumanMessage(content=f"question {i}"),
+                    _ai_with_call(f"t8-alm-{i}", "memory", {"q": "x"}),
+                    _tool("x" * 400, f"t8-alm-{i}"),
                 ]
             )
         req = make_request(msgs, session_id=sid, model=stub)
         result = asyncio.run(mw._aapply_compression(req, sid))
         assert len(stub.calls) >= 1
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "llm_summary"
-        )
+        assert state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY")) == "llm_summary"
         assert len(result.messages) < len(msgs)
 
     def test_aapply_compression_fallback_when_skip_llm(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=8000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=8000, trigger=[("tokens", 500)])
         state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
         msgs = _history(turns=6, out_chars=4000)
         req = make_request(msgs, session_id=sid)
@@ -1692,30 +1593,24 @@ class TestSummarizationAsync:
             for m in result.messages
             if isinstance(m.content, str)
         )
-        assert (
-            state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY"))
-            == "fallback"
-        )
+        assert state_register_mem.get_state(sid, mget("_LAST_STRATEGY_KEY")) == "fallback"
 
     def test_aapply_compression_preserves_non_summary_messages(self, sid):
         stub = StubModel(text="Async LLM wrote a deterministic long summary body.")
-        mw = make_middleware(
-            model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)]
-        )
+        mw = make_middleware(model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)])
         msgs = []
         for i in range(50):
             msgs.extend(
                 [
-                    HumanMessage(content="question %d" % i),
-                    _ai_with_call("t8-alp-%d" % i, "memory", {"q": "x"}),
-                    _tool("x" * 400, "t8-alp-%d" % i),
+                    HumanMessage(content=f"question {i}"),
+                    _ai_with_call(f"t8-alp-{i}", "memory", {"q": "x"}),
+                    _tool("x" * 400, f"t8-alp-{i}"),
                 ]
             )
         req = make_request(msgs, session_id=sid, model=stub)
         result = asyncio.run(mw._aapply_compression(req, sid))
         assert any(
-            isinstance(m, HumanMessage) and "question 0" in str(m.content)
-            for m in result.messages
+            isinstance(m, HumanMessage) and "question 0" in str(m.content) for m in result.messages
         )
 
     # ---- wrap_model_call (sync) ----------------------------------------------
@@ -1788,9 +1683,7 @@ class TestSummarizationAsync:
             mw.wrap_model_call(req, lambda r: "never")
 
     def test_wrap_model_call_records_count_on_compact(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=2000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=2000, trigger=[("tokens", 500)])
         msgs = [
             HumanMessage(content="q1"),
             _ai_with_call("t8-wc-1", "search", {"q": "same"}),
@@ -1805,9 +1698,7 @@ class TestSummarizationAsync:
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
 
     def test_wrap_model_call_handler_result_returned_on_compact(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=2000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=2000, trigger=[("tokens", 500)])
         msgs = [
             HumanMessage(content="q1"),
             _ai_with_call("t8-wc-3", "search", {"q": "same"}),
@@ -1828,6 +1719,7 @@ class TestSummarizationAsync:
             [HumanMessage(content="hi"), AIMessage(content="hello")],
             session_id=sid,
         )
+
         async def handler(r):
             return "AWRAP-SENTINEL"
 
@@ -1889,9 +1781,7 @@ class TestSummarizationAsync:
 
     def test_awrap_model_call_llm_path_async_stub(self, sid):
         stub = StubModel(text="Async wrap LLM deterministic long summary body here.")
-        mw = make_middleware(
-            model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)]
-        )
+        mw = make_middleware(model=stub, main_llm_context_window=40000, trigger=[("tokens", 5000)])
         msgs = []
         # 100 turns: est ~10800 >= trigger 5000 and > budget 10000 -> cutoff
         # > 0 -> async LLM path fires (50 turns est ~5600 would stay under
@@ -1899,12 +1789,13 @@ class TestSummarizationAsync:
         for i in range(100):
             msgs.extend(
                 [
-                    HumanMessage(content="question %d" % i),
-                    _ai_with_call("t8-aw-%d" % i, "memory", {"q": "x"}),
-                    _tool("x" * 400, "t8-aw-%d" % i),
+                    HumanMessage(content=f"question {i}"),
+                    _ai_with_call(f"t8-aw-{i}", "memory", {"q": "x"}),
+                    _tool("x" * 400, f"t8-aw-{i}"),
                 ]
             )
         req = make_request(msgs, session_id=sid, model=stub)
+
         async def handler(r):
             return "AWRAP-SENTINEL"
 
@@ -1913,9 +1804,7 @@ class TestSummarizationAsync:
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
 
     def test_awrap_model_call_fallback_skip_llm(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=8000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=8000, trigger=[("tokens", 500)])
         state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
         msgs = _history(turns=6, out_chars=4000)
         req = make_request(msgs, session_id=sid)
@@ -1942,10 +1831,7 @@ class TestSummarizationAsync:
         state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
         mw._before_agent_impl({"session_id": sid})
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
-        assert (
-            state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY"))
-            == 0
-        )
+        assert state_register_mem.get_state(sid, mget("_COMPRESSION_INEFFECTIVE_KEY")) == 0
         assert not state_register_mem.get_state(sid, mget("_SKIP_LLM_KEY"))
 
     def test_before_agent_no_session_key_noop(self):
@@ -1956,9 +1842,7 @@ class TestSummarizationAsync:
     # ---- integration ----------------------------------------------------------
 
     def test_wrap_and_apply_integration_roundtrip(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=2000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=2000, trigger=[("tokens", 500)])
         msgs = [
             HumanMessage(content="q1"),
             _ai_with_call("t8-ir-1", "search", {"q": "same"}),
@@ -1991,9 +1875,7 @@ class TestSummarizationAsync:
         assert not state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY"))
 
     def test_awrap_and_before_agent_reset_between_calls(self, sid):
-        mw = make_middleware(
-            main_llm_context_window=2000, trigger=[("tokens", 500)]
-        )
+        mw = make_middleware(main_llm_context_window=2000, trigger=[("tokens", 500)])
         msgs = [
             HumanMessage(content="q1"),
             _ai_with_call("t8-rb-1", "search", {"q": "same"}),
@@ -2004,6 +1886,7 @@ class TestSummarizationAsync:
             AIMessage(content="done"),
         ]
         req = make_request(msgs, session_id=sid)
+
         async def handler(r):
             return "AWRAP-SENTINEL"
 

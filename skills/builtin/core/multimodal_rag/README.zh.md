@@ -29,6 +29,7 @@
 import asyncio
 from skills.builtin.core.multimodal_rag.scripts import folder_index, file_index, query
 
+
 async def main():
     # 1) 将整个文件夹索引为知识图谱分类
     await folder_index("/path/to/documents", "my_docs")
@@ -39,6 +40,7 @@ async def main():
     # 3) 查询图谱（多跳检索）
     answer = await query("请问巨学力与源野汉娜之间是什么关系？")
     print(answer)
+
 
 asyncio.run(main())
 ```

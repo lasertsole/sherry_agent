@@ -37,7 +37,6 @@ Each entry is a light spec object with the following attributes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 
 @dataclass(frozen=True)
@@ -45,19 +44,19 @@ class ProviderSpec:
     """Immutable metadata for a single provider."""
 
     name: str
-    keywords: List[str]
+    keywords: list[str]
     is_oauth: bool = False
     is_local: bool = False
-    detect_by_base_keyword: Optional[str] = None
+    detect_by_base_keyword: str | None = None
     is_gateway: bool = False
-    default_api_base: Optional[str] = None
+    default_api_base: str | None = None
 
 
 # Registry order matters: ``fallthrough_order`` and gateway/local fallbacks
 # follow the order of ``PROVIDERS``. Explicit prefix matching precedes keyword
 # matching (see ``_match_provider``), so ``github-copilot/model`` correctly
 # resolves to ``github_copilot`` instead of ``openai_codex``.
-PROVIDERS: List[ProviderSpec] = [
+PROVIDERS: list[ProviderSpec] = [
     ProviderSpec(
         name="custom",
         keywords=["custom"],
@@ -164,7 +163,7 @@ PROVIDERS: List[ProviderSpec] = [
 _LOOKUP: dict[str, ProviderSpec] = {spec.name: spec for spec in PROVIDERS}
 
 
-def find_by_name(name: str) -> Optional[ProviderSpec]:
+def find_by_name(name: str) -> ProviderSpec | None:
     """Return the spec whose ``name`` equals *name*, or ``None``."""
     return _LOOKUP.get(name)
 

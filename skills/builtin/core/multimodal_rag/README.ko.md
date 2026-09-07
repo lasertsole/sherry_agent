@@ -29,6 +29,7 @@
 import asyncio
 from skills.builtin.core.multimodal_rag.scripts import folder_index, file_index, query
 
+
 async def main():
     # 1) 전체 폴더를 지식 그래프 카테고리로 인덱싱
     await folder_index("/path/to/documents", "my_docs")
@@ -39,6 +40,7 @@ async def main():
     # 3) 그래프 질의 (멀티홉 검색)
     answer = await query("거학력과 원야한나 사이의 관계는 무엇인가요?")
     print(answer)
+
 
 asyncio.run(main())
 ```

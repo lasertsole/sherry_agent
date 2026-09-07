@@ -70,9 +70,9 @@ _STILL_BLOCKED = ["rm -rf /", "echo hi && rm -rf /"]
 # SafeShellTool._run today (HITL hardline regex still catches them, but the
 # tool layer does not). Task 6's regex blacklist must block them.
 _BYPASS_TODAY = [
-    ["echo ok && rm -rf /"],      # danger embedded in a larger element
-    ["rm -rf /*"],                # not byte-equal to "rm -rf /"
-    ["rm  -rf /"],                # double space -> not byte-equal
+    ["echo ok && rm -rf /"],  # danger embedded in a larger element
+    ["rm -rf /*"],  # not byte-equal to "rm -rf /"
+    ["rm  -rf /"],  # double space -> not byte-equal
 ]
 
 _SENTINEL_TERMINAL = "__TERMINAL_EXECUTED__"
@@ -122,7 +122,7 @@ class TestTerminalBlacklist:
 
     @pytest.mark.parametrize("commands", _BYPASS_TODAY, ids=lambda c: repr(c))
     def test_element_exact_bypass_now_blocked_by_regex(self, commands, monkeypatch):
-        # # 特征化：当前缺陷，Task 6 将改为正则
+        # # Characterization: current defect; Task 6 will switch to regex
         # # WILL-CHANGE(Task 6) — UPDATED BY TASK 6: the defect is FIXED.
         # The element-exact ``bad in commands`` check was replaced by a regex
         # over the " && "-joined command string (DANGEROUS_COMMAND_REGEX,
@@ -179,7 +179,7 @@ class TestPythonReplWrapper:
 
     def test_simple_execution_returns_stdout(self):
         # # PRESERVE — print(1+1) -> "2". Task 7 must NOT break the wrapper
-        # protocol (plan: "不修改 _REPL_WRAPPER 脚本内容"; QA expects output "2").
+        # protocol (plan: "do not modify the _REPL_WRAPPER script content"; QA expects output "2").
         repl = build_python_repl_tool()
         out = repl.run({"query": "print(1+1)"})
         assert "2" in out, f"expected stdout '2' from the wrapper, got {out!r}"
@@ -424,7 +424,8 @@ class TestHitlGraphFlow:
         swallowed = [
             m
             for m in _tool_messages(out)
-            if getattr(m, "name", None) == "terminal" and "Approval interrupt failed" in (m.content or "")
+            if getattr(m, "name", None) == "terminal"
+            and "Approval interrupt failed" in (m.content or "")
         ]
         assert not swallowed, "GraphInterrupt must not be swallowed into a deny ToolMessage"
 
@@ -537,9 +538,9 @@ class TestHitlGraphFlow:
         assert recorded == ["git reset --hard"], "check_command is still called under YOLO"
         assert _pending_tasks(graph, config) == [], "YOLO must not interrupt"
         assert any(m.content == _SENTINEL_TERMINAL for m in _tool_messages(out))
-        assert not [
-            m for m in _tool_messages(out) if getattr(m, "status", None) == "error"
-        ], "YOLO pass must not produce a deny/error ToolMessage"
+        assert not [m for m in _tool_messages(out) if getattr(m, "status", None) == "error"], (
+            "YOLO pass must not produce a deny/error ToolMessage"
+        )
 
     def test_python_repl_not_intercepted_by_hitl(self):
         # # WILL-CHANGE(Task 8) — RESOLVED (Task 8 done). python_repl now has a

@@ -91,7 +91,7 @@ class DelegatedTaskHandle:
         )
         return str(status).upper() != "TERMINAL"
 
-    def poll(self) -> "DelegatedTaskHandle":
+    def poll(self) -> DelegatedTaskHandle:
         """Refresh terminal result fields from the live registry record (no sleep).
 
         Returns ``self`` for chaining.
@@ -111,7 +111,7 @@ class DelegatedTaskHandle:
 
     def result(
         self, timeout: float | None = None, poll_interval: float = 0.25
-    ) -> "DelegatedTaskHandle":
+    ) -> DelegatedTaskHandle:
         """Block until the run reaches a terminal state; returns ``self`` populated.
 
         Args:
@@ -344,7 +344,7 @@ def delegate_task(
     label: str | None = None,
     thinking: str | None = None,
     output_schema: dict[str, Any] | None = None,
-) -> "DelegatedTaskHandle":
+) -> DelegatedTaskHandle:
     """Dispatch a single sub-agent task synchronously.
 
     This is the practical counterpart to the ``sessions_spawn`` tool: it runs

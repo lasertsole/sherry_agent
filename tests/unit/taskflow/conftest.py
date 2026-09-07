@@ -21,7 +21,8 @@ import importlib.util
 import sys
 import types as stdlib_types
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import pytest
 

@@ -10,7 +10,7 @@ from .skill_tools import (
     build_skill_manage_tool as build_skill_manage_tool,
     build_skill_view_tool as build_skill_view_tool,
 )
-from typing import Callable
+from collections.abc import Callable
 from .mcp_plugin import build_mcp_tools
 from .terminal import build_terminal_tool
 from .subagent import build_subagent_runtime_tools

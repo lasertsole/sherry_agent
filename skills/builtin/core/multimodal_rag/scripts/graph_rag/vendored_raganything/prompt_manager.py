@@ -19,17 +19,17 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict
+from typing import Any
 
 from raganything.prompt import PROMPTS
 
 logger = logging.getLogger(__name__)
 
 # Store the original English prompts as the canonical fallback
-_ENGLISH_PROMPTS: Dict[str, Any] = PROMPTS.snapshot()
+_ENGLISH_PROMPTS: dict[str, Any] = PROMPTS.snapshot()
 
 # Registry of available prompt languages
-_PROMPT_LANGUAGES: Dict[str, Dict[str, Any]] = {
+_PROMPT_LANGUAGES: dict[str, dict[str, Any]] = {
     "en": _ENGLISH_PROMPTS,
 }
 
@@ -52,7 +52,7 @@ def _normalize_language_code(language_code: str) -> str:
     return normalized
 
 
-def _lazy_load_language(lang: str) -> Dict[str, Any]:
+def _lazy_load_language(lang: str) -> dict[str, Any]:
     """Lazily load prompt templates for a language."""
     if lang == "zh":
         from raganything.prompts_zh import PROMPTS_ZH
@@ -61,7 +61,7 @@ def _lazy_load_language(lang: str) -> Dict[str, Any]:
     return {}
 
 
-def register_prompt_language(language_code: str, prompts: Dict[str, Any]) -> None:
+def register_prompt_language(language_code: str, prompts: dict[str, Any]) -> None:
     """Register a new set of prompt templates for a language.
 
     Args:
@@ -117,7 +117,7 @@ def set_prompt_language(language: str) -> None:
     # Compute the resolved prompt set first, then atomically swap the active
     # prompt snapshot under a lock so readers never observe a cleared/partial
     # dictionary.
-    resolved: Dict[str, Any] = {}
+    resolved: dict[str, Any] = {}
     for key in _ENGLISH_PROMPTS:
         if key in target_prompts:
             resolved[key] = target_prompts[key]

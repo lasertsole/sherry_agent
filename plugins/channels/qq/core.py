@@ -201,9 +201,9 @@ class QQChannel(BaseChannel):
         else:
             self.config = QQConfig.model_validate(config)
         super().__init__(self.config, bus)
-        self._client: "botpy.Client | None" = None
+        self._client: botpy.Client | None = None
         self._processed_ids: deque = deque(maxlen=1000)
-        self._msg_seq: int = 1  # 消息序列号，避免被 QQ API 去重
+        self._msg_seq: int = 1  # Message sequence number to avoid dedup by the QQ API
         self._chat_type_cache: dict[str, str] = {}
 
     @staticmethod
@@ -341,7 +341,7 @@ class QQChannel(BaseChannel):
             self._processed_ids.append(data.id)
 
             content = (data.content or "").strip()
-            # 提取图片URL
+            # Extract image URLs
             media_urls = []
             if hasattr(data, "attachments") and data.attachments:
                 for attachment in data.attachments:
@@ -349,7 +349,7 @@ class QQChannel(BaseChannel):
                         media_urls.append(attachment.url)
                         logger.info(f"Received image: {attachment.filename} from {attachment.url}")
 
-            # 如果既没有文本内容也没有图片，则忽略
+            # Ignore when there is neither text content nor images
             if not content and not media_urls:
                 logger.debug(f"QQ message ignored: no content or media, message_id={data.id}")
                 return

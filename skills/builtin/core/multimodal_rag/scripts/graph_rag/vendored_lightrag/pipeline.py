@@ -25,7 +25,7 @@ import shutil
 import time
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
@@ -553,8 +553,8 @@ class _PipelineMixin:
                 "status": DocStatus.PENDING,
                 "content_summary": get_content_summary(body_text),
                 "content_length": len(body_text),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
                 "file_path": content_data["file_path"],
                 "track_id": track_id,
             }
@@ -700,8 +700,8 @@ class _PipelineMixin:
                         "content_length": attempt.get("content_length", 0),
                         "chunks_count": 0,
                         "chunks_list": [],
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
                         "file_path": file_path,
                         "track_id": track_id,  # Use current track_id for tracking
                         "error_msg": (
@@ -807,7 +807,7 @@ class _PipelineMixin:
             track_id = generate_track_id("error")
 
         error_docs: dict[str, Any] = {}
-        current_time = datetime.now(timezone.utc).isoformat()
+        current_time = datetime.now(UTC).isoformat()
 
         for error_file in error_files:
             file_path = normalize_document_file_path(error_file.get("file_path", "unknown_file"))
@@ -872,7 +872,7 @@ class _PipelineMixin:
                     {
                         "busy": True,
                         "job_name": "Default Job",
-                        "job_start": datetime.now(timezone.utc).isoformat(),
+                        "job_start": datetime.now(UTC).isoformat(),
                         "docs": 0,
                         "batchs": 0,  # Total number of files to be processed
                         "cur_batch": 0,  # Number of files already processed
@@ -1342,7 +1342,7 @@ class _PipelineMixin:
                 "chunks_count": preserved_chunks_count,
                 "chunks_list": preserved_chunks_list,
                 "created_at": status_doc.created_at,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
                 "file_path": resolved_file_path,
                 "track_id": getattr(status_doc, "track_id", ""),
                 "content_hash": getattr(status_doc, "content_hash", None),
@@ -2550,7 +2550,7 @@ class _PipelineMixin:
             "content_summary": status_doc.content_summary,
             "content_length": status_doc.content_length,
             "created_at": status_doc.created_at,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             "file_path": file_path,
             "track_id": status_doc.track_id,
             "content_hash": status_doc.content_hash,
@@ -2791,7 +2791,7 @@ class _PipelineMixin:
             if existing_status:
                 patched = dict(existing_status)
                 patched["content_hash"] = content_hash
-                patched["updated_at"] = datetime.now(timezone.utc).isoformat()
+                patched["updated_at"] = datetime.now(UTC).isoformat()
                 await self.doc_status.upsert({doc_id: patched})
         return content_hash
 
@@ -2817,7 +2817,7 @@ class _PipelineMixin:
         original_doc_id, original_doc = match
         original_track_id = doc_status_field(original_doc, "track_id", "")
         original_status = doc_status_field(original_doc, "status", "unknown")
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         message = (
             "Identical content already exists under another filename. "
             f"Original doc_id: {original_doc_id}, Status: {original_status}"
@@ -3132,7 +3132,7 @@ class _PipelineMixin:
             if not content_text:
                 return ""
             blockid = hashlib.md5(
-                f"{doc_id}:{block_idx}:{heading}:{content_text}".encode("utf-8")
+                f"{doc_id}:{block_idx}:{heading}:{content_text}".encode()
             ).hexdigest()
             blocks_lines.append(
                 json.dumps(
@@ -3323,7 +3323,7 @@ class _PipelineMixin:
 
         merged_text = "\n\n".join([x for x in merged_parts if x.strip()])
         doc_hash = hashlib.sha256(merged_text.encode("utf-8")).hexdigest()
-        parse_time = datetime.now(timezone.utc).isoformat()
+        parse_time = datetime.now(UTC).isoformat()
         meta = {
             "type": "meta",
             "format": "lightrag",

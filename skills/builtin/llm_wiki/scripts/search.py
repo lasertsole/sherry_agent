@@ -10,7 +10,7 @@ from pathlib import Path
 from collections import defaultdict
 from loguru import logger
 
-# 动态加载 core 模块
+# Dynamically load the core module
 _scripts_dir = Path(__file__).resolve().parent
 _core_spec = importlib.util.spec_from_file_location("wiki_core", str(_scripts_dir / "core.py"))
 _core = importlib.util.module_from_spec(_core_spec)
@@ -39,7 +39,7 @@ def search_wiki(keyword: str) -> list:
     pattern = os.path.join(str(wiki_root), "**", "*.md")
     for fpath in glob.glob(pattern, recursive=True):
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
+            with open(fpath, encoding="utf-8") as f:
                 content = f.read()
             if keyword.lower() in content.lower():
                 rel_path = os.path.relpath(fpath, str(wiki_root))
@@ -74,36 +74,36 @@ def lint_wiki() -> dict:
         report["errors"].append("Wiki directory does not exist")
         return report
 
-    # 扫描所有.md文件
+    # Scan all .md files
     all_md_files = []
     pattern = os.path.join(str(wiki_root), "**", "*.md")
     for fpath in glob.glob(pattern, recursive=True):
         rel_path = os.path.relpath(fpath, str(wiki_root))
-        # 排除根目录的SCHEMA/index/log
+        # Exclude root-level SCHEMA/index/log
         if rel_path in ("SCHEMA.md", "index.md", "log.md"):
             continue
         all_md_files.append(rel_path)
 
     report["total_pages"] = len(all_md_files)
 
-    # 构建wikilink引用图
+    # Build the wikilink reference graph
     inbound_links = defaultdict(set)
     outbound_links = defaultdict(set)
 
     for fpath in glob.glob(pattern, recursive=True):
         rel_path = os.path.relpath(fpath, str(wiki_root))
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
+            with open(fpath, encoding="utf-8") as f:
                 content = f.read()
 
-            # 提取 [[wikilinks]]
+            # Extract [[wikilinks]]
             links = re.findall(r"\[\[([^\]]+)\]\]", content)
             for link in links:
                 target = link.split("|")[0].strip()
                 outbound_links[rel_path].add(target)
                 inbound_links[target].add(rel_path)
 
-            # 检查frontmatter（跳过raw/目录，raw使用自己的frontmatter格式）
+            # Check frontmatter (skip raw/; raw uses its own frontmatter format)
             if not rel_path.startswith("raw") and content.startswith("---"):
                 parts = content.split("---", 2)
                 if len(parts) >= 3:
@@ -115,7 +115,7 @@ def lint_wiki() -> dict:
                             {"file": rel_path, "missing_fields": missing}
                         )
 
-            # 检查文件大小
+            # Check file size
             lines = content.split("\n")
             if len(lines) > 200:
                 report["large_pages"].append({"file": rel_path, "lines": len(lines)})
@@ -123,7 +123,7 @@ def lint_wiki() -> dict:
         except Exception as e:
             report["errors"].append(f"Failed to process {rel_path}: {e}")
 
-    # 孤儿页面：没有入链的页面（跳过raw/目录）
+    # Orphan pages: pages with no inbound links (skip raw/)
     for page in all_md_files:
         if page.startswith("raw"):
             continue
@@ -131,7 +131,7 @@ def lint_wiki() -> dict:
         if page_name not in inbound_links:
             report["orphan_pages"].append(page)
 
-    # 断链：指向不存在的页面
+    # Broken links: links pointing to nonexistent pages
     all_page_names = set()
     for p in all_md_files:
         all_page_names.add(Path(p).stem)

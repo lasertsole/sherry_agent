@@ -1,6 +1,6 @@
 """Sub-agent run record and three state-machine models: execution, completion, and delivery."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ from .spawn import SpawnMode, ContextMode
 from .capability import SubagentSessionRole, ControlScope
 
 
-class ExecutionStatus(str, Enum):
+class ExecutionStatus(StrEnum):
     """Top-level execution phase of a sub-agent run."""
 
     RUNNING = "running"
@@ -17,7 +17,7 @@ class ExecutionStatus(str, Enum):
     TERMINAL = "terminal"
 
 
-class DeliveryStatus(str, Enum):
+class DeliveryStatus(StrEnum):
     """Lifecycle of a completion-delivery attempt from the sub-agent to its parent."""
 
     NOT_REQUIRED = "not_required"
@@ -29,7 +29,7 @@ class DeliveryStatus(str, Enum):
     DISCARDED = "discarded"
 
 
-class RunOutcomeStatus(str, Enum):
+class RunOutcomeStatus(StrEnum):
     """Terminal outcome category for a sub-agent run."""
 
     OK = "ok"

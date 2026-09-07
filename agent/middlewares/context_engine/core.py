@@ -3,9 +3,10 @@ from loguru import logger
 from langgraph.types import Command
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
-from typing_extensions import override
+from typing import override
 from context_engine import add_messages
-from typing import Callable, Awaitable, Any, cast
+from typing import Any, cast
+from collections.abc import Callable, Awaitable
 from workspace.prompt_builder import build_system_prompt
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from runtime import state_register_db, state_register_mem

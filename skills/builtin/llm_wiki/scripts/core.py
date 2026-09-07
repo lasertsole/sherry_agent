@@ -8,14 +8,14 @@ import json
 from pathlib import Path
 from loguru import logger
 
-# 动态定位项目根目录 (skills/builtin/llm_wiki/scripts/ 向上4层)
+# Dynamically locate the project root (4 levels up from skills/builtin/llm_wiki/scripts/)
 current_file = Path(__file__).resolve()
 project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # ============================================================
-# Wiki 目录结构定义 (JSON格式，省token且易解析)
+# Wiki directory structure definition (JSON format: saves tokens and is easy to parse)
 # ============================================================
 WIKI_STRUCTURE = {
     "wiki": {
@@ -72,13 +72,13 @@ def init_wiki() -> dict:
     wiki_root = get_wiki_path()
 
     try:
-        # 创建根目录
+        # Create the root directory
         wiki_root.mkdir(parents=True, exist_ok=True)
         result["created_dirs"].append(str(wiki_root))
 
         struct = WIKI_STRUCTURE["wiki"]
 
-        # 创建 raw/ 下的子目录
+        # Create subdirectories under raw/
         raw = struct.get("raw", {})
         if isinstance(raw, dict):
             for subdir_name in raw:
@@ -88,7 +88,7 @@ def init_wiki() -> dict:
                 subdir_path.mkdir(parents=True, exist_ok=True)
                 result["created_dirs"].append(str(subdir_path))
 
-        # 创建其他分类目录 (entities, concepts, comparisons, queries)
+        # Create the other category directories (entities, concepts, comparisons, queries)
         for key, value in struct.items():
             if key == "root" or key == "raw":
                 continue
@@ -97,7 +97,7 @@ def init_wiki() -> dict:
                 dir_path.mkdir(parents=True, exist_ok=True)
                 result["created_dirs"].append(str(dir_path))
 
-        # 创建根目录下的文件 (SCHEMA.md, index.md, log.md)
+        # Create root-level files (SCHEMA.md, index.md, log.md)
         root_files = struct.get("root", [])
         for fname in root_files:
             fpath = wiki_root / fname

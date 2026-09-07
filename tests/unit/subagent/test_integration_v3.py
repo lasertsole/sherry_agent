@@ -319,7 +319,7 @@ class TestDeliveryDualPathIntegration:
         )
         findings = build_child_completion_findings(run)
         assert "builder" in findings
-        assert "OK" in findings
+        assert "ok" in findings
 
     def test_sub_to_user_findings_format(self):
         run = SubagentRunRecord(

@@ -7,7 +7,7 @@ from typing import Any
 from loguru import logger
 from config import SRC_DIR
 from pub_func import is_url
-from typing_extensions import override
+from typing import override
 from langgraph.runtime import Runtime
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import BaseMessage, HumanMessage

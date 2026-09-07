@@ -238,9 +238,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
 
     def _run_wrapped(self, argv: list[str], env: dict[str, str]) -> str:
         """Sandboxed sync path: list-exec of the backend-wrapped argv."""
-        return self._execute_sync(
-            argv, shell=False, env=env, encoding=self._encoding
-        )
+        return self._execute_sync(argv, shell=False, env=env, encoding=self._encoding)
 
     # ── Tool entry points ───────────────────────────────────────────────────
 
@@ -312,14 +310,12 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     cwd=str(ROOT_DIR),
                     env=env,
                 )
-            stdout_bytes, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=TERMINAL_TIMEOUT
-            )
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=TERMINAL_TIMEOUT)
             output = stdout_bytes.decode(self._encoding, errors="replace")
             if proc.returncode != 0:
                 return f"Exit code {proc.returncode}\n{output}"
             return output
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if proc:
                 proc.kill()
                 await proc.communicate()

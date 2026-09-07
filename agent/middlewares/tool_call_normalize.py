@@ -1,7 +1,7 @@
 from typing import Any
 from langgraph.runtime import Runtime
 from loguru import logger
-from typing_extensions import override
+from typing import override
 from langchain_core.messages import RemoveMessage, BaseMessage
 from pub_func import sanitize_tool_use_result_pairing
 from langgraph.graph.message import REMOVE_ALL_MESSAGES

@@ -14,7 +14,8 @@ module exposes:
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from graph_rag.vendored_lightrag.constants import DEFAULT_SUMMARY_LANGUAGE
 from graph_rag.vendored_lightrag.utils import get_env_value, logger

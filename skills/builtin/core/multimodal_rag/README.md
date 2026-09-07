@@ -29,6 +29,7 @@ The skill ships with the EMA agent — no separate installation is needed. The R
 import asyncio
 from skills.builtin.core.multimodal_rag.scripts import folder_index, file_index, query
 
+
 async def main():
     # 1) Index an entire folder into a knowledge-graph category
     await folder_index("/path/to/documents", "my_docs")
@@ -39,6 +40,7 @@ async def main():
     # 3) Query the graph (multi-hop retrieval)
     answer = await query("What is the relationship between JuXueLi and YuanYe HanNa?")
     print(answer)
+
 
 asyncio.run(main())
 ```

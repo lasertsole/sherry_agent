@@ -52,7 +52,8 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from graph_rag.vendored_lightrag.table_markup import (
     TABLE_TAG_RE as _TABLE_TAG_RE,

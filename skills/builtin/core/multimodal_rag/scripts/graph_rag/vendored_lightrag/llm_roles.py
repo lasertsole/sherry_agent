@@ -15,7 +15,8 @@ import inspect
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from graph_rag.vendored_lightrag.utils import (
     get_env_value,

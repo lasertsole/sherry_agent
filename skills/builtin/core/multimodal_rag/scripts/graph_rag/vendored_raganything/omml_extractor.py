@@ -42,7 +42,7 @@ from __future__ import annotations
 import logging
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 from xml.etree import ElementTree as ET
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ _W = "{" + NS["w"] + "}"
 # OMML "n-ary" operator characters and their LaTeX equivalents. Word stores
 # the operator as a Unicode codepoint inside m:naryPr/m:chr; if the chr
 # attribute is absent it defaults to the integral sign (\u222b).
-_NARY_OPERATORS: Dict[str, str] = {
+_NARY_OPERATORS: dict[str, str] = {
     "\u2211": r"\sum",  # SUMMATION
     "\u220f": r"\prod",  # PRODUCT
     "\u2210": r"\coprod",  # COPRODUCT
@@ -81,7 +81,7 @@ _NARY_OPERATORS: Dict[str, str] = {
 # A small mapping of Unicode math symbols Word likes to use in m:t runs.
 # The set is intentionally minimal; anything not in the table is passed
 # through unchanged so that ``\alpha`` and ``α`` both remain searchable.
-_SYMBOL_TO_LATEX: Dict[str, str] = {
+_SYMBOL_TO_LATEX: dict[str, str] = {
     "\u00b1": r"\pm",
     "\u00d7": r"\times",
     "\u00f7": r"\div",
@@ -109,8 +109,8 @@ _SYMBOL_TO_LATEX: Dict[str, str] = {
 
 
 def extract_omml_equations(
-    docx_path: Union[str, Path],
-) -> List[Dict[str, Any]]:
+    docx_path: str | Path,
+) -> list[dict[str, Any]]:
     """Extract every OMML equation from a DOCX file in document order.
 
     Parameters
@@ -165,7 +165,7 @@ def extract_omml_equations(
     except ET.ParseError as e:
         raise ValueError(f"Could not parse word/document.xml in {path}: {e}") from e
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     # iter() walks the entire tree in document order, which is exactly what
     # we want: the resulting list is ordered the same way Word renders the
     # equations on screen.
@@ -214,12 +214,12 @@ def extract_omml_equations(
 
 
 def enrich_content_list_with_docx_equations(
-    content_list: List[Dict[str, Any]],
-    docx_path: Union[str, Path],
+    content_list: list[dict[str, Any]],
+    docx_path: str | Path,
     *,
     page_idx_key: str = "page_idx",
     deduplicate_existing_equations: bool = True,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Merge OMML equations extracted from ``docx_path`` into a parsed content list.
 
     The DOCX → PDF conversion that both the MinerU and Docling parsers rely on
@@ -299,7 +299,7 @@ def enrich_content_list_with_docx_equations(
         except (TypeError, ValueError):
             last_page_idx = 0
 
-    enriched: List[Dict[str, Any]] = list(content_list)
+    enriched: list[dict[str, Any]] = list(content_list)
     appended = 0
     for eq in extracted:
         latex = eq["text"].strip()
@@ -355,7 +355,7 @@ def omml_to_latex(element: ET.Element) -> str:
     return _convert(element)
 
 
-def _convert(element: Optional[ET.Element]) -> str:
+def _convert(element: ET.Element | None) -> str:
     if element is None:
         return ""
 
@@ -396,17 +396,17 @@ def _escape_text(text: str) -> str:
     return "".join(out)
 
 
-def _children_by_tag(element: ET.Element, tag: str) -> List[ET.Element]:
+def _children_by_tag(element: ET.Element, tag: str) -> list[ET.Element]:
     full = _M + tag
     return [c for c in element if c.tag == full]
 
 
-def _first_child(element: ET.Element, tag: str) -> Optional[ET.Element]:
+def _first_child(element: ET.Element, tag: str) -> ET.Element | None:
     children = _children_by_tag(element, tag)
     return children[0] if children else None
 
 
-def _convert_children(element: Optional[ET.Element]) -> str:
+def _convert_children(element: ET.Element | None) -> str:
     # Tolerate a missing child element: handlers like _h_fraction or
     # _h_radical pass the result of _first_child() directly here, which can
     # be None when the source DOCX is malformed (a fraction without m:num,
@@ -712,7 +712,7 @@ def _h_pass_through(element: ET.Element) -> str:
 
 # Map of OMML local-name → handler. Anything not listed falls through to the
 # generic recursive descent in :func:`_convert`, which preserves text content.
-_HANDLERS: Dict[str, Any] = {
+_HANDLERS: dict[str, Any] = {
     "oMath": _h_omath,
     "oMathPara": _h_omath_para,
     "r": _h_run,

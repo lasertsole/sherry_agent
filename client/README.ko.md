@@ -174,28 +174,28 @@ client/
 
 ## 기술 스택
 
-| 계층 | 기술 | 목적 |
-|-------|-----------|---------|
-| **크로스 플랫폼 셸** | [Tauri 2](https://v2.tauri.app/)(`2.0.0-rc.17`, `@tauri-apps/api` ^2.11.1, `@tauri-apps/cli` 2.11.4) | 네이티브 데스크톱 패키징 + 설정/케이퍼빌리티/아이콘 |
-| **프런트엔드 프레임워크** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41 | SPA 모드(`ssr: false`), Composition API + `<script setup lang="ts">` |
-| **UI 컴포넌트** | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0(`@primevue/nuxt-module`) | Dialog, Button, Select, ToggleSwitch, Toast 등 |
-| **상태 관리** | [Pinia](https://pinia.vuejs.org/) ^4.0.3(`@pinia/nuxt`) + `pinia-plugin-persistedstate`(localStorage) | 전역 UI 상태(사이드바, 테마 엔트리) |
-| **스타일링** | [Tailwind CSS](https://tailwindcss.com/) v4(`@tailwindcss/vite` 경유) + SCSS(`sass`) | 유틸리티 퍼스트 CSS + `@theme` 토큰 + SCSS 믹스인 라이브러리 |
-| **컬러 모드** | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/) | 다크/라이트 테마 전환(`.dark` 클래스) |
-| **국제화** | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0 | zh / en / ja / ko, `no_prefix` 전략 |
-| **Markdown 렌더링** | [markdown-it](https://github.com/markdown-it/markdown-it) ^15 | 채팅 메시지 markdown → HTML(ChatBox.vue) |
-| **XSS 방어** | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4 | 렌더링된 HTML 새니타이즈 |
-| **날짜 포맷** | [dayjs](https://day.js.org/) | 컴팩트 타임스탬프(`YYYYMMDDHHmmss`) 파싱/포맷 |
-| **오프라인 저장소** | [Dexie.js](https://dexie.org/) ^4.4.4 | IndexedDB 래퍼: 메시지, 캐릭터, 배경, 서브에이전트 실행, 클라이언트 로그 |
-| **이벤트 버스** | [mitt](https://github.com/developit/mitt) ^3 | 경량 컴포넌트 간 통신 |
-| **차트 / 그래프** | [@antv/g2](https://g2.antv.antgroup.com/) ^5, [@antv/g6](https://g6.antv.antgroup.com/) ^5 | 통계 차트, 서브에이전트 플로우 그래프, 지식 그래프 |
-| **이미지 크롭** | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6 | 아바타 업로드 및 크롭 |
-| **유틸리티** | [lodash-es](https://lodash.com/) ^4.18 | 범용 유틸리티 함수 |
-| **단위 / 통합 테스트** | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8 | 컴포저블 단위 테스트 + SFC 통합 테스트 |
-| **E2E repro** | [@playwright/test](https://playwright.dev/) ^1.62 | 개발 서버 대상 repro 테스트(Desktop Edge) |
-| **Lint / 포맷** | ESLint ^10(flat config) + Prettier | 코드 품질 |
-| **타입 체크** | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9 | `pnpm typecheck` |
-| **백엔드 언어** | [Rust](https://www.rust-lang.org/) 2021 edition(MSRV 1.94) | Tauri 셸(src-tauri/, 현재는 플레이스홀더 모듈) |
+| 계층                      | 기술                                                                                                  | 목적                                                                     |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **크로스 플랫폼 셸**      | [Tauri 2](https://v2.tauri.app/)(`2.0.0-rc.17`, `@tauri-apps/api` ^2.11.1, `@tauri-apps/cli` 2.11.4)  | 네이티브 데스크톱 패키징 + 설정/케이퍼빌리티/아이콘                      |
+| **프런트엔드 프레임워크** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                              | SPA 모드(`ssr: false`), Composition API + `<script setup lang="ts">`     |
+| **UI 컴포넌트**           | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0(`@primevue/nuxt-module`)                 | Dialog, Button, Select, ToggleSwitch, Toast 등                           |
+| **상태 관리**             | [Pinia](https://pinia.vuejs.org/) ^4.0.3(`@pinia/nuxt`) + `pinia-plugin-persistedstate`(localStorage) | 전역 UI 상태(사이드바, 테마 엔트리)                                      |
+| **스타일링**              | [Tailwind CSS](https://tailwindcss.com/) v4(`@tailwindcss/vite` 경유) + SCSS(`sass`)                  | 유틸리티 퍼스트 CSS + `@theme` 토큰 + SCSS 믹스인 라이브러리             |
+| **컬러 모드**             | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                  | 다크/라이트 테마 전환(`.dark` 클래스)                                    |
+| **국제화**                | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                       | zh / en / ja / ko, `no_prefix` 전략                                      |
+| **Markdown 렌더링**       | [markdown-it](https://github.com/markdown-it/markdown-it) ^15                                         | 채팅 메시지 markdown → HTML(ChatBox.vue)                                 |
+| **XSS 방어**              | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4                                                 | 렌더링된 HTML 새니타이즈                                                 |
+| **날짜 포맷**             | [dayjs](https://day.js.org/)                                                                          | 컴팩트 타임스탬프(`YYYYMMDDHHmmss`) 파싱/포맷                            |
+| **오프라인 저장소**       | [Dexie.js](https://dexie.org/) ^4.4.4                                                                 | IndexedDB 래퍼: 메시지, 캐릭터, 배경, 서브에이전트 실행, 클라이언트 로그 |
+| **이벤트 버스**           | [mitt](https://github.com/developit/mitt) ^3                                                          | 경량 컴포넌트 간 통신                                                    |
+| **차트 / 그래프**         | [@antv/g2](https://g2.antv.antgroup.com/) ^5, [@antv/g6](https://g6.antv.antgroup.com/) ^5            | 통계 차트, 서브에이전트 플로우 그래프, 지식 그래프                       |
+| **이미지 크롭**           | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6                                           | 아바타 업로드 및 크롭                                                    |
+| **유틸리티**              | [lodash-es](https://lodash.com/) ^4.18                                                                | 범용 유틸리티 함수                                                       |
+| **단위 / 통합 테스트**    | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8                  | 컴포저블 단위 테스트 + SFC 통합 테스트                                   |
+| **E2E repro**             | [@playwright/test](https://playwright.dev/) ^1.62                                                     | 개발 서버 대상 repro 테스트(Desktop Edge)                                |
+| **Lint / 포맷**           | ESLint ^10(flat config) + Prettier                                                                    | 코드 품질                                                                |
+| **타입 체크**             | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                             | `pnpm typecheck`                                                         |
+| **백엔드 언어**           | [Rust](https://www.rust-lang.org/) 2021 edition(MSRV 1.94)                                            | Tauri 셸(src-tauri/, 현재는 플레이스홀더 모듈)                           |
 
 ### 주요 설정
 
@@ -228,25 +228,25 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 
 `bridge.ts`는 Tauri 데스크톱과 브라우저 두 모드 모두에서 작동하는 통합 API를 제공합니다. 모든 백엔드 접근은 이것(또는 `requestApi.ts`의 `fetchApi`)을 통해 이루어집니다:
 
-| API | 설명 |
-|-----|-------------|
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)` | 스트리밍 에이전트 채팅; `{ controller, promise }` 반환(Tauri Events 또는 `/sessions/agent/ws`) |
-| `sendChatMessage(request, onChunk)` | `streamChatMessage`의 편의 래퍼 |
-| `stopChatMessage(sessionId)` | 진행 중인 생성 중지(`agent_stop` IPC 또는 WS `stop` 프레임) |
-| `resumeHitl(sessionId, decision, ...)` | 새 WebSocket으로 일시 중지된 HITL 에이전트 재개 |
-| `clearSession(sessionId)` | 세션 상태 클리어(`session_clear` IPC 또는 `DELETE /sessions`) |
-| `getHistory(sessionId, lastTurnCount)` | 히스토리 조회(`session_history` IPC 또는 `GET /n_turns_history_messages`) |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun` | 백그라운드 서브에이전트 작업 관리 |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate` | 시스템 프롬프트 파일 CRUD |
-| `readMemory` / `writeMemory` | 장기 메모리 파일(`workspace/memory/*`) |
-| `readHeartbeat` / `writeHeartbeat` | `workspace/HEARTBEAT.md`(항상 직접 HTTP) |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | cron 작업 관리 |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill` | 스킬 관리 |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig` | 채널 설정 |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings` | 자동 스킬 curator 제어 |
-| `listLogFiles` / `readLogFile` / `openLogStream` | 백엔드 로그 읽기 + 실시간 `/logs/ws` 스트림 |
-| `readEnvConfig` / `writeEnvConfig`(`env.ts`) | 백엔드 `.env` 읽기/업데이트(`GET/PUT /env`) |
-| `checkHealth()` | 백엔드 도달 가능성(`system_health` IPC 또는 `GET /system_prompt`) |
+| API                                                                                                | 설명                                                                                           |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | 스트리밍 에이전트 채팅; `{ controller, promise }` 반환(Tauri Events 또는 `/sessions/agent/ws`) |
+| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage`의 편의 래퍼                                                                |
+| `stopChatMessage(sessionId)`                                                                       | 진행 중인 생성 중지(`agent_stop` IPC 또는 WS `stop` 프레임)                                    |
+| `resumeHitl(sessionId, decision, ...)`                                                             | 새 WebSocket으로 일시 중지된 HITL 에이전트 재개                                                |
+| `clearSession(sessionId)`                                                                          | 세션 상태 클리어(`session_clear` IPC 또는 `DELETE /sessions`)                                  |
+| `getHistory(sessionId, lastTurnCount)`                                                             | 히스토리 조회(`session_history` IPC 또는 `GET /n_turns_history_messages`)                      |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | 백그라운드 서브에이전트 작업 관리                                                              |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | 시스템 프롬프트 파일 CRUD                                                                      |
+| `readMemory` / `writeMemory`                                                                       | 장기 메모리 파일(`workspace/memory/*`)                                                         |
+| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`(항상 직접 HTTP)                                                       |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | cron 작업 관리                                                                                 |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | 스킬 관리                                                                                      |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 채널 설정                                                                                      |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 자동 스킬 curator 제어                                                                         |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 백엔드 로그 읽기 + 실시간 `/logs/ws` 스트림                                                    |
+| `readEnvConfig` / `writeEnvConfig`(`env.ts`)                                                       | 백엔드 `.env` 읽기/업데이트(`GET/PUT /env`)                                                    |
+| `checkHealth()`                                                                                    | 백엔드 도달 가능성(`system_health` IPC 또는 `GET /system_prompt`)                              |
 
 브라우저 모드 채팅 스트리밍 세부 사항:
 
@@ -260,10 +260,10 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 
 서로 독립적인 2개의 모듈 수준 싱글턴 연결(둘 다 5초 후 자동 재연결):
 
-| 연결 | 엔드포인트 | mitt로 발행되는 이벤트 |
-|-----------|----------|-----------------|
-| 세션 푸시 | `/sessions/ws?session_id=default` | `ws:connected`, `ws:notification`, `ws:message`, `ws:disconnected` |
-| 서브에이전트 푸시 | `/subagents/ws` | `ws:subagents:connected`, `ws:subagents:ready`, `ws:subagent_spawned`, `ws:subagent_ended`, `ws:subagents:message`, `ws:subagents:disconnected` |
+| 연결              | 엔드포인트                        | mitt로 발행되는 이벤트                                                                                                                          |
+| ----------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 세션 푸시         | `/sessions/ws?session_id=default` | `ws:connected`, `ws:notification`, `ws:message`, `ws:disconnected`                                                                              |
+| 서브에이전트 푸시 | `/subagents/ws`                   | `ws:subagents:connected`, `ws:subagents:ready`, `ws:subagent_spawned`, `ws:subagent_ended`, `ws:subagents:message`, `ws:subagents:disconnected` |
 
 둘 다 `VITE_API_BACK_URL`에서 베이스 URL을 해석합니다(`http://` → `ws://`, `https://` → `wss://`).
 
@@ -271,29 +271,29 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 
 REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
-| 엔드포인트 | 메서드 | 용도 |
-|----------|-----------|---------|
-| `/sessions` | DELETE | 세션 클리어 |
-| `/n_turns_history_messages` | GET | 최근 N턴 히스토리 |
-| `/get_history_by_turn_page` | GET | 페이지네이션된 히스토리(Dexie로 캐시 우선) |
-| `/sessions/agent/ws` | WS | 채팅 스트리밍, 중지, HITL 재개 |
-| `/sessions/ws` | WS | 서버 푸시 알림 |
-| `/subagents/ws` | WS | 서브에이전트 생성/종료 푸시 |
-| `/subagents/runs` | GET / DELETE | 서브에이전트 실행 기록(목록/서브트리/삭제) |
-| `/subagents/steer` | POST | 서브에이전트 실행 스티어/재개 |
-| `/system_prompt` | GET / POST / PATCH / PUT | 시스템 프롬프트 읽기/쓰기/업데이트 |
-| `/system_prompt/template` | GET | 페르소나 템플릿 파일 |
-| `/memory` | GET / PUT | 장기 메모리 파일 |
-| `/heartbeat` | GET / PUT | HEARTBEAT.md |
-| `/cron`, `/cron/trigger`, `/cron/enable` | GET/POST/PUT/DELETE | cron 작업 CRUD + 트리거 |
-| `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST | 스킬 관리 |
-| `/curator/run`, `/curator/settings` | POST / GET / PUT | curator 리뷰 및 설정 |
-| `/channels`, `/channels/{name}`, `/channels/{name}/config` | GET / PUT | 채널 토글 및 설정 |
-| `/env` | GET / PUT | 백엔드 `.env` 읽기/업데이트 |
-| `/logs/files`, `/logs` | GET | 로그 파일 목록 및 꼬리 읽기 |
-| `/logs/ws` | WS | 실시간 로그 스트림 |
-| `/images/upload`, `/audio/upload`, `/video/upload` | POST | Base64 미디어 업로드 → URL |
-| `/media` | GET | 저장된 미디어 파일 렌더링 |
+| 엔드포인트                                                                                       | 메서드                   | 용도                                       |
+| ------------------------------------------------------------------------------------------------ | ------------------------ | ------------------------------------------ |
+| `/sessions`                                                                                      | DELETE                   | 세션 클리어                                |
+| `/n_turns_history_messages`                                                                      | GET                      | 최근 N턴 히스토리                          |
+| `/get_history_by_turn_page`                                                                      | GET                      | 페이지네이션된 히스토리(Dexie로 캐시 우선) |
+| `/sessions/agent/ws`                                                                             | WS                       | 채팅 스트리밍, 중지, HITL 재개             |
+| `/sessions/ws`                                                                                   | WS                       | 서버 푸시 알림                             |
+| `/subagents/ws`                                                                                  | WS                       | 서브에이전트 생성/종료 푸시                |
+| `/subagents/runs`                                                                                | GET / DELETE             | 서브에이전트 실행 기록(목록/서브트리/삭제) |
+| `/subagents/steer`                                                                               | POST                     | 서브에이전트 실행 스티어/재개              |
+| `/system_prompt`                                                                                 | GET / POST / PATCH / PUT | 시스템 프롬프트 읽기/쓰기/업데이트         |
+| `/system_prompt/template`                                                                        | GET                      | 페르소나 템플릿 파일                       |
+| `/memory`                                                                                        | GET / PUT                | 장기 메모리 파일                           |
+| `/heartbeat`                                                                                     | GET / PUT                | HEARTBEAT.md                               |
+| `/cron`, `/cron/trigger`, `/cron/enable`                                                         | GET/POST/PUT/DELETE      | cron 작업 CRUD + 트리거                    |
+| `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST                 | 스킬 관리                                  |
+| `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | curator 리뷰 및 설정                       |
+| `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | 채널 토글 및 설정                          |
+| `/env`                                                                                           | GET / PUT                | 백엔드 `.env` 읽기/업데이트                |
+| `/logs/files`, `/logs`                                                                           | GET                      | 로그 파일 목록 및 꼬리 읽기                |
+| `/logs/ws`                                                                                       | WS                       | 실시간 로그 스트림                         |
+| `/images/upload`, `/audio/upload`, `/video/upload`                                               | POST                     | Base64 미디어 업로드 → URL                 |
+| `/media`                                                                                         | GET                      | 저장된 미디어 파일 렌더링                  |
 
 ---
 

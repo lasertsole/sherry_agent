@@ -21,16 +21,16 @@ const response = await invoke<PromptFileResponse>('system_prompt_read');
 
 `PromptFileResponse` — 文件名到内容的映射。
 
-| 字段 | 类型 | 说明 |
-|-------|------|-------------|
+| 字段              | 类型                     | 说明                   |
+| ----------------- | ------------------------ | ---------------------- |
 | `file_to_content` | `Record<string, string>` | 文件名到文件内容的映射 |
 
 ### 可能的错误
 
-| 错误码 | 说明 | 可重试 |
-|------|-------------|-----------|
-| `IO_ERROR` | 读取提示词文件失败 | 是 |
-| `CONFIG_ERROR` | 提示词文件格式无效 | 否 |
+| 错误码         | 说明               | 可重试 |
+| -------------- | ------------------ | ------ |
+| `IO_ERROR`     | 读取提示词文件失败 | 是     |
+| `CONFIG_ERROR` | 提示词文件格式无效 | 否     |
 
 ### 示例
 
@@ -52,20 +52,20 @@ console.log(response.file_to_content['AGENTS.md']);
 
 ```typescript
 await invoke('system_prompt_write', {
-  payload: PromptFilePayload,
+  payload: PromptFilePayload
 });
 ```
 
 ### 参数
 
-| 参数 | 类型 | 必填 | 说明 |
-|-----------|------|----------|-------------|
-| `payload` | [`PromptFilePayload`](/zh/types/reference#promptfilepayload) | 是 | 要写入的文件 |
+| 参数      | 类型                                                         | 必填 | 说明         |
+| --------- | ------------------------------------------------------------ | ---- | ------------ |
+| `payload` | [`PromptFilePayload`](/zh/types/reference#promptfilepayload) | 是   | 要写入的文件 |
 
 #### PromptFilePayload
 
-| 字段 | 类型 | 说明 |
-|-------|------|-------------|
+| 字段              | 类型                     | 说明                 |
+| ----------------- | ------------------------ | -------------------- |
 | `file_to_content` | `Record<string, string>` | 文件名到新内容的映射 |
 
 ### 返回值
@@ -74,10 +74,10 @@ await invoke('system_prompt_write', {
 
 ### 可能的错误
 
-| 错误码 | 说明 | 可重试 |
-|------|-------------|-----------|
-| `IO_ERROR` | 写入提示词文件失败 | 是 |
-| `CONFIG_ERROR` | 文件内容无效 | 否 |
+| 错误码         | 说明               | 可重试 |
+| -------------- | ------------------ | ------ |
+| `IO_ERROR`     | 写入提示词文件失败 | 是     |
+| `CONFIG_ERROR` | 文件内容无效       | 否     |
 
 ### 示例
 
@@ -88,9 +88,9 @@ await invoke('system_prompt_write', {
   payload: {
     file_to_content: {
       'AGENTS.md': '# 更新后的 Agent 配置\n...',
-      'SOUL.md': '# 更新后的灵魂\n...',
-    },
-  },
+      'SOUL.md': '# 更新后的灵魂\n...'
+    }
+  }
 });
 ```
 
@@ -104,7 +104,7 @@ await invoke('system_prompt_write', {
 
 ```typescript
 await invoke('system_prompt_update', {
-  payload: PromptFilePayload,
+  payload: PromptFilePayload
 });
 ```
 
@@ -128,8 +128,8 @@ import { invoke } from '@tauri-apps/api/core';
 await invoke('system_prompt_update', {
   payload: {
     file_to_content: {
-      'AGENTS.md': '# 追加的内容...',
-    },
-  },
+      'AGENTS.md': '# 追加的内容...'
+    }
+  }
 });
 ```

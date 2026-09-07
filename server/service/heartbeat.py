@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from loguru import logger
 from config import PLUGINS_PATH
 from config.path import HEARTBEAT_PATH
@@ -9,7 +9,8 @@ from type.bus import OutboundMessage
 from langchain.agents import create_agent
 from workspace import CORE_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
-from channels import BaseChannel, channel_manager
+from channels import channel_manager
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 from runtime import relation_register
 from workspace.prompt_builder import build_system_prompt
@@ -78,7 +79,7 @@ async def process_heartbeat_task(task: str) -> str:
         ensure_workspace_system_files()
 
         # Get graph-memory system prompt
-        main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
+        main_llm = cast("BaseChatModel", build_main_llm())  # fresh LLM for the current event loop
 
         agent: CompiledStateGraph = create_agent(
             model=main_llm,
@@ -161,7 +162,7 @@ async def process_heartbeat_notify(agent_res: str) -> None:
                 res[name] = receiver
 
     for name, receiver in res.items():
-        channel: BaseChannel = channel_manager.get_channel(name)
+        channel = channel_manager.get_channel(name)
         if channel:
             await channel.send(OutboundMessage(channel=name, chat_id=receiver, content=agent_res))
 

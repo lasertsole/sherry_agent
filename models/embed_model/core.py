@@ -1,4 +1,3 @@
-import re
 import sys
 import json
 import math
@@ -6,15 +5,12 @@ import urllib3
 import requests
 from pathlib import Path
 from loguru import logger
-from config import ENV_PATH
 from models.utils import read_env_file_value as _read_dotenv
 from langchain_core.embeddings import Embeddings
 
 
 _MODEL_DIR = Path(__file__).resolve().parent
 _WEIGHT_DIR = _MODEL_DIR / "model_weight"
-
-
 
 
 def _abort(msg: str) -> None:

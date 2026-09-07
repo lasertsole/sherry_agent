@@ -1,11 +1,11 @@
-# -*- encoding: utf-8 -*-
 import re
 import yaml
 import logging
 import functools
 import numpy as np
 from pathlib import Path
-from typing import Any, Iterable, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Iterable
 
 
 try:
@@ -361,7 +361,7 @@ def read_yaml(yaml_path: str | Path) -> dict:
     return data
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_logger(name="funasr_onnx"):
     """Initialize and get a logger by name.
     If the logger has not been initialized, this method will initialize the

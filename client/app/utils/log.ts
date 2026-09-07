@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- this file IS the log infrastructure (logger sink); see eslint.config.mjs "Log infrastructure owns console calls". */
 /**
  * Environment-aware logging utility (Nuxt-adapted version of the minimal implementation
  * from the "error captured factory function" doc, 03-errorCapturedFactoryFunction.md §2.3).

@@ -68,7 +68,8 @@ extend-exclude = [
 [tool.ruff.lint]
 # Pin the rule set explicitly: ruff's built-in defaults expand across versions
 # (0.16 pulled in I/B/C4/RUF/FURB/PLC/PYI), which made the gate unrunnable.
-select = ["E4", "E7", "E9", "F"]
+# UP (pyupgrade) enforces Python 3.13+ idioms per [tool.ruff] target-version.
+select = ["E4", "E7", "E9", "F", "UP"]
 
 [tool.basedpyright]
 typeCheckingMode = "standard"

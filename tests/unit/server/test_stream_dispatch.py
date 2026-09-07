@@ -21,7 +21,12 @@ from langgraph.types import Command
 from type.message import MultiModalMessage
 from runtime import state_register_mem
 from server.service import messages as m
-from server.service.stream_dispatch import StreamTurn
+from server.service.stream_dispatch import (
+    StreamTurn,
+    _accumulate_pending_args,
+    _clear_pending_args,
+    _get_pending_args,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -82,14 +87,14 @@ def _reset_turn_state():
     state_register_mem.set_state(SID, "answering", False)
     state_register_mem.set_state(SID, "current_tool_name", "")
     state_register_mem.set_state(SID, "current_tool_id", "")
-    m._clear_pending_args(SID)
+    _clear_pending_args(SID)
 
 
 class TestUpdatesMode:
     def test_tool_message_emits_result_then_end_and_resets_tool_id(self):
         state_register_mem.set_state(SID, "current_tool_name", "bash")
         state_register_mem.set_state(SID, "current_tool_id", "t1")
-        m._accumulate_pending_args(SID, "t1", {"cmd": "ls"})
+        _accumulate_pending_args(SID, "t1", {"cmd": "ls"})
 
         frames = asyncio.run(_collect(_PlainTurn([_updates([_tm("file list", "t1")])]).run()))
 
@@ -105,7 +110,7 @@ class TestUpdatesMode:
             {"type": "tool_end", "content": "bash"},
         ]
         assert state_register_mem.get_state(SID, "current_tool_id", "") == ""
-        assert m._get_pending_args(SID, "t1") == {}  # consumed from the stash
+        assert _get_pending_args(SID, "t1") == {}  # consumed from the stash
 
     def test_error_status_surfaced(self):
         tm = _tm("boom", "t9")
@@ -133,7 +138,9 @@ class TestMessagesMode:
         assert turn.ai_text == "你好"
 
     def test_non_model_metadata_skipped(self):
-        turn = _PlainTurn([("messages", (_model_chunk(content="ignored"), {"langgraph_node": "tools"}))])
+        turn = _PlainTurn(
+            [("messages", (_model_chunk(content="ignored"), {"langgraph_node": "tools"}))]
+        )
 
         frames = asyncio.run(_collect(turn.run()))
 
@@ -144,7 +151,10 @@ class TestMessagesMode:
             [
                 (
                     "messages",
-                    (_model_chunk(content="summary text"), {"langgraph_node": "model", "lc_source": "summarization"}),
+                    (
+                        _model_chunk(content="summary text"),
+                        {"langgraph_node": "model", "lc_source": "summarization"},
+                    ),
                 )
             ]
         )
@@ -156,9 +166,24 @@ class TestMessagesMode:
     def test_tool_start_fires_once_and_tool_result_carries_accumulated_args(self):
         turn = _PlainTurn(
             [
-                _mc(_model_chunk(content="", tool_call_chunks=[{"name": "bash", "args": "", "id": "t1", "index": 0}])),
-                _mc(_model_chunk(content="", tool_call_chunks=[{"name": "", "args": '{"cmd":', "id": None, "index": 0}])),
-                _mc(_model_chunk(content="", tool_call_chunks=[{"name": "", "args": ' "ls"}', "id": None, "index": 0}])),
+                _mc(
+                    _model_chunk(
+                        content="",
+                        tool_call_chunks=[{"name": "bash", "args": "", "id": "t1", "index": 0}],
+                    )
+                ),
+                _mc(
+                    _model_chunk(
+                        content="",
+                        tool_call_chunks=[{"name": "", "args": '{"cmd":', "id": None, "index": 0}],
+                    )
+                ),
+                _mc(
+                    _model_chunk(
+                        content="",
+                        tool_call_chunks=[{"name": "", "args": ' "ls"}', "id": None, "index": 0}],
+                    )
+                ),
                 _updates([_tm("done", "t1")]),
             ]
         )
@@ -306,7 +331,11 @@ class TestGenerateTurnWiring:
                         _model_chunk(
                             content="hi",
                             response_metadata={"model_name": "glm-5"},
-                            usage_metadata={"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+                            usage_metadata={
+                                "input_tokens": 3,
+                                "output_tokens": 4,
+                                "total_tokens": 7,
+                            },
                         )
                     )
                 ]

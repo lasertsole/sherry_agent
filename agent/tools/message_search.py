@@ -30,9 +30,6 @@ class MessageSearchSchema(BaseModel):
     limit: int = Field(default=3, description="Max sessions to summarize (default: 3, max: 5).")
 
 
-
-
-
 def _format_conversation(messages: list[dict[str, Any]]) -> str:
     """Format session messages into a readable transcript for summarization."""
     parts = []

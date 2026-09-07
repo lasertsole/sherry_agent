@@ -25,7 +25,7 @@ def _read_skills_state() -> dict[str, dict[str, bool]]:
     try:
         if not SKILLS_STATE_FILE.exists():
             return {}
-        with open(SKILLS_STATE_FILE, "r", encoding="utf-8") as f:
+        with open(SKILLS_STATE_FILE, encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return {}
@@ -53,7 +53,7 @@ def read_skills_snapshot() -> list[dict[str, str]] | None:
     file_path = SKILLS_DIR / "skills_snapshot.json"
     if not file_path.exists():
         return None
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         return json.loads(f.read())
 
 
@@ -104,7 +104,7 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     state = _read_skills_state()
 
     skills: list[dict[str, Any]] = []
-    seen_paths = set()  # 用于去重
+    seen_paths = set()  # for deduplication
 
     for skill_file in SKILLS_DIR.glob("**/SKILL.md"):
         if skill_file in seen_paths:
@@ -161,7 +161,7 @@ def get_skills_text(
             if s["name"] in selected_skill_names and _skill_visible_to(s, caller_scope):
                 final_skills.append(s)
 
-    # 如果selected_skill_names为空则默认全选
+    # If selected_skill_names is empty, select all by default
     else:
         for s in skills:
             if _skill_visible_to(s, caller_scope):

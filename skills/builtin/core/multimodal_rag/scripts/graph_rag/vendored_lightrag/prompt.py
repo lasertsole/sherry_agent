@@ -1,7 +1,8 @@
 from __future__ import annotations
 import os
 from pathlib import Path
-from typing import Any, Mapping, TypedDict
+from typing import Any, TypedDict
+from collections.abc import Mapping
 
 import yaml
 

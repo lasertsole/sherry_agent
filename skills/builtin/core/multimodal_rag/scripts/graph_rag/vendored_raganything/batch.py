@@ -7,7 +7,7 @@ Contains methods for processing multiple documents in batch mode
 import asyncio
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 import time
 
 from .batch_parser import BatchParser, BatchProcessingResult
@@ -39,7 +39,7 @@ class BatchMixin:
         display_stats: bool = None,
         split_by_character: str | None = None,
         split_by_character_only: bool = False,
-        file_extensions: Optional[List[str]] = None,
+        file_extensions: list[str] | None = None,
         recursive: bool = None,
         max_workers: int = None,
     ):
@@ -169,11 +169,11 @@ class BatchMixin:
 
     def process_documents_batch(
         self,
-        file_paths: List[str],
-        output_dir: Optional[str] = None,
-        parse_method: Optional[str] = None,
-        max_workers: Optional[int] = None,
-        recursive: Optional[bool] = None,
+        file_paths: list[str],
+        output_dir: str | None = None,
+        parse_method: str | None = None,
+        max_workers: int | None = None,
+        recursive: bool | None = None,
         show_progress: bool = True,
         **kwargs,
     ) -> BatchProcessingResult:
@@ -221,11 +221,11 @@ class BatchMixin:
 
     async def process_documents_batch_async(
         self,
-        file_paths: List[str],
-        output_dir: Optional[str] = None,
-        parse_method: Optional[str] = None,
-        max_workers: Optional[int] = None,
-        recursive: Optional[bool] = None,
+        file_paths: list[str],
+        output_dir: str | None = None,
+        parse_method: str | None = None,
+        max_workers: int | None = None,
+        recursive: bool | None = None,
         show_progress: bool = True,
         **kwargs,
     ) -> BatchProcessingResult:
@@ -271,14 +271,14 @@ class BatchMixin:
             **kwargs,
         )
 
-    def get_supported_file_extensions(self) -> List[str]:
+    def get_supported_file_extensions(self) -> list[str]:
         """Get list of supported file extensions for batch processing"""
         batch_parser = BatchParser(parser_type=self.config.parser)
         return batch_parser.get_supported_extensions()
 
     def filter_supported_files(
-        self, file_paths: List[str], recursive: Optional[bool] = None
-    ) -> List[str]:
+        self, file_paths: list[str], recursive: bool | None = None
+    ) -> list[str]:
         """
         Filter file paths to only include supported file types
 
@@ -297,14 +297,14 @@ class BatchMixin:
 
     async def process_documents_with_rag_batch(
         self,
-        file_paths: List[str],
-        output_dir: Optional[str] = None,
-        parse_method: Optional[str] = None,
-        max_workers: Optional[int] = None,
-        recursive: Optional[bool] = None,
+        file_paths: list[str],
+        output_dir: str | None = None,
+        parse_method: str | None = None,
+        max_workers: int | None = None,
+        recursive: bool | None = None,
         show_progress: bool = True,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Process documents in batch and then add them to RAG
 

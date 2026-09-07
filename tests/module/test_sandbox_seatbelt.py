@@ -93,13 +93,13 @@ def test_seatbelt_profile_deny_after_allow_default():
 
 def test_seatbelt_profile_allows_root_dir_subpath():
     profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
-    expected = f'(allow file-write* (subpath {json.dumps(str(ROOT_DIR))}))'
+    expected = f"(allow file-write* (subpath {json.dumps(str(ROOT_DIR))}))"
     assert expected in profile
 
 
 def test_seatbelt_profile_allows_temp_dir_subpath():
     profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
-    expected = f'(allow file-write* (subpath {json.dumps(str(TEMP_DIR))}))'
+    expected = f"(allow file-write* (subpath {json.dumps(str(TEMP_DIR))}))"
     assert expected in profile
 
 
@@ -118,7 +118,7 @@ def test_seatbelt_json_escaping_for_quote_containing_path(monkeypatch):
     weird = '/tmp/we"ird; (deny file-write*)'
     monkeypatch.setattr(seatbelt_mod, "TEMP_DIR", weird)
     profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
-    expected = f'(allow file-write* (subpath {json.dumps(weird)}))'
+    expected = f"(allow file-write* (subpath {json.dumps(weird)}))"
     assert expected in profile
     # Raw unescaped form (quote not preceded by backslash) must NOT appear.
     assert 'we"ird;' not in profile

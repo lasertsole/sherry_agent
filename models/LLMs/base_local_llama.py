@@ -15,7 +15,8 @@ ITTT_model / VTTT_model) shrink to hook implementations on top of these bases.
 """
 
 import atexit
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any
+from collections.abc import Mapping
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -35,7 +36,7 @@ class LocalLlamaChatBase(BaseChatModel):
     # auxiliary extracts reasoning_content/reasoning; vision models ignore it
     extract_reasoning: bool = False
 
-    _client: Optional[Any] = None
+    _client: Any | None = None
     _resolved_path: str = ""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -54,14 +55,17 @@ class LocalLlamaChatBase(BaseChatModel):
     def _llm_type(self) -> str:
         raise NotImplementedError
 
-    def _convert_message_to_dict(self, message: BaseMessage) -> Dict[str, Any]:
+    def _convert_message_to_dict(self, message: BaseMessage) -> dict[str, Any]:
         """Default text-only conversion (auxiliary variant)."""
         if isinstance(message, HumanMessage):
             return {"role": "user", "content": message.content}
         if isinstance(message, AIMessage):
             return {"role": "assistant", "content": message.content}
         # SystemMessage and everything else
-        return {"role": "user" if not isinstance(message, SystemMessage) else "system", "content": message.content}
+        return {
+            "role": "user" if not isinstance(message, SystemMessage) else "system",
+            "content": message.content,
+        }
 
     # ---- shared lifecycle --------------------------------------------------
 
@@ -87,9 +91,9 @@ class LocalLlamaChatBase(BaseChatModel):
 
     def _generate(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         client = self._ensure_client()
@@ -104,7 +108,7 @@ class LocalLlamaChatBase(BaseChatModel):
             choice = response["choices"][0]
             message = choice["message"]
             content = message.get("content", "")
-            reason: Optional[str] = None
+            reason: str | None = None
             if self.extract_reasoning:
                 reason = message.get("reasoning_content")
                 if reason is None:
@@ -115,7 +119,9 @@ class LocalLlamaChatBase(BaseChatModel):
         if isinstance(reason, str) and reason:
             ai_kwargs.setdefault("reasoning_content", reason)
         return ChatResult(
-            generations=[ChatGeneration(message=AIMessage(content=content, additional_kwargs=ai_kwargs))]
+            generations=[
+                ChatGeneration(message=AIMessage(content=content, additional_kwargs=ai_kwargs))
+            ]
         )
 
 

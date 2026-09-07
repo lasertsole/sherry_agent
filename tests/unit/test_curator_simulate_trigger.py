@@ -30,7 +30,7 @@ maintenance actually fires without touching real ``skills/auto/`` or ``logs/cura
 """
 
 import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from unittest.mock import patch
 
 import context_engine.curator.state as curator_state
@@ -57,7 +57,7 @@ def with_elapsed_interval(isolated_state):
     inject ``now``), so we back-date ``last_run_at`` below the default 5-day
     interval. Mimics ``test_should_run_over_interval_runs``.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     st = curator_state.load_state()
     st["last_run_at"] = (now - timedelta(days=8)).isoformat()
     curator_state.save_state(st)
@@ -88,7 +88,7 @@ def test_trigger_time_elapsed_and_idle_enough(with_elapsed_interval, mock_review
 
 def test_no_trigger_within_interval(isolated_state, mock_review):
     """Last run is recent (within interval) → maintenance must NOT fire."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     st = curator_state.load_state()
     st["last_run_at"] = now.isoformat()  # just ran now
     curator_state.save_state(st)

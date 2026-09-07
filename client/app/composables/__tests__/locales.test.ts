@@ -66,7 +66,9 @@ describe('i18n locale parity', () => {
 describe('i18n chat.backgroundMessage (subagent-origin-tagging Task 5)', () => {
   /** Resolves a dot-path against a locale dict (index-signature safe, no literal-type pitfalls) */
   const keyOf = (dict: Dict, path: string): unknown =>
-    path.split('.').reduce<unknown>((node, part) => (node && typeof node === 'object' ? (node as Dict)[part] : undefined), dict);
+    path
+      .split('.')
+      .reduce<unknown>((node, part) => (node && typeof node === 'object' ? (node as Dict)[part] : undefined), dict);
 
   // Fixed copy from the plan: the muted label shown above background-task carrier cards
   it('all four locales define chat.backgroundMessage with the planned copy', () => {

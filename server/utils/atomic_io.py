@@ -16,12 +16,11 @@ change its crash/backup semantics, so it is deliberately left as-is.
 import os
 import tempfile
 from pathlib import Path
-from typing import Union
 
 from loguru import logger
 
 
-def atomic_write_text(path: Union[str, Path], text: str, *, fsync: bool = False) -> None:
+def atomic_write_text(path: str | Path, text: str, *, fsync: bool = False) -> None:
     """Atomically write *text* to *path*; raises on failure.
 
     Writes to a temporary file created in the same directory as the target

@@ -18,7 +18,8 @@ from channels import channel_manager
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langgraph.graph.state import CompiledStateGraph
-from typing import Any, Callable, Coroutine, Literal
+from typing import Any, Literal
+from collections.abc import Callable, Coroutine
 from workspace.prompt_builder import build_system_prompt
 from .types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
@@ -76,7 +77,9 @@ class CronJobFailureState:
     backoff_ms: int = 0
 
 
-def _compute_next_run(schedule: CronSchedule, now_ms: int, anchor_ms: int | None = None) -> int | None:
+def _compute_next_run(
+    schedule: CronSchedule, now_ms: int, anchor_ms: int | None = None
+) -> int | None:
     """Compute next run time in ms.
 
     For ``every`` schedules, ``anchor_ms`` pins the interval grid to the
@@ -466,7 +469,11 @@ class CronService:
             channel: str = payload.channel
             to: str = payload.to
 
-            from agent.tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
+            from agent.tools import (
+                build_python_repl_tool,
+                build_read_file_tool,
+                build_write_file_tool,
+            )
 
             tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 

@@ -199,14 +199,16 @@ nudge_review_memory_count = state_register_db.get_state(session_id, _NUDGE_MEMOR
 nudge_review_skill_count = state_register_db.get_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0)
 
 need_nudge_review_memory = nudge_review_memory_count >= _NUDGE_MEMORY_THRESHOLD  # 10
-need_nudge_skill_memory = nudge_review_skill_count >= _NUDGE_SKILL_THRESHOLD     # 10
+need_nudge_skill_memory = nudge_review_skill_count >= _NUDGE_SKILL_THRESHOLD  # 10
 
 # 触发:
 if need_memory and need_skill:
     _nudge_combined(...)
 else:
-    if need_memory: _nudge_memory(...)
-    if need_skill: _nudge_skill(...)
+    if need_memory:
+        _nudge_memory(...)
+    if need_skill:
+        _nudge_skill(...)
 ```
 
 ### 新机制
@@ -233,6 +235,7 @@ if need_plan_extraction:
 ```python
 _PLAN_EXTRACTION_FIRED_KEY = "nudge_plan_extraction_fired"
 
+
 def _detect_todo_all_complete(session_id: str) -> bool:
     """检测 todo 列表是否刚刚全部完成（且本次未触发过提取）。
 
@@ -245,6 +248,7 @@ def _detect_todo_all_complete(session_id: str) -> bool:
     下次 todos 变为非全完成状态时重置为 False。
     """
     from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
     todos = get_todos_sync(session_id)
     if not todos:
         return False
@@ -309,6 +313,7 @@ def _build_plan_context(session_id: str) -> dict:
 
     # 1. 读取 todos
     from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
     todos = get_todos_sync(session_id)
     if not todos:
         return {}
@@ -351,16 +356,19 @@ def _build_plan_context(session_id: str) -> dict:
     subagent_runs = []
     try:
         from agent.tools.subagent.registry import list_runs_for_requester
+
         runs = list_runs_for_requester(session_key)
         for run in runs:
             outcome = run.execution.outcome
-            subagent_runs.append({
-                "task_name": run.task_name,
-                "task": run.task,
-                "result_text": run.completion.result_text,
-                "outcome": outcome.status.value if outcome else "unknown",
-                "error": outcome.error if outcome else None,
-            })
+            subagent_runs.append(
+                {
+                    "task_name": run.task_name,
+                    "task": run.task,
+                    "result_text": run.completion.result_text,
+                    "outcome": outcome.status.value if outcome else "unknown",
+                    "error": outcome.error if outcome else None,
+                }
+            )
     except Exception:
         pass
 
@@ -588,6 +596,7 @@ Tier 2: 工具按需查询 (详细)
 from langchain_core.tools import tool
 from typing import Literal
 
+
 @tool("knowledge")
 async def knowledge(
     action: Literal["write", "read", "list"],
@@ -625,8 +634,11 @@ async def knowledge(
         if not plan_name or not data or not layer:
             return "Error: write requires plan_name, layer, and data"
         path = await KnowledgeStore.write(
-            layer=layer, plan_name=plan_name, data=data,
-            position=position, wave_index=wave_index,
+            layer=layer,
+            plan_name=plan_name,
+            data=data,
+            position=position,
+            wave_index=wave_index,
         )
         return f"Knowledge written to {path}"
 
@@ -634,8 +646,10 @@ async def knowledge(
         if not plan_name:
             return "Error: read requires plan_name"
         return KnowledgeStore.read_formatted(
-            plan_name=plan_name, layer=layer,
-            position=position, wave_index=wave_index,
+            plan_name=plan_name,
+            layer=layer,
+            position=position,
+            wave_index=wave_index,
         )
 
     elif action == "list":
@@ -675,7 +689,6 @@ _KNOWLEDGE_ROOT = ".omo/knowledge"
 
 
 class KnowledgeStore:
-
     @staticmethod
     async def write(
         layer: Literal["task", "wave", "plan"],
@@ -797,9 +810,10 @@ class KnowledgeStore:
                     fs = len(t.get("failure_set", []))
                     sp = len(t.get("success_path", []))
                     lines.append(f"  Task {pos}: method={m} (failures={fs}, steps={sp})")
-                lines.append("\nUse knowledge(action='read', plan_name='{plan_name}', "
-                             "layer='task', position=N) for task detail.".format(
-                                 plan_name=plan_name))
+                lines.append(
+                    "\nUse knowledge(action='read', plan_name='{plan_name}', "
+                    "layer='task', position=N) for task detail.".format(plan_name=plan_name)
+                )
             return "\n".join(lines)
 
         # Task detail
@@ -832,8 +846,7 @@ class KnowledgeStore:
             if runs:
                 lines.append("\n## Subagent Runs")
                 for r in runs:
-                    lines.append(f"  - {r.get('task_name', '?')}: "
-                                 f"outcome={r.get('outcome', '?')}")
+                    lines.append(f"  - {r.get('task_name', '?')}: outcome={r.get('outcome', '?')}")
 
             return "\n".join(lines)
 
@@ -863,8 +876,7 @@ class KnowledgeStore:
             if ts:
                 lines.append("\n## Tasks Summary")
                 for t in ts:
-                    lines.append(f"  - Task {t.get('position')}: "
-                                 f"method={t.get('method', '?')}")
+                    lines.append(f"  - Task {t.get('position')}: method={t.get('method', '?')}")
 
             return "\n".join(lines)
 
@@ -888,6 +900,7 @@ from .knowledge_store import KnowledgeStore
 
 _KNOWLEDGE_TOOLS = [knowledge]
 
+
 def build_knowledge_tools() -> list:
     tools = list(_KNOWLEDGE_TOOLS)
     for t in tools:
@@ -909,9 +922,9 @@ def build_knowledge_tools() -> list:
 
 ```python
 # 删除以下常量和函数:
-_COMBINED_REVIEW_PROMPT = ...     # ~75 行，删除（不再有 combined 场景）
-_nudge_skill()                    # ~12 行，删除（功能合并进 _nudge_plan_extraction）
-_nudge_combined()                 # ~15 行，删除（不再有 combined 场景）
+_COMBINED_REVIEW_PROMPT = ...  # ~75 行，删除（不再有 combined 场景）
+_nudge_skill()  # ~12 行，删除（功能合并进 _nudge_plan_extraction）
+_nudge_combined()  # ~15 行，删除（不再有 combined 场景）
 ```
 
 ### 内容合并（不删除，移入新 prompt）
@@ -927,10 +940,10 @@ _nudge_combined()                 # ~15 行，删除（不再有 combined 场景
 
 ```python
 # 保留:
-_MEMORY_REVIEW_PROMPT            # 不变
-_nudge_memory()                  # 不变
-_NudgeLimitTool                  # 不变（knowledge 和 skill_manage 都有 nudge:True metadata）
-_create_nudge_agent()            # 不变
+_MEMORY_REVIEW_PROMPT  # 不变
+_nudge_memory()  # 不变
+_NudgeLimitTool  # 不变（knowledge 和 skill_manage 都有 nudge:True metadata）
+_create_nudge_agent()  # 不变
 ```
 
 ### 新增
@@ -1014,14 +1027,14 @@ def _wrap_tool_call_impl(self, request):
 _PLAN_EXTRACTION_FIRED_KEY = "nudge_plan_extraction_fired"
 _PLAN_EXTRACTION_LOCK_KEY = "nudge_plan_extraction_lock"
 
+
 # _is_lock 修改:
 @staticmethod
 def _is_lock(session_id: str) -> bool:
     return state_register_mem.get_state(
         session_id, _NUDGE_MEMORY_LOCK_KEY, False
-    ) or state_register_mem.get_state(
-        session_id, _PLAN_EXTRACTION_LOCK_KEY, False
-    )
+    ) or state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False)
+
 
 # _after_agent_impl 修改:
 def _after_agent_impl(self, state):
@@ -1038,9 +1051,7 @@ def _after_agent_impl(self, state):
     )
 
     if self._is_lock(session_id):
-        state_register_db.set_state(
-            session_id, _NUDGE_MEMORY_COUNT_KEY, nudge_review_memory_count
-        )
+        state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, nudge_review_memory_count)
         return None
 
     need_nudge_review_memory = nudge_review_memory_count >= _NUDGE_MEMORY_THRESHOLD
@@ -1049,9 +1060,7 @@ def _after_agent_impl(self, state):
     if need_nudge_review_memory:
         state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0)
     else:
-        state_register_db.set_state(
-            session_id, _NUDGE_MEMORY_COUNT_KEY, nudge_review_memory_count
-        )
+        state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, nudge_review_memory_count)
 
     return (
         session_id,
@@ -1060,6 +1069,7 @@ def _after_agent_impl(self, state):
         need_nudge_review_memory,
         need_plan_extraction,  # 替换 need_skill
     )
+
 
 # after_agent / aafter_agent 修改:
 async def aafter_agent(self, state, runtime):
@@ -1097,6 +1107,7 @@ def _detect_todo_all_complete(session_id: str) -> bool:
     """检测 todo 列表是否刚刚全部完成。"""
     try:
         from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
         todos = get_todos_sync(session_id)
     except Exception:
         return False
@@ -1160,6 +1171,7 @@ def _build_knowledge_block(session_id: str) -> str:
     # 从 todos 的 plan_ref 获取当前 plan_name
     try:
         from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
         todos = get_todos_sync(session_id)
         plan_ref = ""
         for t in todos:

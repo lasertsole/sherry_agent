@@ -2,7 +2,6 @@ from config.num import PRUNE_PROTECT_TOKENS, PRUNE_MIN_REDUCTION_TOKENS
 from langchain_core.messages import (
     BaseMessage,
     ToolMessage,
-    HumanMessage,
     AIMessage,
 )
 
@@ -14,9 +13,7 @@ def _is_summary_message(msg: BaseMessage) -> bool:
     return getattr(msg, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE
 
 
-def _find_tool_name(
-    messages: list[BaseMessage], target_idx: int, tc_id: str
-) -> str:
+def _find_tool_name(messages: list[BaseMessage], target_idx: int, tc_id: str) -> str:
     if not tc_id:
         return ""
     for i in range(target_idx - 1, -1, -1):
@@ -37,8 +34,11 @@ def prune_tool_outputs(
 ) -> tuple[list[BaseMessage], int]:
     protected = protected_tools or set()
     if estimator is None:
-        def estimator(msgs):
+
+        def _default_estimator(msgs):
             return sum(len(str(getattr(m, "content", ""))) // 4 for m in msgs)
+
+        estimator = _default_estimator
 
     total_tool_tokens = 0
     pruned_tokens = 0

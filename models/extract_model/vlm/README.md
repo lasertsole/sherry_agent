@@ -129,13 +129,13 @@ model = Qwen2VLForConditionalGeneration.from_pretrained(
     "opendatalab/MinerU2.5-Pro-2604-1.2B", dtype="auto", device_map="auto"
 )
 
-processor = AutoProcessor.from_pretrained(
-    "opendatalab/MinerU2.5-Pro-2604-1.2B", use_fast=True
-)
+processor = AutoProcessor.from_pretrained("opendatalab/MinerU2.5-Pro-2604-1.2B", use_fast=True)
 
 client = MinerUClient(
-    backend="transformers", model=model, processor=processor,
-    image_analysis=False # default False, set True to enable image/chart analysis
+    backend="transformers",
+    model=model,
+    processor=processor,
+    image_analysis=False,  # default False, set True to enable image/chart analysis
 )
 
 print(client.two_step_extract(Image.open("/path/to/page.png")))

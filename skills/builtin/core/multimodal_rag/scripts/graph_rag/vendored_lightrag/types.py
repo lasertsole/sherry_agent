@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Any
 
 
 class ExtractedEntity(BaseModel):
@@ -50,7 +50,7 @@ class KnowledgeGraphNode(BaseModel):
 
 class KnowledgeGraphEdge(BaseModel):
     id: str
-    type: Optional[str]
+    type: str | None
     source: str  # id of source node
     target: str  # id of target node
     properties: dict[str, Any]  # anything else goes here

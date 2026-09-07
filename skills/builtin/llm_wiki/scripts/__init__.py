@@ -18,12 +18,12 @@ def _load_module(name, filename):
     return mod
 
 
-# 加载各模块
+# Load each module
 _core = _load_module("wiki_core", "core.py")
 _search = _load_module("wiki_search", "search.py")
 _ingest = _load_module("wiki_ingest", "ingest.py")
 
-# 导出 core 中的内容
+# Export contents from core
 get_wiki_path = _core.get_wiki_path
 get_wiki_subdir = _core.get_wiki_subdir
 init_wiki = _core.init_wiki
@@ -31,11 +31,11 @@ wiki_exists = _core.wiki_exists
 print_structure = _core.print_structure
 WIKI_STRUCTURE = _core.WIKI_STRUCTURE
 
-# 导出 search 中的内容
+# Export contents from search
 search_wiki = _search.search_wiki
 lint_wiki = _search.lint_wiki
 
-# 导出 ingest 中的内容
+# Export contents from ingest
 save_source = _ingest.save_source
 
 __all__ = [

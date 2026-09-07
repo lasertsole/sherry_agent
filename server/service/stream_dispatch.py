@@ -32,9 +32,9 @@ per-session module state stay stable for existing tests).
 import asyncio
 import json
 import time
-from typing import Any, AsyncGenerator, Literal
+from typing import Any, Literal
+from collections.abc import AsyncGenerator
 
-from loguru import logger
 from langchain.messages import AIMessageChunk
 from langchain_core.messages import BaseMessage, ToolCall, ToolCallChunk, ToolMessage
 from runtime import state_register_mem
@@ -187,7 +187,9 @@ class StreamTurn:
     def _note_tool_start(self, tool_name: str) -> None:
         """Side effect when a new tool_start fires (transcript note)."""
 
-    def _extra_messages_frames(self, msg_chunk: BaseMessage, metadata: dict[str, Any]) -> list[dict]:
+    def _extra_messages_frames(
+        self, msg_chunk: BaseMessage, metadata: dict[str, Any]
+    ) -> list[dict]:
         """Frames to yield for messages-mode chunks consumed before the model
         filter (resume's HITL-denial tool_result path); empty = not consumed."""
         return []
@@ -221,7 +223,7 @@ class StreamTurn:
 
     # ---- template -------------------------------------------------------
 
-    async def run(self) -> AsyncGenerator[dict[str, str], None]:
+    async def run(self) -> AsyncGenerator[dict[str, Any]]:
         start_time = time.time()
         self._log_started()
         await self._prepare()
@@ -273,9 +275,7 @@ class StreamTurn:
                                 # `msg_chunk.content` never fired, leaving the card
                                 # permanently "running" (the stuck-tool bug).
                                 yield {"type": "tool_end", "content": name}
-                                state_register_mem.set_state(
-                                    self.session_id, "current_tool_id", ""
-                                )
+                                state_register_mem.set_state(self.session_id, "current_tool_id", "")
                         continue
                     if mode != "messages":
                         continue
@@ -416,8 +416,8 @@ class StreamTurn:
                         # End tool call output logic
 
                         # Conversation output logic
-                        if len(msg_chunk.content) > 0:
-                            res: str = msg_chunk.content
+                        if isinstance(msg_chunk.content, str) and len(msg_chunk.content) > 0:
+                            res = msg_chunk.content
                             self.ai_text += res
                             yield {"type": "text", "content": res}
 

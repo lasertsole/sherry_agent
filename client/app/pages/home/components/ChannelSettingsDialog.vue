@@ -248,6 +248,7 @@ import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { updateChannel, getChannelConfig, updateChannelConfig } from '@/composables/bridge';
 import type { ChannelInfo, ChannelConfig } from '@/composables/bridge';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -344,7 +345,7 @@ const init = async () => {
       configFields.value = normalizeConfig(res.config ?? {});
     } catch (e) {
       error.value = `${t('extend.channelSettings.configLoadFailed')}: ${e}`;
-      console.error('[ChannelSettingsDialog] Failed to load channel config:', e);
+      logUtil.e('[ChannelSettingsDialog] Failed to load channel config:', e);
     }
   }
 };
@@ -372,7 +373,7 @@ const handleSave = async () => {
     visible.value = false;
   } catch (e) {
     error.value = `${t('extend.channelSettings.saveFailed')}: ${e}`;
-    console.error('[ChannelSettingsDialog] Failed to save channel settings:', e);
+    logUtil.e('[ChannelSettingsDialog] Failed to save channel settings:', e);
   } finally {
     saving.value = false;
   }

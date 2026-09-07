@@ -6,8 +6,6 @@ exhausted flag at max_consecutive_failures, reason recording,
 full reset on record_success.
 """
 
-import pytest
-
 from runtime.periodic_backoff import PeriodicBackoff
 
 
@@ -51,8 +49,18 @@ class TestDoublingArithmetic:
 
         # 60 * 2^7 == 7680 -> capped to 7200 at the 7th failure onwards.
         assert observed == [
-            120, 240, 480, 960, 1920, 3840,
-            7200, 7200, 7200, 7200, 7200, 7200,
+            120,
+            240,
+            480,
+            960,
+            1920,
+            3840,
+            7200,
+            7200,
+            7200,
+            7200,
+            7200,
+            7200,
         ]
 
     def test_custom_factor_and_max_interval(self):

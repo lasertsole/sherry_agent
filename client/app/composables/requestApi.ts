@@ -4,11 +4,11 @@ import { sendRequestErrorToast } from './toast';
 
 interface Params {
   url: NitroFetchRequest;
-  opts?: { [key: string]: any } | FormData;
+  opts?: { [key: string]: unknown } | FormData;
   method?: 'get' | 'post' | 'put' | 'patch' | 'delete';
   contentType?: 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data';
   lazy?: boolean;
-  headeropts?: { [key: string]: any };
+  headeropts?: { [key: string]: unknown };
   onError?: () => void;
   initialCache?: boolean;
   server?: boolean;
@@ -22,7 +22,7 @@ interface Params {
  * @param { any } params Path parameters
  * @returns { NitroFetchRequest } The request path after replacement
  */
-const replacePathVariables = (url: NitroFetchRequest, params: any = {}): NitroFetchRequest => {
+const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unknown> = {}): NitroFetchRequest => {
   if (Object.keys(params).length === 0) {
     return url;
   }
@@ -39,7 +39,7 @@ const replacePathVariables = (url: NitroFetchRequest, params: any = {}): NitroFe
     if (params[key] === undefined) {
       throw new Error(`"${key}" is not provided in params`);
     }
-    formattedURL = formattedURL.replace(`:${key}`, params[key]);
+    formattedURL = formattedURL.replace(`:${key}`, String(params[key]));
     delete params[key];
     m = regex.exec(formattedURL);
   }
@@ -64,10 +64,10 @@ async function requestBaseApi({
   contentType = 'application/json',
   headeropts = {}
 }: Params): Promise<Response> {
-  const requestURL = replacePathVariables(url, opts);
+  const requestURL = opts instanceof FormData ? url : replacePathVariables(url, opts);
 
   // Set up request parameters
-  const params: any = {};
+  const params: Record<string, unknown> = {};
   if (contentType == 'application/json') {
     opts = { ...opts };
   }
@@ -119,7 +119,7 @@ async function requestBaseApi({
           options.headers.set('Content-Type', contentType);
         }
         for (const [key, value] of Object.entries(headeropts)) {
-          options.headers.set(key, value);
+          options.headers.set(key, String(value));
         }
 
         if (import.meta.client) {
@@ -153,8 +153,6 @@ async function requestBaseApi({
           if (token) {
             localStorage.setItem('token', token);
           }
-
-          return response;
         }
       },
 

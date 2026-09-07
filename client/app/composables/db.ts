@@ -375,7 +375,7 @@ export async function readCachedMessages(sessionId: string): Promise<CachedMessa
     .where('[session_id+turn_num]')
     .between([sessionId, MIN_KEY], [sessionId, MAX_KEY])
     .toArray();
-  return rows.filter((row) => isValidTurnNum(row.turn_num));
+  return rows.filter(row => isValidTurnNum(row.turn_num));
 }
 
 /**

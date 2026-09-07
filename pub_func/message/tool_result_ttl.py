@@ -41,16 +41,11 @@ from pub_func.message.estimate_msg_tokens import estimate_msg_tokens
 
 # Non-empty by design: sanitize_tool_use_result_pairing drops ToolMessages
 # whose content is empty, which would break tool pairing immediately.
-TTL_PLACEHOLDER = (
-    "\n\n[...truncated by context compression, "
-    "tool result expired (TTL=300s)...]\n\n"
-)
+TTL_PLACEHOLDER = "\n\n[...truncated by context compression, tool result expired (TTL=300s)...]\n\n"
 NON_TEXT_BLOCK_PLACEHOLDER = "[non-text block truncated by context compression]"
 
 
-def record_first_seen(
-    registry: dict[str, float], messages: list[BaseMessage], now: float
-) -> None:
+def record_first_seen(registry: dict[str, float], messages: list[BaseMessage], now: float) -> None:
     """Record wall-clock first-seen for every tool_call_id new to registry.
 
     Existing entries are never overwritten (their first-seen time is the
@@ -172,7 +167,7 @@ def _est_with_content(msg: BaseMessage, content) -> int:
 
 
 def _build_head_tail(text: str, head_len: int, tail_len: int, placeholder: str) -> str:
-    tail_part = text[len(text) - tail_len:] if tail_len > 0 else ""
+    tail_part = text[len(text) - tail_len :] if tail_len > 0 else ""
     return text[:head_len] + placeholder + tail_part
 
 
@@ -256,10 +251,7 @@ def _truncate_list_content(msg: BaseMessage, budget_tokens: int) -> int:
             blocks[i] = {"type": "text", "text": NON_TEXT_BLOCK_PLACEHOLDER}
 
     # Pass 2: still over budget -> shrink text-block tails (heads kept).
-    while (
-        budget_tokens is not None
-        and _est_with_content(msg, blocks) > budget_tokens
-    ):
+    while budget_tokens is not None and _est_with_content(msg, blocks) > budget_tokens:
         shrunk = False
         for block in blocks:
             if not _is_text_block(block):
@@ -271,9 +263,7 @@ def _truncate_list_content(msg: BaseMessage, budget_tokens: int) -> int:
             tail_len = len(text) - (head_len + len(TTL_PLACEHOLDER))
             if tail_len <= 0:
                 continue
-            block["text"] = _build_head_tail(
-                text, head_len, tail_len // 2, TTL_PLACEHOLDER
-            )
+            block["text"] = _build_head_tail(text, head_len, tail_len // 2, TTL_PLACEHOLDER)
             shrunk = True
         if not shrunk:
             break  # every tail already collapsed; heads are kept

@@ -224,6 +224,7 @@ boost base 从 `request.model_settings` 读取实际 `max_tokens`，不回退到
 # 现有
 _BASE_MAX_TOKENS = int(os.getenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "8192"))
 
+
 # 新增辅助方法
 def _get_current_base(self, request) -> int:
     """Read the effective max_tokens base from the request, falling back
@@ -235,6 +236,7 @@ def _get_current_base(self, request) -> int:
     if isinstance(current, int) and current > 0:
         return current
     return _BASE_MAX_TOKENS
+
 
 # 修改 awrap_model_call 中的 boost 循环
 async def awrap_model_call(self, request, handler):
@@ -253,7 +255,7 @@ async def awrap_model_call(self, request, handler):
 
     try:
         for attempt in range(1, _MAX_RETRIES + 1):
-            boosted = min(base * (2 ** attempt), _MAX_CAP)  # ← 用 base 而非 _BASE_MAX_TOKENS
+            boosted = min(base * (2**attempt), _MAX_CAP)  # ← 用 base 而非 _BASE_MAX_TOKENS
             self._inject_boost(request, boosted)
             logger.debug(
                 f"Tool-call truncation retry {attempt}/{_MAX_RETRIES}, "
@@ -386,8 +388,8 @@ def __init__(self, session_id: str) -> None:
     self.meta_output_tokens: int | None = None
     self.meta_finish_reason: str | None = None
     self._has_tool_calls: bool = False
-    self._has_reasoning: bool = False        # ← 新增
-    self._has_visible_text: bool = False     # ← 新增
+    self._has_reasoning: bool = False  # ← 新增
+    self._has_visible_text: bool = False  # ← 新增
 ```
 
 **reasoning delta 块** (L458-460) — 收到 reasoning 时设 flag：
@@ -395,7 +397,7 @@ def __init__(self, session_id: str) -> None:
 ```python
 _reasoning = _reasoning_delta(msg_chunk)
 if _reasoning and len(_reasoning) > 0:
-    self._has_reasoning = True               # ← 新增
+    self._has_reasoning = True  # ← 新增
     yield {"type": "reasoning", "content": _reasoning}
 ```
 
@@ -405,7 +407,7 @@ if _reasoning and len(_reasoning) > 0:
 if len(msg_chunk.content) > 0:
     res: str = msg_chunk.content
     self.ai_text += res
-    self._has_visible_text = True            # ← 新增
+    self._has_visible_text = True  # ← 新增
     yield {"type": "text", "content": res}
 ```
 
@@ -440,7 +442,7 @@ _REASONING_ONLY_PROMPT = (
 )
 
 _MAX_CONTINUATION_RETRIES = 4
-_MAX_REASONING_ONLY_RETRIES = 2   # ← 新增：reasoning-only 重试上限（与 openclaw 对齐）
+_MAX_REASONING_ONLY_RETRIES = 2  # ← 新增：reasoning-only 重试上限（与 openclaw 对齐）
 ```
 
 **`_GenerateTurn.__init__`** — 新增字段：
@@ -521,9 +523,7 @@ def _prepare_continuation(self, is_reasoning_only: bool = False) -> None:
 async def _create_source(self) -> tuple[Literal["stream", "invoke"], Any]:
     if self._is_continuation:
         prompt = (
-            self._REASONING_ONLY_PROMPT
-            if self._is_reasoning_only
-            else self._CONTINUATION_PROMPT
+            self._REASONING_ONLY_PROMPT if self._is_reasoning_only else self._CONTINUATION_PROMPT
         )
         input_dict = {
             "session_id": self.session_id,
@@ -691,17 +691,11 @@ HeartbeatStaleness     ← 心跳检测
     "output_tokens": 8192,
     "output_token_details": {
         "reasoning_tokens": 6000  # ← 6000 是 thinking, 2192 是实际输出
-    }
+    },
 }
 
 # DeepSeek/GLM 的 usage_metadata 示例（通过 OpenAI-compatible 网关）
-{
-    "input_tokens": 1234,
-    "output_tokens": 8192,
-    "output_token_details": {
-        "reasoning_tokens": 4096
-    }
-}
+{"input_tokens": 1234, "output_tokens": 8192, "output_token_details": {"reasoning_tokens": 4096}}
 ```
 
 当前 `stream_dispatch.py:330-335` 只读 `input_tokens` 和 `output_tokens`，`output_token_details` 被忽略。
@@ -715,7 +709,7 @@ HeartbeatStaleness     ← 心跳检测
 ```python
 def __init__(self, session_id: str) -> None:
     # ... 现有
-    self.meta_reasoning_tokens: int | None = None    # ← 新增
+    self.meta_reasoning_tokens: int | None = None  # ← 新增
 ```
 
 **metadata 捕获块** (L330-335) — 提取 reasoning_tokens：
@@ -738,15 +732,17 @@ if _usage:
 **`_GenerateTurn._final_frames()`** — meta chunk 增加字段：
 
 ```python
-return [{
-    "type": "meta",
-    "content": "",
-    "model_name": self.meta_model_name or "",
-    "input_tokens": self.meta_input_tokens or 0,
-    "output_tokens": self.meta_output_tokens or 0,
-    "reasoning_tokens": self.meta_reasoning_tokens or 0,   # ← 新增
-    "finish_reason": self.meta_finish_reason or "",
-}]
+return [
+    {
+        "type": "meta",
+        "content": "",
+        "model_name": self.meta_model_name or "",
+        "input_tokens": self.meta_input_tokens or 0,
+        "output_tokens": self.meta_output_tokens or 0,
+        "reasoning_tokens": self.meta_reasoning_tokens or 0,  # ← 新增
+        "finish_reason": self.meta_finish_reason or "",
+    }
+]
 ```
 
 #### `server/service/stream_driver.py`

@@ -27,7 +27,12 @@ from ..registry.read import count_active_runs_readonly, count_all_active_runs_re
 from ..registry.reconciliation import resolve_run_orphan_reason
 from ..session.cleanup import delete_subagent_session_for_cleanup
 from ..capabilities import resolve_subagent_capabilities
-from .depth import get_subagent_depth, validate_spawn_depth, validate_concurrent_children, validate_global_concurrent
+from .depth import (
+    get_subagent_depth,
+    validate_spawn_depth,
+    validate_concurrent_children,
+    validate_global_concurrent,
+)
 from .target_policy import validate_target_policy
 from .plan import resolve_run_timeout_seconds, resolve_model_and_thinking_plan
 from .task_name import normalize_subagent_task_name
@@ -591,7 +596,7 @@ async def _execute_subagent(
             refresh_thread_binding(run.thread_binding_info.thread_id)
 
     # --- Exception handling: map failures to RunOutcome statuses ---
-    except asyncio.TimeoutError:
+    except TimeoutError:
         outcome = RunOutcome(
             status=RunOutcomeStatus.TIMEOUT, error=f"Subagent timed out after {timeout_seconds}s"
         )

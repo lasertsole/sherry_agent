@@ -23,7 +23,7 @@ import os
 import shutil
 import zipfile
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -228,7 +228,7 @@ class MinerURawClient:
 
     async def _download_official(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         source_file_path: Path,
         raw_dir: Path,
         upload_name: str,
@@ -272,7 +272,7 @@ class MinerURawClient:
 
     async def _poll_official_batch(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         batch_id: str,
         upload_name: str,
     ) -> str:
@@ -335,7 +335,7 @@ class MinerURawClient:
 
     async def _download_local(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         source_file_path: Path,
         raw_dir: Path,
         upload_name: str,
@@ -369,7 +369,7 @@ class MinerURawClient:
 
     async def _poll_local_task(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         task_id: str,
     ) -> None:
         poll_url = f"{self.local_endpoint}/tasks/{task_id}"
@@ -389,7 +389,7 @@ class MinerURawClient:
 
     async def _download_zip(
         self,
-        client: "httpx.AsyncClient",
+        client: httpx.AsyncClient,
         result_url: str,
         raw_dir: Path,
         resp: Any = None,
@@ -529,7 +529,7 @@ class MinerURawClient:
             engine_version=self.engine_version,
             endpoint_signature=self.endpoint,
             options_signature=self._options_signature(),
-            downloaded_at=datetime.now(timezone.utc).isoformat(),
+            downloaded_at=datetime.now(UTC).isoformat(),
         )
         write_manifest(raw_dir, manifest)
         return manifest

@@ -44,9 +44,7 @@ class TestDecodeJsonColumns:
         assert "ts_ms" not in row  # internal ordering column dropped
 
     def test_non_string_cells_left_untouched(self):
-        row = _decode_json_columns(
-            _row(content=json.dumps("plain text"), audios=None, videos=None)
-        )
+        row = _decode_json_columns(_row(content=json.dumps("plain text"), audios=None, videos=None))
 
         assert row["content"] == "plain text"  # JSON-encoded string decodes
         assert row["audios"] is None  # non-string cells stay as-is
@@ -71,9 +69,7 @@ class TestDecodeJsonColumns:
         monkeypatch.setattr(store_core, "_db", store_db.get_db())
 
         async def _seed():
-            await store_core.add_messages(
-                "s1", [HumanMessage(content="q"), AIMessage(content="a")]
-            )
+            await store_core.add_messages("s1", [HumanMessage(content="q"), AIMessage(content="a")])
 
         asyncio.run(_seed())
 

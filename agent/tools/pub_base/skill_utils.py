@@ -181,8 +181,7 @@ def iter_skill_index_files(skills_dir: Path, filename: str):
         dirs[:] = [d for d in dirs if d not in EXCLUDED_SKILL_DIRS]
         if filename in files:
             matches.append(Path(root) / filename)
-    for path in sorted(matches, key=lambda p: str(p.relative_to(skills_dir))):
-        yield path
+    yield from sorted(matches, key=lambda p: str(p.relative_to(skills_dir)))
 
 
 # ── Namespace helpers for plugin-provided skills ───────────────────────────
@@ -209,7 +208,7 @@ def is_valid_namespace(candidate: str | None) -> bool:
 
 def find_auto_skills(*, skip_disabled: bool = False) -> list[dict[str, Any]]:
     skills: list[dict[str, Any]] = []
-    seen_paths = set()  # 用于去重
+    seen_paths = set()  # For deduplication
 
     for skill_file in AUTO_SKILLS_DIR.glob("**/SKILL.md"):
         if skill_file in seen_paths:

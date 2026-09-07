@@ -230,6 +230,7 @@
 // Methods/types (regular script block: only for exporting ensureSessionCharacter to parent component for reuse)
 import type { CachedCharacter } from '@/composables/db';
 import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter } from '@/composables/db';
+import { logUtil } from '~/utils/log';
 
 /**
  * Default character display info (built-in: Touno Hanna / Sherry Orange + default avatar URLs, see `defaultCharacter.ts`).
@@ -272,7 +273,7 @@ export async function ensureSessionCharacter(sessionId: string) {
     await cacheCharacter(locked);
   } catch (error) {
     // Don't block chat on Dexie read/write exceptions.
-    console.warn('[ensureSessionCharacter] 读取角色快照失败：', error);
+    logUtil.w('[ensureSessionCharacter] 读取角色快照失败：', error);
   }
 }
 </script>
@@ -433,7 +434,7 @@ const loadSessionList = async () => {
     );
   } catch (error) {
     // When server unreachable: current session memory state preserved, try to recover persisted placeholder sessions from IndexedDB
-    console.warn('[loadSessionList] 拉取会话列表失败：', error);
+    logUtil.w('[loadSessionList] 拉取会话列表失败：', error);
     try {
       const placeholders = await readCachedSessionMetaList();
       const localById = new Map<string, SessionRecord>();
@@ -449,7 +450,7 @@ const loadSessionList = async () => {
         overrides.has(item.id) ? { ...item, title: overrides.get(item.id) ?? item.title, renamed: true } : item
       );
     } catch (cacheErr) {
-      console.warn('[loadSessionList] 恢复本地占位会话失败：', cacheErr);
+      logUtil.w('[loadSessionList] 恢复本地占位会话失败：', cacheErr);
     }
   }
 };
@@ -524,7 +525,7 @@ const handleDeleteSession = async (id: string) => {
   try {
     const ok = await clearSession(id);
     if (!ok) {
-      console.warn('[handleDeleteSession] Failed to delete session, keeping list item:', id);
+      logUtil.w('[handleDeleteSession] Failed to delete session, keeping list item:', id);
       return;
     }
     historyList.value = historyList.value.filter(s => s.id !== id);
@@ -543,7 +544,7 @@ const handleDeleteSession = async (id: string) => {
       router.push(localePath('/home'));
     }
   } catch (error) {
-    console.warn('[handleDeleteSession] Exception deleting session, keeping list item:', id, error);
+    logUtil.w('[handleDeleteSession] Exception deleting session, keeping list item:', id, error);
   } finally {
     deletingSessionIds.value.delete(id);
   }
@@ -600,7 +601,7 @@ const doBatchDeleteSessions = async () => {
       } catch (error) {
         failed = true;
         remain.push(id);
-        console.warn('[handleBatchDelete] Exception deleting session:', id, error);
+        logUtil.w('[handleBatchDelete] Exception deleting session:', id, error);
       }
     }
 
@@ -622,7 +623,7 @@ const doBatchDeleteSessions = async () => {
     selectedSessionIds.value = remain;
 
     if (failed && remain.length > 0) {
-      console.warn('[handleBatchDelete] Some sessions failed to delete, kept:', remain);
+      logUtil.w('[handleBatchDelete] Some sessions failed to delete, kept:', remain);
     }
   } finally {
     batchDeleting.value = false;
@@ -718,7 +719,7 @@ const doBatchDeleteTasks = async () => {
     const removed = await deleteSelectedTasks();
     if (removed > 0) emit('subagent:refresh-tasks');
   } catch (error) {
-    console.error('[SessionSidebar] Failed to batch delete background tasks:', error);
+    logUtil.e('[SessionSidebar] Failed to batch delete background tasks:', error);
   }
 };
 
@@ -745,7 +746,7 @@ const doDeleteTask = async (runId: string) => {
     await deleteSubagentSubtree(runId);
     emit('subagent:refresh-tasks');
   } catch (error) {
-    console.error('[SessionSidebar] Failed to delete background task:', error);
+    logUtil.e('[SessionSidebar] Failed to delete background task:', error);
   }
 };
 

@@ -124,7 +124,7 @@ async def sessions_yield_runtime_tool(
     try:
         await asyncio.wait_for(event.wait(), timeout=timeout_seconds)
         return "All subagents have completed. Their results have been delivered to you."
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return (
             f"Yield timed out after {timeout_seconds}s. Some subagents may still be "
             "running. Use subagents_list to check."

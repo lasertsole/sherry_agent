@@ -171,7 +171,7 @@ const props = defineProps<{
   run?: SubagentRun;
 }>();
 
-  const { t } = useI18n();
+const { t } = useI18n();
 const { badgeClass, statusLabel, roleLabel, runLabel, parentSessionLabel, refreshFocusedSubtree } = useSubagentTasks();
 
 /** delivery.status label (reuses the sidebar status keys; shows the raw value as fallback) */
@@ -231,4 +231,3 @@ function formatTime(ms: number | null | undefined): string {
   return dayjs(Number(ms)).format('YYYY-MM-DD HH:mm:ss');
 }
 </script>
-

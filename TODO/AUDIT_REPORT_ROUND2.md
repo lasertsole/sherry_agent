@@ -12,8 +12,8 @@
 
 ```python
 skill_path = path_params["skill_path"]
-full_path = ROOT_DIR / skill_path          # 无 is_relative_to 检查
-content = full_path.read_text(...)         # 读取任意文件
+full_path = ROOT_DIR / skill_path  # 无 is_relative_to 检查
+content = full_path.read_text(...)  # 读取任意文件
 ```
 
 - `resolve_path`（AUDIT_REPORT #1）已修复（含 `is_relative_to(ROOT_DIR)` 检查），但此端点**完全绕过** `resolve_path`，直接 `ROOT_DIR / skill_path`。
@@ -25,11 +25,11 @@ content = full_path.read_text(...)         # 读取任意文件
 **文件**：`agent/tools/subagent/delegate.py:128-141`
 
 ```python
-asyncio.get_running_loop()   # 检测到运行中的事件循环
+asyncio.get_running_loop()  # 检测到运行中的事件循环
 in_loop = True
 if in_loop:
     while self.is_running():
-        time.sleep(poll_interval)   # ← 阻塞事件循环！
+        time.sleep(poll_interval)  # ← 阻塞事件循环！
 ```
 
 - `result()` 是同步方法，检测到运行中的事件循环后用 `time.sleep()` 轮询。注释声称"不阻塞外层循环"但 `time.sleep()` **确实阻塞**。
@@ -59,7 +59,7 @@ import jieba                     # 导入失败后仍继续
 try:
     event_loop.run_forever()
 except Exception:
-    pass                         # 事件循环崩溃，静默无日志
+    pass  # 事件循环崩溃，静默无日志
 ```
 
 - 渠道管理器事件循环崩溃后所有渠道（QQ 等）停止工作但**无任何日志告警**。进程继续运行但渠道全部失联。
@@ -74,7 +74,7 @@ while True:
     try:
         maybe_run_curator(idle_for_seconds=...)
     except Exception:
-        pass                     # curator 每次失败都静默吞没，无日志
+        pass  # curator 每次失败都静默吞没，无日志
 ```
 
 - curator 核心逻辑（技能归档、清理、状态迁移）异常被静默吞没，curator 永远循环但永远失败。DB 损坏、LLM 调用失败、状态迁移错误全部隐藏。
@@ -89,9 +89,9 @@ while True:
 **文件**：`agent/middlewares/multimodal_processor.py:92,97,208,221,244,253,276,285,375`
 
 ```python
-temp_dir = SRC_DIR / session_id / "mutil_temp"   # session_id 未清洗
+temp_dir = SRC_DIR / session_id / "mutil_temp"  # session_id 未清洗
 temp_dir.mkdir(parents=True, exist_ok=True)
-temp_path.write_bytes(data)                      # 写入任意路径
+temp_path.write_bytes(data)  # 写入任意路径
 ```
 
 - **输入源**：`server/trigger/ws/messages.py:168` → `session_id = obj.get("session_id")` 从 WS JSON body 取值，**无** `_validate_session_id` 调用（对比 `media.py:29-42` 有防护）。
@@ -104,7 +104,7 @@ temp_path.write_bytes(data)                      # 写入任意路径
 
 ```python
 req = urllib.request.Request(url, headers={...})
-with urllib.request.urlopen(req, timeout=30) as resp:   # 无内网 IP 黑名单
+with urllib.request.urlopen(req, timeout=30) as resp:  # 无内网 IP 黑名单
     data = resp.read()
 ```
 
@@ -117,10 +117,11 @@ with urllib.request.urlopen(req, timeout=30) as resp:   # 无内网 IP 黑名单
 **文件**：`server/trigger/http/knowledge_graph.py:67-93`
 
 ```python
-name = str(filename)                          # 攻击者可控的 multipart 文件名
+name = str(filename)  # 攻击者可控的 multipart 文件名
 ext = Path(name).suffix.lower()
-if ext not in _ALLOWED_EXT: ...                # 仅检查后缀，不阻挡 "../"
-staged = stage_dir / name                      # name 含 "../" → 穿越
+if ext not in _ALLOWED_EXT:
+    ...  # 仅检查后缀，不阻挡 "../"
+staged = stage_dir / name  # name 含 "../" → 穿越
 staged.write_bytes(data)
 ```
 
@@ -133,7 +134,7 @@ staged.write_bytes(data)
 
 ```python
 for sid, task in list(_active_tasks.items()):
-    if task.done():          # 仅移除已完成的
+    if task.done():  # 仅移除已完成的
         _active_tasks.pop(sid, None)
 ```
 
@@ -169,8 +170,9 @@ for sid, task in list(_active_tasks.items()):
 
 ```python
 while True:
-    row = await queue.claim_next(session_id)    # DB 错误直接抛出
-    if row is None: break
+    row = await queue.claim_next(session_id)  # DB 错误直接抛出
+    if row is None:
+        break
     await _execute_claimed_row(session_id, row)
 ```
 
@@ -210,7 +212,7 @@ while True:
 try:
     await wake_yield_if_all_children_settled(...)
 except Exception:
-    pass                         # 唤醒失败 → 父代理永远阻塞在 yield 上
+    pass  # 唤醒失败 → 父代理永远阻塞在 yield 上
 ```
 
 - **修复**：至少 `logger.warning("wake_yield failed for ...: {}", e)`。
@@ -260,7 +262,7 @@ except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
 **文件**：`agent/tools/subagent/registry/lifecycle.py:40-42`
 
 ```python
-_terminal_locks: dict[str, asyncio.Lock] = {}       # 只增不减
+_terminal_locks: dict[str, asyncio.Lock] = {}  # 只增不减
 _cleanup_generations: dict[str, int] = {}
 _deferred_cleanup_timers: dict[str, asyncio.Task] = {}
 ```
@@ -277,7 +279,7 @@ _deferred_cleanup_timers: dict[str, asyncio.Task] = {}
 **文件**：`server/trigger/http/audio.py:60-64`、`video.py:60-61`、`image.py:59-60`
 
 ```python
-file_path.write_bytes(data)   # 无 len(data) 检查
+file_path.write_bytes(data)  # 无 len(data) 检查
 ```
 
 - **修复**：加 `len(data)` 上限检查（对比 `skills.py:upload` 有 `_MAX_SKILL_CONTENT_CHARS`）。
@@ -287,8 +289,8 @@ file_path.write_bytes(data)   # 无 len(data) 检查
 **文件**：`server/trigger/http/knowledge_graph.py:146,150`
 
 ```python
-max_depth = max(0, int(query.get("max_depth", 3)))    # 仅最小值，无上限
-max_nodes = max(1, int(query.get("max_nodes", 1000))) # 仅最小值
+max_depth = max(0, int(query.get("max_depth", 3)))  # 仅最小值，无上限
+max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 ```
 
 ## 25. 子代理生成安全限制可被 HTTP body 覆盖
@@ -303,7 +305,7 @@ max_nodes = max(1, int(query.get("max_nodes", 1000))) # 仅最小值
 **文件**：`channels/manager.py:148-149`
 
 ```python
-self._event_loop.create_task(self._inbound_consume_loop())   # 引用未存储
+self._event_loop.create_task(self._inbound_consume_loop())  # 引用未存储
 self._event_loop.create_task(self._outbound_consume_loop())
 ```
 
@@ -351,7 +353,7 @@ rows = store_core.get_messages_by_lastest_n_turns(session_id, last_n=2)  # SYNC 
 ```python
 if loop and loop.is_running():
     future = pool.submit(_run_in_worker)
-    return future.result(timeout=timeout)   # 阻塞事件循环线程
+    return future.result(timeout=timeout)  # 阻塞事件循环线程
 ```
 
 - **修复**：确保所有 `run_async` 调用方不在事件循环线程上，或提供 `await` 版本。
@@ -388,7 +390,7 @@ if loop and loop.is_running():
 
 ```python
 await db.execute("DELETE FROM subagent_runs")  # 删除全部行
-for run_id, run in runs.items():               # 逐条重新插入
+for run_id, run in runs.items():  # 逐条重新插入
     await db.execute("INSERT INTO subagent_runs ...")
 ```
 
@@ -407,7 +409,7 @@ for run_id, run in runs.items():               # 逐条重新插入
 **文件**：`server/service/heartbeat.py:71-76`
 
 ```python
-main_llm = build_main_llm()      # 每次新建 LLM 客户端
+main_llm = build_main_llm()  # 每次新建 LLM 客户端
 agent = create_agent(model=main_llm, tools=tools)  # 每次重建状态图
 ```
 

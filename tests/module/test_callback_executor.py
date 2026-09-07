@@ -148,6 +148,7 @@ class TestCallbackExecutor:
 
     def test_create_task_timeout_cancels_slow_task(self, executor):
         """A task exceeding its timeout is cancelled and the done event fires."""
+
         async def slow():
             await asyncio.sleep(30)
 
