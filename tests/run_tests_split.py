@@ -15,8 +15,9 @@ in a different process from ``tests/integration + tests/system +
 tests/module`` makes cross-suite pollution structurally impossible.
 
 Groups (run SEQUENTIALLY, never in parallel — CPU/model resource contention):
-  A  tests/unit
-  B  tests/integration  tests/system  tests/module
+  A  marker: unit
+  B  marker: integration or module or system
+  C  marker: regression
 
 Usage
 -----
@@ -40,11 +41,13 @@ from typing import TextIO, cast
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# (name, description, test paths)
-GROUPS: list[tuple[str, str, list[str]]] = [
-    ("A", "tests/unit", ["tests/unit"]),
-    ("B", "integration + system + module", ["tests/integration", "tests/system", "tests/module"]),
-    ("C", "regression", ["tests/regression"]),
+# (name, description, marker expression evaluated against the whole tests/ tree)
+# Grouping is BY MARKER, not by directory — test files mirror the source tree
+# (tests/agent/..., tests/server/...) and carry a module-level pytestmark.
+GROUPS: list[tuple[str, str, str]] = [
+    ("A", "unit", "unit"),
+    ("B", "integration + module + system", "integration or module or system"),
+    ("C", "regression", "regression"),
 ]
 
 # pytest exit codes (see `pytest --help` / _pytest.main.ExitCode)
@@ -97,17 +100,14 @@ def parse_args() -> tuple[RunnerOptions, list[str]]:
     return options, passthrough
 
 
-def build_group_cmd(
-    group_paths: list[str], with_llm_e2e: bool, passthrough: list[str]
-) -> list[str]:
+def build_group_cmd(group_expr: str, with_llm_e2e: bool, passthrough: list[str]) -> list[str]:
     """Build the pytest command line for one group."""
-    cmd: list[str] = [sys.executable, "-m", "pytest", *group_paths, "-q"]
-    # Marker selection. Passed on the CLI (after pyproject addopts) so the
-    # script stays self-contained: the last -m wins over ini addopts.
-    if with_llm_e2e:
-        cmd += ["-m", "llm_e2e"]
-    else:
-        cmd += ["-m", "not llm_e2e"]
+    cmd: list[str] = [sys.executable, "-m", "pytest", "tests/", "--ignore=tests/full", "-q"]
+    # Marker selection. The group expression is composed with the llm_e2e
+    # policy on the CLI (after pyproject addopts) so the script stays
+    # self-contained: the last -m wins over ini addopts.
+    llm = "llm_e2e" if with_llm_e2e else "not llm_e2e"
+    cmd += ["-m", f"({group_expr}) and {llm}"]
     cmd += passthrough
     return cmd
 
@@ -136,7 +136,7 @@ def child_env() -> dict[str, str]:
 def run_group(
     name: str,
     desc: str,
-    paths: list[str],
+    expr: str,
     with_llm_e2e: bool,
     passthrough: list[str],
 ) -> tuple[int, float]:
@@ -145,7 +145,7 @@ def run_group(
     Returns (exit_code, elapsed_seconds). Output is captured with
     errors="replace" (UTF-8) and echoed, so GBK consoles can't corrupt it.
     """
-    cmd = build_group_cmd(paths, with_llm_e2e, passthrough)
+    cmd = build_group_cmd(expr, with_llm_e2e, passthrough)
     print(f"\n{'=' * 70}\nGROUP {name}: {desc}\n  $ {' '.join(cmd)}\n{'=' * 70}", flush=True)
 
     start = time.monotonic()
@@ -191,8 +191,8 @@ def main() -> int:
         print(f"  passthrough: {passthrough}")
 
     results: list[tuple[str, str, int, float]] = []
-    for name, desc, paths in GROUPS:
-        rc, elapsed = run_group(name, desc, paths, options.with_llm_e2e, passthrough)
+    for name, desc, expr in GROUPS:
+        rc, elapsed = run_group(name, desc, expr, options.with_llm_e2e, passthrough)
         results.append((name, desc, rc, elapsed))
 
     print(f"\n{'=' * 70}\nPER-GROUP SUMMARY\n{'=' * 70}")
