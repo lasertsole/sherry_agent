@@ -81,7 +81,7 @@ def _build_rename_summary(
     consolidated = classification["consolidated"]
     pruned = classification["pruned"]
 
-    SHOW = 10
+    SHOW = 10  # noqa: N806
     lines: list[str] = [f"archived {len(consolidated) + len(pruned)} skill(s):"]
     shown = 0
     for entry in consolidated[:SHOW]:

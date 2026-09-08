@@ -107,7 +107,7 @@ async def _expire_suspended_by_requester_type() -> int:
     """Expire suspended deliveries based on requester type (cron/subagent/interactive) with different TTLs."""
     from . import memory, mark_delivery_discarded, set_run
 
-    _REQUESTER_TYPE_EXPIRY_MS = {
+    _REQUESTER_TYPE_EXPIRY_MS = {  # noqa: N806
         "cron": 2 * 3600 * 1000,  # 2 hours for cron
         "subagent": 6 * 3600 * 1000,  # 6 hours for sub-agent
         "interactive": 24 * 3600 * 1000,  # 24 hours for interactive

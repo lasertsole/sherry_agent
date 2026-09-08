@@ -1,7 +1,7 @@
 import time
 import torch
 from torch import nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from funasr.register import tables
 from funasr.models.ctc.ctc import CTC
 from utils.ctc_alignment import ctc_forced_align

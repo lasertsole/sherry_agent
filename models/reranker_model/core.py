@@ -192,13 +192,13 @@ def load_classifier_weights(gguf_path: str | os.PathLike) -> ClassifierWeights:
     n_rows = int(shape_field[0])
     n_cols = int(shape_field[1])
     logger.info("Dequantising cls.weight (%s × %s, Q8_0) …", n_rows, n_cols)
-    W1 = dequantize_q8_0(np.asarray(cls_weight_t.data, dtype=np.uint8), n_rows, n_cols)
+    W1 = dequantize_q8_0(np.asarray(cls_weight_t.data, dtype=np.uint8), n_rows, n_cols)  # noqa: N806
 
     # --- cls.bias ---
     b1 = _get_tensor("cls.bias").data.copy().astype(np.float32)
 
     # --- cls.output.weight & cls.output.bias ---
-    W2 = _get_tensor("cls.output.weight").data.copy().astype(np.float32)
+    W2 = _get_tensor("cls.output.weight").data.copy().astype(np.float32)  # noqa: N806
     b2 = _get_tensor("cls.output.bias").data.copy().astype(np.float32)
 
     logger.info(

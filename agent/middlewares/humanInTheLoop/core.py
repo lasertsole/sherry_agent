@@ -155,7 +155,7 @@ class HumanInTheLoop(AgentMiddleware):
         """
         if choices:
             choices = choices[:4] + ["Other (type your answer)"]
-        from .types import ActionRequest as AR, ReviewConfig as RC, HITLRequest as HR
+        from .types import ActionRequest as AR, ReviewConfig as RC, HITLRequest as HR  # noqa: N817, N814
 
         hitl_request = HR(
             action_requests=[AR(name="clarify", args={"question": question, "choices": choices})],

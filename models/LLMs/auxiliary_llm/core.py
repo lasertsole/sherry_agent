@@ -100,8 +100,8 @@ def build_auxiliary_llm(temperature: float | None = None):
 
         model_weight_dir = Path(__file__).parent.resolve() / "model_weight"
         _model_path = model_weight_dir / "Qwen3.5-9B-Q4_K_M.gguf"
-        _HF_REPO_ID = "lmstudio-community/Qwen3.5-9B-GGUF"
-        _HF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"
+        _HF_REPO_ID = "lmstudio-community/Qwen3.5-9B-GGUF"  # noqa: N806
+        _HF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"  # noqa: N806
 
         def _resolve_model_path() -> str:
             # Shared resolver (audit 1.1.3); hf_hub_download(local_files_only=True)

@@ -68,6 +68,38 @@ export default defineConfig([
     }
   },
   {
+    // Naming conventions (part2 item 九): block backend-style snake_case bleed.
+    // property/method selectors are intentionally NOT enforced — object literals,
+    // i18n keys and API payloads are data, not code style.
+    // variable keeps PascalCase (Vue component imports) and UPPER_CASE (constants).
+    files: ['**/*.{ts,tsx,vue}'],
+    rules: {
+      '@typescript-eslint/naming-convention': [
+        'error',
+        { selector: 'function', format: ['camelCase'], leadingUnderscore: 'allow' },
+        {
+          selector: 'variable',
+          format: ['camelCase', 'UPPER_CASE', 'PascalCase'],
+          leadingUnderscore: 'allow'
+        },
+        { selector: 'parameter', format: ['camelCase'], leadingUnderscore: 'allow' },
+        { selector: 'class', format: ['PascalCase'] },
+        // UPPER_CASE allowed for constant-namespace enums (legacy CHAT_ROLE); lowercase
+        // snake_case typeLike names remain blocked
+        { selector: 'typeLike', format: ['PascalCase', 'UPPER_CASE'] }
+      ]
+    }
+  },
+  {
+    // API-contract mirror modules: exported function/parameter names deliberately
+    // mirror backend endpoint names (/get_history_by_turn_page, /system_prompt),
+    // so snake_case here is a contract, not style bleed.
+    files: ['**/composables/messages.ts', '**/composables/workspace.ts'],
+    rules: {
+      '@typescript-eslint/naming-convention': 'off'
+    }
+  },
+  {
     // Log infrastructure owns console calls; tests legitimately mock/console.
     files: ['**/__tests__/**', '**/clientLog.ts'],
     rules: {

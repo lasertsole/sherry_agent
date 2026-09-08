@@ -128,8 +128,8 @@ def _try_import_botpy() -> bool:
         importlib.invalidate_caches()
         try:
             import botpy as _botpy
-            from botpy.message import C2CMessage as _c2c
-            from botpy.message import GroupMessage as _group
+            from botpy.message import C2CMessage as _c2c  # noqa: N813
+            from botpy.message import GroupMessage as _group  # noqa: N813
         except Exception as exc:
             last_exc = exc
             if attempt < 2:
@@ -256,7 +256,7 @@ class QQChannel(BaseChannel):
             return
 
         self._running = True
-        BotClass = _make_bot_class(self)
+        BotClass = _make_bot_class(self)  # noqa: N806
         self._client = BotClass()
         logger.info("QQ bot started (C2C & Group supported)")
         await self._run_bot()

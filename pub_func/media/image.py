@@ -9,7 +9,7 @@ from loguru import logger
 
 def detect_image_format(image_data: bytes) -> str | None:
     """Detect image format by file header signature."""
-    IMAGE_SIGNATURES = {
+    IMAGE_SIGNATURES = {  # noqa: N806
         b"\xff\xd8\xff": "JPEG",
         b"\x89PNG\r\n\x1a\n": "PNG",
         b"GIF87a": "GIF",
@@ -407,7 +407,7 @@ def check_if_image_and_convert_to_base64(
 
         header = response.raw.read(32)
 
-        IMAGE_SIGNATURES = {
+        IMAGE_SIGNATURES = {  # noqa: N806
             b"\xff\xd8\xff": "JPEG",
             b"\x89PNG\r\n\x1a\n": "PNG",
             b"GIF87a": "GIF",

@@ -53,6 +53,18 @@ repos:
         files: \.(css|rs|js|ts|mjs|vue)$
         exclude: ^client/
 
+  # ---- naming convention guard (part2 item 九) ----------------------------
+  # Layer 1 of the naming matrix: file name formats (.py snake_case, .ts
+  # kebab-case, .vue PascalCase). Layer 2 lives in ruff (N rules) and eslint
+  # (@typescript-eslint/naming-convention).
+  - repo: local
+    hooks:
+      - id: naming-convention
+        name: file naming convention
+        entry: bash scripts/hooks/check-naming-convention.sh
+        language: system
+        files: \.(py|ts|tsx|js|jsx|mjs|cjs|vue|scss|css)$
+
   # ---- frontend: fix-then-check (client/ pnpm toolchain) ------------------
   - repo: local
     hooks:
@@ -80,6 +92,14 @@ repos:
         pass_filenames: false
         require_serial: true
         files: ^client/.*\.(ts|tsx|vue|js|mjs|json)$
+      # Phase 4: circular dependency detection — dpdm over the .ts module graph
+      - id: dpdm
+        name: dpdm (circular deps)
+        entry: bash scripts/hooks/dpdm.sh
+        language: system
+        pass_filenames: false
+        require_serial: true
+        files: ^client/.*\.(ts|tsx|vue|js|mjs)$
 
   # ---- commit message: commitlint (Angular convention) --------------------
   - repo: local

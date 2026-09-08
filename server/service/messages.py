@@ -10,7 +10,7 @@ from runtime import state_register_mem
 from context_engine import get_session_ids
 from type.message import MultiModalMessage
 from pub_func import build_agent_config, is_url
-from ..DAO import clear_session as clear_session_DAO
+from ..DAO import clear_session as clear_session_dao
 from context_engine.curator import reset_idle_for_seconds
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
@@ -588,7 +588,7 @@ def get_session_list() -> list[dict[str, Any]]:
 
 async def clear_session(session_id: str):
     logger.debug(f"Clearing session history: session_id={session_id}")
-    await clear_session_DAO(session_id=session_id)
+    await clear_session_dao(session_id=session_id)
     logger.debug(f"Session history cleared: session_id={session_id}")
 
 
