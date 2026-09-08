@@ -183,6 +183,17 @@ async def _write_interrupt_marker(
         )
 
 
+# Phase 2 text continuation: injected verbatim (hermes-agent proven prompt)
+# after a max_tokens truncation with no tool calls; the checkpointer reloads
+# the truncated AIMessage so the model resumes mid-answer.
+_CONTINUATION_PROMPT = (
+    "[System: Your previous response was truncated by the output "
+    "length limit. Continue exactly where you left off. Do not "
+    "restart or repeat prior text. Finish the answer directly.]"
+)
+_MAX_CONTINUATION_RETRIES = 4
+
+
 class _GenerateTurn(StreamTurn):
     """A normal user turn (stream or non-stream) through the context-assembled agent."""
 
@@ -197,10 +208,17 @@ class _GenerateTurn(StreamTurn):
         self.multi_modal_message = multi_modal_message
         self.is_stream = is_stream
         self.origin = origin
+        # Agent reference held across the turn so a Phase 2 text continuation
+        # can re-stream through the SAME checkpointer-backed graph (the new
+        # HumanMessage appends to the truncated AIMessage in state).
+        self._agent: Any = None
+        self._continuation_retries: int = 0
+        self._is_continuation: bool = False
 
     async def _prepare(self) -> None:
         # reset curator reset_idle_for_seconds
         reset_idle_for_seconds()
+        self._agent = await built_agent(force_rebuild=True)
 
     def _log_started(self) -> None:
         logger.debug(
@@ -209,16 +227,28 @@ class _GenerateTurn(StreamTurn):
         )
 
     async def _create_source(self) -> tuple[Literal["stream", "invoke"], Any]:
+        if self._is_continuation:
+            # Phase 2: the checkpointer reloads the truncated AIMessage, so a
+            # bare continuation HumanMessage makes the model resume mid-answer.
+            input_dict: dict[str, Any] = {
+                "session_id": self.session_id,
+                "messages": [HumanMessage(content=_CONTINUATION_PROMPT)],
+            }
+        else:
+            content_list: list[str | dict[str, Any]] = _get_content_list(self.multi_modal_message)
+            input_dict = {
+                "session_id": self.session_id,
+                "messages": [HumanMessage(content=content_list, metadata=self.origin)],
+            }
         if self.is_stream:
-            # Stream directly from the context-assembled agent
-            return "stream", await _get_generator(
-                self.session_id, self.multi_modal_message, origin=self.origin
+            return "stream", self._agent.astream(
+                input=input_dict,
+                config=build_agent_config(self.session_id),
+                stream_mode=["messages", "updates"],
             )
         return (
             "invoke",
-            await _get_generator(
-                self.session_id, self.multi_modal_message, is_stream=False, origin=self.origin
-            ),
+            self._agent.ainvoke(input=input_dict, config=build_agent_config(self.session_id)),
         )
 
     def _note_tool_start(self, tool_name: str) -> None:
@@ -240,6 +270,10 @@ class _GenerateTurn(StreamTurn):
                     self.meta_input_tokens = int(_usage["input_tokens"])
                 if _usage.get("output_tokens") is not None:
                     self.meta_output_tokens = int(_usage["output_tokens"])
+            _finish = _resp_meta.get("finish_reason") or _resp_meta.get("stop_reason")
+            if _finish:
+                self.meta_finish_reason = _finish
+            self._has_tool_calls = bool(getattr(last_msg, "tool_calls", None))
         except (KeyError, TypeError, AttributeError):
             pass
         return [{"type": "text", "content": res}]
@@ -255,8 +289,25 @@ class _GenerateTurn(StreamTurn):
                 "model_name": self.meta_model_name or "",
                 "input_tokens": self.meta_input_tokens or 0,
                 "output_tokens": self.meta_output_tokens or 0,
+                "finish_reason": self.meta_finish_reason or "",
             }
         ]
+
+    def _should_text_continue(self) -> bool:
+        return (
+            self.meta_finish_reason in ("length", "max_tokens")
+            and not self._has_tool_calls
+            and self._continuation_retries < _MAX_CONTINUATION_RETRIES
+        )
+
+    def _prepare_continuation(self) -> None:
+        self._is_continuation = True
+        self._continuation_retries += 1
+        # The next model call's finish_reason overwrites these; clearing here
+        # prevents a stale truncation value from re-triggering the loop if the
+        # continuation stream carries no metadata.
+        self.meta_finish_reason = None
+        self._has_tool_calls = False
 
     async def _on_cancelled(self) -> None:
         await _write_interrupt_marker(self.session_id, self.ai_text, "cancelled")
@@ -294,6 +345,7 @@ class _GenerateTurn(StreamTurn):
                 await source.aclose()
             except Exception:
                 pass  # GeneratorExit is expected and harmless
+        self._agent = None
         # There is no pool to "release" here: the stale keep-alive connection
         # (which dies mid-request as openai.APITimeoutError) is handled by
         # rebuilding the graph with a FRESH main_llm -> httpx client at the START

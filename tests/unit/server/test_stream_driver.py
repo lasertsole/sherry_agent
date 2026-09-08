@@ -104,6 +104,7 @@ class TestDoneAndInterrupt:
                             "model_name": "deepseek-v3",
                             "input_tokens": 11,
                             "output_tokens": 22,
+                            "finish_reason": "",
                         },
                     ]
                 )
@@ -119,6 +120,7 @@ class TestDoneAndInterrupt:
             "model_name": "deepseek-v3",
             "input_tokens": 11,
             "output_tokens": 22,
+            "finish_reason": "",
         }
 
     def test_done_frame_uses_class_defaults_without_meta(self):
@@ -133,6 +135,7 @@ class TestDoneAndInterrupt:
             "model_name": "",
             "input_tokens": 0,
             "output_tokens": 0,
+            "finish_reason": "",
         }
 
     def test_interrupt_sends_hitl_request_and_sets_flag(self):

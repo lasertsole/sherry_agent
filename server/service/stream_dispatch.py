@@ -174,6 +174,13 @@ class StreamTurn:
         self.meta_model_name: str | None = None
         self.meta_input_tokens: int | None = None
         self.meta_output_tokens: int | None = None
+        # finish_reason / stop_reason of the LAST model call ("stop", "length",
+        # "max_tokens", ...) — drives the Phase 2 text-continuation decision.
+        self.meta_finish_reason: str | None = None
+        # Whether any model call in this turn produced tool calls. A truncated
+        # response WITH tool calls goes through the Phase 3 max-tokens boost
+        # (middleware re-call) instead of the Phase 2 text continuation.
+        self._has_tool_calls: bool = False
 
     # ---- hooks ----------------------------------------------------------
 
@@ -202,6 +209,13 @@ class StreamTurn:
         """Frames yielded after normal completion (generate: the meta chunk)."""
         return []
 
+    def _should_text_continue(self) -> bool:
+        """Whether to inject a continuation prompt and re-stream after truncation."""
+        return False
+
+    def _prepare_continuation(self) -> None:
+        """Prepare state for a continuation re-restream (e.g., set a flag)."""
+
     async def _on_cancelled(self) -> None:
         """Best-effort persistence on the cancel path (generate: marker)."""
 
@@ -219,6 +233,8 @@ class StreamTurn:
         state_register_mem.set_state(self.session_id, "current_tool_name", "")
         state_register_mem.set_state(self.session_id, "current_tool_id", "")
         state_register_mem.set_state(self.session_id, "answering", False)
+        # Phase 3 flag consumed by MaxTokensBoostMiddleware during model calls
+        state_register_mem.delete_state(self.session_id, "is_stream_turn")
         _clear_pending_args(self.session_id)
 
     # ---- template -------------------------------------------------------
@@ -234,208 +250,241 @@ class StreamTurn:
         kind: Literal["stream", "invoke"] | None = None
         source: Any = None
         try:
-            kind, source = await self._create_source()
+            # Phase 2 outer loop: on text truncation (finish_reason=length,
+            # no tool calls) the subclass's _should_text_continue re-streams
+            # with a continuation prompt. The previous source is closed before
+            # each re-creation; _final_frames/_log_completed fire ONCE after
+            # the final iteration so the client sees a single meta chunk.
+            while True:
+                if source is not None and kind == "stream":
+                    try:
+                        await source.aclose()
+                    except Exception:
+                        pass  # generator teardown is best-effort between phases
+                kind, source = await self._create_source()
+                # Phase 3 flag: MaxTokensBoostMiddleware reads this to decide
+                # whether a re-call must strip streaming callbacks.
+                state_register_mem.set_state(self.session_id, "is_stream_turn", kind == "stream")
 
-            if kind == "invoke":
-                result: dict[str, Any] = await source
-                for frame in self._invoke_frames(result):
-                    yield frame
-            else:
-                async for chunk in source:
-                    if state_register_mem.get_state(self.session_id, "answering") is False:
-                        raise asyncio.CancelledError
+                if kind == "invoke":
+                    result: dict[str, Any] = await source
+                    for frame in self._invoke_frames(result):
+                        yield frame
+                else:
+                    async for chunk in source:
+                        if state_register_mem.get_state(self.session_id, "answering") is False:
+                            raise asyncio.CancelledError
 
-                    mode: str = chunk[0]
-                    data: Any = chunk[1]
-                    if mode == "updates":
-                        for node_name, state_update in data.items():
-                            if node_name != "tools":
-                                continue
-                            msgs = state_update.get("messages", [])
-                            for tm in msgs:
-                                if not isinstance(tm, ToolMessage):
+                        mode: str = chunk[0]
+                        data: Any = chunk[1]
+                        if mode == "updates":
+                            for node_name, state_update in data.items():
+                                if node_name != "tools":
                                     continue
-                                tool_id = tm.tool_call_id
-                                name = state_register_mem.get_state(
-                                    self.session_id, "current_tool_name", ""
-                                )
-                                args = _pop_pending_args(self.session_id, tool_id)
-                                yield {
-                                    "type": "tool_result",
-                                    "content": _normalize_text(tm.content),
-                                    "tool_id": tool_id,
-                                    "tool_name": name,
-                                    "args": args,
-                                    "error": bool(getattr(tm, "status", None) == "error"),
-                                }
-                                # Robust tool_end: emitted here on the REAL ToolMessage,
-                                # independent of whether the model emitted adjacent text.
-                                # Image/vision tools often produce only a tool call chunk
-                                # with no text, so the old messages-mode gating on
-                                # `msg_chunk.content` never fired, leaving the card
-                                # permanently "running" (the stuck-tool bug).
-                                yield {"type": "tool_end", "content": name}
-                                state_register_mem.set_state(self.session_id, "current_tool_id", "")
-                        continue
-                    if mode != "messages":
-                        continue
+                                msgs = state_update.get("messages", [])
+                                for tm in msgs:
+                                    if not isinstance(tm, ToolMessage):
+                                        continue
+                                    tool_id = tm.tool_call_id
+                                    name = state_register_mem.get_state(
+                                        self.session_id, "current_tool_name", ""
+                                    )
+                                    args = _pop_pending_args(self.session_id, tool_id)
+                                    yield {
+                                        "type": "tool_result",
+                                        "content": _normalize_text(tm.content),
+                                        "tool_id": tool_id,
+                                        "tool_name": name,
+                                        "args": args,
+                                        "error": bool(getattr(tm, "status", None) == "error"),
+                                    }
+                                    # Robust tool_end: emitted here on the REAL ToolMessage,
+                                    # independent of whether the model emitted adjacent text.
+                                    # Image/vision tools often produce only a tool call chunk
+                                    # with no text, so the old messages-mode gating on
+                                    # `msg_chunk.content` never fired, leaving the card
+                                    # permanently "running" (the stuck-tool bug).
+                                    yield {"type": "tool_end", "content": name}
+                                    state_register_mem.set_state(
+                                        self.session_id, "current_tool_id", ""
+                                    )
+                            continue
+                        if mode != "messages":
+                            continue
 
-                    # For "messages" mode, data is (message_chunk, metadata_dict).
-                    msg_chunk: BaseMessage = data[0]
-                    metadata: dict[str, Any] = data[1]
+                        # For "messages" mode, data is (message_chunk, metadata_dict).
+                        msg_chunk: BaseMessage = data[0]
+                        metadata: dict[str, Any] = data[1]
 
-                    extra_frames = self._extra_messages_frames(msg_chunk, metadata)
-                    if extra_frames:
-                        for frame in extra_frames:
-                            yield frame
-                        continue
+                        extra_frames = self._extra_messages_frames(msg_chunk, metadata)
+                        if extra_frames:
+                            for frame in extra_frames:
+                                yield frame
+                            continue
 
-                    # Filter out outputs from non-model nodes in the lifecycle
-                    if (
-                        metadata.get("langgraph_node", None) != "model"
-                        or metadata.get("lc_source") == "summarization"
-                    ):
-                        continue
-
-                    if isinstance(msg_chunk, AIMessageChunk):
-                        # Capture model + token usage metadata. The first chunk
-                        # carries the model name; only the final chunk carries
-                        # usage. Every lookup is guarded so a missing field NEVER
-                        # breaks the stream.
-                        try:
-                            _resp_meta = getattr(msg_chunk, "response_metadata", None) or {}
-                            _model_name = _resp_meta.get("model_name") or _resp_meta.get("model")
-                            if _model_name:
-                                self.meta_model_name = _model_name
-                            _usage = getattr(msg_chunk, "usage_metadata", None)
-                            if _usage:
-                                if _usage.get("input_tokens") is not None:
-                                    self.meta_input_tokens = int(_usage["input_tokens"])
-                                if _usage.get("output_tokens") is not None:
-                                    self.meta_output_tokens = int(_usage["output_tokens"])
-                        except (KeyError, TypeError, AttributeError):
-                            pass
-
-                        # Tool call output logic
-                        tool_calls: list[ToolCall] | list[ToolCallChunk] = (
-                            msg_chunk.tool_calls
-                            if msg_chunk.tool_calls and len(msg_chunk.tool_calls) > 0
-                            else msg_chunk.tool_call_chunks
-                        )
+                        # Filter out outputs from non-model nodes in the lifecycle
                         if (
-                            len(tool_calls) > 0
-                            or state_register_mem.get_state(
-                                self.session_id, "current_tool_id", ""
-                            ).strip()
+                            metadata.get("langgraph_node", None) != "model"
+                            or metadata.get("lc_source") == "summarization"
                         ):
-                            repeat_flag: bool = True  # Prevent duplicate tool call output
-                            tool_id: str | None = (
-                                None  # current tool call id (unknown for dict-typed access)
+                            continue
+
+                        if isinstance(msg_chunk, AIMessageChunk):
+                            # Capture model + token usage metadata. The first chunk
+                            # carries the model name; only the final chunk carries
+                            # usage. Every lookup is guarded so a missing field NEVER
+                            # breaks the stream.
+                            try:
+                                _resp_meta = getattr(msg_chunk, "response_metadata", None) or {}
+                                _model_name = _resp_meta.get("model_name") or _resp_meta.get(
+                                    "model"
+                                )
+                                if _model_name:
+                                    self.meta_model_name = _model_name
+                                _usage = getattr(msg_chunk, "usage_metadata", None)
+                                if _usage:
+                                    if _usage.get("input_tokens") is not None:
+                                        self.meta_input_tokens = int(_usage["input_tokens"])
+                                    if _usage.get("output_tokens") is not None:
+                                        self.meta_output_tokens = int(_usage["output_tokens"])
+                                _finish = _resp_meta.get("finish_reason") or _resp_meta.get(
+                                    "stop_reason"
+                                )
+                                if _finish:
+                                    self.meta_finish_reason = _finish
+                            except (KeyError, TypeError, AttributeError):
+                                pass
+
+                            # Tool call output logic
+                            tool_calls: list[ToolCall] | list[ToolCallChunk] = (
+                                msg_chunk.tool_calls
+                                if msg_chunk.tool_calls and len(msg_chunk.tool_calls) > 0
+                                else msg_chunk.tool_call_chunks
                             )
-                            if len(tool_calls) > 0:
-                                tool_call = tool_calls[0]
-
-                                if tool_call["name"]:
-                                    if tool_call["name"].strip() or tool_call[
-                                        "name"
-                                    ].strip() != state_register_mem.get_state(
-                                        self.session_id, "current_tool_name"
-                                    ):
-                                        state_register_mem.set_state(
-                                            self.session_id, "current_tool_name", tool_call["name"]
-                                        )
-
-                                if tool_call["id"]:
-                                    tool_id = tool_call["id"]
-                                    if (
-                                        tool_id.strip()
-                                        or tool_id.strip()
-                                        != state_register_mem.get_state(
-                                            self.session_id, "current_tool_id"
-                                        )
-                                    ):
-                                        state_register_mem.set_state(
-                                            self.session_id, "current_tool_id", tool_id
-                                        )
-                                        repeat_flag = False
-
-                            # Continuously refresh the pending arg-bag from the most
-                            # complete ToolCall chunk. Tool calling is streamed as a
-                            # sequence of fragments: the first chunk carries empty
-                            # args, and later chunks progressively accumulate the full
-                            # JSON. Capturing args only on the first fragment leaves
-                            # _pending_args permanently empty, so tool_start/tool_result
-                            # both carry {} on the wire (the tool bubble shows no args
-                            # until the page is rebuilt from the checkpointed final
-                            # ToolCall after refresh).
-                            #
-                            # This refresh runs on EVERY chunk (not just repeat_flag),
-                            # so the accumulated dict from the final fragment supersedes
-                            # the initial empty capture. A complete args dict always
-                            # supersedes an earlier partial JSON string; we never let a
-                            # later string fragment clobber an already-complete dict.
-                            # Streamed tool-call args are fragmented: the first chunk
-                            # carries the id with empty args, later (id-less) chunks
-                            # carry partial-JSON string fragments. Accumulate them onto
-                            # the effective tool id (persisted in state register) so the
-                            # bag is populated by the time tool_start/tool_result emit.
-                            eff_tool_id: str | None = (
-                                tool_id
+                            if (
+                                len(tool_calls) > 0
                                 or state_register_mem.get_state(
                                     self.session_id, "current_tool_id", ""
                                 ).strip()
-                                or None
-                            )
-                            # IMPORTANT: the args fragment MUST come from tool_call_chunks
-                            # (the complete ordered partial-JSON stream, including the
-                            # leading `{`), NOT from the `tool_calls` ToolCall dict whose
-                            # args is an empty `{}` on the first chunk. Reading the dict
-                            # loses the opening brace, so the accumulated string can never
-                            # form valid JSON and tool_start/tool_result stay args={}.
-                            _arg_frag: str | None = None
-                            if msg_chunk.tool_call_chunks and len(msg_chunk.tool_call_chunks) > 0:
-                                _arg_frag = msg_chunk.tool_call_chunks[0].get("args")
-                            _accumulate_pending_args(self.session_id, eff_tool_id, _arg_frag)
-
-                            if not repeat_flag:
-                                tool_name = state_register_mem.get_state(
-                                    self.session_id, "current_tool_name", ""
+                            ):
+                                repeat_flag: bool = True  # Prevent duplicate tool call output
+                                tool_id: str | None = (
+                                    None  # current tool call id (unknown for dict-typed access)
                                 )
-                                self._note_tool_start(tool_name)
-                                yield {
-                                    "type": "tool_start",
-                                    "content": tool_name,
-                                    "args": _get_pending_args(self.session_id, tool_id),
-                                }
+                                if len(tool_calls) > 0:
+                                    self._has_tool_calls = True
+                                    tool_call = tool_calls[0]
 
-                        # NOTE: tool_end is emitted from the updates-mode "tools"
-                        # branch (on the real ToolMessage), so a tool that produces no
-                        # adjacent text still gets a completion signal. The old
-                        # messages-mode implementation gated on msg_chunk.content, which
-                        # is why image/vision tools (usually text-free) hung forever.
-                        # End tool call output logic
+                                    if tool_call["name"]:
+                                        if tool_call["name"].strip() or tool_call[
+                                            "name"
+                                        ].strip() != state_register_mem.get_state(
+                                            self.session_id, "current_tool_name"
+                                        ):
+                                            state_register_mem.set_state(
+                                                self.session_id,
+                                                "current_tool_name",
+                                                tool_call["name"],
+                                            )
 
-                        # Conversation output logic
-                        if isinstance(msg_chunk.content, str) and len(msg_chunk.content) > 0:
-                            res = msg_chunk.content
-                            self.ai_text += res
-                            yield {"type": "text", "content": res}
+                                    if tool_call["id"]:
+                                        tool_id = tool_call["id"]
+                                        if (
+                                            tool_id.strip()
+                                            or tool_id.strip()
+                                            != state_register_mem.get_state(
+                                                self.session_id, "current_tool_id"
+                                            )
+                                        ):
+                                            state_register_mem.set_state(
+                                                self.session_id, "current_tool_id", tool_id
+                                            )
+                                            repeat_flag = False
 
-                        # Model reasoning output logic
-                        # Reasoning models (DeepSeek thinking, GLM thinking, R1...)
-                        # stream their chain-of-thought via
-                        # `additional_kwargs['reasoning_content']` (NOT inline content).
-                        # The normalizer guarantees per-chunk DELTAS on that key, so
-                        # the value is forwarded verbatim — the client appends each
-                        # "reasoning" chunk, and chunk aggregation reconstructs the
-                        # complete CoT on the final message. Surfaces as a dedicated
-                        # "reasoning" chunk so the client can render a collapsible
-                        # thinking block on the same message as the final answer.
-                        _reasoning = _reasoning_delta(msg_chunk)
-                        if _reasoning and len(_reasoning) > 0:
-                            yield {"type": "reasoning", "content": _reasoning}
-                        # End model reasoning output logic
-                        # End conversation output logic
+                                # Continuously refresh the pending arg-bag from the most
+                                # complete ToolCall chunk. Tool calling is streamed as a
+                                # sequence of fragments: the first chunk carries empty
+                                # args, and later chunks progressively accumulate the full
+                                # JSON. Capturing args only on the first fragment leaves
+                                # _pending_args permanently empty, so tool_start/tool_result
+                                # both carry {} on the wire (the tool bubble shows no args
+                                # until the page is rebuilt from the checkpointed final
+                                # ToolCall after refresh).
+                                #
+                                # This refresh runs on EVERY chunk (not just repeat_flag),
+                                # so the accumulated dict from the final fragment supersedes
+                                # the initial empty capture. A complete args dict always
+                                # supersedes an earlier partial JSON string; we never let a
+                                # later string fragment clobber an already-complete dict.
+                                # Streamed tool-call args are fragmented: the first chunk
+                                # carries the id with empty args, later (id-less) chunks
+                                # carry partial-JSON string fragments. Accumulate them onto
+                                # the effective tool id (persisted in state register) so the
+                                # bag is populated by the time tool_start/tool_result emit.
+                                eff_tool_id: str | None = (
+                                    tool_id
+                                    or state_register_mem.get_state(
+                                        self.session_id, "current_tool_id", ""
+                                    ).strip()
+                                    or None
+                                )
+                                # IMPORTANT: the args fragment MUST come from tool_call_chunks
+                                # (the complete ordered partial-JSON stream, including the
+                                # leading `{`), NOT from the `tool_calls` ToolCall dict whose
+                                # args is an empty `{}` on the first chunk. Reading the dict
+                                # loses the opening brace, so the accumulated string can never
+                                # form valid JSON and tool_start/tool_result stay args={}.
+                                _arg_frag: str | None = None
+                                if (
+                                    msg_chunk.tool_call_chunks
+                                    and len(msg_chunk.tool_call_chunks) > 0
+                                ):
+                                    _arg_frag = msg_chunk.tool_call_chunks[0].get("args")
+                                _accumulate_pending_args(self.session_id, eff_tool_id, _arg_frag)
+
+                                if not repeat_flag:
+                                    tool_name = state_register_mem.get_state(
+                                        self.session_id, "current_tool_name", ""
+                                    )
+                                    self._note_tool_start(tool_name)
+                                    yield {
+                                        "type": "tool_start",
+                                        "content": tool_name,
+                                        "args": _get_pending_args(self.session_id, tool_id),
+                                    }
+
+                            # NOTE: tool_end is emitted from the updates-mode "tools"
+                            # branch (on the real ToolMessage), so a tool that produces no
+                            # adjacent text still gets a completion signal. The old
+                            # messages-mode implementation gated on msg_chunk.content, which
+                            # is why image/vision tools (usually text-free) hung forever.
+                            # End tool call output logic
+
+                            # Conversation output logic
+                            if isinstance(msg_chunk.content, str) and len(msg_chunk.content) > 0:
+                                res = msg_chunk.content
+                                self.ai_text += res
+                                yield {"type": "text", "content": res}
+
+                            # Model reasoning output logic
+                            # Reasoning models (DeepSeek thinking, GLM thinking, R1...)
+                            # stream their chain-of-thought via
+                            # `additional_kwargs['reasoning_content']` (NOT inline content).
+                            # The normalizer guarantees per-chunk DELTAS on that key, so
+                            # the value is forwarded verbatim — the client appends each
+                            # "reasoning" chunk, and chunk aggregation reconstructs the
+                            # complete CoT on the final message. Surfaces as a dedicated
+                            # "reasoning" chunk so the client can render a collapsible
+                            # thinking block on the same message as the final answer.
+                            _reasoning = _reasoning_delta(msg_chunk)
+                            if _reasoning and len(_reasoning) > 0:
+                                yield {"type": "reasoning", "content": _reasoning}
+                            # End model reasoning output logic
+                            # End conversation output logic
+
+                if not self._should_text_continue():
+                    break
+                self._prepare_continuation()
 
             for frame in self._final_frames():
                 yield frame

@@ -5,6 +5,7 @@ from .base import args_hash as args_hash
 
 from .summarization import Summarization as Summarization
 from .output_repetition_guard import OutputRepetitionGuard as OutputRepetitionGuard
+from .max_tokens_boost import MaxTokensBoostMiddleware as MaxTokensBoostMiddleware
 from .tool_guardrails import ToolGuardrails as ToolGuardrails
 from .iteration_budget import IterationBudget as IterationBudget
 from .context_engine import ContextEngineHook as ContextEngineHook

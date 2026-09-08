@@ -18,6 +18,7 @@ from .middlewares import (
     IterationBudget,
     HeartbeatStaleness,
     OutputRepetitionGuard,
+    MaxTokensBoostMiddleware,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
@@ -147,6 +148,7 @@ async def built_agent(
                 ToolCallNormalize(),
                 SubagentCompletionDrainMiddleware(),
                 OutputRepetitionGuard(),
+                MaxTokensBoostMiddleware(),
                 HeartbeatStaleness(),
                 HumanInTheLoop(HITLConfig()),
                 Summarization(

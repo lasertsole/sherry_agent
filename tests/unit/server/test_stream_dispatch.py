@@ -81,12 +81,35 @@ class _PlainTurn(StreamTurn):
         return "stream", _source(self._chunks)
 
 
+class _FakeAgent:
+    """Agent double for _GenerateTurn._prepare (built_agent is never the SUT)."""
+
+    def astream(self, *args, **kwargs):
+        async def _empty():
+            return
+            yield
+
+        return _empty()
+
+    async def ainvoke(self, *args, **kwargs):
+        return {"messages": []}
+
+
+@pytest.fixture(autouse=True)
+def _fake_built_agent(monkeypatch):
+    async def _build(*args, **kwargs):
+        return _FakeAgent()
+
+    monkeypatch.setattr(m, "built_agent", _build)
+
+
 @pytest.fixture(autouse=True)
 def _reset_turn_state():
     yield
     state_register_mem.set_state(SID, "answering", False)
     state_register_mem.set_state(SID, "current_tool_name", "")
     state_register_mem.set_state(SID, "current_tool_id", "")
+    state_register_mem.delete_state(SID, "is_stream_turn")
     _clear_pending_args(SID)
 
 
@@ -320,6 +343,7 @@ class TestGenerateTurnWiring:
             "model_name": "",
             "input_tokens": 0,
             "output_tokens": 0,
+            "finish_reason": "",
         }
 
     def test_meta_carries_captured_model_and_usage(self):
@@ -375,7 +399,7 @@ class TestGenerateTurnWiring:
 
         assert spy.closed is True
 
-    def test_invoke_source_emits_text_then_meta(self, monkeypatch):
+    def test_invoke_source_emits_text_then_meta(self):
         class _LastMsg:
             content = "final answer"
             response_metadata = {"model_name": "ds-v3"}
@@ -383,15 +407,19 @@ class TestGenerateTurnWiring:
 
         result = {"messages": [_LastMsg()]}
 
-        async def _fake_get_generator(session_id, mm, is_stream=True, origin=None):
-            async def _invoke():
+        class _InvokeAgent:
+            async def ainvoke(self, *args, **kwargs):
                 return result
 
-            return _invoke()
-
-        monkeypatch.setattr(m, "_get_generator", _fake_get_generator)
-
         turn = m._GenerateTurn(SID, MultiModalMessage(text="q"), is_stream=False, origin=None)
+
+        # run() calls _prepare() which rebuilds the agent — skip it and inject
+        # the scripted agent directly (the built_agent path is not the SUT here).
+        async def _noop_prepare() -> None:
+            return None
+
+        turn._prepare = _noop_prepare
+        turn._agent = _InvokeAgent()
         frames = asyncio.run(_collect(turn.run()))
 
         assert frames[0] == {"type": "text", "content": "final answer"}
@@ -401,6 +429,7 @@ class TestGenerateTurnWiring:
             "model_name": "ds-v3",
             "input_tokens": 9,
             "output_tokens": 2,
+            "finish_reason": "",
         }
         assert turn.ai_text == "final answer"
 

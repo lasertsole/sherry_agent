@@ -121,6 +121,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
             # mapping reads the `reasoning` column.
             ai_additional_kwargs: dict[str, Any] = getattr(m, "additional_kwargs", None) or {}
             reasoning_text: str | None = ai_additional_kwargs.get("reasoning_content") or None
+            finish_reason: str | None = response_metadata.get("finish_reason") or (
+                response_metadata.get("stop_reason")
+            )
 
             insert_rows.append(
                 {
@@ -134,7 +137,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                     "tool_name": None,
                     "timestamp": base_timestamp,
                     "ts_ms": turn_ms,
-                    "finish_reason": None,
+                    "finish_reason": finish_reason,
                     "reasoning": reasoning_text,
                     "reasoning_content": None,
                     "images": None,
