@@ -1,3 +1,5 @@
+"""Loguru logging configuration (console + rotating file sinks)."""
+
 import os
 import sys
 import time

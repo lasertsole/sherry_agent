@@ -1,0 +1,5 @@
+{
+  "ignore": ["app/types/backend/**", "docs/**"],
+  "ignoreDependencies": ["@commitlint/cli", "@tauri-apps/cli", "vue-i18n", "nitropack"],
+  "ignoreExportsUsedInFile": true
+}

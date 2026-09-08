@@ -49,7 +49,7 @@ const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unk
 /**
  * Request with server-side rendering support
  * @param { NitroFetchRequest } url Request path
- * @param { {[key: string]: any} | FormData } opts Request parameters
+ * @param { object } opts Request parameters
  * @param { 'get' | 'post' | 'put' | 'delete' } method Request method
  * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
  * @param { {[key: string]: any} } headeropts Request header parameters
@@ -57,6 +57,7 @@ const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unk
  * @param { Array<()=>void> } watch Watch for whether a re-request is needed
  * @returns {Promise<Response>} Request result
  */
+
 async function requestBaseApi({
   url,
   opts = {},
@@ -210,11 +211,12 @@ function retryFetch(
   });
 }
 
+/* eslint-disable jsdoc/check-param-names -- plugin cannot bind a destructured parameter that carries an object-literal default */
 /**
  * Request API
  *
  * @param { NitroFetchRequest } url Request path
- * @param { [key: string]: any | FormData } opts Request parameters
+ * @param { object } opts Request parameters
  * @param { 'get' | 'post' | 'put' | 'delete' } method Request method
  * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
  * @param { [key: string]: any } headeropts Request header parameters

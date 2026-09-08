@@ -1,3 +1,5 @@
+"""Filesystem path configuration (repo roots, data and skill directories)."""
+
 import sys
 from pathlib import Path
 

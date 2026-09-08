@@ -70,11 +70,13 @@ class ChannelManager:
     def set_inbound_consumer(
         self, inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]]
     ) -> None:
+        """Bind the callback invoked for every inbound message."""
         self._inbound_consumer = inbound_consumer
 
     def set_outbound_consumer(
         self, outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]]
     ) -> None:
+        """Bind the callback invoked for every outbound message."""
         self._outbound_consumer = outbound_consumer
 
     def __init__(self, config: dict[str, str] | None = None, bus: MessageBus | None = None):

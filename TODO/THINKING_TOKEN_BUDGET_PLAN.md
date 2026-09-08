@@ -4,7 +4,9 @@
 > Date: 2026-09-07
 > Owner: Agent
 > Predecessor: 输出侧 max_tokens 恢复（已实施 — `agent/middlewares/max_tokens_boost.py`)
-> Related: CONTEXT_LIMIT_GUARD_WRAPPER.md (input-side overflow detection)
+> Related: 输入侧上下文上限检测原本计划为 `ContextLimitGuardWrapper`
+> (`agent/context_limit_guard_wrapper.py`)，但**未实施**——该计划文档
+> (`TODO/CONTEXT_LIMIT_GUARD_WRAPPER.md`) 已删除，无对应实现/测试。
 
 ---
 
@@ -876,7 +878,6 @@ StreamTurn.run()  ─── while True ─────────────�
 | `agent/middlewares/output_repetition_guard.py` | 已有 reasoning 独立追踪，不涉及 token budget                                           |
 | `agent/middlewares/iteration_budget.py`        | boost re-call 在 middleware 内完成，+0 额外消耗                                        |
 | `agent/stream_repetition_guard_wrapper.py`     | 不涉及 token limit                                                                     |
-| `agent/context_limit_guard_wrapper.py`         | 只跟踪 visible text 的 output 预算，不涉及 thinking                                    |
 | `_ResumeTurn` (messages.py)                    | 继承基类 `(False, False)`，不受 Phase B 影响                                           |
 
 ---

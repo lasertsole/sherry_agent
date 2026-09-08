@@ -165,6 +165,8 @@ class ToolsConfig(Base):
 
 
 class Config(BaseSettings):
+    """Aggregated application settings (agents, channels, providers)."""
+
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)

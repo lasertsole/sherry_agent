@@ -8,6 +8,8 @@ from type.bus import InboundMessage, OutboundMessage
 
 
 class BaseChannel(ABC):
+    """Abstract channel adapter: consumes inbound messages, emits outbound ones."""
+
     name: str = "base"
     display_name: str = "Base"
 

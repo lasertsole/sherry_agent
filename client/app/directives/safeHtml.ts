@@ -59,7 +59,11 @@ export function safeMarkdownHtml(content: string | null | undefined): string {
   }
 }
 
-/** Directive implementation: mounted and updated share the same render path, keeping content up to date during streamed appends */
+/**
+ * Directive implementation: mounted and updated share the same render path, keeping content up to date during streamed appends
+ * @param el
+ * @param binding
+ */
 const render = (el: HTMLElement, binding: DirectiveBinding<string | null | undefined>): void => {
   el.innerHTML = safeMarkdownHtml(binding.value);
 };
@@ -68,5 +72,3 @@ export const vSafeHtml: ObjectDirective<HTMLElement, string | null | undefined> 
   mounted: render,
   updated: render
 };
-
-export default vSafeHtml;

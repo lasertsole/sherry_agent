@@ -39,7 +39,10 @@ interface DebounceState {
 /** Property key used to store the state on the element (a Symbol avoids clashes with business properties) */
 const STATE_KEY = Symbol('v-debounce-state');
 
-/** Extract the first purely numeric modifier as the delay in milliseconds */
+/**
+ * Extract the first purely numeric modifier as the delay in milliseconds
+ * @param modifiers
+ */
 function extractDelay(modifiers: Partial<Record<string, boolean>>): number {
   for (const key of Object.keys(modifiers)) {
     const n = Number(key);
@@ -88,5 +91,3 @@ export const vDebounce: Directive<HTMLElement> = {
     delete (el as unknown as Record<symbol, unknown>)[STATE_KEY];
   }
 };
-
-export default vDebounce;

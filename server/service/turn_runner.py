@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
+from collections.abc import Callable
 
 from loguru import logger
 
@@ -98,19 +99,32 @@ def get_pending_interrupt(*args: Any, **kwargs: Any) -> Any:
     return _read(*args, **kwargs)
 
 
-def _get_active_tasks() -> dict[str, asyncio.Task]:
-    """Seam over the WS module's live per-session tasks (lazy, cycle-safe).
+_ACTIVE_TASKS_PROVIDER: Callable[[], dict[str, asyncio.Task]] | None = None
 
-    Returns the real registry dict when the WS module is importable so that
-    adoption and registration stay consistent with the WS handler; an empty
-    throwaway dict otherwise (tests patch this seam entirely).
+
+def register_active_tasks_provider(provider: Callable[[], dict[str, asyncio.Task]]) -> None:
+    """Register a provider returning the live per-session task registry.
+
+    Upper (trigger) layers own their transport task registries; they push the
+    live dict down here at import time so the service layer never has to reach
+    upward. Last registration wins.
     """
-    try:
-        from server.trigger.ws import messages as ws_messages  # noqa: PLC0415
+    global _ACTIVE_TASKS_PROVIDER
+    _ACTIVE_TASKS_PROVIDER = provider
 
-        return ws_messages._active_tasks  # noqa: SLF001
-    except Exception:  # pragma: no cover - ws module always present in prod
+
+def _get_active_tasks() -> dict[str, asyncio.Task]:
+    """Live per-session tasks via the registered provider (empty when absent).
+
+    Returns the real registry dict when a trigger layer has registered a
+    provider so that adoption and registration stay consistent with the WS
+    handler; an empty throwaway dict otherwise (tests patch this seam
+    entirely).
+    """
+    provider = _ACTIVE_TASKS_PROVIDER
+    if provider is None:
         return {}
+    return provider()
 
 
 def register_outbound_router(route: str, router: Any) -> None:

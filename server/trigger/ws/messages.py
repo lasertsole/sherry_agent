@@ -32,6 +32,11 @@ _active_tasks: dict[str, asyncio.Task] = {}
 # drain orchestrator can execute ws-routed rows (idempotent).
 turn_runner.register_default_ws_executor()
 
+# Push the live task registry DOWN into the service layer (dependency
+# inversion): turn_runner adopts/registers these tasks without importing this
+# trigger module, keeping the server layer contract intact.
+turn_runner.register_active_tasks_provider(lambda: _active_tasks)
+
 
 async def _send_ws(websocket: WebSocketAdapter, payload: dict[str, Any]) -> None:
     """Best-effort send; swallows send failures (socket may be closing).

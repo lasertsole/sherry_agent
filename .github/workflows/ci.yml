@@ -50,6 +50,9 @@ jobs:
       - name: Run hermetic test suite
         run: uv run --no-sync python tests/run_tests_split.py
 
+      - name: Check server layer contract
+        run: uv run --no-sync lint-imports
+
   frontend-test:
     name: Frontend tests (Vitest)
     runs-on: ubuntu-latest

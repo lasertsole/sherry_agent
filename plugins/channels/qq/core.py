@@ -192,6 +192,7 @@ class QQChannel(BaseChannel):
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:
+        """Default QQ channel configuration (credentials merged at init)."""
         return QQConfig().model_dump(by_alias=True)
 
     def __init__(self, config: Any, bus: MessageBus):

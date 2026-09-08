@@ -4,6 +4,7 @@ import tseslint from 'typescript-eslint';
 import pluginVue from 'eslint-plugin-vue';
 import json from '@eslint/json';
 import markdown from '@eslint/markdown';
+import jsdoc from 'eslint-plugin-jsdoc';
 import { defineConfig } from 'eslint/config';
 import eslintPluginPrettier from 'eslint-plugin-prettier';
 
@@ -68,8 +69,30 @@ export default defineConfig([
     }
   },
   {
-    // Naming conventions (part2 item 九): block backend-style snake_case bleed.
-    // property/method selectors are intentionally NOT enforced — object literals,
+    // JSDoc signature validation (part3 item 十二): comments must stay bound
+    // to the code they describe. Only functions that ALREADY carry a JSDoc
+    // block are checked; writing new JSDoc is not forced.
+    files: ['**/*.{ts,vue}'],
+    plugins: { jsdoc },
+    settings: { jsdoc: { mode: 'typescript' } },
+    rules: {
+      // @param names must match the function signature
+      'jsdoc/check-param-names': 'error',
+      // @returns type must match the actual return type
+      'jsdoc/check-types': 'warn',
+      // must not describe parameters that do not exist
+      'jsdoc/no-undefined-types': 'error',
+      // JSDoc blocks must carry description text
+      'jsdoc/require-description': 'warn',
+      // completeness signals only (warn): the corpus keeps short JSDoc blocks;
+      // signature BINDING is enforced by check-param-names above
+      'jsdoc/require-param': 'warn',
+      // functions WITH a JSDoc block must declare the return (if any)
+      'jsdoc/require-returns': 'warn'
+    }
+  },
+  {
+    // Naming conventions (part2 item 九): block backend-style snake_case bleed.    // property/method selectors are intentionally NOT enforced — object literals,
     // i18n keys and API payloads are data, not code style.
     // variable keeps PascalCase (Vue component imports) and UPPER_CASE (constants).
     files: ['**/*.{ts,tsx,vue}'],

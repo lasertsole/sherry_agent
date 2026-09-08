@@ -1,3 +1,5 @@
+"""Message bus data models (inbound/outbound message envelopes)."""
+
 from typing import Any
 from datetime import datetime
 from dataclasses import dataclass, field

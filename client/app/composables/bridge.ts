@@ -122,6 +122,7 @@ export const WS_RECONNECT_MAX_ATTEMPTS = 3;
 
 /**
  * Exponential backoff: wait time in milliseconds before the `attempt`-th (1-based) reconnect.
+ * @param attempt
  * @example wsReconnectDelayMs(1) === 1000; wsReconnectDelayMs(2) === 2000; wsReconnectDelayMs(3) === 4000
  */
 export function wsReconnectDelayMs(attempt: number): number {
@@ -239,7 +240,12 @@ export async function sendChatMessage(request: ChatRequest, onChunk: OnChunkCall
   return streamChatMessage(request, onChunk).promise;
 }
 
-/** Tauri mode: invoke IPC + listen for Tauri Events. */
+/**
+ * Tauri mode: invoke IPC + listen for Tauri Events.
+ * @param request
+ * @param onChunk
+ * @param onDone
+ */
 async function sendChatMessageTauri(
   request: ChatRequest,
   onChunk: OnChunkCallback,
@@ -311,6 +317,7 @@ async function sendChatMessageTauri(
  *
  * `http://host:port` -> `ws://host:port`, `https://` -> `wss://`,
  * and strips any trailing slashes.
+ * @param apiBaseUrl
  */
 function resolveWsBaseUrl(apiBaseUrl: string): string {
   return apiBaseUrl.replace(/^https?:\/\//, m => (m === 'https://' ? 'wss://' : 'ws://')).replace(/\/+$/, '');
@@ -343,6 +350,8 @@ export interface StreamController {
  *
  * @param request  The chat payload.
  * @param onChunk  Called with each text fragment, its semantic type, and the session id.
+ * @param onHitl   Called when the agent pauses for a human-in-the-loop decision.
+ * @param onDone   Called once after the stream finishes (success or handled stop).
  * @param onQueued Called when the backend enqueues the message (session busy) instead of streaming immediately.
  * @returns        `{ controller, promise }`.
  */
@@ -907,6 +916,7 @@ export function resumeHitl(
 
 /**
  * Stop an ongoing agent generation.
+ * @param sessionId
  */
 export async function stopChatMessage(sessionId: string): Promise<void> {
   if (isTauri()) {
@@ -920,6 +930,7 @@ export async function stopChatMessage(sessionId: string): Promise<void> {
 /**
  * Browser mode: send a stop command over the agent WebSocket
  * (`/sessions/agent/ws`) instead of relying on the legacy HTTP stop endpoint.
+ * @param sessionId
  */
 function stopChatMessageBrowser(sessionId: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -980,6 +991,7 @@ function stopChatMessageBrowser(sessionId: string): Promise<void> {
 
 /**
  * Clear all state for a session.
+ * @param sessionId
  */
 export async function clearSession(sessionId: string): Promise<void> {
   if (isTauri()) {
@@ -1145,6 +1157,8 @@ export async function deleteSubagentRunSubtree(runId: string): Promise<number> {
  *
  * @param runId The run to steer.
  * @param payload New task and/or additional instructions; both optional.
+ * @param payload.new_task New task direction injected into the child agent.
+ * @param payload.new_instructions Additional steering instructions appended to the thread.
  * @returns The updated run record, or null when the backend rejected the steer
  *          (terminal/collector state, rate-limited, control denied) or the
  *          request failed.
@@ -1164,6 +1178,8 @@ export async function steerSubagentRun(
 
 /**
  * Retrieve conversation history.
+ * @param sessionId
+ * @param lastTurnCount
  */
 export async function getHistory(sessionId: string, lastTurnCount: number = 10): Promise<HistoryMessage[]> {
   if (isTauri()) {
@@ -1198,6 +1214,7 @@ export async function readSystemPrompt(): Promise<Record<string, string>> {
  *
  * The templates live under `workspace/template/<lang>/`. When `lang` is omitted
  * the backend falls back to the user's preferred workspace template language.
+ * @param lang
  */
 export async function readSystemPromptTemplate(lang?: string): Promise<Record<string, string>> {
   if (isTauri()) {
@@ -1216,6 +1233,7 @@ export async function readSystemPromptTemplate(lang?: string): Promise<Record<st
 
 /**
  * Overwrite system prompt files (full replacement).
+ * @param fileToContent
  */
 export async function writeSystemPrompt(fileToContent: Record<string, string>): Promise<void> {
   if (isTauri()) {
@@ -1232,6 +1250,7 @@ export async function writeSystemPrompt(fileToContent: Record<string, string>): 
 
 /**
  * Partially update system prompt files (merge).
+ * @param fileToContent
  */
 export async function updateSystemPrompt(fileToContent: Record<string, string>): Promise<void> {
   if (isTauri()) {
@@ -1272,6 +1291,7 @@ export async function readMemory(): Promise<Record<string, string>> {
 /**
  * Overwrite long-term memory files (full replacement).
  * Only provided files are overwritten; others are left unchanged.
+ * @param fileToContent
  */
 export async function writeMemory(fileToContent: Record<string, string>): Promise<void> {
   if (isTauri()) {
@@ -1309,6 +1329,7 @@ export async function readHeartbeat(): Promise<Record<string, string>> {
  * Overwrite the heartbeat file (`workspace/HEARTBEAT.md`, full replacement).
  * Always uses `fetchApi` in both modes — no Rust/Tauri command exists for
  * heartbeat.
+ * @param fileToContent
  */
 export async function writeHeartbeat(fileToContent: Record<string, string>): Promise<void> {
   await fetchApi({
@@ -1409,6 +1430,13 @@ export async function listCronJobs(includeDisabled = false): Promise<CronListRes
  * Create a new cron job.
  *
  * @param input The job fields (mirrors the `POST /cron` body).
+ * @param input.name Job display name.
+ * @param input.message Task message sent to the agent on each run.
+ * @param input.schedule Cron expression / interval schedule.
+ * @param input.deliver Whether the run result is delivered to a channel.
+ * @param input.channel Target channel id when `deliver` is set.
+ * @param input.to Channel recipient (e.g. QQ number) when `deliver` is set.
+ * @param input.delete_after_run Whether the job removes itself after its next run.
  * @returns `{ success, job?, message? }` from the backend.
  */
 export async function addCronJob(input: {
@@ -1432,6 +1460,13 @@ export async function addCronJob(input: {
  *
  * @param id   The job id to update.
  * @param patch Partial fields to merge onto the existing job.
+ * @param patch.name Job display name.
+ * @param patch.message Task message sent to the agent on each run.
+ * @param patch.schedule Cron expression / interval schedule.
+ * @param patch.deliver Whether the run result is delivered to a channel.
+ * @param patch.channel Target channel id when `deliver` is set.
+ * @param patch.to Channel recipient (e.g. QQ number) when `deliver` is set.
+ * @param patch.delete_after_run Whether the job removes itself after its next run.
  * @returns `{ success, job?, message? }` from the backend.
  */
 export async function updateCronJob(
@@ -1530,6 +1565,7 @@ export async function listChannels(): Promise<{ channels: ChannelInfo[] }> {
 
 /**
  * Read a single skill's full SKILL.md content.
+ * @param location
  */
 export async function readSkill(location: string): Promise<SkillDetail> {
   const cleanPath = location.replace(/^\.\//, '');
@@ -1794,6 +1830,8 @@ export interface ChannelUpdate {
  * No Tauri IPC command exists for channels yet, so unlike write flows that
  * round-trip through Rust, channel writes go straight to the Python REST API
  * in both modes (mirrors `listChannels`).
+ * @param channelName
+ * @param update
  */
 export async function updateChannel(channelName: string, update: ChannelUpdate): Promise<ChannelInfo> {
   return fetchApi({
@@ -1819,6 +1857,7 @@ export interface ChannelConfigResponse {
  * Read a channel's own config.json (plugins/channels/<name>/config.json),
  * returned as a free-form key/value map so the settings UI can render/edit
  * arbitrary fields (strings, numbers, booleans, lists).
+ * @param channelName
  */
 export async function getChannelConfig(channelName: string): Promise<ChannelConfigResponse> {
   return fetchApi({
@@ -1831,6 +1870,8 @@ export async function getChannelConfig(channelName: string): Promise<ChannelConf
 /**
  * Persist a channel's own config.json wholesale. The dict is stored verbatim,
  * preserving each value's JSON type. Mirrors the PUT semantics of the backend.
+ * @param channelName
+ * @param config
  */
 export async function updateChannelConfig(channelName: string, config: ChannelConfig): Promise<ChannelConfigResponse> {
   return fetchApi({

@@ -25,7 +25,7 @@ export type PersonaPresetCreateResult = { ok: true; id: number } | { ok: false; 
  * deleting takes effect immediately in every open view", the preset list must be a **true
  * module-level singleton** — `presets`/`loading` are declared at the module top level
  * (outside the function); every call to `usePersonaPresets()` returns a reference to the
- * **same** refs, not separate copies (same pattern as {@link useChatBackground}).
+ * **same** refs, not separate copies (same pattern as `useChatBackground`).
  *
  * - The first call automatically triggers one `refresh()` to fill the singleton state
  *   (fire-and-forget; later calls reuse the already-loaded list).
@@ -70,6 +70,8 @@ const refresh = async (): Promise<void> => {
  * Module-level create: inserts a new preset after the name-uniqueness check (delegated
  * to `createPersonaPreset`, which throws on duplicates) and refreshes the shared list on
  * success. Never throws — see {@link PersonaPresetCreateResult} for the failure mapping.
+ * @param name Preset display name (must be unique)
+ * @param content Field map persisted into the Dexie personaPresets table
  */
 const create = async (name: string, content: Record<string, string>): Promise<PersonaPresetCreateResult> => {
   try {
@@ -90,6 +92,8 @@ const create = async (name: string, content: Record<string, string>): Promise<Pe
 /**
  * Module-level update: overwrites one preset's content (never its name) and refreshes
  * the shared list on success. Never throws — returns `false` on any failure.
+ * @param id Preset row id in the Dexie personaPresets table
+ * @param content Field map replacing the stored content
  */
 const update = async (id: number, content: Record<string, string>): Promise<boolean> => {
   try {
@@ -105,6 +109,7 @@ const update = async (id: number, content: Record<string, string>): Promise<bool
 /**
  * Module-level remove: deletes one preset by id and refreshes the shared list on
  * success. Never throws — returns `false` on any failure.
+ * @param id Preset row id in the Dexie personaPresets table
  */
 const remove = async (id: number): Promise<boolean> => {
   try {
@@ -119,7 +124,7 @@ const remove = async (id: number): Promise<boolean> => {
 
 /**
  * Shared composable for the AI persona preset feature (module-level singleton, same
- * pattern as {@link useChatBackground}): every call returns references to the same
+ * pattern as `useChatBackground`): every call returns references to the same
  * shared refs, plus the module-level actions.
  */
 export function usePersonaPresets() {

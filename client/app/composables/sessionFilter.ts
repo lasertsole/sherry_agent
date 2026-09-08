@@ -50,12 +50,19 @@ export function parseSessionCreateTime(raw: string): Dayjs | null {
   return fallback.isValid() ? fallback : null;
 }
 
-/** Whether at least one valid date exists in a date-range array (distinguishes "date filter disabled" from "enabled") */
+/**
+ * Whether at least one valid date exists in a date-range array (distinguishes "date filter disabled" from "enabled")
+ * @param range
+ */
 function hasRangeValue(range: Date[] | null): boolean {
   return Array.isArray(range) && range.some(d => d != null);
 }
 
-/** Whether any filter condition is currently active (non-blank keyword, or date range containing a valid date) */
+/**
+ * Whether any filter condition is currently active (non-blank keyword, or date range containing a valid date)
+ * @param keyword
+ * @param range
+ */
 export function hasActiveSessionFilter(keyword: string, range: Date[] | null): boolean {
   return keyword.trim().length > 0 || hasRangeValue(range);
 }
@@ -72,6 +79,8 @@ export function hasActiveSessionFilter(keyword: string, range: Date[] | null): b
  *   excluded; when disabled, they pass through directly.
  *
  * @param item The session to check (must contain at least title and createTime)
+ * @param item.title Session display title searched by keyword
+ * @param item.createTime Session creation time parsed for the date range
  * @param keyword Title keyword (raw value; trimmed internally)
  * @param range Date range (value from PrimeVue Calendar range mode; may be null)
  */

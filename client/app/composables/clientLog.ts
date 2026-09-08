@@ -65,6 +65,7 @@ export interface ClientLogEntry {
  * - `all`: every level; `log` (counterpart of the info directory) only INFO; `error`: ERROR + CRITICAL.
  * Client console capture actually only produces DEBUG/INFO/WARNING/ERROR, but TRACE/SUCCESS
  * and unknown levels are also handled so classification aligns exactly with the server.
+ * @param level
  */
 export function levelToType(level: string): ClientLogType {
   switch ((level || '').toUpperCase()) {
@@ -79,7 +80,10 @@ export function levelToType(level: string): ClientLogType {
   }
 }
 
-/** Get an entry's type: prefer the persisted field, falling back to level-based inference when missing (compatible with old historical data). */
+/**
+ * Get an entry's type: prefer the persisted field, falling back to level-based inference when missing (compatible with old historical data).
+ * @param entry
+ */
 export function typeOfEntry(entry: ClientLogEntry): ClientLogType {
   return entry.type ?? levelToType(entry.level);
 }
@@ -127,14 +131,20 @@ export interface ClientLogBucket {
 /** Local date bucketing granularity: one bucket per day. */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Truncate a Unix millisecond timestamp to the local-timezone midnight of its day. */
+/**
+ * Truncate a Unix millisecond timestamp to the local-timezone midnight of its day.
+ * @param ts
+ */
 export function startOfLocalDay(ts: number): number {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
-/** Compute the display name of the bucket a timestamp belongs to (local timezone, formatted as `YYYY-MM-DD`). */
+/**
+ * Compute the display name of the bucket a timestamp belongs to (local timezone, formatted as `YYYY-MM-DD`).
+ * @param ts
+ */
 export function bucketNameOf(ts: number): string {
   const d = new Date(ts);
   const y = d.getFullYear();
@@ -274,6 +284,7 @@ let captureInstalled = false;
 
 /**
  * Override the persistence layer (for tests). Pass `null` to restore the default Dexie implementation.
+ * @param store
  */
 export function setClientLogStore(store: ClientLogStore | null): void {
   activeStore = store ?? dexieStore;
@@ -291,6 +302,8 @@ const origConsole = {
 /**
  * Write one captured entry into both the (length-capped) in-memory buffer and Dexie (history).
  * The Dexie write is fire-and-forget: it never blocks the console call itself.
+ * @param level
+ * @param text
  */
 function pushEntry(level: string, text: string): void {
   if (!text) return;
@@ -314,7 +327,10 @@ function pushEntry(level: string, text: string): void {
   clientLogSubscribers.forEach(fn => fn(entry));
 }
 
-/** Format a list of console args into a single line of text. */
+/**
+ * Format a list of console args into a single line of text.
+ * @param args
+ */
 function formatArgs(args: unknown[]): string {
   let text = '';
   for (const a of args) {
@@ -373,6 +389,7 @@ export function installClientLogCapture(): void {
  * Supports "history logs": when the dialog opens, read an initial batch of recent entries,
  * then catch up via the live subscription.
  *
+ * @param options Options object.
  * @param options.limit   Maximum number of entries to return (default 500).
  * @param options.beforeId Optional: only return entries with `id < beforeId`, for paging upward into older history.
  * @returns Array of entries in reverse time order (**newest first**).
@@ -400,6 +417,7 @@ export async function listClientLogTypes(): Promise<ClientLogTypeInfo[]> {
 
 /**
  * List the per-day sub-buckets inside a type bucket (newest first), for the "bucket by day" dropdown — mirrors the server's per-day file list.
+ * @param type
  */
 export async function listClientLogBucketsForType(type: ClientLogType): Promise<ClientLogBucket[]> {
   return await activeStore.listBucketsForType(type);
@@ -420,7 +438,10 @@ export function getLogBufferSnapshot(): ClientLogEntry[] {
   return [...logBuffer];
 }
 
-/** Subscribe to live client log pushes. Returns an unsubscribe function. */
+/**
+ * Subscribe to live client log pushes. Returns an unsubscribe function.
+ * @param fn
+ */
 export function subscribeClientLogs(fn: (entry: ClientLogEntry) => void): () => void {
   clientLogSubscribers.add(fn);
   return () => {

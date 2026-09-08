@@ -1,3 +1,5 @@
+"""Centralized numeric tuning thresholds (compression, RAG, triggers)."""
+
 # Compression and RAG thresholds
 ARCHIVE_THRESHOLD = 8_000
 MEMORY_THRESHOLD = 10_000

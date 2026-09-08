@@ -33,11 +33,11 @@ import { logUtil } from '~/utils/log';
  */
 export interface MsgRefType {
   /**
-   * Show a notification message
-   * @param obj.message   Message content
-   * @param obj.type      Message type (text / success / error / warning)
-   * @param obj.position  Position (top / bottom / center)
-   * @param obj.duration  Display duration (ms)
+   * Show a notification message. The payload fields are:
+   * - `message`: message content
+   * - `type`: message type (text / success / error / warning)
+   * - `position`: position (top / bottom / center)
+   * - `duration`: display duration (ms)
    */
   open: (obj: { message: string; type?: string; position?: string; duration?: number }) => void;
 }

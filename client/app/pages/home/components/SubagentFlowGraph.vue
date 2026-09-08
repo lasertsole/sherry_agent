@@ -98,7 +98,10 @@ const colorMode = useColorMode();
 /** Whether the current theme is dark */
 const isDark = () => colorMode.value === 'dark';
 
-/** Run status → node color (light theme) */
+/**
+ * Run status → node color (light theme)
+ * @param status
+ */
 const statusColorLight = (status: string): string => {
   switch (status) {
     case 'RUNNING':
@@ -115,7 +118,10 @@ const statusColorLight = (status: string): string => {
   }
 };
 
-/** Run status → node color (dark theme) */
+/**
+ * Run status → node color (dark theme)
+ * @param status
+ */
 const statusColorDark = (status: string): string => {
   switch (status) {
     case 'RUNNING':
@@ -132,12 +138,18 @@ const statusColorDark = (status: string): string => {
   }
 };
 
-/** Run status → node color (per theme) */
+/**
+ * Run status → node color (per theme)
+ * @param status
+ */
 const statusColor = (status: string): string => {
   return isDark() ? statusColorDark(status) : statusColorLight(status);
 };
 
-/** Run status → status text i18n key */
+/**
+ * Run status → status text i18n key
+ * @param run
+ */
 const statusKey = (run: SubagentRun): string => {
   const exec = run?.execution?.status;
   if (exec === 'RUNNING' || exec === 'INTERRUPTED') return 'running';
@@ -147,17 +159,15 @@ const statusKey = (run: SubagentRun): string => {
   return 'unknown';
 };
 
-/** Node main title: prefers label/task_name, then the task text */
+/**
+ * Node main title: prefers label/task_name, then the task text
+ * @param run
+ */
 const nodeLabel = (run: SubagentRun): string => {
   return run?.label || run?.task_name || run?.task || run?.run_id || '-';
 };
 
 /**
- * Map a list of run records into G6 graph data (tree-shaped).
- * Parent-child association (SubagentRun has no parent_run_id): when a parent run's
- * child_session_key = K, every run whose requester_session_key === K is its direct child
- * task. Edges are derived level by level from this.
- * @param runs list of run records
  * Computes the base node style for a single run (colored by run status).
  * Selection highlighting is not handled here; it is applied in place via G6's selected state
  * (see the node.state configuration in ensureGraph), avoiding a full graph rebuild / layout
@@ -246,6 +256,7 @@ const deriveDisplayData = (): GraphData => {
  * graph structure changed substantively). Structural changes (first load / WS-introduced new
  * nodes) rebuild the data and re-run the layout; a mere selection-highlight toggle should call
  * applyHighlight() instead, avoiding a full graph rebuild and re-layout.
+ * @param data
  */
 const ensureGraph = async (data: GraphData) => {
   if (!containerRef.value) return;
@@ -434,7 +445,10 @@ const loadFlow = async () => {
   }
 };
 
-/** Incremental update: merge the new event into runStore and re-render per the selection state */
+/**
+ * Incremental update: merge the new event into runStore and re-render per the selection state
+ * @param run
+ */
 const applyIncremental = (run: SubagentRun) => {
   if (!run?.run_id) return;
   if (empty.value) empty.value = false;

@@ -1,7 +1,11 @@
+"""Multimodal message models shared between agent and channels."""
+
 from pydantic import BaseModel
 
 
 class MultiModalMessage(BaseModel):
+    """Multimodal chat message (text plus optional media lists)."""
+
     # Text content
     text: str
 

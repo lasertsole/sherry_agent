@@ -337,7 +337,10 @@ const targetRunId = ref<string | undefined>(undefined);
 
 const { taskRuns, initTasks, setTasksTabActive } = useSubagentTasks();
 
-/** Receive 'show background tasks' event: switch to task list page and record the run_id to locate (if any). */
+/**
+ * Receive 'show background tasks' event: switch to task list page and record the run_id to locate (if any).
+ * @param payload
+ */
 // mitt Handler<unknown> requires the (event: unknown) signature; narrow the broadcast value manually
 // (sidebar emits a string run_id or undefined).
 const onShowTasks = (payload: unknown) => {
@@ -408,6 +411,7 @@ const defaultCharacter = (): { userName: string; userAvatar: string; aiName: str
 
 /**
  * Map a character snapshot to `characterInfo` (empty segments fall back to built-in defaults).
+ * @param snap
  */
 const applyCharacterSnapshot = (snap?: Pick<CachedCharacter, 'userName' | 'userAvatar' | 'aiName' | 'aiAvatar'>) => {
   const defaultInfo = defaultCharacter();
@@ -469,6 +473,7 @@ const chatMessages = ref<MessageItem[]>([]);
  *
  * Fix: No longer reconstruct entire `currentSession.value` (that would overwrite user's already-sent local messages,
  * causing 'list cleared after sending'). Only merge history rows into single list, existing messages preserved.
+ * @param sessionId
  */
 const loadSessionHistory = async (sessionId: string) => {
   const rows = await get_history_by_turn_page(sessionId, 0, 10, 1);
@@ -576,7 +581,10 @@ let activeAgentController: AbortController | null = null;
  */
 const reconnectState = ref<{ attempt: number; max: number } | null>(null);
 
-/** Reconnection events only drive this session's banner (route may cache multiple session instances simultaneously) */
+/**
+ * Reconnection events only drive this session's banner (route may cache multiple session instances simultaneously)
+ * @param event
+ */
 // mitt Handler<unknown> requires the (event: unknown) signature; narrow the broadcast payload manually
 // (bridge.sendChatMessageWs emits { sessionId?, attempt?, maxAttempts? }).
 const onStreamReconnecting = (event: unknown) => {
@@ -609,13 +617,18 @@ const queueBadge = ref<{ position: number; queueSize: number; turn: number } | n
  * `queued` frame → queue badge. Only drives THIS instance's badge: matched against the frozen
  * `mySid`, not the live `sessionId` computed — the latter reads the globally shared route object
  * and flips to another sid while this KeepAlive-cached instance sits in the background.
+ * @param info
+ * @param turnNum
  */
 const handleQueued = (info: QueuedInfo, turnNum: number) => {
   if (info.sessionId !== mySid) return;
   queueBadge.value = { position: info.position, queueSize: info.queueSize, turn: turnNum };
 };
 
-/** Drop the queue badge when it belongs to the given turn (turn-scoped clear helper). */
+/**
+ * Drop the queue badge when it belongs to the given turn (turn-scoped clear helper).
+ * @param turnNum
+ */
 const clearQueueBadgeForTurn = (turnNum: number) => {
   if (queueBadge.value?.turn === turnNum) {
     queueBadge.value = null;
@@ -661,6 +674,7 @@ let tempIdCounter = -1000000;
  *
  * Note: `activeAgentController` is a setup closure variable, so handler must be defined in this scope,
  * and compare the first parameter (session id) with this instance `sessionId` to ensure only this session is aborted.
+ * @param deletedSid
  */
 const handleAbortStreamOnDelete = (deletedSid: unknown) => {
   // Use frozen this instance `mySid` for comparison, not live `sessionId`: the latter reads global route,
@@ -686,7 +700,10 @@ const handleAbortStreamOnDelete = (deletedSid: unknown) => {
 /** HITL approval request (set when agent pauses waiting for human approval) */
 const hitlRequest = ref<HitlRequestData | null>(null);
 
-/** Handle HITL approval request: show approval dialog */
+/**
+ * Handle HITL approval request: show approval dialog
+ * @param data
+ */
 const handleHitlRequest = (data: HitlRequestData) => {
   hitlRequest.value = data;
 };
@@ -703,6 +720,8 @@ let activeHitlController: { closed: boolean; abort: () => void } | null = null;
  * Here changed to independent `resumeHitl`: directly open a new WS to backend `/sessions/agent/ws`,
  * send `hitl_response` frame to streamingly restore agent from LangGraph checkpoint, thus
  * supporting three-layer persistence (session switch, refresh, browser reopen) and still being able to complete approval.
+ * @param decision
+ * @param message
  */
 const handleHitlDecision = (decision: 'approve' | 'reject', message: string = '') => {
   const sid = sessionId.value;
@@ -797,6 +816,7 @@ const handleHitlDecision = (decision: 'approve' | 'reject', message: string = ''
  * `hitlRequest` only lives in component memory and is empty when re-entering the session. Here we query the backend
  * `/get_pending_interrupt` (re-pushed from the LangGraph checkpoint) for whether this session still has a pending
  * approval; if it does, the card is popped up again for the user to approve/reject.
+ * @param sid
  */
 const restorePendingHitl = async (sid: string) => {
   if (!sid) return;
@@ -864,7 +884,11 @@ const chatInputBoxRef = useTemplateRef<InstanceType<typeof ChatInputBox>>('chatI
  * @param content Chunk text (the body for text, the tool name for tool_start, the result text for tool_result)
  * @param type Semantic type
  * @param turnNum This turn's turn number (new messages are written into this turn)
- * @param meta Tool call metadata (only present for tool_result: tool_id/tool_name/args/error)
+ * @param meta Tool call metadata (only present for tool_result)
+ * @param meta.tool_id Backend tool call id
+ * @param meta.tool_name Tool name
+ * @param meta.args Serialized tool arguments
+ * @param meta.error Tool execution error, if any
  */
 const appendStreamChunk = (
   sid: string,
@@ -1051,6 +1075,8 @@ const draftDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
  *
  * High-frequency text chunks are not persisted one by one but merged via the debounce; discrete stages
  * (send / each tool stage / error / first text / server completion) are written immediately by callers via `commitDraftTurn`.
+ * @param sid
+ * @param turnNum
  */
 const scheduleDraftWrite = (sid: string, turnNum: number) => {
   const key = `${sid}:${turnNum}`;
@@ -1068,6 +1094,8 @@ const scheduleDraftWrite = (sid: string, turnNum: number) => {
 /**
  * Write the draft immediately (called at discrete stages) and cancel the turn's pending text debounce.
  * If a text append for this turn is still scheduled, flush one snapshot first before clearing the timer, avoiding duplicate writes.
+ * @param sid
+ * @param turnNum
  */
 const commitDraftTurn = async (sid: string, turnNum: number) => {
   const key = `${sid}:${turnNum}`;
@@ -1081,6 +1109,8 @@ const commitDraftTurn = async (sid: string, turnNum: number) => {
 
 /**
  * Clear a turn's draft and cancel its pending debounce timer (called when the server successfully persists and reconciles, or when the session is cleared).
+ * @param sid
+ * @param turnNum
  */
 const removeDraftTurn = (sid: string, turnNum: number) => {
   const key = `${sid}:${turnNum}`;
@@ -1101,20 +1131,29 @@ const removeDraftTurn = (sid: string, turnNum: number) => {
  */
 const activeDraftTurns = new Set<number>();
 
-/** Register one active draft turn (created on send, removed on completion). */
+/**
+ * Register one active draft turn (created on send, removed on completion).
+ * @param sid
+ * @param turnNum
+ */
 const trackDraftTurn = (sid: string, turnNum: number) => {
   activeDraftTurns.add(turnNum);
   // Write one draft at creation time, guaranteeing the fastest "cache-on-send" frame (user message + empty AI placeholder).
   void writeDraftTurn(sid, turnNum);
 };
 
-/** Determine whether a turn is in the active draft-persisting state. */
+/**
+ * Determine whether a turn is in the active draft-persisting state.
+ * @param turnNum
+ */
 const isDraftTurnActive = (turnNum: number): boolean => activeDraftTurns.has(turnNum);
 
 /**
  * Remove a turn's draft registration. Called after the server successfully persists: clear the draft + cancel the
  * pending debounce timer; the caller then triggers `loadSessionHistory` to replace local negative temporary-id rows
  * with the server's positive-id rows.
+ * @param sid
+ * @param turnNum
  */
 const untrackDraftTurn = (sid: string, turnNum: number) => {
   const had = activeDraftTurns.delete(turnNum);
@@ -1188,6 +1227,14 @@ const handleSend = async (text: string) => {
   /**
    * Streamed chunk callback: reuse the shared `appendStreamChunk` to manage message segmentation dynamically by semantic type
    * (text/tool_start/tool_end), sharing the same rendering logic as the HITL resume path.
+   * @param content
+   * @param type
+   * @param _sessionId
+   * @param meta
+   * @param meta.tool_id
+   * @param meta.tool_name
+   * @param meta.args
+   * @param meta.error
    */
   const onStreamChunk = (
     content: string,
@@ -1287,7 +1334,10 @@ const MAX_SELECTED_IMAGES = 10;
 /** Hidden image file input */
 const imageFileInput = useTemplateRef<HTMLInputElement>('imageFileInputRef');
 
-/** Read an image file as a DataURL (includes the data:image/...;base64 prefix; strip the prefix before sending) */
+/**
+ * Read an image file as a DataURL (includes the data:image/...;base64 prefix; strip the prefix before sending)
+ * @param file
+ */
 const readImageFile = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1296,7 +1346,10 @@ const readImageFile = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-/** Remove one selected image */
+/**
+ * Remove one selected image
+ * @param index
+ */
 const removeImage = (index: number) => {
   selectedImages.value.splice(index, 1);
   selectedImages.value = [...selectedImages.value];
@@ -1307,7 +1360,10 @@ const triggerImagePicker = () => {
   imageFileInput.value?.click();
 };
 
-/** Image selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_IMAGES) */
+/**
+ * Image selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_IMAGES)
+ * @param event
+ */
 const onImageSelected = async (event: Event) => {
   const input = event.target as HTMLInputElement;
   // Copy to a plain array snapshot before resetting input.value.
@@ -1354,7 +1410,10 @@ const MAX_SELECTED_AUDIOS = 5;
 /** Hidden audio file input */
 const audioFileInput = useTemplateRef<HTMLInputElement>('audioFileInputRef');
 
-/** Read an audio file as a DataURL (includes the data:audio/...;base64 prefix; strip the prefix before sending) */
+/**
+ * Read an audio file as a DataURL (includes the data:audio/...;base64 prefix; strip the prefix before sending)
+ * @param file
+ */
 const readAudioFile = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1363,7 +1422,10 @@ const readAudioFile = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-/** Remove one selected audio */
+/**
+ * Remove one selected audio
+ * @param index
+ */
 const removeAudio = (index: number) => {
   selectedAudios.value.splice(index, 1);
   selectedAudios.value = [...selectedAudios.value];
@@ -1374,7 +1436,10 @@ const triggerAudioPicker = () => {
   audioFileInput.value?.click();
 };
 
-/** Audio selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_AUDIOS) */
+/**
+ * Audio selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_AUDIOS)
+ * @param event
+ */
 const onAudioSelected = async (event: Event) => {
   const input = event.target as HTMLInputElement;
   // Copy to a plain array snapshot before resetting input.value.
@@ -1421,7 +1486,10 @@ const MAX_SELECTED_VIDEOS = 3;
 /** Hidden video file input */
 const videoFileInput = useTemplateRef<HTMLInputElement>('videoFileInputRef');
 
-/** Read a video file as a DataURL (includes the data:video/...;base64 prefix; strip the prefix before sending) */
+/**
+ * Read a video file as a DataURL (includes the data:video/...;base64 prefix; strip the prefix before sending)
+ * @param file
+ */
 const readVideoFile = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1430,7 +1498,10 @@ const readVideoFile = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-/** Remove one selected video */
+/**
+ * Remove one selected video
+ * @param index
+ */
 const removeVideo = (index: number) => {
   selectedVideos.value.splice(index, 1);
   selectedVideos.value = [...selectedVideos.value];
@@ -1441,7 +1512,10 @@ const triggerVideoPicker = () => {
   videoFileInput.value?.click();
 };
 
-/** Video selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_VIDEOS) */
+/**
+ * Video selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_VIDEOS)
+ * @param event
+ */
 const onVideoSelected = async (event: Event) => {
   const input = event.target as HTMLInputElement;
   // Copy to a plain array snapshot before resetting input.value (Safari handles this asynchronously, see onImageSelected).
@@ -1474,7 +1548,11 @@ const onVideoSelected = async (event: Event) => {
   selectedVideos.value = [...selectedVideos.value];
 };
 
-/** Tool trigger */
+/**
+ * Tool trigger
+ * @param type
+ * @param event
+ */
 const handleOperate = (type: string, event: string) => {
   if (!event || !type) return;
   // Toolbar
@@ -1509,7 +1587,10 @@ const handleCreateSession = () => {
   cacheSessionMeta({ id: newSessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
 };
 
-/** Load history for the specified session for this instance (clears local state, then rebuilds). Only called on new sessions / exception fallback paths. */
+/**
+ * Load history for the specified session for this instance (clears local state, then rebuilds). Only called on new sessions / exception fallback paths.
+ * @param sid
+ */
 const doLoadFor = (sid: string) => {
   // When switching to / first-loading a new sid, clear all session-scoped local state first, then load this session's own history.
   // If chatMessages still holds the previous session's messages, even a loadSessionHistory dedup merge by id

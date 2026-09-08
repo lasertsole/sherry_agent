@@ -86,5 +86,3 @@ export const headerTools: Tool[] = [
     label: 'toolbar.extend'
   }
 ];
-
-export default {};
