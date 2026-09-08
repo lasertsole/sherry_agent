@@ -325,7 +325,7 @@ class SteeringQueue:
             if item is not None:
                 try:
                     state.items.remove(item)
-                except ValueError:  # already gone — nothing to roll back
+                except ValueError:  # already gone — nothing to roll back  # noqa: S110
                     pass
 
 

@@ -275,7 +275,7 @@ def build_auxiliary_llm(temperature: float | None = None):
                                         "type": "tool_call",
                                     }
                                 )
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError:  # noqa: S110
                             pass
 
                     tool_kwargs: dict[str, Any] = {}

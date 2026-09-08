@@ -86,7 +86,7 @@ def sid(request):
     yield s
     try:
         state_register_mem.clear_session(s)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
 
@@ -252,7 +252,7 @@ class TestNeedUpdateSystemPrompt:
         finally:
             try:
                 state_register_mem.clear_session(sid_value)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
     def test_false_no_write_no_override(self, monkeypatch):
@@ -274,7 +274,7 @@ class TestNeedUpdateSystemPrompt:
         finally:
             try:
                 state_register_mem.clear_session(sid_value)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
     def test_failure_propagates(self, monkeypatch):
@@ -293,7 +293,7 @@ class TestNeedUpdateSystemPrompt:
         finally:
             try:
                 state_register_mem.clear_session(sid_value)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
 
@@ -896,7 +896,7 @@ def fresh_sid(prefix="t8-s"):
     s = f"{prefix}-{uuid.uuid4().hex[:8]}"
     try:
         state_register_mem.clear_session(s)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     return s
 

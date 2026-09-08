@@ -527,7 +527,7 @@ def _cli_version_fingerprint(exe: str) -> str:
         first_line = version.splitlines()[0].strip() if version else ""
         if first_line:
             return first_line
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     try:
         st = os.stat(exe)

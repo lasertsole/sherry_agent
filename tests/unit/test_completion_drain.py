@@ -71,7 +71,7 @@ def _clean_guard_and_budget_state():
         for key in ("iteration_budget", "iteration_budget_used", *SESSION_STATE_KEYS):
             try:
                 state_register_mem.delete_state(sid, key)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
     yield
 

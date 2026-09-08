@@ -11,7 +11,7 @@
 1. **劣化はするが、クラッシュはしない。** 保護機能がプロセスを落とすことはありません: バックグラウンドサービスは*停止*し、ターンは*安全に終了し*、起動ゲートはプロセスを HTTP 専用モードへ*縮小*します。
 2. **必ずハッチを残す。** すべてのブレーカーには文書化された手動リセット(REST エンドポイント、状態ファイルの削除、プロセスの再起動)があります。
 
-**一次情報:** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/periodic_backoff.py`、`runtime/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**一次情報:** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/periodic_backoff.py`、`runtime/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
 
 ## 🎯 概要と脅威モデル
 
@@ -20,6 +20,7 @@
 | **テキストデスループ** (モデル呼び出し 1 回) | 同じ文 / 同じ文字列が永遠にストリーミングされる | `OutputRepetitionGuard` (ワーカー) + `RepetitionGuardWrapper` (メインエージェントのストリーム) |
 | **ツール病理ループ** (ターン 1 回) | 同じ失敗するツール呼び出し、ピンポンペア、引数の改変 | `ToolGuardrails`: 5 種類の病理 → WARN → BLOCK → HALT、リカバリモード付き |
 | **無限ターン** | モデル/ツール呼び出しが止まらない | `IterationBudget` (メイン 90 / ワーカー 60、合算呼び出し) |
+| **切断リトライスパイラル** | `max_tokens` で切断されたツール呼び出しがゴミ引数のまま実行 → エラー → モデルが再発行し、反復回数を無駄に焼く | `MaxTokensBoostMiddleware`: ミドルウェア内の有界再呼び出し(3 リトライ、ブースト上限、予算 +0) |
 | **スタックしたターン** | 数分間まったく進まない (ハングしたツール、挟まったループ) | `HeartbeatStaleness` ウォッチドッグ → `HeartbeatTimeoutError` |
 | **バックグラウンドサービスループ** | ハートビート / スイーパー / cron ティックが永遠に失敗 | `PeriodicBackoff` (枯渇 = サービス停止) / cron 降格 → 自動無効化 |
 | **完了通知の消失または重複** | サブエージェントは終わったのに親が通知を受け取れない、または二度受け取る | 完了ドレイン (1 回だけ注入) + announce 再試行ラダー + 冪等キー |
@@ -57,6 +58,31 @@
 ### ターンレベル: `IterationBudget`
 
 ターンごとにモデル呼び出しとツール呼び出しを**合算**して数えます。メインエージェント 90、ワーカーエージェント 60 (ベースデフォルト 50)。使い果たされたモデル呼び出しはターミナル AIMessage を返し、使い果たされたツール呼び出しはエラー ToolMessage を返すので、モデルはループの途中で死ぬことなく締めくくれます。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
+
+### ターンレベル: `MaxTokensBoostMiddleware`、ツール呼び出し切断からの復旧
+
+メインエージェントとワーカーエージェントで有効。モデル呼び出しが切断状態
+(`finish_reason == "length"` / `stop_reason == "max_tokens"`) で返り、**かつツール
+呼び出しを含む**場合、ツール呼び出し JSON はゴミです：実行は必ず失敗し、モデルが
+再発行し、每一輪 `IterationBudget` を無駄に焼く —— ターンガードからは一切見えない
+無限リトライスパイラルです。このミドルウェアはミドルウェア層の中でそのスパイラルを
+閉じます：
+
+- 最初の呼び出しは元の `max_tokens` で実行。切断かつツール呼び出しありの場合、
+  `max_tokens = base × 2^attempt`(base は `MAIN_LLM_OUTPUT_MAX_TOKEN`、デフォルト
+  8192、上限 32768、最大 3 リトライ)で `awrap_model_call` 内の handler を再呼び出し。
+- **構造的に有界**：handler 呼び出しは合計最大 4 回、ブースト値は上限付き、再呼び出しは
+  *ミドルウェア内* で完結するため `IterationBudget` は **+0** —— 予算へスパイラルしません。
+- 切断された中間結果は破棄されます。agent ループには最終(回復後)結果だけが見え、
+  切断内容が checkpointer に書き込まれたり、ツール実行器に渡ったりしません。
+- **ストリーミング再呼び出しは callbacks を剥離**：最初の呼び出しの切断トークンは
+  すでに送信済みのため、再呼び出し前に `request.config["callbacks"]` を取り除いて
+  重複出力を防ぎ、`finally` で元の値を復元します(例外時も含む)。
+  ストリーミング/非ストリーミングの判定は `StreamTurn.run()` がセッション毎に設定する
+  `is_stream_turn` フラグを読み——子エージェント(ainvoke)はこのフラグを持たず、
+  常に非ストリーミング経路を通ります。
+- テキストのみの切断(ツール呼び出しなし)はここで扱うループ問題ではありません。
+  サービス層が有界な継続再ストリーム(最大 4 回)で担当します。
 
 ### ターンレベル: テキストデスループ、`OutputRepetitionGuard` + `RepetitionGuardWrapper`
 
@@ -143,7 +169,7 @@
 
 | 層 | メカニズム | 捕まえるもの |
 |---|---|---|
-| ミドルウェア (グラフ内、ターンごと) | `ToolGuardrails`、`IterationBudget`、`OutputRepetitionGuard` / `RepetitionGuardWrapper`、`HeartbeatStaleness`、`SubagentCompletionDrain` | ツール病理、無限ターン、テキストデスループ、スタックしたターン、欠落した完了注入 |
+| ミドルウェア (グラフ内、ターンごと) | `ToolGuardrails`、`IterationBudget`、`MaxTokensBoostMiddleware`、`OutputRepetitionGuard` / `RepetitionGuardWrapper`、`HeartbeatStaleness`、`SubagentCompletionDrain` | ツール病理、無限ターン、切断されたツール呼び出しスパイラル、テキストデスループ、スタックしたターン、欠落した完了注入 |
 | プロセス (バックグラウンドサービス) | `PeriodicBackoff` (ハートビート、スイーパー)、cron 失敗ブレーカー、announce 再試行ラダー + 冪等性 | サービス再試行ストーム、失敗するスケジュールジョブ、重複する完了配送 |
 | 起動 (プロセスライフサイクル) | `CrashLoopBreaker`、`server/__main__` ゲーティング、`trigger.__init__` の早期終了 | クラッシュ再起動ループ |
 | インフラ / 運用 | cron REST ハッチ、HTTP 専用 env、状態ファイル削除 | オペレータの介入が要る、動けなくなったブレーカー状態 |
@@ -154,6 +180,7 @@
 |---|---|---|---|
 | `ToolGuardrails` | ターン (ツール呼び出し) | `state_register_mem` (`tool_guardrail_state`) | 毎ターン (`before_agent`) |
 | `IterationBudget` | ターン (呼び出し回数) | `state_register_mem` | 毎ターン |
+| `MaxTokensBoostMiddleware` | モデル呼び出し (切断) | `request.model_settings` + `is_stream_turn` フラグ | 毎ターン; フラグは `_cleanup` でクリア |
 | `OutputRepetitionGuard` | ターン + セッション (テキスト) | 6 つのセッションキー | halt フラグはターンごと、ハッシュ履歴はセッションごと (サブエージェント解体で解放) |
 | `RepetitionGuardWrapper` | ストリーム呼び出し (テキスト) | in-flight + halt キー | モデル呼び出しごと |
 | `HeartbeatStaleness` | ターン (実時間) | `heartbeat_*` キー + 1 分タイマー | 毎ターン |
@@ -170,6 +197,7 @@
 - **すべてのしきい値はコードのデフォルト値です** (dataclass / コンストラクタパラメータ)。意図的に環境変数は用意していません。注目点として、`config/schema.py` の `max_tool_iterations = 40` はミドルウェアには*消費されず*(予算は明示的に渡されます: 90 / 60)、`HeartbeatConfig.interval_s = 1800` はハートビートサービスのデフォルトと一致しますが、サービスはデフォルト値で構築されます。
 - `TOOL_CALL_TIMEOUT_MINUTES` (`.env.example` でデフォルト 5) は現在**ドキュメント専用**です: これを消費するコードはありません。実際に有効なツール別の上限は定数です(web 検索 15s、ターミナル 30s、python REPL 30s)。これをループ境界として当てにしないでください。
 - ワーカーはミドルウェアとして `OutputRepetitionGuard` を受け取り、メインエージェントは `RepetitionGuardWrapper` でラップされます(ミドルウェアフックは生のストリームチャンクを見えません)。
+- `MaxTokensBoostMiddleware` は環境変数ノブを持つ唯一のガードです: `MAIN_LLM_OUTPUT_MAX_TOKEN`(デフォルト 8192)がインポート時に読まれブーストの base になります; 上限(32768)とリトライ回数(3)はコード定数です。
 - `ToolGuardrails` のノブ: `warnings_enabled` (デフォルト True)、`hard_stop_enabled` (デフォルト False、BLOCK はブロックのまま)、`recovery_mode_enabled` (デフォルト True)、`recovery_max_violations` (デフォルト 1)。
 - Announce 配送のノブ (サブエージェント announce 設定): 5s / 10s / 20s の一時的遅延を伴う `announce_retry_max=3`、さらに `max_announce_retry_count=10` と 24 時間の run 失効。
 
@@ -196,6 +224,8 @@
 | `tests/unit/server/test_sweeper_wiring.py` | スイーパー起動配線 |
 | `tests/unit/server/test_crash_gating.py` | 起動ゲーティング、HTTP 専用モード |
 | `tests/unit/server/test_cron_api.py` | Cron REST、failure-state / reset-failures を含む |
+| `tests/unit/test_token_limit_continuation.py` | 切断検出、テキスト継続ループ、ブースト再呼び出し(callbacks 剥離を含む) |
+| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | 子エージェントのミドルウェア配線、非ストリーミングデフォルト |
 
 ## ⚠️ 正直さと限界
 

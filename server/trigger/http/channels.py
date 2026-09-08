@@ -59,7 +59,7 @@ def _channel_icon_url(name: str) -> str:
             candidate = icon_dir / Path(explicit).name
             if candidate.is_file():
                 return f"http://{API_HOST}:{API_PORT}/channels/{name}/icon/{candidate.name}"
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     # 2) Canonical convention file.
@@ -73,7 +73,7 @@ def _channel_icon_url(name: str) -> str:
         for entry in sorted(icon_dir.iterdir()):
             if entry.is_file():
                 return f"http://{API_HOST}:{API_PORT}/channels/{name}/icon/{entry.name}"
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     return ""
 

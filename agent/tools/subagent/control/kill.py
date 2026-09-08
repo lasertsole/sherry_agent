@@ -127,7 +127,7 @@ async def kill_subagent_run_with_cascade(
     if run and killed:
         try:
             await wake_yield_if_all_children_settled(run.requester_session_key)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     return killed
@@ -180,7 +180,7 @@ async def kill_all_controlled_subagent_runs(
     if killed:
         try:
             await wake_yield_if_all_children_settled(requester_session_key)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
     return killed
 

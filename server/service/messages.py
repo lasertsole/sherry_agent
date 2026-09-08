@@ -274,7 +274,7 @@ class _GenerateTurn(StreamTurn):
             if _finish:
                 self.meta_finish_reason = _finish
             self._has_tool_calls = bool(getattr(last_msg, "tool_calls", None))
-        except (KeyError, TypeError, AttributeError):
+        except (KeyError, TypeError, AttributeError):  # noqa: S110
             pass
         return [{"type": "text", "content": res}]
 
@@ -343,7 +343,7 @@ class _GenerateTurn(StreamTurn):
         if kind == "stream" and source is not None:
             try:
                 await source.aclose()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass  # GeneratorExit is expected and harmless
         self._agent = None
         # There is no pool to "release" here: the stale keep-alive connection

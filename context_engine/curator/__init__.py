@@ -112,7 +112,7 @@ def _curator_loop():
         try:
             _idle_for_seconds += _curator_check_interval
             maybe_run_curator(idle_for_seconds=_idle_for_seconds)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
         loop.run_until_complete(_a.sleep(_curator_check_interval))
 

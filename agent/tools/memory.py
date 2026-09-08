@@ -47,7 +47,7 @@ except ImportError:
     fcntl = None
     try:
         import msvcrt
-    except ImportError:
+    except ImportError:  # noqa: S110
         pass
 
 ENTRY_DELIMITER = "\n§\n"
@@ -186,7 +186,7 @@ class MemoryStore:
                 try:
                     fd.seek(0)
                     msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-                except OSError:
+                except OSError:  # noqa: S110
                     pass
             fd.close()
 
@@ -466,7 +466,7 @@ class MemoryStore:
                 # Clean up temp file on any failure
                 try:
                     os.unlink(tmp_path)
-                except OSError:
+                except OSError:  # noqa: S110
                     pass
                 raise
         except OSError as e:

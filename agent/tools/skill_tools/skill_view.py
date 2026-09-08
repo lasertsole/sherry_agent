@@ -79,7 +79,7 @@ def _get_category_from_path(skill_path) -> str | None:
         rel_path = skill_path.relative_to(SKILLS_DIR)
         if len(rel_path.parts) >= 1:
             return rel_path.parts[0]
-    except (ValueError, Exception):
+    except (ValueError, Exception):  # noqa: S110
         pass
     return None
 

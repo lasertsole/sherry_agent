@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - platform-specific fallback
     fcntl = None
     try:
         import msvcrt
-    except ImportError:
+    except ImportError:  # noqa: S110
         pass
 
 
@@ -86,7 +86,7 @@ def _usage_file_lock():
             try:
                 fd.seek(0)
                 msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-            except OSError:
+            except OSError:  # noqa: S110
                 pass
         fd.close()
 
@@ -349,7 +349,7 @@ def save_usage(data: dict[str, dict[str, Any]]) -> None:
         except BaseException:
             try:
                 os.unlink(tmp_path)
-            except OSError:
+            except OSError:  # noqa: S110
                 pass
             raise
     except Exception as e:

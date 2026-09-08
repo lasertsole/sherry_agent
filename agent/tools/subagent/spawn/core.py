@@ -637,7 +637,7 @@ async def _execute_subagent(
 
         try:
             await fire_progress_hook(run, "execution completed")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
         if outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
@@ -664,7 +664,7 @@ async def _execute_subagent(
                     )
                     try:
                         await fire_ended_hook(run)
-                    except Exception:
+                    except Exception:  # noqa: S110
                         pass
                     return
 
@@ -676,7 +676,7 @@ async def _execute_subagent(
 
         try:
             await fire_ended_hook(run)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
 
@@ -853,7 +853,7 @@ async def _rollback_spawn(
 
         try:
             await _remove_run(run_id)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
         from ..hooks.base import fire_stop_hooks
@@ -867,5 +867,5 @@ async def _rollback_spawn(
                     task="",
                 )
             )
-        except Exception:
+        except Exception:  # noqa: S110
             pass

@@ -275,12 +275,12 @@ def sid():
     yield s
     try:
         state_register_mem.clear_session(s)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     for key in ("system_prompt", "workspace"):
         try:
             state_register_db.delete_state(s, key)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
 

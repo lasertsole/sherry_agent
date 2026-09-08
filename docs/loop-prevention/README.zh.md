@@ -11,7 +11,7 @@
 1. **只降级，绝不崩溃。** 防护永远不会拖垮进程：后台服务*停止*，回合*优雅结束*，启动门控把进程*收缩*到纯 HTTP 模式。
 2. **永远留一个逃生口。** 每个熔断器都有成文的手动重置方式（REST 端点、删除状态文件、或重启进程）。
 
-**事实来源：** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/periodic_backoff.py`、`runtime/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**事实来源：** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/periodic_backoff.py`、`runtime/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
 
 ## 🎯 总览与威胁模型
 
@@ -20,6 +20,7 @@
 | **文字死亡循环**（单次模型调用） | 同一句话 / 同一串字符被永远流式输出 | `OutputRepetitionGuard`（worker）+ `RepetitionGuardWrapper`（主 Agent 流式层） |
 | **工具病理循环**（单回合） | 同一个失败的工具调用、乒乓配对、参数翻新 | `ToolGuardrails`：5 种病理 → WARN → BLOCK → HALT，带恢复模式 |
 | **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / worker 60 次，合并计数） |
+| **截断重试螺旋** | 被 `max_tokens` 截断的工具调用以垃圾参数执行 → 报错 → 模型重发，白白烧迭代 | `MaxTokensBoostMiddleware`：middleware 内有界重呼（3 次重试、提升封顶、预算 +0） |
 | **卡死回合** | 连续数分钟毫无进展（工具挂起、循环楔死） | `HeartbeatStaleness` 看门狗 → `HeartbeatTimeoutError` |
 | **后台服务循环** | 心跳 / 清扫器 / cron tick 永远失败 | `PeriodicBackoff`（耗尽 = 服务停止）/ cron 退化 → 自动停用 |
 | **完成通知丢失或重复** | 子 Agent 已完成，但父 Agent 永远收不到通知，或者收到两次 | 完成通知 drain（只注入一次）+ announce 重试阶梯 + 幂等键 |
@@ -57,6 +58,27 @@
 ### 回合级：`IterationBudget`
 
 每回合把模型调用和工具调用**合并**计数。主 Agent 90 次，worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用返回一条终止 AIMessage；工具调用返回一条错误 ToolMessage，让模型得以收尾而不是死在循环中间。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
+
+### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
+
+在主 Agent 与 worker Agent 上生效。当模型调用以截断结束（`finish_reason == "length"` /
+`stop_reason == "max_tokens"`）**且携带工具调用**时，工具调用的 JSON 是垃圾：执行必然
+失败、模型重发、每一轮都白白消耗 `IterationBudget` —— 这是一条回合护栏完全看不到的
+无界重试螺旋。该中间件在 middleware 层内关掉这条螺旋：
+
+- 第一次调用用原始 `max_tokens`；截断且带工具调用时，以
+  `max_tokens = base × 2^attempt`（base 取 `MAIN_LLM_OUTPUT_MAX_TOKEN`，默认 8192；
+  上限 32768；最多 3 次重试）在 `awrap_model_call` 内重呼 handler。
+- **构造上即有界**：handler 总共最多 4 次调用，提升值封顶，且重呼发生在
+  *middleware 内*，`IterationBudget` 计 **+0** —— 不会螺旋进预算。
+- 被截断的中间结果被丢弃；agent 循环只看到最终（恢复后的）结果，截断内容不会
+  写入 checkpointer，也不会被工具执行器拿到。
+- **流式重呼剥离 callbacks**：第一次调用的截断 token 已经上线，因此每次重呼前
+  移除 `request.config["callbacks"]` 避免重复输出，并在 `finally` 中恢复原始值
+  （即使异常也恢复）。流式/非流式判定读取 `StreamTurn.run()` 按会话设置的
+  `is_stream_turn` 标志——子代理（ainvoke）永远不带该标志，始终走非流式路径。
+- 纯文本截断（无工具调用）不是这里处理的循环问题；服务层通过有界续写重流
+  （最多 4 次）负责。
 
 ### 回合级：文字死亡循环，`OutputRepetitionGuard` + `RepetitionGuardWrapper`
 
@@ -143,7 +165,7 @@
 
 | 层 | 机制 | 接住什么 |
 |---|---|---|
-| 中间件（图内，每回合） | `ToolGuardrails`、`IterationBudget`、`OutputRepetitionGuard` / `RepetitionGuardWrapper`、`HeartbeatStaleness`、`SubagentCompletionDrain` | 工具病理、无界回合、文字死亡循环、卡死回合、丢失的完成注入 |
+| 中间件（图内，每回合） | `ToolGuardrails`、`IterationBudget`、`MaxTokensBoostMiddleware`、`OutputRepetitionGuard` / `RepetitionGuardWrapper`、`HeartbeatStaleness`、`SubagentCompletionDrain` | 工具病理、无界回合、截断的工具调用螺旋、文字死亡循环、卡死回合、丢失的完成注入 |
 | 进程（后台服务） | `PeriodicBackoff`（心跳、清扫器）、cron 失败熔断器、announce 重试阶梯 + 幂等 | 服务重试风暴、失败的定时任务、重复的完成投递 |
 | 启动（进程生命周期） | `CrashLoopBreaker`、`server/__main__` 门控、`trigger.__init__` 提前退出 | 崩溃重启循环 |
 | 基础设施 / 运维 | cron REST 逃生口、HTTP-only 环境变量、状态文件删除 | 需要运维介入才能解开的熔断状态 |
@@ -154,6 +176,7 @@
 |---|---|---|---|
 | `ToolGuardrails` | 回合（工具调用） | `state_register_mem`（`tool_guardrail_state`） | 每回合（`before_agent`） |
 | `IterationBudget` | 回合（调用计数） | `state_register_mem` | 每回合 |
+| `MaxTokensBoostMiddleware` | 模型调用（截断） | `request.model_settings` + `is_stream_turn` 标志 | 每回合；标志在 `_cleanup` 清除 |
 | `OutputRepetitionGuard` | 回合 + 会话（文本） | 6 个会话键 | halt 标志按回合；哈希历史按会话（子 Agent 拆除时释放） |
 | `RepetitionGuardWrapper` | 流式调用（文本） | in-flight + halt 键 | 每次模型调用 |
 | `HeartbeatStaleness` | 回合（墙上时钟） | `heartbeat_*` 键 + 1 分钟定时器 | 每回合 |
@@ -170,6 +193,7 @@
 - **所有阈值都是代码默认值**（dataclass / 构造函数参数）；有意不为它们提供环境变量。值得注意的是，`config/schema.py` 的 `max_tool_iterations = 40` *并未*被中间件消费（预算是显式传入的：90 / 60），`HeartbeatConfig.interval_s = 1800` 与心跳服务默认值一致但服务是以默认参数构造的。
 - `TOOL_CALL_TIMEOUT_MINUTES`（`.env.example` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
 - Worker 以中间件形式获得 `OutputRepetitionGuard`；主 Agent 由 `RepetitionGuardWrapper` 包裹（中间件钩子看不到原始流式 chunk）。
+- `MaxTokensBoostMiddleware` 是唯一带环境变量旋钮的护栏：`MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）在导入时读取作为提升基数；上限（32768）与重试次数（3）为代码常量。
 - `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）。
 - Announce 投递旋钮（子 Agent announce 配置）：`announce_retry_max=3` 配 5s / 10s / 20s 瞬态延迟，另有 `max_announce_retry_count=10` 和 24 小时 run 过期。
 
@@ -196,6 +220,8 @@
 | `tests/unit/server/test_sweeper_wiring.py` | 清扫器启动接线 |
 | `tests/unit/server/test_crash_gating.py` | 启动门控、HTTP-only 模式 |
 | `tests/unit/server/test_cron_api.py` | Cron REST，含 failure-state / reset-failures |
+| `tests/unit/test_token_limit_continuation.py` | 截断检测、文本续写循环、boost 重呼（含 callbacks 剥离） |
+| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | 子代理 middleware 接线、非流式默认 |
 
 ## ⚠️ 诚实与局限
 

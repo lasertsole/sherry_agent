@@ -768,7 +768,7 @@ def _patch_skill(
         err_msg = match_error
         try:
             err_msg += format_no_match_hint(match_error, match_count, old_string, content)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
         return {
             "success": False,
@@ -954,7 +954,7 @@ class SkillManage(BaseTool):
                 from skills import build_skills_snapshot
 
                 build_skills_snapshot()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
             # Curator telemetry: bump patch_count on edit/patch/write_file (the actions
             # that mutate an existing skill's guidance), drop the record on delete.
@@ -981,7 +981,7 @@ class SkillManage(BaseTool):
                     # status/restore still see it. Only a hard delete forgets.
                     if not result.get("_archived"):
                         forget(name)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
         return json.dumps(result, ensure_ascii=False)

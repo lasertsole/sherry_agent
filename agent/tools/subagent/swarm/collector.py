@@ -172,7 +172,7 @@ async def _on_swarm_run_started(run: SubagentRunRecord) -> None:
         from ..hooks.progress import fire_spawned_hook
 
         await fire_spawned_hook(run)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
 

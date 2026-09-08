@@ -259,7 +259,7 @@ class StreamTurn:
                 if source is not None and kind == "stream":
                     try:
                         await source.aclose()
-                    except Exception:
+                    except Exception:  # noqa: S110
                         pass  # generator teardown is best-effort between phases
                 kind, source = await self._create_source()
                 # Phase 3 flag: MaxTokensBoostMiddleware reads this to decide
@@ -352,7 +352,7 @@ class StreamTurn:
                                 )
                                 if _finish:
                                     self.meta_finish_reason = _finish
-                            except (KeyError, TypeError, AttributeError):
+                            except (KeyError, TypeError, AttributeError):  # noqa: S110
                                 pass
 
                             # Tool call output logic

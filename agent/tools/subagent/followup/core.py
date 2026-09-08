@@ -80,6 +80,6 @@ async def stop_followup() -> None:
         _followup_task.cancel()
         try:
             await _followup_task
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: S110
             pass
         _followup_task = None

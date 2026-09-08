@@ -167,7 +167,7 @@ def _schedule_descendant_wake_if_needed(run: SubagentRunRecord) -> None:
                 from ..registry import wake_yield_if_all_children_settled
 
                 await wake_yield_if_all_children_settled(run.requester_session_key)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
     asyncio.create_task(_check())

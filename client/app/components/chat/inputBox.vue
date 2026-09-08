@@ -39,7 +39,6 @@
 import { computed, onMounted, watch, ref, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
-import { vDebounce } from '~/directives/debounce';
 
 const { t } = useI18n();
 

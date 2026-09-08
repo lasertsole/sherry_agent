@@ -185,7 +185,7 @@ async def stop_sweeper() -> None:
         _sweeper_task.cancel()
         try:
             await _sweeper_task
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: S110
             pass
         _sweeper_task = None
     # Fresh backoff state on next start (conservative direction).

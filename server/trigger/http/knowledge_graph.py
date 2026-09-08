@@ -108,7 +108,7 @@ async def knowledge_graph_upload_handler(request):
                         if p.is_file():
                             p.unlink(missing_ok=True)
                     stage_dir.rmdir()
-                except OSError:
+                except OSError:  # noqa: S110
                     pass
     except Exception as e:  # noqa: BLE001
         logger.exception("Knowledge-graph upload failed")

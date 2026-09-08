@@ -357,7 +357,7 @@ def e2e_env(monkeypatch, tmp_path):
         relation_register.clear_session(sid)
         try:
             state_register_mem.clear_session(sid)
-        except Exception:
+        except Exception:  # noqa: S110
             pass
     yield_events._yield_events.clear()
     registry_memory.clear()

@@ -64,7 +64,7 @@ def _connect_with_retry() -> sqlite3.Connection:
             if db is not None:
                 try:
                     db.close()
-                except sqlite3.Error:
+                except sqlite3.Error:  # noqa: S110
                     pass
             if attempt == _CONNECT_ATTEMPTS:
                 raise

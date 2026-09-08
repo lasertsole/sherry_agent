@@ -31,7 +31,7 @@ def read_env_file_value(key: str, default: str = "", env_path=None) -> str:
             raw = raw.strip("\"'").strip()
             if raw:
                 return raw
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     return default
 

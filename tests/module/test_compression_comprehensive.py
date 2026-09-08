@@ -113,7 +113,7 @@ def sid(request):
     yield s
     try:
         state_register_mem.clear_session(s)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
 
@@ -360,7 +360,7 @@ class TestSyncAsyncParity:
         finally:
             try:
                 state_register_mem.clear_session(sid2)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
 
@@ -567,7 +567,7 @@ class TestT3Trigger:
         finally:
             try:
                 state_register_mem.clear_session(sid2)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
     def test_apost_response_check_is_real_coroutine(self):
@@ -927,7 +927,7 @@ class TestT4T5Recovery:
         finally:
             try:
                 state_register_mem.clear_session(sid2)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
     def test_t4_then_t5_independent_counters(self, sid):
@@ -1010,7 +1010,7 @@ class TestT4T5Recovery:
         finally:
             try:
                 state_register_mem.clear_session(sid2)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
 
@@ -1527,7 +1527,7 @@ class TestSyncAsyncFullBranchParity:
             for s in (sid_s, sid_a):
                 try:
                     state_register_mem.clear_session(s)
-                except Exception:
+                except Exception:  # noqa: S110
                     pass
 
 

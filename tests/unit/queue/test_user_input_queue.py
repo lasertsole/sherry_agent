@@ -429,7 +429,7 @@ async def test_ensure_db_reowns_init_when_owning_loop_is_dead(tmp_path: Path):
             task.cancel()
             try:
                 await task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: S110
                 pass
 
         try:

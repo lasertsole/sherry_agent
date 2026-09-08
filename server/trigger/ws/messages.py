@@ -129,7 +129,7 @@ async def _cancel_session(session_id: str) -> None:
         # stream is expected to surface promptly after cancel().
         try:
             await asyncio.wait_for(task, timeout=5.0)
-        except (TimeoutError, asyncio.CancelledError, Exception):
+        except (TimeoutError, asyncio.CancelledError, Exception):  # noqa: S110
             pass
     else:
         state_register_mem.set_state(session_id, "answering", False)

@@ -16,7 +16,7 @@ def _parse_iso(ts: str | None) -> datetime | None:
 def _ensure_dir(p: Path) -> None:
     try:
         p.mkdir(parents=True, exist_ok=True)
-    except OSError:
+    except OSError:  # noqa: S110
         pass
 
 

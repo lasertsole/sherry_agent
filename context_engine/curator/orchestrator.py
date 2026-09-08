@@ -195,7 +195,7 @@ def run_curator_review(
         if on_summary:
             try:
                 on_summary(f"curator: {final_summary}")
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
         return {
             "started_at": start.isoformat(),
@@ -282,7 +282,7 @@ def run_curator_review(
     if on_summary:
         try:
             on_summary(f"curator: {final_summary}")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     result: dict[str, Any] = {

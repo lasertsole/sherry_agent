@@ -13,6 +13,17 @@
  */
 import { vi } from 'vitest';
 import * as Vue from 'vue';
+import { config } from '@vue/test-utils';
+import { vDebounce } from '~/directives/debounce';
+import { vSafeHtml } from '~/directives/safeHtml';
+
+// The Nuxt plugin `app/plugins/directives.ts` registers v-debounce / v-safe-html
+// on the app instance; bare Vitest never boots Nuxt plugins, so mirror that
+// global registration here for every mount.
+config.global.directives = {
+  debounce: vDebounce,
+  'safe-html': vSafeHtml
+};
 
 // Vue auto-imports consumed by the SFC sources under test (Nuxt provides these
 // transparently; bare Vitest does not). Re-export the real implementations.

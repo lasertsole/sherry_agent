@@ -534,7 +534,6 @@ import {
   pinSkill
 } from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
-import { vDebounce } from '~/directives/debounce';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });

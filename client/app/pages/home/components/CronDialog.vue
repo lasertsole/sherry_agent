@@ -247,7 +247,6 @@ import {
   type CronJob,
   type CronSchedule
 } from '@/composables/bridge';
-import { vDebounce } from '~/directives/debounce';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });

@@ -305,7 +305,6 @@ import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
 import { formatCompactTimeString } from '@/common/utils';
 import { useI18n } from 'vue-i18n';
-import { vSafeHtml } from '@/directives/safeHtml';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n();

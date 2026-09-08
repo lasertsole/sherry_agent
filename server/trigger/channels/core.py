@@ -378,7 +378,7 @@ def _run() -> None:
 
     try:
         event_loop.run_forever()
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
 

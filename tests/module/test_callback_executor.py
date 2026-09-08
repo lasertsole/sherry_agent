@@ -71,7 +71,7 @@ class TestCallbackExecutor:
             started.set()
             try:
                 await asyncio.sleep(10)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: S110
                 pass
             finally:
                 finished.append("cancelled")

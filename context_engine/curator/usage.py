@@ -38,7 +38,7 @@ def load_record(name: str) -> dict[str, Any]:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError):  # noqa: S110
             pass
     return _default_record(name)
 
@@ -150,7 +150,7 @@ def delete_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
     if rec_path.exists():
         try:
             rec_path.unlink()
-        except Exception:
+        except Exception:  # noqa: S110
             pass
     return True, f"Deleted {name}" + (f" (absorbed into {absorbed_into})" if absorbed_into else "")
 
@@ -221,7 +221,7 @@ def _cleanup_orphan_dirs() -> None:
         try:
             d.rmdir()
             logger.debug("Curator removed orphan empty dir: {}", d.name)
-        except OSError:
+        except OSError:  # noqa: S110
             pass
 
 
@@ -235,5 +235,5 @@ def _cleanup_orphan_records(live_names: set[str]) -> None:
             try:
                 f.unlink()
                 logger.debug("Curator removed orphan usage record: {}", f.name)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass

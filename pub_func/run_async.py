@@ -104,7 +104,7 @@ def run_async(coro, timeout: float = 300):
                         worker_loop.run_until_complete(
                             asyncio.gather(*pending, return_exceptions=True)
                         )
-                except Exception:
+                except Exception:  # noqa: S110
                     pass
                 worker_loop.close()
 

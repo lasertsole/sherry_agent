@@ -150,7 +150,7 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
             if not consumer.done() or consumer.cancelled():
                 try:
                     await asyncio.shield(_abandon_once())
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: S110
                     pass
             raise
         if consumer.cancelled():

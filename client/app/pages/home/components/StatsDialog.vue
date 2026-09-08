@@ -145,7 +145,6 @@ import { useI18n } from 'vue-i18n';
 import type { G2Spec } from '@antv/g2';
 import GChart from './GChart.vue';
 import { fetchApi } from '~/composables/requestApi';
-import { vDebounce } from '~/directives/debounce';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });

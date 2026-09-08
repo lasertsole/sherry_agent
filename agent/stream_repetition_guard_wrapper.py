@@ -135,7 +135,7 @@ class RepetitionGuardWrapper:
                     sid = resume.get("session_id", "")
                     if sid.strip():
                         return sid
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
         # 3. config configurable fallback
@@ -147,7 +147,7 @@ class RepetitionGuardWrapper:
                     sid = conf.get("session_id", "")
                     if sid.strip():
                         return sid
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
         raise RuntimeError(
@@ -385,12 +385,12 @@ class RepetitionGuardWrapper:
                         phantom_dropped,
                         session_id,
                     )
-                except Exception:
+                except Exception:  # noqa: S110
                     pass
             if generator is not None:
                 try:
                     await generator.aclose()
-                except Exception:
+                except Exception:  # noqa: S110
                     pass
 
     # ------------------------------------------------------------------

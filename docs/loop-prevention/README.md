@@ -11,7 +11,7 @@ Two design rules run through every guard below:
 1. **Degrade, never crash.** Protection never takes the process down: background services *stop*, turns *end gracefully*, and the boot gate *narrows the footprint* to HTTP-only mode.
 2. **Always leave a hatch.** Every breaker has a documented manual reset (REST endpoint, state-file delete, or process restart).
 
-**Source of truth:** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/periodic_backoff.py`, `runtime/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
+**Source of truth:** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/max_tokens_boost.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/periodic_backoff.py`, `runtime/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
 
 ## 🎯 Overview & Threat Model
 
@@ -20,6 +20,7 @@ Two design rules run through every guard below:
 | **Text death loop** (one model call) | Same sentence / character run streamed forever | `OutputRepetitionGuard` (worker) + `RepetitionGuardWrapper` (main-agent stream) |
 | **Tool pathology loop** (one turn) | Same failing tool call, ping-pong pairs, argument churn | `ToolGuardrails`: 5 pathologies → WARN → BLOCK → HALT, with recovery mode |
 | **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 60 worker combined calls) |
+| **Truncation retry spiral** | A `max_tokens`-truncated tool call executes as garbage → error → the model re-issues it, burning iterations | `MaxTokensBoostMiddleware`: bounded in-middleware re-call (3 retries, capped boost, +0 budget) |
 | **Stuck turn** | No progress for minutes (hung tool, wedged loop) | `HeartbeatStaleness` watchdog → `HeartbeatTimeoutError` |
 | **Background service loop** | Heartbeat / sweeper / cron tick failing forever | `PeriodicBackoff` (exhaustion = service stops) / cron degrade → auto-disable |
 | **Lost or duplicated completion** | Subagent finished, but the parent never hears about it, or hears twice | Completion drain (inject-once) + announce retry ladder + idempotency keys |
@@ -57,6 +58,33 @@ Details that matter:
 ### Turn level: `IterationBudget`
 
 Counts model calls and tool calls **combined** per turn. Main agent 90, worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage; an exhausted tool call returns an error ToolMessage so the model can wrap up instead of dying mid-loop. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
+
+### Turn level: `MaxTokensBoostMiddleware`, tool-call truncation recovery
+
+Active on the main agent and worker agents. When a model call returns truncated
+(`finish_reason == "length"` / `stop_reason == "max_tokens"`) **with tool
+calls**, the tool-call JSON is garbage: executing it fails, the model re-issues
+it, and each round burns `IterationBudget` — an unbounded retry spiral seeded
+by nothing the turn guards watch. The middleware closes that spiral inside the
+middleware layer:
+
+- First call at the original `max_tokens`; on truncation-with-tool-calls it
+  re-calls the handler with `max_tokens = base × 2^attempt` (base
+  `MAIN_LLM_OUTPUT_MAX_TOKEN`, default 8192; capped at 32768; max 3 retries).
+- **Bounded by construction**: 4 handler calls total, the boost is capped, and
+  the re-calls happen *inside* `awrap_model_call`, so `IterationBudget` charges
+  **+0** — no spiral into the budget.
+- The truncated intermediate result is discarded; the agent loop only sees the
+  final (recovered) result, so nothing truncated reaches the checkpointer or a
+  tool executor.
+- **Streaming re-calls strip callbacks**: the truncated first-call tokens are
+  already on the wire, so each re-call removes `request.config["callbacks"]`
+  to avoid duplicate output and restores the originals in `finally` (even on
+  exception). The streaming/non-streaming decision reads the `is_stream_turn`
+  flag `StreamTurn.run()` sets per session — children (ainvoke) never carry it
+  and always take the non-streaming path.
+- Text-only truncation (no tool calls) is not a loop concern handled here; the
+  service layer owns it via a bounded continuation re-stream (max 4).
 
 ### Turn level: text death loops, `OutputRepetitionGuard` + `RepetitionGuardWrapper`
 
@@ -143,7 +171,7 @@ Manual reset: delete `src/data/boot_lifecycle.json`, or simply exit cleanly once
 
 | Layer | Mechanisms | What it catches |
 |---|---|---|
-| Middleware (in-graph, per turn) | `ToolGuardrails`, `IterationBudget`, `OutputRepetitionGuard` / `RepetitionGuardWrapper`, `HeartbeatStaleness`, `SubagentCompletionDrain` | tool pathologies, unbounded turns, text death loops, stuck turns, missing completion injections |
+| Middleware (in-graph, per turn) | `ToolGuardrails`, `IterationBudget`, `MaxTokensBoostMiddleware`, `OutputRepetitionGuard` / `RepetitionGuardWrapper`, `HeartbeatStaleness`, `SubagentCompletionDrain` | tool pathologies, unbounded turns, truncated tool-call spirals, text death loops, stuck turns, missing completion injections |
 | Process (background services) | `PeriodicBackoff` (heartbeat, sweeper), cron failure breaker, announce retry ladder + idempotency | service retry storms, failing scheduled jobs, duplicated completion delivery |
 | Boot (process lifecycle) | `CrashLoopBreaker`, `server/__main__` gating, `trigger.__init__` early exit | crash-reboot loops |
 | Infra / ops | cron REST hatches, HTTP-only env, state-file delete | stuck breaker state that needs an operator exit |
@@ -154,6 +182,7 @@ Manual reset: delete `src/data/boot_lifecycle.json`, or simply exit cleanly once
 |---|---|---|---|
 | `ToolGuardrails` | Turn (tool calls) | `state_register_mem` (`tool_guardrail_state`) | Every turn (`before_agent`) |
 | `IterationBudget` | Turn (call count) | `state_register_mem` | Every turn |
+| `MaxTokensBoostMiddleware` | Model call (truncation) | `request.model_settings` + `is_stream_turn` flag | Per turn; flag cleared in `_cleanup` |
 | `OutputRepetitionGuard` | Turn + session (text) | 6 session keys | Halt flag per turn; hash history per session (released on subagent teardown) |
 | `RepetitionGuardWrapper` | Stream call (text) | In-flight + halt key | Per model call |
 | `HeartbeatStaleness` | Turn (wall clock) | `heartbeat_*` keys + 1-min timer | Every turn |
@@ -170,6 +199,7 @@ Within a turn, the turn guards are orthogonal and fire in parallel: `OutputRepet
 - **All thresholds are code defaults** (dataclass / constructor parameters); there are intentionally no env vars for them. Notably, `config/schema.py`'s `max_tool_iterations = 40` is *not* consumed by the middleware (budgets are passed explicitly: 90 / 60), and `HeartbeatConfig.interval_s = 1800` matches the heartbeat service default but the service is constructed with defaults.
 - `TOOL_CALL_TIMEOUT_MINUTES` (default 5 in `.env.example`) is currently **documentation-only**: no code consumes it. The active per-tool bounds are constants (web search 15s, terminal 30s, python REPL 30s). Do not rely on it as a loop bound.
 - Workers get `OutputRepetitionGuard` as middleware; the main agent is wrapped by `RepetitionGuardWrapper` (middleware hooks do not see raw stream chunks).
+- `MaxTokensBoostMiddleware` is the one guard with an env knob: `MAIN_LLM_OUTPUT_MAX_TOKEN` (default 8192) sets the boost base read at import time; the cap (32768) and retry count (3) are code constants.
 - `ToolGuardrails` knobs: `warnings_enabled` (default True), `hard_stop_enabled` (default False, BLOCK stays a block), `recovery_mode_enabled` (default True), `recovery_max_violations` (default 1).
 - Announce delivery knobs (subagent announce config): `announce_retry_max=3` with 5s / 10s / 20s transient delays, plus `max_announce_retry_count=10` and a 24h run expiry.
 
@@ -196,6 +226,8 @@ Manual recovery cheatsheet:
 | `tests/unit/server/test_sweeper_wiring.py` | Sweeper startup wiring |
 | `tests/unit/server/test_crash_gating.py` | Boot gating, HTTP-only mode |
 | `tests/unit/server/test_cron_api.py` | Cron REST incl. failure-state / reset-failures |
+| `tests/unit/test_token_limit_continuation.py` | Truncation detection, text continuation loop, boost re-call incl. callback stripping |
+| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | Child-agent middleware wiring, non-stream default |
 
 ## ⚠️ Honesty & Limitations
 

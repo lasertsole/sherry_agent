@@ -464,7 +464,7 @@ class TestMaxTokensBoostMiddleware:
         req, _ = self._stream_setup(sentinel)
         try:
             asyncio.run(self._mw().awrap_model_call(req, handler))
-        except RuntimeError:
+        except RuntimeError:  # noqa: S110
             pass
         assert req.config.get("callbacks") is sentinel
 

@@ -226,11 +226,11 @@ def sid(request):
     yield token
     try:
         state_register_mem.clear_session(token)
-    except Exception:  # pragma: no cover - teardown best effort
+    except Exception:  # pragma: no cover - teardown best effort  # noqa: S110
         pass
     try:
         state_register_db.delete_state(token, "system_prompt")
-    except Exception:  # pragma: no cover - teardown best effort
+    except Exception:  # pragma: no cover - teardown best effort  # noqa: S110
         pass
 
 

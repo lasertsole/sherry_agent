@@ -11,7 +11,7 @@
 1. **성능을 낮추되, 절대 크래시하지 않는다.** 보호 기능은 프로세스를 죽이지 않습니다: 백그라운드 서비스는 *정지*하고, 턴은 *우아하게 끝나며*, 부팅 게이트는 프로세스를 HTTP 전용 모드로 *축소*합니다.
 2. **항상 탈출구를 남긴다.** 모든 브레이커에는 문서화된 수동 리셋(REST 엔드포인트, 상태 파일 삭제, 프로세스 재시작)이 있습니다.
 
-**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/periodic_backoff.py`, `runtime/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
+**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/max_tokens_boost.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/periodic_backoff.py`, `runtime/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
 
 ## 🎯 개요와 위협 모델
 
@@ -20,6 +20,7 @@
 | **텍스트 데스 루프** (모델 호출 1회) | 같은 문장 / 같은 문자열이 영원히 스트리밍됨 | `OutputRepetitionGuard` (워커) + `RepetitionGuardWrapper` (메인 에이전트 스트림) |
 | **도구 병리 루프** (턴 1회) | 같은 실패 도구 호출, 핑퐁 쌍, 인자 갱신 | `ToolGuardrails`: 5가지 병리 → WARN → BLOCK → HALT, 복구 모드 포함 |
 | **무한 턴** | 모델/도구 호출이 끝나지 않음 | `IterationBudget` (메인 90 / 워커 60, 합산 호출) |
+| **잘림 재시도 나선** | `max_tokens`로 잘린 도구 호출이 쓰레기 인수로 실행 → 오류 → 모델이 재발행하며 반복을 태움 | `MaxTokensBoostMiddleware`: 미들웨어 내 유한 재호출(3회 재시도, 부스트 상한, 예산 +0) |
 | **멈춘 턴** | 수 분간 진행 없음 (도구 행, 끼인 루프) | `HeartbeatStaleness` 와치독 → `HeartbeatTimeoutError` |
 | **백그라운드 서비스 루프** | 하트비트 / 스위퍼 / cron 틱이 영원히 실패 | `PeriodicBackoff` (소진 = 서비스 정지) / cron 강등 → 자동 비활성 |
 | **완료 통지 유실 또는 중복** | 서브에이전트는 끝났는데 부모가 통지를 못 받거나 두 번 받음 | 완료 drain (1회만 주입) + announce 재시도 사다리 + 멱등 키 |
@@ -57,6 +58,30 @@
 ### 턴 수준: `IterationBudget`
 
 턴당 모델 호출과 도구 호출을 **합산**해서 셉니다. 메인 에이전트 90, 워커 에이전트 60 (기본값 50). 소진된 모델 호출은 터미널 AIMessage를 반환하고, 소진된 도구 호출은 에러 ToolMessage를 반환해 모델이 루프 한가운데서 죽지 않고 마무리할 수 있게 합니다. 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
+
+### 턴 수준: `MaxTokensBoostMiddleware`, 도구 호출 잘림 복구
+
+메인 에이전트와 워커 에이전트에서 활성화됩니다. 모델 호출이 잘린 상태
+(`finish_reason == "length"` / `stop_reason == "max_tokens"`)로 반환되고 **도구 호출을
+포함**하면, 도구 호출 JSON은 쓰레기입니다: 실행은 반드시 실패하고, 모델이 재발행하고,
+매 라운드마다 `IterationBudget`을 태웁니다 — 턴 가드에는 전혀 보이지 않는 무한 재시도
+나선입니다. 이 미들웨어는 미들웨어 계층 안에서 그 나선을 닫습니다:
+
+- 첫 호출은 원래 `max_tokens`로 실행. 잘림 + 도구 호출인 경우
+  `max_tokens = base × 2^attempt`(base는 `MAIN_LLM_OUTPUT_MAX_TOKEN`, 기본 8192,
+  상한 32768, 최대 3회 재시도)로 `awrap_model_call` 내 handler를 재호출합니다.
+- **구조적으로 유한**: handler 호출은 총 최대 4회, 부스트 값은 상한이 있고, 재호출은
+  *미들웨어 내부*에서 완결되므로 `IterationBudget`은 **+0** — 예산으로 나선이
+  진행되지 않습니다.
+- 잘린 중간 결과는 폐기됩니다. agent 루프에는 최종(복구된) 결과만 보이므로 잘린 내용이
+  checkpointer에 기록되거나 도구 실행기로 전달되지 않습니다.
+- **스트리밍 재호출은 callbacks 제거**: 첫 호출의 잘린 토큰은 이미 전송되었으므로,
+  재호출 전에 `request.config["callbacks"]`를 제거해 중복 출력을 방지하고 `finally`에서
+  원래 값을 복원합니다(예외 시에도). 스트리밍/비스트리밍 판단은 `StreamTurn.run()`이
+  세션별로 설정하는 `is_stream_turn` 플래그를 읽습니다 — 자식 에이전트(ainvoke)는 이
+  플래그를 가지지 않으므로 항상 비스트리밍 경로를 통과합니다.
+- 텍스트 전용 잘림(도구 호출 없음)은 여기서 다루는 루프 문제가 아닙니다. 서비스 계층이
+  유한한 continuation 재스트리밍(최대 4회)으로 담당합니다.
 
 ### 턴 수준: 텍스트 데스 루프, `OutputRepetitionGuard` + `RepetitionGuardWrapper`
 
@@ -143,7 +168,7 @@
 
 | 계층 | 메커니즘 | 잡는 것 |
 |---|---|---|
-| 미들웨어 (그래프 내, 턴별) | `ToolGuardrails`, `IterationBudget`, `OutputRepetitionGuard` / `RepetitionGuardWrapper`, `HeartbeatStaleness`, `SubagentCompletionDrain` | 도구 병리, 무한 턴, 텍스트 데스 루프, 멈춘 턴, 누락된 완료 주입 |
+| 미들웨어 (그래프 내, 턴별) | `ToolGuardrails`, `IterationBudget`, `MaxTokensBoostMiddleware`, `OutputRepetitionGuard` / `RepetitionGuardWrapper`, `HeartbeatStaleness`, `SubagentCompletionDrain` | 도구 병리, 무한 턴, 잘린 도구 호출 나선, 텍스트 데스 루프, 멈춘 턴, 누락된 완료 주입 |
 | 프로세스 (백그라운드 서비스) | `PeriodicBackoff` (하트비트, 스위퍼), cron 실패 브레이커, announce 재시도 사다리 + 멱등성 | 서비스 재시도 폭풍, 실패하는 예약 작업, 중복 완료 전달 |
 | 부팅 (프로세스 라이프사이클) | `CrashLoopBreaker`, `server/__main__` 게이팅, `trigger.__init__` 조기 종료 | 크래시-재부팅 루프 |
 | 인프라 / 운영 | cron REST 탈출구, HTTP 전용 환경변수, 상태 파일 삭제 | 운영자의 개입이 필요한 꼼짝 못 하는 브레이커 상태 |
@@ -154,6 +179,7 @@
 |---|---|---|---|
 | `ToolGuardrails` | 턴 (도구 호출) | `state_register_mem` (`tool_guardrail_state`) | 매 턴 (`before_agent`) |
 | `IterationBudget` | 턴 (호출 수) | `state_register_mem` | 매 턴 |
+| `MaxTokensBoostMiddleware` | 모델 호출 (잘림) | `request.model_settings` + `is_stream_turn` 플래그 | 매 턴; 플래그는 `_cleanup`에서 해제 |
 | `OutputRepetitionGuard` | 턴 + 세션 (텍스트) | 6개 세션 키 | halt 플래그는 턴별; 해시 히스토리는 세션별 (서브에이전트 해체 시 해제) |
 | `RepetitionGuardWrapper` | 스트림 호출 (텍스트) | in-flight + halt 키 | 모델 호출별 |
 | `HeartbeatStaleness` | 턴 (월클록) | `heartbeat_*` 키 + 1분 타이머 | 매 턴 |
@@ -170,6 +196,7 @@
 - **모든 임계값은 코드 기본값입니다** (dataclass / 생성자 파라미터); 환경 변수는 의도적으로 두지 않았습니다. 특히 `config/schema.py`의 `max_tool_iterations = 40`은 미들웨어가 소비하지 *않고*(예산은 명시적으로 전달됨: 90 / 60), `HeartbeatConfig.interval_s = 1800`은 하트비트 서비스 기본값과 일치하지만 서비스는 기본값으로 생성됩니다.
 - `TOOL_CALL_TIMEOUT_MINUTES` (`.env.example` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
+- `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.
 - `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1).
 - Announce 전달 노브 (서브에이전트 announce 설정): `announce_retry_max=3`에 5s / 10s / 20s 일시적 지연, 그리고 `max_announce_retry_count=10`과 24시간 run 만료.
 
@@ -196,6 +223,8 @@
 | `tests/unit/server/test_sweeper_wiring.py` | 스위퍼 시작 배선 |
 | `tests/unit/server/test_crash_gating.py` | 부팅 게이팅, HTTP 전용 모드 |
 | `tests/unit/server/test_cron_api.py` | Cron REST, failure-state / reset-failures 포함 |
+| `tests/unit/test_token_limit_continuation.py` | 잘림 감지, 텍스트 continuation 루프, 부스트 재호출(callbacks 제거 포함) |
+| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | 자식 에이전트 미들웨어 배선, 비스트리밍 기본값 |
 
 ## ⚠️ 정직함과 한계
 

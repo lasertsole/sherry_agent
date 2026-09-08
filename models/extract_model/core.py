@@ -124,7 +124,7 @@ class MinerUModel:
             import torch
 
             torch.cuda.empty_cache()
-        except ImportError:
+        except ImportError:  # noqa: S110
             pass
         logger.info("MinerU VLM unloaded.")
 

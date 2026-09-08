@@ -110,7 +110,7 @@ async def _wait_for_updated_reply(
                     if content != (baseline or ""):
                         return content
                     break
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     return None

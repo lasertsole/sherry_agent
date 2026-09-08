@@ -278,7 +278,7 @@ class QQChannel(BaseChannel):
         if self._client:
             try:
                 await self._client.close()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
         logger.info("QQ bot stopped")
 

@@ -364,7 +364,6 @@
 <script lang="ts" setup>
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { vDebounce } from '~/directives/debounce';
 import { listLogFiles, readLogFile, openLogStream } from '@/composables/bridge';
 import type { LogFileInfo, LogStreamFrame } from '@/composables/bridge';
 import {

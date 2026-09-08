@@ -385,7 +385,7 @@ async def resume_subagent_run(run_id: str) -> SubagentRunRecord | None:
 
     try:
         await wake_yield_if_all_children_settled(updated.requester_session_key)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     return updated

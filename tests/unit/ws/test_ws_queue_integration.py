@@ -103,7 +103,7 @@ async def _handler_session(socket: _HandlerSocket):
         socket.close()
         try:
             await asyncio.wait_for(task, timeout=10)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: S110
             pass
 
 
