@@ -115,12 +115,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     ├── LLM：model_override → build_llm_by_name()；ORCHESTRATOR →
   │     │   build_main_llm()；LEAF → build_auxiliary_llm()
   │     ├── child_session_key ごとに独立した非同期 SQLite checkpointer
-  │     └── create_agent() で 6 層のミドルウェアを構成：
+  │     └── create_agent() で 7 層のミドルウェアを構成：
   │           ├── Summarization(model=<補助 LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
   │           ├── IterationBudget(60)      — 最大反復回数
   │           ├── ToolGuardrails()         — ツール安全ガードレール
   │           ├── OutputRepetitionGuard()  — 出力反復抑制
+  │           ├── MaxTokensBoostMiddleware() — ツール呼び出し切断時に max_tokens を
+  │           │                  増やして再呼び出し（子は非ストリーミング経路）
   │           ├── ToolCallNormalize()      — ツール呼び出し正規化
   │           └── HeartbeatStaleness()     — ハートビート監視
   │           ...その後 RepetitionGuardWrapper(phantom_stream_guard=True) で包む

@@ -700,6 +700,8 @@ async def _build_child_agent(
       - **IterationBudget(60)** — caps the agent to 60 reasoning/tool-call iterations.
       - **ToolGuardrails** — validates tool calls before dispatch.
       - **OutputRepetitionGuard** — stops the agent from emitting the same text endlessly.
+      - **MaxTokensBoostMiddleware** — re-calls the model with a boosted ``max_tokens``
+        (base × 2^n, capped) when a truncated response carries cut-off tool calls.
       - **ToolCallNormalize** — normalises tool call format across LLM providers.
       - **HeartbeatStaleness** — detects and recovers from stalled agent loops.
 
@@ -732,6 +734,7 @@ async def _build_child_agent(
         ToolCallNormalize,
         Summarization,
         HeartbeatStaleness,
+        MaxTokensBoostMiddleware,
     )
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
     from agent.tools import build_main_tools
@@ -786,6 +789,11 @@ async def _build_child_agent(
             # ("agent:...:subagent:<uuid>"). No service-layer (Layer C) stream wiring is
             # needed here; Layer C only guards the parent's relay loop.
             OutputRepetitionGuard(),
+            # Tool-call truncation recovery: children run via ``ainvoke`` so the
+            # middleware takes its non-streaming path (no callback stripping —
+            # ``is_stream_turn`` is only set by the parent's StreamTurn loop and
+            # is keyed by the child's own session id, which never has it).
+            MaxTokensBoostMiddleware(),
             ToolCallNormalize(),
             HeartbeatStaleness(),
         ],

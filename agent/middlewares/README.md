@@ -25,6 +25,7 @@ The middleware layer of the EMA AI Agent: eight `AgentMiddleware` components tha
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [Summarization](#summarization)
+  - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
   - [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper)
 - [Shared State System](#shared-state-system)
 - [Configuration](#configuration)
@@ -80,6 +81,9 @@ middleware = [
     IterationBudget(90),
     ToolGuardrails(),
     ToolCallNormalize(),
+    SubagentCompletionDrainMiddleware(),
+    OutputRepetitionGuard(),
+    MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     Summarization(
@@ -115,6 +119,7 @@ middleware = [
     IterationBudget(60),
     ToolGuardrails(),
     OutputRepetitionGuard(),
+    MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
 ]
@@ -128,6 +133,8 @@ Differences vs the main agent:
 - A tighter iteration budget (60 instead of 90).
 - No `ContextEngineHook`, no `MultimodalProcessor`, no `HumanInTheLoop`.
 - `OutputRepetitionGuard` runs as a real middleware here.
+- `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
+  `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
 - When a child session finishes, the spawn code deletes the six `OutputRepetitionGuard` state keys (`SESSION_STATE_KEYS`) from `state_register_mem` in its `finally` block.
 
 ### Effective Per-Turn Order (main agent)
@@ -317,6 +324,33 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 
 ▶️ Full details: [docs/harness/summarization/README.md](../../docs/harness/summarization/README.md) · [中文](../../docs/harness/summarization/README.zh.md) · [한국어](../../docs/harness/summarization/README.ko.md) · [日本語](../../docs/harness/summarization/README.ja.md)
 
+### MaxTokensBoostMiddleware
+
+**Module:** `agent/middlewares/max_tokens_boost.py` · **Class:** `MaxTokensBoostMiddleware(AgentMiddleware)`
+**Hooks:** `wrap_model_call` / `awrap_model_call`
+
+Recovers from **tool-call truncation**: when a model call returns with
+`finish_reason == "length"` (OpenAI) / `stop_reason == "max_tokens"` (Anthropic)
+AND the response carries tool calls, the tool-call JSON was cut off. The
+middleware re-calls the handler inside `awrap_model_call` with a boosted
+`max_tokens = base × 2^attempt` (base `MAIN_LLM_OUTPUT_MAX_TOKEN`, default
+8192; capped at 32768; max 3 retries) so the model can emit the complete
+tool-call payload. The truncated intermediate result is discarded — the agent
+loop only sees the final result, so nothing truncated reaches the checkpointer
+and the IterationBudget is charged once per outer model call.
+
+- **Text-only truncation** (no tool calls) is NOT handled here — the
+  service-layer `StreamTurn` outer loop owns it (continuation HumanMessage).
+- **Streaming re-calls strip callbacks**: the truncated first-call tokens
+  already streamed to the client; before each re-call the middleware removes
+  `request.config["callbacks"]` so no duplicate output is produced, and
+  restores the original callbacks in `finally` (even on exception). The
+  streaming/non-streaming decision reads the `is_stream_turn` flag that
+  `StreamTurn.run()` sets per session — children (ainvoke) never carry it and
+  always take the non-streaming path.
+- `_extract_ai_message` handles both bare `AIMessage` results and
+  `ModelResponse`-shaped objects.
+
 ### OutputRepetitionGuard & RepetitionGuardWrapper
 
 **Module:** `agent/middlewares/output_repetition_guard.py` · **Class:** `OutputRepetitionGuard(AgentMiddleware)`
@@ -434,6 +468,7 @@ agent = create_agent(
 | `HumanInTheLoop` | `config: HITLConfig` | defaults above | defaults |
 | `HeartbeatStaleness` | (defaults) | interval 1 min, idle 7 / in-tool 20 | defaults |
 | `OutputRepetitionGuard` | (defaults) | 3 / 2 / 0.6 / 6 / 8 | defaults |
+| `MaxTokensBoostMiddleware` | (env) | `MAIN_LLM_OUTPUT_MAX_TOKEN` base 8192, cap 32768, 3 retries | defaults |
 
 ---
 
@@ -538,6 +573,7 @@ agent/middlewares/
 │   └── core.py                  # HumanInTheLoop
 ├── iteration_budget.py          # IterationBudget
 ├── multimodal_processor.py      # MultimodalProcessor
+├── max_tokens_boost.py          # MaxTokensBoostMiddleware (tool-call truncation re-call)
 ├── output_repetition_guard.py   # OutputRepetitionGuard (not re-exported below)
 ├── summarization.py             # Summarization
 ├── tool_call_normalize.py       # ToolCallNormalize
@@ -560,6 +596,7 @@ from agent.middlewares import (
     MultimodalProcessor,
     HumanInTheLoop,
     HITLConfig,
+    MaxTokensBoostMiddleware,
 )
 # OutputRepetitionGuard is NOT re-exported here — import it from
 # agent.middlewares.output_repetition_guard instead.

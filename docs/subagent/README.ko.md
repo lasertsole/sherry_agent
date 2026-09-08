@@ -114,12 +114,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     ├── LLM: model_override → build_llm_by_name(); ORCHESTRATOR →
   │     │   build_main_llm(); LEAF → build_auxiliary_llm()
   │     ├── child_session_key별로 독립적인 비동기 SQLite checkpointer
-  │     └── create_agent()로 6겹의 미들웨어 구성:
+  │     └── create_agent()로 7겹의 미들웨어 구성:
   │           ├── Summarization(model=<보조 LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
   │           ├── IterationBudget(60)      — 최대 반복 횟수
   │           ├── ToolGuardrails()         — 도구 안전 가드레일
   │           ├── OutputRepetitionGuard()  — 출력 반복 억제
+  │           ├── MaxTokensBoostMiddleware() — 도구 호출 잘림 시 max_tokens를 높여
+  │           │                  재호출(자식은 비스트리밍 경로)
   │           ├── ToolCallNormalize()      — 도구 호출 정규화
   │           └── HeartbeatStaleness()     — 하트비트 감시
   │           ...이후 RepetitionGuardWrapper(phantom_stream_guard=True)로 감쌈

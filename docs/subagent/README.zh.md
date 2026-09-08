@@ -112,12 +112,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     ├── LLM：model_override → build_llm_by_name()；ORCHESTRATOR →
   │     │   build_main_llm()；LEAF → build_auxiliary_llm()
   │     ├── 独立的异步 SQLite checkpointer（按 child_session_key 隔离）
-  │     └── create_agent() 组装六层中间件：
+  │     └── create_agent() 组装七层中间件：
   │           ├── Summarization(model=<辅助 LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
   │           ├── IterationBudget(60)      — 最大迭代次数
   │           ├── ToolGuardrails()         — 工具安全护栏
   │           ├── OutputRepetitionGuard()  — 输出重复抑制
+  │           ├── MaxTokensBoostMiddleware() — 工具调用被截断时以提升的 max_tokens
+  │           │                  重呼模型（子代理走非流式路径）
   │           ├── ToolCallNormalize()      — 工具调用规范化
   │           └── HeartbeatStaleness()     — 心跳监测
   │           ...再包装 RepetitionGuardWrapper(phantom_stream_guard=True)

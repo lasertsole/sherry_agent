@@ -3,7 +3,7 @@
 > Status: **Draft** (not yet implemented)
 > Date: 2026-09-07
 > Owner: Agent
-> Predecessor: TOKEN_LIMIT_CONTINUATION_PLAN.md (completed, 119/119 tests pass)
+> Predecessor: 输出侧 max_tokens 恢复（已实施 — `agent/middlewares/max_tokens_boost.py`)
 > Related: CONTEXT_LIMIT_GUARD_WRAPPER.md (input-side overflow detection)
 
 ---

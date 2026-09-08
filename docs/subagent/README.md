@@ -112,12 +112,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     ├── LLM: model_override → build_llm_by_name(); ORCHESTRATOR →
   │     │   build_main_llm(); LEAF → build_auxiliary_llm()
   │     ├── Independent async SQLite checkpointer keyed by child_session_key
-  │     └── create_agent() with six middlewares:
+  │     └── create_agent() with seven middlewares:
   │           ├── Summarization(model=<aux LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
   │           ├── IterationBudget(60)      — max iteration count
   │           ├── ToolGuardrails()         — tool safety guardrails
   │           ├── OutputRepetitionGuard()  — output repetition suppression
+  │           ├── MaxTokensBoostMiddleware() — re-calls with boosted max_tokens on
+  │           │                  tool-call truncation (non-stream path for children)
   │           ├── ToolCallNormalize()      — tool call normalization
   │           └── HeartbeatStaleness()     — heartbeat monitoring
   │           ... then wrapped in RepetitionGuardWrapper(phantom_stream_guard=True)

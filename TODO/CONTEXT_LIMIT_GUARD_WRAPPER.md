@@ -3,7 +3,8 @@
 > 日期: 2026-09-07
 > 状态: 已实施
 > 前置: STREAM_REPETITION_OPTIMIZATION.md (已完成), Summarization 中间件 T1-T5 (已完成)
-> 关联: TOKEN_LIMIT_CONTINUATION_PLAN.md (Draft — 输出侧 max_tokens 续写, 与本文互补)
+> 关联: 输出侧 max_tokens 截断恢复已实施为 `MaxTokensBoostMiddleware`
+> (`agent/middlewares/max_tokens_boost.py`,含 StreamTurn 文本续写), 与本文互补
 
 ---
 
@@ -302,16 +303,17 @@ def __getattr__(name: str):
 | T3               | 响应后真实 token 检测（仅日志）           | `extract_reported_input_tokens`               |
 | T4/T5            | provider 报错恢复                         | `classify_provider_error`                     |
 
-### 6.2 与 TOKEN_LIMIT_CONTINUATION_PLAN.md 的关系
+### 6.2 与输出侧 max_tokens 截断恢复（已实施）的关系
 
-| 维度     | 本方案 (ContextLimitGuard)    | Token Limit Plan                  |
-| -------- | ----------------------------- | --------------------------------- |
-| 防御对象 | **INPUT 侧** — 上下文窗口溢出 | **OUTPUT 侧** — `max_tokens` 截断 |
-| 检测信号 | `usage_metadata.input_tokens` | `finish_reason == "length"`       |
-| 动作     | 设 force flag → T2 压缩       | 注入续写 HumanMessage → re-stream |
-| 层       | wrapper（stream 层）          | StreamTurn（服务层）              |
+| 维度     | 本方案 (ContextLimitGuard)    | 输出侧恢复 (MaxTokensBoostMiddleware / StreamTurn) |
+| -------- | ----------------------------- | -------------------------------------------------- |
+| 防御对象 | **INPUT 侧** — 上下文窗口溢出 | **OUTPUT 侧** — `max_tokens` 截断                  |
+| 检测信号 | `usage_metadata.input_tokens` | `finish_reason == "length"`                        |
+| 动作     | 设 force flag → T2 压缩       | 工具调用截断 → boost re-call；纯文本 → 续写 HumanMessage |
+| 层       | wrapper（stream 层）          | middleware + StreamTurn（服务层）                  |
 
-两者互补：本方案防 input 溢出，Token Limit Plan 防 output 截断。
+两者互补：本方案防 input 溢出，输出侧恢复（`agent/middlewares/max_tokens_boost.py`
++ `server/service/stream_dispatch.py` 的续写循环）防 output 截断。
 
 ---
 

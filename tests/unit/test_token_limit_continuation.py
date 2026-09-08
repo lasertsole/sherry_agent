@@ -1,6 +1,8 @@
 """Token-limit detection / text-continuation / max-tokens-boost tests.
 
-Covers the three phases of TODO/TOKEN_LIMIT_CONTINUATION_PLAN.md:
+Covers the three phases of the token-limit feature (plan doc retired; the
+implementation lives in server/service/stream_dispatch.py,
+server/service/messages.py and agent/middlewares/max_tokens_boost.py):
 - Phase 1: finish_reason extraction into StreamTurn metadata + persistence
 - Phase 2: text continuation re-stream loop in _GenerateTurn
 - Phase 3: MaxTokensBoostMiddleware re-call with callback stripping

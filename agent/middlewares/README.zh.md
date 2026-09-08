@@ -80,6 +80,9 @@ middleware = [
     IterationBudget(90),
     ToolGuardrails(),
     ToolCallNormalize(),
+    SubagentCompletionDrainMiddleware(),
+    OutputRepetitionGuard(),
+    MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     Summarization(
@@ -115,6 +118,7 @@ middleware = [
     IterationBudget(60),
     ToolGuardrails(),
     OutputRepetitionGuard(),
+    MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
 ]
@@ -319,6 +323,28 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 预算中间件的类默认值 `max_iterations` 为 50；*实际注册*值是 90（主）与 60（worker）。本文档旧版本声称预算为 10——那是错的。
 
+### MaxTokensBoostMiddleware
+
+**模块：** `agent/middlewares/max_tokens_boost.py` · **类：** `MaxTokensBoostMiddleware(AgentMiddleware)`
+**钩子：** `wrap_model_call` / `awrap_model_call`
+
+从**工具调用截断**中恢复：当模型调用返回 `finish_reason == "length"`（OpenAI）/
+`stop_reason == "max_tokens"`（Anthropic）且响应携带工具调用时，说明工具调用的
+JSON 本身被截断。中间件在 `awrap_model_call` 内以提升后的
+`max_tokens = base × 2^attempt`（base 取 `MAIN_LLM_OUTPUT_MAX_TOKEN`，默认 8192；
+上限 32768；最多重试 3 次）重新调用 handler，让模型补全完整的工具调用载荷。
+被截断的中间结果被丢弃——agent 循环只看到最终结果，因此不会有截断内容写入
+checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
+
+- **纯文本截断**（无工具调用）不在此处理——由服务层 `StreamTurn` 外层循环负责
+  （注入续写 HumanMessage）。
+- **流式重呼会剥离 callbacks**：第一次调用的截断 token 已经流式发给客户端；
+  每次重呼前中间件会移除 `request.config["callbacks"]`，避免重复输出，并在
+  `finally` 中恢复原始 callbacks（即使异常也恢复）。流式/非流式的判定读取
+  `StreamTurn.run()` 按会话设置的 `is_stream_turn` 标志——子代理（ainvoke）
+  永远不带该标志，始终走非流式路径。
+- `_extract_ai_message` 同时处理裸 `AIMessage` 结果与 `ModelResponse` 形态对象。
+
 ### OutputRepetitionGuard 与 RepetitionGuardWrapper
 
 **模块：** `agent/middlewares/output_repetition_guard.py` · **类：** `OutputRepetitionGuard(AgentMiddleware)`
@@ -397,6 +423,7 @@ from agent.middlewares import (
     HeartbeatStaleness,
     HumanInTheLoop,
     HITLConfig,
+    MaxTokensBoostMiddleware,
     Summarization,
 )
 
@@ -540,6 +567,7 @@ agent/middlewares/
 │   └── core.py                  # HumanInTheLoop
 ├── iteration_budget.py          # IterationBudget
 ├── multimodal_processor.py      # MultimodalProcessor
+├── max_tokens_boost.py          # MaxTokensBoostMiddleware（工具调用截断重呼）
 ├── output_repetition_guard.py   # OutputRepetitionGuard（不在下方再导出之列）
 ├── summarization.py             # Summarization
 ├── tool_call_normalize.py       # ToolCallNormalize

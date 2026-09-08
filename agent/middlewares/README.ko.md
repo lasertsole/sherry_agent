@@ -80,6 +80,9 @@ middleware = [
     IterationBudget(90),
     ToolGuardrails(),
     ToolCallNormalize(),
+    SubagentCompletionDrainMiddleware(),
+    OutputRepetitionGuard(),
+    MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     Summarization(
@@ -115,6 +118,7 @@ middleware = [
     IterationBudget(60),
     ToolGuardrails(),
     OutputRepetitionGuard(),
+    MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
 ]
@@ -319,6 +323,31 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 예산 미들웨어의 클래스 기본값 `max_iterations`는 50입니다. *실제 등록된* 값은 90(메인)과 60(워커). 이 문서의 이전 버전은 예산 10이라고 주장했습니다 — 잘못된 정보였습니다.
 
+### MaxTokensBoostMiddleware
+
+**모듈:** `agent/middlewares/max_tokens_boost.py` · **클래스:** `MaxTokensBoostMiddleware(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call`
+
+**도구 호출 잘림 복구**: 모델 호출이 `finish_reason == "length"`(OpenAI) /
+`stop_reason == "max_tokens"`(Anthropic)로 반환되고 응답에 도구 호출이 포함되어
+있으면 도구 호출 JSON 자체가 잘린 것입니다. 미들웨어는 `awrap_model_call` 내에서
+`max_tokens = base × 2^attempt`(base는 `MAIN_LLM_OUTPUT_MAX_TOKEN`, 기본 8192,
+상한 32768, 최대 3회 재시도)로 늘려 handler를 재호출하여 모델이 완전한 도구 호출
+페이로드를 출력하게 합니다. 잘린 중간 결과는 폐기됩니다 — agent 루프에는 최종
+결과만 보이므로 잘린 내용이 checkpointer에 기록되지 않고, IterationBudget은
+외부 모델 호출당 1회만 청구됩니다.
+
+- **텍스트 전용 잘림**(도구 호출 없음)은 여기서 처리하지 않습니다 — 서비스 계층의
+  `StreamTurn` 외부 루프(continuation HumanMessage 주입)가 담당합니다.
+- **스트리밍 재호출 시 callbacks 제거**: 첫 호출의 잘린 토큰은 이미 클라이언트로
+  전송되었으므로, 재호출 전에 `request.config["callbacks"]`를 제거하여 중복 출력을
+  방지하고 `finally`에서 원래 callbacks를 복원합니다(예외 시에도). 스트리밍/
+  비스트리밍 판단은 `StreamTurn.run()`이 세션별로 설정하는 `is_stream_turn`
+  플래그를 읽습니다 — 자식 에이전트(ainvoke)는 이 플래그를 가지지 않으므로 항상
+  비스트리밍 경로를 통과합니다.
+- `_extract_ai_message`는 순수 `AIMessage` 결과와 `ModelResponse` 형태 객체를
+  모두 처리합니다.
+
 ### OutputRepetitionGuard와 RepetitionGuardWrapper
 
 **모듈:** `agent/middlewares/output_repetition_guard.py` · **클래스:** `OutputRepetitionGuard(AgentMiddleware)`
@@ -397,6 +426,7 @@ from agent.middlewares import (
     HeartbeatStaleness,
     HumanInTheLoop,
     HITLConfig,
+    MaxTokensBoostMiddleware,
     Summarization,
 )
 
@@ -540,6 +570,7 @@ agent/middlewares/
 │   └── core.py                  # HumanInTheLoop
 ├── iteration_budget.py          # IterationBudget
 ├── multimodal_processor.py      # MultimodalProcessor
+├── max_tokens_boost.py          # MaxTokensBoostMiddleware（工具调用截断重呼）
 ├── output_repetition_guard.py   # OutputRepetitionGuard (아래에서 재익스포트되지 않음)
 ├── summarization.py             # Summarization
 ├── tool_call_normalize.py       # ToolCallNormalize
