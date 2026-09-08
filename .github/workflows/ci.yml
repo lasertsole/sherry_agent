@@ -1,7 +1,7 @@
 # CI: hermetic test gate.
 #
 # Runs the repo's own 2-process split runner (tests/run_tests_split.py):
-#   GROUP A = tests/unit, GROUP B = tests/integration + system + module.
+#   GROUP A = marker:unit, GROUP B = marker:integration+module+system, C = regression.
 # Real-LLM network tests (llm_e2e / tests/full) are excluded by design and
 # have a dedicated manually-dispatched workflow (llm-e2e.yml).
 #
@@ -49,3 +49,39 @@ jobs:
 
       - name: Run hermetic test suite
         run: uv run --no-sync python tests/run_tests_split.py
+
+  frontend-test:
+    name: Frontend tests (Vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      # postinstall runs `nuxt prepare`, generating the .nuxt/ tree the
+      # vitest aliases rely on
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests
+        run: pnpm run test:unit
+
+      - name: Run integration tests
+        run: pnpm run test:integration
+
+      - name: Detect circular dependencies
+        run: pnpm run dpdm
