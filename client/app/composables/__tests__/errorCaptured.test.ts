@@ -6,6 +6,9 @@ import { mount } from '@vue/test-utils';
 import { useErrorCaptured, type MsgRefType } from '../errorCaptured';
 import { registerToastApi, _setClientFlag } from '../toast';
 
+// Pin i18n to key-passthrough: these tests assert the LABEL KEYS, not zh copy
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
+
 /**
  * Unit tests for the errorCaptured factory function.
  *

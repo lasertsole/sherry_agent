@@ -5,6 +5,21 @@ import homeIndex from '@/pages/home/index.vue';
 import HistoryItem from '@/pages/home/components/HistoryItem.vue';
 import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 
+// This mock is scoped to this file: only here does the mounted home page graph
+// reach LogsDialog's onMounted, which installs the console capture.
+// clientLog.ts's console.* capture self-feeds in happy-dom: pushEntry -> Dexie
+// add() rejects (no IndexedDB) -> the persistence-failure handler calls
+// console.warn -> the capture re-captures that -> pushEntry again... This
+// infinite microtask loop starves flushPromises and OOMs the worker. Keep the
+// module's real API but never install the capture in this suite.
+vi.mock('@/composables/clientLog', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/composables/clientLog')>();
+  return {
+    ...actual,
+    installClientLogCapture: () => {}
+  };
+});
+
 // Dexie has no IndexedDB to back it in happy-dom (probe: every operation rejects
 // with MissingAPIError), so keep the real module but neutralize the persistence
 // wrappers: they resolve empty and the fetchApi-seeded server rows become the

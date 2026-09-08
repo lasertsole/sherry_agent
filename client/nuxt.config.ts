@@ -40,6 +40,16 @@ export default defineNuxtConfig({
   // Enable SSG
   ssr: false,
 
+  // Colocated test files are compiled by vitest (esbuild, types stripped) and
+  // are NOT part of the app's type-check scope: `pnpm typecheck` (vue-tsc -p
+  // .nuxt/tsconfig.app.json) keeps checking app sources only.
+  typescript: {
+    tsConfig: {
+      // patterns resolve relative to .nuxt/ (tsconfig.app.json's home)
+      exclude: ['../app/**/__tests__/**']
+    }
+  },
+
   // // Enables the development server to be discoverable by other devices when running on iOS physical devices
   // devServer: {
   //   host: '0',

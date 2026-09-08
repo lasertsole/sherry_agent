@@ -48,6 +48,7 @@ const wsMocks = vi.hoisted(() => ({
 vi.mock('@/composables/mitt', () => mittMocks);
 vi.mock('@/composables/bridge', () => bridgeMocks);
 vi.mock('@/composables/db', () => dbMocks);
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/composables/ws', () => wsMocks);
 
 import type { SubagentRun } from '../bridge';

@@ -225,7 +225,7 @@ const dexieStore: ClientLogStore = {
     return (
       [...byDay.entries()]
         .map(([start, v]) => {
-          const is_current = start === nowStart;
+          const isCurrent = start === nowStart;
           // The sub-bucket's right endpoint is "that day's midnight + 1 day". To avoid boundary rounding
           // artifacts at timezone / day-crossing edges,
           // each bucket uses the local midnight obtained by truncating its earliest record's ts (identical to start).
@@ -235,7 +235,7 @@ const dexieStore: ClientLogStore = {
             tsStart: start,
             tsEnd: start + DAY_MS,
             count: v.count,
-            is_current
+            is_current: isCurrent
           } satisfies ClientLogBucket;
         })
         // Newest (today) first, mirroring the server file list's "newest first".
