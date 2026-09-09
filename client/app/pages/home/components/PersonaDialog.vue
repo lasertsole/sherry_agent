@@ -314,7 +314,7 @@ const allTabsValid = computed(() =>
   })
 );
 
-/** Enablement for both 保存预设 and 应用 buttons. */
+/** Enablement for both the 保存预设 ("Save Preset") and 应用 ("Apply") buttons. */
 const actionEnabled = computed(
   () => allTabsValid.value && !loading.value && !saving.value && !applying.value && !restoring.value
 );
@@ -328,7 +328,10 @@ const buildContent = (): Record<string, string> => {
   return fileToContent;
 };
 
-/** Fill all 4 tabs with the given file->content map. */
+/**
+ * Fill all 4 tabs with the given file->content map.
+ * @param content
+ */
 const fillTabs = (content: Record<string, string>) => {
   for (const tab of tabs) {
     editContent.value[tab.key] = content[tab.file] ?? '';
@@ -363,7 +366,10 @@ const selectDefault = async () => {
   }
 };
 
-/** Click a user preset entry: load its content into all 4 tabs and enter edit mode. */
+/**
+ * Click a user preset entry: load its content into all 4 tabs and enter edit mode.
+ * @param preset
+ */
 const selectPreset = (preset: PersonaPreset) => {
   if (loading.value || restoring.value || preset.id === undefined) return;
   fillTabs(preset.content);
@@ -371,14 +377,14 @@ const selectPreset = (preset: PersonaPreset) => {
   activeDefault.value = false;
 };
 
-/** Click 新增: clear the edit state only — the form content is kept for save-as-new. */
+/** Click 新增 ("New"): clear the edit state only — the form content is kept for save-as-new. */
 const startNewPreset = () => {
   editingPresetId.value = null;
   activeDefault.value = true;
 };
 
 /**
- * Click 保存预设:
+ * Click 保存预设 ("Save Preset"):
  * - editing an existing preset → overwrite it directly (no name dialog);
  * - otherwise (default/new mode) → open the name dialog to save as a new preset.
  */
@@ -393,7 +399,7 @@ const savePreset = () => {
   }
 };
 
-/** Direct-overwrite path for 保存预设 while editing a user preset. */
+/** Direct-overwrite path for 保存预设 ("Save Preset") while editing a user preset. */
 const overwriteEditingPreset = async () => {
   const id = editingPresetId.value;
   if (id === null) return;
@@ -440,7 +446,10 @@ const confirmSavePreset = async () => {
 // PrimeVue ConfirmationService (ConfirmDialog mounted in app.vue) — same pattern as SessionSidebar.
 const confirm = useConfirm();
 
-/** Delete a preset after a second confirmation. */
+/**
+ * Delete a preset after a second confirmation.
+ * @param preset
+ */
 const requestDeletePreset = (preset: PersonaPreset) => {
   if (preset.id === undefined) return;
   confirm.require({
@@ -454,7 +463,10 @@ const requestDeletePreset = (preset: PersonaPreset) => {
   });
 };
 
-/** Actual delete executor (triggered by the confirmation dialog accept callback). */
+/**
+ * Actual delete executor (triggered by the confirmation dialog accept callback).
+ * @param preset
+ */
 const doRemovePreset = async (preset: PersonaPreset) => {
   const id = preset.id;
   if (id === undefined) return;
@@ -468,7 +480,7 @@ const doRemovePreset = async (preset: PersonaPreset) => {
   }
 };
 
-/** Click 应用: full-write all 4 persona files; success → toast + saved + close, failure → stay open. */
+/** Click 应用 ("Apply"): full-write all 4 persona files; success → toast + saved + close, failure → stay open. */
 const handleApply = async () => {
   if (!actionEnabled.value) return;
   applying.value = true;
