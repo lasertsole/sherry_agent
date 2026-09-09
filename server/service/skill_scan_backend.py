@@ -8,6 +8,7 @@ bounded by ``SKILL_SCANNER_TIMEOUT``.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import shutil
@@ -170,7 +171,7 @@ def _run_cli(path: Path) -> ScanResult:
 def _run_python_api(path: Path) -> ScanResult:
     """Scan using the in-process ``skillspector.graph`` API (static-only)."""
     try:
-        from skillspector import graph
+        graph = importlib.import_module("skillspector.graph")
     except Exception as exc:
         logger.debug("skillspector python API unavailable: {}", exc)
         return _unavailable("python")
