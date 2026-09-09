@@ -1,8 +1,8 @@
-"""Atomic single-entry submission for parent-session turns (plan Task 5).
+"""Atomic single-entry submission for parent-session turns (plan).
 
 ``submit_user_input`` is the ONE channel every inbound user/cron input must
-flow through (G1): the WS layer (Task 7), cron/heartbeat origins (Task 8's
-rewritten auto_turn), and channel adapters (Task 9) all call it instead of
+flow through (G1): the WS layer (), cron/heartbeat origins ('s
+rewritten auto_turn), and channel adapters () all call it instead of
 hand-rolling their own detect-then-dispatch sequence.
 
 Atomic flow (per-session asyncio.Lock removes the detect->dispatch TOCTOU):
@@ -10,7 +10,7 @@ Atomic flow (per-session asyncio.Lock removes the detect->dispatch TOCTOU):
     1. acquire the per-session lock (module-level dict, bounded cleanup)
     2. dedup pre-check: an ACTIVE queue row with the same ``client_msg_id``
        (any state) -> return DEDUPED, nothing else happens
-    3. ``detect_state(session_id)`` (Task 2 signals: ws_task > answering >
+    3. ``detect_state(session_id)`` ( signals: ws_task > answering >
        hitl_pending > auto_turn_inflight > idle) -- ANY busy=True reason
        queues; reasons are never special-cased here (G2: source and
        classification are fixed at the call site)
@@ -24,18 +24,18 @@ Atomic flow (per-session asyncio.Lock removes the detect->dispatch TOCTOU):
        the placeholder also covers the window between lock release and the
        executor setting its own busy flags)
     6. release the lock, THEN ``asyncio.create_task(executor.execute(...))``
-       -- the whole turn never runs inside submit; Task 7's TurnRunner owns
+       -- the whole turn never runs inside submit; TurnRunner owns
        turn completion (on_turn_finished) and drains the QUEUED rows
 
 The idle/busy decision treats a live CLAIMED row as busy even when
 ``detect_state`` reports idle (crash-recovery leftover placeholders count as
 "turn in flight" until they expire or are voided), while leftover QUEUED rows
 do NOT block a fresh turn -- stale QUEUED rows after a crash are drained
-after the new turn finishes (Task 7), they never silence the session.
+after the new turn finishes (), they never silence the session.
 
 Crash recovery: the CLAIMED row is the audit/recovery fact. If the process
 dies between step 5 and 6 the row survives in SQLite and ``recover()``
-(24h expiry) eventually voids it; Task 10 wires startup reconciliation.
+(24h expiry) eventually voids it; wires startup reconciliation.
 
 Public surface consumed by Tasks 7/9/10 (names are a contract):
 ``submit_user_input`` / ``SubmitResult`` / ``SubmitStatus`` / ``TurnExecutor``
@@ -118,13 +118,11 @@ def queued(position: int) -> SubmitResult:
 
 @runtime_checkable
 class TurnExecutor(Protocol):
-    """Drives one full agent turn for a session.
-
-    Task 7 provides the real implementation (generalizes auto_turn's
+    """Drives one full agent turn for a session. provides the real implementation (generalizes auto_turn's
     ``_drive_turn`` pattern); tests inject fakes. Dispatch happens AFTER the
     per-session lock is released, via ``asyncio.create_task`` -- implementers
     own their own busy-flag lifecycle (answering/hitl_pending) and turn
-    completion (Task 7's on_turn_finished drains the queue).
+    completion (on_turn_finished drains the queue).
     """
 
     async def execute(
@@ -146,10 +144,8 @@ class OutboundRouter(Protocol):
 
 
 class TurnExecutorRegistry:
-    """Route -> TurnExecutor registry (``"ws"`` / ``"channel"`` today).
-
-    Task 7 registers the real WS turn runner via
-    ``get_default_registry().register("ws", runner)``; Task 9 registers the
+    """Route -> TurnExecutor registry (``"ws"`` / ``"channel"`` today). registers the real WS turn runner via
+    ``get_default_registry().register("ws", runner)``; registers the
     channel runner. Tests inject fakes into their own registry instance and
     pass it explicitly to ``submit_user_input``.
     """
@@ -179,7 +175,7 @@ def route_for(reply_target: str | None) -> str:
 # Per-session critical sections. The dict is bounded: once it exceeds
 # _LOCK_SWEEP_THRESHOLD entries, locks nobody currently holds are dropped on
 # the next lookup. The sweep is synchronous on the owning event loop, so a
-# caller between _get_session_lock() and its (uninterrupted) acquire keeps
+# caller between _get_session_lock and its (uninterrupted) acquire keeps
 # its own reference and is unaffected by the dict entry being dropped.
 _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
 _LOCK_SWEEP_THRESHOLD = 256
@@ -197,8 +193,8 @@ def _get_session_lock(session_id: str) -> asyncio.Lock:
     return lock
 
 
-# Process-wide defaults. Task 7 wires the real ws TurnExecutor into
-# get_default_registry() at startup; until then an idle submit fails fast
+# Process-wide defaults. wires the real ws TurnExecutor into
+# get_default_registry at startup; until then an idle submit fails fast
 # with a clear RuntimeError instead of orphaning a placeholder row.
 _default_queue: UserInputQueue | None = None
 _default_registry = TurnExecutorRegistry()
@@ -328,7 +324,7 @@ async def submit_user_input(
             return QUEUE_FULL
 
     # 4. Lock released: dispatch OUTSIDE the critical section. The CLAIMED
-    #    row written above is the crash-recovery fact; Task 7's TurnRunner
+    #    row written above is the crash-recovery fact; TurnRunner
     #    owns completion (on_turn_finished) and queue draining.
     asyncio.create_task(
         _run_executor(executor, bare, message, source, reply_target),

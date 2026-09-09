@@ -14,7 +14,7 @@ Design notes (see docs/harness/loop-prevention/README.md + audit corrections):
   the same state file and is one-shot: ``record_boot`` consumes it, so a hard
   crash after a clean exit correctly reports the next boot as unclean.
 
-This module is deliberately free of service wiring: Task 9 (``server/__main__.py``)
+This module is deliberately free of service wiring: (``server/__main__.py``)
 consumes ``record_boot`` / ``is_tripped`` / ``clear`` / ``mark_clean_exit`` /
 ``was_last_exit_clean`` at startup and via ``atexit``.
 """
@@ -94,7 +94,7 @@ def _try_write_state(state: dict[str, Any]) -> None:
 
 
 def record_boot(clean: bool, reason: str = "") -> bool:
-    """Record one process boot; return the current ``is_tripped()`` verdict.
+    """Record one process boot; return the current ``is_tripped`` verdict.
 
     Args:
         clean: True when the previous shutdown was a clean exit (marker seen),
@@ -143,12 +143,12 @@ def clear() -> None:
 
 
 def mark_clean_exit() -> None:
-    """Flag the current process as exiting cleanly (call from atexit — Task 9)."""
+    """Flag the current process as exiting cleanly (call from atexit —)."""
     state = _read_state()
     state[_CLEAN_EXIT_KEY] = True
     _try_write_state(state)
 
 
 def was_last_exit_clean() -> bool:
-    """True only if the previous shutdown ran ``mark_clean_exit()`` (default: False)."""
+    """True only if the previous shutdown ran ``mark_clean_exit`` (default: False)."""
     return bool(_read_state().get(_CLEAN_EXIT_KEY, False))

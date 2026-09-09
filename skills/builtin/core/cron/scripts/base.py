@@ -70,7 +70,7 @@ class CronJobFailureState:
 
     consecutive_failures: int = 0
     last_error: str = ""
-    # time.monotonic() timestamp marking the start of the current backoff
+    # time.monotonic timestamp marking the start of the current backoff
     # window (set when degradation is first reached, refreshed on every
     # further failure while degraded).
     degraded_since: float | None = None
@@ -477,7 +477,7 @@ class CronService:
 
             tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 
-            # Sandbox-hardening Task 8: cron agents are BACKGROUND callers — stamp
+            # Sandbox-hardening cron agents are BACKGROUND callers — stamp
             # every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass
             # in terminal.py / python_repl.py) denies sandbox=False outright (no HITL
             # middleware on background graphs to approve it).
@@ -753,7 +753,7 @@ class CronService:
     def get_failure_state(self, job_id: str) -> dict | None:
         """Return the job's failure-tracking state as a plain dict, or None.
 
-        Public breaker API (consumed by the REST layer, Task 10). Returns a
+        Public breaker API (consumed by the REST layer,). Returns a
         zeroed view once the state has been reset — entries are never removed.
         """
         state = self._failure_states.get(job_id)
@@ -821,7 +821,7 @@ def _get_cron_loop() -> asyncio.AbstractEventLoop:
 
 
 def _start_cron_service_thread():
-    """Run cron_service.start() in a dedicated daemon thread with its own event loop."""
+    """Run cron_service.start in a dedicated daemon thread with its own event loop."""
     global _started
     with _start_lock:
         if _started:

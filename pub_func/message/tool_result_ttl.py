@@ -1,7 +1,5 @@
-"""Tool-result TTL + compression-budget truncation (in-place, pairing-safe).
-
-Task 4 of the context-compression plan. Pure functions over the message
-list plus a caller-owned first-seen registry; the middleware layer (Task 5)
+"""Tool-result TTL + compression-budget truncation (in-place, pairing-safe). of the context-compression plan. Pure functions over the message
+list plus a caller-owned first-seen registry; the middleware layer ()
 wires them into the truncate route of the 4-way router.
 
 WHY IN-PLACE ONLY (pairing invariant — highest-risk constraint here):

@@ -1,6 +1,6 @@
 """Terminal tool with sandbox, blacklist, timeout, and env scrubbing.
 
-Sandbox-hardening Task 6 additions (see .omo/plans/sandbox-hardening.md
+Sandbox-hardening additions (see .omo/plans/sandbox-hardening.md
 lines 554-568):
 
 - ``SafeShellInput`` subclass: the ``sandbox`` flag is exposed to the LLM via
@@ -14,7 +14,7 @@ lines 554-568):
   by name), with scope/policy guards: ``caller_scope != "main"`` +
   ``sandbox=False`` is denied outright; ``SANDBOX_POLICY=required`` +
   ``sandbox=False`` is denied (main-session human approval wiring arrives
-  with Task 8 — no ``interrupt()`` here).
+  with — no ``interrupt()`` here).
 - ``DANGEROUS_COMMAND_REGEX``: regex blacklist over the ``" && "``-joined
   command string (re.IGNORECASE), replacing the old element-exact substring
   set that let ``["echo ok", "rm -rf /"]`` slip through. On hit a
@@ -55,7 +55,7 @@ from agent.tools.pub_base.schema_utils import class_or_instance_schema
 
 TERMINAL_TIMEOUT = 30  # seconds
 
-# Historical refusal message format (terminal.py Task 5 snapshot); now RAISED
+# Historical refusal message format (terminal.py snapshot); now RAISED
 # as a ToolException instead of returned, so handle_tool_error=True routes it
 # through the error ToolMessage channel.
 _BLOCKED_MESSAGE = "Blocked: unsafe command."
@@ -63,7 +63,7 @@ _BLOCKED_MESSAGE = "Blocked: unsafe command."
 # Regex blacklist over the " && "-joined command string (plan line 563).
 # Supersedes the old element-exact BLACKLIST set: "rm -rf /", "mkfs",
 # "shutdown", "reboot" are all covered, plus the joined/chained variants the
-# exact matcher missed (["echo ok", "rm -rf /"] was the Task 5 defect).
+# exact matcher missed (["echo ok", "rm -rf /"] was the defect).
 DANGEROUS_COMMAND_REGEX = re.compile(
     "|".join(
         [
@@ -103,7 +103,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
     # never propagate; the subclass must be wired here (plan line 559).
     args_schema: type[BaseModel] = SafeShellInput
 
-    # Declared as a pydantic field so super().__init__(root_dir=...) is a real
+    # Declared as a pydantic field so super.__init__(root_dir=...) is a real
     # kwarg (pre-Task-6 code passed it as an extra, which pydantic silently
     # dropped; declaring it makes the parameter real and fixes the
     # basedpyright reportCallIssue).
@@ -112,7 +112,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
     def __init__(self, root_dir: str | None = None):
         # root_dir defaults to None so the ClassVar schema descriptor can
         # synthesize a throwaway instance for class-level schema access.
-        # Stored via direct field assignment: super().__init__ is ShellTool's
+        # Stored via direct field assignment: super.__init__ is ShellTool's
         # synthesized pydantic __init__, which has no root_dir parameter
         # (pre-Task-6 code passed it as an extra kwarg that pydantic dropped).
         super().__init__()
@@ -260,7 +260,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             if argv is not None:
                 return self._run_wrapped(argv, wrapped_env)
 
-        # ShellTool._run() delegates to BashProcess which uses subprocess.run(check=True)
+        # ShellTool._run delegates to BashProcess which uses subprocess.run(check=True)
         # without timeout — prone to hanging and fails on Windows for console-dependent
         # commands (e.g. `timeout` needs a real console handle). Bypass it entirely and
         # use _run_with_encoding which has proper timeout and encoding handling.

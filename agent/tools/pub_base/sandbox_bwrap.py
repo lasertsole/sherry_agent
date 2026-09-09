@@ -21,7 +21,7 @@ import subprocess
 
 from config.path import ROOT_DIR, TEMP_DIR
 
-try:  # Prefer the Task 2 output; fall back to the local ABC shape when Task 2 hasn't landed (see notepad problems.md)
+try:  # Prefer the output; fall back to the local ABC shape when hasn't landed (see notepad problems.md)
     from agent.tools.pub_base.sandbox import SandboxBackend
 except ImportError:  # pragma: no cover
     from abc import ABC, abstractmethod

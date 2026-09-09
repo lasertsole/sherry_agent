@@ -20,7 +20,7 @@ from pub_func import string_to_unique_int
 
 """Channel inbound message handler"""
 
-# Route key for the channel executor in the Task 5 registry.
+# Route key for the channel executor in the registry.
 _ROUTE_CHANNEL: str = iqs.ROUTE_CHANNEL
 
 # Cron jobs publish InboundMessage with this sender_id
@@ -32,7 +32,7 @@ _turn_runner_module = None
 
 
 def _get_turn_runner():
-    """Lazy seam to the Task 7 turn runner module.
+    """Lazy seam to the turn runner module.
 
     Imported on first use (not at module import) so channels/core.py can be
     loaded in isolation and so a mid-write turn_runner module can never
@@ -111,10 +111,10 @@ async def _send_reply(target: dict[str, Any], content: str, message_id: str | No
 
 
 class _ChannelTurnExecutor:
-    """Task 5 TurnExecutor for channel routes (route="channel").
+    """TurnExecutor for channel routes (route="channel").
 
     Drives one full agent turn for a session, replying to the ENQUEUE-TIME
-    reply_target, then hands turn completion to the Task 7 turn runner
+    reply_target, then hands turn completion to the turn runner
     (``on_turn_finished`` marks the CLAIMED placeholder DELIVERED and drains
     the session's QUEUED rows).
     """
@@ -131,7 +131,7 @@ class _ChannelTurnExecutor:
             if not completed and claim_row_id is not None:
                 # A crashed/malformed turn must not leave the placeholder
                 # CLAIMED (an orphaned placeholder blocks the session until
-                # the 24h recover() sweep): finalize it FAILED so the drain
+                # the 24h recover sweep): finalize it FAILED so the drain
                 # can report the error frame instead.
                 try:
                     await iqs.get_default_queue().mark_terminal(claim_row_id, "FAILED")
@@ -183,11 +183,11 @@ class _ChannelTurnExecutor:
 
 
 class _ChannelOutboundRouter:
-    """Task 5 OutboundRouter for channel sessions.
+    """OutboundRouter for channel sessions.
 
     ``frame`` may carry a ``reply_target`` JSON string (enqueue-time target
     wins); otherwise the live session->chat relation map is the fallback.
-    ``send_error`` is the Task 7 drain error seam (best-effort via the live
+    ``send_error`` is the drain error seam (best-effort via the live
     relation map).
     """
 
@@ -262,7 +262,7 @@ async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> Non
     reply_target = _build_reply_target(message)
 
     # NOTE: media/image URLs are intentionally not converted here anymore:
-    # the queue payload convention (Task 5) is text-only
+    # the queue payload convention is text-only
     # ({"text": ..., "image_base64_list": []}), isomorphic with the WS path.
 
     result = await iqs.submit_user_input(
@@ -294,7 +294,7 @@ async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> Non
     # DEDUPED: duplicate delivery (client_msg_id already active) -- silent.
 
 
-# Bind the channel executor + outbound router into the Task 5/7 seams.
+# Bind the channel executor + outbound router into the/7 seams.
 register_channel_turn_infra()
 
 # Set channel inbound consumer

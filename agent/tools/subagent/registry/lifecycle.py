@@ -197,7 +197,7 @@ async def _start_announce_cleanup_flow(run: SubagentRunRecord) -> None:
         except Exception as e:
             logger.error("Announce flow failed for run {}: {}", run.run_id, e)
     elif _should_notify_failure(run):
-        # Task 9 (Q3) additive failure trigger: runs that skip the announce gate
+        # (Q3) additive failure trigger: runs that skip the announce gate
         # entirely (e.g. SESSION mode — completion not required) would otherwise
         # end silently; notify the requester's WS session via the third path.
         from ..announce.delivery import route_subagent_failure_notification
@@ -296,7 +296,7 @@ def _should_suspend_pending_final_delivery(run: SubagentRunRecord) -> bool:
 
 
 def _should_notify_failure(run: SubagentRunRecord) -> bool:
-    """Task 9 (Q3): True for failed/interrupted terminal runs whose completion never
+    """(Q3): True for failed/interrupted terminal runs whose completion never
     reaches the announce gate (completion not required, e.g. SESSION mode) — they
     would otherwise end silently. Deliberate suppressions are respected: the
     elif chain only reaches this check when no suppression branch matched.

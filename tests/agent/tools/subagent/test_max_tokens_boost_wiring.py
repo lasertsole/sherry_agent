@@ -43,6 +43,9 @@ def _wiring(monkeypatch):
     class _FakeLLM:
         pass
 
+    # CI runs without .env: MAIN_LLM_MAX_TOKEN is unset and spawn/core would
+    # crash on `None * COMPRESSION_TRIGGER_RATIO` — pin the window deterministically
+    monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
     monkeypatch.setattr("models.build_main_llm", lambda *a, **k: _FakeLLM())
     monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: _FakeLLM())
     return captured

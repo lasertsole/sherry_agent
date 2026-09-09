@@ -22,6 +22,8 @@ Usage:
 import os
 from pathlib import Path
 
+from loguru import logger
+
 from config import ENV_PATH
 from typing import Any
 from dotenv import load_dotenv
@@ -70,10 +72,10 @@ if not _is_local:
 
     if not _model_config:
         # No ITTT_* configuration at all (e.g. hermetic CI: no .env, remote
-        # default). init_chat_model() would raise on an empty config, so leave
+        # default). init_chat_model would raise on an empty config, so leave
         # the model unbuilt; it is only needed when _vision_model_func (or a
         # user) actually invokes it on a configured environment.
-        print("[ITTT_model WARNING] no ITTT_* configuration found; model left unbuilt")
+        logger.warning("no ITTT_* configuration found; model left unbuilt")
         ITTT_model = None
     else:
         ITTT_model = init_chat_model(**_model_config).configurable_fields(

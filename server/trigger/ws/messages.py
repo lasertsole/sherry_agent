@@ -18,17 +18,17 @@ from robyn import WebSocketDisconnect, WebSocketAdapter
 # Tracks the running stream task per session. A generation/HITL-resume request
 # is submitted as a background asyncio task so the receiver loop never blocks
 # waiting for a stream to finish. A "stop" frame can then cancel that task via
-# asyncio.Task.cancel() — which propagates into `async_generate`/`resume_agent`
+# asyncio.Task.cancel — which propagates into `async_generate`/`resume_agent`
 # (both already handle `asyncio.CancelledError` and reset `answering` in their
 # `finally` block), giving an immediate interrupt regardless of whether the
 # agent is mid-token-stream, waiting on model TTFB, or stuck in a tool call.
 #
-# Task 7: generation turns go through the user-input queue (submit_user_input
+# generation turns go through the user-input queue (submit_user_input
 # → dispatched WsTurnExecutor); this registry now also covers resume turns and
 # the executor-driven child tasks so `stop` and `detect_state` see them all.
 _active_tasks: dict[str, asyncio.Task] = {}
 
-# Task 7: register the ws TurnExecutor on the default queue registry so the
+# register the ws TurnExecutor on the default queue registry so the
 # drain orchestrator can execute ws-routed rows (idempotent).
 turn_runner.register_default_ws_executor()
 
@@ -60,7 +60,7 @@ async def _run_stream(
     loop performed, so cancellation and cleanup are uniform whether the stream
     finished, errored, or was cancelled via ``task.cancel()``.
 
-    Task 7: ``claim_row_id`` (when set) marks this turn's queue row DELIVERED
+    ``claim_row_id`` (when set) marks this turn's queue row DELIVERED
     in the finally block; the TurnRunner then drains any rows queued while the
     turn was running. Resume turns pass nothing — they own no queue row.
 
@@ -118,7 +118,7 @@ class _AgentWsStreamDriver(StreamDriver):
         current = _active_tasks.get(self.session_id)
         if current is asyncio.current_task():
             _active_tasks.pop(self.session_id, None)
-        # Task 7: the turn's row is marked terminal (when it owns one) and the
+        # the turn's row is marked terminal (when it owns one) and the
         # TurnRunner drains whatever rows were queued while the turn ran.
         await turn_runner.on_turn_finished(self.session_id, self.claim_row_id)
 
@@ -131,7 +131,7 @@ async def _cancel_session(session_id: str) -> None:
         logger.info(f"Agent WS stop cancelling active task: session_id={session_id}")
         # Give the cancelled task a chance to send its "stopped"/cleanup frame
         # and reset state before we ack. Don't block indefinitely — the callee
-        # stream is expected to surface promptly after cancel().
+        # stream is expected to surface promptly after cancel.
         try:
             await asyncio.wait_for(task, timeout=5.0)
         except (TimeoutError, asyncio.CancelledError, Exception):  # noqa: S110
@@ -178,7 +178,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     )
                     # Cancel any in-flight generation before resuming.
                     await _cancel_session(session_id)
-                    # Task 7: the HITL wait is over — clear the pending flag as
+                    # the HITL wait is over — clear the pending flag as
                     # the resume turn starts.
                     set_hitl_pending(session_id, False)
                     task = asyncio.ensure_future(
@@ -208,7 +208,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
 
                 multi_modal_message = MultiModalMessage(**multi_modal_message_data)
 
-                # Task 7: the WsTurnExecutor resolves the reply socket through
+                # the WsTurnExecutor resolves the reply socket through
                 # relation_register, so THIS connection must be registered under
                 # the session — otherwise every streamed chunk/done frame is
                 # silently dropped (_send_ws(None) is a no-op). Only generation
@@ -232,7 +232,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     f"text_preview='{text_preview}', image_count={image_count}, image_path_count={image_path_count}"
                 )
 
-                # Task 7: queue-then-drain. A busy session never gets its turn
+                # queue-then-drain. A busy session never gets its turn
                 # cancelled — the message is queued and executed FIFO when the
                 # current turn finishes (on_turn_finished → TurnRunner drain).
                 submit_result = await iqs.submit_user_input(

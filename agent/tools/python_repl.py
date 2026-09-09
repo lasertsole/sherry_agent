@@ -3,7 +3,7 @@
 Uses subprocess to run code in an isolated Python process. On timeout the
 child process is killed cleanly — no thread/memory leakage.
 
-Sandbox-hardening Task 7 additions (see .omo/plans/sandbox-hardening.md
+Sandbox-hardening additions (see .omo/plans/sandbox-hardening.md
 lines 647-731):
 
 - ``sandbox`` parameter on ``_run``/``_arun``/``_run_with_timeout`` — the
@@ -12,7 +12,7 @@ lines 647-731):
   is picked up from the ``_run`` signature.
 - scope/policy guards: ``caller_scope != "main"`` + ``sandbox=False`` is
   denied outright; ``SANDBOX_POLICY=required`` + ``sandbox=False`` is denied
-  (main-session human approval wiring arrives with Task 8).
+  (main-session human approval wiring arrives with).
 - env scrub: the child process always gets ``env=scrub_env()``.
 - cwd clamp: the child process always starts in ``ROOT_DIR`` (feasibility gap
   5: inheriting the server's launch directory is a defect).
@@ -84,7 +84,7 @@ except Exception as e:
 def _run_with_timeout(command: str, timeout: int, sandbox: bool = True, **_kwargs: Any) -> str:
     """Execute Python code in a subprocess with timeout. Kill on timeout.
 
-    Spawn-point hardening (Task 7):
+    Spawn-point hardening ():
 
     - ``env=scrub_env()``: the child never sees secret-named variables.
     - ``cwd=str(ROOT_DIR)``: the child never inherits the server's launch dir.
@@ -94,7 +94,7 @@ def _run_with_timeout(command: str, timeout: int, sandbox: bool = True, **_kwarg
       loguru warning line. ``REQUIRED`` + unavailable backend raises
       ``RuntimeError`` (surfaced as a tool error via ``handle_tool_error``).
 
-    Extra ``**kwargs`` are absorbed for forward compatibility (Task 8/9 may
+    Extra ``**kwargs`` are absorbed for forward compatibility (/9 may
     add flags) and deliberately ignored.
     """
     safe_repr = repr(command)

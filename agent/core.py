@@ -24,9 +24,6 @@ from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
-# # Only idempotent tools may run in parallel; non-idempotent ones run serially
-# patch_tool_node()
-
 # ── Extended state schema ────────────────────────────────────────────────
 # Carries ``session_id`` through the graph so that middlewares reading
 # ``request.state["session_id"]`` is used by middlewares that need it
@@ -42,7 +39,7 @@ class StateSchema(AgentState):
 # These three steps used to run at module import time, which made any bare
 # ``import agent.core`` (tests, tooling, type checkers) trigger disk I/O and
 # tool construction unexpectedly and slowly. They now
-# live in ``init()``, called once by the service entry point
+# live in ``init``, called once by the service entry point
 # (``server/__main__.py``) — importing this module is side-effect-free.
 
 _tools: list[BaseTool] = []
@@ -89,7 +86,7 @@ def get_agent_tools() -> list[BaseTool]:
 # the exact same payload (12KB system prompt + full tools schema) that COMPLETED
 # IN 8.0s on a fresh in-loop client, while the cached-pool WS path failed.
 #
-# Keying by loop gives identical behaviour to calling build_main_llm() fresh for
+# Keying by loop gives identical behaviour to calling build_main_llm fresh for
 # the current loop (the codebase-wide convention), but still reuses the compiled
 # graph for subsequent requests on the same loop to avoid rebuilding it.
 _agent: CompiledStateGraph | None = None
@@ -116,7 +113,7 @@ async def built_agent(
     # ``openai.APITimeoutError("Request timed out")`` far under the SDK deadline.
     # Provably: the exact same payload (12KB system prompt + full tools schema)
     # streams in 8.0s on a fresh in-loop client, while a cached-pool WS call dies
-    # at ~16.78s. Closing the pool (AsyncOpenAI.close()) does NOT help — it
+    # at ~16.78s. Closing the pool (AsyncOpenAI.close) does NOT help — it
     # permanently destroys the client ("Cannot send a request, as the client has
     # been closed"), so rebuilding the graph (hence a fresh client) per turn is
     # the only clean way to reproduce the fresh-client condition. The SQLite

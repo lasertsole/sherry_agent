@@ -4,6 +4,8 @@
 
 import types
 import torch
+
+from loguru import logger
 from funasr.utils.torch_function import sequence_mask
 
 
@@ -31,7 +33,7 @@ def export_forward(
     # speech_lengths = speech_lengths.to(device="cuda")
     language_query = self.embed(language.to(speech.device)).unsqueeze(1)
     textnorm_query = self.embed(textnorm.to(speech.device)).unsqueeze(1)
-    print(textnorm_query.shape, speech.shape)
+    logger.debug(f"textnorm_query={textnorm_query.shape} speech={speech.shape}")
     speech = torch.cat((textnorm_query, speech), dim=1)
     speech_lengths += 1
 

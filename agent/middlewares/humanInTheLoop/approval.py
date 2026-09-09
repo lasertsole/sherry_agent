@@ -30,7 +30,7 @@ def is_yolo_mode(config: HITLConfig) -> bool:
     - ``config.mode == ApprovalMode.OFF``
     - Environment variable ``SHERRY_YOLO_MODE`` set to ``1`` / ``true`` / ``yes``
 
-    Public API (sandbox-hardening Task 8): the sandbox-bypass approval wiring
+    Public API (sandbox-hardening): the sandbox-bypass approval wiring
     in :mod:`.core` reuses this exact YOLO predicate, so the approval pipeline
     and the sandbox-bypass gate share one source of truth.
     """

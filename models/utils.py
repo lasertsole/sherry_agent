@@ -2,6 +2,8 @@
 
 import re
 
+from loguru import logger
+
 from config import ENV_PATH
 
 
@@ -62,7 +64,7 @@ def resolve_gguf_path(
     if fallback_path is not None:
         fallback = _Path(fallback_path)
         if fallback.is_file():
-            print(f"Copying GGUF from {fallback} -> {local} ...")
+            logger.info(f"Copying GGUF from {fallback} -> {local} ...")
             _Path(local_dir).mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(fallback), str(local))
             return str(local)
@@ -75,7 +77,7 @@ def resolve_gguf_path(
             "Run: pip install huggingface_hub"
         ) from None
 
-    print(f"Downloading {hf_repo}/{hf_filename} -> {local_dir} ...")
+    logger.info(f"Downloading {hf_repo}/{hf_filename} -> {local_dir} ...")
     hf_hub_download(
         repo_id=hf_repo,
         filename=hf_filename,

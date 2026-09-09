@@ -34,7 +34,7 @@ Known API gap (task 3 file is frozen — recorded, not fixed here):
     (completed/failed/interrupted). Messages rebuilt during rehydration
     therefore carry metadata ``{internal, provenance, run_id}`` WITHOUT
     ``status``; the original status remains visible inside the stored marker
-    text ``"[subagent:{name} {status}]"``. Task 7's skip check only needs
+    text ``"[subagent:{name} {status}]"``. skip check only needs
     ``internal`` + ``provenance``, so this is informational loss only.
     Related: ``PendingInjectionStore.list_pending()`` has no session filter —
     rehydration filters rows client-side by ``requester_session_key``.

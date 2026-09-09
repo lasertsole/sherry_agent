@@ -1,4 +1,4 @@
-"""Interrupted-turn marker writer (plan Task 6, input-queueing-reply-binding).
+"""Interrupted-turn marker writer (plan, input-queueing-reply-binding).
 
 When a streaming turn dies mid-flight (user cancel via ``asyncio.Task.cancel()``
 or the heartbeat idle timeout), the checkpointer transcript can end in a
@@ -11,7 +11,7 @@ reconciles the graph state and persists the interruption:
    interrupt marker ``AIMessage``. The marker carries a DETERMINISTIC message
    id (``interrupted-{thread_id}-{turn_seq}``), so the ``add_messages``
    reducer upserts it — a retried write is an idempotent rewrite, never a
-   duplicate (Task 3 spike verdict, FACT A + FACT D).
+   duplicate ( spike verdict, FACT A + FACT D).
 
 2. **MesMemory dual-write** — one ``role=ai`` row prefixed
    ``[interrupted:{reason}] `` through the EXISTING store writer
@@ -21,9 +21,9 @@ reconciles the graph state and persists the interruption:
    already-present interrupted row.
 
 3. **CLAIMED queue cleanup** — the cancelled turn's ``insert_claimed``
-   placeholder row (Task 5) is flipped to ``VOIDED`` so it is never drained
+   placeholder row () is flipped to ``VOIDED`` so it is never drained
    as if the turn had run; QUEUED rows are untouched (they keep waiting for
-   Task 7's drain).
+   drain).
 
 Everything is BEST-EFFORT by contract: any internal failure is logged via
 loguru and swallowed — this runs ON the cancellation exception paths of
@@ -54,7 +54,7 @@ __all__ = ["write_interrupted_marker"]
 InterruptReason = Literal["cancelled", "heartbeat_timeout"]
 
 # MesMemory row prefix carrying the interrupted flag (no schema change; the
-# reason rides inside the content text — plan Task 6 approved fallback).
+# reason rides inside the content text — plan approved fallback).
 _MESMEMORY_PREFIX_TEMPLATE = "[interrupted:{reason}]"
 
 
@@ -81,7 +81,7 @@ async def write_interrupted_marker(
             resolves lazily via ``agent.built_agent()``; tests inject the
             hermetic graph.
         queue: ``UserInputQueue`` for the CLAIMED-row cleanup. ``None``
-            (production) resolves the process-wide default (Task 5).
+            (production) resolves the process-wide default ().
 
     Never raises (except a re-delivered ``CancelledError``): internal
     failures are logged and swallowed — the caller is an exception handler.
@@ -232,7 +232,7 @@ async def _persist_to_mesmemory(
     """Mirror the marker as one ``role=ai`` MesMemory row (existing write path).
 
     Content prefix ``[interrupted:{reason}] `` carries the flag WITHOUT a
-    schema change (plan Task 6 approved fallback; metadata does not survive
+    schema change (plan approved fallback; metadata does not survive
     into MesMemory rows). ``add_messages`` is APPEND-ONLY with NO id dedupe
     (verdict FACT D clarification), so dedupe happens HERE: the session's
     latest turn rows are scanned for an existing interrupted ai row first.
@@ -287,9 +287,9 @@ async def _void_claimed_rows(queue: UserInputQueue, session_id: str) -> int:
     """Flip the session's CLAIMED placeholder rows to VOIDED (never QUEUED).
 
     The interrupted turn will never deliver its result, so its CLAIMED row
-    (Task 5's durable "turn in progress" fact) must not survive as busy —
-    that would block fresh turns for 24h (issues.md, Task 5 P2). QUEUED rows
-    stay queued: Task 7's drain delivers them after the next turn.
+    (durable "turn in progress" fact) must not survive as busy —
+    that would block fresh turns for 24h (issues.md, P2). QUEUED rows
+    stay queued: drain delivers them after the next turn.
     """
     from server.queue.user_input_queue import UserInputQueueStatus
 

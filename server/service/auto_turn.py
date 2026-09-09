@@ -1,17 +1,17 @@
-"""Idle auto-turn trigger for completion injections (Task 8).
+"""Idle auto-turn trigger for completion injections.
 
 `maybe_trigger_auto_turn` is a fire-and-forget entry point: it snapshots
-session idleness via Task 5 `detect_state`, spawns the turn runner as a
+session idleness via `detect_state`, spawns the turn runner as a
 background asyncio task, and returns immediately — it NEVER awaits the turn
 lifecycle.  The turn itself consumes `server.service.messages.async_generate`
 (an async generator) chunk-by-chunk and mirrors the WS frame contract of
 `_run_stream`.  Under the new queueing semantics user input arriving during
-an auto turn is queued (Task 5/9): the auto turn is never cancelled by user
+an auto turn is queued (/9): the auto turn is never cancelled by user
 presence and runs to completion — there is no user-takeover branch.
 
 Hard rules honored here: no import of the WS trigger module (it hangs
 standalone), no writes to `_active_tasks` / `answering` / `_pending_args` (all
-owned by `async_generate`), no direct SQLite access (Task 6 store is the only
+owned by `async_generate`), no direct SQLite access ( store is the only
 persistence door), loguru-only logging.
 """
 
@@ -79,7 +79,7 @@ async def maybe_trigger_auto_turn(session_key: str, injection: HumanMessage) -> 
     """Snapshot idleness and spawn the fire-and-forget auto turn (zero awaits here)."""
     bare = normalize_session_key(session_key)
     if not bare:
-        # Not our problem (Task 9 addresses real sessions): zero side effects.
+        # Not our problem ( addresses real sessions): zero side effects.
         return AutoTurnResult(AutoTurnOutcome.BUSY, bare, "unknown_session")
     st = detect_state(bare)
     if st.busy:
@@ -169,7 +169,7 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     Audit 2.1.3: the loop itself is the shared :class:`StreamDriver` template;
     ``_AutoTurnStreamDriver`` carries this site's knobs.
     """
-    # Task 4 (subagent-origin-tagging): extract the carrier metadata BEFORE the
+    # (subagent-origin-tagging): extract the carrier metadata BEFORE the
     # MultiModalMessage flatten — the flatten to MultiModalMessage drops it, and
     # this is the only place the {internal, provenance, run_id, status} tag can
     # be forwarded into the graph input. Passed VERBATIM to async_generate as
@@ -177,7 +177,7 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     # metadata; None is legal and means "real user" downstream).
     inj_meta = getattr(injection, "metadata", None)
     # Duck-typed on purpose: BaseMessage .text (property, core 1.4.7) preferred,
-    # str(content) fallback keeps non-BaseMessage injections from Task 9 usable.
+    # str(content) fallback keeps non-BaseMessage injections from usable.
     raw_text = getattr(injection, "text", None)
     text = raw_text if isinstance(raw_text, str) else str(getattr(injection, "content", injection))
     message = MultiModalMessage(text=text)
@@ -188,7 +188,7 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
 
 
 class _AutoTurnStreamDriver(StreamDriver):
-    """Driver for the idle auto turn (Task 8).
+    """Driver for the idle auto turn.
 
     Hard rules honored: never touches ``_active_tasks`` / ``answering`` /
     ``_pending_args`` (all owned by ``async_generate``) and never sets the
@@ -211,7 +211,7 @@ class _AutoTurnStreamDriver(StreamDriver):
         logger.error("auto_turn: turn failed for {}: {}", self.session_id, exc)
 
     async def on_finish(self) -> None:
-        # Task 7: the auto-turn owns no queue row (claim_row_id=None) — the
+        # the auto-turn owns no queue row (claim_row_id=None) — the
         # TurnRunner defers while a foreign CLAIMED row exists, so this only
         # kicks the drain for rows queued while the turn was running.
         await on_turn_finished(self.session_id)

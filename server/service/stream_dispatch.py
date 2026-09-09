@@ -493,7 +493,7 @@ class StreamTurn:
             self._log_completed(elapsed)
         except asyncio.CancelledError:
             elapsed = time.time() - start_time
-            # Task 6: persist the interrupted marker (best-effort) BEFORE the
+            # persist the interrupted marker (best-effort) BEFORE the
             # cancel frame — reconcile the checkpointer transcript while ai_text
             # still holds the partial answer. Never masks the frame below.
             await self._on_cancelled()
@@ -501,7 +501,7 @@ class StreamTurn:
             self._log_cancelled(elapsed)
         except HeartbeatTimeoutError as e:
             elapsed = time.time() - start_time
-            # Task 6: persist the interrupted marker (best-effort) BEFORE the
+            # persist the interrupted marker (best-effort) BEFORE the
             # timeout frame — same contract as the cancel path above.
             await self._on_heartbeat_timeout(e)
             yield {

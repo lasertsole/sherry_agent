@@ -95,7 +95,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         request: ModelRequest[ContextT],
     ) -> AIMessage | None:
         """Check budget and return terminal AIMessage if exhausted, or None to proceed."""
-        # Task 7: internal completion-notification turns are not paid iterations.
+        # internal completion-notification turns are not paid iterations.
         if _is_internal_completion((request.state.get("messages") or [None])[-1]):
             return None
         session_id = self._get_session_id(request.state)

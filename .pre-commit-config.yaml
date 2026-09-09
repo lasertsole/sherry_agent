@@ -106,13 +106,15 @@ repos:
   # ---- pre-push: whole-project type + architecture + dead-code gates ------
   - repo: local
     hooks:
-      # Python types — whole project (type inference is global)
+      # Python types — every file in the push. Pyright still resolves the
+      # full import graph for correctness; only pushed files are REPORTED.
+      # (Whole-project mode crawls .venv/logs for ~14min on slow filesystems —
+      # far beyond the pre-push budget; per-file is bounded by the push size.)
       - id: basedpyright
         name: basedpyright (types, pre-push)
         entry: uv run --no-sync basedpyright
         language: system
         types: [python]
-        pass_filenames: false
         require_serial: true
         stages: [pre-push]
 

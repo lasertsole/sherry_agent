@@ -2,9 +2,7 @@
 
 Supports dual-path delivery: sub→sub internal injection vs sub→user completion
 message. Classifies errors as transient/permanent and applies appropriate retry
-schedules including compaction-retry for nested sub-agent scenarios.
-
-Task 9 adds a third, additive path: when a run announces to a main-agent WS
+schedules including compaction-retry for nested sub-agent scenarios. adds a third, additive path: when a run announces to a main-agent WS
 session, the completion is also routed into the requester's turn pipeline
 (busy → task 6 steering queue, idle → task 8 auto-turn trigger). Channel
 sessions and non-session requesters keep the notification-bell status quo (Q2);
@@ -116,7 +114,7 @@ def resolve_compaction_retry_delay_ms(attempt: int) -> float:
     return _COMPACTION_RETRY_DELAYS_MS[-1] / 1000.0
 
 
-# ── Task 9: third delivery path (WS turn-input injection) ───────────────────
+# ── third delivery path (WS turn-input injection) ───────────────────
 # Additive to the dual-path dispatch: completed runs announcing to a main-agent
 # WS session also get their completion routed into the requester's turn
 # pipeline. All third-party touches below are lazy imports: module-level
@@ -129,7 +127,7 @@ _injection_store = None  # lazy PendingInjectionStore singleton (default registr
 
 
 def _get_injection_store():
-    """Task 3 pending-injection store seam (lazy singleton; monkeypatched in tests)."""
+    """pending-injection store seam (lazy singleton; monkeypatched in tests)."""
     global _injection_store
     if _injection_store is None:
         from ..registry.pending_injections import PendingInjectionStore
@@ -139,7 +137,7 @@ def _get_injection_store():
 
 
 def _detect_session_state(session_key: str):
-    """Task 5 busy/idle detector seam (sync; lazy import, monkeypatched in tests)."""
+    """busy/idle detector seam (sync; lazy import, monkeypatched in tests)."""
     from ..registry.session_state import detect_state
 
     return detect_state(session_key)
@@ -153,14 +151,14 @@ def _get_bound_websocket(session_id: str):
 
 
 def _enqueue_steering(session_key: str, injection: HumanMessage):
-    """Task 6 steering-queue seam (lazy): memory append + SQLite persist in one step."""
+    """steering-queue seam (lazy): memory append + SQLite persist in one step."""
     from .steering_queue import enqueue_steering
 
     return enqueue_steering(session_key, injection)
 
 
 def _trigger_auto_turn(session_key: str, injection: HumanMessage):
-    """Task 8 auto-turn trigger seam (lazy; fire-and-forget, never awaits the turn)."""
+    """auto-turn trigger seam (lazy; fire-and-forget, never awaits the turn)."""
     from server.service.auto_turn import maybe_trigger_auto_turn
 
     return maybe_trigger_auto_turn(session_key, injection)
@@ -222,7 +220,7 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
 
 
 async def route_subagent_failure_notification(run: SubagentRunRecord) -> None:
-    """Task 9 (Q3) failure trigger for runs that never enter the standard announce flow.
+    """(Q3) failure trigger for runs that never enter the standard announce flow.
 
     SESSION-mode runs (completion not required) skip the announce gate in
     registry/lifecycle.py entirely; this routes their failure outcome through
@@ -304,7 +302,7 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
     result = await run_announce_dispatch(run, _deliver_with_retry)
 
     if result.success:
-        # Task 9 third path (additive): also route the completion injection into a
+        # third path (additive): also route the completion injection into a
         # main-agent WS session's turn pipeline. Best-effort and log-only — the
         # dual-path result and bookkeeping below are never altered.
         await _maybe_route_third_path(run, result)

@@ -25,8 +25,8 @@ precedence order (frozen by tests/unit/state/test_detect_state_extension.py):
    = answering, matching the in-stream abort check
    ``get_state(...) is False`` (:258/:634).
 
-3. HITL-wait flag (plan Task 2) — per-session registry OWNED by this module,
-   mutated only via ``set_hitl_pending(session_id, value)`` (Task 7 wires the
+3. HITL-wait flag (plan) — per-session registry OWNED by this module,
+   mutated only via ``set_hitl_pending(session_id, value)`` ( wires the
    set/clear calls in the WS layer: set when the ``hitl_request`` frame is
    sent at ``server/trigger/ws/messages.py:67-74``, cleared when the resume
    turn starts at :181). Needed because during a HITL wait neither signal
@@ -38,14 +38,14 @@ precedence order (frozen by tests/unit/state/test_detect_state_extension.py):
 4. Auto-turn in-flight — membership of ``server/service/auto_turn.py:51``
    ``_INFLIGHT: dict[str, asyncio.Task]`` (bare id -> auto-turn runner task).
    "Live" means present AND ``task.done()`` is False (same shape as the
-   ws_task signal). Narrows the TOCTOU window (plan Task 2): the answering
+   ws_task signal). Narrows the TOCTOU window (plan): the answering
    flag is only set at ``messages.py:273`` AFTER the heavy
    ``built_agent(force_rebuild=True)`` rebuild (:220), while ``_INFLIGHT``
    is registered at auto-turn dispatch time.
 
 Session keys arrive from the announce side as ``agent:main:session:{id}``
 while the structures above use bare ids, so every lookup goes through
-``agent.tools.subagent.registry.session_keys.normalize_session_key`` (Task 1
+``agent.tools.subagent.registry.session_keys.normalize_session_key`` (
 frozen contract) first.
 
 Guarantees:
@@ -131,10 +131,10 @@ def _get_auto_turn_module():
 
 
 def set_hitl_pending(session_id: str, value: bool) -> None:
-    """Set/clear the HITL-wait busy flag for a session (plan Task 2).
+    """Set/clear the HITL-wait busy flag for a session (plan).
 
     Bare ids are normalized so announce-side prefixed keys hit the same
-    entry. Empty/unknown ids are ignored. Task 7 wires the calls: set when
+    entry. Empty/unknown ids are ignored. wires the calls: set when
     the ``hitl_request`` frame goes out, cleared when the resume turn starts.
     """
     bare = normalize_session_key(session_id)
@@ -154,7 +154,7 @@ def _is_hitl_pending(session_id: str) -> bool:
 
 def _is_auto_turn_inflight(session_id: str) -> bool:
     # Direct membership read of the module-level dict ("import and check
-    # membership directly" — Task 2 spec); lock mirrors auto_turn's own
+    # membership directly" — spec); lock mirrors auto_turn's own
     # mutation discipline. Done tasks are stale entries, not live turns.
     mod = _get_auto_turn_module()
     with mod._INFLIGHT_LOCK:

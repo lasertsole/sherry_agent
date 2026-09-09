@@ -1,6 +1,6 @@
-"""TurnRunner — per-session turn lifecycle and drain orchestration (Task 7).
+"""TurnRunner — per-session turn lifecycle and drain orchestration.
 
-Turn execution is routed through the user-input queue (Task 5):
+Turn execution is routed through the user-input queue ():
 
 - A finished turn calls :func:`on_turn_finished` (from the WS handler's
   ``_run_stream`` finally, the ``WsTurnExecutor`` finally, or the auto-turn's
@@ -217,7 +217,7 @@ async def on_turn_finished(session_id: str, claim_row_id: str | None = None) -> 
     existing = _DRAIN_TASKS.get(session_id)
     if existing is not None and not existing.done() and existing.cancelling() == 0:
         return
-    # cancelling() check (3.11+): a drain that is being stop-cancelled must
+    # cancelling check (3.11+): a drain that is being stop-cancelled must
     # not block a fresh drain from starting during the unwind.
     task = asyncio.create_task(_drain_loop(session_id))
     _DRAIN_TASKS[session_id] = task

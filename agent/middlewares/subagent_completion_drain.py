@@ -1,4 +1,4 @@
-"""Task 7 — before_model middleware: drain subagent-completion steering injections.
+"""— before_model middleware: drain subagent-completion steering injections.
 
 The announce pipeline (plan tasks 5/6) queues busy-session completion messages
 into the per-session ``SteeringQueue`` (memory + SQLite). This middleware is the

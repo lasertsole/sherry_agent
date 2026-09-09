@@ -14,7 +14,7 @@ _WEIGHT_DIR = _MODEL_DIR / "model_weight"
 
 
 def _abort(msg: str) -> None:
-    print(f"[EmbedModel ERROR] {msg}", file=sys.stderr)
+    logger.error(f"[EmbedModel ERROR] {msg}")
     sys.exit(1)
 
 
@@ -95,7 +95,7 @@ _GGUF_MODEL_PATH = _WEIGHT_DIR / "bge-m3-q8_0.gguf"
 if _use_local and not _GGUF_MODEL_PATH.is_file():
     # First run: download to model_weight/ (no model loading)
     # Skipped when llama-cpp-python is absent (e.g. hermetic CI, which never
-    # installs it): _load_model() re-runs _ensure_downloaded() on first use.
+    # installs it): _load_model re-runs _ensure_downloaded on first use.
     try:
         _ensure_downloaded()
     except ModuleNotFoundError:

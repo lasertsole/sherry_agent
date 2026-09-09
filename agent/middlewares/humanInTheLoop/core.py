@@ -261,9 +261,9 @@ class HumanInTheLoop(AgentMiddleware):
         tool_name: str,
         action_desc: str = "",
     ) -> tuple[bool, ToolMessage | None]:
-        """Sandbox-bypass approval (Task 8): gate ``sandbox=False`` tool calls.
+        """Sandbox-bypass approval: gate ``sandbox=False`` tool calls.
 
-        Reuses the ``interrupt(HITLRequest(...))`` template verbatim (the Task 5
+        Reuses the ``interrupt(HITLRequest(...))`` template verbatim (the
         resume contract): ``Command(resume={"decisions": [{"type": "approve"}]})``
         proceeds; ``{"type": "reject", "message": ...}`` (or no decision) yields
         a ``"User denied: <msg>. <BLOCKED_MESSAGE>"`` error ToolMessage with NO
@@ -362,7 +362,7 @@ class HumanInTheLoop(AgentMiddleware):
                     )
                     continue
 
-                # ── Sandbox-bypass approval (Task 8) ──
+                # ── Sandbox-bypass approval ──
                 # Gate sandbox=False terminal calls: human approval required
                 # unless YOLO is active. Inserted BEFORE smart approval so it
                 # gates ALL sandbox=False executions — including the
@@ -456,10 +456,10 @@ class HumanInTheLoop(AgentMiddleware):
                 revised_tool_calls.append(tool_call)
                 continue
 
-            # ── python_repl: sandbox-bypass approval (Task 8) ──
+            # ── python_repl: sandbox-bypass approval ──
             # Same gate as terminal: human approval for sandbox=False calls
             # unless YOLO is active. Approved bypasses FALL THROUGH to the
-            # remaining gates (plugin allow-through) — preserving the Task 5
+            # remaining gates (plugin allow-through) — preserving the
             # contract that python_repl is otherwise NOT intercepted. The
             # tool layer's scope/policy denial is NOT repeated here (owned by
             # _deny_sandbox_bypass in python_repl.py).
@@ -476,7 +476,7 @@ class HumanInTheLoop(AgentMiddleware):
                         artificial_tool_messages.append(deny_msg)
                     continue
                 # Approved → fall through (no append+continue): the plugin
-                # allow-through layer keeps Task 5 pass-through semantics.
+                # allow-through layer keeps pass-through semantics.
 
             # ── Memory tool: write approval gate ──
             if tool_name == "memory" and self.config.write_approval_memory:

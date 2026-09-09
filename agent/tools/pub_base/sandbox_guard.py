@@ -16,7 +16,7 @@ class SandboxGuardMixin:
         """Guard sandbox=False calls: subagents are denied, REQUIRED denies all.
 
         Matrix cells (agent/tools/pub_base/sandbox.py docstring):
-        - required + sandbox=False → DENIED (no approval path until Task 8)
+        - required + sandbox=False → DENIED (no approval path until)
         - subagent scope + sandbox=False → DENIED (bypass is a main-session,
           human-approved decision only)
         - sandbox=True is never gated here.

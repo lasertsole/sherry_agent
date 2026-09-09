@@ -114,7 +114,7 @@ async def _get_generator(
         f"is_stream={is_stream}, has_images={len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0}"
     )
 
-    # origin (Task 4, subagent-origin-tagging): the subagent-completion carrier
+    # origin (, subagent-origin-tagging): the subagent-completion carrier
     # tag {internal, provenance, run_id, status} forwarded verbatim from
     # auto_turn. None (real-user WS/channel paths) is legal — LangChain
     # metadata is Optional — and leaves the message untagged.
@@ -159,7 +159,7 @@ async def _write_interrupt_marker(
     session_id: str, partial_text: str, reason: Literal["cancelled", "heartbeat_timeout"]
 ) -> None:
     """Persist the interrupted-turn marker on ``async_generate``'s cancellation
-    paths (plan Task 6 / G3-allowed touchpoint: ONE await per handler, placed
+    paths (plan / G3-allowed touchpoint: ONE await per handler, placed
     BEFORE the terminal frame so the partial transcript is reconciled while
     ``ai_text`` still holds it).
 

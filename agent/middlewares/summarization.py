@@ -99,7 +99,7 @@ _FORCE_RECOVERY_KEY = "summarization_force_recovery"
 _PREVIOUS_FILE_OPS_KEY = "summarization_previous_file_ops"
 _COOLDOWN_ROUNDS_KEY = "summarization_cooldown_rounds"
 _TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
-# T4/T5 per-error-class retry counters (Task 7): session-level, one key per
+# T4/T5 per-error-class retry counters: session-level, one key per
 # classified error, same state_register_mem pattern as the keys above.
 _OVERFLOW_RETRIES_T4_KEY = "summarization_overflow_retries_t4"
 _OVERFLOW_RETRIES_T5_KEY = "summarization_overflow_retries_t5"
@@ -121,7 +121,7 @@ _RETRY_KEY_BY_ERROR_CLASS: dict[str, str] = {
 
 
 # ======================================================================
-# T3: reported input-token extraction (Task 6)
+# T3: reported input-token extraction
 # ======================================================================
 
 
@@ -630,7 +630,7 @@ class Summarization(AgentMiddleware):
         return None
 
     # ------------------------------------------------------------------
-    # 4-route overflow routing (Task 5: upgraded _preemptive_check decision)
+    # 4-route overflow routing (upgraded _preemptive_check decision)
     # ------------------------------------------------------------------
 
     def _usable_budget(self) -> int:
@@ -656,7 +656,7 @@ class Summarization(AgentMiddleware):
         Returns one of ROUTE_FITS / ROUTE_TRUNCATE_TOOL_RESULTS_ONLY /
         ROUTE_COMPACT_THEN_TRUNCATE / ROUTE_COMPACT_ONLY, or None when no
         dynamic context window is configured. T1/T2 are estimate-driven; the
-        reported-usage input belongs to T3 (Task 6).
+        reported-usage input belongs to T3 ().
         """
         ctx_window = self._main_llm_context_window
         if not ctx_window or ctx_window <= 0:
@@ -683,7 +683,7 @@ class Summarization(AgentMiddleware):
     def _run_budget_truncation(
         self, messages: list[BaseMessage], usable: int
     ) -> tuple[list[BaseMessage], int]:
-        """Task 4 budget truncation over Task 3's candidate rule.
+        """budget truncation over candidate rule.
 
         Step 1 truncates oversized tool-call args (returns new AIMessages
         via model_copy — the input list is not mutated for AIMessages).
@@ -861,7 +861,7 @@ class Summarization(AgentMiddleware):
         return False
 
     # ------------------------------------------------------------------
-    # T3: post-response real-token re-check (Task 6)
+    # T3: post-response real-token re-check
     # ------------------------------------------------------------------
 
     def _post_response_check(
@@ -871,12 +871,12 @@ class Summarization(AgentMiddleware):
         session_id: str,
         t2_compressed: bool = False,
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        """Post-response real-token re-check (T3, Task 6).
+        """Post-response real-token re-check (T3,).
 
         Runs AFTER the handler returns inside wrap/awrap_model_call: the
         provider-reported input tokens are the most accurate overflow signal,
         and per-call granularity covers multiple model calls within one turn
-        (which the per-turn T1 preflight cannot). Dispatch reuses the Task 5
+        (which the per-turn T1 preflight cannot). Dispatch reuses the
         executors (``_dispatch_overflow_route``) — never a second copy — and
         a failure NEVER loses the original response.
         """
@@ -989,7 +989,7 @@ class Summarization(AgentMiddleware):
             return response
 
     # ------------------------------------------------------------------
-    # T4/T5: provider-error recovery loop (Task 7)
+    # T4/T5: provider-error recovery loop
     # ------------------------------------------------------------------
 
     def _forced_recovery_request(
@@ -1005,10 +1005,10 @@ class Summarization(AgentMiddleware):
         cooldown rounds and the per-turn attempt cap are simply never
         consulted here — the forced semantics of ``_FORCE_RECOVERY_KEY``
         without setting the key). Reuses ``_apply_compression`` and
-        ``_run_budget_truncation`` (Task 3 candidate rule; TTL=0 semantics
+        ``_run_budget_truncation`` ( candidate rule; TTL=0 semantics
         = every candidate truncatable; budget = usable *
         TRUNCATE_BUDGET_RATIO) — no second dispatch copy. Pairing
-        invariants stay intact (Task 4 truncation is pairing-safe; the
+        invariants stay intact ( truncation is pairing-safe; the
         summary output is a Human/AI pair).
 
         Does NOT arm the cooldown or count a turn attempt (error recovery
@@ -1100,7 +1100,7 @@ class Summarization(AgentMiddleware):
           AFTER this helper returns, on the final successful response only
           (Metis lock: failed retry calls must not pollute degradation
           statistics). T3 post-response checks run after the recovered
-          final response (Task 6 wiring preserved).
+          final response ( wiring preserved).
         """
         while True:
             try:
@@ -1902,7 +1902,7 @@ class Summarization(AgentMiddleware):
         state_register_mem.set_state(session_id, _RECOVERY_ATTEMPTS_KEY, 0)
         state_register_mem.set_state(session_id, _FORCE_RECOVERY_KEY, False)
         state_register_mem.set_state(session_id, _PREVIOUS_FILE_OPS_KEY, None)
-        # NEW (Task 5): per-turn proactive-compression attempt counter.
+        # NEW: per-turn proactive-compression attempt counter.
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, 0)
 
     def _t1_state_update(self, request: ModelRequest[ContextT]) -> dict[str, Any]:
@@ -2030,12 +2030,12 @@ class Summarization(AgentMiddleware):
                         request = request.override(system_message=SystemMessage(content=rebuilt))
             response = self._execute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
-            # T3 post-response re-check (Task 6). Gate path: T2 did NOT
+            # T3 post-response re-check. Gate path: T2 did NOT
             # dispatch here, so t2_compressed=False — the check re-reads the
             # anti-thrash state itself (post-tick cooldown still > 0 blocks).
             return self._post_response_check(request, response, session_id)
 
-        # T3 anti-double-compress snapshot (Task 6): turn attempts BEFORE the
+        # T3 anti-double-compress snapshot: turn attempts BEFORE the
         # T2 dispatch; only actual compact executions increment the key, so a
         # bump means T2 compressed in THIS wrap call.
         t2_attempts_before = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
@@ -2054,7 +2054,7 @@ class Summarization(AgentMiddleware):
         t2_compressed = (
             state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) > t2_attempts_before
         )
-        # T3: post-response real-token re-check (Task 6); T2-compressed calls
+        # T3: post-response real-token re-check; T2-compressed calls
         # skip via the local flag — one compression per model call.
         return self._post_response_check(request, response, session_id, t2_compressed=t2_compressed)
 
@@ -2103,10 +2103,10 @@ class Summarization(AgentMiddleware):
                         request = request.override(system_message=SystemMessage(content=rebuilt))
             response = await self._aexecute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
-            # T3 post-response re-check (Task 6); see the sync twin.
+            # T3 post-response re-check; see the sync twin.
             return await self._apost_response_check(request, response, session_id)
 
-        # T3 anti-double-compress snapshot (Task 6): turn attempts BEFORE the
+        # T3 anti-double-compress snapshot: turn attempts BEFORE the
         # T2 dispatch; only actual compact executions increment the key, so a
         # bump means T2 compressed in THIS wrap call.
         t2_attempts_before = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
@@ -2125,7 +2125,7 @@ class Summarization(AgentMiddleware):
         t2_compressed = (
             state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) > t2_attempts_before
         )
-        # T3: post-response real-token re-check (Task 6); T2-compressed calls
+        # T3: post-response real-token re-check; T2-compressed calls
         # skip via the local flag — one compression per model call.
         return await self._apost_response_check(
             request, response, session_id, t2_compressed=t2_compressed

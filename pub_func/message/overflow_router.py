@@ -1,9 +1,9 @@
-"""Overflow routing pure functions (Task 3 — dual-track router).
+"""Overflow routing pure functions ( — dual-track router).
 
 Pure decision layer for the context-compression dual-track router: given a
 token pressure and a list of truncatable tool-result candidates, decide one
 of four routes. Execution (actual truncation / compression) lives in the
-middleware (Task 5 consumes these strings as its dispatch contract) — this
+middleware ( consumes these strings as its dispatch contract) — this
 module performs NO truncation, NO compression, NO I/O and keeps NO global
 state.
 
@@ -125,7 +125,7 @@ def decide_route(
           0 < sum < overflow → "compact_then_truncate"; no candidates →
           "compact_only"
 
-    ``context_window`` is part of the dispatch signature (Task 5 passes it
+    ``context_window`` is part of the dispatch signature ( passes it
     through) but the band math is intentionally budget-relative: the reserve
     between usable_budget and context_window is already accounted for by the
     caller.

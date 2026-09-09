@@ -84,7 +84,7 @@ extend-exclude = [
 # UPPER_SNAKE constants and framework idioms are exempted via pep8-naming below.
 # D100-D103+D200 (pydocstyle subset) are the docstring-existence gate; the
 # heavy legacy directories are registered below and shrink as they get typed.
-select = ["E4", "E7", "E9", "F", "UP", "S110", "N", "D100", "D101", "D102", "D103", "D200"]
+select = ["E4", "E7", "E9", "F", "UP", "S110", "N", "D100", "D101", "D102", "D103", "D200", "T20"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -141,11 +141,14 @@ ignore = [
 "skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_lightrag/**" = ["S110", "N"]
 # Skill scripts initialize env/model before imports (intentional delayed imports);
 # best-effort cleanup uses try-except-pass deliberately
-"skills/builtin/**/scripts/*" = ["E402", "S110", "N", "D200"]
+"skills/builtin/**/scripts/*" = ["E402", "S110", "N", "D200", "T20"]
 # Tests do sys.path setup before imports; docstring gate does not apply
-"tests/**" = ["E402", "D100", "D101", "D102", "D103", "D200"]
+"tests/**" = ["E402", "D100", "D101", "D102", "D103", "D200", "T20"]
 # Vendored FunASR onnxruntime utils (OOXML/feature-array names like pPr, T_lfr are upstream domain terms)
-"models/STT_model/utils/*" = ["E722", "S110", "N", "D200"]
+"models/STT_model/utils/*" = ["E722", "S110", "N", "D200", "T20"]
+
+# print allowed in the server entry (startup banner before logging is wired)
+"server/__main__.py" = ["T20"]
 
 # --- docstring-existence debt registry (D100-D103): shrink as docstrings land ---
 "agent/**" = ["D100", "D101", "D102", "D103", "D200"]

@@ -15,7 +15,7 @@ treated as "sandbox unavailable", never as a crash).
 
 Precedence matrix (``SANDBOX_POLICY`` x tool-call ``sandbox`` flag)
 -------------------------------------------------------------------
-This is the authoritative behavior table, tested cell-by-cell in Task 9:
+This is the authoritative behavior table, tested cell-by-cell in
 
 ========== ============================== ==============================
 policy     sandbox=True                   sandbox=False
@@ -24,7 +24,7 @@ required   sandboxed via backend;         DENIED outright (tool layer,
            RuntimeError if the backend    Tasks 6/7 -- no approval path)
            is unavailable on this system
 auto       sandboxed via backend; if      HITL approval required
-           unavailable: degrade to        (Task 8, humanInTheLoop)
+           unavailable: degrade to        (, humanInTheLoop)
            unsandboxed + one loguru
            warning (warning emitted by
            the tool layer, Tasks 6/7)
@@ -148,13 +148,13 @@ def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
     backend: SandboxBackend | None = None
     try:
         if system == "Linux":
-            # Lazy import: sandbox_bwrap.py is created by Task 3 (parallel
+            # Lazy import: sandbox_bwrap.py is created by (parallel
             # wave); ImportError == unavailable, never a crash.
             from agent.tools.pub_base.sandbox_bwrap import BwrapBackend
 
             backend = BwrapBackend()
         elif system == "Darwin":
-            # Lazy import: sandbox_seatbelt.py is created by Task 4.
+            # Lazy import: sandbox_seatbelt.py is created by.
             from agent.tools.pub_base.sandbox_seatbelt import SeatbeltBackend
 
             backend = SeatbeltBackend()

@@ -21,7 +21,7 @@ from skills.builtin.core.heartbeat.scripts import move_task_to_completed, list_a
 
 tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
 
-# Sandbox-hardening Task 8: heartbeat agents are BACKGROUND callers — stamp
+# Sandbox-hardening heartbeat agents are BACKGROUND callers — stamp
 # every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass in
 # terminal.py / python_repl.py) denies sandbox=False outright (no HITL
 # middleware exists on background graphs to approve it).

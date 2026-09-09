@@ -1,4 +1,4 @@
-"""Durable per-session FIFO user-input queue: SQLite-backed store (Task 1).
+"""Durable per-session FIFO user-input queue: SQLite-backed store.
 
 The crash-safe store behind "busy-time input queueing": while a session's turn
 is running, newly submitted user input is persisted here and drained AFTER the
@@ -51,12 +51,12 @@ Public API (consumed by Tasks 5/7/9/10 -- signatures are a contract):
   - ``await recover(session_id) -> int`` -- voids expired (``expires_at <= now``)
     QUEUED/CLAIMED rows (24h crash-recovery expiry), returns how many.
   - ``await find_active_by_client_msg_id(client_msg_id) -> UserInputQueueRow |
-    None`` -- read-only ACTIVE-row lookup by the dedup key (Task 5 submit
+    None`` -- read-only ACTIVE-row lookup by the dedup key ( submit
     pre-check under its per-session lock; the enqueue/insert transactions
     remain the authoritative dedup).
   - ``await insert_claimed(session_id, payload, source, reply_target=None,
     client_msg_id=None) -> UserInputQueueRow`` -- insert a row ALREADY in
-    CLAIMED state (Task 5 idle-branch placeholder: the durable "turn in
+    CLAIMED state ( idle-branch placeholder: the durable "turn in
     progress" fact written in the same critical section as the idle check).
     Same capacity rule as ``enqueue`` (``QueueFullError`` at cap).
 
@@ -99,7 +99,7 @@ _INIT_WAIT_TIMEOUT_S = 10.0
 # Per-session queue depth cap: QUEUED + CLAIMED rows.
 MAX_ACTIVE_PER_SESSION = 20
 
-# Crash-recovery expiry: rows older than this are voided by recover().
+# Crash-recovery expiry: rows older than this are voided by recover.
 _EXPIRY_SECONDS = 24 * 60 * 60.0
 
 _CREATE_TABLE_SQL = """
@@ -162,7 +162,7 @@ SET status = 'VOIDED', updated_at = ?
 WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL} AND expires_at <= ?;
 """
 
-# Task 5 helper: read-only ACTIVE-row lookup by the dedup key.
+# helper: read-only ACTIVE-row lookup by the dedup key.
 _FIND_ACTIVE_BY_CLIENT_MSG_SQL = f"""
 SELECT {_ROW_COLUMNS} FROM user_input_queue
 WHERE client_msg_id = ? AND status IN {_ACTIVE_STATUSES_SQL}
@@ -170,7 +170,7 @@ ORDER BY created_at ASC, id ASC
 LIMIT 1;
 """
 
-# Task 5 idle-branch placeholder: a row that starts life CLAIMED ("turn in
+# idle-branch placeholder: a row that starts life CLAIMED ("turn in
 # progress" fact), inserted in the same critical section as the idle check.
 _INSERT_CLAIMED_SQL = """
 INSERT INTO user_input_queue
@@ -595,7 +595,7 @@ class UserInputQueue:
     async def find_active_by_client_msg_id(self, client_msg_id: str) -> UserInputQueueRow | None:
         """Return the ACTIVE (QUEUED/CLAIMED) row carrying ``client_msg_id``, or None.
 
-        Read-only dedup lookup used by ``submit_user_input`` (Task 5) to
+        Read-only dedup lookup used by ``submit_user_input`` () to
         classify a repeated ``client_msg_id`` as DEDUPED before any insert or
         turn dispatch. The authoritative dedup remains inside the
         ``enqueue``/``insert_claimed`` transactions (partial UNIQUE index);
@@ -615,12 +615,12 @@ class UserInputQueue:
         reply_target: str | None = None,
         client_msg_id: str | None = None,
     ) -> UserInputQueueRow:
-        """Insert a row ALREADY in CLAIMED state (Task 5 idle-branch placeholder).
+        """Insert a row ALREADY in CLAIMED state ( idle-branch placeholder).
 
         ``submit_user_input`` writes this row inside its per-session lock, in
         the same critical section as the idle check: the row is the durable
         "turn in progress" fact that makes any racing submit see the session
-        as busy and enqueue instead of double-dispatching a turn. Task 7's
+        as busy and enqueue instead of double-dispatching a turn.'s
         drain consumes CLAIMED rows through the same lifecycle machinery
         (``mark_terminal``) as QUEUED ones; ``claim_next`` never returns them.
 

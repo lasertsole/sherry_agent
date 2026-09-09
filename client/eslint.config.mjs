@@ -123,20 +123,22 @@ export default defineConfig([
     }
   },
   {
+    // Global baseline. MUST stay ABOVE the override block below (flat config:
+    // last matching block wins) or the no-console exemptions get overridden.
+    rules: {
+      'no-console': 'error', // item 十七: console.* must go through the log tooling
+      'no-undef': 'off', //交给nuxt框架检查
+      '@typescript-eslint/no-unsafe-function-type': 'off',
+      '@typescript-eslint/no-explicit-any': 'warn',
+      semi: ['error']
+    }
+  },
+  {
     // Log infrastructure owns console calls; tests legitimately mock/console.
     files: ['**/__tests__/**', '**/clientLog.ts'],
     rules: {
       'no-console': 'off',
       '@typescript-eslint/no-explicit-any': 'off'
-    }
-  },
-  {
-    rules: {
-      'no-console': 'warn',
-      'no-undef': 'off', //交给nuxt框架检查
-      '@typescript-eslint/no-unsafe-function-type': 'off',
-      '@typescript-eslint/no-explicit-any': 'warn',
-      semi: ['error']
     }
   },
   {
