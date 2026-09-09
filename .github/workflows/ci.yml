@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           # match the dev toolchain: pnpm 9 treats a config-only
           # client/pnpm-workspace.yaml as an empty workspace and hard-fails
