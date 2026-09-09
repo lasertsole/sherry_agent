@@ -161,7 +161,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { listChannels } from '@/composables/bridge';
 import type { ChannelInfo } from '@/composables/bridge';
 import ChannelSettingsDialog from './ChannelSettingsDialog.vue';
 import { logUtil } from '~/utils/log';
@@ -186,7 +185,10 @@ const channels = ref<ChannelInfo[]>([]);
 const selectedChannel = ref<ChannelInfo | null>(null);
 const showSettings = ref(false);
 
-/** Card click → open that channel's settings dialog. */
+/**
+ * Card click → open that channel's settings dialog.
+ * @param ch
+ */
 const openSettings = (ch: ChannelInfo) => {
   selectedChannel.value = ch;
   showSettings.value = true;

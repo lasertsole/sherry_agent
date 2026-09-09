@@ -201,3 +201,52 @@ class TestAsyncSearch:
 
     async def test_async_empty_query(self, patched_core_db):
         assert await core_mod.search_messages_async("   ", patched_core_db["session_id"]) == []
+
+
+class TestContextFetchConsolidation:
+    def test_context_fetched_in_one_query_for_all_matches(self, patched_core_db):
+        """N matches cost exactly 2 top-level statements: 1 search + 1 context fetch."""
+        sid = patched_core_db["session_id"]
+        statements: list[str] = []
+        patched_core_db["db"].set_trace_callback(statements.append)
+        try:
+            results = core_mod.search_messages("docker", sid)
+        finally:
+            patched_core_db["db"].set_trace_callback(None)
+
+        assert len(results) == 2
+        by_id = {m["id"]: m for m in results}
+        assert by_id[1]["context"] == [
+            {
+                "role": "human",
+                "content": json.dumps("how do I use docker compose?", ensure_ascii=False),
+            },
+            {
+                "role": "ai",
+                "content": json.dumps(
+                    "Docker compose runs multi-container apps.", ensure_ascii=False
+                ),
+            },
+        ]
+        assert [c["role"] for c in by_id[2]["context"]] == ["human", "ai", "human"]
+        top_level = [s for s in statements if not s.lstrip().startswith("--")]
+        assert len(top_level) == 2, (
+            f"expected 1 search + 1 context statement, got {len(top_level)}: {top_level}"
+        )
+
+    def test_boundary_match_has_prev_but_no_next(self, patched_core_db):
+        """The session's last row matches: context is [prev, match], no fabricated next."""
+        sid = patched_core_db["session_id"]
+
+        results = core_mod.search_messages("kubernetes", sid)
+
+        by_id = {m["id"]: m for m in results}
+        assert set(by_id) == {3, 4}
+        assert [c["role"] for c in by_id[3]["context"]] == ["ai", "human", "ai"]
+        assert by_id[3]["context"][2]["content"] == json.dumps(
+            "Kubernetes orchestrates containers at cluster scale.", ensure_ascii=False
+        )
+        assert [c["role"] for c in by_id[4]["context"]] == ["human", "ai"]
+        assert by_id[4]["context"][0]["content"] == json.dumps(
+            "what about kubernetes?", ensure_ascii=False
+        )

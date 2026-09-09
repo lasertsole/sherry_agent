@@ -24,16 +24,16 @@ init_logger()
 # Load .env and init LangSmith (must be before any LangChain imports).
 # LangSmith settings live in sherry.jsonc (see config/sherry_settings.py).
 load_dotenv(ENV_PATH, override=True)
-if bool(get_sherry_setting("LANGSMITH_TRACING_V2")) and str(
-    get_sherry_setting("LANGSMITH_API_KEY")
+if bool(get_sherry_setting("LANGSMITH.TRACING_V2")) and str(
+    get_sherry_setting("LANGSMITH.API_KEY")
 ):
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ["LANGSMITH_API_KEY"] = str(get_sherry_setting("LANGSMITH_API_KEY"))
-    os.environ["LANGSMITH_PROJECT"] = str(get_sherry_setting("LANGSMITH_PROJECT"))
+    os.environ["LANGSMITH_API_KEY"] = str(get_sherry_setting("LANGSMITH.API_KEY"))
+    os.environ["LANGSMITH_PROJECT"] = str(get_sherry_setting("LANGSMITH.PROJECT"))
     print("🔍 LangSmith tracing enabled -> project:", os.environ["LANGSMITH_PROJECT"])
 else:
     print(
-        "ℹ️  LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY in sherry.jsonc to enable)"
+        "ℹ️  LangSmith not configured (set LANGSMITH.TRACING_V2=true and LANGSMITH.API_KEY in sherry.jsonc to enable)"
     )
 
 

@@ -186,8 +186,6 @@
 // (sidebar/toolbar/each dialog, plus child route pages without their own capture)
 // → logUtil logging + global toast; returning false stops further upward propagation
 // (factory function pattern from 03-errorCapturedFactoryFunction.md)
-import { useErrorCaptured } from '~/composables/errorCaptured';
-
 useErrorCaptured();
 
 // components
@@ -235,6 +233,7 @@ const languageOptions = computed(() => [
  * (Compared with directly setting `locale.value = code` + manually writing the cookie,
  *  `setLocale` is the only path that guarantees the language pack gets loaded; otherwise
  *  `$t` returns raw keys on first render/switch.)
+ * @param code
  */
 async function onLanguageChange(code: string) {
   await setLocale(code as 'zh' | 'en' | 'ja' | 'ko');
@@ -251,6 +250,7 @@ async function onLanguageChange(code: string) {
  * "the preferred language survives browser refresh/restart", we must manually write the
  * preference cookie and have app.vue read it first on initial load (app.vue's read logic
  * cooperates using the same key).
+ * @param code
  */
 function persistLocalePreference(code: 'zh' | 'en' | 'ja' | 'ko') {
   if (import.meta.server) return;
@@ -279,6 +279,9 @@ const KEEP_ALIVE_MAX = 20;
  * The standalone tasks page uses its own slot to avoid its KeepAlive state clobbering the chat
  * page's (and vice versa); all other routes (chat page / home) uniformly use the session id as
  * the key.
+ * @param route
+ * @param route.path
+ * @param route.params
  */
 const resolvePageKey = (route: { path: string; params: Record<string, unknown> }) => {
   const sid = String(route.params.sid ?? 'root');
@@ -342,7 +345,11 @@ const loadCharacter = async () => {
 /** Current session id (used for sidebar highlighting + the NuxtPage KeepAlive key) */
 const currentSessionId = ref<string>();
 
-/** Tool trigger (header bar only; toolbar/images etc. have moved into [sid].vue along with the session main area) */
+/**
+ * Tool trigger (header bar only; toolbar/images etc. have moved into [sid].vue along with the session main area)
+ * @param type
+ * @param event
+ */
 const handleOperate = (type: string, event: string) => {
   if (!event || type !== 'headerBar') return;
   switch (event) {
@@ -389,6 +396,7 @@ const handleOperate = (type: string, event: string) => {
  * then collapses the menu.
  * knowledgeGraph is a route jump while the rest are dialogs; both uniformly reuse
  * handleOperate's event dispatch.
+ * @param event
  */
 const handleMenuSelect = (event: string) => {
   isSettingsMenuOpen.value = false;

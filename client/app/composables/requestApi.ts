@@ -1,6 +1,5 @@
 import type { NitroFetchRequest } from 'nitropack';
 import type { Response } from '~/types/response';
-import { sendRequestErrorToast } from './toast';
 
 interface Params {
   url: NitroFetchRequest;
@@ -101,11 +100,9 @@ async function requestBaseApi({
     data = await $fetch<Response>(requestURL, {
       method,
       // The ofetch library auto-detects the request URL; for requests whose url already contains a
-      // domain, baseURL is not prepended.
-      // Fallback consistent with the streaming paths in ws.ts / bridge.ts: when VITE_API_BACK_URL is
-      // not configured, fall back to the local backend address to prevent requests from degrading
-      // into relative paths that hit the Nuxt dev server and return an HTML shell.
-      baseURL: import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080',
+      // domain, baseURL is not prepended. The fallback (local backend address when VITE_API_BACK_URL
+      // is not configured) is shared with the streaming paths via API_BASE_URL (env.ts).
+      baseURL: API_BASE_URL,
       ...params,
       retry: 3,
       retryDelay: 2000,

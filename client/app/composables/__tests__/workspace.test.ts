@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-// `fetchApi` is used inside workspace.ts as a Nuxt auto-import (no explicit
-// `import` statement), so it must be stubbed as a global.
+// `fetchApi` is used inside workspace.ts as a Nuxt auto-import: the binding
+// resolves through the `../requestApi` module (unimport injection, see
+// vitest.config.ts), so mock that module — a globalThis stub would never be
+// read by an import binding.
+const fetchApiMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
+
 import {
   read_system_prompt_handler,
   write_system_prompt_file_handler,
@@ -9,13 +15,12 @@ import {
 } from '../workspace';
 
 function stubFetchApi(data: unknown) {
-  const mock = vi.fn().mockResolvedValue(data);
-  vi.stubGlobal('fetchApi', mock);
-  return mock;
+  fetchApiMock.mockReset();
+  fetchApiMock.mockResolvedValue(data);
+  return fetchApiMock;
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 

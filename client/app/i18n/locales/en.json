@@ -1,9 +1,6 @@
 {
   "a11y": {
-    "skipToMain": "Skip to main content",
-    "previewImage": "Preview image",
-    "toggleTheme": "Toggle theme",
-    "deleteSession": "Delete session"
+    "previewImage": "Preview image"
   },
   "common": {
     "confirmDelete": "Confirm Delete",
@@ -11,35 +8,15 @@
     "cancel": "Cancel"
   },
   "chatInput": {
-    "placeholder": "Type a message...",
-    "thinking": "AI is thinking...",
-    "waitingApproval": "Waiting for approval...",
-    "send": "Send",
-    "stop": "Stop",
     "maxImages": "You can upload at most {count} images",
     "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",
     "maxAudios": "You can upload at most {count} audio files",
     "maxAudiosExceed": "You can upload at most {count} audio files, {extra} over the limit",
     "maxVideos": "You can upload at most {count} video files",
-    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit",
-    "queued": "Queued · position {position} of {queueSize}"
+    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
   },
   "chatBox": {
-    "defaultUserName": "Me",
-    "defaultAiName": "Sherry",
-    "imageLoadFailed": "Image load failed",
-    "removeImage": "Remove image",
-    "removeAudio": "Remove audio",
-    "removeVideo": "Remove video",
-    "toolArgs": "Arguments",
-    "toolResult": "Result",
-    "toolNoOutput": "No output",
-    "toolRunning": "Running…",
-    "thinking": "Thinking",
-    "modelMeta": "{input} in · {output} out tokens",
-    "scrollBottom": "Scroll to bottom",
-    "copy": "Copy",
-    "copied": "Copied"
+    "defaultAiName": "Sherry"
   },
   "chat": {
     "backgroundMessage": "Background task"
@@ -51,79 +28,19 @@
     "sendFailed": "(Send failed: {reason})",
     "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly."
   },
-  "hitl": {
-    "title": "Action Requires Approval",
-    "tool": "Tool",
-    "reject": "Reject",
-    "approve": "Approve"
-  },
-  "taskViewer": {
-    "viewTasks": "View Background Tasks"
-  },
-  "taskDetail": {
-    "placeholder": "Click a node in the tree above to view task details",
-    "taskDesc": "Description",
-    "status": "Status",
-    "depth": "Depth",
-    "agentId": "Agent",
-    "spawnMode": "Spawn Mode",
-    "parentSession": "Parent Session",
-    "startedAt": "Started At",
-    "endedAt": "Ended At",
-    "endedReason": "End Reason",
-    "outcome": "Outcome",
-    "outcomeStatus": "Outcome Status",
-    "error": "Error",
-    "resultText": "Result",
-    "delivery": "Delivery",
-    "steerTitle": "Steer / Resume",
-    "steerHint": "The child agent continues from its current context with your new instructions; leave empty to simply resume an interrupted run.",
-    "steerPlaceholder": "New instructions (optional, e.g. retry with a different approach…)",
-    "steerAction": "Send & Continue",
-    "steerSteering": "Sending…",
-    "steerSuccess": "Sent — the child agent is continuing.",
-    "steerFailed": "Steer failed (run may have finished or is rate-limited)"
-  },
-  "flow": {
-    "loading": "Loading…",
-    "empty": "No background data",
-    "error": "Failed to load"
-  },
   "connection": {
-    "reconnecting": "Connection lost, reconnecting… (attempt {attempt}/{max})",
     "offline": "Network offline",
     "backendDown": "Backend service unreachable",
     "backOnline": "Connection restored"
   },
   "history": {
     "noSessions": "No conversations",
-    "selectAll": "Select All",
-    "batchDelete": "Delete Conversations",
-    "batchDeleteConfirm": "Are you sure you want to delete the selected conversations? This action cannot be undone.",
-    "createdAt": "Created: {time}",
-    "dateFormat": "MM/DD/YYYY HH:mm",
-    "deleteConfirm": "Are you sure you want to delete this conversation? This action cannot be undone.",
-    "newSession": "New Session",
-    "searchPlaceholder": "Search sessions by title…",
-    "dateRange": "Filter by date range",
-    "clearFilter": "Clear filters",
-    "noSearchResults": "No matching sessions",
-    "filterToggle": "Filter",
-    "editTitle": "Rename session",
-    "titlePlaceholder": "Enter new title",
-    "titleInvalid": "Title must be at most 30 characters and contain only letters, numbers, spaces, and . _ -"
+    "newSession": "New Session"
   },
   "sidebar": {
-    "tabSessions": "Chats",
-    "tabTasks": "Background Tasks",
     "tasksLoading": "Loading tasks...",
     "noTasks": "No background tasks yet",
     "tasksUpdatedAt": "Updated {time}",
-    "tasksSelectAll": "Select All",
-    "tasksBatchDelete": "Batch delete tasks",
-    "tasksBatchDeleteConfirm": "Delete the selected tasks? Their root and all child tasks will be permanently cleared. This cannot be undone.",
-    "taskDelete": "Delete task",
-    "taskDeleteConfirm": "Delete this task? Its root and all child tasks will be permanently cleared. This cannot be undone.",
     "tasksAgoSeconds": "{sec}s ago",
     "statusRunning": "Running",
     "statusInterrupted": "Interrupted",
@@ -136,14 +53,7 @@
     "statusKilled": "Killed",
     "statusUnknown": "Unknown",
     "roleRoot": "Root",
-    "roleChild": "Task",
-    "callingSession": "Calling Session",
-    "startTime": "Start Time",
-    "endTime": "End Time",
-    "backToSession": "Back to session",
-    "backToSessionPrompt": "Jump to the session that spawned this task",
-    "refreshGraph": "Refresh",
-    "refreshGraphPrompt": "Refetch and redraw the run graph"
+    "roleChild": "Task"
   },
   "toolbar": {
     "newChat": "New Chat",
@@ -172,38 +82,11 @@
   "config": {
     "save": "Save",
     "cancel": "Cancel",
-    "tabs": {
-      "agents": "Core Rules",
-      "identity": "Identity",
-      "soul": "Soul",
-      "user": "User Profile",
-      "character": "Character Setup",
-      "env": "Environment",
-      "sherry": "App Config",
-      "memoryAgent": "Memory · Agent",
-      "memoryUser": "Memory · User"
-    },
-    "desc": {
-      "agents": "Agent core rules: conversation flow, security, module index",
-      "identity": "Agent identity: name, emoji, avatar",
-      "soul": "Agent personality, tone, character",
-      "user": "User info and preferences",
-      "memoryAgent": "Agent long-term memory notes (workspace/memory/MEMORY.md)",
-      "memoryUser": "User long-term memory info (workspace/memory/USER.md)"
-    },
     "language": {
       "zh": "简体中文",
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "crop": {
-      "title": "Crop Avatar",
-      "confirm": "Confirm",
-      "zoomIn": "Zoom In",
-      "zoomOut": "Zoom Out",
-      "rotate": "Rotate",
-      "preview": "Crop Preview"
     }
   }
 }

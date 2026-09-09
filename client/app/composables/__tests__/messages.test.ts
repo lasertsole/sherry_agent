@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { CachedMessage } from '../db';
 
-// `fetchApi` is used inside messages.ts as a Nuxt auto-import (no explicit
-// `import` statement), so it must be stubbed as a global rather than via
-// `vi.mock('../requestApi')`.
+// `fetchApi` is used inside messages.ts as a Nuxt auto-import: the binding
+// resolves through the `../requestApi` module (unimport injection, see
+// vitest.config.ts), so mock that module — a globalThis stub would never be
+// read by an import binding.
 //
 // The Dexie `db` module (`../db`) is mocked so tests never touch a real
 // IndexedDB instance.
@@ -16,12 +17,16 @@ const dbMock = vi.hoisted(() => ({
 
 vi.mock('../db', () => dbMock);
 
+const fetchApiMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
+
 import { get_history_by_turn_page, clearSession, postAgentStream } from '../messages';
 
 function stubFetchApi(data: unknown) {
-  const mock = vi.fn().mockResolvedValue(data);
-  vi.stubGlobal('fetchApi', mock);
-  return mock;
+  fetchApiMock.mockReset();
+  fetchApiMock.mockResolvedValue(data);
+  return fetchApiMock;
 }
 
 const mockDb = dbMock;
@@ -122,6 +127,35 @@ describe('get_history_by_turn_page', () => {
         min_turn_num: 5,
         turn_page_size: 20,
         turn_page_num: 2
+      },
+      method: 'get'
+    });
+  });
+
+  it('clamps turn_page_size to the 1-200 server cap', async () => {
+    const data = [{ ...rows[0], id: 11, turn_num: 6 }];
+    const mock = stubFetchApi({ code: 200, data });
+
+    await get_history_by_turn_page('s1', 1, 500, 1);
+    expect(mock).toHaveBeenCalledWith({
+      url: '/get_history_by_turn_page',
+      opts: {
+        session_id: 's1',
+        min_turn_num: 1,
+        turn_page_size: 200,
+        turn_page_num: 1
+      },
+      method: 'get'
+    });
+
+    await get_history_by_turn_page('s1', 1, 0, 1);
+    expect(mock).toHaveBeenLastCalledWith({
+      url: '/get_history_by_turn_page',
+      opts: {
+        session_id: 's1',
+        min_turn_num: 1,
+        turn_page_size: 1,
+        turn_page_num: 1
       },
       method: 'get'
     });

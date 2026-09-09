@@ -427,7 +427,7 @@ Pinned 技能享有最高保护级别：
 
 ## 配置参考
 
-配置文件路径：`curator.yaml`（项目根目录，与 `ROOT_DIR` 同级）
+配置位于 `sherry.jsonc`（项目根目录）的 `"curator"` 对象中。
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
@@ -436,9 +436,10 @@ Pinned 技能享有最高保护级别：
 | `min_idle_hours` | `2` | 最小空闲时间 |
 | `stale_after_days` | `30` | 标记为 stale 的天数 |
 | `archive_after_days` | `90` | 删除的天数 |
-| `consolidate` | `false` | 是否启用 LLM 合并整合 |
+| `consolidate` | `true` | 是否启用 LLM 合并整合 |
+| `prune_builtins` | `true` | 是否清理内置技能的使用记录 |
 
-配置通过 `_load_config()` 加载，使用 PyYAML 读取 `curator.yaml`。每个 getter 函数（`is_enabled`、`get_interval_hours` 等）在解析错误时回退到常量默认值。
+配置通过 `config/sherry_settings.py` 读取（`get_sherry_setting("curator.<key>")`）。每个 getter 函数（`is_enabled`、`get_interval_hours` 等）在配置缺失或无法解析时回退到其中声明的类型化默认值。
 
 ---
 
@@ -488,7 +489,7 @@ Curator 遵循以下严格不变量，任何情况下不可违反：
 curator/
 ├── __init__.py           # 公共 API 导出
 ├── constants.py          # 常量定义（路径、状态名、默认值）
-├── config.py             # 配置加载（curator.yaml + 环境变量）
+├── config.py             # 配置 getter（sherry.jsonc 的 "curator" 对象）
 ├── state.py              # Curator 运行状态持久化（.curator_state）
 ├── usage.py              # 技能使用记录 CRUD（.usage/{name}.json）+ agent_created_report + 孤立记录清理
 ├── transitions.py        # 自动状态转换 + should_run_now 判定

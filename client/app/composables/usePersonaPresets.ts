@@ -1,11 +1,5 @@
 import { ref } from 'vue';
-import {
-  createPersonaPreset,
-  deletePersonaPreset,
-  listPersonaPresets,
-  updatePersonaPreset,
-  type PersonaPreset
-} from '@/composables/db';
+import type { PersonaPreset } from '@/composables/db';
 import { logUtil } from '~/utils/log';
 
 /**

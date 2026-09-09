@@ -1,9 +1,6 @@
 {
   "a11y": {
-    "skipToMain": "跳到主内容",
-    "previewImage": "预览图片",
-    "toggleTheme": "切换主题",
-    "deleteSession": "删除会话"
+    "previewImage": "预览图片"
   },
   "common": {
     "confirmDelete": "确认删除",
@@ -11,35 +8,15 @@
     "cancel": "取消"
   },
   "chatInput": {
-    "placeholder": "请输入内容...",
-    "thinking": "AI 正在思考中...",
-    "waitingApproval": "等待审批...",
-    "send": "发送",
-    "stop": "停止",
     "maxImages": "最多只能上传 {count} 张图片",
     "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张",
     "maxAudios": "最多只能上传 {count} 段音频",
     "maxAudiosExceed": "最多只能上传 {count} 段音频，已超出 {extra} 段",
     "maxVideos": "最多只能上传 {count} 段视频",
-    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段",
-    "queued": "已排队 · 第 {position} 位（共 {queueSize} 个）"
+    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
   },
   "chatBox": {
-    "defaultUserName": "我",
-    "defaultAiName": "橘雪莉",
-    "imageLoadFailed": "图片加载失败",
-    "removeImage": "移除图片",
-    "removeAudio": "移除音频",
-    "removeVideo": "移除视频",
-    "toolArgs": "调用参数",
-    "toolResult": "执行结果",
-    "toolNoOutput": "无输出",
-    "toolRunning": "执行中…",
-    "thinking": "思考过程",
-    "modelMeta": "输入 {input} · 输出 {output} tokens",
-    "scrollBottom": "回到最底部",
-    "copy": "复制",
-    "copied": "已复制"
+    "defaultAiName": "橘雪莉"
   },
   "chat": {
     "backgroundMessage": "后台任务"
@@ -51,79 +28,19 @@
     "sendFailed": "（发送失败：{reason}）",
     "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步"
   },
-  "hitl": {
-    "title": "操作需要审批",
-    "tool": "工具",
-    "reject": "拒绝",
-    "approve": "批准"
-  },
-  "taskViewer": {
-    "viewTasks": "查看后台任务"
-  },
-  "taskDetail": {
-    "placeholder": "点击上方树状图中的节点查看任务详情",
-    "taskDesc": "任务描述",
-    "status": "状态",
-    "depth": "深度",
-    "agentId": "Agent",
-    "spawnMode": "生成方式",
-    "parentSession": "调用方 Session",
-    "startedAt": "开始时间",
-    "endedAt": "结束时间",
-    "endedReason": "结束原因",
-    "outcome": "执行结果",
-    "outcomeStatus": "结果状态",
-    "error": "错误信息",
-    "resultText": "返回内容",
-    "delivery": "配送状态",
-    "steerTitle": "改道 / 恢复执行",
-    "steerHint": "发送后，子任务将带着当前对话上下文与你的新指令继续执行；留空则仅恢复被中断的任务。",
-    "steerPlaceholder": "新指令（可选，例如：换个方向重试…）",
-    "steerAction": "发送并继续",
-    "steerSteering": "发送中…",
-    "steerSuccess": "指令已送达，子任务正在继续。",
-    "steerFailed": "改道失败（任务可能已结束或频率受限）"
-  },
-  "flow": {
-    "loading": "加载中…",
-    "empty": "无后台数据",
-    "error": "加载失败"
-  },
   "connection": {
-    "reconnecting": "连接中断，正在重连…（第 {attempt}/{max} 次）",
     "offline": "网络已断开",
     "backendDown": "后端服务未连接",
     "backOnline": "网络已恢复"
   },
   "history": {
     "noSessions": "暂无会话记录",
-    "selectAll": "全选",
-    "batchDelete": "批量删除对话",
-    "batchDeleteConfirm": "确定要批量删除选中的对话吗？此操作不可恢复。",
-    "createdAt": "创建时间：{time}",
-    "dateFormat": "YYYY-MM-DD HH:mm",
-    "deleteConfirm": "确定要删除该会话吗？此操作不可恢复。",
-    "newSession": "新会话",
-    "searchPlaceholder": "搜索会话标题…",
-    "dateRange": "按日期范围筛选",
-    "clearFilter": "清除筛选",
-    "noSearchResults": "没有匹配的会话",
-    "filterToggle": "筛选",
-    "editTitle": "重命名会话",
-    "titlePlaceholder": "输入新标题",
-    "titleInvalid": "标题限 30 字以内，且只能包含中英文、数字、空格和 . _ -"
+    "newSession": "新会话"
   },
   "sidebar": {
-    "tabSessions": "会话",
-    "tabTasks": "后台任务",
     "tasksLoading": "正在加载任务…",
     "noTasks": "暂无后台任务",
     "tasksUpdatedAt": "更新于 {time}",
-    "tasksSelectAll": "全选",
-    "tasksBatchDelete": "批量删除任务",
-    "tasksBatchDeleteConfirm": "确定要批量删除选中的任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
-    "taskDelete": "删除任务",
-    "taskDeleteConfirm": "确定要删除该任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "运行中",
     "statusInterrupted": "已中断",
@@ -136,14 +53,7 @@
     "statusKilled": "已终止",
     "statusUnknown": "未知",
     "roleRoot": "主任务",
-    "roleChild": "子任务",
-    "callingSession": "调用会话",
-    "startTime": "开始时间",
-    "endTime": "结束时间",
-    "backToSession": "返回会话",
-    "backToSessionPrompt": "跳转到发起该任务的会话",
-    "refreshGraph": "刷新",
-    "refreshGraphPrompt": "重新拉取并重绘运行图"
+    "roleChild": "子任务"
   },
   "toolbar": {
     "newChat": "新建对话",
@@ -172,38 +82,11 @@
   "config": {
     "save": "保存",
     "cancel": "取消",
-    "tabs": {
-      "agents": "核心规则",
-      "identity": "身份信息",
-      "soul": "人格灵魂",
-      "user": "用户信息",
-      "character": "角色配置",
-      "env": "环境配置",
-      "sherry": "应用配置",
-      "memoryAgent": "记忆·Agent",
-      "memoryUser": "记忆·用户"
-    },
-    "desc": {
-      "agents": "Agent核心规则：会话流程、安全、模块索引",
-      "identity": "Agent身份：名字、emoji、头像",
-      "soul": "Agent人格、语气、性格",
-      "user": "用户信息和偏好",
-      "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
-      "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）"
-    },
     "language": {
       "zh": "简体中文",
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "crop": {
-      "title": "裁剪头像",
-      "confirm": "确定",
-      "zoomIn": "放大",
-      "zoomOut": "缩小",
-      "rotate": "旋转",
-      "preview": "裁剪预览"
     }
   }
 }

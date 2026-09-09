@@ -12,7 +12,6 @@
  */
 
 import { ref, type Ref } from 'vue';
-import { emit } from './mitt';
 
 /** Session ID (currently fixed to "default") */
 const SESSION_ID = 'default';
@@ -74,13 +73,17 @@ function stopHeartbeat(): void {
  * Start the heartbeat interval (called on every onopen).
  * Defensively calls stopHeartbeat first, ensuring the previous connection's
  * timers never survive into the new connection cycle.
+ * @param socket
  */
 function startHeartbeat(socket: WebSocket): void {
   stopHeartbeat();
   heartbeatTimer = setInterval(() => heartbeatTick(socket), HEARTBEAT_INTERVAL_MS);
 }
 
-/** Single heartbeat tick: send a ping frame and schedule the timeout check when OPEN and no ping is pending */
+/**
+ * Single heartbeat tick: send a ping frame and schedule the timeout check when OPEN and no ping is pending
+ * @param socket
+ */
 function heartbeatTick(socket: WebSocket): void {
   // Connection unavailable (closing/closed) or the previous ping frame is still
   // awaiting a pong: skip this tick; the pending timeout callback will handle
@@ -115,28 +118,13 @@ function heartbeatTick(socket: WebSocket): void {
 }
 
 /**
- * Parse the host and port parts from a ws:// or wss:// URL
- *
- * Extracts the host and port from VITE_API_BACK_URL (e.g. http://localhost:8080)
- * and builds the corresponding WebSocket URL.
- *
- * @param apiBaseUrl HTTP base URL
- * @returns WebSocket base URL (ws://host:port)
- */
-function resolveWsBaseUrl(apiBaseUrl: string): string {
-  // Replace the protocol: http:// -> ws://, https:// -> wss://
-  const wsUrl = apiBaseUrl.replace(/^https?:\/\//, match => (match === 'http://' ? 'ws://' : 'wss://'));
-  // Strip the trailing /
-  return wsUrl.replace(/\/+$/, '');
-}
-
-/**
  * Create and obtain the WebSocket connection (singleton)
  *
  * Equivalent of @st.cache_resource: module-level singleton + connection state
  * management
  *
  * @param {{ onReconnect?: () => void }} [options] Optional connection-restored callback
+ * @param options.onReconnect
  * @returns {{ ws: Ref<WebSocket | null>, isConnected: Ref<boolean> }}
  */
 export function useWs(options?: { onReconnect?: () => void }): {
@@ -152,9 +140,7 @@ export function useWs(options?: { onReconnect?: () => void }): {
     return { ws, isConnected };
   }
 
-  const baseUrl = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
-  const wsBase = resolveWsBaseUrl(baseUrl);
-  const wsUrl = `${wsBase}/sessions/ws?session_id=${SESSION_ID}`;
+  const wsUrl = `${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`;
 
   function connect(): void {
     // An existing connection is still handshaking: reuse it directly, never
@@ -188,6 +174,10 @@ export function useWs(options?: { onReconnect?: () => void }): {
       startHeartbeat(socket);
     };
 
+    const handleSessionFrame = createWsMessageHandler<{ content?: unknown }>({
+      notification: data => emit('ws:notification', data.content ?? '')
+    });
+
     socket.onmessage = (event: MessageEvent) => {
       // Receiving any frame (including pong) proves the server's event loop is
       // alive: first clear pending/counters and cancel this round's timeout
@@ -197,17 +187,11 @@ export function useWs(options?: { onReconnect?: () => void }): {
       clearPongTimeout();
 
       try {
-        const data = JSON.parse(event.data);
-        const eventType: string = data.event ?? '';
-        const content: unknown = data.content ?? '';
-
-        if (eventType === 'notification') {
-          // Dispatch the notification event for components to listen to
-          emit('ws:notification', content);
+        const data = handleSessionFrame(event);
+        if (data) {
+          // Pass through the raw event
+          emit('ws:message', data);
         }
-
-        // Pass through the raw event
-        emit('ws:message', data);
       } catch {
         // JSON parse failed; ignore this message
       }
@@ -296,6 +280,7 @@ let subagentReady = false;
  * Create and obtain the subagent real-time push WebSocket connection (singleton)
  *
  * @param {{ onReconnect?: () => void }} [options] Optional connection-restored callback
+ * @param options.onReconnect
  * @returns {{ ws: Ref<WebSocket | null>, isConnected: Ref<boolean>, isReady: Ref<boolean> }}
  */
 export function useSubagentWs(options?: { onReconnect?: () => void }): {
@@ -314,9 +299,7 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
     return { ws, isConnected, isReady };
   }
 
-  const baseUrl = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
-  const wsBase = resolveWsBaseUrl(baseUrl);
-  const wsUrl = `${wsBase}/subagents/ws`;
+  const wsUrl = `${WS_BASE_URL}/subagents/ws`;
 
   function connect(): void {
     // Close the old connection
@@ -335,26 +318,21 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
       emit('ws:subagents:connected', undefined);
     };
 
+    const handleSubagentFrame = createWsMessageHandler<{ event?: string; data?: unknown }>({
+      ready: data => {
+        subagentReady = true;
+        isReady.value = true;
+        emit('ws:subagents:ready', data.data ?? null);
+      },
+      subagent_spawned: data => emit('ws:subagent_spawned', data.data ?? null),
+      subagent_ended: data => emit('ws:subagent_ended', data.data ?? null)
+    });
+
     socket.onmessage = (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data);
-        const eventType: string = data.event ?? '';
-        const eventData: unknown = data.data ?? null;
-
-        if (eventType === 'ready') {
-          subagentReady = true;
-          isReady.value = true;
-          emit('ws:subagents:ready', eventData);
-          return;
-        }
-
-        if (eventType === 'subagent_spawned') {
-          emit('ws:subagent_spawned', eventData);
-        } else if (eventType === 'subagent_ended') {
-          emit('ws:subagent_ended', eventData);
-        }
-
-        // Pass through the raw event
+        const data = handleSubagentFrame(event);
+        // `ready` frames stay private to this module; every other parsed frame is passed through raw
+        if (data === null || data.event === 'ready') return;
         emit('ws:subagents:message', data);
       } catch {
         // JSON parse failed; ignore this message

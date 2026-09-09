@@ -262,7 +262,7 @@ for r in results:
 - **范围**：只作用于 `skills/auto/` 下的 Agent 自建技能；绝不触碰内置技能
 - **触发**：服务入口调用 `context_engine.curator.init()` 启动守护线程（`curator-timer`），每 3600 秒调用一次 `maybe_run_curator()`；仅当 `should_run_now()` 为真（已启用、未暂停、`interval_hours` 已到期）且 Agent 空闲足够久（`min_idle_hours`）时才执行。每次用户回合都会调用 `reset_idle_for_seconds()`（`server/service/messages.py`）
 - **生命周期**：`active → stale`（`stale_after_days`，默认 30 天无活动）；超过 `archive_after_days`（默认 90 天）的技能会从磁盘移除；处于 stale 窗口内但从未使用过的技能会被重新激活。被 pinned 的技能跳过所有流转
-- **LLM 合并**（通过 `curator.yaml` 可选开启，默认 `consolidate: false`）：将重叠的窄技能合并为 LLM 生成的 umbrella 技能
+- **LLM 合并**（通过 `sherry.jsonc` 的 `curator.consolidate` 配置，默认开启）：将重叠的窄技能合并为 LLM 生成的 umbrella 技能
 - **状态与报告**：运行状态存于 `skills/.curator_state`；报告位于 `logs/curator/{timestamp}/`（`run.json` + `REPORT.md`）
 
 公开 API 包括 `run_curator_review(on_summary=None, dry_run=False, consolidate=None)`、`maybe_run_curator(*, idle_for_seconds=None, on_summary=None)`、`reset_idle_for_seconds()`、`pin_skill(name)`、`unpin_skill(name)`、`delete_skill(name, absorbed_into="")`、`apply_automatic_transitions(now=None)` 与 `should_run_now(now=None)`。

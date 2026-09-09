@@ -331,9 +331,16 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **ツール呼び出し切断からの復旧**：モデル呼び出しが `finish_reason == "length"`
 （OpenAI）/ `stop_reason == "max_tokens"`（Anthropic）で返り、レスポンスにツール
 呼び出しが含まれる場合、ツール呼び出し JSON 自体が切断されています。ミドルウェアは
-`awrap_model_call` 内で `max_tokens = base × 2^attempt`（base は
-`MAIN_LLM_OUTPUT_MAX_TOKEN`、デフォルト 8192、上限 32768、最大 3 リトライ）に
-増やして handler を再呼び出しし、完全なツール呼び出しペイロードを生成させます。
+`wrap_model_call` / `awrap_model_call` 内で `max_tokens = base × 2^attempt`
+（上限 32768、最大 3 リトライ）に増やして handler を再呼び出しし、完全なツール
+呼び出しペイロードを生成させます。base は 3 層で解決されます（最初の正の値を採用）：
+
+1. 呼び出し自身の `request.model_settings["max_tokens"]` —— 現在の呼び出しの実際の
+   上限。呼び出しがより高い値で設定されていても、再呼び出しが低いデフォルトから
+   やり直すことはありません；
+2. 環境変数 `MAIN_LLM_OUTPUT_MAX_TOKEN`（デフォルト 8192）；
+3. ハードコードされたデフォルト 8192。
+
 切断された中間結果は破棄され——agent ループには最終結果だけが見えるため、切断内容が
 checkpointer に書き込まれることはなく、IterationBudget は外側のモデル呼び出し毎に
 1 回だけ加算されます。
@@ -346,7 +353,8 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
   callbacks を復元します（例外時も含む）。ストリーミング/非ストリーミングの判定は
   `StreamTurn.run()` がセッション毎に設定する `is_stream_turn` フラグを読み——
   子エージェント（ainvoke）はこのフラグを持たず、常に非ストリーミング経路を通ります。
-- `_extract_ai_message` は素の `AIMessage` と `ModelResponse` 形式の両方を処理します。
+- `_extract_ai_message` は素の `AIMessage` と `.messages` を持つ `ModelRequest`
+  形式レスポンスの両方を処理します。
 
 ### OutputRepetitionGuard と RepetitionGuardWrapper
 

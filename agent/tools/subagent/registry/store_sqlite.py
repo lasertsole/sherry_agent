@@ -187,15 +187,22 @@ def _ensure_tables_sync() -> None:
 
 
 async def save_runs_to_sqlite(runs: dict[str, SubagentRunRecord]) -> None:
-    """Full-replace write of all run records (DELETE then INSERT)."""
+    """Full-sync write: incrementally upsert all run records, then delete run_ids absent from the snapshot."""
     await ensure_db()
     async with _connect() as db:
-        await db.execute("DELETE FROM subagent_runs")
         for run_id, run in runs.items():
             await db.execute(
-                "INSERT INTO subagent_runs (run_id, data) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO subagent_runs (run_id, data) VALUES (?, ?)",
                 (run_id, _serialize_run(run)),
             )
+        if runs:
+            placeholders = ",".join("?" for _ in runs)
+            await db.execute(
+                f"DELETE FROM subagent_runs WHERE run_id NOT IN ({placeholders})",
+                tuple(runs.keys()),
+            )
+        else:
+            await db.execute("DELETE FROM subagent_runs")
         await db.commit()
 
 

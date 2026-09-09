@@ -83,14 +83,9 @@ export interface MessageItem {
 }
 
 /** Role */
-export enum CHAT_ROLE {
-  /** ai */
-  AI = 'ai',
-  /** Tool */
-  TOOL = 'tool',
-  /** User */
-  USER = 'human'
-}
+import { CHAT_ROLE } from '@/types/chat-role';
+
+export { CHAT_ROLE };
 
 /** HITL approval request (corresponds to the backend HitlInterruptData) */
 export interface HitlRequestData {

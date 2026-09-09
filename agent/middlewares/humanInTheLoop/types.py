@@ -17,6 +17,11 @@ from typing import Any
 
 _STATE_PREFIX = "hitl"
 
+# Session-scoped bypass-all flag in state_register_mem (cleared with the
+# session) — distinct from the persistent external-path YOLO in
+# state_register_db (see agent/tools/pub_base/path_utils.py).
+SESSION_YOLO_KEY = "session_yolo"
+
 BLOCKED_MESSAGE = (
     "The user has NOT consented to this action. "
     "Do NOT retry this command, do NOT rephrase it, "

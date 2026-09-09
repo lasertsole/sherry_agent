@@ -1,5 +1,4 @@
 import re
-import json
 from loguru import logger
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
@@ -44,15 +43,11 @@ from config.num import (
     MAX_TOOL_OUTPUT_CHARS,
     MIN_ARGS_CHARS_TO_TRUNCATE,
     MAX_TOOL_ARGS_CHARS,
-    AGGRESSIVE_TRUNCATE_CHARS,
     SUMMARY_TOTAL_MAX_CHARS,
     CONTENT_HEAD_RATIO,
     CONTENT_TAIL_RATIO,
     DEGRADATION_NO_TEXT_THRESHOLD,
     MAX_RECOVERY_ATTEMPTS,
-    MAX_TOTAL_COMPRESSION_ATTEMPTS,
-    INEFFECTIVE_THRESHOLD,
-    MIN_EFFECTIVENESS_PCT,
     PROTECTED_TOOLS,
     LAST_TURN_RATIO_THRESHOLD,
     COMPLETED_MAX_ITEMS,
@@ -81,6 +76,21 @@ from pub_func.message.llm_error_classifier import (
     PAYLOAD_TOO_LARGE,
     classify_provider_error,
 )
+from agent.middlewares.summarization_components import (
+    CompressionEffectivenessTracker,
+    MessageTruncator,
+    OrphanPairRepairer,
+    find_tool_name,
+)
+from agent.middlewares.summarization_components import (
+    _COMPRESSION_COUNT_KEY as _COMPRESSION_COUNT_KEY,
+    _COMPRESSION_INEFFECTIVE_KEY as _COMPRESSION_INEFFECTIVE_KEY,
+    _COMPRESSION_LAST_TOKENS_KEY as _COMPRESSION_LAST_TOKENS_KEY,
+    _FORCE_RECOVERY_KEY as _FORCE_RECOVERY_KEY,
+    _LAST_STRATEGY_KEY as _LAST_STRATEGY_KEY,
+    _SKIP_LLM_KEY as _SKIP_LLM_KEY,
+    _SUMMARY_LC_SOURCE as _SUMMARY_LC_SOURCE,
+)
 
 
 # ======================================================================
@@ -88,14 +98,8 @@ from pub_func.message.llm_error_classifier import (
 # ======================================================================
 
 _LAST_USER_QUESTION_KEY = "summarization_last_user_question"
-_COMPRESSION_COUNT_KEY = "summarization_compression_count"
-_COMPRESSION_INEFFECTIVE_KEY = "summarization_compression_ineffective"
-_COMPRESSION_LAST_TOKENS_KEY = "summarization_compression_last_tokens"
-_LAST_STRATEGY_KEY = "summarization_last_strategy"
-_SKIP_LLM_KEY = "summarization_skip_llm"
 _DEGRADATION_NO_TEXT_KEY = "summarization_degradation_no_text"
 _RECOVERY_ATTEMPTS_KEY = "summarization_recovery_attempts"
-_FORCE_RECOVERY_KEY = "summarization_force_recovery"
 _PREVIOUS_FILE_OPS_KEY = "summarization_previous_file_ops"
 _COOLDOWN_ROUNDS_KEY = "summarization_cooldown_rounds"
 _TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
@@ -103,9 +107,6 @@ _TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
 # classified error, same state_register_mem pattern as the keys above.
 _OVERFLOW_RETRIES_T4_KEY = "summarization_overflow_retries_t4"
 _OVERFLOW_RETRIES_T5_KEY = "summarization_overflow_retries_t5"
-_PREEMPTIVE_TRUNCATE_MAX_CHARS = 2000
-
-_SUMMARY_LC_SOURCE = "summarization"
 
 # Classified provider error -> (recovery trigger label, session retry key).
 # Any future classifier value missing from these maps is treated as a
@@ -550,6 +551,10 @@ class Summarization(AgentMiddleware):
         self._need_update_system_prompt = need_update_system_prompt
         self._compress_last_turn: bool = False
         self._compaction_just_happened: bool = False
+
+        self._effectiveness_tracker = CompressionEffectivenessTracker(self._estimate_tokens)
+        self._truncator = MessageTruncator()
+        self._orphan_repairer = OrphanPairRepairer()
 
     # ------------------------------------------------------------------
     # Session validation
@@ -1181,49 +1186,11 @@ class Summarization(AgentMiddleware):
     def _preemptive_truncate(
         self, messages: list[BaseMessage], session_id: str
     ) -> list[BaseMessage]:
-        result: list[BaseMessage] = []
-        truncated_count = 0
-
-        for m in messages:
-            if isinstance(m, ToolMessage):
-                tc_id = getattr(m, "tool_call_id", "")
-                tool_name = self._find_tool_name(messages, m, tc_id)
-                if tool_name in PROTECTED_TOOLS:
-                    result.append(m)
-                    continue
-                content = str(getattr(m, "content", ""))
-                if len(content) > _PREEMPTIVE_TRUNCATE_MAX_CHARS:
-                    head = content[: int(_PREEMPTIVE_TRUNCATE_MAX_CHARS * CONTENT_HEAD_RATIO)]
-                    tail = content[-int(_PREEMPTIVE_TRUNCATE_MAX_CHARS * CONTENT_TAIL_RATIO) :]
-                    omitted = len(content) - len(head) - len(tail)
-                    truncated = f"{head}...[omitted {omitted} chars]...{tail}"
-                    result.append(m.model_copy(update={"content": truncated}))
-                    truncated_count += 1
-                else:
-                    result.append(m)
-            else:
-                result.append(m)
-
-        if truncated_count > 0:
-            logger.debug(
-                "Preemptive truncation: {} tool outputs, session={}",
-                truncated_count,
-                session_id,
-            )
-        return result
+        return self._truncator.preemptive_truncate(messages, session_id)
 
     @staticmethod
     def _find_tool_name(messages: list[BaseMessage], tool_msg: ToolMessage, tc_id: str) -> str:
-        if not tc_id:
-            return ""
-        idx = messages.index(tool_msg)
-        for i in range(idx - 1, -1, -1):
-            m = messages[i]
-            if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-                for tc in m.tool_calls:
-                    if tc.get("id") == tc_id:
-                        return tc.get("name", "")
-        return ""
+        return find_tool_name(messages, tool_msg, tc_id)
 
     # ------------------------------------------------------------------
     # Last-turn detection
@@ -1276,26 +1243,7 @@ class Summarization(AgentMiddleware):
     # ------------------------------------------------------------------
 
     def _should_skip_compression(self, session_id: str) -> bool:
-        if state_register_mem.get_state(session_id, _FORCE_RECOVERY_KEY, False):
-            state_register_mem.set_state(session_id, _FORCE_RECOVERY_KEY, False)
-            state_register_mem.set_state(session_id, _SKIP_LLM_KEY, False)
-            state_register_mem.set_state(session_id, _COMPRESSION_COUNT_KEY, 0)
-            state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
-            return False
-
-        attempts = state_register_mem.get_state(session_id, _COMPRESSION_COUNT_KEY, 0)
-        if attempts >= MAX_TOTAL_COMPRESSION_ATTEMPTS:
-            logger.debug("Max compression attempts ({}) reached", MAX_TOTAL_COMPRESSION_ATTEMPTS)
-            return True
-
-        ineffective = state_register_mem.get_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
-        if ineffective >= INEFFECTIVE_THRESHOLD:
-            if not state_register_mem.get_state(session_id, _SKIP_LLM_KEY, False):
-                state_register_mem.set_state(session_id, _SKIP_LLM_KEY, True)
-                logger.debug("LLM summary ineffective, switching to non-LLM strategies only")
-            return False
-
-        return False
+        return self._effectiveness_tracker.should_skip(session_id)
 
     def _record_compression(
         self,
@@ -1304,29 +1252,9 @@ class Summarization(AgentMiddleware):
         after_messages: Sequence[BaseMessage],
         strategy_used: str = "",
     ) -> None:
-        attempts = state_register_mem.get_state(session_id, _COMPRESSION_COUNT_KEY, 0) + 1
-        state_register_mem.set_state(session_id, _COMPRESSION_COUNT_KEY, attempts)
-        state_register_mem.set_state(session_id, _LAST_STRATEGY_KEY, strategy_used or "unknown")
-
-        before_tokens = self._estimate_tokens(before_messages)
-        after_tokens = self._estimate_tokens(after_messages)
-        msg_reduced = len(after_messages) < len(before_messages)
-        token_reduction_pct = (
-            (before_tokens - after_tokens) / before_tokens if before_tokens > 0 else 0.0
+        self._effectiveness_tracker.record(
+            session_id, before_messages, after_messages, strategy_used
         )
-        effective = msg_reduced or token_reduction_pct >= MIN_EFFECTIVENESS_PCT
-
-        if not effective:
-            ineffective = (
-                state_register_mem.get_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0) + 1
-            )
-            state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, ineffective)
-        else:
-            state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
-            if strategy_used in ("dedup", "prune", "truncate", "fallback", "aggressive"):
-                state_register_mem.set_state(session_id, _SKIP_LLM_KEY, False)
-
-        state_register_mem.set_state(session_id, _COMPRESSION_LAST_TOKENS_KEY, after_tokens)
 
     # ------------------------------------------------------------------
     # Cutoff determination (budget-based tail selection)
@@ -1367,40 +1295,7 @@ class Summarization(AgentMiddleware):
         return max(cutoff, 0)
 
     def _adjust_for_orphan_pairs(self, messages: list[AnyMessage], cutoff: int) -> int:
-        adjusted = cutoff
-        while adjusted > 0:
-            orphan_ids: set[str] = set()
-            for m in messages[adjusted:]:
-                if isinstance(m, ToolMessage) and m.tool_call_id:
-                    orphan_ids.add(m.tool_call_id)
-            for m in messages[adjusted:]:
-                if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-                    for tc in m.tool_calls:
-                        orphan_ids.discard(tc.get("id"))
-            if not orphan_ids:
-                break
-
-            earliest_orphan_ai = len(messages)
-            for i in range(adjusted):
-                m = messages[i]
-                if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-                    if any(tc.get("id") in orphan_ids for tc in m.tool_calls):
-                        earliest_orphan_ai = min(earliest_orphan_ai, i)
-            if earliest_orphan_ai < adjusted:
-                adjusted = earliest_orphan_ai
-            else:
-                prev_user_idx = next(
-                    (
-                        i
-                        for i in range(adjusted - 1, -1, -1)
-                        if isinstance(messages[i], HumanMessage)
-                    ),
-                    None,
-                )
-                if prev_user_idx is None:
-                    break
-                adjusted = prev_user_idx
-        return adjusted
+        return self._orphan_repairer.adjust(messages, cutoff)
 
     # ------------------------------------------------------------------
     # Previous summary chaining
@@ -1580,38 +1475,7 @@ class Summarization(AgentMiddleware):
         return current, total_reduced
 
     def _aggressive_truncate(self, messages: list[BaseMessage]) -> list[BaseMessage]:
-        result: list[BaseMessage] = []
-        for msg in messages:
-            if isinstance(msg, ToolMessage):
-                content = str(getattr(msg, "content", ""))
-                if len(content) > AGGRESSIVE_TRUNCATE_CHARS:
-                    truncated = content[:AGGRESSIVE_TRUNCATE_CHARS] + (
-                        f"...[aggressively truncated, {len(content) - AGGRESSIVE_TRUNCATE_CHARS} chars omitted]"
-                    )
-                    msg = msg.model_copy(update={"content": truncated})
-            elif isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                new_tcs = []
-                for tc in msg.tool_calls:
-                    name = tc.get("name", "")
-                    if name in PROTECTED_TOOLS:
-                        new_tcs.append(tc)
-                        continue
-                    args = tc.get("args", {})
-                    try:
-                        args_str = json.dumps(args, ensure_ascii=False)
-                    except (TypeError, ValueError):
-                        args_str = str(args)
-                    if len(args_str) > AGGRESSIVE_TRUNCATE_CHARS:
-                        truncated = args_str[:AGGRESSIVE_TRUNCATE_CHARS] + (
-                            f"...[args aggressively truncated, "
-                            f"{len(args_str) - AGGRESSIVE_TRUNCATE_CHARS} chars omitted]"
-                        )
-                        new_tcs.append({**tc, "args": {"_truncated_args": truncated}})
-                    else:
-                        new_tcs.append(tc)
-                msg = msg.model_copy(update={"tool_calls": new_tcs})
-            result.append(msg)
-        return result
+        return self._truncator.aggressive_truncate(messages)
 
     # ------------------------------------------------------------------
     # Recovery context capture & injection
@@ -1664,23 +1528,10 @@ class Summarization(AgentMiddleware):
 
     @staticmethod
     def _truncate_content(content: str, max_chars: int) -> str:
-        if len(content) <= max_chars:
-            return content
-        head = content[: int(max_chars * CONTENT_HEAD_RATIO)]
-        tail = content[-int(max_chars * CONTENT_TAIL_RATIO) :]
-        omitted = len(content) - len(head) - len(tail)
-        return f"{head}...[omitted {omitted} chars]...{tail}"
+        return MessageTruncator.truncate_content(content, max_chars)
 
     def _truncate_summary_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
-        result: list[BaseMessage] = []
-        for m in messages:
-            if getattr(m, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE:
-                content = getattr(m, "content", "")
-                if isinstance(content, str) and len(content) > SUMMARY_TOTAL_MAX_CHARS:
-                    truncated = self._truncate_content(content, SUMMARY_TOTAL_MAX_CHARS)
-                    m = m.model_copy(update={"content": truncated})
-            result.append(m)
-        return result
+        return self._truncator.truncate_summary_messages(messages)
 
     # ------------------------------------------------------------------
     # Degradation monitoring

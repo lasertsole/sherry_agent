@@ -178,6 +178,12 @@ INSERT INTO user_input_queue
 VALUES (?, ?, ?, ?, ?, ?, 'CLAIMED', ?, ?, ?);
 """
 
+_INSERT_QUEUED_SQL = """
+INSERT INTO user_input_queue
+(id, session_id, payload, source, reply_target, client_msg_id, status, created_at, updated_at, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?);
+"""
+
 
 async def _switch_to_wal_if_needed(db: aiosqlite.Connection) -> None:
     """Switch the database to WAL mode, unless it is already WAL.
@@ -269,44 +275,30 @@ def _row_from_db(row: aiosqlite.Row) -> UserInputQueueRow:
     )
 
 
-class UserInputQueue:
-    """Async store for queued user inputs, persisted via aiosqlite (WAL).
+class ConnectionManager:
+    """Owns short-lived aiosqlite connections and same-loop write serialization.
 
-    Open one instance per process (or per test) pointed at the same db file;
-    state survives across instances ("restarts") because SQLite is the source
-    of truth for this queue.
-
-    Connections are short-lived and every one of them sets ``PRAGMA
-    busy_timeout`` as its first statement. Schema init (WAL check/switch +
-    CREATE TABLE/INDEX) runs at most once per instance, on first use,
-    serialized by an asyncio lock on the instance's owning loop. Every mutating
-    operation runs in a single ``BEGIN IMMEDIATE`` transaction: the write lock
-    is acquired up front, so the multi-statement check-then-write sequences
-    cannot interleave with a concurrent writer (race-free enqueue dedup/cap
-    checks and claim).
-
-    Same-loop writes are additionally serialized by a per-instance
-    ``asyncio.Lock`` (``_write_lock``): SQLite's busy-handler backoff is UNFAIR
-    (sleeps up to 100 ms between retries), so under heavy same-loop contention
-    (e.g. 100 concurrent claims) individual ``BEGIN IMMEDIATE`` attempts can
-    exceed ``busy_timeout`` before ever acquiring the SQLite write lock and
-    fail with "database is locked". The in-process lock removes that contention
-    entirely (the deployment is single-process), while ``BEGIN IMMEDIATE`` +
-    ``busy_timeout`` still guard cross-instance / cross-process atomicity --
-    claim atomicity itself rests on the single ``UPDATE ... RETURNING``
-    statement, which is correct with or without the lock.
+    Every connection executes ``PRAGMA busy_timeout`` as its FIRST statement.
+    ``write_transaction`` additionally holds a per-instance ``asyncio.Lock``:
+    SQLite's busy-handler backoff is UNFAIR (sleeps up to 100 ms between
+    retries), so under heavy same-loop contention (e.g. 100 concurrent claims)
+    individual ``BEGIN IMMEDIATE`` attempts can exceed ``busy_timeout`` before
+    ever acquiring the SQLite write lock and fail with "database is locked".
+    The in-process lock removes that contention entirely (the deployment is
+    single-process), while ``BEGIN IMMEDIATE`` + ``busy_timeout`` still guard
+    cross-instance / cross-process atomicity.
     """
 
-    def __init__(self, db_path: Path | None = None) -> None:
-        self._db_path = Path(db_path) if db_path is not None else _DB_PATH
-        self._db_dir = self._db_path.parent
-        self._init_lock = asyncio.Lock()
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = Path(db_path)
         self._write_lock = asyncio.Lock()
-        self._init_loop: asyncio.AbstractEventLoop | None = None
-        self._initialized: bool = False
+
+    def remint_write_lock(self) -> None:
+        """Replace the write lock (the owning event loop died and was re-owned)."""
+        self._write_lock = asyncio.Lock()
 
     @asynccontextmanager
-    async def _connect(self) -> AsyncGenerator[aiosqlite.Connection]:
+    async def connect(self) -> AsyncGenerator[aiosqlite.Connection]:
         """Open a short-lived connection; busy_timeout is always the FIRST statement."""
         db = await aiosqlite.connect(self._db_path)
         try:
@@ -316,13 +308,13 @@ class UserInputQueue:
             await db.close()
 
     @asynccontextmanager
-    async def _transaction(self) -> AsyncGenerator[aiosqlite.Connection]:
+    async def transaction(self) -> AsyncGenerator[aiosqlite.Connection]:
         """One connection + one BEGIN IMMEDIATE transaction, committed on success.
 
         An exception inside the block rolls the transaction back before the
         connection closes, so partial writes never survive.
         """
-        async with self._connect() as db:
+        async with self.connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
                 yield db
@@ -333,28 +325,46 @@ class UserInputQueue:
                 await db.commit()
 
     @asynccontextmanager
-    async def _write_transaction(self) -> AsyncGenerator[aiosqlite.Connection]:
-        """Serialize same-loop writers, then run one BEGIN IMMEDIATE transaction.
-
-        The per-instance lock keeps SQLite-level write-lock contention (and its
-        unfair busy-handler backoff) out of the single-process deployment; the
-        transaction still guarantees atomicity if a foreign writer contends.
-        """
+    async def write_transaction(self) -> AsyncGenerator[aiosqlite.Connection]:
+        """Serialize same-loop writers, then run one BEGIN IMMEDIATE transaction."""
         async with self._write_lock:
-            async with self._transaction() as db:
+            async with self.transaction() as db:
                 yield db
 
-    async def _init_db(self) -> None:
+
+class SchemaManager:
+    """One-time schema setup (WAL + table + indexes), lock- and loop-aware.
+
+    Schema init runs at most once per store instance, on first use, serialized
+    by an asyncio lock on the instance's owning loop. If the owning loop died
+    before finishing (event-loop teardown can cancel a first-use init
+    mid-statement), the next caller re-owns the init: asyncio primitives are
+    loop-bound once used, so the locks minted on the dead loop are replaced
+    along with it (the connection manager's write lock included).
+    """
+
+    def __init__(self, db_path: Path, conn: ConnectionManager) -> None:
+        self._db_path = Path(db_path)
+        self._conn = conn
+        self._init_lock = asyncio.Lock()
+        self._init_loop: asyncio.AbstractEventLoop | None = None
+        self._initialized: bool = False
+
+    def remint_locks(self) -> None:
+        """Replace the init lock (the owning event loop died and was re-owned)."""
+        self._init_lock = asyncio.Lock()
+
+    async def init_db(self) -> None:
         """One-time schema setup; safe to run concurrently (busy_timeout + IF NOT EXISTS)."""
-        self._db_dir.mkdir(parents=True, exist_ok=True)
-        async with self._connect() as db:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        async with self._conn.connect() as db:
             await _switch_to_wal_if_needed(db)
             await db.execute(_CREATE_TABLE_SQL)
             for index_sql in _CREATE_INDEX_SQLS:
                 await db.execute(index_sql)
             await db.commit()
 
-    async def _ensure_db(self) -> None:
+    async def ensure_db(self) -> None:
         """Ensure the database directory and the user_input_queue table exist (once per instance)."""
         if self._initialized:
             return
@@ -371,15 +381,15 @@ class UserInputQueue:
             # asyncio primitives are loop-bound once used, so the locks
             # minted on the dead loop are replaced along with it.
             self._init_loop = None
-            self._init_lock = asyncio.Lock()
-            self._write_lock = asyncio.Lock()
+            self.remint_locks()
+            self._conn.remint_write_lock()
         if self._init_loop is None:
             self._init_loop = loop
         if self._init_loop is loop:
             async with self._init_lock:
                 if self._initialized:
                     return
-                await self._init_db()
+                await self.init_db()
                 self._initialized = True
             return
         # Non-owning loop (a store instance driven from more than one event
@@ -390,8 +400,166 @@ class UserInputQueue:
         while not self._initialized and time.monotonic() < deadline:
             await asyncio.sleep(0.01)
         if not self._initialized:
-            await self._init_db()
+            await self.init_db()
             self._initialized = True
+
+
+class QueueRepository:
+    """Stateless SQL statements over the ``user_input_queue`` table.
+
+    Every method takes an OPEN connection (plain or inside a
+    ``BEGIN IMMEDIATE`` transaction) and returns domain objects; transaction
+    boundaries and ordering policy live with the caller.
+    """
+
+    @staticmethod
+    async def find_active_by_client_msg(
+        db: aiosqlite.Connection, client_msg_id: str
+    ) -> UserInputQueueRow | None:
+        async with db.execute(
+            "SELECT * FROM user_input_queue WHERE client_msg_id = ? "
+            f"AND status IN {_ACTIVE_STATUSES_SQL} ORDER BY created_at ASC LIMIT 1",
+            (client_msg_id,),
+        ) as cursor:
+            existing = await cursor.fetchone()
+        return _row_from_db(existing) if existing is not None else None
+
+    @staticmethod
+    async def count_active(db: aiosqlite.Connection, session_id: str) -> int:
+        async with db.execute(
+            f"SELECT COUNT(*) FROM user_input_queue WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL}",
+            (session_id,),
+        ) as cursor:
+            count_row = await cursor.fetchone()
+            assert count_row is not None, "COUNT(*) always returns a row"
+            (count,) = count_row
+        return int(count)
+
+    @staticmethod
+    async def insert_queued(db: aiosqlite.Connection, row: UserInputQueueRow) -> None:
+        await db.execute(
+            _INSERT_QUEUED_SQL,
+            (
+                row.id,
+                row.session_id,
+                row.payload,
+                row.source,
+                row.reply_target,
+                row.client_msg_id,
+                row.created_at,
+                row.updated_at,
+                row.expires_at,
+            ),
+        )
+
+    @staticmethod
+    async def insert_claimed(db: aiosqlite.Connection, row: UserInputQueueRow) -> None:
+        await db.execute(
+            _INSERT_CLAIMED_SQL,
+            (
+                row.id,
+                row.session_id,
+                row.payload,
+                row.source,
+                row.reply_target,
+                row.client_msg_id,
+                row.created_at,
+                row.updated_at,
+                row.expires_at,
+            ),
+        )
+
+    @staticmethod
+    async def fetch_by_id(db: aiosqlite.Connection, row_id: str) -> UserInputQueueRow:
+        async with db.execute("SELECT * FROM user_input_queue WHERE id = ?", (row_id,)) as cursor:
+            inserted = await cursor.fetchone()
+        assert inserted is not None, "inserted row vanished inside its own transaction"
+        return _row_from_db(inserted)
+
+    @staticmethod
+    async def queued_position(db: aiosqlite.Connection, row: UserInputQueueRow) -> int:
+        """1-based FIFO rank of ``row`` among its session's QUEUED rows.
+
+        For a CLAIMED row there is no queue slot: returns 0 (already being
+        processed, not waiting in line).
+        """
+        if row.status is not UserInputQueueStatus.QUEUED:
+            return 0
+        async with db.execute(
+            "SELECT COUNT(*) FROM user_input_queue "
+            "WHERE session_id = ? AND status = 'QUEUED' "
+            "AND (created_at < ? OR (created_at = ? AND id <= ?))",
+            (row.session_id, row.created_at, row.created_at, row.id),
+        ) as cursor:
+            position_row = await cursor.fetchone()
+            assert position_row is not None, "COUNT(*) always returns a row"
+            (position,) = position_row
+        return int(position)
+
+    @staticmethod
+    async def claim_next(
+        db: aiosqlite.Connection, session_id: str, now: float
+    ) -> UserInputQueueRow | None:
+        cursor = await db.execute(_CLAIM_NEXT_SQL, (now, session_id, now))
+        claimed = await cursor.fetchone()
+        return _row_from_db(claimed) if claimed is not None else None
+
+    @staticmethod
+    async def mark_terminal(
+        db: aiosqlite.Connection, terminal: str, row_id: str, now: float
+    ) -> bool:
+        cursor = await db.execute(_MARK_TERMINAL_SQL, (terminal, now, row_id))
+        return await cursor.fetchone() is not None
+
+    @staticmethod
+    async def recover(db: aiosqlite.Connection, session_id: str, now: float) -> int:
+        cursor = await db.execute(_RECOVER_SQL, (now, session_id, now))
+        return int(cursor.rowcount)
+
+    @staticmethod
+    async def list_active(db: aiosqlite.Connection, session_id: str) -> list[UserInputQueueRow]:
+        rows: list[UserInputQueueRow] = []
+        async with db.execute(
+            f"SELECT {_ROW_COLUMNS} FROM user_input_queue "
+            f"WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL} "
+            "ORDER BY created_at ASC, id ASC",
+            (session_id,),
+        ) as cursor:
+            async for row in cursor:
+                rows.append(_row_from_db(row))
+        return rows
+
+
+class UserInputQueue:
+    """Async store for queued user inputs, persisted via aiosqlite (WAL).
+
+    Open one instance per process (or per test) pointed at the same db file;
+    state survives across instances ("restarts") because SQLite is the source
+    of truth for this queue.
+
+    Connection lifecycle, schema init and SQL execution are delegated to
+    ``ConnectionManager`` / ``SchemaManager`` / ``QueueRepository``; this class
+    orchestrates them: every mutating operation runs in a single
+    ``BEGIN IMMEDIATE`` transaction, so the multi-statement check-then-write
+    sequences cannot interleave with a concurrent writer (race-free enqueue
+    dedup/cap checks and claim).
+    """
+
+    def __init__(self, db_path: Path | None = None) -> None:
+        self._db_path = Path(db_path) if db_path is not None else _DB_PATH
+        self._conn = ConnectionManager(self._db_path)
+        self._schema = SchemaManager(self._db_path, self._conn)
+
+    @property
+    def _initialized(self) -> bool:
+        return self._schema._initialized
+
+    @property
+    def _init_loop(self) -> asyncio.AbstractEventLoop | None:
+        return self._schema._init_loop
+
+    async def _ensure_db(self) -> None:
+        await self._schema.ensure_db()
 
     async def enqueue(
         self,
@@ -420,34 +588,22 @@ class UserInputQueue:
         now = time.time()
         row_id = uuid.uuid4().hex
 
-        async with self._write_transaction() as db:
+        async with self._conn.write_transaction() as db:
             # 1. Dedup against ACTIVE rows with the same client_msg_id.
             if client_msg_id is not None:
-                async with db.execute(
-                    "SELECT * FROM user_input_queue WHERE client_msg_id = ? "
-                    f"AND status IN {_ACTIVE_STATUSES_SQL} ORDER BY created_at ASC LIMIT 1",
-                    (client_msg_id,),
-                ) as cursor:
-                    existing = await cursor.fetchone()
+                existing = await QueueRepository.find_active_by_client_msg(db, client_msg_id)
                 if existing is not None:
-                    existing_row = _row_from_db(existing)
-                    position = await self._queued_position(db, existing_row)
+                    position = await QueueRepository.queued_position(db, existing)
                     logger.debug(
                         "user_input_queue dedup: client_msg_id {} already active as row {} (position {}); enqueue is a no-op",
                         client_msg_id,
-                        existing_row.id,
+                        existing.id,
                         position,
                     )
-                    return existing_row, position
+                    return existing, position
 
             # 2. Capacity: QUEUED + CLAIMED for this session.
-            async with db.execute(
-                f"SELECT COUNT(*) FROM user_input_queue WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL}",
-                (session_id,),
-            ) as cursor:
-                count_row = await cursor.fetchone()
-                assert count_row is not None, "COUNT(*) always returns a row"
-                (active_count,) = count_row
+            active_count = await QueueRepository.count_active(db, session_id)
             if active_count >= MAX_ACTIVE_PER_SESSION:
                 raise QueueFullError(
                     f"input queue full for session {session_id!r}: "
@@ -457,50 +613,22 @@ class UserInputQueue:
             # 3. Insert and compute the new row's FIFO position.
             created_at = now
             expires_at = created_at + _EXPIRY_SECONDS
-            await db.execute(
-                "INSERT INTO user_input_queue "
-                "(id, session_id, payload, source, reply_target, client_msg_id, status, created_at, updated_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?)",
-                (
-                    row_id,
-                    session_id,
-                    payload,
-                    source,
-                    reply_target,
-                    client_msg_id,
-                    created_at,
-                    now,
-                    expires_at,
-                ),
+            row = UserInputQueueRow(
+                id=row_id,
+                session_id=session_id,
+                payload=payload,
+                source=source,
+                reply_target=reply_target,
+                client_msg_id=client_msg_id,
+                status=UserInputQueueStatus.QUEUED,
+                created_at=created_at,
+                updated_at=now,
+                expires_at=expires_at,
             )
-            async with db.execute(
-                "SELECT * FROM user_input_queue WHERE id = ?", (row_id,)
-            ) as cursor:
-                inserted = await cursor.fetchone()
-            assert inserted is not None, "inserted row vanished inside its own transaction"
-            row = _row_from_db(inserted)
-            position = await self._queued_position(db, row)
-            return row, position
-
-    @staticmethod
-    async def _queued_position(db: aiosqlite.Connection, row: UserInputQueueRow) -> int:
-        """1-based FIFO rank of ``row`` among its session's QUEUED rows.
-
-        For a CLAIMED row there is no queue slot: returns 0 (already being
-        processed, not waiting in line).
-        """
-        if row.status is not UserInputQueueStatus.QUEUED:
-            return 0
-        async with db.execute(
-            "SELECT COUNT(*) FROM user_input_queue "
-            "WHERE session_id = ? AND status = 'QUEUED' "
-            "AND (created_at < ? OR (created_at = ? AND id <= ?))",
-            (row.session_id, row.created_at, row.created_at, row.id),
-        ) as cursor:
-            position_row = await cursor.fetchone()
-            assert position_row is not None, "COUNT(*) always returns a row"
-            (position,) = position_row
-        return int(position)
+            await QueueRepository.insert_queued(db, row)
+            inserted = await QueueRepository.fetch_by_id(db, row_id)
+            position = await QueueRepository.queued_position(db, inserted)
+            return inserted, position
 
     async def claim_next(self, session_id: str) -> UserInputQueueRow | None:
         """Atomically claim the OLDEST non-expired QUEUED row of ``session_id``.
@@ -513,12 +641,8 @@ class UserInputQueue:
         """
         await self._ensure_db()
         now = time.time()
-        async with self._write_transaction() as db:
-            cursor = await db.execute(_CLAIM_NEXT_SQL, (now, session_id, now))
-            claimed = await cursor.fetchone()
-            if claimed is None:
-                return None
-            return _row_from_db(claimed)
+        async with self._conn.write_transaction() as db:
+            return await QueueRepository.claim_next(db, session_id, now)
 
     async def mark_terminal(
         self, row_id: str, status: UserInputQueueStatus | Literal["DELIVERED", "FAILED", "VOIDED"]
@@ -537,9 +661,9 @@ class UserInputQueue:
             )
 
         await self._ensure_db()
-        async with self._write_transaction() as db:
-            cursor = await db.execute(_MARK_TERMINAL_SQL, (terminal.value, time.time(), row_id))
-            if await cursor.fetchone() is None:
+        async with self._conn.write_transaction() as db:
+            found = await QueueRepository.mark_terminal(db, terminal.value, row_id, time.time())
+            if not found:
                 logger.debug(
                     "user_input_queue mark_terminal: row {} not active (unknown id or already terminal); no-op",
                     row_id,
@@ -548,30 +672,14 @@ class UserInputQueue:
     async def count_active(self, session_id: str) -> int:
         """Number of ACTIVE (QUEUED + CLAIMED) rows for ``session_id``."""
         await self._ensure_db()
-        async with self._connect() as db:
-            async with db.execute(
-                f"SELECT COUNT(*) FROM user_input_queue WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL}",
-                (session_id,),
-            ) as cursor:
-                count_row = await cursor.fetchone()
-                assert count_row is not None, "COUNT(*) always returns a row"
-                (count,) = count_row
-        return int(count)
+        async with self._conn.connect() as db:
+            return await QueueRepository.count_active(db, session_id)
 
     async def list_active(self, session_id: str) -> list[UserInputQueueRow]:
         """All ACTIVE (QUEUED + CLAIMED) rows for ``session_id``, FIFO order (created_at ASC)."""
         await self._ensure_db()
-        rows: list[UserInputQueueRow] = []
-        async with self._connect() as db:
-            async with db.execute(
-                f"SELECT {_ROW_COLUMNS} FROM user_input_queue "
-                f"WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL} "
-                "ORDER BY created_at ASC, id ASC",
-                (session_id,),
-            ) as cursor:
-                async for row in cursor:
-                    rows.append(_row_from_db(row))
-        return rows
+        async with self._conn.connect() as db:
+            return await QueueRepository.list_active(db, session_id)
 
     async def recover(self, session_id: str) -> int:
         """Void expired QUEUED/CLAIMED rows (24h crash-recovery expiry); return the count.
@@ -581,16 +689,15 @@ class UserInputQueue:
         """
         await self._ensure_db()
         now = time.time()
-        async with self._write_transaction() as db:
-            cursor = await db.execute(_RECOVER_SQL, (now, session_id, now))
-            voided = cursor.rowcount
+        async with self._conn.write_transaction() as db:
+            voided = await QueueRepository.recover(db, session_id, now)
         if voided > 0:
             logger.info(
                 "user_input_queue recover: voided {} expired row(s) for session {}",
                 voided,
                 session_id,
             )
-        return int(voided)
+        return voided
 
     async def find_active_by_client_msg_id(self, client_msg_id: str) -> UserInputQueueRow | None:
         """Return the ACTIVE (QUEUED/CLAIMED) row carrying ``client_msg_id``, or None.
@@ -602,10 +709,8 @@ class UserInputQueue:
         this helper is the pre-check under the caller's per-session lock.
         """
         await self._ensure_db()
-        async with self._connect() as db:
-            async with db.execute(_FIND_ACTIVE_BY_CLIENT_MSG_SQL, (client_msg_id,)) as cursor:
-                row = await cursor.fetchone()
-        return _row_from_db(row) if row is not None else None
+        async with self._conn.connect() as db:
+            return await QueueRepository.find_active_by_client_msg(db, client_msg_id)
 
     async def insert_claimed(
         self,
@@ -640,36 +745,24 @@ class UserInputQueue:
         created_at = now
         expires_at = created_at + _EXPIRY_SECONDS
 
-        async with self._write_transaction() as db:
-            async with db.execute(
-                f"SELECT COUNT(*) FROM user_input_queue WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL}",
-                (session_id,),
-            ) as cursor:
-                count_row = await cursor.fetchone()
-                assert count_row is not None, "COUNT(*) always returns a row"
-                (active_count,) = count_row
+        async with self._conn.write_transaction() as db:
+            active_count = await QueueRepository.count_active(db, session_id)
             if active_count >= MAX_ACTIVE_PER_SESSION:
                 raise QueueFullError(
                     f"input queue full for session {session_id!r}: "
                     f"{active_count} active rows >= cap {MAX_ACTIVE_PER_SESSION}"
                 )
-            await db.execute(
-                _INSERT_CLAIMED_SQL,
-                (
-                    row_id,
-                    session_id,
-                    payload,
-                    source,
-                    reply_target,
-                    client_msg_id,
-                    created_at,
-                    now,
-                    expires_at,
-                ),
+            row = UserInputQueueRow(
+                id=row_id,
+                session_id=session_id,
+                payload=payload,
+                source=source,
+                reply_target=reply_target,
+                client_msg_id=client_msg_id,
+                status=UserInputQueueStatus.CLAIMED,
+                created_at=created_at,
+                updated_at=now,
+                expires_at=expires_at,
             )
-            async with db.execute(
-                "SELECT * FROM user_input_queue WHERE id = ?", (row_id,)
-            ) as cursor:
-                inserted = await cursor.fetchone()
-            assert inserted is not None, "inserted row vanished inside its own transaction"
-            return _row_from_db(inserted)
+            await QueueRepository.insert_claimed(db, row)
+            return await QueueRepository.fetch_by_id(db, row_id)

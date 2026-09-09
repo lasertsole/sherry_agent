@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { toMessageItems } from '../messageItems';
+import { toMessageItems } from '../../../composables/message-items';
 import { CHAT_ROLE } from '../type';
 import type { CachedMessage } from '@/composables/db';
 
 /**
  * Minimal valid CachedMessage row (mirrors the backend history API row shape; see db.ts).
  * `origin` is intentionally absent from the base object: legacy cached rows never carried it.
+ * @param over
  */
 const row = (over: Partial<CachedMessage>): CachedMessage => ({
   id: 1,

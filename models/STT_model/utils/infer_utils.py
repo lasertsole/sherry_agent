@@ -16,8 +16,9 @@ try:
         get_available_providers,
         get_device,
     )
-except:
-    print("please pip3 install onnxruntime")
+except ImportError as e:
+    logging.error("onnxruntime import failed: %s", e)
+    raise
 import jieba
 import warnings
 

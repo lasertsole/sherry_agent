@@ -31,6 +31,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_audio_video_columns,
         add_model_token_columns,
         add_origin_column,
+        add_session_role_index,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -188,6 +189,10 @@ def add_origin_column(db: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Column already exists — nothing to do.
         pass
+
+
+def add_session_role_index(db: sqlite3.Connection) -> None:
+    db.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role)")
 
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:

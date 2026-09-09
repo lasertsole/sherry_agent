@@ -1,5 +1,4 @@
 import { computed, ref } from 'vue';
-import { readBackgroundConfig, saveBackground } from '@/composables/db';
 import { logUtil } from '~/utils/log';
 
 /**
@@ -69,6 +68,8 @@ const loadBackground = async () => {
  * Module-level setter: updates the shared singleton state synchronously + persists to
  * Dexie. Passing an empty string clears the background. Persistence failures do not
  * throw (a local frontend cache failure must not block the save flow).
+ * @param url
+ * @param opacity
  */
 const setBackground = async (url: string, opacity: number = backgroundOpacity.value) => {
   backgroundUrl.value = url;
@@ -80,7 +81,10 @@ const setBackground = async (url: string, opacity: number = backgroundOpacity.va
   }
 };
 
-/** Module-level overlay-opacity update (keeps the current background image), persisted to Dexie */
+/**
+ * Module-level overlay-opacity update (keeps the current background image), persisted to Dexie
+ * @param opacity
+ */
 const setBackgroundOpacity = async (opacity: number) => {
   backgroundOpacity.value = opacity;
   try {

@@ -378,8 +378,8 @@ def _run() -> None:
 
     try:
         event_loop.run_forever()
-    except Exception:  # noqa: S110
-        pass
+    except Exception:
+        logger.exception("Channel event loop crashed")
 
 
 _channel_thread: Thread = Thread(target=_run, daemon=True)

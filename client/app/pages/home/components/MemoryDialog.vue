@@ -103,7 +103,6 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { readMemory, writeMemory } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
 
 /**
@@ -120,6 +119,7 @@ const ENTRY_DELIMITER = '\n§\n';
 /**
  * Derive the H1 title used as a file header (e.g. 'MEMORY.md' -> '# MEMORY').
  * Only the exact title of the current file is treated as a header.
+ * @param file
  */
 function fileTitle(file: string): string {
   return `# ${file.replace(/\.md$/i, '')}`;
@@ -129,6 +129,8 @@ function fileTitle(file: string): string {
  * Re-assemble a full raw file body for a given file: header line, then the
  * entries joined by the on-disk delimiter. Mirrors the on-disk layout the
  * backend writes and expects to read back.
+ * @param file
+ * @param entries
  */
 function joinFileBody(file: string, entries: string[]): string {
   const body = entries.filter(e => e.trim().length > 0).join(ENTRY_DELIMITER);
@@ -170,7 +172,11 @@ const editEntries = ref<Record<string, string[]>>({});
 /** Frozen entries per file at load time, for dirty tracking. */
 const originalEntries = ref<Record<string, string[]>>({});
 
-/** Split a raw memory file into entries using the on-disk delimiter. */
+/**
+ * Split a raw memory file into entries using the on-disk delimiter.
+ * @param file
+ * @param raw
+ */
 function splitEntries(file: string, raw: string): string[] {
   if (!raw || !raw.trim()) return [];
 
@@ -190,7 +196,10 @@ function splitEntries(file: string, raw: string): string[] {
   return parts;
 }
 
-/** Join entries back into a raw file using the on-disk delimiter. */
+/**
+ * Join entries back into a raw file using the on-disk delimiter.
+ * @param entries
+ */
 function joinEntries(entries: string[]): string {
   return entries.filter(e => e.trim().length > 0).join(ENTRY_DELIMITER);
 }
@@ -199,7 +208,10 @@ function entries(file: string): string[] {
   return editEntries.value[file] ?? [];
 }
 
-/** Length of the joined raw file for one tab (what the server actually measures). */
+/**
+ * Length of the joined raw file for one tab (what the server actually measures).
+ * @param file
+ */
 function joinedLength(file: string): number {
   return joinEntries(entries(file)).length;
 }
@@ -292,6 +304,14 @@ const handleSave = async () => {
         "deleteEntry": "删除条目",
         "empty": "暂无条目，请在下方添加。",
         "effectiveHint": "提示：修改后仅在系统压缩或重启时生效。"
+      },
+      "tabs": {
+        "memoryAgent": "记忆·Agent",
+        "memoryUser": "记忆·用户"
+      },
+      "desc": {
+        "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
+        "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）"
       }
     }
   },
@@ -303,6 +323,14 @@ const handleSave = async () => {
         "deleteEntry": "Delete entry",
         "empty": "No entries yet. Add one below.",
         "effectiveHint": "Note: Changes only take effect after compression or restart."
+      },
+      "tabs": {
+        "memoryAgent": "Memory · Agent",
+        "memoryUser": "Memory · User"
+      },
+      "desc": {
+        "memoryAgent": "Agent long-term memory notes (workspace/memory/MEMORY.md)",
+        "memoryUser": "User long-term memory info (workspace/memory/USER.md)"
       }
     }
   },
@@ -314,6 +342,14 @@ const handleSave = async () => {
         "deleteEntry": "項目を削除",
         "empty": "項目はまだありません。下から追加してください。",
         "effectiveHint": "注意：変更は圧縮時または再起動時にのみ反映されます。"
+      },
+      "tabs": {
+        "memoryAgent": "記憶・Agent",
+        "memoryUser": "記憶・ユーザー"
+      },
+      "desc": {
+        "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
+        "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）"
       }
     }
   },
@@ -325,6 +361,14 @@ const handleSave = async () => {
         "deleteEntry": "항목 삭제",
         "empty": "항목이 없습니다. 아래에서 추가하세요.",
         "effectiveHint": "참고: 변경 사항은 압축 또는 재시작 시에만 적용됩니다."
+      },
+      "tabs": {
+        "memoryAgent": "메모리·Agent",
+        "memoryUser": "메모리·사용자"
+      },
+      "desc": {
+        "memoryAgent": "Agent 장기 기억 메모 (workspace/memory/MEMORY.md)",
+        "memoryUser": "사용자 장기 기억 정보 (workspace/memory/USER.md)"
       }
     }
   }

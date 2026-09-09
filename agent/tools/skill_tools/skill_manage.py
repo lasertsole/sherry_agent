@@ -768,8 +768,8 @@ def _patch_skill(
         err_msg = match_error
         try:
             err_msg += format_no_match_hint(match_error, match_count, old_string, content)
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("format_no_match_hint failed for {}: {}", target, e)
         return {
             "success": False,
             "error": err_msg,
@@ -954,8 +954,8 @@ class SkillManage(BaseTool):
                 from skills import build_skills_snapshot
 
                 build_skills_snapshot()
-            except Exception:  # noqa: S110
-                pass
+            except Exception as e:
+                logger.debug("build_skills_snapshot failed after skill_manage({}): {}", action, e)
             # Curator telemetry: bump patch_count on edit/patch/write_file (the actions
             # that mutate an existing skill's guidance), drop the record on delete.
             # Only mark a skill as agent-created when the background self-improvement
@@ -981,8 +981,8 @@ class SkillManage(BaseTool):
                     # status/restore still see it. Only a hard delete forgets.
                     if not result.get("_archived"):
                         forget(name)
-            except Exception:  # noqa: S110
-                pass
+            except Exception as e:
+                logger.debug("Skill usage telemetry failed for {} ({}): {}", name, action, e)
 
         return json.dumps(result, ensure_ascii=False)
 

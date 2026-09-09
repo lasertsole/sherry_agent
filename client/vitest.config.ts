@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
+import unimport from 'unimport/unplugin';
 import { fileURLToPath } from 'node:url';
 
 // Single unified Vitest config for the colocated test suites:
@@ -9,7 +10,40 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   plugins: [
     // SFC compilation for the integration suite (no-op cost for pure .ts files)
-    vue()
+    vue(),
+    // Attach SFC `<i18n lang="json">` block messages onto the compiled
+    // component (`__i18n`), mirroring what @intlify/unplugin-vue-i18n does in
+    // the real Nuxt build. plugin-vue compiles each i18n custom block to an
+    // inert `import blockN from "file.vue?vue&type=i18n..."` (Vite parses the
+    // JSON; the block never reaches the component), so without this pass the
+    // integration suite cannot resolve component-local keys. The stubbed
+    // `vue-i18n` module reads `__i18n` off the current instance and overlays it
+    // over the global zh messages (local scope with global fallback).
+    {
+      name: 'vitest-sfc-i18n-blocks',
+      enforce: 'post',
+      transform(code, id) {
+        const [filename] = id.split('?', 2);
+        if (!filename.endsWith('.vue')) return;
+        const blockVars = [...code.matchAll(/import (block\d+) from "[^"]+\?vue&type=i18n[^"]*"/g)].map(m => m[1]);
+        if (!blockVars.length || !code.includes('_sfc_main')) return;
+        return {
+          code: `${code}\nif (typeof _sfc_main !== 'undefined') _sfc_main.__i18n = [${blockVars.join(', ')}];\n`,
+          map: null
+        };
+      }
+    },
+    // Mirror Nuxt's unimport transform for app/composables/ exports (enforced
+    // as bare symbols by the `no-restricted-imports` rule in
+    // eslint.config.mjs). Without this injection those identifiers are
+    // ReferenceErrors under Vitest. unimport stays on the same 6.x major as
+    // Nuxt 4.5 so test-time injection matches the production build. Tests are
+    // excluded: they run outside the Nuxt pipeline and import explicitly.
+    unimport.vite({
+      dirs: ['./app/composables'],
+      addons: { vueTemplate: true },
+      exclude: [/[\\/]node_modules[\\/]/, /[\\/]\.git[\\/]/, /[\\/]__tests__[\\/]/]
+    })
   ],
   resolve: {
     alias: {

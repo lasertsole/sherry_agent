@@ -80,7 +80,10 @@ class FakeWebSocket {
     this.readyState = FakeWebSocket.OPEN;
     this.onopen?.({});
   }
-  /** Simulate an inbound frame (assumes string payload). */
+  /**
+   * Simulate an inbound frame (assumes string payload).
+   * @param payload
+   */
   frame(payload: unknown) {
     const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
     this.onmessage?.({ data });
@@ -399,5 +402,26 @@ describe('HITL trigger patterns match the backend guardrails', () => {
       edited_args: { command: 'ls' }
     });
     void promise;
+  });
+});
+
+describe('resumeHitl yolo decision (fresh resume WebSocket)', () => {
+  it('sends a yolo hitl_response frame on the dedicated resume socket', async () => {
+    const onChunk = vi.fn();
+    const { promise } = bridge.resumeHitl('s1', 'yolo', '', onChunk);
+    const ws = await awaitSocket();
+
+    expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
+    const frame = JSON.parse(ws.sent[0]!);
+    expect(frame).toEqual({
+      type: 'hitl_response',
+      session_id: 's1',
+      decision: 'yolo',
+      message: ''
+    });
+
+    ws.frame({ event: 'done', session_id: 's1' });
+    await expect(promise).resolves.toBeUndefined();
+    expect(onChunk).not.toHaveBeenCalled();
   });
 });

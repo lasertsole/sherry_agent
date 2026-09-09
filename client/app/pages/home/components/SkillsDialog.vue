@@ -522,17 +522,6 @@
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
-import {
-  listSkills,
-  readSkill,
-  runCuratorReview,
-  uploadSkill,
-  setSkillActive,
-  getCuratorSettings,
-  setCuratorSettings,
-  deleteSkill,
-  pinSkill
-} from '@/composables/bridge';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
 
@@ -631,7 +620,10 @@ interface TreeNode {
   children: TreeNode[];
 }
 
-/** Build a nested tree from the backend's flat `files[]` listing (depth-first order). */
+/**
+ * Build a nested tree from the backend's flat `files[]` listing (depth-first order).
+ * @param files
+ */
 const buildTree = (files: SkillFileNode[]): TreeNode[] => {
   // Build a proper nested tree by accumulating each node on its parent path.
   const byPath = new Map<string, TreeNode>();
@@ -749,7 +741,7 @@ const onAutoIntervalChange = async (event: { value: number | null; originalEvent
   intervalError.value = false;
   try {
     // Selection is limited to 1-5 by the button group; null (deselect) clears
-    // the override, falling back to the curator.yaml default.
+    // the override, falling back to the sherry.jsonc curator default.
     const resp = await setCuratorSettings(value);
     if (resp.success) {
       // Reload to reflect backend-normalized state (e.g. server-clamped value).

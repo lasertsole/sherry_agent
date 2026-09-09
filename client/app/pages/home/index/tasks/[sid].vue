@@ -12,8 +12,6 @@
 // Page-level error capture: runtime errors from all descendant components of this page (SubagentTasksView
 // and its sub-graphs, etc.) → logUtil log + global toast; return false stops propagation upward
 // (03-errorCaptured factory function doc, factory function pattern)
-import { useErrorCaptured } from '~/composables/errorCaptured';
-
 useErrorCaptured();
 
 // components

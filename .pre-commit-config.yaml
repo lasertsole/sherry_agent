@@ -1,7 +1,7 @@
 # Three-stage local gate layout:
 #
 #   pre-commit (fast, <5s)   : ruff, ruff-format, naming-convention, boundary
-#                              guard, frontend-fix, eslint
+#                              guards, frontend-fix, eslint
 #   commit-msg (<1s)         : commitlint (Angular convention)
 #   pre-push (<60s, heavy)   : basedpyright, vue-tsc, dpdm, knip, import-linter
 #
@@ -57,6 +57,20 @@ repos:
         language: system
         files: \.(css|rs|js|ts|mjs|vue)$
         exclude: ^client/
+        stages: [pre-commit]
+
+  # ---- skill boundary guard: SKILL.md must stay inside skills/ ------------
+  # Same canary shape as the frontend guard above: `files` matches SKILL.md
+  # by name, `exclude` removes the allowed skills/ tree; any leftover file
+  # means a skill definition escaped the skills/ folder and the hook fails.
+  - repo: local
+    hooks:
+      - id: skill-file-boundary
+        name: enforce SKILL.md in skills/
+        entry: bash scripts/hooks/reject-stray-skill.sh
+        language: system
+        files: SKILL\.md$
+        exclude: ^skills/
         stages: [pre-commit]
 
   # ---- naming convention guard (part2 item 九) ----------------------------

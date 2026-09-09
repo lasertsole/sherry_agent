@@ -80,7 +80,8 @@ async def _capture_baseline_reply(child_session_key: str) -> str | None:
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
                 return content[:500]
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug("Baseline reply capture failed for {}: {}", child_session_key, e)
         return None
 
 
@@ -110,7 +111,7 @@ async def _wait_for_updated_reply(
                     if content != (baseline or ""):
                         return content
                     break
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("Reply poll failed for {}: {}", child_session_key, e)
 
     return None

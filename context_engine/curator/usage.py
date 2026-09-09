@@ -150,8 +150,8 @@ def delete_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
     if rec_path.exists():
         try:
             rec_path.unlink()
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("Failed to remove usage record for {}: {}", name, e)
     return True, f"Deleted {name}" + (f" (absorbed into {absorbed_into})" if absorbed_into else "")
 
 
@@ -235,5 +235,5 @@ def _cleanup_orphan_records(live_names: set[str]) -> None:
             try:
                 f.unlink()
                 logger.debug("Curator removed orphan usage record: {}", f.name)
-            except Exception:  # noqa: S110
-                pass
+            except Exception as e:
+                logger.debug("Curator failed to remove orphan usage record {}: {}", f.name, e)

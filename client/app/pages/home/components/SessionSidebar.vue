@@ -229,7 +229,6 @@
 <script lang="ts">
 // Methods/types (regular script block: only for exporting ensureSessionCharacter to parent component for reuse)
 import type { CachedCharacter } from '@/composables/db';
-import { GLOBAL_SESSION_KEY, DEFAULT_CACHED_CHARACTER, cacheCharacter, readCachedCharacter } from '@/composables/db';
 import { logUtil } from '~/utils/log';
 
 /**
@@ -285,21 +284,8 @@ import HistoryItem from './HistoryItem.vue';
 import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from '../type.ts';
-import {
-  clearCachedCharacter,
-  cacheSessionMeta,
-  readCachedSessionMetaList,
-  clearCachedSessionMeta,
-  saveSessionTitleOverride,
-  readSessionTitleOverrides,
-  clearSessionTitleOverride
-} from '@/composables/db';
-import { emit, on, off } from '@/composables/mitt';
-import { getSessionList, clearSession, SESSION_ABORT_STREAM_EVENT } from '@/composables/messages';
 import type { SubagentRun } from '@/composables/bridge';
-import { useSubagentTasks } from '@/composables/useSubagentTasks';
 import dayjs from 'dayjs';
-import { filterSessions } from '@/composables/sessionFilter';
 import { isValidSessionTitle } from '@/common/utils';
 
 const { t } = useI18n();
@@ -337,7 +323,10 @@ const collapsed = defineModel<boolean>('collapsed', { default: false });
 /** Current session id (bidirectionally synced by parent component via v-model:current-session-id, parent uses it to load character snapshot) */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');
 
-/** Render execution time: epoch milliseconds → local readable string; null/invalid values show placeholder '-' */
+/**
+ * Render execution time: epoch milliseconds → local readable string; null/invalid values show placeholder '-'
+ * @param ms
+ */
 function formatTime(ms: number | null | undefined): string {
   if (ms == null || Number.isNaN(Number(ms))) return '-';
   return dayjs(Number(ms)).format('YYYY-MM-DD HH:mm:ss');
@@ -482,6 +471,7 @@ const handleCreateSession = () => {
 /**
  * Session switch: route to corresponding session page.
  * [sid].vue is cached by KeepAlive using session_id, switches restore its draft/scroll/streaming state as-is.
+ * @param id
  */
 const handleToggleSession = (id: string) => {
   if (currentSessionId.value === id) return;
@@ -498,6 +488,8 @@ const handleToggleSession = (id: string) => {
  * Rename session: takes effect locally immediately (can be searched), and persists overlay.
  * Title overlay is stored separately in Dexie `sessionTitles` table (not cleared when placeholder session is promoted),
  * next loadSessionList will overwrite server-derived title and mark as `renamed` (shows highlighted color).
+ * @param id
+ * @param title
  */
 async function handleRenameSession(id: string, title: string) {
   // In-depth defense: illegal titles (over 30 chars / contain special chars) are ignored directly, normal path already intercepted in HistoryItem before submission
@@ -518,6 +510,7 @@ const batchDeleting = ref(false);
  * Delete session: call server clearSession, remove from list after success.
  * If deleting the currently active session, route back to home empty state ([sid].vue instance released by KeepAlive).
  * in-flight anti-reentrancy: if same session is triggered again during deletion, directly ignore (rapid clicks only send one DELETE).
+ * @param id
  */
 const handleDeleteSession = async (id: string) => {
   if (deletingSessionIds.value.has(id)) return;
@@ -550,7 +543,10 @@ const handleDeleteSession = async (id: string) => {
   }
 };
 
-/** Select all/Deselect all: only affects 'visible after filtering' sessions, original selected state of hidden (filtered out) items remains unchanged */
+/**
+ * Select all/Deselect all: only affects 'visible after filtering' sessions, original selected state of hidden (filtered out) items remains unchanged
+ * @param checked
+ */
 const handleToggleSelectAll = (checked: boolean) => {
   const visibleIds = new Set(filteredHistoryList.value.map(s => s.id));
   if (checked) {
@@ -657,6 +653,7 @@ const activeTab = ref<'sessions' | 'tasks'>('sessions');
  * 'Background Tasks Box' (showTasksView).
  * - Switch to 'background tasks': mark background tasks in display state, let WS pull full task data for list display when ready.
  * - Switch to 'sessions': unmark that state.
+ * @param tab
  */
 const switchTab = (tab: 'sessions' | 'tasks') => {
   activeTab.value = tab;
@@ -673,6 +670,7 @@ const switchTab = (tab: 'sessions' | 'tasks') => {
  * When there's an active session (route with sid), emit subagent:show-tasks event, received by [sid].vue embedded view and set to task display state;
  * When there's no active session (root path /home, [sid].vue not mounted, event has no receiver), directly focus that run (module-level singleton state preserved across routes)
  * and navigate to standalone task page /home/tasks/{parent session} — that page always mounts SubagentTasksView, can read focused run from singleton state.
+ * @param run
  */
 const showTasksView = (run: SubagentRun) => {
   activeTab.value = 'tasks';
@@ -693,6 +691,7 @@ const showTasksView = (run: SubagentRun) => {
 /**
  * Toggle single task selection state (only triggered by checkbox within task card).
  * Card body click changed to showTasksView (opens task detail page), avoiding blocking open logic.
+ * @param runId
  */
 const handleToggleTask = (runId: string) => {
   if (deletingRunIds.value.has(runId)) return;
@@ -726,6 +725,8 @@ const doBatchDeleteTasks = async () => {
 /**
  * Single task box deletion (trash icon at bottom right, consistent with session box delete entry).
  * Reuses the same deletion pipeline as batch delete: after PrimeVue confirmation dialog, completely deletes the task and its entire subtree (frontend/backend + Dexie).
+ * @param run
+ * @param run.run_id
  */
 const handleDeleteTask = (run: { run_id: string }) => {
   if (deletingRunIds.value.has(run.run_id)) return;
@@ -740,7 +741,10 @@ const handleDeleteTask = (run: { run_id: string }) => {
   });
 };
 
-/** Actual executor for single background task deletion (triggered by confirmation dialog accept callback). */
+/**
+ * Actual executor for single background task deletion (triggered by confirmation dialog accept callback).
+ * @param runId
+ */
 const doDeleteTask = async (runId: string) => {
   try {
     await deleteSubagentSubtree(runId);
@@ -781,3 +785,104 @@ watch(
   { immediate: false }
 );
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "history": {
+      "batchDelete": "批量删除对话",
+      "batchDeleteConfirm": "确定要批量删除选中的对话吗？此操作不可恢复。",
+      "clearFilter": "清除筛选",
+      "dateRange": "按日期范围筛选",
+      "filterToggle": "筛选",
+      "noSearchResults": "没有匹配的会话",
+      "searchPlaceholder": "搜索会话标题…",
+      "selectAll": "全选"
+    },
+    "sidebar": {
+      "callingSession": "调用会话",
+      "endTime": "结束时间",
+      "startTime": "开始时间",
+      "tabSessions": "会话",
+      "tabTasks": "后台任务",
+      "taskDelete": "删除任务",
+      "taskDeleteConfirm": "确定要删除该任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
+      "tasksBatchDelete": "批量删除任务",
+      "tasksBatchDeleteConfirm": "确定要批量删除选中的任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
+      "tasksSelectAll": "全选"
+    }
+  },
+  "en": {
+    "history": {
+      "batchDelete": "Delete Conversations",
+      "batchDeleteConfirm": "Are you sure you want to delete the selected conversations? This action cannot be undone.",
+      "clearFilter": "Clear filters",
+      "dateRange": "Filter by date range",
+      "filterToggle": "Filter",
+      "noSearchResults": "No matching sessions",
+      "searchPlaceholder": "Search sessions by title…",
+      "selectAll": "Select All"
+    },
+    "sidebar": {
+      "callingSession": "Calling Session",
+      "endTime": "End Time",
+      "startTime": "Start Time",
+      "tabSessions": "Chats",
+      "tabTasks": "Background Tasks",
+      "taskDelete": "Delete task",
+      "taskDeleteConfirm": "Delete this task? Its root and all child tasks will be permanently cleared. This cannot be undone.",
+      "tasksBatchDelete": "Batch delete tasks",
+      "tasksBatchDeleteConfirm": "Delete the selected tasks? Their root and all child tasks will be permanently cleared. This cannot be undone.",
+      "tasksSelectAll": "Select All"
+    }
+  },
+  "ja": {
+    "history": {
+      "batchDelete": "会話を一括削除",
+      "batchDeleteConfirm": "選択した会話を一括削除してもよろしいですか？この操作は元に戻せません。",
+      "clearFilter": "フィルターをクリア",
+      "dateRange": "日付範囲で絞り込み",
+      "filterToggle": "絞り込み",
+      "noSearchResults": "一致するセッションがありません",
+      "searchPlaceholder": "セッションタイトルを検索…",
+      "selectAll": "すべて選択"
+    },
+    "sidebar": {
+      "callingSession": "呼び出し中セッション",
+      "endTime": "終了時刻",
+      "startTime": "開始時刻",
+      "tabSessions": "会話",
+      "tabTasks": "バックグラウンドタスク",
+      "taskDelete": "タスクを削除",
+      "taskDeleteConfirm": "このタスクを削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
+      "tasksBatchDelete": "タスクを一括削除",
+      "tasksBatchDeleteConfirm": "選択したタスクを一括削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
+      "tasksSelectAll": "すべて選択"
+    }
+  },
+  "ko": {
+    "history": {
+      "batchDelete": "대화 일괄 삭제",
+      "batchDeleteConfirm": "선택한 대화를 일괄 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+      "clearFilter": "필터 지우기",
+      "dateRange": "날짜 범위로 필터링",
+      "filterToggle": "필터",
+      "noSearchResults": "일치하는 세션이 없습니다",
+      "searchPlaceholder": "세션 제목 검색…",
+      "selectAll": "전체 선택"
+    },
+    "sidebar": {
+      "callingSession": "호출 세션",
+      "endTime": "종료 시간",
+      "startTime": "시작 시간",
+      "tabSessions": "대화",
+      "tabTasks": "백그라운드 작업",
+      "taskDelete": "작업 삭제",
+      "taskDeleteConfirm": "이 작업을 삭제하시겠습니까? 루트 작업과 모든 하위 작업이 완전히 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "tasksBatchDelete": "작업 일괄 삭제",
+      "tasksBatchDeleteConfirm": "선택한 작업을 일괄 삭제하시겠습니까? 루트 작업과 모든 하위 작업이 완전히 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "tasksSelectAll": "전체 선택"
+    }
+  }
+}
+</i18n>

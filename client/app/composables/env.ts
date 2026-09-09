@@ -1,3 +1,20 @@
+/** Backend HTTP base URL (REST): `VITE_API_BACK_URL`, falling back to the local backend address so requests never degrade into relative paths that hit the Nuxt dev server. */
+export const API_BASE_URL: string = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
+
+/** Backend WebSocket base URL: `API_BASE_URL` with `http(s)://` rewritten to `ws(s)://` and trailing slashes stripped. */
+export const WS_BASE_URL: string = resolveWsBaseUrl(API_BASE_URL);
+
+/**
+ * Resolve the WebSocket base URL from an HTTP API base URL.
+ *
+ * `http://host:port` -> `ws://host:port`, `https://` -> `wss://`,
+ * and strips any trailing slashes.
+ * @param apiBaseUrl
+ */
+export function resolveWsBaseUrl(apiBaseUrl: string): string {
+  return apiBaseUrl.replace(/^https?:\/\//, m => (m === 'https://' ? 'wss://' : 'ws://')).replace(/\/+$/, '');
+}
+
 export interface EnvEntry {
   key: string;
   value: string;

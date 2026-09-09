@@ -246,7 +246,6 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { updateChannel, getChannelConfig, updateChannelConfig } from '@/composables/bridge';
 import type { ChannelInfo, ChannelConfig } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
 
@@ -294,7 +293,10 @@ function isNumber(v: unknown): v is number {
   return typeof v === 'number';
 }
 
-/** Convert the config object into the frontend edit structure; objects/arrays are serialized to JSON strings so they can be edited in InputText. */
+/**
+ * Convert the config object into the frontend edit structure; objects/arrays are serialized to JSON strings so they can be edited in InputText.
+ * @param raw
+ */
 function normalizeConfig(raw: ChannelConfig): Record<string, ConfigField> {
   const out: Record<string, ConfigField> = {};
   for (const [k, v] of Object.entries(raw)) {
@@ -313,7 +315,10 @@ function normalizeValue(v: unknown): ConfigValue {
   return String(v);
 }
 
-/** On save, parse stringified objects/arrays back to JSON; keep the string if parsing fails. */
+/**
+ * On save, parse stringified objects/arrays back to JSON; keep the string if parsing fails.
+ * @param v
+ */
 function denormalizeValue(v: unknown): unknown {
   if (typeof v !== 'string') return v;
   const trimmed = v.trim();

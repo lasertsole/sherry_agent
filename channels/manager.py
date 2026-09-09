@@ -12,12 +12,65 @@ from collections.abc import Callable, Awaitable
 from type.bus import InboundMessage, OutboundMessage
 
 
+class _ChannelRegistry:
+    """Startup concerns of the channel system: config loading, plugin-channel
+    discovery and allow-from validation.
+
+    Instances hold no runtime state — :meth:`discover` returns the enabled
+    channel map and :meth:`validate_allow_from` gates it, so the manager keeps
+    owning the live ``_channels`` mapping for routing and lifecycle.
+    """
+
+    @staticmethod
+    def load_config() -> dict[str, str] | None:
+        """Load ``plugins/channels/config.json``; ``None`` when it is missing."""
+        channels_json = PLUGINS_PATH / "channels/config.json"
+        if not channels_json.exists():
+            return None
+        return json.loads(channels_json.read_text())
+
+    @staticmethod
+    def discover(config: dict[str, str], bus: MessageBus) -> dict[str, BaseChannel]:
+        """Instantiate every discovered channel whose config section is enabled."""
+        from channels.registry import discover_all
+
+        channels: dict[str, BaseChannel] = {}
+        for name, cls in discover_all().items():
+            section = config.get(name, None)
+            if section is None:
+                continue
+            enabled = (
+                section.get("enabled", False)
+                if isinstance(section, dict)
+                else getattr(section, "enabled", False)
+            )
+            if not enabled:
+                continue
+            try:
+                channel = cls(section, bus)
+                channels[name] = channel
+                logger.info(f"{cls.display_name} channel enabled")
+            except Exception as e:
+                logger.warning(f"{name} channel not available: {e}")
+        return channels
+
+    @staticmethod
+    def validate_allow_from(channels: dict[str, BaseChannel]) -> None:
+        for name, ch in channels.items():
+            if getattr(ch.config, "allow_from", None) == []:
+                raise SystemExit(
+                    f'Error: "{name}" has empty allowFrom (denies all). '
+                    f'Set ["*"] to allow everyone, or add specific user IDs.'
+                )
+
+
 class ChannelManager:
     """
     Manages chat channels and coordinates message routing.
 
     Responsibilities:
-    - Initialize enabled channels (Telegram, WhatsApp, etc.)
+    - Initialize enabled channels (config + discovery delegated to
+      ``_ChannelRegistry``)
     - Start/stop channels
     - Route outbound messages
     """
@@ -91,55 +144,22 @@ class ChannelManager:
         self._started = False
 
         if config is None:
-            channels_json = PLUGINS_PATH / "channels/config.json"
-            if not channels_json.exists():
+            config = _ChannelRegistry.load_config()
+            if config is None:
                 return
-
-            config = json.loads(channels_json.read_text())
 
         if bus is None:
             bus = MessageBus()
         self._bus = bus
         self._config = config
-        self._init_channels()
+        self._channels = _ChannelRegistry.discover(config, bus)
+        _ChannelRegistry.validate_allow_from(self._channels)
 
         # If an event loop is already running, use it; otherwise create a new one.
         try:
             self._event_loop = asyncio.get_running_loop()
         except RuntimeError:
             self._event_loop = asyncio.new_event_loop()
-
-    def _init_channels(self) -> None:
-        """Initialize channels discovered via plugins directory scan + entry_points plugins."""
-        from channels.registry import discover_all
-
-        for name, cls in discover_all().items():
-            section = self._config.get(name, None)
-            if section is None:
-                continue
-            enabled = (
-                section.get("enabled", False)
-                if isinstance(section, dict)
-                else getattr(section, "enabled", False)
-            )
-            if not enabled:
-                continue
-            try:
-                channel = cls(section, self._bus)
-                self._channels[name] = channel
-                logger.info(f"{cls.display_name} channel enabled")
-            except Exception as e:
-                logger.warning(f"{name} channel not available: {e}")
-
-        self._validate_allow_from()
-
-    def _validate_allow_from(self) -> None:
-        for name, ch in self._channels.items():
-            if getattr(ch.config, "allow_from", None) == []:
-                raise SystemExit(
-                    f'Error: "{name}" has empty allowFrom (denies all). '
-                    f'Set ["*"] to allow everyone, or add specific user IDs.'
-                )
 
     @staticmethod
     async def _start_channel(name: str, channel: BaseChannel) -> None:

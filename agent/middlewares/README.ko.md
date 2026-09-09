@@ -330,10 +330,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 **도구 호출 잘림 복구**: 모델 호출이 `finish_reason == "length"`(OpenAI) /
 `stop_reason == "max_tokens"`(Anthropic)로 반환되고 응답에 도구 호출이 포함되어
-있으면 도구 호출 JSON 자체가 잘린 것입니다. 미들웨어는 `awrap_model_call` 내에서
-`max_tokens = base × 2^attempt`(base는 `MAIN_LLM_OUTPUT_MAX_TOKEN`, 기본 8192,
-상한 32768, 최대 3회 재시도)로 늘려 handler를 재호출하여 모델이 완전한 도구 호출
-페이로드를 출력하게 합니다. 잘린 중간 결과는 폐기됩니다 — agent 루프에는 최종
+있으면 도구 호출 JSON 자체가 잘린 것입니다. 미들웨어는 `wrap_model_call` /
+`awrap_model_call` 내에서 `max_tokens = base × 2^attempt`(상한 32768, 최대 3회
+재시도)로 늘려 handler를 재호출하여 모델이 완전한 도구 호출 페이로드를 출력하게
+합니다. base는 3계층으로 해석됩니다(첫 번째 양수 채택):
+
+1. 호출 자체의 `request.model_settings["max_tokens"]` — 현재 호출의 실제 상한.
+   호출이 더 높은 값으로 설정되어 있어도 재호출이 더 낮은 기본값에서 다시
+   시작되지 않습니다;
+2. 환경 변수 `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192);
+3. 하드코딩된 기본값 8192.
+
+잘린 중간 결과는 폐기됩니다 — agent 루프에는 최종
 결과만 보이므로 잘린 내용이 checkpointer에 기록되지 않고, IterationBudget은
 외부 모델 호출당 1회만 청구됩니다.
 
@@ -345,8 +353,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   비스트리밍 판단은 `StreamTurn.run()`이 세션별로 설정하는 `is_stream_turn`
   플래그를 읽습니다 — 자식 에이전트(ainvoke)는 이 플래그를 가지지 않으므로 항상
   비스트리밍 경로를 통과합니다.
-- `_extract_ai_message`는 순수 `AIMessage` 결과와 `ModelResponse` 형태 객체를
-  모두 처리합니다.
+- `_extract_ai_message`는 순수 `AIMessage` 결과와 `.messages`를 가진
+  `ModelRequest` 형태 응답 객체를 모두 처리합니다.
 
 ### OutputRepetitionGuard와 RepetitionGuardWrapper
 

@@ -1,5 +1,4 @@
 import asyncio
-import time
 import base64
 from loguru import logger
 from agent import built_agent
@@ -82,57 +81,6 @@ def _get_content_list(multi_modal_message: MultiModalMessage) -> list[str | dict
 
     return content_list
 
-
-"""Agent assembly logic — builds agent with context"""
-
-
-async def _get_generator(
-    session_id: str,
-    multi_modal_message: MultiModalMessage,
-    is_stream: bool = True,
-    origin: dict | None = None,
-):
-    start_time = time.time()
-
-    logger.debug(f"Building agent: session_id={session_id}")
-
-    # Rebuild the agent every turn with a FRESH main_llm -> httpx transport
-    # pool. Reusing a long-lived pooled connection across WS turns goes stale
-    # (DeepSeek's edge reaps an idle keep-alive connection ~15-17s) and the next
-    # streaming POST dies mid-request as openai.APITimeoutError. Provably: the
-    # same large payload streams in 8.0s on a fresh client but dies at ~16.78s on
-    # the cached pool. The SQLite checkpointer persists session state
-    # independently of the graph object, so this rebuild is safe.
-    agent = await built_agent(force_rebuild=True)
-
-    # Prepare the content_list
-    content_list: list[str | dict[str, Any]] = _get_content_list(multi_modal_message)
-
-    elapsed = time.time() - start_time
-    logger.debug(
-        f"Agent generator prepared: session_id={session_id}, duration={elapsed:.2f}s, "
-        f"is_stream={is_stream}, has_images={len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0}"
-    )
-
-    # origin (, subagent-origin-tagging): the subagent-completion carrier
-    # tag {internal, provenance, run_id, status} forwarded verbatim from
-    # auto_turn. None (real-user WS/channel paths) is legal — LangChain
-    # metadata is Optional — and leaves the message untagged.
-    input_dict = {
-        "session_id": session_id,
-        "messages": [HumanMessage(content=content_list, metadata=origin)],
-    }
-    if is_stream:
-        return agent.astream(
-            input=input_dict,
-            config=build_agent_config(session_id),
-            stream_mode=["messages", "updates"],
-        )
-    else:
-        return agent.ainvoke(input=input_dict, config=build_agent_config(session_id))
-
-
-"""End agent assembly logic"""
 
 """Response generation logic — yields typed dict chunks
 
@@ -350,7 +298,7 @@ class _GenerateTurn(StreamTurn):
         # (which dies mid-request as openai.APITimeoutError) is handled by
         # rebuilding the graph with a FRESH main_llm -> httpx client at the START
         # of each turn (see the built_agent(force_rebuild=True) call in
-        # _get_generator). Closing the embedded AsyncOpenAI here would
+        # _GenerateTurn._prepare). Closing the embedded AsyncOpenAI here would
         # permanently kill it ("Cannot send a request, as the client has been
         # closed"), so we never close it mid-lifecycle.
         await super()._cleanup(kind, source)
@@ -382,7 +330,7 @@ class _ResumeTurn(StreamTurn):
         self._config = build_agent_config(self.session_id)
 
         # Inject session_id into the resume value. On a normal turn it arrives via the
-        # graph input dict (see _get_generator), but Command(resume=...) merges only the
+        # graph input dict (see _GenerateTurn._create_source), but Command(resume=...) merges only the
         # resume value into state — without session_id here, MultimodalProcessor's
         # _before_agent_impl would raise "Not pass session_id" on resume.
         self._resume_value = {

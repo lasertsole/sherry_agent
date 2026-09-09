@@ -17,7 +17,33 @@
   "WORKSPACE_TEMPLATE_LANG": "en",
 
   // LangSmith tracing
-  "LANGSMITH_TRACING_V2": false,
-  "LANGSMITH_API_KEY": "",
-  "LANGSMITH_PROJECT": "EMA_AI_agent"
+  "LANGSMITH": {
+    "TRACING_V2": false,
+    "API_KEY": "",
+    "PROJECT": "EMA_AI_agent"
+  },
+
+  // Curator — background skill maintenance orchestrator for agent-created skills.
+  "curator": {
+    // Whether Curator is enabled / 是否启用 Curator
+    "enabled": true,
+
+    // Minimum interval between curator runs (hours); 7 days / 两次 Curator 运行的最小间隔（小时）；7 天
+    "interval_hours": 168,
+
+    // Agent must be idle for at least N hours before curator triggers / 触发前 Agent 至少空闲的小时数
+    "min_idle_hours": 2,
+
+    // Days of inactivity before a skill is marked stale / 技能被标记为过期（stale）前的闲置天数
+    "stale_after_days": 30,
+
+    // Days of inactivity before a skill is archived / 技能被归档前的闲置天数
+    "archive_after_days": 90,
+
+    // Whether to enable LLM consolidation pass (merge narrow skills into umbrellas) / 是否启用 LLM 合并（将窄技能合并为 umbrella 技能）
+    "consolidate": true,
+
+    // Whether to clean up usage records for built-in skills / 是否清理内置技能的使用记录
+    "prune_builtins": true
+  }
 }

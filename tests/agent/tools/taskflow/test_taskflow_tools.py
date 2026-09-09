@@ -6,7 +6,7 @@ Covers the six acceptance checks:
    simulated restart (fresh connections / new event loop)
 3. concurrent double-write on one flow: exactly one expectedRevision conflict
    and the error carries the latest revision
-4. skills/taskflow/SKILL.md discovered via scan_skills(use_cache=False) with
+4. skills/builtin/core/taskflow/SKILL.md discovered via scan_skills(use_cache=False) with
    scope=main_only (main visible, subagent not)
 5. resume injects a child result idempotently (same result never injected twice)
 6. the tool family loads with no P0-1 guard layer wired
@@ -190,7 +190,9 @@ async def test_concurrent_conflict_exactly_one_wins_with_latest_revision(isolate
 def test_taskflow_skill_discovered_and_scoped(scan_skills_real, skill_visible_to_real):
     skills = scan_skills_real()
     entry = next((s for s in skills if s["name"] == "taskflow"), None)
-    assert entry is not None, "skills/taskflow/SKILL.md must be discovered by scan_skills"
+    assert entry is not None, (
+        "skills/builtin/core/taskflow/SKILL.md must be discovered by scan_skills"
+    )
     assert entry["scope"] == "main_only"
     assert entry["active"] is True
     assert entry["description"].strip(), "description must be a non-empty one-liner"

@@ -134,8 +134,12 @@ async def _cancel_session(session_id: str) -> None:
         # stream is expected to surface promptly after cancel.
         try:
             await asyncio.wait_for(task, timeout=5.0)
-        except (TimeoutError, asyncio.CancelledError, Exception):  # noqa: S110
+        except (TimeoutError, asyncio.CancelledError):
             pass
+        except Exception as e:
+            logger.warning(
+                f"Agent WS stop: cancelled task raised: session_id={session_id}, error={e}"
+            )
     else:
         state_register_mem.set_state(session_id, "answering", False)
         logger.info(f"Agent WS stop requested (no active task): session_id={session_id}")

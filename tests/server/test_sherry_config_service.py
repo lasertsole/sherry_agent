@@ -15,14 +15,47 @@ SAMPLE = """// app settings
 
   "SUBAGENT_TODO_DONE_FUNC": "archive",
   "WORKSPACE_TEMPLATE_LANG": "en",
-  "LANGSMITH_TRACING_V2": false,
-  "LANGSMITH_API_KEY": "",
-  "LANGSMITH_PROJECT": "EMA_AI_agent"
+  "LANGSMITH": {
+    "TRACING_V2": false,
+    "API_KEY": "",
+    "PROJECT": "EMA_AI_agent"
+  },
+  "curator": {
+    "enabled": true,
+    "interval_hours": 168,
+    "min_idle_hours": 2,
+    "stale_after_days": 30,
+    "archive_after_days": 90,
+    "consolidate": true,
+    "prune_builtins": true
+  }
 }
 """
 
 
 pytestmark = [pytest.mark.unit]
+
+
+def _dotted_keys(text: str) -> list[str]:
+    """Parse a sherry.jsonc document into its dotted setting keys, in file order."""
+    keys: list[str] = []
+    group = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        if stripped.startswith("}"):
+            group = None
+            continue
+        if not stripped.startswith('"'):
+            continue
+        name = stripped.split('"')[1]
+        rest = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
+        if rest == "{":
+            group = name
+            continue
+        keys.append(f"{group}.{name}" if group else name)
+    return keys
 
 
 @pytest.fixture()
@@ -42,7 +75,8 @@ class TestReadSherryConfig:
 
         by_key = {e["key"]: e["value"] for e in payload["entries"]}
         assert by_key["TOOL_CALL_TIMEOUT_MINUTES"] == "5"
-        assert by_key["LANGSMITH_TRACING_V2"] == "false"
+        assert by_key["LANGSMITH.TRACING_V2"] == "false"
+        assert by_key["curator.interval_hours"] == "168"
         assert by_key["LOG_LEVEL"] == "INFO"
         assert all(e["value_edited"] is False for e in payload["entries"])
 
@@ -60,7 +94,8 @@ class TestWriteSherryConfig:
             {
                 "LOG_LEVEL": "DEBUG",
                 "TOOL_CALL_TIMEOUT_MINUTES": "9",
-                "LANGSMITH_TRACING_V2": "true",
+                "LANGSMITH.TRACING_V2": "true",
+                "curator.consolidate": "false",
             }
         )
         text = sherry_file.read_text(encoding="utf-8")
@@ -68,22 +103,21 @@ class TestWriteSherryConfig:
         # Comments and ordering survive the line-wise edit.
         assert "// app settings" in text
         assert "// timeout in minutes" in text
-        keys_in_order = [
-            line.split('"')[1] for line in text.splitlines() if line.strip().startswith('"')
-        ]
-        assert keys_in_order == list(sherry_settings.SHERRY_SETTING_KEYS)
+        assert _dotted_keys(text) == list(sherry_settings.SHERRY_SETTING_KEYS)
 
         # Typed values are written as JSON scalars (no quotes on int/bool).
         assert '"TOOL_CALL_TIMEOUT_MINUTES": 9,' in text
         assert '"LOG_LEVEL": "DEBUG",' in text
-        assert '"LANGSMITH_TRACING_V2": true' in text
+        assert '"TRACING_V2": true' in text
+        assert '"consolidate": false' in text
 
         # The trailing comma of the last entry stays absent; the file still parses.
         assert not text.rstrip().rstrip(",").endswith(",")
         data = json5.loads(text)
         assert data["TOOL_CALL_TIMEOUT_MINUTES"] == 9
-        assert data["LANGSMITH_TRACING_V2"] is True
-        assert data["LANGSMITH_PROJECT"] == "EMA_AI_agent"
+        assert data["LANGSMITH"]["TRACING_V2"] is True
+        assert data["LANGSMITH"]["PROJECT"] == "EMA_AI_agent"
+        assert data["curator"]["consolidate"] is False
 
     def test_write_creates_a_dot_bak_backup(self, sherry_file):
         write_sherry_config({"LOG_LEVEL": "DEBUG"})

@@ -14,7 +14,7 @@
 
 Covers:
 - interval override get/set clamping (1..5 days) persisted in .curator_state
-- effective interval hours (override takes precedence over curator.yaml)
+- effective interval hours (override takes precedence over the sherry.jsonc curator interval)
 - should_run_now trigger / no-trigger via simulated time
 - manual run (run_curator_review) updates last_maintenance_at
 - last maintenance timestamp persistence + round-trip
@@ -72,7 +72,7 @@ def isolated_state(tmp_path):
 
 
 def test_interval_override_default_none(isolated_state):
-    """No override configured -> get returns None, effective falls back to yaml."""
+    """No override configured -> get returns None, effective falls back to the configured interval."""
     assert get_interval_override_days() is None
     assert get_effective_interval_hours() == curator_config.get_interval_hours()
 
@@ -98,7 +98,7 @@ def test_set_interval_override_max_clamp(isolated_state):
 
 
 def test_set_interval_override_zero_rejected(isolated_state):
-    """0 below min -> rejected/reset to None (use yaml default)."""
+    """0 below min -> rejected/reset to None (use the configured default)."""
     assert set_interval_override_days(0) is None
     assert get_interval_override_days() is None
     assert get_effective_interval_hours() == curator_config.get_interval_hours()
@@ -147,13 +147,13 @@ def test_invalid_types_reset_to_none(isolated_state):
 
 
 def test_effective_hours_uses_override(isolated_state):
-    """A valid override (2d) overrides the default 5d/120h."""
+    """A valid override (2d) overrides the configured default."""
     set_interval_override_days(2)
     assert get_effective_interval_hours() == 48
 
 
-def test_effective_hours_cleared_uses_yaml(isolated_state):
-    """After clearing, effective hours fall back to curator.yaml interval."""
+def test_effective_hours_cleared_uses_configured_interval(isolated_state):
+    """After clearing, effective hours fall back to the sherry.jsonc curator interval."""
     set_interval_override_days(4)  # 96h
     set_interval_override_days(None)
     assert get_effective_interval_hours() == curator_config.get_interval_hours()
@@ -178,14 +178,14 @@ def test_should_run_within_interval_no_run(isolated_state):
     now = datetime.now(UTC)
     curator_state.save_state(
         {"last_run_at": (now - timedelta(hours=24)).isoformat()}
-    )  # default 120h
+    )  # default 168h
     assert should_run_now(now=now) is False
 
 
 def test_should_run_over_interval_runs(isolated_state):
     """Now exceeds the effective (default) interval -> trigger."""
     now = datetime.now(UTC)
-    curator_state.save_state({"last_run_at": (now - timedelta(days=8)).isoformat()})  # > 5 days
+    curator_state.save_state({"last_run_at": (now - timedelta(days=8)).isoformat()})  # > 7 days
     assert should_run_now(now=now) is True
 
 

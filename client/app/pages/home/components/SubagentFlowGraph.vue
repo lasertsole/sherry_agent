@@ -42,9 +42,7 @@ import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Graph, NodeEvent } from '@antv/g6';
 import type { GraphData, IElementEvent, NodeData } from '@antv/g6';
-import { on, off } from '@/composables/mitt';
-import { fetchSubagentRuns, type SubagentRun } from '@/composables/bridge';
-import { useSubagentWs } from '@/composables/ws';
+import type { SubagentRun } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n();
@@ -544,3 +542,36 @@ onBeforeUnmount(() => {
   destroyGraph();
 });
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "flow": {
+      "loading": "加载中…",
+      "empty": "无后台数据",
+      "error": "加载失败"
+    }
+  },
+  "en": {
+    "flow": {
+      "loading": "Loading…",
+      "empty": "No background data",
+      "error": "Failed to load"
+    }
+  },
+  "ja": {
+    "flow": {
+      "loading": "読み込み中...",
+      "empty": "バックグラウンドデータがありません",
+      "error": "読み込みに失敗しました"
+    }
+  },
+  "ko": {
+    "flow": {
+      "loading": "불러오는 중...",
+      "empty": "백그라운드 데이터가 없습니다",
+      "error": "불러오지 못했습니다"
+    }
+  }
+}
+</i18n>

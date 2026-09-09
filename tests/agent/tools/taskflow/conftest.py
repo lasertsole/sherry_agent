@@ -136,7 +136,7 @@ def scan_skills_real() -> Callable[[], list[dict[str, Any]]]:
 
     ``use_cache=False`` bypasses skills_snapshot.json (loader.py:82-89 reads
     the snapshot first when caching is on), so the scan always re-globs
-    SKILLS_DIR and reflects the skills/taskflow/SKILL.md file on disk.
+    SKILLS_DIR and reflects the skills/builtin/core/taskflow/SKILL.md file on disk.
     """
 
     def _scan() -> list[dict[str, Any]]:

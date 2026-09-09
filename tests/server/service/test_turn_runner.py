@@ -298,6 +298,43 @@ async def test_channel_router_receives_error_frame_on_failure(env):
     )
 
 
+@pytest.mark.asyncio
+async def test_drain_survives_claim_next_failure_and_keeps_processing(env, monkeypatch):
+    """A claim_next DB error must not kill the drain: log, back off, retry."""
+    tr, store, registry = env.tr, env.store, env.registry
+    r1 = await _enqueue(store, "s1", "first")
+    r2 = await _enqueue(store, "s1", "second")
+    executor = RecordingExecutor()
+    registry.register("ws", executor)
+
+    real_store = store
+    claim_failures: list[str] = []
+
+    class FlakyClaimQueue:
+        def __getattr__(self, name):
+            return getattr(real_store, name)
+
+        async def claim_next(self, session_id: str):
+            if not claim_failures:
+                claim_failures.append(session_id)
+                raise RuntimeError("db hiccup")
+            return await real_store.claim_next(session_id)
+
+    monkeypatch.setattr(iqs, "get_default_queue", lambda: FlakyClaimQueue())
+    monkeypatch.setattr(tr, "_DRAIN_ERROR_BACKOFF_S", 0.01)
+
+    await tr.on_turn_finished("s1")
+
+    drain = tr._DRAIN_TASKS.get("s1")
+    await asyncio.wait_for(drain, timeout=10)
+    assert len(claim_failures) == 1, "claim_next must fail exactly once"
+    assert [call[1] for call in executor.calls] == ["first", "second"], (
+        "queued rows must still be processed after the failed claim"
+    )
+    assert _status_of(store, r1.id) == "DELIVERED"
+    assert _status_of(store, r2.id) == "DELIVERED"
+
+
 # ---------------------------------------------------------------------------
 # Single-flight + foreign CLAIMED defer
 # ---------------------------------------------------------------------------

@@ -297,18 +297,9 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import {
-  GLOBAL_SESSION_KEY,
-  DEFAULT_CACHED_CHARACTER,
-  readCachedCharacter,
-  cacheCharacter,
-  readBackgroundConfig
-} from '@/composables/db';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { EnvGroup } from '@/composables/env';
-import { readEnvConfig, writeEnvConfig } from '@/composables/env';
 import type { SherryEntry } from '@/composables/sherryConfig';
-import { readSherryConfig, writeSherryConfig } from '@/composables/sherryConfig';
 import { logUtil } from '~/utils/log';
 
 /** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
@@ -483,7 +474,10 @@ const originalChar = ref<{ user: { name: string; avatar: string }; assistant: { 
 const userAvatarUrl = computed(() => charUser.value.avatar);
 const assistantAvatarUrl = computed(() => charAssistant.value.avatar);
 
-/** Reads an uploaded image file as a base64 data URL */
+/**
+ * Reads an uploaded image file as a base64 data URL
+ * @param file
+ */
 const readFileAsDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -619,7 +613,11 @@ const backgroundAspect = computed(() => {
   return Number((innerW / innerH).toFixed(4));
 });
 
-/** Opens the crop dialog after a background image is selected (16:9, reuses the avatar crop UI); only the cropped result becomes the background */
+/**
+ * Opens the crop dialog after a background image is selected (16:9, reuses the avatar crop UI); only the cropped result becomes the background
+ * @param event
+ * @param event.files
+ */
 const onBackgroundSelect = (event: { files: File[] }) => {
   const file = event.files?.[0];
   if (!file) return;
@@ -629,6 +627,7 @@ const onBackgroundSelect = (event: { files: File[] }) => {
 /**
  * Localized label for the background FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
  * file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to upload a new background.
+ * @param files
  */
 const fileLabelText = (files: File[]): string => {
   if (files.length > 0) return files[0]?.name ?? '';
@@ -639,6 +638,7 @@ const fileLabelText = (files: File[]): string => {
 /**
  * Localized label for the avatar FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
  * file selected → show the file name; otherwise → prompt to upload a new avatar.
+ * @param files
  */
 const avatarFileLabel = (files: File[]): string => {
   if (files.length > 0) return files[0]?.name ?? '';
@@ -790,6 +790,14 @@ const onHide = () => {
         "saveFailed": "应用配置保存失败，请检查值是否合法。",
         "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
         "noConfigFile": "未找到 sherry.jsonc 文件。"
+      },
+      "crop": {
+        "title": "裁剪头像"
+      },
+      "tabs": {
+        "character": "角色配置",
+        "env": "环境配置",
+        "sherry": "应用配置"
       }
     }
   },
@@ -827,6 +835,14 @@ const onHide = () => {
         "saveFailed": "Failed to save app config.",
         "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
         "noConfigFile": "No sherry.jsonc file found."
+      },
+      "crop": {
+        "title": "Crop Avatar"
+      },
+      "tabs": {
+        "character": "Character Setup",
+        "env": "Environment",
+        "sherry": "App Config"
       }
     }
   },
@@ -864,6 +880,14 @@ const onHide = () => {
         "saveFailed": "アプリ設定の保存に失敗しました。",
         "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
         "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+      },
+      "crop": {
+        "title": "アバターをトリミング"
+      },
+      "tabs": {
+        "character": "キャラクター設定",
+        "env": "環境設定",
+        "sherry": "アプリ設定"
       }
     }
   },
@@ -901,6 +925,14 @@ const onHide = () => {
         "saveFailed": "앱 설정을 저장하지 못했습니다.",
         "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
         "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
+      },
+      "crop": {
+        "title": "아바타 자르기"
+      },
+      "tabs": {
+        "character": "캐릭터 설정",
+        "env": "환경 설정",
+        "sherry": "앱 설정"
       }
     }
   }

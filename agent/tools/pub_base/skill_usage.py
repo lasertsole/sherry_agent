@@ -86,8 +86,8 @@ def _usage_file_lock():
             try:
                 fd.seek(0)
                 msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-            except OSError:  # noqa: S110
-                pass
+            except OSError as e:
+                logger.debug("msvcrt unlock failed for %s: %s", lock_path, e)
         fd.close()
 
 
@@ -349,8 +349,8 @@ def save_usage(data: dict[str, dict[str, Any]]) -> None:
         except BaseException:
             try:
                 os.unlink(tmp_path)
-            except OSError:  # noqa: S110
-                pass
+            except OSError as e:
+                logger.debug("temp file cleanup failed for %s: %s", tmp_path, e)
             raise
     except Exception as e:
         logger.debug("Failed to write %s: %s", path, e, exc_info=True)

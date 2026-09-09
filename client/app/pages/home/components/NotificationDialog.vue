@@ -133,8 +133,6 @@
 <script lang="ts" setup>
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useWs } from '@/composables/ws';
-import { on } from '@/composables/mitt';
 import dayjs from 'dayjs';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -191,7 +189,10 @@ const clearAll = () => {
   emits('changed', 0);
 };
 
-/** Notification content (WS-pushed content may be an object or a string) */
+/**
+ * Notification content (WS-pushed content may be an object or a string)
+ * @param payload
+ */
 const contentOf = (payload: unknown): string => {
   if (payload == null) return '';
   if (typeof payload === 'string') return payload.trim();
@@ -203,14 +204,20 @@ const contentOf = (payload: unknown): string => {
   }
 };
 
-/** Determine the notification source (whether the content contains task keywords) */
+/**
+ * Determine the notification source (whether the content contains task keywords)
+ * @param content
+ */
 const sourceOf = (content: string): NotificationItem['source'] => {
   // The server includes a source marker prefix in content; when no marker exists, fall back to content keywords
   if (/^(heartbeat|cron):\s*/.test(content)) return content.startsWith('heartbeat:') ? 'heartbeat' : 'cron';
   return /\b(cron|定时|定時)\b/i.test(content) ? 'cron' : 'heartbeat';
 };
 
-/** Handle one notification: merge the count when identical to the "previous (latest)" item */
+/**
+ * Handle one notification: merge the count when identical to the "previous (latest)" item
+ * @param payload
+ */
 const handleNotification = (payload: unknown) => {
   const content = contentOf(payload);
   if (!content) return;

@@ -49,6 +49,7 @@ from type.message import MultiModalMessage
 # ---------------------------------------------------------------------------
 
 _DRAIN_TASKS: dict[str, asyncio.Task] = {}
+_DRAIN_ERROR_BACKOFF_S: float = 1.0
 _OUTBOUND_ROUTERS: dict[str, Any] = {}
 
 
@@ -227,11 +228,18 @@ async def _drain_loop(session_id: str) -> None:
     """Execute the session's queued rows FIFO until the queue runs dry."""
     try:
         while True:
-            queue = _iqs().get_default_queue()
-            row = await queue.claim_next(session_id)
-            if row is None:
-                break
-            await _execute_claimed_row(session_id, row)
+            try:
+                queue = _iqs().get_default_queue()
+                row = await queue.claim_next(session_id)
+                if row is None:
+                    break
+                await _execute_claimed_row(session_id, row)
+            except Exception as e:
+                logger.warning(
+                    f"TurnRunner: drain failed for session {session_id}; "
+                    f"retrying in {_DRAIN_ERROR_BACKOFF_S}s: {e}"
+                )
+                await asyncio.sleep(_DRAIN_ERROR_BACKOFF_S)
     finally:
         if _DRAIN_TASKS.get(session_id) is asyncio.current_task():
             _DRAIN_TASKS.pop(session_id, None)

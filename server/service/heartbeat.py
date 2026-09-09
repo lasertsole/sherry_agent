@@ -1,4 +1,6 @@
+import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 from loguru import logger
@@ -34,6 +36,35 @@ for _t in tools:
 # (client/app/composables/ws.ts), so pushes target that session so the UI
 # refreshes live when a heartbeat execution completes.
 HEARTBEAT_WS_SESSION_ID: str = "default"
+
+_MAIN_LLM_ENV_VARS: tuple[str, ...] = (
+    "MAIN_LLM_PROVIDER",
+    "MAIN_LLM_NAME",
+    "MAIN_LLM_API_BASE",
+    "MAIN_LLM_API_KEY",
+    "MAIN_LLM_MAX_TOKEN",
+    "MAIN_LLM_ENABLE_THINKING",
+    "MAIN_LLM_REASONING_EFFORT",
+)
+
+_cached_heartbeat_agent: (
+    tuple[asyncio.AbstractEventLoop, tuple[str | None, ...], CompiledStateGraph] | None
+) = None
+
+
+def _get_heartbeat_agent() -> CompiledStateGraph:
+    global _cached_heartbeat_agent
+    loop = asyncio.get_running_loop()
+    env_signature = tuple(os.environ.get(name) for name in _MAIN_LLM_ENV_VARS)
+    cached = _cached_heartbeat_agent
+    if cached is None or cached[0] is not loop or cached[1] != env_signature:
+        cached = (
+            loop,
+            env_signature,
+            create_agent(model=cast("BaseChatModel", build_main_llm()), tools=tools),
+        )
+        _cached_heartbeat_agent = cached
+    return cached[2]
 
 
 async def push_heartbeat_updated() -> None:
@@ -79,12 +110,7 @@ async def process_heartbeat_task(task: str) -> str:
         ensure_workspace_system_files()
 
         # Get graph-memory system prompt
-        main_llm = cast("BaseChatModel", build_main_llm())  # fresh LLM for the current event loop
-
-        agent: CompiledStateGraph = create_agent(
-            model=main_llm,
-            tools=tools,
-        )
+        agent = _get_heartbeat_agent()
 
         messages: list[BaseMessage] = [
             SystemMessage(content=build_system_prompt(selected_file_names=CORE_SYSTEM_FILE_NAMES)),

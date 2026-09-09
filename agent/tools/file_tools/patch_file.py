@@ -11,11 +11,21 @@ actual indentation pattern.
 
 import json
 import difflib
-from typing import override
+from typing import Annotated, override
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
+from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from agent.tools.pub_base import resolve_path, PathOutOfBoundsError, fuzzy_find_and_replace
+from langgraph.prebuilt.tool_node import InjectedState
+from agent.tools.pub_base import (
+    PathOutOfBoundsError,
+    _extract_session_id,
+    resolve_external_path,
+    resolve_project_path,
+    fuzzy_find_and_replace,
+)
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 # ── Diff helper ──────────────────────────────────────────────────────────
 
@@ -84,6 +94,7 @@ class PatchFileInput(BaseModel):
         default=False,
         description="If True, replace all occurrences of old_string; otherwise require uniqueness",
     )
+    session_id: SessionId = ""
 
 
 class PatchFileTool(BaseTool):
@@ -104,13 +115,17 @@ class PatchFileTool(BaseTool):
         old_string: str,
         new_string: str,
         replace_all: bool = False,
+        session_id: str = "",
     ) -> str:
         try:
-            resolved = resolve_path(file_path)
+            resolved = resolve_project_path(file_path)
         except PathOutOfBoundsError:
-            return json.dumps(
-                {"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False
-            )
+            try:
+                resolved = resolve_external_path(
+                    file_path, session_id=session_id, action_desc="patch file"
+                )
+            except PathOutOfBoundsError as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         if not resolved.exists():
             return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)
@@ -172,8 +187,11 @@ class PatchFileTool(BaseTool):
         old_string: str,
         new_string: str,
         replace_all: bool = False,
+        session_id: str = "",
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        return self._core(file_path, old_string, new_string, replace_all)
+        session_id = session_id or _extract_session_id(run_manager)
+        return self._core(file_path, old_string, new_string, replace_all, session_id)
 
     @override
     async def _arun(
@@ -182,8 +200,11 @@ class PatchFileTool(BaseTool):
         old_string: str,
         new_string: str,
         replace_all: bool = False,
+        session_id: str = "",
+        run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        return self._core(file_path, old_string, new_string, replace_all)
+        session_id = session_id or _extract_session_id(run_manager)
+        return self._core(file_path, old_string, new_string, replace_all, session_id)
 
 
 def build_patch_file_tool() -> PatchFileTool:

@@ -42,7 +42,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **신뢰성 있는 전달**: 결과는 멱등성 검사와 지수 백오프 재시도를 갖춘 EventBus announce 파이프라인을 통해 반환
 - **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커는 런 타임아웃이 설정된 경우에만 이를 강제 (기본값: 없음)
 - **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
-- ▶️ _전체 아키텍처는 [Subagent System README](docs/subagent/README.md) 참조_
+- ▶️ _전체 아키텍처는 [Subagent System README](agent/tools/subagent/README.md) 참조_
 
 ### 4. 🌐 멀티채널 접근
 - **Robyn 백엔드**([server/](server/)): 비동기 HTTP API + WebSocket(`/sessions/ws`), `127.0.0.1:8080`에서 리슨하며 업로드된 미디어를 `/static`, `/images`, `/audio`, `/video`로 제공
@@ -94,7 +94,6 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 EMA_AI_agent/
 ├── agent/                  # 에이전트 코어 로직
 │   ├── core.py             # 메인 에이전트 루프(LangChain create_agent → LangGraph 그래프)
-│   ├── smart_tool_node.py  # 도구 노드 패칭(멱등 도구 병렬 실행)
 │   ├── stream_repetition_guard_wrapper.py # 스트림 출력 반복 방지 가드
 │   ├── checkpointer/       # 스레드 세이프 비동기 SQLite 체크포인터
 │   ├── middlewares/        # 미들웨어 파이프라인(요약, 가드레일, HITL 등)
@@ -232,7 +231,7 @@ EMA_AI_agent/
 | 서브모듈 | 설명 | 문서 |
 |-----------|-------------|---------------|
 | **Context Engine** | 단기 세션 메시지 메모리(MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **서브에이전트 시스템** | 멀티레벨 서브에이전트 스폰, 병렬 실행 및 결과 전달 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) |
+| **서브에이전트 시스템** | 멀티레벨 서브에이전트 스폰, 병렬 실행 및 결과 전달 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **미들웨어** | 에이전트 라이프사이클 미들웨어 파이프라인 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **채널** | 채널 인터페이스 및 어댑터 시스템 | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
 | **데스크톱 클라이언트** | Tauri 2 + Nuxt 4 데스크톱/모바일 SPA 클라이언트 | [EN](client/README.md) · [ZH](client/README.zh.md) |
@@ -270,7 +269,7 @@ cp .env.example .env
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 보안 스캐너 스위치(기본값 켜짐) |
 | `TOOL_CALL_TIMEOUT_MINUTES` / `LOG_LEVEL` | — | 도구 타임아웃(5분) 및 로그 레벨(INFO) |
 | `WORKSPACE_TEMPLATE_LANG` | — | 페르소나 템플릿 언어: `en` / `zh` / `ja` / `ko`(첫 사용 시 지연 복사) |
-| `LANGSMITH_*` | — | 선택적 LangSmith 트레이싱 |
+| `"LANGSMITH"` (sherry.jsonc) | — | 선택적 LangSmith 트레이싱 |
 
 ### 3. 모델 참고 사항 (HuggingFace 자동 다운로드)
 **로컬 GGUF** 모드로 구성된 모델은 첫 사용 시 Hugging Face에서 `models/<model>/model_weight/`로 자동 다운로드됩니다 — 수동 다운로드가 필요 없습니다:

@@ -436,14 +436,14 @@ class TestLlmEnv:
         # SKILL_SCANNER_LLM defaults to OFF. _LLM_ENABLED_ENV is read once at
         # import time, so the flag's effect is pinned via the module constant
         # (an env-only setenv cannot rebind it).
-        monkeypatch.setattr("server.service.skill_scanner._LLM_ENABLED_ENV", False)
+        monkeypatch.setattr("server.service.skill_scan_backend._LLM_ENABLED_ENV", False)
         monkeypatch.setenv("AUXILIARY_LLM_API_BASE", "https://api.example.com/v1")
         monkeypatch.setenv("AUXILIARY_LLM_API_KEY", "sk-test")
         assert _llm_env() == {}
 
     def test_flag_on_with_creds_forwards_env(self, monkeypatch):
         _scrub_llm_env(monkeypatch)
-        monkeypatch.setattr("server.service.skill_scanner._LLM_ENABLED_ENV", True)
+        monkeypatch.setattr("server.service.skill_scan_backend._LLM_ENABLED_ENV", True)
         monkeypatch.setenv("SKILL_SCANNER_LLM", "1")
         monkeypatch.setenv("AUXILIARY_LLM_API_BASE", "https://api.example.com/v1")
         monkeypatch.setenv("AUXILIARY_LLM_API_KEY", "sk-test")
@@ -457,7 +457,7 @@ class TestLlmEnv:
 
     def test_flag_on_without_creds_returns_empty(self, monkeypatch):
         _scrub_llm_env(monkeypatch)
-        monkeypatch.setattr("server.service.skill_scanner._LLM_ENABLED_ENV", True)
+        monkeypatch.setattr("server.service.skill_scan_backend._LLM_ENABLED_ENV", True)
         monkeypatch.setenv("SKILL_SCANNER_LLM", "1")
         assert _llm_env() == {}
 

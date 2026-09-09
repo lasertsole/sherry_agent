@@ -68,6 +68,13 @@ vi.mock('@/pages/home/components/SubagentTasksView.vue', () => ({
   default: { name: 'SubagentTasksView', template: '<div class="stv-stub"></div>' }
 }));
 
+// Backend seeded at the fetchApi transport level; the transport is mocked at
+// the `@/composables/requestApi` module because consumers bind it through the
+// unimport auto-import injection (see vitest.config.ts), not via globalThis.
+const fetchApiMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/composables/requestApi', () => ({ fetchApi: fetchApiMock }));
+
 const base = (over: Partial<MessageItem>): MessageItem => ({
   session_id: 'default',
   role: CHAT_ROLE.USER,
@@ -200,11 +207,8 @@ describe('home/index/[sid].vue image pass-through (integration, backend mocked)'
   ];
 
   beforeEach(() => {
-    vi.stubGlobal(
-      'fetchApi',
-      vi.fn(async (opts?: { url?: string }) =>
-        opts?.url === '/get_history_by_turn_page' ? rows : { code: 200, data: null }
-      )
+    fetchApiMock.mockImplementation(async (opts?: { url?: string }) =>
+      opts?.url === '/get_history_by_turn_page' ? rows : { code: 200, data: null }
     );
   });
 

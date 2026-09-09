@@ -514,14 +514,14 @@ class CrossEncoderGGUF:
         if hasattr(self, "_ctx") and self._ctx is not None:
             try:
                 ll.llama_free(self._ctx)
-            except Exception:  # noqa: S110
-                pass
+            except Exception as e:
+                logger.debug("llama_free failed: %s", e)
             self._ctx = None
         if hasattr(self, "_model") and self._model is not None:
             try:
                 ll.llama_free_model(self._model)
-            except Exception:  # noqa: S110
-                pass
+            except Exception as e:
+                logger.debug("llama_free_model failed: %s", e)
             self._model = None
 
     def __del__(self) -> None:

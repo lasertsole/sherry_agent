@@ -143,8 +143,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { readHeartbeat, writeHeartbeat } from '@/composables/bridge';
-import { on, off } from '@/composables/mitt';
 import type { Handler } from 'mitt';
 import { logUtil } from '~/utils/log';
 
@@ -187,7 +185,10 @@ const originalSnapshot = ref<{ header: string; active: string[]; completed: stri
 const activeSectionTitle = computed(() => `${ACTIVE_HEADER}`);
 const completedSectionTitle = computed(() => `${COMPLETED_HEADER}`);
 
-/** Split raw HEARTBEAT.md into the three region lists. */
+/**
+ * Split raw HEARTBEAT.md into the three region lists.
+ * @param raw
+ */
 function parseFile(raw: string): { header: string; active: string[]; completed: string[] } {
   const sections = raw.split(/^##\s+(Active Tasks|Completed)\s*$/m);
   // sections: [header, <markerActive>, activeBlock, <markerCompleted>, completedBlock?, ...]
@@ -264,7 +265,10 @@ function removeTask(i: number) {
   activeTasks.value.splice(i, 1);
 }
 
-/** Move an active task to the completed list. */
+/**
+ * Move an active task to the completed list.
+ * @param i
+ */
 function completeTask(i: number) {
   const task = activeTasks.value[i];
   if (task && task.trim().length > 0) {
@@ -273,7 +277,10 @@ function completeTask(i: number) {
   }
 }
 
-/** Move a completed task back to the active list. */
+/**
+ * Move a completed task back to the active list.
+ * @param i
+ */
 function reactivateTask(i: number) {
   const task = completedTasks.value[i];
   if (task) {

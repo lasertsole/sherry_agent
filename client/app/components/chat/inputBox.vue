@@ -115,6 +115,7 @@ let browsingSnapshot = '';
  * "switched question" while browsing history with the up/down keys). Directly assigning `textContent`
  * loses the cursor and resets the existing content (full selection replaced), which matches the
  * "switch question" semantics — replacing the whole entry. autoSend is not triggered during browsing.
+ * @param text
  */
 function writeDraftToInput(text: string): void {
   if (inputDom.value) {
@@ -180,7 +181,10 @@ function handleKeyEscape(): void {
   writeDraftToInput(browsingSnapshot);
 }
 
-/** Input callback: strip contenteditable markup, keeping only plain text for validation */
+/**
+ * Input callback: strip contenteditable markup, keeping only plain text for validation
+ * @param event
+ */
 function inputFunc(event: Event): void {
   if (!(event instanceof InputEvent)) {
     return;
@@ -198,7 +202,10 @@ function inputFunc(event: Event): void {
   }
 }
 
-/** Enter sends (without Shift); Shift+Enter keeps the line break */
+/**
+ * Enter sends (without Shift); Shift+Enter keeps the line break
+ * @param event
+ */
 function handleKeyEnter(event: KeyboardEvent): void {
   if (event.shiftKey) return; // Shift+Enter inserts a line break
   handleSend();
@@ -208,6 +215,7 @@ function handleKeyEnter(event: KeyboardEvent): void {
  * Stores a sent user question into the history cache (dedup, keeping at most the most recent MAX_HISTORY entries).
  * Identical text is deduplicated only at the end: if it already exists, remove it from its old position and append
  * it to the end, keeping the "newest" semantics correct.
+ * @param text
  */
 function recordQuestion(text: string): void {
   if (isEmpty(text)) return;
@@ -325,3 +333,40 @@ defineExpose({ clearHistory });
   }
 }
 </style>
+
+<i18n lang="json">
+{
+  "zh": {
+    "chatInput": {
+      "placeholder": "请输入内容...",
+      "thinking": "AI 正在思考中...",
+      "send": "发送",
+      "stop": "停止"
+    }
+  },
+  "en": {
+    "chatInput": {
+      "placeholder": "Type a message...",
+      "thinking": "AI is thinking...",
+      "send": "Send",
+      "stop": "Stop"
+    }
+  },
+  "ja": {
+    "chatInput": {
+      "placeholder": "メッセージを入力してください...",
+      "thinking": "AI が考えています...",
+      "send": "送信",
+      "stop": "停止"
+    }
+  },
+  "ko": {
+    "chatInput": {
+      "placeholder": "메시지를 입력하세요...",
+      "thinking": "AI가 생각하고 있습니다...",
+      "send": "보내기",
+      "stop": "중지"
+    }
+  }
+}
+</i18n>

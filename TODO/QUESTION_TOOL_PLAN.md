@@ -24,14 +24,15 @@ sherry_agent 已有完整的 HITL interrupt/resume 管道（`agent/middlewares/h
 
 ```python
 class QuestionOption(BaseModel):
-    label: str        # 1-5 词短标签
+    label: str  # 1-5 词短标签
     description: str  # 选项解释
 
+
 class QuestionInput(BaseModel):
-    question: str                     # 向用户展示的问题
-    header: str                       # 极短标签（max 30 chars）
-    options: list[QuestionOption]     # 2-6 个选项
-    multiple: bool = False            # 是否允许多选
+    question: str  # 向用户展示的问题
+    header: str  # 极短标签（max 30 chars）
+    options: list[QuestionOption]  # 2-6 个选项
+    multiple: bool = False  # 是否允许多选
 ```
 
 ### 工具类
@@ -60,17 +61,24 @@ metadata 三个标志的用途：
 async def _arun(self, question, header, options, multiple, **kwargs):
     # 1. 构造 HITLRequest（复用现有 interrupt/resume 管道）
     hitl_request = HITLRequest(
-        action_requests=[ActionRequest(
-            name="question",
-            args={"question": question, "header": header,
-                  "options": [o.model_dump() for o in options],
-                  "multiple": multiple},
-            description=question,
-        )],
-        review_configs=[ReviewConfig(
-            action_name="question",
-            allowed_decisions=["approve", "reject"],
-        )],
+        action_requests=[
+            ActionRequest(
+                name="question",
+                args={
+                    "question": question,
+                    "header": header,
+                    "options": [o.model_dump() for o in options],
+                    "multiple": multiple,
+                },
+                description=question,
+            )
+        ],
+        review_configs=[
+            ReviewConfig(
+                action_name="question",
+                allowed_decisions=["approve", "reject"],
+            )
+        ],
     )
     # 2. interrupt() 暂停图执行，等待用户回复
     response = interrupt(hitl_request)

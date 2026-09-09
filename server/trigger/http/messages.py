@@ -9,6 +9,8 @@ from server.service import (
     get_pending_interrupt as _get_pending_interrupt,
 )
 
+_MAX_TURN_PAGE_SIZE = 200
+
 
 @app.get("/sessions")
 async def get_sessions_handler(request):
@@ -40,7 +42,7 @@ async def get_history_by_turn_page(request):
     Query parameters:
         session_id (str, required):     Session ID.
         min_turn_num (int, required):   Minimum turn number (>= 1). Turns below this are excluded.
-        turn_page_size (int, required): Turns per page (>= 1).
+        turn_page_size (int, required): Turns per page (1-200).
         turn_page_num (int, required):  Page number (>= 1). 1 = most recent page.
     """
     query_params = request.query_params
@@ -59,6 +61,9 @@ async def get_history_by_turn_page(request):
 
     if not turn_page_size:
         raise ValueError("turn_page_size is required")
+
+    if int(turn_page_size) > _MAX_TURN_PAGE_SIZE:
+        raise ValueError(f"turn_page_size must be <= {_MAX_TURN_PAGE_SIZE}")
 
     if not turn_page_num:
         raise ValueError("turn_page_num is required")

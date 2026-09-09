@@ -115,43 +115,59 @@ class TestParseSkillManageArgs316:
 
 
 class TestConfigGetter317:
-    def _with_config(self, monkeypatch, cfg):
-        monkeypatch.setattr(config, "_load_config", lambda: cfg)
+    @pytest.fixture()
+    def sherry_file(self, tmp_path, monkeypatch):
+        """Point the sherry.jsonc path at a temp file for the duration of a test."""
+        from config import sherry_settings
 
-    def test_bool_default_when_missing(self, monkeypatch):
-        self._with_config(monkeypatch, {})
-        assert config.is_enabled() is True
-        assert config.get_consolidate() is False  # DEFAULT_CONSOLIDATE
+        path = tmp_path / "sherry.jsonc"
+        monkeypatch.setattr(sherry_settings, "SHERRY_CONFIG_PATH", path)
+        return path
 
-    def test_bool_coercion(self, monkeypatch):
-        self._with_config(monkeypatch, {"enabled": 0, "consolidate": "yes"})
+    def test_getters_read_the_nested_curator_object(self, sherry_file):
+        import json
+
+        sherry_file.write_text(
+            json.dumps(
+                {
+                    "curator": {
+                        "enabled": False,
+                        "interval_hours": 48,
+                        "min_idle_hours": 0.5,
+                        "stale_after_days": 7,
+                        "archive_after_days": 14,
+                        "consolidate": False,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
         assert config.is_enabled() is False
+        assert config.get_interval_hours() == 48
+        assert config.get_min_idle_hours() == 0.5
+        assert config.get_stale_after_days() == 7
+        assert config.get_archive_after_days() == 14
+        assert config.get_consolidate() is False
+
+    def test_missing_file_falls_back_to_typed_defaults(self, sherry_file):
+        from config.sherry_settings import SHERRY_SETTING_DEFAULTS
+
+        assert config.is_enabled() is True
+        assert config.get_interval_hours() == SHERRY_SETTING_DEFAULTS["curator.interval_hours"]
+        assert config.get_min_idle_hours() == float(
+            SHERRY_SETTING_DEFAULTS["curator.min_idle_hours"]
+        )
         assert config.get_consolidate() is True
 
-    def test_int_coercion_and_default_on_bad_value(self, monkeypatch):
-        self._with_config(monkeypatch, {"interval_hours": "24"})
-        assert config.get_interval_hours() == 24
+    def test_unparseable_value_falls_back_to_default(self, sherry_file):
+        import json
 
-        self._with_config(monkeypatch, {"interval_hours": None})
-        from context_engine.curator.constants import DEFAULT_INTERVAL_HOURS
+        from config.sherry_settings import SHERRY_SETTING_DEFAULTS
 
-        assert config.get_interval_hours() == DEFAULT_INTERVAL_HOURS
+        sherry_file.write_text(json.dumps({"curator": {"interval_hours": "abc"}}), encoding="utf-8")
 
-    def test_float_coercion_and_default(self, monkeypatch):
-        from context_engine.curator.constants import DEFAULT_MIN_IDLE_HOURS
-
-        self._with_config(monkeypatch, {"min_idle_hours": "0.5"})
-        assert config.get_min_idle_hours() == 0.5
-
-        self._with_config(monkeypatch, {"min_idle_hours": "abc"})
-        assert config.get_min_idle_hours() == DEFAULT_MIN_IDLE_HOURS
-
-    def test_days_getters(self, monkeypatch):
-        from context_engine.curator.constants import DEFAULT_ARCHIVE_AFTER_DAYS
-
-        self._with_config(monkeypatch, {"stale_after_days": 7, "archive_after_days": "bad"})
-        assert config.get_stale_after_days() == 7
-        assert config.get_archive_after_days() == DEFAULT_ARCHIVE_AFTER_DAYS
+        assert config.get_interval_hours() == SHERRY_SETTING_DEFAULTS["curator.interval_hours"]
 
 
 class TestComputeDiff312:

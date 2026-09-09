@@ -12,13 +12,23 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import override
+from typing import Annotated, override
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
+from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
-from agent.tools.pub_base import is_text_file, resolve_path, PathOutOfBoundsError, should_skip_dir
+from agent.tools.pub_base import (
+    PathOutOfBoundsError,
+    _extract_session_id,
+    is_text_file,
+    resolve_external_path,
+    resolve_project_path,
+    should_skip_dir,
+)
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 
 # ── Content search (grep-like) ───────────────────────────────────────────
@@ -162,6 +172,7 @@ class SearchFilesInput(BaseModel):
         le=5,
         description="Lines of context around content matches (default: 0, max: 5)",
     )
+    session_id: SessionId = ""
 
 
 class SearchFilesTool(BaseTool):
@@ -192,13 +203,17 @@ class SearchFilesTool(BaseTool):
         limit: int = 50,
         offset: int = 0,
         context: int = 0,
+        session_id: str = "",
     ) -> str:
         try:
-            resolved = resolve_path(path)
+            resolved = resolve_project_path(path)
         except PathOutOfBoundsError:
-            return json.dumps(
-                {"error": f"Path outside project root not allowed: {path}"}, ensure_ascii=False
-            )
+            try:
+                resolved = resolve_external_path(
+                    path, session_id=session_id, action_desc="search directory"
+                )
+            except PathOutOfBoundsError as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         if not resolved.exists():
             return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)
@@ -222,9 +237,11 @@ class SearchFilesTool(BaseTool):
         limit: int = 50,
         offset: int = 0,
         context: int = 0,
+        session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        return self._core(pattern, target, path, file_glob, limit, offset, context)
+        session_id = session_id or _extract_session_id(run_manager)
+        return self._core(pattern, target, path, file_glob, limit, offset, context, session_id)
 
     @override
     async def _arun(
@@ -236,9 +253,11 @@ class SearchFilesTool(BaseTool):
         limit: int = 50,
         offset: int = 0,
         context: int = 0,
+        session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        return self._core(pattern, target, path, file_glob, limit, offset, context)
+        session_id = session_id or _extract_session_id(run_manager)
+        return self._core(pattern, target, path, file_glob, limit, offset, context, session_id)
 
 
 def build_search_files_tool() -> SearchFilesTool:

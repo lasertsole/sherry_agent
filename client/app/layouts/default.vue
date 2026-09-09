@@ -28,3 +28,28 @@ const { t } = useI18n();
   overflow: hidden;
 }
 </style>
+
+<i18n lang="json">
+{
+  "zh": {
+    "a11y": {
+      "skipToMain": "跳到主内容"
+    }
+  },
+  "en": {
+    "a11y": {
+      "skipToMain": "Skip to main content"
+    }
+  },
+  "ja": {
+    "a11y": {
+      "skipToMain": "メインコンテンツへスキップ"
+    }
+  },
+  "ko": {
+    "a11y": {
+      "skipToMain": "메인 콘텐츠로 건너뛰기"
+    }
+  }
+}
+</i18n>

@@ -54,6 +54,12 @@
                 severity="danger"
                 @click="handleHitlDecision('reject')" />
               <Button
+                :label="t('hitl.yolo')"
+                icon="pi pi-bolt"
+                severity="warn"
+                :title="t('hitl.yoloTooltip')"
+                @click="handleHitlDecision('yolo')" />
+              <Button
                 :label="t('hitl.approve')"
                 icon="pi pi-check"
                 @click="handleHitlDecision('approve')" />
@@ -264,8 +270,6 @@
 // Page-level error capture: runtime errors for all descendant components (ChatBox/HITL card/SubagentTasksView, etc.)
 // → logUtil logs + global toast, return false prevents bubbling up to home/index.vue
 // (03-errorCaptured factory function pattern)
-import { useErrorCaptured } from '~/composables/errorCaptured';
-
 useErrorCaptured();
 
 // components
@@ -275,33 +279,10 @@ import { ChatInputBox } from '#components';
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
-import type { MessageItem, HitlRequestData } from '../type.ts';
-import type { MultiModalMessage } from '@/types/message';
-import { CHAT_ROLE } from '../type.ts';
-import { toMessageItems } from '../messageItems';
-import type { CachedCharacter } from '@/composables/db';
-import {
-  DEFAULT_CACHED_CHARACTER,
-  cacheCharacter,
-  readCachedCharacter,
-  cacheSessionMeta,
-  saveDraftTurn,
-  readDraftTurns,
-  clearDraftTurn,
-  clearDraftSession
-} from '@/composables/db';
+import type { MessageItem } from '../type.ts';
 import { tools } from '../config';
-import { resumeHitl, StreamInterruptedError, type AgentChunkType, type QueuedInfo } from '@/composables/bridge';
-import {
-  get_history_by_turn_page,
-  getPendingInterrupt,
-  postAgentStream,
-  SESSION_ABORT_STREAM_EVENT
-} from '@/composables/messages';
-import { on, off } from '@/composables/mitt';
-import { useSubagentTasks } from '@/composables/useSubagentTasks';
+import type { ChatController } from '@/composables/messages';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
-import { logUtil } from '~/utils/log';
 
 // Image preview
 const { openPreview } = useImagePreview();
@@ -384,79 +365,7 @@ onDeactivated(() => {
  */
 let mySidLoaded = false;
 
-/**
- * Character display information (source is local Dexie session cache snapshot, see `CachedCharacter` in `db.ts`).
- * - `userAvatar` / `aiAvatar` are base64 data URL (user custom) or `/avatar/xxx.jpg` relative URL (built-in default), both can be directly rendered by `<img>`.
- * - Refreshed from corresponding session snapshot (or global pending profile) on each session switch/new creation, old sessions retain their own snapshots.
- */
-const characterInfo = ref<{ userName: string; userAvatar: string; aiName: string; aiAvatar: string }>({
-  userName: DEFAULT_CACHED_CHARACTER.userName,
-  userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
-  aiName: DEFAULT_CACHED_CHARACTER.aiName,
-  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar
-});
-
-/** Default character display info (built-in: Touno Hanna / Sherry Orange + default avatar URLs, see `defaultCharacter.ts`) */
-const defaultCharacter = (): { userName: string; userAvatar: string; aiName: string; aiAvatar: string } => ({
-  userName: DEFAULT_CACHED_CHARACTER.userName,
-  userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar,
-  aiName: DEFAULT_CACHED_CHARACTER.aiName,
-  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar
-});
-
-// ── Chat area background image (uniformly rendered by home/index.vue root container) ────────
-// Background image is global configuration, bound to root container of home/index.vue (fills entire window, including left session list),
-// Updated immediately by shared singleton useChatBackground after saving, no need to load/render background image in this page.
-// This page root div is already set to bg-transparent (light theme) in template, allowing root container's background image to show through.
-
-/**
- * Map a character snapshot to `characterInfo` (empty segments fall back to built-in defaults).
- * @param snap
- */
-const applyCharacterSnapshot = (snap?: Pick<CachedCharacter, 'userName' | 'userAvatar' | 'aiName' | 'aiAvatar'>) => {
-  const defaultInfo = defaultCharacter();
-  characterInfo.value = snap
-    ? {
-        userName: snap.userName?.trim() ? snap.userName : defaultInfo.userName,
-        userAvatar: snap.userAvatar ?? defaultInfo.userAvatar,
-        aiName: snap.aiName?.trim() ? snap.aiName : defaultInfo.aiName,
-        aiAvatar: snap.aiAvatar ?? defaultInfo.aiAvatar
-      }
-    : defaultInfo;
-};
-
-/**
- * Ensure the specified session has locked its own character snapshot and update `characterInfo` to that session's display info.
- *
- * Naming logic: System configuration - character configuration edits the 'global pending profile' (`GLOBAL_SESSION_KEY` row).
- * When each session is first opened, copy and lock the current global profile to its own `session_id` row;
- * Subsequent global updates (avatar/name changes) no longer affect old sessions with locked snapshots, only new sessions get the latest global values.
- *
- * @param sessionId Session ID
- */
-const ensureSessionCharacter = async (sessionId: string) => {
-  try {
-    const [globalSnap, sessionSnap] = await Promise.all([
-      readCachedCharacter('__global__'),
-      readCachedCharacter(sessionId)
-    ]);
-    // Session already has snapshot (old session locked avatar/name) → use snapshot directly, not affected by global changes.
-    if (sessionSnap) {
-      applyCharacterSnapshot(sessionSnap);
-      return;
-    }
-    // Session has no snapshot yet (new session or never opened before) → use global profile snapshot and lock it.
-    // Note: `base` might be the global row (with session_id=GLOBAL_SESSION_KEY),
-    // must use `...base` then explicitly override session_id, avoid writing real session key into global row.
-    const base = globalSnap ?? defaultCharacter();
-    const locked: CachedCharacter = { ...base, session_id: sessionId };
-    await cacheCharacter(locked);
-    applyCharacterSnapshot(locked);
-  } catch (error) {
-    // On Dexie read/write exceptions, preserve current display and don't block chat.
-    logUtil.w('[ensureSessionCharacter] 读取角色快照失败：', error);
-  }
-};
+// ── Shared page state (owned here, used by the slices below) ────────────────
 
 /**
  * Message list to render for current session — single source of truth.
@@ -467,398 +376,99 @@ const ensureSessionCharacter = async (sessionId: string) => {
  */
 const chatMessages = ref<MessageItem[]>([]);
 
-/**
- * Load history messages for specified session (local cache first, backend merges server-side increments),
- * merged into `chatMessages` (deduplicated by id), for ChatBox rendering.
- *
- * Fix: No longer reconstruct entire `currentSession.value` (that would overwrite user's already-sent local messages,
- * causing 'list cleared after sending'). Only merge history rows into single list, existing messages preserved.
- * @param sessionId
- */
-const loadSessionHistory = async (sessionId: string) => {
-  const rows = await get_history_by_turn_page(sessionId, 0, 10, 1);
-  const historyItems = toMessageItems(rows);
-
-  // Merge and deduplicate: existing ids preserve local versions (including unsent temporary messages with negative ids),
-  // server real ids are added as-is. Overall turn_num ascending ensures stable order.
-  //
-  // Race condition fix: unsent temporary messages have negative ids (handleSend assigns large negative),
-  // when server later returns the real positive id row for the same message, their ids differ, deduplication by id would preserve both
-  // 'temporary negative id copy' and 'server positive id row', causing the same message to render twice.
-  //
-  // Therefore for each local negative id temporary copy, directly match its real positive id in server history rows by
-  // 'same session + same turn_num + same role + same content' exact match;
-  // if hit, replace with server row (discard temporary copy). Note cannot only merge find by (session, turn, role)
-  // —— multiple same-role rows may appear in same turn (e.g. tool call + final reply within one AI round,
-  // add_messages writes the whole batch into same turn_num), merge keys would lose some rows. Line-by-line exact match
-  // on content ensures no cross-row mistaken replacement.
-  const mergedById = new Map<number, MessageItem>();
-  const serverRowFor = (m: MessageItem) =>
-    historyItems.find(
-      h =>
-        h.id >= 0 &&
-        h.session_id === m.session_id &&
-        h.turn_num === m.turn_num &&
-        h.role === m.role &&
-        h.content === m.content
-    );
-  for (const m of chatMessages.value) {
-    // Local temporary negative id rows: if server has already returned positive id row for same logical message, skip (use server row).
-    if (m.id < 0) {
-      const serverRow = serverRowFor(m);
-      // Hit: replace temporary copy with server positive id row, add in subsequent loop; placeholder here to avoid duplication
-      if (serverRow) {
-        mergedById.set(serverRow.id, serverRow);
-        continue;
-      }
-    }
-    mergedById.set(m.id, m);
-  }
-  for (const h of historyItems) {
-    // Only add when local doesn't have message with same id, to avoid overwriting content already updated during streaming
-    if (!mergedById.has(h.id)) mergedById.set(h.id, h);
-  }
-
-  // —— Draft Hydration ——
-  // Read incomplete draft turns for this session in IndexedDB (turns not persisted due to error/stop/HITL-reject, etc.,
-  // and turns currently being streamed generated when server hasn't yet written back onDone results).
-  //
-  // Each draft message preserves its 'local negative temporary id' and 'positive turn_num'. Since positive turn_num matches real-time messages,
-  // draft rows naturally appear after committed messages in same turn (see sorting at end), won't float before committed turns like old negative turn scheme.
-  // And exact match with server/local collection by (session, turn, role, content) — if same logical message is already persisted (serverRowFor hit)
-  // or already exists in local collection, skip this draft row to avoid duplicate rendering of drafts and real-time messages in same turn.
-  const drafts = await readDraftTurns(sessionId);
-  //
-  // Draft 'Stale Turn' Judgment: If same turn_num already has 'server-persisted positive id row' in merged collection,
-  // and contains a final AI result not in streaming (role=ai) — then this turn has been successfully persisted by server,
-  // this draft is stale residue from when the turn was interrupted (e.g. Test: manually kill backend to let draft retain 'reply failed' marker,
-  // then backend self-heals and writes back real content for same turn). At this point, exact match by (turn, role, content) line by line
-  // would be missed due to different content (failed marker vs real reply), causing failed marker/failed tool rows and server real rows
-  // to render together, duplicating the same turn. Correct approach: Any draft turn whose final AI result has been persisted should be skipped entirely, no longer hydrated.
-  //
-  // Only using server role=ai behavior as 'persisted final result' anchor is because normal ongoing streaming turns server
-  // only writes human first (positive id), AI result not yet persisted, at this point draft AI rows should still be hydrated; only when AI is persisted
-  // does it mean the turn is substantially complete and the draft must be stale.
-  const staleDraftTurns = new Set<number>();
-  for (const m of mergedById.values()) {
-    if (m.id >= 0 && m.role === 'ai') staleDraftTurns.add(m.turn_num);
-  }
-  for (const draft of drafts) {
-    for (const dm of draft.messages) {
-      if (dm.session_id !== sessionId) continue; // Defensive: only hydrate this session
-      // Stale turn: this turn has been persisted with final AI result by server, discard draft row entirely
-      if (staleDraftTurns.has(dm.turn_num)) continue;
-      // Whether draft row already exists in local collection / server history (matched by logical keys)
-      const alreadyLocal = [...mergedById.values()].some(
-        m => m.turn_num === dm.turn_num && m.role === dm.role && m.content === dm.content
-      );
-      if (alreadyLocal) continue;
-      mergedById.set(dm.id, dm);
-    }
-  }
-
-  // Sort by turn_num ascending; within same turn, sort by id ascending (matches backend messages table
-  // "ORDER BY turn_num ASC, id ASC"). Previously using id descending would reverse insertion order within same turn
-  // (user message + AI reply share same turn_num), causing after refresh
-  // AI replies to appear above user messages, last AI reply not at bottom.
-  //
-  // Draft rows use same positive turn_num + negative temporary id as real-time messages: for committed turns, draft id is negative,
-  // real message id for that turn is positive, within same turn id ascending (negative < positive) drafts come first —— but same logical message
-  // has been filtered out by 'skip' logic above, drafts that can be hydrated are all failed turns not yet persisted, thus won't
-  // conflict with actual rendering.
-  chatMessages.value = [...mergedById.values()].sort((a, b) => a.turn_num - b.turn_num || a.id - b.id);
-};
-
 /** Whether currently in AI reply generation */
 const isSending = ref(false);
+
 /** Current ongoing streaming request controller (used to stop generation) */
-let activeAgentController: AbortController | null = null;
-
-/**
- * WS stream reconnection status banner: null = not reconnecting; otherwise show 'Reconnecting (attempt/max times)'.
- * Data source is mitt events broadcast by bridge's sendChatMessageWs during exponential backoff reconnection
- * (stream:reconnecting / stream:reconnected / stream:reconnect:failed).
- */
-const reconnectState = ref<{ attempt: number; max: number } | null>(null);
-
-/**
- * Reconnection events only drive this session's banner (route may cache multiple session instances simultaneously)
- * @param event
- */
-// mitt Handler<unknown> requires the (event: unknown) signature; narrow the broadcast payload manually
-// (bridge.sendChatMessageWs emits { sessionId?, attempt?, maxAttempts? }).
-const onStreamReconnecting = (event: unknown) => {
-  const payload = (typeof event === 'object' && event !== null ? event : {}) as {
-    sessionId?: string;
-    attempt?: number;
-    maxAttempts?: number;
-  };
-  const current = sessionId.value || 'default';
-  if (payload?.sessionId && payload.sessionId !== current) return;
-  reconnectState.value = { attempt: payload?.attempt ?? 1, max: payload?.maxAttempts ?? 3 };
-};
-const onStreamReconnected = () => {
-  reconnectState.value = null;
-};
-const onStreamReconnectFailed = () => {
-  reconnectState.value = null;
-};
-
-/**
- * Queue badge state: null = nothing queued; otherwise show 'Queued · position N of M'.
- * Data source is bridge.sendChatMessageWs forwarding the backend `queued` frame for a send
- * issued while the session was still streaming (the message will stream once earlier turns finish).
- * `turn` records which local turn the badge belongs to, so clears are turn-scoped and a
- * concurrently finishing earlier stream can never wipe a newer queued send's badge.
- */
-const queueBadge = ref<{ position: number; queueSize: number; turn: number } | null>(null);
-
-/**
- * `queued` frame → queue badge. Only drives THIS instance's badge: matched against the frozen
- * `mySid`, not the live `sessionId` computed — the latter reads the globally shared route object
- * and flips to another sid while this KeepAlive-cached instance sits in the background.
- * @param info
- * @param turnNum
- */
-const handleQueued = (info: QueuedInfo, turnNum: number) => {
-  if (info.sessionId !== mySid) return;
-  queueBadge.value = { position: info.position, queueSize: info.queueSize, turn: turnNum };
-};
-
-/**
- * Drop the queue badge when it belongs to the given turn (turn-scoped clear helper).
- * @param turnNum
- */
-const clearQueueBadgeForTurn = (turnNum: number) => {
-  if (queueBadge.value?.turn === turnNum) {
-    queueBadge.value = null;
-  }
-};
-
-/**
- * Post-interrupt delayed reconciliation: Backend only persists this round's messages when agent graph completes,
- * server may still be generating at interruption moment. Wait 25 seconds then pull history (loadSessionHistory has built-in positive/negative id deduplication),
- * replace local negative temporary id rows with server positive turn_num records, recover content generated before interruption.
- * Only execute if still on same session and not sending at that time; repeated interruptions reset timer (one-time semantics).
- */
-let postInterruptTimer: ReturnType<typeof setTimeout> | null = null;
-const schedulePostInterruptReconcile = (sid: string) => {
-  if (postInterruptTimer) clearTimeout(postInterruptTimer);
-  postInterruptTimer = setTimeout(() => {
-    postInterruptTimer = null;
-    if (sessionId.value === sid && !isSending.value) {
-      void loadSessionHistory(sid);
-    }
-  }, 25_000);
-};
-/**
- * Auto-increment id counter (for local temporary messages, avoid conflict with real ids).
- *
- * Start from a large negative number and allocate in 'incrementing' order by creation time: -1000000, -999999, -999998 …
- * This way messages within same turn (turn_num same) when sorted by id ascending,
- * exactly equals their creation order (user message first, AI/tool segments follow),
- * maintaining consistency with backend "ORDER BY turn_num ASC, id ASC" (user written first, smaller id).
- *
- * Note: Cannot use `--tempIdCounter` (decrement) like before, otherwise later created AI/tool
- * message ids would be smaller, when switching away during streaming and back triggers re-sorting, AI would appear above user.
- */
-let tempIdCounter = -1000000;
-
-/**
- * Stream abort handling when session is deleted:
- *
- * When this session is deleted (home/index.vue broadcasts `SESSION_ABORT_STREAM_EVENT`),
- * if this instance is exactly that session (matched by sid) and still streaming, abort its AbortController.
- * Particularly crucial for 'inactive but KeepAlive cached and stream not aborted' sessions — if not aborted after deletion,
- * backend will continue pushing chunks to deleted session's WebSocket, causing deleted chat state to be contaminated.
- *
- * Note: `activeAgentController` is a setup closure variable, so handler must be defined in this scope,
- * and compare the first parameter (session id) with this instance `sessionId` to ensure only this session is aborted.
- * @param deletedSid
- */
-const handleAbortStreamOnDelete = (deletedSid: unknown) => {
-  // Use frozen this instance `mySid` for comparison, not live `sessionId`: the latter reads global route,
-  // when instance is KeepAlive cached (switched to other session) it becomes others' sid, causing this session deletion to miss comparison、
-  // background stream cannot be aborted.
-  if (deletedSid !== mySid) return;
-  if (activeAgentController) {
-    activeAgentController.abort();
-    activeAgentController = null;
-    isSending.value = false;
-  }
-  // Session gone: drop the queue badge so it cannot linger on a deleted session's cached instance
-  queueBadge.value = null;
-  // Session deleted: clear remaining history cache/draft browsing state in this instance's KeepAlive cache slot
-  // (when deleting inactive session slot may not be released immediately, history residing in slot must be actively cleared,
-  //   ensuring history strictly follows session deletion, avoiding manually revisiting that sid to see deleted session residues).
-  chatInputBoxRef.value?.clearHistory?.();
-  // Session deleted: clear all ongoing draft turns for this session in IndexedDB, prevent orphan drafts
-  // from incorrectly re-hydrating after rebuilding same id session (Draft table still contains original deleted session content).
-  void clearDraftSession(mySid);
-};
-
-/** HITL approval request (set when agent pauses waiting for human approval) */
-const hitlRequest = ref<HitlRequestData | null>(null);
-
-/**
- * Handle HITL approval request: show approval dialog
- * @param data
- */
-const handleHitlRequest = (data: HitlRequestData) => {
-  hitlRequest.value = data;
-};
-
-/** Ongoing HITL resume controller (single-flight: only one allowed per session) */
-let activeHitlController: { closed: boolean; abort: () => void } | null = null;
-
-/**
- * User approve/reject HITL request.
- *
- * Decision no longer depends on `sendHitlResponse` mounted on the closure returned by `streamChatMessage` during real-time message sending —
- * that closure is only available when `!done && socket.readyState === OPEN`,
- * after page refresh/session switch/browser reopen socket is closed、controller is null, approval will silently no-op.
- * Here changed to independent `resumeHitl`: directly open a new WS to backend `/sessions/agent/ws`,
- * send `hitl_response` frame to streamingly restore agent from LangGraph checkpoint, thus
- * supporting three-layer persistence (session switch, refresh, browser reopen) and still being able to complete approval.
- * @param decision
- * @param message
- */
-const handleHitlDecision = (decision: 'approve' | 'reject', message: string = '') => {
-  const sid = sessionId.value;
-  if (!sid) {
-    hitlRequest.value = null;
-    return;
-  }
-  // single-flight only used to prevent duplicate submission for 'same pending approval item', absolutely cannot silently discard new decisions.
-  // For sequential HITL (multiple dangerous tools requiring approval one by one), the previous resume WS is still in
-  // streaming recovery (closed=false), if directly return at this point will cause subsequent 'approve/reject' clicks to have no response at all.
-  // Correct approach: first abort/release the still-running controller slot, then open a new resume WS for this decision —
-  // ensuring every click has a real channel to send hitl_response, absolutely no silent no-op.
-  if (activeHitlController && !activeHitlController.closed) {
-    // Abort old link's stream recovery (its abort will send {type:'stop'} to backend), and release its slot,
-    // avoid it mistakenly clearing the already replaced activeHitlController once it resolves later.
-    activeHitlController.abort();
-    activeHitlController = null;
-  }
-
-  // Record the turn number for this approval: new messages from resume will go to 'current max turn + 1'
-  const turnNum = chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
-
-  // Register this resume turn as draft (consistent with handleSend), so appendStreamChunk can write to disk in real-time;
-  // remove during reconciliation when resume stream completes normally, retain draft to cache failure stage content on reject/failure.
-  trackDraftTurn(sid, turnNum);
-
-  const onChunk = (
-    content: string,
-    type: AgentChunkType,
-    _sessionId: string,
-    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
-  ) => {
-    appendStreamChunk(sid, content, type, turnNum, meta);
-  };
-
-  const { controller, promise } = resumeHitl(sid, decision, message, onChunk, handleHitlRequest);
-  activeHitlController = controller;
-
-  // Reject: this tool won't be executed, backend won't send back tool_end, so mark the currently still running
-  // tool card as failed (UI changes from spinner to red ✗), avoid permanent loading state.
-  if (decision === 'reject') {
-    markRunningToolsFailed();
-    // Reject won't trigger backend response, immediately write draft with failed status to disk, ensuring failed progress is visible after refresh
-    void writeDraftTurn(sid, turnNum);
-  }
-
-  /**
-   * Clean up the hanging state of this HITL approval chain.
-   *
-   * Key point: When HITL interrupt occurs, backend **does not close** the original generation stream's WebSocket (waiting for resume),
-   * so the promise returned by `postAgentStream` in `handleSend` hangs permanently, its `onDone` never triggers,
-   * `isSending` stays at `true`. Must manually reset after approval completes, otherwise input box/generate button will be permanently locked.
-   */
-  const finish = () => {
-    if (activeHitlController === controller) activeHitlController = null;
-    // The original generation stream is abandoned: release its controller slot and reset the sending state
-    activeAgentController = null;
-    isSending.value = false;
-    // If no new hitl_request is triggered during approval, close the approval card
-    if (hitlRequest.value) {
-      hitlRequest.value = null;
-    }
-  };
-  promise
-    .then(() => {
-      // Normal completion: write final draft first then reconcile remove (consistent with handleSend onDone)
-      return commitDraftTurn(sid, turnNum).then(() => {
-        untrackDraftTurn(sid, turnNum);
-        finish();
-        void loadSessionHistory(sid);
-      });
-    })
-    .catch(() => {
-      // Also clean up on error, keep input available; card closing is decided by other processes
-      if (activeHitlController === controller) activeHitlController = null;
-      activeAgentController = null;
-      // HITL resume failed: ongoing tools did not complete normally, marked as failed (red ✗)
-      markRunningToolsFailed();
-      // Retain draft: cache the completed stages before failure
-      void writeDraftTurn(sid, turnNum);
-      isSending.value = false;
-    });
-
-  // This approval has been answered; collapse the card (it pops up again if the agent pauses once more during the resume)
-  hitlRequest.value = null;
-};
-
-/**
- * Try to restore the HITL interrupt card that is still "pending approval".
- *
- * In the three-tier persistence scenarios (session switch / page refresh / browser reopen / server restart),
- * `hitlRequest` only lives in component memory and is empty when re-entering the session. Here we query the backend
- * `/get_pending_interrupt` (re-pushed from the LangGraph checkpoint) for whether this session still has a pending
- * approval; if it does, the card is popped up again for the user to approve/reject.
- * @param sid
- */
-const restorePendingHitl = async (sid: string) => {
-  if (!sid) return;
-  // Do not re-raise if an approval is already in flight or a card already exists
-  if (hitlRequest.value || (activeHitlController && !activeHitlController.closed)) return;
-  const pending = await getPendingInterrupt(sid);
-  if (pending && typeof pending === 'object' && !Array.isArray(pending) && typeof pending.tool_name === 'string') {
-    hitlRequest.value = {
-      tool_name: pending.tool_name,
-      tool_args: pending.tool_args ?? {},
-      description: pending.description ?? '',
-      allowed_decisions: pending.allowed_decisions ?? []
-    };
-  }
-};
-
-/** Stop the current AI reply generation (local frontend abort + notify the backend to stop) */
-const handleStop = () => {
-  activeAgentController?.abort();
-  activeAgentController = null;
-  // If a HITL resume stream recovery is in flight, abort that controller as well
-  // (its abort sends {type:'stop'} to the backend, making answering=False and triggering a CancelledError)
-  activeHitlController?.abort();
-  activeHitlController = null;
-  // The aborted turn did not finish; mark the still-running tool cards as failed (red ✗)
-  markRunningToolsFailed();
-  // Aborting also counts as an "unfinished turn": for every active draft turn of this session, write a snapshot
-  // that includes the failed state, so that after stopping, a refresh still shows the produced
-  // greeting/analysis/preliminary tool stages instead of the whole turn disappearing.
-  const sid = sessionId.value || 'default';
-  for (const turnNum of [...activeDraftTurns]) {
-    void writeDraftTurn(sid, turnNum);
-  }
-  // After aborting, the pending-approval card has already been handled by this approval flow; no need to show it again
-  hitlRequest.value = null;
-  // The queued badge (if any) belongs to the aborted send: drop it so it cannot linger
-  queueBadge.value = null;
-  isSending.value = false;
-};
+const activeAgentController = ref<ChatController | null>(null);
 
 /** Input box draft (controlled, two-way bound to inputBox.vue via defineModel) */
 const draft = ref('');
+
+// ── Slices: lifecycle / drafts / chunk rendering / HITL / streaming ────────
+
+const { characterInfo, ensureSessionCharacter, loadSessionHistory } = useSessionLifecycle(chatMessages);
+
+const drafts = useDraftPersistence(chatMessages);
+
+const chunks = useStreamChunks(chatMessages, drafts.allocateTempId, drafts);
+
+const hitl = useHitlApproval({
+  chatMessages,
+  sessionId,
+  isSending,
+  activeAgentController,
+  loadSessionHistory,
+  drafts,
+  chunks
+});
+
+const { hitlRequest, handleHitlDecision, restorePendingHitl } = hitl;
+
+// ── Media selection (per-kind picker slice; template owns the hidden inputs) ──
+
+const {
+  selected: selectedImages,
+  trigger: triggerImagePicker,
+  onSelected: onImageSelected,
+  remove: removeImage
+} = useMediaPicker('image');
+
+const {
+  selected: selectedAudios,
+  trigger: triggerAudioPicker,
+  onSelected: onAudioSelected,
+  remove: removeAudio
+} = useMediaPicker('audio');
+
+const {
+  selected: selectedVideos,
+  trigger: triggerVideoPicker,
+  onSelected: onVideoSelected,
+  remove: removeVideo
+} = useMediaPicker('video');
+
+/** Snapshot the pending media base64 payloads for the outgoing message. */
+const getPendingMedia = () => ({
+  images: selectedImages.value.map(img => img.base64),
+  audios: selectedAudios.value.map(a => a.base64),
+  videos: selectedVideos.value.map(v => v.base64)
+});
+
+/** Clear the pending media selections (send took them). */
+const clearMediaSelection = () => {
+  selectedImages.value = [];
+  selectedAudios.value = [];
+  selectedVideos.value = [];
+};
+
+const stream = useChatStream({
+  chatMessages,
+  sessionId,
+  mySid,
+  draft,
+  isSending,
+  activeAgentController,
+  t,
+  getPendingMedia,
+  clearMediaSelection,
+  setTasksTabActive,
+  loadSessionHistory,
+  drafts,
+  chunks,
+  hitl
+});
+
+const {
+  handleSend,
+  handleStop,
+  reconnectState,
+  queueBadge,
+  clearQueueBadge,
+  onStreamReconnecting,
+  onStreamReconnected,
+  onStreamReconnectFailed
+} = stream;
 
 /**
  * Reference to the input box component instance: when the session is deleted (frontend broadcasts `SESSION_ABORT_STREAM_EVENT`),
@@ -868,684 +478,36 @@ const draft = ref('');
 const chatInputBoxRef = useTemplateRef<InstanceType<typeof ChatInputBox>>('chatInputBoxRef');
 
 /**
- * Merge one streamed chunk into `chatMessages` (the single source of truth) by semantic type.
+ * Stream abort handling when session is deleted:
  *
- * This function is the shared message-rendering logic used by both `handleSend` (normal chat)
- * and the "HITL resume" path:
- * - text: if the tail of the same turn is an AI message, append to it; otherwise (tail is TOOL / different turn) create a new AI message
- * - tool_start: create a new TOOL message (status=running)
- * - tool_end: mark the most recent TOOL message of the same turn as done
- * - tool_result: fill the most recent same-turn TOOL message with args and result text, and mark its status per `error`
+ * When this session is deleted (home/index.vue broadcasts `SESSION_ABORT_STREAM_EVENT`),
+ * if this instance is exactly that session (matched by sid) and still streaming, abort its AbortController.
+ * Particularly crucial for 'inactive but KeepAlive cached and stream not aborted' sessions — if not aborted after deletion,
+ * backend will continue pushing chunks to deleted session's WebSocket, causing deleted chat state to be contaminated.
  *
- * The `turnNum` parameter bounds the scope, so unrelated history messages are never mistaken for the target
- * of the current streaming turn.
- *
- * @param sid Session id
- * @param content Chunk text (the body for text, the tool name for tool_start, the result text for tool_result)
- * @param type Semantic type
- * @param turnNum This turn's turn number (new messages are written into this turn)
- * @param meta Tool call metadata (only present for tool_result)
- * @param meta.tool_id Backend tool call id
- * @param meta.tool_name Tool name
- * @param meta.args Serialized tool arguments
- * @param meta.error Tool execution error, if any
+ * Note: the handler must be defined in this scope,
+ * and compare the first parameter (session id) with this instance `sessionId` to ensure only this session is aborted.
+ * @param deletedSid
  */
-const appendStreamChunk = (
-  sid: string,
-  content: string,
-  type: AgentChunkType,
-  turnNum: number,
-  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
-) => {
-  const last = chatMessages.value[chatMessages.value.length - 1];
-  // Determine whether this belongs to an "active draft turn" (created on send, removed after onDone/error/stop).
-  // On hit, write the draft in layers at the tail: text appends are debounced 200ms, discrete tool stages / first text are written immediately.
-  const isActiveDraft = isDraftTurnActive(turnNum);
-  if (type === 'text') {
-    if (last && last.role === CHAT_ROLE.AI && last.turn_num === turnNum) {
-      // Tail of same turn is AI → append the body
-      last.content += content;
-    } else {
-      // Tail is TOOL / not this turn → create a new AI message to carry it
-      chatMessages.value.push({
-        session_id: sid,
-        role: CHAT_ROLE.AI,
-        content,
-        reasoning: '',
-        id: tempIdCounter++,
-        turn_num: turnNum,
-        timestamp: new Date().toISOString()
-      });
-    }
-    if (isActiveDraft) scheduleDraftWrite(sid, turnNum);
-  } else if (type === 'reasoning') {
-    // Model thinking block: appended chunk by chunk into the `reasoning` field of the same-turn tail AI message,
-    // without interfering with body text accumulation.
-    // When the tail is TOOL / not this turn, create a new AI placeholder message to carry it (the body may arrive later).
-    let target: MessageItem;
-    if (last && last.role === CHAT_ROLE.AI && last.turn_num === turnNum) {
-      target = last;
-    } else {
-      target = {
-        session_id: sid,
-        role: CHAT_ROLE.AI,
-        content: '',
-        reasoning: '',
-        id: tempIdCounter++,
-        turn_num: turnNum,
-        timestamp: new Date().toISOString()
-      };
-      chatMessages.value.push(target);
-    }
-    target.reasoning = (target.reasoning ?? '') + content;
-    // Thinking blocks are discrete stages; debouncing seems intuitive, but thinking content must be persisted in real time
-    // with the stream to support refresh recovery, so it simply shares the text-append debounce path
-    // (thinking blocks are usually not subdivided as frequently as body text).
-    if (isActiveDraft) scheduleDraftWrite(sid, turnNum);
-  } else if (type === 'tool_start') {
-    chatMessages.value.push({
-      session_id: sid,
-      role: CHAT_ROLE.TOOL,
-      content: '',
-      toolName: content,
-      toolStatus: 'running',
-      // Args are delivered with meta at tool_start time, so call arguments can be viewed while running
-      toolArgs: meta?.args ?? undefined,
-      id: tempIdCounter++,
-      turn_num: turnNum,
-      timestamp: new Date().toISOString()
-    });
-    if (isActiveDraft) void commitDraftTurn(sid, turnNum);
-  } else if (type === 'tool_end') {
-    // Mark the most recent TOOL message of this turn as completed
-    for (let i = chatMessages.value.length - 1; i >= 0; i--) {
-      const row = chatMessages.value[i];
-      if (!row) continue;
-      if (row.role === CHAT_ROLE.TOOL && row.turn_num === turnNum) {
-        row.toolStatus = 'done';
-        break;
-      }
-    }
-    if (isActiveDraft) void commitDraftTurn(sid, turnNum);
-  } else if (type === 'tool_result') {
-    // Fill the most recent same-turn TOOL message with args and result text, and mark its status per `error`.
-    // HITL resume special case: the interrupted tool card was created in the PREVIOUS (generate) turn,
-    // while its tool_result arrives with the resume turn number (max+1) — the same-turn search misses it.
-    // Fallback: the most recent TOOL card still 'running' (approve path) or 'failed' (reject path —
-    // markRunningToolsFailed already ran before the resume frames arrive), so the execution result /
-    // rejection notice lands on the card the user actually saw.
-    let targetIdx = -1;
-    for (let i = chatMessages.value.length - 1; i >= 0; i--) {
-      const row = chatMessages.value[i];
-      if (!row) continue;
-      if (row.role === CHAT_ROLE.TOOL && row.turn_num === turnNum) {
-        targetIdx = i;
-        break;
-      }
-    }
-    if (targetIdx < 0) {
-      for (let i = chatMessages.value.length - 1; i >= 0; i--) {
-        const row = chatMessages.value[i];
-        if (!row) continue;
-        if (row.role === CHAT_ROLE.TOOL && (row.toolStatus === 'running' || row.toolStatus === 'failed')) {
-          targetIdx = i;
-          break;
-        }
-      }
-    }
-    const targetRow = targetIdx >= 0 ? chatMessages.value[targetIdx] : undefined;
-    if (targetRow) {
-      if (meta?.tool_name) targetRow.toolName = meta.tool_name;
-      if (meta?.args) targetRow.toolArgs = meta.args;
-      targetRow.toolResult = content;
-      targetRow.toolStatus = meta?.error ? 'error' : 'done';
-    }
-    // tool_result is a discrete stage: persist immediately (keep preceding content whether success or error)
-    if (isActiveDraft) void commitDraftTurn(sid, turnNum);
-  }
-  // Trigger a reactive update
-  chatMessages.value = [...chatMessages.value];
-};
-
-/**
- * Mark all tool cards still in `running` state as failed (UI turns to a red ✗).
- *
- * Used by every path where "a tool call did not finish normally": HITL reject, user abort, stream error.
- * In none of these scenarios does the backend send back the corresponding tool_end; an unmarked card would spin forever.
- */
-const markRunningToolsFailed = () => {
-  let changed = false;
-  chatMessages.value = chatMessages.value.map(m => {
-    if (m.role === CHAT_ROLE.TOOL && m.toolStatus === 'running') {
-      changed = true;
-      return { ...m, toolStatus: 'failed' as const };
-    }
-    return m;
-  });
-  if (!changed) chatMessages.value = [...chatMessages.value];
-};
-
-/**
- * Discrete write-rate control for in-flight drafts.
- *
- * Key design: draft messages **reuse the real `turn_num` of their turn** (the same positive turn numbers
- * assigned by `handleSend`/HITL resume), rather than a separate negative draft turn number. Two reasons:
- *
- * 1. **Natural ordering**: `loadSessionHistory` sorts by `turn_num` ascending. Drafts reusing the real turn_num
- *    appear at their logical position (immediately after the in-flight/error turn), with no special handling.
- * 2. **Reconciliation dedup is feasible**: the server only persists a turn when the agent round completes fully
- *    (`aafter_agent`); in-flight / errored turns have **no rows at all** on the server, so a draft reusing that
- *    turn's turn_num never collides with already-persisted messages. During reconciliation, `serverRowFor` matches
- *    exactly on "same session + same turn_num + same role + same content", which is precisely how the server's
- *    positive-id row replaces the local draft's negative temporary-id row, achieving natural dedup.
- *
- * Therefore the `drafts` table uses `[session_id + turn_num]` as its primary key; repeatedly overwriting the same
- * turn is exactly the "cache every step" behavior.
- */
-
-/**
- * Persist all messages of the given turn from the current `chatMessages` as one local draft.
- *
- * Only messages with `turn_num === turnNum` are saved, so turns unrelated to this send/this resume are never overwritten.
- *
- * @param sid      Session id
- * @param turnNum  This turn (the real turn_num used by stream callbacks)
- */
-const writeDraftTurn = async (sid: string, turnNum: number) => {
-  const rows = chatMessages.value.filter(m => m.turn_num === turnNum);
-  if (rows.length === 0) return; // This turn has no messages yet; no need to write an empty draft
-  // Deep copy: chatMessages is a Vue ref; elements are reactive Proxies after ref unwrapping.
-  // With only a shallow spread / partial deep copy, nested images/audios/videos/toolArgs remain Proxy references,
-  // and Dexie put() would throw DataCloneError during IndexedDB structured clone → the draft write fails.
-  // MessageItem only contains JSON-compatible fields (no Date/Function/Blob), so a full JSON round-trip deep copy
-  // is the safest, and it also prevents later streaming mutations from polluting the already-persisted draft.
-  const snapshot = rows.map(m => JSON.parse(JSON.stringify(m)));
-  try {
-    await saveDraftTurn({ session_id: sid, turn_num: turnNum, messages: snapshot });
-  } catch (e) {
-    logUtil.w('[writeDraftTurn] 草稿写入失败：', sid, turnNum, e);
-  }
-};
-
-/** 200ms debounce timer for text-append draft writes (key: `${sid}:${turnNum}`) */
-const draftDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-/**
- * Schedule one "text append" draft write (200ms trailing debounce).
- *
- * High-frequency text chunks are not persisted one by one but merged via the debounce; discrete stages
- * (send / each tool stage / error / first text / server completion) are written immediately by callers via `commitDraftTurn`.
- * @param sid
- * @param turnNum
- */
-const scheduleDraftWrite = (sid: string, turnNum: number) => {
-  const key = `${sid}:${turnNum}`;
-  const existing = draftDebounceTimers.get(key);
-  if (existing) clearTimeout(existing);
-  draftDebounceTimers.set(
-    key,
-    setTimeout(() => {
-      draftDebounceTimers.delete(key);
-      void writeDraftTurn(sid, turnNum);
-    }, 200)
-  );
-};
-
-/**
- * Write the draft immediately (called at discrete stages) and cancel the turn's pending text debounce.
- * If a text append for this turn is still scheduled, flush one snapshot first before clearing the timer, avoiding duplicate writes.
- * @param sid
- * @param turnNum
- */
-const commitDraftTurn = async (sid: string, turnNum: number) => {
-  const key = `${sid}:${turnNum}`;
-  const pending = draftDebounceTimers.get(key);
-  if (pending) {
-    clearTimeout(pending);
-    draftDebounceTimers.delete(key);
-  }
-  await writeDraftTurn(sid, turnNum);
-};
-
-/**
- * Clear a turn's draft and cancel its pending debounce timer (called when the server successfully persists and reconciles, or when the session is cleared).
- * @param sid
- * @param turnNum
- */
-const removeDraftTurn = (sid: string, turnNum: number) => {
-  const key = `${sid}:${turnNum}`;
-  const pending = draftDebounceTimers.get(key);
-  if (pending) {
-    clearTimeout(pending);
-    draftDebounceTimers.delete(key);
-  }
-  void clearDraftTurn(sid, turnNum);
-};
-
-/**
- * Set of "active turns" currently streaming (elements are real turn_num values).
- *
- * `handleSend` and the "HITL resume" path each push one turn_num when starting a stream; it is removed when the
- * stream ends normally / errors / is aborted / is rejected. `appendStreamChunk` writes drafts only when turn_num
- * belongs to this set, so history rows never trigger accidental disk writes.
- */
-const activeDraftTurns = new Set<number>();
-
-/**
- * Register one active draft turn (created on send, removed on completion).
- * @param sid
- * @param turnNum
- */
-const trackDraftTurn = (sid: string, turnNum: number) => {
-  activeDraftTurns.add(turnNum);
-  // Write one draft at creation time, guaranteeing the fastest "cache-on-send" frame (user message + empty AI placeholder).
-  void writeDraftTurn(sid, turnNum);
-};
-
-/**
- * Determine whether a turn is in the active draft-persisting state.
- * @param turnNum
- */
-const isDraftTurnActive = (turnNum: number): boolean => activeDraftTurns.has(turnNum);
-
-/**
- * Remove a turn's draft registration. Called after the server successfully persists: clear the draft + cancel the
- * pending debounce timer; the caller then triggers `loadSessionHistory` to replace local negative temporary-id rows
- * with the server's positive-id rows.
- * @param sid
- * @param turnNum
- */
-const untrackDraftTurn = (sid: string, turnNum: number) => {
-  const had = activeDraftTurns.delete(turnNum);
-  removeDraftTurn(sid, turnNum);
-  void had; // keep ref for clarity
-};
-
-/**
- * Handle input box send: add the user message to the list, and obtain the AI reply via a streaming request (Tauri IPC or browser WebSocket).
- *
- * Streamed replies are dynamically segmented: the backend distinguishes conversation text from tool calls by chunk type
- * (text / tool_start / tool_end); the frontend accordingly creates/updates separate message bubbles in real time —
- * one bubble for the conversation, one bubble per tool call.
- *
- * @param text User input content
- */
-const handleSend = async (text: string) => {
-  const sid = sessionId.value || 'default';
-
-  // When the user sends a message, make sure the right side returns to the chat area (if it was previously on the background task list page)
-  setTasksTabActive(false);
-
-  // Compute the next turn number: current max turn_num + 1, not the array length.
-  const turnNum = chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
-
-  // Carry the images pending send (taken and cleared from the pending list at send time)
-  const imageBase64List = selectedImages.value.map(img => img.base64);
-  // Carry the audios/videos pending send (taken and cleared from the pending list at send time)
-  const audioBytesList = selectedAudios.value.map(a => a.base64);
-  const videoBytesList = selectedVideos.value.map(v => v.base64);
-
-  // Append the user message (displayed locally immediately)
-  const userMsg: MessageItem = {
-    session_id: sid,
-    role: CHAT_ROLE.USER,
-    content: text,
-    images: imageBase64List,
-    audios: audioBytesList,
-    videos: videoBytesList,
-    id: tempIdCounter++,
-    turn_num: turnNum,
-    timestamp: new Date().toISOString()
-  };
-
-  // Initial AI placeholder message (content filled progressively by streamed chunks)
-  const aiMsg: MessageItem = {
-    session_id: sid,
-    role: CHAT_ROLE.AI,
-    content: '',
-    reasoning: '',
-    id: tempIdCounter++,
-    turn_num: turnNum,
-    timestamp: new Date().toISOString()
-  };
-
-  chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
-
-  // After sending, clear the pending images/audios/videos and the input area
-  selectedImages.value = [];
-  selectedAudios.value = [];
-  selectedVideos.value = [];
-  draft.value = '';
-
-  isSending.value = true;
-
-  // Register this turn as an "active draft turn" so appendStreamChunk can persist accordingly;
-  // the first registration immediately writes a "cache-on-send" frame (user message + empty AI placeholder).
-  // Removed when the stream completes normally (onDone); kept on error/abort/reject so the draft caches the failed-stage content.
-  trackDraftTurn(sid, turnNum);
-
-  /**
-   * Streamed chunk callback: reuse the shared `appendStreamChunk` to manage message segmentation dynamically by semantic type
-   * (text/tool_start/tool_end), sharing the same rendering logic as the HITL resume path.
-   * @param content
-   * @param type
-   * @param _sessionId
-   * @param meta
-   * @param meta.tool_id
-   * @param meta.tool_name
-   * @param meta.args
-   * @param meta.error
-   */
-  const onStreamChunk = (
-    content: string,
-    type: AgentChunkType,
-    _sessionId: string,
-    meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
-  ) => {
-    // First chunk of this turn = the (possibly queued) message started streaming: drop this turn's
-    // queue badge. Turn-scoped, so chunks of an earlier in-flight stream never clear a newer badge.
-    clearQueueBadgeForTurn(turnNum);
-    appendStreamChunk(sid, content, type, turnNum, meta);
-  };
-
-  try {
-    const req: MultiModalMessage = { text };
-    if (imageBase64List.length > 0) req.image_base64_list = imageBase64List;
-    if (audioBytesList.length > 0) req.audio_bytes_list = audioBytesList;
-    if (videoBytesList.length > 0) req.video_bytes_list = videoBytesList;
-    activeAgentController = postAgentStream(
-      sid,
-      req,
-      onStreamChunk,
-      meta => {
-        // Stream finished normally: first persist a final draft (guarding against last-moment text changes not yet written by the debounce),
-        // then remove this turn's draft registration and trigger history reconciliation — the server has by now persisted this turn
-        // as positive turn_num messages, and loadSessionHistory will replace the local negative temporary ids with the positive
-        // server ids, deduplicating them.
-        // Also attach the model metadata carried by the done frame (modelName/inputTokens/outputTokens) onto this turn's AI message.
-        clearQueueBadgeForTurn(turnNum);
-        if (meta) {
-          const ai = chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turnNum);
-          if (ai) {
-            if (meta.modelName !== undefined) ai.modelName = meta.modelName;
-            if (meta.inputTokens !== undefined) ai.inputTokens = meta.inputTokens;
-            if (meta.outputTokens !== undefined) ai.outputTokens = meta.outputTokens;
-            chatMessages.value = [...chatMessages.value];
-          }
-        }
-        void commitDraftTurn(sid, turnNum).then(() => {
-          untrackDraftTurn(sid, turnNum);
-          activeAgentController = null;
-          isSending.value = false;
-          void loadSessionHistory(sid);
-        });
-      },
-      err => {
-        // Stream error: in-flight tool calls did not finish normally, mark them as failed (red ✗).
-        // The draft is **kept** — caching the already-completed greeting/analysis/preliminary tool stage content,
-        // so it is not lost because the final result never arrived; the user still sees the pre-failure progress after refresh.
-        activeAgentController = null;
-        // This turn will never stream: drop its queue badge (covers both error branches below).
-        clearQueueBadgeForTurn(turnNum);
-        if (err instanceof StreamInterruptedError) {
-          // Network stream loss (final failure after the reconnect budget is exhausted): content may have partially rendered,
-          // so never overwrite existing body text with the failure message; only show the interruption hint when the AI body is empty.
-          // Draft kept + one-shot reconciliation of the server-persisted result 25s later (the server may still be generating).
-          if (!aiMsg.content) {
-            aiMsg.content = t('errors.streamInterrupted');
-          }
-          markRunningToolsFailed();
-          void writeDraftTurn(sid, turnNum);
-          isSending.value = false;
-          schedulePostInterruptReconcile(sid);
-          return;
-        }
-        aiMsg.content = t('errors.replyFailed', { reason: String(err) });
-        markRunningToolsFailed();
-        // Persist a draft snapshot that includes the failed state
-        void writeDraftTurn(sid, turnNum);
-        isSending.value = false;
-      },
-      handleHitlRequest,
-      info => {
-        // Backend enqueued this send (session was busy): show the queue badge above the input box.
-        handleQueued(info, turnNum);
-      }
-    );
-  } catch (e) {
-    // Synchronous throw (rare); the stream never started, so just unlock directly.
-    // Draft kept here as well: user message + empty AI placeholder + failure message are all cached.
-    activeAgentController = null;
-    aiMsg.content = t('errors.sendFailed', { reason: String(e) });
-    void writeDraftTurn(sid, turnNum);
+const handleAbortStreamOnDelete = (deletedSid: unknown) => {
+  // Use frozen this instance `mySid` for comparison, not live `sessionId`: the latter reads global route,
+  // when instance is KeepAlive cached (switched to other session) it becomes others' sid, causing this session deletion to miss comparison、
+  // background stream cannot be aborted.
+  if (deletedSid !== mySid) return;
+  if (activeAgentController.value) {
+    activeAgentController.value.abort();
+    activeAgentController.value = null;
     isSending.value = false;
   }
-};
-
-/**
- * Selected images (base64, sent along with the message).
- * Only present during "local preview + send"; cleared after sending/canceling.
- */
-const selectedImages = ref<{ base64: string; name: string }[]>([]);
-
-/** Maximum number of images allowed per message */
-const MAX_SELECTED_IMAGES = 10;
-
-/** Hidden image file input */
-const imageFileInput = useTemplateRef<HTMLInputElement>('imageFileInputRef');
-
-/**
- * Read an image file as a DataURL (includes the data:image/...;base64 prefix; strip the prefix before sending)
- * @param file
- */
-const readImageFile = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
-/**
- * Remove one selected image
- * @param index
- */
-const removeImage = (index: number) => {
-  selectedImages.value.splice(index, 1);
-  selectedImages.value = [...selectedImages.value];
-};
-
-/** Trigger the system image file picker */
-const triggerImagePicker = () => {
-  imageFileInput.value?.click();
-};
-
-/**
- * Image selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_IMAGES)
- * @param event
- */
-const onImageSelected = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  // Copy to a plain array snapshot before resetting input.value.
-  // input.files is a "live" FileList — once value is emptied, the browser immediately clears that FileList;
-  // reading files afterwards would yield an empty array, so selectedImages would never be populated and the preview would not show.
-  const files = Array.from(input.files ?? []);
-  input.value = ''; // Allow re-selecting the same file
-  if (files.length === 0) return;
-
-  // Count limit: truncate the excess and notify the user
-  const remaining = MAX_SELECTED_IMAGES - selectedImages.value.length;
-  if (remaining <= 0) {
-    alert(t('chatInput.maxImages', { count: MAX_SELECTED_IMAGES }));
-    return;
-  }
-  const accepted = files.slice(0, remaining);
-  if (files.length > remaining) {
-    alert(t('chatInput.maxImagesExceed', { count: MAX_SELECTED_IMAGES, extra: files.length - remaining }));
-  }
-
-  for (const file of accepted) {
-    if (!file.type.startsWith('image/')) continue;
-    try {
-      const dataUrl = await readImageFile(file);
-      // data:image/png;base64,xxxxx -> keep only the base64 part
-      const base64 = dataUrl.split(',')[1] ?? '';
-      selectedImages.value.push({ base64, name: file.name });
-    } catch (e) {
-      logUtil.w('[onImageSelected] 读取图片失败：', file.name, e);
-    }
-  }
-  selectedImages.value = [...selectedImages.value];
-};
-
-/**
- * Selected audios (base64, sent along with the message).
- * Only present during "local preview + send"; cleared after sending/canceling.
- */
-const selectedAudios = ref<{ base64: string; name: string }[]>([]);
-
-/** Maximum number of audios allowed per message */
-const MAX_SELECTED_AUDIOS = 5;
-
-/** Hidden audio file input */
-const audioFileInput = useTemplateRef<HTMLInputElement>('audioFileInputRef');
-
-/**
- * Read an audio file as a DataURL (includes the data:audio/...;base64 prefix; strip the prefix before sending)
- * @param file
- */
-const readAudioFile = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
-/**
- * Remove one selected audio
- * @param index
- */
-const removeAudio = (index: number) => {
-  selectedAudios.value.splice(index, 1);
-  selectedAudios.value = [...selectedAudios.value];
-};
-
-/** Trigger the system audio file picker */
-const triggerAudioPicker = () => {
-  audioFileInput.value?.click();
-};
-
-/**
- * Audio selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_AUDIOS)
- * @param event
- */
-const onAudioSelected = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  // Copy to a plain array snapshot before resetting input.value.
-  // input.files is a "live" FileList — once value is emptied, the browser immediately clears that FileList;
-  // reading files afterwards would yield an empty array, so selectedAudios would never be populated and the preview would not show.
-  const files = Array.from(input.files ?? []);
-  input.value = ''; // Allow re-selecting the same file
-  if (files.length === 0) return;
-
-  // Count limit: truncate the excess and notify the user
-  const remaining = MAX_SELECTED_AUDIOS - selectedAudios.value.length;
-  if (remaining <= 0) {
-    alert(t('chatInput.maxAudios', { count: MAX_SELECTED_AUDIOS }));
-    return;
-  }
-  const accepted = files.slice(0, remaining);
-  if (files.length > remaining) {
-    alert(t('chatInput.maxAudiosExceed', { count: MAX_SELECTED_AUDIOS, extra: files.length - remaining }));
-  }
-
-  for (const file of accepted) {
-    if (!file.type.startsWith('audio/')) continue;
-    try {
-      const dataUrl = await readAudioFile(file);
-      // data:audio/mpeg;base64,xxxxx -> keep only the base64 part
-      const base64 = dataUrl.split(',')[1] ?? '';
-      selectedAudios.value.push({ base64, name: file.name });
-    } catch (e) {
-      logUtil.w('[onAudioSelected] 读取音频失败：', file.name, e);
-    }
-  }
-  selectedAudios.value = [...selectedAudios.value];
-};
-
-/**
- * Selected videos (base64, sent along with the message).
- * Only present during "local preview + send"; cleared after sending/canceling.
- */
-const selectedVideos = ref<{ base64: string; name: string }[]>([]);
-
-/** Maximum number of videos allowed per message */
-const MAX_SELECTED_VIDEOS = 3;
-
-/** Hidden video file input */
-const videoFileInput = useTemplateRef<HTMLInputElement>('videoFileInputRef');
-
-/**
- * Read a video file as a DataURL (includes the data:video/...;base64 prefix; strip the prefix before sending)
- * @param file
- */
-const readVideoFile = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
-/**
- * Remove one selected video
- * @param index
- */
-const removeVideo = (index: number) => {
-  selectedVideos.value.splice(index, 1);
-  selectedVideos.value = [...selectedVideos.value];
-};
-
-/** Trigger the system video file picker */
-const triggerVideoPicker = () => {
-  videoFileInput.value?.click();
-};
-
-/**
- * Video selection callback: read as base64 and add to the pending-send list (capped at MAX_SELECTED_VIDEOS)
- * @param event
- */
-const onVideoSelected = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  // Copy to a plain array snapshot before resetting input.value (Safari handles this asynchronously, see onImageSelected).
-  const files = Array.from(input.files ?? []);
-  input.value = ''; // Allow re-selecting the same file
-  if (files.length === 0) return;
-
-  // Count limit: truncate the excess and notify the user
-  const remaining = MAX_SELECTED_VIDEOS - selectedVideos.value.length;
-  if (remaining <= 0) {
-    alert(t('chatInput.maxVideos', { count: MAX_SELECTED_VIDEOS }));
-    return;
-  }
-  const accepted = files.slice(0, remaining);
-  if (files.length > remaining) {
-    alert(t('chatInput.maxVideosExceed', { count: MAX_SELECTED_VIDEOS, extra: files.length - remaining }));
-  }
-
-  for (const file of accepted) {
-    if (!file.type.startsWith('video/')) continue;
-    try {
-      const dataUrl = await readVideoFile(file);
-      // data:video/mp4;base64,xxxxx -> keep only the base64 part
-      const base64 = dataUrl.split(',')[1] ?? '';
-      selectedVideos.value.push({ base64, name: file.name });
-    } catch (e) {
-      logUtil.w('[onVideoSelected] 读取视频失败：', file.name, e);
-    }
-  }
-  selectedVideos.value = [...selectedVideos.value];
+  // Session gone: drop the queue badge so it cannot linger on a deleted session's cached instance
+  clearQueueBadge();
+  // Session deleted: clear remaining history cache/draft browsing state in this instance's KeepAlive cache slot
+  // (when deleting inactive session slot may not be released immediately, history residing in slot must be actively cleared,
+  //   ensuring history strictly follows session deletion, avoiding manually revisiting that sid to see deleted session residues).
+  chatInputBoxRef.value?.clearHistory?.();
+  // Session deleted: clear all ongoing draft turns for this session in IndexedDB, prevent orphan drafts
+  // from incorrectly re-hydrating after rebuilding same id session (Draft table still contains original deleted session content).
+  void clearDraftSession(mySid);
 };
 
 /**
@@ -1598,15 +560,12 @@ const doLoadFor = (sid: string) => {
   chatMessages.value = [];
   isSending.value = false;
   // Discard the in-flight request controller left over from the previous session (its stream was invalidated by the session switch / is no longer usable)
-  activeAgentController = null;
-  activeHitlController?.abort();
-  activeHitlController = null;
+  activeAgentController.value = null;
+  hitl.abortResume();
   // The previous session's pending-approval card / input draft / selected images must not leak into the new session
-  hitlRequest.value = null;
+  hitl.clearRequest();
   draft.value = '';
-  selectedImages.value = [];
-  selectedAudios.value = [];
-  selectedVideos.value = [];
+  clearMediaSelection();
   // Load this session's locked character snapshot (if none, lock using the global profile)
   ensureSessionCharacter(sid);
   loadSessionHistory(sid);
@@ -1690,11 +649,6 @@ onUnmounted(() => {
   off('stream:reconnecting', onStreamReconnecting);
   off('stream:reconnected', onStreamReconnected);
   off('stream:reconnect:failed', onStreamReconnectFailed);
-  // Cancel the pending "delayed post-interrupt reconciliation" timer
-  if (postInterruptTimer) {
-    clearTimeout(postInterruptTimer);
-    postInterruptTimer = null;
-  }
 });
 </script>
 
@@ -1709,3 +663,108 @@ onUnmounted(() => {
   opacity: 0;
 }
 </style>
+
+<i18n lang="json">
+{
+  "zh": {
+    "chatInput": {
+      "queued": "已排队 · 第 {position} 位（共 {queueSize} 个）",
+      "waitingApproval": "等待审批..."
+    },
+    "chatBox": {
+      "removeImage": "移除图片",
+      "removeAudio": "移除音频",
+      "removeVideo": "移除视频"
+    },
+    "connection": {
+      "reconnecting": "连接中断，正在重连…（第 {attempt}/{max} 次）"
+    },
+    "hitl": {
+      "approve": "批准",
+      "reject": "拒绝",
+      "title": "操作需要审批",
+      "tool": "工具",
+      "yolo": "同意所有操作",
+      "yoloTooltip": "同意本次及本会话后续所有操作，不再弹出审批"
+    },
+    "taskViewer": {
+      "viewTasks": "查看后台任务"
+    }
+  },
+  "en": {
+    "chatInput": {
+      "queued": "Queued · position {position} of {queueSize}",
+      "waitingApproval": "Waiting for approval..."
+    },
+    "chatBox": {
+      "removeImage": "Remove image",
+      "removeAudio": "Remove audio",
+      "removeVideo": "Remove video"
+    },
+    "connection": {
+      "reconnecting": "Connection lost, reconnecting… (attempt {attempt}/{max})"
+    },
+    "hitl": {
+      "approve": "Approve",
+      "reject": "Reject",
+      "title": "Action Requires Approval",
+      "tool": "Tool",
+      "yolo": "Approve All (YOLO)",
+      "yoloTooltip": "Approve this and all future actions in this session — no more approval prompts"
+    },
+    "taskViewer": {
+      "viewTasks": "View Background Tasks"
+    }
+  },
+  "ja": {
+    "chatInput": {
+      "queued": "順番待ち · {queueSize} 件中 {position} 番目",
+      "waitingApproval": "承認待ち..."
+    },
+    "chatBox": {
+      "removeImage": "画像を削除",
+      "removeAudio": "音声を削除",
+      "removeVideo": "動画を削除"
+    },
+    "connection": {
+      "reconnecting": "接続が切断されました。再接続中…（{attempt}/{max} 回目）"
+    },
+    "hitl": {
+      "approve": "承認",
+      "reject": "拒否",
+      "title": "操作の承認が必要です",
+      "tool": "ツール",
+      "yolo": "すべての操作を承認",
+      "yoloTooltip": "今回とこのセッションの以後の操作をすべて承認し、確認ダイアログは表示されません"
+    },
+    "taskViewer": {
+      "viewTasks": "バックグラウンドタスクを表示"
+    }
+  },
+  "ko": {
+    "chatInput": {
+      "queued": "대기 중 · {queueSize}개 중 {position}번째",
+      "waitingApproval": "승인 대기 중..."
+    },
+    "chatBox": {
+      "removeImage": "이미지 제거",
+      "removeAudio": "오디오 제거",
+      "removeVideo": "비디오 제거"
+    },
+    "connection": {
+      "reconnecting": "연결 끊김, 재연결 중… ({attempt}/{max}번째 시도)"
+    },
+    "hitl": {
+      "approve": "승인",
+      "reject": "거부",
+      "title": "작업 승인이 필요합니다",
+      "tool": "도구",
+      "yolo": "모든 작업 승인",
+      "yoloTooltip": "이번 작업과 이 세션의 이후 모든 작업을 승인하며 확인 창이 다시 표시되지 않습니다"
+    },
+    "taskViewer": {
+      "viewTasks": "백그라운드 작업 보기"
+    }
+  }
+}
+</i18n>

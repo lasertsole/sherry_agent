@@ -300,15 +300,12 @@
 // (G6 graph container / node detail panel, etc.)
 // → logUtil logging + global toast; returning false stops further upward propagation
 // (factory function pattern from 03-errorCapturedFactoryFunction.md)
-import { useErrorCaptured } from '~/composables/errorCaptured';
-
 useErrorCaptured();
 
 import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Graph, NodeEvent } from '@antv/g6';
 import type { GraphData, IElementEvent, NodeData, EdgeData } from '@antv/g6';
-import { fetchApi } from '~/composables/requestApi';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -423,13 +420,19 @@ const colorMode = useColorMode();
 /** Whether the current theme is dark (defaults to dark when unknown) */
 const isDark = () => colorMode.value === 'dark';
 
-/** Pick the entity color according to the theme */
+/**
+ * Pick the entity color according to the theme
+ * @param entityType
+ */
 const entityColor = (entityType: string): string => {
   const palette = isDark() ? DARK_PALETTE : LIGHT_PALETTE;
   return palette[entityType] ?? palette.default;
 };
 
-/** Derive the entity type from the node's properties / labels */
+/**
+ * Derive the entity type from the node's properties / labels
+ * @param node
+ */
 const resolveEntityType = (node: BackendNode): string => {
   const fromProps = node.properties?.entity_type;
   if (typeof fromProps === 'string' && fromProps.trim().length > 0) {
@@ -442,7 +445,10 @@ const resolveEntityType = (node: BackendNode): string => {
   return 'default';
 };
 
-/** Backend data → G6 graph data */
+/**
+ * Backend data → G6 graph data
+ * @param payload
+ */
 const mapGraphData = (payload: KnowledgeGraphResponse): MappedGraphData => {
   const nodes: GraphNode[] = (payload.nodes ?? []).map(node => ({
     id: node.id,
@@ -468,14 +474,20 @@ const mapGraphData = (payload: KnowledgeGraphResponse): MappedGraphData => {
   return { nodes, edges };
 };
 
-/** Detail panel: display the entity type label (falls back to default when unknown) */
+/**
+ * Detail panel: display the entity type label (falls back to default when unknown)
+ * @param node
+ */
 const nodeTypeLabel = (node: GraphNode): string => {
   const entityType = node.data.entityType || 'default';
   const palette = isDark() ? DARK_PALETTE : LIGHT_PALETTE;
   return palette[entityType] !== undefined ? entityType : 'default';
 };
 
-/** Detail panel: node properties (name is already shown as the title, so it is excluded to avoid duplication) */
+/**
+ * Detail panel: node properties (name is already shown as the title, so it is excluded to avoid duplication)
+ * @param node
+ */
 const nodeProperties = (node: GraphNode): Array<[string, unknown]> => {
   const raw = node.data.raw;
   if (!raw?.properties) return [];
@@ -493,7 +505,10 @@ const nodeProperties = (node: GraphNode): Array<[string, unknown]> => {
   });
 };
 
-/** Detail panel: node content (the LightRAG entity summary, the field closest to a "body text"; falls back to description when content is absent) */
+/**
+ * Detail panel: node content (the LightRAG entity summary, the field closest to a "body text"; falls back to description when content is absent)
+ * @param node
+ */
 const nodeContent = (node: GraphNode): string => {
   const props = node.data.raw?.properties;
   if (!props) return '';
@@ -504,7 +519,10 @@ const nodeContent = (node: GraphNode): string => {
   return '';
 };
 
-/** Detail panel: source file path */
+/**
+ * Detail panel: source file path
+ * @param node
+ */
 const nodeSourceFile = (node: GraphNode): string => {
   const props = node.data.raw?.properties;
   if (!props) return '';
@@ -513,7 +531,10 @@ const nodeSourceFile = (node: GraphNode): string => {
   return '';
 };
 
-/** Detail panel: source document ID */
+/**
+ * Detail panel: source document ID
+ * @param node
+ */
 const nodeSourceId = (node: GraphNode): string => {
   const props = node.data.raw?.properties;
   if (!props) return '';
@@ -522,7 +543,10 @@ const nodeSourceId = (node: GraphNode): string => {
   return '';
 };
 
-/** Detail panel: property value formatting (objects/arrays → JSON string) */
+/**
+ * Detail panel: property value formatting (objects/arrays → JSON string)
+ * @param value
+ */
 const formatProp = (value: unknown): string => {
   if (value === null || value === undefined) return '';
   if (typeof value === 'object') {
@@ -535,7 +559,10 @@ const formatProp = (value: unknown): string => {
   return String(value);
 };
 
-/** Detail panel: neighbor nodes directly connected to the selected node (used to display related entities) */
+/**
+ * Detail panel: neighbor nodes directly connected to the selected node (used to display related entities)
+ * @param node
+ */
 const neighborsOf = (node: GraphNode): GraphNode[] => {
   const data = loadedGraphData.value;
   if (!data) return [];
@@ -547,7 +574,10 @@ const neighborsOf = (node: GraphNode): GraphNode[] => {
   return data.nodes.filter(n => n.id !== node.id && neighborIds.has(n.id));
 };
 
-/** Build the G6 graph config and render it */
+/**
+ * Build the G6 graph config and render it
+ * @param data
+ */
 const renderGraph = async (data: MappedGraphData) => {
   if (!containerRef.value) return;
 
@@ -706,7 +736,10 @@ const applyHighlight = async (prev?: string, next?: string) => {
 /** File extensions allowed for upload (kept in sync with the backend's _ALLOWED_EXT) */
 const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md'];
 
-/** Check whether a single file's extension is allowed */
+/**
+ * Check whether a single file's extension is allowed
+ * @param name
+ */
 const isAllowedFile = (name: string): boolean => {
   const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
   return ALLOWED_EXTENSIONS.includes(ext);
@@ -717,7 +750,10 @@ const triggerUpload = () => {
   fileInputRef.value?.click();
 };
 
-/** Trigger the upload after files are selected */
+/**
+ * Trigger the upload after files are selected
+ * @param event
+ */
 const onFileSelected = (event: Event) => {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files ?? []);
@@ -726,7 +762,10 @@ const onFileSelected = (event: Event) => {
   uploadFiles(files);
 };
 
-/** Upload files to the backend and reload the graph */
+/**
+ * Upload files to the backend and reload the graph
+ * @param files
+ */
 const uploadFiles = async (files: File[]) => {
   if (uploading.value) return;
 

@@ -3,9 +3,13 @@
 When a model call comes back truncated (``finish_reason == "length"`` /
 ``stop_reason == "max_tokens"``) AND the response carries tool calls, the
 tool-call JSON itself was cut off — executing it would be garbage. This
-middleware re-calls the handler inside ``awrap_model_call`` with a doubled
-``max_tokens`` (base × 2^attempt, capped at 32768) so the model can emit the
-complete tool-call payload.
+middleware re-calls the handler inside ``wrap_model_call`` /
+``awrap_model_call`` with a boosted ``max_tokens`` (base × 2^attempt,
+capped at 32768) so the model can emit the complete tool-call payload. The
+boost base resolves through three layers — the call's own
+``model_settings["max_tokens"]``, then the ``MAIN_LLM_OUTPUT_MAX_TOKEN``
+env base, then the 8192 default — so a re-call tracks the current call's
+actual limit instead of restarting from the env default.
 
 Text-only truncation (no tool calls) is NOT handled here — the StreamTurn
 outer loop (Phase 2) owns it via a continuation HumanMessage.
@@ -29,6 +33,7 @@ from langchain_core.messages import AIMessage
 _logger = logging.getLogger(__name__)
 
 _BASE_MAX_TOKENS = int(os.getenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "8192"))
+_DEFAULT_MAX_TOKENS = 8192
 _MAX_CAP = 32_768
 _MAX_RETRIES = 3
 _TRUNCATION_REASONS = frozenset({"length", "max_tokens"})
@@ -67,6 +72,21 @@ class MaxTokensBoostMiddleware(AgentMiddleware):
         if isinstance(model_settings, dict):
             model_settings["max_tokens"] = max_tokens
 
+    def _get_current_base(self, request: Any) -> int:
+        """Resolve the boost base through three layers, first positive value wins.
+
+        Layer 1: the call's own ``model_settings["max_tokens"]`` (the actual
+        current limit — boosts never restart from a lower default);
+        Layer 2: the ``MAIN_LLM_OUTPUT_MAX_TOKEN`` env base;
+        Layer 3: the hardcoded 8192 default.
+        """
+        model_settings = getattr(request, "model_settings", None)
+        if isinstance(model_settings, dict):
+            current = model_settings.get("max_tokens")
+            if isinstance(current, int) and current > 0:
+                return current
+        return _BASE_MAX_TOKENS if _BASE_MAX_TOKENS > 0 else _DEFAULT_MAX_TOKENS
+
     def _strip_callbacks(self, request: Any) -> Any:
         config = getattr(request, "config", None)
         if isinstance(config, dict):
@@ -96,9 +116,9 @@ class MaxTokensBoostMiddleware(AgentMiddleware):
         result = handler(request)
         if not self._detect_tool_call_truncation(result):
             return result
-        boosted = _BASE_MAX_TOKENS
+        base = self._get_current_base(request)
         for _attempt in range(1, _MAX_RETRIES + 1):
-            boosted = min(_BASE_MAX_TOKENS * (2**_attempt), _MAX_CAP)
+            boosted = min(base * (2**_attempt), _MAX_CAP)
             self._inject_boost(request, boosted)
             result = handler(request)
             if not self._detect_tool_call_truncation(result):
@@ -115,9 +135,9 @@ class MaxTokensBoostMiddleware(AgentMiddleware):
             saved_callbacks = self._strip_callbacks(request)
             stripped = True
         try:
-            boosted = _BASE_MAX_TOKENS
+            base = self._get_current_base(request)
             for attempt in range(1, _MAX_RETRIES + 1):
-                boosted = min(_BASE_MAX_TOKENS * (2**attempt), _MAX_CAP)
+                boosted = min(base * (2**attempt), _MAX_CAP)
                 self._inject_boost(request, boosted)
                 result = await handler(request)
                 if not self._detect_tool_call_truncation(result):
@@ -127,7 +147,7 @@ class MaxTokensBoostMiddleware(AgentMiddleware):
                     "MaxTokensBoost exhausted %s retries (base=%s, cap=%s); "
                     "returning last truncated result",
                     _MAX_RETRIES,
-                    _BASE_MAX_TOKENS,
+                    base,
                     _MAX_CAP,
                 )
         finally:

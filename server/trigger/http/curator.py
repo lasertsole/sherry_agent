@@ -22,7 +22,7 @@ async def get_curator_settings_handler(request):
     """
     Return the currently effective curator settings:
       - auto_interval_days: the UI-configured interval (days, 1..5) or None if
-        falling back to curator.yaml's interval_hours.
+        falling back to the curator.interval_hours setting in sherry.jsonc.
       - interval_hours: the effective interval in hours.
       - last_run_at / last_maintenance_at: ISO timestamps (may be None).
     """
@@ -46,8 +46,9 @@ async def put_curator_settings_handler(request):
     Configure the auto-maintenance interval override.
 
     Accepts a JSON body: {"auto_interval_days": <int|null>}. A literal null
-    clears the override and falls back to curator.yaml's interval_hours (used
-    by the client's "restore default" button). Any other non-null value must
+    clears the override and falls back to the curator.interval_hours setting
+    in sherry.jsonc (used by the client's "restore default" button). Any other
+    non-null value must
     be an integer within the valid 1..5 day range, otherwise a 400 is
     returned — this rejects empty strings, floats, and out-of-range values.
 

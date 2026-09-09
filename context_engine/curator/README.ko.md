@@ -428,7 +428,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 
 ## 구성 참조
 
-구성 파일 경로: `curator.yaml` (프로젝트 루트, `ROOT_DIR` 옆)
+구성은 `sherry.jsonc` (프로젝트 루트)의 `"curator"` 객체에 있습니다.
 
 | 설정 | 기본값 | 설명 |
 |---------|---------|-------------|
@@ -437,9 +437,10 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 | `min_idle_hours` | `2` | 최소 유휴 시간 |
 | `stale_after_days` | `30` | 오래된 것으로 표시하기 전 일수 |
 | `archive_after_days` | `90` | 삭제 전 일수 |
-| `consolidate` | `false` | LLM 통합 활성화 여부 |
+| `consolidate` | `true` | LLM 통합 활성화 여부 |
+| `prune_builtins` | `true` | 내장 스킬 사용 기록 정리 여부 |
 
-구성은 PyYAML을 사용하여 `curator.yaml`을 읽는 `_load_config()`를 통해 로드됩니다. 각 getter 함수(`is_enabled`, `get_interval_hours` 등)는 파싱 오류 시 상수 기본값으로 대체됩니다.
+구성은 `config/sherry_settings.py`를 통해 읽습니다(`get_sherry_setting("curator.<key>")`). 각 getter 함수(`is_enabled`, `get_interval_hours` 등)는 값이 없거나 파싱할 수 없을 때 해당 모듈에 선언된 타입 기본값으로 대체됩니다.
 
 ---
 
@@ -489,7 +490,7 @@ Curator는 절대 위반해서는 안 되는 다음의 엄격한 불변 조건�
 curator/
 ├── __init__.py           # Public API exports
 ├── constants.py          # Constants (paths, state names, defaults)
-├── config.py             # Config loading (curator.yaml + env vars)
+├── config.py             # Config getters (sherry.jsonc "curator" object)
 ├── state.py              # Curator run state persistence (.curator_state)
 ├── usage.py              # Skill usage record CRUD (.usage/{name}.json) + agent_created_report + orphan cleanup
 ├── transitions.py        # Auto state transitions + should_run_now logic

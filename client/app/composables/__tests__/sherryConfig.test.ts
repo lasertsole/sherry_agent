@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SherryConfigPayload } from '../sherryConfig';
 
-// `sherryConfig.ts` calls `fetchApi` as a Nuxt auto-import (no explicit import
-// in source). Stub the global with our own mock, mirroring env.test.ts.
+// `sherryConfig.ts` calls `fetchApi` as a Nuxt auto-import: the binding
+// resolves through the `../requestApi` module (see unimport injection in
+// vitest.config.ts), so mock that module (mirrors env.test.ts).
 
 const fetchApiMock = vi.hoisted(() => vi.fn());
 
-vi.stubGlobal('fetchApi', fetchApiMock);
+vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
 
 import { readSherryConfig, writeSherryConfig } from '../sherryConfig';
 

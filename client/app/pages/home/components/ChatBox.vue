@@ -426,6 +426,7 @@ const turnGroups = computed<MessageItem[][]>(() => {
  * Only groups that are "multi-row with a non-user first row" (pure AI/TOOL consecutive rows)
  * use gap-3; single-row groups or groups containing a user do not need it — their spacing is
  * provided by the outer gap-6 (24px).
+ * @param group
  */
 const turnSpacingClass = (group: MessageItem[]): boolean => group.length > 1 && group[0]?.role !== CHAT_ROLE.USER;
 
@@ -435,17 +436,20 @@ const turnSpacingClass = (group: MessageItem[]): boolean => group.length > 1 && 
  * Carriers render as a centered, muted system card instead of the regular user bubble;
  * legacy rows without origin (TEXT NULL = a real user message) keep the existing
  * user-bubble rendering untouched.
+ * @param message
  */
 const isBackgroundTask = (message: MessageItem): boolean => message.role === CHAT_ROLE.USER && !!message.origin;
 
 /**
  * Messages of a turn group that render as regular rows (background-task carriers excluded).
+ * @param group
  */
 const regularMessages = (group: MessageItem[]): MessageItem[] => group.filter(m => !isBackgroundTask(m));
 
 /**
  * Background-task carriers of a turn group (USER rows always form singleton groups, so this
  * is either empty or the whole group).
+ * @param group
  */
 const backgroundCarriers = (group: MessageItem[]): MessageItem[] => group.filter(isBackgroundTask);
 
@@ -521,9 +525,6 @@ watch(
 // After the component mounts (first page open), scroll to the bottom so the latest messages are visible
 onMounted(() => scrollToBottom());
 
-/** Backend /media endpoint root: derived from VITE_API_BACK_URL (trailing slashes stripped) */
-const backendBaseUrl = ((import.meta.env.VITE_API_BACK_URL as string) ?? '').replace(/\/+$/, '');
-
 /**
  * Resolve the image entries in a message into renderable <img src> values.
  * Semantics (see the MessageItem.images comment in type.ts):
@@ -536,6 +537,8 @@ const backendBaseUrl = ((import.meta.env.VITE_API_BACK_URL as string) ?? '').rep
  * extension; the base64 alphabet happens to contain / and + (and is usually padded with =),
  * so "/" must never be used as the "file path" test —— that would misjudge the user's raw
  * base64 image as a /media request (the root cause of 4 historical "media not found" bugs).
+ * @param message
+ * @param entry
  */
 const resolveImageSrc = (message: MessageItem, entry: string): string => {
   const s = (entry ?? '').trim();
@@ -546,9 +549,8 @@ const resolveImageSrc = (message: MessageItem, entry: string): string => {
   if (/^https?:\/\//i.test(s)) return s;
   const isFilePath = s.includes('\\') || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(s);
   if (isFilePath) {
-    // AI messages: fetch via /media; the file may carry any directory prefix, so take its basename
-    const filename = s.split(/[\\/]/).pop() || '';
-    return `${backendBaseUrl}/media?session_id=${encodeURIComponent(message.session_id ?? '')}&filename=${encodeURIComponent(filename)}`;
+    // AI messages: fetch via /media
+    return mediaUrl(message.session_id, s);
   }
   // User messages: local base64
   return `data:image/*;base64,${s}`;
@@ -561,6 +563,7 @@ const resolveImageSrc = (message: MessageItem, entry: string): string => {
  *   "[System: The user uploaded N image(s). Location: http://…/images/<hash>.png,…]"
  * This fallback resolves those served URLs so history/legacy rows whose
  * `images` field is empty still render their images.
+ * @param content
  */
 const extractContentImageUrls = (content: string): string[] => {
   if (!content) return [];
@@ -575,6 +578,7 @@ const extractContentImageUrls = (content: string): string[] => {
 /**
  * Images to render for a message: explicit `images` wins; otherwise fall back
  * to URLs parsed from the content's Location marker.
+ * @param message
  */
 const messageImages = (message: MessageItem): string[] => {
   const explicit = message.images ?? [];
@@ -590,6 +594,9 @@ const messageImages = (message: MessageItem): string[] => {
  *  - AI messages: persisted absolute file paths → fetched via the backend /media endpoint, with
  *    the basename used to build the URL
  *  - Absolute http(s):// URLs pass through as-is
+ * @param message
+ * @param entry
+ * @param mimePrefix
  */
 const resolveMediaSrc = (message: MessageItem, entry: string, mimePrefix: string): string => {
   const s = (entry ?? '').trim();
@@ -598,21 +605,31 @@ const resolveMediaSrc = (message: MessageItem, entry: string, mimePrefix: string
   if (/^https?:\/\//i.test(s)) return s;
   const isFilePath = s.includes('\\') || /\.(mp3|wav|ogg|m4a|aac|flac|mp4|webm|mov|avi|mkv|m4v)$/i.test(s);
   if (isFilePath) {
-    // AI messages: fetch via /media; the file may carry any directory prefix, so take its basename
-    const filename = s.split(/[\\/]/).pop() || '';
-    return `${backendBaseUrl}/media?session_id=${encodeURIComponent(message.session_id ?? '')}&filename=${encodeURIComponent(filename)}`;
+    // AI messages: fetch via /media
+    return mediaUrl(message.session_id, s);
   }
   // User messages: local base64 (data:<mimePrefix>;base64,<data>)
   return `data:${mimePrefix};base64,${s}`;
 };
 
-/** Resolve the audio src (mime prefix audio/*) */
+/**
+ * Resolve the audio src (mime prefix audio/*)
+ * @param message
+ * @param entry
+ */
 const resolveAudioSrc = (message: MessageItem, entry: string): string => resolveMediaSrc(message, entry, 'audio/*');
 
-/** Resolve the video src (mime prefix video/*) */
+/**
+ * Resolve the video src (mime prefix video/*)
+ * @param message
+ * @param entry
+ */
 const resolveVideoSrc = (message: MessageItem, entry: string): string => resolveMediaSrc(message, entry, 'video/*');
 
-/** Audio/video entries carried by this message */
+/**
+ * Audio/video entries carried by this message
+ * @param message
+ */
 const messageAudios = (message: MessageItem): string[] => message.audios ?? [];
 const messageVideos = (message: MessageItem): string[] => message.videos ?? [];
 
@@ -623,7 +640,11 @@ const messageVideos = (message: MessageItem): string[] => message.videos ?? [];
  */
 const failedImageSources = reactive(new Set<string>());
 
-/** Callback for <img> load failures (including 404/network errors): record the failed src in the set to hide the broken image. */
+/**
+ * Callback for <img> load failures (including 404/network errors): record the failed src in the set to hide the broken image.
+ * @param event
+ * @param src
+ */
 const onImageError = (event: Event, src: string) => {
   if (src) {
     failedImageSources.add(src);
@@ -635,7 +656,10 @@ const onImageError = (event: Event, src: string) => {
 /** Set of tool-card message ids currently expanded (collapsed by default) */
 const expandedToolCards = reactive(new Set<number>());
 
-/** Toggle the expand/collapse state of a tool card */
+/**
+ * Toggle the expand/collapse state of a tool card
+ * @param id
+ */
 const toggleToolCard = (id: number) => {
   if (expandedToolCards.has(id)) {
     expandedToolCards.delete(id);
@@ -649,7 +673,10 @@ const toggleToolCard = (id: number) => {
 /** Set of thinking-block message ids currently expanded (collapsed by default) */
 const expandedThinking = reactive(new Set<number>());
 
-/** Toggle the expand/collapse state of a message's thinking block */
+/**
+ * Toggle the expand/collapse state of a message's thinking block
+ * @param id
+ */
 const toggleThinking = (id: number) => {
   if (expandedThinking.has(id)) {
     expandedThinking.delete(id);
@@ -658,12 +685,18 @@ const toggleThinking = (id: number) => {
   }
 };
 
-/** Whether this message is a tool call card (tool cards are always expandable; live args/progress can be viewed even while running) */
+/**
+ * Whether this message is a tool call card (tool cards are always expandable; live args/progress can be viewed even while running)
+ * @param message
+ */
 const isToolMessage = (message: MessageItem): boolean => {
   return message.role === CHAT_ROLE.TOOL && !!message.toolName;
 };
 
-/** Format the tool args object into readable JSON text */
+/**
+ * Format the tool args object into readable JSON text
+ * @param args
+ */
 const formatToolArgs = (args: Record<string, unknown>): string => {
   try {
     return JSON.stringify(args, null, 2);
@@ -680,7 +713,10 @@ const copiedMessageId = ref<number | null>(null);
 /** Handle of the copy-feedback reset timer (must be cleared on re-click or component unmount, preventing an old timer from wiping the new feedback early) */
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Whether this message shows a copy button: only user/AI text messages with a non-empty body (tool cards and empty messages are excluded from the copy logic) */
+/**
+ * Whether this message shows a copy button: only user/AI text messages with a non-empty body (tool cards and empty messages are excluded from the copy logic)
+ * @param message
+ */
 const canCopyMessage = (message: MessageItem): boolean => {
   return (
     (message.role === CHAT_ROLE.USER || message.role === CHAT_ROLE.AI) &&
@@ -694,6 +730,7 @@ const canCopyMessage = (message: MessageItem): boolean => {
  * Prefers the modern Clipboard API (requires a secure context); when it is unavailable or
  * rejects, fall back to "hidden textarea + document.execCommand('copy')". Returns false when
  * all paths fail; the caller only logs a warning.
+ * @param text
  */
 const copyTextToClipboard = async (text: string): Promise<boolean> => {
   if (navigator.clipboard && window.isSecureContext) {
@@ -707,7 +744,10 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
   return fallbackCopyText(text);
 };
 
-/** Fallback copy: hidden textarea + execCommand('copy') (safety net for legacy environments / non-secure contexts) */
+/**
+ * Fallback copy: hidden textarea + execCommand('copy') (safety net for legacy environments / non-secure contexts)
+ * @param text
+ */
 const fallbackCopyText = (text: string): boolean => {
   const textarea = document.createElement('textarea');
   textarea.value = text;
@@ -730,7 +770,10 @@ const fallbackCopyText = (text: string): boolean => {
   return ok;
 };
 
-/** Copy a message's raw Markdown body; on success briefly show the ✓ feedback (reverting to the copy icon after 1500ms) */
+/**
+ * Copy a message's raw Markdown body; on success briefly show the ✓ feedback (reverting to the copy icon after 1500ms)
+ * @param message
+ */
 const copyMessage = async (message: MessageItem) => {
   // Clear the previous feedback timer so that with rapid clicks only the latest feedback takes effect
   if (copyResetTimer) {
@@ -773,3 +816,68 @@ onBeforeUnmount(() => {
   transform: translateY(8px);
 }
 </style>
+
+<i18n lang="json">
+{
+  "zh": {
+    "chatBox": {
+      "copy": "复制",
+      "copied": "已复制",
+      "defaultUserName": "我",
+      "imageLoadFailed": "图片加载失败",
+      "modelMeta": "输入 {input} · 输出 {output} tokens",
+      "scrollBottom": "回到最底部",
+      "thinking": "思考过程",
+      "toolArgs": "调用参数",
+      "toolNoOutput": "无输出",
+      "toolResult": "执行结果",
+      "toolRunning": "执行中…"
+    }
+  },
+  "en": {
+    "chatBox": {
+      "copy": "Copy",
+      "copied": "Copied",
+      "defaultUserName": "Me",
+      "imageLoadFailed": "Image load failed",
+      "modelMeta": "{input} in · {output} out tokens",
+      "scrollBottom": "Scroll to bottom",
+      "thinking": "Thinking",
+      "toolArgs": "Arguments",
+      "toolNoOutput": "No output",
+      "toolResult": "Result",
+      "toolRunning": "Running…"
+    }
+  },
+  "ja": {
+    "chatBox": {
+      "copy": "コピー",
+      "copied": "コピーしました",
+      "defaultUserName": "わたし",
+      "imageLoadFailed": "画像の読み込みに失敗しました",
+      "modelMeta": "入力 {input} · 出力 {output} tokens",
+      "scrollBottom": "最下部へ戻る",
+      "thinking": "思考",
+      "toolArgs": "引数",
+      "toolNoOutput": "出力なし",
+      "toolResult": "実行結果",
+      "toolRunning": "実行中…"
+    }
+  },
+  "ko": {
+    "chatBox": {
+      "copy": "복사",
+      "copied": "복사됨",
+      "defaultUserName": "나",
+      "imageLoadFailed": "이미지 로드 실패",
+      "modelMeta": "입력 {input} · 출력 {output} tokens",
+      "scrollBottom": "맨 아래로",
+      "thinking": "생각",
+      "toolArgs": "인자",
+      "toolNoOutput": "출력 없음",
+      "toolResult": "실행 결과",
+      "toolRunning": "실행 중…"
+    }
+  }
+}
+</i18n>

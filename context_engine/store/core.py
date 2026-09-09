@@ -2,6 +2,7 @@ import json
 import sqlite3
 import threading
 from .db import get_db
+from abc import ABC, abstractmethod
 from typing import Annotated, Any
 from datetime import datetime, timedelta
 from pydantic import Field, validate_call
@@ -58,6 +59,154 @@ def get_max_turn_num(session_id: str) -> int:
     return max_turn_num_row[0] if max_turn_num_row and max_turn_num_row[0] is not None else 0
 
 
+class MessageRowBuilder(ABC):
+    @abstractmethod
+    def build(self, msg: BaseMessage, session_id: str) -> dict | None: ...
+
+
+class AIMessageRowBuilder(MessageRowBuilder):
+    def build(self, msg: BaseMessage, session_id: str) -> dict:
+        # Extract model + token usage metadata for frontend display. Both
+        # are optional: some providers omit them, so every lookup is
+        # guarded and defaults to None.
+        response_metadata: dict[str, Any] = getattr(msg, "response_metadata", None) or {}
+        model_name: str | None = response_metadata.get("model_name") or response_metadata.get(
+            "model"
+        )
+        usage_metadata: dict[str, Any] | None = getattr(msg, "usage_metadata", None)
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        if usage_metadata:
+            if usage_metadata.get("input_tokens") is not None:
+                input_tokens = int(usage_metadata["input_tokens"])
+            if usage_metadata.get("output_tokens") is not None:
+                output_tokens = int(usage_metadata["output_tokens"])
+
+        # Persist the chain-of-thought so the client can re-render the
+        # collapsible thinking bubble after a reload. Reasoning models
+        # (DeepSeek thinking, GLM thinking, R1...) carry the complete CoT
+        # on the final aggregated message under
+        # additional_kwargs["reasoning_content"] (the reasoning normalizer
+        # emits per-chunk deltas, which langchain's chunk aggregation
+        # concatenates back into the full text). The client history
+        # mapping reads the `reasoning` column.
+        ai_additional_kwargs: dict[str, Any] = getattr(msg, "additional_kwargs", None) or {}
+        reasoning_text: str | None = ai_additional_kwargs.get("reasoning_content") or None
+        finish_reason: str | None = response_metadata.get("finish_reason") or (
+            response_metadata.get("stop_reason")
+        )
+
+        return {
+            "session_id": session_id,
+            "turn_num": 0,
+            "role": msg.type,
+            "content": json.dumps(getattr(msg, "content", ""), ensure_ascii=False),
+            "tool_call_id": None,
+            "tool_calls": json.dumps(getattr(msg, "tool_calls", None), ensure_ascii=False),
+            "tool_status": None,
+            "tool_name": None,
+            "timestamp": "",
+            "ts_ms": 0,
+            "finish_reason": finish_reason,
+            "reasoning": reasoning_text,
+            "reasoning_content": None,
+            "images": None,
+            "audios": None,
+            "videos": None,
+            "model_name": model_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "origin": None,
+        }
+
+
+class HumanMessageRowBuilder(MessageRowBuilder):
+    def build(self, msg: BaseMessage, session_id: str) -> dict | None:
+        additional_kwargs: dict[str, str] = getattr(msg, "additional_kwargs", {})
+
+        # Filter out human messages produced by summarization,
+        # so compressed history doesn't pollute the raw store.
+        if additional_kwargs.get("lc_source", None) == "summarization":
+            return None
+
+        # Persist any media file paths declared by the multimodal processor.
+        images: list[str] = _as_str_list(additional_kwargs.get("images", []))
+        audios: list[str] = _as_str_list(additional_kwargs.get("audios", []))
+        videos: list[str] = _as_str_list(additional_kwargs.get("videos", []))
+
+        # Tag background subagent-completion injections. The tag fires
+        # ONLY on a full match of the frozen metadata contract built by
+        # agent/tools/subagent/announce/completion_message.py (mirrors
+        # _is_internal_completion in the completion-drain middleware):
+        # internal must be True (strict bool, not merely truthy) AND
+        # provenance must be exactly "subagent_completion". Everything
+        # else — plain user input, partial-contract metadata — stays
+        # NULL (= real user message). Never an empty string.
+        meta: dict[str, Any] = getattr(msg, "metadata", None) or {}
+        origin: str | None = (
+            "subagent_completion"
+            if (meta.get("internal") is True and meta.get("provenance") == "subagent_completion")
+            else None
+        )
+
+        return {
+            "session_id": session_id,
+            "turn_num": 0,
+            "role": msg.type,
+            "content": json.dumps(getattr(msg, "content", ""), ensure_ascii=False),
+            "tool_call_id": None,
+            "tool_calls": None,
+            "tool_status": None,
+            "tool_name": None,
+            "timestamp": "",
+            "ts_ms": 0,
+            "finish_reason": None,
+            "reasoning": None,
+            "reasoning_content": None,
+            "images": json.dumps(images, ensure_ascii=False) if images else None,
+            "audios": json.dumps(audios, ensure_ascii=False) if audios else None,
+            "videos": json.dumps(videos, ensure_ascii=False) if videos else None,
+            "model_name": None,
+            "input_tokens": None,
+            "output_tokens": None,
+            "origin": origin,
+        }
+
+
+class ToolMessageRowBuilder(MessageRowBuilder):
+    def build(self, msg: BaseMessage, session_id: str) -> dict:
+        # Tool message: carry tool metadata (call id, name, execution status).
+        return {
+            "session_id": session_id,
+            "turn_num": 0,
+            "role": msg.type,
+            "content": json.dumps(getattr(msg, "content", ""), ensure_ascii=False),
+            "tool_call_id": getattr(msg, "tool_call_id", None),
+            "tool_calls": None,
+            "tool_name": getattr(msg, "name", None),
+            "tool_status": getattr(msg, "status", "success"),
+            "finish_reason": None,
+            "reasoning": None,
+            "reasoning_content": None,
+            "timestamp": "",
+            "ts_ms": 0,
+            "images": None,
+            "audios": None,
+            "videos": None,
+            "model_name": None,
+            "input_tokens": None,
+            "output_tokens": None,
+            "origin": None,
+        }
+
+
+_BUILDERS: dict[str, MessageRowBuilder] = {
+    "ai": AIMessageRowBuilder(),
+    "human": HumanMessageRowBuilder(),
+    "tool": ToolMessageRowBuilder(),
+}
+
+
 async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     """Persist a batch of LangChain messages as a new turn in the messages table.
 
@@ -72,163 +221,15 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     if messages is None or len(messages) == 0:
         return
 
-    # A turn here is a group of messages. Each add_messages call starts a new
-    # turn. Rows are built with a 0 placeholder below; the real turn number is
-    # assigned atomically under _turn_assign_lock right before the INSERT
-    # (audit #5) so a concurrent same-session writer can never share it.
-    current_turn: int = 0
-
-    # All messages in this batch share the same timestamp (YYYYMMDDHHmmss)
-    # and the same ts_ms ordering key (audit #21: strictly increasing).
-    # The REAL stamp is taken atomically with turn assignment under
-    # _turn_assign_lock below — stamping earlier would let a concurrent
-    # writer slip between "stamped" and "turn-assigned" and invert
-    # timestamp order against turn order (the history-jumble race).
-    # These are placeholders; every row is rewritten inside the lock.
-    turn_ms: int = 0
-    base_timestamp: str = ""
-
     # Rows to be bulk-inserted by executemany.
     insert_rows: list[dict] = []
-
-    # Normalize each LangChain message into a raw DB row according to its role.
     for m in messages:
-        # AI message: keep content and optional tool_calls (JSON-encoded).
-        if m.type == "ai":
-            # Extract model + token usage metadata for frontend display. Both
-            # are optional: some providers omit them, so every lookup is
-            # guarded and defaults to None.
-            response_metadata: dict[str, Any] = getattr(m, "response_metadata", None) or {}
-            model_name: str | None = response_metadata.get("model_name") or response_metadata.get(
-                "model"
-            )
-            usage_metadata: dict[str, Any] | None = getattr(m, "usage_metadata", None)
-            input_tokens: int | None = None
-            output_tokens: int | None = None
-            if usage_metadata:
-                if usage_metadata.get("input_tokens") is not None:
-                    input_tokens = int(usage_metadata["input_tokens"])
-                if usage_metadata.get("output_tokens") is not None:
-                    output_tokens = int(usage_metadata["output_tokens"])
-
-            # Persist the chain-of-thought so the client can re-render the
-            # collapsible thinking bubble after a reload. Reasoning models
-            # (DeepSeek thinking, GLM thinking, R1...) carry the complete CoT
-            # on the final aggregated message under
-            # additional_kwargs["reasoning_content"] (the reasoning normalizer
-            # emits per-chunk deltas, which langchain's chunk aggregation
-            # concatenates back into the full text). The client history
-            # mapping reads the `reasoning` column.
-            ai_additional_kwargs: dict[str, Any] = getattr(m, "additional_kwargs", None) or {}
-            reasoning_text: str | None = ai_additional_kwargs.get("reasoning_content") or None
-            finish_reason: str | None = response_metadata.get("finish_reason") or (
-                response_metadata.get("stop_reason")
-            )
-
-            insert_rows.append(
-                {
-                    "session_id": session_id,
-                    "turn_num": current_turn,
-                    "role": m.type,
-                    "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
-                    "tool_call_id": None,
-                    "tool_calls": json.dumps(getattr(m, "tool_calls", None), ensure_ascii=False),
-                    "tool_status": None,
-                    "tool_name": None,
-                    "timestamp": base_timestamp,
-                    "ts_ms": turn_ms,
-                    "finish_reason": finish_reason,
-                    "reasoning": reasoning_text,
-                    "reasoning_content": None,
-                    "images": None,
-                    "audios": None,
-                    "videos": None,
-                    "model_name": model_name,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "origin": None,
-                }
-            )
-        elif m.type == "human":
-            additional_kwargs: dict[str, str] = getattr(m, "additional_kwargs", {})
-
-            # Filter out human messages produced by summarization,
-            # so compressed history doesn't pollute the raw store.
-            if additional_kwargs.get("lc_source", None) == "summarization":
-                continue
-
-            # Persist any media file paths declared by the multimodal processor.
-            images: list[str] = _as_str_list(additional_kwargs.get("images", []))
-            audios: list[str] = _as_str_list(additional_kwargs.get("audios", []))
-            videos: list[str] = _as_str_list(additional_kwargs.get("videos", []))
-
-            # Tag background subagent-completion injections. The tag fires
-            # ONLY on a full match of the frozen metadata contract built by
-            # agent/tools/subagent/announce/completion_message.py (mirrors
-            # _is_internal_completion in the completion-drain middleware):
-            # internal must be True (strict bool, not merely truthy) AND
-            # provenance must be exactly "subagent_completion". Everything
-            # else — plain user input, partial-contract metadata — stays
-            # NULL (= real user message). Never an empty string.
-            meta: dict[str, Any] = getattr(m, "metadata", None) or {}
-            origin: str | None = (
-                "subagent_completion"
-                if (
-                    meta.get("internal") is True and meta.get("provenance") == "subagent_completion"
-                )
-                else None
-            )
-
-            insert_rows.append(
-                {
-                    "session_id": session_id,
-                    "turn_num": current_turn,
-                    "role": m.type,
-                    "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
-                    "tool_call_id": None,
-                    "tool_calls": None,
-                    "tool_status": None,
-                    "tool_name": None,
-                    "timestamp": base_timestamp,
-                    "ts_ms": turn_ms,
-                    "finish_reason": None,
-                    "reasoning": None,
-                    "reasoning_content": None,
-                    "images": json.dumps(images, ensure_ascii=False) if images else None,
-                    "audios": json.dumps(audios, ensure_ascii=False) if audios else None,
-                    "videos": json.dumps(videos, ensure_ascii=False) if videos else None,
-                    "model_name": None,
-                    "input_tokens": None,
-                    "output_tokens": None,
-                    "origin": origin,
-                }
-            )
-        elif m.type == "tool":
-            # Tool message: carry tool metadata (call id, name, execution status).
-            insert_rows.append(
-                {
-                    "session_id": session_id,
-                    "turn_num": current_turn,
-                    "role": m.type,
-                    "content": json.dumps(getattr(m, "content", ""), ensure_ascii=False),
-                    "tool_call_id": getattr(m, "tool_call_id", None),
-                    "tool_calls": None,
-                    "tool_name": getattr(m, "name", None),
-                    "tool_status": getattr(m, "status", "success"),
-                    "finish_reason": None,
-                    "reasoning": None,
-                    "reasoning_content": None,
-                    "timestamp": base_timestamp,
-                    "ts_ms": turn_ms,
-                    "images": None,
-                    "audios": None,
-                    "videos": None,
-                    "model_name": None,
-                    "input_tokens": None,
-                    "output_tokens": None,
-                    "origin": None,
-                }
-            )
+        builder = _BUILDERS.get(m.type)
+        if builder is None:
+            continue
+        row = builder.build(m, session_id)
+        if row is not None:
+            insert_rows.append(row)
 
     # Audit #5: assign the turn number atomically. Re-read MAX(turn_num) and
     # insert while holding the module-level lock, so two concurrent writers on
@@ -479,21 +480,6 @@ def _decode_title_content(raw_content: str | None) -> str:
     return ""
 
 
-def _is_top_level_session(session_id: str) -> bool:
-    """Return True for a top-level (user-facing) session.
-
-    Subagent sessions are namespaced under a reserved
-    ``agent:<agent_id>:subagent:`` prefix hierarchy and must NOT be surfaced in
-    the user's session list. Every key in that hierarchy (top-level child,
-    grandchild, etc.) carries the ``:subagent:`` segment, e.g.:
-    - ``agent:main:subagent:<uuid>``                  — a top-level child agent.
-    - ``agent:main:subagent:<uuid>:subagent:<uuid>``  — a nested grandchild.
-    See ``agent/tools/subagent/spawn/core.py::child_session_key`` for
-    construction.
-    """
-    return ":subagent:" not in session_id
-
-
 def get_session_ids() -> list[dict]:
     """Enumerate all distinct top-level sessions from the messages table.
 
@@ -506,55 +492,49 @@ def get_session_ids() -> list[dict]:
         }, ...]
 
     Subagent sessions (keyed with an ``agent:<agent_id>:subagent:`` prefix
-    hierarchy) are excluded, so only user-facing conversations are listed.
+    hierarchy) are excluded in SQL, so only user-facing conversations are
+    listed. The title subquery and the aggregation run as one statement.
 
     ``last_time`` is the newest message's ``timestamp`` text (the same
     ``YYYYMMDDHHmmss`` format used across the store).
     """
     with _db:
         rows = _db.execute("""
-            SELECT m.session_id, m.last_time
+            SELECT
+                agg.session_id,
+                agg.last_time,
+                (
+                    SELECT m2.content
+                    FROM messages m2
+                    WHERE m2.session_id = agg.session_id
+                      AND m2.role = 'human'
+                      AND m2.origin IS NULL
+                    ORDER BY m2.turn_num DESC, m2.id DESC
+                    LIMIT 1
+                ) AS title_content
             FROM (
                 SELECT session_id, MAX(timestamp) AS last_time, MAX(ts_ms) AS last_sort
                 FROM messages
+                WHERE instr(session_id, ':subagent:') = 0
                 GROUP BY session_id
-            ) m
-            ORDER BY m.last_sort DESC, m.last_time DESC
+            ) agg
+            ORDER BY agg.last_sort DESC, agg.last_time DESC
         """).fetchall()
 
     result: list[dict] = []
     for row in rows:
-        session_id = str(row["session_id"])
-        # Skip subagent (commander/worker) sessions.
-        if not _is_top_level_session(session_id):
-            continue
-        # Derive a title from the latest human message of the session
-        # (the user's most recent question). Background subagent-completion
+        # Title comes from the latest human message of the session (the
+        # user's most recent question). Background subagent-completion
         # injections (``origin = 'subagent_completion'``) are excluded, so a
         # carrier never becomes the session title; a session whose only human
         # rows are carriers gets an empty title, which the client renders as
         # an i18n placeholder (e.g. "新会话") instead of leaking the raw
         # session_id.
-        title: str = ""
-        with _db:
-            last_msg = _db.execute(
-                """
-                SELECT content FROM messages
-                WHERE session_id = ? AND role = 'human' AND origin IS NULL
-                ORDER BY turn_num DESC, id DESC
-                LIMIT 1
-            """,
-                (session_id,),
-            ).fetchone()
-        if last_msg is not None:
-            title = _decode_title_content(
-                last_msg["content"] if last_msg["content"] is not None else None
-            )
         result.append(
             {
-                "session_id": session_id,
+                "session_id": str(row["session_id"]),
                 "last_time": str(row["last_time"]),
-                "title": title,
+                "title": _decode_title_content(row["title_content"]),
             }
         )
     return result

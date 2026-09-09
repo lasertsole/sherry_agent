@@ -76,8 +76,6 @@
 import { computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
-import { on, off, emit as busEmit } from '@/composables/mitt';
-import { useSubagentTasks } from '@/composables/useSubagentTasks';
 import type { SubagentRun } from '@/composables/bridge';
 import SubagentFlowGraph from './SubagentFlowGraph.vue';
 import SubagentRunDetail from './SubagentRunDetail.vue';
@@ -186,7 +184,7 @@ const jumpBackToSession = () => {
   const targetSid = backToSessionSid.value;
   if (!targetSid) return;
   // Embedded (viewMode==='tasks' inside [sid].vue): notify the host to switch back to the chat view
-  busEmit('subagent:show-chat');
+  emit('subagent:show-chat');
   // Switch the sidebar back to the "Sessions" tab, ensuring the session list is visible and the target session is highlighted
   setTasksTabActive(false);
   // Route to the target session page; a no-op in embedded mode if already on the target page, completes the jump on the standalone page.
@@ -194,7 +192,10 @@ const jumpBackToSession = () => {
   router.push(localePath(`/home/${targetSid}`));
 };
 
-/** Received the sidebar's "show background tasks" event: locate/expand the specified run (if any) */
+/**
+ * Received the sidebar's "show background tasks" event: locate/expand the specified run (if any)
+ * @param event
+ */
 const onShowTasks = (event: unknown) => {
   const runId = typeof event === 'string' ? event : undefined;
   focusRun(runId);
@@ -219,3 +220,40 @@ onUnmounted(() => {
   off('subagent:show-tasks', onShowTasks);
 });
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "sidebar": {
+      "backToSession": "返回会话",
+      "backToSessionPrompt": "跳转到发起该任务的会话",
+      "refreshGraph": "刷新",
+      "refreshGraphPrompt": "重新拉取并重绘运行图"
+    }
+  },
+  "en": {
+    "sidebar": {
+      "backToSession": "Back to session",
+      "backToSessionPrompt": "Jump to the session that spawned this task",
+      "refreshGraph": "Refresh",
+      "refreshGraphPrompt": "Refetch and redraw the run graph"
+    }
+  },
+  "ja": {
+    "sidebar": {
+      "backToSession": "セッションに戻る",
+      "backToSessionPrompt": "このタスクを開始したセッションに移動",
+      "refreshGraph": "再読み込み",
+      "refreshGraphPrompt": "実行グラフを再取得して再描画"
+    }
+  },
+  "ko": {
+    "sidebar": {
+      "backToSession": "세션으로 돌아가기",
+      "backToSessionPrompt": "이 작업을 시작한 세션으로 이동",
+      "refreshGraph": "새로고침",
+      "refreshGraphPrompt": "실행 그래프를 다시 가져와 다시 그리기"
+    }
+  }
+}
+</i18n>

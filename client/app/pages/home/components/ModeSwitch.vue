@@ -29,7 +29,10 @@ const uiStore = useUiStore();
 /** Current mode */
 const currentMode = ref<string>(colorMode.preference);
 
-/** Switch the theme */
+/**
+ * Switch the theme
+ * @param value
+ */
 const handleSwitch = (value: string | boolean) => {
   // ToggleSwitch's value-change emits a boolean; normalize both shapes to the mode string.
   const mode = typeof value === 'string' ? value : value ? 'dark' : 'light';
@@ -37,3 +40,28 @@ const handleSwitch = (value: string | boolean) => {
   uiStore.setTheme(mode);
 };
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "a11y": {
+      "toggleTheme": "切换主题"
+    }
+  },
+  "en": {
+    "a11y": {
+      "toggleTheme": "Toggle theme"
+    }
+  },
+  "ja": {
+    "a11y": {
+      "toggleTheme": "テーマを切り替え"
+    }
+  },
+  "ko": {
+    "a11y": {
+      "toggleTheme": "테마 전환"
+    }
+  }
+}
+</i18n>

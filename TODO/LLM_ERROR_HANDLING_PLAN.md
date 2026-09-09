@@ -137,38 +137,38 @@ class FailoverReason(enum.Enum):
     """LLM API 错误原因分类 — 决定恢复策略。"""
 
     # 认证 / 授权
-    auth = "auth"                        # 瞬时 401/403 — 可刷新/轮转
-    auth_permanent = "auth_permanent"    # 刷新后仍 401/403 — 不可恢复
+    auth = "auth"  # 瞬时 401/403 — 可刷新/轮转
+    auth_permanent = "auth_permanent"  # 刷新后仍 401/403 — 不可恢复
 
     # 计费 / 配额
-    billing = "billing"                  # 402 或确认额度耗尽 — 立即切换
-    rate_limit = "rate_limit"            # 429 或配额限流 — 退避后重试
+    billing = "billing"  # 402 或确认额度耗尽 — 立即切换
+    rate_limit = "rate_limit"  # 429 或配额限流 — 退避后重试
     upstream_rate_limit = "upstream_rate_limit"  # 聚合器上游 429 — 切模型不切 key
 
     # 服务端
-    overloaded = "overloaded"            # 503/529 — 退避重试
-    server_error = "server_error"        # 500/502 — 退避重试
+    overloaded = "overloaded"  # 503/529 — 退避重试
+    server_error = "server_error"  # 500/502 — 退避重试
 
     # 传输
-    timeout = "timeout"                  # 连接/读取超时 — 重建 client + 重试
+    timeout = "timeout"  # 连接/读取超时 — 重建 client + 重试
     ssl_cert_verification = "ssl_cert_verification"  # TLS 证书验证失败 — 快速失败
 
     # 上下文 / 负载
-    context_overflow = "context_overflow"    # 上下文过大 — 压缩
+    context_overflow = "context_overflow"  # 上下文过大 — 压缩
     payload_too_large = "payload_too_large"  # 413 — 压缩负载
-    image_too_large = "image_too_large"      # 单图超限 — 缩小重试
+    image_too_large = "image_too_large"  # 单图超限 — 缩小重试
 
     # 模型 / 提供商策略
-    model_not_found = "model_not_found"                  # 404 — 切换模型
+    model_not_found = "model_not_found"  # 404 — 切换模型
     provider_policy_blocked = "provider_policy_blocked"  # 聚合器策略阻断
-    content_policy_blocked = "content_policy_blocked"    # 安全过滤 — 不重试
+    content_policy_blocked = "content_policy_blocked"  # 安全过滤 — 不重试
 
     # 请求格式
-    format_error = "format_error"        # 400 — 终止或裁剪重试
+    format_error = "format_error"  # 400 — 终止或裁剪重试
     invalid_response = "invalid_response"  # 空响应/格式错 — 重试或切换
 
     # 兜底
-    unknown = "unknown"                  # 无法分类 — 退避重试
+    unknown = "unknown"  # 无法分类 — 退避重试
 ```
 
 ### A.3 `ClassifiedError` 结果
@@ -177,6 +177,7 @@ class FailoverReason(enum.Enum):
 @dataclass
 class ClassifiedError:
     """结构化错误分类 + 恢复动作提示。"""
+
     reason: FailoverReason
     status_code: Optional[int] = None
     provider: Optional[str] = None
@@ -260,39 +261,81 @@ _EXCEPTION_TYPE_MAP = {
 
 _MESSAGE_PATTERNS = {
     FailoverReason.context_overflow: [
-        "context_length_exceeded", "maximum context length", "context length",
-        "context window", "input length exceeds", "reduce the length", "too many tokens",
+        "context_length_exceeded",
+        "maximum context length",
+        "context length",
+        "context window",
+        "input length exceeds",
+        "reduce the length",
+        "too many tokens",
     ],
     FailoverReason.content_policy_blocked: [
-        "content_policy_violation", "content filter", "safety", "refusal", "content_filter",
+        "content_policy_violation",
+        "content filter",
+        "safety",
+        "refusal",
+        "content_filter",
     ],
     FailoverReason.overloaded: ["overload", "capacity", "server is overloaded"],
-    FailoverReason.billing: ["billing", "payment", "insufficient balance", "quota exceeded", "credit"],
+    FailoverReason.billing: [
+        "billing",
+        "payment",
+        "insufficient balance",
+        "quota exceeded",
+        "credit",
+    ],
     FailoverReason.rate_limit: ["rate limit", "too many requests", "throttling", "rate_limit"],
     FailoverReason.timeout: ["timeout", "timed out", "deadline exceeded", "etimedout"],
-    FailoverReason.ssl_cert_verification: ["ssl", "certificate", "certificate_verify_failed", "cert verification"],
+    FailoverReason.ssl_cert_verification: [
+        "ssl",
+        "certificate",
+        "certificate_verify_failed",
+        "cert verification",
+    ],
     FailoverReason.model_not_found: ["model not found", "model not available", "unknown model"],
 }
 
 _RECOVERY_MATRIX = {
-    FailoverReason.auth:               dict(retryable=True,  should_compress=False, should_fallback=False),
-    FailoverReason.auth_permanent:    dict(retryable=False, should_compress=False, should_fallback=True),
-    FailoverReason.billing:           dict(retryable=False, should_compress=False, should_fallback=True),
-    FailoverReason.rate_limit:         dict(retryable=True,  should_compress=False, should_fallback=False),
-    FailoverReason.upstream_rate_limit: dict(retryable=False, should_compress=False, should_fallback=True),
-    FailoverReason.overloaded:         dict(retryable=True,  should_compress=False, should_fallback=False),
-    FailoverReason.server_error:       dict(retryable=True,  should_compress=False, should_fallback=False),
-    FailoverReason.timeout:            dict(retryable=True,  should_compress=False, should_fallback=False),
-    FailoverReason.ssl_cert_verification: dict(retryable=False, should_compress=False, should_fallback=True),
-    FailoverReason.context_overflow:   dict(retryable=False, should_compress=True,  should_fallback=False),
-    FailoverReason.payload_too_large:  dict(retryable=False, should_compress=True,  should_fallback=False),
-    FailoverReason.image_too_large:    dict(retryable=True,  should_compress=False, should_fallback=False),
-    FailoverReason.model_not_found:    dict(retryable=False, should_compress=False, should_fallback=True),
-    FailoverReason.provider_policy_blocked: dict(retryable=False, should_compress=False, should_fallback=True),
-    FailoverReason.content_policy_blocked:   dict(retryable=False, should_compress=False, should_fallback=True),
-    FailoverReason.format_error:       dict(retryable=False, should_compress=False, should_fallback=False),
-    FailoverReason.invalid_response:   dict(retryable=True,  should_compress=False, should_fallback=False),
-    FailoverReason.unknown:            dict(retryable=True,  should_compress=False, should_fallback=False),
+    FailoverReason.auth: dict(retryable=True, should_compress=False, should_fallback=False),
+    FailoverReason.auth_permanent: dict(
+        retryable=False, should_compress=False, should_fallback=True
+    ),
+    FailoverReason.billing: dict(retryable=False, should_compress=False, should_fallback=True),
+    FailoverReason.rate_limit: dict(retryable=True, should_compress=False, should_fallback=False),
+    FailoverReason.upstream_rate_limit: dict(
+        retryable=False, should_compress=False, should_fallback=True
+    ),
+    FailoverReason.overloaded: dict(retryable=True, should_compress=False, should_fallback=False),
+    FailoverReason.server_error: dict(retryable=True, should_compress=False, should_fallback=False),
+    FailoverReason.timeout: dict(retryable=True, should_compress=False, should_fallback=False),
+    FailoverReason.ssl_cert_verification: dict(
+        retryable=False, should_compress=False, should_fallback=True
+    ),
+    FailoverReason.context_overflow: dict(
+        retryable=False, should_compress=True, should_fallback=False
+    ),
+    FailoverReason.payload_too_large: dict(
+        retryable=False, should_compress=True, should_fallback=False
+    ),
+    FailoverReason.image_too_large: dict(
+        retryable=True, should_compress=False, should_fallback=False
+    ),
+    FailoverReason.model_not_found: dict(
+        retryable=False, should_compress=False, should_fallback=True
+    ),
+    FailoverReason.provider_policy_blocked: dict(
+        retryable=False, should_compress=False, should_fallback=True
+    ),
+    FailoverReason.content_policy_blocked: dict(
+        retryable=False, should_compress=False, should_fallback=True
+    ),
+    FailoverReason.format_error: dict(
+        retryable=False, should_compress=False, should_fallback=False
+    ),
+    FailoverReason.invalid_response: dict(
+        retryable=True, should_compress=False, should_fallback=False
+    ),
+    FailoverReason.unknown: dict(retryable=True, should_compress=False, should_fallback=False),
 }
 ```
 
@@ -301,6 +344,7 @@ _RECOVERY_MATRIX = {
 ```python
 PAYLOAD_TOO_LARGE = FailoverReason.payload_too_large.value
 CONTEXT_OVERFLOW = FailoverReason.context_overflow.value
+
 
 def classify_provider_error(exc: BaseException) -> str | None:
     """向后兼容包装。"""
@@ -346,9 +390,13 @@ def classify_provider_error(exc: BaseException) -> str | None:
 - ssl_cert_verification 不重试（确定性握手失败）
 """
 
+
 class LLMRetryMiddleware(AgentMiddleware):
-    def __init__(self, config: LLMRetryConfig | None = None,
-                 fallback_chain: list[FallbackCandidate] | None = None):
+    def __init__(
+        self,
+        config: LLMRetryConfig | None = None,
+        fallback_chain: list[FallbackCandidate] | None = None,
+    ):
         self.config = config or LLMRetryConfig()
         self.fallback_chain = fallback_chain or []
 
@@ -450,9 +498,11 @@ def _should_text_continue(self) -> bool:
 _content_filter_keywords = {"new_sensitive", "content_filter", "safety"}
 _partial_text = "".join(self._text_chunks)
 
-if (self.meta_finish_reason in (None, "stop", "")
+if (
+    self.meta_finish_reason in (None, "stop", "")
     and len(self._text_chunks) > 0
-    and any(kw in _partial_text.lower() for kw in _content_filter_keywords)):
+    and any(kw in _partial_text.lower() for kw in _content_filter_keywords)
+):
     self.meta_finish_reason = "content_filter"
     state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
 ```
@@ -479,6 +529,7 @@ if (self.meta_finish_reason in (None, "stop", "")
 ```python
 _LLM_STALE_STREAK_KEY = "llm_stale_streak"
 STALE_GIVEUP_THRESHOLD = 5
+
 
 def _bump_stale_streak(self, session_id): ...
 def _reset_stale_streak(self, session_id): ...
@@ -523,14 +574,27 @@ def _on_stream_error(self, error: Exception) -> None:
 """
 
 STREAM_DIAG_HEADERS = (
-    "cf-ray", "cf-cache-status", "x-request-id",
-    "x-openrouter-provider", "x-openrouter-model",
-    "server", "via", "x-vercel-id",
+    "cf-ray",
+    "cf-cache-status",
+    "x-request-id",
+    "x-openrouter-provider",
+    "x-openrouter-model",
+    "server",
+    "via",
+    "x-vercel-id",
 )
 
+
 def stream_diag_init() -> Dict[str, Any]:
-    return {"started_at": time.time(), "first_chunk_at": None,
-            "chunks": 0, "bytes": 0, "headers": {}, "http_status": None}
+    return {
+        "started_at": time.time(),
+        "first_chunk_at": None,
+        "chunks": 0,
+        "bytes": 0,
+        "headers": {},
+        "http_status": None,
+    }
+
 
 def stream_diag_capture_response(diag, http_response): ...
 def flatten_exception_chain(error: BaseException) -> str: ...
@@ -579,15 +643,23 @@ except Exception as e:
 
 import random
 
-def jittered_backoff(attempt: int, *, base_delay: float = 2.0,
-                     max_delay: float = 60.0, jitter: float = 0.3) -> float:
+
+def jittered_backoff(
+    attempt: int, *, base_delay: float = 2.0, max_delay: float = 60.0, jitter: float = 0.3
+) -> float:
     exponential = base_delay * (2 ** (attempt - 1))
     capped = min(exponential, max_delay)
     jitter_amount = capped * jitter * (random.random() * 2 - 1)
     return max(0.1, capped + jitter_amount)
 
-def adaptive_rate_limit_backoff(attempt: int, *, retry_after: float | None = None,
-                                base_delay: float = 5.0, max_delay: float = 120.0) -> float:
+
+def adaptive_rate_limit_backoff(
+    attempt: int,
+    *,
+    retry_after: float | None = None,
+    base_delay: float = 5.0,
+    max_delay: float = 120.0,
+) -> float:
     if retry_after is not None and retry_after > 0:
         return min(retry_after, max_delay)
     return jittered_backoff(attempt, base_delay=base_delay, max_delay=max_delay)
@@ -619,6 +691,7 @@ class FallbackCandidate:
     provider: str
     model_name: str
     model: Any
+
 
 class LLMRetryMiddleware(AgentMiddleware):
     def __init__(self, config=None, fallback_chain=None):

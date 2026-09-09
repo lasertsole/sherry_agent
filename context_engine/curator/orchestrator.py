@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass, field
 from loguru import logger
 from typing import Any
 from collections.abc import Callable
@@ -97,19 +98,24 @@ def _run_llm_review(prompt: str) -> dict[str, Any]:
     return result
 
 
-def run_curator_review(
-    on_summary: Callable[[str], None] | None = None,
-    dry_run: bool = False,
-    consolidate: bool | None = None,
-) -> dict[str, Any]:
-    if consolidate is None:
-        consolidate = get_consolidate()
-    start = datetime.now(UTC)
+@dataclass
+class _ReviewRun:
+    start: datetime
+    dry_run: bool
+    prefix: str
+    counts: dict[str, Any]
+    auto_summary: str
+    before_report: list = field(default_factory=list)
+    before_names: set = field(default_factory=set)
+    llm_meta: dict = field(default_factory=dict)
+    final_summary: str = ""
 
+
+def _collect_auto_transition_counts(dry_run: bool, start: datetime) -> dict[str, Any]:
     if dry_run:
         try:
             report = agent_created_report()
-            counts = {
+            return {
                 "checked": len(report),
                 "marked_stale": 0,
                 "archived": 0,
@@ -117,10 +123,11 @@ def run_curator_review(
                 "seeded": 0,
             }
         except Exception:
-            counts = {"checked": 0, "marked_stale": 0, "archived": 0, "reactivated": 0, "seeded": 0}
-    else:
-        counts = apply_automatic_transitions(now=start)
+            return {"checked": 0, "marked_stale": 0, "archived": 0, "reactivated": 0, "seeded": 0}
+    return apply_automatic_transitions(now=start)
 
+
+def _build_auto_summary(counts: dict[str, Any]) -> str:
     auto_parts = []
     if counts["marked_stale"]:
         auto_parts.append(f"{counts['marked_stale']} marked stale")
@@ -128,19 +135,21 @@ def run_curator_review(
         auto_parts.append(f"{counts['archived']} archived")
     if counts["reactivated"]:
         auto_parts.append(f"{counts['reactivated']} reactivated")
-    auto_summary = ", ".join(auto_parts) if auto_parts else "no changes"
+    return ", ".join(auto_parts) if auto_parts else "no changes"
 
+
+def _record_intermediate_state(run: _ReviewRun) -> None:
     state = load_state()
-    if not dry_run:
-        state["last_run_at"] = start.isoformat()
+    if not run.dry_run:
+        state["last_run_at"] = run.start.isoformat()
         state["run_count"] = int(state.get("run_count", 0)) + 1
         # Surface the last maintenance time to the client (manual or auto run).
-        state["last_maintenance_at"] = start.isoformat()
-    prefix = "dry-run auto: " if dry_run else "auto: "
-    state["last_run_summary"] = f"{prefix}{auto_summary}"
+        state["last_maintenance_at"] = run.start.isoformat()
+    state["last_run_summary"] = f"{run.prefix}{run.auto_summary}"
     save_state(state)
 
-    # --- synchronous LLM pass (blocks caller) ---
+
+def _snapshot_agent_skills() -> tuple[list, set]:
     try:
         before_report = agent_created_report()
     except Exception:
@@ -148,62 +157,11 @@ def run_curator_review(
     before_names = {
         r["name"] for r in before_report if isinstance(r, dict) and isinstance(r.get("name"), str)
     }
+    return before_report, before_names
+
+
+def _run_llm_consolidation_pass(run: _ReviewRun) -> None:
     llm_meta: dict[str, Any] = {
-        "final": "",
-        "summary": "",
-        "model": "",
-        "provider": "",
-        "tool_calls": [],
-        "error": None,
-    }
-
-    if not consolidate:
-        final_summary = f"{prefix}{auto_summary}; llm: skipped (consolidation off)"
-        llm_meta = {
-            "final": "",
-            "summary": "skipped (consolidation off)",
-            "model": "",
-            "provider": "",
-            "tool_calls": [],
-            "error": None,
-        }
-        elapsed = (datetime.now(UTC) - start).total_seconds()
-        try:
-            after_report = agent_created_report()
-        except Exception:
-            after_report = []
-        try:
-            report_path = _write_run_report(
-                started_at=start,
-                elapsed_seconds=elapsed,
-                auto_counts=counts,
-                auto_summary=auto_summary,
-                before_report=before_report,
-                before_names=before_names,
-                after_report=after_report,
-                llm_meta=llm_meta,
-            )
-            rp = str(report_path) if report_path else None
-        except Exception:
-            rp = None
-        state2 = load_state()
-        state2["last_run_duration_seconds"] = round(elapsed, 2)
-        state2["last_run_summary"] = final_summary
-        if rp:
-            state2["last_report_path"] = rp
-        save_state(state2)
-        if on_summary:
-            try:
-                on_summary(f"curator: {final_summary}")
-            except Exception:  # noqa: S110
-                pass
-        return {
-            "started_at": start.isoformat(),
-            "auto_transitions": counts,
-            "summary_so_far": auto_summary,
-        }
-
-    llm_meta = {
         "final": "",
         "summary": "",
         "model": "",
@@ -214,17 +172,19 @@ def run_curator_review(
     try:
         candidate_list = _render_candidate_list()
         if "No agent-created skills" in candidate_list:
-            final_summary = f"{prefix}{auto_summary}; llm: skipped (no candidates)"
+            run.final_summary = f"{run.prefix}{run.auto_summary}; llm: skipped (no candidates)"
             llm_meta["summary"] = "skipped (no candidates)"
         else:
-            if dry_run:
+            if run.dry_run:
                 prompt = f"{CURATOR_DRY_RUN_BANNER}\n{CURATOR_REVIEW_PROMPT}\n{candidate_list}"
             else:
                 prompt = f"{CURATOR_REVIEW_PROMPT}\n{candidate_list}"
             llm_meta = _run_llm_review(prompt)
-            final_summary = f"{prefix}{auto_summary}; llm: {llm_meta.get('summary', 'no change')}"
+            run.final_summary = (
+                f"{run.prefix}{run.auto_summary}; llm: {llm_meta.get('summary', 'no change')}"
+            )
     except Exception as e:
-        final_summary = f"{prefix}{auto_summary}; llm: error ({e})"
+        run.final_summary = f"{run.prefix}{run.auto_summary}; llm: error ({e})"
         llm_meta = {
             "final": "",
             "summary": f"error ({e})",
@@ -233,70 +193,114 @@ def run_curator_review(
             "tool_calls": [],
             "error": str(e),
         }
+    run.llm_meta = llm_meta
 
+
+def _append_rename_summary(run: _ReviewRun) -> str:
     try:
         rename_lines = _build_rename_summary(
-            before_names=before_names,
+            before_names=run.before_names,
             after_report=agent_created_report(),
-            tool_calls=llm_meta.get("tool_calls", []) or [],
-            model_final=llm_meta.get("final", "") or "",
+            tool_calls=run.llm_meta.get("tool_calls", []) or [],
+            model_final=run.llm_meta.get("final", "") or "",
         )
         if rename_lines:
-            final_summary = f"{final_summary}\n{rename_lines}"
+            return f"{run.final_summary}\n{rename_lines}"
     except Exception as e:
         logger.debug("Curator rename summary build failed: {}", e)
+    return run.final_summary
 
-    if not dry_run:
-        try:
-            _apply_consolidation(llm_meta.get("final", ""))
-        except Exception as e:
-            logger.debug("Curator consolidation apply failed: {}", e)
 
-    elapsed = (datetime.now(UTC) - start).total_seconds()
+def _finalize_run(run: _ReviewRun, on_summary: Callable[[str], None] | None) -> dict[str, Any]:
+    elapsed = (datetime.now(UTC) - run.start).total_seconds()
     try:
         after_report = agent_created_report()
     except Exception:
         after_report = []
     try:
         report_path = _write_run_report(
-            started_at=start,
+            started_at=run.start,
             elapsed_seconds=elapsed,
-            auto_counts=counts,
-            auto_summary=auto_summary,
-            before_report=before_report,
-            before_names=before_names,
+            auto_counts=run.counts,
+            auto_summary=run.auto_summary,
+            before_report=run.before_report,
+            before_names=run.before_names,
             after_report=after_report,
-            llm_meta=llm_meta,
+            llm_meta=run.llm_meta,
         )
         rp = str(report_path) if report_path else None
     except Exception:
         rp = None
-
-    state2 = load_state()
-    state2["last_run_duration_seconds"] = round(elapsed, 2)
-    state2["last_run_summary"] = final_summary
+    state = load_state()
+    state["last_run_duration_seconds"] = round(elapsed, 2)
+    state["last_run_summary"] = run.final_summary
     if rp:
-        state2["last_report_path"] = rp
-    save_state(state2)
+        state["last_report_path"] = rp
+    save_state(state)
 
     if on_summary:
         try:
-            on_summary(f"curator: {final_summary}")
-        except Exception:  # noqa: S110
-            pass
+            on_summary(f"curator: {run.final_summary}")
+        except Exception as e:
+            logger.debug("Curator on_summary callback failed: {}", e)
 
     result: dict[str, Any] = {
-        "started_at": start.isoformat(),
-        "auto_transitions": counts,
-        "summary_so_far": auto_summary,
+        "started_at": run.start.isoformat(),
+        "auto_transitions": run.counts,
+        "summary_so_far": run.auto_summary,
     }
     # When the LLM layer fails (not configured / call exception), carry an error
     # marker so the HTTP handler can surface success=False and the frontend
     # doesn't falsely report "maintenance complete".
-    if llm_meta.get("error"):
-        result["error"] = str(llm_meta["error"])
-        result["summary_so_far"] = f"{auto_summary}; llm: {llm_meta.get('summary') or 'error'}"
+    if run.llm_meta.get("error"):
+        result["error"] = str(run.llm_meta["error"])
+        result["summary_so_far"] = (
+            f"{run.auto_summary}; llm: {run.llm_meta.get('summary') or 'error'}"
+        )
     return result
+
+
+def run_curator_review(
+    on_summary: Callable[[str], None] | None = None,
+    dry_run: bool = False,
+    consolidate: bool | None = None,
+) -> dict[str, Any]:
+    if consolidate is None:
+        consolidate = get_consolidate()
+    start = datetime.now(UTC)
+    counts = _collect_auto_transition_counts(dry_run, start)
+    run = _ReviewRun(
+        start=start,
+        dry_run=dry_run,
+        prefix="dry-run auto: " if dry_run else "auto: ",
+        counts=counts,
+        auto_summary=_build_auto_summary(counts),
+    )
+    _record_intermediate_state(run)
+    run.before_report, run.before_names = _snapshot_agent_skills()
+
+    if not consolidate:
+        run.llm_meta = {
+            "final": "",
+            "summary": "skipped (consolidation off)",
+            "model": "",
+            "provider": "",
+            "tool_calls": [],
+            "error": None,
+        }
+        run.final_summary = f"{run.prefix}{run.auto_summary}; llm: skipped (consolidation off)"
+        return _finalize_run(run, on_summary)
+
+    _run_llm_consolidation_pass(run)
+    run.final_summary = _append_rename_summary(run)
+
+    if not run.dry_run:
+        try:
+            _apply_consolidation(run.llm_meta.get("final", ""))
+        except Exception as e:
+            logger.debug("Curator consolidation apply failed: {}", e)
+
+    return _finalize_run(run, on_summary)
 
 
 def maybe_run_curator(
@@ -466,6 +470,11 @@ def _generate_umbrella_skill(
     return fallback, {}
 
 
+def _log_refresh_task_failure(task: asyncio.Future) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.debug("Curator: system prompt refresh task failed: {}", task.exception())
+
+
 def _refresh_all_cached_system_prompts() -> None:
     """Rebuild and overwrite the cached system_prompt for every known session.
 
@@ -494,65 +503,116 @@ def _refresh_all_cached_system_prompts() -> None:
         for sid in session_ids:
             new_prompt = build_system_prompt(session_id=sid)
             state_register_mem.set_state(sid, "system_prompt", new_prompt)
-            state_register_db.set_state(sid, "system_prompt", new_prompt)
+            state_register_db.update_states(sid, {"system_prompt": new_prompt})
 
         logger.info("Curator: refreshed cached system_prompt for {} session(s)", len(session_ids))
     except Exception:
         logger.exception("Curator: failed to refresh cached system_prompts")
 
 
-def _apply_consolidation(llm_final: str) -> None:
-    from context_engine.curator.classify import _parse_structured_summary
-    from context_engine.curator.usage import delete_skill, seed_record_if_missing
-    from agent.tools.skill_tools.skill_manage import _create_skill, _write_file
-
-    parsed = _parse_structured_summary(llm_final)
-    consolidations = parsed.get("consolidations", [])
-    prunings = parsed.get("prunings", [])
-    if not consolidations and not prunings:
-        return
-
+def _collect_umbrella_names(consolidations: list) -> set[str]:
     umbrella_names = set()
     for entry in consolidations:
         into = entry.get("into", "").strip()
         if into:
             umbrella_names.add(into)
+    return umbrella_names
 
-    for umbrella in sorted(umbrella_names):
+
+def _read_source_blocks(merged_skills: list) -> list[str]:
+    source_blocks: list[str] = []
+    for entry in merged_skills:
+        src_name = entry.get("from", "").strip()
+        src_dir = _resolve_skill_dir(src_name)
+        src_md = src_dir / "SKILL.md" if src_dir is not None else None
+        if src_md and src_md.exists():
+            src_text = src_md.read_text(encoding="utf-8")
+            source_blocks.append(f"### {src_name}\n\n{src_text}")
+        else:
+            source_blocks.append(f"### {src_name}\n\n{entry.get('reason', '')}")
+    return source_blocks
+
+
+def _collect_file_inventory(merged_skills: list) -> str:
+    file_inventory_lines: list[str] = []
+    for entry in merged_skills:
+        src_name = entry.get("from", "").strip()
+        src_dir = _resolve_skill_dir(src_name)
+        if src_dir is None:
+            continue
+        for subdir in ("references", "templates", "scripts", "assets"):
+            src_sub = src_dir / subdir
+            if not src_sub.is_dir():
+                continue
+            for f in src_sub.iterdir():
+                if f.is_file():
+                    file_inventory_lines.append(f"- {subdir}/{f.name} (from {src_name})")
+    return "\n".join(file_inventory_lines)
+
+
+def _write_supporting_files(umbrella: str, supporting_files: dict[str, str]) -> None:
+    from agent.tools.skill_tools.skill_manage import _write_file
+
+    for file_path, file_content in supporting_files.items():
+        wr = _write_file(umbrella, file_path, file_content)
+        if wr.get("success"):
+            logger.debug("Curator wrote umbrella support file {}/{}", umbrella, file_path)
+        else:
+            logger.warning(
+                "Curator failed to write {}/{}: {}", umbrella, file_path, wr.get("error")
+            )
+
+
+def _migrate_source_files(umbrella: str, merged_skills: list, written: set[str]) -> None:
+    from agent.tools.skill_tools.skill_manage import _write_file
+
+    for entry in merged_skills:
+        src_name = entry.get("from", "").strip()
+        src_dir = _resolve_skill_dir(src_name)
+        if src_dir is None:
+            continue
+        for subdir in ("references", "templates", "scripts", "assets", "examples", "resources"):
+            src_sub = src_dir / subdir
+            if not src_sub.is_dir():
+                continue
+            for f in src_sub.iterdir():
+                if not f.is_file():
+                    continue
+                file_path = f"{subdir}/{f.name}"
+                if file_path in written:
+                    logger.debug(
+                        "Curator: skip migrating {}/{} (umbrella support file already written)",
+                        src_name,
+                        file_path,
+                    )
+                    continue
+                file_content = f.read_text(encoding="utf-8")
+                wr = _write_file(umbrella, file_path, file_content)
+                if wr.get("success"):
+                    logger.debug(
+                        "Curator migrated {}/{} -> {}/{}", src_name, f.name, umbrella, f.name
+                    )
+                else:
+                    logger.warning(
+                        "Curator failed to migrate {}/{}: {}", src_name, f.name, wr.get("error")
+                    )
+
+
+def _merge_umbrella_skills(consolidations: list) -> None:
+    from context_engine.curator.usage import seed_record_if_missing
+    from agent.tools.skill_tools.skill_manage import _create_skill
+
+    for umbrella in sorted(_collect_umbrella_names(consolidations)):
         skill_dir = _resolve_skill_dir(umbrella)
         if skill_dir is not None:
             continue
         merged_skills = [e for e in consolidations if e.get("into", "").strip() == umbrella]
 
-        source_blocks: list[str] = []
-        for entry in merged_skills:
-            src_name = entry.get("from", "").strip()
-            src_dir = _resolve_skill_dir(src_name)
-            src_md = src_dir / "SKILL.md" if src_dir is not None else None
-            if src_md and src_md.exists():
-                src_text = src_md.read_text(encoding="utf-8")
-                source_blocks.append(f"### {src_name}\n\n{src_text}")
-            else:
-                source_blocks.append(f"### {src_name}\n\n{entry.get('reason', '')}")
-
+        source_blocks = _read_source_blocks(merged_skills)
         reasons = [f"- {e.get('from', '?')}: {e.get('reason', '')}" for e in merged_skills]
         merged_content = "\n\n".join(source_blocks)
+        file_inventory = _collect_file_inventory(merged_skills)
 
-        file_inventory_lines: list[str] = []
-        for entry in merged_skills:
-            src_name = entry.get("from", "").strip()
-            src_dir = _resolve_skill_dir(src_name)
-            if src_dir is None:
-                continue
-            for subdir in ("references", "templates", "scripts", "assets"):
-                src_sub = src_dir / subdir
-                if not src_sub.is_dir():
-                    continue
-                for f in src_sub.iterdir():
-                    if f.is_file():
-                        file_inventory_lines.append(f"- {subdir}/{f.name} (from {src_name})")
-
-        file_inventory = "\n".join(file_inventory_lines)
         umbrella_content, supporting_files = _generate_umbrella_skill(
             umbrella, reasons, merged_content, file_inventory
         )
@@ -573,45 +633,12 @@ def _apply_consolidation(llm_final: str) -> None:
         # Write supporting files the LLM split out of the main SKILL.md, then
         # migrate any source subdirectory files (skip ones already written).
         written = {p for p in supporting_files}
-        for file_path, file_content in supporting_files.items():
-            wr = _write_file(umbrella, file_path, file_content)
-            if wr.get("success"):
-                logger.debug("Curator wrote umbrella support file {}/{}", umbrella, file_path)
-            else:
-                logger.warning(
-                    "Curator failed to write {}/{}: {}", umbrella, file_path, wr.get("error")
-                )
+        _write_supporting_files(umbrella, supporting_files)
+        _migrate_source_files(umbrella, merged_skills, written)
 
-        for entry in merged_skills:
-            src_name = entry.get("from", "").strip()
-            src_dir = _resolve_skill_dir(src_name)
-            if src_dir is None:
-                continue
-            for subdir in ("references", "templates", "scripts", "assets", "examples", "resources"):
-                src_sub = src_dir / subdir
-                if not src_sub.is_dir():
-                    continue
-                for f in src_sub.iterdir():
-                    if not f.is_file():
-                        continue
-                    file_path = f"{subdir}/{f.name}"
-                    if file_path in written:
-                        logger.debug(
-                            "Curator: skip migrating {}/{} (umbrella support file already written)",
-                            src_name,
-                            file_path,
-                        )
-                        continue
-                    file_content = f.read_text(encoding="utf-8")
-                    wr = _write_file(umbrella, file_path, file_content)
-                    if wr.get("success"):
-                        logger.debug(
-                            "Curator migrated {}/{} -> {}/{}", src_name, f.name, umbrella, f.name
-                        )
-                    else:
-                        logger.warning(
-                            "Curator failed to migrate {}/{}: {}", src_name, f.name, wr.get("error")
-                        )
+
+def _delete_consolidated_sources(consolidations: list) -> None:
+    from context_engine.curator.usage import delete_skill
 
     for entry in consolidations:
         name = entry.get("from", "").strip()
@@ -623,6 +650,10 @@ def _apply_consolidation(llm_final: str) -> None:
             logger.info("Curator deleted '{}': {}", name, msg)
         else:
             logger.warning("Curator failed to delete '{}': {}", name, msg)
+
+
+def _delete_pruned_skills(prunings: list, consolidations: list) -> None:
+    from context_engine.curator.usage import delete_skill
 
     for entry in prunings:
         name = entry.get("name", "").strip()
@@ -637,11 +668,29 @@ def _apply_consolidation(llm_final: str) -> None:
         else:
             logger.warning("Curator failed to prune '{}': {}", name, msg)
 
+
+def _schedule_system_prompt_refresh() -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
     if loop is not None and loop.is_running():
-        asyncio.ensure_future(asyncio.to_thread(_refresh_all_cached_system_prompts))
+        task = asyncio.ensure_future(asyncio.to_thread(_refresh_all_cached_system_prompts))
+        task.add_done_callback(_log_refresh_task_failure)
     else:
         asyncio.run(asyncio.to_thread(_refresh_all_cached_system_prompts))
+
+
+def _apply_consolidation(llm_final: str) -> None:
+    from context_engine.curator.classify import _parse_structured_summary
+
+    parsed = _parse_structured_summary(llm_final)
+    consolidations = parsed.get("consolidations", [])
+    prunings = parsed.get("prunings", [])
+    if not consolidations and not prunings:
+        return
+
+    _merge_umbrella_skills(consolidations)
+    _delete_consolidated_sources(consolidations)
+    _delete_pruned_skills(prunings, consolidations)
+    _schedule_system_prompt_refresh()

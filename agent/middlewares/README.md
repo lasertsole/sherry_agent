@@ -332,10 +332,18 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 Recovers from **tool-call truncation**: when a model call returns with
 `finish_reason == "length"` (OpenAI) / `stop_reason == "max_tokens"` (Anthropic)
 AND the response carries tool calls, the tool-call JSON was cut off. The
-middleware re-calls the handler inside `awrap_model_call` with a boosted
-`max_tokens = base × 2^attempt` (base `MAIN_LLM_OUTPUT_MAX_TOKEN`, default
-8192; capped at 32768; max 3 retries) so the model can emit the complete
-tool-call payload. The truncated intermediate result is discarded — the agent
+middleware re-calls the handler inside `wrap_model_call` / `awrap_model_call`
+with a boosted `max_tokens = base × 2^attempt` (capped at 32768; max 3 retries)
+so the model can emit the complete tool-call payload. The boost base resolves
+through three layers — first positive value wins:
+
+1. the call's own `request.model_settings["max_tokens"]` — the actual current
+   limit, so the boost never restarts from a lower default when the call was
+   configured higher;
+2. the `MAIN_LLM_OUTPUT_MAX_TOKEN` environment variable (default 8192);
+3. the hardcoded 8192 default.
+
+The truncated intermediate result is discarded — the agent
 loop only sees the final result, so nothing truncated reaches the checkpointer
 and the IterationBudget is charged once per outer model call.
 
@@ -349,7 +357,7 @@ and the IterationBudget is charged once per outer model call.
   `StreamTurn.run()` sets per session — children (ainvoke) never carry it and
   always take the non-streaming path.
 - `_extract_ai_message` handles both bare `AIMessage` results and
-  `ModelResponse`-shaped objects.
+  `ModelRequest`-shaped response objects carrying `.messages`.
 
 ### OutputRepetitionGuard & RepetitionGuardWrapper
 
@@ -468,7 +476,7 @@ agent = create_agent(
 | `HumanInTheLoop` | `config: HITLConfig` | defaults above | defaults |
 | `HeartbeatStaleness` | (defaults) | interval 1 min, idle 7 / in-tool 20 | defaults |
 | `OutputRepetitionGuard` | (defaults) | 3 / 2 / 0.6 / 6 / 8 | defaults |
-| `MaxTokensBoostMiddleware` | (env) | `MAIN_LLM_OUTPUT_MAX_TOKEN` base 8192, cap 32768, 3 retries | defaults |
+| `MaxTokensBoostMiddleware` | (env) | base: request `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN` (8192) → 8192, cap 32768, 3 retries | defaults |
 
 ---
 

@@ -14,6 +14,7 @@ from .types import (
     HITLConfig,
     SmartApprovalResult,
     _STATE_PREFIX,
+    SESSION_YOLO_KEY,
     BLOCKED_MESSAGE,
 )
 from .detection import detect_hardline_command, detect_dangerous_command
@@ -22,13 +23,16 @@ from .detection import detect_hardline_command, detect_dangerous_command
 from agent.middlewares.base import args_hash
 
 
-def is_yolo_mode(config: HITLConfig) -> bool:
+def is_yolo_mode(config: HITLConfig, session_id: str | None = None) -> bool:
     """Check whether YOLO (bypass-all) mode is active.
 
     Activated by any of:
     - ``config.yolo_mode == True``
     - ``config.mode == ApprovalMode.OFF``
     - Environment variable ``SHERRY_YOLO_MODE`` set to ``1`` / ``true`` / ``yes``
+    - Session-scoped flag ``hitl:session_yolo`` in ``state_register_mem``
+      (set when the user answers an approval interrupt with the ``"yolo"``
+      decision; checked only when *session_id* is provided)
 
     Public API (sandbox-hardening): the sandbox-bypass approval wiring
     in :mod:`.core` reuses this exact YOLO predicate, so the approval pipeline
@@ -38,12 +42,19 @@ def is_yolo_mode(config: HITLConfig) -> bool:
         return True
     if config.mode == ApprovalMode.OFF:
         return True
+    if session_id and _get_state(session_id, SESSION_YOLO_KEY, False):
+        return True
     return os.environ.get("SHERRY_YOLO_MODE", "").strip() in ("1", "true", "yes")
 
 
-def _is_yolo_active(config: HITLConfig) -> bool:
+def set_session_yolo(session_id: str) -> None:
+    """Activate session-scoped YOLO for *session_id* (bypass subsequent approval gates)."""
+    _set_state(session_id, SESSION_YOLO_KEY, True)
+
+
+def _is_yolo_active(config: HITLConfig, session_id: str | None = None) -> bool:
     """Backward-compatible alias for :func:`is_yolo_mode` (verbatim logic)."""
-    return is_yolo_mode(config)
+    return is_yolo_mode(config, session_id)
 
 
 def _check_deny_rules(command: str, deny_rules: list[str]) -> str | None:
@@ -144,7 +155,7 @@ class ApprovalPipeline:
             return result
 
         # Layer 3: YOLO bypass
-        if _is_yolo_active(self.config):
+        if _is_yolo_active(self.config, session_id):
             result = ApprovalResult(
                 approved=True, decision=ApprovalDecision.ONCE, reason="YOLO mode active"
             )

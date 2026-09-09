@@ -157,3 +157,18 @@ def test_reset_failures_missing_id_bad_request(monkeypatch):
     resp = _call(cron_api.reset_failures_handler, {})
 
     assert resp.status_code == 400
+
+
+def test_valid_schedule_rejects_every_ms_below_floor():
+    assert cron_api._valid_schedule({"kind": "every", "everyMs": 999}) is None
+
+
+def test_valid_schedule_accepts_every_ms_at_floor():
+    schedule = cron_api._valid_schedule({"kind": "every", "everyMs": 1000})
+
+    assert schedule is not None
+    assert schedule.every_ms == 1000
+
+
+def test_valid_schedule_rejects_every_ms_below_floor_as_string():
+    assert cron_api._valid_schedule({"kind": "every", "everyMs": "1"}) is None

@@ -25,6 +25,7 @@ from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, Ex
 from ..registry import register_run
 from ..registry.read import count_active_runs_readonly, count_all_active_runs_readonly
 from ..registry.reconciliation import resolve_run_orphan_reason
+from ..registry.session_keys import normalize_session_key
 from ..session.cleanup import delete_subagent_session_for_cleanup
 from ..capabilities import resolve_subagent_capabilities
 from .depth import (
@@ -560,6 +561,18 @@ async def _execute_subagent(
         if run.spawned_cwd:
             agent_config["cwd"] = run.spawned_cwd
 
+        # Security: the child's file tools resolve external-path authorization
+        # against these keys — allowlist inheritance (parent session) and
+        # subagent identification (fail-closed without main-session approval).
+        from runtime import state_register_mem
+
+        state_register_mem.set_state(
+            run.child_session_key,
+            "requester_session_key",
+            normalize_session_key(run.spawned_by),
+        )
+        state_register_mem.set_state(run.child_session_key, "caller_scope", "subagent")
+
         # Invoke the child agent under a wall-clock timeout (0 disables the timeout)
         if timeout_seconds > 0:
             agent_result = await asyncio.wait_for(
@@ -637,8 +650,8 @@ async def _execute_subagent(
 
         try:
             await fire_progress_hook(run, "execution completed")
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("fire_progress_hook error for run {}: {}", run.run_id, e)
 
         if outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
             from ..config import get_config
@@ -664,8 +677,8 @@ async def _execute_subagent(
                     )
                     try:
                         await fire_ended_hook(run)
-                    except Exception:  # noqa: S110
-                        pass
+                    except Exception as e:
+                        logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
                     return
 
         from ..registry.lifecycle import complete_subagent_run
@@ -676,8 +689,8 @@ async def _execute_subagent(
 
         try:
             await fire_ended_hook(run)
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
 
 
 async def _build_child_agent(
@@ -853,8 +866,8 @@ async def _rollback_spawn(
 
         try:
             await _remove_run(run_id)
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("remove_run failed for run {}: {}", run_id, e)
 
         from ..hooks.base import fire_stop_hooks
 
@@ -867,5 +880,5 @@ async def _rollback_spawn(
                     task="",
                 )
             )
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("fire_stop_hooks error for run {}: {}", run_id, e)

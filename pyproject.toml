@@ -163,7 +163,7 @@ ignore = [
 root_package = "server"
 
 [[tool.importlinter.contracts]]
-name = "Server 层级依赖契约"
+name = "Server layered dependency contract"
 type = "layers"
 layers = [
     "server.trigger",

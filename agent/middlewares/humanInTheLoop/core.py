@@ -9,7 +9,6 @@ Delegates to:
 
 from __future__ import annotations
 
-import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -19,8 +18,6 @@ from langgraph.errors import GraphInterrupt
 from runtime.state_register import state_register_mem
 
 from .types import (
-    ApprovalDecision,
-    ApprovalMode,
     ApprovalResult,
     HITLConfig,
     SmartApprovalResult,
@@ -40,7 +37,7 @@ from .types import (
     override,
     interrupt,
 )
-from .approval import ApprovalPipeline, is_yolo_mode
+from .approval import ApprovalPipeline, set_session_yolo
 from .gates import (
     WriteApprovalGate,
     InterruptManager,
@@ -49,6 +46,7 @@ from .gates import (
     PairingStore,
     SlashConfirm,
 )
+from .strategies import ApprovalContext, ApprovalHandlerRegistry, ApprovalOutcome
 
 
 class HumanInTheLoop(AgentMiddleware):
@@ -89,6 +87,8 @@ class HumanInTheLoop(AgentMiddleware):
                     )
             elif isinstance(tool_config, dict) and tool_config.get("allowed_decisions"):
                 self._interrupt_on[tool_name] = tool_config
+
+        self._approval_registry = ApprovalHandlerRegistry()
 
     # ── Hook registration ────────────────────────────────────────────────
 
@@ -164,7 +164,10 @@ class HumanInTheLoop(AgentMiddleware):
         try:
             response = interrupt(hitl_request)
             decisions = response.get("decisions", [])
-            if decisions and decisions[0]["type"] == "approve":
+            decision_type = decisions[0]["type"] if decisions else ""
+            if decision_type == "yolo" and session_id:
+                set_session_yolo(session_id)
+            if decision_type in ("approve", "yolo"):
                 return decisions[0].get("message", "Approved")
             return None
         except Exception:
@@ -260,6 +263,7 @@ class HumanInTheLoop(AgentMiddleware):
         tool_call: ToolCall,
         tool_name: str,
         action_desc: str = "",
+        session_id: str = "",
     ) -> tuple[bool, ToolMessage | None]:
         """Sandbox-bypass approval: gate ``sandbox=False`` tool calls.
 
@@ -268,6 +272,8 @@ class HumanInTheLoop(AgentMiddleware):
         proceeds; ``{"type": "reject", "message": ...}`` (or no decision) yields
         a ``"User denied: <msg>. <BLOCKED_MESSAGE>"`` error ToolMessage with NO
         second interrupt. ``GraphInterrupt`` is re-raised, never swallowed.
+        A ``{"type": "yolo"}`` decision approves the call AND activates the
+        session-scoped YOLO flag (subsequent gates in this session bypass).
 
         Contract (plan line 739, Metis ruling): the tool layer's scope/policy
         denial is NOT repeated here — ``_deny_sandbox_bypass`` in terminal.py /
@@ -303,7 +309,11 @@ class HumanInTheLoop(AgentMiddleware):
                 )
             )
             decisions = hitl_response.get("decisions", [])
-            if decisions and decisions[0]["type"] == "approve":
+            decision_type = decisions[0]["type"] if decisions else ""
+            if decision_type == "yolo" and session_id:
+                set_session_yolo(session_id)
+                return True, None
+            if decision_type == "approve":
                 return True, None
             msg = (
                 (decisions[0].get("message") or "Rejected by user") if decisions else "No decision"
@@ -336,272 +346,21 @@ class HumanInTheLoop(AgentMiddleware):
         if not last_ai_msg or not getattr(last_ai_msg, "tool_calls", None):
             return None
 
-        session_id = self._session_id(state)
-        revised_tool_calls: list[ToolCall] = []
-        artificial_tool_messages: list[ToolMessage] = []
-
+        outcome = ApprovalOutcome()
+        ctx = ApprovalContext(
+            mw=self,
+            state=state,
+            runtime=runtime,
+            session_id=self._session_id(state),
+            outcome=outcome,
+        )
         for tool_call in last_ai_msg.tool_calls:
-            tool_name: str = tool_call.get("name", "")
-            tool_args: dict[str, Any] = tool_call.get("args", {})
+            self._approval_registry.dispatch(tool_call, ctx)
 
-            # ── Terminal tool: command approval pipeline ──
-            if tool_name == "terminal":
-                command = tool_args.get("commands", "") or tool_args.get("command", "")
-                if isinstance(command, list):
-                    command = " && ".join(command)
-                result = self.approval.check_command(command, session_id)
-
-                if result.blocked and result.decision == ApprovalDecision.DENY:
-                    artificial_tool_messages.append(
-                        ToolMessage(
-                            content=result.reason,
-                            name=tool_name,
-                            tool_call_id=tool_call["id"],
-                            status="error",
-                        )
-                    )
-                    continue
-
-                # ── Sandbox-bypass approval ──
-                # Gate sandbox=False terminal calls: human approval required
-                # unless YOLO is active. Inserted BEFORE smart approval so it
-                # gates ALL sandbox=False executions — including the
-                # dangerous-command interrupt below, whose approve path
-                # (``continue`` inside try) would otherwise skip the bypass.
-                # NOTE: the tool layer's scope/policy denial (subagent /
-                # background caller_scope + SANDBOX_POLICY=required, both with
-                # sandbox=False) is NOT repeated here — _deny_sandbox_bypass
-                # in terminal.py owns it and raises ToolException at execution.
-                if not is_yolo_mode(self.config) and not tool_args.get("sandbox", True):
-                    approved, deny_msg = self._sandbox_bypass_interrupt(
-                        tool_call, tool_name, f"Command: {command}"
-                    )
-                    if not approved:
-                        if deny_msg is not None:
-                            artificial_tool_messages.append(deny_msg)
-                        continue
-                    # Approved bypass → the human explicitly approved THIS
-                    # call (full args shown); skip smart approval and the
-                    # dangerous-command re-prompt.
-                    revised_tool_calls.append(tool_call)
-                    continue
-
-                # Smart approval (layer 6)
-                if not result.approved and self.config.mode == ApprovalMode.SMART:
-                    smart = self.approval.smart_approve(command)
-                    if smart == SmartApprovalResult.APPROVE:
-                        revised_tool_calls.append(tool_call)
-                        continue
-                    elif smart == SmartApprovalResult.DENY:
-                        artificial_tool_messages.append(
-                            ToolMessage(
-                                content=f"Smart approval denied. {BLOCKED_MESSAGE}",
-                                name=tool_name,
-                                tool_call_id=tool_call["id"],
-                                status="error",
-                            )
-                        )
-                        continue
-
-                # If still not approved, use interrupt for human decision
-                if not result.approved:
-                    action_request = ActionRequest(
-                        name=tool_name,
-                        args=tool_args,
-                        description=f"Dangerous command: {command}",
-                    )
-                    review_config = ReviewConfig(
-                        action_name=tool_name,
-                        allowed_decisions=["approve", "reject"],
-                    )
-                    try:
-                        hitl_response = interrupt(
-                            HITLRequest(
-                                action_requests=[action_request],
-                                review_configs=[review_config],
-                            )
-                        )
-                        decisions = hitl_response.get("decisions", [])
-                        if decisions and decisions[0]["type"] == "approve":
-                            revised_tool_calls.append(tool_call)
-                        else:
-                            msg = (
-                                (decisions[0].get("message") or "Rejected by user")
-                                if decisions
-                                else "No decision"
-                            )
-                            artificial_tool_messages.append(
-                                ToolMessage(
-                                    content=f"User denied: {msg}. {BLOCKED_MESSAGE}",
-                                    name=tool_name,
-                                    tool_call_id=tool_call["id"],
-                                    status="error",
-                                )
-                            )
-                    except GraphInterrupt:
-                        # Real HITL interrupt: let LangGraph persist it so the
-                        # frontend approval dialog can fire. Do NOT swallow it.
-                        raise
-                    except Exception:
-                        artificial_tool_messages.append(
-                            ToolMessage(
-                                content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
-                                name=tool_name,
-                                tool_call_id=tool_call["id"],
-                                status="error",
-                            )
-                        )
-                    continue
-
-                revised_tool_calls.append(tool_call)
-                continue
-
-            # ── python_repl: sandbox-bypass approval ──
-            # Same gate as terminal: human approval for sandbox=False calls
-            # unless YOLO is active. Approved bypasses FALL THROUGH to the
-            # remaining gates (plugin allow-through) — preserving the
-            # contract that python_repl is otherwise NOT intercepted. The
-            # tool layer's scope/policy denial is NOT repeated here (owned by
-            # _deny_sandbox_bypass in python_repl.py).
-            if (
-                tool_name == "python_repl"
-                and not is_yolo_mode(self.config)
-                and not tool_args.get("sandbox", True)
-            ):
-                approved, deny_msg = self._sandbox_bypass_interrupt(
-                    tool_call, tool_name, f"Query: {tool_args.get('query', '')}"
-                )
-                if not approved:
-                    if deny_msg is not None:
-                        artificial_tool_messages.append(deny_msg)
-                    continue
-                # Approved → fall through (no append+continue): the plugin
-                # allow-through layer keeps pass-through semantics.
-
-            # ── Memory tool: write approval gate ──
-            if tool_name == "memory" and self.config.write_approval_memory:
-                action = tool_args.get("action", "")
-                if action in ("add", "replace"):
-                    write_result = self.write_gate.request_write(
-                        WriteTarget.MEMORY,
-                        json.dumps(tool_args),
-                        session_id,
-                    )
-                    if write_result.blocked:
-                        artificial_tool_messages.append(
-                            ToolMessage(
-                                content=write_result.reason,
-                                name=tool_name,
-                                tool_call_id=tool_call["id"],
-                                status="error",
-                            )
-                        )
-                        continue
-
-            # ── Configured interrupt_on tools ──
-            if tool_name in self._interrupt_on:
-                config = self._interrupt_on[tool_name]
-                description_value = config.get("description")
-                if callable(description_value):
-                    description = description_value(tool_call, state, runtime)
-                elif description_value is not None:
-                    description = description_value
-                else:
-                    description = (
-                        f"{self.config.description_prefix}\n\nTool: {tool_name}\nArgs: {tool_args}"
-                    )
-
-                action_request = ActionRequest(
-                    name=tool_name,
-                    args=tool_args,
-                    description=description,
-                )
-                review_config = ReviewConfig(
-                    action_name=tool_name,
-                    allowed_decisions=config["allowed_decisions"],
-                )
-                try:
-                    hitl_response = interrupt(
-                        HITLRequest(
-                            action_requests=[action_request],
-                            review_configs=[review_config],
-                        )
-                    )
-                    decisions = hitl_response.get("decisions", [])
-                    if not decisions:
-                        artificial_tool_messages.append(
-                            ToolMessage(
-                                content=f"No decision received. {BLOCKED_MESSAGE}",
-                                name=tool_name,
-                                tool_call_id=tool_call["id"],
-                                status="error",
-                            )
-                        )
-                        continue
-
-                    decision = decisions[0]
-                    allowed = config["allowed_decisions"]
-                    if decision["type"] == "approve" and "approve" in allowed:
-                        revised_tool_calls.append(tool_call)
-                    elif decision["type"] == "edit" and "edit" in allowed:
-                        edited = decision.get("edited_action", {})
-                        revised_tc: Any = dict(tool_call)
-                        revised_tc["args"] = edited.get("args", tool_args)
-                        revised_tc["name"] = edited.get("name", tool_name)
-                        revised_tool_calls.append(revised_tc)
-                    elif decision["type"] == "reject" and "reject" in allowed:
-                        msg = decision.get("message", f"User rejected {tool_name}")
-                        artificial_tool_messages.append(
-                            ToolMessage(
-                                content=f"{msg}. {BLOCKED_MESSAGE}",
-                                name=tool_name,
-                                tool_call_id=tool_call["id"],
-                                status="error",
-                            )
-                        )
-                    else:
-                        artificial_tool_messages.append(
-                            ToolMessage(
-                                content=f"Unexpected decision type. {BLOCKED_MESSAGE}",
-                                name=tool_name,
-                                tool_call_id=tool_call["id"],
-                                status="error",
-                            )
-                        )
-                except GraphInterrupt:
-                    # Real HITL interrupt: let LangGraph persist it so the
-                    # frontend approval dialog can fire. Do NOT swallow it.
-                    raise
-                except Exception:
-                    artificial_tool_messages.append(
-                        ToolMessage(
-                            content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
-                            name=tool_name,
-                            tool_call_id=tool_call["id"],
-                            status="error",
-                        )
-                    )
-                continue
-
-            # ── Plugin-escalated tool approval (layer 10) ──
-            tool_approval = self.approval.request_tool_approval(tool_name, tool_args, session_id)
-            if tool_approval.blocked:
-                artificial_tool_messages.append(
-                    ToolMessage(
-                        content=tool_approval.reason,
-                        name=tool_name,
-                        tool_call_id=tool_call["id"],
-                        status="error",
-                    )
-                )
-                continue
-
-            revised_tool_calls.append(tool_call)
-
-        last_ai_msg.tool_calls = revised_tool_calls
+        last_ai_msg.tool_calls = outcome.revised_tool_calls
         return (
-            {"messages": [last_ai_msg, *artificial_tool_messages]}
-            if artificial_tool_messages
+            {"messages": [last_ai_msg, *outcome.artificial_tool_messages]}
+            if outcome.artificial_tool_messages
             else None
         )
 

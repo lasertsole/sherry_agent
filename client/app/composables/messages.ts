@@ -1,21 +1,25 @@
 import type { MultiModalMessage } from '@/types/message';
 import type { Response } from '@/types/response';
 import type { SessionRecord } from '@/pages/home/type';
-
-type AbortControllerWithHitl = AbortController & {
-  sendHitlResponse?: ((response: HitlResponse) => void) | null;
-};
-import {
-  streamChatMessage,
-  type OnChunkCallback,
-  type OnDoneCallback,
-  type OnHitlCallback,
-  type OnQueuedCallback,
-  type HitlInterruptData,
-  type HitlResponse
+import type {
+  OnChunkCallback,
+  OnDoneCallback,
+  OnHitlCallback,
+  OnQueuedCallback,
+  HitlInterruptData,
+  HitlResponse
 } from './bridge';
-import { cacheMessages, cachedMaxTurnNum, clearCachedSession, readCachedMessages, type CachedMessage } from './db';
+import type { CachedMessage } from './db';
 import { logUtil } from '~/utils/log';
+
+/**
+ * Controller returned by `postAgentStream`: a standard `AbortController` extended with
+ * the HITL decision sender of the underlying stream (present only while the browser
+ * WebSocket is still open; absent in Tauri mode).
+ */
+export interface ChatController extends AbortController {
+  sendHitlResponse?: (response: HitlResponse) => void;
+}
 
 /**
  * Event name for "abort streaming generation" when a session is deleted.
@@ -44,10 +48,12 @@ export const SESSION_ABORT_STREAM_EVENT = 'session:abort-stream';
  *
  * @param session_id Session ID
  * @param min_turn_num Minimum turn (>= 1; overridden by the cached max turn when a cache exists)
- * @param turn_page_size Turn page size
+ * @param turn_page_size Turn page size (clamped to 1-200, mirroring the server cap)
  * @param turn_page_num Page number
  * @returns {Promise<CachedMessage[]>} Array of conversation history records (the raw local cache row structure)
  */
+const MAX_TURN_PAGE_SIZE = 200;
+
 export async function get_history_by_turn_page(
   session_id: string,
   min_turn_num: number,
@@ -71,7 +77,7 @@ export async function get_history_by_turn_page(
       opts: {
         session_id,
         min_turn_num: effectiveMinTurn,
-        turn_page_size,
+        turn_page_size: Math.min(Math.max(turn_page_size, 1), MAX_TURN_PAGE_SIZE),
         turn_page_num
       },
       method: 'get'
@@ -98,6 +104,8 @@ export async function get_history_by_turn_page(
 /**
  * Merge the cached and server-returned messages for a session, deduplicate by `id`, and return
  * sorted by `turn_num` ascending.
+ * @param cached
+ * @param fetched
  */
 function mergeDedup(cached: CachedMessage[], fetched: CachedMessage[]): CachedMessage[] {
   const seen = new Map<number, CachedMessage>();
@@ -213,7 +221,7 @@ export async function getPendingInterrupt(session_id: string): Promise<HitlInter
  * @param onError Error callback
  * @param onHitl HITL interrupt callback
  * @param onQueued Queued callback (backend enqueued the message because the session is busy)
- * @returns {AbortController} The caller can abort the request via controller.abort()
+ * @returns {ChatController} The caller can abort the request via controller.abort()
  */
 export function postAgentStream(
   session_id: string,
@@ -223,8 +231,8 @@ export function postAgentStream(
   onError?: (err: unknown) => void,
   onHitl?: OnHitlCallback,
   onQueued?: OnQueuedCallback
-): AbortController {
-  const controller = new AbortController();
+): ChatController {
+  const controller: ChatController = new AbortController();
   let stopFn: (() => void) | null = null;
 
   // Bridge to the unified streaming entry of bridge (browser WS / Tauri IPC).
@@ -242,10 +250,7 @@ export function postAgentStream(
     onQueued
   );
   stopFn = () => stream.abort();
-  const hitlSender = stream.sendHitlResponse ?? null;
-
-  // Attach sendHitlResponse onto the returned AbortController
-  (controller as AbortControllerWithHitl).sendHitlResponse = hitlSender;
+  controller.sendHitlResponse = stream.sendHitlResponse ?? undefined;
 
   // User-initiated abort → trigger the stream stop
   controller.signal.addEventListener('abort', () => stopFn?.());

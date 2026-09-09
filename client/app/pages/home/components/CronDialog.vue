@@ -152,6 +152,11 @@
             optionValue="value"
             class="w-40" />
         </div>
+        <small
+          v-if="everyBelowFloor"
+          class="text-red-500 dark:text-red-400">
+          {{ t('config.cron.intervalTooSmall') }}
+        </small>
       </div>
 
       <div
@@ -237,16 +242,7 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import {
-  listCronJobs,
-  addCronJob,
-  updateCronJob,
-  runCronJob,
-  enableCronJob,
-  deleteCronJob,
-  type CronJob,
-  type CronSchedule
-} from '@/composables/bridge';
+import type { CronJob, CronSchedule } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -286,6 +282,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 const SECOND_MS = 1000;
+const MIN_EVERY_MS = 1000;
 
 const form = ref({
   name: '',
@@ -306,9 +303,18 @@ const canSaveEdit = computed(() => {
   if (!form.value.name.trim()) return false;
   if (!form.value.message.trim()) return false;
   if (form.value.scheduleType === 'at' && !form.value.atDate) return false;
-  if (form.value.scheduleType === 'every' && (!form.value.everyValue || form.value.everyValue <= 0)) return false;
+  if (form.value.scheduleType === 'every') {
+    const ms = everyToMs();
+    if (!ms || ms < MIN_EVERY_MS) return false;
+  }
   if (form.value.scheduleType === 'cron' && !form.value.expr.trim()) return false;
   return true;
+});
+
+const everyBelowFloor = computed(() => {
+  if (form.value.scheduleType !== 'every') return false;
+  const ms = everyToMs();
+  return ms !== null && ms < MIN_EVERY_MS;
 });
 
 function everyToMs(): number | null {
@@ -536,6 +542,7 @@ async function loadJobs() {
         "atTime": "执行时刻",
         "everyInterval": "执行间隔",
         "intervalValue": "数值",
+        "intervalTooSmall": "间隔最小为 1 秒",
         "cronExpr": "Cron 表达式",
         "message": "任务消息",
         "messagePlaceholder": "请输入要执行的任务内容",
@@ -576,6 +583,7 @@ async function loadJobs() {
         "atTime": "Execution time",
         "everyInterval": "Interval",
         "intervalValue": "Value",
+        "intervalTooSmall": "Interval must be at least 1 second",
         "cronExpr": "Cron expression",
         "message": "Task message",
         "messagePlaceholder": "Enter the task content to execute",
@@ -616,6 +624,7 @@ async function loadJobs() {
         "atTime": "実行時刻",
         "everyInterval": "実行間隔",
         "intervalValue": "値",
+        "intervalTooSmall": "間隔は1秒以上にしてください",
         "cronExpr": "Cron 式",
         "message": "タスク内容",
         "messagePlaceholder": "実行するタスクの内容を入力",
@@ -656,6 +665,7 @@ async function loadJobs() {
         "atTime": "실행 시각",
         "everyInterval": "실행 간격",
         "intervalValue": "값",
+        "intervalTooSmall": "간격은 1초 이상이어야 합니다",
         "cronExpr": "Cron 표현식",
         "message": "작업 내용",
         "messagePlaceholder": "실행할 작업 내용을 입력하세요",

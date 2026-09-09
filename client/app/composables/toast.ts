@@ -1,6 +1,5 @@
 import type { ToastMessageOptions } from 'primevue/toast';
 import type { ToastServiceMethods } from 'primevue/toastservice';
-import { resolveRuntimeT } from '~/composables/i18nRuntime';
 
 /**
  * Global toast notification layer.
@@ -67,6 +66,7 @@ export function registerToastApi(api: ToastApi | null): void {
  * that does not include `t`, so it cannot be used directly);
  * unit tests / non-Nuxt contexts fall back to returning the key as-is.
  * Never throws in either case.
+ * @param key
  */
 function safeT(key: string): string {
   if (!isClient()) return key;
@@ -74,7 +74,10 @@ function safeT(key: string): string {
   return t ? t(key) : key;
 }
 
-/** Unified dispatch entry: silently returns when unregistered / not on the client. */
+/**
+ * Unified dispatch entry: silently returns when unregistered / not on the client.
+ * @param message
+ */
 function show(message: ToastMessageOptions): void {
   if (!isClient() || !toastApi) return;
   toastApi.add(message);

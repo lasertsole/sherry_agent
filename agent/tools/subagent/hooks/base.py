@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel
 from collections.abc import Callable, Awaitable
+from loguru import logger
 
 
 class SubagentStartEvent(BaseModel):
@@ -47,8 +48,8 @@ async def fire_start_hooks(event: SubagentStartEvent) -> None:
     for hook in _start_hooks:
         try:
             await hook(event)
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("start hook {} failed: {}", getattr(hook, "__name__", hook), e)
 
 
 async def fire_stop_hooks(event: SubagentStopEvent) -> None:
@@ -56,8 +57,8 @@ async def fire_stop_hooks(event: SubagentStopEvent) -> None:
     for hook in _stop_hooks:
         try:
             await hook(event)
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("stop hook {} failed: {}", getattr(hook, "__name__", hook), e)
 
 
 def clear_hooks() -> None:

@@ -39,6 +39,8 @@ _IMPORT_FN = "skills.builtin.core.speech_to_text.scripts.server"
 # on Windows — venvs ship python.exe — nor on POSIX — bin/ layout) is gone.
 _INTERPRETER = Path(INTERPRETER_PATH).as_posix()
 
+_PID_PATH: Path = ROOT_DIR / ".stt_daemon.pid"
+
 
 def _daemon_alive() -> bool:
     """Return True if the STT daemon is reachable."""
@@ -49,6 +51,25 @@ def _daemon_alive() -> bool:
         return False
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _recorded_daemon_pid() -> int | None:
+    if not _PID_PATH.exists():
+        return None
+    try:
+        return int(_PID_PATH.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
 def _spawn_daemon() -> None:
     """Start the detached STT daemon if it isn't already running.
 
@@ -56,6 +77,10 @@ def _spawn_daemon() -> None:
     alive after this subprocess exits, so model loading survives the terminal
     tool's 30s timeout.
     """
+    recorded = _recorded_daemon_pid()
+    if recorded is not None and _pid_alive(recorded):
+        logger.info(f"STT daemon already running (pid={recorded}).")
+        return
     cmd: list[str] = [_INTERPRETER, "-c", f"from {_IMPORT_FN} import main; main()"]
     creationflags = 0
     if os.name == "nt":
@@ -71,6 +96,7 @@ def _spawn_daemon() -> None:
             stderr=subprocess.DEVNULL,
             creationflags=creationflags,
         )
+        _PID_PATH.write_text(str(proc.pid), encoding="utf-8")
         logger.info(f"STT daemon spawning (pid={proc.pid}).")
     except Exception as e:  # noqa: BLE001
         logger.error(f"STT daemon spawn failed: {e}")

@@ -144,7 +144,6 @@ import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { G2Spec } from '@antv/g2';
 import GChart from './GChart.vue';
-import { fetchApi } from '~/composables/requestApi';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -239,13 +238,19 @@ const DARK_PALETTE: string[] = [
   '#2dd4bf'
 ];
 
-/** Stable color by model name */
+/**
+ * Stable color by model name
+ * @param index
+ */
 const modelColor = (index: number): string => {
   const palette = isDark() ? DARK_PALETTE : LIGHT_PALETTE;
   return palette[index % palette.length] ?? '';
 };
 
-/** Backend data → frontend mapping */
+/**
+ * Backend data → frontend mapping
+ * @param payload
+ */
 const mapStatsData = (payload: StatsResponse): DayUsage[] => {
   const rawDays = Array.isArray(payload?.days) ? payload.days : [];
   return rawDays.map(day => ({

@@ -1,5 +1,4 @@
 import Dexie, { type IndexableType, type Table } from 'dexie';
-import { DEFAULT_CHARACTER } from './defaultCharacter';
 import type { MessageItem } from '@/pages/home/type';
 
 /** Lower bound of the compound index (smallest encoded value sharing the same session_id prefix) */
@@ -354,6 +353,7 @@ export async function cacheMessages(rows: CachedMessage[]): Promise<void> {
  * END of an index query, and a single bad value poisons numeric sort
  * comparators downstream (`a.turn_num - b.turn_num` evaluates to NaN, which
  * destabilizes the whole array order — the "history jumble" bug).
+ * @param turnNum
  */
 function isValidTurnNum(turnNum: unknown): turnNum is number {
   return typeof turnNum === 'number' && Number.isFinite(turnNum);
@@ -522,7 +522,13 @@ export async function clearSessionTitleOverride(id: string): Promise<void> {
  *              and replace them by content)
  */
 export async function saveDraftTurn(draft: DraftTurn): Promise<void> {
-  await db.drafts.put(draft);
+  // Deep copy: callers pass elements straight from Vue reactive refs; after ref unwrapping they
+  // are reactive Proxies (including nested images/audios/videos/toolArgs), and Dexie put() would
+  // throw DataCloneError during IndexedDB structured clone → the draft write fails.
+  // MessageItem only contains JSON-compatible fields (no Date/Function/Blob), so a full JSON
+  // round-trip deep copy is the safest; it also prevents later streaming mutations from
+  // polluting the already-persisted draft.
+  await db.drafts.put(JSON.parse(JSON.stringify(draft)) as DraftTurn);
 }
 
 /**

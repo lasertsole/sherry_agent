@@ -206,3 +206,52 @@ const destroyCropper = () => {
 <style>
 /* cropperjs requires the parent container to have a definite size; imageContainer is fixed at 520px height */
 </style>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "crop": {
+        "confirm": "确定",
+        "preview": "裁剪预览",
+        "rotate": "旋转",
+        "zoomIn": "放大",
+        "zoomOut": "缩小"
+      }
+    }
+  },
+  "en": {
+    "config": {
+      "crop": {
+        "confirm": "Confirm",
+        "preview": "Crop Preview",
+        "rotate": "Rotate",
+        "zoomIn": "Zoom In",
+        "zoomOut": "Zoom Out"
+      }
+    }
+  },
+  "ja": {
+    "config": {
+      "crop": {
+        "confirm": "確定",
+        "preview": "トリミングプレビュー",
+        "rotate": "回転",
+        "zoomIn": "拡大",
+        "zoomOut": "縮小"
+      }
+    }
+  },
+  "ko": {
+    "config": {
+      "crop": {
+        "confirm": "확인",
+        "preview": "자르기 미리보기",
+        "rotate": "회전",
+        "zoomIn": "확대",
+        "zoomOut": "축소"
+      }
+    }
+  }
+}
+</i18n>

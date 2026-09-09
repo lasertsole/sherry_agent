@@ -1,11 +1,19 @@
 """Read file tool with pagination support (offset + limit) and line numbers."""
 
 import json
+from typing import Annotated, override
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-from typing import override
-from agent.tools.pub_base import resolve_path, PathOutOfBoundsError
+from langgraph.prebuilt.tool_node import InjectedState
+from agent.tools.pub_base import (
+    PathOutOfBoundsError,
+    _extract_session_id,
+    resolve_external_path,
+    resolve_project_path,
+)
 from langchain_core.callbacks import CallbackManagerForToolRun
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 
 class ReadFileInput(BaseModel):
@@ -23,6 +31,7 @@ class ReadFileInput(BaseModel):
         le=2000,
         description="Maximum number of lines to read (default: 500, max: 2000)",
     )
+    session_id: SessionId = ""
 
 
 def _add_line_numbers(content: str, start_line: int = 1) -> str:
@@ -55,13 +64,16 @@ class ReadFileTool(BaseTool):
 
     # ── shared core ────────────────────────────────────────────────────────
 
-    def _core(self, file_path: str, offset: int = 1, limit: int = 500) -> str:
+    def _core(self, file_path: str, offset: int = 1, limit: int = 500, session_id: str = "") -> str:
         try:
-            resolved = resolve_path(file_path)
+            resolved = resolve_project_path(file_path)
         except PathOutOfBoundsError:
-            return json.dumps(
-                {"error": f"Path outside project root not allowed: {file_path}"}, ensure_ascii=False
-            )
+            try:
+                resolved = resolve_external_path(
+                    file_path, session_id=session_id, action_desc="read file"
+                )
+            except PathOutOfBoundsError as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         if not resolved.exists():
             return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)
@@ -118,9 +130,11 @@ class ReadFileTool(BaseTool):
         file_path: str,
         offset: int = 1,
         limit: int = 500,
+        session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        return self._core(file_path, offset, limit)
+        session_id = session_id or _extract_session_id(run_manager)
+        return self._core(file_path, offset, limit, session_id)
 
     @override
     async def _arun(
@@ -128,9 +142,11 @@ class ReadFileTool(BaseTool):
         file_path: str,
         offset: int = 1,
         limit: int = 500,
+        session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        return self._core(file_path, offset, limit)
+        session_id = session_id or _extract_session_id(run_manager)
+        return self._core(file_path, offset, limit, session_id)
 
 
 def build_read_file_tool() -> ReadFileTool:

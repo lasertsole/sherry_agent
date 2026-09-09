@@ -77,7 +77,6 @@ import { computed } from 'vue';
 import type { SessionRecord } from '../type';
 import { useI18n } from 'vue-i18n';
 import { formatCompactTimeString, isValidSessionTitle, SESSION_TITLE_MAX_LENGTH } from '@/common/utils';
-import { toastError } from '~/composables/toast';
 
 const { t } = useI18n();
 
@@ -157,3 +156,60 @@ function cancelRename() {
   isEditing.value = false;
 }
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "a11y": {
+      "deleteSession": "删除会话"
+    },
+    "history": {
+      "createdAt": "创建时间：{time}",
+      "dateFormat": "YYYY-MM-DD HH:mm",
+      "deleteConfirm": "确定要删除该会话吗？此操作不可恢复。",
+      "editTitle": "重命名会话",
+      "titleInvalid": "标题限 30 字以内，且只能包含中英文、数字、空格和 . _ -",
+      "titlePlaceholder": "输入新标题"
+    }
+  },
+  "en": {
+    "a11y": {
+      "deleteSession": "Delete session"
+    },
+    "history": {
+      "createdAt": "Created: {time}",
+      "dateFormat": "MM/DD/YYYY HH:mm",
+      "deleteConfirm": "Are you sure you want to delete this conversation? This action cannot be undone.",
+      "editTitle": "Rename session",
+      "titleInvalid": "Title must be at most 30 characters and contain only letters, numbers, spaces, and . _ -",
+      "titlePlaceholder": "Enter new title"
+    }
+  },
+  "ja": {
+    "a11y": {
+      "deleteSession": "セッションを削除"
+    },
+    "history": {
+      "createdAt": "作成日時：{time}",
+      "dateFormat": "YYYY/MM/DD HH:mm",
+      "deleteConfirm": "この会話を削除してもよろしいですか？この操作は元に戻せません。",
+      "editTitle": "セッション名を変更",
+      "titleInvalid": "タイトルは30文字以内で、英字・数字・空白および . _ - のみ使用できます",
+      "titlePlaceholder": "新しいタイトルを入力"
+    }
+  },
+  "ko": {
+    "a11y": {
+      "deleteSession": "세션 삭제"
+    },
+    "history": {
+      "createdAt": "만든 시간：{time}",
+      "dateFormat": "YYYY/MM/DD HH:mm",
+      "deleteConfirm": "이 대화를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+      "editTitle": "세션 이름 바꾸기",
+      "titleInvalid": "제목은 30자 이내이며 영문·한글·숫자·공백 및 . _ -만 사용할 수 있습니다",
+      "titlePlaceholder": "새 제목 입력"
+    }
+  }
+}
+</i18n>

@@ -1,93 +1,55 @@
 from typing import Any
-from collections.abc import Callable
-from loguru import logger
 from dotenv import load_dotenv
 
-from config import ROOT_DIR, ENV_PATH
+from config import ENV_PATH
+from config.sherry_settings import get_sherry_setting
 from context_engine.curator.constants import (
-    DEFAULT_INTERVAL_HOURS,
-    DEFAULT_INTERVAL_OVERRIDE_MIN_DAYS,
     DEFAULT_INTERVAL_OVERRIDE_MAX_DAYS,
-    DEFAULT_MIN_IDLE_HOURS,
-    DEFAULT_STALE_AFTER_DAYS,
-    DEFAULT_ARCHIVE_AFTER_DAYS,
-    DEFAULT_CONSOLIDATE,
+    DEFAULT_INTERVAL_OVERRIDE_MIN_DAYS,
 )
 
 load_dotenv(ENV_PATH, override=True)
 
 # Override interval is persisted in .curator_state under this key. A non-null
-# value (clamped to [MIN, MAX] days) overrides the `interval_hours` from
-# curator.yaml so the client's "auto maintenance interval" setting takes
-# precedence over the file-based default (5 days).
+# value (clamped to [MIN, MAX] days) overrides the ``curator.interval_hours``
+# setting in sherry.jsonc so the client's "auto maintenance interval" setting
+# takes precedence over the file-based default (7 days).
 _INTERVAL_OVERRIDE_KEY = "auto_interval_days"
 # Last maintenance time (manual or auto) is surfaced to the client. Mirrors the
 # transient `last_run_at` value but is always written on a successful run.
 _LAST_MAINTENANCE_KEY = "last_maintenance_at"
 
 
-def _load_config() -> dict[str, Any]:
-    try:
-        import yaml
-
-        cfg_path = ROOT_DIR / "curator.yaml"
-        if cfg_path.exists():
-            with open(cfg_path, encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            if isinstance(cfg, dict):
-                return cfg
-    except Exception as e:
-        logger.debug("Failed to load curator config: {}", e)
-    return {}
-
-
-def _get_config_value(key: str, type_: Callable[[Any], Any], default: Any) -> Any:
-    """Read *key* from curator.yaml, coerced via *type_*, falling back to *default*.
-
-    Shared body of the six config getters (audit 3.1.7). ``bool`` coercion
-    never fails (mirrors the original ``bool(...)`` getters); int/float
-    coercion failures (``TypeError``/``ValueError`` — e.g. a null or
-    non-numeric yaml value) fall back to the default (mirrors the original
-    try/except getters).
-    """
-    raw = _load_config().get(key, default)
-    if type_ is bool:
-        return bool(raw)
-    try:
-        return type_(raw)
-    except (TypeError, ValueError):
-        return default
-
-
 def is_enabled() -> bool:
-    return _get_config_value("enabled", bool, True)
+    return get_sherry_setting("curator.enabled")
 
 
 def get_interval_hours() -> int:
-    return _get_config_value("interval_hours", int, DEFAULT_INTERVAL_HOURS)
+    return get_sherry_setting("curator.interval_hours")
 
 
 def get_min_idle_hours() -> float:
-    return _get_config_value("min_idle_hours", float, DEFAULT_MIN_IDLE_HOURS)
+    return get_sherry_setting("curator.min_idle_hours")
 
 
 def get_stale_after_days() -> int:
-    return _get_config_value("stale_after_days", int, DEFAULT_STALE_AFTER_DAYS)
+    return get_sherry_setting("curator.stale_after_days")
 
 
 def get_archive_after_days() -> int:
-    return _get_config_value("archive_after_days", int, DEFAULT_ARCHIVE_AFTER_DAYS)
+    return get_sherry_setting("curator.archive_after_days")
 
 
 def get_consolidate() -> bool:
-    return _get_config_value("consolidate", bool, DEFAULT_CONSOLIDATE)
+    return get_sherry_setting("curator.consolidate")
 
 
 def _clamp_interval_days(days: Any) -> int | None:
     """Clamp a raw override value to the allowed 1..5 day range.
 
     Returns ``None`` for ``None``/empty/out-of-range inputs so the caller can
-    treat it as "no override -> use curator.yaml interval_hours".
+    treat it as "no override -> use the ``curator.interval_hours`` setting
+    from sherry.jsonc".
     """
     if days is None or days == "":
         return None
@@ -119,8 +81,9 @@ def get_interval_override_days() -> int | None:
 def set_interval_override_days(days: int | None) -> int | None:
     """Persist the UI-configured maintenance interval (days, clamped to 1..5).
 
-    Pass ``None`` to clear the override and fall back to curator.yaml's
-    ``interval_hours``. Returns the effective stored value after clamping.
+    Pass ``None`` to clear the override and fall back to the
+    ``curator.interval_hours`` setting in sherry.jsonc. Returns the effective
+    stored value after clamping.
     """
     from context_engine.curator.state import load_state, save_state
 
@@ -135,7 +98,8 @@ def get_effective_interval_hours() -> int:
     """Effective interval between curator runs, in hours.
 
     A UI-configured ``auto_interval_days`` override (1..5) takes precedence over
-    the ``interval_hours`` from curator.yaml (default 5 days = 120h).
+    the ``curator.interval_hours`` setting in sherry.jsonc (default
+    7 days = 168h).
     """
     override = get_interval_override_days()
     if override is not None:

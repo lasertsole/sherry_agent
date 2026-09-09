@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS pending_injections (
 );
 """
 
+_CREATE_STATUS_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_pending_injections_status
+ON pending_injections(status)
+WHERE status = 'pending';
+"""
+
 # Atomic single-statement transition used by mark_consumed: the status guard in
 # WHERE makes concurrent callers race-safe (exactly one row changes per run_id).
 _MARK_CONSUMED_SQL = """
@@ -156,6 +162,7 @@ class PendingInjectionStore:
         async with self._connect() as db:
             await _switch_to_wal_if_needed(db)
             await db.execute(_CREATE_TABLE_SQL)
+            await db.execute(_CREATE_STATUS_INDEX_SQL)
             await db.commit()
 
     async def _ensure_db(self) -> None:

@@ -2,7 +2,6 @@ import type { ComponentPublicInstance, Ref } from 'vue';
 import { onErrorCaptured } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
-import { toastError } from '~/composables/toast';
 import { logUtil } from '~/utils/log';
 
 /**

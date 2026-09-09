@@ -65,16 +65,22 @@ const primevueStub = {
 // fetchApi('/sessions'); the server answers with a bare array (see messages.ts
 // getSessionList). Seed one row so HistoryItem children actually render.
 // last_time must stay in the 14-digit compact format that
-// formatCompactTimeString parses.
-const seededFetchApi = vi.fn(async (opts?: { url?: string }) =>
-  opts?.url === '/sessions'
-    ? [{ session_id: 's1', last_time: '20260617104200', title: '第一次对话' }]
-    : { code: 200, data: null }
+// formatCompactTimeString parses. `fetchApi` is consumed through auto-imported
+// module bindings (unimport injection, see vitest.config.ts), so the transport
+// is mocked at the `@/composables/requestApi` module, not as a globalThis stub.
+const seededFetchApi = vi.hoisted(() =>
+  vi.fn(async (opts?: { url?: string }) =>
+    opts?.url === '/sessions'
+      ? [{ session_id: 's1', last_time: '20260617104200', title: '第一次对话' }]
+      : { code: 200, data: null }
+  )
 );
 
-// `get_history_by_turn_page` is a Nuxt auto-import pre-stubbed in setup.ts, so
-// any stray reference is a no-op. Children are real components whose heavy deps
-// (PrimeVue/markdown) are stubbed above.
+vi.mock('@/composables/requestApi', () => ({ fetchApi: seededFetchApi }));
+
+// Children are real components whose heavy deps
+// (PrimeVue/markdown) are stubbed above; the real get_history_by_turn_page
+// runs against the mocked transport and resolves empty for non-/sessions URLs.
 function mountHome() {
   return mount(homeIndex, {
     global: { stubs: primevueStub }
@@ -83,7 +89,7 @@ function mountHome() {
 
 describe('home/index.vue (integration, backend mocked)', () => {
   beforeEach(() => {
-    vi.stubGlobal('fetchApi', seededFetchApi);
+    seededFetchApi.mockClear();
   });
 
   it('composes the sidebar and chat regions with real leaf children', async () => {

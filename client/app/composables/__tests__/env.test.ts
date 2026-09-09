@@ -1,16 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { EnvConfigPayload } from '../env';
 
-// `env.ts` calls `fetchApi` as a Nuxt auto-import (no explicit import in source).
-// Stub the global with our own mock, capturing args across tests. The shared
-// setup.ts assigns its own default first; we override it here for this file.
-// NOTE: do NOT call vi.unstubAllGlobals() in afterEach — that would revert the
-// global to setup.ts's default `{ code: 200, data: null }`, breaking later tests
-// in this file. Vitest auto-restores stubGlobal stubs at file teardown.
+// `env.ts` calls `fetchApi` as a Nuxt auto-import: under the unimport
+// injection (vitest.config.ts) the binding resolves through the
+// `../requestApi` module, so mock that module — a globalThis stub would never
+// be read by an import binding.
 
 const fetchApiMock = vi.hoisted(() => vi.fn());
 
-vi.stubGlobal('fetchApi', fetchApiMock);
+vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
 
 import { readEnvConfig, writeEnvConfig } from '../env';
 

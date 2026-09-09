@@ -44,6 +44,7 @@ Integration (in ``agent/core.py``)::
 
 from __future__ import annotations
 
+import abc
 from typing import Any
 from collections.abc import AsyncGenerator
 
@@ -69,6 +70,297 @@ __all__ = [
     "RepetitionGuardWrapper",
     "SESSION_STATE_KEYS",
 ]
+
+
+class StreamGuardState(abc.ABC):
+    """One phase of the wrapper's stream-level guard state machine.
+
+    States are stateless strategy objects; the per-stream mutable data
+    (accumulated call text, cut flag, phantom counter) lives on the
+    :class:`StreamGuardMachine` that dispatches chunks to the active state.
+    """
+
+    def __init__(self, machine: StreamGuardMachine):
+        self._m = machine
+
+    def on_updates(self) -> StreamGuardState:
+        """A graph "updates" chunk arrived: reset per-call tracking."""
+        self._m.reset_call_tracking()
+        return self._m.updates_seen_state
+
+    def on_non_model_node(self) -> StreamGuardState:
+        """A non-model node chunk arrived: reset per-call tracking.
+
+        ``saw_updates`` is unchanged — a fresh (dict-input) run stays
+        fresh until the first real "updates" tuple.
+        """
+        self._m.reset_call_tracking()
+        return self._m.updates_seen_state
+
+    async def on_model_chunk(
+        self,
+        chunk: Any,
+        msg_chunk: Any,
+        metadata: dict[str, Any],
+    ) -> AsyncGenerator[tuple]:
+        """Template for "model"-node message chunks.
+
+        The HALT short-circuit and the non-``AIMessageChunk`` pass-through
+        run in every state; the accumulating/suppressing behaviour is
+        state-specific.
+        """
+        # HALT short-circuit: if the halt flag is already set (e.g. by the
+        # middleware backstop), yield halt messages instead of forwarding
+        # repetitive text.
+        if state_register_mem.get_state(self._m.session_id, _HALTED_KEY, False):
+            yield StreamGuardMachine.text_chunk(
+                StreamGuardMachine.halted_short_circuit_message(), metadata
+            )
+            return
+
+        if not isinstance(msg_chunk, AIMessageChunk):
+            yield chunk
+            return
+
+        has_tool_calls = bool(
+            getattr(msg_chunk, "tool_calls", None) or getattr(msg_chunk, "tool_call_chunks", None)
+        )
+        content = str(msg_chunk.content or "")
+
+        async for out in self._handle_model_text(
+            chunk, msg_chunk, metadata, content, has_tool_calls
+        ):
+            yield out
+
+    @abc.abstractmethod
+    def _handle_model_text(
+        self,
+        chunk: Any,
+        msg_chunk: Any,
+        metadata: dict[str, Any],
+        content: str,
+        has_tool_calls: bool,
+    ) -> AsyncGenerator[tuple]: ...
+
+
+class FreshState(StreamGuardState):
+    """Pre-first-update phase: the phantom-stream guard window.
+
+    On a fresh dict-input run the middleware-equipped graph ALWAYS emits
+    before_agent "updates" tuples before any model text (verified via
+    healthy-turn captures — first chunk is
+    ``{'MultimodalProcessor.before_agent': None}``). "Model"-tagged text
+    arriving before ANY update cannot be live graph output; historically it
+    tripped the internal-repetition cut and call_cut then suppressed the
+    REAL reply behind it (user saw only the 145-char warning). Drop the
+    phantom loudly instead of cutting.
+    """
+
+    async def on_model_chunk(
+        self,
+        chunk: Any,
+        msg_chunk: Any,
+        metadata: dict[str, Any],
+    ) -> AsyncGenerator[tuple]:
+        if self._m.phantom_guard_active and str(getattr(msg_chunk, "content", "") or ""):
+            self._m.phantom_dropped += 1
+            if self._m.phantom_dropped == 1:
+                logger.critical(
+                    "[RepetitionGuardWrapper] PHANTOM model stream "
+                    "before first graph update — dropping. "
+                    "session={} node={} metadata={!r} content={!r}",
+                    self._m.session_id,
+                    metadata.get("langgraph_node"),
+                    metadata,
+                    str(getattr(msg_chunk, "content", ""))[:200],
+                )
+            return
+        async for out in super().on_model_chunk(chunk, msg_chunk, metadata):
+            yield out
+
+    def on_non_model_node(self) -> StreamGuardState:
+        # Non-model nodes don't mark the graph as started: stay fresh.
+        self._m.reset_call_tracking()
+        return self
+
+    async def _handle_model_text(
+        self,
+        chunk: Any,
+        msg_chunk: Any,
+        metadata: dict[str, Any],
+        content: str,
+        has_tool_calls: bool,
+    ) -> AsyncGenerator[tuple]:
+        async for out in self._m.updates_seen_state._handle_model_text(
+            chunk, msg_chunk, metadata, content, has_tool_calls
+        ):
+            yield out
+
+
+class UpdatesSeenState(StreamGuardState):
+    """Graph started; per-call text tracking is empty/running."""
+
+    async def _handle_model_text(
+        self,
+        chunk: Any,
+        msg_chunk: Any,
+        metadata: dict[str, Any],
+        content: str,
+        has_tool_calls: bool,
+    ) -> AsyncGenerator[tuple]:
+        m = self._m
+        # ---- accumulate + stream-level internal detection ----
+        if content and not m.call_cut and not has_tool_calls:
+            m.call_text += content
+            if len(m.call_text) >= _MIN_CONTENT_LENGTH:
+                try:
+                    if m.guard._detect_internal_repetition(m.call_text):
+                        already = state_register_mem.get_state(
+                            m.session_id, _INTERNAL_WARNED_KEY, False
+                        )
+                        if not already:
+                            state_register_mem.set_state(m.session_id, _INTERNAL_WARNED_KEY, True)
+                            logger.debug(
+                                "[RepetitionGuardWrapper] session={} "
+                                "stream internal repetition — cutting; "
+                                "call_text={!r}",
+                                m.session_id,
+                                m.call_text[:200],
+                            )
+                            yield StreamGuardMachine.text_chunk(_STREAM_WARNING, metadata)
+                            m.call_cut = True
+                            m.transition(m.cut_state)
+                            return  # suppress the triggering chunk too
+                except Exception:
+                    logger.exception(
+                        "[RepetitionGuardWrapper] internal detection error (non-fatal)"
+                    )
+            m.transition(m.model_text_state)
+
+        # ---- forward chunk ----
+        # When text is cut, skip subsequent text-bearing chunks from
+        # the current model call.  Reasoning-only chunks (empty
+        # content) are still forwarded so the thinking stream stays
+        # intact for the client.
+        if m.call_cut and content and not has_tool_calls:
+            return  # suppress repetitive text
+        yield chunk
+
+
+class ModelTextState(UpdatesSeenState):
+    """Per-call text is accumulating (``call_text`` non-empty)."""
+
+
+class CutState(StreamGuardState):
+    """This call's visible text was cut; suppress further text chunks."""
+
+    async def _handle_model_text(
+        self,
+        chunk: Any,
+        msg_chunk: Any,
+        metadata: dict[str, Any],
+        content: str,
+        has_tool_calls: bool,
+    ) -> AsyncGenerator[tuple]:
+        if content and not has_tool_calls:
+            return  # suppress repetitive text
+        yield chunk
+
+
+class StreamGuardMachine:
+    """Per-stream state machine behind ``RepetitionGuardWrapper.astream``.
+
+    Owns the mutable per-stream variables (``call_text`` / ``call_cut`` /
+    ``phantom_dropped``) and dispatches each inner chunk through the
+    active :class:`StreamGuardState`.
+    """
+
+    def __init__(self, session_id: str, guard: OutputRepetitionGuard, phantom_guard_active: bool):
+        self.session_id = session_id
+        self.guard = guard
+        # Command(resume) streams legitimately start with messages (the
+        # interrupted node re-executes without re-running before_agent),
+        # so the guard only applies to fresh dict-input runs. The guard
+        # itself is opt-in (constructor flag) — enabled in production.
+        self.phantom_guard_active = phantom_guard_active
+        self.call_text = ""
+        self.call_cut = False
+        self.phantom_dropped = 0
+
+        self.updates_seen_state = UpdatesSeenState(self)
+        self.model_text_state = ModelTextState(self)
+        self.cut_state = CutState(self)
+        self._state: StreamGuardState = FreshState(self)
+
+    def transition(self, state: StreamGuardState) -> None:
+        self._state = state
+
+    def reset_call_tracking(self) -> None:
+        """Reset per-call tracking (cross-call detection is handled by the
+        middleware's wrap_model_call)."""
+        self.call_text = ""
+        self.call_cut = False
+
+    async def on_chunk(self, chunk: Any) -> AsyncGenerator[tuple]:
+        """Dispatch one inner chunk through the current state."""
+        # Guard against unexpected chunk shapes
+        if not isinstance(chunk, (tuple, list)) or len(chunk) < 2:
+            yield chunk
+            return
+
+        mode = chunk[0]
+        data = chunk[1]
+
+        if mode == "updates":
+            self.transition(self._state.on_updates())
+            yield chunk
+            return
+
+        # non-"messages" mode — pass through
+        if mode != "messages":
+            yield chunk
+            return
+
+        # data is (message_chunk, metadata_dict)
+        if not isinstance(data, (tuple, list)) or len(data) < 2:
+            yield chunk
+            return
+
+        msg_chunk: Any = data[0]
+        metadata: dict[str, Any] = data[1] if isinstance(data[1], dict) else {}
+
+        if metadata.get("langgraph_node") != "model":
+            self.transition(self._state.on_non_model_node())
+            yield chunk
+            return
+
+        async for out in self._state.on_model_chunk(chunk, msg_chunk, metadata):
+            yield out
+
+    # ------------------------------------------------------------------
+    # Chunk builders
+    # ------------------------------------------------------------------
+    @staticmethod
+    def text_chunk(
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[str, tuple[AIMessageChunk, dict[str, Any]]]:
+        """Build a ``("messages", (AIMessageChunk, metadata))`` chunk."""
+        return (
+            "messages",
+            (
+                AIMessageChunk(content=content),
+                metadata or {"langgraph_node": "model"},
+            ),
+        )
+
+    @staticmethod
+    def halted_short_circuit_message() -> str:
+        """Message yielded when ``_HALTED_KEY`` is already set."""
+        return (
+            "[Output Repetition Guard] Output repetition was detected "
+            "earlier this turn. I must stop here."
+        )
 
 
 class RepetitionGuardWrapper:
@@ -135,8 +427,8 @@ class RepetitionGuardWrapper:
                     sid = resume.get("session_id", "")
                     if sid.strip():
                         return sid
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("[RepetitionGuardWrapper] Command.resume session_id probe failed: {}", e)
 
         # 3. config configurable fallback
         try:
@@ -147,8 +439,8 @@ class RepetitionGuardWrapper:
                     sid = conf.get("session_id", "")
                     if sid.strip():
                         return sid
-        except Exception:  # noqa: S110
-            pass
+        except Exception as e:
+            logger.debug("[RepetitionGuardWrapper] config session_id probe failed: {}", e)
 
         raise RuntimeError(
             "RepetitionGuardWrapper: session_id is required but not found "
@@ -168,31 +460,6 @@ class RepetitionGuardWrapper:
         if isinstance(stream_mode, (list, tuple)):
             return "messages" in stream_mode
         return False
-
-    # ------------------------------------------------------------------
-    # Chunk builders
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _text_chunk(
-        content: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> tuple[str, tuple[AIMessageChunk, dict[str, Any]]]:
-        """Build a ``("messages", (AIMessageChunk, metadata))`` chunk."""
-        return (
-            "messages",
-            (
-                AIMessageChunk(content=content),
-                metadata or {"langgraph_node": "model"},
-            ),
-        )
-
-    @staticmethod
-    def _halted_short_circuit_message() -> str:
-        """Message yielded when ``_HALTED_KEY`` is already set."""
-        return (
-            "[Output Repetition Guard] Output repetition was detected "
-            "earlier this turn. I must stop here."
-        )
 
     # ------------------------------------------------------------------
     # Streaming interception (astream)
@@ -221,177 +488,33 @@ class RepetitionGuardWrapper:
                 yield chunk
             return
 
-        # State machine for tracking the current model call's accumulated
-        # text (for internal repetition detection only).
-        call_text = ""
-        call_cut = False  # whether current call's visible text was cut
-
-        # [phantom-stream guard] state: a fresh dict-input run ALWAYS emits
-        # middleware before_agent "updates" tuples before any model text
-        # (verified via healthy-turn captures — first chunk is
-        # {'MultimodalProcessor.before_agent': None}). "Model"-tagged text
-        # arriving before ANY update cannot be live graph output; when it
-        # tripped the internal-repetition cut, call_cut then suppressed the
-        # REAL reply behind it (user saw only the 145-char warning).
-        saw_updates = False  # any "updates" chunk seen (graph started)
-        phantom_dropped = 0  # pre-updates "model" text chunks dropped
-        # Command(resume) streams legitimately start with messages (the
-        # interrupted node re-executes without re-running before_agent),
-        # so the guard only applies to fresh dict-input runs. The guard
-        # itself is opt-in (constructor flag) — enabled in production.
-        phantom_guard_active = self._phantom_stream_guard and isinstance(input_, dict)
-
+        machine = StreamGuardMachine(
+            session_id,
+            self._guard,
+            self._phantom_stream_guard and isinstance(input_, dict),
+        )
         generator = self._inner.astream(*args, **kwargs)
 
         try:
             async for chunk in generator:
-                # Guard against unexpected chunk shapes
-                if not isinstance(chunk, (tuple, list)) or len(chunk) < 2:
-                    yield chunk
-                    continue
-
-                mode = chunk[0]
-                data = chunk[1]
-
-                # ====================================================
-                # "updates" mode — reset per-call tracking
-                # ====================================================
-                if mode == "updates":
-                    saw_updates = True
-                    # Reset per-call tracking (cross-call detection is
-                    # handled by the middleware's wrap_model_call).
-                    call_text = ""
-                    call_cut = False
-                    yield chunk
-                    continue
-
-                # ====================================================
-                # non-"messages" mode — pass through
-                # ====================================================
-                if mode != "messages":
-                    yield chunk
-                    continue
-
-                # data is (message_chunk, metadata_dict)
-                if not isinstance(data, (tuple, list)) or len(data) < 2:
-                    yield chunk
-                    continue
-
-                msg_chunk: Any = data[0]
-                metadata: dict = data[1] if isinstance(data[1], dict) else {}
-                node = metadata.get("langgraph_node")
-
-                # --------------------------------------------------
-                # Non-model node -> reset per-call tracking
-                # --------------------------------------------------
-                if node != "model":
-                    call_text = ""
-                    call_cut = False
-                    yield chunk
-                    continue
-
-                # --------------------------------------------------
-                # Model node — internal repetition detection
-                # --------------------------------------------------
-                # [phantom-stream guard] On a fresh dict-input run the
-                # middleware-equipped graph ALWAYS emits before_agent
-                # "updates" tuples before any model text (verified via
-                # healthy-turn captures — first chunk is
-                # {'MultimodalProcessor.before_agent': None}).
-                # "Model"-tagged text arriving before ANY update cannot
-                # be live graph output; historically it tripped the
-                # internal-repetition cut and call_cut then suppressed
-                # the REAL reply behind it (user saw only the 145-char
-                # warning). Drop the phantom loudly instead of cutting.
-                if (
-                    phantom_guard_active
-                    and not saw_updates
-                    and str(getattr(msg_chunk, "content", "") or "")
-                ):
-                    phantom_dropped += 1
-                    if phantom_dropped == 1:
-                        logger.critical(
-                            "[RepetitionGuardWrapper] PHANTOM model stream "
-                            "before first graph update — dropping. "
-                            "session={} node={} metadata={!r} content={!r}",
-                            session_id,
-                            node,
-                            metadata,
-                            str(getattr(msg_chunk, "content", ""))[:200],
-                        )
-                    continue
-
-                # HALT short-circuit: if the halt flag is already set
-                # (e.g. by the middleware backstop), yield halt messages
-                # instead of forwarding repetitive text.
-                if state_register_mem.get_state(session_id, _HALTED_KEY, False):
-                    yield self._text_chunk(self._halted_short_circuit_message(), metadata)
-                    continue
-
-                if not isinstance(msg_chunk, AIMessageChunk):
-                    yield chunk
-                    continue
-
-                # Skip chunks that carry tool calls (text-output guard only)
-                has_tool_calls = bool(
-                    getattr(msg_chunk, "tool_calls", None)
-                    or getattr(msg_chunk, "tool_call_chunks", None)
-                )
-
-                content = str(msg_chunk.content or "")
-
-                # ---- accumulate + stream-level internal detection ----
-                if content and not call_cut and not has_tool_calls:
-                    call_text += content
-                    if len(call_text) >= _MIN_CONTENT_LENGTH:
-                        try:
-                            if self._guard._detect_internal_repetition(call_text):
-                                already = state_register_mem.get_state(
-                                    session_id, _INTERNAL_WARNED_KEY, False
-                                )
-                                if not already:
-                                    state_register_mem.set_state(
-                                        session_id, _INTERNAL_WARNED_KEY, True
-                                    )
-                                    logger.debug(
-                                        "[RepetitionGuardWrapper] session={} "
-                                        "stream internal repetition — cutting; "
-                                        "call_text={!r}",
-                                        session_id,
-                                        call_text[:200],
-                                    )
-                                    yield self._text_chunk(_STREAM_WARNING, metadata)
-                                    call_cut = True
-                        except Exception:
-                            logger.exception(
-                                "[RepetitionGuardWrapper] internal detection error (non-fatal)"
-                            )
-
-                # ---- forward chunk ----
-                # When text is cut, skip subsequent text-bearing chunks from
-                # the current model call.  Reasoning-only chunks (empty
-                # content) are still forwarded so the thinking stream stays
-                # intact for the client.
-                if call_cut and content and not has_tool_calls:
-                    continue  # suppress repetitive text
-                yield chunk
-
+                async for out in machine.on_chunk(chunk):
+                    yield out
         finally:
-            if phantom_dropped > 0:
+            if machine.phantom_dropped > 0:
                 try:
                     logger.critical(
                         "[RepetitionGuardWrapper] PHANTOM stream total: "
                         "dropped {} pre-update model chunk(s) session={}",
-                        phantom_dropped,
+                        machine.phantom_dropped,
                         session_id,
                     )
-                except Exception:  # noqa: S110
-                    pass
+                except Exception as e:
+                    logger.debug("[RepetitionGuardWrapper] phantom stream log write failed: {}", e)
             if generator is not None:
                 try:
                     await generator.aclose()
-                except Exception:  # noqa: S110
-                    pass
+                except Exception as e:
+                    logger.debug("[RepetitionGuardWrapper] generator aclose failed: {}", e)
 
     # ------------------------------------------------------------------
     # Non-streaming (ainvoke)

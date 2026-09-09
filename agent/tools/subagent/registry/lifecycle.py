@@ -330,15 +330,18 @@ def _schedule_deferred_cleanup_resume(run: SubagentRunRecord, delay_seconds: flo
     async def _resume():
         await asyncio.sleep(delay_seconds)
         _deferred_cleanup_timers.pop(run.run_id, None)
-        latest = get_run(run.run_id)
-        if latest is None or latest.cleanup_completed_at is not None:
-            return
-        should, reason = resolve_deferred_cleanup_decision(latest)
-        if should:
-            _cleanup_generations[latest.run_id] = latest.generation
-            await _finalize_cleanup(latest, reason)
-        elif reason == "defer_descendants":
-            _schedule_deferred_cleanup_resume(latest, delay_seconds=10.0)
+        try:
+            latest = get_run(run.run_id)
+            if latest is None or latest.cleanup_completed_at is not None:
+                return
+            should, reason = resolve_deferred_cleanup_decision(latest)
+            if should:
+                _cleanup_generations[latest.run_id] = latest.generation
+                await _finalize_cleanup(latest, reason)
+            elif reason == "defer_descendants":
+                _schedule_deferred_cleanup_resume(latest, delay_seconds=10.0)
+        except Exception as e:
+            logger.debug("Deferred cleanup resume failed for run {}: {}", run.run_id, e)
 
     _deferred_cleanup_timers[run.run_id] = asyncio.create_task(_resume())
 
@@ -385,8 +388,8 @@ async def resume_subagent_run(run_id: str) -> SubagentRunRecord | None:
 
     try:
         await wake_yield_if_all_children_settled(updated.requester_session_key)
-    except Exception:  # noqa: S110
-        pass
+    except Exception as e:
+        logger.warning("wake_yield failed for session {}: {}", updated.requester_session_key, e)
 
     return updated
 

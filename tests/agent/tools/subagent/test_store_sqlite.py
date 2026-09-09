@@ -89,3 +89,35 @@ async def test_concurrent_same_run_id_upserts_yield_single_row(isolated_db: Path
     loaded = await store_sqlite.load_runs_from_sqlite()
     assert len(loaded) == 1
     assert loaded["run-abc-123"].task in {run.task for run in runs}
+
+
+@pytest.mark.asyncio
+async def test_save_runs_snapshot_removes_missing_run_ids(isolated_db: Path):
+    """#34 regression: incremental save keeps full-replace sync semantics.
+
+    Given runs A and B persisted, saving a snapshot containing only A must
+    delete B's row (otherwise removed runs resurrect after restart) while
+    A survives with its payload intact.
+    """
+    run_a = _make_run(run_id="run-A", task="task A")
+    run_b = _make_run(run_id="run-B", task="task B")
+
+    await store_sqlite.save_runs_to_sqlite({"run-A": run_a, "run-B": run_b})
+    await store_sqlite.save_runs_to_sqlite({"run-A": run_a})
+
+    loaded = await store_sqlite.load_runs_from_sqlite()
+    assert set(loaded) == {"run-A"}
+    assert loaded["run-A"].task == "task A"
+
+
+@pytest.mark.asyncio
+async def test_save_runs_empty_snapshot_clears_all_rows(isolated_db: Path):
+    """#34 regression: an empty snapshot wipes every row (sync semantics for the empty case)."""
+    await store_sqlite.save_runs_to_sqlite(
+        {"run-A": _make_run(run_id="run-A"), "run-B": _make_run(run_id="run-B")}
+    )
+
+    await store_sqlite.save_runs_to_sqlite({})
+
+    loaded = await store_sqlite.load_runs_from_sqlite()
+    assert loaded == {}

@@ -163,8 +163,6 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
 import type { SubagentRun } from '@/composables/bridge';
-import { steerSubagentRun } from '@/composables/bridge';
-import { useSubagentTasks } from '@/composables/useSubagentTasks';
 
 const props = defineProps<{
   /** The currently selected run record; undefined means no node is selected */
@@ -225,9 +223,121 @@ async function doSteer(): Promise<void> {
   }
 }
 
-/** Render an execution time: epoch milliseconds → local readable string; shows the '-' placeholder for empty values */
+/**
+ * Render an execution time: epoch milliseconds → local readable string; shows the '-' placeholder for empty values
+ * @param ms
+ */
 function formatTime(ms: number | null | undefined): string {
   if (ms == null || Number.isNaN(Number(ms))) return '-';
   return dayjs(Number(ms)).format('YYYY-MM-DD HH:mm:ss');
 }
 </script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "taskDetail": {
+      "agentId": "Agent",
+      "delivery": "配送状态",
+      "depth": "深度",
+      "endedAt": "结束时间",
+      "endedReason": "结束原因",
+      "error": "错误信息",
+      "outcome": "执行结果",
+      "outcomeStatus": "结果状态",
+      "parentSession": "调用方 Session",
+      "placeholder": "点击上方树状图中的节点查看任务详情",
+      "resultText": "返回内容",
+      "spawnMode": "生成方式",
+      "startedAt": "开始时间",
+      "status": "状态",
+      "steerAction": "发送并继续",
+      "steerFailed": "改道失败（任务可能已结束或频率受限）",
+      "steerHint": "发送后，子任务将带着当前对话上下文与你的新指令继续执行；留空则仅恢复被中断的任务。",
+      "steerPlaceholder": "新指令（可选，例如：换个方向重试…）",
+      "steerSteering": "发送中…",
+      "steerSuccess": "指令已送达，子任务正在继续。",
+      "steerTitle": "改道 / 恢复执行",
+      "taskDesc": "任务描述"
+    }
+  },
+  "en": {
+    "taskDetail": {
+      "agentId": "Agent",
+      "delivery": "Delivery",
+      "depth": "Depth",
+      "endedAt": "Ended At",
+      "endedReason": "End Reason",
+      "error": "Error",
+      "outcome": "Outcome",
+      "outcomeStatus": "Outcome Status",
+      "parentSession": "Parent Session",
+      "placeholder": "Click a node in the tree above to view task details",
+      "resultText": "Result",
+      "spawnMode": "Spawn Mode",
+      "startedAt": "Started At",
+      "status": "Status",
+      "steerAction": "Send & Continue",
+      "steerFailed": "Steer failed (run may have finished or is rate-limited)",
+      "steerHint": "The child agent continues from its current context with your new instructions; leave empty to simply resume an interrupted run.",
+      "steerPlaceholder": "New instructions (optional, e.g. retry with a different approach…)",
+      "steerSteering": "Sending…",
+      "steerSuccess": "Sent — the child agent is continuing.",
+      "steerTitle": "Steer / Resume",
+      "taskDesc": "Description"
+    }
+  },
+  "ja": {
+    "taskDetail": {
+      "agentId": "エージェント",
+      "delivery": "配信",
+      "depth": "深さ",
+      "endedAt": "終了時刻",
+      "endedReason": "終了理由",
+      "error": "エラー",
+      "outcome": "結果",
+      "outcomeStatus": "結果ステータス",
+      "parentSession": "親セッション",
+      "placeholder": "上のツリーでノードをクリックするとタスク詳細を表示します",
+      "resultText": "結果",
+      "spawnMode": "生成モード",
+      "startedAt": "開始時刻",
+      "status": "ステータス",
+      "steerAction": "送信して続行",
+      "steerFailed": "軌道修正に失敗しました（タスク終了済みまたはレート制限の可能性）",
+      "steerHint": "送信すると、子エージェントは現在のコンテキストと新しい指示に従って処理を続けます。空欄の場合は中断されたタスクの再開のみ行います。",
+      "steerPlaceholder": "新しい指示（任意。例：別のアプローチで再試行…）",
+      "steerSteering": "送信中…",
+      "steerSuccess": "指示を送信しました。子エージェントが処理を続けています。",
+      "steerTitle": "軌道修正 / 再開",
+      "taskDesc": "説明"
+    }
+  },
+  "ko": {
+    "taskDetail": {
+      "agentId": "에이전트",
+      "delivery": "전송",
+      "depth": "깊이",
+      "endedAt": "종료 시간",
+      "endedReason": "종료 이유",
+      "error": "오류",
+      "outcome": "결과",
+      "outcomeStatus": "결과 상태",
+      "parentSession": "상위 세션",
+      "placeholder": "위 트리에서 노드를 클릭하면 작업 세부정보를 확인할 수 있습니다",
+      "resultText": "결과",
+      "spawnMode": "생성 모드",
+      "startedAt": "시작 시간",
+      "status": "상태",
+      "steerAction": "보내고 계속하기",
+      "steerFailed": "경로 변경 실패(작업이 이미 종료되었거나 빈도 제한일 수 있음)",
+      "steerHint": "보내면 하위 에이전트가 현재 컨텍스트와 새 지시에 따라 작업을 계속합니다. 비워 두면 중단된 작업만 재개합니다.",
+      "steerPlaceholder": "새 지시(선택 사항, 예: 다른 접근으로 재시도…)",
+      "steerSteering": "전송 중…",
+      "steerSuccess": "지시를 전달했습니다. 하위 에이전트가 계속 진행합니다.",
+      "steerTitle": "경로 변경 / 재개",
+      "taskDesc": "설명"
+    }
+  }
+}
+</i18n>

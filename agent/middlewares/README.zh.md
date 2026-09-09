@@ -330,9 +330,15 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 从**工具调用截断**中恢复：当模型调用返回 `finish_reason == "length"`（OpenAI）/
 `stop_reason == "max_tokens"`（Anthropic）且响应携带工具调用时，说明工具调用的
-JSON 本身被截断。中间件在 `awrap_model_call` 内以提升后的
-`max_tokens = base × 2^attempt`（base 取 `MAIN_LLM_OUTPUT_MAX_TOKEN`，默认 8192；
-上限 32768；最多重试 3 次）重新调用 handler，让模型补全完整的工具调用载荷。
+JSON 本身被截断。中间件在 `wrap_model_call` / `awrap_model_call` 内以提升后的
+`max_tokens = base × 2^attempt`（上限 32768；最多重试 3 次）重新调用 handler，
+让模型补全完整的工具调用载荷。base 按三层降级解析（取第一个正值）：
+
+1. 本次调用自身的 `request.model_settings["max_tokens"]` —— 即当前调用的真实
+   上限，因此调用配置了更高 max_tokens 时，重呼不会从更低的默认值重新起步；
+2. 环境变量 `MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）；
+3. 硬编码默认值 8192。
+
 被截断的中间结果被丢弃——agent 循环只看到最终结果，因此不会有截断内容写入
 checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
@@ -343,7 +349,8 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   `finally` 中恢复原始 callbacks（即使异常也恢复）。流式/非流式的判定读取
   `StreamTurn.run()` 按会话设置的 `is_stream_turn` 标志——子代理（ainvoke）
   永远不带该标志，始终走非流式路径。
-- `_extract_ai_message` 同时处理裸 `AIMessage` 结果与 `ModelResponse` 形态对象。
+- `_extract_ai_message` 同时处理裸 `AIMessage` 结果与携带 `.messages` 的
+  `ModelRequest` 形态响应对象。
 
 ### OutputRepetitionGuard 与 RepetitionGuardWrapper
 

@@ -2,7 +2,7 @@
 
 Validates the browser-chat guard end-to-end WITHOUT a real LLM:
 
-    WS client -- text --> async_generate --> _get_generator
+    WS client -- text --> async_generate --> _GenerateTurn
         --> built_agent(force_rebuild=True)   [monkeypatched]
         --> RepetitionGuardWrapper( MockAgent(scripted repetitive chunks) )
         --> wrapper cuts repetition + yields [Output Repetition Guard] marker

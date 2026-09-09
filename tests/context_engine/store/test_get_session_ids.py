@@ -7,6 +7,8 @@ Verifies the session-list enumeration logic against a real SQLite database:
   placeholder rather than leaking the raw session_id).
 - Subagent sessions (``agent:<agent_id>:subagent:`` hierarchy) are excluded.
 - Rows are ordered newest-activity first.
+- The aggregation + title fetch is a single SQL round-trip for any number
+  of sessions.
 """
 
 import json
@@ -214,3 +216,26 @@ class TestGetSessionIds:
 
         result = get_session_ids()
         assert result == []
+
+    def test_single_sql_round_trip_for_all_sessions(self, sid_db, patch_db):
+        """Aggregation + per-session titles must be ONE execute, not 1 + N."""
+        from context_engine.store.core import get_session_ids
+
+        ins = sid_db["insert"]
+        ins("s1", 1, "human", json.dumps("q1", ensure_ascii=False), "20260101100000")
+        ins("s1", 1, "ai", json.dumps("a1", ensure_ascii=False), "20260101100001")
+        ins("s2", 1, "human", json.dumps("q2", ensure_ascii=False), "20260101120000")
+        ins("s2", 1, "ai", json.dumps("a2", ensure_ascii=False), "20260101120001")
+
+        statements: list[str] = []
+        sid_db["db"].set_trace_callback(statements.append)
+        try:
+            result = get_session_ids()
+        finally:
+            sid_db["db"].set_trace_callback(None)
+
+        assert [r["session_id"] for r in result] == ["s2", "s1"]
+        assert [r["title"] for r in result] == ["q2", "q1"]
+        assert len(statements) == 1, (
+            f"expected a single SQL round-trip, got {len(statements)}: {statements}"
+        )

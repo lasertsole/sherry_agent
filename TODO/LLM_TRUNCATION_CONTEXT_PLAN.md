@@ -29,6 +29,7 @@
 # models/LLMs/reasoning_payload.py — 新增
 _DEFAULT_NON_ANTHROPIC_BUDGET = int(os.getenv("MAIN_LLM_THINKING_BUDGET", "4096"))
 
+
 def get_thinking_budget(provider: str | None, model_name: str | None, enabled: bool) -> int:
     if not enabled or not provider:
         return 0
@@ -101,11 +102,11 @@ def _should_text_continue(self) -> tuple[bool, bool]:
     if not self._has_visible_text and self._has_reasoning:
         if self._reasoning_only_retries >= _MAX_REASONING_ONLY_RETRIES:
             return False, False
-        return True, True   # reasoning-only → 专用 prompt
+        return True, True  # reasoning-only → 专用 prompt
 
     if self._continuation_retries >= _MAX_CONTINUATION_RETRIES:
         return False, False
-    return True, False      # 文本截断 → 标准续传
+    return True, False  # 文本截断 → 标准续传
 ```
 
 **专用续传 prompt**：
@@ -155,6 +156,7 @@ _MAX_REASONING_ONLY_RETRIES = 2
 # stream_dispatch.py — StreamTurn.__init__
 self._is_partial_stream_stub: bool = False
 
+
 # 流异常或静默结束时
 def _on_stream_error(self, error: Exception) -> None:
     if self._text_chunks:  # 已有部分输出
@@ -201,9 +203,11 @@ async def awrap_model_call(self, request, handler):
 ```python
 def _get_continuation_prompt(is_partial_stub, dropped_tools=None) -> str:
     if is_partial_stub and dropped_tools:
-        return (f"[System: Your previous tool call ({', '.join(dropped_tools[:3])}) "
-                "was too large and the stream timed out. Do NOT retry the same "
-                "large content. Break it into multiple smaller tool calls.]")
+        return (
+            f"[System: Your previous tool call ({', '.join(dropped_tools[:3])}) "
+            "was too large and the stream timed out. Do NOT retry the same "
+            "large content. Break it into multiple smaller tool calls.]"
+        )
     elif is_partial_stub:
         return "[System: The previous response was cut off by a network error. Continue exactly where you left off.]"
     else:
@@ -220,11 +224,13 @@ def _get_continuation_prompt(is_partial_stub, dropped_tools=None) -> str:
 # stream_dispatch.py — StreamTurn
 self._partial_tool_names: list[str] = []
 
+
 def _on_tool_call_started(self, tool_name: str) -> None:
     """流式 chunk 中检测到新 tool-call 开始时调用。
     对应 hermes chat_completion_helpers.py:2467-2480。"""
     if tool_name and tool_name not in self._partial_tool_names:
         self._partial_tool_names.append(tool_name)
+
 
 def _build_dropped_tool_warning(self) -> str | None:
     """构建 dropped tool names 的用户可见警告。
@@ -235,8 +241,10 @@ def _build_dropped_tool_warning(self) -> str | None:
     name_str = ", ".join(names)
     if len(self._partial_tool_names) > 3:
         name_str += f", +{len(self._partial_tool_names) - 3} more"
-    return (f"\n\n⚠ Stream stalled mid tool-call ({name_str}); "
-            f"the action was not executed. Ask me to retry if you want to continue.")
+    return (
+        f"\n\n⚠ Stream stalled mid tool-call ({name_str}); "
+        f"the action was not executed. Ask me to retry if you want to continue."
+    )
 ```
 
 **在 `_on_stream_error` 中使用**：
@@ -303,7 +311,7 @@ if ai and (ai.response_metadata or {}).get("_content_filter_terminated"):
 
 ```python
 # agent/tools/subagent/spawn/core.py — middleware 列表
-middleware=[
+middleware = [
     Summarization(...),
     IterationBudget(60),
     ToolGuardrails(),
@@ -334,14 +342,17 @@ if _usage:
 
 ```python
 # messages.py — _final_frames
-return [{
-    "type": "meta", "content": "",
-    "model_name": self.meta_model_name or "",
-    "input_tokens": self.meta_input_tokens or 0,
-    "output_tokens": self.meta_output_tokens or 0,
-    "reasoning_tokens": self.meta_reasoning_tokens or 0,  # 新增
-    "finish_reason": self.meta_finish_reason or "",
-}]
+return [
+    {
+        "type": "meta",
+        "content": "",
+        "model_name": self.meta_model_name or "",
+        "input_tokens": self.meta_input_tokens or 0,
+        "output_tokens": self.meta_output_tokens or 0,
+        "reasoning_tokens": self.meta_reasoning_tokens or 0,  # 新增
+        "finish_reason": self.meta_finish_reason or "",
+    }
+]
 ```
 
 **DB 持久化**（`context_engine/store/core.py`）：
@@ -442,6 +453,7 @@ astream(stream_mode=["messages", "updates"]) 单次 agent loop:
 解决 Summarization T1-T5 中间件的三重盲区。
 """
 
+
 class ContextLimitGuardWrapper:
     """包裹 CompiledStateGraph，在 astream 层逐 chunk 监控。
 
@@ -451,8 +463,9 @@ class ContextLimitGuardWrapper:
     2. mid-stream output：累积 text chunk 估算 token，超预算停止 forward（只影响客户端视图）
     """
 
-    def __init__(self, inner, context_window: int,
-                 output_cut_ratio: float = 0.20, check_interval: int = 20):
+    def __init__(
+        self, inner, context_window: int, output_cut_ratio: float = 0.20, check_interval: int = 20
+    ):
         self._inner = inner
         self._context_window = context_window
         self._output_token_budget = int(context_window * output_cut_ratio)
@@ -496,7 +509,8 @@ class ContextLimitGuardWrapper:
                 # --- model-call 边界 force-compress ---
                 self._check_and_force_compress(
                     getattr(chunk, "session_id", ""),  # best-effort
-                    last_input_tokens, last_output_tokens
+                    last_input_tokens,
+                    last_output_tokens,
                 )
                 # 重置 per-call 累积
                 call_output_text = ""
@@ -639,11 +653,11 @@ middleware = [
     ToolCallNormalize(),
     SubagentCompletionDrainMiddleware(),
     OutputRepetitionGuard(),
-    MaxTokensBoostMiddleware(),      # ← 外层：只处理 tool-call 截断 boost
+    MaxTokensBoostMiddleware(),  # ← 外层：只处理 tool-call 截断 boost
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     Summarization(...),
-    LLMRetryMiddleware(               # ← 内层（下游）：先看到结果
+    LLMRetryMiddleware(  # ← 内层（下游）：先看到结果
         config=LLMRetryConfig(),
         fallback_chain=_build_fallback_chain(),
     ),
@@ -665,13 +679,13 @@ _agent = ContextLimitGuardWrapper(_agent, context_window=main_llm_max_tokens)
 ```python
 # agent/tools/subagent/spawn/core.py
 
-middleware=[
+middleware = [
     Summarization(...),
     IterationBudget(60),
     ToolGuardrails(),
     OutputRepetitionGuard(),
     ToolCallNormalize(),
-    MaxTokensBoostMiddleware(),   # H.6 新增
+    MaxTokensBoostMiddleware(),  # H.6 新增
     HeartbeatStaleness(),
 ]
 ```

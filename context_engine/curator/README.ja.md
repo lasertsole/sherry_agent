@@ -430,7 +430,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 
 ## 設定リファレンス
 
-設定ファイルパス: `curator.yaml`（プロジェクトルート、`ROOT_DIR` の横）
+設定は `sherry.jsonc`（プロジェクトルート）の `"curator"` オブジェクトにあります。
 
 | 設定 | デフォルト | 説明 |
 |---------|---------|-------------|
@@ -439,9 +439,10 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 | `min_idle_hours` | `2` | 最小アイドル時間 |
 | `stale_after_days` | `30` | 古いとマークするまでの日数 |
 | `archive_after_days` | `90` | 削除までの日数 |
-| `consolidate` | `false` | LLM 統合を有効にするかどうか |
+| `consolidate` | `true` | LLM 統合を有効にするかどうか |
+| `prune_builtins` | `true` | 内蔵スキルの使用記録をクリーンアップするかどうか |
 
-設定は PyYAML を使用して `curator.yaml` を読み取る `_load_config()` を介してロードされます。各 getter 関数（`is_enabled`、`get_interval_hours` など）は、解析エラー時に定数デフォルトにフォールバックします。
+設定は `config/sherry_settings.py` を介して読み込まれます（`get_sherry_setting("curator.<key>")`）。各 getter 関数（`is_enabled`、`get_interval_hours` など）は、値が欠落しているか解析できない場合、そこで宣言された型付きデフォルトにフォールバックします。
 
 ---
 
@@ -491,7 +492,7 @@ Curator は、決して違反されてはならない以下の厳格な不変条
 curator/
 ├── __init__.py           # Public API exports
 ├── constants.py          # Constants (paths, state names, defaults)
-├── config.py             # Config loading (curator.yaml + env vars)
+├── config.py             # Config getters (sherry.jsonc "curator" object)
 ├── state.py              # Curator run state persistence (.curator_state)
 ├── usage.py              # Skill usage record CRUD (.usage/{name}.json) + agent_created_report + orphan cleanup
 ├── transitions.py        # Auto state transitions + should_run_now logic

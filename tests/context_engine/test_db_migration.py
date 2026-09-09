@@ -11,6 +11,10 @@ Covers:
   connection never raises nor duplicates the column, and calling
   ``add_origin_column`` directly twice hits the swallowed
   ``sqlite3.OperationalError`` branch without raising.
+- ``idx_messages_session_role``: an old (v7) database gains the
+  ``(session_id, role)`` index on upgrade, a fresh DB is created with it,
+  and re-running the migration path never raises on the ``IF NOT EXISTS``
+  step.
 
 Contract (decisions.md): ``origin`` TEXT NULL — NULL = real user message,
 ``"subagent_completion"`` = background subagent-completion injection.
@@ -130,3 +134,49 @@ class TestOriginMigration:
         add_origin_column(db)  # duplicate ALTER -> sqlite3.OperationalError -> pass
 
         assert len(_origin_columns(db)) == 1
+
+
+def _index_names(db: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in db.execute("PRAGMA index_list(messages)").fetchall()}
+
+
+def _build_pre_index_schema(db: sqlite3.Connection) -> None:
+    """Recreate the v7 (pre-index) schema: every migration before the role index."""
+    build_messages_tb(db)
+    add_images_column(db)
+    add_audio_video_columns(db)
+    add_model_token_columns(db)
+    add_origin_column(db)
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
+    )
+    db.execute("INSERT INTO _migrations (v, at) VALUES (?, ?)", (7, 0))
+    db.commit()
+
+
+class TestSessionRoleIndexMigration:
+    def test_old_schema_db_gains_session_role_index(self):
+        """Upgrading an old DB (v7, no role index) creates idx_messages_session_role."""
+        db = _connect()
+        _build_pre_index_schema(db)
+        assert "idx_messages_session_role" not in _index_names(db)
+
+        _migrate(db)
+
+        assert "idx_messages_session_role" in _index_names(db)
+        assert db.execute("SELECT MAX(v) FROM _migrations").fetchone()[0] > 7
+
+    def test_fresh_db_has_session_role_index(self):
+        """A brand-new DB migrated from scratch has idx_messages_session_role."""
+        db = _connect()
+        _migrate(db)
+
+        assert "idx_messages_session_role" in _index_names(db)
+
+    def test_migrate_twice_keeps_session_role_index(self):
+        """The IF NOT EXISTS step is idempotent across a double migration."""
+        db = _connect()
+        _migrate(db)
+        _migrate(db)
+
+        assert "idx_messages_session_role" in _index_names(db)

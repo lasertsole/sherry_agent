@@ -1,15 +1,21 @@
 """Project-root ``sherry.jsonc`` — application-level settings split out of ``.env``.
 
-The eight keys in :data:`SHERRY_SETTING_KEYS` used to live in the ``.env``
-environment file (editable through the environment-config dialog). They are now
-stored in ``sherry.jsonc`` at the repository root as JSON5 (comments + trailing
-commas allowed) and read through this module instead of ``os.getenv`` — the
-environment file is no longer a source for them.
+These settings used to live in the ``.env`` environment file (editable through
+the environment-config dialog). They are stored in ``sherry.jsonc`` at the
+repository root as JSON5 (comments + trailing commas allowed) and read through
+this module instead of ``os.getenv`` — the environment file is no longer a
+source for them.
 
-Values are typed: ``TOOL_CALL_TIMEOUT_MINUTES`` coerces to ``int``,
-``LANGSMITH_TRACING_V2`` to ``bool``, everything else to ``str``. A missing
-file, a missing key, or an unparseable value falls back to the typed default
-so the application always boots.
+Most settings are top-level keys. Grouped settings live in nested objects and
+are addressed with dotted paths: the ``"LANGSMITH"`` object holds the LangSmith
+tracing settings and the ``"curator"`` object holds the background
+skill-maintenance settings, so ``"LANGSMITH.TRACING_V2"`` resolves to the
+``TRACING_V2`` leaf inside the ``"LANGSMITH"`` object.
+
+Values are typed: ``TOOL_CALL_TIMEOUT_MINUTES`` and the curator counters coerce
+to numbers, the boolean switches to ``bool``, everything else to ``str``. A
+missing file, a missing key, or an unparseable value falls back to the typed
+default so the application always boots.
 """
 
 from __future__ import annotations
@@ -21,7 +27,8 @@ import json5
 
 SHERRY_CONFIG_PATH = Path(__file__).resolve().parents[1] / "sherry.jsonc"
 
-# Single source of truth for accepted keys and their typed defaults.
+# Single source of truth for accepted keys and their typed defaults. Nested
+# objects in sherry.jsonc are addressed with dotted paths ("GROUP.KEY").
 # Secret-class keys (TAVILY_API_KEY) stay in the gitignored .env on purpose —
 # sherry.jsonc is git-tracked and must never hold API keys.
 SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
@@ -29,21 +36,45 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "LOG_LEVEL": "INFO",
     "SUBAGENT_TODO_DONE_FUNC": "archive",
     "WORKSPACE_TEMPLATE_LANG": "en",
-    "LANGSMITH_TRACING_V2": False,
-    "LANGSMITH_API_KEY": "",
-    "LANGSMITH_PROJECT": "EMA_AI_agent",
+    "LANGSMITH.TRACING_V2": False,
+    "LANGSMITH.API_KEY": "",
+    "LANGSMITH.PROJECT": "EMA_AI_agent",
+    "curator.enabled": True,
+    "curator.interval_hours": 168,
+    "curator.min_idle_hours": 2,
+    "curator.stale_after_days": 30,
+    "curator.archive_after_days": 90,
+    "curator.consolidate": True,
+    "curator.prune_builtins": True,
 }
 
 SHERRY_SETTING_KEYS: tuple[str, ...] = tuple(SHERRY_SETTING_DEFAULTS)
 
-_INT_KEYS = frozenset({"TOOL_CALL_TIMEOUT_MINUTES"})
-_BOOL_KEYS = frozenset({"LANGSMITH_TRACING_V2"})
+_INT_KEYS = frozenset(
+    {
+        "TOOL_CALL_TIMEOUT_MINUTES",
+        "curator.interval_hours",
+        "curator.stale_after_days",
+        "curator.archive_after_days",
+    }
+)
+_FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
+_BOOL_KEYS = frozenset(
+    {
+        "LANGSMITH.TRACING_V2",
+        "curator.enabled",
+        "curator.consolidate",
+        "curator.prune_builtins",
+    }
+)
 
 
 def _coerce(key: str, value: Any) -> Any:
     """Coerce a parsed value to the key's declared type."""
     if key in _INT_KEYS:
         return int(value)
+    if key in _FLOAT_KEYS:
+        return float(value)
     if key in _BOOL_KEYS:
         if isinstance(value, bool):
             return value
@@ -54,8 +85,9 @@ def _coerce(key: str, value: Any) -> Any:
 def load_sherry_settings() -> dict[str, Any]:
     """Load every setting from ``sherry.jsonc`` merged over the typed defaults.
 
-    A missing or unparseable file silently yields the typed defaults — the
-    application must boot even when the config is absent or half-edited.
+    Dotted keys resolve through their nested group object. A missing or
+    unparseable file silently yields the typed defaults — the application must
+    boot even when the config is absent or half-edited.
     """
     settings: dict[str, Any] = dict(SHERRY_SETTING_DEFAULTS)
     try:
@@ -69,9 +101,14 @@ def load_sherry_settings() -> dict[str, Any]:
     if not isinstance(data, dict):
         return settings
     for key in SHERRY_SETTING_KEYS:
-        if key in data:
+        node: Any = data
+        for part in key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                break
+            node = node[part]
+        else:
             try:
-                settings[key] = _coerce(key, data[key])
+                settings[key] = _coerce(key, node)
             except (TypeError, ValueError):
                 continue
     return settings

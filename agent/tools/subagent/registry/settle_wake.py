@@ -85,7 +85,10 @@ class RequesterSettleWakeBatch:
         async def _retry():
             await asyncio.sleep(delay)
             self._timers.pop(requester_session_key, None)
-            await self.complete_batch(requester_session_key)
+            try:
+                await self.complete_batch(requester_session_key)
+            except Exception as e:
+                logger.debug("Settle wake retry failed for {}: {}", requester_session_key, e)
 
         self._timers[requester_session_key] = asyncio.create_task(_retry())
 

@@ -1,9 +1,6 @@
 {
   "a11y": {
-    "skipToMain": "메인 콘텐츠로 건너뛰기",
-    "previewImage": "이미지 미리보기",
-    "toggleTheme": "테마 전환",
-    "deleteSession": "세션 삭제"
+    "previewImage": "이미지 미리보기"
   },
   "common": {
     "confirmDelete": "삭제 확인",
@@ -11,35 +8,15 @@
     "cancel": "취소"
   },
   "chatInput": {
-    "placeholder": "메시지를 입력하세요...",
-    "thinking": "AI가 생각하고 있습니다...",
-    "waitingApproval": "승인 대기 중...",
-    "send": "보내기",
-    "stop": "중지",
     "maxImages": "최대 {count}개의 이미지를 업로드할 수 있습니다",
     "maxImagesExceed": "최대 {count}개의 이미지를 업로드할 수 있습니다. {extra}개를 초과했습니다",
     "maxAudios": "최대 {count}개의 음성을 업로드할 수 있습니다",
     "maxAudiosExceed": "최대 {count}개의 음성을 업로드할 수 있습니다. {extra}개를 초과했습니다",
     "maxVideos": "최대 {count}개의 비디오를 업로드할 수 있습니다",
-    "maxVideosExceed": "최대 {count}개의 비디오를 업로드할 수 있습니다. {extra}개를 초과했습니다",
-    "queued": "대기 중 · {queueSize}개 중 {position}번째"
+    "maxVideosExceed": "최대 {count}개의 비디오를 업로드할 수 있습니다. {extra}개를 초과했습니다"
   },
   "chatBox": {
-    "defaultUserName": "나",
-    "defaultAiName": "셰리",
-    "imageLoadFailed": "이미지 로드 실패",
-    "removeImage": "이미지 제거",
-    "removeAudio": "오디오 제거",
-    "removeVideo": "비디오 제거",
-    "toolArgs": "인자",
-    "toolResult": "실행 결과",
-    "toolNoOutput": "출력 없음",
-    "toolRunning": "실행 중…",
-    "thinking": "생각",
-    "modelMeta": "입력 {input} · 출력 {output} tokens",
-    "scrollBottom": "맨 아래로",
-    "copy": "복사",
-    "copied": "복사됨"
+    "defaultAiName": "셰리"
   },
   "chat": {
     "backgroundMessage": "백그라운드 작업"
@@ -51,79 +28,19 @@
     "sendFailed": "（전송 실패：{reason}）",
     "streamInterrupted": "연결이 끊겼습니다. 답장은 백그라운드에서 완료되었을 수 있으며 곧 자동 동기화됩니다."
   },
-  "hitl": {
-    "title": "작업 승인이 필요합니다",
-    "tool": "도구",
-    "reject": "거부",
-    "approve": "승인"
-  },
-  "taskViewer": {
-    "viewTasks": "백그라운드 작업 보기"
-  },
-  "taskDetail": {
-    "placeholder": "위 트리에서 노드를 클릭하면 작업 세부정보를 확인할 수 있습니다",
-    "taskDesc": "설명",
-    "status": "상태",
-    "depth": "깊이",
-    "agentId": "에이전트",
-    "spawnMode": "생성 모드",
-    "parentSession": "상위 세션",
-    "startedAt": "시작 시간",
-    "endedAt": "종료 시간",
-    "endedReason": "종료 이유",
-    "outcome": "결과",
-    "outcomeStatus": "결과 상태",
-    "error": "오류",
-    "resultText": "결과",
-    "delivery": "전송",
-    "steerTitle": "경로 변경 / 재개",
-    "steerHint": "보내면 하위 에이전트가 현재 컨텍스트와 새 지시에 따라 작업을 계속합니다. 비워 두면 중단된 작업만 재개합니다.",
-    "steerPlaceholder": "새 지시(선택 사항, 예: 다른 접근으로 재시도…)",
-    "steerAction": "보내고 계속하기",
-    "steerSteering": "전송 중…",
-    "steerSuccess": "지시를 전달했습니다. 하위 에이전트가 계속 진행합니다.",
-    "steerFailed": "경로 변경 실패(작업이 이미 종료되었거나 빈도 제한일 수 있음)"
-  },
-  "flow": {
-    "loading": "불러오는 중...",
-    "empty": "백그라운드 데이터가 없습니다",
-    "error": "불러오지 못했습니다"
-  },
   "connection": {
-    "reconnecting": "연결 끊김, 재연결 중… ({attempt}/{max}번째 시도)",
     "offline": "네트워크 연결 끊김",
     "backendDown": "백엔드 서비스에 연결할 수 없음",
     "backOnline": "네트워크 연결 복원됨"
   },
   "history": {
     "noSessions": "대화 기록이 없습니다",
-    "selectAll": "전체 선택",
-    "batchDelete": "대화 일괄 삭제",
-    "batchDeleteConfirm": "선택한 대화를 일괄 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
-    "createdAt": "만든 시간：{time}",
-    "dateFormat": "YYYY/MM/DD HH:mm",
-    "deleteConfirm": "이 대화를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
-    "newSession": "새 대화",
-    "searchPlaceholder": "세션 제목 검색…",
-    "dateRange": "날짜 범위로 필터링",
-    "clearFilter": "필터 지우기",
-    "noSearchResults": "일치하는 세션이 없습니다",
-    "filterToggle": "필터",
-    "editTitle": "세션 이름 바꾸기",
-    "titlePlaceholder": "새 제목 입력",
-    "titleInvalid": "제목은 30자 이내이며 영문·한글·숫자·공백 및 . _ -만 사용할 수 있습니다"
+    "newSession": "새 대화"
   },
   "sidebar": {
-    "tabSessions": "대화",
-    "tabTasks": "백그라운드 작업",
     "tasksLoading": "작업을 불러오는 중...",
     "noTasks": "백그라운드 작업이 아직 없습니다",
     "tasksUpdatedAt": "{time}에 업데이트",
-    "tasksSelectAll": "전체 선택",
-    "tasksBatchDelete": "작업 일괄 삭제",
-    "tasksBatchDeleteConfirm": "선택한 작업을 일괄 삭제하시겠습니까? 루트 작업과 모든 하위 작업이 완전히 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
-    "taskDelete": "작업 삭제",
-    "taskDeleteConfirm": "이 작업을 삭제하시겠습니까? 루트 작업과 모든 하위 작업이 완전히 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
     "tasksAgoSeconds": "{sec}초 전",
     "statusRunning": "실행 중",
     "statusInterrupted": "중단됨",
@@ -136,14 +53,7 @@
     "statusKilled": "종료됨",
     "statusUnknown": "알 수 없음",
     "roleRoot": "루트",
-    "roleChild": "작업",
-    "callingSession": "호출 세션",
-    "startTime": "시작 시간",
-    "endTime": "종료 시간",
-    "backToSession": "세션으로 돌아가기",
-    "backToSessionPrompt": "이 작업을 시작한 세션으로 이동",
-    "refreshGraph": "새로고침",
-    "refreshGraphPrompt": "실행 그래프를 다시 가져와 다시 그리기"
+    "roleChild": "작업"
   },
   "toolbar": {
     "newChat": "새 대화",
@@ -172,38 +82,11 @@
   "config": {
     "save": "저장",
     "cancel": "취소",
-    "tabs": {
-      "agents": "핵심 규칙",
-      "identity": "신원 정보",
-      "soul": "인격·영혼",
-      "user": "사용자 정보",
-      "character": "캐릭터 설정",
-      "env": "환경 설정",
-      "sherry": "앱 설정",
-      "memoryAgent": "메모리·Agent",
-      "memoryUser": "메모리·사용자"
-    },
-    "desc": {
-      "agents": "Agent 핵심 규칙：대화 흐름, 보안, 모듈 색인",
-      "identity": "Agent 신원：이름, 이모지, 아바타",
-      "soul": "Agent 인격, 어조, 성격",
-      "user": "사용자 정보 및 선호도",
-      "memoryAgent": "Agent 장기 기억 메모 (workspace/memory/MEMORY.md)",
-      "memoryUser": "사용자 장기 기억 정보 (workspace/memory/USER.md)"
-    },
     "language": {
       "zh": "简体中文",
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "crop": {
-      "title": "아바타 자르기",
-      "confirm": "확인",
-      "zoomIn": "확대",
-      "zoomOut": "축소",
-      "rotate": "회전",
-      "preview": "자르기 미리보기"
     }
   }
 }

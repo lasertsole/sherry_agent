@@ -123,6 +123,127 @@ export default defineConfig([
     }
   },
   {
+    // Nuxt 4 auto-imports every export of app/composables/ (unimport scans the
+    // directory; the generated declarations live in .nuxt/imports.d.ts), so an
+    // explicit import of a composable module is redundant. Ban it and use the
+    // auto-imported symbol directly. Type-only imports stay legal (types are
+    // NOT injected at runtime), and test files are exempt: they run under bare
+    // Vitest outside the Nuxt/unimport pipeline and must import explicitly.
+    files: ['app/**/*.{ts,mts,cts,vue}'],
+    ignores: ['**/__tests__/**', 'app/composables/*.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/composables', '@/composables/**', '~/composables', '~/composables/**'],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            },
+            {
+              group: ['~~/composables', '~~/composables/**', '@@/composables', '@@/composables/**'],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            },
+            {
+              group: [
+                '../composables',
+                '../composables/**',
+                '../../composables',
+                '../../composables/**',
+                '../../../composables',
+                '../../../composables/**'
+              ],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    // Composables importing sibling composables use relative paths ('./db')
+    // that no alias/parent pattern above can match; inside app/composables/*.ts
+    // every relative runtime import IS a composable-to-composable import, so
+    // ban those too (this block restates the alias patterns because a later
+    // matching flat-config block replaces, not merges, the same rule).
+    files: ['app/composables/*.ts'],
+    ignores: ['**/__tests__/**'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/composables', '@/composables/**', '~/composables', '~/composables/**'],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            },
+            {
+              group: ['~~/composables', '~~/composables/**', '@@/composables', '@@/composables/**'],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            },
+            {
+              group: ['../composables', '../composables/**', '../../composables', '../../composables/**'],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            },
+            {
+              group: ['./**', '../**'],
+              message:
+                'Composables are auto-imported; relative sibling imports of composables are banned (type-only imports are allowed).',
+              allowTypeImports: true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    // bridge.ts facade exception: bridge.ts re-exports the split bridge/* domain
+    // modules. Those submodules are NOT auto-imported (Nuxt scans only the top
+    // level of composables/), so the facade must reference them relatively.
+    // Only relative paths inside the facade's own subtree become legal here;
+    // aliases and parent imports stay banned.
+    files: ['app/composables/bridge.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/composables', '@/composables/**', '~/composables', '~/composables/**'],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            },
+            {
+              group: ['~~/composables', '~~/composables/**', '@@/composables', '@@/composables/**'],
+              message:
+                'Nuxt auto-imports app/composables exports; use the symbol directly (type-only imports are allowed).',
+              allowTypeImports: true
+            },
+            {
+              group: ['../composables', '../composables/**', '../../composables', '../../composables/**', '../**'],
+              message:
+                'Composables are auto-imported; only ./bridge/* relative imports are allowed in the bridge facade (type-only imports are allowed).',
+              allowTypeImports: true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
     // Global baseline. MUST stay ABOVE the override block below (flat config:
     // last matching block wins) or the no-console exemptions get overridden.
     rules: {

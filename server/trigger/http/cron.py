@@ -68,6 +68,9 @@ def _job_to_dict(job) -> dict:
     }
 
 
+_MIN_EVERY_MS: int = 1000
+
+
 def _valid_schedule(body: dict) -> CronSchedule | None:
     """Extract and validate the schedule payload, or fall back to defaults.
 
@@ -87,6 +90,8 @@ def _valid_schedule(body: dict) -> CronSchedule | None:
     if kind == "at" and at_ms is None:
         return None
     if kind == "every" and not every_ms:
+        return None
+    if kind == "every" and int(every_ms or 0) < _MIN_EVERY_MS:
         return None
     if kind == "cron" and not expr:
         return None

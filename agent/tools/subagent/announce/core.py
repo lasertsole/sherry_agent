@@ -159,15 +159,15 @@ def _schedule_descendant_wake_if_needed(run: SubagentRunRecord) -> None:
 
     async def _check():
         await asyncio.sleep(5.0)
-        from ..registry.queries import count_active_descendant_runs
+        try:
+            from ..registry.queries import count_active_descendant_runs
 
-        active = count_active_descendant_runs(run.child_session_key)
-        if active == 0:
-            try:
+            active = count_active_descendant_runs(run.child_session_key)
+            if active == 0:
                 from ..registry import wake_yield_if_all_children_settled
 
                 await wake_yield_if_all_children_settled(run.requester_session_key)
-            except Exception:  # noqa: S110
-                pass
+        except Exception as e:
+            logger.debug("Descendant wake check failed for run {}: {}", run.run_id, e)
 
     asyncio.create_task(_check())

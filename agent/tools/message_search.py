@@ -30,180 +30,313 @@ class MessageSearchSchema(BaseModel):
     limit: int = Field(default=3, description="Max sessions to summarize (default: 3, max: 5).")
 
 
-def _format_conversation(messages: list[dict[str, Any]]) -> str:
-    """Format session messages into a readable transcript for summarization."""
-    parts = []
-    for msg in messages:
-        role = msg.get("role", "unknown").upper()
-        content = msg.get("content") or ""
-        tool_name = msg.get("tool_name")
+class ConversationTruncator:
+    """Format a session transcript and pick the character window that
+    maximises coverage of the query matches."""
 
-        if role == "TOOL" and tool_name:
-            # Truncate long tool outputs
-            if len(content) > 500:
-                content = content[:250] + "\n...[truncated]...\n" + content[-250:]
-            parts.append(f"[TOOL:{tool_name}]: {content}")
-        elif role == "AI":
-            # Include tool call names if present
-            tool_calls = msg.get("tool_calls")
-            if tool_calls and isinstance(tool_calls, list):
-                tc_names = []
-                for tc in tool_calls:
-                    if isinstance(tc, dict):
-                        name = tc.get("name") or tc.get("function", {}).get("name", "?")
-                        tc_names.append(name)
-                if tc_names:
-                    parts.append(f"[ASSISTANT]: [Called: {', '.join(tc_names)}]")
-                if content:
+    @staticmethod
+    def format_conversation(messages: list[dict[str, Any]]) -> str:
+        """Format session messages into a readable transcript for summarization."""
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "unknown").upper()
+            content = msg.get("content") or ""
+            tool_name = msg.get("tool_name")
+
+            if role == "TOOL" and tool_name:
+                # Truncate long tool outputs
+                if len(content) > 500:
+                    content = content[:250] + "\n...[truncated]...\n" + content[-250:]
+                parts.append(f"[TOOL:{tool_name}]: {content}")
+            elif role == "AI":
+                # Include tool call names if present
+                tool_calls = msg.get("tool_calls")
+                if tool_calls and isinstance(tool_calls, list):
+                    tc_names = []
+                    for tc in tool_calls:
+                        if isinstance(tc, dict):
+                            name = tc.get("name") or tc.get("function", {}).get("name", "?")
+                            tc_names.append(name)
+                    if tc_names:
+                        parts.append(f"[ASSISTANT]: [Called: {', '.join(tc_names)}]")
+                    if content:
+                        parts.append(f"[ASSISTANT]: {content}")
+                else:
                     parts.append(f"[ASSISTANT]: {content}")
             else:
-                parts.append(f"[ASSISTANT]: {content}")
-        else:
-            parts.append(f"[{role}]: {content}")
+                parts.append(f"[{role}]: {content}")
 
-    return "\n\n".join(parts)
+        return "\n\n".join(parts)
 
+    @staticmethod
+    def truncate_around_matches(
+        full_text: str, query: str, max_chars: int = MAX_SESSION_CHARS
+    ) -> str:
+        """
+        Truncate a conversation transcript to *max_chars*, choosing a window
+        that maximises coverage of positions where the *query* actually appears.
 
-def _truncate_around_matches(full_text: str, query: str, max_chars: int = MAX_SESSION_CHARS) -> str:
-    """
-    Truncate a conversation transcript to *max_chars*, choosing a window
-    that maximises coverage of positions where the *query* actually appears.
+        Strategy (in priority order):
+        1. Try to find the full query as a phrase (case-insensitive).
+        2. If no phrase hit, look for positions where all query terms appear
+           within a 200-char proximity window (co-occurrence).
+        3. Fall back to individual term positions.
 
-    Strategy (in priority order):
-    1. Try to find the full query as a phrase (case-insensitive).
-    2. If no phrase hit, look for positions where all query terms appear
-       within a 200-char proximity window (co-occurrence).
-    3. Fall back to individual term positions.
+        Once candidate positions are collected the function picks the window
+        start that covers the most of them.
+        """
+        if len(full_text) <= max_chars:
+            return full_text
 
-    Once candidate positions are collected the function picks the window
-    start that covers the most of them.
-    """
-    if len(full_text) <= max_chars:
-        return full_text
+        text_lower = full_text.lower()
+        query_lower = query.lower().strip()
+        match_positions: list[int] = []
 
-    text_lower = full_text.lower()
-    query_lower = query.lower().strip()
-    match_positions: list[int] = []
+        # --- 1. Full-phrase search ------------------------------------------------
+        phrase_pat = re.compile(re.escape(query_lower))
+        match_positions = [m.start() for m in phrase_pat.finditer(text_lower)]
 
-    # --- 1. Full-phrase search ------------------------------------------------
-    phrase_pat = re.compile(re.escape(query_lower))
-    match_positions = [m.start() for m in phrase_pat.finditer(text_lower)]
+        # --- 2. Proximity co-occurrence of all terms (within 200 chars) -----------
+        if not match_positions:
+            terms = query_lower.split()
+            if len(terms) > 1:
+                # Collect every occurrence of each term
+                term_positions: dict[str, list[int]] = {}
+                for t in terms:
+                    term_positions[t] = [m.start() for m in re.finditer(re.escape(t), text_lower)]
+                # Slide through positions of the rarest term and check proximity
+                rarest = min(terms, key=lambda t: len(term_positions.get(t, [])))
+                for pos in term_positions.get(rarest, []):
+                    if all(
+                        any(abs(p - pos) < 200 for p in term_positions.get(t, []))
+                        for t in terms
+                        if t != rarest
+                    ):
+                        match_positions.append(pos)
 
-    # --- 2. Proximity co-occurrence of all terms (within 200 chars) -----------
-    if not match_positions:
-        terms = query_lower.split()
-        if len(terms) > 1:
-            # Collect every occurrence of each term
-            term_positions: dict[str, list[int]] = {}
+        # --- 3. Individual term positions (last resort) ---------------------------
+        if not match_positions:
+            terms = query_lower.split()
             for t in terms:
-                term_positions[t] = [m.start() for m in re.finditer(re.escape(t), text_lower)]
-            # Slide through positions of the rarest term and check proximity
-            rarest = min(terms, key=lambda t: len(term_positions.get(t, [])))
-            for pos in term_positions.get(rarest, []):
-                if all(
-                    any(abs(p - pos) < 200 for p in term_positions.get(t, []))
-                    for t in terms
-                    if t != rarest
-                ):
-                    match_positions.append(pos)
+                for m in re.finditer(re.escape(t), text_lower):
+                    match_positions.append(m.start())
 
-    # --- 3. Individual term positions (last resort) ---------------------------
-    if not match_positions:
-        terms = query_lower.split()
-        for t in terms:
-            for m in re.finditer(re.escape(t), text_lower):
-                match_positions.append(m.start())
-
-    if not match_positions:
-        # Nothing at all — take from the start
-        truncated = full_text[:max_chars]
-        suffix = "\n\n...[later conversation truncated]..." if max_chars < len(full_text) else ""
-        return truncated + suffix
-
-    # --- Pick window that covers the most match positions ---------------------
-    match_positions.sort()
-
-    best_start = 0
-    best_count = 0
-    for candidate in match_positions:
-        ws = max(0, candidate - max_chars // 4)  # bias: 25% before, 75% after
-        we = ws + max_chars
-        if we > len(full_text):
-            ws = max(0, len(full_text) - max_chars)
-            we = len(full_text)
-        count = sum(1 for p in match_positions if ws <= p < we)
-        if count > best_count:
-            best_count = count
-            best_start = ws
-
-    start = best_start
-    end = min(len(full_text), start + max_chars)
-
-    truncated = full_text[start:end]
-    prefix = "...[earlier conversation truncated]...\n\n" if start > 0 else ""
-    suffix = "\n\n...[later conversation truncated]..." if end < len(full_text) else ""
-    return prefix + truncated + suffix
-
-
-async def _summarize(conversation_text: str, query: str) -> str | None:
-    """Summarize a single session conversation focused on the search query."""
-    system_prompt = (
-        "You are reviewing a past conversation transcript to help recall what happened. "
-        "Summarize the conversation with a focus on the search topic. Include:\n"
-        "1. What the user asked about or wanted to accomplish\n"
-        "2. What actions were taken and what the outcomes were\n"
-        "3. Key decisions, solutions found, or conclusions reached\n"
-        "4. Any specific commands, files, URLs, or technical details that were important\n"
-        "5. Anything left unresolved or notable\n\n"
-        "Be thorough but concise. Preserve specific details (commands, paths, error messages) "
-        "that would be useful to recall. Write in past tense as a factual recap."
-    )
-
-    user_prompt = (
-        f"Search topic: {query}\n"
-        f"CONVERSATION TRANSCRIPT:\n{conversation_text}\n\n"
-        f"Summarize this conversation with focus on: {query}"
-    )
-
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
-            response = main_llm.invoke(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ]
+        if not match_positions:
+            # Nothing at all — take from the start
+            truncated = full_text[:max_chars]
+            suffix = (
+                "\n\n...[later conversation truncated]..." if max_chars < len(full_text) else ""
             )
+            return truncated + suffix
 
-            content = response.content
+        # --- Pick window that covers the most match positions ---------------------
+        match_positions.sort()
 
-            if content:
-                return content
-            # Reasoning-only / empty — let the retry loop handle it
-            logger.warning(
-                "Session search LLM returned empty content (attempt %d/%d)",
-                attempt + 1,
-                max_retries,
-            )
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1 * (attempt + 1))
-                continue
-            return content
-        except RuntimeError:
-            logger.warning("No auxiliary model available for session summarization")
-            return None
-        except Exception as e:
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1 * (attempt + 1))
-            else:
+        best_start = 0
+        best_count = 0
+        for candidate in match_positions:
+            ws = max(0, candidate - max_chars // 4)  # bias: 25% before, 75% after
+            we = ws + max_chars
+            if we > len(full_text):
+                ws = max(0, len(full_text) - max_chars)
+                we = len(full_text)
+            count = sum(1 for p in match_positions if ws <= p < we)
+            if count > best_count:
+                best_count = count
+                best_start = ws
+
+        start = best_start
+        end = min(len(full_text), start + max_chars)
+
+        truncated = full_text[start:end]
+        prefix = "...[earlier conversation truncated]...\n\n" if start > 0 else ""
+        suffix = "\n\n...[later conversation truncated]..." if end < len(full_text) else ""
+        return prefix + truncated + suffix
+
+
+class SessionSearcher:
+    """FTS5 search across past sessions (current session excluded) plus
+    retrieval of each match's conversation scope."""
+
+    def search(self, query: str, session_id: str, role_filter: str | None) -> list[dict[str, Any]]:
+        """FTS5 search — get matches ranked by relevance."""
+        role_list = None
+        if role_filter and role_filter.strip():
+            role_list = [r.strip() for r in role_filter.split(",") if r.strip()]
+
+        return search_messages(
+            query=query,
+            session_id=session_id,
+            role_filter=role_list,
+            limit=50,  # Get more matches to find unique sessions
+            offset=0,
+        )
+
+    def collect_tasks(
+        self, query: str, session_id: str, raw_results: list[dict[str, Any]]
+    ) -> list[tuple[str, dict[str, Any], str]]:
+        """Format + truncate each match's conversation scope into a summary task."""
+        # context of message
+        raw_scopes: list[list[dict[str, Any]]] = []
+        for result in raw_results:
+            raw_scopes.append(get_turns_by_turn_num_scope(result["session_id"], result["turn_num"]))
+
+        tasks: list[tuple[str, dict[str, Any], str]] = []
+        for messages, match_info in zip(raw_scopes, raw_results):
+            try:
+                if not messages:
+                    continue
+                conversation_text = _format_conversation(messages)
+                conversation_text = _truncate_around_matches(conversation_text, query)
+                tasks.append((session_id, match_info, conversation_text))
+            except Exception as e:
                 logger.warning(
-                    "Session summarization failed after %d attempts: %s",
-                    max_retries,
+                    "Failed to prepare session %s: %s",
+                    session_id,
                     e,
                     exc_info=True,
                 )
+        return tasks
+
+
+class SessionSummarizer:
+    """Parallel LLM summarization of prepared conversation transcripts."""
+
+    @staticmethod
+    async def summarize(conversation_text: str, query: str) -> str | None:
+        """Summarize a single session conversation focused on the search query."""
+        system_prompt = (
+            "You are reviewing a past conversation transcript to help recall what happened. "
+            "Summarize the conversation with a focus on the search topic. Include:\n"
+            "1. What the user asked about or wanted to accomplish\n"
+            "2. What actions were taken and what the outcomes were\n"
+            "3. Key decisions, solutions found, or conclusions reached\n"
+            "4. Any specific commands, files, URLs, or technical details that were important\n"
+            "5. Anything left unresolved or notable\n\n"
+            "Be thorough but concise. Preserve specific details (commands, paths, error messages) "
+            "that would be useful to recall. Write in past tense as a factual recap."
+        )
+
+        user_prompt = (
+            f"Search topic: {query}\n"
+            f"CONVERSATION TRANSCRIPT:\n{conversation_text}\n\n"
+            f"Summarize this conversation with focus on: {query}"
+        )
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                main_llm = (
+                    build_main_llm()
+                )  # Create a fresh LLM instance for the current event loop
+                response = main_llm.invoke(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ]
+                )
+
+                content = response.content
+
+                if content:
+                    return content
+                # Reasoning-only / empty — let the retry loop handle it
+                logger.warning(
+                    "Session search LLM returned empty content (attempt %d/%d)",
+                    attempt + 1,
+                    max_retries,
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+                    continue
+                return content
+            except RuntimeError:
+                logger.warning("No auxiliary model available for session summarization")
                 return None
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+                else:
+                    logger.warning(
+                        "Session summarization failed after %d attempts: %s",
+                        max_retries,
+                        e,
+                        exc_info=True,
+                    )
+                    return None
+
+    async def summarize_all(
+        self, tasks: list[tuple[str, dict[str, Any], str]], query: str
+    ) -> list[str | Exception]:
+        """Summarize all sessions with bounded concurrency."""
+
+        async def _summarize_all() -> list[str | Exception]:
+            max_concurrency = 5
+            semaphore = asyncio.Semaphore(max_concurrency)
+
+            async def _bounded_summary(text: str) -> str | None:
+                async with semaphore:
+                    return await _summarize(text, query)
+
+            coros = [_bounded_summary(text) for _, _, text in tasks]
+            return await asyncio.gather(*coros, return_exceptions=True)
+
+        # Use _run_async() which properly manages event loops across
+        # CLI, gateway, and worker-thread contexts.  The previous
+        # pattern (asyncio.run() in a ThreadPoolExecutor) created a
+        # disposable event loop that conflicted with cached
+        # AsyncOpenAI/httpx clients bound to a different loop,
+        # causing deadlocks in gateway mode (#2681).
+        return run_async(_summarize_all())
+
+    @staticmethod
+    def collect_summaries(
+        tasks: list[tuple[str, dict[str, Any], str]],
+        results: list[str | Exception],
+    ) -> list[str]:
+        """Assemble per-session summaries; failed/missing ones fall back to a
+        raw preview so matched sessions aren't silently dropped (fixes #3409)."""
+        summaries: list[str] = []
+        for (session_id, match_info, conversation_text), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Failed to summarize session %s: %s",
+                    session_id,
+                    result,
+                    exc_info=True,
+                )
+                result = None
+
+            # Prefer resolved parent session metadata over FTS5 match metadata.
+            # match_info carries source/model from the *child* session that contained
+            # the FTS5 hit; after _resolve_to_parent() the session_id points to the
+            # session the user actually cares about (#15909).
+            if result:
+                summary = result
+            else:
+                # Fallback: raw preview so matched sessions aren't silently
+                # dropped when the summarizer is unavailable (fixes #3409).
+                preview = (
+                    (conversation_text[:500] + "\n…[truncated]")
+                    if conversation_text
+                    else "No preview available."
+                )
+                summary = f"[Raw preview — summarization unavailable]\n{preview}"
+
+            summaries.append(summary)
+        return summaries
+
+
+def _format_conversation(messages: list[dict[str, Any]]) -> str:
+    return ConversationTruncator.format_conversation(messages)
+
+
+def _truncate_around_matches(full_text: str, query: str, max_chars: int = MAX_SESSION_CHARS) -> str:
+    return ConversationTruncator.truncate_around_matches(full_text, query, max_chars)
+
+
+async def _summarize(conversation_text: str, query: str) -> str | None:
+    return await SessionSummarizer.summarize(conversation_text, query)
 
 
 def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str:
@@ -290,19 +423,8 @@ def session_search(
     query = query.strip()
 
     try:
-        # Parse role filter
-        role_list = None
-        if role_filter and role_filter.strip():
-            role_list = [r.strip() for r in role_filter.split(",") if r.strip()]
-
-        # FTS5 search -- get matches ranked by relevance
-        raw_results = search_messages(
-            query=query,
-            session_id=session_id,
-            role_filter=role_list,
-            limit=50,  # Get more matches to find unique sessions
-            offset=0,
-        )
+        searcher = SessionSearcher()
+        raw_results = searcher.search(query, session_id, role_filter)
 
         if not raw_results or len(raw_results) == 0:
             return json.dumps(
@@ -316,49 +438,11 @@ def session_search(
                 ensure_ascii=False,
             )
 
-        # context of message
-        raw_scopes: list[list[dict[str, Any]]] = []
-        for result in raw_results:
-            raw_scopes.append(get_turns_by_turn_num_scope(result["session_id"], result["turn_num"]))
+        tasks = searcher.collect_tasks(query, session_id, raw_results)
 
-        tasks: list[tuple[str, dict[str, Any], str]] = []
-        for messages, match_info in zip(raw_scopes, raw_results):
-            try:
-                if not messages:
-                    continue
-                conversation_text = _format_conversation(messages)
-                conversation_text = _truncate_around_matches(conversation_text, query)
-                tasks.append((session_id, match_info, conversation_text))
-            except Exception as e:
-                logger.warning(
-                    "Failed to prepare session %s: %s",
-                    session_id,
-                    e,
-                    exc_info=True,
-                )
-
-        # Summarize all sessions in parallel
-        async def _summarize_all() -> list[str | Exception]:
-            """Summarize all sessions with bounded concurrency."""
-            max_concurrency = 5
-            semaphore = asyncio.Semaphore(max_concurrency)
-
-            async def _bounded_summary(text: str) -> str | None:
-                async with semaphore:
-                    return await _summarize(text, query)
-
-            coros = [_bounded_summary(text) for _, _, text in tasks]
-            return await asyncio.gather(*coros, return_exceptions=True)
-
+        summarizer = SessionSummarizer()
         try:
-            # Use _run_async() which properly manages event loops across
-            # CLI, gateway, and worker-thread contexts.  The previous
-            # pattern (asyncio.run() in a ThreadPoolExecutor) created a
-            # disposable event loop that conflicted with cached
-            # AsyncOpenAI/httpx clients bound to a different loop,
-            # causing deadlocks in gateway mode (#2681).
-
-            results = run_async(_summarize_all())
+            results = summarizer.summarize_all(tasks, query)
         except concurrent.futures.TimeoutError:
             logger.warning(
                 "Session summarization timed out after 60 seconds",
@@ -372,34 +456,7 @@ def session_search(
                 ensure_ascii=False,
             )
 
-        summaries: list[str] = []
-        for (session_id, match_info, conversation_text), result in zip(tasks, results):
-            if isinstance(result, Exception):
-                logger.warning(
-                    "Failed to summarize session %s: %s",
-                    session_id,
-                    result,
-                    exc_info=True,
-                )
-                result = None
-
-            # Prefer resolved parent session metadata over FTS5 match metadata.
-            # match_info carries source/model from the *child* session that contained
-            # the FTS5 hit; after _resolve_to_parent() the session_id points to the
-            # session the user actually cares about (#15909).
-            if result:
-                summary = result
-            else:
-                # Fallback: raw preview so matched sessions aren't silently
-                # dropped when the summarizer is unavailable (fixes #3409).
-                preview = (
-                    (conversation_text[:500] + "\n…[truncated]")
-                    if conversation_text
-                    else "No preview available."
-                )
-                summary = f"[Raw preview — summarization unavailable]\n{preview}"
-
-            summaries.append(summary)
+        summaries = summarizer.collect_summaries(tasks, results)
 
         return json.dumps(
             {"success": True, "query": query, "results": summaries, "count": len(summaries)},

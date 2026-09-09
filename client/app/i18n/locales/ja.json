@@ -1,9 +1,6 @@
 {
   "a11y": {
-    "skipToMain": "メインコンテンツへスキップ",
-    "previewImage": "画像をプレビュー",
-    "toggleTheme": "テーマを切り替え",
-    "deleteSession": "セッションを削除"
+    "previewImage": "画像をプレビュー"
   },
   "common": {
     "confirmDelete": "削除の確認",
@@ -11,35 +8,15 @@
     "cancel": "キャンセル"
   },
   "chatInput": {
-    "placeholder": "メッセージを入力してください...",
-    "thinking": "AI が考えています...",
-    "waitingApproval": "承認待ち...",
-    "send": "送信",
-    "stop": "停止",
     "maxImages": "最大 {count} 枚の画像をアップロードできます",
     "maxImagesExceed": "最大 {count} 枚の画像をアップロードできます。{extra} 枚超過しています",
     "maxAudios": "最大 {count} 個の音声をアップロードできます",
     "maxAudiosExceed": "最大 {count} 個の音声をアップロードできます。{extra} 個超過しています",
     "maxVideos": "最大 {count} 個の動画をアップロードできます",
-    "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています",
-    "queued": "順番待ち · {queueSize} 件中 {position} 番目"
+    "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています"
   },
   "chatBox": {
-    "defaultUserName": "わたし",
-    "defaultAiName": "シェリー",
-    "imageLoadFailed": "画像の読み込みに失敗しました",
-    "removeImage": "画像を削除",
-    "removeAudio": "音声を削除",
-    "removeVideo": "動画を削除",
-    "toolArgs": "引数",
-    "toolResult": "実行結果",
-    "toolNoOutput": "出力なし",
-    "toolRunning": "実行中…",
-    "thinking": "思考",
-    "modelMeta": "入力 {input} · 出力 {output} tokens",
-    "scrollBottom": "最下部へ戻る",
-    "copy": "コピー",
-    "copied": "コピーしました"
+    "defaultAiName": "シェリー"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク"
@@ -51,79 +28,19 @@
     "sendFailed": "（送信に失敗：{reason}）",
     "streamInterrupted": "接続が中断されました。返信はバックグラウンドで完了している可能性があります。まもなく自動同期されます。"
   },
-  "hitl": {
-    "title": "操作の承認が必要です",
-    "tool": "ツール",
-    "reject": "拒否",
-    "approve": "承認"
-  },
-  "taskViewer": {
-    "viewTasks": "バックグラウンドタスクを表示"
-  },
-  "taskDetail": {
-    "placeholder": "上のツリーでノードをクリックするとタスク詳細を表示します",
-    "taskDesc": "説明",
-    "status": "ステータス",
-    "depth": "深さ",
-    "agentId": "エージェント",
-    "spawnMode": "生成モード",
-    "parentSession": "親セッション",
-    "startedAt": "開始時刻",
-    "endedAt": "終了時刻",
-    "endedReason": "終了理由",
-    "outcome": "結果",
-    "outcomeStatus": "結果ステータス",
-    "error": "エラー",
-    "resultText": "結果",
-    "delivery": "配信",
-    "steerTitle": "軌道修正 / 再開",
-    "steerHint": "送信すると、子エージェントは現在のコンテキストと新しい指示に従って処理を続けます。空欄の場合は中断されたタスクの再開のみ行います。",
-    "steerPlaceholder": "新しい指示（任意。例：別のアプローチで再試行…）",
-    "steerAction": "送信して続行",
-    "steerSteering": "送信中…",
-    "steerSuccess": "指示を送信しました。子エージェントが処理を続けています。",
-    "steerFailed": "軌道修正に失敗しました（タスク終了済みまたはレート制限の可能性）"
-  },
-  "flow": {
-    "loading": "読み込み中...",
-    "empty": "バックグラウンドデータがありません",
-    "error": "読み込みに失敗しました"
-  },
   "connection": {
-    "reconnecting": "接続が切断されました。再接続中…（{attempt}/{max} 回目）",
     "offline": "ネットワークが切断されました",
     "backendDown": "バックエンドサービスに接続できません",
     "backOnline": "接続が復帰しました"
   },
   "history": {
     "noSessions": "会話履歴がありません",
-    "selectAll": "すべて選択",
-    "batchDelete": "会話を一括削除",
-    "batchDeleteConfirm": "選択した会話を一括削除してもよろしいですか？この操作は元に戻せません。",
-    "createdAt": "作成日時：{time}",
-    "dateFormat": "YYYY/MM/DD HH:mm",
-    "deleteConfirm": "この会話を削除してもよろしいですか？この操作は元に戻せません。",
-    "newSession": "新しい会話",
-    "searchPlaceholder": "セッションタイトルを検索…",
-    "dateRange": "日付範囲で絞り込み",
-    "clearFilter": "フィルターをクリア",
-    "noSearchResults": "一致するセッションがありません",
-    "filterToggle": "絞り込み",
-    "editTitle": "セッション名を変更",
-    "titlePlaceholder": "新しいタイトルを入力",
-    "titleInvalid": "タイトルは30文字以内で、英字・数字・空白および . _ - のみ使用できます"
+    "newSession": "新しい会話"
   },
   "sidebar": {
-    "tabSessions": "会話",
-    "tabTasks": "バックグラウンドタスク",
     "tasksLoading": "タスクを読み込み中...",
     "noTasks": "バックグラウンドタスクはまだありません",
     "tasksUpdatedAt": "{time} に更新",
-    "tasksSelectAll": "すべて選択",
-    "tasksBatchDelete": "タスクを一括削除",
-    "tasksBatchDeleteConfirm": "選択したタスクを一括削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
-    "taskDelete": "タスクを削除",
-    "taskDeleteConfirm": "このタスクを削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "実行中",
     "statusInterrupted": "中断",
@@ -136,14 +53,7 @@
     "statusKilled": "終了",
     "statusUnknown": "不明",
     "roleRoot": "ルート",
-    "roleChild": "タスク",
-    "callingSession": "呼び出し中セッション",
-    "startTime": "開始時刻",
-    "endTime": "終了時刻",
-    "backToSession": "セッションに戻る",
-    "backToSessionPrompt": "このタスクを開始したセッションに移動",
-    "refreshGraph": "再読み込み",
-    "refreshGraphPrompt": "実行グラフを再取得して再描画"
+    "roleChild": "タスク"
   },
   "toolbar": {
     "newChat": "新しい会話",
@@ -172,38 +82,11 @@
   "config": {
     "save": "保存",
     "cancel": "キャンセル",
-    "tabs": {
-      "agents": "コアルール",
-      "identity": "身元情報",
-      "soul": "人格・魂",
-      "user": "ユーザー情報",
-      "character": "キャラクター設定",
-      "env": "環境設定",
-      "sherry": "アプリ設定",
-      "memoryAgent": "記憶・Agent",
-      "memoryUser": "記憶・ユーザー"
-    },
-    "desc": {
-      "agents": "Agent コアルール：会話フロー、セキュリティ、モジュール一覧",
-      "identity": "Agent 身元：名前、絵文字、アバター",
-      "soul": "Agent 人格、トーン、性格",
-      "user": "ユーザー情報と好み",
-      "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
-      "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）"
-    },
     "language": {
       "zh": "简体中文",
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "crop": {
-      "title": "アバターをトリミング",
-      "confirm": "確定",
-      "zoomIn": "拡大",
-      "zoomOut": "縮小",
-      "rotate": "回転",
-      "preview": "トリミングプレビュー"
     }
   }
 }

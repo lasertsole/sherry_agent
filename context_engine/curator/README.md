@@ -436,7 +436,7 @@ Each run generates a detailed report saved under `logs/curator/{timestamp}/`:
 
 ## Configuration Reference
 
-Config file path: `curator.yaml` (at project root, alongside `ROOT_DIR`)
+Config lives in `sherry.jsonc` (project root) under the `"curator"` object.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -445,9 +445,10 @@ Config file path: `curator.yaml` (at project root, alongside `ROOT_DIR`)
 | `min_idle_hours` | `2` | Minimum idle time |
 | `stale_after_days` | `30` | Days before marking as stale |
 | `archive_after_days` | `90` | Days before deleting |
-| `consolidate` | `false` | Whether to enable LLM consolidation |
+| `consolidate` | `true` | Whether to enable LLM consolidation |
+| `prune_builtins` | `true` | Whether to clean up usage records for built-in skills |
 
-Config is loaded via `_load_config()` which reads `curator.yaml` using PyYAML. Each getter function (`is_enabled`, `get_interval_hours`, etc.) falls back to the constant defaults on parse errors.
+Config is read through `config/sherry_settings.py` (`get_sherry_setting("curator.<key>")`). Each getter function (`is_enabled`, `get_interval_hours`, etc.) falls back to the typed default declared there when the value is missing or unparseable.
 
 ---
 
@@ -497,7 +498,7 @@ Curator adheres to the following strict invariants that must never be violated:
 curator/
 ├── __init__.py           # Public API exports
 ├── constants.py          # Constants (paths, state names, defaults)
-├── config.py             # Config loading (curator.yaml + env vars)
+├── config.py             # Config getters (sherry.jsonc "curator" object)
 ├── state.py              # Curator run state persistence (.curator_state)
 ├── usage.py              # Skill usage record CRUD (.usage/{name}.json) + agent_created_report + orphan cleanup
 ├── transitions.py        # Auto state transitions + should_run_now logic

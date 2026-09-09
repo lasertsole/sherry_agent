@@ -541,6 +541,81 @@ class TestMaxTokensBoostMiddleware:
         assert len(calls) == 1
 
 
+# ---- MaxTokensBoost base resolution (three layers) --------------------------
+
+
+class TestMaxTokensBoostBaseResolution:
+    """Boost base resolves through three layers: request max_tokens → env → 8192."""
+
+    def _mw(self):
+        return MaxTokensBoostMiddleware()
+
+    @staticmethod
+    def _always_truncated_handler(boosts):
+        truncated = _ai("length", tool_calls=[{"name": "f", "args": {}, "id": "1"}])
+
+        async def handler(req):
+            if "max_tokens" in req.model_settings:
+                boosts.append(req.model_settings["max_tokens"])
+            return truncated
+
+        return handler
+
+    def test_layer1_request_max_tokens_wins_and_caps(self):
+        # initial call carries 60000; boosts (60000×2^attempt) clamp to the 32768 cap
+        boosts = []
+        req = _request(model_settings={"max_tokens": 60_000})
+        asyncio.run(self._mw().awrap_model_call(req, self._always_truncated_handler(boosts)))
+        assert boosts == [60_000, mtb._MAX_CAP, mtb._MAX_CAP, mtb._MAX_CAP]
+        assert req.model_settings["max_tokens"] == mtb._MAX_CAP
+
+    def test_layer1_never_degrades_below_call_limit(self):
+        # sub-cap request limit (20000): every injected boost stays ≥ 20000
+        boosts = []
+        req = _request(model_settings={"max_tokens": 20_000})
+        asyncio.run(self._mw().awrap_model_call(req, self._always_truncated_handler(boosts)))
+        assert boosts == [20_000, mtb._MAX_CAP, mtb._MAX_CAP, mtb._MAX_CAP]
+        assert min(boosts[1:]) >= 20_000
+
+    def test_layer1_takes_precedence_over_env_base(self, monkeypatch):
+        monkeypatch.setattr(mtb, "_BASE_MAX_TOKENS", 2048)
+        boosts = []
+        req = _request(model_settings={"max_tokens": 3000})
+        asyncio.run(self._mw().awrap_model_call(req, self._always_truncated_handler(boosts)))
+        assert boosts == [3000, 6000, 12000, 24000]
+
+    def test_layer2_env_base_used_when_request_has_no_max_tokens(self, monkeypatch):
+        monkeypatch.setattr(mtb, "_BASE_MAX_TOKENS", 2048)
+        boosts = []
+        req = _request(model_settings={})
+        asyncio.run(self._mw().awrap_model_call(req, self._always_truncated_handler(boosts)))
+        assert boosts == [4096, 8192, 16384]
+
+    def test_non_positive_request_max_tokens_falls_through(self, monkeypatch):
+        monkeypatch.setattr(mtb, "_BASE_MAX_TOKENS", 2048)
+        boosts = []
+        req = _request(model_settings={"max_tokens": 0})
+        asyncio.run(self._mw().awrap_model_call(req, self._always_truncated_handler(boosts)))
+        assert boosts == [0, 4096, 8192, 16384]
+
+    def test_layer3_default_8192_when_env_base_not_positive(self, monkeypatch):
+        monkeypatch.setattr(mtb, "_BASE_MAX_TOKENS", 0)
+        boosts = []
+        req = _request()
+        asyncio.run(self._mw().awrap_model_call(req, self._always_truncated_handler(boosts)))
+        assert boosts == [16384, 32768, 32768]
+
+    def test_sync_path_uses_request_base(self):
+        truncated = _ai("length", tool_calls=[{"name": "f", "args": {}, "id": "1"}])
+
+        def handler(req):
+            return truncated
+
+        req = _request(model_settings={"max_tokens": 60_000})
+        self._mw().wrap_model_call(req, handler)
+        assert req.model_settings["max_tokens"] == mtb._MAX_CAP
+
+
 # ---- Phase 2 + Phase 3 integration ------------------------------------------
 
 

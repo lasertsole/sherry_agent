@@ -1,8 +1,4 @@
 import { ref, type Ref } from 'vue';
-import { isSessionWsOpen, useWs } from '~/composables/ws';
-import { on, off } from '~/composables/mitt';
-import { resolveRuntimeT } from '~/composables/i18nRuntime';
-import { toastInfo, toastWarn } from '~/composables/toast';
 
 /**
  * Network / backend connectivity monitoring (event-driven, based on WebSocket heartbeat liveness detection).
@@ -83,6 +79,7 @@ const BACK_ONLINE_KEY = 'connection.backOnline';
  * Delegates to `resolveRuntimeT()` (i18nRuntime.ts) to resolve the real translation function at
  * Nuxt runtime (nuxt-i18n v10's `$i18n` is a locale state proxy without `t` and cannot be used directly);
  * unit tests / non-Nuxt contexts fall back to returning the key unchanged. Never throws in either case.
+ * @param key
  */
 function safeT(key: string): string {
   if (!isClient()) return key;

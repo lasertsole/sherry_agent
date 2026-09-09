@@ -364,22 +364,8 @@
 <script lang="ts" setup>
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { listLogFiles, readLogFile, openLogStream } from '@/composables/bridge';
 import type { LogFileInfo, LogStreamFrame } from '@/composables/bridge';
-import {
-  CLIENT_LOG_TYPES,
-  installClientLogCapture,
-  listClientLogTypes,
-  listClientLogBucketsForType,
-  readClientLogBucket,
-  clearClientLogs,
-  subscribeClientLogs,
-  levelToType,
-  typeOfEntry,
-  type ClientLogBucket,
-  type ClientLogEntry,
-  type ClientLogType
-} from '@/composables/clientLog';
+import type { ClientLogBucket, ClientLogEntry, ClientLogType } from '@/composables/clientLog';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
@@ -435,11 +421,17 @@ const selectedBucketIsCurrent = computed<boolean>(() => {
   return !!b?.is_current;
 });
 
-/** Whether the live stream should accept this entry (current type only; all = everything). */
+/**
+ * Whether the live stream should accept this entry (current type only; all = everything).
+ * @param entry
+ */
 const entryMatchesSelectedType = (entry: ClientLogEntry): boolean =>
   selectedType.value === 'all' || typeOfEntry(entry) === selectedType.value;
 
-/** Live-append new frontend logs while the dialog is open (only when the "today" bucket is selected, live is enabled, and the type matches). */
+/**
+ * Live-append new frontend logs while the dialog is open (only when the "today" bucket is selected, live is enabled, and the type matches).
+ * @param entry
+ */
 const handleFrontendEntry = (entry: ClientLogEntry) => {
   if (!entryMatchesSelectedType(entry)) return;
   frontendLines.value.push(entry);
@@ -463,7 +455,10 @@ const loadTypeList = async () => {
   }
 };
 
-/** Type switch: reload the bucket list for that type and default-select "today" (today, newest first). */
+/**
+ * Type switch: reload the bucket list for that type and default-select "today" (today, newest first).
+ * @param type
+ */
 const loadBucketsForType = async (type: ClientLogType) => {
   loadingBucketContent.value = true;
   try {
@@ -500,14 +495,20 @@ const loadBucketContent = async () => {
   }
 };
 
-/** Type switch: stop live (the type changed) and reload buckets + content. */
+/**
+ * Type switch: stop live (the type changed) and reload buckets + content.
+ * @param type
+ */
 const onTypeChange = async (type: ClientLogType) => {
   stopFrontendLive();
   selectedType.value = type;
   await loadBucketsForType(type);
 };
 
-/** Bucket switch: stop live when leaving "today"; otherwise reload the content. */
+/**
+ * Bucket switch: stop live when leaving "today"; otherwise reload the content.
+ * @param name
+ */
 const onBucketChange = async (name: string) => {
   stopFrontendLive();
   selectedBucket.value = name;
@@ -588,7 +589,10 @@ const wsStatus = ref<'idle' | 'connecting' | 'connected'>('idle');
 
 /* ---- Server tab's "type mega-bucket → per-day bucket" hierarchy (mirroring the client tab) ---- */
 
-/** Server log directory type → unified type mega-bucket: info → log (INFO stream), all → all, error → error. */
+/**
+ * Server log directory type → unified type mega-bucket: info → log (INFO stream), all → all, error → error.
+ * @param kind
+ */
 const kindToType = (kind: string): ClientLogType => (kind === 'info' ? 'log' : (kind as ClientLogType));
 
 /** Parse the server log filename `{kind}_{YYYY-MM-DD}_{pid}.log` to get the type and date. */
@@ -631,7 +635,10 @@ const serverPidsForDate = computed<ServerLogBucket[]>(() =>
 const serverSelectedDate = ref<string | null>(null);
 const serverSelectedPid = ref<string | null>(null);
 
-/** Date column switch: record the chosen date and default-select the first PID (ascending) under that date. */
+/**
+ * Date column switch: record the chosen date and default-select the first PID (ascending) under that date.
+ * @param date
+ */
 const onServerDateChange = async (date: string | null) => {
   stopLive();
   serverSelectedDate.value = date;
@@ -645,7 +652,10 @@ const onServerDateChange = async (date: string | null) => {
   if (pids[0]) await loadContent();
 };
 
-/** PID column switch: update the selected PID and read the real file corresponding to that PID. */
+/**
+ * PID column switch: update the selected PID and read the real file corresponding to that PID.
+ * @param pid
+ */
 const onServerPidChange = async (pid: string | null) => {
   stopLive();
   serverSelectedPid.value = pid;
@@ -667,7 +677,10 @@ const serverSelectedBucket = computed<string | null>(() => resolvedServerBucket.
 /** Whether the selected bucket is "today" (only it can receive live pushes). */
 const serverSelectedBucketIsCurrent = computed<boolean>(() => !!resolvedServerBucket.value?.is_current);
 
-/** Type switch: recompute the buckets under that type, default-selecting the latest "today". */
+/**
+ * Type switch: recompute the buckets under that type, default-selecting the latest "today".
+ * @param type
+ */
 const onServerTypeChange = async (type: ClientLogType) => {
   stopLive();
   serverSelectedType.value = type;
@@ -677,6 +690,7 @@ const onServerTypeChange = async (type: ClientLogType) => {
 /** Bucketing by "date + PID": every real log file of the type becomes one bucket (one PID per
  *  bucket), so multiple PIDs on the same day no longer fold into each other. The bucket `name`
  *  uses the filename as the unique key and serves as the underlying data source for the
+ * @param type
  *  "date + PID" columns. */
 const buildServerBucketsForType = (type: ClientLogType): ServerLogBucket[] => {
   // All real files under this type; filenames are grouped/matched to count the PIDs per date.
@@ -716,6 +730,7 @@ const buildServerBucketsForType = (type: ClientLogType): ServerLogBucket[] => {
 
 /** Load the bucket list for the type: one bucket per backend log file (with its own path),
  *  default-selecting the latest "today" file and using it to set the initial "date + PID"
+ * @param type
  *  column values. */
 const loadServerBucketsForType = async (type: ClientLogType) => {
   loadingFiles.value = true;
@@ -744,7 +759,10 @@ const loadServerBucketsForType = async (type: ClientLogType) => {
 /** File path of the currently selected bucket (used for reading/live), resolved from "date + PID". */
 const serverSelectedFilePath = computed<string | null>(() => resolvedServerBucket.value?.path ?? null);
 
-/** Whether the live stream should accept this log entry (current type only; all = everything). */
+/**
+ * Whether the live stream should accept this log entry (current type only; all = everything).
+ * @param level
+ */
 const frameMatchesSelectedType = (level: string): boolean =>
   serverSelectedType.value === 'all' || levelToType(level) === serverSelectedType.value;
 
@@ -752,7 +770,10 @@ const consoleRef = ref<HTMLElement | null>(null);
 let streamHandle: { close: () => void } | null = null;
 let userScrolledUp = false;
 
-/** Return the Tailwind color classes for a log level (dark-mode aware) */
+/**
+ * Return the Tailwind color classes for a log level (dark-mode aware)
+ * @param level
+ */
 const levelClass = (level: string): string => {
   const lv = (level || '').toUpperCase();
   if (lv === 'TRACE' || lv === 'DEBUG') return 'text-gray-500 dark:text-gray-400';
@@ -762,10 +783,16 @@ const levelClass = (level: string): string => {
   return 'text-gray-800 dark:text-gray-200';
 };
 
-/** Format a single log line: `{message}` (the raw text already contains the timestamp and level) */
+/**
+ * Format a single log line: `{message}` (the raw text already contains the timestamp and level)
+ * @param line
+ */
 const formatLine = (line: LogLine): string => line.text;
 
-/** Append log lines (live stream), dropping the oldest when over the cap */
+/**
+ * Append log lines (live stream), dropping the oldest when over the cap
+ * @param newLines
+ */
 const appendLines = (newLines: LogLine[]) => {
   if (newLines.length === 0) return;
   lines.value = [...lines.value, ...newLines];
@@ -829,7 +856,10 @@ const loadContent = async () => {
   }
 };
 
-/** Infer the level from a raw log text line (used for coloring) */
+/**
+ * Infer the level from a raw log text line (used for coloring)
+ * @param text
+ */
 const inferLevel = (text: string): string => {
   const m = text.match(/\b(TRACE|DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\b/);
   return m?.[1] ?? 'INFO';

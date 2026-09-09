@@ -68,18 +68,44 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-import importlib
 import json
 import os
 import shutil
-import subprocess
-from dataclasses import dataclass, field, asdict
-from enum import StrEnum
+import subprocess as subprocess
 from pathlib import Path
 from typing import Any
 
+import importlib
+
 from loguru import logger
 from server.utils.atomic_io import atomic_write_text
+from server.service.skill_scan_model import (
+    ScanFinding as ScanFinding,
+    ScanResult as ScanResult,
+    ScanStatus as ScanStatus,
+    Severity as Severity,
+    _extract_scan_result as _extract_scan_result,
+    _normalise_findings as _normalise_findings,
+    _scan_result_from_dict,
+)
+from server.service.skill_scan_backend import (
+    _CLI_TIMEOUT as _CLI_TIMEOUT,
+    _cli_timeout as _cli_timeout,
+    _llm_env,
+    _run_cli,
+    _run_python_api,
+    _unavailable,
+)
+from server.service.skill_scan_policy import (
+    build_caution_warnings as build_caution_warnings,
+    build_reject_message as build_reject_message,
+)
+from server.service.skill_scan_cache import (
+    _CACHE_VERSION,
+    _VERSION_FINGERPRINT_CACHE,
+    _directory_content_hash,
+    _scanner_version_fingerprint,
+)
 
 # Sentinel used by the CLI/Python backends to signal "scanner could not run".
 _UNSET = object()
@@ -92,246 +118,10 @@ _ENABLED_ENV = os.environ.get("SKILL_SCANNER_ENABLED", "1").strip().lower() not 
     "off",
 }
 
-#: Env flag that enables LLM semantic analysis. Defaults to OFF (``0``) —
-#: opt in with ``SKILL_SCANNER_LLM=1`` (see the provider limitation note in the
-#: module docstring). When LLM analysis is enabled, analyzer-eligible skill
-#: contents are sent to the configured OpenAI-compatible provider
-#: (see :func:`_llm_env`).
-_LLM_ENABLED_ENV = os.environ.get("SKILL_SCANNER_LLM", "0").strip().lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
+#: Location of the verdict cache (``src/`` is git-ignored runtime data).
+_CACHE_PATH: Path = Path(__file__).resolve().parents[2] / "src" / "data" / "skills_scan_cache.json"
 
-
-def _llm_env() -> dict[str, str]:
-    """Env vars forwarded to the SkillSpector subprocess for LLM analysis.
-
-    The CLI reads ``SKILLSPECTOR_PROVIDER`` / ``SKILLSPECTOR_MODEL`` /
-    ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` from its own subprocess env. To
-    avoid duplicating credentials, these are derived from the app's
-    ``AUXILIARY_LLM_*`` settings (the lightweight model tier used for simple
-    auxiliary tasks) unless the caller pre-set them explicitly. The auxiliary
-    LLM is a deliberate choice: skill scanning is a low-stakes supporting task,
-    so it should not consume the main model's quota.
-
-    Returns an empty dict when LLM analysis is disabled so the subprocess runs
-    static-only (never leaks env vars or sends contents to a provider).
-    """
-    if not _LLM_ENABLED_ENV:
-        return {}
-    env = {
-        "SKILLSPECTOR_PROVIDER": "openai",
-        "OPENAI_BASE_URL": os.environ.get(
-            "AUXILIARY_LLM_API_BASE", os.environ.get("OPENAI_BASE_URL", "")
-        ),
-        "OPENAI_API_KEY": os.environ.get(
-            "AUXILIARY_LLM_API_KEY", os.environ.get("OPENAI_API_KEY", "")
-        ),
-    }
-    model = os.environ.get("SKILLSPECTOR_MODEL") or os.environ.get("AUXILIARY_LLM_API_NAME") or ""
-    if model:
-        env["SKILLSPECTOR_MODEL"] = model
-    # Keep any explicit overrides the operator set (e.g. OPENAI_BASE_URL for a
-    # local Ollama endpoint) instead of always clobbering them with the app's.
-    for key in ("SKILLSPECTOR_PROVIDER", "OPENAI_BASE_URL", "OPENAI_API_KEY"):
-        explicit = os.environ.get(key)
-        if explicit:
-            env[key] = explicit
-    if not env.get("OPENAI_BASE_URL") or not env.get("OPENAI_API_KEY"):
-        logger.warning(
-            "SkillSpector LLM analysis requested but AUXILIARY_LLM_API_BASE/KEY "
-            + "are missing; static-only scan will run for the subprocess"
-        )
-        return {}
-    return env
-
-
-#: CLI flag that turns the scanner into a hard gate when the scanner is running
-#: but the skill's verdict is `DO_NOT_INSTALL` (see ``scan_skill``).
-#: (Kept as a module constant so tests + callers can reason about the policy.)
-FAIL_CLOSED_ON_DO_NOT_INSTALL = True
-
-#: Expected exit codes from the ``skillspector scan`` command.
-#: 0 = SAFE or CAUTION, 1 = DO_NOT_INSTALL, 2 = error (scanner failed to run).
-_EXIT_OK = 0
-_EXIT_DO_NOT_INSTALL = 1
-_EXIT_ERROR = 2
-
-#: How long (seconds) the CLI subprocess may run before it is killed.
-_CLI_TIMEOUT = 120
-
-#: Env var overriding the CLI subprocess timeout (seconds), read on every
-#: call so operators can tune it without a code change.
-_CLI_TIMEOUT_ENV = "SKILL_SCANNER_TIMEOUT"
-
-
-def _cli_timeout() -> int:
-    """Resolve the CLI subprocess timeout in seconds.
-
-    Reads ``SKILL_SCANNER_TIMEOUT`` on every call: unset/empty falls back to
-    the module default :data:`_CLI_TIMEOUT`; a valid integer is clamped to at
-    least 1; an invalid (non-integer) value logs a warning and falls back to
-    the default. Never raises.
-    """
-    raw = os.environ.get(_CLI_TIMEOUT_ENV, "")
-    if not raw:
-        return _CLI_TIMEOUT
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        logger.warning(
-            "Invalid {} value '{}'; falling back to default {}s",
-            _CLI_TIMEOUT_ENV,
-            raw,
-            _CLI_TIMEOUT,
-        )
-        return _CLI_TIMEOUT
-
-
-class ScanStatus(StrEnum):
-    """Top-level outcome of a skill scan."""
-
-    #: Scanner ran and returned a verdict (SAFE / CAUTION / DO_NOT_INSTALL).
-    SCANNED = "scanned"
-    #: Scanner could not run (not installed, subprocess error, timeout, ...).
-    UNAVAILABLE = "unavailable"
-
-
-class Severity(StrEnum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
-@dataclass
-class ScanFinding:
-    """A single pattern/finding reported by SkillSpector."""
-
-    title: str
-    category: str = ""
-    severity: Severity | str = Severity.LOW
-    description: str = ""
-    path: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
-class ScanResult:
-    """Normalised result of a SkillSpector scan on one skill directory."""
-
-    #: One of "scanned" (a real verdict) or "unavailable" (scanner did not run).
-    status: ScanStatus
-    #: 0-100 aggregated risk score. ``None`` when status is UNAVAILABLE.
-    risk_score: int | None = None
-    #: "SAFE" | "CAUTION" | "DO_NOT_INSTALL". ``None`` when unavailable.
-    risk_recommendation: str | None = None
-    risk_severity: Severity | str | None = None
-    findings: list[ScanFinding] = field(default_factory=list)
-
-    #: Backend that produced this result ("cli", "python", or None).
-    backend: str | None = None
-
-    @property
-    def is_unavailable(self) -> bool:
-        return self.status is ScanStatus.UNAVAILABLE
-
-    @property
-    def is_do_not_install(self) -> bool:
-        return (
-            self.status is ScanStatus.SCANNED
-            and str(self.risk_recommendation or "").upper() == "DO_NOT_INSTALL"
-        )
-
-    @property
-    def is_caution(self) -> bool:
-        return (
-            self.status is ScanStatus.SCANNED
-            and str(self.risk_recommendation or "").upper() == "CAUTION"
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status.value,
-            "risk_score": self.risk_score,
-            "risk_recommendation": self.risk_recommendation,
-            "risk_severity": (
-                self.risk_severity.value
-                if isinstance(self.risk_severity, Severity)
-                else self.risk_severity
-            ),
-            "backend": self.backend,
-            "findings": [f.to_dict() for f in self.findings],
-        }
-
-
-def _severity(value: Any) -> Severity | str:
-    """Coerce a raw severity into a :class:`Severity`, tolerating bad input."""
-    if not value:
-        return Severity.LOW
-    text = str(value).lower()
-    for sev in Severity:
-        if sev.value in text:
-            return sev
-    return text
-
-
-def _normalise_findings(raw: Any) -> list[ScanFinding]:
-    """Normalise SkillSpector findings (CLI JSON or Python API) into a list."""
-    findings: list[ScanFinding] = []
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            findings.append(
-                ScanFinding(
-                    title=str(item.get("title") or item.get("rule") or item.get("id") or "Finding"),
-                    category=str(item.get("category") or ""),
-                    severity=_severity(item.get("severity")),
-                    description=str(item.get("description") or item.get("message") or ""),
-                    path=str(item.get("file") or item.get("path") or item.get("location") or ""),
-                )
-            )
-    elif isinstance(raw, dict):
-        # Some versions nest findings under a key (e.g. "findings" / "results").
-        nested = raw.get("findings") or raw.get("results") or raw.get("issues")
-        if nested is not None:
-            return _normalise_findings(nested)
-    return findings
-
-
-def _extract_scan_result(
-    payload: dict[str, Any] | None,
-    *,
-    backend: str,
-) -> ScanResult:
-    """Build a normalised :class:`ScanResult` from a SkillSpector dict/JSON."""
-    if not isinstance(payload, dict):
-        return ScanResult(
-            status=ScanStatus.SCANNED,
-            risk_score=0,
-            risk_recommendation="UNKNOWN",
-            backend=backend,
-        )
-    score = payload.get("risk_score")
-    try:
-        score = int(score) if score is not None else 0
-    except (TypeError, ValueError):
-        score = 0
-    rec = str(payload.get("risk_recommendation") or "UNKNOWN").upper()
-    severity = payload.get("risk_severity")
-    return ScanResult(
-        status=ScanStatus.SCANNED,
-        risk_score=score,
-        risk_recommendation=rec,
-        risk_severity=_severity(severity),
-        findings=_normalise_findings(payload.get("filtered_findings") or payload.get("findings")),
-        backend=backend,
-    )
+_BACKEND_CACHE: dict[str, bool | None] = {}
 
 
 def _is_available(backend: str) -> bool:
@@ -350,9 +140,6 @@ def _is_available(backend: str) -> bool:
     return False
 
 
-_BACKEND_CACHE: dict[str, bool | None] = {}
-
-
 def _probe_backend(backend: str) -> bool:
     """Memoised availability probe for a backend."""
     cached = _BACKEND_CACHE.get(backend)
@@ -361,87 +148,6 @@ def _probe_backend(backend: str) -> bool:
     available = _is_available(backend)
     _BACKEND_CACHE[backend] = available
     return available
-
-
-def _run_cli(path: Path) -> ScanResult:
-    """Scan using the ``skillspector`` CLI (json output).
-
-    LLM semantic analysis is opt-in (see :func:`_llm_env`); the subprocess
-    runs static-only unless ``SKILL_SCANNER_LLM=1``. The subprocess is killed
-    after ``SKILL_SCANNER_TIMEOUT`` seconds (default :data:`_CLI_TIMEOUT`).
-    """
-    exe = shutil.which("skillspector")
-    if not exe:
-        return _unavailable("cli")
-    cmd = [exe, "scan", str(path), "--format", "json"]
-    extra_env = _llm_env()
-    if not extra_env:
-        cmd.append("--no-llm")
-    merged_env = {**os.environ, **extra_env}
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_cli_timeout(),
-            check=False,
-            env=merged_env,
-        )
-    except subprocess.TimeoutExpired:
-        logger.warning("SkillSpector CLI timed out on {}", path)
-        return _unavailable("cli")
-    except OSError as exc:  # e.g. binary missing mid-run
-        logger.warning("SkillSpector CLI failed to launch for {}: {}", path, exc)
-        return _unavailable("cli")
-
-    if proc.returncode == _EXIT_ERROR:
-        stderr = (proc.stderr or "").strip()[-800:]
-        logger.warning(
-            "SkillSpector CLI reported an error for {}: {}", path, stderr or proc.stdout[:500]
-        )
-        return _unavailable("cli")
-
-    # exit 0 (SAFE/CAUTION) or 1 (DO_NOT_INSTALL): parse JSON regardless of the
-    # exact exit code — the recommendation lives in the body, not the rc.
-    try:
-        payload = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        logger.warning("SkillSpector CLI returned invalid JSON for {}", path)
-        return _unavailable("cli")
-    result = _extract_scan_result(payload, backend="cli")
-    if proc.returncode == _EXIT_DO_NOT_INSTALL:
-        result.risk_recommendation = "DO_NOT_INSTALL"
-    return result
-
-
-def _run_python_api(path: Path) -> ScanResult:
-    """Scan using the in-process ``skillspector.graph`` API (static-only)."""
-    try:
-        from skillspector import graph  # type: ignore[import-not-found]
-    except Exception as exc:
-        logger.debug("skillspector python API unavailable: {}", exc)
-        return _unavailable("python")
-    try:
-        result = graph.invoke(
-            {
-                "input_path": str(path),
-                "output_format": "json",
-                "use_llm": False,
-            }
-        )
-    except Exception as exc:
-        logger.warning("SkillSpector python API failed for {}: {}", path, exc)
-        return _unavailable("python")
-    if isinstance(result, dict):
-        return _extract_scan_result(result, backend="python")
-    logger.warning("SkillSpector python API returned unexpected type for {}", path)
-    return _unavailable("python")
-
-
-def _unavailable(backend: str | None = None) -> ScanResult:
-    return ScanResult(status=ScanStatus.UNAVAILABLE, backend=backend)
 
 
 def _resolve_backend() -> str | None:
@@ -455,111 +161,9 @@ def _resolve_backend() -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Verdict-level, content-addressed disk cache
-# ---------------------------------------------------------------------------
-# Scans are expensive (the CLI may take ~2 min with LLM analysis enabled), but
-# their verdict depends only on: the skill's file contents, the scanner
-# version, the LLM mode and the backend. Those four inputs are folded into a
-# content-addressed key (NO filesystem path: uploads land in random staging
-# dirs, and identical content must share a verdict). Verdicts are stored in a
-# single JSON file under the runtime data tree and re-served on warm starts.
-# Every cache access is fail-open: a broken cache never blocks or slows a scan.
-
-#: Location of the verdict cache (``src/`` is git-ignored runtime data).
-_CACHE_PATH: Path = Path(__file__).resolve().parents[2] / "src" / "data" / "skills_scan_cache.json"
-
-#: Memoised scanner-version fingerprints per backend id.
-_VERSION_FINGERPRINT_CACHE: dict[str, str] = {}
-
-#: How long (seconds) the ``--version`` probe of the CLI may run.
-_VERSION_PROBE_TIMEOUT = 10
-
-#: On-disk schema version of the cache file.
-_CACHE_VERSION = 1
-
-
-def _directory_content_hash(directory: Path) -> str:
-    """Content-addressed hash of every file under *directory*.
-
-    Walks the tree in sorted order and chains, per file, its POSIX-relative
-    path and the sha256 of its bytes into one final sha256 hex digest, so any
-    content change (rename, edit, added file) changes the digest.
-    ``__pycache__`` dirs and ``*.pyc`` files are skipped (interpreter noise).
-    A nonexistent directory hashes like an empty one (the loop never runs, so
-    the result equals the sha256 of empty bytes) and never raises.
-    """
-    overall = hashlib.sha256()
-    if directory.is_dir():
-        for root, dirs, files in os.walk(directory):
-            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-            for name in sorted(files):
-                if name.endswith(".pyc"):
-                    continue
-                full = Path(root) / name
-                rel = full.relative_to(directory).as_posix()
-                try:
-                    file_hash = hashlib.sha256(full.read_bytes()).hexdigest()
-                except OSError:
-                    file_hash = "unreadable"  # deleted/raced mid-walk; stay deterministic
-                overall.update(rel.encode("utf-8") + b"\0" + file_hash.encode("ascii"))
-    return overall.hexdigest()
-
-
-def _cli_version_fingerprint(exe: str) -> str:
-    """Version string of the CLI binary, with an exe-staleness fallback.
-
-    Probes ``<exe> --version`` with a short timeout; when the probe fails or
-    yields nothing, falls back to ``<mtime>:<size>`` of the binary so a
-    replaced CLI still invalidates cached verdicts. Never raises.
-    """
-    try:
-        proc = subprocess.run(
-            [exe, "--version"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_VERSION_PROBE_TIMEOUT,
-            check=False,
-        )
-        version = (proc.stdout or "").strip()
-        first_line = version.splitlines()[0].strip() if version else ""
-        if first_line:
-            return first_line
-    except Exception:  # noqa: S110
-        pass
-    try:
-        st = os.stat(exe)
-        return f"{st.st_mtime}:{st.st_size}"
-    except OSError:
-        return "unknown"
-
-
-def _scanner_version_fingerprint(backend: str) -> str:
-    """Memoised fingerprint of the scanner installation for *backend*.
-
-    ``"python"`` backends are fingerprinted as ``"python-api"`` (the in-process
-    API has no separate binary). ``"cli"`` is fingerprinted by its reported
-    version string, falling back to binary staleness. Any probe error fails
-    open to the bare backend id — the cache just becomes less precise, never
-    wrong in a blocking way.
-    """
-    cached = _VERSION_FINGERPRINT_CACHE.get(backend)
-    if cached is not None:
-        return cached
-    fingerprint = backend  # fail-open default
-    try:
-        if backend == "python":
-            fingerprint = "python-api"
-        elif backend == "cli":
-            exe = shutil.which("skillspector")
-            if exe:
-                fingerprint = _cli_version_fingerprint(exe)
-    except Exception as exc:
-        logger.debug("SkillSpector version probe failed for {}: {}", backend, exc)
-    _VERSION_FINGERPRINT_CACHE[backend] = fingerprint
-    return fingerprint
+def reset_backend_cache() -> None:
+    """Clear the memoised backend-availability cache (used by tests)."""
+    _BACKEND_CACHE.clear()
 
 
 def _llm_fingerprint() -> str:
@@ -587,46 +191,6 @@ def _scan_cache_key(path: Path, backend: str) -> str:
     digest.update(_llm_fingerprint().encode("utf-8"))
     digest.update(backend.encode("utf-8"))
     return digest.hexdigest()
-
-
-def _scan_result_from_dict(data: Any) -> ScanResult:
-    """Rebuild a :class:`ScanResult` from its :meth:`ScanResult.to_dict` form.
-
-    ``to_dict`` serialises severity enums to their string values, so severities
-    are re-coerced through :func:`_severity` on the way back. Raises
-    ``ValueError`` on any malformed shape (the caller fails open).
-    """
-    if not isinstance(data, dict):
-        raise ValueError("cache entry 'result' is not a dict")
-    status_raw = data.get("status")
-    if status_raw == ScanStatus.SCANNED.value:
-        status = ScanStatus.SCANNED
-    elif status_raw == ScanStatus.UNAVAILABLE.value:
-        status = ScanStatus.UNAVAILABLE
-    else:
-        raise ValueError(f"unknown scan status in cache: {status_raw!r}")
-    findings: list[ScanFinding] = []
-    for item in data.get("findings") or []:
-        if not isinstance(item, dict):
-            continue
-        findings.append(
-            ScanFinding(
-                title=str(item.get("title") or ""),
-                category=str(item.get("category") or ""),
-                severity=_severity(item.get("severity")),
-                description=str(item.get("description") or ""),
-                path=str(item.get("path") or ""),
-            )
-        )
-    severity = data.get("risk_severity")
-    return ScanResult(
-        status=status,
-        risk_score=data.get("risk_score"),
-        risk_recommendation=data.get("risk_recommendation"),
-        risk_severity=_severity(severity) if severity else severity,
-        findings=findings,
-        backend=data.get("backend"),
-    )
 
 
 def _lookup_scan_cache(key: str) -> ScanResult | None:
@@ -763,57 +327,3 @@ def scan_skill(path: str | os.PathLike[str]) -> ScanResult:
         )
         return _finish(_run_python_api(p))
     return _finish(_run_python_api(p))
-
-
-def build_caution_warnings(result: ScanResult) -> list[str]:
-    """Build user-facing advisory warnings for a CAUTION verdict.
-
-    Returns an empty list when the result is not a CAUTION (SAFE, UNAVAILABLE,
-    or DO_NOT_INSTALL) — in the DO_NOT_INSTALL case the upload is blocked by
-    :func:`build_reject_message` instead. Each returned string is a concise,
-    human-readable reason the skill was flagged, so the client can surface it
-    without blocking the upload.
-    """
-    if not result.is_caution:
-        return []
-    finding_titles = [f.title for f in result.findings if f.title]
-    score = result.risk_score if result.risk_score is not None else 0
-    prefix = f"Skill flagged by security scanner (CAUTION, risk score {score})."
-    if not finding_titles:
-        return [prefix]
-    return [prefix + f" Flags: {', '.join(dict.fromkeys(finding_titles))}."]
-
-
-def build_reject_message(result: ScanResult) -> str | None:
-    """Translate a :class:`ScanResult` into an upload-blocking message.
-
-    Returns ``None`` when the upload may proceed, or the human-readable reason
-    to surface in a 400 response when it must be blocked.
-
-    Policy
-    ------
-    * ``DO_NOT_INSTALL`` (scanner available) -> reject (fail-closed).
-    * ``CAUTION`` / ``SAFE`` -> allow (return ``None``).
-    * ``UNAVAILABLE`` (scanner not installed / errored) -> allow; this is a
-      dev-convenience gate, and the app must keep working when the scanner is
-      absent.
-    """
-    if result.is_unavailable:
-        logger.warning("Skill security scanner unavailable; allowing upload without scan verdict")
-        return None
-    if result.is_do_not_install:
-        score = result.risk_score if result.risk_score is not None else 0
-        findings = result.findings or []
-        detail = findings[0].title if findings else "no detailed findings"
-        return (
-            f"Skill rejected by security scanner: recommendation "
-            f"DO_NOT_INSTALL (risk score {score}). Reason: {detail}."
-        )
-    # SAFE / CAUTION -> allow.
-    return None
-
-
-# Allow an explicit re-probe for tests/clients that install the tool at runtime.
-def reset_backend_cache() -> None:
-    """Clear the memoised backend-availability cache (used by tests)."""
-    _BACKEND_CACHE.clear()

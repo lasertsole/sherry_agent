@@ -3,7 +3,7 @@
 Error-text contract: tools NEVER raise business errors to the LLM; they
 return human-readable strings prefixed with ``Error:``. Conflict texts embed
 the latest revision so the caller can re-read (taskflow_summary) and retry
-with the freshest expected_revision, per skills/taskflow/SKILL.md.
+with the freshest expected_revision, per skills/builtin/core/taskflow/SKILL.md.
 """
 
 from ..config import TERMINAL_STATUSES
