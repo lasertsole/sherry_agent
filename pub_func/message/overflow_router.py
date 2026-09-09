@@ -19,14 +19,14 @@ Thresholds are imported from ``config.num`` — never redefined here:
     MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE (200) → candidate floor
     TRUNCATABLE_RECENT_SKIP (6) → most recent messages never truncated
 
-Soft/hard overflow semantics (软/硬溢出):
-    软溢出 (threshold_truncate <= pressure < threshold_compact): pressure is
+Soft/hard overflow semantics (soft vs. hard overflow):
+    Soft overflow (threshold_truncate <= pressure < threshold_compact): pressure is
     above the preemptive-truncate line but still inside usable_budget.
-    够截断就截、不够不动 — if any truncatable candidate exists, route to
+    Truncate if possible, otherwise stand pat — if any truncatable candidate exists, route to
     truncation only; otherwise do nothing ("fits"). Compression is never
     triggered by soft overflow alone.
-    硬溢出 (pressure >= threshold_compact): the context must be pressed back
-    below usable_budget (必须压回 usable_budget 以下). If the truncatable
+    Hard overflow (pressure >= threshold_compact): the context must be pressed back
+    below usable_budget (pressed below usable_budget). If the truncatable
     token sum covers the overflow, truncation alone suffices; if there are
     candidates but not enough tokens, compression runs first with truncation
     as backstop; with no candidates at all, only compression can help.
@@ -116,11 +116,11 @@ def decide_route(
       pressure < threshold_truncate
           → "fits"
       soft overflow (threshold_truncate <= pressure < threshold_compact):
-          够截断就截、不够不动 — candidates exist →
+          truncate if possible, otherwise stand pat — candidates exist →
           "truncate_tool_results_only"; none → "fits" (compression is never
           triggered by soft overflow alone)
       hard overflow (pressure >= threshold_compact):
-          必须压回 usable_budget 以下 — overflow = pressure − usable_budget;
+          must be pressed below usable_budget — overflow = pressure − usable_budget;
           candidate token sum >= overflow → "truncate_tool_results_only";
           0 < sum < overflow → "compact_then_truncate"; no candidates →
           "compact_only"

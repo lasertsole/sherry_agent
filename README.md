@@ -198,7 +198,7 @@ EMA_AI_agent/
 │
 ├── temp/                   # Temporary files
 │
-├── tests/                  # Test suite (pytest) + run_tests_split.py (process-isolated test runner)
+├── tests/                  # Mirror-structured pytest suite (tests/<source>/...) + run_tests_split.py (marker-based runner)
 │
 ├── type/                   # Shared data models
 │   ├── message.py          # MultiModalMessage, Chat, etc.
@@ -313,11 +313,11 @@ The client connects to the Python backend at `http://127.0.0.1:8080` by default 
 
 ## 🧪 Testing
 
-Tests live under `tests/{unit,integration,system,module}` and run with **pytest** via uv (`uv run pytest` for a single test file or a small selection).
+Tests live under `tests/`, **mirroring the source tree** (`tests/agent/...`, `tests/server/...`, `tests/context_engine/...`), and run with **pytest** via uv (`uv run pytest` for a single test file or a small selection). Every test file carries a module-level `pytestmark` (`unit` / `integration` / `module` / `system` / `regression`) that selects which runner group executes it.
 
 ### Recommended: the process-isolated runner
 
-For the full suite (and for CI), use the split runner — it executes the suite in **two sequential pytest processes** (never parallel), aggregates their exit codes, and prints a per-group summary plus a final verdict (exit code 0 only if both groups pass):
+For the full suite (and for CI), use the split runner — it executes the suite in **three sequential pytest processes** (never parallel), selecting tests by MARKER (not by directory), aggregates their exit codes, and prints a per-group summary plus a final verdict (exit code 0 only if all groups pass):
 
 ```bash
 uv run python tests/run_tests_split.py                  # hermetic suite (default, llm_e2e excluded)
@@ -325,12 +325,13 @@ uv run python tests/run_tests_split.py --with-llm-e2e   # ONLY the real-LLM e2e 
 uv run python tests/run_tests_split.py -- -k spawn -q   # args after `--` are forwarded to pytest
 ```
 
-| Group | Directories | Contents |
-| :---- | :---------- | :------- |
-| **A** | `tests/unit` | unit tests (home of the `sys.modules` stubs described below) |
-| **B** | `tests/integration`, `tests/system`, `tests/module` | hermetic integration / system / module tests |
+| Group | Marker | Contents |
+| :---- | :----- | :------- |
+| **A** | `unit` | pure-logic, fully mocked tests |
+| **B** | `integration or module or system` | hermetic integration / module / system tests |
+| **C** | `regression` | cross-module regression tests |
 
-**Why two processes?** `tests/unit/subagent/conftest.py` installs stub callables into process-global `sys.modules` at conftest *import* time. In a single-process full-suite run, pytest imports every conftest and test module during collection — before any test executes — so those stubs are live for the whole process and leak across directories: lazy (call-time) imports resolve the stub, while modules that bound the real object earlier keep stale bindings. The result is confusing, order-dependent failures in suites far away from `tests/unit` (e.g. skill-scope assertions seeing a stub's fixed skill list, `TypeError` tracebacks naming conftest lambdas). Running the groups in separate processes makes this cross-suite pollution structurally impossible. (The stubs themselves are restore-safe since `c730a46`; the runner is the defense-in-depth operational layer.)
+**Why separate processes?** `tests/agent/tools/subagent/conftest.py` installs stub callables into process-global `sys.modules` at conftest *import* time. In a single-process full-suite run, pytest imports every conftest and test module during collection — before any test executes — so those stubs are live for the whole process and leak across suites: lazy (call-time) imports resolve the stub, while modules that bound the real object earlier keep stale bindings. The result is confusing, order-dependent failures in suites far away from the subagent tests (e.g. skill-scope assertions seeing a stub's fixed skill list, `TypeError` tracebacks naming conftest lambdas). Running the groups in separate processes makes this cross-suite pollution structurally impossible. (The stubs themselves are restore-safe since `c730a46`; the runner is the defense-in-depth operational layer.)
 
 **Windows note:** child pytest processes get `PYTHONIOENCODING=utf-8` in their environment and the runner captures their output with `errors="replace"`, so GBK console codepages can neither corrupt the output nor crash the run.
 

@@ -60,19 +60,22 @@ async def ws_processor(session_id: str, event: str, content: str | dict[str, Any
 
 def ping_processor(session_id: str, content: str | dict[str, Any]) -> str | dict[str, Any]:
     """
-    心跳保活处理器
+    Heartbeat keep-alive processor.
 
-    客户端基于 /sessions/ws 连接做应用层存活检测：定期发送 event="ping" 的
-    心跳帧，这里原样回复 {"event": "pong"}（返回 dict 而非 str，客户端收到的
-    即为 JSON 对象帧），用于替代旧的 HTTP 轮询健康检查。
+    The client performs application-level liveness detection over the
+    /sessions/ws connection: it periodically sends a heartbeat frame with
+    event="ping", and this handler replies verbatim with {"event": "pong"}
+    (returning a dict instead of a str so the client receives a JSON object
+    frame). This replaces the old HTTP-polling health check.
 
-    注意：必须是同步函数——ws_processor 对处理器做同步调用，async 函数会
-    返回 coroutine 对象，json.dumps(coroutine) 抛 TypeError 导致回帧静默丢失。
+    Note: this must be a synchronous function — ws_processor invokes handlers
+    synchronously; an async function would return a coroutine object, and
+    json.dumps(coroutine) raises TypeError, silently dropping the reply frame.
     """
     return {"event": "pong"}
 
 
-# 注册 ping -> pong 心跳事件处理器
+# Register the ping -> pong heartbeat event handler
 ws_event_processor_dict["ping"] = ping_processor
 
 

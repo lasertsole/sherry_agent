@@ -117,12 +117,14 @@ async def run_curator_handler(request):
     auto-run loop is zeroed to avoid an immediate duplicate auto-trigger.
     """
     try:
-        # run_curator_review 是同步阻塞调用（含 LLM 调用），必须放到线程池执行，
-        # 避免阻塞 asyncio 事件循环、拖慢其他并发请求。
+        # run_curator_review is a synchronous blocking call (includes an LLM
+        # call), so it must run in a thread pool to avoid blocking the asyncio
+        # event loop and slowing down other concurrent requests.
         result = await asyncio.to_thread(run_curator_review)
         logger.debug(f"Curator force-run completed: {result}")
-        # LLM 层失败时未抛出异常，而是通过结果里的 error 字段标记。
-        # 必须显式识别，否则前端会误报「维护完成」。
+        # Failures at the LLM layer do not raise; they are flagged via the
+        # "error" field in the result. This must be recognized explicitly,
+        # otherwise the frontend would wrongly report "maintenance complete".
         if result.get("error"):
             logger.warning(f"Curator force-run LLM failed: {result['error']}")
             return {"success": False, "error": result["error"], "result": result}

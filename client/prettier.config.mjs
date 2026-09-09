@@ -3,24 +3,25 @@
  * @type {import("prettier").Config}
  */
 export default {
-  // 一行最多 120 字符
+  // Max 120 characters per line
   printWidth: 120,
-  // 使用 2 个空格缩进
+  // Use 2-space indentation
   tabWidth: 2,
-  // 使用单引号
+  // Use single quotes
   singleQuote: true,
-  // 如果希望使用分号，应设置："semi": true，不尾随就设置为 false
+  // Set "semi": true to use semicolons, or false to omit trailing ones
   semi: true,
-  // 多行逗号分割的语法中，最后一行不加逗号
+  // No trailing comma on the last line of multi-line comma-separated syntax
   trailingComma: 'none',
   jsxSingleQuote: true,
-  // 单个参数的箭头函数不加括号 x => x
+  // Omit parentheses for single-parameter arrow functions: x => x
   arrowParens: 'avoid',
-  // 对象大括号内两边是否加空格 { a:0 }
+  // Whether to add spaces inside object braces: { a:0 }
   bracketSpacing: true,
-  // 将多行 HTML（HTML、JSX、Vue、Angular）元素的 > 放在最后一行的末尾，而不是单独一行。默认值为 false。
+  // Put the > of multi-line HTML (HTML, JSX, Vue, Angular) elements at the end of the last line
+  // instead of on its own line. Defaults to false.
   bracketSameLine: true,
   endOfLine: 'auto',
-  // 每行单个属性
+  // One attribute per line
   singleAttributePerLine: true
 };

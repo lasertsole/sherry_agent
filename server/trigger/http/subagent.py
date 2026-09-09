@@ -83,8 +83,10 @@ async def get_subagent_runs_handler(request):
     if run_id:
         root = get_run(run_id)
         if root is None:
-            # SQLite 兜底：内存暂缺但磁盘仍有时回补内存，避免误判为"已删除"
-            # （restore_runs_from_disk 仅启动时一次性执行，不覆盖运行期偶发缺失）。
+            # SQLite fallback: if the run is missing in memory but still on
+            # disk, backfill the memory registry to avoid a false "deleted"
+            # verdict (restore_runs_from_disk only runs once at startup and
+            # does not cover runs that sporadically vanish at runtime).
             runs_on_disk = await load_runs_from_sqlite()
             root = runs_on_disk.get(run_id)
             if root is not None:
@@ -93,8 +95,10 @@ async def get_subagent_runs_handler(request):
                 )
                 set_run(root)
         if root is None:
-            # run 确已不存在（已清理/删除/过期）是 GET 的正常业务状态：
-            # 返回结构化空结果，前端据此回退会话级全量刷新，而非 500。
+            # A run that genuinely no longer exists (cleaned up / deleted /
+            # expired) is a normal business state for GET: return a
+            # structured empty result so the frontend falls back to a
+            # session-level full refresh instead of a 500.
             logger.info(f"Sub-agent run '{run_id}' not found; returning empty result")
             return {"runs": []}
         # Root + all of its descendants. list_descendant_runs uses the root's
@@ -305,8 +309,9 @@ async def steer_subagent_handler(request):
 
     run = get_run(run_id)
     if run is None:
-        # SQLite 兜底（与 GET 一致）：重启后内存缺失但磁盘仍有 run 时回补，
-        # 让 steer 也能接管跨进程"僵尸 RUNNING"的 run。
+        # SQLite fallback (same as GET): after a restart the run may be
+        # missing in memory but still exist on disk, so backfill it here to
+        # let steer take over cross-process "zombie RUNNING" runs as well.
         runs_on_disk = await load_runs_from_sqlite()
         run = runs_on_disk.get(run_id)
         if run is not None:

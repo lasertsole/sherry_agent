@@ -34,8 +34,8 @@ def _resolve_level() -> str:
 
 
 def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
-    """初始化全局日志配置"""
-    # 按类型创建独立的日志子目录：info/、error/ 与全部记录的 all/
+    """Initialize the global logging configuration."""
+    # Create per-type log sub-directories: info/, error/, and all/ (everything)
     log_dir = Path(log_dir)
     info_dir = log_dir / "info"
     error_dir = log_dir / "error"
@@ -44,15 +44,15 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         if not os.path.exists(d):
             os.makedirs(d)
 
-    # 0. 删除过期日志（递归遍历各类型子目录）
+    # 0. Delete expired logs (walk each per-type sub-directory recursively)
     _clean_expired_logs(log_dir, timeout_days)
 
     level = _resolve_level()
 
-    # 1. 清除 Loguru 默认配置
+    # 1. Clear Loguru's default configuration
     logger.remove()
 
-    # 2. 控制台输出
+    # 2. Console output
     logger.add(
         sys.stderr,
         level=level,
@@ -60,8 +60,8 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         enqueue=True,
     )
 
-    # 3. 正常流水日志（只捕获 INFO 级别，供日常查看；WARNING/ERROR/CRITICAL
-    #    归 error 侧排查，TRACE/DEBUG 归全量日志）
+    # 3. Normal activity log (captures INFO only for day-to-day review;
+    #    WARNING/ERROR/CRITICAL go to the error log, TRACE/DEBUG to the full log)
     logger.add(
         os.path.join(info_dir, f"info_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
         level="INFO",
@@ -73,7 +73,7 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         enqueue=True,
     )
 
-    # 4. 全量日志（记录所有级别，包括 TRACE/DEBUG/WARNING，供全面排查）
+    # 4. Full log (records every level, including TRACE/DEBUG/WARNING, for thorough troubleshooting)
     logger.add(
         os.path.join(all_dir, f"all_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
         level="TRACE",
@@ -84,7 +84,8 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         enqueue=True,
     )
 
-    # 5. 异常错误日志（只捕获 ERROR 和 CRITICAL，带有完整的堆栈和变量诊断）
+    # 5. Exception/error log (captures ERROR and CRITICAL only, with full
+    #    stack traces and variable diagnostics)
     logger.add(
         os.path.join(error_dir, f"error_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
         level="ERROR",

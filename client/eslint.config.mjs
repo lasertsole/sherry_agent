@@ -60,16 +60,16 @@ export default defineConfig([
   {
     files: ['**/*.vue'],
     rules: {
-      // 禁止直接使用 v-html 插入未净化 HTML，防止 XSS。
-      // 唯一例外的 ChatBox.vue 绑定的是 safeHtml()（markdown-it + DOMPurify 净化）后的输出，
-      // 已以行级 eslint-disable 注明理由。
+      // Forbid inserting unsanitized HTML directly via v-html to prevent XSS.
+      // The sole exception is ChatBox.vue, which binds the output of safeHtml()
+      // (sanitized by markdown-it + DOMPurify), with the reason noted via a line-level eslint-disable.
       'vue/no-v-html': 'error',
       'vue/multi-word-component-names': 'off',
       'vue/no-mutating-props': 'off'
     }
   },
   {
-    // JSDoc signature validation (part3 item 十二): comments must stay bound
+    // JSDoc signature validation (part3 item 12): comments must stay bound
     // to the code they describe. Only functions that ALREADY carry a JSDoc
     // block are checked; writing new JSDoc is not forced.
     files: ['**/*.{ts,vue}'],
@@ -92,7 +92,7 @@ export default defineConfig([
     }
   },
   {
-    // Naming conventions (part2 item 九): block backend-style snake_case bleed.    // property/method selectors are intentionally NOT enforced — object literals,
+    // Naming conventions (part2 item 9): block backend-style snake_case bleed.    // property/method selectors are intentionally NOT enforced — object literals,
     // i18n keys and API payloads are data, not code style.
     // variable keeps PascalCase (Vue component imports) and UPPER_CASE (constants).
     files: ['**/*.{ts,tsx,vue}'],
@@ -126,8 +126,8 @@ export default defineConfig([
     // Global baseline. MUST stay ABOVE the override block below (flat config:
     // last matching block wins) or the no-console exemptions get overridden.
     rules: {
-      'no-console': 'error', // item 十七: console.* must go through the log tooling
-      'no-undef': 'off', //交给nuxt框架检查
+      'no-console': 'error', // item 17: console.* must go through the log tooling
+      'no-undef': 'off', // delegated to the nuxt framework's checks
       '@typescript-eslint/no-unsafe-function-type': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
       semi: ['error']
