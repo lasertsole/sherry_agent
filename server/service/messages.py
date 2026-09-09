@@ -242,6 +242,11 @@ class _GenerateTurn(StreamTurn):
         ]
 
     def _should_text_continue(self) -> bool:
+        if self.meta_finish_reason == "content_filter":
+            # Flag the middleware layer so the next model call can fall back
+            # or terminate instead of re-prompting a filtered response.
+            state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+            return False
         return (
             self.meta_finish_reason in ("length", "max_tokens")
             and not self._has_tool_calls

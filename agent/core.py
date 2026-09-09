@@ -5,6 +5,7 @@ from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
 from models import build_main_llm, build_auxiliary_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
+from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
 from config.num import COMPRESSION_TRIGGER_RATIO
 from agent.tools import memory_store, build_main_tools
@@ -19,6 +20,7 @@ from .middlewares import (
     HeartbeatStaleness,
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
+    LLMRetryMiddleware,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
@@ -130,6 +132,7 @@ async def built_agent(
 
         main_llm = build_main_llm()
         auxiliary_llm = build_auxiliary_llm()
+        fallback_chain = build_fallback_chain()
 
         # Build the agent
         _agent = create_agent(
@@ -148,6 +151,11 @@ async def built_agent(
                 MaxTokensBoostMiddleware(),
                 HeartbeatStaleness(),
                 HumanInTheLoop(HITLConfig()),
+                # Between HITL and Summarization: INNER relative to
+                # MaxTokensBoost (it only sees genuine truncations) and OUTER
+                # relative to Summarization (the retry loop wraps the
+                # T4/T5 overflow recovery from outside).
+                LLMRetryMiddleware(fallback_chain=fallback_chain),
                 Summarization(
                     need_update_system_prompt=True,
                     model=auxiliary_llm,

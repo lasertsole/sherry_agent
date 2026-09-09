@@ -3,6 +3,7 @@ from typing import Any
 from config import ENV_PATH
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from loguru import logger
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.LLMs.reasoning_openai import ReasoningChatOpenAI
 from models.LLMs.reasoning_payload import build_reasoning_kwargs, is_zhipu_reasoning_model
@@ -92,3 +93,47 @@ def build_main_llm(temperature: float | None = None):
     if temperature is not None:
         model = model.bind(temperature=temperature)
     return model
+
+
+def build_fallback_chain():
+    """Build the model fallback chain from ``FALLBACK_LLM_{i}_*`` env vars.
+
+    Reads ``FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}`` for i = 1..
+    and stops at the first missing NAME. PROVIDER defaults to ``openai``
+    (OpenAI-compatible gateways). Candidates are plain client objects — no
+    network I/O happens here; a candidate whose provider client cannot be
+    constructed is skipped with a warning so an optional fallback never
+    breaks agent startup.
+    """
+    from agent.middlewares.llm_retry import FallbackCandidate
+
+    chain: list[FallbackCandidate] = []
+    index = 1
+    while True:
+        name = os.getenv(f"FALLBACK_LLM_{index}_NAME")
+        if not name:
+            break
+        provider = os.getenv(f"FALLBACK_LLM_{index}_PROVIDER") or "openai"
+        candidate_config: dict[str, Any] = {
+            "model_provider": provider,
+            "model": name,
+            "api_key": os.getenv(f"FALLBACK_LLM_{index}_API_KEY"),
+            "base_url": os.getenv(f"FALLBACK_LLM_{index}_API_BASE"),
+            "temperature": 0,
+            "max_retries": 2,
+            "timeout": 120,
+        }
+        candidate_config = {k: v for k, v in candidate_config.items() if v is not None and v != ""}
+        try:
+            inner = init_chat_model(**candidate_config)
+        except Exception as exc:
+            logger.warning("Skipping unusable fallback LLM {} ({}): {}", index, name, exc)
+            index += 1
+            continue
+        chain.append(
+            FallbackCandidate(
+                provider=provider, model_name=name, model=NormalizingChatModel(inner=inner)
+            )
+        )
+        index += 1
+    return chain

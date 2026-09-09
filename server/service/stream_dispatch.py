@@ -37,8 +37,10 @@ from collections.abc import AsyncGenerator
 
 from langchain.messages import AIMessageChunk
 from langchain_core.messages import BaseMessage, ToolCall, ToolCallChunk, ToolMessage
+from loguru import logger
 from runtime import state_register_mem
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
+from .stream_diag import reraise_with_diag, stream_diag_init, stream_diag_summary
 
 
 # Stash of pending tool args, keyed by [bare session id][tool_call_id] (the
@@ -50,6 +52,11 @@ _pending_args: dict[str, dict[str, dict]] = {}
 # Raw JSON-fragment buffer per [bare session id][tool_id], accumulated until
 # it parses to a dict.
 _pending_raw: dict[str, dict[str, list[str]]] = {}
+
+# Markers some providers (e.g. MiniMax) emit in the partial text right before
+# cutting the stream on a safety-filter hit, without a content_filter
+# finish_reason.
+_CONTENT_FILTER_KEYWORDS = ("new_sensitive", "content_filter", "safety")
 
 
 def _accumulate_pending_args(session_id: str, tool_id: str | None, raw_args) -> None:
@@ -181,6 +188,9 @@ class StreamTurn:
         # response WITH tool calls goes through the Phase 3 max-tokens boost
         # (middleware re-call) instead of the Phase 2 text continuation.
         self._has_tool_calls: bool = False
+        # Per-turn stream diagnostics (chunk/byte counters + first-chunk timing)
+        # consumed by the failure path in run().
+        self._diag: dict[str, Any] = stream_diag_init()
 
     # ---- hooks ----------------------------------------------------------
 
@@ -211,7 +221,26 @@ class StreamTurn:
 
     def _should_text_continue(self) -> bool:
         """Whether to inject a continuation prompt and re-stream after truncation."""
+        if self.meta_finish_reason == "content_filter":
+            # Safety-filtered responses must not enter the continuation loop;
+            # flag the middleware layer so it can fall back or terminate.
+            state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
         return False
+
+    def _detect_mid_stream_content_filter(self) -> bool:
+        """Detect a mid-stream safety cut that ended the stream WITHOUT a
+        content_filter finish_reason (the stream just stops, or reports a
+        plain ``stop``). Marks the turn and flags the middleware layer."""
+        if self.meta_finish_reason not in (None, "stop", ""):
+            return False
+        if not self.ai_text:
+            return False
+        lowered = self.ai_text.lower()
+        if not any(kw in lowered for kw in _CONTENT_FILTER_KEYWORDS):
+            return False
+        self.meta_finish_reason = "content_filter"
+        state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+        return True
 
     def _prepare_continuation(self) -> None:
         """Prepare state for a continuation re-restream (e.g., set a flag)."""
@@ -330,6 +359,9 @@ class StreamTurn:
                             continue
 
                         if isinstance(msg_chunk, AIMessageChunk):
+                            self._diag["chunks"] += 1
+                            if self._diag["first_chunk_at"] is None:
+                                self._diag["first_chunk_at"] = time.time()
                             # Capture model + token usage metadata. The first chunk
                             # carries the model name; only the final chunk carries
                             # usage. Every lookup is guarded so a missing field NEVER
@@ -464,6 +496,7 @@ class StreamTurn:
                             if isinstance(msg_chunk.content, str) and len(msg_chunk.content) > 0:
                                 res = msg_chunk.content
                                 self.ai_text += res
+                                self._diag["bytes"] += len(res)
                                 yield {"type": "text", "content": res}
 
                             # Model reasoning output logic
@@ -481,6 +514,10 @@ class StreamTurn:
                                 yield {"type": "reasoning", "content": _reasoning}
                             # End model reasoning output logic
                             # End conversation output logic
+
+                    # Stream ended: check for a provider mid-stream safety cut
+                    # that arrived without a content_filter finish_reason.
+                    self._detect_mid_stream_content_filter()
 
                 if not self._should_text_continue():
                     break
@@ -511,7 +548,10 @@ class StreamTurn:
             self._log_timeout(elapsed, e)
         except Exception as e:
             elapsed = time.time() - start_time
+            self._detect_mid_stream_content_filter()
+            diag_summary = stream_diag_summary(self._diag, e)
+            logger.error("Stream failed: {}", diag_summary)
             self._log_failed(elapsed, e)
-            raise e
+            reraise_with_diag(e, diag_summary)
         finally:
             await self._cleanup(kind, source)
