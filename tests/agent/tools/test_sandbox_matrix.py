@@ -410,7 +410,7 @@ class TestCell3RequiredSandboxFalseToolDenial:
         )
         msg = str(exc_info.value)
         assert "required" in msg, f"deny text must name the policy, got: {msg!r}"
-        assert ("主会话" in msg) or ("main" in msg), (
+        assert ("main-session" in msg) or ("main" in msg), (
             f"deny text must mention the main-session approval path, got: {msg!r}"
         )
 

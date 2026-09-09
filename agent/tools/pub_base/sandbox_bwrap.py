@@ -1,18 +1,22 @@
 """Linux bwrap (bubblewrap) sandbox backend.
 
-仅验证构造逻辑，未在 Linux 实机验证（Windows 开发机无 bwrap 二进制；
-本模块的测试全部 mock subprocess，不会执行真实 bwrap）。
+Construction logic only — never verified on a real Linux machine (the Windows
+dev box has no bwrap binary; this module's tests all mock subprocess and never
+execute a real bwrap).
 
-argv 顺序是承重结构：
-- ``--ro-bind / /`` 先把整个根目录挂为只读；
-- 随后仅把 ROOT_DIR / TEMP_DIR 以可写方式 ``--bind``（可写面 = 这两个目录）；
-- ``--clearenv`` 必须出现在所有 ``--setenv`` 之前 —— 两者结合实现 env
-  白名单语义（上游 env_scrub 已清洗，这里只注入白名单内的变量）；
-- ``--`` 之后是被包装的原始命令。
+argv order is load-bearing:
+- ``--ro-bind / /`` first mounts the entire root read-only;
+- only ROOT_DIR / TEMP_DIR are then writable-mounted via ``--bind``
+  (writable surface = these two directories);
+- ``--clearenv`` must precede every ``--setenv`` — combined, the two implement
+  env allowlist semantics (upstream env_scrub already cleaned the env; only
+  allowlisted variables are injected here);
+- everything after ``--`` is the original wrapped command.
 
-参考: oh-my-openagent sandbox-bwrap-probe.ts / sandbox-platform.ts buildBwrapArgs
-（探测语义原型：bwrap 存在但被 AppArmor 阻止时（Ubuntu 24.04+
-kernel.apparmor_restrict_unprivileged_userns=1），存在性检查不够，必须冒烟）。
+Reference: oh-my-openagent sandbox-bwrap-probe.ts / sandbox-platform.ts buildBwrapArgs
+(probe semantics prototype: when bwrap exists but is blocked by AppArmor
+(Ubuntu 24.04+ kernel.apparmor_restrict_unprivileged_userns=1), an existence
+check is not enough — a smoke test is mandatory).
 """
 
 from __future__ import annotations
@@ -54,12 +58,12 @@ _PROBE_ARGV = [
 
 
 class BwrapBackend(SandboxBackend):
-    """Linux bubblewrap backend. bwrap 不接受 env 字典，env 经 --setenv 注入。"""
+    """Linux bubblewrap backend. bwrap does not accept an env dict; env vars are injected via --setenv."""
 
     _probe_cache: bool | None = None  # Class-level cache: probe only once per process lifetime
 
     def probe(self) -> bool:
-        """冒烟测试 bwrap 可用性；异常/非零返回码/超时一律 False，结果类级缓存。"""
+        """Smoke-test bwrap availability; exceptions / non-zero return codes / timeouts all yield False, result cached at class level."""
         if BwrapBackend._probe_cache is not None:
             return BwrapBackend._probe_cache
         try:
@@ -76,7 +80,7 @@ class BwrapBackend(SandboxBackend):
         return ok
 
     def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]:
-        """把 cmd 包装进 bwrap argv；env 白名单经 --setenv 注入。"""
+        """Wrap cmd into a bwrap argv; the env allowlist is injected via --setenv."""
         argv: list[str] = [
             "bwrap",
             "--ro-bind",
@@ -104,6 +108,6 @@ class BwrapBackend(SandboxBackend):
 
 
 def _writable_paths() -> list[str]:
-    """可写目录清单（str 化），路径相同（TEMP_DIR == ROOT_DIR 等场景）时去重。"""
+    """Writable directory list (as str), deduplicated when paths coincide (e.g. TEMP_DIR == ROOT_DIR)."""
     root, temp = str(ROOT_DIR), str(TEMP_DIR)
     return [root] if root == temp else [root, temp]

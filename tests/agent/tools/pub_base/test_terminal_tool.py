@@ -271,7 +271,7 @@ class TestSandboxBypassGuards:
         with pytest.raises(ToolException) as excinfo:
             tool._run(["echo ok"], sandbox=False)
         msg = str(excinfo.value)
-        assert "沙箱绕过仅限主会话人工审批" in msg
+        assert "Sandbox bypass requires main-session human approval" in msg
         assert "subagent" in msg, "message must include the current scope"
         assert record == [], "denied call must not spawn"
 
@@ -330,7 +330,7 @@ class TestSandboxBypassGuards:
 
         with pytest.raises(ToolException) as excinfo:
             asyncio.run(tool._arun(["echo ok"], sandbox=False))
-        assert "沙箱绕过仅限主会话人工审批" in str(excinfo.value)
+        assert "Sandbox bypass requires main-session human approval" in str(excinfo.value)
         assert "background" in str(excinfo.value)
         assert record == [], "denied async call must not spawn"
 
@@ -594,4 +594,4 @@ class TestPublicInvokeSemantics:
         tool = _tool(caller_scope="subagent")
         out = tool.invoke({"commands": ["echo ok"], "sandbox": False})
         assert isinstance(out, str)
-        assert "沙箱绕过仅限主会话人工审批" in out
+        assert "Sandbox bypass requires main-session human approval" in out

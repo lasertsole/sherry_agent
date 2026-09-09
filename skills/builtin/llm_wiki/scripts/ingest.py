@@ -1,5 +1,5 @@
 """
-llm_wiki ingest: 原始资料导入
+llm_wiki ingest: raw source ingestion
 """
 
 import hashlib
@@ -18,15 +18,15 @@ get_wiki_path = _core.get_wiki_path
 
 def save_source(content: str, category: str = "articles", filename: str = None) -> dict:
     """
-    保存原始资料到 raw/ 目录。
+    Save a raw source document into the raw/ directory.
 
     Args:
-        content: 资料内容（文本）
-        category: 分类，可选 articles / papers / transcripts / assets
-        filename: 文件名（不含路径），如不指定则自动生成
+        content: Source content (text)
+        category: Category, one of articles / papers / transcripts / assets
+        filename: File name (without path); auto-generated if not specified
 
     Returns:
-        dict: 保存结果，包含 file_path, sha256, success
+        dict: Save result, containing file_path, sha256, success
     """
     wiki_root = get_wiki_path()
     raw_dir = wiki_root / "raw" / category

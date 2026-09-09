@@ -1,4 +1,4 @@
-"""code_wiki 包 — 便捷引用 scripts/core.py 中的公共 API。"""
+"""code_wiki package — convenient re-exports of the public API from scripts/core.py."""
 
 from .scripts.core import (
     get_wiki_path,

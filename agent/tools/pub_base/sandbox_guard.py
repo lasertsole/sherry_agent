@@ -26,8 +26,11 @@ class SandboxGuardMixin:
         metadata = self.metadata if isinstance(self.metadata, dict) else {}
         scope = metadata.get("caller_scope", "main")
         if scope != "main":
-            raise ToolException(f"沙箱绕过仅限主会话人工审批；当前 scope={scope}")
+            raise ToolException(
+                f"Sandbox bypass requires main-session human approval; current scope={scope}"
+            )
         if read_policy() is SandboxPolicy.REQUIRED:
             raise ToolException(
-                "SANDBOX_POLICY=required 拒绝未沙箱执行：sandbox=False 需要主会话（main）人工审批"
+                "SANDBOX_POLICY=required denied non-sandboxed execution: "
+                "sandbox=False requires manual approval from the main session"
             )

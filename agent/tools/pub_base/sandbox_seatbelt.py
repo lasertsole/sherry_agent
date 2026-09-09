@@ -1,8 +1,9 @@
 """macOS Seatbelt (sandbox-exec) sandbox backend.
 
-仅验证构造逻辑，未在 macOS 实机验证（Windows 开发机限制；测试全部 mock，
-不执行真实 sandbox-exec）。sbpl profile 模板与 ``sandbox-exec -p ... --``
-包装结构参照 oh-my-openagent ``sandbox-platform.ts`` 的 ``buildDarwinProfile``。
+Construction logic only — never verified on a real macOS machine (Windows dev
+box limitation; all tests are mocked and never execute a real sandbox-exec).
+The sbpl profile template and the ``sandbox-exec -p ... --`` wrapping structure
+follow oh-my-openagent ``sandbox-platform.ts`` ``buildDarwinProfile``.
 """
 
 import json

@@ -1,5 +1,5 @@
 """
-llm_wiki search: Wiki搜索与健康检查
+llm_wiki search: Wiki search and health check
 """
 
 import os
@@ -21,13 +21,13 @@ WIKI_STRUCTURE = _core.WIKI_STRUCTURE
 
 def search_wiki(keyword: str) -> list:
     """
-    在Wiki中按关键词搜索所有.md文件。
+    Search all .md files in the wiki by keyword.
 
     Args:
-        keyword: 搜索关键词
+        keyword: Search keyword
 
     Returns:
-        list: 匹配结果列表，每项为 {"file": 相对路径, "matches": 匹配行数}
+        list: List of matches, each item being {"file": relative path, "matches": number of matching lines}
     """
     wiki_root = get_wiki_path()
     results = []
@@ -54,10 +54,10 @@ def search_wiki(keyword: str) -> list:
 
 def lint_wiki() -> dict:
     """
-    对Wiki进行健康检查。
+    Run a health check on the wiki.
 
     Returns:
-        dict: 检查结果，包含各类问题
+        dict: Check results, containing the various issue categories
     """
     wiki_root = get_wiki_path()
     report = {

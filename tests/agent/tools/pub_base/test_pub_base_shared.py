@@ -83,7 +83,7 @@ class TestSandboxGuardMixin:
 
     def test_subagent_scope_denied(self):
         tool = _GuardedTool({"caller_scope": "subagent"})
-        with pytest.raises(ToolException, match="沙箱绕过仅限主会话"):
+        with pytest.raises(ToolException, match="Sandbox bypass requires main-session"):
             tool._deny_sandbox_bypass(False)
 
     def test_main_scope_allowed_under_auto(self, monkeypatch):

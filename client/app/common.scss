@@ -1,27 +1,27 @@
 @use 'sass:math';
 
-/* 限定最小宽度 */
+/* Minimum width */
 @mixin minWidth($minWidth) {
   min-width: $minWidth;
   box-sizing: border-box;
   display: inline-block;
 }
 
-/* 限定最大宽度 */
+/* Maximum width */
 @mixin maxWidth($maxWidth) {
   max-width: $maxWidth;
   box-sizing: border-box;
   display: inline-block;
 }
 
-/* 限定宽度 */
+/* Bounded width (min + max) */
 @mixin limitWidth($minWidth, $maxWidth) {
   width: $maxWidth;
   @include minWidth($minWidth);
   @include maxWidth($maxWidth);
 }
 
-/* 限定最小高度 */
+/* Minimum height */
 @mixin minHeight($minHeight) {
   box-sizing: border-box;
   height: $minHeight;
@@ -29,7 +29,7 @@
   display: inline-block;
 }
 
-/* 限定最大高度 */
+/* Maximum height */
 @mixin maxHeight($maxHeight) {
   box-sizing: border-box;
   height: $maxHeight;
@@ -37,235 +37,235 @@
   display: inline-block;
 }
 
-/* 限定高度 */
+/* Bounded height (min + max) */
 @mixin limitHeight($minHeight, $maxHeight) {
   height: $maxHeight;
   @include minHeight($minHeight);
   @include maxHeight($maxHeight);
 }
 
-/* 固定宽度 */
+/* Fixed width */
 @mixin fixedWidth($size) {
   @include limitWidth($size, $size);
 }
 
-/* 固定高度 */
+/* Fixed height */
 @mixin fixedHeight($size) {
   @include limitHeight($size, $size);
 }
 
-/* 限定最小父容器宽度 */
+/* Minimum width of the parent container */
 @mixin minWidthInParent {
   @include minWidth(100%);
 }
 
-/* 限定最大父容器宽度 */
+/* Maximum width of the parent container */
 @mixin maxWidthInParent {
   @include maxWidth(100%);
 }
 
-/* 限定最小父容器高度 */
+/* Minimum height of the parent container */
 @mixin minHeightInParent {
   @include minHeight(100%);
 }
 
-/* 限定最大父容器高度 */
+/* Maximum height of the parent container */
 @mixin maxHeightInParent {
   @include maxHeight(100%);
 }
 
-/*  固定充满父容器宽度 */
+/* Fixed width filling the parent container */
 @mixin fullWidth {
   @include fixedWidth(100%);
 }
 
-/* 固定充满父容器高度 */
+/* Fixed height filling the parent container */
 @mixin fullHeight {
   @include fixedHeight(100%);
 }
 
-/* 固定高度 */
+/* Fixed height */
 @mixin fixedWidthFullHeight($size) {
   @include fixedWidth($size);
   @include fixedHeight(100%);
 }
 
-/* 固定高度 */
+/* Fixed height */
 @mixin fullWidthFixedHeight($size) {
   @include fixedWidth(100%);
   @include fixedHeight($size);
 }
 
-/* 限定最小长方形 */
+/* Minimum rectangle */
 @mixin minRetangle($widthSize, $heightSize) {
   @include minWidth($widthSize);
   @include minHeight($heightSize);
 }
 
-/* 限定最大长方形 */
+/* Maximum rectangle */
 @mixin maxRetangle($widthSize, $heightSize) {
   @include maxWidth($widthSize);
   @include maxHeight($heightSize);
 }
 
-/* 固定长方形 */
+/* Fixed rectangle */
 @mixin fixedRetangle($widthSize, $heightSize) {
   @include fixedWidth($widthSize);
   @include fixedHeight($heightSize);
 }
 
-/* 满宽长方形 */
+/* Full-width rectangle */
 @mixin fullWidthRetangle($heightSize) {
   @include fullWidth;
   @include fixedHeight($heightSize);
 }
 
-/* 满高长方形 */
+/* Full-height rectangle */
 @mixin fullHeightRetangle($widthSize) {
   @include fixedWidth($widthSize);
   @include fullHeight;
 }
 
-/* 最小正方形 */
+/* Minimum square */
 @mixin minSquare($size) {
   @include minRetangle($size, $size);
 }
 
-/* 最大正方形 */
+/* Maximum square */
 @mixin maxSquare($size) {
   @include maxRetangle($size, $size);
 }
 
-/* 固定正方形 */
+/* Fixed square */
 @mixin fixedSquare($size) {
   @include fixedRetangle($size, $size);
 }
 
-/* 固定圆角矩形 */
+/* Fixed rounded rectangle */
 @mixin fixedRoundedRectangle($widthSize, $heightSize, $borderRadiusSize) {
   border-radius: $borderRadiusSize;
   @include fixedRetangle($widthSize, $heightSize);
 }
 
-/* 限定最小圆角正方形 */
+/* Minimum rounded square */
 @mixin minRoundedSquare($widthSize, $heightSize, $borderRadiusSize) {
   border-radius: $borderRadiusSize;
   @include minRetangle($widthSize, $heightSize);
 }
 
-/* 限定最大圆角正方形 */
+/* Maximum rounded square */
 @mixin maxRoundedSquare($widthSize, $heightSize, $borderRadiusSize) {
   border-radius: $borderRadiusSize;
   @include maxRetangle($widthSize, $heightSize);
 }
 
-/* 固定圆角正方形 */
+/* Fixed rounded square */
 @mixin fixedRoundedSquare($size, $borderRadiusSize) {
   border-radius: $borderRadiusSize;
   @include fixedSquare($size);
 }
 
-/* 限定最小胶囊形 */
+/* Minimum capsule */
 @mixin minCapsule($widthSize, $heightSize) {
   border-radius: math.div($heightSize, 2);
   @include minRetangle($widthSize, $heightSize);
 }
 
-/* 限定最大胶囊形 */
+/* Maximum capsule */
 @mixin maxCapsule($widthSize, $heightSize) {
   border-radius: math.div($heightSize, 2);
   @include maxRetangle($widthSize, $heightSize);
 }
 
-/* 固定胶囊形 */
+/* Fixed capsule */
 @mixin fixedCapsule($widthSize, $heightSize) {
   border-radius: math.div($heightSize, 2);
   @include fixedRetangle($widthSize, $heightSize);
 }
 
-/* 限定最小圆形 */
+/* Minimum circle */
 @mixin minCircle($size) {
   @include minRoundedSquare($size, $size);
 }
 
-/* 限定最大圆形 */
+/* Maximum circle */
 @mixin maxCircle($size) {
   @include maxRoundedSquare($size, $size);
 }
 
-/* 固定圆形 */
+/* Fixed circle */
 @mixin fixedCircle($size) {
   @include fixedRoundedRectangle($size, $size, 50%);
   overflow: hidden;
 }
 
-/* 限定最小充满父容器 */
+/* Minimum fill of the parent container */
 @mixin minInParent {
   @include minSquare(100%);
 }
 
-/* 限定最大充满父容器 */
+/* Maximum fill of the parent container */
 @mixin maxInParent {
   @include maxSquare(100%);
 }
 
-/* 固定充满父容器 */
+/* Fixed fill of the parent container */
 @mixin fullInParent {
   @include fixedSquare(100%);
 }
 
-/* 限定最小充满视口 */
+/* Minimum fill of the viewport */
 @mixin minViewWindow {
   @include minWidthInParent;
 }
 
-/* 限定最大充满视口 */
+/* Maximum fill of the viewport */
 @mixin maxViewWindow {
   @include maxWidthInParent;
 }
 
-/* 固定充满视口 */
+/* Fixed fill of the viewport */
 @mixin fullViewWindow {
   width: 100vw;
   height: 100vh;
 }
 
-/* 限定最小充满父容器的圆形 */
+/* Minimum circle filling the parent container */
 @mixin minInParentCircle {
   @include minCircle(100%);
 }
 
-/* 限定最大充满父容器的圆形 */
+/* Maximum circle filling the parent container */
 @mixin maxInParentCircle {
   @include maxCircle(100%);
 }
 
-/* 固定充满父容器的圆形 */
+/* Fixed circle filling the parent container */
 @mixin fullInParentCircle {
   @include fixedCircle(100%);
 }
 
-/* 放置背景图片的环境配置 */
+/* Background image placement conditions */
 @mixin backgroundImgCondition() {
   background-repeat: no-repeat;
   background-position: center;
   background-size: 100%;
 }
 
-/* 固定充满父容器的图片 */
+/* Image filling the parent container */
 @mixin imgFullInParent($imgSrc) {
   background-image: url(#{$imgSrc});
   @include fullInParent;
   @include backgroundImgCondition;
 }
 
-/* 固定充满本容器的图片 */
+/* Image filling this container */
 @mixin fullImg($imgSrc) {
   background-image: url(#{$imgSrc});
   @include backgroundImgCondition;
 }
 
-/* flex 布局居中 */
+/* Flex layout centering */
 @mixin flexCenter {
   display: flex;
   justify-content: center;
@@ -273,23 +273,23 @@
 }
 
 @mixin scrollBar($thumbSize) {
-  /* 滚动条整体部分 */
+  /* Scrollbar as a whole */
   overflow: auto;
   &::-webkit-scrollbar {
-    width: $thumbSize; /* 滚动条的宽度 */
-    height: $thumbSize; /* 水平滚动条的高度 */
+    width: $thumbSize; /* Scrollbar width */
+    height: $thumbSize; /* Horizontal scrollbar height */
   }
 
-  /* 滚动条的滑块部分 */
+  /* Scrollbar thumb */
   &::-webkit-scrollbar-thumb {
-    background-color: darkgrey; /* 滑块的颜色 */
-    border-radius: $thumbSize; /* 滑块的圆角 */
+    background-color: darkgrey; /* Thumb color */
+    border-radius: $thumbSize; /* Thumb corner radius */
   }
 
-  /* 滚动条的轨道部分 */
+  /* Scrollbar track */
   &::-webkit-scrollbar-track {
-    background-color: lightgrey; /* 轨道的颜色 */
-    border-radius: $thumbSize; /* 轨道的圆角 */
+    background-color: lightgrey; /* Track color */
+    border-radius: $thumbSize; /* Track corner radius */
   }
 }
 
@@ -298,7 +298,7 @@
   word-break: break-all;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1; // 限制显示的行数
+  -webkit-line-clamp: 1; // Limit the number of displayed lines
   overflow: hidden;
   text-overflow: ellipsis;
 }

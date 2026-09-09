@@ -1,7 +1,7 @@
 """
 llm_wiki scripts package.
-由于技能目录名包含连字符(llm_wiki)，无法使用标准Python包导入，
-所有模块间引用均使用 importlib 动态加载。
+Since the skill directory name contains a hyphen (llm_wiki), standard Python package
+imports cannot be used; all cross-module references are loaded dynamically via importlib.
 """
 
 import importlib.util
@@ -11,7 +11,7 @@ _scripts_dir = Path(__file__).resolve().parent
 
 
 def _load_module(name, filename):
-    """动态加载同目录下的Python模块"""
+    """Dynamically load a Python module from the same directory"""
     spec = importlib.util.spec_from_file_location(name, str(_scripts_dir / filename))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

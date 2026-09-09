@@ -103,7 +103,7 @@ class ChannelManager:
         self._config = config
         self._init_channels()
 
-        # 如果有运行中的事件循环，则使用它， 否则创建一个新的
+        # If an event loop is already running, use it; otherwise create a new one.
         try:
             self._event_loop = asyncio.get_running_loop()
         except RuntimeError:

@@ -146,11 +146,12 @@ def get_skills_text(
     caller_scope: str = "main",
 ) -> str:
     """
-    获取 skills xml
-    :param selected_skill_names: 选中的技能名字列表
-    :param caller_scope: 调用方视角（"main" 或 "subagent"）。scope 为
-        "main_only" 的技能对 subagent 不可见，"subagent_only" 的技能对 main
-        不可见（见 ``scope:`` frontmatter 字段；默认 "all" 双方可见）。
+    Get the skills XML.
+    :param selected_skill_names: list of selected skill names
+    :param caller_scope: the caller's perspective ("main" or "subagent"). Skills
+        scoped "main_only" are invisible to subagents; "subagent_only" skills are
+        invisible to main (see the ``scope:`` frontmatter field; default "all"
+        makes them visible to both).
     :return: skills xml
     """
     skills: list[dict[str, Any]] = scan_skills()

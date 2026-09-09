@@ -1,6 +1,6 @@
 """
-code_wiki core: Wiki 路径管理与文档操作
-所有路径均通过项目根目录动态计算，无硬编码绝对路径。
+code_wiki core: Wiki path management and document operations.
+All paths are computed dynamically from the project root; no hardcoded absolute paths.
 """
 
 import sys
@@ -20,47 +20,47 @@ WIKI_SUBDIR = "wiki"  # placed under src/data/wiki/
 
 def get_wiki_path() -> Path:
     """
-    动态获取 code_wiki 输出根目录路径。
-    基于项目根目录下的 src/data/wiki/
+    Dynamically resolve the code_wiki output root directory.
+    Based on src/data/wiki/ under the project root.
 
     Returns:
-        Path: wiki 根目录的 Path 对象
+        Path: Path object for the wiki root directory
     """
     return project_root / "src" / "data" / WIKI_SUBDIR
 
 
 def get_repo_wiki_path(repo_name: str) -> Path:
     """
-    获取指定仓库的 wiki 文档目录。
+    Get the wiki documentation directory for the given repository.
 
     Args:
-        repo_name: 仓库名称
+        repo_name: Repository name
 
     Returns:
-        Path: 该仓库 wiki 目录的 Path 对象
+        Path: Path object for that repository's wiki directory
     """
     return get_wiki_path() / repo_name
 
 
 def get_modules_dir(repo_name: str) -> Path:
-    """获取指定仓库的 modules/ 子目录。"""
+    """Get the modules/ subdirectory for the given repository."""
     return get_repo_wiki_path(repo_name) / "modules"
 
 
 def get_diagrams_dir(repo_name: str) -> Path:
-    """获取指定仓库的 diagrams/ 子目录。"""
+    """Get the diagrams/ subdirectory for the given repository."""
     return get_repo_wiki_path(repo_name) / "diagrams"
 
 
 def init_repo_wiki(repo_name: str) -> dict:
     """
-    初始化某个仓库的 wiki 文档目录结构。
+    Initialize the wiki documentation directory structure for a repository.
 
     Args:
-        repo_name: 仓库名称
+        repo_name: Repository name
 
     Returns:
-        dict: 创建结果，包含 created_dirs, created_files, errors
+        dict: Creation result, containing created_dirs, created_files, errors
     """
     result = {"created_dirs": [], "created_files": [], "errors": []}
 
@@ -89,13 +89,13 @@ def init_repo_wiki(repo_name: str) -> dict:
 
 def list_modules(repo_name: str) -> list[dict]:
     """
-    列出指定仓库已生成的模块文档。
+    List the generated module documents for the given repository.
 
     Args:
-        repo_name: 仓库名称
+        repo_name: Repository name
 
     Returns:
-        list[dict]: 模块文档列表，每项包含 name 和 path
+        list[dict]: List of module documents, each with name and path
     """
     modules_dir = get_modules_dir(repo_name)
     if not modules_dir.exists():
@@ -109,20 +109,20 @@ def list_modules(repo_name: str) -> list[dict]:
 
 
 def repo_wiki_exists(repo_name: str) -> bool:
-    """检查指定仓库的 wiki 文档是否已初始化。"""
+    """Check whether the wiki docs for the given repository have been initialized."""
     return get_repo_wiki_path(repo_name).exists()
 
 
 def read_doc(repo_name: str, filename: str) -> str | None:
     """
-    读取指定仓库 wiki 中的某个文档。
+    Read a document from the given repository's wiki.
 
     Args:
-        repo_name: 仓库名称
-        filename: 文件名 (如 "README.md", "architecture.md", "modules/core.md")
+        repo_name: Repository name
+        filename: File name (e.g. "README.md", "architecture.md", "modules/core.md")
 
     Returns:
-        str | None: 文件内容，不存在则返回 None
+        str | None: File content, or None if the file does not exist
     """
     path = get_repo_wiki_path(repo_name) / filename
     if not path.exists():
@@ -132,15 +132,15 @@ def read_doc(repo_name: str, filename: str) -> str | None:
 
 def write_doc(repo_name: str, filename: str, content: str) -> Path:
     """
-    写入文档到指定仓库 wiki。
+    Write a document into the given repository's wiki.
 
     Args:
-        repo_name: 仓库名称
-        filename: 文件名 (如 "README.md", "modules/core.md")
-        content: 文件内容
+        repo_name: Repository name
+        filename: File name (e.g. "README.md", "modules/core.md")
+        content: File content
 
     Returns:
-        Path: 写入文件的路径
+        Path: Path of the written file
     """
     path = get_repo_wiki_path(repo_name) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,10 +151,10 @@ def write_doc(repo_name: str, filename: str, content: str) -> Path:
 
 def get_structure() -> dict:
     """
-    返回 code_wiki 文档目录结构定义。
+    Return the code_wiki documentation directory structure definition.
 
     Returns:
-        dict: 目录结构
+        dict: Directory structure
     """
     return {
         "wiki_root": str(get_wiki_path()),
@@ -174,5 +174,5 @@ def get_structure() -> dict:
 
 
 def print_structure() -> str:
-    """以 JSON 格式输出目录结构。"""
+    """Output the directory structure as JSON."""
     return json.dumps(get_structure(), ensure_ascii=False, indent=2)

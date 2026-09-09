@@ -1,4 +1,4 @@
-"""EC-01 ~ EC-16 — 全功能边界情况回归（对应 tests/REGRESSION_PLAN.md §4）。"""
+"""EC-01 ~ EC-16 — full-feature edge-case regressions (see tests/REGRESSION_PLAN.md §4)."""
 
 from __future__ import annotations
 
@@ -281,7 +281,7 @@ class TestTimestampBounds:
         for _ in range(2):
             ms, stamp = store_core._next_turn_stamp()
             stamps.append((ms, stamp))
-        assert stamps[1][0] > stamps[0][0], "同毫秒必须 +1ms 错开"
+        assert stamps[1][0] > stamps[0][0], "same-millisecond timestamps must be staggered by +1ms"
 
 
 # ---------------------------------------------------------------------------
@@ -381,8 +381,9 @@ class TestDenyRulesPriority:
 
 
 def test_cleanup_edge_cases_covered_reference():
-    """EC-16 的文件清理矩阵由 TestUC09MultimodalFlow.test_expired_temp_files_cleaned
-    与 UC-09 主体共同覆盖（非数字文件名删除 / 过期删除 / 新文件保留）。"""
+    """The EC-16 file-cleanup matrix is covered jointly by
+    TestUC09MultimodalFlow.test_expired_temp_files_cleaned and the UC-09 body
+    (non-numeric filename deletion / expired deletion / new files kept)."""
     import agent.middlewares.multimodal_processor as mm_mod
 
     assert hasattr(mm_mod.MultimodalProcessor, "_after_agent_impl")

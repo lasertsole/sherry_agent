@@ -1,6 +1,7 @@
 """TDD tests for the Linux bwrap sandbox backend (Task 3).
 
-仅验证构造逻辑，未在 Linux 实机验证（Windows 开发机无 bwrap 二进制）。
+Construction logic only — never verified on a real Linux machine (the Windows
+dev box has no bwrap binary).
 All subprocess interaction is mocked — no real bwrap is ever executed here.
 
 argv order is load-bearing:

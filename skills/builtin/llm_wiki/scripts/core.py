@@ -1,6 +1,6 @@
 """
-llm_wiki core: Wiki路径管理与初始化
-所有路径均通过项目根目录动态计算，无硬编码绝对路径。
+llm_wiki core: Wiki path management and initialization.
+All paths are computed dynamically from the project root; no hardcoded absolute paths.
 """
 
 import sys
@@ -37,35 +37,35 @@ WIKI_STRUCTURE = {
 
 def get_wiki_path() -> Path:
     """
-    动态获取Wiki根目录路径。
-    基于项目根目录下的 src/data/wiki/
+    Dynamically resolve the wiki root directory path.
+    Based on src/data/wiki/ under the project root.
 
     Returns:
-        Path: Wiki根目录的Path对象
+        Path: Path object for the wiki root directory
     """
     return project_root / "src" / "data" / "wiki"
 
 
 def get_wiki_subdir(subdir: str) -> Path:
     """
-    获取Wiki下指定子目录的路径。
+    Get the path of a subdirectory under the wiki.
 
     Args:
-        subdir: 子目录名，如 "entities", "raw/articles"
+        subdir: Subdirectory name, e.g. "entities", "raw/articles"
 
     Returns:
-        Path: 子目录的Path对象
+        Path: Path object for the subdirectory
     """
     return get_wiki_path() / subdir
 
 
 def init_wiki() -> dict:
     """
-    初始化Wiki目录结构。
-    根据 WIKI_STRUCTURE 创建所有必要的目录和文件。
+    Initialize the wiki directory structure.
+    Creates all required directories and files according to WIKI_STRUCTURE.
 
     Returns:
-        dict: 初始化结果，包含 created_dirs, created_files, errors
+        dict: Initialization result, containing created_dirs, created_files, errors
     """
     result = {"created_dirs": [], "created_files": [], "errors": []}
 
@@ -116,20 +116,20 @@ def init_wiki() -> dict:
 
 def wiki_exists() -> bool:
     """
-    检查Wiki是否已初始化。
+    Check whether the wiki has been initialized.
 
     Returns:
-        bool: Wiki根目录是否存在
+        bool: Whether the wiki root directory exists
     """
     return get_wiki_path().exists()
 
 
 def print_structure() -> str:
     """
-    以JSON格式输出Wiki目录结构。
-    用于在对话中展示给用户。
+    Output the wiki directory structure as JSON.
+    Used to display the structure to the user in conversation.
 
     Returns:
-        str: 格式化的JSON字符串
+        str: Formatted JSON string
     """
     return json.dumps(WIKI_STRUCTURE, ensure_ascii=False, indent=2)

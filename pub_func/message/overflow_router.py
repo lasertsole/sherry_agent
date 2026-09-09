@@ -26,7 +26,7 @@ Soft/hard overflow semantics (soft vs. hard overflow):
     truncation only; otherwise do nothing ("fits"). Compression is never
     triggered by soft overflow alone.
     Hard overflow (pressure >= threshold_compact): the context must be pressed back
-    below usable_budget (pressed below usable_budget). If the truncatable
+    below usable_budget. If the truncatable
     token sum covers the overflow, truncation alone suffices; if there are
     candidates but not enough tokens, compression runs first with truncation
     as backstop; with no candidates at all, only compression can help.

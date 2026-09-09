@@ -1,40 +1,41 @@
 @import 'primeicons/primeicons.css';
 @import 'tailwindcss';
 
-/* 使用 .dark 类名触发器暗黑模式（与 @nuxtjs/color-mode 一致） */
+/* Use the .dark class as the dark-mode trigger (consistent with @nuxtjs/color-mode) */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ==========================================================================
-   Tailwind v4 主题令牌（@theme 块，取代已删除的 tailwind.config.js / tailwind.config.ts）
+   Tailwind v4 theme tokens (@theme block, replacing the removed tailwind.config.js / tailwind.config.ts)
    ========================================================================== */
 @theme {
-  /* 自定义断点 */
+  /* Custom breakpoints */
   --breakpoint-sm: 480px;
   --breakpoint-md: 768px;
   --breakpoint-lg: 976px;
   --breakpoint-xl: 1440px;
 
-  /* 自定义颜色 */
+  /* Custom colors */
   --color-gray-dark: #273444;
   --color-gray-light: #eef0f3;
   --color-theme-main: var(--theme-text);
 
-  /* 自定义字体 */
+  /* Custom fonts */
   --font-serif: Merriweather, serif;
 
-  /* 自定义 z-index */
+  /* Custom z-index values */
   --z-index-1: 1;
   --z-index-2: 2;
   --z-index-3: 3;
 }
 
 /* ==========================================================================
-   全局 Reset / 基础层
+   Global reset / base layer
    ==========================================================================
-   所有 unlayered 样式会「恒优先于」@layer 内的样式（CSS layer 规则）。因此这里
-   的全局 reset 若保持 unlayered，会压过 Tailwind v4 utilities 层里的任何
-   margin/padding 工具类（例：chat 气泡 p-3、间距类 .mt-3/mt-6 全部失效），
-   导致元素紧贴边缘。把它们统一下放到 @layer base，层内优先级即可被正确覆盖。
+   All unlayered styles always take precedence over styles inside @layer (CSS layer rules). So if
+   this global reset stays unlayered, it would override any margin/padding utility in the Tailwind
+   v4 utilities layer (e.g. the p-3 on chat bubbles and spacing classes like .mt-3/.mt-6 would stop
+   working), leaving elements flush against the edges. Moving them all into @layer base lets
+   within-layer precedence apply so they can be overridden correctly.
    ========================================================================== */
 @layer base {
   * {
@@ -52,13 +53,13 @@
     --layout-samll-width: 600px;
     --layout-big-width: 800px;
     font-size: 16px;
-    /* 明亮模式下的文字颜色变量 */
-    --theme-text: #1a1a1a; /* 类似 text-gray-900 */
+    /* Text color variable for light mode */
+    --theme-text: #1a1a1a; /* Similar to text-gray-900 */
   }
 
   html.dark {
-    /* 暗黑模式下的文字颜色变量 */
-    --theme-text: #ffffff; /* 类似 text-white */
+    /* Text color variable for dark mode */
+    --theme-text: #ffffff; /* Similar to text-white */
   }
 
   a {
@@ -70,14 +71,14 @@
     list-style: none;
   }
 
-  /* 键盘焦点可见性：亮/暗模式统一的焦点轮廓（Tab 导航时清晰可辨） */
+  /* Keyboard focus visibility: unified focus outline for light/dark modes (clearly visible on Tab navigation) */
   :focus-visible {
     outline: 2px solid #3b82f6;
     outline-offset: 2px;
     border-radius: 2px;
   }
 
-  /* 跳转主内容链接：默认移出视口顶部隐藏，键盘聚焦时滑入左上角 */
+  /* Skip-to-main-content link: hidden above the viewport by default, slides into the top-left corner on keyboard focus */
   .skip-link {
     position: fixed;
     top: 0;
@@ -101,46 +102,46 @@
 }
 
 /* ==========================================================================
-   全局现代极简滚动条优化 (支持白天/暗黑模式自动适配)
+   Global modern minimalist scrollbar styling (adapts automatically to light/dark modes)
    ========================================================================== */
 
-/* 1. 针对 Webkit 内核浏览器 (Chrome, Safari, Edge, 各种手机浏览器) */
+/* 1. For WebKit-based browsers (Chrome, Safari, Edge, various mobile browsers) */
 ::-webkit-scrollbar {
-  width: 8px; /* 垂直滚动条宽度：保持较细的 8px，精致不突兀 */
-  height: 8px; /* 水平滚动条高度 */
+  width: 8px; /* Vertical scrollbar width: kept slim at 8px, refined and unobtrusive */
+  height: 8px; /* Horizontal scrollbar height */
 }
 
-/* 滚动条轨道 (背景) */
+/* Scrollbar track (background) */
 ::-webkit-scrollbar-track {
-  background: transparent; /* 默认轨道透明，完美融入任何背景色 */
+  background: transparent; /* Track is transparent by default, blending seamlessly into any background color */
 }
 
-/* 滚动条滑块 (滑块本身) */
+/* Scrollbar thumb (the thumb itself) */
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.3); /* 默认使用柔和的灰色 (类似 tailwind gray-400 的 30% 透明度) */
-  border-radius: 9999px; /* 胶囊圆角，极致丝滑 */
-  border: 2px solid transparent; /* 配合 background-clip 实现边缘留白呼吸感 */
+  background-color: rgba(156, 163, 175, 0.3); /* Soft gray by default (similar to tailwind gray-400 at 30% opacity) */
+  border-radius: 9999px; /* Capsule corner radius, perfectly smooth */
+  border: 2px solid transparent; /* Pairs with background-clip to leave breathing room at the edges */
   background-clip: padding-box;
 }
 
-/* 鼠标悬停在滑块上时：颜色加深，方便用户拖拽 */
+/* On thumb hover: darken the color to make dragging easier */
 ::-webkit-scrollbar-thumb:hover {
   background-color: rgba(156, 163, 175, 0.6);
 }
 
-/* 当系统处于暗黑模式 (.dark) 下时的滚动条滑块外观更新 */
+/* Scrollbar thumb appearance update while the system is in dark mode (.dark) */
 .dark ::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.2); /* 暗黑模式下降低默认亮度，防止刺眼 */
+  background-color: rgba(156, 163, 175, 0.2); /* Reduce the default brightness in dark mode to avoid glare */
 }
 .dark ::-webkit-scrollbar-thumb:hover {
   background-color: rgba(156, 163, 175, 0.45);
 }
 
-/* 2. 针对 Firefox 火狐浏览器的现代标准标准实现 */
+/* 2. Modern standard implementation for Firefox */
 @supports (scrollbar-width: thin) {
   html {
-    scrollbar-width: thin; /* 变细 */
-    /* 分别配置：滑块颜色 轨道颜色 */
+    scrollbar-width: thin; /* Slimmer */
+    /* Configure separately: thumb color and track color */
     scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
   }
 
@@ -150,8 +151,9 @@
 }
 
 /* ==========================================================================
-   自定义工具栏图标：拼图 (扩展工具按钮)
-   通过 CSS mask 载入 SVG 拼图图形，颜色跟随按钮文字色 (currentColor)，与其他图标统一
+   Custom toolbar icon: puzzle piece (extend-tools button)
+   Load the SVG puzzle graphic via CSS mask; the color follows the button text color (currentColor)
+   to stay consistent with the other icons
    ========================================================================== */
 .puzzle-icon {
   display: inline-block;

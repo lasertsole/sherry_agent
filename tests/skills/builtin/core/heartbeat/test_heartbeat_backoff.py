@@ -82,7 +82,7 @@ async def test_tick_failure_stretches_interval_exponentially(monkeypatch):
 @pytest.mark.asyncio
 async def test_tick_success_resets_backoff(monkeypatch):
     """Hooks 1+2: failures accumulate, then a successful tick fully resets.
-    Reset is observed through one ``_run_loop`` round (plan: "或经 _run_loop 单轮") —
+    Reset is observed through one ``_run_loop`` round (plan: "or via a single _run_loop round") —
     the reset lives inside ``_tick``'s success path, which the loop exercises."""
     mute_gate(monkeypatch)
     svc = make_service(flaky_execute(raises_times=2))

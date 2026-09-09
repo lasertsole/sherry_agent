@@ -1,6 +1,7 @@
 """Tests for the macOS Seatbelt (sandbox-exec) sandbox backend.
 
-仅验证构造逻辑，未在 macOS 实机验证（Windows 开发机限制）。
+Construction logic only — never verified on a real macOS machine (Windows
+dev box limitation).
 All tests mock ``shutil.which`` — the real ``sandbox-exec`` binary is never
 executed (probe is which-only by design; seatbelt offers no exit-code probe).
 """

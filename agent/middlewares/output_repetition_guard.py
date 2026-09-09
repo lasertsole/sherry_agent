@@ -96,7 +96,7 @@ _MIN_CONTENT_LENGTH = 20
 # non-empty content (>= 1 char) is required.
 _MIN_CROSSCALL_LENGTH = 1
 # Default minimum consecutive identical non-whitespace characters (e.g. 8x
-# ``啊``) required to flag a character run as "repetitive".
+# ``a``) required to flag a character run as "repetitive".
 _CHAR_RUN_MIN = 8
 # Sentence/line delimiter set used by the segment-level sub-detector.  Because
 # ``\\n`` is included, line-level repetition is covered by the same pass.
@@ -136,7 +136,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
     char_run_min : int
         Minimum consecutive occurrences of the same non-whitespace
         character to trigger character-run detection.  Catches patterns
-        like ``啊啊啊啊啊啊啊啊``.  Default **8**.
+        like ``aaaaaaaa``.  Default **8**.
     """
 
     def __init__(
@@ -177,7 +177,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
         """Normalize content for robust cross-call hash comparison.
 
         Applies three transformations so that near-identical outputs
-        (e.g. ``"好的，我来处理。"``, ``"好的 我来处理"``, ``"好的，我来处理"``)
+        (e.g. ``"Okay, I'll handle it."``, ``"Okay I'll handle it"``, ``"Okay, I'll handle it"``)
         all produce the same hash:
 
         1. **NFKC normalization** — full-width → half-width (``Ａ`` → ``A``)
@@ -238,7 +238,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
         ``char_run_min``+ times consecutively.
         3. **Phrase-periodic** -- a short substring (2-10 chars) repeated
             consecutively ``phrase_min_repeats``+ times with no delimiter.
-            Catches ``我来帮你我来帮你我来帮你我来帮你我来帮你我来帮你``.
+            Catches ``I can helpI can helpI can helpI can helpI can helpI can help``.
         Returns ``True`` if **any** sub-detector fires.
         """
         if self._detect_sentence_repetition(content):
@@ -270,7 +270,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
         """Character-run sub-detector: same char repeated consecutively.
 
         Uses a regex back-reference ``\\1`` to find ``char_run_min`` or more
-        consecutive identical non-whitespace characters (e.g. ``啊啊啊啊…``),
+        consecutive identical non-whitespace characters (e.g. ``aaaa…``),
         which is a strong signal of stuttering/death-loop output.
         """
         threshold = self.char_run_min - 1
@@ -287,7 +287,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
 
         Looks for any phrase of length ``2..max_phrase`` that repeats
         immediately and contiguously ``min_repeats``+ times with no
-        delimiter -- e.g. ``我来帮你我来帮你我来帮你我来帮你``.  Whitespace is
+        delimiter -- e.g. ``I can helpI can helpI can helpI can help``.  Whitespace is
         stripped first so delimiters do not mask the pattern.
         """
         content = re.sub(r"[ \t]+", "", content)

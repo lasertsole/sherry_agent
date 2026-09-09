@@ -68,7 +68,7 @@ class TestLazyImportRemoval:
     def test_read_skills_snapshot_lives_on_loader_module(self):
         """The moved leaf function must be a module-level attribute of loader.
 
-        Old code imported it inside scan_skills (the audit's 变通) — the
+        Old code imported it inside scan_skills (the audit's workaround) — the
         module attribute did not exist.
         """
         assert hasattr(loader_mod, "read_skills_snapshot")

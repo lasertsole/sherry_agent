@@ -16,7 +16,7 @@ Written FIRST (TDD RED) against `.omo/plans/sandbox-hardening.md` Task 8 (line
          ``sandbox=False`` (defensive comment only).
       2. ``is_yolo_mode(self.config)`` True → pass through (YOLO needs no
          approval).
-      3. False and ``sandbox=False`` → interrupt approval ("沙箱绕过");
+      3. False and ``sandbox=False`` → interrupt approval (sandbox bypass);
          approved → tool call proceeds with ``sandbox=False``; denied →
          rejection ToolMessage ("User denied: ... " + BLOCKED_MESSAGE).
   ``sandbox=True`` calls NEVER enter the bypass approval (straight pass-through,
@@ -36,7 +36,7 @@ mechanism Task 5 locked in the characterization suite. Resume shape:
 second interrupt.
 
 Env-scrub guarantee on the APPROVE path (user's original design —
-"沙箱绕过后仍有防护： env scrub + 黑名单 + cwd 钳制"):
+"after a sandbox bypass protections remain: env scrub + blacklist + cwd clamping"):
 ``subprocess.Popen`` is patched GLOBALLY (``monkeypatch.setattr(subprocess,
 "Popen", ...)``), the resumed graph runs the REAL tool, and the recorded
 ``env=`` kwarg must contain no ``SHERRY_SECRET_NAMES`` member (e.g. no
@@ -333,7 +333,7 @@ class TestYoloPublicApi:
 # Scenario 1 — main-session bypass approval flow (-k "main")
 # ─────────────────────────────────────────────────────────────────────────────
 class TestMainSessionBypassApproval:
-    """YOLO off + sandbox=False → interrupt('沙箱绕过'); approve/deny contracts."""
+    """YOLO off + sandbox=False → interrupt('sandbox bypass'); approve/deny contracts."""
 
     def test_main_terminal_sandbox_false_persists_interrupt_with_shabox_text(self):
         graph, _hitl = _build_graph(
@@ -628,8 +628,8 @@ class TestBackgroundScopeGuard:
     def test_background_stamped_python_repl_sandbox_false_tool_layer_exception(self):
         # A background graph (NO HITL middleware — heartbeat/cron never get one)
         # with a background-stamped python_repl: sandbox=False → the TOOL layer
-        # raises ToolException (guard text mentions 沙箱绕过仅限主会话) — no
-        # interrupt anywhere.
+        # raises ToolException (guard text mentions the main-session-only
+        # sandbox bypass) — no interrupt anywhere.
         repl = build_python_repl_tool()
         repl.metadata = {"idempotent": False, "caller_scope": "background"}
         _ScriptedModel.calls = 0
@@ -646,7 +646,7 @@ class TestBackgroundScopeGuard:
             if isinstance(m, ToolMessage) and getattr(m, "status", None) == "error"
         ]
         assert errors, "background python_repl sandbox=False must be denied by the tool layer"
-        assert "沙箱绕过仅限主会话" in str(errors[0].content)
+        assert "Sandbox bypass requires main-session" in str(errors[0].content)
 
     def test_background_stamped_terminal_sandbox_false_tool_layer_exception(self, monkeypatch):
         # Spawn-point stubbed (belt-and-braces): whatever the guard does, no
@@ -670,7 +670,7 @@ class TestBackgroundScopeGuard:
             if isinstance(m, ToolMessage) and getattr(m, "status", None) == "error"
         ]
         assert errors, "background terminal sandbox=False must be denied by the tool layer"
-        assert "沙箱绕过仅限主会话" in str(errors[0].content)
+        assert "Sandbox bypass requires main-session" in str(errors[0].content)
         assert "__EXEC__" not in str(errors[0].content)
 
 
@@ -712,10 +712,10 @@ class TestSubagentScopeStamp:
         term.metadata = {"idempotent": False, "caller_scope": "subagent"}
         with pytest.raises(ToolException) as exc_info:
             term._run(["echo ok"], sandbox=False)
-        assert "沙箱绕过仅限主会话" in str(exc_info.value)
+        assert "Sandbox bypass requires main-session" in str(exc_info.value)
 
         repl = build_python_repl_tool()
         repl.metadata = {"idempotent": False, "caller_scope": "subagent"}
         with pytest.raises(ToolException) as exc_info:
             repl._run("print(1)", sandbox=False)
-        assert "沙箱绕过仅限主会话" in str(exc_info.value)
+        assert "Sandbox bypass requires main-session" in str(exc_info.value)

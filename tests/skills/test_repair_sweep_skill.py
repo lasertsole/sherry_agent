@@ -1,6 +1,6 @@
 """Structural tests for the repair-sweep orchestration protocol skill.
 
-Item 3 (修复清扫舰队 / Repair Sweep) of ORCHESTRATION_PORT_PLAN.md: the port is
+Item 3 (Repair Sweep) of ORCHESTRATION_PORT_PLAN.md: the port is
 pure protocol layer. ``skills/repair-sweep/SKILL.md`` must carry the parameter
 model (scope tiers / batch_size cap / worker fleet sizing), the six-step fleet
 workflow, the embedded worker spawn-prompt template with the trimmed

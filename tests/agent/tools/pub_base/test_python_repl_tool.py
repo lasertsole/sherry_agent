@@ -270,7 +270,7 @@ def test_scope_deny_subagent_sandbox_false():
     with pytest.raises(ToolException) as excinfo:
         tool._run("print(1)", sandbox=False)
     msg = str(excinfo.value)
-    assert "主会话" in msg or "main" in msg
+    assert "main-session" in msg or "main" in msg
 
 
 def test_scope_deny_main_sandbox_false_allowed(monkeypatch: pytest.MonkeyPatch):
@@ -290,7 +290,7 @@ def test_required_policy_deny_sandbox_false(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(ToolException) as excinfo:
         tool._run("print(1)", sandbox=False)
     msg = str(excinfo.value)
-    assert "主会话" in msg or "main" in msg
+    assert "main-session" in msg or "main" in msg
 
 
 def test_scope_subagent_sandbox_true_unaffected(monkeypatch: pytest.MonkeyPatch):
@@ -311,7 +311,7 @@ def test_scope_deny_via_public_run(monkeypatch: pytest.MonkeyPatch):
     _set_policy(monkeypatch, SandboxPolicy.REQUIRED)
     tool = build_python_repl_tool()
     out = tool.run({"query": "print(1)", "sandbox": False})
-    assert "主会话" in out or "main" in out
+    assert "main-session" in out or "main" in out
 
 
 # ---------------------------------------------------------------------------

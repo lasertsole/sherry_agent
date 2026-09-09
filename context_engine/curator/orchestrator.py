@@ -290,8 +290,9 @@ def run_curator_review(
         "auto_transitions": counts,
         "summary_so_far": auto_summary,
     }
-    # LLM 层失败（未配置/调用异常）时，携带错误标记，供 HTTP handler 区分为
-    # success=False，避免前端误报「维护完成」。
+    # When the LLM layer fails (not configured / call exception), carry an error
+    # marker so the HTTP handler can surface success=False and the frontend
+    # doesn't falsely report "maintenance complete".
     if llm_meta.get("error"):
         result["error"] = str(llm_meta["error"])
         result["summary_so_far"] = f"{auto_summary}; llm: {llm_meta.get('summary') or 'error'}"
