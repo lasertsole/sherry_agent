@@ -108,6 +108,11 @@ exclude = [
     "client",
     "src",
     "temp",
+    ".venv",             # site-packages resolve fine even when excluded
+    "logs",              # rotating log output
+    "**/.*",             # restate pyright default: dot-dirs (.git, .omo, ...)
+    "**/__pycache__",    # restate pyright default: bytecode caches
+    "**/node_modules",   # restate pyright default
     "docs",
     ".omo",
     ".playwright-mcp",
