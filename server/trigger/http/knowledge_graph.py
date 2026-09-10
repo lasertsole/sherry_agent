@@ -65,7 +65,11 @@ async def knowledge_graph_upload_handler(request):
     results = []
     try:
         for filename, file_info in files.items():
-            name = str(filename)
+            name = Path(str(filename).replace("\\", "/")).name
+            if not name or name in (".", ".."):
+                results.append({"name": str(filename), "ok": False, "error": "Invalid file name"})
+                logger.warning("Knowledge-graph upload rejected invalid file name: %s", filename)
+                continue
             ext = Path(name).suffix.lower()
             if ext not in _ALLOWED_EXT:
                 results.append(

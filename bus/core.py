@@ -3,7 +3,7 @@
 import asyncio
 from loguru import logger
 from config.num import BUS_QUEUE_MAXSIZE
-from type.bus import InboundMessage, OutboundMessage
+from pub.types.bus import InboundMessage, OutboundMessage
 
 
 class MessageBus:

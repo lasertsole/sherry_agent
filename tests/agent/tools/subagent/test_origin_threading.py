@@ -27,7 +27,7 @@ import inspect
 
 import pytest
 from langchain_core.messages import HumanMessage
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 
 pytestmark = pytest.mark.unit
 

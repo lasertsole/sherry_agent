@@ -182,16 +182,9 @@ async def post_subagent_run_handler(request):
 
     run_in_background = _coerce_bool(body.get("run_in_background", True))
 
-    # Sanitize numeric overrides (mirror delegate_task's per-call handling).
     run_timeout_seconds = body.get("run_timeout_seconds")
     if run_timeout_seconds is not None:
         run_timeout_seconds = float(run_timeout_seconds)
-    max_spawn_depth = body.get("max_spawn_depth")
-    if max_spawn_depth is not None:
-        max_spawn_depth = int(max_spawn_depth)
-    max_children_per_agent = body.get("max_children_per_agent")
-    if max_children_per_agent is not None:
-        max_children_per_agent = int(max_children_per_agent)
 
     try:
         handle = delegate_task(
@@ -203,8 +196,6 @@ async def post_subagent_run_handler(request):
             task_name=body.get("task_name"),
             label=body.get("label"),
             run_timeout_seconds=run_timeout_seconds,
-            max_spawn_depth=max_spawn_depth,
-            max_children_per_agent=max_children_per_agent,
         )
     except ValueError as exc:
         logger.warning(f"POST /subagents/runs rejected: {exc}")

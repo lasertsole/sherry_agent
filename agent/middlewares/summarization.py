@@ -24,12 +24,12 @@ from langchain_core.messages import (
     RemoveMessage,
 )
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
-from pub_func.message.estimate_msg_tokens import estimate_msg_tokens, estimate_messages_tokens
-from pub_func.message.turn_utils import split_into_turns, split_turn
-from pub_func.message.tool_output_dedup import dedup_tool_outputs
-from pub_func.message.tool_output_prune import prune_tool_outputs
-from pub_func.message.target_truncation import target_truncate_tool_outputs
-from pub_func.message.tool_args_truncate import truncate_tool_args
+from pub.func.message.estimate_msg_tokens import estimate_msg_tokens, estimate_messages_tokens
+from pub.func.message.turn_utils import split_into_turns, split_turn
+from pub.func.message.tool_output_dedup import dedup_tool_outputs
+from pub.func.message.tool_output_prune import prune_tool_outputs
+from pub.func.message.target_truncation import target_truncate_tool_outputs
+from pub.func.message.tool_args_truncate import truncate_tool_args
 from config.num import (
     PREEMPTIVE_TRUNCATE_RATIO,
     COMPRESSION_TRIGGER_RATIO,
@@ -61,7 +61,7 @@ from config.num import (
     TRUNCATE_BUDGET_RATIO,
     COMPRESSION_RESERVE_TOKENS,
 )
-from pub_func.message.overflow_router import (
+from pub.func.message.overflow_router import (
     ROUTE_FITS,
     ROUTE_TRUNCATE_TOOL_RESULTS_ONLY,
     ROUTE_COMPACT_THEN_TRUNCATE,
@@ -70,8 +70,8 @@ from pub_func.message.overflow_router import (
     decide_route,
     find_truncatable_tool_results,
 )
-from pub_func.message.tool_result_ttl import truncate_to_budget
-from pub_func.message.llm_error_classifier import (
+from pub.func.message.tool_result_ttl import truncate_to_budget
+from pub.func.message.llm_error_classifier import (
     CONTEXT_OVERFLOW,
     PAYLOAD_TOO_LARGE,
     classify_provider_error,
@@ -103,10 +103,9 @@ _RECOVERY_ATTEMPTS_KEY = "summarization_recovery_attempts"
 _PREVIOUS_FILE_OPS_KEY = "summarization_previous_file_ops"
 _COOLDOWN_ROUNDS_KEY = "summarization_cooldown_rounds"
 _TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
-# T4/T5 per-error-class retry counters: session-level, one key per
-# classified error, same state_register_mem pattern as the keys above.
-_OVERFLOW_RETRIES_T4_KEY = "summarization_overflow_retries_t4"
-_OVERFLOW_RETRIES_T5_KEY = "summarization_overflow_retries_t5"
+# T4/T5 overflow retry counter: session-level, shared by every classified
+# overflow error, same state_register_mem pattern as the keys above.
+_OVERFLOW_RETRIES_KEY = "summarization_overflow_retries"
 
 # Classified provider error -> (recovery trigger label, session retry key).
 # Any future classifier value missing from these maps is treated as a
@@ -116,8 +115,8 @@ _TRIGGER_BY_ERROR_CLASS: dict[str, str] = {
     CONTEXT_OVERFLOW: "T5",
 }
 _RETRY_KEY_BY_ERROR_CLASS: dict[str, str] = {
-    PAYLOAD_TOO_LARGE: _OVERFLOW_RETRIES_T4_KEY,
-    CONTEXT_OVERFLOW: _OVERFLOW_RETRIES_T5_KEY,
+    PAYLOAD_TOO_LARGE: _OVERFLOW_RETRIES_KEY,
+    CONTEXT_OVERFLOW: _OVERFLOW_RETRIES_KEY,
 }
 
 
@@ -1755,6 +1754,7 @@ class Summarization(AgentMiddleware):
         state_register_mem.set_state(session_id, _PREVIOUS_FILE_OPS_KEY, None)
         # NEW: per-turn proactive-compression attempt counter.
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+        state_register_mem.set_state(session_id, _OVERFLOW_RETRIES_KEY, 0)
 
     def _t1_state_update(self, request: ModelRequest[ContextT]) -> dict[str, Any]:
         """Translate a T1-dispatched request into a before_agent state update.

@@ -42,7 +42,7 @@ from loguru import logger
 from server.queue.user_input_queue import UserInputQueueStatus
 from server.service.stream_driver import StreamDriver
 from server.utils.ws_helpers import send_ws_json
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 
 # ---------------------------------------------------------------------------
 # State + seams (monkeypatch points for tests)

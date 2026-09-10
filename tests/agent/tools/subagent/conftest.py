@@ -22,7 +22,7 @@ def _real_init_attr(pkg: str, name: str):
     makes ``from <stub> import <name>`` behave like the real package for names
     that are plain re-exports (functions/classes) rather than same-named
     submodules — e.g. ``from context_engine import get_db`` or
-    ``from pub_func import string_to_unique_int`` (which lives in
+    ``from pub.func import string_to_unique_int`` (which lives in
     ``string_to_int.py`` since the legacy hash modules were merged).
     """
     mod = _real_init_cache.get(pkg)
@@ -58,7 +58,7 @@ def _real_init_attr(pkg: str, name: str):
 def _make_stub(mod_name: str) -> stdlib_types.ModuleType:
     """Create a lightweight stub that still resolves real names.
 
-    Heavy package ``__init__`` files (``agent``, ``pub_func`` -> cv2 via
+    Heavy package ``__init__`` files (``agent``, ``pub.func`` -> cv2 via
     ``media/*``, ``context_engine`` store, ...) are stubbed to keep the
     subagent import chain isolated. But ``tests/unit/subagent`` sorts
     alphabetically before ``tests/unit/test_*.py``, so this conftest would
@@ -68,7 +68,7 @@ def _make_stub(mod_name: str) -> stdlib_types.ModuleType:
     - a ``__path__``, so ``import <stub>.<submodule>`` loads the real code;
     - a module-level ``__getattr__`` (PEP 562) that resolves missing names
       the way the real package would: first via a same-named submodule
-      (``from pub_func import run_async`` -> ``pub_func/run_async.py``),
+      (``from pub.func import run_async`` -> ``pub/func/run_async.py``),
       otherwise via the real package init (``from channels import
       BaseChannel`` -> ``channels/__init__.py`` re-export).
     """
@@ -110,7 +110,7 @@ def _setup_subagent_alias():
         "agent.core",
         "agent.checkpointer",
         "agent.middlewares",
-        "pub_func",
+        "pub.func",
         "models",
         "sessions",
         "runtime",
@@ -124,7 +124,7 @@ def _setup_subagent_alias():
 
     # Light packages are NOT stubbed and load for real on demand: `config`
     # (path/num constants; chains need ENV_PATH, SRC_DIR, AUTO_SKILLS_DIR,
-    # PLUGINS_PATH, ROOT_DIR, TEMP_DIR), `type` (bus dataclasses /
+    # PLUGINS_PATH, ROOT_DIR, TEMP_DIR), `pub.types` (bus dataclasses /
     # message models), `server` (empty __init__), `bus` (async queues).
 
     # Bind the runtime package names that real runtime submodules re-import
@@ -154,7 +154,7 @@ def _setup_subagent_alias():
 
     # NOTE: signature must accept positional args — server/service/messages.py
     # get_pending_interrupt() calls build_agent_config(session_id).
-    sys.modules["pub_func"].build_agent_config = lambda *a, **kw: {}
+    sys.modules["pub.func"].build_agent_config = lambda *a, **kw: {}
 
     sys.modules["models"].build_main_llm = lambda: None
     sys.modules["models"].build_auxiliary_llm = lambda: None

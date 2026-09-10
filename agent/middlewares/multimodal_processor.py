@@ -9,6 +9,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from agent.middlewares.mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
 from agent.middlewares.media_handlers import MediaPaths, _MEDIA_HANDLERS
+from pub.func.validator import is_safe_session_id
 
 
 class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddleware):
@@ -37,6 +38,10 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         session_id: str = state.get("session_id", "")
         if session_id.strip() == "":
             err_text: str = "Not pass session_id"
+            logger.error(err_text)
+            raise RuntimeError(err_text)
+        if not is_safe_session_id(session_id):
+            err_text = f"Unsafe session_id: {session_id!r}"
             logger.error(err_text)
             raise RuntimeError(err_text)
 
@@ -151,6 +156,10 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         session_id: str = state.get("session_id", "")
         if session_id.strip() == "":
             err_text: str = "Not pass session_id"
+            logger.error(err_text)
+            raise RuntimeError(err_text)
+        if not is_safe_session_id(session_id):
+            err_text = f"Unsafe session_id: {session_id!r}"
             logger.error(err_text)
             raise RuntimeError(err_text)
 

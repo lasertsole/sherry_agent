@@ -9,7 +9,7 @@ from config import PLUGINS_PATH
 from asyncio import AbstractEventLoop
 from typing import Any
 from collections.abc import Callable, Awaitable
-from type.bus import InboundMessage, OutboundMessage
+from pub.types.bus import InboundMessage, OutboundMessage
 
 
 class _ChannelRegistry:
@@ -82,6 +82,7 @@ class ChannelManager:
     _event_loop: AbstractEventLoop | None
     _inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]] | None
     _outbound_consumer: Callable[[OutboundMessage, BaseChannel], Awaitable[None]] | None
+    _consumer_tasks: list[asyncio.Task]
     _started: bool
 
     async def _consume_loop(self, direction: str) -> None:
@@ -141,6 +142,7 @@ class ChannelManager:
         self._event_loop = None
         self._inbound_consumer = None
         self._outbound_consumer = None
+        self._consumer_tasks = []
         self._started = False
 
         if config is None:
@@ -192,14 +194,17 @@ class ChannelManager:
         # Start outbound dispatcher
         self._dispatch_task = self._event_loop.create_task(self._dispatch_outbound())
 
-        # Start inbound/outbound consumers
-        self._event_loop.create_task(self._inbound_consume_loop())
-        self._event_loop.create_task(self._outbound_consume_loop())
+        self._consumer_tasks = [
+            self._event_loop.create_task(self._inbound_consume_loop()),
+            self._event_loop.create_task(self._outbound_consume_loop()),
+        ]
 
         # Start channels
         for name, channel in self._channels.items():
             logger.info(f"Starting {name} channel...")
-            self._event_loop.create_task(self._start_channel(name, channel))
+            self._consumer_tasks.append(
+                self._event_loop.create_task(self._start_channel(name, channel))
+            )
 
     async def stop_service(self) -> None:
         """Stop all channels and the dispatcher."""
@@ -209,6 +214,13 @@ class ChannelManager:
         if self._dispatch_task:
             self._dispatch_task.cancel()
             logger.debug("Dispatcher task cancelled")
+
+        for task in self._consumer_tasks:
+            task.cancel()
+        if self._consumer_tasks:
+            await asyncio.gather(*self._consumer_tasks, return_exceptions=True)
+            logger.debug("Consumer tasks cancelled: count={}", len(self._consumer_tasks))
+        self._consumer_tasks = []
 
         # Stop all channels
         tasks = []

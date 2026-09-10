@@ -4485,7 +4485,7 @@ class _PipelineMixin:
                 chunk_content = _compose(description)
                 tokens = len(self.tokenizer.encode(chunk_content))
                 if tokens > max_tokens:
-                    # Truncate only the description, never name/type/equation.
+                    # Truncate only the description, never name/pub/types/equation.
                     desc_tokens = self.tokenizer.encode(description)
                     overflow = tokens - max_tokens
                     keep = max(min_desc_tokens, len(desc_tokens) - overflow)

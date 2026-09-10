@@ -40,7 +40,7 @@ from config.num import (
     TRUNCATE_BUDGET_RATIO,
     TTL_REGISTRY_MAX_ENTRIES,
 )
-from pub_func.message.tool_result_ttl import record_first_seen
+from pub.func.message.tool_result_ttl import record_first_seen
 from runtime import state_register_mem
 
 # ----------------------------------------------------------------------
@@ -792,10 +792,8 @@ class TestT4T5Recovery:
         assert resp.content == "ok"
         # degradation monitor ran exactly once, on the final successful response
         assert len(monitor) == 1 and monitor[0] is resp
-        t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")  # AttributeError-RED probe
-        t5_key = mget("_OVERFLOW_RETRIES_T5_KEY")
-        assert state_register_mem.get_state(sid, t4_key) == 1
-        assert state_register_mem.get_state(sid, t5_key) in (None, 0)
+        overflow_key = mget("_OVERFLOW_RETRIES_KEY")  # AttributeError-RED probe
+        assert state_register_mem.get_state(sid, overflow_key) == 1
         # exactly one compression this session = the forced recovery one
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
         # forced path does NOT arm cooldown / per-turn attempts
@@ -831,11 +829,8 @@ class TestT4T5Recovery:
 
         assert len(calls) == 2
         assert resp.content == "ok"
-        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T5_KEY")) == 1
-        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T4_KEY")) in (
-            None,
-            0,
-        )
+        overflow_key = mget("_OVERFLOW_RETRIES_KEY")
+        assert state_register_mem.get_state(sid, overflow_key) == 1
         assert any("trigger=T5" in line and "attempt=1/3" in line for line in lines)
         assert any("error_class=context_overflow" in line for line in lines)
 
@@ -859,7 +854,7 @@ class TestT4T5Recovery:
 
         assert ei.value is err  # same object: never wrapped, never replaced
         assert len(calls) == 4
-        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T4_KEY")) == 3
+        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_KEY")) == 3
         # one _apply_compression execution per retry = 3 total
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 3
         assert monitor == []  # failed calls never pollute degradation stats
@@ -887,11 +882,8 @@ class TestT4T5Recovery:
         assert ei.value is err
         assert len(calls) == 1
         assert monitor == []
-        for key in (
-            mget("_OVERFLOW_RETRIES_T4_KEY"),
-            mget("_OVERFLOW_RETRIES_T5_KEY"),
-        ):
-            assert state_register_mem.get_state(sid, key) in (None, 0)
+        overflow_key = mget("_OVERFLOW_RETRIES_KEY")
+        assert state_register_mem.get_state(sid, overflow_key) in (None, 0)
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) in (None, 0)
         assert not any("trigger=T4" in line or "trigger=T5" in line for line in lines)
 
@@ -922,20 +914,20 @@ class TestT4T5Recovery:
         )
 
         try:
-            t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")
+            overflow_key = mget("_OVERFLOW_RETRIES_KEY")
             assert calls.count("s") == calls.count("a") == 2
             assert resp_s.content == resp_a.content == "ok"
-            assert state_register_mem.get_state(sid, t4_key) == 1
-            assert state_register_mem.get_state(sid2, t4_key) == 1
+            assert state_register_mem.get_state(sid, overflow_key) == 1
+            assert state_register_mem.get_state(sid2, overflow_key) == 1
         finally:
             try:
                 state_register_mem.clear_session(sid2)
             except Exception:  # noqa: S110
                 pass
 
-    def test_t4_then_t5_independent_counters(self, sid):
+    def test_t4_then_t5_share_one_counter(self, sid):
         """Extra: T4 on call 1, T5 on call 2, success on call 3 - the two
-        error classes count against INDEPENDENT session keys."""
+        error classes count against the SAME session key (merged counter)."""
         stub = StubModel()
         mw = make_middleware(model=stub)
         calls = []
@@ -953,10 +945,10 @@ class TestT4T5Recovery:
 
         assert len(calls) == 3
         assert resp.content == "ok"
-        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T4_KEY")) == 1
-        assert state_register_mem.get_state(sid, mget("_OVERFLOW_RETRIES_T5_KEY")) == 1
+        overflow_key = mget("_OVERFLOW_RETRIES_KEY")
+        assert state_register_mem.get_state(sid, overflow_key) == 2
         assert any("trigger=T4" in line and "attempt=1/3" in line for line in lines)
-        assert any("trigger=T5" in line and "attempt=1/3" in line for line in lines)
+        assert any("trigger=T5" in line and "attempt=2/3" in line for line in lines)
 
     def test_recovery_bypasses_cooldown_gate_and_skip_gate(self, sid):
         """Extra: recovery still works when the wrap call enters via the
@@ -977,10 +969,10 @@ class TestT4T5Recovery:
         with capture_logs():
             resp_a = mw.wrap_model_call(make_request(t3_low_est_messages(), sid, stub), handler_a)
 
-        t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")
+        overflow_key = mget("_OVERFLOW_RETRIES_KEY")
         assert resp_a.content == "ok"
         assert len(calls_a) == 2
-        assert state_register_mem.get_state(sid, t4_key) == 1
+        assert state_register_mem.get_state(sid, overflow_key) == 1
         # cooldown ticked 2 -> 1 at wrap entry, NOT re-armed by the forced path
         assert state_register_mem.get_state(sid, mget("_COOLDOWN_ROUNDS_KEY")) == 1
         assert state_register_mem.get_state(sid, mget("_TURN_ATTEMPTS_KEY")) in (
@@ -1008,7 +1000,7 @@ class TestT4T5Recovery:
                 )
             assert resp_b.content == "ok"
             assert len(calls_b) == 2
-            assert state_register_mem.get_state(sid2, t4_key) == 1
+            assert state_register_mem.get_state(sid2, overflow_key) == 1
             assert any("attempt=1/3" in line for line in lines)
         finally:
             try:
@@ -1213,7 +1205,7 @@ class TestAntiThrashMatrix:
         count_key = mget("_COMPRESSION_COUNT_KEY")
         cooldown_key = mget("_COOLDOWN_ROUNDS_KEY")
         attempts_key = mget("_TURN_ATTEMPTS_KEY")
-        t4_key = mget("_OVERFLOW_RETRIES_T4_KEY")
+        overflow_key = mget("_OVERFLOW_RETRIES_KEY")
         state_register_mem.set_state(sid, count_key, 5)
         state_register_mem.set_state(sid, cooldown_key, 2)
         state_register_mem.set_state(sid, attempts_key, 3)
@@ -1254,7 +1246,7 @@ class TestAntiThrashMatrix:
         assert len(calls_b) == 2
         assert resp_b.content == "ok"
         assert requests[1] is not requests[0]  # rebuilt request, not original
-        assert state_register_mem.get_state(sid, t4_key) == 1
+        assert state_register_mem.get_state(sid, overflow_key) == 1
         assert state_register_mem.get_state(sid, count_key) == 6  # 5 + forced
         # cooldown ticked again (1 -> 0), never re-armed by the forced path
         assert state_register_mem.get_state(sid, cooldown_key) == 0
@@ -1323,8 +1315,7 @@ _PARITY_STATE_KEYS = (
     "_COMPRESSION_COUNT_KEY",
     "_TURN_ATTEMPTS_KEY",
     "_COOLDOWN_ROUNDS_KEY",
-    "_OVERFLOW_RETRIES_T4_KEY",
-    "_OVERFLOW_RETRIES_T5_KEY",
+    "_OVERFLOW_RETRIES_KEY",
 )
 
 _PARITY_413 = Provider413Error("413 payload too large")
@@ -1402,7 +1393,7 @@ _PARITY_SCENARIOS = {
         errors=[_PARITY_413, None],
         calls=2,
         aux=0,
-        state={"_OVERFLOW_RETRIES_T4_KEY": 1, "_COMPRESSION_COUNT_KEY": 1},
+        state={"_OVERFLOW_RETRIES_KEY": 1, "_COMPRESSION_COUNT_KEY": 1},
     ),
     "s8_t5_recover": dict(
         msgs=t3_low_est_messages,
@@ -1410,7 +1401,7 @@ _PARITY_SCENARIOS = {
         errors=[_PARITY_T5, None],
         calls=2,
         aux=0,
-        state={"_OVERFLOW_RETRIES_T5_KEY": 1, "_COMPRESSION_COUNT_KEY": 1},
+        state={"_OVERFLOW_RETRIES_KEY": 1, "_COMPRESSION_COUNT_KEY": 1},
     ),
     "s9_t4_exhaust": dict(
         msgs=t3_low_est_messages,
@@ -1418,7 +1409,7 @@ _PARITY_SCENARIOS = {
         errors=[_PARITY_413],
         calls=4,
         aux=0,
-        state={"_OVERFLOW_RETRIES_T4_KEY": 3, "_COMPRESSION_COUNT_KEY": 3},
+        state={"_OVERFLOW_RETRIES_KEY": 3, "_COMPRESSION_COUNT_KEY": 3},
     ),
 }
 

@@ -61,13 +61,11 @@ class WavFrontend:
 
     def fbank_online(self, waveform: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         waveform = waveform * (1 << 15)
-        # self.fbank_fn = knf.OnlineFbank(self.opts)
         self.fbank_fn.accept_waveform(self.opts.frame_opts.samp_freq, waveform.tolist())
         frames = self.fbank_fn.num_frames_ready
         mat = np.empty([frames, self.opts.mel_opts.num_bins])
         for i in range(self.fbank_beg_idx, frames):
             mat[i, :] = self.fbank_fn.get_frame(i)
-        # self.fbank_beg_idx += (frames-self.fbank_beg_idx)
         feat = mat.astype(np.float32)
         feat_len = np.array(mat.shape[0]).astype(np.int32)
         return feat, feat_len
@@ -151,8 +149,6 @@ class WavFrontend:
 class WavFrontendOnline(WavFrontend):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # self.fbank_fn = knf.OnlineFbank(self.opts)
-        # add variables
         self.frame_sample_length = int(
             self.opts.frame_opts.frame_length_ms * self.opts.frame_opts.samp_freq / 1000
         )
@@ -322,8 +318,6 @@ class WavFrontendOnline(WavFrontend):
                     self.reserve_waveforms = None
                 else:
                     reserve_frame_idx = lfr_splice_frame_idxs[0] - minus_frame
-                    # print('reserve_frame_idx:  ' + str(reserve_frame_idx))
-                    # print('frame_frame:  ' + str(frame_from_waveforms))
                     self.reserve_waveforms = self.waveforms[
                         :,
                         reserve_frame_idx * self.frame_shift_sample_length : frame_from_waveforms

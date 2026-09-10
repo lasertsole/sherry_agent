@@ -442,7 +442,7 @@ class TestUC09MultimodalFlow:
 class TestUC10MessageBus:
     def test_inbound_order_preserved(self):
         from bus.core import MessageBus
-        from type.bus import InboundMessage
+        from pub.types.bus import InboundMessage
 
         bus = MessageBus(maxsize=8)
 
@@ -461,7 +461,7 @@ class TestUC10MessageBus:
 
     def test_outbound_round_trip(self):
         from bus.core import MessageBus
-        from type.bus import OutboundMessage
+        from pub.types.bus import OutboundMessage
 
         bus = MessageBus(maxsize=4)
 
@@ -639,7 +639,7 @@ class TestUC15SameSecondOrdering:
 class TestUC16BusBackpressure:
     def test_full_queue_delays_not_drops(self):
         from bus.core import MessageBus
-        from type.bus import InboundMessage
+        from pub.types.bus import InboundMessage
 
         bus = MessageBus(maxsize=1)
 

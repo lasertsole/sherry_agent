@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from config import is_allowed_skill_path
 from skills import loader as loader_mod
 
 REPO_ROOT = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
@@ -232,3 +233,55 @@ class TestReadSkillsSnapshot:
         monkeypatch.setattr(loader_mod, "SKILLS_DIR", skills_dir)
 
         assert loader_mod.read_skills_snapshot() == payload
+
+
+# ---------------------------------------------------------------------------
+# Discovery restricted to builtin/auto/plugins
+# ---------------------------------------------------------------------------
+
+
+class TestAllowedSkillRoots:
+    def _tree(self, tmp_path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+        monkeypatch.setattr(loader_mod, "SKILLS_DIR", root / "skills")
+        monkeypatch.setattr(loader_mod, "ROOT_DIR", root)
+        monkeypatch.setattr(loader_mod, "SKILLS_STATE_FILE", root / "skills_state.json")
+        return root
+
+    def test_allowed_roots_discovered(self, tmp_path, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch)
+        _write_skill(root, "skills/builtin/core/alpha", "alpha")
+        _write_skill(root, "skills/auto/learned/auto_one", "auto_one")
+        _write_skill(root, "skills/plugins/up/plug_one", "plug_one")
+
+        names = {s["name"] for s in loader_mod.scan_skills(use_cache=False)}
+
+        assert {"alpha", "auto_one", "plug_one"} <= names
+
+    def test_skill_directly_under_skills_ignored(self, tmp_path, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch)
+        _write_skill(root, "skills", "stray")
+        _write_skill(root, "skills/builtin/core/alpha", "alpha")
+
+        names = {s["name"] for s in loader_mod.scan_skills(use_cache=False)}
+
+        assert "stray" not in names
+        assert "alpha" in names
+
+    def test_unexpected_subdir_ignored(self, tmp_path, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch)
+        _write_skill(root, "skills/misc/stray", "stray")
+
+        names = {s["name"] for s in loader_mod.scan_skills(use_cache=False)}
+
+        assert "stray" not in names
+
+    def test_is_allowed_skill_path(self, tmp_path):
+        skills_dir = tmp_path / "skills"
+        assert is_allowed_skill_path(skills_dir / "builtin/x/SKILL.md", skills_dir) is True
+        assert is_allowed_skill_path(skills_dir / "auto/x/SKILL.md", skills_dir) is True
+        assert is_allowed_skill_path(skills_dir / "plugins/x/SKILL.md", skills_dir) is True
+        assert is_allowed_skill_path(skills_dir / "SKILL.md", skills_dir) is False
+        assert is_allowed_skill_path(skills_dir / "misc/x/SKILL.md", skills_dir) is False
+        assert is_allowed_skill_path(tmp_path / "outside/SKILL.md", skills_dir) is False

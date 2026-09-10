@@ -26,7 +26,7 @@ from agent.tools.subagent.announce.completion_message import (
 from agent.tools.subagent.announce.steering_queue import SteeringQueue
 from agent.tools.subagent.registry.pending_injections import PendingInjectionStore
 from agent.tools.subagent.types.registry import SubagentRunRecord
-from pub_func.transcript_repair import sanitize_tool_use_result_pairing
+from pub.func.transcript_repair import sanitize_tool_use_result_pairing
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +47,7 @@ def _make_run(
 
 
 # ---------------------------------------------------------------------------
-# Path 1: transcript sanitize (pub_func/transcript_repair.py:158-229)
+# Path 1: transcript sanitize (pub/func/transcript_repair.py:158-229)
 # ---------------------------------------------------------------------------
 
 

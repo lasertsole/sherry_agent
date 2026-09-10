@@ -152,11 +152,16 @@ EMA_AI_agent/
 │   ├── channels/           # 渠道插件（QQ 机器人适配器）
 │   └── mcp_server/         # MCP 服务器配置
 │
-├── pub_func/               # 通用工具函数
-│   ├── format/             # 文本格式化工具
-│   ├── media/              # 媒体处理工具
-│   ├── message/            # 消息处理工具
-│   └── validator/          # 输入校验工具
+├── pub/                    # 共享工具与数据模型
+│   ├── func/               # 通用工具函数
+│   │   ├── format/         # 文本格式化工具
+│   │   ├── media/          # 媒体处理工具
+│   │   ├── message/        # 消息处理工具
+│   │   └── validator/      # 输入校验工具
+│   └── types/              # 共享数据模型
+│       ├── message.py      # MultiModalMessage、Chat 等
+│       ├── bus.py          # 消息总线数据模型
+│       └── client.py       # 客户端数据模型
 │
 ├── runtime/                # 运行时状态与工具
 │   ├── core.py             # 单例 Register 基类 + 按会话清理
@@ -198,11 +203,6 @@ EMA_AI_agent/
 ├── temp/                   # 临时文件
 │
 ├── tests/                  # 测试套件（pytest）
-│
-├── type/                   # 共享数据模型
-│   ├── message.py          # MultiModalMessage、Chat 等
-│   ├── bus.py              # 消息总线数据模型
-│   └── client.py           # 客户端数据模型
 │
 ├── workspace/              # 角色档案与行为定义
 │   ├── IDENTITY.md         # 姓名、年龄、兴趣、人际关系

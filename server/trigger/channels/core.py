@@ -11,12 +11,12 @@ from runtime import relation_register
 from server.queue.user_input_queue import UserInputQueueStatus
 from server.service import async_generate
 from server.service import input_queue_service as iqs
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 from channels import BaseChannel, channel_manager
-from type.bus import InboundMessage, OutboundMessage
+from pub.types.bus import InboundMessage, OutboundMessage
 from skills.builtin.core.heartbeat import heartbeat_service
 from server.service import process_heartbeat_task, process_heartbeat_notify
-from pub_func import string_to_unique_int
+from pub.func import string_to_unique_int
 
 """Channel inbound message handler"""
 

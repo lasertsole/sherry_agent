@@ -50,8 +50,18 @@ CURATOR_DRY_RUN_BANNER = (
 )
 
 
+_report_cache: list | None = None
+
+
+def _cached_agent_created_report(*, refresh: bool = False) -> list:
+    global _report_cache
+    if refresh or _report_cache is None:
+        _report_cache = agent_created_report()
+    return _report_cache
+
+
 def _render_candidate_list() -> str:
-    rows = agent_created_report()
+    rows = _cached_agent_created_report()
     rows = [r for r in rows if not r.get("pinned")]
     if not rows:
         return "No agent-created skills to review."
@@ -114,7 +124,7 @@ class _ReviewRun:
 def _collect_auto_transition_counts(dry_run: bool, start: datetime) -> dict[str, Any]:
     if dry_run:
         try:
-            report = agent_created_report()
+            report = _cached_agent_created_report()
             return {
                 "checked": len(report),
                 "marked_stale": 0,
@@ -151,7 +161,7 @@ def _record_intermediate_state(run: _ReviewRun) -> None:
 
 def _snapshot_agent_skills() -> tuple[list, set]:
     try:
-        before_report = agent_created_report()
+        before_report = _cached_agent_created_report()
     except Exception:
         before_report = []
     before_names = {
@@ -200,7 +210,7 @@ def _append_rename_summary(run: _ReviewRun) -> str:
     try:
         rename_lines = _build_rename_summary(
             before_names=run.before_names,
-            after_report=agent_created_report(),
+            after_report=_cached_agent_created_report(refresh=True),
             tool_calls=run.llm_meta.get("tool_calls", []) or [],
             model_final=run.llm_meta.get("final", "") or "",
         )
@@ -214,7 +224,7 @@ def _append_rename_summary(run: _ReviewRun) -> str:
 def _finalize_run(run: _ReviewRun, on_summary: Callable[[str], None] | None) -> dict[str, Any]:
     elapsed = (datetime.now(UTC) - run.start).total_seconds()
     try:
-        after_report = agent_created_report()
+        after_report = _cached_agent_created_report(refresh=True)
     except Exception:
         after_report = []
     try:
@@ -267,6 +277,8 @@ def run_curator_review(
 ) -> dict[str, Any]:
     if consolidate is None:
         consolidate = get_consolidate()
+    global _report_cache
+    _report_cache = None
     start = datetime.now(UTC)
     counts = _collect_auto_transition_counts(dry_run, start)
     run = _ReviewRun(

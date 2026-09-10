@@ -2,7 +2,7 @@
 
 Three UI-editable text file stores previously implemented the same
 ``read_*_file()`` (iterate allowed names, read what exists) and
-``write_*_file()`` (validate name/type/non-empty/length, write) patterns:
+``write_*_file()`` (validate name/pub/types/non-empty/length, write) patterns:
 ``server/service/workplace.py``, ``server/service/memory.py`` and
 ``server/service/heartbeat.py``. The template lives here; each service keeps
 its module-level function names and delegates to a store instance.

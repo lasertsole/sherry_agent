@@ -11,7 +11,7 @@ from bus import MessageBus
 from channels.deps import install_requirements
 from collections import deque
 from config.schema import Base
-from type.bus import OutboundMessage
+from pub.types.bus import OutboundMessage
 from channels.base import BaseChannel
 from typing import TYPE_CHECKING, Any, Literal
 

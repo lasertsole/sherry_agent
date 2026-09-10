@@ -19,7 +19,7 @@ from agent.middlewares.max_tokens_boost import MaxTokensBoostMiddleware
 from runtime import state_register_mem
 from server.service import messages as m
 from server.service.messages import _CONTINUATION_PROMPT, _MAX_CONTINUATION_RETRIES
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 

@@ -18,7 +18,7 @@ from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.types import Command
 
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 from runtime import state_register_mem
 from server.service import messages as m
 from server.service.stream_dispatch import (

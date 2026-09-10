@@ -14,7 +14,7 @@ import base64
 import requests
 from dotenv import load_dotenv
 from config.path import STATIC_DIR
-from pub_func import generate_tsid
+from pub.func import generate_tsid
 from pydantic import validate_call
 
 # Load environment variables

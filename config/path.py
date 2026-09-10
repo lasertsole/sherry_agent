@@ -37,6 +37,10 @@ SKILLS_DIR = ROOT_DIR / "skills"
 AUTO_SKILLS_DIR = SKILLS_DIR / "auto/"
 PLUGIN_SKILLS_DIR = SKILLS_DIR / "plugins"
 SKILLS_STATE_FILE = PLUGIN_SKILLS_DIR / ".state.json"
+# A SKILL.md is only discoverable when it lives under one of these top-level
+# roots beneath SKILLS_DIR. A SKILL.md directly under skills/ or under an
+# unexpected subdirectory is ignored by the loader and the skill index.
+SKILL_DISCOVERY_ROOTS: tuple[str, ...] = ("builtin", "auto", "plugins")
 WORKSPACE_DIR = ROOT_DIR / "workspace"
 WORKSPACE_TEMPLATE_DIR = WORKSPACE_DIR / "template"
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
@@ -84,3 +88,17 @@ def resolve_workspace_template_lang(lang: str | None = None) -> str:
 def resolve_workspace_template_dir(lang: str | None = None) -> Path:
     """Return the template directory for ``lang``, falling back to a default."""
     return WORKSPACE_TEMPLATE_DIR / resolve_workspace_template_lang(lang)
+
+
+def is_allowed_skill_path(skill_file: Path, skills_dir: Path | None = None) -> bool:
+    """Return True when *skill_file* lives under an allowed skill root.
+
+    ``skills_dir`` defaults to :data:`SKILLS_DIR`; callers that override the
+    skills root (e.g. tests) pass it explicitly.
+    """
+    base = SKILLS_DIR if skills_dir is None else skills_dir
+    try:
+        rel = skill_file.relative_to(base)
+    except ValueError:
+        return False
+    return bool(rel.parts) and rel.parts[0] in SKILL_DISCOVERY_ROOTS

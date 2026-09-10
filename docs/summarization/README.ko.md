@@ -4,7 +4,7 @@
 
 > 에이전트가 긴 대화를 모델의 컨텍스트 윈도우 안에 유지하는 방법: 다섯 개의 트리거 지점이 전체 라이프사이클(턴 시작 전, 모든 모델 호출 전, 모든 모델 응답 후, 프로바이더 오버플로 에러 시)을 감시하고, 순수 함수형 4-경로 라우터가 가장 저렴한 수리책을 고르며(큰 도구 결과와 과도하게 큰 도구 호출 인자를 먼저 잘라내고, 강제될 때만 AI 압축), 안티-스래싱 가드가 압축이 통제 없이 불어나는 일을 원천 차단합니다.
 
-사실상의 기준(source of truth): `agent/middlewares/summarization.py`, `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, `pub_func/message/llm_error_classifier.py`, `pub_func/message/estimate_msg_tokens.py`, `pub_func/message/tool_output_dedup.py`, `pub_func/message/tool_output_prune.py`, `pub_func/message/target_truncation.py`, `pub_func/message/tool_args_truncate.py`, `pub_func/message/turn_utils.py`, `config/num.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/message/estimate_msg_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/num.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -96,7 +96,7 @@ AIMessage(<summary>, lc_source="summarization")
 └─ T4/T5  프로바이더 에러 복구 링
        (_execute_with_recovery :1057 / _aexecute_with_recovery :1115)
        ├─ 핸들러가 예외를 던짐 → classify_provider_error
-       │  (pub_func/message/llm_error_classifier.py):
+       │  (pub/func/message/llm_error_classifier.py):
        │  payload_too_large → T4, context_overflow → T5
        │  (_TRIGGER_BY_ERROR_CLASS :115, _RETRY_KEY_BY_ERROR_CLASS :119)
        ├─ 대상 외 / 미분류 → 원본 예외를 그대로 재던짐(재시도 0회,
@@ -119,7 +119,7 @@ AIMessage(<summary>, lc_source="summarization")
 
 ## 🚦 4-경로 오버플로 라우팅 결정
 
-`pub_func/message/overflow_router.py`는 **순수 결정 레이어**입니다 — 잘라내기도, 압축도, I/O도, 상태도 없습니다. 미들웨어는 여기서 세 함수를 임포트합니다:
+`pub/func/message/overflow_router.py`는 **순수 결정 레이어**입니다 — 잘라내기도, 압축도, I/O도, 상태도 없습니다. 미들웨어는 여기서 세 함수를 임포트합니다:
 
 - `compute_pressure`(:50) = `max(estimated_tokens + system_prompt_tokens, reported_tokens)` — API가 보고한 수치가 있으면 그것이 우선;
 - `find_truncatable_tool_results`(:68) — **`ToolMessage`만** 후보 자격이 있음(도구 결과는 재생성 가능); 최근 `TRUNCATABLE_RECENT_SKIP (6)`개 메시지는 항상 제외되어 최신 tool/ai 페어링이 온전히 유지됨; 후보는 최소 `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE (200)` 추정 토큰 이상이어야 함; 결과는 토큰 내림차순 정렬이라 실행자가 가장 큰 이득부터 자름;
@@ -150,7 +150,7 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 ## 🪙 토큰 추정 (토크나이저 없음)
 
-`pub_func/message/estimate_msg_tokens.py`(29행)는 의도적으로 토크나이저 없이 결정론적으로 동작합니다:
+`pub/func/message/estimate_msg_tokens.py`(29행)는 의도적으로 토크나이저 없이 결정론적으로 동작합니다:
 
 ```python
 tokens = (content chars            # str content, or len(json.dumps(content))
@@ -164,9 +164,9 @@ tokens = (content chars            # str content, or len(json.dumps(content))
 
 `_run_budget_truncation`(:659) 안에서는 두 개의 트렁케이션 레이어가 순서대로 돕니다:
 
-**1단계 — 도구 호출 인자**(`pub_func/message/tool_args_truncate.py`): JSON 직렬화가 `MIN_ARGS_CHARS_TO_TRUNCATE (500)`자를 넘는 모든 `AIMessage.tool_calls[].args` — 해당 도구가 `PROTECTED_TOOLS`에 없는 경우 — 는 `MAX_TOOL_ARGS_CHARS (2_000)`자로 봉인되는 `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}`로 대체됩니다(머리 30% / 꼬리 30%, 도구 결과와 같은 비율). 덕분에 `args`는 dict로 남고(LangChain의 `ToolCall.args` 타입), 모든 프로바이더 어댑터에서 JSON 직렬화 가능하며, 모델은 인자가 잘렸음을 볼 수 있습니다. 최근 `TRUNCATABLE_RECENT_SKIP (6)`개 메시지는 건너뛰고, 대체된 `AIMessage`는 `model_copy` 클론입니다 — tool_call_ids는 절대 건드리지 않으므로 AIMessage↔ToolMessage 페어링은 온전히 유지됩니다.
+**1단계 — 도구 호출 인자**(`pub/func/message/tool_args_truncate.py`): JSON 직렬화가 `MIN_ARGS_CHARS_TO_TRUNCATE (500)`자를 넘는 모든 `AIMessage.tool_calls[].args` — 해당 도구가 `PROTECTED_TOOLS`에 없는 경우 — 는 `MAX_TOOL_ARGS_CHARS (2_000)`자로 봉인되는 `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}`로 대체됩니다(머리 30% / 꼬리 30%, 도구 결과와 같은 비율). 덕분에 `args`는 dict로 남고(LangChain의 `ToolCall.args` 타입), 모든 프로바이더 어댑터에서 JSON 직렬화 가능하며, 모델은 인자가 잘렸음을 볼 수 있습니다. 최근 `TRUNCATABLE_RECENT_SKIP (6)`개 메시지는 건너뛰고, 대체된 `AIMessage`는 `model_copy` 클론입니다 — tool_call_ids는 절대 건드리지 않으므로 AIMessage↔ToolMessage 페어링은 온전히 유지됩니다.
 
-**2단계 — 도구 결과**: `pub_func/message/tool_result_ttl.py`는 트렁케이트 트랙이 사용하는 제자리 절단을 제공합니다. 설계 불변식(하중 지지):
+**2단계 — 도구 결과**: `pub/func/message/tool_result_ttl.py`는 트렁케이트 트랙이 사용하는 제자리 절단을 제공합니다. 설계 불변식(하중 지지):
 
 - **제자리만** — 이 모듈은 메시지를 절대 삭제, 재정렬, pop하지 않습니다; `msg.content`(또는 content 리스트 블록)만 수정하고 인덱스를 반환합니다. 이것이 프로바이더 API와 `ToolCallNormalize`가 의존하는 tool-call/`ToolMessage` 페어링을 보존합니다.
 - **비어 있지 않은 플레이스홀더** — 잘려나간 결과는 항상 비어 있지 않은 내용을 유지합니다: `ToolCallNormalize.before_model`은 **빈 `ToolMessage`를 드롭**해서 트랜스크립트를 정화하므로, 빈 플레이스홀더는 조용히 페어링을 깨뜨립니다.
@@ -244,13 +244,13 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🛡️ 안티-스래싱 가드 매트릭스와 성능 저하 복구
 
-상태는 세션 범위 `state_register_mem`의 **열네 개** `summarization_*` 키(:92–107)에 살습니다. `_reset_turn_state`(:1849)는 매 턴 시작 시 그중 **열 개**를 리셋합니다; `summarization_last_user_question`, `summarization_cooldown_rounds`, 두 T4/T5 재시도 카운터는 의도적으로 턴마다 리셋되지 **않습니다**.
+상태는 세션 범위 `state_register_mem`의 **열세 개** `summarization_*` 키(:92–107)에 살습니다. `_reset_turn_state`(:1849)는 매 턴 시작 시 그중 **열한 개**를 리셋합니다; `summarization_last_user_question`, `summarization_cooldown_rounds`는 의도적으로 턴마다 리셋되지 **않습니다**.
 
 | 가드 | 키 | 임계값 | 효과 |
 | :---- | :-- | :-------- | :----- |
 | 턴 쿨다운 | `summarization_cooldown_rounds` | `COMPACTION_COOLDOWN_ROUNDS = 3` | 실제 compact마다 무장(:694); **모든** 모델 호출이 감소(:832); T1 compact 라우트, T2 선제, T3를 차단 — T4/T5 강제 링은 절대 차단하지 않음 |
 | 턴당 압축 수 | `summarization_turn_attempts` | `MAX_COMPRESS_ATTEMPTS_PER_TURN = 3` | :694이 증가; T2 선제 + T3 억제(강제 링은 면제) |
-| 클래스별 오버플로 재시도 | `summarization_overflow_retries_t4` / `_t5` | `MAX_OVERFLOW_RETRIES = 3` | 성공한 강제 단계마다 증가; 소진 → 원본 프로바이더 에러 전파 |
+| 오버플로 재시도 (T4/T5 공유) | `summarization_overflow_retries` | `MAX_OVERFLOW_RETRIES = 3` | 두 에러 클래스가 공유하며 턴마다 리셋; 성공한 강제 단계마다 증가; 소진 → 원본 프로바이더 에러 전파 |
 | 세션 총 압축 | `summarization_compression_count` | `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` | `_should_skip_compression`(:1255)이 True 반환 — 선제 압축 완전 정지 |
 | 연속 무효 | `summarization_compression_ineffective` | `INEFFECTIVE_THRESHOLD = 2` | `skip_llm` 설정 — 비 LLM 전략만 |
 | 유효성 판정 | (`_record_compression`, :1277) | 메시지 수 감소 **또는** 토큰 축소 ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | 성공한 비 LLM 전략(`dedup`/`prune`/`truncate`/`fallback`/`aggressive`)이 `skip_llm`을 다시 해제 |
@@ -299,7 +299,7 @@ Summarization(
 | `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 트렁케이트 트랙 예산 = usable × 0.60 (:680) |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results`의 후보 하한 |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | 최신 메시지는 절대 트렁케이트 불가 (페어링 마진) |
-| `MAX_OVERFLOW_RETRIES` ◆ | `3` | 에러 클래스당 T4/T5 강제 복구 상한 |
+| `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 강제 복구 상한 (단일 공유 카운터) |
 | `MAX_COMPRESS_ATTEMPTS_PER_TURN` ◆ | `3` | 턴당 선제 압축 상한 |
 | `COMPACTION_COOLDOWN_ROUNDS` ◆ | `3` | 실제 compact마다 무장되는 쿨다운 |
 | `MIN_PRESERVE_TOKENS` ◆ | `2_000` | 보존 예산 하한; 윈도우가 없을 때의 예산 |
@@ -343,7 +343,7 @@ Summarization(
 | `tests/unit/test_pub_func_message_tools.py` | 29 | 중복 제거 / 프루닝 / 타깃 트렁케이트 / 턴 유틸리티에 도구 인자 트렁케이트 추가: 머리+꼬리 형식, 작은 인자 스킵, 확보량 클램프, 보호 도구, 최근 스킵, 페어링 및 무변경 |
 | `tests/unit/test_config_num.py` | 43 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
 | `tests/module/test_compression_comprehensive.py` | 48 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티 |
-| `tests/module/test_compression_e2e_static.py` | 12 | 6개 엔드투엔드 시나리오 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
+| `tests/module/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
 | `tests/module/test_summarization_trigger.py` | 3 | 프로덕션 등록 계약: `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
 | `tests/module/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
 | `tests/module/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
@@ -360,7 +360,7 @@ Summarization(
 - **추정기는 토크나이저가 아니라 `chars // 4`입니다.** 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)이며 영어/코드 혼합 콘텐츠로 보정되었습니다; CJK 중심 콘텐츠는 과소 계수됩니다(중국어는 4가 아닌 1–2자/토큰에 가까움).
 - **보고된 사용량이 이기는 곳.** T3만이 보고된 사용량 기반 트리거입니다(`compute_pressure`는 max를 취함). T1/T2 라우트 결정은 추정 기반입니다(추정치 + 시스템 프롬프트 오버헤드만); 레거시 `_check_trigger` 절 폴백은 `max(로컬 추정치, 보고값)`을 사용합니다.
 - **T3는 반환되는 응답을 절대 바꾸지 않습니다.** T3 디스패치의 지속 효과는 도구 결과의 제자리 트렁케이션(메시지 객체는 그래프 상태와 공유됨)과 안티-스래싱 장부 기록뿐입니다; T3 compact 라우트의 `request.override`는 로컬이며 원본 응답이 항상 반환됩니다. T3 본문 전체가 fail-open입니다.
-- **T4/T5는 설계상 안티-스래싱 매트릭스를 우회합니다** — 그것이 "강제"의 요점입니다. 클래스당 `MAX_OVERFLOW_RETRIES (3)` 초과, 또는 강제 압축 단계 자체의 실패 시, 원본 프로바이더 예외가 전파됩니다(절대 삼켜지지 않고, 절대 압축 에러로 대체되지 않음).
+- **T4/T5는 설계상 안티-스래싱 매트릭스를 우회합니다** — 그것이 "강제"의 요점입니다. `MAX_OVERFLOW_RETRIES (3)`(T4/T5 단일 공유 카운터, 턴마다 리셋) 초과, 또는 강제 압축 단계 자체의 실패 시, 원본 프로바이더 예외가 전파됩니다(절대 삼켜지지 않고, 절대 압축 에러로 대체되지 않음).
 - **압축은 fail-open입니다.** `_apply_compression` 내부의 어떤 예외도 로그되고 삼켜집니다; 턴은 압축되지 않은 히스토리로 진행됩니다.
 - **정적 폴백은 휴리스틱입니다.** 키워드 기반 결정/완료 분류와 원시 도구 인자에서의 경로 추출은 최선의 노력입니다; 섹션 골격은 보장되지만 콘텐츠 품질은 아닙니다.
 - **`_SUMMARY_PREFIX`/`_SUMMARY_SUFFIX`/`<summary>` 태그/`lc_source="summarization"`은 하중을 지지는 정확한 문자열입니다.** 이후 턴의 체이닝(`_extract_previous_summary`), 프루닝 정지 조건, 테스트 스위트 전체가 이들을 문자 그대로 매칭합니다 — 함부로 다시 표현하지 마십시오.

@@ -239,7 +239,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/tool_call_normalize.py` · **クラス：** `ToolCallNormalize(AgentMiddleware)`
 **フック：** `before_model` / `abefore_model` のみ
 
-コンテキストトリミング後の tool-call / tool-result ペアリングを修復し、プロバイダーの "Message ordering conflict" エラーを防ぎます。処理は `pub_func.sanitize_tool_use_result_pairing(state["messages"])`（`pub_func/transcript_repair.py` で定義）に委譲され、以下を行います：
+コンテキストトリミング後の tool-call / tool-result ペアリングを修復し、プロバイダーの "Message ordering conflict" エラーを防ぎます。処理は `pub.func.sanitize_tool_use_result_pairing(state["messages"])`（`pub/func/transcript_repair.py` で定義）に委譲され、以下を行います：
 
 - `tool_call_id` による `ToolMessage` の重複排除；
 - 空の `ToolMessage` の除去；
@@ -317,7 +317,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 メインエージェントには **`HumanInTheLoop` と `Summarization` の間**で登録されます：`MaxTokensBoostMiddleware` に対しては内側（ブースト再呼び出しを経ても残った本当の切断だけを目にする）、Summarization に対しては外側（リトライループが T4/T5 オーバーフローリカバリリングを外側から包む）。ワーカーパイプラインには登録されません。状態に `session_id` がない場合は素通しです。
 
-各 handler 呼び出しは、`pub_func/message/llm_error_classifier.py` に基づく「分類 → 処置」ループを通ります — `FailoverReason` 列挙型（18 種）、`ClassifiedError` 判定（`retryable` / `should_compress` / `should_fallback` フラグ）、8 段階優先度パイプライン `classify_api_error` — そして `pub_func/retry_utils.py::jittered_backoff` でバックオフします。
+各 handler 呼び出しは、`pub/func/message/llm_error_classifier.py` に基づく「分類 → 処置」ループを通ります — `FailoverReason` 列挙型（18 種）、`ClassifiedError` 判定（`retryable` / `should_compress` / `should_fallback` フラグ）、8 段階優先度パイプライン `classify_api_error` — そして `pub/func/retry_utils.py::jittered_backoff` でバックオフします。
 
 **`FailoverReason` ごとのリトライセマンティクス**
 
@@ -345,7 +345,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 最内層のミドルウェア — LLM に最も近い位置。スクラッチで実装された `AgentMiddleware` です（LangChain の `SummarizationMiddleware` **ではありません**）：トリガーが発火すると、予算ベースのカットオフで履歴を圧縮します — 非 LLM 戦略を優先し、テキスト劣化が安全な場合にのみ補助 LLM による要約を使用。`keep` パラメータは受け付けますが未使用で、末尾保持は予算ベースです：`clamp(context_window × 0.25, 2 000, 15 000)` トークン（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
-- **ライフサイクルとルーティング：** ミドルウェアは 5つのトリガーポイント（T1–T5）を網羅します — T1 事前点検（`before_agent` / `abefore_agent`）、T2 呼び出し前ディスパッチ（`wrap_model_call` / `awrap_model_call`）、T3 応答後の再確認（実際の報告トークン）、T4（413 Payload Too Large）/ T5（コンテキストオーバーフロー）エラー復帰リング — どのトリガーも 4ルート・オーバーフロー判定（truncate / compact / both / pass）を実行し、`pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/tool_args_truncate.py`（ツール呼び出し引数の切り詰め）、`pub_func/message/llm_error_classifier.py` に委譲します。状態はセッション単位の `summarization_*` キー（計 14 個、ターンごとに 10 個をリセット）に保持されます。詳細は下記のリンクを参照。
+- **ライフサイクルとルーティング：** ミドルウェアは 5つのトリガーポイント（T1–T5）を網羅します — T1 事前点検（`before_agent` / `abefore_agent`）、T2 呼び出し前ディスパッチ（`wrap_model_call` / `awrap_model_call`）、T3 応答後の再確認（実際の報告トークン）、T4（413 Payload Too Large）/ T5（コンテキストオーバーフロー）エラー復帰リング — どのトリガーも 4ルート・オーバーフロー判定（truncate / compact / both / pass）を実行し、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/tool_args_truncate.py`（ツール呼び出し引数の切り詰め）、`pub/func/message/llm_error_classifier.py` に委譲します。状態はセッション単位の `summarization_*` キー（計 14 個、ターンごとに 10 個をリセット）に保持されます。詳細は下記のリンクを参照。
 - **トリガーセマンティクス**：節は `("messages", N)` または `("tokens", N)` で、節リスト間は **OR** — いずれかの節が発火すると圧縮が始まります。メインエージェント：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。ワーカー：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
 - **カットオフの安全性：** `_determine_cutoff` がカットオフ位置を選び、続いて `_adjust_for_orphan_pairs` が `ToolMessage` が自身の `AIMessage` ツール呼び出しから分離されなくなるまで位置を手前に戻します。最後のユーザーターンが推定トークンの ≥ 50 % を占める場合（`LAST_TURN_RATIO_THRESHOLD = 0.5`）、そのターンを要約で消すのではなく、ターン自体を圧縮します（`self._compress_last_turn` フラグ）。
 - **アンチスラッシング：** 1 セッションあたり最大 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 回の圧縮（ターンごとではない）。連続 `INEFFECTIVE_THRESHOLD = 2` 回の無効な圧縮で（有効 = メッセージ数の減少、またはトークン削減 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`）、LLM ステップを無効化（`summarization_skip_llm`）し非 LLM 戦略のみを実行します。カウンターはセッション単位の `summarization_*` キーとして `state_register_mem` に保持されます（圧縮回数、無効連続回数、直近トークン、直近戦略、スキップフラグ、リカバリ状態など）。

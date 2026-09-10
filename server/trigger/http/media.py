@@ -3,6 +3,7 @@ from loguru import logger
 from robyn import Response
 from server.trigger.core import app
 from config import SRC_DIR
+from pub.func.validator import is_safe_session_id
 
 # Sorted by specificity; only the extension is used to pick a Content-Type.
 _CONTENT_TYPES: dict[str, str] = {
@@ -28,18 +29,7 @@ MEDIA_DIR_NAME = "media"
 
 def _validate_session_id(session_id: str) -> bool:
     """Reject path traversal attempts and empty/odd values in session id."""
-    if not session_id:
-        return False
-    if session_id in (".", ".."):
-        return False
-    if "/" in session_id or "\\" in session_id:
-        return False
-    try:
-        candidate = (SRC_DIR / session_id).resolve()
-    except Exception:
-        return False
-    # The resolved path must remain inside SRC_DIR to prevent traversal.
-    return candidate.is_relative_to(SRC_DIR.resolve())
+    return is_safe_session_id(session_id)
 
 
 @app.get("/media")

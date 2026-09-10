@@ -18,7 +18,7 @@ from context_engine.store import core as store_core
 from context_engine.store.db import _migrate
 from server.service import messages as m
 from server.service.stream_driver import StreamDriver
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 

@@ -21,6 +21,7 @@ from langchain_core.messages import ToolCall, ToolMessage
 from langgraph.errors import GraphInterrupt
 
 from .approval import is_yolo_mode, set_session_yolo
+from .detection import detect_clawhub_command
 from .types import (
     ApprovalDecision,
     ApprovalMode,
@@ -129,8 +130,13 @@ class TerminalApprovalHandler(ToolApprovalHandler):
             ctx.outcome.approve(tool_call)
             return True
 
+        # clawhub remote-npm execution always requires explicit human
+        # confirmation — SMART auto-approval and the benign-command fast path
+        # must not bypass the gate.
+        clawhub_tag = detect_clawhub_command(command)
+
         # Smart approval (layer 6)
-        if not result.approved and mw.config.mode == ApprovalMode.SMART:
+        if not result.approved and mw.config.mode == ApprovalMode.SMART and not clawhub_tag:
             smart = mw.approval.smart_approve(command)
             if smart == SmartApprovalResult.APPROVE:
                 ctx.outcome.approve(tool_call)
@@ -139,12 +145,18 @@ class TerminalApprovalHandler(ToolApprovalHandler):
                 ctx.outcome.deny(tool_call, tool_name, f"Smart approval denied. {BLOCKED_MESSAGE}")
                 return True
 
-        # If still not approved, use interrupt for human decision
-        if not result.approved:
+        # If still not approved — or the call is clawhub remote execution —
+        # use interrupt for human decision.
+        if (clawhub_tag or not result.approved) and not is_yolo_mode(mw.config, ctx.session_id):
+            description = (
+                f"clawhub remote npm execution ({clawhub_tag}): {command}"
+                if clawhub_tag
+                else f"Dangerous command: {command}"
+            )
             action_request = ActionRequest(
                 name=tool_name,
                 args=tool_args,
-                description=f"Dangerous command: {command}",
+                description=description,
             )
             review_config = ReviewConfig(
                 action_name=tool_name,

@@ -3,6 +3,7 @@ from loguru import logger
 from robyn import Response
 from server.trigger.core import app
 from config import SRC_DIR, API_HOST, API_PORT
+from config.num import MAX_VIDEO_UPLOAD_BYTES
 
 _CONTENT_TYPE_TO_EXT: dict[str, str] = {
     "video/mp4": ".mp4",
@@ -47,6 +48,14 @@ async def upload_video(request):
             status_code=400,
             headers={"Content-Type": "application/json"},
             description='{"success": false, "message": "Empty request body"}',
+        )
+
+    if len(data) > MAX_VIDEO_UPLOAD_BYTES:
+        logger.warning(f"Video upload rejected: too large ({len(data)} bytes)")
+        return Response(
+            status_code=413,
+            headers={"Content-Type": "application/json"},
+            description='{"success": false, "message": "File too large"}',
         )
 
     content_type = request.headers.get("Content-Type")

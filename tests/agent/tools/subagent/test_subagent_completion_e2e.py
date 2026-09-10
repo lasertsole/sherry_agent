@@ -61,11 +61,11 @@ from agent.tools.subagent.types.registry import (
     RunOutcomeStatus,
     SubagentRunRecord,
 )
-from pub_func.build_agent_config import build_agent_config
+from pub.func.build_agent_config import build_agent_config
 from runtime.relation_register import relation_register
 from runtime.state_register import state_register_mem
 from server.queue import UserInputQueue
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 
 from server.service import auto_turn as at
 from server.service import input_queue_service as iqs

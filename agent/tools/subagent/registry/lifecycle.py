@@ -49,6 +49,37 @@ def _get_terminal_lock(run_id: str) -> asyncio.Lock:
     return _terminal_locks[run_id]
 
 
+def sweep_stale_lifecycle_state() -> int:
+    """Drop lifecycle bookkeeping for runs no longer present in the registry.
+
+    ``_terminal_locks``/``_cleanup_generations``/``_deferred_cleanup_timers``
+    grow one entry per run and have no other pruning path, so a long-lived
+    server would retain thousands of dead entries (and their closure/timer
+    references). Cancels any pending deferred-cleanup timer whose run is gone.
+    Returns the number of entries pruned.
+    """
+    pruned = 0
+
+    for run_id in list(_terminal_locks):
+        if get_run(run_id) is None:
+            _terminal_locks.pop(run_id, None)
+            pruned += 1
+
+    for run_id in list(_cleanup_generations):
+        if get_run(run_id) is None:
+            _cleanup_generations.pop(run_id, None)
+            pruned += 1
+
+    for run_id, timer in list(_deferred_cleanup_timers.items()):
+        if get_run(run_id) is None:
+            _deferred_cleanup_timers.pop(run_id, None)
+            if not timer.done():
+                timer.cancel()
+            pruned += 1
+
+    return pruned
+
+
 async def complete_subagent_run(
     run_id: str,
     outcome: RunOutcome,
@@ -64,6 +95,7 @@ async def complete_subagent_run(
     async with lock:
         run = get_run(run_id)
         if run is None:
+            _terminal_locks.pop(run_id, None)
             return None
 
         gen_tracker = get_terminal_gen_tracker()
@@ -75,12 +107,14 @@ async def complete_subagent_run(
                     expected_generation,
                     run.generation,
                 )
+                _terminal_locks.pop(run_id, None)
                 return run
         elif not gen_tracker.is_callback_current(run_id, run.generation):
             if gen_tracker.is_older_equivalent(run_id, run.generation):
                 logger.warning(
                     "complete_subagent_run: older equivalent callback for run {}, skipping", run_id
                 )
+                _terminal_locks.pop(run_id, None)
                 return run
 
         gen_tracker.retire(run_id)
@@ -89,6 +123,7 @@ async def complete_subagent_run(
             logger.warning(
                 "complete_subagent_run: run {} is superseded, skipping completion", run_id
             )
+            _terminal_locks.pop(run_id, None)
             return run
 
         run = _arbitrate_kill_vs_completion(run, outcome)

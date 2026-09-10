@@ -551,7 +551,7 @@ async def _execute_subagent(
         messages.append(HumanMessage(content=user_message))
 
         # Build the LangGraph config dict (session, thinking tag, cwd)
-        from pub_func import build_agent_config
+        from pub.func import build_agent_config
 
         agent_config = build_agent_config(session_id=run.child_session_key)
         if run.thinking:

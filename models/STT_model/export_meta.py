@@ -29,8 +29,6 @@ def export_forward(
     textnorm: torch.Tensor,
     **kwargs,
 ):
-    # speech = speech.to(device="cuda")
-    # speech_lengths = speech_lengths.to(device="cuda")
     language_query = self.embed(language.to(speech.device)).unsqueeze(1)
     textnorm_query = self.embed(textnorm.to(speech.device)).unsqueeze(1)
     logger.debug(f"textnorm_query={textnorm_query.shape} speech={speech.shape}")

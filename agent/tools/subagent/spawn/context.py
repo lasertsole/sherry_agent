@@ -25,7 +25,7 @@ async def prepare_spawned_context(
 
         try:
             from agent import built_agent
-            from pub_func import build_agent_config
+            from pub.func import build_agent_config
 
             agent = await built_agent()
             state = await agent.aget_state(config=build_agent_config(requester_session_id))

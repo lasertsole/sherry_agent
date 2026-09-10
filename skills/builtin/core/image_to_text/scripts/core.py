@@ -15,7 +15,7 @@ from PIL import Image
 from loguru import logger
 from models import ITTT_model
 from dotenv import load_dotenv
-from pub_func.validator import is_url
+from pub.func.validator import is_url
 from langchain_core.messages import HumanMessage
 
 # Load environment variables

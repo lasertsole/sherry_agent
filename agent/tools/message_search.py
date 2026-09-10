@@ -5,7 +5,7 @@ import asyncio
 import sqlite3
 from loguru import logger
 import concurrent.futures
-from pub_func import run_async
+from pub.func import run_async
 from typing import Any, Annotated
 
 from agent.tools.pub_base.tool_utils import tool_error as _tool_error
@@ -223,12 +223,15 @@ class SessionSummarizer:
             f"Summarize this conversation with focus on: {query}"
         )
 
+        try:
+            main_llm = build_main_llm()
+        except RuntimeError:
+            logger.warning("No auxiliary model available for session summarization")
+            return None
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                main_llm = (
-                    build_main_llm()
-                )  # Create a fresh LLM instance for the current event loop
                 response = main_llm.invoke(
                     [
                         {"role": "system", "content": system_prompt},

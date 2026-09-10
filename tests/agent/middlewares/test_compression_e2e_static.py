@@ -71,7 +71,7 @@ from agent.middlewares import IterationBudget, Summarization
 from agent.middlewares.summarization import (
     _COOLDOWN_ROUNDS_KEY,
     _COMPRESSION_COUNT_KEY,
-    _OVERFLOW_RETRIES_T4_KEY,
+    _OVERFLOW_RETRIES_KEY,
 )
 from config.num import (
     COMPACTION_COOLDOWN_ROUNDS,
@@ -80,8 +80,8 @@ from config.num import (
     PREEMPTIVE_TRUNCATE_RATIO,
     PRUNE_TTL_SECONDS,
 )
-from pub_func.message.estimate_msg_tokens import estimate_msg_tokens
-from pub_func.message.tool_result_ttl import (
+from pub.func.message.estimate_msg_tokens import estimate_msg_tokens
+from pub.func.message.tool_result_ttl import (
     TTL_PLACEHOLDER,
     record_first_seen,
     select_expired,
@@ -157,6 +157,10 @@ class Provider413Error(Exception):
     """413-shaped provider error (classifier channel 1: status_code attr)."""
 
     status_code = 413
+
+
+class ProviderContextOverflowError(Exception):
+    """Context-overflow-shaped error (classifier channel 2: message text)."""
 
 
 # ----------------------------------------------------------------------
@@ -612,7 +616,7 @@ def test_e2e_d_t4_provider_413_recovery(order, sid):
     assert "trigger=T4" in attempt_lines[0]
 
     # --- per-class retry counter armed; forced compression was recorded ---
-    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_T4_KEY, 0) == 1
+    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_KEY, 0) == 1
     assert state_register_mem.get_state(sid, _COMPRESSION_COUNT_KEY, 0) == 1
 
     # --- single-message history: compact is a noop (no LLM, no routes) ---
@@ -663,7 +667,7 @@ def test_e2e_e_t4_exhaustion_propagates_original_error(order, sid):
 
     # --- exactly MAX_OVERFLOW_RETRIES forced recoveries happened ---
     assert len(main_model.calls) == 4, "1 initial + 3 retried handler calls"
-    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_T4_KEY, 0) == 3
+    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_KEY, 0) == 3
     assert state_register_mem.get_state(sid, _COMPRESSION_COUNT_KEY, 0) == 3
 
     # --- attempt logs 1/3, 2/3, 3/3 and the exhaustion error log ---
@@ -781,3 +785,94 @@ def test_e2e_f_ttl_clock_and_multi_round_stability(order, sid):
     assert result3["messages"][-1].content == "Round-3 reply."
     assert len(main_model.calls) == 3
     assert len(aux_model.calls) == 0
+
+
+# ======================================================================
+# Overflow-retry counter: cross-turn reset + shared T4/T5 key
+# ======================================================================
+
+
+def test_overflow_counter_resets_across_turns(order, sid):
+    """A recovery in round 1 lands the shared counter on 1; the next turn's
+    before_agent resets it to 0, so the session starts clean again."""
+    err = Provider413Error("HTTP 413: request payload too large")
+    script = [
+        err,
+        AIMessage("Recovered answer for the reset test."),
+        AIMessage("Round-2 reply."),
+    ]
+    main_model = _ScriptedMainModel(script)
+    aux_model = _StubSummaryModel()
+    agent = _build_agent(order, main_model, aux_model)
+
+    result1 = asyncio.run(
+        agent.ainvoke({"messages": [HumanMessage("h" * 47000)], "session_id": sid})
+    )
+    assert result1["messages"][-1].content == "Recovered answer for the reset test."
+    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_KEY, 0) == 1
+
+    result2 = asyncio.run(
+        agent.ainvoke(
+            {
+                "messages": [*result1["messages"], HumanMessage("follow-up")],
+                "session_id": sid,
+            }
+        )
+    )
+    assert result2["messages"][-1].content == "Round-2 reply."
+    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_KEY, 0) == 0
+
+
+def test_overflow_counter_exhaustion_recovers_next_turn(order, sid):
+    """Exhaustion in one turn does NOT permanently lock recovery: the next
+    turn resets the shared counter, so a fresh overflow recovers again."""
+    err = Provider413Error("HTTP 413: persistent payload too large")
+    script = [
+        err,
+        err,
+        err,
+        err,
+        err,
+        AIMessage("Recovered on the next turn."),
+    ]
+    main_model = _ScriptedMainModel(script)
+    aux_model = _StubSummaryModel()
+    agent = _build_agent(order, main_model, aux_model)
+
+    with pytest.raises(Provider413Error) as excinfo:
+        asyncio.run(agent.ainvoke({"messages": [HumanMessage("h" * 47000)], "session_id": sid}))
+    assert excinfo.value is err
+    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_KEY, 0) == 3
+
+    with _LogCapture() as cap:
+        result = asyncio.run(
+            agent.ainvoke({"messages": [HumanMessage("h" * 47000)], "session_id": sid})
+        )
+    assert result["messages"][-1].content == "Recovered on the next turn."
+    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_KEY, 0) == 1
+    assert any("trigger=T4" in line and "attempt=1/3" in line for line in cap.compression_lines())
+
+
+def test_t4_t5_share_one_overflow_counter(order, sid):
+    """payload_too_large and context_overflow draw from the SAME counter:
+    T4 -> 1, T5 -> 2, T4 -> 3, then the 4th overflow (T5) exhausts."""
+    err_t4 = Provider413Error("HTTP 413: request payload too large")
+    err_t5 = ProviderContextOverflowError("This model's maximum context length is 65536 tokens")
+    script = [err_t4, err_t5, err_t4, err_t5]
+    main_model = _ScriptedMainModel(script)
+    aux_model = _StubSummaryModel()
+    agent = _build_agent(order, main_model, aux_model)
+
+    with _LogCapture() as cap, pytest.raises(ProviderContextOverflowError) as excinfo:
+        asyncio.run(agent.ainvoke({"messages": [HumanMessage("h" * 47000)], "session_id": sid}))
+
+    assert excinfo.value is err_t5
+    assert len(main_model.calls) == 4
+    assert state_register_mem.get_state(sid, _OVERFLOW_RETRIES_KEY, 0) == 3
+
+    lines = cap.compression_lines()
+    assert any("trigger=T4" in line and "attempt=1/3" in line for line in lines)
+    assert any("trigger=T5" in line and "attempt=2/3" in line for line in lines)
+    assert any("trigger=T4" in line and "attempt=3/3" in line for line in lines)
+    exhausted = [line for line in lines if "retries exhausted" in line]
+    assert len(exhausted) == 1 and "trigger=T5" in exhausted[0]

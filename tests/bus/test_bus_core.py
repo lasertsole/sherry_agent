@@ -2,7 +2,7 @@
 
 import pytest
 import asyncio
-from type.bus import InboundMessage, OutboundMessage
+from pub.types.bus import InboundMessage, OutboundMessage
 from bus.core import MessageBus
 from config.num import BUS_QUEUE_MAXSIZE
 

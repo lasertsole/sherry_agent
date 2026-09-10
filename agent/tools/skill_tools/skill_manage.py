@@ -13,7 +13,7 @@ from typing import override
 from langchain_core.tools import BaseTool
 from config import AUTO_SKILLS_DIR, ROOT_DIR
 from agent.tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
-from pub_func import atomic_replace, has_traversal_component, validate_within_dir
+from pub.func import atomic_replace, has_traversal_component, validate_within_dir
 
 _MAX_NAME_LENGTH: int = 64
 _MAX_DESCRIPTION_LENGTH: int = 1024

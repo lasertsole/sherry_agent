@@ -14,7 +14,7 @@ from langchain_core.messages import (
 from langchain.agents.middleware import ModelRequest
 
 import agent.middlewares.summarization as summarization_module
-from pub_func.message import estimate_msg_tokens, estimate_messages_tokens
+from pub.func.message import estimate_msg_tokens, estimate_messages_tokens
 from runtime import state_register_mem
 from config.num import (
     COMPLETED_MAX_ITEMS,
@@ -99,7 +99,7 @@ def sid(request):
 
 
 class TestEstimateMsgTokens:
-    """Per-message token estimation must delegate to pub_func helpers."""
+    """Per-message token estimation must delegate to pub.func helpers."""
 
     def test_class_level_estimate_msg_tokens_delegates(self):
         # Staticmethod on the NEW class: 11 chars // 4 == 2.

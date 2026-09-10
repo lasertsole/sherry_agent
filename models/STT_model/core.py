@@ -95,10 +95,6 @@ class MultiHeadedAttentionSANM(nn.Module):
         # We assume d_v always equals d_k
         self.d_k = n_feat // n_head
         self.h = n_head
-        # self.linear_q = nn.Linear(n_feat, n_feat)
-        # self.linear_k = nn.Linear(n_feat, n_feat)
-        # self.linear_v = nn.Linear(n_feat, n_feat)
-
         self.linear_out = nn.Linear(n_feat, n_feat)
         self.linear_q_k_v = nn.Linear(in_feat, n_feat * 3)
         self.attn = None
@@ -107,7 +103,6 @@ class MultiHeadedAttentionSANM(nn.Module):
         self.fsmn_block = nn.Conv1d(
             n_feat, n_feat, kernel_size, stride=1, padding=0, groups=n_feat, bias=False
         )
-        # padding
         left_padding = (kernel_size - 1) // 2
         if sanm_shfit > 0:
             left_padding = left_padding + sanm_shfit
@@ -181,9 +176,7 @@ class MultiHeadedAttentionSANM(nn.Module):
 
             mask = mask.unsqueeze(1).eq(0)  # (batch, 1, *, time2)
 
-            min_value = -float(
-                "inf"
-            )  # float(numpy.finfo(torch.tensor(0, dtype=scores.dtype).numpy().dtype).min)
+            min_value = -float("inf")
             scores = scores.masked_fill(mask, min_value)
             attn = torch.softmax(scores, dim=-1).masked_fill(
                 mask, 0.0
@@ -550,7 +543,6 @@ class SenseVoiceEncoderSmall(nn.Module):
 
         xs_pad = self.embed(xs_pad)
 
-        # forward encoder1
         for layer_idx, encoder_layer in enumerate(self.encoders0):
             encoder_outs = encoder_layer(xs_pad, masks)
             xs_pad, masks = encoder_outs[0], encoder_outs[1]
@@ -561,7 +553,6 @@ class SenseVoiceEncoderSmall(nn.Module):
 
         xs_pad = self.after_norm(xs_pad)
 
-        # forward encoder2
         olens = masks.squeeze(1).sum(1).int()
 
         for layer_idx, encoder_layer in enumerate(self.tp_encoders):
@@ -671,8 +662,6 @@ class SenseVoiceSmall(nn.Module):
                 text: (Batch, Length)
                 text_lengths: (Batch,)
         """
-        # import pdb;
-        # pdb.set_trace()
         if len(text_lengths.size()) > 1:
             text_lengths = text_lengths[:, 0]
         if len(speech_lengths.size()) > 1:
@@ -694,7 +683,6 @@ class SenseVoiceSmall(nn.Module):
         loss_rich, acc_rich = self._calc_rich_ce_loss(encoder_out[:, :4, :], text[:, :4])
 
         loss = loss_ctc + loss_rich
-        # Collect total loss stats
         stats["loss_ctc"] = torch.clone(loss_ctc.detach()) if loss_ctc is not None else None
         stats["loss_rich"] = torch.clone(loss_rich.detach()) if loss_rich is not None else None
         stats["loss"] = torch.clone(loss.detach()) if loss is not None else None
@@ -765,7 +753,6 @@ class SenseVoiceSmall(nn.Module):
         ys_pad: torch.Tensor,
         ys_pad_lens: torch.Tensor,
     ):
-        # Calc CTC loss
         loss_ctc = self.ctc(encoder_out, encoder_out_lens, ys_pad, ys_pad_lens)
 
         # Calc CER using CTC
@@ -860,12 +847,11 @@ class SenseVoiceSmall(nn.Module):
         speech = torch.cat((input_query, speech), dim=1)
         speech_lengths += 3
 
-        # Encoder
         encoder_out, encoder_out_lens = self.encoder(speech, speech_lengths)
         if isinstance(encoder_out, tuple):
             encoder_out = encoder_out[0]
 
-        # c. Passed the encoder result and the beam search
+        # c. Pass the encoder result through CTC log_softmax
         ctc_logits = self.ctc.log_softmax(encoder_out)
         if kwargs.get("ban_emo_unk", False):
             ctc_logits[:, :, self.emo_dict["unk"]] = -float("inf")

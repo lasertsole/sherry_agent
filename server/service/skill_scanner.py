@@ -228,7 +228,7 @@ def _store_scan_cache(key: str, result: ScanResult) -> None:
     hard-gate verdict is post-processed before storage and MUST survive warm
     starts). UNAVAILABLE results are never stored. The file is written
     atomically (:func:`server.utils.atomic_io.atomic_write_text` — tempfile in
-    the same dir + ``os.replace``, mirroring :func:`pub_func.atomic_replace`);
+    the same dir + ``os.replace``, mirroring :func:`pub.func.atomic_replace`);
     any error is swallowed so the cache can never slow down or break the real
     scan.
     """

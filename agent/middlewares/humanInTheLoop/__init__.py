@@ -25,8 +25,11 @@ from .types import (
 from .detection import (
     detect_hardline_command,
     detect_dangerous_command,
+    detect_clawhub_command,
     HARDLINE_PATTERNS,
     DANGEROUS_PATTERNS,
+    CLAWHUB_REMOTE_NPM_PATTERNS,
+    CLAWHUB_REMOTE_NPM_TAG,
 )
 from .approval import ApprovalPipeline, _extract_pattern, _args_hash
 from .gates import (
@@ -55,8 +58,11 @@ __all__ = [
     "LANGCHAIN_AVAILABLE",
     "detect_hardline_command",
     "detect_dangerous_command",
+    "detect_clawhub_command",
     "HARDLINE_PATTERNS",
     "DANGEROUS_PATTERNS",
+    "CLAWHUB_REMOTE_NPM_PATTERNS",
+    "CLAWHUB_REMOTE_NPM_TAG",
     "ApprovalPipeline",
     "_extract_pattern",
     "_args_hash",

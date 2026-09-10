@@ -58,7 +58,7 @@ MARKER_ID_1 = f"interrupted-{THREAD_ID}-1"
 DANGLING_CALL_ID = "call_1"
 DANGLING_AI_ID = "ai-dangling-superstep"
 
-# Mirrors pub_func/transcript_repair.make_missing_tool_result content.
+# Mirrors pub/func/transcript_repair.make_missing_tool_result content.
 HEAL_CONTENT = "tool result missing after context trim."
 
 

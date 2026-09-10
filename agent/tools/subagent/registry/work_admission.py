@@ -22,7 +22,9 @@ async def run_with_work_admission(coro, label: str = "unknown") -> None:
     """Submit a coroutine as root work; defers it if the gateway is draining."""
     if is_gateway_draining():
         logger.info("Gateway draining, scheduling retry for: {}", label)
-        asyncio.create_task(_schedule_drain_retry(coro, label, delay=5.0))
+        task = asyncio.create_task(_schedule_drain_retry(coro, label, delay=5.0))
+        _root_work_tasks.add(task)
+        task.add_done_callback(_root_work_tasks.discard)
         return
 
     task = asyncio.create_task(_run_and_cleanup(coro, label))

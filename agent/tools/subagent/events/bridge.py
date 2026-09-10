@@ -52,7 +52,7 @@ def _strip_session_prefix(session_id: str | None) -> str | None:
 async def _deliver_to_channel(channel_id: str, chat_id: str, content: str) -> None:
     """Send a delivery message to a channel chat recipient."""
     from channels.manager import channel_manager
-    from type.bus import OutboundMessage
+    from pub.types.bus import OutboundMessage
 
     channel = channel_manager.get_channel(channel_id)
     if channel is None:

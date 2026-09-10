@@ -4,7 +4,7 @@
 
 > Agent 如何让长对话保持在模型的上下文窗口之内：五个触发点覆盖整个生命周期（回合开始前、每次模型调用前、每次模型响应后、以及 provider 溢出报错时），一个纯函数式的四路路由选择最省钱的修复手段（先截断超大工具输出和超大的工具调用参数，实在不行才让 AI 压缩历史），防抖护栏保证压缩永远不会失控打转。
 
-事实来源：`agent/middlewares/summarization.py`、`pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/llm_error_classifier.py`、`pub_func/message/estimate_msg_tokens.py`、`pub_func/message/tool_output_dedup.py`、`pub_func/message/tool_output_prune.py`、`pub_func/message/target_truncation.py`、`pub_func/message/tool_args_truncate.py`、`pub_func/message/turn_utils.py`、`config/num.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
+事实来源：`agent/middlewares/summarization.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/message/estimate_msg_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/num.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -94,7 +94,7 @@ AIMessage(<summary>, lc_source="summarization")
 └─ T4/T5  provider 报错恢复环
        (_execute_with_recovery :1057 / _aexecute_with_recovery :1115)
        ├─ handler 抛异常 → classify_provider_error
-       │  （pub_func/message/llm_error_classifier.py）：
+       │  （pub/func/message/llm_error_classifier.py）：
        │  payload_too_large → T4，context_overflow → T5
        │  （_TRIGGER_BY_ERROR_CLASS :115，_RETRY_KEY_BY_ERROR_CLASS :119）
        ├─ 非目标类 / 未知类 → 原始异常原样重新抛出（零重试、
@@ -116,7 +116,7 @@ AIMessage(<summary>, lc_source="summarization")
 
 ## 🚦 四路溢出路由决策
 
-`pub_func/message/overflow_router.py` 是一个**纯决策层** —— 不截断、不压缩、无 I/O、无状态。中间件从它导入三个函数：
+`pub/func/message/overflow_router.py` 是一个**纯决策层** —— 不截断、不压缩、无 I/O、无状态。中间件从它导入三个函数：
 
 - `compute_pressure`（:50）= `max(estimated_tokens + system_prompt_tokens, reported_tokens)` —— 有 API 上报值时以上报值为准；
 - `find_truncatable_tool_results`（:68）—— **只有** `ToolMessage` 有资格（工具输出可再生）；最近 `TRUNCATABLE_RECENT_SKIP (6)` 条消息永远排除在外，保证最新的 tool/ai 配对完好；候选必须值回票价：估算 token ≥ `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE (200)`；结果按 token 数降序排列，执行器先切最大的赢家；
@@ -147,7 +147,7 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 ## 🪙 Token 估算（无分词器）
 
-`pub_func/message/estimate_msg_tokens.py`（29 行）刻意不依赖分词器、完全确定：
+`pub/func/message/estimate_msg_tokens.py`（29 行）刻意不依赖分词器、完全确定：
 
 ```python
 tokens = (content chars            # str content, or len(json.dumps(content))
@@ -161,9 +161,9 @@ tokens = (content chars            # str content, or len(json.dumps(content))
 
 `_run_budget_truncation`（:659）内部按顺序运行两层截断：
 
-**第 1 步 —— 工具调用参数**（`pub_func/message/tool_args_truncate.py`）：每条 JSON 序列化后超过 `MIN_ARGS_CHARS_TO_TRUNCATE (500)` 字符的 `AIMessage.tool_calls[].args` —— 且其工具不在 `PROTECTED_TOOLS` 中 —— 会被替换为 `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}`，并以 `MAX_TOOL_ARGS_CHARS (2_000)` 字符封顶（头部 30% / 尾部 30%，与工具输出比例相同）。这样 `args` 仍是 dict（LangChain 的 `ToolCall.args` 类型），对每个 provider 适配器都保持 JSON 可序列化，模型也能看出参数被切过。最近 `TRUNCATABLE_RECENT_SKIP (6)` 条消息会被跳过，被替换的 `AIMessage` 是 `model_copy` 克隆 —— tool_call_ids 绝不触碰，AIMessage↔ToolMessage 配对保持完好。
+**第 1 步 —— 工具调用参数**（`pub/func/message/tool_args_truncate.py`）：每条 JSON 序列化后超过 `MIN_ARGS_CHARS_TO_TRUNCATE (500)` 字符的 `AIMessage.tool_calls[].args` —— 且其工具不在 `PROTECTED_TOOLS` 中 —— 会被替换为 `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}`，并以 `MAX_TOOL_ARGS_CHARS (2_000)` 字符封顶（头部 30% / 尾部 30%，与工具输出比例相同）。这样 `args` 仍是 dict（LangChain 的 `ToolCall.args` 类型），对每个 provider 适配器都保持 JSON 可序列化，模型也能看出参数被切过。最近 `TRUNCATABLE_RECENT_SKIP (6)` 条消息会被跳过，被替换的 `AIMessage` 是 `model_copy` 克隆 —— tool_call_ids 绝不触碰，AIMessage↔ToolMessage 配对保持完好。
 
-**第 2 步 —— 工具输出**：`pub_func/message/tool_result_ttl.py` 提供截断轨道使用的原地截断。设计不变量（承重）：
+**第 2 步 —— 工具输出**：`pub/func/message/tool_result_ttl.py` 提供截断轨道使用的原地截断。设计不变量（承重）：
 
 - **只原地修改** —— 该模块从不删除、重排或弹出消息；只修改 `msg.content`（或 content 列表块）并返回索引。这保住了 provider API 与 `ToolCallNormalize` 依赖的 tool-call/`ToolMessage` 配对。
 - **占位符非空** —— 被截断的结果始终保留非空内容：`ToolCallNormalize.before_model` 会**丢弃空的 `ToolMessage`** 来净化转录，空占位符会悄悄破坏配对。
@@ -241,13 +241,13 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🛡️ 防抖护栏矩阵与退化恢复
 
-状态存放在会话级 `state_register_mem` 的**十四个** `summarization_*` 键中（:92–107）。`_reset_turn_state`（:1849）在每个回合开始时重置其中**十个**；`summarization_last_user_question`、`summarization_cooldown_rounds` 与两个 T4/T5 重试计数器被刻意**不**按回合重置。
+状态存放在会话级 `state_register_mem` 的**十三个** `summarization_*` 键中（:92–107）。`_reset_turn_state`（:1849）在每个回合开始时重置其中**十一个**；`summarization_last_user_question` 与 `summarization_cooldown_rounds` 被刻意**不**按回合重置。
 
 | 护栏 | 键 | 阈值 | 效果 |
 | :---- | :-- | :-------- | :----- |
 | 回合冷却期 | `summarization_cooldown_rounds` | `COMPACTION_COOLDOWN_ROUNDS = 3` | 每次实际 compact 后武装（:694）；**每次**模型调用递减（:832）；封锁 T1 compact 路由、T2 主动压缩与 T3 —— 永不封锁 T4/T5 强制恢复环 |
 | 每回合压缩数 | `summarization_turn_attempts` | `MAX_COMPRESS_ATTEMPTS_PER_TURN = 3` | 由 :694 递增；压制 T2 主动压缩 + T3（强制环豁免） |
-| 每类溢出重试 | `summarization_overflow_retries_t4` / `_t5` | `MAX_OVERFLOW_RETRIES = 3` | 每次成功的强制步骤后递增；耗尽 → 原始 provider 错误向上传播 |
+| 溢出重试（T4/T5 共用） | `summarization_overflow_retries` | `MAX_OVERFLOW_RETRIES = 3` | 两类错误共用、按回合重置；每次成功的强制步骤后递增；耗尽 → 原始 provider 错误向上传播 |
 | 会话压缩总数 | `summarization_compression_count` | `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` | `_should_skip_compression`（:1255）返回 True —— 主动压缩完全停止 |
 | 连续无效次数 | `summarization_compression_ineffective` | `INEFFECTIVE_THRESHOLD = 2` | 置 `skip_llm` —— 只跑非 LLM 策略 |
 | 有效性判定 | （`_record_compression`，:1277 | 消息数下降**或** token 缩减 ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | 成功的非 LLM 策略（`dedup`/`prune`/`truncate`/`fallback`/`aggressive`）会再次清掉 `skip_llm` |
@@ -296,7 +296,7 @@ Summarization(
 | `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 截断轨道预算 = usable × 0.60（:680） |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results` 的候选门槛 |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | 最新若干条永不可截断（配对安全边距） |
-| `MAX_OVERFLOW_RETRIES` ◆ | `3` | 每错误类的 T4/T5 强制恢复上限 |
+| `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 强制恢复上限（单一共用计数器） |
 | `MAX_COMPRESS_ATTEMPTS_PER_TURN` ◆ | `3` | 每回合主动压缩上限 |
 | `COMPACTION_COOLDOWN_ROUNDS` ◆ | `3` | 每次实际 compact 后武装的冷却期 |
 | `MIN_PRESERVE_TOKENS` ◆ | `2_000` | 保留预算下限；无窗口时的预算 |
@@ -340,7 +340,7 @@ Summarization(
 | `tests/unit/test_pub_func_message_tools.py` | 29 | 去重 / 修剪 / 定向截断 / 回合工具，外加工具参数截断：头+尾格式、小参数跳过、释放量钳制、受保护工具、跳过最近消息、配对与无变异 |
 | `tests/unit/test_config_num.py` | 43 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
 | `tests/module/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
-| `tests/module/test_compression_e2e_static.py` | 12 | 6 个端到端场景 × 2 种注册顺序、静态回退压缩、零网络 |
+| `tests/module/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
 | `tests/module/test_summarization_trigger.py` | 3 | 生产注册契约：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/module/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
 | `tests/module/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
@@ -357,7 +357,7 @@ Summarization(
 - **估算器是 `chars // 4`，不是分词器。** 它刻意保持确定性（测试可复现、预算稳定），按英文/代码混合内容校准；CJK 密集内容会被低估（中文平均更接近 1–2 字符/token 而非 4）。
 - **上报值何时胜出。** T3 是唯一由上报用量驱动的触发点（`compute_pressure` 取 max）。T1/T2 的路由决策由估算驱动（仅估算 + 系统提示词开销）；遗留的 `_check_trigger` 子句兜底使用 `max(本地估算, 上报值)`。
 - **T3 绝不改写返回的响应。** T3 派发的持久效果是工具输出的原地截断（消息对象与图状态共享）和防抖记账；T3 的 compact 路由 `request.override` 只在本地生效，原始响应始终返回。整个 T3 函数体 fail-open。
-- **T4/T5 设计上绕过防抖矩阵** —— 这正是"强制"的意义所在。超过每类 `MAX_OVERFLOW_RETRIES (3)`、或强制压缩步骤自身失败时，原始 provider 异常向上传播（绝不吞掉、绝不被压缩错误顶替）。
+- **T4/T5 设计上绕过防抖矩阵** —— 这正是"强制"的意义所在。超过 `MAX_OVERFLOW_RETRIES (3)`（T4/T5 共用的单一计数器，每回合重置）、或强制压缩步骤自身失败时，原始 provider 异常向上传播（绝不吞掉、绝不被压缩错误顶替）。
 - **压缩是 fail-open 的。** `_apply_compression` 内的任何异常都会记日志并吞掉；回合带着未压缩的历史继续。
 - **静态回退是启发式的。** 基于关键词的决策/完成分类与从原始工具参数提取路径都是尽力而为；段落骨架有保证，内容质量没有。
 - **`_SUMMARY_PREFIX`/`_SUMMARY_SUFFIX`/`<summary>` 标签/`lc_source="summarization"` 是承重的精确字符串。** 后续回合的链式（`_extract_previous_summary`）、修剪停止条件与全部测试套件都按字面匹配它们 —— 不要随手改写。

@@ -8,7 +8,7 @@ contract for the summarization middleware
 
 Also guards the pre-existing constants of the old config/num.py baseline
 (ARCHIVE_THRESHOLD, MEMORY_THRESHOLD, COMPRESS_RATIO, BUS_QUEUE_MAXSIZE)
-and CHARS_PER_TOKEN (consumed by pub_func/message/estimate_msg_tokens.py).
+and CHARS_PER_TOKEN (consumed by pub/func/message/estimate_msg_tokens.py).
 """
 
 import importlib

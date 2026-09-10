@@ -10,7 +10,6 @@ from .fifo import get_fifo
 
 
 _group_configs: dict[str, SwarmGroupConfig] = {}
-_launch_fingerprints: dict[str, str] = {}  # Idempotency: fingerprint → run_id
 
 
 def configure_swarm_group(config: SwarmGroupConfig) -> None:
@@ -34,17 +33,19 @@ async def reserve_swarm_run(
 ) -> SubagentRunRecord | None:
     """Reserve a swarm run slot, enqueue it, and pump the lane for activation."""
     if launch_fingerprint:
-        fp_key = f"{group_id}:{launch_fingerprint}"  # Composite key prevents cross-group collisions
-        existing_run_id = _launch_fingerprints.get(fp_key)
-        if existing_run_id:
-            existing = get_run(existing_run_id)
-            if existing is not None:
-                logger.info(
-                    "reserve_swarm_run: idempotent hit for fingerprint {} → run {}",
-                    fp_key,
-                    existing_run_id,
-                )
-                return existing
+        for existing in all_runs():
+            if (
+                existing.swarm_group_id == group_id
+                and existing.launch_fingerprint == launch_fingerprint
+            ):
+                if get_run(existing.run_id) is not None:
+                    logger.info(
+                        "reserve_swarm_run: idempotent hit for fingerprint {}:{} → run {}",
+                        group_id,
+                        launch_fingerprint,
+                        existing.run_id,
+                    )
+                    return existing
 
     config = _group_configs.get(group_id)
     if config is None:
@@ -87,6 +88,7 @@ async def reserve_swarm_run(
         update={
             "swarm_group_id": group_id,
             "swarm_run_state": SwarmRunState.RESERVED.value,
+            "launch_fingerprint": launch_fingerprint,
         }
     )
     set_run(updated)
@@ -95,10 +97,6 @@ async def reserve_swarm_run(
     await fifo.enqueue(group_id, run.run_id)
 
     logger.info("Reserved swarm run: run_id={}, group={}", run.run_id, group_id)
-
-    if launch_fingerprint:
-        fp_key = f"{group_id}:{launch_fingerprint}"  # Same composite key for storing the mapping
-        _launch_fingerprints[fp_key] = updated.run_id
 
     await _pump_lane(group_id)
 

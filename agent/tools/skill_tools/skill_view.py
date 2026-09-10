@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from loguru import logger
 from typing import Any
-from config import SKILLS_DIR
+from config import SKILLS_DIR, is_allowed_skill_path
 from pydantic import BaseModel, Field
 from typing import override
 from langchain_core.tools import BaseTool
@@ -35,7 +35,7 @@ _INJECTION_PATTERNS: list[str] = [
 
 
 def _skill_lookup_path_error(name: str) -> str | None:
-    from pub_func import has_traversal_component
+    from pub.func import has_traversal_component
 
     if not isinstance(name, str):
         return "Skill name must be a string."
@@ -128,6 +128,7 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
             not _is_skill_support_path(direct_path)
             and direct_path.is_dir()
             and (direct_path / "SKILL.md").exists()
+            and is_allowed_skill_path(direct_path / "SKILL.md", SKILLS_DIR)
         ):
             _record(direct_path, direct_path / "SKILL.md")
         elif direct_path.with_suffix(".md").exists() and not _is_skill_support_path(
@@ -137,6 +138,8 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
 
         # Strategy 2: recursive by directory name + frontmatter name
         for found_skill_md in iter_skill_index_files(SKILLS_DIR, "SKILL.md"):
+            if not is_allowed_skill_path(found_skill_md, SKILLS_DIR):
+                continue
             if any(part in EXCLUDED_SKILL_DIRS for part in found_skill_md.parts):
                 continue
             if found_skill_md.parent.name == name:
@@ -248,7 +251,7 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
 
         # If a specific file path is requested, read that instead
         if file_path and skill_dir:
-            from pub_func import has_traversal_component, validate_within_dir
+            from pub.func import has_traversal_component, validate_within_dir
 
             if has_traversal_component(file_path):
                 return json.dumps(

@@ -49,7 +49,7 @@ const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unk
  * Request with server-side rendering support
  * @param { NitroFetchRequest } url Request path
  * @param { object } opts Request parameters
- * @param { 'get' | 'post' | 'put' | 'delete' } method Request method
+ * @param { 'get' | 'post' | 'put' | 'patch' | 'delete' } method Request method
  * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
  * @param { {[key: string]: any} } headeropts Request header parameters
  * @param { boolean } server Whether server-side rendering is used
@@ -214,7 +214,7 @@ function retryFetch(
  *
  * @param { NitroFetchRequest } url Request path
  * @param { object } opts Request parameters
- * @param { 'get' | 'post' | 'put' | 'delete' } method Request method
+ * @param { 'get' | 'post' | 'put' | 'patch' | 'delete' } method Request method
  * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
  * @param { [key: string]: any } headeropts Request header parameters
  * @returns {Promise<Response>} Request result

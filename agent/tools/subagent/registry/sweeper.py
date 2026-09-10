@@ -58,6 +58,7 @@ async def _do_sweep() -> None:
         finalize_suspended_deliveries,
         finalize_failed_deliveries,
         pressure_prune_suspended_deliveries,
+        sweep_stale_lifecycle_state,
     )
     from .work_admission import run_with_work_admission
     from ..orphan.recovery import (
@@ -99,6 +100,10 @@ async def _do_sweep() -> None:
         logger.warning("Sweeper pressure pruned {} suspended deliveries", pruned)
 
     await _finalize_killed_unterminated()
+
+    swept = sweep_stale_lifecycle_state()
+    if swept > 0:
+        logger.debug("Sweeper pruned {} stale lifecycle entries", swept)
 
     await run_with_work_admission(_persist_async(), label="sweeper-persist")
 

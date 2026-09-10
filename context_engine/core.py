@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 from loguru import logger
-from pub_func import contains_cjk, count_cjk
+from pub.func import contains_cjk, count_cjk
 from .store import get_db, get_messages_by_lastest_n_turns
 
 

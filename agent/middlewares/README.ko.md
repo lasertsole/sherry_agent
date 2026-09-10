@@ -239,7 +239,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/tool_call_normalize.py` · **클래스:** `ToolCallNormalize(AgentMiddleware)`
 **후크:** `before_model` / `abefore_model` 전용
 
-컨텍스트 트리밍 후의 tool-call / tool-result 페어링을 복구하여 프로바이더의 "Message ordering conflict" 오류를 방지합니다. 처리는 `pub_func.sanitize_tool_use_result_pairing(state["messages"])`(`pub_func/transcript_repair.py`에 정의)로 위임되며, 다음을 수행합니다:
+컨텍스트 트리밍 후의 tool-call / tool-result 페어링을 복구하여 프로바이더의 "Message ordering conflict" 오류를 방지합니다. 처리는 `pub.func.sanitize_tool_use_result_pairing(state["messages"])`(`pub/func/transcript_repair.py`에 정의)로 위임되며, 다음을 수행합니다:
 
 - `tool_call_id` 기준으로 `ToolMessage` 중복 제거;
 - 빈 `ToolMessage` 제거;
@@ -317,7 +317,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 메인 에이전트에 **`HumanInTheLoop`와 `Summarization` 사이**에 등록됩니다: `MaxTokensBoostMiddleware`에 대해서는 안쪽(부스트 재호출을 통과한 진짜 잘림만 목격), Summarization에 대해서는 바깥쪽(재시도 루프가 T4/T5 오버플로 복구 링을 바깥에서 감쌈). 워커 파이프라인에는 등록되지 않습니다. 상태에 `session_id`가 없으면 그냥 통과합니다.
 
-각 handler 호출은 `pub_func/message/llm_error_classifier.py`에 기반한 "분류 → 처분" 루프를 거칩니다 — `FailoverReason` 열거형(18종), `ClassifiedError` 판정(`retryable` / `should_compress` / `should_fallback` 플래그), 8단계 우선순위 파이프라인 `classify_api_error` — 그리고 `pub_func/retry_utils.py::jittered_backoff`로 백오프합니다.
+각 handler 호출은 `pub/func/message/llm_error_classifier.py`에 기반한 "분류 → 처분" 루프를 거칩니다 — `FailoverReason` 열거형(18종), `ClassifiedError` 판정(`retryable` / `should_compress` / `should_fallback` 플래그), 8단계 우선순위 파이프라인 `classify_api_error` — 그리고 `pub/func/retry_utils.py::jittered_backoff`로 백오프합니다.
 
 **`FailoverReason`별 재시도 시맨틱스**
 
@@ -345,7 +345,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 최내곽 미들웨어 — LLM에 가장 가까운 위치. 처음부터 직접 구현한 `AgentMiddleware`입니다(LangChain의 `SummarizationMiddleware` **아님**): 트리거가 발동하면 예산 기반 컷오프로 히스토리를 압축합니다 — 비(非)LLM 전략 우선, 텍스트 저하가 안전할 때만 보조 LLM 요약 사용. `keep` 파라미터는 받아들이지만 사용하지 않으며, 꼬리 보존은 예산 기반입니다: `clamp(context_window × 0.25, 2 000, 15 000)` 토큰(`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
-- **라이프사이클과 라우팅:** 미들웨어는 이제 다섯 개의 트리거 지점(T1–T5)을 아우릅니다 — T1 사전 점검(`before_agent` / `abefore_agent`), T2 호출 전 디스패치(`wrap_model_call` / `awrap_model_call`), T3 응답 후 재확인(실제 보고 토큰), T4(413 Payload Too Large)/T5(컨텍스트 오버플로) 에러 복구 링 — 모든 트리거는 4-경로 오버플로 라우팅 결정(truncate / compact / both / pass)을 실행하며 `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, `pub_func/message/tool_args_truncate.py`(도구 호출 인자 절단), `pub_func/message/llm_error_classifier.py`에 위임됩니다. 상태는 세션 단위 `summarization_*` 키(총 14개, 턴마다 10개 리셋)로 유지됩니다. 전체 문서는 아래 링크를 참조하세요.
+- **라이프사이클과 라우팅:** 미들웨어는 이제 다섯 개의 트리거 지점(T1–T5)을 아우릅니다 — T1 사전 점검(`before_agent` / `abefore_agent`), T2 호출 전 디스패치(`wrap_model_call` / `awrap_model_call`), T3 응답 후 재확인(실제 보고 토큰), T4(413 Payload Too Large)/T5(컨텍스트 오버플로) 에러 복구 링 — 모든 트리거는 4-경로 오버플로 라우팅 결정(truncate / compact / both / pass)을 실행하며 `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/tool_args_truncate.py`(도구 호출 인자 절단), `pub/func/message/llm_error_classifier.py`에 위임됩니다. 상태는 세션 단위 `summarization_*` 키(총 14개, 턴마다 10개 리셋)로 유지됩니다. 전체 문서는 아래 링크를 참조하세요.
 - **트리거 시맨틱스**: 절은 `("messages", N)` 또는 `("tokens", N)`이며, 절 리스트 사이는 **OR** — 절이 하나라도 발동하면 압축이 시작됩니다. 메인 에이전트: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. 워커: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
 - **컷오프 안전성:** `_determine_cutoff`가 컷오프 지점을 고르고, 이어서 `_adjust_for_orphan_pairs`가 `ToolMessage`가 자신의 `AIMessage` 도구 호출과 분리되지 않을 때까지 위치를 뒤로 이동시킵니다. 마지막 사용자 턴이 추정 토큰의 ≥ 50%를 차지하면(`LAST_TURN_RATIO_THRESHOLD = 0.5`), 그 턴을 요약으로 없애는 대신 턴 자체를 압축합니다(`self._compress_last_turn` 플래그).
 - **안티스래싱:** 세션당 최대 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5`회 압축(턴당이 아님). 연속 `INEFFECTIVE_THRESHOLD = 2`회 무효 압축이면(유효 = 메시지 수 감소 또는 토큰 절감 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) LLM 단계를 비활성화(`summarization_skip_llm`)하고 비(非)LLM 전략만 실행합니다. 카운터는 세션 단위 `summarization_*` 키로 `state_register_mem`에 저장됩니다(압축 횟수, 무효 연속, 마지막 토큰, 마지막 전략, 스킵 플래그, 복구 상태 등).

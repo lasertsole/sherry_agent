@@ -152,11 +152,16 @@ EMA_AI_agent/
 │   ├── channels/           # チャンネルプラグイン（QQ ボットアダプター）
 │   └── mcp_server/         # MCP サーバー設定
 │
-├── pub_func/               # 共通ユーティリティ関数
-│   ├── format/             # テキストフォーマットユーティリティ
-│   ├── media/              # メディア処理ユーティリティ
-│   ├── message/            # メッセージ処理ユーティリティ
-│   └── validator/          # 入力バリデーションユーティリティ
+├── pub/                    # 共有ユーティリティとデータモデル
+│   ├── func/               # 共通ユーティリティ関数
+│   │   ├── format/         # テキストフォーマットユーティリティ
+│   │   ├── media/          # メディア処理ユーティリティ
+│   │   ├── message/        # メッセージ処理ユーティリティ
+│   │   └── validator/      # 入力バリデーションユーティリティ
+│   └── types/              # 共有データモデル
+│       ├── message.py      # MultiModalMessage、Chat など
+│       ├── bus.py          # メッセージバスデータモデル
+│       └── client.py       # クライアントデータモデル
 │
 ├── runtime/                # ランタイム状態とユーティリティ
 │   ├── core.py             # シングルトン Register 基底 + セッション単位のクリーンアップ
@@ -198,11 +203,6 @@ EMA_AI_agent/
 ├── temp/                   # 一時ファイル
 │
 ├── tests/                  # テストスイート（pytest）
-│
-├── type/                   # 共有データモデル
-│   ├── message.py          # MultiModalMessage、Chat など
-│   ├── bus.py              # メッセージバスデータモデル
-│   └── client.py           # クライアントデータモデル
 │
 ├── workspace/              # キャラクタープロファイルと行動定義
 │   ├── IDENTITY.md         # 名前、年齢、興味、人間関係

@@ -200,7 +200,7 @@ async def _execute_steered_subagent(
     outcome = RunOutcome(status=RunOutcomeStatus.OK)
 
     try:
-        from pub_func import build_agent_config
+        from pub.func import build_agent_config
 
         # run_timeout_seconds <= 0 means "no timeout" — only wrap in wait_for when a positive timeout is set.
         if timeout_seconds > 0:

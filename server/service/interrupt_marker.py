@@ -190,7 +190,7 @@ def _heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> li
     stay untouched for provider validity (appending a ToolMessage at the end
     can only answer the last AIMessage's calls anyway).
     """
-    from pub_func.transcript_repair import make_missing_tool_result
+    from pub.func.transcript_repair import make_missing_tool_result
 
     last_ai_idx = None
     for i in range(len(messages) - 1, -1, -1):

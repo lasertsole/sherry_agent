@@ -239,7 +239,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/tool_call_normalize.py` · **类：** `ToolCallNormalize(AgentMiddleware)`
 **钩子：** 仅 `before_model` / `abefore_model`
 
-在上下文裁剪后修复 tool-call / tool-result 配对，防止提供方报 "Message ordering conflict" 错误。委托给 `pub_func.sanitize_tool_use_result_pairing(state["messages"])`（定义于 `pub_func/transcript_repair.py`），它会：
+在上下文裁剪后修复 tool-call / tool-result 配对，防止提供方报 "Message ordering conflict" 错误。委托给 `pub.func.sanitize_tool_use_result_pairing(state["messages"])`（定义于 `pub/func/transcript_repair.py`），它会：
 
 - 按 `tool_call_id` 对 `ToolMessage` 去重；
 - 丢弃空的 `ToolMessage`；
@@ -317,7 +317,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 在主 Agent 中注册于 **`HumanInTheLoop` 与 `Summarization` 之间**：相对 `MaxTokensBoostMiddleware` 为内层（只看到 boost 重呼之后仍未解决的真正截断），相对 Summarization 为外层（重试环从外部包住 T4/T5 溢出恢复环）。worker 流水线中**不**注册。当状态中没有 `session_id` 时，中间件直接透传。
 
-每次 handler 调用都经过基于 `pub_func/message/llm_error_classifier.py` 的"分类 → 处置"循环——`FailoverReason` 枚举（18 种原因）、`ClassifiedError` 判定（`retryable` / `should_compress` / `should_fallback` 标志）、8 步优先级管线 `classify_api_error`——并通过 `pub_func/retry_utils.py::jittered_backoff` 退避。
+每次 handler 调用都经过基于 `pub/func/message/llm_error_classifier.py` 的"分类 → 处置"循环——`FailoverReason` 枚举（18 种原因）、`ClassifiedError` 判定（`retryable` / `should_compress` / `should_fallback` 标志）、8 步优先级管线 `classify_api_error`——并通过 `pub/func/retry_utils.py::jittered_backoff` 退避。
 
 **按 `FailoverReason` 的重试语义**
 
@@ -345,7 +345,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 最内层的中间件——最贴近 LLM。从零实现的 `AgentMiddleware`（**并非** LangChain 的 `SummarizationMiddleware`）：触发条件命中后，按预算制截断点压缩历史——优先非 LLM 策略，仅在文本降级安全时才使用辅助 LLM 摘要。`keep` 参数被接受但未使用；尾部保留纯预算制：`clamp(context_window × 0.25, 2 000, 15 000)` 个 token（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
-- **生命周期与路由**：中间件现覆盖五个触发点（T1–T5）——T1 预检（`before_agent` / `abefore_agent`）、T2 调用前派发（`wrap_model_call` / `awrap_model_call`）、T3 响应后复检（真实上报 token）、T4（413 Payload Too Large）/ T5（上下文溢出）错误恢复环——每次触发都运行四路溢出路由决策（truncate / compact / both / pass），并委托给 `pub_func/message/overflow_router.py`、`pub_func/message/tool_result_ttl.py`、`pub_func/message/tool_args_truncate.py`（工具调用参数截断）、`pub_func/message/llm_error_classifier.py`。状态存于会话级 `summarization_*` 键（共 14 个，每回合重置 10 个）。完整文档见下方链接。
+- **生命周期与路由**：中间件现覆盖五个触发点（T1–T5）——T1 预检（`before_agent` / `abefore_agent`）、T2 调用前派发（`wrap_model_call` / `awrap_model_call`）、T3 响应后复检（真实上报 token）、T4（413 Payload Too Large）/ T5（上下文溢出）错误恢复环——每次触发都运行四路溢出路由决策（truncate / compact / both / pass），并委托给 `pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/tool_args_truncate.py`（工具调用参数截断）、`pub/func/message/llm_error_classifier.py`。状态存于会话级 `summarization_*` 键（共 14 个，每回合重置 10 个）。完整文档见下方链接。
 - **触发语义**：单个子句是 `("messages", N)` 或 `("tokens", N)`；子句列表之间是 **OR**——任一子句命中即开始压缩。主 Agent：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`；worker：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
 - **截断点安全：** `_determine_cutoff` 选定截断点，随后 `_adjust_for_orphan_pairs` 向前回退，直到没有任何 `ToolMessage` 与其 `AIMessage` 工具调用被拆开；当最后一个用户回合占估算 token 的 ≥ 50 % 时（`LAST_TURN_RATIO_THRESHOLD = 0.5`），会改为对最后一个回合本身做压缩（`self._compress_last_turn` 标志），而不是把它摘要掉。
 - **防抖动：** 每个**会话**至多 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 次压缩（而非每回合）；连续 `INEFFECTIVE_THRESHOLD = 2` 次无效压缩后（有效 = 消息数减少，或 token 缩减 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`），LLM 步骤被禁用（`summarization_skip_llm`），仅运行非 LLM 策略。计数器以会话级 `summarization_*` 键存于 `state_register_mem`（压缩次数、无效连击、上次 token、上次策略、跳过标志、恢复状态等）。

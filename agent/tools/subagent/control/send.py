@@ -69,7 +69,7 @@ async def _capture_baseline_reply(child_session_key: str) -> str | None:
     """Snapshot the current last AI message so we can detect when a new reply arrives."""
     try:
         from agent import built_agent
-        from pub_func import build_agent_config
+        from pub.func import build_agent_config
 
         agent = await built_agent()
         state = await agent.aget_state(config=build_agent_config(child_session_key))
@@ -99,7 +99,7 @@ async def _wait_for_updated_reply(
 
         try:
             from agent import built_agent
-            from pub_func import build_agent_config
+            from pub.func import build_agent_config
 
             agent = await built_agent()
             state = await agent.aget_state(config=build_agent_config(child_session_key))

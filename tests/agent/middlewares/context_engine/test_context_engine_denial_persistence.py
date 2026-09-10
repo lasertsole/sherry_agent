@@ -17,7 +17,7 @@ import pytest
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from pub_func import sanitize_tool_use_result_pairing
+from pub.func import sanitize_tool_use_result_pairing
 from agent.middlewares.context_engine.core import _reconcile_denials_for_persistence
 
 

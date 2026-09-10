@@ -50,10 +50,6 @@ export default defineNuxtConfig({
     }
   },
 
-  // // Enables the development server to be discoverable by other devices when running on iOS physical devices
-  // devServer: {
-  //   host: '0',
-  // },
   vite: {
     // Better support for Tauri CLI output
     clearScreen: false,

@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image
 from loguru import logger
 
-from pub_func import is_url
+from pub.func import is_url
 
 # Magic byte signatures → file extension
 # Ordered by specificity (more bytes = earlier check)

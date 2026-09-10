@@ -117,6 +117,37 @@ DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
 ]
 
+# ── ClawHub remote-npm execution (explicit human confirmation required) ──
+# clawhub's helper shells out to ``npx --yes clawhub@latest`` (remote code);
+# the agent reaches it either through the terminal tool's Python helper import
+# or by invoking npx directly. Both forms gate on explicit human approval.
+CLAWHUB_REMOTE_NPM_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bnpx\b[^\n]*clawhub", re.IGNORECASE),
+    re.compile(r"\b(?:run_)?clawhub(?:_command|_runner|@[\w.\-]+)?\b", re.IGNORECASE),
+]
+
+CLAWHUB_REMOTE_NPM_TAG = "clawhub_remote_npm"
+
+
+def detect_clawhub_command(command: str) -> str | None:
+    """Check if *command* runs clawhub's remote npm code.
+
+    ClawHub skills are executed through the ``terminal`` tool, which either
+    imports the Python helper (``...clawhub.scripts.run_clawhub_command``) or
+    shells ``npx --yes clawhub@latest`` directly. Both download and execute
+    remote code and therefore require explicit human confirmation.
+
+    Args:
+        command: The shell command string to inspect.
+
+    Returns:
+        :data:`CLAWHUB_REMOTE_NPM_TAG` if matched, or ``None``.
+    """
+    for pattern in CLAWHUB_REMOTE_NPM_PATTERNS:
+        if pattern.search(command):
+            return CLAWHUB_REMOTE_NPM_TAG
+    return None
+
 
 def detect_hardline_command(command: str) -> str | None:
     """Check if *command* matches any hardline blocklist pattern.

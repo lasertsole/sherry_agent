@@ -152,11 +152,16 @@ EMA_AI_agent/
 │   ├── channels/           # Channel plugins (QQ bot adapter)
 │   └── mcp_server/         # MCP server configuration
 │
-├── pub_func/               # Common utility functions
-│   ├── format/             # Text formatting utilities
-│   ├── media/              # Media processing utilities
-│   ├── message/            # Message processing utilities
-│   └── validator/          # Input validation utilities
+├── pub/                    # Shared utilities & data models
+│   ├── func/               # Common utility functions
+│   │   ├── format/         # Text formatting utilities
+│   │   ├── media/          # Media processing utilities
+│   │   ├── message/        # Message processing utilities
+│   │   └── validator/      # Input validation utilities
+│   └── types/              # Shared data models
+│       ├── message.py      # MultiModalMessage, Chat, etc.
+│       ├── bus.py          # Message bus data models
+│       └── client.py       # Client data models
 │
 ├── runtime/                # Runtime state & utilities
 │   ├── core.py             # Singleton Register base + per-session cleanup
@@ -198,11 +203,6 @@ EMA_AI_agent/
 ├── temp/                   # Temporary files
 │
 ├── tests/                  # Mirror-structured pytest suite (tests/<source>/...) + run_tests_split.py (marker-based runner)
-│
-├── type/                   # Shared data models
-│   ├── message.py          # MultiModalMessage, Chat, etc.
-│   ├── bus.py              # Message bus data models
-│   └── client.py           # Client data models
 │
 ├── workspace/              # Character profile & behavior definition
 │   ├── IDENTITY.md         # Name, age, interests, relationships

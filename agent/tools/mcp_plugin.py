@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import json
 from pathlib import Path
-from pub_func import run_async
+from pub.func import run_async
 from langchain_core.tools import BaseTool
 
 _HERE_DIR = Path(__file__).resolve().parent  # tools/

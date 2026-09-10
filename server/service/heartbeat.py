@@ -7,7 +7,7 @@ from loguru import logger
 from config import PLUGINS_PATH
 from config.path import HEARTBEAT_PATH
 from models import build_main_llm
-from type.bus import OutboundMessage
+from pub.types.bus import OutboundMessage
 from langchain.agents import create_agent
 from workspace import CORE_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files

@@ -1,7 +1,7 @@
 import aiosqlite
 from pathlib import Path
 from config import SRC_DIR
-from pub_func import rand_str_to_int
+from pub.func import rand_str_to_int
 from agent.checkpointer.thread_safe_checkpointer import (
     ThreadSafeAsyncSqliteSaver,
 )

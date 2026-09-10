@@ -4,7 +4,7 @@
 
 > How the agent keeps long conversations inside the model's context window: five trigger points watch the whole lifecycle (before the turn, before every model call, after every model response, and on provider overflow errors), a pure 4-route router picks the cheapest fix (truncate big tool results and oversized tool-call args first, AI-compact only when forced), and anti-thrash guards make sure compression can never spiral.
 
-Source of truth: `agent/middlewares/summarization.py`, `pub_func/message/overflow_router.py`, `pub_func/message/tool_result_ttl.py`, `pub_func/message/llm_error_classifier.py`, `pub_func/message/estimate_msg_tokens.py`, `pub_func/message/tool_output_dedup.py`, `pub_func/message/tool_output_prune.py`, `pub_func/message/target_truncation.py`, `pub_func/message/tool_args_truncate.py`, `pub_func/message/turn_utils.py`, `config/num.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
+Source of truth: `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/message/estimate_msg_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/num.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -97,7 +97,7 @@ turn starts
 └─ T4/T5  provider-error recovery ring
        (_execute_with_recovery :1057 / _aexecute_with_recovery :1115)
        ├─ handler raises → classify_provider_error
-       │    (pub_func/message/llm_error_classifier.py):
+       │    (pub/func/message/llm_error_classifier.py):
        │    payload_too_large → T4, context_overflow → T5
        │    (_TRIGGER_BY_ERROR_CLASS :115, _RETRY_KEY_BY_ERROR_CLASS :119)
        ├─ non-target / unknown class → ORIGINAL exception re-raises
@@ -121,7 +121,7 @@ The legacy trigger clauses still exist as the T2 fallback (`_check_trigger`, :57
 
 ## 🚦 The Four-Route Overflow Decision
 
-`pub_func/message/overflow_router.py` is a **pure decision layer** — no truncation, no compression, no I/O, no state. The middleware imports three functions:
+`pub/func/message/overflow_router.py` is a **pure decision layer** — no truncation, no compression, no I/O, no state. The middleware imports three functions:
 
 - `compute_pressure` (:50) = `max(estimated_tokens + system_prompt_tokens, reported_tokens)` — the API-reported number wins when present;
 - `find_truncatable_tool_results` (:68) — **only** `ToolMessage`s are eligible (tool results are regenerable); the most recent `TRUNCATABLE_RECENT_SKIP (6)` messages are always excluded so the newest tool/ai pairing stays intact; a candidate must be worth ≥ `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE (200)` estimated tokens; the result is sorted DESC so executors cut the biggest wins first;
@@ -152,7 +152,7 @@ Window math (test contracts): window `41 600` → usable `25 600`, lines `17 920
 
 ## 🪙 Token Estimation (No Tokenizer)
 
-`pub_func/message/estimate_msg_tokens.py` (29 lines) is deliberately tokenizer-free and deterministic:
+`pub/func/message/estimate_msg_tokens.py` (29 lines) is deliberately tokenizer-free and deterministic:
 
 ```python
 tokens = (content chars            # str content, or len(json.dumps(content))
@@ -166,9 +166,9 @@ It is fast, stable across runs (same input → same number → reproducible test
 
 Two truncation layers run inside `_run_budget_truncation` (:659), in order:
 
-**Step 1 — tool-call args** (`pub_func/message/tool_args_truncate.py`): every `AIMessage.tool_calls[].args` whose JSON serialization exceeds `MIN_ARGS_CHARS_TO_TRUNCATE (500)` chars — and whose tool is not in `PROTECTED_TOOLS` — is replaced with `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}` capped at `MAX_TOOL_ARGS_CHARS (2_000)` chars (head 30% / tail 30%, same ratios as tool results). This keeps `args` a dict (LangChain's `ToolCall.args` type), stays JSON-serializable for every provider adapter, and lets the model see the args were cut. The most recent `TRUNCATABLE_RECENT_SKIP (6)` messages are skipped and replaced `AIMessage`s are `model_copy` clones — tool_call_ids are never touched, so AIMessage↔ToolMessage pairing stays intact.
+**Step 1 — tool-call args** (`pub/func/message/tool_args_truncate.py`): every `AIMessage.tool_calls[].args` whose JSON serialization exceeds `MIN_ARGS_CHARS_TO_TRUNCATE (500)` chars — and whose tool is not in `PROTECTED_TOOLS` — is replaced with `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}` capped at `MAX_TOOL_ARGS_CHARS (2_000)` chars (head 30% / tail 30%, same ratios as tool results). This keeps `args` a dict (LangChain's `ToolCall.args` type), stays JSON-serializable for every provider adapter, and lets the model see the args were cut. The most recent `TRUNCATABLE_RECENT_SKIP (6)` messages are skipped and replaced `AIMessage`s are `model_copy` clones — tool_call_ids are never touched, so AIMessage↔ToolMessage pairing stays intact.
 
-**Step 2 — tool results**: `pub_func/message/tool_result_ttl.py` provides the in-place truncation used by the truncate track. Design invariants (load-bearing):
+**Step 2 — tool results**: `pub/func/message/tool_result_ttl.py` provides the in-place truncation used by the truncate track. Design invariants (load-bearing):
 
 - **In place only** — the module never removes, reorders or pops messages; it only mutates `msg.content` (or a content-list block) and returns indices. This preserves the tool-call/`ToolMessage` pairing that the provider API and `ToolCallNormalize` depend on.
 - **Non-empty placeholders** — a truncated result always keeps non-empty content: `ToolCallNormalize.before_model` sanitizes the transcript by **dropping empty `ToolMessage`s**, so an empty placeholder would silently break the pairing.
@@ -246,13 +246,13 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🛡️ Anti-Thrash Guard Matrix & Degradation Recovery
 
-State lives in session-scoped `state_register_mem` under **fourteen** `summarization_*` keys (:92–107). `_reset_turn_state` (:1849) resets **ten** of them at every turn start; `summarization_last_user_question`, `summarization_cooldown_rounds` and the two T4/T5 retry counters are deliberately **not** reset per turn.
+State lives in session-scoped `state_register_mem` under **thirteen** `summarization_*` keys (:92–107). `_reset_turn_state` (:1849) resets **eleven** of them at every turn start; `summarization_last_user_question` and `summarization_cooldown_rounds` are deliberately **not** reset per turn.
 
 | Guard | Key | Threshold | Effect |
 | :---- | :-- | :-------- | :----- |
 | Turn cooldown | `summarization_cooldown_rounds` | `COMPACTION_COOLDOWN_ROUNDS = 3` | Armed after every actual compact (:694); ticked down by **every** model call (:832); blocks T1 compact routes, T2 proactive and T3 — never the T4/T5 forced ring |
 | Per-turn compactions | `summarization_turn_attempts` | `MAX_COMPRESS_ATTEMPTS_PER_TURN = 3` | Incremented by :694; suppresses T2 proactive + T3 (forced ring exempt) |
-| Per-class overflow retries | `summarization_overflow_retries_t4` / `_t5` | `MAX_OVERFLOW_RETRIES = 3` | Incremented after each successful forced step; exhausted → original provider error propagates |
+| Overflow retries (T4/T5 shared) | `summarization_overflow_retries` | `MAX_OVERFLOW_RETRIES = 3` | Shared by both error classes and reset per turn; incremented after each successful forced step; exhausted → original provider error propagates |
 | Session compressions | `summarization_compression_count` | `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` | `_should_skip_compression` (:1255) returns True — proactive compression stops entirely |
 | Consecutive ineffective | `summarization_compression_ineffective` | `INEFFECTIVE_THRESHOLD = 2` | Sets `skip_llm` — non-LLM strategies only |
 | Effectiveness | (`_record_compression`, :1277) | message count reduced **or** token reduction ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | Successful non-LLM strategies (`dedup`/`prune`/`truncate`/`fallback`/`aggressive`) clear `skip_llm` again |
@@ -301,7 +301,7 @@ All thresholds live in `config/num.py`. Values marked ◆ are consumed by the li
 | `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | truncate-track budget = usable × 0.60 (:660) |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | candidate floor in `find_truncatable_tool_results` |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | newest messages never truncatable (pairing margin) |
-| `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 forced-recovery cap per error class |
+| `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 forced-recovery cap (shared counter) |
 | `MAX_COMPRESS_ATTEMPTS_PER_TURN` ◆ | `3` | per-turn proactive compaction cap |
 | `COMPACTION_COOLDOWN_ROUNDS` ◆ | `3` | cooldown armed after every actual compact |
 | `MIN_PRESERVE_TOKENS` ◆ | `2_000` | preserve-budget floor; budget without a window |
@@ -345,7 +345,7 @@ All thresholds live in `config/num.py`. Values marked ◆ are consumed by the li
 | `tests/unit/test_pub_func_message_tools.py` | 29 | dedup / prune / target-truncate / turn-utils plus tool-args truncation: head+tail format, small-args skip, freed clamp, protected tools, skip-recent, pairing & no-mutation |
 | `tests/unit/test_config_num.py` | 43 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
 | `tests/module/test_compression_comprehensive.py` | 48 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity |
-| `tests/module/test_compression_e2e_static.py` | 12 | 6 end-to-end scenarios × 2 registration orders, static-fallback compaction, zero network |
+| `tests/module/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
 | `tests/module/test_summarization_trigger.py` | 3 | Production registration contract: `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
 | `tests/module/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
 | `tests/module/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
@@ -362,7 +362,7 @@ The full process-isolated suite (`uv run python tests/run_tests_split.py`) passe
 - **The estimator is `chars // 4`, not a tokenizer.** It is intentionally deterministic (reproducible tests, stable budgets) and calibrated for mixed English/code; CJK-heavy content will be under-counted (Chinese averages closer to 1–2 chars/token than 4).
 - **Where reported usage wins.** T3 is the only reported-usage-driven trigger (`compute_pressure` takes the max). The T1/T2 route decision is estimate-driven (estimate + system-prompt overhead only); the legacy `_check_trigger` clause fallback uses `max(local estimate, reported)`.
 - **T3 never alters the returned response.** A T3 dispatch's durable effects are the in-place truncation of tool results (message objects are shared with the graph state) and the anti-thrash bookkeeping; the compact route's `request.override` at T3 is local and the original response is always returned. The whole T3 body is fail-open.
-- **T4/T5 bypass the anti-thrash matrix by design** — that is the point of "forced". After `MAX_OVERFLOW_RETRIES (3)` per class, or if the forced-compression step itself fails, the ORIGINAL provider exception propagates (never swallowed, never replaced by the compression error).
+- **T4/T5 bypass the anti-thrash matrix by design** — that is the point of "forced". After `MAX_OVERFLOW_RETRIES (3)` (shared T4/T5 counter, reset each turn), or if the forced-compression step itself fails, the ORIGINAL provider exception propagates (never swallowed, never replaced by the compression error).
 - **Compression is fail-open.** Any exception inside `_apply_compression` is logged and swallowed; the turn proceeds with the uncompressed history.
 - **The static fallback is heuristic.** Keyword-based decision/completed classification and path extraction from raw tool args are best-effort; the section skeleton is guaranteed, the content quality is not.
 - **`_SUMMARY_PREFIX`/`_SUMMARY_SUFFIX`/`<summary>` tags/`lc_source="summarization"` are load-bearing exact strings.** Later-turn chaining (`_extract_previous_summary`), prune stop-condition, and the test suites all match them literally — do not reword them casually.

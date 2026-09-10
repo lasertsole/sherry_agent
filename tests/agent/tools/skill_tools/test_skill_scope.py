@@ -220,6 +220,15 @@ class TestSkillViewScope:
         result = self._run_view("subagent", "vault_main")
         assert result["success"] is False
 
+    def test_disallowed_subdir_not_discovered(self, tmp_path, monkeypatch):
+        skills_dir = tmp_path / "skills"
+        _write_skill(skills_dir, "misc/stray", "name: stray\ndescription: Outside roots\n")
+        monkeypatch.setattr(skill_view_module, "SKILLS_DIR", skills_dir)
+
+        result = self._run_view(None, "stray")
+
+        assert result["success"] is False
+
 
 # ---------------------------------------------------------------------------
 # skill_list — caller-scope filtering

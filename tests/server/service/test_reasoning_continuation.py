@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessageChunk
 
 from runtime import state_register_mem
 from server.service import messages as m
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 

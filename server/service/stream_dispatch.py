@@ -40,7 +40,7 @@ from langchain_core.messages import BaseMessage, ToolCall, ToolCallChunk, ToolMe
 from loguru import logger
 from runtime import state_register_mem
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
-from pub_func.message.llm_error_classifier import FailoverReason, classify_api_error
+from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from .stream_diag import reraise_with_diag, stream_diag_init, stream_diag_summary
 
 
@@ -143,6 +143,7 @@ def _clear_pending_args(session_id: str) -> None:
     every session's state whenever any turn finished.
     """
     _pending_args.pop(session_id, None)
+    _pending_raw.pop(session_id, None)
 
 
 def _reasoning_delta(msg_chunk: BaseMessage) -> str:

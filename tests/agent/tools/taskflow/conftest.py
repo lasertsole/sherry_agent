@@ -86,28 +86,28 @@ def _real_agent_tools() -> Any:
 
 
 def _fix_stub_run_async() -> None:
-    """Make ``from pub_func import run_async`` work inside the stub regime.
+    """Make ``from pub.func import run_async`` work inside the stub regime.
 
-    The tests/unit/subagent conftest stubs ``pub_func`` with a PEP 562
+    The tests/unit/subagent conftest stubs ``pub.func`` with a PEP 562
     ``__getattr__`` that resolves a missing name by importing the same-named
     submodule and returning its re-export. For ``run_async`` that import has
-    a side effect: the import machinery binds the ``pub_func.run_async``
+    a side effect: the import machinery binds the ``pub.func.run_async``
     SUBMODULE as the package attribute, shadowing the re-export before
     ``IMPORT_FROM`` reads it. Real modules loaded afterwards (mcp_plugin's
-    ``from pub_func import run_async``) therefore get the module object and
+    ``from pub.func import run_async``) therefore get the module object and
     ``run_async(client.get_tools())`` explodes as ``TypeError: 'module'
     object is not callable``. Bind the real function (run_async.py imports
     only asyncio/threading, no heavy deps) onto the stub so normal attribute
-    lookup wins. No-op when pub_func is real or already fixed.
+    lookup wins. No-op when pub.func is real or already fixed.
     """
-    stub = sys.modules.get("pub_func")
+    stub = sys.modules.get("pub.func")
     if stub is None:
         return
     if callable(getattr(stub, "run_async", None)):
         return
     real = _load_module_from_file(
-        "_taskflow_real_pub_func_run_async",
-        _ROOT / "pub_func" / "run_async.py",
+        "_taskflow_real_pubfunc_run_async",
+        _ROOT / "pub" / "func" / "run_async.py",
     )
     setattr(stub, "run_async", real.run_async)
 

@@ -11,8 +11,9 @@ from server.service import get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs
 from server.service import turn_runner
 from server.service.stream_driver import StreamDriver
+from server.service.stream_dispatch import _clear_pending_args
 from server.utils.ws_helpers import send_ws_json
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
 # Tracks the running stream task per session. A generation/HITL-resume request
@@ -299,13 +300,23 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
     except Exception as e:
         logger.warning(f"Agent WS client {websocket.id} disconnected: {e}")
 
-    # Release the session→socket binding. The unregister is last-writer-wins
-    # safe: a newer socket's binding survives this (possibly stale) exit.
+    # Capture the bound session before unregistering so the in-flight turn can
+    # be stopped; then release the session→socket binding. The unregister is
+    # last-writer-wins safe: a newer socket's binding survives this exit.
+    disconnected_session_id = relation_register.get_session_id_by_websocket(websocket)
     relation_register.unregister_websocket_by_websocket(websocket)
 
-    # Clean up any task that was bound to this now-closed socket.
+    # Cancel a still-running turn only when this socket was the session's last
+    # binding — a newer socket re-binding the same session keeps its turn alive.
+    if (
+        disconnected_session_id is not None
+        and relation_register.get_websocket_id_by_session_id(disconnected_session_id) is None
+    ):
+        task = _active_tasks.pop(disconnected_session_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        _clear_pending_args(disconnected_session_id)
+
     for sid, task in list(_active_tasks.items()):
-        # A task holds `websocket` in its closure; we can't reliably inspect it,
-        # so only reap tasks that are already finished.
         if task.done():
             _active_tasks.pop(sid, None)

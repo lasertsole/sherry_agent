@@ -101,7 +101,7 @@ class HeartbeatService:
 
         Returns (action, tasks) where action is 'skip' or 'run'.
         """
-        from pub_func import current_time_str
+        from pub.func import current_time_str
         from langchain_core.messages import HumanMessage, SystemMessage
 
         system_msg = "You are a heartbeat agent. Call the heartbeat tool to report your decision."

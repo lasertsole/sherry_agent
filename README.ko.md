@@ -152,11 +152,16 @@ EMA_AI_agent/
 │   ├── channels/           # 채널 플러그인(QQ 봇 어댑터)
 │   └── mcp_server/         # MCP 서버 설정
 │
-├── pub_func/               # 공용 유틸리티 함수
-│   ├── format/             # 텍스트 포맷 유틸리티
-│   ├── media/              # 미디어 처리 유틸리티
-│   ├── message/            # 메시지 처리 유틸리티
-│   └── validator/          # 입력 검증 유틸리티
+├── pub/                    # 공용 유틸리티 및 데이터 모델
+│   ├── func/               # 공용 유틸리티 함수
+│   │   ├── format/         # 텍스트 포맷 유틸리티
+│   │   ├── media/          # 미디어 처리 유틸리티
+│   │   ├── message/        # 메시지 처리 유틸리티
+│   │   └── validator/      # 입력 검증 유틸리티
+│   └── types/              # 공유 데이터 모델
+│       ├── message.py      # MultiModalMessage, Chat 등
+│       ├── bus.py          # 메시지 버스 데이터 모델
+│       └── client.py       # 클라이언트 데이터 모델
 │
 ├── runtime/                # 런타임 상태 및 유틸리티
 │   ├── core.py             # 싱글톤 Register 기반 + 세션별 정리
@@ -198,11 +203,6 @@ EMA_AI_agent/
 ├── temp/                   # 임시 파일
 │
 ├── tests/                  # 테스트 스위트(pytest)
-│
-├── type/                   # 공유 데이터 모델
-│   ├── message.py          # MultiModalMessage, Chat 등
-│   ├── bus.py              # 메시지 버스 데이터 모델
-│   └── client.py           # 클라이언트 데이터 모델
 │
 ├── workspace/              # 캐릭터 프로파일 및 행동 정의
 │   ├── IDENTITY.md         # 이름, 나이, 관심사, 인간관계

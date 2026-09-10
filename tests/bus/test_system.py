@@ -2,7 +2,7 @@
 
 import asyncio
 import pytest
-from type.bus import InboundMessage, OutboundMessage
+from pub.types.bus import InboundMessage, OutboundMessage
 from bus.core import MessageBus
 
 

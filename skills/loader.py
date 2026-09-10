@@ -4,7 +4,14 @@ import json
 import yaml
 from pathlib import Path
 from typing import Any
-from config import ROOT_DIR, SKILLS_DIR, SKILLS_STATE_FILE
+from loguru import logger
+from config import (
+    ROOT_DIR,
+    SKILLS_DIR,
+    SKILLS_STATE_FILE,
+    SKILL_DISCOVERY_ROOTS,
+    is_allowed_skill_path,
+)
 
 
 def parse_frontmatter(text: str) -> dict[str, Any]:
@@ -107,6 +114,12 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     seen_paths = set()  # for deduplication
 
     for skill_file in SKILLS_DIR.glob("**/SKILL.md"):
+        if not is_allowed_skill_path(skill_file, SKILLS_DIR):
+            logger.warning(
+                "Ignoring SKILL.md outside allowed roots "
+                f"({', '.join(SKILL_DISCOVERY_ROOTS)}): {skill_file}"
+            )
+            continue
         if skill_file in seen_paths:
             continue
         seen_paths.add(skill_file)

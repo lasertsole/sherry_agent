@@ -87,7 +87,7 @@ export function stringToDate(dateString: string): Date | null {
     return date;
   }
 
-  // Convert the custom format into a standard ISO 8601 format
+  // Strip the ISO 8601 "T" separator and trailing "Z" UTC marker so Date can parse it as local time
   dateString = dateString.replace(/T/gi, ' ').replace(/Z/gi, '');
   const date = new Date(dateString);
   if (isNaN(date.getTime())) {
@@ -143,14 +143,14 @@ export function isLate(a: Date, b: Date): boolean {
  *
  * @param { Date } a
  * @param { Date } b
- * @returns { Date } true if a is later than b, false otherwise
+ * @returns { Date } the later of a and b
  */
 export function maxDate(a: Date, b: Date): Date {
   return isLate(a, b) ? a : b;
 }
 
 /**
- * The current UTC (universal coordinated) time, precise to the microsecond level
+ * The current UTC (universal coordinated) time, formatted to millisecond precision
  *
  * @returns { string } the current UTC time
  */

@@ -12,7 +12,7 @@ so no network / no API keys / no real provider is involved):
   ``tool_calls`` and no following ``ToolMessage`` (the real shape when a cancel
   lands right after a model super-step) is healed at INPUT time by
   ``ToolCallNormalize.before_model`` (``agent/middlewares/tool_call_normalize.py:12-26``
-  -> ``pub_func/transcript_repair.py:158-306``: synthesizes an error-status
+  -> ``pub/func/transcript_repair.py:158-306``: synthesizes an error-status
   placeholder ToolMessage, :138-155, :270-289). WITHOUT that middleware a
   strict provider rejects the transcript (simulated 400 here). CRITICAL
   finding: when nothing terminates the dangling span, the sanitizer's span
@@ -632,7 +632,7 @@ PROD_SESSION = "prod-interrupt-session"
 PROD_MARKER_ID = f"interrupted-{THREAD_ID}-1"
 PROD_HEAL_ID = f"{PROD_MARKER_ID}-heal-{DANGLING_CALL_ID}"
 
-# Mirrors pub_func/transcript_repair.make_missing_tool_result content.
+# Mirrors pub/func/transcript_repair.make_missing_tool_result content.
 PROD_HEAL_CONTENT = "tool result missing after context trim."
 
 

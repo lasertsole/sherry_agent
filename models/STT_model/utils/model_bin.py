@@ -44,11 +44,6 @@ class SenseVoiceSmallONNX:
         config_file = os.path.join(model_dir, "config.yaml")
         cmvn_file = os.path.join(model_dir, "am.mvn")
         config = read_yaml(config_file)
-        # token_list = os.path.join(model_dir, "tokens.json")
-        # with open(token_list, "r", encoding="utf-8") as f:
-        #     token_list = json.load(f)
-
-        # self.converter = TokenIDConverter(token_list)
         self.tokenizer = CharTokenizer()
         config["frontend_conf"]["cmvn_file"] = cmvn_file
         self.frontend = WavFrontend(**config["frontend_conf"])

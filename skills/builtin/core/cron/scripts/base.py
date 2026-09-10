@@ -13,7 +13,7 @@ from bus import MessageBus
 from config import ROOT_DIR
 from datetime import datetime
 from models import build_main_llm
-from type.bus import InboundMessage, OutboundMessage
+from pub.types.bus import InboundMessage, OutboundMessage
 from channels import channel_manager
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
@@ -624,7 +624,7 @@ class CronService:
         # Auto-start if not running
         if not self._running:
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 if loop.is_running():
                     loop.create_task(self.start())
                 else:
@@ -668,7 +668,7 @@ class CronService:
         # Auto-start if not running
         if not self._running:
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 if loop.is_running():
                     loop.create_task(self.start())
                 else:

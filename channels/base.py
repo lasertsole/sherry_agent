@@ -4,7 +4,7 @@ from typing import Any
 from loguru import logger
 from bus import MessageBus
 from abc import ABC, abstractmethod
-from type.bus import InboundMessage, OutboundMessage
+from pub.types.bus import InboundMessage, OutboundMessage
 
 
 class BaseChannel(ABC):

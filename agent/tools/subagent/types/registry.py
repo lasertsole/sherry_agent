@@ -141,6 +141,7 @@ class SubagentRunRecord(BaseModel):
 
     swarm_group_id: str | None = None
     swarm_run_state: str | None = None
+    launch_fingerprint: str | None = None
     output_schema: dict | None = None
     suppress_completion_delivery: bool = False
     retain_attachments_on_keep: bool = False

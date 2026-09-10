@@ -110,6 +110,7 @@ from .lifecycle import (
     finalize_failed_deliveries,
     recover_orphaned_runs,
     pressure_prune_suspended_deliveries,
+    sweep_stale_lifecycle_state,
 )
 from .terminal_gen import TerminalGenerationTracker, get_terminal_gen_tracker
 from .settle_wake import SettleWakeState, RequesterSettleWakeBatch, get_settle_wake_batch
@@ -209,6 +210,7 @@ __all__ = [
     "finalize_failed_deliveries",
     "recover_orphaned_runs",
     "pressure_prune_suspended_deliveries",
+    "sweep_stale_lifecycle_state",
     "TerminalGenerationTracker",
     "get_terminal_gen_tracker",
     "SettleWakeState",

@@ -36,7 +36,7 @@ from runtime.relation_register import relation_register
 from server.service import get_pending_interrupt
 from server.service.messages import async_generate
 from server.service.turn_runner import on_turn_finished
-from type.message import MultiModalMessage
+from pub.types.message import MultiModalMessage
 
 
 class AutoTurnOutcome(StrEnum):

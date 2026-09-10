@@ -11,7 +11,7 @@ import aiosqlite
 import pytest
 
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
-from pub_func import rand_str_to_int
+from pub.func import rand_str_to_int
 
 
 class FakeConnection:

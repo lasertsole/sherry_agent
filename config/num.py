@@ -68,6 +68,11 @@ AUTO_CONTINUE_PROMPT = (
 # === Token estimation ===
 CHARS_PER_TOKEN = 4
 
+# === Upload size limits (bytes) ===
+MAX_IMAGE_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_AUDIO_UPLOAD_BYTES = 100 * 1024 * 1024
+MAX_VIDEO_UPLOAD_BYTES = 500 * 1024 * 1024
+
 # Message bus bounded-queue size (bus/core.py MessageBus). When a queue is
 # full the producer awaits free space (backpressure) — messages are delayed,
 # never dropped, and memory stays bounded (audit #11).
