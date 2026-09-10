@@ -9,7 +9,7 @@ import json
 from langchain_core.tools import tool
 
 from ..registry import store_sqlite
-from ._shared import not_found_error
+from ._shared import not_found_error, step_status, steps_summary
 
 
 @tool("taskflow_summary")
@@ -38,9 +38,14 @@ async def taskflow_summary(flow_id: str) -> str:
     ]
     for step in steps:
         if isinstance(step, dict):
+            depends_on = step.get("depends_on") or []
+            deps_text = "[" + ", ".join(str(dep) for dep in depends_on) + "]"
             lines.append(
-                f"  - [{step.get('step_id')}] {step.get('task')} -> {step.get('child_session_key')}"
+                f"  - [{step.get('step_id')}] {step_status(step)} {step.get('task')} "
+                f"-> {step.get('child_session_key')} depends_on={deps_text}"
             )
+    counts = steps_summary(steps)
+    lines.append("step statuses: " + " ".join(f"{status}={n}" for status, n in counts.items()))
     lines.append(f"results: {len(results)}")
     for item in results:
         if isinstance(item, dict):
