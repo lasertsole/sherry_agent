@@ -56,6 +56,7 @@ _STATE_KEY_ITER = "heartbeat_iter"
 _STATE_KEY_TOOL = "heartbeat_tool"
 _STATE_KEY_STALE = "heartbeat_stale"
 _STATE_KEY_KILLED = "heartbeat_killed"
+_STATE_KEY_SKIP = "heartbeat_skip"
 _TIMER_NAME = "heartbeat_staleness_check"
 
 
@@ -101,6 +102,16 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
     def _check_progress(self, session_id: str) -> None:
         """Heartbeat callback: compare current state with last observed state."""
         if self._is_killed(session_id):
+            return
+
+        # A skip_heartbeat tool parks the graph waiting for human input; the
+        # unchanged (iter, tool) pair during that wait is not a stall.
+        if state_register_mem.get_state(session_id, _STATE_KEY_SKIP, False):
+            logger.debug(
+                "[HeartbeatStaleness] session={} heartbeat_skip=True, "
+                "skipping progress check (tool waiting for human input)",
+                session_id,
+            )
             return
 
         current_iter: int = state_register_mem.get_state(session_id, _STATE_KEY_ITER, 0)
@@ -178,6 +189,7 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
         state_register_mem.set_state(session_id, _STATE_KEY_TOOL, None)
         state_register_mem.set_state(session_id, _STATE_KEY_STALE, 0)
         state_register_mem.set_state(session_id, _STATE_KEY_KILLED, False)
+        state_register_mem.set_state(session_id, _STATE_KEY_SKIP, False)
         state_register_mem.set_state(session_id, f"_last_{_STATE_KEY_ITER}", 0)
         state_register_mem.set_state(session_id, f"_last_{_STATE_KEY_TOOL}", None)
         self._start_heartbeat(session_id)
@@ -248,6 +260,24 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
             )
 
         tool_name = request.tool_call.get("name", "unknown")
+
+        # Same request.tool.metadata access pattern as ToolGuardrails._is_idempotent
+        # and ContextEngineHook._wrap_tool_call_impl. Interrupt-based tools (e.g. the
+        # question tool) suspend the graph inside the tool, so the after-tool hook
+        # never runs until resume — track that via the skip key instead of the
+        # current-tool key.
+        tool = getattr(request, "tool", None)
+        metadata = getattr(tool, "metadata", None)
+        if isinstance(metadata, dict) and metadata.get("skip_heartbeat", False):
+            state_register_mem.set_state(session_id, _STATE_KEY_SKIP, True)
+            logger.debug(
+                "[HeartbeatStaleness] session={} tool=[{}] skip_heartbeat=True, "
+                "bypassing heartbeat tracking",
+                session_id,
+                tool_name,
+            )
+            return None
+
         state_register_mem.set_state(session_id, _STATE_KEY_TOOL, tool_name)
 
         return None
@@ -255,6 +285,7 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
     def _after_tool_call_impl(self, request: ToolCallRequest) -> None:
         session_id = self._sid(request.state)
         state_register_mem.set_state(session_id, _STATE_KEY_TOOL, None)
+        state_register_mem.set_state(session_id, _STATE_KEY_SKIP, False)
 
     @override
     def wrap_tool_call(
