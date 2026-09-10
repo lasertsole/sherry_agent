@@ -53,9 +53,8 @@ def _build_todo_block(session_id: str) -> str:
             content = todo.get("content", "")
             priority = todo.get("priority") or "medium"
             lines.append(f"- [{icon}] {tag} {content} ({priority})")
-        # Deterrence-only notices: the continuation enforcer (E3) and the
-        # Sisyphus verifier (E5) are not wired up yet. These lines exist so the
-        # model knows the hooks are coming; drop this comment once E3/E5 ship.
+        # Deterrence notices: E3 continuation and the E4 transition barrier are enforced in code
+        # (agent/core.py + service.update_todos); E5 verification is recorded via SisyphusVerifier/EvidenceLedger.
         lines.append(
             "Your todo list is tracked by the continuation system. "
             "Incomplete todos will trigger automatic continuation."
