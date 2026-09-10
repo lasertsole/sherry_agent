@@ -19,6 +19,16 @@ const SESSION_ID = 'default';
 /** WebSocket singleton reference */
 let wsInstance: WebSocket | null = null;
 
+let everConnected = false;
+
+/** Outbound bridge: sends a full `{session_id, event, content}` frame (same shape as the heartbeat send). */
+on('ws:send', (payload: unknown) => {
+  const frame = payload as { event?: unknown } | null | undefined;
+  if (!frame || typeof frame.event !== 'string') return;
+  if (!wsInstance || wsInstance.readyState !== WebSocket.OPEN) return;
+  wsInstance.send(JSON.stringify(frame));
+});
+
 /* ---------------------------------------------------------------------------
  * Application-layer heartbeat (ping/pong liveness check) — applies only to the
  * /sessions/ws session channel above
@@ -166,6 +176,8 @@ export function useWs(options?: { onReconnect?: () => void }): {
     socket.onopen = () => {
       isConnected.value = true;
       emit('ws:connected', undefined);
+      if (everConnected) emit('ws:reconnected', undefined);
+      everConnected = true;
 
       // Reset heartbeat counters and start the heartbeat timer (counting
       // restarts from scratch on every reconnect)
@@ -175,7 +187,8 @@ export function useWs(options?: { onReconnect?: () => void }): {
     };
 
     const handleSessionFrame = createWsMessageHandler<{ content?: unknown }>({
-      notification: data => emit('ws:notification', data.content ?? '')
+      notification: data => emit('ws:notification', data.content ?? ''),
+      todo_updated: data => emit('ws:todo_updated', data)
     });
 
     socket.onmessage = (event: MessageEvent) => {
@@ -239,6 +252,7 @@ export function closeWs(): void {
   stopHeartbeat();
   pendingPong = false;
   missedPongs = 0;
+  everConnected = false;
   if (wsInstance) {
     wsInstance.close();
     wsInstance = null;

@@ -1,3 +1,4 @@
+import inspect
 import json
 from loguru import logger
 from robyn import Response
@@ -39,20 +40,23 @@ def handle_exception(error: Exception):
     )
 
 
-ws_event_processor_dict: dict[str, Callable[[str, str | dict[str, Any]], str | dict[str, Any]]] = {}
+ws_event_processor_dict: dict[str, Callable[[str, str | dict[str, Any]], Any]] = {}
 
 
 async def ws_processor(session_id: str, event: str, content: str | dict[str, Any]) -> Any:
     try:
-        processor: Callable[[str, str | dict[str, Any]], str | dict[str, Any]] | None = (
-            ws_event_processor_dict.get(event)
+        processor: Callable[[str, str | dict[str, Any]], Any] | None = ws_event_processor_dict.get(
+            event
         )
         if processor is None:
             logger.debug(f"No processor registered for event: {event}, session_id={session_id}")
             return None
 
         logger.debug(f"Processing WS event: event={event}, session_id={session_id}")
-        return processor(session_id, content)
+        result = processor(session_id, content)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
     except Exception as e:
         logger.warning(f"ws_processor error happened: {e}, session_id={session_id}, event={event}")
         return None
@@ -68,15 +72,42 @@ def ping_processor(session_id: str, content: str | dict[str, Any]) -> str | dict
     (returning a dict instead of a str so the client receives a JSON object
     frame). This replaces the old HTTP-polling health check.
 
-    Note: this must be a synchronous function — ws_processor invokes handlers
-    synchronously; an async function would return a coroutine object, and
-    json.dumps(coroutine) raises TypeError, silently dropping the reply frame.
+    A plain function is enough: ws_processor awaits awaitable results, so a
+    handler may be sync (returning the reply frame directly, as here) or async.
     """
     return {"event": "pong"}
 
 
 # Register the ping -> pong heartbeat event handler
 ws_event_processor_dict["ping"] = ping_processor
+
+
+async def todo_refresh_processor(
+    session_id: str, content: str | dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reply to a client `todo_refresh` frame with the persisted session plan.
+
+    Sent by the frontend after a `/sessions/ws` reconnect to recover the todo
+    list; the returned `todo_updated` frame is written back to the requesting
+    socket by ``ws_handler``. Fail-open: an unknown session, a removed package,
+    or any store error logs and returns ``None`` (the client ignores the null
+    reply), never raising into the receive loop.
+    """
+    try:
+        from agent.tools.todolist.service import TodoService
+
+        todos = await TodoService.get_todos(session_id)
+        return {
+            "event": "todo_updated",
+            "session_id": session_id,
+            "content": {"todos": todos},
+        }
+    except Exception as e:
+        logger.warning(f"todo_refresh failed: {e}, session_id={session_id}")
+        return None
+
+
+ws_event_processor_dict["todo_refresh"] = todo_refresh_processor
 
 
 @app.websocket("/sessions/ws")

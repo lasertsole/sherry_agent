@@ -79,6 +79,15 @@
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기"
   },
+  "todolist": {
+    "progress": "{done}/{total} 완료",
+    "title": "작업 계획",
+    "flowLabel": "TaskFlow: {flow}",
+    "linkedStep": "TaskFlow {flow} · {step}",
+    "delegated": "서브에이전트에 위임됨",
+    "expand": "계획 펼치기",
+    "collapse": "계획 접기"
+  },
   "config": {
     "save": "저장",
     "cancel": "취소",

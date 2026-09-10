@@ -79,6 +79,15 @@
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏"
   },
+  "todolist": {
+    "progress": "已完成 {done}/{total}",
+    "title": "任务计划",
+    "flowLabel": "TaskFlow: {flow}",
+    "linkedStep": "TaskFlow {flow} · {step}",
+    "delegated": "已委派给子代理",
+    "expand": "展开计划",
+    "collapse": "收起计划"
+  },
   "config": {
     "save": "保存",
     "cancel": "取消",

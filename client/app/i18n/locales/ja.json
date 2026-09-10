@@ -79,6 +79,15 @@
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開"
   },
+  "todolist": {
+    "progress": "{done}/{total} 完了",
+    "title": "タスク計画",
+    "flowLabel": "TaskFlow: {flow}",
+    "linkedStep": "TaskFlow {flow} · {step}",
+    "delegated": "サブエージェントに委任",
+    "expand": "計画を展開",
+    "collapse": "計画を折りたたむ"
+  },
   "config": {
     "save": "保存",
     "cancel": "キャンセル",

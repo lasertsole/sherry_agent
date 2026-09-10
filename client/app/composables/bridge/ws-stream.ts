@@ -258,6 +258,9 @@ export function sendChatMessageWs(
             });
           }
         },
+        // The agent WS is registered under the running session, so TodoService's
+        // live `todo_updated` push arrives here; re-broadcast it for useTodoList.
+        todo_updated: data => emit('ws:todo_updated', data),
         done: data => {
           if (!done) {
             done = true;

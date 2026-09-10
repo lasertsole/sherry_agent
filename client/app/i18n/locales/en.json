@@ -79,6 +79,15 @@
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar"
   },
+  "todolist": {
+    "progress": "{done}/{total} done",
+    "title": "Task Plan",
+    "flowLabel": "TaskFlow: {flow}",
+    "linkedStep": "TaskFlow {flow} · {step}",
+    "delegated": "Delegated to subagent",
+    "expand": "Expand plan",
+    "collapse": "Collapse plan"
+  },
   "config": {
     "save": "Save",
     "cancel": "Cancel",

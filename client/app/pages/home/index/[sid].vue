@@ -110,6 +110,7 @@
             </div>
           </div>
         </template>
+        <TodoDock />
         <!-- Chat input box area (position:relative parent, used as the anchor for other floating elements) -->
         <div class="relative">
           <!-- WS stream reconnect banner: shown while sendChatMessageWs is in exponential-backoff reconnection (browser mode);
@@ -329,6 +330,7 @@ useErrorCaptured();
 
 // components
 import ChatBox from '../components/ChatBox.vue';
+import TodoDock from '@/components/chat/TodoDock.vue';
 import { ChatInputBox } from '#components';
 // function
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -372,6 +374,7 @@ const viewMode = ref<'chat' | 'tasks'>('chat');
 const targetRunId = ref<string | undefined>(undefined);
 
 const { taskRuns, initTasks, setTasksTabActive } = useSubagentTasks();
+const { init: initTodoList } = useTodoList();
 
 /**
  * Receive 'show background tasks' event: switch to task list page and record the run_id to locate (if any).
@@ -407,6 +410,8 @@ onActivated(() => {
   // Prefetch background tasks for this session (idempotent: only actually fetch when session switches or list is empty),
   // Used by "View Background Tasks" jump bar to determine whether to show (don't show if no tasks).
   if (mySid) initTasks(mySid);
+  // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
+  if (mySid) initTodoList(mySid);
 });
 onDeactivated(() => {
   isActive.value = false;

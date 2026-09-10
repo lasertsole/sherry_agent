@@ -95,12 +95,16 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   const state = Vue.reactive({
     sidebarCollapsed: false,
     settingsMenuOpen: false,
+    todoDockCollapsed: false,
     setTheme: (value: string) => {
       const colorMode = (globalThis as any).useColorMode?.();
       if (colorMode) colorMode.preference = value;
     },
     toggleSidebar: () => {
       state.sidebarCollapsed = !state.sidebarCollapsed;
+    },
+    toggleTodoDock: () => {
+      state.todoDockCollapsed = !state.todoDockCollapsed;
     }
   });
   return state;
