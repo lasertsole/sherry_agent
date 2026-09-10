@@ -24,6 +24,7 @@ from .middlewares import (
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
+from .middlewares.task_intent import TaskIntentMiddleware
 from .context_limit_guard_wrapper import ContextLimitGuardWrapper
 from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
@@ -148,6 +149,7 @@ async def built_agent(
                 ToolGuardrails(),
                 ToolCallNormalize(),
                 SubagentCompletionDrainMiddleware(),
+                TaskIntentMiddleware(),
                 OutputRepetitionGuard(),
                 MaxTokensBoostMiddleware(),
                 HeartbeatStaleness(),
