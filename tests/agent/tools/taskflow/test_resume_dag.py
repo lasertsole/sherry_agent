@@ -15,7 +15,6 @@ Blocked dependents are seeded directly into state because ``depends_on`` on
 contract independently.
 """
 
-import asyncio
 import sys
 
 import pytest
@@ -72,9 +71,7 @@ async def _create_dispatched(tools: dict, flow_id: str, step_key: str, task: str
 
 
 @pytest.mark.asyncio
-async def test_resume_marks_dispatched_step_done(
-    isolated_db, monkeypatch: pytest.MonkeyPatch
-):
+async def test_resume_marks_dispatched_step_done(isolated_db, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )

@@ -15,7 +15,6 @@ Coverage:
 (f) an unrelated live child key is never queried and does not block the return
 """
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -170,9 +169,7 @@ async def test_all_runs_not_live_returns_settled_report(
 
 
 @pytest.mark.asyncio
-async def test_live_run_is_polled_until_settled(
-    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_live_run_is_polled_until_settled(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
     # Given a run that is live on the first check then ends
     state = {"checks": 0}
 
@@ -200,9 +197,7 @@ async def test_live_run_is_polled_until_settled(
 
 
 @pytest.mark.asyncio
-async def test_timeout_returns_partial_report(
-    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_timeout_returns_partial_report(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
     # Given a dispatched run that stays live forever
     runs = {"c1": _Run("c1", live=True)}
     queried, live_checks = _patch_registry(monkeypatch, runs)
@@ -248,9 +243,7 @@ async def test_unrelated_live_child_does_not_block(
 
 
 @pytest.mark.asyncio
-async def test_unknown_flow_returns_error(
-    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_unknown_flow_returns_error(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
     # Given no flow exists
     _patch_registry(monkeypatch, {})
 

@@ -294,9 +294,7 @@ async def test_empty_step_ids_rejected(isolated_db: Path, monkeypatch):
     monkeypatch.setattr(_dispatch, "dispatch_child", _recording_dispatch(calls, ["unused"]))
     await _seed("flow-1", [_step("step-1", StepStatus.READY)])
 
-    out = await taskflow_dispatch.coroutine(
-        flow_id="flow-1", step_ids=[], session_id=_SESSION
-    )
+    out = await taskflow_dispatch.coroutine(flow_id="flow-1", step_ids=[], session_id=_SESSION)
 
     assert out == "Error: step_ids is required"
     assert calls == []

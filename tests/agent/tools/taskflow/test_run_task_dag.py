@@ -17,8 +17,6 @@ Contracts covered:
 (d) the dispatched path still sets the flow-level ``child_session_key``.
 """
 
-import asyncio
-
 import pytest
 
 from agent.tools.taskflow.registry import store_sqlite
@@ -186,9 +184,7 @@ async def test_dispatched_path_sets_flow_level_child_session_key(
         flow_id="flow-1",
         description="flow key probe",
         initial_state={
-            "steps": [
-                {"step_id": "step-1", "task": "first", "depends_on": [], "status": "done"}
-            ]
+            "steps": [{"step_id": "step-1", "task": "first", "depends_on": [], "status": "done"}]
         },
     )
 
