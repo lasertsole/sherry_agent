@@ -9,7 +9,7 @@ Relationship to the existing pipeline:
   delegates deterministic failures (auth_permanent, billing, ssl, model
   not found, policy blocks) to the fallback chain when one is configured.
 - A silent mid-stream network cut (the stream layer's
-  ``llm_partial_stream_stub`` flag, H.3) converts into a classified retry
+  ``llm_partial_stream_stub`` flag) converts into a classified retry
   on the next call: the cut response is regenerated with a fresh attempt —
   never boosted with larger max_tokens.
 - content_policy_blocked never retries: the stream layer flags it via the
@@ -28,8 +28,8 @@ middleware is a plain bounded retry loop.
 
 # allow: SIZE_OK — the bulk is the sync/async retry-loop pair that the
 # AgentMiddleware contract requires as two near-identical state machines
-# (the established pattern: see MaxTokensBoostMiddleware). The H.3/H.5
-# stream-flag seams belong beside the loops that consume them; extracting
+# (the established pattern: see MaxTokensBoostMiddleware). The stream-flag
+# seams belong beside the loops that consume them; extracting
 # them would scatter one cohesive unit across modules.
 
 import asyncio
@@ -49,11 +49,11 @@ from runtime import state_register_mem
 _STALE_STREAK_KEY = "llm_stale_streak"
 _FALLBACK_INDEX_KEY = "llm_fallback_index"
 _CONTENT_FILTER_KEY = "llm_content_filter_blocked"
-# H.5: the stream layer's mid-stream safety-cut flag (same contract as
+# Mid-stream safety-cut flag set by the stream layer (same contract as
 # ``_CONTENT_FILTER_KEY``, which covers the explicit finish_reason path).
 _FILTER_TERMINATED_KEY = "llm_content_filter_terminated"
-# H.3: the stream layer's partial-stub flag — the PREVIOUS response was cut
-# mid-output by a network failure; the next model call must be retried (a
+# Partial-stream stub flag set by the stream layer — the PREVIOUS response was
+# cut mid-output by a network failure; the next model call must be retried (a
 # fresh attempt), never boosted with larger max_tokens.
 _PARTIAL_STUB_KEY = "llm_partial_stream_stub"
 _PARTIAL_CAUSE_KEY = "llm_partial_stream_cause"
@@ -264,7 +264,7 @@ class LLMRetryMiddleware(AgentMiddleware):
 
         Two stream-layer producers share this seam: the explicit
         ``finish_reason == "content_filter"`` branch
-        (``llm_content_filter_blocked``) and the H.5 mid-stream safety cut
+        (``llm_content_filter_blocked``) and the mid-stream safety cut
         (``llm_content_filter_terminated``).
 
         Returns the request rebound to the fallback model when a candidate is
@@ -288,7 +288,7 @@ class LLMRetryMiddleware(AgentMiddleware):
             return rebound
         raise ContentFilterError(_CONTENT_FILTER_MESSAGE) from cause
 
-    # ---- partial-stream stub (H.3, set by the stream layer) --------------
+    # ---- partial-stream stub (set by the stream layer) -------------------
 
     def _consume_partial_stream_stub(self, session_id: str) -> FailoverReason | None:
         """Convert the stream layer's partial-stub flag into a classified failure.

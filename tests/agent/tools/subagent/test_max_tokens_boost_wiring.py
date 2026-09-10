@@ -1,7 +1,7 @@
 """MaxTokensBoostMiddleware wiring in the subagent middleware stack.
 
-Guards the token-limit plan Phase 3 rollout to child agents: the middleware
-must sit in ``_build_child_agent``'s chain right after ``OutputRepetitionGuard``
+Guards the middleware's presence in child agents: it must sit in
+``_build_child_agent``'s chain right after ``OutputRepetitionGuard``
 (same relative position as in the main agent), and the non-streaming path must
 be the default for children (they run via ``ainvoke``, so ``is_stream_turn`` is
 never set for a child session id).

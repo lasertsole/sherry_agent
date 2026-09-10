@@ -1,4 +1,4 @@
-"""H.1 thinking-budget tests — ``get_thinking_budget`` + model-config inflation.
+"""Thinking-budget tests — ``get_thinking_budget`` + model-config inflation.
 
 Covers the thinking-budget headroom added to the model config when the
 universal reasoning switch is on (models/LLMs/reasoning_payload.py +

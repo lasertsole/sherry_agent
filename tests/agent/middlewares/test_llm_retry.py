@@ -250,7 +250,7 @@ class TestContentFilterFlag:
             mw.wrap_model_call(_request(), handler)
 
 
-# ---- partial-stream stub (H.3) ----------------------------------------------
+# ---- partial-stream stub -----------------------------------------------------
 
 
 class TestPartialStreamStub:
@@ -376,7 +376,7 @@ class TestPartialStreamStub:
         assert "max_tokens" not in req.model_settings
 
 
-# ---- content-filter terminated flag (H.5) ------------------------------------
+# ---- content-filter terminated flag ------------------------------------------
 
 
 class TestContentFilterTerminated:

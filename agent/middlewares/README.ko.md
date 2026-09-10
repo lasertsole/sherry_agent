@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 단계에 개입하는 8개의 `AgentMiddleware` 컴포넌트 — 컨텍스트 엔지니어링, 멀티모달 입력 처리, 반복 예산, 도구 가드레일, 트랜스크립트 복구, 하트비트 스테일니스 감지, 휴먼인더루프 승인, 컨텍스트 요약 — 그리고 워커 에이전트가 사용하는 출력 반복 가드.
+EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 단계에 개입하는 `AgentMiddleware` 컴포넌트 — 컨텍스트 엔지니어링, 멀티모달 입력 처리, 반복 예산, 도구 가드레일, 트랜스크립트 복구, 하트비트 스테일니스 감지, 휴먼인더루프 승인, 컨텍스트 요약, 모델 폴백이 있는 분류 기반 LLM 오류 재시도(`LLMRetryMiddleware`) — 그리고 출력 반복 가드와 스트림 수준 그래프 래퍼(`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
 
 > 이 문서의 모든 서술은 소스 코드를 기준으로 검증되었습니다(설치된 `langchain 1.3.9`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, 그리고 `agent/middlewares/` 하위 모듈). 아래에 등장하는 클래스명·파일명·기본값·상태 키는 모두 실제 코드에 존재합니다.
 
@@ -24,8 +24,11 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
+  - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
+  - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
   - [OutputRepetitionGuard와 RepetitionGuardWrapper](#outputrepetitionguard와-repetitionguardwrapper)
+  - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
 - [공유 상태 시스템](#공유-상태-시스템)
 - [설정](#설정)
 - [수명주기 및 데이터 흐름](#수명주기-및-데이터-흐름)
@@ -85,6 +88,7 @@ middleware = [
     MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
+    LLMRetryMiddleware(fallback_chain=fallback_chain),
     Summarization(
         need_update_system_prompt=True,
         model=auxiliary_llm,
@@ -94,13 +98,14 @@ middleware = [
     ),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
-# 컴파일된 그래프를 다시 래핑:
+# 컴파일된 그래프를 다시 래핑 (안쪽 → 바깥쪽):
 agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
+agent = ContextLimitGuardWrapper(agent, context_window=main_llm_max_tokens)
 ```
 
 `main_llm_max_tokens`는 환경 변수 `MAIN_LLM_MAX_TOKEN`에서 읽습니다(`models/LLMs/main_llm.py`). 따라서 메인 에이전트의 요약 트리거는 메인 모델 컨텍스트 윈도우의 80% 지점에 놓입니다(`COMPRESSION_TRIGGER_RATIO = 0.80`).
 
-> **참고:** `OutputRepetitionGuard`는 메인 에이전트의 미들웨어로 **등록되지 않습니다**. 메인 에이전트에는 컴파일된 그래프를 래핑하는 `RepetitionGuardWrapper`가 동일한 역할을 제공합니다 — [OutputRepetitionGuard와 RepetitionGuardWrapper](#outputrepetitionguard와-repetitionguardwrapper) 참조.
+> **참고:** `OutputRepetitionGuard`는 메인 에이전트의 미들웨어로 **등록되어 있습니다**(호출별 인터셉트). 또한 컴파일된 그래프는 스트림 수준 감지를 위해 `RepetitionGuardWrapper`로 추가 래핑됩니다 — [OutputRepetitionGuard와 RepetitionGuardWrapper](#outputrepetitionguard와-repetitionguardwrapper) 참조.
 
 ### 워커 / 서브에이전트 파이프라인 (`agent/tools/subagent/spawn/core.py`)
 
@@ -130,7 +135,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 요약 트리거가 토큰 전용이 아니라 메시지 수(40) **또는** 토큰 수(컨텍스트 윈도우의 80%).
 - 더 타이트한 반복 예산(90 대신 60).
-- `ContextEngineHook`, `MultimodalProcessor`, `HumanInTheLoop` 없음.
+- `ContextEngineHook`, `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음).
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - 자식 세션이 끝나면 spawn 코드가 `finally` 블록에서 `state_register_mem`으로부터 `OutputRepetitionGuard`의 6개 상태 키(`SESSION_STATE_KEYS`)를 삭제합니다.
 
@@ -138,9 +143,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 페이즈 | 순서 |
 |---|---|
-| `before_agent` (리스트 순서) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization |
-| `wrap_model_call` (최외곽 → 최내곽) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization (Summarization이 LLM에 가장 가까움) |
-| `after_agent` (역순) | Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook |
+| `before_agent` (리스트 순서) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `wrap_model_call` (최외곽 → 최내곽) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
+| `after_agent` (역순) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook |
 
 해당 후크를 구현한 미들웨어만 그 페이즈에 참여합니다. 표는 "구현했다면 실행될 위치"를 보여줍니다.
 
@@ -263,9 +268,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - `before_agent`는 상태 키를 리셋하고 `timer_call_register.register(..., execute_now=True)`로 백그라운드 타이머를 시작합니다(1분 주기).
 - `wrap_model_call`은 `heartbeat_iter`를 증가시킵니다 — 단, 이전 점검에서 이미 턴이 kill되었다면 먼저 `HeartbeatTimeoutError`를 발생시킵니다. `wrap_tool_call`은 도구 실행 중 `heartbeat_tool`을 설정하고 반환 후 클리어합니다.
+- `skip_heartbeat` 바이패스: 메타데이터에 `skip_heartbeat: true`를 설정한 도구(interrupt 기반 도구는 인간 입력을 기다리며 그래프를 주차시키므로 after-tool 훅이 재개될 때까지 실행되지 않음)는 `heartbeat_tool` 대신 `heartbeat_skip`을 설정합니다. 플래그가 서 있는 동안 타이머 콜백은 진행 점검을 건너뜁니다 — 대기 중 변하지 않는 `(iter, tool)` 쌍은 스테일이 아닙니다. 플래그는 after-tool 훅에서 클리어되고 `before_agent`에서 리셋됩니다.
 - 타이머 콜백은 `(heartbeat_iter, heartbeat_tool)`을 `_last_heartbeat_iter` / `_last_heartbeat_tool`과 비교합니다. 진행이 있으면 스테일 카운터를 리셋, 없으면 증가. 아이들 상태에서 `stale_cycles_idle = 7`회, 또는 하나의 도구 안에 갇혀 `stale_cycles_in_tool = 20`회에 도달하면 `heartbeat_killed = True`가 되어, 다음 모델 / 도구 호출은 계속 진행하는 대신 `HeartbeatTimeoutError`를 발생시킵니다.
 - `after_agent`는 타이머를 중지합니다.
-- 상태 키: `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, 그리고 `_last_heartbeat_iter` / `_last_heartbeat_tool`.
+- 상태 키: `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, 그리고 `_last_heartbeat_iter` / `_last_heartbeat_tool`.
 
 ### HumanInTheLoop
 
@@ -303,6 +309,34 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `description_prefix` | `"Action requires human approval"` | 승인 다이얼로그 제목 접두사 |
 
 ▶️ 전체 문서: [humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
+
+### LLMRetryMiddleware
+
+**모듈:** `agent/middlewares/llm_retry.py` · **클래스:** `LLMRetryMiddleware(AgentMiddleware)` (그 외 `LLMRetryConfig`, `FallbackCandidate`, `ContentFilterError`)
+**후크:** `wrap_model_call` / `awrap_model_call` 전용
+
+메인 에이전트에 **`HumanInTheLoop`와 `Summarization` 사이**에 등록됩니다: `MaxTokensBoostMiddleware`에 대해서는 안쪽(부스트 재호출을 통과한 진짜 잘림만 목격), Summarization에 대해서는 바깥쪽(재시도 루프가 T4/T5 오버플로 복구 링을 바깥에서 감쌈). 워커 파이프라인에는 등록되지 않습니다. 상태에 `session_id`가 없으면 그냥 통과합니다.
+
+각 handler 호출은 `pub_func/message/llm_error_classifier.py`에 기반한 "분류 → 처분" 루프를 거칩니다 — `FailoverReason` 열거형(18종), `ClassifiedError` 판정(`retryable` / `should_compress` / `should_fallback` 플래그), 8단계 우선순위 파이프라인 `classify_api_error` — 그리고 `pub_func/retry_utils.py::jittered_backoff`로 백오프합니다.
+
+**`FailoverReason`별 재시도 시맨틱스**
+
+| 클래스 | 이유 | 처분 |
+|---|---|---|
+| 지터 백오프 재시도 (`retryable=True`) | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown` | 최대 `max_retries`회 재호출. 지연 = `base_delay × 2^(attempt−1)`를 `max_delay`로 상한 적용, ±`jitter`, `[0.1, max_delay]`로 클램프 |
+| 압축 위임 (`should_compress=True`) | `context_overflow`, `payload_too_large` | 즉시 재발생 — 오버플로 오류는 Summarization의 T4/T5 복구 링이 담당 |
+| 폴백 (`should_fallback=True`, 재시도 불가) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | 다음 폴백 후보로 전환. 체인 소진 시 재발생 |
+| 하드 페일 | `format_error` | 재발생(재시도·폴백 없음) |
+
+**스테일 연속 서킷 브레이커(턴 간):** timeout으로 분류된 실패마다 — 그리고 timeout 분류의 부분 스트림 스텁 재시도마다 — 세션 단위 `llm_stale_streak`(`state_register_mem` 내)가 증가하고, 성공한 handler 호출이 있으면 0으로 리셋됩니다. 연속이 `stale_giveup_threshold`에 도달하면 다음 모델 호출은 LLM을 호출하기 **전에** `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`를 발생시켜, 프로바이더가 계속 무응답인 악순환을 턴 간에 끊습니다.
+
+**모델 폴백 체인:** `FallbackCandidate(provider, model_name, model)` 항목은 `models/LLMs/main_llm.py::build_fallback_chain()`이 환경 변수 `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}`로부터 구축합니다(i = 1…, 처음 `NAME`이 빠진 지점에서 중단. `PROVIDER` 기본값 `openai`. 클라이언트를 구성할 수 없는 후보는 경고와 함께 건너뜀). 1 기준 활성 인덱스는 세션 단위로 `llm_fallback_index`에 스티키하게 유지되며, 매 모델 호출 시작 시 `request.override(model=...)`로 이미 활성화된 후보에 재바인딩되고, 폴백 분류 실패(또는 콘텐츠 필터 플래그) 시 다음 후보가 활성화됩니다. `FALLBACK_LLM_*`가 설정되지 않으면(기본값) 이 미들웨어는 단순한 유계 재시도 루프입니다.
+
+**콘텐츠 필터 플래그 소비:** 스트림 계층(`server/service/stream_dispatch.py`)은 `llm_content_filter_blocked`(명시적 `finish_reason == "content_filter"`) 또는 `llm_content_filter_terminated`(스트림 도중 안전 컷)를 설정합니다. 미들웨어는 매 handler 호출 후 — 성공이든 분류된 예외든 — 두 플래그를 확인하여 클리어하고, 폴백 모델로 재바인딩하거나 후보가 남아 있지 않으면 `ContentFilterError("Model declined to respond (safety refusal).")`를 발생시킵니다. `content_policy_blocked`는 절대 재시도하지 않습니다.
+
+**부분 스트림 스텁 소비:** 스트림 도중 네트워크 단절 후 스트림 계층은 `llm_partial_stream_stub`과 `llm_partial_stream_cause`(보존된 `FailoverReason` 값, 기본값 `timeout`)를 설정합니다. 미들웨어는 성공한 handler 호출 후 플래그를 소비합니다: 잘린 결과는 폐기되고, handler가 백오프 후 새 시도로 한 번 재호출됩니다 — 더 큰 max_tokens로 부스트되는 일은 결코 없습니다. 스트리밍 턴(`is_stream_turn` 플래그)에서는 재호출 전에 `request.config["callbacks"]`를 제거하고 `finally`에서 복원합니다(MaxTokensBoost의 strip → call → restore 계약). 이미 스트리밍된 토큰이 중복되지 않습니다. timeout 분류 원인은 스테일 연속을 증가시킵니다. 재시도 예산이 소진되면 미들웨어는 우아하게 저하되어 현재(부분) 결과를 반환합니다.
+
+**상태 키(모두 `state_register_mem` 내):** `llm_stale_streak`, `llm_fallback_index`(여기서 소유). `llm_content_filter_blocked`, `llm_content_filter_terminated`, `llm_partial_stream_stub`, `llm_partial_stream_cause`(스트림 계층이 기록, 여기서 소비).
 
 ### Summarization
 
@@ -355,13 +389,21 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   비스트리밍 경로를 통과합니다.
 - `_extract_ai_message`는 순수 `AIMessage` 결과와 `.messages`를 가진
   `ModelRequest` 형태 응답 객체를 모두 처리합니다.
+- **추론(thinking) 예산 상호작용:** `MAIN_LLM_ENABLE_THINKING=true`이면
+  `models/LLMs/main_llm.py::apply_thinking_budget`가 요청의 `max_tokens`를 미리
+  `OUTPUT_MAX_TOKEN + 추론 예산`으로 부풀립니다(이 미들웨어와 `MAIN_LLM_OUTPUT_MAX_TOKEN`
+  환경 변수 / 8192 기본값을 공유) — 따라서 레이어 1 부스트 base는 이미 추론 예산이
+  부풀린 출력 상한에서 시작합니다.
+- **서비스 계층 진단:** 스트림 실패 시 `server/service/stream_diag.py`가
+  청크/바이트 수와 첫 청크까지의 시간을 집계해 재발생되는 예외에 요약을 덧붙입니다 —
+  위의 미들웨어 수준 복구를 보완하는 관측성입니다.
 
 ### OutputRepetitionGuard와 RepetitionGuardWrapper
 
 **모듈:** `agent/middlewares/output_repetition_guard.py` · **클래스:** `OutputRepetitionGuard(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-사후(事後)형 출력 반복 감지기로, `WARN → HALT` 에스컬레이션을 가집니다. `agent.middlewares.output_repetition_guard`에서 익스포트되며(`agent/middlewares/__init__.py`에서는 **재익스포트되지 않음**), **워커 파이프라인에만 등록**됩니다.
+사후(事後)형 출력 반복 감지기로, `WARN → HALT` 에스컬레이션을 가집니다. `agent.middlewares.output_repetition_guard`에서 익스포트되며 `agent/middlewares/__init__.py`에서도 재익스포트됩니다. 메인 에이전트(호출별 인터셉트, 아래 래퍼의 보완)와 워커 파이프라인 **양쪽에** 등록됩니다.
 
 메인 에이전트에서는 동일한 감지가 **`RepetitionGuardWrapper`**(`agent/stream_repetition_guard_wrapper.py`)를 통해 수행됩니다. 이것은 컴파일된 그래프를 래핑하고, 스트림 수준에서 인터셉트하며(`ainvoke`의 사후 백스톱 포함), 같은 상태 키와 기본값을 재사용합니다. 두 등록 모두 `phantom_stream_guard=True`를 전달합니다.
 
@@ -380,6 +422,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **스트림 계층 헬퍼** `check_stream_repetition(session_id, accumulated_text)` — 공유 `_STREAM_GUARD` 싱글턴으로, `server/service/messages.py::async_generate`가 반복 감지 시 스트리밍 응답을 조기에 차단하는 데 사용합니다. 같은 상태 키와 내부 경고 중복 제거 게이트를 공유합니다.
 
 **워커 클린업:** 자식 세션 종료 시 `SESSION_STATE_KEYS`(6개 키)가 `state_register_mem`에서 삭제됩니다.
+
+### ContextLimitGuardWrapper
+
+**모듈:** `agent/context_limit_guard_wrapper.py` · **클래스:** `ContextLimitGuardWrapper`
+
+`RepetitionGuardWrapper`와 같은 종류의 그래프 래퍼이며, 미들웨어가 **아닙니다**. `agent/core.py`에서는 `RepetitionGuardWrapper`의 **바깥쪽**에서 컴파일된 에이전트를 래핑하여(`agent → RepetitionGuardWrapper → ContextLimitGuardWrapper`) 반복 필터링 전에 스트림 청크를 목격합니다. 미들웨어의 스트리밍 사각지대를 메웁니다: 미들웨어는 스트림 도중 청크를 볼 수 없고, 응답 후 오버플로 신호로는 컨텍스트를 소급 압축할 수 없습니다.
+
+**방어 1 — 모델 호출 경계 강제 압축:** 실제 `usage_metadata` 입력/출력 토큰을 `messages` 청크에서 포착하고, 모델 호출 경계마다(`updates` 모드)와 스트림 종료 시, 현재 호출(`input_tokens` 단독)과 예측 뷰(`input + output`, 출력은 다음 호출의 입력이 되므로)를 모두 컨텍스트 윈도우의 `COMPRESSION_TRIGGER_RATIO`(80%)와 대조합니다. 임계값에 도달하면 Summarization의 강제 복구 키(`summarization_force_recovery`)를 `state_register_mem`에 기록하여, 다음 사전 점검이 쿨다운/시도 상한 안티스래싱 게이트에 막히지 않고 압축을 수행하게 합니다.
+
+**방어 2 — 스트림 도중 출력 예산:** 누적된 모델 텍스트를 `_CHARS_PER_TOKEN = 4`자/토큰으로 추정하여 `check_interval = 20` 청크마다 점검합니다. 추정치가 윈도우의 `output_cut_ratio = 0.20`을 초과하면 이후 텍스트 청크는 클라이언트로 전달되지 않고(도구 호출 청크는 계속 통과), 대신 1회성 절단 마커(`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`)가 출력됩니다. 그래프 내부에는 여전히 완전한 `AIMessage`가 누적됩니다 — 잘린 꼬리가 바로 다음 압축 패스가 제거하는 대상입니다.
+
+`ainvoke`는 그대로 위임합니다(비스트리밍 경로는 Summarization의 T1–T3 트리거가 이미 담당). 알 수 없는 속성은 내부 그래프에 위임됩니다. 생성자: `(inner, context_window, output_cut_ratio=0.20, check_interval=20)` — `context_window`는 `MAIN_LLM_MAX_TOKEN`으로, Summarization 트리거와 같은 소스입니다.
 
 ---
 
@@ -405,8 +459,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` 키(압축 카운터, 무효 연속, 마지막 토큰/전략, 스킵 LLM 플래그, 복구 상태, 마지막 사용자 질문) | Summarization | mem |
-| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
+| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard 키(`SESSION_STATE_KEYS`, 6개) | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
+| `llm_stale_streak`, `llm_fallback_index` | LLMRetryMiddleware | mem |
+| `llm_content_filter_blocked`, `llm_content_filter_terminated` | 스트림 계층(기록) → LLMRetryMiddleware(소비) | mem |
+| `llm_partial_stream_stub`, `llm_partial_stream_cause` | 스트림 계층(기록) → LLMRetryMiddleware(소비) | mem |
+| `summarization_force_recovery` | ContextLimitGuardWrapper(기록) → Summarization(소비) | mem |
 | `hitl:` 접두사 키(`_STATE_PREFIX = "hitl"`) | HumanInTheLoop | mem |
 
 ---
@@ -417,7 +475,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 노브 | 위치 | 효과 |
 |---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 메인 에이전트의 요약 트리거 = 이 값의 80%. `main_llm_context_window`로도 전달 |
+| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 메인 에이전트의 요약 트리거 = 이 값의 80%. `main_llm_context_window`와 `ContextLimitGuardWrapper.context_window`로도 전달 |
+| `MAIN_LLM_OUTPUT_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 출력 토큰 예산(기본 8192): MaxTokensBoost 부스트 base의 레이어 2, 추론 예산 부풀림이 더해지는 베이스 |
+| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()` | `LLMRetryMiddleware`의 모델 폴백 체인 후보(i = 1…, 처음 `NAME`이 빠진 지점에서 중단) |
 
 > **관련되지만 독립적:** 도구별 타임아웃은 하드코딩된 모듈 상수입니다 — `WEB_SEARCH_TIMEOUT = 15`(`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30`(`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30`(`agent/tools/python_repl.py`, 만료 시 자식 프로세스 kill). `.env.example`의 `TOOL_CALL_TIMEOUT_MINUTES = 5`는 **이를 소비하는 코드가 존재하지 않습니다** — 유효한 노브가 아닙니다. `config/num.py`의 상수(`ARCHIVE_THRESHOLD`, `MEMORY_THRESHOLD`, `COMPRESS_RATIO`)도 미들웨어 계층에서 소비되지 않습니다.
 
@@ -474,6 +534,8 @@ agent = create_agent(
 | `HumanInTheLoop` | `config: HITLConfig` | 위 기본값 | 기본값 |
 | `HeartbeatStaleness` | (기본) | 주기 1분, 아이들 7 / 도구 내 20 | 기본값 |
 | `OutputRepetitionGuard` | (기본) | 3 / 2 / 0.6 / 6 / 8 | 기본값 |
+| `MaxTokensBoostMiddleware` | (환경 변수) | base: 요청 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`(8192) → 8192, 상한 32768, 3회 재시도 | 기본값 |
+| `LLMRetryMiddleware` | `config: LLMRetryConfig` | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | 기본값 (+ `FALLBACK_LLM_*` 기반 `fallback_chain`) |
 
 ---
 
@@ -502,6 +564,8 @@ agent = create_agent(
 │   │   · ContextEngineHook  시스템 프롬프트 주입(request.override)
 │   │   · IterationBudget  1 소모. 소진 시 종단 AIMessage
 │   │   · HeartbeatStaleness  kill됐으면 HeartbeatTimeoutError, 아니면 heartbeat_iter += 1
+│   │   · LLMRetryMiddleware  서킷 브레이커 점검. 분류 기반 재시도 + 백오프. 폴백 /
+│   │                        콘텐츠 필터 / 부분 스트림 스텁 플래그 소비
 │   │   · Summarization  필요 시 히스토리 압축(비(非)LLM 전략 + 보조 LLM), 안티스래싱 카운터
 │   ├─ LLM 응답
 │   └─ after_model
@@ -563,6 +627,8 @@ class MyMiddleware(AgentMiddleware):
 ```
 agent/middlewares/
 ├── __init__.py                  # 공개 익스포트
+├── base.py                      # require_session_id / args_hash 헬퍼
+├── mixins.py                    # BeforeAgentHooksMixin / AfterAgentHooksMixin
 ├── context_engine/              # ContextEngineHook + nudge 서브에이전트
 │   ├── __init__.py              # ContextEngineHook만 익스포트
 │   ├── core.py                  # ContextEngineHook
@@ -577,15 +643,22 @@ agent/middlewares/
 │   │                            # KanbanTriage, PairingStore, SlashConfirm
 │   └── core.py                  # HumanInTheLoop
 ├── iteration_budget.py          # IterationBudget
+├── llm_retry.py                 # LLMRetryMiddleware (LLMRetryConfig, FallbackCandidate, ContentFilterError 포함)
+├── max_tokens_boost.py          # MaxTokensBoostMiddleware (도구 호출 잘림 재호출)
+├── media_handlers.py            # MultimodalProcessor의 미디어 타입별 전략
 ├── multimodal_processor.py      # MultimodalProcessor
-├── max_tokens_boost.py          # MaxTokensBoostMiddleware（工具调用截断重呼）
-├── output_repetition_guard.py   # OutputRepetitionGuard (아래에서 재익스포트되지 않음)
+├── output_repetition_guard.py   # OutputRepetitionGuard (__init__.py가 재익스포트)
+├── repetition_detectors.py      # 순수 반복 감지 프리미티브
+├── repetition_state.py          # 세션 단위 반복 상태 헬퍼
+├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
 ├── summarization.py             # Summarization
+├── summarization_components.py  # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 ├── tool_call_normalize.py       # ToolCallNormalize
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # 이 문서 (+ .zh / .ja / .ko 버전)
 
-agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (이 패키지 바깥에 존재)
+agent/stream_repetition_guard_wrapper.py   # RepetitionGuardWrapper (이 패키지 바깥에 존재)
+agent/context_limit_guard_wrapper.py       # ContextLimitGuardWrapper (이 패키지 바깥에 존재)
 ```
 
 ### 익스포트 (`__init__.py`)
@@ -593,6 +666,12 @@ agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (이 패키�
 ```python
 from agent.middlewares import (
     Summarization,
+    LLMRetryMiddleware,
+    LLMRetryConfig,
+    FallbackCandidate,
+    ContentFilterError,
+    OutputRepetitionGuard,
+    MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
     ContextEngineHook,
@@ -602,6 +681,6 @@ from agent.middlewares import (
     HumanInTheLoop,
     HITLConfig,
 )
-# OutputRepetitionGuard는 여기서 재익스포트되지 않습니다 —
-# agent.middlewares.output_repetition_guard에서 임포트하세요.
+# 공유 헬퍼도 익스포트됩니다: BeforeAgentHooksMixin,
+# AfterAgentHooksMixin, require_session_id, args_hash.
 ```

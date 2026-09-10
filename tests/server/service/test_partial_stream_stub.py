@@ -1,4 +1,4 @@
-"""H.3 partial-stream-stub tests — stream-layer flagging + middleware retry.
+"""Partial-stream-stub tests — stream-layer flagging + middleware retry.
 
 Covers the network-cut vs output-truncation distinction: StreamTurn flags a
 stream that died mid-output (``llm_partial_stream_stub``) and

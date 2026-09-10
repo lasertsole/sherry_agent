@@ -1,4 +1,4 @@
-"""H.7 reasoning_tokens tracking tests.
+"""Reasoning-tokens tracking tests.
 
 Covers the reasoning-token chain end to end: extraction from
 ``usage_metadata.output_token_details`` in StreamTurn, the ``meta`` frame

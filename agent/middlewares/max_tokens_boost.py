@@ -1,4 +1,4 @@
-"""MaxTokensBoostMiddleware — tool-call truncation recovery (token-limit plan Phase 3).
+"""MaxTokensBoostMiddleware — tool-call truncation recovery.
 
 When a model call comes back truncated (``finish_reason == "length"`` /
 ``stop_reason == "max_tokens"``) AND the response carries tool calls, the
@@ -12,7 +12,8 @@ env base, then the 8192 default — so a re-call tracks the current call's
 actual limit instead of restarting from the env default.
 
 Text-only truncation (no tool calls) is NOT handled here — the StreamTurn
-outer loop (Phase 2) owns it via a continuation HumanMessage.
+outer loop (server/service/stream_dispatch.py) owns it via a continuation
+HumanMessage.
 
 Both streaming and non-streaming paths re-call the handler uniformly. For the
 streaming path the LangChain callbacks are stripped before each re-call so the

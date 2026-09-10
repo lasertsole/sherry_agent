@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-The middleware layer of the EMA AI Agent: eight `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, heartbeat staleness detection, human-in-the-loop approvals, and context summarization — plus an output repetition guard used by the worker agents.
+The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, heartbeat staleness detection, human-in-the-loop approvals, context summarization, and classified LLM error retry with model fallback (`LLMRetryMiddleware`) — plus an output repetition guard and stream-level graph wrappers (`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
 
 > Every claim in this document was verified against the source code (installed `langchain 1.3.9`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, and the modules under `agent/middlewares/`). Class names, file names, defaults, and state keys below all exist in code.
 
@@ -24,9 +24,11 @@ The middleware layer of the EMA AI Agent: eight `AgentMiddleware` components tha
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
+  - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
   - [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper)
+  - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
 - [Shared State System](#shared-state-system)
 - [Configuration](#configuration)
 - [Lifecycle & Data Flow](#lifecycle--data-flow)
@@ -86,6 +88,7 @@ middleware = [
     MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
+    LLMRetryMiddleware(fallback_chain=fallback_chain),
     Summarization(
         need_update_system_prompt=True,
         model=auxiliary_llm,
@@ -95,13 +98,14 @@ middleware = [
     ),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
-# the compiled graph is then wrapped:
+# the compiled graph is then wrapped (innermost → outermost):
 agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
+agent = ContextLimitGuardWrapper(agent, context_window=main_llm_max_tokens)
 ```
 
 `main_llm_max_tokens` is read from the `MAIN_LLM_MAX_TOKEN` environment variable (`models/LLMs/main_llm.py`), so the main-agent summarization trigger sits at 80 % of the main model's context window (`COMPRESSION_TRIGGER_RATIO = 0.80`).
 
-> **Note:** `OutputRepetitionGuard` is **not** registered as main-agent middleware. For the main agent, its behavior is provided by the `RepetitionGuardWrapper` that wraps the compiled graph — see [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper).
+> **Note:** `OutputRepetitionGuard` **is** registered as main-agent middleware (per-call interception) **and** the compiled graph is additionally wrapped by `RepetitionGuardWrapper` for stream-level detection — see [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper).
 
 ### Worker / Subagent Pipeline (`agent/tools/subagent/spawn/core.py`)
 
@@ -131,7 +135,7 @@ Differences vs the main agent:
 
 - Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
-- No `ContextEngineHook`, no `MultimodalProcessor`, no `HumanInTheLoop`.
+- No `ContextEngineHook`, no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop).
 - `OutputRepetitionGuard` runs as a real middleware here.
 - `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
   `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
@@ -141,9 +145,9 @@ Differences vs the main agent:
 
 | Phase | Order |
 |---|---|
-| `before_agent` (list order) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization |
-| `wrap_model_call` (outermost → innermost) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization (Summarization sits closest to the LLM) |
-| `after_agent` (reverse order) | Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook |
+| `before_agent` (list order) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `wrap_model_call` (outermost → innermost) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
+| `after_agent` (reverse order) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook |
 
 Only middlewares that implement a given hook participate in that phase; the table shows where each would run if it did.
 
@@ -266,9 +270,10 @@ Watchdog for stuck turns. Registered in **both** the main agent and the worker a
 
 - `before_agent` resets the state keys and starts a background timer via `timer_call_register.register(..., execute_now=True)` (1-minute cadence).
 - `wrap_model_call` increments `heartbeat_iter` — but first raises `HeartbeatTimeoutError` if a previous check already killed the turn. `wrap_tool_call` sets `heartbeat_tool` while a tool runs and clears it afterwards.
+- `skip_heartbeat` bypass: a tool whose metadata sets `skip_heartbeat: true` (interrupt-based tools park the graph waiting for human input, so the after-tool hook never runs until resume) sets `heartbeat_skip` instead of `heartbeat_tool`; while the flag is up the timer callback skips the progress check — the unchanged `(iter, tool)` pair during that wait is not a stall. The flag clears in the after-tool hook and resets in `before_agent`.
 - The timer callback compares `(heartbeat_iter, heartbeat_tool)` against `_last_heartbeat_iter` / `_last_heartbeat_tool`. Progress resets the stale counter; no progress increments it. After `stale_cycles_idle = 7` checks while idle, or `stale_cycles_in_tool = 20` checks while stuck inside one tool, `heartbeat_killed = True` — the next model / tool call raises `HeartbeatTimeoutError` instead of proceeding.
 - `after_agent` stops the timer.
-- State keys: `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, plus `_last_heartbeat_iter` / `_last_heartbeat_tool`.
+- State keys: `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, plus `_last_heartbeat_iter` / `_last_heartbeat_tool`.
 
 ### HumanInTheLoop
 
@@ -306,6 +311,34 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 | `description_prefix` | `"Action requires human approval"` | Approval-dialog title prefix |
 
 ▶️ Full details: [humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
+
+### LLMRetryMiddleware
+
+**Module:** `agent/middlewares/llm_retry.py` · **Class:** `LLMRetryMiddleware(AgentMiddleware)` (plus `LLMRetryConfig`, `FallbackCandidate`, `ContentFilterError`)
+**Hooks:** `wrap_model_call` / `awrap_model_call` only
+
+Registered in the main agent **between `HumanInTheLoop` and `Summarization`**: inner relative to `MaxTokensBoostMiddleware` (it only sees genuine truncations that survived the boost re-calls) and outer relative to Summarization (the retry loop wraps the T4/T5 overflow-recovery ring from the outside). Not registered in the worker pipeline. When the state carries no `session_id`, the middleware is a passthrough.
+
+Each handler call runs through a classify → act loop built on `pub_func/message/llm_error_classifier.py` — the `FailoverReason` enum (18 reasons), the `ClassifiedError` verdict (`retryable` / `should_compress` / `should_fallback` flags), and the 8-step priority pipeline `classify_api_error` — and backs off via `pub_func/retry_utils.py::jittered_backoff`.
+
+**Retry semantics by `FailoverReason`**
+
+| Class | Reasons | Action |
+|---|---|---|
+| Retry with jittered backoff (`retryable=True`) | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown` | Up to `max_retries` re-calls; delay = `base_delay × 2^(attempt−1)` capped at `max_delay`, ±`jitter`, clamped to `[0.1, max_delay]` |
+| Compress-delegate (`should_compress=True`) | `context_overflow`, `payload_too_large` | Re-raise immediately — Summarization's T4/T5 recovery ring owns overflow errors |
+| Fallback (`should_fallback=True`, non-retryable) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | Switch to the next fallback candidate; chain exhausted → re-raise |
+| Hard fail | `format_error` | Re-raise (no retry, no fallback) |
+
+**Stale-streak circuit breaker (cross-turn):** every timeout-classified failure — and every timeout-classified partial-stream-stub retry — increments the session-scoped `llm_stale_streak` in `state_register_mem`; any successful handler call resets it to 0. When the streak reaches `stale_giveup_threshold`, the next model call raises `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")` **before** the LLM is invoked, ending a persistent provider stall across turns.
+
+**Model fallback chain:** `FallbackCandidate(provider, model_name, model)` entries are built by `models/LLMs/main_llm.py::build_fallback_chain()` from `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` env vars (i = 1…, stops at the first missing `NAME`; `PROVIDER` defaults to `openai`; candidates whose client cannot be constructed are skipped with a warning). The 1-based active index is sticky per session in `llm_fallback_index`: at the start of every model call the request is re-bound to the already-activated candidate via `request.override(model=...)`, and on a fallback-classified failure (or a content-filter flag) the next candidate is activated. With no `FALLBACK_LLM_*` configured (the default) the middleware is a plain bounded retry loop.
+
+**Content-filter flag consumption:** the stream layer (`server/service/stream_dispatch.py`) sets `llm_content_filter_blocked` (explicit `finish_reason == "content_filter"`) or `llm_content_filter_terminated` (mid-stream safety cut). The middleware checks both flags after every handler call — on success or on a classified exception — clears them, and either re-binds to the fallback model or raises `ContentFilterError("Model declined to respond (safety refusal).")` when no candidate remains. `content_policy_blocked` never retries.
+
+**Partial-stream stub consumption:** after a mid-stream network cut the stream layer sets `llm_partial_stream_stub` plus `llm_partial_stream_cause` (the preserved `FailoverReason` value, defaulting to `timeout`). The middleware consumes the flag after a successful handler call: the cut result is discarded and the handler is re-called once as a fresh attempt after backoff — never boosted with larger max_tokens. On stream turns (`is_stream_turn` flag) the re-call strips `request.config["callbacks"]` first and restores them in `finally` (the MaxTokensBoost strip → call → restore contract), so the already-streamed tokens are not duplicated. A timeout-classified cause bumps the stale streak. When the retry budget is exhausted, the middleware degrades gracefully and returns the current (partial) result.
+
+**State keys (all in `state_register_mem`):** `llm_stale_streak`, `llm_fallback_index` (owned here); `llm_content_filter_blocked`, `llm_content_filter_terminated`, `llm_partial_stream_stub`, `llm_partial_stream_cause` (written by the stream layer, consumed here).
 
 ### Summarization
 
@@ -358,13 +391,22 @@ and the IterationBudget is charged once per outer model call.
   always take the non-streaming path.
 - `_extract_ai_message` handles both bare `AIMessage` results and
   `ModelRequest`-shaped response objects carrying `.messages`.
+- **Thinking-budget interaction:** when `MAIN_LLM_ENABLE_THINKING=true`,
+  `models/LLMs/main_llm.py::apply_thinking_budget` pre-inflates the request's
+  `max_tokens` to `OUTPUT_MAX_TOKEN + thinking budget` (sharing the
+  `MAIN_LLM_OUTPUT_MAX_TOKEN` env / 8192 default with this middleware), so the
+  layer-1 boost base already starts above the thinking-inflated output cap.
+- **Service-layer diagnostics:** on a stream failure,
+  `server/service/stream_diag.py` counts chunks/bytes and time-to-first-chunk
+  and appends the summary to the re-raised exception — complementary
+  observability to the middleware-level recovery above.
 
 ### OutputRepetitionGuard & RepetitionGuardWrapper
 
 **Module:** `agent/middlewares/output_repetition_guard.py` · **Class:** `OutputRepetitionGuard(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-Post-hoc output-repetition detector with `WARN → HALT` escalation. Exported from `agent.middlewares.output_repetition_guard` (it is **not** re-exported by `agent/middlewares/__init__.py`) and registered **only in the worker pipeline**.
+Post-hoc output-repetition detector with `WARN → HALT` escalation. Exported from `agent.middlewares.output_repetition_guard` and re-exported by `agent/middlewares/__init__.py`; registered in **both** the main agent (per-call interception, complementing the wrapper below) and the worker pipeline.
 
 For the main agent the same detection runs through **`RepetitionGuardWrapper`** (`agent/stream_repetition_guard_wrapper.py`), which wraps the compiled graph and intercepts at stream level (plus an `ainvoke` post-hoc backstop), reusing the same state keys and defaults. Both registrations pass `phantom_stream_guard=True`.
 
@@ -383,6 +425,18 @@ For the main agent the same detection runs through **`RepetitionGuardWrapper`** 
 **Stream-layer helper** `check_stream_repetition(session_id, accumulated_text)` — a shared `_STREAM_GUARD` singleton used by `server/service/messages.py::async_generate` to cut a streaming response mid-flight when repetition is detected; it shares the same state keys and the same internal-warn dedupe gate.
 
 **Worker cleanup:** `SESSION_STATE_KEYS` (six keys) are deleted from `state_register_mem` when the child session finishes.
+
+### ContextLimitGuardWrapper
+
+**Module:** `agent/context_limit_guard_wrapper.py` · **Class:** `ContextLimitGuardWrapper`
+
+A graph wrapper (like `RepetitionGuardWrapper`), **not** a middleware. In `agent/core.py` it wraps the compiled agent **outside** the `RepetitionGuardWrapper` (`agent → RepetitionGuardWrapper → ContextLimitGuardWrapper`), so it sees stream chunks before repetition filtering. It closes the middlewares' streaming blind spot: middlewares never see mid-stream chunks, and a post-response overflow signal cannot retroactively compact the context.
+
+**Defense 1 — model-call boundary force-compress:** real `usage_metadata` input/output tokens are captured from the `messages` chunks; at each model-call boundary (`updates` mode) and at stream end, both the current call (`input_tokens` alone) and the predictive view (`input + output`, since the output becomes the next call's input) are checked against `COMPRESSION_TRIGGER_RATIO` (80 %) of the context window. At/over the threshold, Summarization's force-recovery key (`summarization_force_recovery`) is set in `state_register_mem` so the next pre-call check compresses instead of being skipped by the cooldown / attempt-cap anti-thrash gates.
+
+**Defense 2 — mid-stream output budget:** accumulated model text is estimated at `_CHARS_PER_TOKEN = 4` characters per token and checked every `check_interval = 20` chunks; once the estimate exceeds `output_cut_ratio = 0.20` of the window, further text chunks stop being forwarded to the client (tool-call chunks still pass) and a one-time truncation marker (`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`) is emitted instead. The graph still accumulates the full `AIMessage` — the truncated tail is exactly what the next compression pass removes.
+
+`ainvoke` delegates untouched (Summarization's T1–T3 triggers already cover the non-streaming path); unknown attributes delegate to the inner graph. Constructor: `(inner, context_window, output_cut_ratio=0.20, check_interval=20)` — `context_window` is `MAIN_LLM_MAX_TOKEN`, the same source Summarization's trigger uses.
 
 ---
 
@@ -408,8 +462,12 @@ Common interface (`runtime/state_register.py`): `set_state`, `get_state`, `get_a
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` keys (compression counters, ineffective streak, last tokens/strategy, skip-LLM flag, recovery state, last user question) | Summarization | mem |
-| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
+| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard keys (`SESSION_STATE_KEYS`, six) | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
+| `llm_stale_streak`, `llm_fallback_index` | LLMRetryMiddleware | mem |
+| `llm_content_filter_blocked`, `llm_content_filter_terminated` | stream layer (written) → LLMRetryMiddleware (consumed) | mem |
+| `llm_partial_stream_stub`, `llm_partial_stream_cause` | stream layer (written) → LLMRetryMiddleware (consumed) | mem |
+| `summarization_force_recovery` | ContextLimitGuardWrapper (written) → Summarization (consumed) | mem |
 | `hitl:`-prefixed keys (`_STATE_PREFIX = "hitl"`) | HumanInTheLoop | mem |
 
 ---
@@ -420,7 +478,9 @@ Common interface (`runtime/state_register.py`): `set_state`, `get_state`, `get_a
 
 | Knob | Where | Effect |
 |---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | Main-agent Summarization trigger = 80 % of this value; also passed as `main_llm_context_window` |
+| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | Main-agent Summarization trigger = 80 % of this value; also passed as `main_llm_context_window` and as `ContextLimitGuardWrapper.context_window` |
+| `MAIN_LLM_OUTPUT_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | Output-token budget (default 8192): layer 2 of MaxTokensBoost's boost base, and the base that thinking-budget inflation adds to |
+| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()` | Model fallback chain candidates for `LLMRetryMiddleware` (i = 1…, stops at the first missing `NAME`) |
 
 > **Related but separate:** per-tool timeouts are hard-coded module constants — `WEB_SEARCH_TIMEOUT = 15` (`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30` (`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30` (`agent/tools/python_repl.py`; the child process is killed on expiry). `TOOL_CALL_TIMEOUT_MINUTES = 5` exists in `.env.example` but **no code consumes it** — it is not an active knob. The `config/num.py` constants (`ARCHIVE_THRESHOLD`, `MEMORY_THRESHOLD`, `COMPRESS_RATIO`) are not consumed by the middleware layer either.
 
@@ -477,6 +537,7 @@ agent = create_agent(
 | `HeartbeatStaleness` | (defaults) | interval 1 min, idle 7 / in-tool 20 | defaults |
 | `OutputRepetitionGuard` | (defaults) | 3 / 2 / 0.6 / 6 / 8 | defaults |
 | `MaxTokensBoostMiddleware` | (env) | base: request `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN` (8192) → 8192, cap 32768, 3 retries | defaults |
+| `LLMRetryMiddleware` | `config: LLMRetryConfig` | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | defaults (+ `fallback_chain` from `FALLBACK_LLM_*`) |
 
 ---
 
@@ -505,6 +566,8 @@ user turn arrives
 │   │   · ContextEngineHook  inject system prompt (request.override)
 │   │   · IterationBudget  consume 1; terminal AIMessage when exhausted
 │   │   · HeartbeatStaleness  raise HeartbeatTimeoutError if killed; else heartbeat_iter += 1
+│   │   · LLMRetryMiddleware  breaker check; classified retry w/ backoff; fallback /
+│   │                        content-filter / partial-stream-stub flag consumption
 │   │   · Summarization  maybe compact history (non-LLM strategies + auxiliary LLM), anti-thrash counters
 │   ├─ LLM responds
 │   └─ after_model
@@ -566,6 +629,8 @@ Async variants follow the `a` prefix convention: `abefore_agent`, `aafter_agent`
 ```
 agent/middlewares/
 ├── __init__.py                  # public exports
+├── base.py                      # require_session_id / args_hash helpers
+├── mixins.py                    # BeforeAgentHooksMixin / AfterAgentHooksMixin
 ├── context_engine/              # ContextEngineHook + nudge sub-agents
 │   ├── __init__.py              # exports ContextEngineHook only
 │   ├── core.py                  # ContextEngineHook
@@ -580,15 +645,22 @@ agent/middlewares/
 │   │                            # KanbanTriage, PairingStore, SlashConfirm
 │   └── core.py                  # HumanInTheLoop
 ├── iteration_budget.py          # IterationBudget
-├── multimodal_processor.py      # MultimodalProcessor
+├── llm_retry.py                 # LLMRetryMiddleware (+ LLMRetryConfig, FallbackCandidate, ContentFilterError)
 ├── max_tokens_boost.py          # MaxTokensBoostMiddleware (tool-call truncation re-call)
-├── output_repetition_guard.py   # OutputRepetitionGuard (not re-exported below)
+├── media_handlers.py            # per-media-type strategies for MultimodalProcessor
+├── multimodal_processor.py      # MultimodalProcessor
+├── output_repetition_guard.py   # OutputRepetitionGuard (re-exported by __init__.py)
+├── repetition_detectors.py      # pure repetition-detection primitives
+├── repetition_state.py          # session-scoped repetition state helpers
+├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
 ├── summarization.py             # Summarization
+├── summarization_components.py  # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 ├── tool_call_normalize.py       # ToolCallNormalize
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # this file (+ .zh / .ja / .ko variants)
 
-agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (lives outside this package)
+agent/stream_repetition_guard_wrapper.py   # RepetitionGuardWrapper (lives outside this package)
+agent/context_limit_guard_wrapper.py       # ContextLimitGuardWrapper (lives outside this package)
 ```
 
 ### Exports (`__init__.py`)
@@ -596,6 +668,12 @@ agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper (lives outsid
 ```python
 from agent.middlewares import (
     Summarization,
+    LLMRetryMiddleware,
+    LLMRetryConfig,
+    FallbackCandidate,
+    ContentFilterError,
+    OutputRepetitionGuard,
+    MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
     ContextEngineHook,
@@ -604,9 +682,8 @@ from agent.middlewares import (
     MultimodalProcessor,
     HumanInTheLoop,
     HITLConfig,
-    MaxTokensBoostMiddleware,
 )
-# OutputRepetitionGuard is NOT re-exported here — import it from
-# agent.middlewares.output_repetition_guard instead.
+# Shared helpers are exported as well: BeforeAgentHooksMixin,
+# AfterAgentHooksMixin, require_session_id, args_hash.
 ```
 

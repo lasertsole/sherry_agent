@@ -176,10 +176,10 @@ async def built_agent(
         # stream output and historically triggered a false repetition cut
         # that suppressed the real reply.
         _agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
-        # Module I: context-window guard OUTSIDE the repetition wrapper —
-        # the guard sees chunks before repetition filtering, capturing real
-        # usage_metadata at model-call boundaries and enforcing the
-        # mid-stream output budget.
+        # ContextLimitGuardWrapper: context-window guard OUTSIDE the
+        # repetition wrapper — the guard sees chunks before repetition
+        # filtering, capturing real usage_metadata at model-call boundaries
+        # and enforcing the mid-stream output budget.
         _agent = ContextLimitGuardWrapper(_agent, context_window=main_llm_max_tokens)
         _agent_loop = current_loop
 

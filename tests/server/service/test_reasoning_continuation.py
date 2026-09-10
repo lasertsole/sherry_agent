@@ -1,4 +1,4 @@
-"""H.2 reasoning-only continuation tests.
+"""Reasoning-only continuation tests.
 
 Covers the reasoning-only truncation scenario: a thinking model spent the
 whole output budget on reasoning with no visible answer — the turn

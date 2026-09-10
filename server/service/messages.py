@@ -140,7 +140,7 @@ _CONTINUATION_PROMPT = (
     "restart or repeat prior text. Finish the answer directly.]"
 )
 _MAX_CONTINUATION_RETRIES = 4
-# H.2 reasoning-only continuation: when a thinking model spent the whole
+# Reasoning-only continuation: when a thinking model spent the whole
 # output budget on reasoning with NO visible text, "continue where you left
 # off" makes it re-think and exhaust the budget again. The dedicated prompt
 # forces the final answer directly; capped so a persistently thinking model
@@ -266,9 +266,9 @@ class _GenerateTurn(StreamTurn):
         ]
 
     def _should_text_continue(self) -> tuple[bool, bool]:
-        """Phase 2 decision: ``(should_continue, is_reasoning_only)``.
+        """Continuation decision: ``(should_continue, is_reasoning_only)``.
 
-        Truncation-scenario matrix (H.2): tool-call truncation goes to the
+        Truncation-scenario matrix: tool-call truncation goes to the
         MaxTokensBoost middleware (no continuation), reasoning-only output
         gets the dedicated prompt (max 2), everything else that hit the
         length cap gets the standard text continuation (max 4).

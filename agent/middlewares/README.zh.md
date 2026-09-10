@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent 的中间件层：八个 `AgentMiddleware` 组件，作用于每一次模型调用与工具调用——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、心跳卡死检测、人工审批以及上下文摘要——外加一个供 worker agent 使用的输出重复防护。
+EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 `AgentMiddleware` 组件——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、心跳卡死检测、人工审批、上下文摘要，以及带模型回退的分类式 LLM 错误重试（`LLMRetryMiddleware`）——外加输出重复防护与流式图包装器（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
 
 > 本文档中的每一项陈述都已对照源代码核实（已安装的 `langchain 1.3.9`、`agent/core.py`、`agent/tools/subagent/spawn/core.py` 以及 `agent/middlewares/` 下的各模块）。下文出现的类名、文件名、默认值与状态键均真实存在于代码中。
 
@@ -24,8 +24,11 @@ EMA AI Agent 的中间件层：八个 `AgentMiddleware` 组件，作用于每一
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
+  - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
+  - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
   - [OutputRepetitionGuard 与 RepetitionGuardWrapper](#outputrepetitionguard-与-repetitionguardwrapper)
+  - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
 - [共享状态系统](#共享状态系统)
 - [配置](#配置)
 - [生命周期与数据流](#生命周期与数据流)
@@ -85,6 +88,7 @@ middleware = [
     MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
+    LLMRetryMiddleware(fallback_chain=fallback_chain),
     Summarization(
         need_update_system_prompt=True,
         model=auxiliary_llm,
@@ -94,13 +98,14 @@ middleware = [
     ),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
-# 编译后的图再被包装：
+# 编译后的图再被包装（由内到外）：
 agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
+agent = ContextLimitGuardWrapper(agent, context_window=main_llm_max_tokens)
 ```
 
 `main_llm_max_tokens` 读取自环境变量 `MAIN_LLM_MAX_TOKEN`（`models/LLMs/main_llm.py`），因此主 Agent 的摘要触发点位于主模型上下文窗口的 80 % 处（`COMPRESSION_TRIGGER_RATIO = 0.80`）。
 
-> **注意：** `OutputRepetitionGuard` **没有**注册为主 Agent 的中间件。主 Agent 的相应行为由包装编译图的 `RepetitionGuardWrapper` 提供——见 [OutputRepetitionGuard 与 RepetitionGuardWrapper](#outputrepetitionguard-与-repetitionguardwrapper)。
+> **注意：** `OutputRepetitionGuard` **已**注册为主 Agent 的中间件（逐调用拦截），**并且**编译后的图还额外被 `RepetitionGuardWrapper` 包装以进行流式层面的检测——见 [OutputRepetitionGuard 与 RepetitionGuardWrapper](#outputrepetitionguard-与-repetitionguardwrapper)。
 
 ### Worker / 子 Agent 流水线（`agent/tools/subagent/spawn/core.py`）
 
@@ -130,7 +135,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
-- 没有 `ContextEngineHook`、`MultimodalProcessor`、`HumanInTheLoop`。
+- 没有 `ContextEngineHook`、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
@@ -138,9 +143,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 阶段 | 顺序 |
 |---|---|
-| `before_agent`（列表顺序） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization |
-| `wrap_model_call`（最外层 → 最内层） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization（Summarization 最贴近 LLM） |
-| `after_agent`（逆序） | Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook |
+| `before_agent`（列表顺序） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `wrap_model_call`（最外层 → 最内层） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
+| `after_agent`（逆序） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook |
 
 只有实现了某个钩子的中间件才会参与该阶段；表中展示的是如果实现的话各自所处的位置。
 
@@ -263,9 +268,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - `before_agent` 重置状态键，并通过 `timer_call_register.register(..., execute_now=True)` 启动后台定时器（1 分钟节奏）。
 - `wrap_model_call` 将 `heartbeat_iter` 加一——但若此前的心跳检查已判定杀死回合，则先抛出 `HeartbeatTimeoutError`。`wrap_tool_call` 在工具运行期间设置 `heartbeat_tool`，返回后清除。
+- `skip_heartbeat` 旁路：元数据设置了 `skip_heartbeat: true` 的工具（基于 interrupt 的工具会把图挂起等待人工输入，其 after-tool 钩子在恢复前不会运行）会设置 `heartbeat_skip` 而非 `heartbeat_tool`；该标志置位期间，定时器回调跳过进展检查——等待期间未变化的 `(iter, tool)` 对不算停滞。标志在 after-tool 钩子中清除，并在 `before_agent` 中重置。
 - 定时器回调将 `(heartbeat_iter, heartbeat_tool)` 与 `_last_heartbeat_iter` / `_last_heartbeat_tool` 比较：有进展则清零过期计数，无进展则加一。空闲状态下累计 `stale_cycles_idle = 7` 次无进展，或卡在同一工具内累计 `stale_cycles_in_tool = 20` 次，则置 `heartbeat_killed = True`——下一次模型 / 工具调用将抛出 `HeartbeatTimeoutError` 而不是继续执行。
 - `after_agent` 停止定时器。
-- 状态键：`heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`，以及 `_last_heartbeat_iter` / `_last_heartbeat_tool`。
+- 状态键：`heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`heartbeat_skip`，以及 `_last_heartbeat_iter` / `_last_heartbeat_tool`。
 
 ### HumanInTheLoop
 
@@ -303,6 +309,34 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `description_prefix` | `"Action requires human approval"` | 审批对话框标题前缀 |
 
 ▶️ 完整文档：[humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
+
+### LLMRetryMiddleware
+
+**模块：** `agent/middlewares/llm_retry.py` · **类：** `LLMRetryMiddleware(AgentMiddleware)`（另有 `LLMRetryConfig`、`FallbackCandidate`、`ContentFilterError`）
+**钩子：** 仅 `wrap_model_call` / `awrap_model_call`
+
+在主 Agent 中注册于 **`HumanInTheLoop` 与 `Summarization` 之间**：相对 `MaxTokensBoostMiddleware` 为内层（只看到 boost 重呼之后仍未解决的真正截断），相对 Summarization 为外层（重试环从外部包住 T4/T5 溢出恢复环）。worker 流水线中**不**注册。当状态中没有 `session_id` 时，中间件直接透传。
+
+每次 handler 调用都经过基于 `pub_func/message/llm_error_classifier.py` 的"分类 → 处置"循环——`FailoverReason` 枚举（18 种原因）、`ClassifiedError` 判定（`retryable` / `should_compress` / `should_fallback` 标志）、8 步优先级管线 `classify_api_error`——并通过 `pub_func/retry_utils.py::jittered_backoff` 退避。
+
+**按 `FailoverReason` 的重试语义**
+
+| 类别 | 原因 | 处置 |
+|---|---|---|
+| 抖动退避重试（`retryable=True`） | `auth`、`rate_limit`、`overloaded`、`server_error`、`timeout`、`image_too_large`、`invalid_response`、`unknown` | 至多重试 `max_retries` 次；延迟 = `base_delay × 2^(attempt−1)`，封顶 `max_delay`，±`jitter`，钳制在 `[0.1, max_delay]` |
+| 压缩委托（`should_compress=True`） | `context_overflow`、`payload_too_large` | 立即重新抛出——溢出错误归 Summarization 的 T4/T5 恢复环管 |
+| 回退（`should_fallback=True`，不可重试） | `auth_permanent`、`billing`、`upstream_rate_limit`、`ssl_cert_verification`、`model_not_found`、`provider_policy_blocked`、`content_policy_blocked` | 切换到下一个回退候选；链耗尽 → 重新抛出 |
+| 硬失败 | `format_error` | 重新抛出（不重试、不回退） |
+
+**过期连击熔断器（跨回合）：** 每一次被分类为 timeout 的失败——以及每一次 timeout 分类的部分流桩（partial-stub）重试——都会把会话级 `llm_stale_streak`（存于 `state_register_mem`）加一；任何一次成功的 handler 调用都会把它清零。当连击达到 `stale_giveup_threshold` 时，下一次模型调用会在**调用 LLM 之前**抛出 `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`，跨回合终结提供方持续无响应的僵局。
+
+**模型回退链：** `FallbackCandidate(provider, model_name, model)` 条目由 `models/LLMs/main_llm.py::build_fallback_chain()` 从环境变量 `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` 构建（i = 1…，遇到第一个缺失的 `NAME` 即停止；`PROVIDER` 默认 `openai`；客户端无法构造的候选会带警告跳过）。1 起始的激活索引按会话粘性存于 `llm_fallback_index`：每次模型调用开始时，请求都会通过 `request.override(model=...)` 重新绑定到已激活的候选；遇到可回退分类的失败（或内容过滤标志）时激活下一个候选。未配置任何 `FALLBACK_LLM_*`（默认情况）时，中间件就是一个普通的有界重试环。
+
+**内容过滤标志消费：** 流式层（`server/service/stream_dispatch.py`）会设置 `llm_content_filter_blocked`（显式 `finish_reason == "content_filter"`）或 `llm_content_filter_terminated`（流中安全拦截）。中间件在每次 handler 调用之后——无论成功还是已分类异常——检查这两个标志，清除它们，然后要么重新绑定到回退模型，要么在无候选可用时抛出 `ContentFilterError("Model declined to respond (safety refusal).")`。`content_policy_blocked` 永不重试。
+
+**部分流桩消费：** 流被网络中断切断后，流式层会设置 `llm_partial_stream_stub` 与 `llm_partial_stream_cause`（保留的 `FailoverReason` 值，默认 `timeout`）。中间件在成功的 handler 调用之后消费该标志：被切断的结果被丢弃，handler 在退避后以全新尝试重呼一次——绝不加大 max_tokens 提额。流式回合（`is_stream_turn` 标志）下，重呼前先剥离 `request.config["callbacks"]` 并在 `finally` 中恢复（MaxTokensBoost 的 strip → call → restore 契约），避免已流出的 token 重复输出。timeout 分类的原因会累加过期连击。重试预算耗尽时，中间件优雅降级并返回当前（部分）结果。
+
+**状态键（全部存于 `state_register_mem`）：** `llm_stale_streak`、`llm_fallback_index`（本中间件所有）；`llm_content_filter_blocked`、`llm_content_filter_terminated`、`llm_partial_stream_stub`、`llm_partial_stream_cause`（流式层写入，本中间件消费）。
 
 ### Summarization
 
@@ -351,13 +385,19 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   永远不带该标志，始终走非流式路径。
 - `_extract_ai_message` 同时处理裸 `AIMessage` 结果与携带 `.messages` 的
   `ModelRequest` 形态响应对象。
+- **思考预算交互：** 当 `MAIN_LLM_ENABLE_THINKING=true` 时，
+  `models/LLMs/main_llm.py::apply_thinking_budget` 会预先把请求的 `max_tokens`
+  膨胀为 `OUTPUT_MAX_TOKEN + 思考预算`（与本中间件共享 `MAIN_LLM_OUTPUT_MAX_TOKEN`
+  环境变量 / 8192 默认值），因此第一层 boost base 已经从膨胀后的输出上限起步。
+- **服务层诊断：** 流失败时，`server/service/stream_diag.py` 统计块数/字节数与
+  首块耗时，并把摘要附加到重新抛出的异常上——是对上述中间件级恢复的补充观测。
 
 ### OutputRepetitionGuard 与 RepetitionGuardWrapper
 
 **模块：** `agent/middlewares/output_repetition_guard.py` · **类：** `OutputRepetitionGuard(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-事后式的输出重复检测器，带 `WARN → HALT` 升级。从 `agent.middlewares.output_repetition_guard` 导出（**没有**被 `agent/middlewares/__init__.py` 再导出），且**仅在 worker 流水线中注册**。
+事后式的输出重复检测器，带 `WARN → HALT` 升级。从 `agent.middlewares.output_repetition_guard` 导出，并被 `agent/middlewares/__init__.py` 再导出；在主 Agent（逐调用拦截，与下方的包装器互补）与 worker 流水线中**都有**注册。
 
 主 Agent 的同类检测由 **`RepetitionGuardWrapper`**（`agent/stream_repetition_guard_wrapper.py`）完成：它包装编译后的图，在流式层面拦截（外加 `ainvoke` 事后兜底），复用相同的状态键与默认值。两处注册均传入 `phantom_stream_guard=True`。
 
@@ -376,6 +416,18 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 **流式辅助函数** `check_stream_repetition(session_id, accumulated_text)` —— 共享的 `_STREAM_GUARD` 单例，被 `server/service/messages.py::async_generate` 用于在检测到重复时中途截断流式响应；它共享同一组状态键与相同的内部警告去重门。
 
 **Worker 清理：** 子会话结束时，`SESSION_STATE_KEYS`（六个键）会从 `state_register_mem` 中删除。
+
+### ContextLimitGuardWrapper
+
+**模块：** `agent/context_limit_guard_wrapper.py` · **类：** `ContextLimitGuardWrapper`
+
+一个图包装器（与 `RepetitionGuardWrapper` 同类），**不是**中间件。在 `agent/core.py` 中它包装在 `RepetitionGuardWrapper` 的**外侧**（`agent → RepetitionGuardWrapper → ContextLimitGuardWrapper`），因此在重复过滤之前看到流式块。它补上了中间件的流式盲区：中间件看不到流中产生的块，而响应后的溢出信号也无法回溯压缩上下文。
+
+**防御一——模型调用边界强制压缩：** 从 `messages` 块中捕获真实的 `usage_metadata` 输入/输出 token；在每个模型调用边界（`updates` 模式）及流结束时，同时按当前调用（仅 `input_tokens`）与预测视图（`input + output`，因为输出会成为下次调用的输入）对照上下文窗口的 `COMPRESSION_TRIGGER_RATIO`（80 %）阈值。达到/越过阈值时，向 `state_register_mem` 写入 Summarization 的强制恢复键（`summarization_force_recovery`），使下一次调用前检查执行压缩，而不被冷却 / 尝试上限的防抖闸门跳过。
+
+**防御二——流中输出预算：** 累积的模型文本按 `_CHARS_PER_TOKEN = 4` 字符/token 估算，每 `check_interval = 20` 个块检查一次；一旦估算值超过窗口的 `output_cut_ratio = 0.20`，后续文本块不再转发给客户端（工具调用块仍然通过），改为发出一次性截断标记（`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`）。图内仍累积完整的 `AIMessage`——被截掉的尾部正是下一轮压缩要移除的内容。
+
+`ainvoke` 原样委托（Summarization 的 T1–T3 触发点已覆盖非流式路径）；未知属性委托给内部图。构造函数：`(inner, context_window, output_cut_ratio=0.20, check_interval=20)`——`context_window` 即 `MAIN_LLM_MAX_TOKEN`，与 Summarization 触发点同源。
 
 ---
 
@@ -401,8 +453,12 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问） | Summarization | mem |
-| `heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`_last_heartbeat_iter`、`_last_heartbeat_tool` | HeartbeatStaleness | mem |
+| `heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`heartbeat_skip`、`_last_heartbeat_iter`、`_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard 的键（`SESSION_STATE_KEYS`，六个） | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
+| `llm_stale_streak`、`llm_fallback_index` | LLMRetryMiddleware | mem |
+| `llm_content_filter_blocked`、`llm_content_filter_terminated` | 流式层（写入）→ LLMRetryMiddleware（消费） | mem |
+| `llm_partial_stream_stub`、`llm_partial_stream_cause` | 流式层（写入）→ LLMRetryMiddleware（消费） | mem |
+| `summarization_force_recovery` | ContextLimitGuardWrapper（写入）→ Summarization（消费） | mem |
 | `hitl:` 前缀键（`_STATE_PREFIX = "hitl"`） | HumanInTheLoop | mem |
 
 ---
@@ -413,7 +469,9 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 | 配置项 | 位置 | 作用 |
 |---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的 80 %；同时作为 `main_llm_context_window` 传入 |
+| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的 80 %；同时作为 `main_llm_context_window` 与 `ContextLimitGuardWrapper.context_window` 传入 |
+| `MAIN_LLM_OUTPUT_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 输出 token 预算（默认 8192）：MaxTokensBoost boost base 的第 2 层，也是思考预算膨胀叠加的基数 |
+| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()` | `LLMRetryMiddleware` 的模型回退链候选（i = 1…，遇到第一个缺失的 `NAME` 即停止） |
 
 > **相关但独立：** 各工具的超时是写死的模块常量——`WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`；超时会杀死子进程）。`.env.example` 中的 `TOOL_CALL_TIMEOUT_MINUTES = 5` **没有任何代码消费**——它不是生效的配置项。`config/num.py` 的常量（`ARCHIVE_THRESHOLD`、`MEMORY_THRESHOLD`、`COMPRESS_RATIO`）也没有被中间件层使用。
 
@@ -470,6 +528,8 @@ agent = create_agent(
 | `HumanInTheLoop` | `config: HITLConfig` | 见上文默认值 | 默认值 |
 | `HeartbeatStaleness` | （默认） | 间隔 1 分钟，空闲 7 / 工具内 20 | 默认值 |
 | `OutputRepetitionGuard` | （默认） | 3 / 2 / 0.6 / 6 / 8 | 默认值 |
+| `MaxTokensBoostMiddleware` | （环境变量） | base：请求 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`（8192）→ 8192，上限 32768，重试 3 次 | 默认值 |
+| `LLMRetryMiddleware` | `config: LLMRetryConfig` | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5` | 默认值（外加来自 `FALLBACK_LLM_*` 的 `fallback_chain`） |
 
 ---
 
@@ -498,6 +558,8 @@ agent = create_agent(
 │   │   · ContextEngineHook  注入系统提示词（request.override）
 │   │   · IterationBudget  消耗 1；耗尽时返回终止 AIMessage
 │   │   · HeartbeatStaleness  已杀死则抛 HeartbeatTimeoutError；否则 heartbeat_iter += 1
+│   │   · LLMRetryMiddleware  熔断器检查；分类重试 + 退避；回退 /
+│   │                        内容过滤 / 部分流桩标志消费
 │   │   · Summarization  视情况压缩历史（非 LLM 策略 + 辅助 LLM），防抖计数
 │   ├─ LLM 响应
 │   └─ after_model
@@ -559,6 +621,8 @@ class MyMiddleware(AgentMiddleware):
 ```
 agent/middlewares/
 ├── __init__.py                  # 公开导出
+├── base.py                      # require_session_id / args_hash 辅助
+├── mixins.py                    # BeforeAgentHooksMixin / AfterAgentHooksMixin
 ├── context_engine/              # ContextEngineHook + nudge 子 Agent
 │   ├── __init__.py              # 仅导出 ContextEngineHook
 │   ├── core.py                  # ContextEngineHook
@@ -573,15 +637,22 @@ agent/middlewares/
 │   │                            # KanbanTriage、PairingStore、SlashConfirm
 │   └── core.py                  # HumanInTheLoop
 ├── iteration_budget.py          # IterationBudget
-├── multimodal_processor.py      # MultimodalProcessor
+├── llm_retry.py                 # LLMRetryMiddleware（含 LLMRetryConfig、FallbackCandidate、ContentFilterError）
 ├── max_tokens_boost.py          # MaxTokensBoostMiddleware（工具调用截断重呼）
-├── output_repetition_guard.py   # OutputRepetitionGuard（不在下方再导出之列）
+├── media_handlers.py            # MultimodalProcessor 的分媒体类型处理策略
+├── multimodal_processor.py      # MultimodalProcessor
+├── output_repetition_guard.py   # OutputRepetitionGuard（由 __init__.py 再导出）
+├── repetition_detectors.py      # 纯重复检测原语
+├── repetition_state.py          # 会话级重复状态辅助
+├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
 ├── summarization.py             # Summarization
+├── summarization_components.py  # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 ├── tool_call_normalize.py       # ToolCallNormalize
 ├── tool_guardrails.py           # ToolGuardrails
 └── README.md                    # 本文件（+ .zh / .ja / .ko 变体）
 
-agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper（位于本包之外）
+agent/stream_repetition_guard_wrapper.py   # RepetitionGuardWrapper（位于本包之外）
+agent/context_limit_guard_wrapper.py       # ContextLimitGuardWrapper（位于本包之外）
 ```
 
 ### 导出（`__init__.py`）
@@ -589,6 +660,12 @@ agent/stream_repetition_guard_wrapper.py  # RepetitionGuardWrapper（位于本�
 ```python
 from agent.middlewares import (
     Summarization,
+    LLMRetryMiddleware,
+    LLMRetryConfig,
+    FallbackCandidate,
+    ContentFilterError,
+    OutputRepetitionGuard,
+    MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
     ContextEngineHook,
@@ -598,6 +675,6 @@ from agent.middlewares import (
     HumanInTheLoop,
     HITLConfig,
 )
-# OutputRepetitionGuard 不在此处再导出——请从
-# agent.middlewares.output_repetition_guard 导入。
+# 同时导出共享辅助：BeforeAgentHooksMixin、
+# AfterAgentHooksMixin、require_session_id、args_hash。
 ```

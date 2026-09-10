@@ -1,4 +1,4 @@
-"""Module I — ContextLimitGuardWrapper tests.
+"""ContextLimitGuardWrapper tests.
 
 Covers both defenses at stream level: the model-call boundary
 force-compress (real ``usage_metadata`` crossing the compression threshold
