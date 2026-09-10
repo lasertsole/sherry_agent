@@ -32,6 +32,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_model_token_columns,
         add_origin_column,
         add_session_role_index,
+        add_reasoning_tokens_column,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -193,6 +194,22 @@ def add_origin_column(db: sqlite3.Connection) -> None:
 
 def add_session_role_index(db: sqlite3.Connection) -> None:
     db.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role)")
+
+
+def add_reasoning_tokens_column(db: sqlite3.Connection) -> None:
+    """Add a `reasoning_tokens` column to the messages table.
+
+    Persists the reasoning-token count thinking models report under
+    ``usage_metadata["output_token_details"]["reasoning_tokens"]`` (AI rows).
+    Nullable INTEGER: pre-existing rows and non-reasoning models stay NULL.
+    The try/except ignores the error raised when the column is already
+    present, making the migration idempotent.
+    """
+    try:
+        db.execute("ALTER TABLE messages ADD COLUMN reasoning_tokens INTEGER")
+    except sqlite3.OperationalError:
+        # Column already exists — nothing to do.
+        pass
 
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:

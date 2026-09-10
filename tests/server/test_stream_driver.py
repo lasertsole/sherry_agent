@@ -120,6 +120,7 @@ class TestDoneAndInterrupt:
             "model_name": "deepseek-v3",
             "input_tokens": 11,
             "output_tokens": 22,
+            "reasoning_tokens": 0,
             "finish_reason": "",
         }
 
@@ -135,6 +136,7 @@ class TestDoneAndInterrupt:
             "model_name": "",
             "input_tokens": 0,
             "output_tokens": 0,
+            "reasoning_tokens": 0,
             "finish_reason": "",
         }
 

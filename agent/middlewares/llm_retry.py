@@ -8,6 +8,10 @@ Relationship to the existing pipeline:
   server_error, invalid_response, unknown (bounded backoff retries) and
   delegates deterministic failures (auth_permanent, billing, ssl, model
   not found, policy blocks) to the fallback chain when one is configured.
+- A silent mid-stream network cut (the stream layer's
+  ``llm_partial_stream_stub`` flag, H.3) converts into a classified retry
+  on the next call: the cut response is regenerated with a fresh attempt —
+  never boosted with larger max_tokens.
 - content_policy_blocked never retries: the stream layer flags it via the
   ``llm_content_filter_blocked`` state key and this middleware consumes it
   after each handler call, switching to a fallback model or raising
@@ -21,6 +25,12 @@ via astream/ainvoke); the sync twin exists for parity with the other
 middlewares. When no fallback chain is configured (the default) the
 middleware is a plain bounded retry loop.
 """
+
+# allow: SIZE_OK — the bulk is the sync/async retry-loop pair that the
+# AgentMiddleware contract requires as two near-identical state machines
+# (the established pattern: see MaxTokensBoostMiddleware). The H.3/H.5
+# stream-flag seams belong beside the loops that consume them; extracting
+# them would scatter one cohesive unit across modules.
 
 import asyncio
 import time
@@ -39,6 +49,15 @@ from runtime import state_register_mem
 _STALE_STREAK_KEY = "llm_stale_streak"
 _FALLBACK_INDEX_KEY = "llm_fallback_index"
 _CONTENT_FILTER_KEY = "llm_content_filter_blocked"
+# H.5: the stream layer's mid-stream safety-cut flag (same contract as
+# ``_CONTENT_FILTER_KEY``, which covers the explicit finish_reason path).
+_FILTER_TERMINATED_KEY = "llm_content_filter_terminated"
+# H.3: the stream layer's partial-stub flag — the PREVIOUS response was cut
+# mid-output by a network failure; the next model call must be retried (a
+# fresh attempt), never boosted with larger max_tokens.
+_PARTIAL_STUB_KEY = "llm_partial_stream_stub"
+_PARTIAL_CAUSE_KEY = "llm_partial_stream_cause"
+_STREAM_FLAG = "is_stream_turn"
 _STALE_GIVEUP_MESSAGE = "Provider unresponsive — aborting to avoid indefinite stall."
 _CONTENT_FILTER_MESSAGE = "Model declined to respond (safety refusal)."
 
@@ -126,7 +145,18 @@ class LLMRetryMiddleware(AgentMiddleware):
                 request = rebound
                 retry_count = 0
                 continue
-            return result
+            stub_reason = self._consume_partial_stream_stub(session_id)
+            if stub_reason is None:
+                return result
+            retry_count += 1
+            if retry_count > self.config.max_retries:
+                logger.warning(
+                    "Partial-stream stub retry budget exhausted; keeping the current result"
+                )
+                return result
+            return self._recall_after_stub_sync(
+                request, handler, session_id, stub_reason, self._backoff(retry_count)
+            )
 
     async def awrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[Any]]
@@ -180,7 +210,18 @@ class LLMRetryMiddleware(AgentMiddleware):
                 request = rebound
                 retry_count = 0
                 continue
-            return result
+            stub_reason = self._consume_partial_stream_stub(session_id)
+            if stub_reason is None:
+                return result
+            retry_count += 1
+            if retry_count > self.config.max_retries:
+                logger.warning(
+                    "Partial-stream stub retry budget exhausted; keeping the current result"
+                )
+                return result
+            return await self._recall_after_stub_async(
+                request, handler, session_id, stub_reason, self._backoff(retry_count)
+            )
 
     # ---- session-scoped state -------------------------------------------
 
@@ -219,16 +260,26 @@ class LLMRetryMiddleware(AgentMiddleware):
     def _handle_content_filter_flag(
         self, request: ModelRequest, session_id: str, cause: BaseException | None = None
     ) -> ModelRequest | None:
-        """Consume the cross-layer content-filter flag after a handler call.
+        """Consume the cross-layer content-filter flags after a handler call.
+
+        Two stream-layer producers share this seam: the explicit
+        ``finish_reason == "content_filter"`` branch
+        (``llm_content_filter_blocked``) and the H.5 mid-stream safety cut
+        (``llm_content_filter_terminated``).
 
         Returns the request rebound to the fallback model when a candidate is
-        available, or None when the flag is absent / no candidate remains
-        (raising :class:`ContentFilterError` when the flag WAS set). This is
+        available, or None when the flags are absent / no candidate remains
+        (raising :class:`ContentFilterError` when a flag WAS set). This is
         also the interception seam for stream-layer response markers.
         """
-        if not state_register_mem.get_state(session_id, _CONTENT_FILTER_KEY, False):
+        flagged = any(
+            state_register_mem.get_state(session_id, key, False)
+            for key in (_CONTENT_FILTER_KEY, _FILTER_TERMINATED_KEY)
+        )
+        if not flagged:
             return None
         state_register_mem.set_state(session_id, _CONTENT_FILTER_KEY, False)
+        state_register_mem.set_state(session_id, _FILTER_TERMINATED_KEY, False)
         rebound = self._try_fallback(request, session_id)
         if rebound is not None:
             logger.warning(
@@ -236,6 +287,96 @@ class LLMRetryMiddleware(AgentMiddleware):
             )
             return rebound
         raise ContentFilterError(_CONTENT_FILTER_MESSAGE) from cause
+
+    # ---- partial-stream stub (H.3, set by the stream layer) --------------
+
+    def _consume_partial_stream_stub(self, session_id: str) -> FailoverReason | None:
+        """Convert the stream layer's partial-stub flag into a classified failure.
+
+        The flag marks the PREVIOUS response as cut mid-output; the result
+        just produced is discarded and the handler is re-called with a fresh
+        attempt. Returns the classified reason of what killed the stream
+        (preserved by StreamTurn, defaulting to timeout for silent cuts), or
+        None when the flag is absent.
+        """
+        if not state_register_mem.get_state(session_id, _PARTIAL_STUB_KEY, False):
+            return None
+        state_register_mem.set_state(session_id, _PARTIAL_STUB_KEY, False)
+        cause_val = state_register_mem.get_state(session_id, _PARTIAL_CAUSE_KEY, "")
+        state_register_mem.set_state(session_id, _PARTIAL_CAUSE_KEY, "")
+        try:
+            return FailoverReason(cause_val)
+        except ValueError:
+            return FailoverReason.timeout
+
+    def _strip_callbacks(self, request: ModelRequest) -> Any:
+        config = getattr(request, "config", None)
+        if isinstance(config, dict):
+            return config.pop("callbacks", None)
+        return None
+
+    def _restore_callbacks(self, request: ModelRequest, original: Any) -> None:
+        config = getattr(request, "config", None)
+        if isinstance(config, dict):
+            config["callbacks"] = original
+
+    def _recall_after_stub_sync(
+        self,
+        request: ModelRequest,
+        handler: Callable,
+        session_id: str,
+        stub_reason: FailoverReason,
+        delay: float,
+    ) -> Any:
+        """Re-call the handler once for a stub flag with callbacks stripped
+        on stream turns.
+
+        The cut response's tokens already streamed to the client; without
+        the strip the retry would append a second copy. Mirrors
+        MaxTokensBoost's callback-stripping contract (strip → call → restore
+        in finally).
+        """
+        self._prepare_stub_retry(session_id, stub_reason)
+        logger.warning(
+            "Previous stream was cut mid-output (reason={}): retrying in {:.2f}s",
+            stub_reason.value,
+            delay,
+        )
+        time.sleep(delay)
+        strip = bool(state_register_mem.get_state(session_id, _STREAM_FLAG, ""))
+        saved = self._strip_callbacks(request) if strip else None
+        try:
+            return handler(request)
+        finally:
+            if strip:
+                self._restore_callbacks(request, saved)
+
+    async def _recall_after_stub_async(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[Any]],
+        session_id: str,
+        stub_reason: FailoverReason,
+        delay: float,
+    ) -> Any:
+        self._prepare_stub_retry(session_id, stub_reason)
+        logger.warning(
+            "Previous stream was cut mid-output (reason={}): retrying in {:.2f}s",
+            stub_reason.value,
+            delay,
+        )
+        await asyncio.sleep(delay)
+        strip = bool(state_register_mem.get_state(session_id, _STREAM_FLAG, ""))
+        saved = self._strip_callbacks(request) if strip else None
+        try:
+            return await handler(request)
+        finally:
+            if strip:
+                self._restore_callbacks(request, saved)
+
+    def _prepare_stub_retry(self, session_id: str, stub_reason: FailoverReason) -> None:
+        if stub_reason == FailoverReason.timeout:
+            self._bump_stale_streak(session_id)
 
     # ---- fallback chain ---------------------------------------------------
 

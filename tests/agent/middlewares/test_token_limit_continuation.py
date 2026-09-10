@@ -219,28 +219,32 @@ class TestFinishReasonDetection:
 
 
 class TestTextContinuation:
-    def _turn(self, finish="length", tool_calls=False, retries=0):
+    def _turn(self, finish="length", tool_calls=False, retries=0, *, has_text=True):
         turn = _gen_turn(chunks=[])
         turn.meta_finish_reason = finish
         turn._has_tool_calls = tool_calls
         turn._continuation_retries = retries
+        turn._has_visible_text = has_text
         return turn
 
     def test_should_continue_on_length_no_tool_calls(self):
-        assert self._turn(finish="length")._should_text_continue() is True
+        assert self._turn(finish="length")._should_text_continue() == (True, False)
 
     def test_should_continue_on_max_tokens_no_tool_calls(self):
-        assert self._turn(finish="max_tokens")._should_text_continue() is True
+        assert self._turn(finish="max_tokens")._should_text_continue() == (True, False)
 
     def test_should_not_continue_on_stop(self):
-        assert self._turn(finish="stop")._should_text_continue() is False
+        assert self._turn(finish="stop")._should_text_continue() == (False, False)
 
     def test_should_not_continue_with_tool_calls(self):
-        assert self._turn(finish="length", tool_calls=True)._should_text_continue() is False
+        assert self._turn(finish="length", tool_calls=True)._should_text_continue() == (
+            False,
+            False,
+        )
 
     def test_should_not_continue_after_max_retries(self):
         turn = self._turn(finish="length", retries=_MAX_CONTINUATION_RETRIES)
-        assert turn._should_text_continue() is False
+        assert turn._should_text_continue() == (False, False)
 
     def test_prepare_continuation_sets_flag_and_increments(self):
         turn = self._turn()
@@ -650,7 +654,7 @@ class TestPhase2Phase3Integration:
             ]
         )
         asyncio.run(_collect(turn.run()))
-        assert turn._should_text_continue() is False
+        assert turn._should_text_continue() == (False, False)
 
     def test_stop_does_not_trigger_either_phase(self):
         turn = _gen_turn(
@@ -659,5 +663,5 @@ class TestPhase2Phase3Integration:
             ]
         )
         frames = asyncio.run(_collect(turn.run()))
-        assert turn._should_text_continue() is False
+        assert turn._should_text_continue() == (False, False)
         assert [f for f in frames if f.get("type") == "meta"][0]["finish_reason"] == "stop"

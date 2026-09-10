@@ -140,6 +140,18 @@ _CONTINUATION_PROMPT = (
     "restart or repeat prior text. Finish the answer directly.]"
 )
 _MAX_CONTINUATION_RETRIES = 4
+# H.2 reasoning-only continuation: when a thinking model spent the whole
+# output budget on reasoning with NO visible text, "continue where you left
+# off" makes it re-think and exhaust the budget again. The dedicated prompt
+# forces the final answer directly; capped so a persistently thinking model
+# cannot spin the loop.
+_REASONING_ONLY_PROMPT = (
+    "[System: Your previous response was truncated by the output "
+    "length limit. Only reasoning/thinking was produced with no "
+    "visible answer. Produce the answer now — do not re-reason "
+    "or restart the thinking process. Output the final answer directly.]"
+)
+_MAX_REASONING_ONLY_RETRIES = 2
 
 
 class _GenerateTurn(StreamTurn):
@@ -162,6 +174,8 @@ class _GenerateTurn(StreamTurn):
         self._agent: Any = None
         self._continuation_retries: int = 0
         self._is_continuation: bool = False
+        self._reasoning_only_retries: int = 0
+        self._is_reasoning_only: bool = False
 
     async def _prepare(self) -> None:
         # reset curator reset_idle_for_seconds
@@ -178,9 +192,12 @@ class _GenerateTurn(StreamTurn):
         if self._is_continuation:
             # Phase 2: the checkpointer reloads the truncated AIMessage, so a
             # bare continuation HumanMessage makes the model resume mid-answer.
+            # Reasoning-only truncation gets the dedicated answer-now prompt:
+            # "continue where you left off" would just re-trigger the thinking.
+            prompt = _REASONING_ONLY_PROMPT if self._is_reasoning_only else _CONTINUATION_PROMPT
             input_dict: dict[str, Any] = {
                 "session_id": self.session_id,
-                "messages": [HumanMessage(content=_CONTINUATION_PROMPT)],
+                "messages": [HumanMessage(content=prompt)],
             }
         else:
             content_list: list[str | dict[str, Any]] = _get_content_list(self.multi_modal_message)
@@ -218,10 +235,16 @@ class _GenerateTurn(StreamTurn):
                     self.meta_input_tokens = int(_usage["input_tokens"])
                 if _usage.get("output_tokens") is not None:
                     self.meta_output_tokens = int(_usage["output_tokens"])
+                _details = _usage.get("output_token_details") or {}
+                if _details.get("reasoning_tokens") is not None:
+                    self.meta_reasoning_tokens = int(_details["reasoning_tokens"])
             _finish = _resp_meta.get("finish_reason") or _resp_meta.get("stop_reason")
             if _finish:
                 self.meta_finish_reason = _finish
             self._has_tool_calls = bool(getattr(last_msg, "tool_calls", None))
+            self._has_visible_text = bool(res)
+            ai_kwargs: dict[str, Any] = getattr(last_msg, "additional_kwargs", None) or {}
+            self._has_reasoning = bool(ai_kwargs.get("reasoning_content"))
         except (KeyError, TypeError, AttributeError):  # noqa: S110
             pass
         return [{"type": "text", "content": res}]
@@ -237,30 +260,50 @@ class _GenerateTurn(StreamTurn):
                 "model_name": self.meta_model_name or "",
                 "input_tokens": self.meta_input_tokens or 0,
                 "output_tokens": self.meta_output_tokens or 0,
+                "reasoning_tokens": self.meta_reasoning_tokens or 0,
                 "finish_reason": self.meta_finish_reason or "",
             }
         ]
 
-    def _should_text_continue(self) -> bool:
+    def _should_text_continue(self) -> tuple[bool, bool]:
+        """Phase 2 decision: ``(should_continue, is_reasoning_only)``.
+
+        Truncation-scenario matrix (H.2): tool-call truncation goes to the
+        MaxTokensBoost middleware (no continuation), reasoning-only output
+        gets the dedicated prompt (max 2), everything else that hit the
+        length cap gets the standard text continuation (max 4).
+        """
         if self.meta_finish_reason == "content_filter":
             # Flag the middleware layer so the next model call can fall back
             # or terminate instead of re-prompting a filtered response.
             state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
-            return False
-        return (
-            self.meta_finish_reason in ("length", "max_tokens")
-            and not self._has_tool_calls
-            and self._continuation_retries < _MAX_CONTINUATION_RETRIES
-        )
+            return False, False
+        if self.meta_finish_reason not in ("length", "max_tokens"):
+            return False, False
+        if self._has_tool_calls:
+            return False, False
+        if not self._has_visible_text and self._has_reasoning:
+            if self._reasoning_only_retries >= _MAX_REASONING_ONLY_RETRIES:
+                return False, False
+            return True, True
+        if self._continuation_retries >= _MAX_CONTINUATION_RETRIES:
+            return False, False
+        return True, False
 
-    def _prepare_continuation(self) -> None:
+    def _prepare_continuation(self, is_reasoning_only: bool = False) -> None:
         self._is_continuation = True
-        self._continuation_retries += 1
+        self._is_reasoning_only = is_reasoning_only
+        if is_reasoning_only:
+            self._reasoning_only_retries += 1
+        else:
+            self._continuation_retries += 1
         # The next model call's finish_reason overwrites these; clearing here
         # prevents a stale truncation value from re-triggering the loop if the
         # continuation stream carries no metadata.
         self.meta_finish_reason = None
         self._has_tool_calls = False
+        self._has_reasoning = False
+        self._has_visible_text = False
 
     async def _on_cancelled(self) -> None:
         await _write_interrupt_marker(self.session_id, self.ai_text, "cancelled")

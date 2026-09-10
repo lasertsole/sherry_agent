@@ -46,6 +46,7 @@ class StreamDriver:
     done_model_name: Any = ""
     done_input_tokens: Any = 0
     done_output_tokens: Any = 0
+    done_reasoning_tokens: Any = 0
     done_finish_reason: Any = ""
 
     def __init__(self, session_id: str, websocket: Any) -> None:
@@ -113,6 +114,9 @@ class StreamDriver:
                         "model_name": meta.get("model_name", self.done_model_name),
                         "input_tokens": meta.get("input_tokens", self.done_input_tokens),
                         "output_tokens": meta.get("output_tokens", self.done_output_tokens),
+                        "reasoning_tokens": meta.get(
+                            "reasoning_tokens", self.done_reasoning_tokens
+                        ),
                         "finish_reason": meta.get("finish_reason", self.done_finish_reason),
                     }
                 )

@@ -35,6 +35,7 @@ Why it exists
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 # OpenAI-compatible gateways that accept ``reasoning_effort`` on their reasoning
@@ -65,6 +66,12 @@ _ZHIPU_REASONING_PREFIXES = ("glm-4.5", "glm-4.6", "glm-5")
 # Reasoning token budget for Anthropic's ``thinking`` param. Must stay well under
 # the model's ``max_tokens`` or the API rejects the request.
 _DEFAULT_ANTHROPIC_BUDGET = 2000
+
+# Thinking-token headroom for the providers that draw reasoning tokens from the
+# SHARED ``max_tokens`` pool (DeepSeek / GLM / OpenAI reasoning models — none of
+# them expose a budget knob). When thinking is enabled the model config inflates
+# ``max_tokens`` by this much so the visible answer is not squeezed to nothing.
+_DEFAULT_NON_ANTHROPIC_BUDGET = int(os.getenv("MAIN_LLM_THINKING_BUDGET", "4096"))
 
 _VALID_REASONING_EFFORTS = ("low", "medium", "high")
 
@@ -103,6 +110,36 @@ def is_zhipu_reasoning_model(model_name: str) -> bool:
     if "/" in name:
         name = name.rsplit("/", 1)[-1]
     return name.startswith(_ZHIPU_REASONING_PREFIXES)
+
+
+def get_thinking_budget(provider: str | None, model_name: str | None, enabled: bool) -> int:
+    """Return the reasoning-token headroom the model config must add to ``max_tokens``.
+
+    Thinking tokens and output tokens share the ``max_tokens`` budget: without
+    extra headroom a reasoning model can spend the whole cap thinking and cut
+    the visible answer to nothing. Anthropic reports the budget explicitly
+    (``budget_tokens``, reasoning models only); every other payload style
+    draws from the shared pool, so a fixed budget is added. Returns 0 when
+    the switch is off, the provider is unknown, or the model does not accept
+    a reasoning payload — mirroring :func:`build_reasoning_kwargs` exactly so
+    the two never disagree about "does this call think?".
+    """
+    if not enabled or not provider:
+        return 0
+    provider = provider.strip().lower()
+    if provider == "anthropic":
+        if model_name and _is_anthropic_reasoning_model(model_name):
+            return _DEFAULT_ANTHROPIC_BUDGET
+        return 0
+    if provider == "deepseek":
+        return _DEFAULT_NON_ANTHROPIC_BUDGET
+    if provider in _OPENAI_COMPATIBLE:
+        if model_name and (
+            is_zhipu_reasoning_model(model_name) or is_openai_reasoning_model(model_name)
+        ):
+            return _DEFAULT_NON_ANTHROPIC_BUDGET
+        return 0
+    return 0
 
 
 def build_reasoning_kwargs(
@@ -176,4 +213,9 @@ def build_reasoning_kwargs(
     return {}
 
 
-__all__ = ["build_reasoning_kwargs", "is_openai_reasoning_model", "is_zhipu_reasoning_model"]
+__all__ = [
+    "build_reasoning_kwargs",
+    "get_thinking_budget",
+    "is_openai_reasoning_model",
+    "is_zhipu_reasoning_model",
+]

@@ -24,6 +24,7 @@ from .middlewares import (
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
+from .context_limit_guard_wrapper import ContextLimitGuardWrapper
 from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
 # ── Extended state schema ────────────────────────────────────────────────
@@ -98,7 +99,7 @@ _agent_loop = None
 async def built_agent(
     temperature: float = 0.8,
     force_rebuild: bool = False,
-) -> RepetitionGuardWrapper:
+) -> ContextLimitGuardWrapper:
     global _agent, _agent_loop
     import asyncio
 
@@ -175,6 +176,11 @@ async def built_agent(
         # stream output and historically triggered a false repetition cut
         # that suppressed the real reply.
         _agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
+        # Module I: context-window guard OUTSIDE the repetition wrapper —
+        # the guard sees chunks before repetition filtering, capturing real
+        # usage_metadata at model-call boundaries and enforcing the
+        # mid-stream output budget.
+        _agent = ContextLimitGuardWrapper(_agent, context_window=main_llm_max_tokens)
         _agent_loop = current_loop
 
     return _agent

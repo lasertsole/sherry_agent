@@ -76,11 +76,15 @@ class AIMessageRowBuilder(MessageRowBuilder):
         usage_metadata: dict[str, Any] | None = getattr(msg, "usage_metadata", None)
         input_tokens: int | None = None
         output_tokens: int | None = None
+        reasoning_tokens: int | None = None
         if usage_metadata:
             if usage_metadata.get("input_tokens") is not None:
                 input_tokens = int(usage_metadata["input_tokens"])
             if usage_metadata.get("output_tokens") is not None:
                 output_tokens = int(usage_metadata["output_tokens"])
+            _details = usage_metadata.get("output_token_details") or {}
+            if _details.get("reasoning_tokens") is not None:
+                reasoning_tokens = int(_details["reasoning_tokens"])
 
         # Persist the chain-of-thought so the client can re-render the
         # collapsible thinking bubble after a reload. Reasoning models
@@ -116,6 +120,7 @@ class AIMessageRowBuilder(MessageRowBuilder):
             "model_name": model_name,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "reasoning_tokens": reasoning_tokens,
             "origin": None,
         }
 
@@ -169,6 +174,7 @@ class HumanMessageRowBuilder(MessageRowBuilder):
             "model_name": None,
             "input_tokens": None,
             "output_tokens": None,
+            "reasoning_tokens": None,
             "origin": origin,
         }
 
@@ -196,6 +202,7 @@ class ToolMessageRowBuilder(MessageRowBuilder):
             "model_name": None,
             "input_tokens": None,
             "output_tokens": None,
+            "reasoning_tokens": None,
             "origin": None,
         }
 
@@ -273,6 +280,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 model_name,
                 input_tokens,
                 output_tokens,
+                reasoning_tokens,
                 origin
             ) VALUES (
                 :session_id,
@@ -294,6 +302,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 :model_name,
                 :input_tokens,
                 :output_tokens,
+                :reasoning_tokens,
                 :origin
             )
         """,

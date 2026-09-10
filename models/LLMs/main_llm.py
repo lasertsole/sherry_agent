@@ -6,7 +6,11 @@ from langchain.chat_models import init_chat_model
 from loguru import logger
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.LLMs.reasoning_openai import ReasoningChatOpenAI
-from models.LLMs.reasoning_payload import build_reasoning_kwargs, is_zhipu_reasoning_model
+from models.LLMs.reasoning_payload import (
+    build_reasoning_kwargs,
+    get_thinking_budget,
+    is_zhipu_reasoning_model,
+)
 
 # Load environment variables
 load_dotenv(ENV_PATH, override=True)
@@ -34,6 +38,28 @@ if max_tokens:
 enable_thinking = os.getenv("MAIN_LLM_ENABLE_THINKING", "").strip().lower() == "true"
 reasoning_effort = os.getenv("MAIN_LLM_REASONING_EFFORT")
 
+# Output-token budget when thinking is enabled. SAME env/default as
+# MaxTokensBoostMiddleware's boost base (agent/middlewares/max_tokens_boost.py)
+# so the boost sequence always starts above the configured output cap.
+OUTPUT_MAX_TOKEN = int(os.getenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "8192"))
+
+
+def apply_thinking_budget(
+    model_config: dict[str, Any], provider: str | None, model_name: str | None, enabled: bool
+) -> dict[str, Any]:
+    """Inflate ``max_tokens`` by the provider's thinking budget when thinking is on.
+
+    Thinking tokens share the output budget, so the config gets headroom equal
+    to :func:`get_thinking_budget`'s value. When thinking is off (or the model
+    accepts no reasoning payload) the key stays ABSENT so providers keep
+    applying their own default output cap.
+    """
+    budget = get_thinking_budget(provider, model_name, enabled)
+    if budget > 0:
+        model_config["max_tokens"] = OUTPUT_MAX_TOKEN + budget
+    return model_config
+
+
 model_config: dict[str, Any] = {
     "model_provider": model_provider,
     "model": api_name,
@@ -55,6 +81,7 @@ model_config.update(
         reasoning_effort=reasoning_effort,
     )
 )
+apply_thinking_budget(model_config, model_provider, api_name, enable_thinking)
 model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
 
 

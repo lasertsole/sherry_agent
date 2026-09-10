@@ -200,6 +200,7 @@ class _AutoTurnStreamDriver(StreamDriver):
     done_model_name = None
     done_input_tokens = None
     done_output_tokens = None
+    done_reasoning_tokens = None
 
     async def send_frame(self, payload: dict[str, Any]) -> None:
         await _send_ws(self.websocket, payload)

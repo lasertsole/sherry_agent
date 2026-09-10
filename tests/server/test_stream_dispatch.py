@@ -343,6 +343,7 @@ class TestGenerateTurnWiring:
             "model_name": "",
             "input_tokens": 0,
             "output_tokens": 0,
+            "reasoning_tokens": 0,
             "finish_reason": "",
         }
 
@@ -429,6 +430,7 @@ class TestGenerateTurnWiring:
             "model_name": "ds-v3",
             "input_tokens": 9,
             "output_tokens": 2,
+            "reasoning_tokens": 0,
             "finish_reason": "",
         }
         assert turn.ai_text == "final answer"

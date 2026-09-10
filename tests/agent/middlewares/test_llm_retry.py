@@ -250,6 +250,177 @@ class TestContentFilterFlag:
             mw.wrap_model_call(_request(), handler)
 
 
+# ---- partial-stream stub (H.3) ----------------------------------------------
+
+
+class TestPartialStreamStub:
+    def _set_stub(self, cause: str = "timeout") -> None:
+        state_register_mem.set_state(SID, "llm_partial_stream_stub", True)
+        state_register_mem.set_state(SID, "llm_partial_stream_cause", cause)
+
+    def test_stub_flag_discards_result_and_retries(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=3)
+        self._set_stub("timeout")
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:main"
+        # first result discarded (cut response), one fresh retry
+        assert calls["n"] == 2
+        assert state_register_mem.get_state(SID, "llm_partial_stream_stub", False) is False
+        assert state_register_mem.get_state(SID, "llm_partial_stream_cause", "") == ""
+
+    def test_stub_without_cause_defaults_to_timeout(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=3, stale_giveup_threshold=99)
+        state_register_mem.set_state(SID, "llm_partial_stream_stub", True)
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            return _ok_result(req)
+
+        mw.wrap_model_call(_request(), handler)
+        assert calls["n"] == 2
+        # timeout classification bumps the stale streak
+        assert state_register_mem.get_state(SID, "llm_stale_streak", 0) == 1
+
+    def test_unknown_cause_falls_back_to_timeout(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=3)
+        self._set_stub("not-a-reason")
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:main"
+        assert calls["n"] == 2
+
+    def test_stub_exhausted_keeps_current_result(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=0)
+        self._set_stub("server_error")
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:main"
+        assert calls["n"] == 1
+
+    def test_async_stub_retries(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=3)
+        self._set_stub("timeout")
+        calls = {"n": 0}
+
+        async def handler(req):
+            calls["n"] += 1
+            return _ok_result(req)
+
+        assert asyncio.run(mw.awrap_model_call(_request(), handler)) == "ok:main"
+        assert calls["n"] == 2
+
+    def test_stub_retry_strips_callbacks_on_stream_turns(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=3)
+        self._set_stub("timeout")
+        state_register_mem.set_state(SID, "is_stream_turn", True)
+        sentinel = object()
+        seen = []
+
+        class _Req:
+            def __init__(self):
+                self.state = {"session_id": SID}
+                self.config = {"callbacks": sentinel}
+                self.model_settings = {}
+                self.model = _SentinelModel("main")
+
+        def handler(req):
+            seen.append(req.config.get("callbacks"))
+            return _ok_result(req)
+
+        req = _Req()
+        mw.wrap_model_call(req, handler)
+        assert seen[0] is sentinel
+        assert seen[1] is None  # stripped during the stub re-call
+        assert req.config.get("callbacks") is sentinel  # restored after
+
+    def test_stub_never_reaches_max_tokens_boost(self, monkeypatch):
+        """Chain-order guard: boost wraps retry; a stub-flagged result is
+        converted to a retry inside the retry middleware, so the boost layer
+        only ever sees a clean (non-truncated) result."""
+        from agent.middlewares.max_tokens_boost import MaxTokensBoostMiddleware
+
+        _zero_backoff(monkeypatch)
+        retry = _sync_middleware(max_retries=3)
+        boost = MaxTokensBoostMiddleware()
+        self._set_stub("timeout")
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            return _ok_result(req)
+
+        req = _request()
+        result = boost.wrap_model_call(req, lambda r: retry.wrap_model_call(r, handler))
+        assert result == "ok:main"
+        assert calls["n"] == 2
+        assert "max_tokens" not in req.model_settings
+
+
+# ---- content-filter terminated flag (H.5) ------------------------------------
+
+
+class TestContentFilterTerminated:
+    def test_terminated_flag_switches_to_fallback(self):
+        mw = LLMRetryMiddleware(
+            fallback_chain=[FallbackCandidate("deepseek", "deepseek-chat", _SentinelModel("fb1"))]
+        )
+        state_register_mem.set_state(SID, "llm_content_filter_terminated", True)
+        seen = []
+
+        def handler(req):
+            seen.append(getattr(req.model, "model_name", "?"))
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:fb1"
+        assert seen == ["main", "fb1"]
+        assert state_register_mem.get_state(SID, "llm_content_filter_terminated", False) is False
+
+    def test_terminated_flag_without_chain_raises_content_filter(self):
+        mw = _sync_middleware()
+        state_register_mem.set_state(SID, "llm_content_filter_terminated", True)
+
+        def handler(req):
+            return _ok_result(req)
+
+        with pytest.raises(ContentFilterError, match="safety refusal"):
+            mw.wrap_model_call(_request(), handler)
+
+    def test_either_flag_triggers_single_fallback(self):
+        mw = LLMRetryMiddleware(
+            fallback_chain=[FallbackCandidate("deepseek", "deepseek-chat", _SentinelModel("fb1"))]
+        )
+        state_register_mem.set_state(SID, "llm_content_filter_blocked", True)
+        state_register_mem.set_state(SID, "llm_content_filter_terminated", True)
+        seen = []
+
+        def handler(req):
+            seen.append(getattr(req.model, "model_name", "?"))
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:fb1"
+        assert seen == ["main", "fb1"]
+
+
 # ---- fallback chain ---------------------------------------------------------
 
 

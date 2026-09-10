@@ -11,6 +11,7 @@ __all__ = [
     "built_agent",
     "get_agent_tools",
     "build_async_sqlite_checkpointer",
+    "ContextLimitGuardWrapper",
     "RepetitionGuardWrapper",
 ]
 
@@ -24,6 +25,10 @@ def __getattr__(name: str) -> Any:
         from .checkpointer import build_async_sqlite_checkpointer
 
         return build_async_sqlite_checkpointer
+    if name == "ContextLimitGuardWrapper":
+        from .context_limit_guard_wrapper import ContextLimitGuardWrapper
+
+        return ContextLimitGuardWrapper
     if name == "RepetitionGuardWrapper":
         from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 

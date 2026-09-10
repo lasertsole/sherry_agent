@@ -40,6 +40,7 @@ from langchain_core.messages import BaseMessage, ToolCall, ToolCallChunk, ToolMe
 from loguru import logger
 from runtime import state_register_mem
 from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
+from pub_func.message.llm_error_classifier import FailoverReason, classify_api_error
 from .stream_diag import reraise_with_diag, stream_diag_init, stream_diag_summary
 
 
@@ -57,6 +58,19 @@ _pending_raw: dict[str, dict[str, list[str]]] = {}
 # cutting the stream on a safety-filter hit, without a content_filter
 # finish_reason.
 _CONTENT_FILTER_KEYWORDS = ("new_sensitive", "content_filter", "safety")
+
+# Cross-layer flags written for the middleware retry/fallback layer
+# (agent/middlewares/llm_retry.py consumes them at its post-handler seam):
+# - ``llm_partial_stream_stub`` (H.3): the stream died mid-output (network cut
+#   or silent end) after partial model output was already streamed — the next
+#   model call must be retried, NOT boosted with larger max_tokens.
+# - ``llm_partial_stream_cause``: FailoverReason value of what killed the
+#   stream, so the retry reuses the real classification.
+# - ``llm_content_filter_terminated`` (H.5): a mid-stream safety cut — the
+#   next model call must switch to the fallback chain or raise.
+_STUB_FLAG_KEY = "llm_partial_stream_stub"
+_STUB_CAUSE_KEY = "llm_partial_stream_cause"
+_FILTER_TERMINATED_KEY = "llm_content_filter_terminated"
 
 
 def _accumulate_pending_args(session_id: str, tool_id: str | None, raw_args) -> None:
@@ -181,9 +195,23 @@ class StreamTurn:
         self.meta_model_name: str | None = None
         self.meta_input_tokens: int | None = None
         self.meta_output_tokens: int | None = None
+        # H.7: reasoning tokens reported by thinking models
+        # (usage_metadata.output_token_details.reasoning_tokens).
+        self.meta_reasoning_tokens: int | None = None
         # finish_reason / stop_reason of the LAST model call ("stop", "length",
         # "max_tokens", ...) — drives the Phase 2 text-continuation decision.
         self.meta_finish_reason: str | None = None
+        # What the turn's model calls produced so far. Drives the H.2
+        # reasoning-only continuation decision (thinking budget exhausted with
+        # no visible answer needs a dedicated prompt, not "continue where you
+        # left off") and the H.3 partial-stream-stub detection (output existed
+        # when the stream died).
+        self._has_reasoning: bool = False
+        self._has_visible_text: bool = False
+        # H.4: tool calls seen streaming this turn, keyed by call id (or name
+        # when the id has not arrived yet) — entries are removed when the real
+        # ToolMessage lands, so whatever remains died mid-call.
+        self._partial_tool_calls: dict[str, str] = {}
         # Whether any model call in this turn produced tool calls. A truncated
         # response WITH tool calls goes through the Phase 3 max-tokens boost
         # (middleware re-call) instead of the Phase 2 text continuation.
@@ -219,13 +247,17 @@ class StreamTurn:
         """Frames yielded after normal completion (generate: the meta chunk)."""
         return []
 
-    def _should_text_continue(self) -> bool:
-        """Whether to inject a continuation prompt and re-stream after truncation."""
+    def _should_text_continue(self) -> tuple[bool, bool]:
+        """Whether to inject a continuation prompt and re-stream after truncation.
+
+        Returns ``(should_continue, is_reasoning_only)``: a reasoning-only
+        continuation re-streams with the dedicated answer-now prompt (H.2).
+        """
         if self.meta_finish_reason == "content_filter":
             # Safety-filtered responses must not enter the continuation loop;
             # flag the middleware layer so it can fall back or terminate.
             state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
-        return False
+        return False, False
 
     def _detect_mid_stream_content_filter(self) -> bool:
         """Detect a mid-stream safety cut that ended the stream WITHOUT a
@@ -240,9 +272,40 @@ class StreamTurn:
             return False
         self.meta_finish_reason = "content_filter"
         state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+        state_register_mem.set_state(self.session_id, _FILTER_TERMINATED_KEY, True)
         return True
 
-    def _prepare_continuation(self) -> None:
+    def _mark_partial_stream_stub(self, cause_reason: str) -> None:
+        """H.3: flag a stream that ended abnormally after partial output.
+
+        The middleware retry layer converts the flag into a classified retry
+        on the NEXT model call — a network cut does not need larger
+        max_tokens. Requires model-generated output (text or reasoning): a
+        turn that produced none either never really started (the exception
+        was already retried inside the middleware chain) or is a tool-only
+        round, and must not poison the next call.
+        """
+        if not (self._has_visible_text or self._has_reasoning):
+            return
+        state_register_mem.set_state(self.session_id, _STUB_FLAG_KEY, True)
+        state_register_mem.set_state(self.session_id, _STUB_CAUSE_KEY, cause_reason)
+
+    def _build_dropped_tool_warning(self) -> str | None:
+        """H.4: name the tool calls the stream dropped mid-flight.
+
+        A tool call whose chunks were still streaming when the stream died
+        can never execute (its JSON is incomplete); naming the dropped calls
+        tells the user why the action silently vanished.
+        """
+        if not self._partial_tool_calls:
+            return None
+        names = list(self._partial_tool_calls.values())
+        name_str = ", ".join(names[:3])
+        if len(names) > 3:
+            name_str += f", +{len(names) - 3} more"
+        return f"Stream stalled mid tool-call ({name_str}); the action was not executed."
+
+    def _prepare_continuation(self, is_reasoning_only: bool = False) -> None:
         """Prepare state for a continuation re-restream (e.g., set a flag)."""
 
     async def _on_cancelled(self) -> None:
@@ -319,6 +382,7 @@ class StreamTurn:
                                         self.session_id, "current_tool_name", ""
                                     )
                                     args = _pop_pending_args(self.session_id, tool_id)
+                                    self._partial_tool_calls.pop(tool_id, None)
                                     yield {
                                         "type": "tool_result",
                                         "content": _normalize_text(tm.content),
@@ -379,6 +443,11 @@ class StreamTurn:
                                         self.meta_input_tokens = int(_usage["input_tokens"])
                                     if _usage.get("output_tokens") is not None:
                                         self.meta_output_tokens = int(_usage["output_tokens"])
+                                    _details = _usage.get("output_token_details") or {}
+                                    if _details.get("reasoning_tokens") is not None:
+                                        self.meta_reasoning_tokens = int(
+                                            _details["reasoning_tokens"]
+                                        )
                                 _finish = _resp_meta.get("finish_reason") or _resp_meta.get(
                                     "stop_reason"
                                 )
@@ -406,6 +475,15 @@ class StreamTurn:
                                 if len(tool_calls) > 0:
                                     self._has_tool_calls = True
                                     tool_call = tool_calls[0]
+                                    # H.4: remember every tool call whose chunks
+                                    # started streaming; completed calls are
+                                    # removed when their ToolMessage arrives.
+                                    for tc in tool_calls:
+                                        tc_name = tc.get("name")
+                                        if tc_name:
+                                            self._partial_tool_calls.setdefault(
+                                                tc.get("id") or tc_name, tc_name
+                                            )
 
                                     if tool_call["name"]:
                                         if tool_call["name"].strip() or tool_call[
@@ -496,6 +574,7 @@ class StreamTurn:
                             if isinstance(msg_chunk.content, str) and len(msg_chunk.content) > 0:
                                 res = msg_chunk.content
                                 self.ai_text += res
+                                self._has_visible_text = True
                                 self._diag["bytes"] += len(res)
                                 yield {"type": "text", "content": res}
 
@@ -511,6 +590,7 @@ class StreamTurn:
                             # thinking block on the same message as the final answer.
                             _reasoning = _reasoning_delta(msg_chunk)
                             if _reasoning and len(_reasoning) > 0:
+                                self._has_reasoning = True
                                 yield {"type": "reasoning", "content": _reasoning}
                             # End model reasoning output logic
                             # End conversation output logic
@@ -518,10 +598,16 @@ class StreamTurn:
                     # Stream ended: check for a provider mid-stream safety cut
                     # that arrived without a content_filter finish_reason.
                     self._detect_mid_stream_content_filter()
+                    # H.3: a stream that ends without ANY finish_reason did
+                    # not complete normally — the provider cut it silently.
+                    # Partial output means the answer died mid-flight.
+                    if not self.meta_finish_reason:
+                        self._mark_partial_stream_stub(FailoverReason.timeout.value)
 
-                if not self._should_text_continue():
+                should_continue, is_reasoning_only = self._should_text_continue()
+                if not should_continue:
                     break
-                self._prepare_continuation()
+                self._prepare_continuation(is_reasoning_only)
 
             for frame in self._final_frames():
                 yield frame
@@ -549,7 +635,20 @@ class StreamTurn:
         except Exception as e:
             elapsed = time.time() - start_time
             self._detect_mid_stream_content_filter()
+            if self.meta_finish_reason == "content_filter":
+                # H.5: the provider killed the stream on a safety filter —
+                # either the explicit finish_reason carried in the metadata
+                # or the keyword heuristic above. Flag for fallback.
+                state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+                state_register_mem.set_state(self.session_id, _FILTER_TERMINATED_KEY, True)
+            else:
+                # H.3: the stream died mid-output — preserve the classified
+                # cause so the retry layer reuses the real classification.
+                self._mark_partial_stream_stub(classify_api_error(e).reason.value)
             diag_summary = stream_diag_summary(self._diag, e)
+            dropped = self._build_dropped_tool_warning()
+            if dropped:
+                diag_summary = f"{diag_summary} | {dropped}"
             logger.error("Stream failed: {}", diag_summary)
             self._log_failed(elapsed, e)
             reraise_with_diag(e, diag_summary)
