@@ -36,12 +36,14 @@ _REGISTRY_ERROR: str | None = None
 
 
 def _ensure_registry() -> bool:
-    """Bind the registry seam on first use; False when it cannot be imported."""
+    """Bind the registry seam on first use; False when it cannot be imported.
+
+    A failed import is NOT cached: every call re-attempts it, so a transient
+    registry-import failure is recoverable on a later invocation.
+    """
     global get_run_by_child_session_key, is_live_unended_run, _REGISTRY_ERROR
     if get_run_by_child_session_key is not None and is_live_unended_run is not None:
         return True
-    if _REGISTRY_ERROR is not None:
-        return False
     try:
         from agent.tools.subagent.registry.helpers import (
             is_live_unended_run as _real_is_live,
@@ -55,6 +57,7 @@ def _ensure_registry() -> bool:
         return False
     get_run_by_child_session_key = _real_get_run
     is_live_unended_run = _real_is_live
+    _REGISTRY_ERROR = None
     return True
 
 
@@ -117,6 +120,9 @@ async def taskflow_wait_all(
     as every target is settled or the timeout elapses; an unknown run is treated
     as settled. Afterwards call taskflow_resume for each child to inject its
     result.
+
+    ``session_id`` is injected by the runtime and reserved for parity with the
+    other taskflow tools; the flow is already session-scoped so it is unused.
     """
     flow_id = (flow_id or "").strip()
     if not flow_id:
@@ -144,7 +150,12 @@ async def taskflow_wait_all(
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
 
     while True:
-        report = [(step_id, child_key, _settled(child_key)) for step_id, child_key in targets]
+        try:
+            report = [(step_id, child_key, _settled(child_key)) for step_id, child_key in targets]
+        except Exception as exc:
+            # The registry is an external seam: a lookup failure is an Error
+            # string, never a raised exception at the tool boundary.
+            return f"Error: subagent registry lookup failed: {exc}"
         if all(settled for _, _, settled in report):
             return _format_report(flow_id, report, timed_out=False)
         if time.monotonic() >= deadline:

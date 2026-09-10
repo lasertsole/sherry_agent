@@ -18,16 +18,16 @@ from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus
 from ..registry import store_sqlite
-from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from . import _dispatch
 from ._shared import (
-    conflict_error,
+    apply_dispatched_steps,
     deps_satisfied,
     is_terminal,
     not_found_error,
     requester_session_key,
     step_status,
     terminal_error,
+    update_flow_with_conflict_retry,
 )
 
 SessionId = Annotated[str, InjectedState("session_id")]
@@ -96,6 +96,7 @@ async def taskflow_dispatch(
     requester_key = requester_session_key(session_id)
 
     dispatched_ids: list[str] = []
+    records: list[dict] = []
     failure: Exception | None = None
     for sid in requested:
         step = by_id[sid]
@@ -111,33 +112,38 @@ async def taskflow_dispatch(
         step["status"] = str(StepStatus.DISPATCHED)
         step["child_session_key"] = child_key
         step["dispatched_at"] = time.time()
+        records.append(step)
         dispatched_ids.append(sid)
 
-    state["steps"] = steps
-
-    if failure is not None:
+    if not records:
         failed_ids = [sid for sid in requested if sid not in dispatched_ids]
-        if dispatched_ids:
-            try:
-                await store_sqlite.update_flow(flow_id, revision, state=state)
-            except FlowConflictError as exc:
-                return (
-                    f"{conflict_error(exc)}; dispatched (unrecorded): {dispatched_ids}; "
-                    f"failed: {failed_ids}"
-                )
-            except FlowNotFoundError:
-                return not_found_error(flow_id)
         return (
             f"Error: dispatch failed for step_id(s) {failed_ids} "
             f"({type(failure).__name__}: {failure}); dispatched={dispatched_ids}"
         )
 
-    try:
-        updated = await store_sqlite.update_flow(flow_id, revision, state=state)
-    except FlowConflictError as exc:
-        return conflict_error(exc)
-    except FlowNotFoundError:
-        return not_found_error(flow_id)
+    def build_state(fresh_flow: dict, _attempt: int) -> dict:
+        fresh_state = dict(fresh_flow["state"])
+        fresh_steps = list(fresh_state.get("steps") or [])
+        fresh_state["steps"] = apply_dispatched_steps(fresh_steps, records)
+        return fresh_state
+
+    updated, error = await update_flow_with_conflict_retry(
+        flow_id,
+        revision,
+        flow,
+        build_state,
+        child_keys=[str(record.get("child_session_key") or "") for record in records],
+    )
+    if updated is None:
+        return error
+
+    failed_ids = [sid for sid in requested if sid not in dispatched_ids]
+    if failure is not None:
+        return (
+            f"Error: dispatch failed for step_id(s) {failed_ids} "
+            f"({type(failure).__name__}: {failure}); dispatched={dispatched_ids}"
+        )
 
     return (
         f"TaskFlow steps dispatched: flow_id={flow_id}, step_ids={dispatched_ids}, "

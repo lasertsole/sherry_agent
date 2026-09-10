@@ -6,8 +6,15 @@ the latest revision so the caller can re-read (taskflow_summary) and retry
 with the freshest expected_revision, per skills/builtin/core/taskflow/SKILL.md.
 """
 
+from collections.abc import Callable
+
 from ..config import TERMINAL_STATUSES, StepStatus
-from ..registry.store_sqlite import FlowConflictError
+from ..registry import store_sqlite
+from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError, UNSET
+
+# Bounded optimistic-lock retries for a mutation whose side effect (a spawned
+# child session) already happened: losing the write must never drop the child.
+PERSIST_MAX_ATTEMPTS = 3
 
 
 def requester_session_key(session_id: str) -> str:
@@ -128,8 +135,93 @@ def unlock_dependents(steps: list[dict]) -> list[str]:
             continue
         if deps_satisfied(step, steps):
             step["status"] = str(StepStatus.READY)
-            newly_ready.append(step.get("step_id"))
+            step_id = step.get("step_id")
+            if step_id is not None:
+                newly_ready.append(step_id)
     return newly_ready
+
+
+def record_unpersisted_children_error(flow_id: str, child_keys: list[str], attempts: int) -> str:
+    """Error text naming spawned children that could not be persisted.
+
+    A spawned child is already running: the caller must recover it by key and
+    must NOT re-dispatch it. This text is the only trace of an unrecorded child,
+    so it always names every key.
+    """
+    keys = ", ".join(key for key in child_keys if key)
+    return (
+        f"Error: TaskFlow '{flow_id}': spawned child session(s) could not be recorded "
+        f"after {attempts} optimistic-lock attempt(s): child_session_key(s)=[{keys}]. "
+        "The child session(s) are already running - do NOT dispatch them again; "
+        "recover using the key(s) above."
+    )
+
+
+def apply_dispatched_steps(fresh_steps: list[dict], records: list[dict]) -> list[dict]:
+    """Re-apply recorded dispatched-step payloads onto a freshly-read step list.
+
+    Matching is by ``step_id``. A record whose step is absent from the fresh
+    state is appended, so a spawned child is never lost to a concurrent writer
+    that rewrote the step list.
+    """
+    merged = list(fresh_steps)
+    by_id = {s.get("step_id"): s for s in merged if s.get("step_id") is not None}
+    for record in records:
+        step_id = record.get("step_id")
+        target = by_id.get(step_id) if step_id is not None else None
+        if target is None:
+            merged.append(dict(record))
+            continue
+        target["status"] = record["status"]
+        target["child_session_key"] = record["child_session_key"]
+        target["dispatched_at"] = record["dispatched_at"]
+    return merged
+
+
+async def update_flow_with_conflict_retry(
+    flow_id: str,
+    expected_revision: int,
+    origin_flow: dict,
+    build_state: Callable[[dict, int], dict],
+    *,
+    child_keys: list[str],
+    flow_child_session_key: object = UNSET,
+    max_attempts: int = PERSIST_MAX_ATTEMPTS,
+) -> tuple[dict | None, str | None]:
+    """Persist a mutation, re-reading and rebuilding state on optimistic-lock conflict.
+
+    A child session that has ALREADY spawned must never be silently dropped: the
+    caller invokes this only after a successful spawn, and when the write loses
+    the race ``build_state(fresh_flow, attempt)`` is invoked again against the
+    freshly-read flow and retried up to ``max_attempts``. A vanished or terminal
+    flow is terminal for the retry (the child keys are still named).
+
+    Returns ``(updated_flow, error_text)`` with exactly one non-None: on success
+    the updated flow; on exhaustion an error naming every ``child_keys`` entry.
+    """
+    revision = int(expected_revision)
+    current_flow = origin_flow
+    for attempt in range(1, max_attempts + 1):
+        state = build_state(current_flow, attempt)
+        try:
+            updated = await store_sqlite.update_flow(
+                flow_id,
+                revision,
+                state=state,
+                child_session_key=flow_child_session_key,
+            )
+            return updated, None
+        except FlowConflictError:
+            if attempt == max_attempts:
+                break
+            fresh = await store_sqlite.get_flow(flow_id)
+            if fresh is None or is_terminal(fresh["status"]):
+                return None, record_unpersisted_children_error(flow_id, child_keys, attempt)
+            current_flow = fresh
+            revision = int(fresh["expected_revision"])
+        except FlowNotFoundError:
+            return None, record_unpersisted_children_error(flow_id, child_keys, attempt)
+    return None, record_unpersisted_children_error(flow_id, child_keys, max_attempts)
 
 
 def steps_summary(steps: list[dict]) -> dict[str, int]:

@@ -1,7 +1,7 @@
 """Behavior tests for the taskflow tool family, its skill file, and wiring.
 
 Covers the six acceptance checks:
-1. build_main_tools() exposes all 8 taskflow_* tools
+1. build_main_tools() exposes all 10 taskflow_* tools
 2. create -> run_task -> resume -> finish full chain, readable back across a
    simulated restart (fresh connections / new event loop)
 3. concurrent double-write on one flow: exactly one expectedRevision conflict

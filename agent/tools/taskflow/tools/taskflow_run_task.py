@@ -29,6 +29,7 @@ from ._shared import (
     requester_session_key,
     step_status,
     terminal_error,
+    update_flow_with_conflict_retry,
 )
 
 SessionId = Annotated[str, InjectedState("session_id")]
@@ -106,24 +107,30 @@ async def taskflow_run_task(
     child_session_key = await _dispatch.dispatch_child(
         task=task, requester_session_key=requester_key, label=label
     )
+    dispatched_at = time.time()
 
-    dispatched = new_step(step_id, task, depends_on=deps, status=StepStatus.DISPATCHED)
-    dispatched["child_session_key"] = child_session_key
-    dispatched["dispatched_at"] = time.time()
-    steps.append(dispatched)
-    state["steps"] = steps
+    def build_state(fresh_flow: dict, _attempt: int) -> dict:
+        nonlocal step_id
+        fresh_state = dict(fresh_flow["state"])
+        fresh_steps = list(fresh_state.get("steps") or [])
+        step_id = f"step-{len(fresh_steps) + 1}"
+        dispatched = new_step(step_id, task, depends_on=deps, status=StepStatus.DISPATCHED)
+        dispatched["child_session_key"] = child_session_key
+        dispatched["dispatched_at"] = dispatched_at
+        fresh_steps.append(dispatched)
+        fresh_state["steps"] = fresh_steps
+        return fresh_state
 
-    try:
-        updated = await store_sqlite.update_flow(
-            flow_id,
-            revision,
-            state=state,
-            child_session_key=child_session_key,
-        )
-    except FlowConflictError as exc:
-        return conflict_error(exc)
-    except FlowNotFoundError:
-        return not_found_error(flow_id)
+    updated, error = await update_flow_with_conflict_retry(
+        flow_id,
+        revision,
+        flow,
+        build_state,
+        child_keys=[child_session_key],
+        flow_child_session_key=child_session_key,
+    )
+    if updated is None:
+        return error
 
     return (
         f"TaskFlow step dispatched: flow_id={flow_id}, step_id={step_id}, "
