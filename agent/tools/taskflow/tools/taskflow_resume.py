@@ -10,10 +10,20 @@ import time
 
 from langchain_core.tools import tool
 
-from ..config import TaskFlowStatus
+from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
-from ._shared import conflict_error, is_terminal, not_found_error, terminal_error
+from ._shared import (
+    conflict_error,
+    is_terminal,
+    mark_step_done,
+    not_found_error,
+    steps_summary,
+    terminal_error,
+    unlock_dependents,
+)
+
+_STATUS_ORDER = tuple(status.value for status in StepStatus)
 
 
 def _result_hash(child_session_key: str, result: str) -> str:
@@ -73,6 +83,15 @@ async def taskflow_resume(
     )
     state["results"] = results
 
+    # DAG bookkeeping: this child finishing marks its step done and may unlock
+    # blocked dependents. Resume NEVER spawns the newly-ready steps - the
+    # caller dispatches them explicitly (taskflow_dispatch).
+    steps = list(state.get("steps") or [])
+    step_id = mark_step_done(steps, child_session_key)
+    newly_ready = unlock_dependents(steps)
+    state["steps"] = steps
+    counts = steps_summary(steps)
+
     # Resuming a waiting flow returns it to running; a running flow stays running.
     new_status = (
         TaskFlowStatus.RUNNING.value if flow["status"] == TaskFlowStatus.WAITING.value else None
@@ -91,7 +110,10 @@ async def taskflow_resume(
     except FlowNotFoundError:
         return not_found_error(flow_id)
 
+    counts_text = ",".join(f"{status}={counts[status]}" for status in _STATUS_ORDER)
+    unlocked_text = ",".join(newly_ready)
     return (
         f"TaskFlow resumed: flow_id={flow_id}, revision={updated['expected_revision']}, "
-        f"results={len(results)}, status={updated['status']}"
+        f"results={len(results)}, status={updated['status']}, step_id={step_id}, "
+        f"unlocked=[{unlocked_text}], step_statuses={counts_text}"
     )
