@@ -28,7 +28,8 @@ logs/*.log
 *.db
 *.db-shm
 *.db-wal
-workspace/
+# live persona workspace (root only); tests/workspace must stay trackable
+/workspace/
 skills/auto
 skills/plugins/*.state.json
 **/wiki/
