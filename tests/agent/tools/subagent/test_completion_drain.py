@@ -23,6 +23,7 @@ from agent.middlewares.output_repetition_guard import (
 )
 from agent.middlewares.subagent_completion_drain import (
     SubagentCompletionDrainMiddleware,
+    _VERIFICATION_REMINDER,
 )
 from agent.tools.subagent.announce import steering_queue as sq
 from agent.tools.subagent.announce.steering_queue import SteeringQueue
@@ -99,7 +100,7 @@ def test_drain_before_model_call(isolated_queue):
     meta = msgs[0].metadata or {}
     assert meta.get("internal") is True
     assert meta.get("provenance") == "subagent_completion"
-    assert msgs[0].text == injected.text
+    assert msgs[0].text == injected.text + _VERIFICATION_REMINDER
 
     # drain marks rows CONSUMED: no re-drain on the same session
     assert asyncio.run(mw.abefore_model(state, None)) is None
@@ -150,7 +151,7 @@ def test_resume_drains_persisted_injection(tmp_path, monkeypatch):
     result = asyncio.run(mw.abefore_model({"session_id": SID_RESUME}, None))
     assert result is not None
     assert len(result["messages"]) == 1
-    assert result["messages"][0].text == "resume me"
+    assert result["messages"][0].text == "resume me" + _VERIFICATION_REMINDER
 
     # consumed exactly once after resume
     assert asyncio.run(mw.abefore_model({"session_id": SID_RESUME}, None)) is None

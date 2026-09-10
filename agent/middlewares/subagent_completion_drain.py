@@ -34,6 +34,18 @@ from agent.tools.subagent.announce.steering_queue import drain, rehydrate
 
 __all__ = ["SubagentCompletionDrainMiddleware"]
 
+# E5: appended to every drained subagent-completion carrier so the parent turn
+# is reminded that a completion message is a DoneClaim, not a verified result.
+_VERIFICATION_REMINDER = (
+    "\n\n[SYSTEM REMINDER] Subagent completed. "
+    "Before marking the todo as completed, you MUST:\n"
+    "1. Run todoread to check current state\n"
+    "2. Verify the work against acceptance criteria (Sisyphus contract)\n"
+    "3. Probe for stale state, dirty worktree, leftover resources\n"
+    "4. Only then mark completed via todowrite\n"
+    "Unverified completion = SISYPHUS VIOLATION = Lost progress."
+)
+
 
 def _is_internal_completion(msg: Any) -> bool:
     """True when ``msg`` carries the frozen task-4 completion metadata contract.
@@ -77,7 +89,17 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
                 len(items),
                 key,
             )
-            return {"messages": [item.message for item in items]}
+            # E5: completion carriers are DoneClaims, not verified results —
+            # append the Sisyphus reminder without mutating the shared message.
+            messages = []
+            for item in items:
+                message = item.message
+                if _is_internal_completion(message) and isinstance(message.content, str):
+                    message = message.model_copy(
+                        update={"content": message.content + _VERIFICATION_REMINDER}
+                    )
+                messages.append(message)
+            return {"messages": messages}
         except Exception:
             logger.exception("completion drain failed; continuing turn without injection")
             return None
