@@ -4,6 +4,14 @@
 > 参考项目: oh-my-openagent-dev (D:\selfProj\oh-my-openagent-dev)
 > 日期: 2026-09-07
 
+## Adaptation note (2026-09-10)
+
+**DAG 现在由既有 TaskFlow 系统提供（taskflow-dag-phase1，commits 9ce33ef..2824034），本设计的强制执行层复用而不是再造第二个 DAG。**
+
+- TaskFlow step 携带 `depends_on` 与 `status ∈ {blocked, ready, dispatched, done}`；`taskflow_run_task` 依赖未满足时登记 `blocked` 不派发；`taskflow_resume` 标 `done` 并解锁依赖项（不自动派发）；`taskflow_dispatch` 批量派发 `ready` 步骤；`taskflow_wait_all` 按 flow 范围等待。所有字段在 `state_json`，无 DB migration。
+- 因此 E4（转换屏障）与 E6（委派路由）改以 **TaskFlow step 状态 + subagent registry 存活检测**表达（见下），todolist 层只调用 TaskFlow 工具，不实现调度器。
+- **E1-E7 七层强制保持不变**，代码目标与职责都保留；本文档的核心约束（orchestrator doctrine、工具描述规则、续作强制器、转换屏障、Sisyphus 契约、委派路由、意图识别、压缩免疫注入、TodoDock 前端计划）在适配后仍然全部存在。
+
 ## 设计哲学
 
 全面采用 oh-my-openagent-dev 的强制执行架构：ulw-execute orchestrator doctrine + todo-continuation-enforcer + Sisyphus 完成契约 + 委派路由。
@@ -46,7 +54,7 @@ Layer 9  │ UI 组件层         │ ← 见 TODOLIST_PLAN.md
 Layer 8  │ 前端状态层        │
 Layer 7  │ 实时通信层        │
 Layer 6  │ 压缩保护层 ★     │ ← 见 TODOLIST_PLAN.md
-Layer 5  │ DAG 调度层 ★     │
+Layer 5  │ DAG 调度层 ★     │ ← 委派给 TaskFlow（depends_on + blocked/ready/dispatched/done）
 Layer 4  │ 编排执行层 ★     │ ← ulw-execute
 Layer 3  │ 工具层           │
 Layer 2  │ 服务层           │
@@ -55,9 +63,9 @@ Layer 1  │ 数据存储层        │
 E1       │ 系统提示词强制    │ AGENTS.md orchestrator doctrine + hook 存在性告知
 E2       │ 工具描述强制      │ todowrite docstring MANDATORY 格式规则 + ulw-execute 委派规则
 E3       │ 续作强制器 ★★    │ after_agent 中间件: idle+未完成 todo → 自动续作 (退避/停滞/abort/恢复)
-E4       │ 转换屏障 ★       │ prompt: 不得在 subagent 返回前标记 done + code: has_run_ended 硬阻断
+E4       │ 转换屏障 ★       │ prompt: TaskFlow step 未 done/subagent 未返回不得标 done + code: TaskFlow step 状态 + is_live_unended_run 硬阻断
 E5       │ Sisyphus 验证 ★★ │ DoneClaim → AdversarialVerify → FullyDone (5 gates)
-E6       │ 委派路由 ★       │ #a fan-out + #b category 路由 + #c 委派指令 + #d 转换屏障
+E6       │ 委派路由 ★       │ #a fan-out + #b category 路由 + #c 委派指令 + #d 转换屏障（对接 taskflow_* 工具）
 E7       │ 意图识别器 ★★    │ before_model: E7a arming(无计划→注入引导) + E7b plan-active(有计划→追加reminder)
 ```
 
@@ -102,7 +110,8 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 - delegation="subagent": complex tasks (multi-file, >100 lines, complex logic)
   — delegate to subagent via task tool, then set subagent_id field
 - Code edits, test writes, and fixes are good delegation candidates
-- Spawn all independent subagents for the current wave FIRST, then wait
+- Declare dependencies with taskflow_run_task(depends_on=[...]); dispatch ready
+  steps together with taskflow_dispatch, then wait for them
 
 ### Transition Barrier (CRITICAL)
 
@@ -179,10 +188,12 @@ If not, it's too big — split it.
 - delegation: self|subagent — whether this todo should be delegated
 - subagent_id: set after dispatching a subagent (use the child_session_key returned by task tool)
 
-## Wave Fields (optional, for DAG scheduling)
+## DAG / TaskFlow Fields (optional)
 - plan_ref: .omo/plans/*.md path
-- wave_index: wave number for parallel execution
-- depends_on: JSON array of positions this todo depends on
+- flow_id: linked TaskFlow flow id (DAG lives in TaskFlow, not in todos.db)
+- step_id: linked TaskFlow step id (e.g. step-2); read its status via taskflow_summary
+- To declare dependencies, call taskflow_run_task(..., depends_on=[...]); do NOT
+  re-implement wave/frontier scheduling in the todolist layer
 """
 
 
@@ -402,8 +413,10 @@ def _build_status_block(todos: list[dict]) -> str:
     lines.append("Remaining tasks:")
     for t in remaining:
         icon = {"pending": "○", "in_progress": "◐"}.get(t["status"], "○")
-        wave = f" (wave {t['wave_index']})" if t.get("wave_index") is not None else ""
-        lines.append(f"- [{icon}] {t['content']} ({t['priority']}){wave}")
+        step_ref = ""
+        if t.get("flow_id") and t.get("step_id"):
+            step_ref = f" (flow {t['flow_id']} / {t['step_id']})"
+        lines.append(f"- [{icon}] {t['content']} ({t['priority']}){step_ref}")
     return "\n".join(lines)
 
 
@@ -541,33 +554,59 @@ turn 结束（model 无 tool_call，agent loop 退出）
 ### Transition Barrier (CRITICAL)
 
 - Do NOT mark a todo as completed while its subagent is still running
-- Wait for subagent to return before updating the todo status
+- Do NOT mark a TaskFlow-linked todo completed while its TaskFlow step is not `done`
+  (step status `blocked`/`ready`/`dispatched` all mean "not finished")
+- Wait for subagent to return AND to inject its result via taskflow_resume before
+  updating the todo status; a step becomes `done` only when resume injects a result
 - If subagent failed, mark todo as cancelled and re-plan
 ```
 
 ### Phase 2: 代码级硬阻断
 
 - **修改文件**: `agent/tools/todolist/service.py`
-- **代码量**: ~20 行
+- **代码量**: ~25 行
 - **阶段**: Phase 2
 
-复用 sherry_agent 的 subagent registry 查询 API：
+屏障有两道来源，**都不在 todolist 内建调度器**：
+
+1. **TaskFlow step 状态**（DAG 权威在 TaskFlow）：todo 关联了 `flow_id`/`step_id` 时，
+   只有该 step 为 `done` 才允许把 todo 标 `completed`。step 为 `blocked`/`ready`/
+   `dispatched` 都算未完成，需先 `taskflow_wait_all` → `taskflow_resume` 注入结果。
+2. **subagent registry 存活检测**：todo 关联了 `subagent_id` 时，用
+   `get_run_by_child_session_key` + `is_live_unended_run` 判断子会话是否仍在运行。
 
 ```python
 # agent/tools/todolist/service.py
+
+from agent.tools.subagent.registry import get_run_by_child_session_key, is_live_unended_run
+from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
 
 
 async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
     validated = _validate_todos(todos)
 
-    # E4: 转换屏障 — 检查 subagent 是否仍在运行
+    # E4: 转换屏障 — 双来源
     for todo in validated:
-        if todo["status"] == "completed" and todo.get("subagent_id"):
-            if await _is_subagent_running(todo["subagent_id"]):
+        if todo["status"] != "completed":
+            continue
+
+        # 来源 1: TaskFlow step 状态（DAG 由 TaskFlow 拥有）
+        flow_id, step_id = todo.get("flow_id"), todo.get("step_id")
+        if flow_id and step_id:
+            step_status = _read_taskflow_step_status(flow_id, step_id)
+            if step_status is not None and step_status != "done":
                 raise TodoStoreError(
-                    f"Cannot mark todo completed: subagent {todo['subagent_id']} "
-                    "is still running. Wait for it to finish first."
+                    f"Cannot mark todo completed: TaskFlow step {step_id} "
+                    f"(flow {flow_id}) is '{step_status}'. Call taskflow_wait_all then "
+                    "taskflow_resume to inject the result before marking completed."
                 )
+
+        # 来源 2: subagent registry 存活检测
+        if todo.get("subagent_id") and _is_subagent_running(todo["subagent_id"]):
+            raise TodoStoreError(
+                f"Cannot mark todo completed: subagent {todo['subagent_id']} "
+                "is still running. Wait for it to finish first."
+            )
 
     await store.replace_all(session_id, validated)
     latest = await store.get_todos(session_id)
@@ -575,14 +614,26 @@ async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
     return latest
 
 
-async def _is_subagent_running(child_session_key: str) -> bool:
+def _is_subagent_running(child_session_key: str) -> bool:
     """检查 subagent 是否仍在运行（RUNNING 或 INTERRUPTED）。"""
-    from agent.tools.subagent.registry import get_run_by_child_session_key, has_run_ended
-
     run = get_run_by_child_session_key(child_session_key)
     if run is None:
         return False  # 找不到 run record，不阻断
-    return not has_run_ended(run)  # True = 仍在运行
+    return is_live_unended_run(run)  # True = RUNNING/INTERRUPTED（仍在运行）
+
+
+def _read_taskflow_step_status(flow_id: str, step_id: str) -> str | None:
+    """从 taskflow_summary 输出里解析指定 step 的 status（只读，不调度）。
+
+    DAG 状态完全由 TaskFlow 维护；这里只做屏障判定所需的回读。
+    """
+    text = asyncio.run(taskflow_summary.ainvoke({"flow_id": flow_id}))  # 或同步封装
+    for line in str(text).splitlines():
+        if line.strip().startswith(f"- [{step_id}]"):
+            parts = line.split()
+            if len(parts) >= 3:
+                return parts[2]  # [step_id] status task -> ...
+    return None
 ```
 
 **关键 API**（已确认存在于 sherry_agent）:
@@ -594,6 +645,10 @@ async def _is_subagent_running(child_session_key: str) -> bool:
 | `is_live_unended_run(run)`                        | `agent/tools/subagent/registry/helpers.py:48` | True = RUNNING/INTERRUPTED（仍在运行） |
 
 所有函数从 `agent.tools.subagent.registry` 包统一导出（`__init__.py`）。
+
+> **交叉引用**：E4 的 step 状态来源是 TaskFlow（`blocked/ready/dispatched/done`，
+> 见 `skills/builtin/core/taskflow/SKILL.md`），todolist 层不持有 DAG 副本，也不再需要
+> `wave_index`/`depends_on` 本地字段。
 
 ---
 
@@ -737,6 +792,12 @@ async def abefore_model(self, handler, request, config, *, key, state):
 
 **核心目标**: 在 TodoList 执行过程中，让 LLM 知道何时该派 subagent、派哪类 subagent、何时可以标记完成。
 
+> **DAG 交叉引用（2026-09-10）**：委派产生的子会话由既有 TaskFlow 追踪。带依赖的步骤用
+> `taskflow_run_task(flow_id, task, depends_on=[...])` 登记，依赖未满足时 step 为 `blocked`
+> 且不派发；结果注入用 `taskflow_resume`（标 `done` 并解锁后继）；并行派发用
+> `taskflow_dispatch`；等待用 `taskflow_wait_all`。E6 只负责"路由到哪个 category/是否委派"，
+> 不负责调度，DAG 状态一律以 TaskFlow 为准。
+
 ### 生命周期
 
 ```
@@ -744,11 +805,12 @@ LLM 创建 todo（含 category + delegation 字段）
   → #a fan-out reminder 提醒考虑委派（每 session 首次）
   → #b category 告诉 LLM 派哪类 subagent
   → #c AGENTS.md 指导如何委派
-  → LLM 调 task 工具派 subagent → 拿到 child_session_key
-  → LLM 更新 todo 的 subagent_id 字段
-  → #d-prompt: "不得在 subagent 返回前标记 done"
-  → #d-code: update_todos() 检查 has_run_ended() → 硬阻断
-  → subagent 返回 → E5 Sisyphus 验证 → LLM 标记 completed
+  → 带依赖的步骤: taskflow_run_task(..., depends_on=[...]) → TaskFlow 记 blocked 或 dispatched
+  → 对 ready 步骤: taskflow_dispatch(flow_id, step_ids) 派发 → 拿到 child_session_key
+  → LLM 更新 todo 的 subagent_id + flow_id/step_id 字段
+  → #d-prompt: "TaskFlow step 未 done / subagent 未返回前不得标记 done"
+  → #d-code: update_todos() 检查 TaskFlow step 状态 + is_live_unended_run() → 硬阻断
+  → taskflow_wait_all → taskflow_resume 注入结果(step done) → E5 Sisyphus 验证 → LLM 标记 completed
 ```
 
 ### E6a: Fan-out Reminder（#a）— 事中触发
@@ -767,7 +829,8 @@ _FANOUT_REMINDER = """
 [SYSTEM REMINDER] Consider whether any of these tasks should be delegated to subagents.
 - Set delegation="subagent" for tasks that are independent with disjoint write scopes
 - Set delegation="self" for interdependent or trivial tasks
-- Spawn all independent subagents for the current wave first, then wait
+- Declare dependencies with taskflow_run_task(..., depends_on=[...]); TaskFlow blocks
+  and unlocks steps, then taskflow_dispatch batches the ready ones in parallel
 - Route by category: quick|deep|ultrabrain|visual|git|writing
 """
 
@@ -813,7 +876,9 @@ def _validate_todos(todos: list[dict]) -> list[dict]:
 
 ### E6d: Transition Barrier（#d）— 见 E4
 
-已在 E4 中详述（prompt 级 + 代码级硬阻断）。
+已在 E4 中详述（prompt 级 + 代码级硬阻断）。屏障的判定来源是 **TaskFlow step 状态**
+（`blocked/ready/dispatched/done`，DAG 归 TaskFlow）+ **subagent registry 存活检测**
+（`get_run_by_child_session_key` / `is_live_unended_run`），todolist 层不再自建 DAG 状态。
 
 ### E6 委派路由表
 
@@ -1024,14 +1089,18 @@ This message appears to be a work request. Before responding, assess the scope:
 
 2. You are an ORCHESTRATOR, not an implementer:
    - Create a plan (in .omo/plans/ if applicable) or use todowrite to register tasks
-   - Set proper wave_index, depends_on, category, delegation fields
+   - Set proper category, delegation, flow_id/step_id fields
+   - For dependencies, register TaskFlow steps with depends_on and let TaskFlow
+     block/unlock/parallel-dispatch — do NOT build a second DAG
    - DELEGATE implementation to subagents — you do NOT write code
 
 3. Workflow:
    a. todowrite: register all tasks with atomic granularity
-   b. For delegation="subagent" tasks: spawn subagent via task tool
-   c. Wait for subagent return → verify → mark completed
-   d. For delegation="self" tasks: execute directly
+   b. For dependent steps: taskflow_run_task(..., depends_on=[...]); then
+      taskflow_dispatch the ready ones and taskflow_wait_all
+   c. For delegation="subagent" tasks: spawn subagent via task tool
+   d. Wait for subagent return → taskflow_resume → verify → mark completed
+   e. For delegation="self" tasks: execute directly
 
 ## If this is a simple single-step task:
 Respond directly — no plan needed.
