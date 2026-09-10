@@ -18,6 +18,19 @@ class TaskFlowStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class StepStatus(StrEnum):
+    """Per-step DAG status: blocked -> ready -> dispatched -> done.
+
+    ``done`` means "a result was injected", not "the child succeeded";
+    failure-aware transitions are deliberately deferred to a later phase.
+    """
+
+    BLOCKED = "blocked"
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    DONE = "done"
+
+
 # Terminal flows are immutable: every mutating tool rejects them.
 TERMINAL_STATUSES = frozenset(
     {

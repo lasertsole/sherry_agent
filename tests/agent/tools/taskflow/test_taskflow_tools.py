@@ -11,9 +11,9 @@ Covers the six acceptance checks:
 5. resume injects a child result idempotently (same result never injected twice)
 6. the tool family loads with no P0-1 guard layer wired
 
-The run_task dispatcher is a module-level injectable reference
-(taskflow_run_task._dispatch_child) and is monkeypatched in every test here:
-the real spawn pipeline is never invoked.
+The run_task dispatcher is the shared module-level seam
+(taskflow.tools._dispatch.dispatch_child) and is monkeypatched in every test
+here: the real spawn pipeline is never invoked.
 """
 
 import asyncio
@@ -31,6 +31,7 @@ from agent.tools.taskflow.registry import store_sqlite
 # string targets) resolves to the StructuredTool. sys.modules keys are exact
 # strings and immune to that shadowing.
 taskflow_run_task_module = sys.modules["agent.tools.taskflow.tools.taskflow_run_task"]
+taskflow_dispatch_module = sys.modules["agent.tools.taskflow.tools._dispatch"]
 
 EXPECTED_TOOL_NAMES = [
     "taskflow_create",
@@ -93,7 +94,7 @@ def test_full_chain_create_run_resume_finish_across_restart(
         dispatched.append((task, requester_session_key, label))
         return "agent:main:subagent:child-1"
 
-    monkeypatch.setattr(taskflow_run_task_module, "_dispatch_child", fake_dispatch)
+    monkeypatch.setattr(taskflow_dispatch_module, "dispatch_child", fake_dispatch)
 
     tools = _tool_map()
 
@@ -212,7 +213,7 @@ async def test_resume_idempotent_no_double_injection(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(
-        taskflow_run_task_module, "_dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
+        taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tool_map()
 
@@ -263,7 +264,7 @@ def test_family_loads_without_p0_1_wiring():
     assert len(tools) == 8
     assert all(t.name.startswith("taskflow_") for t in tools)
     # The injection seam exists and can be replaced (used by every dispatch test).
-    assert hasattr(taskflow_run_task_module, "_dispatch_child")
+    assert hasattr(taskflow_dispatch_module, "dispatch_child")
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +283,7 @@ async def test_create_rejects_duplicate(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_set_waiting_then_resume_cycle(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        taskflow_run_task_module, "_dispatch_child", _fake_dispatch("agent:main:subagent:child-2")
+        taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-2")
     )
     tools = _tool_map()
     await tools["taskflow_create"].coroutine(flow_id="flow-1")
@@ -319,7 +320,7 @@ async def test_run_task_registers_step_and_dispatch_args(
         dispatched.append((task, requester_session_key, label))
         return "agent:main:subagent:child-7"
 
-    monkeypatch.setattr(taskflow_run_task_module, "_dispatch_child", fake_dispatch)
+    monkeypatch.setattr(taskflow_dispatch_module, "dispatch_child", fake_dispatch)
     tools = _tool_map()
     await tools["taskflow_create"].coroutine(flow_id="flow-1", description="dispatch probe")
 

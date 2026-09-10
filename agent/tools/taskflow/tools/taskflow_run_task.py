@@ -5,9 +5,9 @@ The dispatch goes through the EXISTING spawn entry point
 (spawn_subagent_direct); the child session completes via the existing
 announce / settle-wake pipeline, which delivers the result back to the
 requester session automatically. No taskflow-local callback is created. The
-dispatch function is a module-level injectable reference (``_dispatch_child``)
-so tests and alternative runtimes can substitute it via monkeypatch without
-touching the spawn pipeline.
+dispatch lives in the shared ``_dispatch.py`` module and is called
+MODULE-QUALIFIED so tests and alternative runtimes can substitute the seam
+without touching the spawn pipeline.
 """
 
 import time
@@ -18,6 +18,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
+from . import _dispatch
 from ._shared import (
     conflict_error,
     is_terminal,
@@ -27,27 +28,6 @@ from ._shared import (
 )
 
 SessionId = Annotated[str, InjectedState("session_id")]
-
-
-async def _default_dispatch_child(
-    task: str, requester_session_key: str, label: str | None = None
-) -> str:
-    """Dispatch a detached child session via the existing spawn entry point."""
-    from agent.tools.subagent import spawn_subagent_direct
-
-    result = await spawn_subagent_direct(
-        task=task,
-        requester_session_key=requester_session_key,
-        label=label,
-        expects_completion_message=True,
-    )
-    if result.status != "accepted" or not result.child_session_key:
-        raise RuntimeError(f"status={result.status} error={result.error}")
-    return result.child_session_key
-
-
-# Module-level injectable dispatch reference: monkeypatch this seam in tests.
-_dispatch_child = _default_dispatch_child
 
 
 @tool("taskflow_run_task")
@@ -83,7 +63,7 @@ async def taskflow_run_task(
     )
     requester_key = requester_session_key(session_id)
 
-    child_session_key = await _dispatch_child(
+    child_session_key = await _dispatch.dispatch_child(
         task=task, requester_session_key=requester_key, label=label
     )
 
