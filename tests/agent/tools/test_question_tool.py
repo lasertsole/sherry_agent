@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 import agent.tools.question as question_module
 from agent.tools import _MAIN_TOOLS_BUILDERS
-from agent.tools.question import QuestionInput, build_question_tool
+from agent.tools.question import QuestionInput, QuestionOption, build_question_tool
 
 
 pytestmark = [pytest.mark.unit]
@@ -117,6 +117,29 @@ class TestDecisionHandling:
     def test_approve_without_message_returns_empty_answer(self, monkeypatch):
         out = self._invoke(monkeypatch, {"decisions": [{"type": "approve"}]})
         assert 'User answered: ""' in out
+
+    def test_yolo_treated_as_approval(self, monkeypatch):
+        out = self._invoke(monkeypatch, {"decisions": [{"type": "yolo", "message": "Chinese"}]})
+        assert out == 'User answered: "Chinese". You can now continue.'
+
+    def test_yolo_activates_session_yolo(self, monkeypatch):
+        import agent.middlewares.humanInTheLoop.approval as approval_module
+
+        calls: list[str] = []
+        monkeypatch.setattr(approval_module, "set_session_yolo", lambda sid: calls.append(sid))
+        _patch_interrupt(monkeypatch, {"decisions": [{"type": "yolo", "message": "Chinese"}]})
+        tool = build_question_tool()
+        tool._ask(
+            "Which database?",
+            "DB choice",
+            [
+                QuestionOption(label="a", description="a"),
+                QuestionOption(label="b", description="b"),
+            ],
+            False,
+            session_id="sess-1",
+        )
+        assert calls == ["sess-1"]
 
     def test_reject_returns_decline(self, monkeypatch):
         out = self._invoke(monkeypatch, {"decisions": [{"type": "reject"}]})

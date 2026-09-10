@@ -107,6 +107,7 @@ EMA_AI_agent/
 │       ├── python_repl.py  # Python コード実行
 │       ├── terminal.py     # ターミナルコマンド実行
 │       ├── memory.py       # メモリ閲覧ツール
+│       ├── question.py     # HITL 多肢選択の質問ツール
 │       └── message_search.py # 会話 FTS5 検索ツール
 │
 ├── bus/                    # メッセージバス（非同期キュー）

@@ -107,6 +107,7 @@ EMA_AI_agent/
 │       ├── python_repl.py  # Python code execution
 │       ├── terminal.py     # Terminal command execution
 │       ├── memory.py       # Memory inspection tool
+│       ├── question.py     # HITL multi-choice question prompt
 │       └── message_search.py # Conversation FTS5 search tool
 │
 ├── bus/                    # Message bus (async queues)

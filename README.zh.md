@@ -107,6 +107,7 @@ EMA_AI_agent/
 │       ├── python_repl.py  # Python 代码执行
 │       ├── terminal.py     # 终端命令执行
 │       ├── memory.py       # 记忆查看工具
+│       ├── question.py     # HITL 多选提问工具
 │       └── message_search.py # 会话 FTS5 搜索工具
 │
 ├── bus/                    # 消息总线（异步队列）

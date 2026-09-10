@@ -23,9 +23,13 @@ from langchain.agents.middleware.human_in_the_loop import (
     ReviewConfig,
 )
 from langchain_core.tools import BaseTool
+from langgraph.prebuilt.tool_node import InjectedState
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
-from typing import Any, override
+from typing import Annotated, Any, override
+
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 
 class QuestionOption(BaseModel):
@@ -53,6 +57,7 @@ class QuestionInput(BaseModel):
         default=False,
         description="Whether the user may select multiple options.",
     )
+    session_id: SessionId = ""
 
 
 _DECLINE_MESSAGE = "User declined to answer. Proceed without this information."
@@ -71,7 +76,12 @@ class QuestionTool(BaseTool):
     metadata: dict = {"idempotent": True, "skip_heartbeat": True, "nudge": True}
 
     def _ask(
-        self, question: str, header: str, options: list[QuestionOption], multiple: bool
+        self,
+        question: str,
+        header: str,
+        options: list[QuestionOption],
+        multiple: bool,
+        session_id: str = "",
     ) -> str:
         hitl_request = HITLRequest(
             action_requests=[
@@ -97,7 +107,12 @@ class QuestionTool(BaseTool):
         response = interrupt(hitl_request)
 
         decisions = response.get("decisions", [])
-        if decisions and decisions[0].get("type") == "approve":
+        decision_type = decisions[0].get("type") if decisions else ""
+        if decision_type == "yolo" and session_id:
+            from agent.middlewares.humanInTheLoop.approval import set_session_yolo
+
+            set_session_yolo(session_id)
+        if decision_type in ("approve", "yolo"):
             answer = decisions[0].get("message", "")
             return f'User answered: "{answer}". You can now continue.'
         return _DECLINE_MESSAGE
@@ -109,9 +124,10 @@ class QuestionTool(BaseTool):
         header: str,
         options: list[QuestionOption],
         multiple: bool = False,
+        session_id: str = "",
         **kwargs: Any,
     ) -> str:
-        return self._ask(question, header, options, multiple)
+        return self._ask(question, header, options, multiple, session_id)
 
     @override
     async def _arun(
@@ -120,9 +136,10 @@ class QuestionTool(BaseTool):
         header: str,
         options: list[QuestionOption],
         multiple: bool = False,
+        session_id: str = "",
         **kwargs: Any,
     ) -> str:
-        return self._ask(question, header, options, multiple)
+        return self._ask(question, header, options, multiple, session_id)
 
 
 def build_question_tool() -> QuestionTool:

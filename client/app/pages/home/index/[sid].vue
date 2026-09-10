@@ -27,45 +27,6 @@
           </span>
           <i class="pi pi-angle-right text-xs text-gray-400"></i>
         </div>
-        <!-- HITL approval card: non-modal, placed at the top of the history message area (does not cover the latest conversation),
-            occupying its own slot so it never blocks viewing other messages; it can grow naturally with its content. -->
-        <div
-          v-if="hitlRequest"
-          class="shrink-0 mx-2 mt-2 bg-white dark:bg-[#131619] rounded-lg border border-solid border-gray-light dark:border-gray-dark shadow-lg">
-          <div class="flex flex-col gap-3 p-3">
-            <div class="text-sm font-semibold">{{ t('hitl.title') }}</div>
-            <div class="text-sm text-gray-500">
-              {{ t('hitl.tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span>
-            </div>
-            <div
-              v-if="hitlRequest?.description"
-              class="text-sm whitespace-pre-wrap">
-              {{ hitlRequest.description }}
-            </div>
-            <div
-              v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0"
-              class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded-lg overflow-auto max-h-40">
-              <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
-            </div>
-            <div class="flex gap-2 justify-end">
-              <Button
-                :label="t('hitl.reject')"
-                icon="pi pi-times"
-                severity="danger"
-                @click="handleHitlDecision('reject')" />
-              <Button
-                :label="t('hitl.yolo')"
-                icon="pi pi-bolt"
-                severity="warn"
-                :title="t('hitl.yoloTooltip')"
-                @click="handleHitlDecision('yolo')" />
-              <Button
-                :label="t('hitl.approve')"
-                icon="pi pi-check"
-                @click="handleHitlDecision('approve')" />
-            </div>
-          </div>
-        </div>
         <ChatBox
           :messages="chatMessages"
           :user-avatar="characterInfo.userAvatar"
@@ -185,8 +146,10 @@
           </Transition>
           <!-- Chat input box area (fixed h-40, keeping the send button position stable) -->
           <div class="flex flex-col h-40">
-            <!-- Chat tools -->
-            <div class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
+            <!-- Chat tools (hidden while a HITL request occupies the input slot) -->
+            <div
+              v-show="!hitlRequest"
+              class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
               <div class="hidden sm:block">
                 <Button
                   v-for="tool in tools"
@@ -232,8 +195,100 @@
                 class="hidden"
                 @change="onVideoSelected" />
             </div>
-            <!-- Input box: input/send disabled while a HITL request is pending approval, with a waiting-for-approval hint -->
+            <!-- HITL panel occupies the same slot as the input box; the two are mutually exclusive (v-show) -->
+            <div
+              v-show="hitlRequest"
+              class="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
+              <!-- question tool: selectable options + a trailing custom-input row -->
+              <template v-if="isQuestionHitl">
+                <div class="text-sm font-semibold">{{ questionHeader || t('hitl.title') }}</div>
+                <div
+                  v-if="questionText"
+                  class="text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-200">
+                  {{ questionText }}
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <button
+                    v-for="(option, idx) in questionOptions"
+                    :key="idx"
+                    type="button"
+                    class="text-left px-3 py-1.5 rounded-lg border border-solid transition-colors cursor-pointer"
+                    :class="
+                      isMultipleQuestion && selectedQuestionOptions.includes(option.label)
+                        ? 'border-theme-main bg-theme-main/10'
+                        : 'border-gray-light dark:border-gray-dark hover:bg-gray-50 dark:hover:bg-[#1a1d21]'
+                    "
+                    @click="selectQuestionOption(option.label)">
+                    <span class="text-sm font-medium">{{ option.label }}</span>
+                    <span
+                      v-if="option.description"
+                      class="text-xs text-gray-400 ml-2">
+                      {{ option.description }}
+                    </span>
+                  </button>
+                  <!-- trailing custom-input row -->
+                  <div class="flex items-center gap-2">
+                    <input
+                      v-model="customAnswer"
+                      type="text"
+                      class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
+                      :placeholder="t('hitl.customPlaceholder')"
+                      @keydown.enter.prevent="submitCustomAnswer" />
+                    <Button
+                      :label="t('hitl.submit')"
+                      size="small"
+                      :disabled="!customAnswer.trim() && selectedQuestionOptions.length === 0"
+                      @click="submitCustomAnswer" />
+                    <Button
+                      :label="t('hitl.reject')"
+                      size="small"
+                      severity="danger"
+                      variant="text"
+                      @click="handleHitlDecision('reject')" />
+                  </div>
+                </div>
+              </template>
+              <!-- other tools: generic approval card -->
+              <template v-else>
+                <div class="text-sm font-semibold">{{ t('hitl.title') }}</div>
+                <div class="text-sm text-gray-500">
+                  {{ t('hitl.tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span>
+                </div>
+                <div
+                  v-if="hitlRequest?.description"
+                  class="text-sm whitespace-pre-wrap">
+                  {{ hitlRequest.description }}
+                </div>
+                <div
+                  v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0"
+                  class="text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded-lg overflow-auto max-h-24">
+                  <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
+                </div>
+                <div class="mt-auto flex gap-2 justify-end">
+                  <Button
+                    :label="t('hitl.reject')"
+                    icon="pi pi-times"
+                    severity="danger"
+                    size="small"
+                    @click="handleHitlDecision('reject')" />
+                  <Button
+                    :label="t('hitl.yolo')"
+                    icon="pi pi-bolt"
+                    severity="warn"
+                    size="small"
+                    :title="t('hitl.yoloTooltip')"
+                    @click="handleHitlDecision('yolo')" />
+                  <Button
+                    :label="t('hitl.approve')"
+                    icon="pi pi-check"
+                    size="small"
+                    @click="handleHitlDecision('approve')" />
+                </div>
+              </template>
+            </div>
+            <!-- Input box: hidden while a HITL request occupies the same slot -->
             <ChatInputBox
+              v-show="!hitlRequest"
               ref="chatInputBoxRef"
               v-model:draft="draft"
               :sending="isSending"
@@ -404,6 +459,75 @@ const hitl = useHitlApproval({
 });
 
 const { hitlRequest, handleHitlDecision, restorePendingHitl } = hitl;
+
+// ── Question-tool HITL view (selectable options + custom answer) ──
+interface QuestionOptionView {
+  label: string;
+  description?: string;
+}
+
+const questionArgs = computed<Record<string, unknown>>(() => hitlRequest.value?.tool_args ?? {});
+const isQuestionHitl = computed(() => hitlRequest.value?.tool_name === 'question');
+const questionText = computed(() => {
+  const q = questionArgs.value['question'];
+  return typeof q === 'string' ? q : (hitlRequest.value?.description ?? '');
+});
+const questionHeader = computed(() => {
+  const h = questionArgs.value['header'];
+  return typeof h === 'string' ? h : '';
+});
+const questionOptions = computed<QuestionOptionView[]>(() => {
+  const raw = questionArgs.value['options'];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
+    .map(o => ({
+      label: String(o['label'] ?? ''),
+      description: typeof o['description'] === 'string' ? o['description'] : undefined
+    }))
+    .filter(o => o.label.length > 0);
+});
+const isMultipleQuestion = computed(() => questionArgs.value['multiple'] === true);
+const customAnswer = ref('');
+const selectedQuestionOptions = ref<string[]>([]);
+
+/**
+ * Send the chosen answer (option label(s) and/or custom text) back through the HITL resume.
+ * @param answer
+ */
+const submitQuestionAnswer = (answer: string) => {
+  customAnswer.value = '';
+  selectedQuestionOptions.value = [];
+  handleHitlDecision('approve', answer);
+};
+
+/**
+ * Single-select sends immediately; multi-select toggles the option in the selection.
+ * @param label
+ */
+const selectQuestionOption = (label: string) => {
+  if (isMultipleQuestion.value) {
+    const i = selectedQuestionOptions.value.indexOf(label);
+    if (i >= 0) selectedQuestionOptions.value.splice(i, 1);
+    else selectedQuestionOptions.value.push(label);
+  } else {
+    submitQuestionAnswer(label);
+  }
+};
+
+/** Submit the custom answer, combined with any selected options in multi-select mode. */
+const submitCustomAnswer = () => {
+  const parts = isMultipleQuestion.value ? [...selectedQuestionOptions.value] : [];
+  const text = customAnswer.value.trim();
+  if (text) parts.push(text);
+  if (parts.length) submitQuestionAnswer(parts.join(', '));
+};
+
+// Reset the question-view state whenever a new HITL request arrives.
+watch(hitlRequest, () => {
+  customAnswer.value = '';
+  selectedQuestionOptions.value = [];
+});
 
 // ── Media selection (per-kind picker slice; template owns the hidden inputs) ──
 
@@ -685,7 +809,9 @@ onUnmounted(() => {
       "title": "操作需要审批",
       "tool": "工具",
       "yolo": "同意所有操作",
-      "yoloTooltip": "同意本次及本会话后续所有操作，不再弹出审批"
+      "yoloTooltip": "同意本次及本会话后续所有操作，不再弹出审批",
+      "customPlaceholder": "输入自定义回答…",
+      "submit": "提交"
     },
     "taskViewer": {
       "viewTasks": "查看后台任务"
@@ -710,7 +836,9 @@ onUnmounted(() => {
       "title": "Action Requires Approval",
       "tool": "Tool",
       "yolo": "Approve All (YOLO)",
-      "yoloTooltip": "Approve this and all future actions in this session — no more approval prompts"
+      "yoloTooltip": "Approve this and all future actions in this session — no more approval prompts",
+      "customPlaceholder": "Type a custom answer…",
+      "submit": "Submit"
     },
     "taskViewer": {
       "viewTasks": "View Background Tasks"
@@ -735,7 +863,9 @@ onUnmounted(() => {
       "title": "操作の承認が必要です",
       "tool": "ツール",
       "yolo": "すべての操作を承認",
-      "yoloTooltip": "今回とこのセッションの以後の操作をすべて承認し、確認ダイアログは表示されません"
+      "yoloTooltip": "今回とこのセッションの以後の操作をすべて承認し、確認ダイアログは表示されません",
+      "customPlaceholder": "カスタム回答を入力…",
+      "submit": "送信"
     },
     "taskViewer": {
       "viewTasks": "バックグラウンドタスクを表示"
@@ -760,7 +890,9 @@ onUnmounted(() => {
       "title": "작업 승인이 필요합니다",
       "tool": "도구",
       "yolo": "모든 작업 승인",
-      "yoloTooltip": "이번 작업과 이 세션의 이후 모든 작업을 승인하며 확인 창이 다시 표시되지 않습니다"
+      "yoloTooltip": "이번 작업과 이 세션의 이후 모든 작업을 승인하며 확인 창이 다시 표시되지 않습니다",
+      "customPlaceholder": "직접 답변 입력…",
+      "submit": "제출"
     },
     "taskViewer": {
       "viewTasks": "백그라운드 작업 보기"

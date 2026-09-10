@@ -107,6 +107,7 @@ EMA_AI_agent/
 │       ├── python_repl.py  # Python 코드 실행
 │       ├── terminal.py     # 터미널 명령 실행
 │       ├── memory.py       # 메모리 확인 도구
+│       ├── question.py     # HITL 다지선다 질문 도구
 │       └── message_search.py # 대화 FTS5 검색 도구
 │
 ├── bus/                    # 메시지 버스(비동기 큐)
