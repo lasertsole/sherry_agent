@@ -25,6 +25,7 @@ from .middlewares import (
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
+from .middlewares.todo_continuation import TodoContinuationEnforcer
 from .context_limit_guard_wrapper import ContextLimitGuardWrapper
 from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
@@ -143,6 +144,11 @@ async def built_agent(
             checkpointer=checkpointer,
             tools=get_agent_tools(),
             middleware=[
+                # E3: registered FIRST so its after_agent hook runs LAST —
+                # after_agent hooks execute in REVERSE list order, so the first
+                # registered middleware sits closest to END (README "Hook
+                # Ordering Semantics"). It must observe the truly finished turn.
+                TodoContinuationEnforcer(),
                 ContextEngineHook(),
                 MultimodalProcessor(),
                 IterationBudget(90),

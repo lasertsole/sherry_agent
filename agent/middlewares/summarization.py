@@ -120,6 +120,20 @@ _RETRY_KEY_BY_ERROR_CLASS: dict[str, str] = {
 }
 
 
+def _rearm_task_intent_after_compact(session_id: str) -> None:
+    """Re-arm E7a steering after a successful system-prompt rebuild (fail-open).
+
+    Compression drops the already-injected steering context, so the next turn
+    must receive the full directive rather than the short reminder.
+    """
+    try:
+        from agent.middlewares.task_intent import rearm_after_compact
+
+        rearm_after_compact(session_id)
+    except Exception:
+        logger.debug("E7 re-arm after compact failed for session {}", session_id)
+
+
 # ======================================================================
 # T3: reported input-token extraction
 # ======================================================================
@@ -1640,6 +1654,7 @@ class Summarization(AgentMiddleware):
             system_prompt = build_system_prompt(session_id=session_id)
             state_register_mem.set_state(session_id, "system_prompt", system_prompt)
             state_register_db.set_state(session_id, "system_prompt", system_prompt)
+            _rearm_task_intent_after_compact(session_id)
 
         override_kwargs: dict[str, Any] = {
             "messages": cast("list[AnyMessage]", final_messages),
@@ -1713,6 +1728,7 @@ class Summarization(AgentMiddleware):
             system_prompt = build_system_prompt(session_id=session_id)
             state_register_mem.set_state(session_id, "system_prompt", system_prompt)
             state_register_db.set_state(session_id, "system_prompt", system_prompt)
+            _rearm_task_intent_after_compact(session_id)
 
         override_kwargs: dict[str, Any] = {
             "messages": cast("list[AnyMessage]", final_messages),
