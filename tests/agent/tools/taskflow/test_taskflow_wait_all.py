@@ -15,13 +15,18 @@ Coverage:
 (f) an unrelated live child key is never queried and does not block the return
 """
 
+import importlib
 from pathlib import Path
 
 import pytest
 
 from agent.tools.taskflow.config import StepStatus
 from agent.tools.taskflow.registry import store_sqlite
-from agent.tools.taskflow.tools import taskflow_wait_all as wait_mod
+
+# The family package re-exports the tool under the same name, which shadows the
+# submodule for package-attribute traversal. importlib resolves the real module
+# from sys.modules, so monkeypatching the registry seam still works.
+wait_mod = importlib.import_module("agent.tools.taskflow.tools.taskflow_wait_all")
 
 pytestmark = [pytest.mark.unit]
 

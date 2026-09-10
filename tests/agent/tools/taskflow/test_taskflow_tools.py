@@ -42,12 +42,14 @@ EXPECTED_TOOL_NAMES = [
     "taskflow_fail",
     "taskflow_cancel",
     "taskflow_summary",
+    "taskflow_dispatch",
+    "taskflow_wait_all",
 ]
 
 
 def _tool_map() -> dict:
     tools = build_taskflow_tools()
-    assert len(tools) == 8
+    assert len(tools) == 10
     return {t.name: t for t in tools}
 
 
@@ -72,6 +74,37 @@ def test_builder_returns_full_family():
     tools = build_taskflow_tools()
     assert [t.name for t in tools] == EXPECTED_TOOL_NAMES
     assert all(t.handle_tool_error for t in tools)
+
+
+def test_builder_returns_tools_in_pinned_order():
+    tools = build_taskflow_tools()
+    assert [t.name for t in tools] == [
+        "taskflow_create",
+        "taskflow_run_task",
+        "taskflow_set_waiting",
+        "taskflow_resume",
+        "taskflow_finish",
+        "taskflow_fail",
+        "taskflow_cancel",
+        "taskflow_summary",
+        "taskflow_dispatch",
+        "taskflow_wait_all",
+    ]
+    assert all(t.metadata.get("scope") == "main_only" for t in tools)
+
+
+def test_every_registered_tool_is_documented_in_skill():
+    skill_path = (
+        Path(__file__).resolve().parents[4]
+        / "skills"
+        / "builtin"
+        / "core"
+        / "taskflow"
+        / "SKILL.md"
+    )
+    skill_text = skill_path.read_text(encoding="utf-8")
+    for tool in build_taskflow_tools():
+        assert tool.name in skill_text, f"{tool.name} missing from SKILL.md"
 
 
 def test_build_main_tools_contains_taskflow_family(build_main_tools_real):
@@ -261,7 +294,7 @@ def test_family_loads_without_p0_1_wiring():
     server runtime, no spawn-pipeline import at module scope (the dispatch
     entry is a lazy module-level injectable reference)."""
     tools = build_taskflow_tools()
-    assert len(tools) == 8
+    assert len(tools) == 10
     assert all(t.name.startswith("taskflow_") for t in tools)
     # The injection seam exists and can be replaced (used by every dispatch test).
     assert hasattr(taskflow_dispatch_module, "dispatch_child")
