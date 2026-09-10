@@ -1,6 +1,6 @@
 # Nudge 知识提取重构方案 — Plan-Aware Knowledge Extraction
 
-> 配套文件: TODOLIST_PLAN.md, TODOLIST_ENFORCEMENT.md
+> 配套文件: TODOLIST_PLAN.md（规划与纪律层，已合并 E1–E7）
 > 参考来源: oh-my-openagent-dev (D:\selfProj\oh-my-openagent-dev)
 > 日期: 2026-09-07
 
