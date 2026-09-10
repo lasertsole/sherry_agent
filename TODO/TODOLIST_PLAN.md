@@ -446,7 +446,7 @@ E6a 的 fan-out reminder（`_FANOUT_REMINDER`，每 session 首次 todowrite 追
 
 ### 6.4 SKILL.md
 
-- **新建文件**：`skills/todolist/SKILL.md`
+- **新建文件**：`skills/builtin/core/todolist/SKILL.md`（必须在 allowed root `skills/builtin/` 下，否则 loader 忽略；见 `config/path.py:41-43`）
 
 ```markdown
 ---
@@ -501,7 +501,7 @@ DAG 调度**不在 todolist 内实现**。声明依赖请用
 
 ## 7. 编排执行层（ulw-execute skill；调用 TaskFlow）
 
-- **新建文件**：`skills/ulw-execute/SKILL.md`
+- **新建文件**：`skills/builtin/core/ulw-execute/SKILL.md`（同 allowed root 约束）
 
 这是从 omo 的 `packages/shared-skills/skills/ulw-execute/SKILL.md` 移植的核心编排 skill，适配 sherry_agent 的基础设施（subagent spawn 工具、auto_turn、SQLite 等）。
 
@@ -2237,8 +2237,8 @@ async def handle_todo_refresh(session_id: str, websocket):
 | 11 | 新建 | `agent/middlewares/task_intent.py` | E7 意图识别与引导 (before_model 中间件) |
 | 12 | 新建 | `agent/middlewares/todo_continuation.py` | E3 续作强制器 (after_agent 中间件) |
 | 13 | 修改 | `agent/tools/__init__.py` | 加入 build_todolist_tools |
-| 14 | 新建 | `skills/todolist/SKILL.md` | skills/builtin/core/taskflow/SKILL.md + TaskFlow DAG 委派说明 |
-| 15 | 新建 | `skills/ulw-execute/SKILL.md` | omo ulw-execute/SKILL.md（移植） |
+| 14 | 新建 | `skills/builtin/core/todolist/SKILL.md` | skills/builtin/core/taskflow/SKILL.md + TaskFlow DAG 委派说明 |
+| 15 | 新建 | `skills/builtin/core/ulw-execute/SKILL.md` | omo ulw-execute/SKILL.md（移植） |
 | 16 | 修改 | `workspace/prompt_builder.py` | _build_todo_block + _build_boulder_block + _build_knowledge_block |
 | 17 | 修改 | `workspace/template/{en,zh}/AGENTS.md` | E1 orchestrator doctrine + E6 委派指令 + E4 转换屏障 |
 | 18 | 修改 | `agent/core.py` | 注册 TaskIntentMiddleware + TodoContinuationEnforcer |
@@ -2285,7 +2285,7 @@ async def handle_todo_refresh(session_id: str, websocket):
 4. `todowrite.py` + `todoread.py` — `@tool` 定义 + E6a fan-out。
 5. `tools/__init__.py` — `build_todolist_tools` + E2 格式规则。
 6. `agent/tools/__init__.py` — 注册。
-7. `skills/todolist/SKILL.md` + `skills/ulw-execute/SKILL.md`。
+7. `skills/builtin/core/todolist/SKILL.md` + `skills/builtin/core/ulw-execute/SKILL.md`（allowed root 下）。
 8. **待定决策**：`todowrite` 是否需要自己的 `todos.db`？（见 §13）
 
 ### Phase C — 前端（nice-to-have）
