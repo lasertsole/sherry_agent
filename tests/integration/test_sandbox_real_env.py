@@ -38,11 +38,20 @@ _PROBE_SMOKE = ["bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/de
 
 
 def _bwrap_usable() -> bool:
-    """Return True only when bwrap exists AND can actually create its namespaces."""
+    """Return True only when the REAL ``wrap()`` argv actually executes.
+
+    Uses the same flags the isolation tests rely on (including
+    ``--unshare-all``), so a host where bwrap exists but cannot unshare
+    namespaces skips instead of running tests that would fail.
+    """
     if shutil.which("bwrap") is None:
         return False
     try:
-        result = subprocess.run(_PROBE_SMOKE, capture_output=True, timeout=5, check=False)
+        argv, _ = BwrapBackend().wrap(
+            ["/bin/sh", "-c", "true"],
+            {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        )
+        result = subprocess.run(argv, capture_output=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
