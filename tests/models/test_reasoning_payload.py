@@ -9,6 +9,8 @@ sets ``max_tokens = OUTPUT_MAX_TOKEN + budget`` (absent when disabled).
 
 import pytest
 
+from config import features
+from config.features import agent_side
 from models.LLMs import main_llm
 from models.LLMs import reasoning_payload as rp
 
@@ -78,17 +80,23 @@ class TestApplyThinkingBudget:
         assert "max_tokens" not in config
 
     def test_output_max_token_matches_boost_env_source(self, monkeypatch):
-        # The boost base (agent/middlewares/max_tokens_boost.py) reads the same
-        # env var with the same default: first boost (base x 2) must exceed the
-        # inflated output cap so a boost always covers the thinking scenario.
+        # env read lives in config.features._build_max_tokens_boost since the
+        # config consolidation; the middleware aliases the registry field.
         monkeypatch.setenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "9000")
         import importlib
 
         importlib.reload(main_llm)
         boost = importlib.reload(importlib.import_module("agent.middlewares.max_tokens_boost"))
         try:
+            # The builder reads the env at call time (env or os.environ).
+            assert agent_side._build_max_tokens_boost()["base_max_tokens"] == 9000
+            # The middleware binding tracks the shared registry field.
+            assert boost._BASE_MAX_TOKENS == features.MAX_TOKENS_BOOST["base_max_tokens"]
+            # Thinking-budget inflation still uses the patched output cap (9000).
             assert main_llm.OUTPUT_MAX_TOKEN == 9000
-            assert boost._BASE_MAX_TOKENS == 9000
+            config: dict = {}
+            main_llm.apply_thinking_budget(config, "deepseek", "deepseek-chat", True)
+            assert config["max_tokens"] == 9000 + rp._DEFAULT_NON_ANTHROPIC_BUDGET
         finally:
             importlib.reload(main_llm)
             importlib.reload(boost)
