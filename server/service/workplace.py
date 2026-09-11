@@ -6,12 +6,18 @@ from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
 from server.service.file_store import FileStore
 
+# AGENTS.md is injected into the system prompt by prompt_builder but is **not**
+# editable through the /system_prompt API: the persona dialog UI no longer exposes
+# it, and the backend must reject any write attempt (defense in depth). The template
+# read is filtered the same way so the API can never leak/extend its edit surface.
+EDITABLE_SYSTEM_FILE_NAMES = [name for name in ALL_SYSTEM_FILE_NAMES if name != "AGENTS.md"]
+
 
 class _WorkplaceFileStore(FileStore):
     """Persona/system prompt files at workspace/ root (audit 2.1.7 template)."""
 
     def __init__(self) -> None:
-        self.file_names = list(ALL_SYSTEM_FILE_NAMES)
+        self.file_names = list(EDITABLE_SYSTEM_FILE_NAMES)
         self.max_content_length = 2_000
         self.error_noun = "file"
 
@@ -51,7 +57,7 @@ def read_system_prompt_template(lang: str | None = None) -> dict[str, str]:
     template_dir = resolve_workspace_template_dir(lang)
     file_to_content: dict[str, str] = {}
 
-    for file_name in ALL_SYSTEM_FILE_NAMES:
+    for file_name in EDITABLE_SYSTEM_FILE_NAMES:
         file_path = template_dir / file_name
         if file_path.is_file():
             with open(file_path, encoding="utf-8") as file:

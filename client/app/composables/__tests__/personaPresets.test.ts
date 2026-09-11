@@ -1,9 +1,9 @@
 /**
- * Unit tests for the AI persona preset persistence layer (Task 1 products):
- * the Dexie db helpers in `../db` (real `HistoryDb` singleton, no Dexie mocks)
- * and the `usePersonaPresets` module-level singleton composable, plus a schema
- * upgrade regression proving the version(9) `personaPresets` append broke none
- * of the v1-v8 tables.
+ * Unit tests for the AI persona preset persistence layer: the Dexie db helpers in
+ * `../db` (real `HistoryDb` singleton, no Dexie mocks), the `usePersonaPresets`
+ * module-level singleton composable, and a schema sanity check proving the
+ * fresh-start version(1) database (all tables in one declaration, no migration
+ * chain) exposes every table ready for use.
  *
  * `import 'fake-indexeddb/auto'` MUST stay the first import: it injects the
  * fake IndexedDB implementation into globalThis before any module below
@@ -20,7 +20,6 @@
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach } from 'vitest';
-import Dexie from 'dexie';
 import {
   db,
   listPersonaPresets,
@@ -36,9 +35,8 @@ import {
 } from '../db';
 import { usePersonaPresets } from '../usePersonaPresets';
 
-/** Persona file contents keyed by the exact workspace basenames (v1 fixture). */
+/** Persona file contents keyed by the editable workspace basenames (v1 fixture). */
 const baseContent = (): Record<string, string> => ({
-  'AGENTS.md': 'agents-v1',
   'IDENTITY.md': 'identity-v1',
   'SOUL.md': 'soul-v1',
   'USER.md': 'user-v1'
@@ -120,7 +118,6 @@ describe('persona preset db helpers (real Dexie over fake-indexeddb)', () => {
     await db.personaPresets.update(id, { createdAt: stale, updatedAt: stale });
 
     const updated: Record<string, string> = {
-      'AGENTS.md': 'agents-v2',
       'IDENTITY.md': 'identity-v2',
       'SOUL.md': 'soul-v2',
       'USER.md': 'user-v2'
@@ -155,9 +152,8 @@ describe('persona preset db helpers (real Dexie over fake-indexeddb)', () => {
     expect(await listPersonaPresets()).toHaveLength(1);
   });
 
-  it('roundtrips content whose keys are exactly the four workspace persona files', async () => {
+  it('roundtrips content whose keys are exactly the three editable persona files', async () => {
     const content: Record<string, string> = {
-      'AGENTS.md': 'tool rules text',
       'IDENTITY.md': 'identity text',
       'SOUL.md': 'soul text',
       'USER.md': 'user preferences text'
@@ -166,8 +162,8 @@ describe('persona preset db helpers (real Dexie over fake-indexeddb)', () => {
     const stored = await getPersonaPreset(id);
     // Deep-equal roundtrip: every value read back exactly as written.
     expect(stored?.content).toEqual(content);
-    // The key set is exactly the four basenames, spelled verbatim.
-    expect(Object.keys(stored?.content ?? {}).sort()).toEqual(['AGENTS.md', 'IDENTITY.md', 'SOUL.md', 'USER.md']);
+    // The key set is exactly the three basenames, spelled verbatim.
+    expect(Object.keys(stored?.content ?? {}).sort()).toEqual(['IDENTITY.md', 'SOUL.md', 'USER.md']);
   });
 });
 
@@ -212,7 +208,6 @@ describe('usePersonaPresets composable (shared singleton over real Dexie)', () =
     }
 
     const updated: Record<string, string> = {
-      'AGENTS.md': 'agents-v2',
       'IDENTITY.md': 'identity-v2',
       'SOUL.md': 'soul-v2',
       'USER.md': 'user-v2'
@@ -247,8 +242,8 @@ describe('usePersonaPresets composable (shared singleton over real Dexie)', () =
   });
 });
 
-describe('schema upgrade regression (version(9) personaPresets append)', () => {
-  it('opens the current schema with personaPresets present and every legacy table readable', async () => {
+describe('fresh-start schema (single version(1) with the full table set)', () => {
+  it('opens the current schema with all tables present and readable', async () => {
     await db.open();
     const tableNames = db.tables.map(t => t.name);
     for (const name of [
@@ -264,7 +259,7 @@ describe('schema upgrade regression (version(9) personaPresets append)', () => {
       expect(tableNames).toContain(name);
     }
 
-    // Existing tables stay readable/writable through their exported helpers.
+    // Every table stays readable/writable through its exported helpers.
     const char = { session_id: 'ses_A', userName: 'u', userAvatar: '', aiName: 'Sherry', aiAvatar: '' };
     await cacheCharacter(char);
     await expect(readCachedCharacter('ses_A')).resolves.toEqual(char);
@@ -276,57 +271,5 @@ describe('schema upgrade regression (version(9) personaPresets append)', () => {
     const id = await createPersonaPreset('AfterOpen', baseContent());
     await expect(listPersonaPresets()).resolves.toHaveLength(1);
     await expect(getPersonaPreset(id)).resolves.toMatchObject({ name: 'AfterOpen' });
-  });
-
-  it('upgrades a pre-v9 database in place without losing existing rows', async () => {
-    // The file-level beforeEach left an empty version(9) database open; free
-    // the database name so the throwaway legacy instance can create a v1 one.
-    await db.delete();
-
-    // Build a legacy version(1) database under the same name with a throwaway
-    // instance: a v1-era message row predating the token columns added in v6.
-    const legacy = new Dexie('ema-history-cache');
-    legacy.version(1).stores({ messages: 'id, [session_id+turn_num], session_id' });
-    try {
-      await legacy.open();
-      await legacy.table('messages').put({
-        id: 7,
-        turn_num: 1,
-        session_id: 'ses_A',
-        role: 'user',
-        content: 'legacy row',
-        timestamp: null,
-        images: null,
-        audios: null,
-        videos: null,
-        tool_call_id: null,
-        tool_calls: null,
-        tool_status: null,
-        tool_name: null,
-        finish_reason: null,
-        reasoning: null,
-        reasoning_content: null
-      });
-    } finally {
-      legacy.close();
-    }
-
-    // Opening the real singleton (declaring versions 1..9) must run the whole
-    // upgrade chain over the legacy store without error.
-    await db.open();
-
-    const row = await db.messages.get(7);
-    expect(row?.session_id).toBe('ses_A');
-    expect(row?.content).toBe('legacy row');
-    // The v6 upgrade normalizes the token/model columns the legacy row lacks.
-    expect(row?.model_name).toBeNull();
-    expect(row?.input_tokens).toBeNull();
-    expect(row?.output_tokens).toBeNull();
-
-    // The appended version(9) table exists and works on the upgraded store.
-    expect(db.tables.map(t => t.name)).toContain('personaPresets');
-    const id = await createPersonaPreset('OnUpgraded', baseContent());
-    expect(await db.personaPresets.count()).toBe(1);
-    await expect(getPersonaPreset(id)).resolves.toMatchObject({ name: 'OnUpgraded' });
   });
 });

@@ -214,11 +214,11 @@ export interface CachedSubagentRun {
 }
 
 /**
- * Locally persisted AI persona preset: a named snapshot of the four workspace persona
- * files, saved/restored from the "persona dialog".
+ * Locally persisted AI persona preset: a named snapshot of the three editable workspace
+ * persona files, saved/restored from the "persona dialog".
  *
  * `content` maps each persona file basename to its full text; keys are exactly
- * 'AGENTS.md' / 'IDENTITY.md' / 'SOUL.md' / 'USER.md' (the same basenames used by the
+ * 'IDENTITY.md' / 'SOUL.md' / 'USER.md' (the same basenames used by the
  * persona dialog tabs and the backend `/system_prompt` API). Uniqueness of `name` is
  * validated at the application layer (trim + case-insensitive), not by the database
  * (Dexie has no unique indexes).
@@ -228,7 +228,7 @@ export interface PersonaPreset {
   id?: number;
   /** Display name (stored trimmed, original case kept; duplicate check is case-insensitive) */
   name: string;
-  /** Persona file contents keyed by exact basenames: 'AGENTS.md' | 'IDENTITY.md' | 'SOUL.md' | 'USER.md' */
+  /** Persona file contents keyed by exact basenames: 'IDENTITY.md' | 'SOUL.md' | 'USER.md' */
   content: Record<string, string>;
   /** Creation time (epoch ms) */
   createdAt: number;
@@ -273,57 +273,27 @@ class HistoryDb extends Dexie {
 
   constructor() {
     super('ema-history-cache');
+    // Fresh-start schema: there is no legacy user data to preserve (no released
+    // users), so the database is declared directly at version(1) with the full
+    // current table set — no migration chain, no upgrade hooks.
     this.version(1).stores({
       // Primary key id; compound index [session_id+turn_num] for per-session queries and deduplication.
       // Single-column session_id is used to clear a session's cache.
-      messages: 'id, [session_id+turn_num], session_id'
-    });
-    this.version(2).stores({
+      messages: 'id, [session_id+turn_num], session_id',
       // Caches each session's avatar/name snapshot keyed by session_id (including the global row).
-      character: 'session_id'
-    });
-    this.version(3).stores({
-      // Local session-list placeholders (primary key is the session id); adding a table does not break existing table structures.
-      sessions: 'id, updatedAt'
-    });
-    this.version(4).stores({
+      character: 'session_id',
+      // Local session-list placeholders (primary key is the session id).
+      sessions: 'id, updatedAt',
       // Compound primary key [session_id+turn_num]: whole-turn drafts are read/written by session + turn.
-      // Single-column session_id clears all drafts for a session by prefix when deleting it.
-      drafts: '[session_id+turn_num], session_id'
-    });
-    this.version(5).stores({
-      // Global background image (primary key session_id=GLOBAL_SESSION_KEY); adding a table does not break existing table structures.
-      background: 'session_id'
-    });
-    this.version(6)
-      .stores({
-        // Structure unchanged; only the messages table gains model_name/input_tokens/output_tokens columns.
-        // Old rows default to null and can simply be treated as undefined when read.
-        messages: 'id, [session_id+turn_num], session_id'
-      })
-      .upgrade(tx => {
-        return tx
-          .table('messages')
-          .toCollection()
-          .modify(msg => {
-            if (msg.model_name === undefined) msg.model_name = null;
-            if (msg.input_tokens === undefined) msg.input_tokens = null;
-            if (msg.output_tokens === undefined) msg.output_tokens = null;
-          });
-      });
-    this.version(7).stores({
-      // Subagent run records cache (primary key run_id); adding a table does not break existing table structures.
-      subagentRuns: 'run_id'
-    });
-    this.version(8).stores({
-      // Session custom-title overrides (primary key is the session id); adding a table does not break existing table structures.
-      // Separate from the sessions placeholder table: the placeholder table is cleared when a session
-      // is promoted to a server-side session, while custom titles must survive promotion.
-      sessionTitles: 'id'
-    });
-    this.version(9).stores({
+      drafts: '[session_id+turn_num], session_id',
+      // Global background image (primary key session_id=GLOBAL_SESSION_KEY).
+      background: 'session_id',
+      // Subagent run records cache (primary key run_id).
+      subagentRuns: 'run_id',
+      // Session custom-title overrides (primary key is the session id); survives session promotion.
+      sessionTitles: 'id',
       // AI persona presets (auto-increment primary key id; indexes support listing by creation
-      // time and by name); adding a table does not break existing table structures.
+      // time and by name).
       personaPresets: '++id, name, createdAt, updatedAt'
     });
   }
@@ -703,7 +673,7 @@ export async function findPersonaPresetByName(name: string): Promise<PersonaPres
  * infrastructure failures.
  *
  * @param name    Preset display name (stored trimmed)
- * @param content Persona file contents keyed by 'AGENTS.md' / 'IDENTITY.md' / 'SOUL.md' / 'USER.md'
+ * @param content Persona file contents keyed by 'IDENTITY.md' / 'SOUL.md' / 'USER.md'
  * @returns       Auto-increment id of the newly created preset
  */
 export async function createPersonaPreset(name: string, content: Record<string, string>): Promise<number> {
@@ -723,7 +693,7 @@ export async function createPersonaPreset(name: string, content: Record<string, 
  * (the name stays the identity of the preset; renaming is not supported).
  *
  * @param id      Persona preset id
- * @param content New persona file contents (keyed by 'AGENTS.md' / 'IDENTITY.md' / 'SOUL.md' / 'USER.md')
+ * @param content New persona file contents (keyed by 'IDENTITY.md' / 'SOUL.md' / 'USER.md')
  */
 export async function updatePersonaPreset(id: number, content: Record<string, string>): Promise<void> {
   await db.personaPresets.update(id, { content, updatedAt: Date.now() });

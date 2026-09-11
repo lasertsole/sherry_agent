@@ -7,7 +7,7 @@
     class="w-[95vw] md:w-[1280px]"
     @show="onDialogShow">
     <div class="flex flex-col gap-3 md:flex-row">
-      <!-- Left column: existing 4-tab persona editor + save-preset action -->
+      <!-- Left column: existing 3-tab persona editor + save-preset action -->
       <div class="flex min-w-0 flex-1 flex-col gap-3">
         <div
           v-if="loading"
@@ -203,7 +203,7 @@ const MAX_CHARS = 2000;
 interface PersonaTab {
   /** Unique key for the tab; the same basename may exist across layers. */
   key: string;
-  /** Actual filename sent to the backend (e.g. 'AGENTS.md'). */
+  /** Actual filename sent to the backend (e.g. 'IDENTITY.md'). */
   file: string;
   i18nKey: string;
   i18nDescKey: string;
@@ -212,13 +212,6 @@ interface PersonaTab {
 }
 
 const tabs: PersonaTab[] = [
-  {
-    key: 'AGENTS.md',
-    file: 'AGENTS.md',
-    i18nKey: 'config.tabs.agents',
-    i18nDescKey: 'config.desc.agents',
-    readFn: readSystemPrompt
-  },
   {
     key: 'IDENTITY.md',
     file: 'IDENTITY.md',
@@ -303,7 +296,7 @@ const loadContent = async () => {
   }
 };
 
-/** All 4 tabs non-empty (trimmed) and each within the char limit — gates save & apply. */
+/** All tabs non-empty (trimmed) and each within the char limit — gates save & apply. */
 const allTabsValid = computed(() =>
   tabs.every(tab => {
     const v = editContent.value[tab.file] ?? '';
@@ -316,7 +309,7 @@ const actionEnabled = computed(
   () => allTabsValid.value && !loading.value && !saving.value && !applying.value && !restoring.value
 );
 
-/** Current editor content as a file->content map (all 4 persona files). */
+/** Current editor content as a file->content map (all persona files). */
 const buildContent = (): Record<string, string> => {
   const fileToContent: Record<string, string> = {};
   for (const tab of tabs) {
@@ -326,7 +319,7 @@ const buildContent = (): Record<string, string> => {
 };
 
 /**
- * Fill all 4 tabs with the given file->content map.
+ * Fill all tabs with the given file->content map.
  * @param content
  */
 const fillTabs = (content: Record<string, string>) => {
@@ -347,7 +340,7 @@ const restoreDefault = async (tab: PersonaTab) => {
   }
 };
 
-/** Click the virtual default entry: load the persona template into all 4 tabs. */
+/** Click the virtual default entry: load the persona template into all tabs. */
 const selectDefault = async () => {
   if (restoring.value || loading.value) return;
   restoring.value = true;
@@ -364,7 +357,7 @@ const selectDefault = async () => {
 };
 
 /**
- * Click a user preset entry: load its content into all 4 tabs and enter edit mode.
+ * Click a user preset entry: load its content into all tabs and enter edit mode.
  * @param preset
  */
 const selectPreset = (preset: PersonaPreset) => {
@@ -477,7 +470,7 @@ const doRemovePreset = async (preset: PersonaPreset) => {
   }
 };
 
-/** Click 应用 ("Apply"): full-write all 4 persona files; success → toast + saved + close, failure → stay open. */
+/** Click 应用 ("Apply"): full-write all persona files; success → toast + saved + close, failure → stay open. */
 const handleApply = async () => {
   if (!actionEnabled.value) return;
   applying.value = true;
@@ -544,13 +537,11 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "agents": "核心规则",
         "identity": "身份信息",
         "soul": "人格灵魂",
         "user": "用户信息"
       },
       "desc": {
-        "agents": "Agent核心规则：会话流程、安全、模块索引",
         "identity": "Agent身份：名字、emoji、头像",
         "soul": "Agent人格、语气、性格",
         "user": "用户信息和偏好"
@@ -594,13 +585,11 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "agents": "Core Rules",
         "identity": "Identity",
         "soul": "Soul",
         "user": "User Profile"
       },
       "desc": {
-        "agents": "Agent core rules: conversation flow, security, module index",
         "identity": "Agent identity: name, emoji, avatar",
         "soul": "Agent personality, tone, character",
         "user": "User info and preferences"
@@ -644,13 +633,11 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "agents": "コアルール",
         "identity": "身元情報",
         "soul": "人格・魂",
         "user": "ユーザー情報"
       },
       "desc": {
-        "agents": "Agent コアルール：会話フロー、セキュリティ、モジュール一覧",
         "identity": "Agent 身元：名前、絵文字、アバター",
         "soul": "Agent 人格、トーン、性格",
         "user": "ユーザー情報と好み"
@@ -694,13 +681,11 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "agents": "핵심 규칙",
         "identity": "신원 정보",
         "soul": "인격·영혼",
         "user": "사용자 정보"
       },
       "desc": {
-        "agents": "Agent 핵심 규칙：대화 흐름, 보안, 모듈 색인",
         "identity": "Agent 신원：이름, 이모지, 아바타",
         "soul": "Agent 인격, 어조, 성격",
         "user": "사용자 정보 및 선호도"
