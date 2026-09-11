@@ -1,5 +1,3 @@
-import os
-
 from .path import (
     ROOT_DIR as ROOT_DIR,
     ENV_PATH as ENV_PATH,
@@ -30,14 +28,16 @@ from .path import (
     resolve_workspace_template_lang as resolve_workspace_template_lang,
     resolve_workspace_template_dir as resolve_workspace_template_dir,
 )
+from .features import GATEWAY as GATEWAY
 from .num import (
     ARCHIVE_THRESHOLD as ARCHIVE_THRESHOLD,
     MEMORY_THRESHOLD as MEMORY_THRESHOLD,
     COMPRESS_RATIO as COMPRESS_RATIO,
 )
 
-# Bind address for the Robyn backend. Both are overridable via env so the
-# server can bind 0.0.0.0 inside containers (Dockerfile sets API_HOST);
+# Bind address for the Robyn backend. Both are sourced from the gateway
+# registry, which reads API_HOST/API_PORT from the environment at import so
+# the server can bind 0.0.0.0 inside containers (Dockerfile sets API_HOST);
 # defaults keep loopback for local development.
-API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
-API_PORT: int = int(os.getenv("API_PORT", "8080"))
+API_HOST: str = GATEWAY["api_host"]
+API_PORT: int = GATEWAY["api_port"]
