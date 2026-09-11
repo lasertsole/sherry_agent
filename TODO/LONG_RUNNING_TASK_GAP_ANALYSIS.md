@@ -1,65 +1,80 @@
 # 长程任务完整能力差距分析 — Long-Running Task Gap Analysis
 
 > 配套文件: SESSION_MEMORY_BORROWING_PLAN.md (22 项记忆层方案)
-> 日期: 2026-09-10
+> 日期: 2026-09-11
 
 ## 现状总结
 
 sherry-agent 已有的长程任务基础设施：
 
-| 能力             | 现有实现                                              | 评估              |
-| ---------------- | ----------------------------------------------------- | ----------------- |
-| 任务状态机       | TaskFlow (5态, 乐观锁, steps/results, waiting/resume) | ★★★★ 状态管理完备 |
-| 子代理持久会话   | SpawnMode.SESSION + subagent_registry.db              | ★★★★ 完备         |
-| 子代理崩溃恢复   | orphan recovery (3次重试, 24h wedged)                 | ★★★★ 完备         |
-| 子代理超时       | run_timeout_seconds + wall-clock deadline             | ★★★ 已有单次超时  |
-| Swarm 并行       | COLLECT/DISTRIBUTE, max_concurrent                    | ★★★ 并行调度有    |
-| 完成通知         | push-based 自动通知父会话                             | ★★★★ 完备         |
-| 结构化输出验证   | validate_structured_output                            | ★★ 仅 schema 验证 |
-| 压缩管线         | T1-T5 五触发 + 多策略 + 恢复上下文                    | ★★★★★ 最完备      |
-| LangGraph 检查点 | ThreadSafeAsyncSqliteSaver                            | ★★★ 跨重启存活    |
-| HITL 审批        | approval pipeline + 永久 allowlist                    | ★★★ 单点审批      |
-| 跨会话记忆       | MEMORY.md/USER.md + FTS5 搜索                         | ★★ 基础           |
+| 能力                | 现有实现                                                                                                                                         | 评估              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
+| 任务状态机          | TaskFlow (5态, 乐观锁, steps/results, waiting/resume)                                                                                            | ★★★★ 状态管理完备 |
+| 子代理持久会话      | SpawnMode.SESSION + subagent_registry.db                                                                                                         | ★★★★ 完备         |
+| 子代理崩溃恢复      | orphan recovery (3次重试, 24h wedged)                                                                                                            | ★★★★ 完备         |
+| 子代理超时          | run_timeout_seconds + wall-clock deadline                                                                                                        | ★★★ 已有单次超时  |
+| Swarm 并行          | COLLECT/DISTRIBUTE, max_concurrent                                                                                                               | ★★★ 并行调度有    |
+| 完成通知            | push-based 自动通知父会话                                                                                                                        | ★★★★ 完备         |
+| 结构化输出验证      | validate_structured_output                                                                                                                       | ★★ 仅 schema 验证 |
+| 压缩管线            | T1-T5 五触发 + 多策略 + 恢复上下文                                                                                                               | ★★★★★ 最完备      |
+| LangGraph 检查点    | ThreadSafeAsyncSqliteSaver                                                                                                                       | ★★★ 跨重启存活    |
+| HITL 审批           | approval pipeline + 永久 allowlist                                                                                                               | ★★★ 单点审批      |
+| 跨会话记忆          | MEMORY.md/USER.md + FTS5 搜索                                                                                                                    | ★★ 基础           |
+| **任务依赖图 DAG**  | `taskflow_run_task` 支持 `depends_on`; StepStatus 4态 (blocked→ready→dispatched→done); `deps_satisfied()`/`unlock_dependents()`; resume 自动解锁 | ★★★★ **已实现**   |
+| **并行步骤执行**    | `taskflow_dispatch` 批量派发 + `taskflow_wait_all` 等待                                                                                          | ★★★★ **已实现**   |
+| **Step 级状态追踪** | steps 内 `status` 字段 (blocked/ready/dispatched/done); `taskflow_summary` 展示各步状态与计数; `taskflow_dispatch` 可重派 ready 步骤             | ★★★ **部分实现**  |
 
 ---
 
 ## 差距清单（记忆层 22 项之外的 12 项）
 
-### 1. 任务依赖图（DAG） — TaskFlow steps 是线性列表
+### 1. 任务依赖图（DAG） — ✅ 已实现
 
-**现状**：`taskflow_run_task` 每次 append 一个 step 到 `state["steps"]` 列表，steps 之间无依赖关系。模型靠对话上下文决定"先做 A 再做 B"，但 TaskFlow 不强制顺序，也不支持"步骤 B 依赖步骤 A 完成"。
+**现状**：~~`taskflow_run_task` 每次 append 一个 step 到 `state["steps"]` 列表，steps 之间无依赖关系。~~
 
-**长程任务影响**：复杂任务需要条件分支（A 成功→做 B，A 失败→做 C）和并行路径（B 和 C 同时做）。线性 steps 无法表达。
+**已完成**：
 
-**参考**：openclaw 的 managedFlows 支持步骤依赖声明。hermes-agent 无此能力。
+- `taskflow_run_task` 支持 `depends_on: list[str]` 参数声明前置步骤
+- `StepStatus` 枚举: `BLOCKED` → `READY` → `DISPATCHED` → `DONE` (`config.py`)
+- `deps_satisfied()`: 检查所有 `depends_on` 步骤是否 `done` (`_shared.py`)
+- `unlock_dependents()`: resume 时自动将满足依赖的 blocked 步骤解锁为 ready (`_shared.py`)
+- `mark_step_done()`: 按 `child_session_key` 标记步骤完成 (`_shared.py`)
+- `taskflow_summary` 展示 `depends_on` 和每步状态
+- `taskflow_dispatch` 支持 blocked-but-satisfied 步骤的批量派发
+- 测试覆盖: `test_step_graph.py` (单元), `test_run_task_dag.py`, `test_resume_dag.py`, `test_summary_dag.py`, `test_dag_e2e.py` (E2E 含模拟重启)
 
-**需要做**：
+**实现细节**:
 
-- `state["steps"]` 增加 `depends_on: list[str]` 字段
-- `taskflow_run_task` 支持 `depends_on` 参数
-- 步骤状态增加 `blocked`（依赖未完成）→ `ready`（依赖完成）→ `dispatched` → `done`
-- `taskflow_resume` 时检查是否解锁后续 blocked 步骤
-
----
-
-### 2. 并行步骤执行 — TaskFlow 仅顺序 dispatch
-
-**现状**：`taskflow_run_task` 一次 dispatch 一个子代理，`taskflow_resume` 一次注入一个结果。虽然子代理的 Swarm 模式（COLLECT/DISTRIBUTE）支持并行 fan-out，但 TaskFlow 层面无法同时 dispatch 多个步骤并等待全部完成。
-
-**长程任务影响**：可并行的步骤（如"同时检查前端和后端"）只能顺序执行，浪费时间。
-
-**参考**：openclaw 的 managedFlows 支持并行步骤。oh-my-openagent 的 completion routing 五态机处理并行完成通知。
-
-**需要做**：
-
-- `taskflow_run_task` 支持批量 dispatch（`tasks: list[str]` 参数）
-- `state["steps"]` 支持多个 `dispatched` 状态的步骤
-- `taskflow_resume` 支持部分完成（部分步骤 done，部分仍 dispatched）
-- 新增 `taskflow_wait_all` 工具：等待所有 dispatched 步骤完成
+- DAG 字段全部存储在 `state_json` 内, 无 DB schema 迁移
+- 未知 `depends_on` id 在 spawn 前拒绝
+- 自依赖永不满足 (防循环)
+- `unlock_dependents` 单次扫描, 依赖环不会死循环
+- legacy 步骤 (无 `status` 字段) 向后兼容: 有 `child_session_key` → dispatched, 否则 → ready
 
 ---
 
-### 3. 每个 TaskFlow 的 Token/Cost 预算跟踪
+### 2. 并行步骤执行 — ✅ 已实现
+
+**现状**：~~`taskflow_run_task` 一次 dispatch 一个子代理, TaskFlow 层面无法同时 dispatch 多个步骤并等待全部完成。~~
+
+**已完成**：
+
+- `taskflow_dispatch` 工具: 批量派发多个 ready/blocked-but-satisfied 步骤
+  - `step_ids: list[str]` 参数, all-or-nothing 校验 (任何无效 id 拒绝整批, 零 spawn)
+  - 中途 spawn 失败: 已成功 spawn 的步骤在单次 `update_flow` 中持久化, 不丢失
+  - flow-level `child_session_key` 不被此工具修改 (per-step key 为准)
+- `taskflow_wait_all` 工具: flow-scoped bounded-poll 等待所有 dispatched 步骤完成
+  - 仅轮询当前 flow 的 dispatched 步骤的 child_session_key, 不阻塞无关后台子代理
+  - 可注入 registry seam (`get_run_by_child_session_key` / `is_live_unended_run`), 测试可替换
+  - 超时返回部分报告; 未知 run 视为已 settled (不挂起)
+- 测试覆盖: `test_taskflow_dispatch.py` (7+ 场景), `test_taskflow_wait_all.py` (6 场景)
+- `build_taskflow_tools()` 返回 10 个工具 (含 dispatch + wait_all)
+
+> 注: `taskflow/__init__.py` 的 `__all__` 尚未导出 `taskflow_dispatch`/`taskflow_wait_all` (仅 `tools/__init__.py` 导出), 不影响功能但建议补齐。
+
+---
+
+### 3. 每个 TaskFlow 的 Token/Cost 预算跟踪 — ❌ 未实现
 
 **现状**：`mes_memory.db` 的 messages 表记录了每条消息的 `input_tokens`/`output_tokens`/`model_name`，但没有按 TaskFlow 聚合。无法知道"这个任务花了多少 token/费用"。
 
@@ -76,7 +91,7 @@ sherry-agent 已有的长程任务基础设施：
 
 ---
 
-### 4. 任务级截止时间（Deadline）
+### 4. 任务级截止时间（Deadline） — ❌ 未实现
 
 **现状**：子代理有 `run_timeout_seconds`（单次执行超时），但 TaskFlow 没有整体截止时间。一个跨多会话的任务可以无限期运行。
 
@@ -89,29 +104,35 @@ sherry-agent 已有的长程任务基础设施：
 - `task_flows` 表新增 `deadline_ts REAL` 列
 - `taskflow_create` 支持 `deadline_hours: float` 参数
 - Sweeper（已有子代理清扫器）扩展：扫描超截止时间的 TaskFlow，标记为 failed
-- 超时通知用户
+- 赅时通知用户
 
 ---
 
-### 5. 检查点级任务恢复 — 从步骤 N 恢复，非从头开始
+### 5. 检查点级任务恢复 — 🟡 部分实现
 
 **现状**：子代理 orphan recovery 是从子代理会话级别恢复（重新 steer 消息），但 TaskFlow 层面没有"从第 N 步恢复"的概念。如果 TaskFlow 有 10 个步骤，完成到第 7 步时系统崩溃，恢复后需要模型重新读取 `taskflow_summary` 确认进度——靠模型理解而非系统强制。
 
-**长程任务影响**：崩溃后恢复依赖模型理解能力，不可靠。
+**已完成**：
 
-**参考**：openclaw 的 `branchCompactionCheckpointSession()` 支持从检查点分支恢复。
+- ✅ `state["steps"]` 的每个 step 已有 `status` 字段 (`blocked`/`ready`/`dispatched`/`done`) — 即差距原述的 `step_status` 字段
+- ✅ `taskflow_summary` 展示每步状态 + 按状态计数 (`step_statuses` 行)
+- ✅ `taskflow_dispatch` 可批量重派 ready 步骤 (崩溃后模型读 summary → dispatch ready 步骤)
+- ✅ `taskflow_resume` 的幂等 `result_hash` 防重复注入
+- ✅ E2E 测试覆盖模拟重启场景 (`test_dag_e2e.py`: fresh store init + new event loop → wait_all → resume → finish)
 
-**需要做**：
+**仍缺失**：
 
-- TaskFlow 的 `state["steps"]` 已有 `dispatched_at` 和结果，增加 `step_status` 字段（`pending`/`dispatched`/`done`/`failed`/`skipped`）
-- 新增 `taskflow_resume_from` 工具：从指定步骤恢复（跳过已完成步骤，重新 dispatch 失败步骤）
-- 会话启动时（LT-2 的自动续接）自动调用恢复逻辑
+- ❌ 无专用 `taskflow_resume_from` 工具 (自动跳过 done 步骤, 重派 failed/dispatched 步骤)
+- ❌ 无 `failed`/`skipped` step 状态 (代码注释: "failure-aware transitions are deliberately deferred to a later phase")
+- 无 会话启动时自动调用恢复逻辑 (依赖 LT-2, 同样未实现)
+
+**剩余工时**: 约 1-1.5 天 (step 状态模型已就绪, 需实现 `taskflow_resume_from` + 联动 LT-2)
 
 ---
 
-### 6. 进度报告工具 — 用户可查询"任务到哪了"
+### 6. 进度报告工具 — ❌ 未实现
 
-**现状**：`taskflow_summary` 返回原始的 steps/results 列表。没有面向用户的进度报告（"已完成 60%，预计还需 2 小时"）。
+**现状**：`taskflow_summary` 返回原始的 steps/results 列表（现已含 step 状态计数）。没有面向用户的进度报告（"已完成 60%，预计还需 2 小时"）。
 
 **长程任务影响**：用户在长程任务中无法快速了解进度，必须阅读原始步骤列表。
 
@@ -127,7 +148,7 @@ sherry-agent 已有的长程任务基础设施：
 
 ---
 
-### 7. 步骤结果验证 — 子代理结果质量检查
+### 7. 步骤结果验证 — ❌ 未实现
 
 **现状**：子代理有 `validate_structured_output`（仅 schema 格式验证），但 TaskFlow 的 `taskflow_resume` 直接接受子代理结果字符串，无内容质量验证。模型靠对话理解判断结果是否可用。
 
@@ -145,7 +166,7 @@ sherry-agent 已有的长程任务基础设施：
 
 ---
 
-### 8. 步骤级重试策略 — 失败后做什么
+### 8. 步骤级重试策略 — ❌ 未实现
 
 **现状**：子代理 orphan recovery 有 3 次重试，但这是子代理级别的。TaskFlow 步骤失败后没有策略——要么模型自己决定重试，要么跳过。无声明式重试策略。
 
@@ -164,7 +185,7 @@ sherry-agent 已有的长程任务基础设施：
 
 ---
 
-### 9. 跨会话任务看板 — 全局任务视图
+### 9. 跨会话任务看板 — ❌ 未实现
 
 **现状**：TaskFlow 按 channel+chat 隔离。用户在频道 A 启动的任务，在频道 B 看不到。
 
@@ -181,7 +202,7 @@ sherry-agent 已有的长程任务基础设施：
 
 ---
 
-### 10. 任务模板/Playbook — 可复用工作流
+### 10. 任务模板/Playbook — ❌ 未实现
 
 **现状**：无任务模板。每个 TaskFlow 从零创建，模型每次重新规划步骤。Skills 系统有 `templates/` 目录但仅用于代码模板，非任务流程模板。
 
@@ -209,7 +230,7 @@ sherry-agent 已有的长程任务基础设施：
 
 ---
 
-### 11. 空闲任务检测 — WAITING 太久告警
+### 11. 空闲任务检测 — WAITING 太久告警 — ❌ 未实现
 
 **现状**：TaskFlow 有 WAITING 状态（`taskflow_set_waiting`），但无超时检测。一个 WAITING 了 3 天的任务不会被标记异常。
 
@@ -229,7 +250,7 @@ sherry-agent 已有的长程任务基础设施：
 
 ---
 
-### 12. 任务历史归档与学习 — "上次类似任务怎么做的"
+### 12. 任务历史归档与学习 — "上次类似任务怎么做的" — ❌ 未实现
 
 **现状**：TaskFlow 终态（DONE/FAILED/CANCELLED）后留在 `taskflow_registry.db`，但无查询接口（除了 `taskflow_summary` 单个查询）。无法搜索"上次类似的任务"。
 
@@ -250,20 +271,20 @@ sherry-agent 已有的长程任务基础设施：
 
 ## 差距汇总
 
-| 编号 | 差距                | 优先级 | 类别     | 预估工时 | 与记忆层方案的关系 |
-| ---- | ------------------- | ------ | -------- | -------- | ------------------ |
-| 1    | 任务依赖图 DAG      | P1     | 执行编排 | 2-3天    | 独立               |
-| 2    | 并行步骤执行        | P1     | 执行编排 | 2-3天    | 依赖 #1            |
-| 3    | Token/Cost 预算跟踪 | P0     | 资源管理 | 1天      | 独立               |
-| 4    | 任务级截止时间      | P0     | 资源管理 | 1天      | 独立               |
-| 5    | 检查点级任务恢复    | P1     | 错误恢复 | 2天      | 与 LT-2 联动       |
-| 6    | 进度报告工具        | P0     | 用户体验 | 0.5天    | 与 LT-2 联动       |
-| 7    | 步骤结果验证        | P1     | 质量保障 | 1-2天    | 独立               |
-| 8    | 步骤级重试策略      | P1     | 错误恢复 | 1-2天    | 独立               |
-| 9    | 跨会话任务看板      | P1     | 用户体验 | 1天      | 与 LT-2 互补       |
-| 10   | 任务模板/Playbook   | P2     | 执行编排 | 2-3天    | 与 Skills 系统联动 |
-| 11   | 空闲任务检测        | P0     | 错误恢复 | 1天      | 与 Sweeper 联动    |
-| 12   | 任务历史归档与学习  | P2     | 知识管理 | 1-2天    | 与 LT-4 联动       |
+| 编号 | 差距                | 状态        | 优先级 | 类别     | 预估工时    | 与记忆层方案的关系 |
+| ---- | ------------------- | ----------- | ------ | -------- | ----------- | ------------------ |
+| 1    | 任务依赖图 DAG      | ✅ 已实现   | —      | 执行编排 | (已完成)    | 独立               |
+| 2    | 并行步骤执行        | ✅ 已实现   | —      | 执行编排 | (已完成)    | 依赖 #1            |
+| 3    | Token/Cost 预算跟踪 | ❌ 未实现   | P0     | 资源管理 | 1天         | 独立               |
+| 4    | 任务级截止时间      | ❌ 未实现   | P0     | 资源管理 | 1天         | 独立               |
+| 5    | 检查点级任务恢复    | 🟡 部分实现 | P1     | 错误恢复 | 剩余1-1.5天 | 与 LT-2 联动       |
+| 6    | 进度报告工具        | ❌ 未实现   | P0     | 用户体验 | 0.5天       | 与 LT-2 联动       |
+| 7    | 步骤结果验证        | ❌ 未实现   | P1     | 质量保障 | 1-2天       | 独立               |
+| 8    | 步骤级重试策略      | ❌ 未实现   | P1     | 错误恢复 | 1-2天       | 独立               |
+| 9    | 跨会话任务看板      | ❌ 未实现   | P1     | 用户体验 | 1天         | 与 LT-2 互补       |
+| 10   | 任务模板/Playbook   | ❌ 未实现   | P2     | 执行编排 | 2-3天       | 与 Skills 系统联动 |
+| 11   | 空闲任务检测        | ❌ 未实现   | P0     | 错误恢复 | 1天         | 与 Sweeper 联动    |
+| 12   | 任务历史归档与学习  | ❌ 未实现   | P2     | 知识管理 | 1-2天       | 与 LT-4 联动       |
 
 ---
 
@@ -276,12 +297,16 @@ sherry-agent 已有的长程任务基础设施：
   P2: P2-1~5                      (5项, 16-21天)
 
 第二层：执行编排层（本文 12 项）
-  P0: #3预算 + #4截止时间 + #6进度报告 + #11空闲检测  (4项, 3.5天)
-  P1: #1 DAG + #2并行 + #5检查点恢复 + #7结果验证 + #8重试策略 + #9看板  (6项, 9-13天)
-  P2: #10模板 + #12历史归档                       (2项, 3-5天)
+  ✅ 已完成: #1 DAG + #2 并行步骤                         (2项, 已完成)
+  🟡 部分完成: #5 检查点恢复 (step状态模型已就绪)          (剩余1-1.5天)
+  P0: #3预算 + #4截止时间 + #6进度报告 + #11空闲检测       (4项, 3.5天)
+  P1: #5剩余 + #7结果验证 + #8重试策略 + #9看板            (4项, 5-7天)
+  P2: #10模板 + #12历史归档                               (2项, 3-5天)
 
 总计: 22(记忆) + 12(编排) = 34 项
-预估总工时: 47-66 天（约 2-3 个月）
+已完成: 2 + 0.5(部分) = 2.5 项
+剩余: 31.5 项
+预估剩余工时: 42-56 天（约 2 个月）
 ```
 
 ### 优先实施顺序（按价值/成本比排序）
@@ -297,11 +322,13 @@ sherry-agent 已有的长程任务基础设施：
 8. LT-8  会话间意图连续性      (1-2天) — "继续上次"场景
 9. LT-7  摘要与TaskFlow协调    (0.5天) — 摘要准确性
 10. P0-4 工具输出一行摘要      (0.5天) — 压缩质量
+11. #5    检查点恢复 (剩余)    (1-1.5天) — 崩溃自动恢复
 ...后续按优先级推进
 ```
 
-> **结论**：实现完整长程任务能力共需 34 项改动（22 记忆 + 12 编排），约 2-3 个月。
-> 但只需前 10 项（约 10-12 天）即可覆盖 80% 的长程任务场景：
+> **结论**：实现完整长程任务能力共需 34 项改动（22 记忆 + 12 编排），约 2 个月。
+> 已完成 2.5 项（#1 DAG + #2 并行步骤 + #5 检查点恢复-数据模型部分）。
+> 只需前 10 项（约 10-12 天）即可覆盖 80% 的长程任务场景：
 >
 > - 记忆不丢（分层 + Flush + 连续性）
 > - 跨会话续接（TaskFlow 自动续接 + 进度报告）
