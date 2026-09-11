@@ -8,14 +8,17 @@ import time
 import uuid
 from pydantic import BaseModel
 from loguru import logger
+
+from config.features import SUBAGENT_INFRA
 from ..types.spawn import SpawnMode
 
 
 class ThreadBindingConfig(BaseModel):
     """Configuration for thread creation: idle/max-age timeouts and optional naming."""
 
-    idle_timeout_ms: int = 300000  # 5 minutes
-    max_age_ms: int = 86400000
+    # 5 minutes idle timeout; 24 hours max age
+    idle_timeout_ms: int = SUBAGENT_INFRA["thread_binding_idle_timeout_ms"]
+    max_age_ms: int = SUBAGENT_INFRA["thread_binding_max_age_ms"]
     thread_name: str | None = None
     intro_text: str | None = None
 
@@ -25,8 +28,8 @@ class ThreadBindingInfo(BaseModel):
 
     thread_id: str
     bound_at: float = 0.0
-    idle_timeout_ms: int = 300000  # 5 minutes
-    max_age_ms: int = 86400000  # 24 hours
+    idle_timeout_ms: int = SUBAGENT_INFRA["thread_binding_idle_timeout_ms"]
+    max_age_ms: int = SUBAGENT_INFRA["thread_binding_max_age_ms"]
     delivery_origin: str | None = None
 
 

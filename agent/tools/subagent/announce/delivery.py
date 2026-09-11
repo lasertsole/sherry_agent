@@ -16,6 +16,8 @@ import re
 import time
 from loguru import logger
 from langchain_core.messages import HumanMessage
+
+from config.features import SUBAGENT_INFRA
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus
 from ..types.delivery import DeliveryContext
 from ..config import get_config
@@ -25,7 +27,8 @@ from .completion_message import STATUS_COMPLETED, STATUS_FAILED, build_completio
 
 _delivered_keys: set[str] = set()  # In-memory idempotency tracking
 _delivery_mirror: dict[str, str] = {}  # Content-based deduplication mirror
-_MIRROR_MAX = 5000  # Max entries in the delivery mirror before eviction
+# Max entries in the delivery mirror before eviction
+_MIRROR_MAX = SUBAGENT_INFRA["delivery_mirror_max"]
 
 _TRANSIENT_PATTERNS = [
     re.compile(r"timeout", re.IGNORECASE),
@@ -50,13 +53,10 @@ _PERMANENT_PATTERNS = [
     re.compile(r"ENOENT", re.IGNORECASE),
 ]
 
-_TRANSIENT_RETRY_DELAYS_MS = [5000, 10000, 20000]  # Exponential backoff for transient errors
-_COMPACTION_RETRY_DELAYS_MS = [
-    1000,
-    2000,
-    4000,
-    8000,
-]  # Backoff for nested sub-agent compaction retries
+# Exponential backoff for transient errors
+_TRANSIENT_RETRY_DELAYS_MS = SUBAGENT_INFRA["delivery_transient_retry_delays_ms"]
+# Backoff for nested sub-agent compaction retries
+_COMPACTION_RETRY_DELAYS_MS = SUBAGENT_INFRA["delivery_compaction_retry_delays_ms"]
 
 
 def _is_already_delivered(run: SubagentRunRecord) -> bool:

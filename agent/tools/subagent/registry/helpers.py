@@ -2,11 +2,15 @@
 
 import time
 from loguru import logger
+
+from config.features import SUBAGENT_INFRA
 from ..types.registry import SubagentRunRecord, ExecutionStatus
 from ..config import SubagentConfig
 
 
-def cap_frozen_result_text(text: str | None, max_bytes: int = 24000) -> str | None:
+def cap_frozen_result_text(
+    text: str | None, max_bytes: int = SUBAGENT_INFRA["helpers_frozen_result_cap_bytes"]
+) -> str | None:
     """Truncate UTF-8 text to max_bytes, appending a truncation notice if exceeded."""
     if text is None:
         return None
@@ -17,13 +21,17 @@ def cap_frozen_result_text(text: str | None, max_bytes: int = 24000) -> str | No
     return truncated + f"\n... [truncated, {len(encoded)} bytes total]"
 
 
-def resolve_announce_retry_delay_ms(attempt: int, base_ms: int = 1000) -> int:
+def resolve_announce_retry_delay_ms(
+    attempt: int, base_ms: int = SUBAGENT_INFRA["helpers_announce_retry_base_ms"]
+) -> int:
     """Compute exponential backoff delay in milliseconds, capped at 8000 ms."""
-    capped_ms = 8000
+    capped_ms = SUBAGENT_INFRA["helpers_announce_retry_cap_ms"]
     return min(base_ms * (2**attempt), capped_ms)
 
 
-def resolve_announce_retry_delay_seconds(attempt: int, base_ms: int = 1000) -> float:
+def resolve_announce_retry_delay_seconds(
+    attempt: int, base_ms: int = SUBAGENT_INFRA["helpers_announce_retry_base_ms"]
+) -> float:
     """Compute exponential backoff delay in seconds."""
     return resolve_announce_retry_delay_ms(attempt, base_ms) / 1000.0
 

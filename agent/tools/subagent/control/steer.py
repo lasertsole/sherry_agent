@@ -7,6 +7,8 @@ suppress_announce_reason, and kill reconciliation before restart.
 import asyncio
 import time
 from loguru import logger
+
+from config.features import SUBAGENT_INFRA
 from ..types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
 from ..registry import (
     get_run,
@@ -20,7 +22,8 @@ from ..config import get_config
 from .controller import can_control_run, is_self_steer
 
 _last_steer_at: dict[str, float] = {}  # Rate-limit tracking per caller:child pair
-_ABORT_SETTLE_TIMEOUT = 5.0  # Max seconds to wait for task cancellation to settle
+# Max seconds to wait for task cancellation to settle
+_ABORT_SETTLE_TIMEOUT = SUBAGENT_INFRA["steer_abort_settle_timeout"]
 
 
 async def steer_subagent_run(
@@ -174,7 +177,7 @@ async def steer_subagent_run(
     return restarted
 
 
-async def _abort_settle_wait(run_id: str, timeout: float = 5.0) -> bool:
+async def _abort_settle_wait(run_id: str, timeout: float = _ABORT_SETTLE_TIMEOUT) -> bool:
     """Wait for the current task to settle after cancellation, up to the given timeout."""
     from ..registry import get_task
 

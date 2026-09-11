@@ -33,17 +33,19 @@ import aiosqlite
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from config.features import SUBAGENT_INFRA
+
 _DB_DIR = Path(__file__).resolve().parent.parent / "data"
 _DB_PATH = _DB_DIR / "subagent_registry.db"
 
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this
 # timeout — handled separately in _switch_to_wal_if_needed.
-_BUSY_TIMEOUT_MS = 5000
+_BUSY_TIMEOUT_MS = SUBAGENT_INFRA["pending_injections_busy_timeout_ms"]
 
 # How long a non-owning event loop waits for the owning loop's one-time schema
 # init before initializing the schema itself (see _ensure_db).
-_INIT_WAIT_TIMEOUT_S = 10.0
+_INIT_WAIT_TIMEOUT_S = SUBAGENT_INFRA["registry_init_wait_timeout_s"]
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS pending_injections (

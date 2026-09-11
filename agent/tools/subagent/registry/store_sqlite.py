@@ -26,6 +26,7 @@ from pathlib import Path
 import aiosqlite
 from loguru import logger
 
+from config.features import SUBAGENT_INFRA
 from ..types.registry import (
     SubagentRunRecord,
 )
@@ -36,12 +37,12 @@ _DB_PATH = _DB_DIR / "subagent_registry.db"
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this
 # timeout — handled separately in _switch_to_wal_if_needed.
-_BUSY_TIMEOUT_MS = 5000
+_BUSY_TIMEOUT_MS = SUBAGENT_INFRA["registry_store_busy_timeout_ms"]
 _BUSY_TIMEOUT_S = _BUSY_TIMEOUT_MS / 1000.0
 
 # How long a non-owning event loop waits for the owning loop's one-time schema
 # init before initializing the schema itself (see ensure_db).
-_INIT_WAIT_TIMEOUT_S = 10.0
+_INIT_WAIT_TIMEOUT_S = SUBAGENT_INFRA["registry_init_wait_timeout_s"]
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS subagent_runs (

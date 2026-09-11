@@ -7,6 +7,8 @@ an updated reply from the sub-agent.
 import asyncio
 import time
 from loguru import logger
+
+from config.features import SUBAGENT_INFRA
 from ..types.registry import ExecutionStatus
 from ..registry import get_run
 from .controller import can_control_run
@@ -17,7 +19,7 @@ async def send_subagent_message(
     message: str,
     caller_session_key: str,
     wait_for_reply: bool = True,
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float = SUBAGENT_INFRA["sessions_send_timeout_seconds"],
 ) -> str | None:
     """Send a message to a running sub-agent and optionally wait for its reply."""
     run = get_run(run_id)

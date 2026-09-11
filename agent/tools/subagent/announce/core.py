@@ -7,6 +7,8 @@ descendant-wake deferral.
 
 import time
 from loguru import logger
+
+from config.features import SUBAGENT_INFRA
 from ..types.registry import SubagentRunRecord, ExecutionStatus, CompletionState
 from .output import build_child_completion_findings
 from .delivery import deliver_subagent_announcement
@@ -65,8 +67,8 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
         captured = await capture_subagent_completion_reply(
             child_session_key=run.child_session_key,
             wait_for_reply=True,
-            max_wait_ms=5000,
-            retry_interval_ms=500,
+            max_wait_ms=SUBAGENT_INFRA["capture_max_wait_ms"],
+            retry_interval_ms=SUBAGENT_INFRA["capture_retry_interval_ms"],
         )
         if captured and captured.strip():
             # Update the run record with the newly captured result text

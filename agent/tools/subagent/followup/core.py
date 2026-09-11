@@ -2,6 +2,8 @@
 
 import asyncio
 from loguru import logger
+
+from config.features import SUBAGENT_INFRA
 from ..registry import all_runs, is_live_unended_run
 from ..registry.lifecycle import recover_orphaned_runs
 from ..config import get_config
@@ -17,9 +19,7 @@ async def _followup_loop() -> None:
     _running = True
     config = get_config()
     # Followup interval is 2× sweeper interval to avoid being too aggressive
-    interval = (
-        config.sweeper_interval_seconds * 2
-    )  # 2× sweeper interval to avoid being too aggressive
+    interval = config.sweeper_interval_seconds * SUBAGENT_INFRA["followup_interval_multiplier"]
 
     logger.info("Subagent followup started (interval={}s)", interval)
 

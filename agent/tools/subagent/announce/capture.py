@@ -6,11 +6,13 @@ briefly wait before sending an empty or stale announcement.
 
 import asyncio
 
+from config.features import SUBAGENT_INFRA
+
 
 async def read_subagent_output_with_retry(
     child_session_key: str,
-    max_wait_ms: int = 5000,
-    retry_interval_ms: int = 500,
+    max_wait_ms: int = SUBAGENT_INFRA["capture_max_wait_ms"],
+    retry_interval_ms: int = SUBAGENT_INFRA["capture_retry_interval_ms"],
 ) -> str | None:
     """Read sub-agent output with retry: poll until non-empty text appears or bounded wait expires."""
     max_wait_ms = max(0, min(max_wait_ms, 15_000))  # Cap at 15s to prevent excessive waits
@@ -36,8 +38,8 @@ async def read_subagent_output_with_retry(
 async def capture_subagent_completion_reply(
     child_session_key: str,
     wait_for_reply: bool = True,
-    max_wait_ms: int = 5000,
-    retry_interval_ms: int = 500,
+    max_wait_ms: int = SUBAGENT_INFRA["capture_max_wait_ms"],
+    retry_interval_ms: int = SUBAGENT_INFRA["capture_retry_interval_ms"],
 ) -> str | None:
     """Capture a sub-agent's completion reply with optional retry waiting.
 

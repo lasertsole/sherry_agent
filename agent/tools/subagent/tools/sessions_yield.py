@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 from loguru import logger
 
+from config.features import SUBAGENT_INFRA
 from ..registry import register_yield_event, remove_yield_event
 from ..registry.queries import list_runs_for_requester
 from ..types.registry import ExecutionStatus
@@ -15,7 +16,7 @@ class SessionsYieldSchema(BaseModel):
         default=None, description="Optional reason for yielding (e.g., 'waiting for subagents')."
     )
     timeout_seconds: float = Field(
-        default=300.0,
+        default=SUBAGENT_INFRA["sessions_yield_default_timeout_seconds"],
         description="Maximum seconds to wait for subagent results. Default 300 (5 min).",
     )
 
@@ -36,7 +37,11 @@ class SessionsYieldTool(BaseTool):
     def _run(self, **kwargs) -> str:
         raise NotImplementedError("Use async version")
 
-    async def _arun(self, reason: str | None = None, timeout_seconds: float = 300.0) -> str:
+    async def _arun(
+        self,
+        reason: str | None = None,
+        timeout_seconds: float = SUBAGENT_INFRA["sessions_yield_default_timeout_seconds"],
+    ) -> str:
         session_key = f"agent:main:session:{self.session_id}"
         logger.info("sessions_yield called: session={}, reason={}", session_key, reason)
 

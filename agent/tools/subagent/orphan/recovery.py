@@ -8,6 +8,8 @@ finalization of interrupted runs.
 import asyncio
 import time
 from loguru import logger
+
+from config.features import SUBAGENT_INFRA
 from ..types.registry import SubagentRunRecord, ExecutionStatus, RunOutcome, RunOutcomeStatus
 from ..registry import (
     get_run,
@@ -21,8 +23,9 @@ from ..announce.core import run_subagent_announce_flow
 from ..config import get_config
 
 _recovery_tasks: dict[str, asyncio.Task] = {}
-_MAX_RECOVERY_ATTEMPTS = 3
-_WEDGED_AGE_SECONDS = 86400  # 24 hours — runs older than this are considered permanently stuck
+_MAX_RECOVERY_ATTEMPTS = SUBAGENT_INFRA["orphan_max_recovery_attempts"]
+# 24 hours — runs older than this are considered permanently stuck
+_WEDGED_AGE_SECONDS = SUBAGENT_INFRA["orphan_wedged_age_seconds"]
 recovery_attempts_persisted: dict[str, int] = {}
 
 
@@ -246,7 +249,8 @@ def cancel_recovery(run_id: str) -> None:
     recovery_attempts_persisted.pop(run_id, None)
 
 
-_MAX_TERMINAL_FINALIZE_ATTEMPTS = 3  # Max retries for force-finalizing an interrupted run
+# Max retries for force-finalizing an interrupted run
+_MAX_TERMINAL_FINALIZE_ATTEMPTS = SUBAGENT_INFRA["orphan_max_terminal_finalize_attempts"]
 
 
 async def finalize_interrupted_run_with_retry(
