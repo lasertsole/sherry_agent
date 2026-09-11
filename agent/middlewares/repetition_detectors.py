@@ -19,12 +19,14 @@ import unicodedata
 
 from langchain_core.messages import AIMessage
 
+from config.features import REPETITION_GUARD
+
 # Only the tail of a long content string is hashed, to keep the comparison
 # cheap and stable even when the rest of the text changes.
-_TAIL_CHARS = 500
+_TAIL_CHARS = REPETITION_GUARD["tail_chars"]
 # Default minimum consecutive identical non-whitespace characters (e.g. 8x
 # ``a``) required to flag a character run as "repetitive".
-_CHAR_RUN_MIN = 8
+_CHAR_RUN_MIN = REPETITION_GUARD["char_run_min"]
 # Sentence/line delimiter set used by the segment-level sub-detector.  Because
 # ``\\n`` is included, line-level repetition is covered by the same pass.
 _SENTENCE_SPLIT = re.compile(r"[。.!?！？\n]+")

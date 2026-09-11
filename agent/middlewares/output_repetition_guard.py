@@ -45,7 +45,7 @@ from langchain.agents.middleware.types import (
 
 from agent.middlewares.base import BeforeAgentHooksMixin
 from agent.middlewares.repetition_detectors import (
-    _CHAR_RUN_MIN,
+    _CHAR_RUN_MIN as _CHAR_RUN_MIN,
     _TAIL_CHARS as _TAIL_CHARS,
     CharRunDetector,
     PhraseRepetitionDetector,
@@ -67,16 +67,17 @@ from agent.middlewares.repetition_state import (
     _REASONING_WARNED_KEY,
     RepetitionState,
 )
+from config.features import REPETITION_GUARD
 from runtime import state_register_mem
 
 # Minimum content/reasoning length before repetition detection runs at all,
 # preventing false positives on short responses.
-_MIN_CONTENT_LENGTH = 20
+_MIN_CONTENT_LENGTH = REPETITION_GUARD["min_content_length"]
 # Minimum content length for **cross-call** repetition detection.  Much lower
 # than ``_MIN_CONTENT_LENGTH`` because even a single short sentence repeated
 # across consecutive model calls is a valid death-loop signal.  Only
 # non-empty content (>= 1 char) is required.
-_MIN_CROSSCALL_LENGTH = 1
+_MIN_CROSSCALL_LENGTH = REPETITION_GUARD["min_crosscall_length"]
 
 
 class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
@@ -106,11 +107,11 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
 
     def __init__(
         self,
-        max_identical_outputs: int = 3,
-        warn_after: int = 2,
-        internal_repeat_ratio: float = 0.6,
-        internal_min_lines: int = 6,
-        char_run_min: int = _CHAR_RUN_MIN,
+        max_identical_outputs: int = REPETITION_GUARD["max_identical_outputs"],
+        warn_after: int = REPETITION_GUARD["warn_after"],
+        internal_repeat_ratio: float = REPETITION_GUARD["internal_repeat_ratio"],
+        internal_min_lines: int = REPETITION_GUARD["internal_min_lines"],
+        char_run_min: int = REPETITION_GUARD["char_run_min"],
     ):
         super().__init__()
         self.max_identical_outputs = max_identical_outputs
@@ -189,8 +190,8 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
     def _detect_phrase_repetition(
         self,
         content: str,
-        min_repeats: int = 5,
-        max_phrase: int = 10,
+        min_repeats: int = REPETITION_GUARD["phrase_min_repeats"],
+        max_phrase: int = REPETITION_GUARD["phrase_max_phrase_len"],
     ) -> bool:
         """Phrase-periodic sub-detector: short substring repeated back-to-back."""
         return self._phrase_detector.detect(content, min_repeats, max_phrase)

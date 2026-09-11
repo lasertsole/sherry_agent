@@ -59,9 +59,10 @@ from agent.middlewares.output_repetition_guard import (
     _INTERNAL_WARNED_KEY,
     _HALTED_KEY,
     _MIN_CONTENT_LENGTH,
-    _CHAR_RUN_MIN,
+    _CHAR_RUN_MIN as _CHAR_RUN_MIN,
     _STREAM_WARNING,
 )
+from config.features import REPETITION_GUARD
 
 # Reasoning keys used to extract reasoning text from ``additional_kwargs``.
 # Re-exported from the middleware module so the wrapper and middleware stay
@@ -384,9 +385,9 @@ class RepetitionGuardWrapper:
     def __init__(
         self,
         inner: CompiledStateGraph,
-        internal_repeat_ratio: float = 0.6,
-        internal_min_lines: int = 6,
-        char_run_min: int = _CHAR_RUN_MIN,
+        internal_repeat_ratio: float = REPETITION_GUARD["internal_repeat_ratio"],
+        internal_min_lines: int = REPETITION_GUARD["internal_min_lines"],
+        char_run_min: int = REPETITION_GUARD["char_run_min"],
         phantom_stream_guard: bool = False,
     ):
         self._inner = inner

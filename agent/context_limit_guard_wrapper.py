@@ -33,12 +33,13 @@ from loguru import logger
 from langchain_core.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
 
+from config.features import CONTEXT_GUARD, TOKEN_ESTIMATION
 from config.num import COMPRESSION_TRIGGER_RATIO
 from runtime import state_register_mem
 from agent.middlewares.summarization_components import _FORCE_RECOVERY_KEY
 from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
-_CHARS_PER_TOKEN = 4
+_CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
 _TRUNCATION_MARKER = (
     "[System notice: the response exceeded the mid-stream output budget and was truncated.]"
 )
@@ -64,8 +65,8 @@ class ContextLimitGuardWrapper:
         self,
         inner: CompiledStateGraph,
         context_window: int,
-        output_cut_ratio: float = 0.20,
-        check_interval: int = 20,
+        output_cut_ratio: float = CONTEXT_GUARD["output_cut_ratio"],
+        check_interval: int = CONTEXT_GUARD["check_interval"],
     ) -> None:
         self._inner = inner
         self._context_window = context_window

@@ -8,6 +8,7 @@ everything defined here).
 
 from __future__ import annotations
 
+from config.features import REPETITION_GUARD
 from runtime.state_register import StateRegisterMeM
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ SESSION_STATE_KEYS: tuple[str, ...] = (
 )
 
 # Maximum number of content hashes kept per session before trimming.
-_MAX_HISTORY = 30
+_MAX_HISTORY = REPETITION_GUARD["max_history"]
 
 
 class RepetitionState:
