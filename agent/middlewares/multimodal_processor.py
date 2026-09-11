@@ -2,6 +2,7 @@ import time
 from typing import Any
 from loguru import logger
 from config import SRC_DIR
+from config.features import CONTEXT_ENGINE_HOOK
 from typing import override
 from langgraph.runtime import Runtime
 from langchain.agents.middleware import AgentMiddleware, AgentState
@@ -168,7 +169,10 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
             return
 
         now_ms: int = int(time.time() * 1000)
-        seven_days_ms: int = 7 * 24 * 60 * 60 * 1000
+        # Retention is configured in days; convert to the millisecond deadline unit.
+        seven_days_ms: int = (
+            CONTEXT_ENGINE_HOOK["multimodal_temp_retention_days"] * 24 * 60 * 60 * 1000
+        )
         deadline_ms: int = now_ms - seven_days_ms
 
         deleted_count: int = 0

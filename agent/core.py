@@ -8,6 +8,7 @@ from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
 from config.num import COMPRESSION_TRIGGER_RATIO
+from config.features import ITERATION_BUDGET
 from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (
@@ -151,7 +152,7 @@ async def built_agent(
                 TodoContinuationEnforcer(),
                 ContextEngineHook(),
                 MultimodalProcessor(),
-                IterationBudget(90),
+                IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
                 ToolGuardrails(),
                 ToolCallNormalize(),
                 SubagentCompletionDrainMiddleware(),

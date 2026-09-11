@@ -10,6 +10,7 @@ from collections.abc import Callable, Awaitable
 from workspace.prompt_builder import build_system_prompt
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from runtime import state_register_db, state_register_mem
+from config.features import CONTEXT_ENGINE_HOOK
 from .nudge import _nudge_memory, _nudge_skill, _nudge_combined
 from pub.func import sanitize_tool_use_result_pairing, slice_last_turn, run_async
 from langchain.agents.middleware import AgentMiddleware, ModelResponse, ModelRequest
@@ -23,8 +24,8 @@ _NUDGE_MEMORY_COUNT_KEY = "nudge_review_memory_count"
 _NUDGE_SKILL_COUNT_KEY = "nudge_review_skill_count"
 _NUDGE_MEMORY_LOCK_KEY = "nudge_review_memory_lock"
 _NUDGE_SKILL_LOCK_KEY = "nudge_review_skill_lock"
-_NUDGE_MEMORY_THRESHOLD = 10
-_NUDGE_SKILL_THRESHOLD = 10
+_NUDGE_MEMORY_THRESHOLD = CONTEXT_ENGINE_HOOK["nudge_memory_threshold"]
+_NUDGE_SKILL_THRESHOLD = CONTEXT_ENGINE_HOOK["nudge_skill_threshold"]
 
 
 def _reconcile_denials_for_persistence(messages: list[BaseMessage]) -> list[BaseMessage]:

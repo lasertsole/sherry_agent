@@ -740,6 +740,7 @@ async def _build_child_agent(
     from models import build_main_llm, build_auxiliary_llm
     from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
     from config.num import COMPRESSION_TRIGGER_RATIO
+    from config.features import ITERATION_BUDGET
     from agent.checkpointer import build_async_sqlite_checkpointer
     from agent.middlewares import (
         IterationBudget,
@@ -790,7 +791,7 @@ async def _build_child_agent(
                 ],
                 keep=("messages", 10),
             ),
-            IterationBudget(60),
+            IterationBudget(ITERATION_BUDGET["worker_max_iterations"]),
             ToolGuardrails(),
             # Non-streaming interception: children run via ``child_agent.ainvoke(...)``
             # (this module's ``_execute_subagent``), so there are no intermediate tokens
