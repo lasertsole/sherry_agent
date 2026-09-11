@@ -1,0 +1,88 @@
+"""Feature configuration registry.
+
+Single source of truth; consumers bind aliases to these fields. The package
+aggregates the two halves of the registry:
+
+* ``agent_side`` — agent-side features (middlewares, tools, LLM client).
+* ``infra_side`` — infrastructure-side features (server, queues, skills,
+  context engine, runtime).
+
+Every ``TypedDict`` and its module-level default instance is re-exported here so
+consumers can import either the specific half or the whole registry from one
+place. Imports use the explicit ``X as X`` form so re-exports stay lint-clean.
+"""
+
+from .agent_side import (
+    TOKEN_ESTIMATION as TOKEN_ESTIMATION,
+    TOOL_GUARDRAILS as TOOL_GUARDRAILS,
+    CONTEXT_ENGINE_HOOK as CONTEXT_ENGINE_HOOK,
+    CONTEXT_GUARD as CONTEXT_GUARD,
+    HEARTBEAT_STALENESS as HEARTBEAT_STALENESS,
+    HITL_DEFAULTS as HITL_DEFAULTS,
+    ITERATION_BUDGET as ITERATION_BUDGET,
+    LLM_CLIENT_DEFAULTS as LLM_CLIENT_DEFAULTS,
+    LLM_RETRY as LLM_RETRY,
+    MAX_TOKENS_BOOST as MAX_TOKENS_BOOST,
+    MODEL_BACKEND as MODEL_BACKEND,
+    REASONING_BUDGET as REASONING_BUDGET,
+    REPETITION_GUARD as REPETITION_GUARD,
+    SUBAGENT_INFRA as SUBAGENT_INFRA,
+    SUMMARIZATION as SUMMARIZATION,
+    TASKFLOW_INFRA as TASKFLOW_INFRA,
+    TODOLIST_INFRA as TODOLIST_INFRA,
+    TOOLS_TIMEOUTS as TOOLS_TIMEOUTS,
+    ContextEngineHookConfig as ContextEngineHookConfig,
+    ContextGuardConfig as ContextGuardConfig,
+    HeartbeatStalenessConfig as HeartbeatStalenessConfig,
+    HitlDefaultsConfig as HitlDefaultsConfig,
+    IterationBudgetConfig as IterationBudgetConfig,
+    LlmClientDefaultsConfig as LlmClientDefaultsConfig,
+    LlmRetryConfig as LlmRetryConfig,
+    MaxTokensBoostConfig as MaxTokensBoostConfig,
+    ModelBackendConfig as ModelBackendConfig,
+    ReasoningBudgetConfig as ReasoningBudgetConfig,
+    RepetitionGuardConfig as RepetitionGuardConfig,
+    SubagentInfraConfig as SubagentInfraConfig,
+    SummarizationConfig as SummarizationConfig,
+    TaskFlowInfraConfig as TaskFlowInfraConfig,
+    TodoListInfraConfig as TodoListInfraConfig,
+    TokenEstimationConfig as TokenEstimationConfig,
+    ToolGuardrailsConfig as ToolGuardrailsConfig,
+    ToolsTimeoutsConfig as ToolsTimeoutsConfig,
+)
+from .infra_side import (
+    BUS as BUS,
+    CHANNELS as CHANNELS,
+    CRASH_LOOP as CRASH_LOOP,
+    CRON_SERVICE as CRON_SERVICE,
+    CURATOR_DEFAULTS as CURATOR_DEFAULTS,
+    GATEWAY as GATEWAY,
+    HEARTBEAT_SERVICE as HEARTBEAT_SERVICE,
+    HTTP_UPLOAD as HTTP_UPLOAD,
+    INPUT_QUEUE as INPUT_QUEUE,
+    MES_MEMORY as MES_MEMORY,
+    MESSAGE_PIPELINE as MESSAGE_PIPELINE,
+    PERIODIC_BACKOFF as PERIODIC_BACKOFF,
+    RETRY_BACKOFF as RETRY_BACKOFF,
+    SERVER_HTTP as SERVER_HTTP,
+    SKILLS_TOOLING as SKILLS_TOOLING,
+    SKILL_SCANNER as SKILL_SCANNER,
+    WS_STREAM as WS_STREAM,
+    BusConfig as BusConfig,
+    ChannelsConfig as ChannelsConfig,
+    CrashLoopConfig as CrashLoopConfig,
+    CronServiceConfig as CronServiceConfig,
+    CuratorDefaultsConfig as CuratorDefaultsConfig,
+    GatewayConfig as GatewayConfig,
+    HeartbeatServiceConfig as HeartbeatServiceConfig,
+    HttpUploadConfig as HttpUploadConfig,
+    InputQueueConfig as InputQueueConfig,
+    MesMemoryConfig as MesMemoryConfig,
+    MessagePipelineConfig as MessagePipelineConfig,
+    PeriodicBackoffConfig as PeriodicBackoffConfig,
+    RetryBackoffConfig as RetryBackoffConfig,
+    ServerHttpConfig as ServerHttpConfig,
+    SkillScannerConfig as SkillScannerConfig,
+    SkillsToolingConfig as SkillsToolingConfig,
+    WsStreamConfig as WsStreamConfig,
+)
