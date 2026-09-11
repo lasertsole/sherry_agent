@@ -1,7 +1,7 @@
 """Sisyphus completion verifier (E5): record evidence for a finished checkbox.
 
 This module implements the evidence-recording half of the 5-gate completion
-contract (``TODO/TODOLIST_PLAN.md`` §9 E5). Gates 2 (automated commands) and 3
+contract (E5; see skills/builtin/core/ulw-execute/SKILL.md). Gates 2 (automated commands) and 3
 (manual QA) are executed by the orchestrator outside this module: the verifier
 rereads the plan (Gate 1), records the ``Verification:`` commands it finds,
 probes the code-level adversarial classes it can observe here — TaskFlow step

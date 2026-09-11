@@ -107,4 +107,4 @@ FullyDone          -> 验证通过后,才把 checkbox 标记 completed
 
 ## 移植说明
 
-本 skill 从 oh-my-openagent (omo) 的 `ulw-execute/SKILL.md` 移植并适配 sherry_agent 基础设施(subagent spawn、auto_turn、SQLite)。上游仓库在本环境不可达,移植所依据的 omo 摘录已内嵌在 `TODO/TODOLIST_PLAN.md` 第 7 节。
+本 skill 从 oh-my-openagent (omo) 的 `ulw-execute/SKILL.md` 移植并适配 sherry_agent 基础设施(subagent spawn、auto_turn、SQLite)。上游仓库在本环境不可达,移植所依据的 omo 摘录已按本仓库基础设施适配（DAG 执行委派给 TaskFlow 工具）。

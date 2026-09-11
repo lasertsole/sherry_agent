@@ -44,7 +44,7 @@ from agent.tools.todolist.stagnation_tracker import (
 
 __all__ = ["TodoContinuationEnforcer"]
 
-# Continuation directive (verbatim from TODO/TODOLIST_PLAN.md §9 E3).
+# Continuation directive (E3 design; behavior contract of this module).
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: TODO CONTINUATION]
 
 Incomplete tasks remain in your todo list. Continue working on the next pending task.
@@ -57,7 +57,7 @@ Incomplete tasks remain in your todo list. Continue working on the next pending 
 
 {todo_status}"""
 
-# Recovery directive (verbatim from TODO/TODOLIST_PLAN.md §9 E3).
+# Recovery directive (E3 design; behavior contract of this module).
 _RECOVERY_PROMPT = """[SYSTEM DIRECTIVE: RECOVERY MODE]
 
 Stagnation detected — the todo list has not changed across multiple continuation attempts.

@@ -1,6 +1,6 @@
 # Nudge 知识提取重构方案 — Plan-Aware Knowledge Extraction
 
-> 配套文件: TODOLIST_PLAN.md（规划与纪律层，已合并 E1–E7）
+> 配套实现: agent/tools/todolist/（规划与纪律层，已实现并含 E1–E7；原 TODOLIST_PLAN.md 设计稿已删除）
 > 参考来源: oh-my-openagent-dev (D:\selfProj\oh-my-openagent-dev)
 > 日期: 2026-09-07
 
@@ -1130,11 +1130,11 @@ def _detect_todo_all_complete(session_id: str) -> bool:
 
 ---
 
-## service.py 修改 (TODOLIST_PLAN.md 中的 TodoService)
+## service.py 修改（TodoService，见 agent/tools/todolist/service.py）
 
 ### 全部完成检测
 
-TodoService 已在 TODOLIST_PLAN.md 中定义。`_detect_todo_all_complete()` 直接读取 `store_sqlite.get_todos_sync()`，不需要 service 层额外修改。
+TodoService 已实现于 agent/tools/todolist/service.py。`_detect_todo_all_complete()` 直接读取 `store_sqlite.get_todos_sync()`，不需要 service 层额外修改。
 
 ### 非计划对话
 
@@ -1319,13 +1319,13 @@ def build_system_prompt(session_id: str, ...) -> str:
 ## 实现顺序
 
 ```
-Phase A: 知识存储 + 工具 (可与 TODOLIST_PLAN Phase 1 并行)
+Phase A: 知识存储 + 工具 (可独立进行（todolist 存储层已实现）)
   1. knowledge_store.py — KnowledgeStore 类 (write + read_all + read_summary + read_formatted + list_plans)
   2. knowledge_tool.py — 统一 @tool 定义 (action="write"/"read"/"list")
   3. knowledge/__init__.py — builder
   4. agent/tools/__init__.py — 注册
 
-Phase B: Nudge 重构 (依赖 TODOLIST_PLAN Phase 1 的 store_sqlite.py)
+Phase B: Nudge 重构 (依赖 agent/tools/todolist/registry/store_sqlite.py（已实现）)
   5. nudge.py — 新增 _PLAN_EXTRACTION_PROMPT (Part 1 知识提取 + Part 2 skill 更新指引 + read 提示) + _build_plan_context + _nudge_plan_extraction
   6. nudge.py — 删除 _COMBINED_REVIEW_PROMPT + _nudge_skill + _nudge_combined (_SKILL_REVIEW_PROMPT 内容已在步骤 5 移入新 prompt)
   7. core.py — 删除 _NUDGE_SKILL_* 常量 + _wrap_tool_call_impl
@@ -1336,7 +1336,7 @@ Phase C: 系统提示词注入 (Tier 1, 依赖 Phase A 的 knowledge_store.py)
   10. prompt_builder.py — 新增 _build_knowledge_block() — 读 plan-summary.json 注入精简摘要
 ```
 
-**依赖关系**: Phase B 步骤 5-9 依赖 `store_sqlite.get_todos_sync()` 存在（TODOLIST_PLAN Phase 1 步骤 1）。
+**依赖关系**: Phase B 步骤 5-9 依赖 `store_sqlite.get_todos_sync()` 存在（agent/tools/todolist/registry/store_sqlite.py，已实现）。
 
 ---
 

@@ -12,7 +12,7 @@ Two independent components of the original design are fused here:
   file exists and contains a checkbox, append the plan-active reminder instead
   and skip E7a entirely (E7b has priority).
 
-Anti-loop guarantees (see ``TODO/TODOLIST_PLAN.md`` §9 E7):
+Anti-loop guarantees (design intent; see this module + skills/builtin/core/ulw-execute/SKILL.md):
 
 - **Per-turn dedup**: injection happens only on the first model call of a turn,
   i.e. when the last non-directive ``HumanMessage`` is the FINAL message in
