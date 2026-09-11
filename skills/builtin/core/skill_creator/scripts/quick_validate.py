@@ -6,14 +6,24 @@ Minimal validator for nanobot skill folders.
 import re
 import sys
 from pathlib import Path
+
 from pydantic import validate_call
+
+# Add the project root so ``config.features`` resolves when this script is run
+# directly, not only when imported as a module.
+_current_file = Path(__file__).resolve()
+_project_root: Path = _current_file.parents[5]
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from config.features import SKILLS_TOOLING  # noqa: E402
 
 try:
     import yaml
 except ModuleNotFoundError:
     yaml = None
 
-MAX_SKILL_NAME_LENGTH = 64
+MAX_SKILL_NAME_LENGTH = SKILLS_TOOLING["skill_creator_max_skill_name_length"]
 ALLOWED_FRONTMATTER_KEYS = {
     "name",
     "description",

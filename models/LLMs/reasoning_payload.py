@@ -35,8 +35,9 @@ Why it exists
 
 from __future__ import annotations
 
-import os
 from typing import Any
+
+from config.features import REASONING_BUDGET
 
 # OpenAI-compatible gateways that accept ``reasoning_effort`` on their reasoning
 # models (o-series / gpt-5). Prune a name here if a gateway rejects the param
@@ -65,13 +66,15 @@ _ZHIPU_REASONING_PREFIXES = ("glm-4.5", "glm-4.6", "glm-5")
 
 # Reasoning token budget for Anthropic's ``thinking`` param. Must stay well under
 # the model's ``max_tokens`` or the API rejects the request.
-_DEFAULT_ANTHROPIC_BUDGET = 2000
+_DEFAULT_ANTHROPIC_BUDGET = REASONING_BUDGET["anthropic_default_thinking_budget"]
 
 # Thinking-token headroom for the providers that draw reasoning tokens from the
 # SHARED ``max_tokens`` pool (DeepSeek / GLM / OpenAI reasoning models — none of
 # them expose a budget knob). When thinking is enabled the model config inflates
 # ``max_tokens`` by this much so the visible answer is not squeezed to nothing.
-_DEFAULT_NON_ANTHROPIC_BUDGET = int(os.getenv("MAIN_LLM_THINKING_BUDGET", "4096"))
+# The ``MAIN_LLM_THINKING_BUDGET`` env override is resolved by the registry
+# builder (config/features/agent_side.py) at import time.
+_DEFAULT_NON_ANTHROPIC_BUDGET = REASONING_BUDGET["non_anthropic_default_thinking_budget"]
 
 _VALID_REASONING_EFFORTS = ("low", "medium", "high")
 

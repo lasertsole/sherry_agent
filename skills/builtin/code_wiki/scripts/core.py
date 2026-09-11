@@ -15,7 +15,9 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
-WIKI_SUBDIR = "wiki"  # placed under src/data/wiki/
+from config.features import SKILLS_TOOLING
+
+WIKI_SUBDIR = SKILLS_TOOLING["wiki_subdir"]  # placed under src/data/wiki/
 
 
 def get_wiki_path() -> Path:

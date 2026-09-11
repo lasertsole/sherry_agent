@@ -28,21 +28,22 @@ from typing import Any
 
 from loguru import logger
 
+from config.features import CRASH_LOOP
 from config.path import SRC_DIR
 
 # Unclean boots within this window (seconds) that trip the breaker: 5 minutes.
-WINDOW_S = 300
+WINDOW_S = CRASH_LOOP["window_s"]
 # Number of unclean boots within the window that trip the breaker.
-TRIP_THRESHOLD = 3
+TRIP_THRESHOLD = CRASH_LOOP["trip_threshold"]
 # Boot records older than this (seconds) are pruned on every record_boot.
-RETENTION_S = 3600
+RETENTION_S = CRASH_LOOP["retention_s"]
 
 # Module-level so tests can monkeypatch it into a tmp_path.
 STATE_PATH = SRC_DIR / "data" / "boot_lifecycle.json"
 
 _BOOTS_KEY = "boots"
 _CLEAN_EXIT_KEY = "last_exit_clean"
-_REASON_MAX_LEN = 200
+_REASON_MAX_LEN = CRASH_LOOP["reason_max_len"]
 
 
 def _empty_state() -> dict[str, Any]:

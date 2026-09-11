@@ -14,15 +14,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from config.features import PERIODIC_BACKOFF
+
 
 @dataclass
 class PeriodicBackoff:
     """Exponential backoff for a periodic service's failure/retry cycle."""
 
     base_interval: float
-    factor: float = 2.0
-    max_interval: float = 7200.0
-    max_consecutive_failures: int = 5
+    factor: float = PERIODIC_BACKOFF["factor"]
+    max_interval: float = PERIODIC_BACKOFF["max_interval_s"]
+    max_consecutive_failures: int = PERIODIC_BACKOFF["max_consecutive_failures"]
     current_interval: float = field(init=False)
     consecutive_failures: int = 0
     reason: str = ""

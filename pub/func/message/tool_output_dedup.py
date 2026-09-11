@@ -5,7 +5,9 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage
 
-DEFAULT_PROTECTED_TOOLS: set[str] = set()
+from config.features import MESSAGE_PIPELINE
+
+DEFAULT_PROTECTED_TOOLS = MESSAGE_PIPELINE["tool_output_dedup_default_protected_tools"]
 
 
 def _tool_signature(tool_call: Mapping[str, Any]) -> str:

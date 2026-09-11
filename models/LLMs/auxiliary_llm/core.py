@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from langchain_core.runnables import Runnable
 
 from config import ENV_PATH
+from config.features import LLM_CLIENT_DEFAULTS
 from models.LLMs.base_local_llama import LocalLlamaChatBase
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.LLMs.auxiliary_llm.local_adapters import LocalStructuredOutput, LocalToolBinder
@@ -69,7 +70,7 @@ def build_auxiliary_llm(temperature: float | None = None):
 
         _api_name = os.getenv("AUXILIARY_LLM_API_NAME", "").strip()
         _raw_max = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
-        _max_tokens = int(_raw_max) if _raw_max else 121072
+        _max_tokens = int(_raw_max) if _raw_max else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
 
         _model_config: dict[str, Any] = {
             "model_provider": _provider,
@@ -77,7 +78,7 @@ def build_auxiliary_llm(temperature: float | None = None):
             "api_key": _api_key,
             "base_url": _api_base,
             "temperature": temperature if temperature is not None else 0,
-            "max_retries": 2,
+            "max_retries": LLM_CLIENT_DEFAULTS["aux_max_retries"],
             "profile": {"max_input_tokens": _max_tokens},
         }
         _model_config = {k: v for k, v in _model_config.items() if v is not None and v != ""}

@@ -1,6 +1,7 @@
 import os
 from typing import Any
 from config import ENV_PATH
+from config.features import LLM_CLIENT_DEFAULTS
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from loguru import logger
@@ -66,9 +67,11 @@ model_config: dict[str, Any] = {
     "api_key": api_key,
     "base_url": api_base,
     "temperature": 0,
-    "max_retries": 2,
-    "timeout": 120,  # Explicit bounded window for each LLM request (seconds)
-    "stream_chunk_timeout": 60,  # Max idle gap between streamed chunks before aborting
+    "max_retries": LLM_CLIENT_DEFAULTS["main_max_retries"],
+    # Explicit bounded window for each LLM request (seconds).
+    "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
+    # Max idle gap between streamed chunks before aborting.
+    "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
     "profile": {"max_input_tokens": max_tokens},  # Set model context window size
 }
 # Map the universal switch to the provider-correct reasoning payload. Returns
@@ -147,8 +150,8 @@ def build_fallback_chain():
             "api_key": os.getenv(f"FALLBACK_LLM_{index}_API_KEY"),
             "base_url": os.getenv(f"FALLBACK_LLM_{index}_API_BASE"),
             "temperature": 0,
-            "max_retries": 2,
-            "timeout": 120,
+            "max_retries": LLM_CLIENT_DEFAULTS["fallback_max_retries"],
+            "timeout": LLM_CLIENT_DEFAULTS["fallback_timeout"],
         }
         candidate_config = {k: v for k, v in candidate_config.items() if v is not None and v != ""}
         try:

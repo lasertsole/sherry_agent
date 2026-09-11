@@ -6,9 +6,15 @@ retries when many sessions fail against the same provider at once.
 
 import random
 
+from config.features import RETRY_BACKOFF
+
 
 def jittered_backoff(
-    attempt: int, *, base_delay: float = 2.0, max_delay: float = 60.0, jitter: float = 0.3
+    attempt: int,
+    *,
+    base_delay: float = RETRY_BACKOFF["jittered_base_delay"],
+    max_delay: float = RETRY_BACKOFF["jittered_max_delay"],
+    jitter: float = RETRY_BACKOFF["jittered_jitter"],
 ) -> float:
     """Exponential backoff for ``attempt`` (1-based) with symmetric jitter.
 
@@ -20,15 +26,15 @@ def jittered_backoff(
     exponential = base_delay * (2 ** (attempt - 1))
     capped = min(exponential, max_delay)
     jitter_amount = capped * jitter * (random.random() * 2 - 1)
-    return max(0.1, min(max_delay, capped + jitter_amount))
+    return max(RETRY_BACKOFF["backoff_floor"], min(max_delay, capped + jitter_amount))
 
 
 def adaptive_rate_limit_backoff(
     attempt: int,
     *,
     retry_after: float | None = None,
-    base_delay: float = 5.0,
-    max_delay: float = 120.0,
+    base_delay: float = RETRY_BACKOFF["adaptive_base_delay"],
+    max_delay: float = RETRY_BACKOFF["adaptive_max_delay"],
 ) -> float:
     """Backoff for rate-limit (429) responses.
 

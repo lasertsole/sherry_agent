@@ -1,4 +1,6 @@
 import json
+
+from config.features import MESSAGE_PIPELINE
 from typing import TypedDict
 from pub.func.message.estimate_msg_tokens import estimate_msg_tokens
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage
@@ -10,7 +12,7 @@ class SliceLastNTurn(TypedDict):
     dropped: int
 
 
-TOKEN_MAX = 6000
+TOKEN_MAX = MESSAGE_PIPELINE["slice_last_turn_token_max"]
 
 
 def _truncate_msg(msg: BaseMessage) -> BaseMessage:

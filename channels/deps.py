@@ -16,7 +16,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-_DEP_INSTALL_TIMEOUT_SECONDS = 120
+from config.features import CHANNELS
+
+_DEP_INSTALL_TIMEOUT_SECONDS = CHANNELS["dep_install_timeout_seconds"]
 
 
 def install_requirements(

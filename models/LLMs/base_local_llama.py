@@ -23,16 +23,18 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+from config.features import LLM_CLIENT_DEFAULTS
+
 
 class LocalLlamaChatBase(BaseChatModel):
     """Common base: fields, client lifecycle, generate skeleton."""
 
     model_path: str = ""
-    n_ctx: int = 4096
-    temperature: float = 0.0
-    max_tokens: int = 4096
+    n_ctx: int = LLM_CLIENT_DEFAULTS["local_n_ctx"]
+    temperature: float = LLM_CLIENT_DEFAULTS["local_temperature"]
+    max_tokens: int = LLM_CLIENT_DEFAULTS["local_max_tokens"]
     verbose: bool = False
-    n_gpu_layers: int = -1
+    n_gpu_layers: int = LLM_CLIENT_DEFAULTS["local_n_gpu_layers"]
     # auxiliary extracts reasoning_content/reasoning; vision models ignore it
     extract_reasoning: bool = False
 

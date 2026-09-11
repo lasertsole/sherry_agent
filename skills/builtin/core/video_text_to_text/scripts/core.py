@@ -12,10 +12,11 @@ project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 from config import TEMP_DIR
+from config.features import SKILLS_TOOLING
 from models import VTTT_model
 
-MIN_DURATION_SEC = 0.0
-MAX_DURATION_SEC = 60.0
+MIN_DURATION_SEC = SKILLS_TOOLING["video_min_duration_sec"]
+MAX_DURATION_SEC = SKILLS_TOOLING["video_max_duration_sec"]
 
 
 def _validate_video_duration(video_path: str) -> float:

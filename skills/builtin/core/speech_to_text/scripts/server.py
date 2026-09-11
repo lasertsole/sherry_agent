@@ -31,9 +31,10 @@ from funasr.utils.postprocess_utils import rich_transcription_postprocess  # noq
 from loguru import logger  # noqa: E402
 
 from config import MODELS_DIR  # noqa: E402
+from config.features import SKILLS_TOOLING  # noqa: E402
 
-HOST: str = "127.0.0.1"
-PORT: int = 9011
+HOST: str = SKILLS_TOOLING["speech_daemon_host"]
+PORT: int = SKILLS_TOOLING["speech_daemon_port"]
 _HEALTH_PATH: str = "/healthy"
 _TRANSCRIBE_PATH: str = "/transcribe"
 

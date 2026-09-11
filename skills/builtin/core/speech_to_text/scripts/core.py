@@ -16,20 +16,21 @@ from loguru import logger  # noqa: E402
 from pydantic import validate_call  # noqa: E402
 
 from config import INTERPRETER_PATH, ROOT_DIR  # noqa: E402
+from config.features import SKILLS_TOOLING  # noqa: E402
 
 # The persistent STT daemon holds the FunASR model in memory.
-DAEMON_HOST: str = "127.0.0.1"
-DAEMON_PORT: int = 9011
+DAEMON_HOST: str = SKILLS_TOOLING["speech_daemon_host"]
+DAEMON_PORT: int = SKILLS_TOOLING["speech_daemon_port"]
 _DAEMON_BASE: str = f"http://{DAEMON_HOST}:{DAEMON_PORT}"
 # Cold-start grace period: how long a client waits for a freshly spawned daemon
 # to become ready. Kept small (well under the terminal's 30s budget) so a first
 # launch returns [warm-up] quickly and lets the AI auto-retry instead of
 # blocking until the terminal tool kills the whole command.
-_READY_WAIT: float = 8.0
-_LIVENESS_TIMEOUT: float = 1.0
+_READY_WAIT: float = SKILLS_TOOLING["speech_ready_wait_seconds"]
+_LIVENESS_TIMEOUT: float = SKILLS_TOOLING["speech_liveness_timeout_seconds"]
 # Generous HTTP timeout so a /transcribe call never trips the client while the
 # already-ready daemon is decoding audio.
-_HTTP_TIMEOUT: float = 60.0
+_HTTP_TIMEOUT: float = SKILLS_TOOLING["speech_http_timeout_seconds"]
 
 # Where ``main`` lives, so the daemon can be (re)spawned from anywhere.
 _IMPORT_FN = "skills.builtin.core.speech_to_text.scripts.server"
