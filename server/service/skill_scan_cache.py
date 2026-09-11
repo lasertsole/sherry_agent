@@ -16,16 +16,17 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from config.features import SKILL_SCANNER
 from loguru import logger
 
 #: Memoised scanner-version fingerprints per backend id.
 _VERSION_FINGERPRINT_CACHE: dict[str, str] = {}
 
 #: How long (seconds) the ``--version`` probe of the CLI may run.
-_VERSION_PROBE_TIMEOUT = 10
+_VERSION_PROBE_TIMEOUT = SKILL_SCANNER["version_probe_timeout"]
 
 #: On-disk schema version of the cache file.
-_CACHE_VERSION = 1
+_CACHE_VERSION = SKILL_SCANNER["cache_version"]
 
 
 def _directory_content_hash(directory: Path) -> str:

@@ -8,6 +8,7 @@ from loguru import logger
 from server.trigger.http.helpers import to_text_response
 from server.utils.atomic_io import atomic_write_text
 from config import SKILLS_STATE_FILE
+from config.features import SERVER_HTTP
 from agent.tools.skill_tools.skill_manage import (
     _MAX_NAME_LENGTH,
     _VALID_NAME_RE,
@@ -26,11 +27,7 @@ from agent.tools.skill_tools.skill_manage import (
 # The API category string is the authoritative source consumed by the client;
 # unknown directories degrade safely to third_party so they remain visible
 # in the skill manager instead of disappearing.
-_DISK_TO_CATEGORY = {
-    "builtin": "builtin",
-    "auto": "auto",
-    "plugins": "third_party",
-}
+_DISK_TO_CATEGORY = SERVER_HTTP["skills_disk_to_category"]
 
 
 def _get_category(location: str) -> str:
@@ -43,8 +40,8 @@ def _get_category(location: str) -> str:
     return _DISK_TO_CATEGORY.get(parts[1], "third_party")
 
 
-_SKIP_DIRS = {"__pycache__", ".git", ".venv", "node_modules"}
-_SKIP_SUFFIXES = {".pyc", ".pyo"}
+_SKIP_DIRS = SERVER_HTTP["skills_skip_dirs"]
+_SKIP_SUFFIXES = SERVER_HTTP["skills_skip_suffixes"]
 
 
 def _build_skill_file_tree(skill_root: Path):

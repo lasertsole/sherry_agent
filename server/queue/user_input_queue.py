@@ -81,6 +81,7 @@ from pathlib import Path
 from typing import Literal
 
 import aiosqlite
+from config.features import INPUT_QUEUE
 from loguru import logger
 from pydantic import BaseModel
 
@@ -90,17 +91,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DB_PATH = _REPO_ROOT / "agent" / "tools" / "subagent" / "data" / "subagent_registry.db"
 
 # Wait (up to) this long for a contended SQLite lock on EVERY connection.
-_BUSY_TIMEOUT_MS = 5000
+_BUSY_TIMEOUT_MS = INPUT_QUEUE["busy_timeout_ms"]
 
 # How long a non-owning event loop waits for the owning loop's one-time schema
 # init before initializing the schema itself (see _ensure_db).
-_INIT_WAIT_TIMEOUT_S = 10.0
+_INIT_WAIT_TIMEOUT_S = INPUT_QUEUE["init_wait_timeout_s"]
 
 # Per-session queue depth cap: QUEUED + CLAIMED rows.
-MAX_ACTIVE_PER_SESSION = 20
+MAX_ACTIVE_PER_SESSION = INPUT_QUEUE["max_active_per_session"]
 
 # Crash-recovery expiry: rows older than this are voided by recover.
-_EXPIRY_SECONDS = 24 * 60 * 60.0
+_EXPIRY_SECONDS = INPUT_QUEUE["expiry_seconds"]
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS user_input_queue (

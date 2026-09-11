@@ -54,6 +54,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from agent.tools.subagent.registry.session_state import SessionState, detect_state
+from config.features import INPUT_QUEUE
 from loguru import logger
 from server.queue.user_input_queue import (
     QueueFullError,
@@ -178,7 +179,7 @@ def route_for(reply_target: str | None) -> str:
 # caller between _get_session_lock and its (uninterrupted) acquire keeps
 # its own reference and is unaffected by the dict entry being dropped.
 _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
-_LOCK_SWEEP_THRESHOLD = 256
+_LOCK_SWEEP_THRESHOLD = INPUT_QUEUE["lock_sweep_threshold"]
 
 
 def _get_session_lock(session_id: str) -> asyncio.Lock:

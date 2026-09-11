@@ -7,32 +7,12 @@ definitions live here; both consumers re-export them under their original
 private names.
 """
 
+from config.features import SERVER_HTTP
 from typing import Any
 
 # Fields that are safe / useful to surface to the UI. Everything else (paths,
 # attachment dirs, internal policy vectors) is omitted from the wire payload.
-PUBLIC_FIELDS = (
-    "run_id",
-    "child_session_key",
-    "requester_session_key",
-    "task",
-    "task_name",
-    "label",
-    "spawn_mode",
-    "context_mode",
-    "agent_id",
-    "depth",
-    "role",
-    "control_scope",
-    "generation",
-    "swarm_group_id",
-    "swarm_run_state",
-    "ended_reason",
-    "pause_reason",
-    "execution",
-    "completion",
-    "delivery",
-)
+PUBLIC_FIELDS = SERVER_HTTP["subagent_public_fields"]
 
 
 def serialize_run(run) -> dict[str, Any]:

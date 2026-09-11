@@ -1,15 +1,13 @@
 from pathlib import Path
 
+from config.features import SERVER_HTTP
 from config.path import MEMORY_DIR
 from server.service.file_store import FileStore
 
 # Memory directories (workspace/memory/). Only these file names are allowed to be
 # read/written through the UI. USER.md overlaps with the workspace-root USER.md
 # naming but lives in a separate directory (the long-term memory store).
-MEMORY_SYSTEM_FILE_NAMES: list[str] = [
-    "MEMORY.md",
-    "USER.md",
-]
+MEMORY_SYSTEM_FILE_NAMES: list[str] = SERVER_HTTP["memory_system_file_names"]
 
 
 class _MemoryFileStore(FileStore):

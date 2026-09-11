@@ -77,6 +77,7 @@ from typing import Any
 
 import importlib
 
+from config.features import SKILL_SCANNER
 from loguru import logger
 from server.utils.atomic_io import atomic_write_text
 from server.service.skill_scan_model import (
@@ -111,7 +112,7 @@ from server.service.skill_scan_cache import (
 _UNSET = object()
 
 #: Env flag to disable the scanner entirely (e.g. ``SKILL_SCANNER_ENABLED=0``).
-_ENABLED_ENV = os.environ.get("SKILL_SCANNER_ENABLED", "1").strip().lower() not in {
+_ENABLED_ENV = os.environ.get(SKILL_SCANNER["enabled_env_var"], "1").strip().lower() not in {
     "0",
     "false",
     "no",
@@ -119,7 +120,7 @@ _ENABLED_ENV = os.environ.get("SKILL_SCANNER_ENABLED", "1").strip().lower() not 
 }
 
 #: Location of the verdict cache (``src/`` is git-ignored runtime data).
-_CACHE_PATH: Path = Path(__file__).resolve().parents[2] / "src" / "data" / "skills_scan_cache.json"
+_CACHE_PATH: Path = Path(__file__).resolve().parents[2] / SKILL_SCANNER["cache_path"]
 
 _BACKEND_CACHE: dict[str, bool | None] = {}
 

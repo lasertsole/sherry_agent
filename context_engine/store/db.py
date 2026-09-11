@@ -3,6 +3,7 @@ import time
 import sqlite3
 from pathlib import Path
 from config import SRC_DIR
+from config.features import MES_MEMORY
 
 _db_path: Path = SRC_DIR / "store/mes_memory/mes_memory.db"
 _db: sqlite3.Connection | None = None
@@ -10,10 +11,10 @@ _db: sqlite3.Connection | None = None
 _db_lock = threading.Lock()
 
 # Busy-wait budget before "database is locked"; 1.0s starved under contention.
-SQLITE_BUSY_TIMEOUT_S = 10.0
+SQLITE_BUSY_TIMEOUT_S = MES_MEMORY["busy_timeout_s"]
 # Retries for transient "database is locked" during connect/migrate.
-_CONNECT_ATTEMPTS = 5
-_RETRY_DELAY_S = 0.2
+_CONNECT_ATTEMPTS = MES_MEMORY["connect_attempts"]
+_RETRY_DELAY_S = MES_MEMORY["retry_delay_s"]
 
 
 def _migrate(db: sqlite3.Connection) -> None:

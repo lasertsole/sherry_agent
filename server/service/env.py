@@ -8,39 +8,20 @@ and unrelated variables are never clobbered.
 
 import re
 
+from config.features import SERVER_HTTP
 from config.path import ENV_PATH
 
 # Canonical display groups with a human-friendly order. Each group is matched by
 # an exact key prefix. Any key not belonging to a known group is attached to the
 # "other" group. The mapping is based on the reference keys in .env.example.
-GROUP_PREFIXES: list[str] = [
-    "MAIN_LLM_",
-    "REASONER_LLM_",
-    "AUXILIARY_LLM_",
-    "ITTT_",
-    "VTTT_",
-    "TTI_",
-    "RERANKER_",
-    "EMBEDDING_",
-    "STT_",
-]
+GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_group_prefixes"]
 OTHER_GROUP = "other"
 
 # Keys split out of .env into the project-root sherry.jsonc (see
 # config/sherry_settings.py) — never surfaced or written here again.
 # TAVILY_API_KEY stays in .env on purpose: it is a secret-class value and .env
 # is gitignored, unlike the tracked sherry.jsonc.
-SPLIT_OUT_KEYS = frozenset(
-    {
-        "TOOL_CALL_TIMEOUT_MINUTES",
-        "LOG_LEVEL",
-        "SUBAGENT_TODO_DONE_FUNC",
-        "WORKSPACE_TEMPLATE_LANG",
-        "LANGSMITH_TRACING_V2",
-        "LANGSMITH_API_KEY",
-        "LANGSMITH_PROJECT",
-    }
-)
+SPLIT_OUT_KEYS = SERVER_HTTP["env_split_out_keys"]
 
 # Simple env-line parser: KEY = VALUE  (allow surrounding whitespace, quoted values).
 _ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")

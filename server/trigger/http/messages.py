@@ -1,5 +1,6 @@
 from typing import cast
 
+from config.features import SERVER_HTTP
 from loguru import logger
 from server.trigger.core import app
 from server.service import (
@@ -9,7 +10,7 @@ from server.service import (
     get_pending_interrupt as _get_pending_interrupt,
 )
 
-_MAX_TURN_PAGE_SIZE = 200
+_MAX_TURN_PAGE_SIZE = SERVER_HTTP["turn_page_size"]
 
 
 @app.get("/sessions")

@@ -3,22 +3,12 @@ from loguru import logger
 from robyn import Response
 from server.trigger.core import app
 from config import SRC_DIR, API_HOST, API_PORT
+from config.features import SERVER_HTTP
 from config.num import MAX_AUDIO_UPLOAD_BYTES
 
-_CONTENT_TYPE_TO_EXT: dict[str, str] = {
-    "audio/mpeg": ".mp3",
-    "audio/mp3": ".mp3",
-    "audio/wav": ".wav",
-    "audio/x-wav": ".wav",
-    "audio/ogg": ".ogg",
-    "audio/webm": ".webm",
-    "audio/flac": ".flac",
-    "audio/mp4": ".m4a",
-    "audio/aac": ".aac",
-    "audio/x-flac": ".flac",
-}
+_CONTENT_TYPE_TO_EXT: dict[str, str] = SERVER_HTTP["audio_content_type_to_ext"]
 
-_DEFAULT_EXT = ".mp3"
+_DEFAULT_EXT = SERVER_HTTP["audio_default_ext"]
 
 
 def _get_extension(content_type: str | None) -> str:

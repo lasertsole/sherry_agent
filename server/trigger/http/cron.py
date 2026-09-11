@@ -13,6 +13,7 @@ camelCase mapping so the client receives a consistent, JSON-safe payload.
 
 from loguru import logger
 
+from config.features import CRON_SERVICE
 from server.trigger.core import app
 from skills.builtin.core.cron.scripts import cron_service, CronSchedule
 
@@ -68,7 +69,7 @@ def _job_to_dict(job) -> dict:
     }
 
 
-_MIN_EVERY_MS: int = 1000
+_MIN_EVERY_MS: int = CRON_SERVICE["min_every_ms"]
 
 
 def _valid_schedule(body: dict) -> CronSchedule | None:

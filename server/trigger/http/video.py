@@ -3,19 +3,12 @@ from loguru import logger
 from robyn import Response
 from server.trigger.core import app
 from config import SRC_DIR, API_HOST, API_PORT
+from config.features import SERVER_HTTP
 from config.num import MAX_VIDEO_UPLOAD_BYTES
 
-_CONTENT_TYPE_TO_EXT: dict[str, str] = {
-    "video/mp4": ".mp4",
-    "video/mpeg": ".mpeg",
-    "video/webm": ".webm",
-    "video/ogg": ".ogg",
-    "video/quicktime": ".mov",
-    "video/x-msvideo": ".avi",
-    "video/x-matroska": ".mkv",
-}
+_CONTENT_TYPE_TO_EXT: dict[str, str] = SERVER_HTTP["video_content_type_to_ext"]
 
-_DEFAULT_EXT = ".mp4"
+_DEFAULT_EXT = SERVER_HTTP["video_default_ext"]
 
 
 def _get_extension(content_type: str | None) -> str:

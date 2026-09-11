@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from config.features import SKILL_SCANNER
 from loguru import logger
 
 from server.service.skill_scan_model import _extract_scan_result, ScanResult, ScanStatus
@@ -33,16 +34,16 @@ _LLM_ENABLED_ENV = os.environ.get("SKILL_SCANNER_LLM", "0").strip().lower() not 
 
 #: Expected exit codes from the ``skillspector scan`` command.
 #: 0 = SAFE or CAUTION, 1 = DO_NOT_INSTALL, 2 = error (scanner failed to run).
-_EXIT_OK = 0
-_EXIT_DO_NOT_INSTALL = 1
-_EXIT_ERROR = 2
+_EXIT_OK = SKILL_SCANNER["exit_ok"]
+_EXIT_DO_NOT_INSTALL = SKILL_SCANNER["exit_do_not_install"]
+_EXIT_ERROR = SKILL_SCANNER["exit_error"]
 
 #: How long (seconds) the CLI subprocess may run before it is killed.
-_CLI_TIMEOUT = 120
+_CLI_TIMEOUT = SKILL_SCANNER["cli_timeout"]
 
 #: Env var overriding the CLI subprocess timeout (seconds), read on every
 #: call so operators can tune it without a code change.
-_CLI_TIMEOUT_ENV = "SKILL_SCANNER_TIMEOUT"
+_CLI_TIMEOUT_ENV = SKILL_SCANNER["cli_timeout_env_var"]
 
 
 def _llm_env() -> dict[str, str]:

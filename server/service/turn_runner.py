@@ -39,6 +39,7 @@ from collections.abc import Callable
 
 from loguru import logger
 
+from config.features import WS_STREAM
 from server.queue.user_input_queue import UserInputQueueStatus
 from server.service.stream_driver import StreamDriver
 from server.utils.ws_helpers import send_ws_json
@@ -49,7 +50,7 @@ from pub.types.message import MultiModalMessage
 # ---------------------------------------------------------------------------
 
 _DRAIN_TASKS: dict[str, asyncio.Task] = {}
-_DRAIN_ERROR_BACKOFF_S: float = 1.0
+_DRAIN_ERROR_BACKOFF_S: float = WS_STREAM["drain_error_backoff_s"]
 _OUTBOUND_ROUTERS: dict[str, Any] = {}
 
 

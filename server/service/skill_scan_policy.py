@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from config.features import SKILL_SCANNER
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 #: CLI flag that turns the scanner into a hard gate when the scanner is running
 #: but the skill's verdict is `DO_NOT_INSTALL` (see ``scan_skill``).
 #: (Kept as a module constant so tests + callers can reason about the policy.)
-FAIL_CLOSED_ON_DO_NOT_INSTALL = True
+FAIL_CLOSED_ON_DO_NOT_INSTALL = SKILL_SCANNER["fail_closed_on_do_not_install"]
 
 
 def build_caution_warnings(result: ScanResult) -> list[str]:

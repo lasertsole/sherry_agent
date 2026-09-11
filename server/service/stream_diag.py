@@ -10,18 +10,11 @@ failure the summary is appended to the re-raised exception message.
 import time
 from typing import Any
 
-STREAM_DIAG_HEADERS = (
-    "cf-ray",
-    "cf-cache-status",
-    "x-request-id",
-    "x-openrouter-provider",
-    "x-openrouter-model",
-    "server",
-    "via",
-    "x-vercel-id",
-)
+from config.features import WS_STREAM
 
-_MAX_FLATTEN_DEPTH = 5
+STREAM_DIAG_HEADERS = WS_STREAM["stream_diag_headers"]
+
+_MAX_FLATTEN_DEPTH = WS_STREAM["max_flatten_depth"]
 
 
 def stream_diag_init() -> dict[str, Any]:

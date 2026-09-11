@@ -1,5 +1,6 @@
 import asyncio
 
+from config.features import CURATOR_DEFAULTS
 from server.trigger.core import app
 from loguru import logger
 from context_engine.curator import reset_idle_for_seconds
@@ -13,8 +14,8 @@ from context_engine.curator.config import (
 from context_engine.curator.state import load_state
 
 # Valid range for the auto-maintenance interval override (days).
-_INTERVAL_MIN_DAYS = 1
-_INTERVAL_MAX_DAYS = 5
+_INTERVAL_MIN_DAYS = CURATOR_DEFAULTS["http_interval_min_days"]
+_INTERVAL_MAX_DAYS = CURATOR_DEFAULTS["http_interval_max_days"]
 
 
 @app.get("/curator/settings")

@@ -6,6 +6,7 @@ import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
+from config.features import MES_MEMORY
 from loguru import logger
 from pub.func import contains_cjk, count_cjk
 from .store import get_db, get_messages_by_lastest_n_turns
@@ -21,9 +22,9 @@ _CONTENT_JSON_PREFIX = "\x00json:"
 # no per-query limit that reaches the FTS5 parser (EXPR_DEPTH and
 # LIKE_PATTERN_LENGTH leave MATCH unchanged; LENGTH is connection-global and
 # would break big-content writes) — bounds are enforced on the input instead.
-_MAX_QUERY_TOKENS = 64
-_MAX_TOKEN_CHARS = 64
-_MAX_WILDCARD_TERMS = 4
+_MAX_QUERY_TOKENS = MES_MEMORY["max_query_tokens"]
+_MAX_TOKEN_CHARS = MES_MEMORY["max_token_chars"]
+_MAX_WILDCARD_TERMS = MES_MEMORY["max_wildcard_terms"]
 
 
 def _shared_db() -> sqlite3.Connection:

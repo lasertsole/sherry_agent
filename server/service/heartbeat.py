@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 from loguru import logger
 from config import PLUGINS_PATH
+from config.features import HEARTBEAT_SERVICE
 from config.path import HEARTBEAT_PATH
 from models import build_main_llm
 from pub.types.bus import OutboundMessage
@@ -35,17 +36,9 @@ for _t in tools:
 # The browser WebSocket client connects as `session_id=default`
 # (client/app/composables/ws.ts), so pushes target that session so the UI
 # refreshes live when a heartbeat execution completes.
-HEARTBEAT_WS_SESSION_ID: str = "default"
+HEARTBEAT_WS_SESSION_ID: str = HEARTBEAT_SERVICE["ws_session_id"]
 
-_MAIN_LLM_ENV_VARS: tuple[str, ...] = (
-    "MAIN_LLM_PROVIDER",
-    "MAIN_LLM_NAME",
-    "MAIN_LLM_API_BASE",
-    "MAIN_LLM_API_KEY",
-    "MAIN_LLM_MAX_TOKEN",
-    "MAIN_LLM_ENABLE_THINKING",
-    "MAIN_LLM_REASONING_EFFORT",
-)
+_MAIN_LLM_ENV_VARS: tuple[str, ...] = HEARTBEAT_SERVICE["main_llm_env_vars"]
 
 _cached_heartbeat_agent: (
     tuple[asyncio.AbstractEventLoop, tuple[str | None, ...], CompiledStateGraph] | None
@@ -199,8 +192,8 @@ async def process_heartbeat_notify(agent_res: str) -> None:
 # However the budget below applies ONLY to the task text bodies: the three
 # structural headings (`# Heartbeat Tasks`, `## Active Tasks`, `## Completed`)
 # do NOT count toward it (see heartbeat_content_length).
-HEARTBEAT_FILE_NAME: str = "HEARTBEAT.md"
-HEARTBEAT_MAX_CONTENT_LENGTH: int = 2000
+HEARTBEAT_FILE_NAME: str = HEARTBEAT_SERVICE["heartbeat_file_name"]
+HEARTBEAT_MAX_CONTENT_LENGTH: int = HEARTBEAT_SERVICE["max_content_length"]
 
 
 def heartbeat_content_length(content: str) -> int:

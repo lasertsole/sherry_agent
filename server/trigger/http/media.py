@@ -3,6 +3,7 @@ from loguru import logger
 from robyn import Response
 from server.trigger.core import app
 from config import SRC_DIR
+from config.features import SERVER_HTTP
 from pub.func.validator import is_safe_session_id
 
 # Sorted by specificity; only the extension is used to pick a Content-Type.
@@ -24,7 +25,7 @@ _CONTENT_TYPES: dict[str, str] = {
 
 # Media files are written by multimodal_processor to
 # <SRC_DIR>/<session_id>/media/<filename>
-MEDIA_DIR_NAME = "media"
+MEDIA_DIR_NAME = SERVER_HTTP["media_dir_name"]
 
 
 def _validate_session_id(session_id: str) -> bool:

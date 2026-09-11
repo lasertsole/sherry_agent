@@ -17,6 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 from config import SRC_DIR
+from config.features import SERVER_HTTP
 from loguru import logger
 from robyn import Response
 
@@ -24,7 +25,7 @@ from server.trigger.core import app
 
 # File extensions accepted for knowledge-graph ingestion.
 # RAG-Anything (mineru/fallback_txt parsers) natively supports these.
-_ALLOWED_EXT = {".pdf", ".docx", ".txt", ".md"}
+_ALLOWED_EXT = SERVER_HTTP["knowledge_graph_allowed_ext"]
 
 
 def _json_response(status_code: int, payload: dict[str, Any]):

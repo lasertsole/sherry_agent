@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from config.features import WS_STREAM
 from loguru import logger
 from agent import built_agent
 from langgraph.types import Command
@@ -139,7 +140,7 @@ _CONTINUATION_PROMPT = (
     "length limit. Continue exactly where you left off. Do not "
     "restart or repeat prior text. Finish the answer directly.]"
 )
-_MAX_CONTINUATION_RETRIES = 4
+_MAX_CONTINUATION_RETRIES = WS_STREAM["max_continuation_retries"]
 # Reasoning-only continuation: when a thinking model spent the whole
 # output budget on reasoning with NO visible text, "continue where you left
 # off" makes it re-think and exhaust the budget again. The dedicated prompt
@@ -151,7 +152,7 @@ _REASONING_ONLY_PROMPT = (
     "visible answer. Produce the answer now — do not re-reason "
     "or restart the thinking process. Output the final answer directly.]"
 )
-_MAX_REASONING_ONLY_RETRIES = 2
+_MAX_REASONING_ONLY_RETRIES = WS_STREAM["max_reasoning_only_retries"]
 
 
 class _GenerateTurn(StreamTurn):
