@@ -1,10 +1,10 @@
-from config.num import (
-    CONTENT_HEAD_RATIO,
-    CONTENT_TAIL_RATIO,
-    MAX_TOOL_OUTPUT_CHARS,
-    MIN_OUTPUT_CHARS_TO_TRUNCATE,
-)
+from config.features import SUMMARIZATION
 from langchain_core.messages import BaseMessage, ToolMessage, AIMessage
+
+CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
+CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
+MAX_TOOL_OUTPUT_CHARS = SUMMARIZATION["max_tool_output_chars"]
+MIN_OUTPUT_CHARS_TO_TRUNCATE = SUMMARIZATION["min_output_chars_to_truncate"]
 
 _OMISSION_TEMPLATE = "...[truncated {omitted} chars]..."
 

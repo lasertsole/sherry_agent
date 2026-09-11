@@ -13,7 +13,7 @@ Routes (dispatch contract, stable strings):
     "compact_then_truncate"      — compress history first, truncate as backstop
     "compact_only"               — heavy: AI compression of the whole history
 
-Thresholds are imported from ``config.num`` — never redefined here:
+Thresholds are imported from ``config.features`` — never redefined here:
     PREEMPTIVE_TRUNCATE_RATIO (0.70) → soft-overflow lower bound
     COMPRESSION_TRIGGER_RATIO (0.80) → hard-overflow lower bound
     MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE (200) → candidate floor
@@ -34,12 +34,12 @@ Soft/hard overflow semantics (soft vs. hard overflow):
 
 from langchain_core.messages import BaseMessage, ToolMessage
 from pub.func.message.estimate_msg_tokens import estimate_msg_tokens
-from config.num import (
-    COMPRESSION_TRIGGER_RATIO,
-    MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE,
-    PREEMPTIVE_TRUNCATE_RATIO,
-    TRUNCATABLE_RECENT_SKIP,
-)
+from config.features import SUMMARIZATION
+
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
+MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE = SUMMARIZATION["min_tool_result_tokens_to_truncate"]
+PREEMPTIVE_TRUNCATE_RATIO = SUMMARIZATION["preemptive_truncate_ratio"]
+TRUNCATABLE_RECENT_SKIP = SUMMARIZATION["truncatable_recent_skip"]
 
 ROUTE_FITS = "fits"
 ROUTE_TRUNCATE_TOOL_RESULTS_ONLY = "truncate_tool_results_only"

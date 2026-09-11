@@ -29,11 +29,6 @@ from .path import (
     resolve_workspace_template_dir as resolve_workspace_template_dir,
 )
 from .features import GATEWAY as GATEWAY
-from .num import (
-    ARCHIVE_THRESHOLD as ARCHIVE_THRESHOLD,
-    MEMORY_THRESHOLD as MEMORY_THRESHOLD,
-    COMPRESS_RATIO as COMPRESS_RATIO,
-)
 
 # Bind address for the Robyn backend. Both are sourced from the gateway
 # registry, which reads API_HOST/API_PORT from the environment at import so

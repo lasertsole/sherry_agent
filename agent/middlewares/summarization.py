@@ -30,37 +30,7 @@ from pub.func.message.tool_output_dedup import dedup_tool_outputs
 from pub.func.message.tool_output_prune import prune_tool_outputs
 from pub.func.message.target_truncation import target_truncate_tool_outputs
 from pub.func.message.tool_args_truncate import truncate_tool_args
-from config.num import (
-    PREEMPTIVE_TRUNCATE_RATIO,
-    COMPRESSION_TRIGGER_RATIO,
-    MIN_PRESERVE_TOKENS,
-    MAX_PRESERVE_TOKENS,
-    PRESERVE_RATIO,
-    PRUNE_PROTECT_TOKENS,
-    PRUNE_MIN_REDUCTION_TOKENS,
-    TARGET_TRUNCATE_RATIO,
-    MIN_OUTPUT_CHARS_TO_TRUNCATE,
-    MAX_TOOL_OUTPUT_CHARS,
-    MIN_ARGS_CHARS_TO_TRUNCATE,
-    MAX_TOOL_ARGS_CHARS,
-    SUMMARY_TOTAL_MAX_CHARS,
-    CONTENT_HEAD_RATIO,
-    CONTENT_TAIL_RATIO,
-    DEGRADATION_NO_TEXT_THRESHOLD,
-    MAX_RECOVERY_ATTEMPTS,
-    PROTECTED_TOOLS,
-    LAST_TURN_RATIO_THRESHOLD,
-    COMPLETED_MAX_ITEMS,
-    KEY_DECISIONS_MAX_ITEMS,
-    CRITICAL_CONTEXT_MAX_ITEMS,
-    FILE_OPS_LIST_MAX_CHARS,
-    LATEST_USER_REQUEST_MAX_CHARS,
-    COMPACTION_COOLDOWN_ROUNDS,
-    MAX_COMPRESS_ATTEMPTS_PER_TURN,
-    MAX_OVERFLOW_RETRIES,
-    TRUNCATE_BUDGET_RATIO,
-    COMPRESSION_RESERVE_TOKENS,
-)
+from config.features import SUMMARIZATION
 from pub.func.message.overflow_router import (
     ROUTE_FITS,
     ROUTE_TRUNCATE_TOOL_RESULTS_ONLY,
@@ -91,6 +61,37 @@ from agent.middlewares.summarization_components import (
     _SKIP_LLM_KEY as _SKIP_LLM_KEY,
     _SUMMARY_LC_SOURCE as _SUMMARY_LC_SOURCE,
 )
+
+# ── Summarization tunables (bound from the feature registry) ─────────────
+PREEMPTIVE_TRUNCATE_RATIO = SUMMARIZATION["preemptive_truncate_ratio"]
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
+MIN_PRESERVE_TOKENS = SUMMARIZATION["min_preserve_tokens"]
+MAX_PRESERVE_TOKENS = SUMMARIZATION["max_preserve_tokens"]
+PRESERVE_RATIO = SUMMARIZATION["preserve_ratio"]
+PRUNE_PROTECT_TOKENS = SUMMARIZATION["prune_protect_tokens"]
+PRUNE_MIN_REDUCTION_TOKENS = SUMMARIZATION["prune_min_reduction_tokens"]
+TARGET_TRUNCATE_RATIO = SUMMARIZATION["target_truncate_ratio"]
+MIN_OUTPUT_CHARS_TO_TRUNCATE = SUMMARIZATION["min_output_chars_to_truncate"]
+MAX_TOOL_OUTPUT_CHARS = SUMMARIZATION["max_tool_output_chars"]
+MIN_ARGS_CHARS_TO_TRUNCATE = SUMMARIZATION["min_args_chars_to_truncate"]
+MAX_TOOL_ARGS_CHARS = SUMMARIZATION["max_tool_args_chars"]
+SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
+CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
+CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
+DEGRADATION_NO_TEXT_THRESHOLD = SUMMARIZATION["degradation_no_text_threshold"]
+MAX_RECOVERY_ATTEMPTS = SUMMARIZATION["max_recovery_attempts"]
+PROTECTED_TOOLS = SUMMARIZATION["protected_tools"]
+LAST_TURN_RATIO_THRESHOLD = SUMMARIZATION["last_turn_ratio_threshold"]
+COMPLETED_MAX_ITEMS = SUMMARIZATION["completed_max_items"]
+KEY_DECISIONS_MAX_ITEMS = SUMMARIZATION["key_decisions_max_items"]
+CRITICAL_CONTEXT_MAX_ITEMS = SUMMARIZATION["critical_context_max_items"]
+FILE_OPS_LIST_MAX_CHARS = SUMMARIZATION["file_ops_list_max_chars"]
+LATEST_USER_REQUEST_MAX_CHARS = SUMMARIZATION["latest_user_request_max_chars"]
+COMPACTION_COOLDOWN_ROUNDS = SUMMARIZATION["compaction_cooldown_rounds"]
+MAX_COMPRESS_ATTEMPTS_PER_TURN = SUMMARIZATION["max_compress_attempts_per_turn"]
+MAX_OVERFLOW_RETRIES = SUMMARIZATION["max_overflow_retries"]
+TRUNCATE_BUDGET_RATIO = SUMMARIZATION["truncate_budget_ratio"]
+COMPRESSION_RESERVE_TOKENS = SUMMARIZATION["compression_reserve_tokens"]
 
 
 # ======================================================================

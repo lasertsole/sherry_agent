@@ -48,7 +48,7 @@ def _env_int(name: str, default: int, env: Mapping[str, str]) -> int:
 
 
 class SummarizationConfig(TypedDict):
-    """Summarization / context-compaction thresholds (config.num baseline)."""
+    """Summarization / context-compaction thresholds (single source of truth for the summarization pipeline)."""
 
     archive_threshold: int
     memory_threshold: int

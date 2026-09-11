@@ -19,14 +19,14 @@ Style parity:
 """
 
 import json
+from config.features import SUMMARIZATION
 from langchain_core.messages import BaseMessage, AIMessage
-from config.num import (
-    MAX_TOOL_ARGS_CHARS,
-    MIN_ARGS_CHARS_TO_TRUNCATE,
-    CONTENT_HEAD_RATIO,
-    CONTENT_TAIL_RATIO,
-    TRUNCATABLE_RECENT_SKIP,
-)
+
+MAX_TOOL_ARGS_CHARS = SUMMARIZATION["max_tool_args_chars"]
+MIN_ARGS_CHARS_TO_TRUNCATE = SUMMARIZATION["min_args_chars_to_truncate"]
+CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
+CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
+TRUNCATABLE_RECENT_SKIP = SUMMARIZATION["truncatable_recent_skip"]
 
 _ARGS_OMISSION_TEMPLATE = "...[args truncated, omitted {omitted} chars]..."
 

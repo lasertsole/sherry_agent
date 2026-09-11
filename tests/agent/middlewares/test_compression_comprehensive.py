@@ -32,16 +32,16 @@ from langchain.agents.middleware import (
 )
 
 import agent.middlewares.summarization as summarization_module
-from config.num import (
-    INEFFECTIVE_THRESHOLD,
-    MAX_COMPRESS_ATTEMPTS_PER_TURN,
-    MAX_TOTAL_COMPRESSION_ATTEMPTS,
-    MIN_EFFECTIVENESS_PCT,
-    TRUNCATE_BUDGET_RATIO,
-    TTL_REGISTRY_MAX_ENTRIES,
-)
+from config.features import SUMMARIZATION
 from pub.func.message.tool_result_ttl import record_first_seen
 from runtime import state_register_mem
+
+INEFFECTIVE_THRESHOLD = SUMMARIZATION["ineffective_threshold"]
+MAX_COMPRESS_ATTEMPTS_PER_TURN = SUMMARIZATION["max_compress_attempts_per_turn"]
+MAX_TOTAL_COMPRESSION_ATTEMPTS = SUMMARIZATION["max_total_compression_attempts"]
+MIN_EFFECTIVENESS_PCT = SUMMARIZATION["min_effectiveness_pct"]
+TRUNCATE_BUDGET_RATIO = SUMMARIZATION["truncate_budget_ratio"]
+TTL_REGISTRY_MAX_ENTRIES = SUMMARIZATION["ttl_registry_max_entries"]
 
 # ----------------------------------------------------------------------
 # Window math (Task 5 contract): dynamic window is the constructor-injected

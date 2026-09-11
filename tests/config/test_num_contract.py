@@ -1,56 +1,53 @@
-"""TDD contract tests: config.num summarization constant contract.
+"""TDD contract tests: config.features summarization registry contract.
 
-The ``from config.num import (...)`` block below is the authoritative import
-contract for the summarization middleware
-(``agent/middlewares/summarization.py``); expected values match
-``config/num.py``, whose semantics are documented in
-``docs/harness/summarization/README.md``.
+The registry field bindings below (``config/features``) are the authoritative
+import contract for the summarization middleware
+(``agent/middlewares/summarization.py``); values live in ``config.features``,
+whose semantics are documented in ``docs/harness/summarization/README.md``.
 
-Also guards the pre-existing constants of the old config/num.py baseline
-(ARCHIVE_THRESHOLD, MEMORY_THRESHOLD, COMPRESS_RATIO, BUS_QUEUE_MAXSIZE)
-and CHARS_PER_TOKEN (consumed by pub/func/message/estimate_msg_tokens.py).
+Also guards the legacy numeric baseline (archive_threshold, memory_threshold,
+compress_ratio, bus queue_maxsize, upload byte caps) and chars_per_token
+(consumed by pub/func/message/estimate_msg_tokens.py).
 """
 
-import importlib
+from config.features import BUS, HTTP_UPLOAD, SUMMARIZATION, TOKEN_ESTIMATION
 
-from config.num import (
-    PREEMPTIVE_TRUNCATE_RATIO,
-    COMPRESSION_TRIGGER_RATIO,
-    MIN_PRESERVE_TOKENS,
-    MAX_PRESERVE_TOKENS,
-    PRESERVE_RATIO,
-    PRUNE_PROTECT_TOKENS,
-    PRUNE_MIN_REDUCTION_TOKENS,
-    TARGET_TRUNCATE_RATIO,
-    MIN_OUTPUT_CHARS_TO_TRUNCATE,
-    MAX_TOOL_OUTPUT_CHARS,
-    AGGRESSIVE_TRUNCATE_CHARS,
-    SUMMARY_TRIM_TOKENS,
-    SUMMARY_TOTAL_MAX_CHARS,
-    CONTENT_HEAD_RATIO,
-    CONTENT_TAIL_RATIO,
-    DEGRADATION_NO_TEXT_THRESHOLD,
-    MAX_RECOVERY_ATTEMPTS,
-    MAX_TOTAL_COMPRESSION_ATTEMPTS,
-    INEFFECTIVE_THRESHOLD,
-    MIN_EFFECTIVENESS_PCT,
-    PROTECTED_TOOLS,
-    LAST_TURN_RATIO_THRESHOLD,
-    COMPLETED_MAX_ITEMS,
-    KEY_DECISIONS_MAX_ITEMS,
-    CRITICAL_CONTEXT_MAX_ITEMS,
-    FILE_OPS_LIST_MAX_CHARS,
-    LATEST_USER_REQUEST_MAX_CHARS,
-    AUTO_CONTINUE_PROMPT,
-    MAX_OVERFLOW_RETRIES,
-    MAX_COMPRESS_ATTEMPTS_PER_TURN,
-    COMPACTION_COOLDOWN_ROUNDS,
-    PRUNE_TTL_SECONDS,
-    TRUNCATE_BUDGET_RATIO,
-    MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE,
-    TRUNCATABLE_RECENT_SKIP,
-    TTL_REGISTRY_MAX_ENTRIES,
-)
+PREEMPTIVE_TRUNCATE_RATIO = SUMMARIZATION["preemptive_truncate_ratio"]
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
+MIN_PRESERVE_TOKENS = SUMMARIZATION["min_preserve_tokens"]
+MAX_PRESERVE_TOKENS = SUMMARIZATION["max_preserve_tokens"]
+PRESERVE_RATIO = SUMMARIZATION["preserve_ratio"]
+PRUNE_PROTECT_TOKENS = SUMMARIZATION["prune_protect_tokens"]
+PRUNE_MIN_REDUCTION_TOKENS = SUMMARIZATION["prune_min_reduction_tokens"]
+TARGET_TRUNCATE_RATIO = SUMMARIZATION["target_truncate_ratio"]
+MIN_OUTPUT_CHARS_TO_TRUNCATE = SUMMARIZATION["min_output_chars_to_truncate"]
+MAX_TOOL_OUTPUT_CHARS = SUMMARIZATION["max_tool_output_chars"]
+AGGRESSIVE_TRUNCATE_CHARS = SUMMARIZATION["aggressive_truncate_chars"]
+SUMMARY_TRIM_TOKENS = SUMMARIZATION["summary_trim_tokens"]
+SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
+CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
+CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
+DEGRADATION_NO_TEXT_THRESHOLD = SUMMARIZATION["degradation_no_text_threshold"]
+MAX_RECOVERY_ATTEMPTS = SUMMARIZATION["max_recovery_attempts"]
+MAX_TOTAL_COMPRESSION_ATTEMPTS = SUMMARIZATION["max_total_compression_attempts"]
+INEFFECTIVE_THRESHOLD = SUMMARIZATION["ineffective_threshold"]
+MIN_EFFECTIVENESS_PCT = SUMMARIZATION["min_effectiveness_pct"]
+PROTECTED_TOOLS = SUMMARIZATION["protected_tools"]
+LAST_TURN_RATIO_THRESHOLD = SUMMARIZATION["last_turn_ratio_threshold"]
+COMPLETED_MAX_ITEMS = SUMMARIZATION["completed_max_items"]
+KEY_DECISIONS_MAX_ITEMS = SUMMARIZATION["key_decisions_max_items"]
+CRITICAL_CONTEXT_MAX_ITEMS = SUMMARIZATION["critical_context_max_items"]
+FILE_OPS_LIST_MAX_CHARS = SUMMARIZATION["file_ops_list_max_chars"]
+LATEST_USER_REQUEST_MAX_CHARS = SUMMARIZATION["latest_user_request_max_chars"]
+AUTO_CONTINUE_PROMPT = SUMMARIZATION["auto_continue_prompt"]
+MAX_OVERFLOW_RETRIES = SUMMARIZATION["max_overflow_retries"]
+MAX_COMPRESS_ATTEMPTS_PER_TURN = SUMMARIZATION["max_compress_attempts_per_turn"]
+COMPACTION_COOLDOWN_ROUNDS = SUMMARIZATION["compaction_cooldown_rounds"]
+PRUNE_TTL_SECONDS = SUMMARIZATION["prune_ttl_seconds"]
+TRUNCATE_BUDGET_RATIO = SUMMARIZATION["truncate_budget_ratio"]
+MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE = SUMMARIZATION["min_tool_result_tokens_to_truncate"]
+TRUNCATABLE_RECENT_SKIP = SUMMARIZATION["truncatable_recent_skip"]
+TTL_REGISTRY_MAX_ENTRIES = SUMMARIZATION["ttl_registry_max_entries"]
 
 CONTRACT_NAMES = [
     "PREEMPTIVE_TRUNCATE_RATIO",
@@ -276,8 +273,7 @@ class TestContextCompressionMultiTriggerDualTrack:
 
 class TestContract:
     def test_all_36_contract_names_importable(self):
-        num = importlib.import_module("config.num")
-        missing = [name for name in CONTRACT_NAMES if not hasattr(num, name)]
+        missing = [name for name in CONTRACT_NAMES if name.lower() not in SUMMARIZATION]
         assert missing == [], f"missing contract constants: {missing}"
 
     def test_contract_name_count(self):
@@ -286,17 +282,28 @@ class TestContract:
 
 class TestPreservedConstants:
     def test_legacy_compression_thresholds(self):
-        num = importlib.import_module("config.num")
-        assert num.ARCHIVE_THRESHOLD == 8_000
-        assert num.MEMORY_THRESHOLD == 10_000
-        assert num.COMPRESS_RATIO == 0.5
+        assert SUMMARIZATION["archive_threshold"] == 8_000
+        assert SUMMARIZATION["memory_threshold"] == 10_000
+        assert SUMMARIZATION["compress_ratio"] == 0.5
 
     def test_bus_queue_maxsize(self):
-        num = importlib.import_module("config.num")
-        assert num.BUS_QUEUE_MAXSIZE == 1000
-        assert isinstance(num.BUS_QUEUE_MAXSIZE, int)
+        assert BUS["queue_maxsize"] == 1000
+        assert isinstance(BUS["queue_maxsize"], int)
 
     def test_chars_per_token(self):
-        num = importlib.import_module("config.num")
-        assert num.CHARS_PER_TOKEN == 4
-        assert isinstance(num.CHARS_PER_TOKEN, int)
+        assert TOKEN_ESTIMATION["chars_per_token"] == 4
+        assert isinstance(TOKEN_ESTIMATION["chars_per_token"], int)
+
+
+class TestUploadLimits:
+    def test_max_image_upload_bytes(self):
+        assert HTTP_UPLOAD["max_image_bytes"] == 25 * 1024 * 1024
+        assert isinstance(HTTP_UPLOAD["max_image_bytes"], int)
+
+    def test_max_audio_upload_bytes(self):
+        assert HTTP_UPLOAD["max_audio_bytes"] == 100 * 1024 * 1024
+        assert isinstance(HTTP_UPLOAD["max_audio_bytes"], int)
+
+    def test_max_video_upload_bytes(self):
+        assert HTTP_UPLOAD["max_video_bytes"] == 500 * 1024 * 1024
+        assert isinstance(HTTP_UPLOAD["max_video_bytes"], int)

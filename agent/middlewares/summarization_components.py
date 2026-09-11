@@ -19,18 +19,17 @@ from loguru import logger
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
-from config.num import (
-    AGGRESSIVE_TRUNCATE_CHARS,
-    CONTENT_HEAD_RATIO,
-    CONTENT_TAIL_RATIO,
-    INEFFECTIVE_THRESHOLD,
-    MAX_TOTAL_COMPRESSION_ATTEMPTS,
-    MIN_EFFECTIVENESS_PCT,
-    PROTECTED_TOOLS,
-    SUMMARY_TOTAL_MAX_CHARS,
-)
-
+from config.features import SUMMARIZATION
 from runtime import state_register_mem
+
+AGGRESSIVE_TRUNCATE_CHARS = SUMMARIZATION["aggressive_truncate_chars"]
+CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
+CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
+INEFFECTIVE_THRESHOLD = SUMMARIZATION["ineffective_threshold"]
+MAX_TOTAL_COMPRESSION_ATTEMPTS = SUMMARIZATION["max_total_compression_attempts"]
+MIN_EFFECTIVENESS_PCT = SUMMARIZATION["min_effectiveness_pct"]
+PROTECTED_TOOLS = SUMMARIZATION["protected_tools"]
+SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
 
 # Anti-flutter / anti-thrash state keys (re-exported by the middleware module,
 # whose tests read them via getattr on the module).
@@ -41,7 +40,7 @@ _LAST_STRATEGY_KEY = "summarization_last_strategy"
 _SKIP_LLM_KEY = "summarization_skip_llm"
 _FORCE_RECOVERY_KEY = "summarization_force_recovery"
 
-_PREEMPTIVE_TRUNCATE_MAX_CHARS = 2000
+_PREEMPTIVE_TRUNCATE_MAX_CHARS = SUMMARIZATION["preemptive_truncate_max_chars"]
 
 _SUMMARY_LC_SOURCE = "summarization"
 

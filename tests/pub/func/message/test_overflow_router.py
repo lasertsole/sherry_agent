@@ -11,13 +11,7 @@ underestimates CJK, so tests build content of exact char lengths to hit
 deterministic token counts.
 """
 
-from config.num import (
-    CHARS_PER_TOKEN,
-    COMPRESSION_TRIGGER_RATIO,
-    MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE,
-    PREEMPTIVE_TRUNCATE_RATIO,
-    TRUNCATABLE_RECENT_SKIP,
-)
+from config.features import SUMMARIZATION, TOKEN_ESTIMATION
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pub.func.message.estimate_msg_tokens import estimate_msg_tokens
 from pub.func.message.overflow_router import (
@@ -25,6 +19,12 @@ from pub.func.message.overflow_router import (
     decide_route,
     find_truncatable_tool_results,
 )
+
+CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
+MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE = SUMMARIZATION["min_tool_result_tokens_to_truncate"]
+PREEMPTIVE_TRUNCATE_RATIO = SUMMARIZATION["preemptive_truncate_ratio"]
+TRUNCATABLE_RECENT_SKIP = SUMMARIZATION["truncatable_recent_skip"]
 
 ROUTE_FITS = "fits"
 ROUTE_TRUNCATE_ONLY = "truncate_tool_results_only"

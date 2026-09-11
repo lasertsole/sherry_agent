@@ -3,8 +3,9 @@ from loguru import logger
 from robyn import Response
 from server.trigger.core import app
 from config import SRC_DIR, API_HOST, API_PORT
-from config.features import SERVER_HTTP
-from config.num import MAX_IMAGE_UPLOAD_BYTES
+from config.features import HTTP_UPLOAD, SERVER_HTTP
+
+MAX_IMAGE_UPLOAD_BYTES = HTTP_UPLOAD["max_image_bytes"]
 
 _CONTENT_TYPE_TO_EXT: dict[str, str] = SERVER_HTTP["image_content_type_to_ext"]
 

@@ -1,6 +1,8 @@
 import json
 from langchain_core.messages import BaseMessage
-from config.num import CHARS_PER_TOKEN
+from config.features import TOKEN_ESTIMATION
+
+CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
 
 
 def estimate_msg_tokens(msg: BaseMessage) -> int:

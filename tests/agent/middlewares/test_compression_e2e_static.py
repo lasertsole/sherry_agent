@@ -73,13 +73,7 @@ from agent.middlewares.summarization import (
     _COMPRESSION_COUNT_KEY,
     _OVERFLOW_RETRIES_KEY,
 )
-from config.num import (
-    COMPACTION_COOLDOWN_ROUNDS,
-    COMPRESSION_RESERVE_TOKENS,
-    COMPRESSION_TRIGGER_RATIO,
-    PREEMPTIVE_TRUNCATE_RATIO,
-    PRUNE_TTL_SECONDS,
-)
+from config.features import SUMMARIZATION
 from pub.func.message.estimate_msg_tokens import estimate_msg_tokens
 from pub.func.message.tool_result_ttl import (
     TTL_PLACEHOLDER,
@@ -87,6 +81,12 @@ from pub.func.message.tool_result_ttl import (
     select_expired,
 )
 from runtime.state_register import state_register_db, state_register_mem
+
+COMPACTION_COOLDOWN_ROUNDS = SUMMARIZATION["compaction_cooldown_rounds"]
+COMPRESSION_RESERVE_TOKENS = SUMMARIZATION["compression_reserve_tokens"]
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
+PREEMPTIVE_TRUNCATE_RATIO = SUMMARIZATION["preemptive_truncate_ratio"]
+PRUNE_TTL_SECONDS = SUMMARIZATION["prune_ttl_seconds"]
 
 # ----------------------------------------------------------------------
 # Window math (mirrors the numbers used by the Task 3-7 suites)

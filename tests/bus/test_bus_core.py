@@ -4,7 +4,9 @@ import pytest
 import asyncio
 from pub.types.bus import InboundMessage, OutboundMessage
 from bus.core import MessageBus
-from config.num import BUS_QUEUE_MAXSIZE
+from config.features import BUS
+
+BUS_QUEUE_MAXSIZE = BUS["queue_maxsize"]
 
 
 pytestmark = [pytest.mark.module]

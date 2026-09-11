@@ -1,9 +1,12 @@
-from config.num import PRUNE_PROTECT_TOKENS, PRUNE_MIN_REDUCTION_TOKENS
+from config.features import SUMMARIZATION
 from langchain_core.messages import (
     BaseMessage,
     ToolMessage,
     AIMessage,
 )
+
+PRUNE_PROTECT_TOKENS = SUMMARIZATION["prune_protect_tokens"]
+PRUNE_MIN_REDUCTION_TOKENS = SUMMARIZATION["prune_min_reduction_tokens"]
 
 _PRUNE_MARKER = "[Old tool result content cleared]"
 _SUMMARY_LC_SOURCE = "summarization"

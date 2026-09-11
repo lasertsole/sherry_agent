@@ -129,9 +129,10 @@ class TestRecordFirstSeen:
         assert set(registry) == {"tc4", "tc5", "tc6"}
 
     def test_cap_constant_imported_from_config(self):
-        from config.num import TTL_REGISTRY_MAX_ENTRIES
+        from config.features import SUMMARIZATION
 
-        assert tool_result_ttl.TTL_REGISTRY_MAX_ENTRIES == TTL_REGISTRY_MAX_ENTRIES
+        registry_cap = SUMMARIZATION["ttl_registry_max_entries"]
+        assert tool_result_ttl.TTL_REGISTRY_MAX_ENTRIES == registry_cap
         assert tool_result_ttl.TTL_REGISTRY_MAX_ENTRIES == 512
 
 

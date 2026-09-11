@@ -18,7 +18,9 @@ from unittest.mock import MagicMock, PropertyMock
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import HumanMessage, AIMessage
 
-from config.num import COMPRESSION_TRIGGER_RATIO
+from config.features import SUMMARIZATION
+
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 
 # ── The context window we feed the middleware (uncapped MAIN_LLM_MAX_TOKEN) ─
 # MAIN_LLM_MAX_TOKEN = 65_536  (from .env; Task 1 of the context-compression

@@ -2,8 +2,10 @@
 
 import asyncio
 from loguru import logger
-from config.num import BUS_QUEUE_MAXSIZE
+from config.features import BUS
 from pub.types.bus import InboundMessage, OutboundMessage
+
+BUS_QUEUE_MAXSIZE = BUS["queue_maxsize"]
 
 
 class MessageBus:

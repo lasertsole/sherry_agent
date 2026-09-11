@@ -28,14 +28,14 @@ placeholder.
 
 from typing import Any, TypeGuard
 
-from config.num import (
-    CONTENT_HEAD_RATIO,
-    CONTENT_TAIL_RATIO,
-    TTL_REGISTRY_MAX_ENTRIES,
-)
+from config.features import SUMMARIZATION
 from langchain_core.messages import BaseMessage, ToolMessage
 
 from pub.func.message.estimate_msg_tokens import estimate_msg_tokens
+
+CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
+CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
+TTL_REGISTRY_MAX_ENTRIES = SUMMARIZATION["ttl_registry_max_entries"]
 
 # Non-empty by design: sanitize_tool_use_result_pairing drops ToolMessages
 # whose content is empty, which would break tool pairing immediately.

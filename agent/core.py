@@ -7,8 +7,7 @@ from models import build_main_llm, build_auxiliary_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
-from config.num import COMPRESSION_TRIGGER_RATIO
-from config.features import ITERATION_BUDGET
+from config.features import ITERATION_BUDGET, SUMMARIZATION
 from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (
@@ -29,6 +28,8 @@ from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.todo_continuation import TodoContinuationEnforcer
 from .context_limit_guard_wrapper import ContextLimitGuardWrapper
 from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
+
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 
 # ── Extended state schema ────────────────────────────────────────────────
 # Carries ``session_id`` through the graph so that middlewares reading

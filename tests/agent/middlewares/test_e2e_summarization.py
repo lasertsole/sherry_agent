@@ -68,9 +68,11 @@ from langchain_core.messages import (  # noqa: E402
 import agent.middlewares.summarization as summarization_module  # noqa: E402
 from agent.middlewares.summarization import Summarization  # noqa: E402
 from config import ENV_PATH  # noqa: E402
-from config.num import COMPRESSION_TRIGGER_RATIO  # noqa: E402
+from config.features import SUMMARIZATION  # noqa: E402
 from runtime import state_register_db, state_register_mem  # noqa: E402
 from workspace.prompt_builder import build_system_prompt  # noqa: E402
+
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 
 # ======================================================================
 # §14 fixture shape

@@ -14,16 +14,16 @@ from langchain_core.messages import (
 from langchain.agents.middleware import ModelRequest
 
 import agent.middlewares.summarization as summarization_module
+from config.features import SUMMARIZATION
 from pub.func.message import estimate_msg_tokens, estimate_messages_tokens
 from runtime import state_register_mem
-from config.num import (
-    COMPLETED_MAX_ITEMS,
-    FILE_OPS_LIST_MAX_CHARS,
-    KEY_DECISIONS_MAX_ITEMS,
-    LATEST_USER_REQUEST_MAX_CHARS,
-    CRITICAL_CONTEXT_MAX_ITEMS,
-    SUMMARY_TOTAL_MAX_CHARS,
-)
+
+COMPLETED_MAX_ITEMS = SUMMARIZATION["completed_max_items"]
+FILE_OPS_LIST_MAX_CHARS = SUMMARIZATION["file_ops_list_max_chars"]
+KEY_DECISIONS_MAX_ITEMS = SUMMARIZATION["key_decisions_max_items"]
+LATEST_USER_REQUEST_MAX_CHARS = SUMMARIZATION["latest_user_request_max_chars"]
+CRITICAL_CONTEXT_MAX_ITEMS = SUMMARIZATION["critical_context_max_items"]
+SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
 
 # CRITICAL INVARIANT: this module never does
 # ``from agent.middlewares.summarization import <name>`` for NEW names —
