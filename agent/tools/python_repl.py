@@ -34,12 +34,14 @@ from langchain_experimental.tools import PythonREPLTool
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 
 from config.path import ROOT_DIR
+from config.features import TOOLS_TIMEOUTS
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 
-PYTHON_REPL_TIMEOUT = 30  # seconds
+# Bound to the feature registry (single source of truth); name preserved.
+PYTHON_REPL_TIMEOUT = TOOLS_TIMEOUTS["python_repl_timeout_seconds"]
 
 _REPL_WRAPPER = textwrap.dedent("""\
 import sys, json, traceback

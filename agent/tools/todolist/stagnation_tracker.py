@@ -14,11 +14,14 @@ is intentionally pure: no I/O, no logging, no event-loop assumptions.
 
 import time
 
-_MAX_STAGNATION = 3  # consecutive unchanged snapshots before giving up
-_BASE_COOLDOWN_S = 2.0  # base cooldown between continuation injections
-_MAX_COOLDOWN_S = 60.0  # cooldown ceiling
-_FAILURE_RESET_WINDOW_S = 300  # 5 minutes without a failure → reset the count
-_MAX_RECOVERY_ATTEMPTS = 2  # max recovery-mode injections per stagnation episode
+from config.features import TODOLIST_INFRA
+
+# Bound to the feature registry (single source of truth); names preserved.
+_MAX_STAGNATION = TODOLIST_INFRA["stagnation_max_stagnation"]
+_BASE_COOLDOWN_S = TODOLIST_INFRA["stagnation_base_cooldown_s"]
+_MAX_COOLDOWN_S = TODOLIST_INFRA["stagnation_max_cooldown_s"]
+_FAILURE_RESET_WINDOW_S = TODOLIST_INFRA["stagnation_failure_reset_window_s"]
+_MAX_RECOVERY_ATTEMPTS = TODOLIST_INFRA["stagnation_max_recovery_attempts"]
 
 # per-session state
 _stagnation_count: dict[str, int] = {}

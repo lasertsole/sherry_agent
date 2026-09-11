@@ -34,6 +34,7 @@ from pathlib import Path
 import aiosqlite
 from loguru import logger
 
+from config.features import TODOLIST_INFRA
 from ..config import (
     DEFAULT_CATEGORY,
     DEFAULT_DELEGATION,
@@ -48,12 +49,12 @@ _DB_PATH = _DB_DIR / "todos.db"
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this
 # timeout, handled separately in _switch_to_wal_if_needed.
-_BUSY_TIMEOUT_MS = 5000
+_BUSY_TIMEOUT_MS = TODOLIST_INFRA["store_busy_timeout_ms"]
 _BUSY_TIMEOUT_S = _BUSY_TIMEOUT_MS / 1000.0
 
 # How long a non-owning event loop waits for the owning loop's one-time schema
 # init before initializing the schema itself (see ensure_db).
-_INIT_WAIT_TIMEOUT_S = 10.0
+_INIT_WAIT_TIMEOUT_S = TODOLIST_INFRA["store_init_wait_timeout_s"]
 
 # Column order is the contract for _row_to_todo; keep both in lockstep.
 _TODO_COLUMNS = (

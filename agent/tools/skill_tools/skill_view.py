@@ -3,6 +3,7 @@ from pathlib import Path
 from loguru import logger
 from typing import Any
 from config import SKILLS_DIR, is_allowed_skill_path
+from config.features import TOOLS_TIMEOUTS
 from pydantic import BaseModel, Field
 from typing import override
 from langchain_core.tools import BaseTool
@@ -17,8 +18,9 @@ from agent.tools.pub_base import (
     EXCLUDED_SKILL_DIRS,
 )
 
-_MAX_NAME_LENGTH = 64
-_MAX_DESCRIPTION_LENGTH = 1024
+# Bound to the feature registry (single source of truth); names preserved.
+_MAX_NAME_LENGTH = TOOLS_TIMEOUTS["skill_view_max_name_length"]
+_MAX_DESCRIPTION_LENGTH = TOOLS_TIMEOUTS["skill_view_max_description_length"]
 _ALLOWED_SUPPORT_DIRS = frozenset(("references", "templates", "assets", "scripts"))
 
 _INJECTION_PATTERNS: list[str] = [

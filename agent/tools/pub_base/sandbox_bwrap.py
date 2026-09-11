@@ -24,6 +24,7 @@ from __future__ import annotations
 import subprocess
 
 from config.path import ROOT_DIR, TEMP_DIR
+from config.features import TOOLS_TIMEOUTS
 
 try:  # Prefer the output; fall back to the local ABC shape when hasn't landed (see notepad problems.md)
     from agent.tools.pub_base.sandbox import SandboxBackend
@@ -40,8 +41,8 @@ except ImportError:  # pragma: no cover
         def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]: ...
 
 
-#: Probe smoke-test timeout (seconds)
-_PROBE_TIMEOUT_SECONDS = 3
+# Probe smoke-test timeout (seconds), bound to the feature registry.
+_PROBE_TIMEOUT_SECONDS = TOOLS_TIMEOUTS["sandbox_bwrap_probe_timeout_seconds"]
 
 #: Smoke-test command: a minimal call that still triggers user-namespace/uid-map setup
 _PROBE_ARGV = [

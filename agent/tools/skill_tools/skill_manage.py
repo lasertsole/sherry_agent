@@ -12,19 +12,21 @@ from typing import Literal, Any
 from typing import override
 from langchain_core.tools import BaseTool
 from config import AUTO_SKILLS_DIR, ROOT_DIR
+from config.features import TOOLS_TIMEOUTS
 from agent.tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
 from pub.func import atomic_replace, has_traversal_component, validate_within_dir
 
-_MAX_NAME_LENGTH: int = 64
-_MAX_DESCRIPTION_LENGTH: int = 1024
-_MAX_SKILL_CONTENT_CHARS = 100_000  # ~36k tokens at 2.75 chars/token
+# Bound to the feature registry (single source of truth); names preserved.
+_MAX_NAME_LENGTH: int = TOOLS_TIMEOUTS["skill_manage_max_name_length"]
+_MAX_DESCRIPTION_LENGTH: int = TOOLS_TIMEOUTS["skill_manage_max_description_length"]
+_MAX_SKILL_CONTENT_CHARS = TOOLS_TIMEOUTS["skill_manage_max_skill_content_chars"]
 _VALID_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 # Subdirectories allowed for write_file/remove_file (umbrella skill standard dirs)
 _ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets", "examples", "resources"}
 # Target max length (chars) for an umbrella SKILL.md main body. Above this the
 # curator is instructed to offload bulky content into references/examples/etc.
-_UMBRELLA_SKILL_CHAR_TARGET = 15_000
-_MAX_SKILL_FILE_BYTES = 1_048_576  # 1 MiB per supporting file
+_UMBRELLA_SKILL_CHAR_TARGET = TOOLS_TIMEOUTS["skill_manage_umbrella_skill_char_target"]
+_MAX_SKILL_FILE_BYTES = TOOLS_TIMEOUTS["skill_manage_max_skill_file_bytes"]
 
 
 def split_oversized_skill(

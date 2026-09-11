@@ -43,6 +43,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from typing import override
 from config import ROOT_DIR
+from config.features import TOOLS_TIMEOUTS
 from langchain_community.tools import ShellTool
 from langchain_community.tools.shell.tool import ShellInput
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
@@ -53,7 +54,8 @@ from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 
-TERMINAL_TIMEOUT = 30  # seconds
+# Bound to the feature registry (single source of truth); name preserved.
+TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 
 # Historical refusal message format (terminal.py snapshot); now RAISED
 # as a ToolException instead of returned, so handle_tool_error=True routes it

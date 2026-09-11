@@ -3,6 +3,7 @@ import asyncio
 import random
 from loguru import logger
 from config import ENV_PATH
+from config.features import TOOLS_TIMEOUTS
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -12,10 +13,11 @@ load_dotenv(ENV_PATH, override=True)
 # (NOT in the tracked sherry.jsonc).
 tavily_api_key = os.getenv("TAVILY_API_KEY")
 
-WEB_SEARCH_TIMEOUT = 15  # seconds
-RETRY_BACKOFF_MIN = 5  # seconds
-RETRY_BACKOFF_MAX = 45  # seconds
-RETRY_MAX_ATTEMPTS = 3
+# Bound to the feature registry (single source of truth); names preserved.
+WEB_SEARCH_TIMEOUT = TOOLS_TIMEOUTS["web_search_timeout_seconds"]
+RETRY_BACKOFF_MIN = TOOLS_TIMEOUTS["web_search_retry_backoff_min_s"]
+RETRY_BACKOFF_MAX = TOOLS_TIMEOUTS["web_search_retry_backoff_max_s"]
+RETRY_MAX_ATTEMPTS = TOOLS_TIMEOUTS["web_search_retry_max_attempts"]
 
 
 class WebSearchSchema(BaseModel):

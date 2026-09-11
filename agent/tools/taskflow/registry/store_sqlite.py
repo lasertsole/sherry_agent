@@ -33,6 +33,7 @@ from pathlib import Path
 import aiosqlite
 from loguru import logger
 
+from config.features import TASKFLOW_INFRA
 from ..config import INITIAL_REVISION, TABLE_NAME, TaskFlowStatus
 
 _DB_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -41,12 +42,12 @@ _DB_PATH = _DB_DIR / "taskflow_registry.db"
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this
 # timeout, handled separately in _switch_to_wal_if_needed.
-_BUSY_TIMEOUT_MS = 5000
+_BUSY_TIMEOUT_MS = TASKFLOW_INFRA["busy_timeout_ms"]
 _BUSY_TIMEOUT_S = _BUSY_TIMEOUT_MS / 1000.0
 
 # How long a non-owning event loop waits for the owning loop's one-time schema
 # init before initializing the schema itself (see ensure_db).
-_INIT_WAIT_TIMEOUT_S = 10.0
+_INIT_WAIT_TIMEOUT_S = TASKFLOW_INFRA["init_wait_timeout_s"]
 
 _CREATE_TABLE_SQL = f"""
 CREATE TABLE IF NOT EXISTS {TABLE_NAME} (

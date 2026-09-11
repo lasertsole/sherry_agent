@@ -20,6 +20,7 @@ from typing import Annotated, Any
 from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
 
+from config.features import TASKFLOW_INFRA
 from ..config import StepStatus
 from ..registry import store_sqlite
 from ._shared import not_found_error, step_status
@@ -27,7 +28,7 @@ from ._shared import not_found_error, step_status
 SessionId = Annotated[str, InjectedState("session_id")]
 
 # Never busy-spin: the caller's interval is clamped up to this floor.
-_MIN_POLL_INTERVAL_SECONDS = 0.05
+_MIN_POLL_INTERVAL_SECONDS = TASKFLOW_INFRA["wait_all_min_poll_interval_seconds"]
 
 # Injectable registry seam (bound once by ``_ensure_registry``).
 get_run_by_child_session_key: Callable[[str], Any] | None = None
@@ -109,8 +110,8 @@ def _format_report(
 @tool("taskflow_wait_all")
 async def taskflow_wait_all(
     flow_id: str,
-    timeout_seconds: float = 300.0,
-    poll_interval_seconds: float = 0.5,
+    timeout_seconds: float = TASKFLOW_INFRA["wait_all_default_timeout_seconds"],
+    poll_interval_seconds: float = TASKFLOW_INFRA["wait_all_default_poll_interval_seconds"],
     session_id: SessionId = "",
 ) -> str:
     """Wait until this flow's dispatched child sessions settle, then report.

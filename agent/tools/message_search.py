@@ -5,6 +5,7 @@ import asyncio
 import sqlite3
 from loguru import logger
 import concurrent.futures
+from config.features import TOOLS_TIMEOUTS
 from pub.func import run_async
 from typing import Any, Annotated
 
@@ -15,7 +16,8 @@ from pydantic import BaseModel, Field
 from langgraph.prebuilt.tool_node import InjectedState
 from context_engine import get_db, search_messages, get_turns_by_turn_num_scope
 
-MAX_SESSION_CHARS = 100_000
+# Bound to the feature registry (single source of truth); name preserved.
+MAX_SESSION_CHARS = TOOLS_TIMEOUTS["message_search_max_session_chars"]
 
 
 class MessageSearchSchema(BaseModel):

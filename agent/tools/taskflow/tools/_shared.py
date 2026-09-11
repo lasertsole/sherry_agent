@@ -8,13 +8,14 @@ with the freshest expected_revision, per skills/builtin/core/taskflow/SKILL.md.
 
 from collections.abc import Callable
 
+from config.features import TASKFLOW_INFRA
 from ..config import TERMINAL_STATUSES, StepStatus
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError, UNSET
 
 # Bounded optimistic-lock retries for a mutation whose side effect (a spawned
 # child session) already happened: losing the write must never drop the child.
-PERSIST_MAX_ATTEMPTS = 3
+PERSIST_MAX_ATTEMPTS = TASKFLOW_INFRA["persist_max_attempts"]
 
 
 def requester_session_key(session_id: str) -> str:
