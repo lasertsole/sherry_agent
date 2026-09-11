@@ -25,18 +25,21 @@ IterationBudget is charged once per outer model call.
 """
 
 import logging
-import os
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 
+from config.features import MAX_TOKENS_BOOST
+
 _logger = logging.getLogger(__name__)
 
-_BASE_MAX_TOKENS = int(os.getenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "8192"))
-_DEFAULT_MAX_TOKENS = 8192
-_MAX_CAP = 32_768
-_MAX_RETRIES = 3
+# Bound to the feature registry (single source of truth); names preserved.
+# The env read (MAIN_LLM_OUTPUT_MAX_TOKEN) now lives in the config builder.
+_BASE_MAX_TOKENS = MAX_TOKENS_BOOST["base_max_tokens"]
+_DEFAULT_MAX_TOKENS = MAX_TOKENS_BOOST["default_max_tokens"]
+_MAX_CAP = MAX_TOKENS_BOOST["max_cap"]
+_MAX_RETRIES = MAX_TOKENS_BOOST["max_retries"]
 _TRUNCATION_REASONS = frozenset({"length", "max_tokens"})
 _STREAM_FLAG = "is_stream_turn"
 

@@ -41,6 +41,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ModelRequest, ModelResponse, ExtendedModelResponse
 
 from runtime import state_register_mem, timer_call_register
+from config.features import HEARTBEAT_STALENESS
 from agent.middlewares.base import (
     BeforeAgentHooksMixin,
     AfterAgentHooksMixin,
@@ -48,9 +49,10 @@ from agent.middlewares.base import (
 )
 
 
-_HEARTBEAT_INTERVAL_MINUTES = 1
-_STALE_CYCLES_IDLE = 7
-_STALE_CYCLES_IN_TOOL = 20
+# Bound to the feature registry (single source of truth); names preserved.
+_HEARTBEAT_INTERVAL_MINUTES = HEARTBEAT_STALENESS["heartbeat_interval_minutes"]
+_STALE_CYCLES_IDLE = HEARTBEAT_STALENESS["stale_cycles_idle"]
+_STALE_CYCLES_IN_TOOL = HEARTBEAT_STALENESS["stale_cycles_in_tool"]
 
 _STATE_KEY_ITER = "heartbeat_iter"
 _STATE_KEY_TOOL = "heartbeat_tool"

@@ -26,6 +26,7 @@ from langchain.agents.middleware.types import (
 )
 
 from runtime import state_register_mem
+from config.features import ITERATION_BUDGET
 
 from agent.middlewares.base import BeforeAgentHooksMixin, require_session_id
 from agent.middlewares.subagent_completion_drain import _is_internal_completion
@@ -48,7 +49,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
     _BUDGET_KEY = "iteration_budget"
     _USED_KEY = "iteration_budget_used"
 
-    def __init__(self, max_iterations: int = 50):
+    def __init__(self, max_iterations: int = ITERATION_BUDGET["default_max_iterations"]):
         super().__init__()
         self.max_iterations = max_iterations
 

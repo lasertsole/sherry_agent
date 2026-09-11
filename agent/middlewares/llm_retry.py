@@ -42,6 +42,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest
 from loguru import logger
 
+from config.features import LLM_RETRY
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from pub.func.retry_utils import jittered_backoff
 from runtime import state_register_mem
@@ -68,11 +69,11 @@ class ContentFilterError(Exception):
 
 @dataclass
 class LLMRetryConfig:
-    max_retries: int = 3
-    base_delay: float = 2.0
-    max_delay: float = 60.0
-    jitter: float = 0.3
-    stale_giveup_threshold: int = 5
+    max_retries: int = LLM_RETRY["max_retries"]
+    base_delay: float = LLM_RETRY["base_delay"]
+    max_delay: float = LLM_RETRY["max_delay"]
+    jitter: float = LLM_RETRY["jitter"]
+    stale_giveup_threshold: int = LLM_RETRY["stale_giveup_threshold"]
 
 
 @dataclass

@@ -15,6 +15,7 @@ from langchain_core.messages import ToolMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from runtime import state_register_mem
+from config.features import TOOL_GUARDRAILS
 from agent.middlewares.base import require_session_id
 
 
@@ -27,21 +28,22 @@ class GuardrailAction(StrEnum):
 
 @dataclass
 class ToolCallGuardrailConfig:
-    warnings_enabled: bool = True
-    hard_stop_enabled: bool = False
-    exact_failure_warn_after: int = 2
-    exact_failure_block_after: int = 5
-    same_tool_failure_warn_after: int = 3
-    same_tool_failure_halt_after: int = 8
-    no_progress_warn_after: int = 2
-    no_progress_block_after: int = 5
-    ping_pong_warn_after: int = 4
-    ping_pong_block_after: int = 6
-    arg_churn_min_calls_per_variant: int = 3
-    arg_churn_warn_after: int = 3
-    arg_churn_block_after: int = 5
-    recovery_mode_enabled: bool = True
-    recovery_max_violations: int = 1
+    # Bound to the feature registry (single source of truth); names preserved.
+    warnings_enabled: bool = TOOL_GUARDRAILS["warnings_enabled"]
+    hard_stop_enabled: bool = TOOL_GUARDRAILS["hard_stop_enabled"]
+    exact_failure_warn_after: int = TOOL_GUARDRAILS["exact_failure_warn_after"]
+    exact_failure_block_after: int = TOOL_GUARDRAILS["exact_failure_block_after"]
+    same_tool_failure_warn_after: int = TOOL_GUARDRAILS["same_tool_failure_warn_after"]
+    same_tool_failure_halt_after: int = TOOL_GUARDRAILS["same_tool_failure_halt_after"]
+    no_progress_warn_after: int = TOOL_GUARDRAILS["no_progress_warn_after"]
+    no_progress_block_after: int = TOOL_GUARDRAILS["no_progress_block_after"]
+    ping_pong_warn_after: int = TOOL_GUARDRAILS["ping_pong_warn_after"]
+    ping_pong_block_after: int = TOOL_GUARDRAILS["ping_pong_block_after"]
+    arg_churn_min_calls_per_variant: int = TOOL_GUARDRAILS["arg_churn_min_calls_per_variant"]
+    arg_churn_warn_after: int = TOOL_GUARDRAILS["arg_churn_warn_after"]
+    arg_churn_block_after: int = TOOL_GUARDRAILS["arg_churn_block_after"]
+    recovery_mode_enabled: bool = TOOL_GUARDRAILS["recovery_mode_enabled"]
+    recovery_max_violations: int = TOOL_GUARDRAILS["recovery_max_violations"]
 
 
 @dataclass
