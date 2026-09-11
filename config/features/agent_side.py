@@ -21,8 +21,6 @@ import os
 from collections.abc import Mapping
 from typing import TypedDict
 
-type FeatureConfig = Mapping[str, object]
-
 _TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_ENV_VALUES = frozenset({"0", "false", "no", "off", ""})
 
@@ -97,7 +95,7 @@ class SummarizationConfig(TypedDict):
     preemptive_truncate_max_chars: int
 
 
-SUMMARIZATION: FeatureConfig = {
+SUMMARIZATION: SummarizationConfig = {
     "archive_threshold": 8_000,
     "memory_threshold": 10_000,
     "compress_ratio": 0.5,
@@ -155,7 +153,7 @@ class TokenEstimationConfig(TypedDict):
     chars_per_token: int
 
 
-TOKEN_ESTIMATION: FeatureConfig = {
+TOKEN_ESTIMATION: TokenEstimationConfig = {
     "chars_per_token": 4,
 }
 
@@ -180,7 +178,7 @@ class ToolGuardrailsConfig(TypedDict):
     recovery_max_violations: int
 
 
-TOOL_GUARDRAILS: FeatureConfig = {
+TOOL_GUARDRAILS: ToolGuardrailsConfig = {
     "warnings_enabled": True,
     "hard_stop_enabled": False,
     "exact_failure_warn_after": 2,
@@ -207,7 +205,7 @@ class IterationBudgetConfig(TypedDict):
     worker_max_iterations: int
 
 
-ITERATION_BUDGET: FeatureConfig = {
+ITERATION_BUDGET: IterationBudgetConfig = {
     "default_max_iterations": 50,
     "main_agent_max_iterations": 90,
     "worker_max_iterations": 60,
@@ -222,7 +220,7 @@ class HeartbeatStalenessConfig(TypedDict):
     stale_cycles_in_tool: int
 
 
-HEARTBEAT_STALENESS: FeatureConfig = {
+HEARTBEAT_STALENESS: HeartbeatStalenessConfig = {
     "heartbeat_interval_minutes": 1,
     "stale_cycles_idle": 7,
     "stale_cycles_in_tool": 20,
@@ -245,7 +243,7 @@ class RepetitionGuardConfig(TypedDict):
     max_history: int
 
 
-REPETITION_GUARD: FeatureConfig = {
+REPETITION_GUARD: RepetitionGuardConfig = {
     "min_content_length": 20,
     "min_crosscall_length": 1,
     "max_identical_outputs": 3,
@@ -270,7 +268,7 @@ class LlmRetryConfig(TypedDict):
     stale_giveup_threshold: int
 
 
-LLM_RETRY: FeatureConfig = {
+LLM_RETRY: LlmRetryConfig = {
     "max_retries": 3,
     "base_delay": 2.0,
     "max_delay": 60.0,
@@ -299,7 +297,7 @@ def _build_max_tokens_boost(env: Mapping[str, str] | None = None) -> MaxTokensBo
     }
 
 
-MAX_TOKENS_BOOST: FeatureConfig = _build_max_tokens_boost()
+MAX_TOKENS_BOOST: MaxTokensBoostConfig = _build_max_tokens_boost()
 
 
 class SubagentInfraConfig(TypedDict):
@@ -327,7 +325,7 @@ class SubagentInfraConfig(TypedDict):
     followup_interval_multiplier: int
 
 
-SUBAGENT_INFRA: FeatureConfig = {
+SUBAGENT_INFRA: SubagentInfraConfig = {
     "registry_store_busy_timeout_ms": 5000,
     "registry_init_wait_timeout_s": 10.0,
     "pending_injections_busy_timeout_ms": 5000,
@@ -362,7 +360,7 @@ class TaskFlowInfraConfig(TypedDict):
     wait_all_default_poll_interval_seconds: float
 
 
-TASKFLOW_INFRA: FeatureConfig = {
+TASKFLOW_INFRA: TaskFlowInfraConfig = {
     "busy_timeout_ms": 5000,
     "init_wait_timeout_s": 10.0,
     "persist_max_attempts": 3,
@@ -384,7 +382,7 @@ class TodoListInfraConfig(TypedDict):
     stagnation_max_recovery_attempts: int
 
 
-TODOLIST_INFRA: FeatureConfig = {
+TODOLIST_INFRA: TodoListInfraConfig = {
     "store_busy_timeout_ms": 5000,
     "store_init_wait_timeout_s": 10.0,
     "stagnation_max_stagnation": 3,
@@ -423,7 +421,7 @@ class ToolsTimeoutsConfig(TypedDict):
     question_custom_max_length: int
 
 
-TOOLS_TIMEOUTS: FeatureConfig = {
+TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "web_search_timeout_seconds": 15,
     "web_search_retry_backoff_min_s": 5,
     "web_search_retry_backoff_max_s": 45,
@@ -462,7 +460,7 @@ class HitlDefaultsConfig(TypedDict):
     default_description_prefix: str
 
 
-HITL_DEFAULTS: FeatureConfig = {
+HITL_DEFAULTS: HitlDefaultsConfig = {
     "block_recurrence_limit": 3,
     "default_timeout": 60,
     "default_clarify_timeout": 3600,
@@ -481,7 +479,7 @@ class ContextEngineHookConfig(TypedDict):
     multimodal_temp_retention_days: int
 
 
-CONTEXT_ENGINE_HOOK: FeatureConfig = {
+CONTEXT_ENGINE_HOOK: ContextEngineHookConfig = {
     "nudge_memory_threshold": 10,
     "nudge_skill_threshold": 10,
     "multimodal_temp_retention_days": 7,
@@ -495,7 +493,7 @@ class ContextGuardConfig(TypedDict):
     check_interval: int
 
 
-CONTEXT_GUARD: FeatureConfig = {
+CONTEXT_GUARD: ContextGuardConfig = {
     "output_cut_ratio": 0.20,
     "check_interval": 20,
 }
@@ -523,7 +521,7 @@ class LlmClientDefaultsConfig(TypedDict):
     vttt_remote_max_retries: int
 
 
-LLM_CLIENT_DEFAULTS: FeatureConfig = {
+LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
     "main_max_retries": 2,
     "main_timeout": 120,
     "main_stream_chunk_timeout": 60,
@@ -560,7 +558,7 @@ def _build_reasoning_budget(env: Mapping[str, str] | None = None) -> ReasoningBu
     }
 
 
-REASONING_BUDGET: FeatureConfig = _build_reasoning_budget()
+REASONING_BUDGET: ReasoningBudgetConfig = _build_reasoning_budget()
 
 
 class ModelBackendConfig(TypedDict):
@@ -579,4 +577,4 @@ def _build_model_backend(env: Mapping[str, str] | None = None) -> ModelBackendCo
     }
 
 
-MODEL_BACKEND: FeatureConfig = _build_model_backend()
+MODEL_BACKEND: ModelBackendConfig = _build_model_backend()
