@@ -1,6 +1,6 @@
 """TDD contract tests for the agent-side feature config registry.
 
-The registry (``config/features/agent_side.py``) is the single source of truth
+The registry (``config/features/agent_side/``) is the single source of truth
 for agent-side feature tuneables; feature modules bind aliases to these fields.
 These tests lock (a) every instance exposes exactly its TypedDict's keys,
 (b) the frozen default values captured from the source modules, (c) the
@@ -46,10 +46,10 @@ from config.features.agent_side import (
     ToolsTimeoutsConfig,
     TokenEstimationConfig,
     ToolGuardrailsConfig,
-    _build_max_tokens_boost,
-    _build_model_backend,
-    _build_reasoning_budget,
 )
+from config.features.agent_side.max_tokens_boost import _build_max_tokens_boost
+from config.features.agent_side.model_backend import _build_model_backend
+from config.features.agent_side.reasoning_budget import _build_reasoning_budget
 
 pytestmark = [pytest.mark.unit]
 

@@ -10,7 +10,7 @@ sets ``max_tokens = OUTPUT_MAX_TOKEN + budget`` (absent when disabled).
 import pytest
 
 from config import features
-from config.features import agent_side
+from config.features.agent_side.max_tokens_boost import _build_max_tokens_boost
 from models.LLMs import main_llm
 from models.LLMs import reasoning_payload as rp
 
@@ -80,8 +80,8 @@ class TestApplyThinkingBudget:
         assert "max_tokens" not in config
 
     def test_output_max_token_matches_boost_env_source(self, monkeypatch):
-        # env read lives in config.features._build_max_tokens_boost since the
-        # config consolidation; the middleware aliases the registry field.
+        # env read lives in config.features.agent_side.max_tokens_boost since
+        # the config consolidation; the middleware aliases the registry field.
         monkeypatch.setenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "9000")
         import importlib
 
@@ -89,7 +89,7 @@ class TestApplyThinkingBudget:
         boost = importlib.reload(importlib.import_module("agent.middlewares.max_tokens_boost"))
         try:
             # The builder reads the env at call time (env or os.environ).
-            assert agent_side._build_max_tokens_boost()["base_max_tokens"] == 9000
+            assert _build_max_tokens_boost()["base_max_tokens"] == 9000
             # The middleware binding tracks the shared registry field.
             assert boost._BASE_MAX_TOKENS == features.MAX_TOKENS_BOOST["base_max_tokens"]
             # Thinking-budget inflation still uses the patched output cap (9000).

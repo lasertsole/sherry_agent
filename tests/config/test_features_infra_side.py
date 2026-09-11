@@ -1,6 +1,6 @@
 """Unit tests for the infra-side feature configuration registry.
 
-Covers ``config/features/infra_side.py``:
+Covers ``config/features/infra_side/``:
 (a) every instance's keys exactly match its ``TypedDict`` annotations;
 (b) spot-checked default values per feature;
 (c) ``_build_gateway`` env injection and loopback defaults;
@@ -10,6 +10,7 @@ Covers ``config/features/infra_side.py``:
 import pytest
 
 from config.features import infra_side as fs
+from config.features.infra_side.gateway import _build_gateway
 
 pytestmark = [pytest.mark.unit]
 
@@ -221,11 +222,11 @@ class TestGatewayBuilder:
     """``GATEWAY`` is env-sourced; verify both injection and defaults."""
 
     def test_injected_env_values(self) -> None:
-        built = fs._build_gateway({"API_HOST": "0.0.0.0", "API_PORT": "9999"})
+        built = _build_gateway({"API_HOST": "0.0.0.0", "API_PORT": "9999"})
         assert (built["api_host"], built["api_port"]) == ("0.0.0.0", 9999)
 
     def test_empty_env_uses_loopback_defaults(self) -> None:
-        built = fs._build_gateway({})
+        built = _build_gateway({})
         assert (built["api_host"], built["api_port"]) == ("127.0.0.1", 8080)
 
     def test_gateway_keys_match_annotations(self) -> None:
