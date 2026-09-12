@@ -6,7 +6,9 @@ the latest revision so the caller can re-read (taskflow_summary) and retry
 with the freshest expected_revision, per skills/builtin/core/taskflow/SKILL.md.
 """
 
+import hashlib
 from collections.abc import Callable
+from typing import Any
 
 from config.features import TASKFLOW_INFRA
 from ..config import TERMINAL_STATUSES, StepStatus
@@ -21,6 +23,12 @@ PERSIST_MAX_ATTEMPTS = TASKFLOW_INFRA["persist_max_attempts"]
 def requester_session_key(session_id: str) -> str:
     """Build the canonical requester session key from a raw LangGraph session id."""
     return f"agent:main:session:{session_id}"
+
+
+def result_hash(child_session_key: str, result: str) -> str:
+    """Fingerprint a (child_session_key, result) pair for resume idempotency."""
+    payload = f"{child_session_key}\x1f{result}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def default_state(
@@ -72,13 +80,15 @@ def new_step(
     """Build a step dict for the flow's ``steps`` list.
 
     All DAG fields live inside ``state_json`` (no DB migration): a stable
-    ``step_id``, the task text, the dependency ids, and the current status.
+    ``step_id``, the task text, the dependency ids, the current status, and the
+    retry counter (0 = no re-dispatch yet; see ``_retry``).
     """
     return {
         "step_id": step_id,
         "task": task,
         "depends_on": list(depends_on or []),
         "status": str(status),
+        "retry_count": 0,
     }
 
 
@@ -197,6 +207,7 @@ async def update_flow_with_conflict_retry(
     child_keys: list[str],
     flow_child_session_key: object = UNSET,
     max_attempts: int = PERSIST_MAX_ATTEMPTS,
+    update_kwargs: dict[str, Any] | None = None,
 ) -> tuple[dict | None, str | None]:
     """Persist a mutation, re-reading and rebuilding state on optimistic-lock conflict.
 
@@ -206,10 +217,14 @@ async def update_flow_with_conflict_retry(
     freshly-read flow and retried up to ``max_attempts``. A vanished or terminal
     flow is terminal for the retry (the child keys are still named).
 
+    ``update_kwargs`` forwards extra ``store_sqlite.update_flow`` keyword
+    arguments (wait/status/token aggregation) unchanged on every attempt.
+
     Returns ``(updated_flow, error_text)`` with exactly one non-None: on success
     the updated flow; on exhaustion an error naming every ``child_keys`` entry.
     """
     revision = int(expected_revision)
+    extra_kwargs = dict(update_kwargs or {})
     current_flow = origin_flow
     for attempt in range(1, max_attempts + 1):
         state = build_state(current_flow, attempt)
@@ -219,6 +234,7 @@ async def update_flow_with_conflict_retry(
                 revision,
                 state=state,
                 child_session_key=flow_child_session_key,
+                **extra_kwargs,
             )
             return updated, None
         except FlowConflictError:

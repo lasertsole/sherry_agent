@@ -23,6 +23,13 @@ from langgraph.prebuilt.tool_node import InjectedState
 from config.features import TASKFLOW_INFRA
 from ..config import StepStatus
 from ..registry import store_sqlite
+from ._retry import (
+    plan_settled_retries,
+    persist_retry_actions,
+    requester_key_for_retry,
+    spawn_replacement,
+    wait_before_retry,
+)
 from ._shared import not_found_error, step_status
 
 SessionId = Annotated[str, InjectedState("session_id")]
@@ -107,6 +114,77 @@ def _format_report(
     return "\n".join(lines)
 
 
+async def _retry_settled_steps(
+    flow_id: str,
+    report: list[tuple[str, str, bool]],
+    session_id: str,
+) -> str:
+    """Auto-retry settled steps with a policy; return appended report lines.
+
+    Returns "" when no settled step carries a retry policy, so legacy flows
+    keep the byte-identical pre-GAP-8 wait_all output. At most ONE retry
+    decision per settled step is executed per call: the replacement child is
+    spawned and recorded, and the orchestrator calls wait_all again to wait for
+    it. No background retry loop lives in this tool.
+    """
+    flow = await store_sqlite.get_flow(flow_id)
+    if flow is None:
+        return ""
+    state = flow.get("state") or {}
+    steps = list(state.get("steps") or [])
+    results = list(state.get("results") or [])
+    actions = plan_settled_retries(steps, results, [(sid, key) for sid, key, _ in report])
+    if not actions:
+        return ""
+
+    requester_key = requester_key_for_retry(state, session_id)
+    redispatches: list[tuple[dict, str]] = []
+    exhausted: list[dict] = []
+    lines: list[str] = []
+    for action in actions:
+        if action["action"] == "exhausted":
+            exhausted.append(action)
+            lines.append(
+                f"retry: step_id={action['step_id']} exhausted "
+                f"(retry_count={action['retry_count']}/{action['max_retries']}); "
+                "marked done with a failure note"
+            )
+            continue
+        policy = action["policy"]
+        await wait_before_retry(policy)
+        try:
+            new_key = await spawn_replacement(action["task"], requester_key)
+        except Exception as exc:
+            # Tool boundary: a failed replacement spawn is reported, never raised.
+            lines.append(
+                f"retry: re-dispatch FAILED for step_id={action['step_id']} "
+                f"({type(exc).__name__}: {exc})"
+            )
+            continue
+        redispatches.append((action, new_key))
+        lines.append(
+            f"retry: re-dispatched step_id={action['step_id']} -> "
+            f"child_session_key={new_key}, "
+            f"retry_count={action['retry_count']}/{policy['max_retries']}, "
+            f"retry_delay_seconds={policy['retry_delay_seconds']}"
+        )
+
+    if redispatches or exhausted:
+        updated, error = await persist_retry_actions(
+            flow_id, flow, {"redispatches": redispatches, "exhausted": exhausted}
+        )
+        if updated is None:
+            # Spawned replacements are already alive and named by the error.
+            return "\n" + "\n".join([*lines, error or ""])
+    if redispatches:
+        lines.append("Call taskflow_wait_all again to wait for the re-dispatched step(s).")
+    if exhausted:
+        lines.append(
+            "Exhausted step(s) need an explicit decision: resume the failure note or fail the flow."
+        )
+    return "\n" + "\n".join(lines)
+
+
 @tool("taskflow_wait_all")
 async def taskflow_wait_all(
     flow_id: str,
@@ -122,8 +200,13 @@ async def taskflow_wait_all(
     as settled. Afterwards call taskflow_resume for each child to inject its
     result.
 
-    ``session_id`` is injected by the runtime and reserved for parity with the
-    other taskflow tools; the flow is already session-scoped so it is unused.
+    A settled (dead) child of a step carrying a retry_policy with budget left
+    is re-dispatched once automatically; when the budget is exhausted the step
+    is marked done with a failure-note result. Call taskflow_wait_all again to
+    wait for the replacement child.
+
+    ``session_id`` is injected by the runtime and used only as the fallback
+    requester for a replacement child when the flow has no creator key.
     """
     flow_id = (flow_id or "").strip()
     if not flow_id:
@@ -158,7 +241,8 @@ async def taskflow_wait_all(
             # string, never a raised exception at the tool boundary.
             return f"Error: subagent registry lookup failed: {exc}"
         if all(settled for _, _, settled in report):
-            return _format_report(flow_id, report, timed_out=False)
+            base = _format_report(flow_id, report, timed_out=False)
+            return base + await _retry_settled_steps(flow_id, report, session_id)
         if time.monotonic() >= deadline:
             return _format_report(flow_id, report, timed_out=True)
         await asyncio.sleep(interval)

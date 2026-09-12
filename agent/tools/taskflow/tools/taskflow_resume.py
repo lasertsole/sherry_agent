@@ -3,32 +3,44 @@
 Idempotency: the (child_session_key, result) pair is fingerprinted; resuming
 with the SAME pair again is a no-op that neither re-injects nor bumps the
 revision, so announce-pipeline redeliveries cannot corrupt the state.
+
+Failure-aware retry (GAP-8): when the step carries a retry_policy and the
+result text classifies as a failure allowed by ``retry_on``, the step is
+re-dispatched instead of marked done - the failure result is still recorded.
 """
 
-import hashlib
 import time
+from typing import Annotated
 
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
+from ._retry import (
+    apply_redispatch,
+    normalize_policy,
+    requester_key_for_retry,
+    should_retry_failure,
+    spawn_replacement,
+    step_retry_count,
+    wait_before_retry,
+)
 from ._shared import (
     conflict_error,
     is_terminal,
-    mark_step_done,
     not_found_error,
+    result_hash,
     steps_summary,
     terminal_error,
     unlock_dependents,
+    update_flow_with_conflict_retry,
 )
 
+SessionId = Annotated[str, InjectedState("session_id")]
+
 _STATUS_ORDER = tuple(status.value for status in StepStatus)
-
-
-def _result_hash(child_session_key: str, result: str) -> str:
-    payload = f"{child_session_key}\x1f{result}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 @tool("taskflow_resume")
@@ -39,6 +51,7 @@ async def taskflow_resume(
     expected_revision: int | None = None,
     token_usage: dict | None = None,
     validation_criteria: str | None = None,
+    session_id: SessionId = "",
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
 
@@ -54,6 +67,12 @@ async def taskflow_resume(
     passed here), the response echoes them with a warning that the result
     still needs validation: the orchestrator judges the result against the
     criteria. The criteria are not enforced by the tool.
+
+    When the result text classifies as a failure and the step's retry_policy
+    allows it (``retry_on`` filter, budget left), a replacement child is
+    spawned and the step stays dispatched on the new child; otherwise the step
+    is marked done. ``session_id`` is injected by the runtime and used as the
+    fallback requester for a replacement child.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -73,43 +92,69 @@ async def taskflow_resume(
         int(expected_revision) if expected_revision is not None else flow["expected_revision"]
     )
 
-    result_hash = _result_hash(child_session_key, result)
+    result_hash_value = result_hash(child_session_key, result)
     state = dict(flow["state"])
     results = list(state.get("results") or [])
-    if any(isinstance(r, dict) and r.get("result_hash") == result_hash for r in results):
+    if any(isinstance(r, dict) and r.get("result_hash") == result_hash_value for r in results):
         return (
             f"TaskFlow resume skipped (already resumed): flow_id={flow_id}, "
-            f"result_hash={result_hash}, results={len(results)}"
+            f"result_hash={result_hash_value}, results={len(results)}"
         )
 
-    results.append(
-        {
-            "child_session_key": child_session_key,
-            "result": result,
-            "result_hash": result_hash,
-            "injected_at": time.time(),
-        }
-    )
+    result_record = {
+        "child_session_key": child_session_key,
+        "result": result,
+        "result_hash": result_hash_value,
+        "injected_at": time.time(),
+    }
+    results.append(result_record)
     state["results"] = results
 
-    # DAG bookkeeping: this child finishing marks its step done and may unlock
-    # blocked dependents. Resume NEVER spawns the newly-ready steps - the
-    # caller dispatches them explicitly (taskflow_dispatch).
+    # DAG bookkeeping: a retried failure keeps the step dispatched on its
+    # replacement child; any other result marks the step done and may unlock
+    # blocked dependents. Resume never spawns the newly-ready steps.
     steps = list(state.get("steps") or [])
-    step_id = mark_step_done(steps, child_session_key)
-    validation_text = ""
-    if step_id is not None:
-        step = next((s for s in steps if s.get("step_id") == step_id), None)
-        if step is not None:
-            criteria = (validation_criteria or "").strip()
-            if criteria:
-                step["validation_criteria"] = criteria
-            stored_criteria = str(step.get("validation_criteria") or "").strip()
-            if stored_criteria:
-                validation_text = (
-                    f"\n  validation_criteria: {stored_criteria}"
-                    f"\n  ⚠ Result needs validation against criteria"
+    step = next((s for s in steps if s.get("child_session_key") == child_session_key), None)
+    step_id = step.get("step_id") if step is not None else None
+    retry_text = ""
+    redispatched_key: str | None = None
+    retry_count_after: int | None = None
+    if step is not None:
+        policy = normalize_policy(step)
+        if policy is not None and should_retry_failure(step, result):
+            requester_key = requester_key_for_retry(state, session_id)
+            await wait_before_retry(policy)
+            try:
+                redispatched_key = await spawn_replacement(
+                    str(step.get("task") or ""), requester_key
                 )
+            except Exception as exc:
+                retry_text = (
+                    f"\n  retry: re-dispatch failed for step_id={step_id} "
+                    f"({type(exc).__name__}: {exc}); step left done with the failure result"
+                )
+            else:
+                retry_count_after = step_retry_count(step) + 1
+                apply_redispatch(step, redispatched_key, retry_count_after)
+                retry_text = (
+                    f"\n  retry: re-dispatched step_id={step_id}, "
+                    f"child_session_key={redispatched_key}, "
+                    f"retry_count={retry_count_after}/{policy['max_retries']}, "
+                    f"retry_delay_seconds={policy['retry_delay_seconds']}"
+                )
+
+    validation_text = ""
+    if step is not None and redispatched_key is None:
+        step["status"] = str(StepStatus.DONE)
+        criteria = (validation_criteria or "").strip()
+        if criteria:
+            step["validation_criteria"] = criteria
+        stored_criteria = str(step.get("validation_criteria") or "").strip()
+        if stored_criteria:
+            validation_text = (
+                f"\n  validation_criteria: {stored_criteria}"
+                f"\n  ⚠ Result needs validation against criteria"
+            )
     newly_ready = unlock_dependents(steps)
     state["steps"] = steps
     counts = steps_summary(steps)
@@ -140,20 +185,56 @@ async def taskflow_resume(
         )
         total_cost = round(float(flow.get("total_cost") or 0.0) + cost_delta, 6)
 
-    try:
-        updated = await store_sqlite.update_flow(
+    if redispatched_key is not None:
+        replacement_key = redispatched_key
+        replacement_count = retry_count_after or 0
+
+        def build_state(fresh_flow: dict, _attempt: int) -> dict:
+            fresh_state = dict(fresh_flow["state"])
+            fresh_results = list(fresh_state.get("results") or [])
+            if not any(
+                isinstance(r, dict) and r.get("result_hash") == result_hash_value
+                for r in fresh_results
+            ):
+                fresh_results.append(result_record)
+            fresh_steps = list(fresh_state.get("steps") or [])
+            target = next((s for s in fresh_steps if s.get("step_id") == step_id), None)
+            if target is not None:
+                apply_redispatch(target, replacement_key, replacement_count)
+            fresh_state["results"] = fresh_results
+            fresh_state["steps"] = fresh_steps
+            return fresh_state
+
+        updated, error = await update_flow_with_conflict_retry(
             flow_id,
             revision,
-            state=state,
-            wait=None,
-            status=new_status,
-            total_tokens=total_tokens,
-            total_cost=total_cost,
+            flow,
+            build_state,
+            child_keys=[replacement_key],
+            update_kwargs={
+                "wait": None,
+                "status": new_status,
+                "total_tokens": total_tokens,
+                "total_cost": total_cost,
+            },
         )
-    except FlowConflictError as exc:
-        return conflict_error(exc)
-    except FlowNotFoundError:
-        return not_found_error(flow_id)
+        if updated is None:
+            return error
+    else:
+        try:
+            updated = await store_sqlite.update_flow(
+                flow_id,
+                revision,
+                state=state,
+                wait=None,
+                status=new_status,
+                total_tokens=total_tokens,
+                total_cost=total_cost,
+            )
+        except FlowConflictError as exc:
+            return conflict_error(exc)
+        except FlowNotFoundError:
+            return not_found_error(flow_id)
 
     counts_text = ",".join(f"{status}={counts[status]}" for status in _STATUS_ORDER)
     unlocked_text = ",".join(newly_ready)
@@ -162,4 +243,5 @@ async def taskflow_resume(
         f"results={len(results)}, status={updated['status']}, step_id={step_id}, "
         f"unlocked=[{unlocked_text}], step_statuses={counts_text}"
         f"{validation_text}"
+        f"{retry_text}"
     )

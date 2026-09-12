@@ -20,6 +20,7 @@ from ..config import StepStatus
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from . import _dispatch
+from ._retry import validate_policy
 from ._shared import (
     conflict_error,
     deps_satisfied,
@@ -43,6 +44,7 @@ async def taskflow_run_task(
     expected_revision: int | None = None,
     depends_on: list[str] | None = None,
     validation_criteria: str | None = None,
+    retry_policy: dict | None = None,
     session_id: SessionId = "",
 ) -> str:
     """Register a step on the flow and dispatch it to a detached child subagent.
@@ -61,6 +63,13 @@ async def taskflow_run_task(
     them on the step; taskflow_resume echoes them with the child result so the
     orchestrator can judge whether the result passes. The tool itself never
     enforces the criteria.
+
+    Pass retry_policy={"max_retries": N, "retry_delay_seconds": S,
+    "retry_on": ["timeout", ...]} to let a failed child be re-dispatched
+    automatically: taskflow_wait_all retries a settled (dead) child and
+    taskflow_resume retries a result whose text classifies as a failure in
+    retry_on (empty list = every classified failure). Repairs stop once
+    retry_count reaches max_retries.
     """
     flow_id = (flow_id or "").strip()
     task = (task or "").strip()
@@ -69,6 +78,9 @@ async def taskflow_run_task(
         return "Error: flow_id is required"
     if not task:
         return "Error: task is required"
+    policy_error = validate_policy(retry_policy)
+    if policy_error:
+        return policy_error
 
     flow = await store_sqlite.get_flow(flow_id)
     if flow is None:
@@ -94,6 +106,8 @@ async def taskflow_run_task(
     candidate = new_step(step_id, task, depends_on=deps, status=StepStatus.READY)
     if criteria:
         candidate["validation_criteria"] = criteria
+    if retry_policy is not None:
+        candidate["retry_policy"] = retry_policy
     if not deps_satisfied(candidate, steps):
         candidate["status"] = str(StepStatus.BLOCKED)
         steps.append(candidate)
@@ -126,6 +140,8 @@ async def taskflow_run_task(
         dispatched = new_step(step_id, task, depends_on=deps, status=StepStatus.DISPATCHED)
         if criteria:
             dispatched["validation_criteria"] = criteria
+        if retry_policy is not None:
+            dispatched["retry_policy"] = retry_policy
         dispatched["child_session_key"] = child_session_key
         dispatched["dispatched_at"] = dispatched_at
         fresh_steps.append(dispatched)

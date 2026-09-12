@@ -19,6 +19,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 from ..config import StepStatus
 from ..registry import store_sqlite
 from . import _dispatch
+from ._retry import is_redispatch, normalize_policy, step_retry_count
 from ._shared import (
     apply_dispatched_steps,
     deps_satisfied,
@@ -49,6 +50,10 @@ async def taskflow_dispatch(
     session key; a mid-batch spawn failure stops the batch and persists the
     successes so no spawned child is lost. Pass expected_revision to fail fast
     on concurrent writers.
+
+    A step carrying a retry_policy that was already dispatched once consumes
+    one retry from its budget (retry_count is incremented); once the budget is
+    exhausted the step is rejected before any spawn.
     """
     flow_id = (flow_id or "").strip()
     if not flow_id:
@@ -89,6 +94,14 @@ async def taskflow_dispatch(
         )
         if not dispatchable:
             return f"Error: step_id '{sid}' is not dispatchable (status={status})"
+        policy = normalize_policy(step)
+        if policy is not None and is_redispatch(step):
+            count = step_retry_count(step)
+            if count >= policy["max_retries"]:
+                return (
+                    f"Error: step_id '{sid}' retry budget exhausted "
+                    f"(retry_count={count}, max_retries={policy['max_retries']})"
+                )
 
     revision = (
         int(expected_revision) if expected_revision is not None else flow["expected_revision"]
@@ -109,6 +122,10 @@ async def taskflow_dispatch(
         except Exception as exc:  # tool boundary: convert to text, persist successes below
             failure = exc
             break
+        policy = normalize_policy(step)
+        if policy is not None:
+            count = step_retry_count(step)
+            step["retry_count"] = count + 1 if is_redispatch(step) else count
         step["status"] = str(StepStatus.DISPATCHED)
         step["child_session_key"] = child_key
         step["dispatched_at"] = time.time()
