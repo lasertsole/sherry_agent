@@ -141,7 +141,8 @@ This message appears to be a work request. Before responding, assess the scope:
 ## If this is a multi-step task (2+ steps):
 
 1. Load the ulw-execute skill to understand the orchestration workflow.
-   Read the skill file at its <location> path shown in <available_skills>.
+   Use the skill_view tool to read skill files by name when you need their
+   full instructions.
 
 2. You are an ORCHESTRATOR, not an implementer:
    - Create a plan (in .omo/plans/ if applicable) or use todowrite to register tasks

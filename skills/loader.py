@@ -189,7 +189,6 @@ def get_skills_text(
         lines.append("  <skill>")
         lines.append(f"    <name>{s['name']}</name>")
         lines.append(f"    <description>{s['description']}</description>")
-        lines.append(f"    <location>{s['location']}</location>")
         lines.append("  </skill>")
     lines.append("</available_skills>")
     return "\n".join(lines)
