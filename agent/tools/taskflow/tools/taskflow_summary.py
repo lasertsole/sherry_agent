@@ -9,6 +9,7 @@ import time
 
 from langchain_core.tools import tool
 
+from config.features import TASKFLOW_INFRA
 from ..registry import store_sqlite
 from ._shared import is_terminal, not_found_error, step_status, steps_summary
 
@@ -64,7 +65,27 @@ async def taskflow_summary(flow_id: str) -> str:
         if isinstance(item, dict):
             lines.append(f"  - [{item.get('child_session_key')}] {str(item.get('result'))[:400]}")
     if flow["wait"] is not None:
-        lines.append(f"wait: {json.dumps(flow['wait'], ensure_ascii=False)}")
+        wait_payload = flow["wait"]
+        lines.append(f"wait: {json.dumps(wait_payload, ensure_ascii=False)}")
+        set_at = wait_payload.get("set_at")
+        if set_at:
+            now = time.time()
+            waiting_secs = now - float(set_at)
+            timeout_hours = TASKFLOW_INFRA["waiting_timeout_hours"]
+            timeout_secs = timeout_hours * 3600
+            if waiting_secs > timeout_secs:
+                waiting_h = waiting_secs / 3600
+                lines.append(
+                    f"wait_status: STALE (waiting {waiting_h:.1f}h, timeout={timeout_hours}h) "
+                    f"— child session may have crashed; consider taskflow_resume with a "
+                    f"failure result or re-dispatch"
+                )
+            else:
+                remaining_h = (timeout_secs - waiting_secs) / 3600
+                lines.append(
+                    f"wait_status: active (waiting {waiting_secs / 3600:.1f}h, "
+                    f"{remaining_h:.1f}h to timeout)"
+                )
     else:
         lines.append("wait: (none)")
     if state.get("summary"):

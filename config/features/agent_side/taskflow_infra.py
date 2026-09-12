@@ -12,6 +12,7 @@ class TaskFlowInfraConfig(TypedDict):
     wait_all_min_poll_interval_seconds: float
     wait_all_default_timeout_seconds: float
     wait_all_default_poll_interval_seconds: float
+    waiting_timeout_hours: int
 
 
 TASKFLOW_INFRA: TaskFlowInfraConfig = {
@@ -21,4 +22,5 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     "wait_all_min_poll_interval_seconds": 0.05,
     "wait_all_default_timeout_seconds": 300.0,
     "wait_all_default_poll_interval_seconds": 0.5,
+    "waiting_timeout_hours": 24,
 }

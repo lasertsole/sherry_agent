@@ -1,5 +1,9 @@
 """Background sweeper daemon: periodically recovers orphans, retries suspended deliveries, detects stale runs, pressure-prunes, and persists to disk."""
 
+# allow: SIZE_OK — every scanner shares one sweep loop, one backoff, and one
+# persist; forking the TaskFlow scans into another module would split the
+# lifecycle they are driven by.
+
 import asyncio
 import time
 from loguru import logger
@@ -109,6 +113,10 @@ async def _do_sweep() -> None:
     if expired_flows > 0:
         logger.warning("Sweeper: {} TaskFlow(s) exceeded deadline, marked as failed", expired_flows)
 
+    stale_waiting = await _scan_stale_waiting_taskflows()
+    if stale_waiting > 0:
+        logger.warning("Sweeper: {} TaskFlow(s) in stale WAITING state", stale_waiting)
+
     await run_with_work_admission(_persist_async(), label="sweeper-persist")
 
 
@@ -140,6 +148,87 @@ async def _expire_overdue_taskflows() -> int:
         return expired
     except Exception as e:
         logger.warning("TaskFlow deadline sweep failed: {}", e)
+        return 0
+
+
+async def _scan_stale_waiting_taskflows() -> int:
+    """Scan TaskFlows in WAITING state whose ``wait.set_at`` exceeds the timeout.
+
+    For each stale flow, check whether the associated child session is still
+    live. A dead (or unknown) child gets a ``stale_detected_at`` marker stamped
+    into the wait payload so ``taskflow_summary`` can surface it. The flow is
+    never auto-failed: the marker is advisory, and a later sweeper cycle simply
+    refreshes it. Fails open (returns 0) so a TaskFlow hiccup never takes the
+    subagent sweeper down.
+    """
+    from config.features import TASKFLOW_INFRA
+    from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+
+    try:
+        await taskflow_store.ensure_db()
+        waiting_flows = await taskflow_store.get_waiting_flows()
+        if not waiting_flows:
+            return 0
+
+        now = time.time()
+        timeout_secs = TASKFLOW_INFRA["waiting_timeout_hours"] * 3600
+        stale_count = 0
+
+        for flow in waiting_flows:
+            wait = flow.get("wait") or {}
+            set_at = wait.get("set_at")
+            if not set_at:
+                continue
+
+            waiting_secs = now - float(set_at)
+            if waiting_secs <= timeout_secs:
+                continue
+
+            child_key = flow.get("child_session_key")
+            child_live = False
+            if child_key:
+                try:
+                    from agent.tools.subagent.registry.queries import get_run_by_child_session_key
+                    from agent.tools.subagent.registry.helpers import is_live_unended_run
+
+                    run = get_run_by_child_session_key(child_key)
+                    child_live = run is not None and is_live_unended_run(run)
+                except Exception:
+                    # Liveness cannot be verified -> treat the child as dead.
+                    child_live = False
+
+            if child_live:
+                logger.debug(
+                    "TaskFlow '{}' waiting {:.1f}h but child session is still live",
+                    flow["flow_id"],
+                    waiting_secs / 3600,
+                )
+                continue
+
+            stale_count += 1
+            logger.warning(
+                "TaskFlow '{}' in stale WAITING ({:.1f}h, child={}): "
+                "child session appears inactive; consider resume or re-dispatch",
+                flow["flow_id"],
+                waiting_secs / 3600,
+                child_key,
+            )
+
+            # Non-destructive marker: refresh the wait payload in place.
+            try:
+                wait["stale_detected_at"] = now
+                wait["stale_child_session_key"] = child_key
+                await taskflow_store.update_flow(
+                    flow["flow_id"],
+                    flow["expected_revision"],
+                    wait=wait,
+                )
+            except Exception as e:
+                logger.debug("Could not mark TaskFlow '{}' as stale: {}", flow["flow_id"], e)
+
+        return stale_count
+    except Exception as e:
+        logger.warning("TaskFlow WAITING sweep failed: {}", e)
         return 0
 
 

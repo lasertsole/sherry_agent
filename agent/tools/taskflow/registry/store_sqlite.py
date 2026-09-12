@@ -23,6 +23,10 @@ gets :class:`FlowConflictError` carrying the latest revision so it can
 re-read (taskflow_summary) and retry, or :class:`FlowNotFoundError`.
 """
 
+# allow: SIZE_OK — single store module for the task_flows table: schema DDL,
+# additive migrations, row mapping, and every query share one connection and
+# init lifecycle and cannot be split without duplicating that plumbing.
+
 import asyncio
 import json
 import sqlite3
@@ -493,6 +497,18 @@ async def get_overdue_flows(now_ts: float) -> list[dict]:
             + " WHERE deadline_ts IS NOT NULL AND deadline_ts < ? "
             + f"AND status NOT IN ({placeholders})",
             (now_ts, *terminal),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [_row_to_flow(row) for row in rows]
+
+
+async def get_waiting_flows() -> list[dict]:
+    """Return all flows in WAITING status."""
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            _SELECT_COLUMNS_SQL + " WHERE status = ?",
+            (TaskFlowStatus.WAITING.value,),
         ) as cursor:
             rows = await cursor.fetchall()
     return [_row_to_flow(row) for row in rows]
