@@ -26,8 +26,8 @@ from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.todo_continuation import TodoContinuationEnforcer
+from agent.graph_wrappers import apply_graph_wrappers
 from .context_limit_guard_wrapper import ContextLimitGuardWrapper
-from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 
@@ -176,7 +176,10 @@ async def built_agent(
                 ),
             ],
         )
-        # Wrap with RepetitionGuardWrapper for stream-level repetition
+        # Wrap with the pluggable graph-wrapper chain (agent/graph_wrappers).
+        # Defaults, innermost first:
+        #
+        # 1. RepetitionGuardWrapper: stream-level repetition
         # detection (in addition to the OutputRepetitionGuard middleware
         # registered above; it also subsumed the former check_stream_repetition
         # calls in messages.py, since removed by the stream_dispatch refactor).
@@ -185,12 +188,12 @@ async def built_agent(
         # dict-input runs — pre-update model text is physically impossible
         # stream output and historically triggered a false repetition cut
         # that suppressed the real reply.
-        _agent = RepetitionGuardWrapper(_agent, phantom_stream_guard=True)
-        # ContextLimitGuardWrapper: context-window guard OUTSIDE the
+        #
+        # 2. ContextLimitGuardWrapper: context-window guard OUTSIDE the
         # repetition wrapper — the guard sees chunks before repetition
         # filtering, capturing real usage_metadata at model-call boundaries
         # and enforcing the mid-stream output budget.
-        _agent = ContextLimitGuardWrapper(_agent, context_window=main_llm_max_tokens)
+        _agent = apply_graph_wrappers(_agent)
         _agent_loop = current_loop
 
     return _agent
