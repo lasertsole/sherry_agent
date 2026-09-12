@@ -4,7 +4,7 @@
 
 > 에이전트가 긴 대화를 모델의 컨텍스트 윈도우 안에 유지하는 방법: 다섯 개의 트리거 지점이 전체 라이프사이클(턴 시작 전, 모든 모델 호출 전, 모든 모델 응답 후, 프로바이더 오버플로 에러 시)을 감시하고, 순수 함수형 4-경로 라우터가 가장 저렴한 수리책을 고르며(큰 도구 결과와 과도하게 큰 도구 호출 인자를 먼저 잘라내고, 강제될 때만 AI 압축), 안티-스래싱 가드가 압축이 통제 없이 불어나는 일을 원천 차단합니다.
 
-사실상의 기준(source of truth): `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/message/estimate_msg_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/num.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/message/estimate_msg_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -289,7 +289,7 @@ Summarization(
 
 ## ⚙️ 설정 참조
 
-모든 임계값은 `config/num.py`에 있습니다. ◆ 표시 상수는 살아있는 코드 경로가 소비합니다; ○ 표시 상수는 정의 또는 임포트는 되지만 살아있는 경로는 **소비하지 않습니다**("정직함과 한계" 참조).
+모든 임계값은 `config/features/agent_side/summarization.py`(SUMMARIZATION TypedDict)에 있습니다. ◆ 표시 상수는 살아있는 코드 경로가 소비합니다; ○ 표시 상수는 정의 또는 임포트는 되지만 살아있는 경로는 **소비하지 않습니다**("정직함과 한계" 참조).
 
 | 상수 | 값 | 소비 위치 |
 | :------- | :---- | :------------- |
@@ -354,7 +354,7 @@ Summarization(
 ## ⚠️ 정직함과 한계
 
 - **`keep=("messages", 10)`은 받아들여지지만 사용되지 않습니다.** 생성자는 API 호환성을 위해 저장할 뿐; 꼬리 보존은 예산 기반(`PRESERVE_RATIO` × 윈도우, [2 000, 15 000] 클램프)에 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. `keep`을 바꿔도 효과가 없습니다.
-- **문서 장식용 임포트.** `summarization.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/num.py`에 정의되지만 소비자가 없습니다.
+- **문서 장식용 임포트.** `summarization.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.
 - **TTL 레지스트리는 프로덕션에 연결되어 있지 않습니다.** `record_first_seen` / `select_expired` / `truncate_expired`(및 `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`)는 테스트만 소비합니다; 미들웨어는 오직 `truncate_to_budget`만 사용합니다. `agent/` 전역 grep에서 TTL 트리오의 프로덕션 호출 지점은 발견되지 않습니다. 레지스트리는 또한 휘발적입니다(인메모리, `tool_call_id` 키, 재시작 시 소실).
 - **남아 있지만 비활성인 코드.** `_preemptive_check`(:589)와 `_preemptive_truncate`(:1159)는 더 이상 호출 지점이 없습니다 — 이들이 구현한 2-밴드 선점은 4-경로 결정으로 대체되었습니다. 참조용으로만 유지됩니다.
 - **추정기는 토크나이저가 아니라 `chars // 4`입니다.** 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)이며 영어/코드 혼합 콘텐츠로 보정되었습니다; CJK 중심 콘텐츠는 과소 계수됩니다(중국어는 4가 아닌 1–2자/토큰에 가까움).

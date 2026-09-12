@@ -3,6 +3,7 @@
 > 参考来源: opencode-dev · oh-my-openagent-dev · hermes-agent-main · openclaw
 > 配套文件: session-memory-comparison.md
 > 日期: 2026-09-10
+> **状态 (2026-09-12)**: LT-1/LT-2/P0-1/P0-4/LT-7/LT-8 以及 #3/#4/#6/#11 已实现（参见 `docs/long-running-tasks/` 和 `agent/tools/taskflow/`）。本文档保留作为设计参考。
 
 ## 目录
 

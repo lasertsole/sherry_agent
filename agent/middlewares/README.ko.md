@@ -479,7 +479,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `MAIN_LLM_OUTPUT_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 출력 토큰 예산(기본 8192): MaxTokensBoost 부스트 base의 레이어 2, 추론 예산 부풀림이 더해지는 베이스 |
 | `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()` | `LLMRetryMiddleware`의 모델 폴백 체인 후보(i = 1…, 처음 `NAME`이 빠진 지점에서 중단) |
 
-> **관련되지만 독립적:** 도구별 타임아웃은 하드코딩된 모듈 상수입니다 — `WEB_SEARCH_TIMEOUT = 15`(`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30`(`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30`(`agent/tools/python_repl.py`, 만료 시 자식 프로세스 kill). `.env.example`의 `TOOL_CALL_TIMEOUT_MINUTES = 5`는 **이를 소비하는 코드가 존재하지 않습니다** — 유효한 노브가 아닙니다. `config/num.py`의 상수(`ARCHIVE_THRESHOLD`, `MEMORY_THRESHOLD`, `COMPRESS_RATIO`)도 미들웨어 계층에서 소비되지 않습니다.
+> **관련되지만 독립적:** 도구별 타임아웃은 하드코딩된 모듈 상수입니다 — `WEB_SEARCH_TIMEOUT = 15`(`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30`(`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30`(`agent/tools/python_repl.py`, 만료 시 자식 프로세스 kill). `.env.example`의 `TOOL_CALL_TIMEOUT_MINUTES = 5`는 **이를 소비하는 코드가 존재하지 않습니다** — 유효한 노브가 아닙니다. 이 레거시 상수는 이전에 `config/num.py`에 있었습니다(현재 제거됨). 요약 파이프라인은 `config/features/agent_side/summarization.py`에서 이를 읽습니다.
 
 ### 빌드 예제
 
