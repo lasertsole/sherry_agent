@@ -2025,3 +2025,67 @@ class TestTaskFlowContextInjection:
         assert "creating a context checkpoint" in first
         assert "Current TaskFlow State" in update
         assert "updating a context checkpoint" in update
+
+
+# ======================================================================
+# LT-3: facts baseline injection into the compression summary prompt
+# ======================================================================
+
+_LT3_STORE_PATCH_TARGET = "agent.tools.memory_tiered.get_tiered_store"
+
+
+class TestFactsBaselineInjection:
+    """LT-3: ground-truth facts rebuild the summary baseline instead of chaining."""
+
+    def test_summary_prompt_includes_facts_baseline(self, sid, monkeypatch):
+        # Given: the tiered facts store has non-empty content in two categories.
+        store = SimpleNamespace(
+            read_facts=lambda: {
+                "user": "prefers dark mode",
+                "project": "sherry_agent is a Python agent",
+            }
+        )
+        monkeypatch.setattr(_LT3_STORE_PATCH_TARGET, lambda: store)
+        mw = make_middleware()
+
+        # When: the summary prompt is built for this session.
+        prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+
+        # Then: the facts baseline block carries the actual ground-truth content.
+        assert "<facts-baseline>" in prompt
+        assert "</facts-baseline>" in prompt
+        assert "Persistent facts from tiered memory (ground truth, survives compression):" in prompt
+        assert "[user]" in prompt
+        assert "prefers dark mode" in prompt
+        assert "[project]" in prompt
+        assert "sherry_agent is a Python agent" in prompt
+
+    def test_summary_prompt_no_facts_baseline(self, sid, monkeypatch):
+        # Given: every facts category is empty or whitespace-only.
+        store = SimpleNamespace(read_facts=lambda: {"user": "", "project": "   "})
+        monkeypatch.setattr(_LT3_STORE_PATCH_TARGET, lambda: store)
+        mw = make_middleware()
+
+        # When: the summary prompt is built for this session.
+        prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+
+        # Then: no facts baseline block is injected (backward-compatible prompt).
+        assert "<facts-baseline>" not in prompt
+        assert "T8CONV-TEXT" in prompt
+        assert "creating a context checkpoint" in prompt
+
+    def test_summary_prompt_facts_fail_safe(self, sid, monkeypatch):
+        # Given: the tiered store raises on access.
+        def _boom():
+            raise RuntimeError("tiered memory unavailable")
+
+        monkeypatch.setattr(_LT3_STORE_PATCH_TARGET, _boom)
+        mw = make_middleware()
+
+        # When: the summary prompt is built for this session.
+        prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+
+        # Then: compression is not blocked and no facts block is injected.
+        assert "<facts-baseline>" not in prompt
+        assert "T8CONV-TEXT" in prompt
+        assert "creating a context checkpoint" in prompt

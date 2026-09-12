@@ -1485,6 +1485,26 @@ class Summarization(AgentMiddleware):
             if taskflow_ctx:
                 parts.append(taskflow_ctx)
 
+        # === Facts baseline (LT-3) ===
+        if session_id:
+            try:
+                from agent.tools.memory_tiered import get_tiered_store
+
+                facts = get_tiered_store().read_facts()
+                non_empty = {k: v for k, v in facts.items() if v.strip()}
+                if non_empty:
+                    baseline_lines = ["<facts-baseline>"]
+                    baseline_lines.append(
+                        "Persistent facts from tiered memory (ground truth, survives compression):"
+                    )
+                    for cat, content in non_empty.items():
+                        baseline_lines.append(f"[{cat}]")
+                        baseline_lines.append(content)
+                    baseline_lines.append("</facts-baseline>")
+                    parts.append("\n".join(baseline_lines))
+            except Exception:  # noqa: S110 — facts baseline is best-effort, never blocks compression
+                pass
+
         return "\n\n".join(parts)
 
     # ------------------------------------------------------------------
