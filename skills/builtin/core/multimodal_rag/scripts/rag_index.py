@@ -38,9 +38,9 @@ from graph_rag.vendored_raganything import RAGAnything
 
 
 @validate_call
-async def folder_index(input_folder_path: str, classify_folder: str) -> str:
+async def folder_index(input_folder_path: str, classify_folder: str, parser: str = "mineru") -> str:
     """Index files in the specified folder into the graph_rag-anything knowledge graph"""
-    rag: RAGAnything = await get_rag_anything()
+    rag: RAGAnything = await get_rag_anything(parser=parser)
 
     await rag.process_folder_complete(
         folder_path=input_folder_path,
@@ -55,8 +55,8 @@ async def folder_index(input_folder_path: str, classify_folder: str) -> str:
 
 
 @validate_call
-async def file_index(input_file_path: str, classify_folder: str) -> None:
-    rag: RAGAnything = await get_rag_anything()
+async def file_index(input_file_path: str, classify_folder: str, parser: str = "mineru") -> None:
+    rag: RAGAnything = await get_rag_anything(parser=parser)
 
     await rag.process_document_complete(
         file_path=input_file_path,

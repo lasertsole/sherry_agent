@@ -48,10 +48,10 @@ from graph_rag.vendored_raganything import RAGAnything
 
 
 @validate_call
-async def query(question: str) -> str:
+async def query(question: str, parser: str = "mineru") -> str:
     """Query the graph_rag-anything knowledge graph"""
     try:
-        rag: RAGAnything = await get_rag_anything()
+        rag: RAGAnything = await get_rag_anything(parser=parser)
         res = await rag.aquery(question)
         logger.debug(f"[Query] {question}")
         answer = f"[Answer] {res}"
