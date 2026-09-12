@@ -2,21 +2,25 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 12 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，并通过三层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
+> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 13 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，回显步骤验收标准供编排者校验，按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供全局跨会话 flow 面板，并通过三层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
-事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/tools/memory_tiered.py`、`agent/middlewares/memory_flush.py`、`agent/middlewares/summarization.py`（LT-7 区块）、`agent/middlewares/task_intent.py`、`agent/middlewares/todo_continuation.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
+事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/tools/memory_tiered.py`、`agent/middlewares/memory_flush.py`、`agent/middlewares/summarization.py`（LT-3 事实基线 + LT-7 区块）、`agent/middlewares/subagent_completion_drain.py`（LT-5 回流）、`agent/middlewares/task_intent.py`、`agent/middlewares/todo_continuation.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
 
 ## 目录
 
 - [概览](#-概览)
 - [TaskFlow DAG 引擎](#-taskflow-dag-引擎)
+- [步骤重试策略（GAP-8）](#-步骤重试策略gap-8)
 - [Token / 成本预算](#-token--成本预算)
 - [任务截止时间](#-任务截止时间)
+- [结果校验（GAP-7）](#-结果校验gap-7)
 - [进度报告](#-进度报告)
 - [空闲检测](#-空闲检测)
+- [跨会话面板（GAP-9）](#-跨会话面板gap-9)
 - [分层记忆](#-分层记忆)
 - [压缩前的记忆落盘](#-压缩前的记忆落盘)
 - [摘要 ↔ TaskFlow 协调](#-摘要--taskflow-协调)
+- [子 Agent 记忆回流（LT-5）](#-子-agent-记忆回流lt-5)
 - [工具输出摘要](#-工具输出摘要)
 - [会话连续性](#-会话连续性)
 - [TaskFlow 自动恢复](#-taskflow-自动恢复)
@@ -104,32 +108,35 @@ blocked ──(依赖满足)──▶ ready ──(派发)──▶ dispatched �
 
 `deps_satisfied(step, steps)`（`_shared.py:99`）为真，当且仅当每个 `depends_on` id 都存在于当前步骤列表中**且**为 `done`。缺失/为空的 `depends_on` 视为自然满足。未知的依赖 id 永远不满足，而**自依赖永远不满足**——因此自引用步骤会安全地保持阻塞，而不会陷入解锁死循环。`unlock_dependents(steps)`（`_shared.py:137`）对列表只做**单遍扫描**，从结构上杜绝了依赖环导致死循环。`taskflow_run_task` 会在任何派发或状态变更**之前**拒绝未知的依赖 id。
 
-### 工具族（12 个工具）
+### 工具族（13 个工具）
 
-所有工具都是 `async`，装饰为 `@tool("taskflow_…")`，由 `build_taskflow_tools()`（`tools/__init__.py:43-55`）打上 `metadata={"scope": "main_only"}` 和 `handle_tool_error=True`。只有主 Agent 可以管理共享 flow 状态；子 Agent 工具策略会无条件丢弃整个工具族。
+所有工具都是 `async`，装饰为 `@tool("taskflow_…")`，由 `build_taskflow_tools()`（`tools/__init__.py:46-58`）打上 `metadata={"scope": "main_only"}` 和 `handle_tool_error=True`。只有主 Agent 可以管理共享 flow 状态；子 Agent 工具策略会无条件丢弃整个工具族。
 
 | 工具 | 用途 |
 | :--- | :--- |
 | `taskflow_create` | 在版本 1 创建 flow；可选设置 `deadline_hours` |
-| `taskflow_run_task` | 注册一个步骤并派发（或记录为 `blocked`） |
+| `taskflow_run_task` | 注册一个步骤（可选 `validation_criteria` / `retry_policy`）并派发（或记录为 `blocked`） |
 | `taskflow_dispatch` | 全有或全无地批量派发多个就绪步骤 |
-| `taskflow_wait_all` | 按 flow 范围有界轮询，等待已派发步骤落定 |
-| `taskflow_resume` | 幂等地注入子结果、解锁后继步骤、聚合 token |
+| `taskflow_wait_all` | 按 flow 范围有界轮询，等待已派发步骤落定（对带策略的落定步骤自动重试） |
+| `taskflow_resume` | 幂等地注入子结果、解锁后继步骤、聚合 token（感知失败重试 + 标准回显） |
 | `taskflow_set_waiting` | 带上原因把 flow 置为 `waiting` |
 | `taskflow_summary` | 只读回读（也是冲突后的重读手段） |
 | `taskflow_progress` | 人类可读的进度/完成度报告 |
 | `taskflow_budget` | 查询或设置 token/成本预算 |
+| `taskflow_list` | 覆盖所有 flow 的跨会话面板（`active` / `all` / 状态名） |
 | `taskflow_finish` / `taskflow_fail` / `taskflow_cancel` | 终态转换 |
 
 ```python
-# agent/tools/taskflow/tools/taskflow_run_task.py:38
+# agent/tools/taskflow/tools/taskflow_run_task.py:40
 async def taskflow_run_task(
     flow_id: str,
     task: str,
     label: str | None = None,
     expected_revision: int | None = None,
     depends_on: list[str] | None = None,
-    session_id: Annotated[str, InjectedState("session_id")] = "",
+    validation_criteria: str | None = None,
+    retry_policy: dict | None = None,
+    session_id: SessionId = "",
 ) -> str
 ```
 
@@ -152,6 +159,58 @@ async def taskflow_run_task(
 ```
 
 当子 Agent **已经派发**但写入竞争失败时，`update_flow_with_conflict_retry()`（`_shared.py:191`）会重新读取最新的 flow，通过 `build_state` 回调重建状态，并最多重试 `PERSIST_MAX_ATTEMPTS = 3` 次。若 flow 已消失或变为终态，或重试耗尽，它会返回一个列出所有已派发 `child_session_key` 的错误，并指示调用方**按 key 回收，绝不重新派发**。
+
+## 🔁 步骤重试策略（GAP-8）
+
+步骤可以携带一个声明式的 `retry_policy`，让失败的子 Agent 被自动重新派发，而不是被直接当成本步骤的最终结果。策略、计数器与替换子会话 key 全部存放在 `state_json` 中（无需迁移表结构），重试辅助函数位于 `agent/tools/taskflow/tools/_retry.py`。
+
+```python
+# retry_policy on a step (stored by taskflow_run_task)
+{"max_retries": 2, "retry_delay_seconds": 30.0, "retry_on": ["timeout", "rate_limit"]}
+```
+
+| 字段 | 类型 | 默认值 | 含义 |
+| :--- | :--- | :--- | :--- |
+| `max_retries` | 非负整数 | `0` | 最大**重新**派发次数 |
+| `retry_delay_seconds` | 非负数值 | `60.0`（`DEFAULT_RETRY_DELAY_SECONDS`） | 每次重新派发前休眠的退避时长 |
+| `retry_on` | `list[str]` | `[]` | 触发重试的失败类型；为空表示所有可分类失败 |
+
+`validate_policy()`（`_retry.py:120`）会在 `taskflow_run_task` 阶段拒绝格式非法的策略——非 dict 策略、负数/非整数 `max_retries`、负数/非数值 `retry_delay_seconds`，或不是字符串列表的 `retry_on`——在任何派发或写入之前返回 `Error:` 字符串。在恢复时，缺失/非法的已存策略会退化为 `None`（`normalize_policy`），从而恢复 GAP-8 之前的无重试行为，而不是让该次调用失败。
+
+`retry_count`（存放在步骤上，默认 `0`）统计的是**重新派发**次数，从不统计最初那次派发：第一个子 Agent 运行时为 `0`，生成第一个替换子 Agent 后为 `1`。只要 `retry_count < max_retries` 就允许重试（`retries_remaining`，`_retry.py:95`）。`apply_redispatch()`（`_retry.py:170`）就地改动步骤——写入新的 `child_session_key`、`dispatched_at`、`status = dispatched`，并递增 `retry_count`。
+
+### 失败分类
+
+`classify_failure(result)`（`_retry.py:56`）是一个基于**结果文本的启发式**分类器。它先把文本转为小写，剥离字面上包含失败词但实际表示成功的措辞（`_NEGATED_FAILURE_PHRASES`，例如 `"no error"`、`"error-free"`），然后返回第一个匹配的有序桶：
+
+| 分类类型 | 触发子串 |
+| :--- | :--- |
+| `timeout` | `timeout`、`timed out`、`time limit` |
+| `rate_limit` | `rate limit`、`rate_limit`、`429`、`too many requests` |
+| `error` | `error`、`failed`、`failure`、`exception`、`traceback`、`aborted`、`crashed` |
+
+干净的结果永不重试。当 `retry_on` 非空时，只有匹配的分类类型才重试；当它为空时，任何可分类失败都会重试（`should_retry_failure`，`_retry.py:103`）。
+
+### 两条自动重新派发路径
+
+| 入口 | 触发条件 | 行为 |
+| :--- | :--- | :--- |
+| `taskflow_wait_all` | 被轮询的子 Agent **死亡**落定且无结果 | `plan_settled_retries()` 在预算尚存时对每个落定步骤重新派发一次，否则以失败说明结果把它标记为 `done` |
+| `taskflow_resume` | 注入的结果文本**可分类为失败**且被 `retry_on` 允许 | 生成替换子 Agent、记录该失败结果，并让步骤在新子 Agent 上保持 `dispatched` |
+
+- **`taskflow_wait_all`** 在每个目标落定后调用 `_retry_settled_steps()`（`taskflow_wait_all.py:117`）。没有策略的步骤不产生任何动作（旧 flow 保持与 GAP-8 之前逐字节一致的输出）；结果已被注入的子 Agent 会被跳过。每次调用对每个落定步骤最多执行**一个**重试决策——生成并记录替换子 Agent，随后编排者再次调用 `wait_all` 等待它。工具内部不存在后台重试循环。替换子 Agent 通过 `persist_retry_actions()`（`_retry.py:254`）持久化，它借助 `update_flow_with_conflict_retry()` 把计划重新应用到刚读取的步骤列表上，因此并发写入者无法丢弃已生成的替换子 Agent。
+- **`taskflow_resume`** 在把步骤标记为 done 之前检查其策略（`taskflow_resume.py:122-144`）。遇到可重试失败时，它先休眠 `retry_delay_seconds`，再生成替换子 Agent；步骤在新子 Agent 上保持 `dispatched`。若替换子 Agent 的生成本身抛异常，步骤会带着失败结果保持 `done`，响应中携带一条列明该异常的 `retry:` 说明。
+
+### 耗尽与失败说明
+
+当 `retry_count` 达到 `max_retries` 时，`plan_settled_retries()` 会发出 `exhausted` 动作而非重新派发。步骤被标记为 `done`，并追加一条携带 `retry_exhausted: True` 的失败说明结果，由 `exhausted_note()` + `failure_result_record()` 生成（`_retry.py:178-196`）：
+
+```
+retry budget exhausted: step step-4 child agent:main:session:... settled without a
+result after 2 retry/retries (max_retries=2); marked done by taskflow_wait_all
+```
+
+耗尽的步骤需要显式决策——恢复该失败说明，或让 flow 失败。`wait_all` 与 `resume` 两条路径都遵守 resume 的幂等契约：失败说明携带 `result_hash`，因此重复投递的落定结果绝不会被记录两次。
 
 ## 🪙 Token / 成本预算
 
@@ -222,6 +281,48 @@ for flow in overdue:
 
 超期的 flow 会被标记为 `failed`；查询会自动排除已经是终态的 flow，而每个 flow 的异常都会被记录并吞掉，因此单条坏数据不会中断整个扫描。
 
+## ✅ 结果校验（GAP-7）
+
+步骤可以携带自然语言的**验收标准**，让编排者有一个具体的依据来判断子 Agent 的结果。两个工具都接受 `validation_criteria`：
+
+```python
+# agent/tools/taskflow/tools/taskflow_run_task.py:46
+async def taskflow_run_task(
+    flow_id: str,
+    task: str,
+    label: str | None = None,
+    expected_revision: int | None = None,
+    depends_on: list[str] | None = None,
+    validation_criteria: str | None = None,     # stored on the step
+    retry_policy: dict | None = None,           # GAP-8 (see above)
+    session_id: SessionId = "",
+) -> str
+```
+
+`taskflow_run_task` 会把去空白后非空的 `validation_criteria` 存到步骤上（`blocked` 与 `dispatched` 两条写入路径都如此）。在恢复时，标准是被**回显**给编排者，而不是被强制执行：
+
+```python
+# taskflow_resume.py:146-157
+if step is not None and redispatched_key is None:
+    step["status"] = str(StepStatus.DONE)
+    criteria = (validation_criteria or "").strip()
+    if criteria:
+        step["validation_criteria"] = criteria
+    stored_criteria = str(step.get("validation_criteria") or "").strip()
+    if stored_criteria:
+        validation_text = (
+            f"\n  validation_criteria: {stored_criteria}"
+            f"\n  ⚠ Result needs validation against criteria"
+        )
+```
+
+工具从不评估这些标准——它只是在注入结果的同时把它们呈现出来，并在响应末尾追加 `validation_criteria: …` 与 `⚠ Result needs validation against criteria` 区块。有两条护栏值得注意：
+
+- 向 `taskflow_resume` 传入 `validation_criteria` 会**覆盖**已存值（例如根据子 Agent 实际所做的工作收紧或修正它）。
+- 只有当步骤确实被标记为 `done`（`redispatched_key is None`）时才会回显；在 GAP-8 下被重新派发的步骤会保留其标准，并在最终成功恢复时得到回显。
+
+编排者（主 Agent 模型）是裁判：把子 Agent 结果与标准比对，然后决定接受该步骤、重新派发，还是让 flow 失败。不存在自动的通过/失败闸门。
+
 ## 📊 进度报告
 
 `taskflow_progress`（`taskflow_progress.py:22`）是一个只读报告，包含完成度百分比、状态分解、后续步骤和预计剩余时间：
@@ -261,6 +362,36 @@ Progress Report: <flow_id>
 
 空闲检测**从不自动把 flow 置为失败**——该标记只是提示性的，并且每个周期都会刷新。与此同时，`taskflow_summary` 会渲染等待状态，当等待超过 `TASKFLOW_INFRA["waiting_timeout_hours"]`（24 小时）时打印 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`（`taskflow_summary.py:67-90`）。
 
+## 📋 跨会话面板（GAP-9）
+
+`taskflow_summary` 读取单个 flow，自动恢复的读取者又限定于会话范围；`taskflow_list` 刻意相反——它是覆盖整个注册表的**全局面板**，因此在一个渠道/聊天中启动的 flow 从任何其他渠道/聊天都可见：
+
+```python
+# agent/tools/taskflow/tools/taskflow_list.py:85
+@tool("taskflow_list")
+async def taskflow_list(status_filter: str = "active") -> str
+```
+
+| `status_filter` | 行 |
+| :--- | :--- |
+| `"active"`（默认） | 仅 `running` + `waiting` |
+| `"all"` | 全部 flow，包含终态 |
+| 其他任意值 | 精确匹配状态（`running`、`waiting`、`done`、`failed`、`cancelled`） |
+
+它是只读的（无需 `expected_revision`），由 `store_sqlite.get_all_flows_sync(status_filter)` 支撑（`store_sqlite.py:566`）。同步读取器使用无需事件循环的 stdlib `sqlite3` 路径，按 `expected_revision DESC` 排序（最近活跃的在前），并且失败开放——初始化/读取失败返回 `[]`。`"active"` 委托给 `get_active_flows_sync()`。
+
+渲染出的面板是一张带固定列的补白文本表，描述裁剪到 40 字符，creator key 裁剪到 16 字符：
+
+```
+TaskFlow board (active): 2 flow(s)
+flow_id | status  | description                              | steps | creator          | updated_at
+--------+-..----+-..----------------------------------------+-..---+----------------+-..----------
+flow-1  | running | Build the parser                         | 2/5   | agent:main:sess  | 2026-09-12 14:03:21
+flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
+```
+
+表结构**没有 `updated_at` 列**（GAP-9 无需迁移）。因此 `_last_activity_ts()`（`taskflow_list.py:28`）把“最后更新”推导为 flow 上任何位置持久化的活动时间戳的最大值——`wait.set_at`、每个 `step.dispatched_at`、每个 `result.injected_at`——并渲染为 UTC 时间戳（flow 完全没有时间戳时为 `-`）。空注册表返回 `No task flows found`。
+
 ## 🧠 分层记忆
 
 三层，区别在于*如何*抵达模型：
@@ -292,6 +423,25 @@ Literal["add", "replace", "remove", "fact_add", "fact_read", "fact_search"]
 
 `prompt_builder.build_system_prompt` 通过 `format_for_system_prompt` 注入 L1 快照，并追加 L2 索引 `FACTS (on-demand, use memory tool with fact_read/fact_search): …`（`workspace/prompt_builder.py:271-282`）。`memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 
+### 摘要提示词中的事实基线（LT-3）
+
+系统提示词只携带一行 L2 索引，因此一次压缩本可能把模型仍需要的事实指针一并摘要掉。为防止这一点，`_build_summary_prompt`（`agent/middlewares/summarization.py:1488-1506`）通过 `get_tiered_store().read_facts()` 读取**所有非空事实**，并把一个 `<facts-baseline>` 区块追加到摘要提示词：
+
+```python
+# summarization.py:1496
+baseline_lines = ["<facts-baseline>"]
+baseline_lines.append(
+    "Persistent facts from tiered memory (ground truth, survives compression):"
+)
+for cat, content in non_empty.items():
+    baseline_lines.append(f"[{cat}]")
+    baseline_lines.append(content)
+baseline_lines.append("</facts-baseline>")
+parts.append("\n".join(baseline_lines))
+```
+
+该区块被标注为**基准事实（ground truth）**，以便压缩模型保留它，而不是丢弃或改写它。它被追加在 LT-7 TaskFlow 区块之后（两者都只是 LLM 提示词的补充，不出现在 `_build_static_fallback_summary` 中），并且完全**尽力而为**：读取分层存储时的任何失败都会被吞掉（`except Exception: pass`），绝不阻塞压缩。这只是一次提示词层面的复用——它不改变 L2 存储什么，也不改变 `memory` 工具如何读取它。
+
 ## 🔥 压缩前的记忆落盘
 
 在摘要中间件丢弃旧消息之前，`agent/middlewares/memory_flush.py` 给廉价模型最后一次机会，把持久事实写入 `MEMORY.md`。触发条件为 `should_flush(discarded_messages, estimated_tokens)`（`memory_flush.py:43`）：
@@ -320,6 +470,23 @@ if taskflow_ctx:
 ```
 
 该区块以 `## Current TaskFlow State (authoritative)` 为标题（`summarization.py:286`），对于本会话拥有的至多三个 flow（通过 `requester_session_key(session_id)` 匹配），列出 flow id/状态、描述、`done/total` 进度与状态分解、最后两个已完成的步骤、前两个待处理步骤，以及任何等待原因。它复用了 DAG 辅助函数 `step_status` 与 `steps_summary`，并且完全失败开放（`except Exception → ""`）。确定性回退摘要（`_build_static_fallback_summary`）**不**包含该区块；它只是 LLM 提示词的补充。
+
+## 🧠 子 Agent 记忆回流（LT-5）
+
+`SubagentCompletionDrainMiddleware`（`agent/middlewares/subagent_completion_drain.py`）是排队的子 Agent 完成消息在父回合的摄入点：在 `before_model` 时，它会重新水合并排空会话的 `SteeringQueue`，注入重建好的完成载体消息。**当排空非空时**，它还会把共享记忆与父 Agent 的内存视图做一次对账：
+
+```python
+# subagent_completion_drain.py:68-93
+def _backflow_shared_memory() -> None:
+    from agent.tools.memory import memory_store
+    memory_store.load_from_disk()
+    for target in ("memory", "user"):
+        memory_store.save_to_disk(target)
+```
+
+父 Agent 与子 Agent 共享**同一个进程级 `MemoryStore`** 与同一个 `facts/` 目录，因此子 Agent 的写入在文件层面本已可见。可能发生漂移的是父 Agent 的内存视图——实时条目，以及构建系统提示词时用的那份**冻结快照**——当进程外的写入者更新了 `MEMORY.md` / `USER.md` 时就会如此。**先重载**的顺序是关键的：若在重载前就把陈旧的内存列表持久化，会覆盖并发写入者，因此对账必须对每个目标执行先加载、后持久化。
+
+与排空一样，回流也是**失败开放**的——记忆 I/O 失败会被记录并吞掉，完成载体仍会抵达父回合。排空还会向内部完成载体追加 Sisyphus 校验提醒，提醒父 Agent：完成只是一份 `DoneClaim`，而不是已验证的结果（在把待办标记为完成之前，先用 `todoread` 校验、对照验收标准，并排查陈旧状态）。
 
 ## ✂️ 工具输出摘要
 
@@ -386,9 +553,17 @@ Use taskflow_summary to inspect a flow and continue execution.
 
 ## ⚙️ 配置注册表
 
-所有可调项都放在 `config/features/` 下，形成一个手工打造的**按对象划分的 `TypedDict` 注册表**。每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。唯一的环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
+所有可调项都放在 `config/features/` 下，它是一个**按对象划分的 `TypedDict` 包**——而不是单个庞大的模块。它分为三部分：
 
-该注册表当前包含 **38 个 feature 对象**——Agent 侧 20 个（`config/features/agent_side/`），基础设施侧 18 个（`config/features/infra_side/`）——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+| 部分 | 内容 |
+| :--- | :--- |
+| `config/features/agent_side/` | **20** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow） |
+| `config/features/infra_side/` | **18** 个基础设施侧配置模块（服务端、队列、技能、上下文引擎、运行时、模型定价） |
+| `config/features/_env.py` | 唯一的共享环境辅助函数 |
+
+每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
+
+该注册表当前包含 **38 个 feature 对象**——Agent 侧 20 + 基础设施侧 18——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -420,7 +595,13 @@ Use taskflow_summary to inspect a flow and continue execution.
 ## 🏗️ 架构图
 
 ```
-                          ┌──────────────────────────────────────────────┐
+                    ┌────────────────────────────────────────────────────────┐
+                    │              agent/wrapper/ registry                   │
+                    │  apply_graph_wrappers() → innermost-first chain:       │
+                    │  RepetitionGuardWrapper → ContextLimitGuardWrapper     │
+                    └───────────────────────────┬────────────────────────────┘
+                                                │ wraps the compiled graph
+                          ┌─────────────────────▼────────────────────────┐
                           │                MAIN AGENT                     │
                           │  create_agent + middleware chain             │
                           └───────────────┬──────────────────────────────┘
@@ -429,36 +610,45 @@ Use taskflow_summary to inspect a flow and continue execution.
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (12, main_only)   │          │  add/fact_add/…      │                 │ build_system_prompt    │
+│ (13, main_only)   │          │  add/fact_add/…      │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ TaskFlow store    │          │ MemoryStore (L1)     │                 │ ─ MEMORY/USER snapshot │
 │ task_flows (WAL)  │          │ TieredMemoryStore(L2)│                 │ ─ FACTS index (L2)     │
-│ state_json DAG    │          │ mes_memory.db (L3)   │                 │ ─ Pending TaskFlows    │
-└────────┬──────────┘          └──────────────────────┘                 │ ─ Last Session         │
-         │                                                              └────────────────────────┘
+│ state_json DAG    │          │  agent/tools/        │                 │ ─ Pending TaskFlows    │
+│ + retry/validation│          │  memory_tiered.py    │                 │ ─ Last Session         │
+└────────┬──────────┘          └──────────────────────┘                 └────────────────────────┘
          │ dispatch_child()                                                       ▲
          ▼                                                                        │ continuity json
 ┌───────────────────┐     announce/settle     ┌────────────────────────┐           │
 │ child subagent    │ ──────────────────────▶ │ taskflow_resume        │           │
 │ sessions          │                         │ (+ token_usage budget) │           │
 └───────────────────┘                         └───────────┬────────────┘           │
-                                                          │                        │
+         │                                                │                        │
+         │ drain (LT-5)                                   │                        │
+         ▼                                                │                        │
+┌──────────────────────────────┐                          │                        │
+│ SubagentCompletionDrain      │                          │                        │
+│ _backflow_shared_memory      │                          │                        │
+└──────────────────────────────┘                          │                        │
          ┌────────────────────────────────────────────────┘                        │
          ▼                                                                         │
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
 │ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+LT-7 TaskFlow)  │   │
-└──────────────────────────────┘                   └───────────┬───────────────┘   │
+│ _scan_stale_waiting_taskflows│                   │ summary (+LT-3 facts,     │   │
+└──────────────────────────────┘                   │  +LT-7 TaskFlow)          │   │
+                                                   └───────────┬───────────────┘   │
                                                                │ clear_session      │
                                                                ▼                    │
                                                    ┌───────────────────────────┐    │
                                                    │ session_continuity JSON   │────┘
                                                    └───────────────────────────┘
 ```
+
+编译后的图不再在 `agent.core.py` 中内联包装：**`agent/wrapper/`** 包现在拥有这些守卫。`agent.wrapper.registry` 暴露一条进程级、有序、可插拔的链（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`），其 `GraphWrapperFactory` 条目按**最内层优先**应用；默认项复现了历史上的硬编码链——先是 `RepetitionGuardWrapper(phantom_stream_guard=True)`，再是 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。流式重复守卫位于 `agent/wrapper/repetition_guard.py`，上下文窗口守卫位于 `agent/wrapper/context_limit.py`。支撑 `facts/` 层的 **TieredMemoryStore（L2）** 位于 `agent/tools/memory_tiered.py`，而 **LT-5** 回流由 `agent/middlewares/subagent_completion_drain.py` 中的 `SubagentCompletionDrainMiddleware` 执行。
 
 ## 📚 API 参考
 
@@ -467,14 +657,15 @@ Use taskflow_summary to inspect a flow and continue execution.
 | 工具 | 签名 | 返回 |
 | :--- | :--- | :--- |
 | `taskflow_create` | `(flow_id, description="", initial_state=None, session_id, deadline_hours=None)` | 创建的 id/状态/版本（+ 截止时间） |
-| `taskflow_run_task` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, session_id)` | 已派发步骤，或带待满足依赖的 `blocked` |
+| `taskflow_run_task` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | 已派发步骤，或带待满足依赖的 `blocked` |
 | `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | 已派发的 step id + 版本 |
-| `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | 每个步骤的落定报告（完整或部分） |
-| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None)` | 恢复后的状态、解锁的步骤、步骤状态计数 |
+| `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | 每个步骤的落定报告（完整或部分；对策略步骤自动重试） |
+| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | 恢复后的状态、解锁的步骤、步骤状态计数、标准回显、重试说明 |
 | `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None)` | waiting 状态 + 版本 |
 | `taskflow_summary` | `(flow_id)` | 完整 flow 状态，含等待/截止时间状态 |
 | `taskflow_progress` | `(flow_id)` | 完成度 %、分解、后续步骤、预计剩余 |
 | `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None)` | 预算报告，或设置确认 |
+| `taskflow_list` | `(status_filter="active")` | 全局跨会话面板（`active` / `all` / 状态名） |
 | `taskflow_finish` | `(flow_id, summary="", expected_revision=None)` | 终态 `done` |
 | `taskflow_fail` | `(flow_id, reason="", expected_revision=None)` | 终态 `failed` |
 | `taskflow_cancel` | `(flow_id, reason="", expected_revision=None)` | 终态 `cancelled` |
@@ -506,10 +697,16 @@ Use taskflow_summary to inspect a flow and continue execution.
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 连续性保存钩子 |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/memory_flush.py:43,65` | 压缩前落盘 |
 | `append_entries` | `agent/tools/memory.py:281` | 批量追加 MEMORY.md |
+| `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | 跨会话面板读取 |
+| `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 失败分类 |
+| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all 重试规划/持久化 |
+| `get_tiered_store` | `agent/tools/memory_tiered.py:118` | L2 事实存储 + LT-3 基线来源 |
+| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain.py:68` | LT-5 记忆回流对账 |
+| `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 可插拔图包装链 |
 
 ## 🧪 测试
 
-TaskFlow 测试位于 `tests/agent/tools/taskflow/`（十四个 `unit` 测试文件加一个共享的 `conftest.py`）：
+TaskFlow 测试位于 `tests/agent/tools/taskflow/`（十七个 `unit` 测试文件加一个共享的 `conftest.py`）：
 
 | 测试文件 | 覆盖内容 |
 | :--- | :--- |
@@ -527,8 +724,11 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（十四个 `unit` 测试文
 | `test_token_budget.py` | token 聚合、成本计算、预算查询/设置/警告/超限 |
 | `test_deadline.py` | `deadline_hours`、摘要渲染、sweeper 过期 |
 | `test_idle_detection.py` | active/stale 等待状态、sweeper 标记、存活子 Agent 跳过 |
+| `test_retry_policy.py` | GAP-8 策略校验、失败分类、重新派发、耗尽 |
+| `test_validation.py` | GAP-7 标准存储、恢复回显、覆盖 |
+| `test_taskflow_list.py` | GAP-9 面板渲染、状态过滤、最后活动时间戳 |
 
-跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/tools/test_memory_tiered.py`（分层事实）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
+跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的 LT-5 记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/agent/tools/test_memory_tiered.py`（分层事实）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
 
 用标准的 uv/pytest 工具只跑这一区块：
 
@@ -553,3 +753,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py tests/agent/tools
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **LT-7 的 TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。
+- **结果校验是提示性的。** `validation_criteria` 会被存储并随结果一起回显，但工具从不强制执行；编排者必须自行判断通过/失败。不存在能因未满足标准而让步骤失败的自动闸门。
+- **重试分类基于文本。** `classify_failure` 是对结果文本的子串启发式：措辞不在模式表内的失败（或被否定措辞掩盖的真实失败）不会触发重试，而空的 `retry_on` 会重试所有可分类失败。`taskflow_wait_all` 无法对没有结果文本的死亡子 Agent 分类，因此只要预算尚存它就会消耗重试预算。
+- **`taskflow_list` 刻意是全局的。** 跨会话面板忽略 `creator_session_key` 作用域，因此任何主 Agent 会话都能枚举注册表中的每一个 flow（只读，无 `expected_revision`）。它并非按会话视图。
+- **事实基线只是 LLM 提示词的补充。** LT-3 的 `<facts-baseline>` 区块由 `_build_summary_prompt` 追加，不出现在确定性回退摘要中，与 LT-7 TaskFlow 区块完全一样。
