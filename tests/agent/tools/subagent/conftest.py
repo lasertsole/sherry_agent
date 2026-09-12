@@ -7,6 +7,8 @@ import types as stdlib_types
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import pytest
+
 _ROOT = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
 
 _SUBMODULE_LOADED = False
@@ -243,3 +245,18 @@ def _setup_subagent_alias():
 
 
 _setup_subagent_alias()
+
+
+@pytest.fixture(autouse=True)
+def _stub_lt5_memory_backflow(monkeypatch):
+    """Keep this suite off the real workspace memory files.
+
+    A non-empty completion drain reconciles ``MEMORY.md``/``USER.md`` on disk
+    (LT-5). The queue/drain tests here exercise carrier plumbing, not memory
+    I/O, and must not rewrite the tracked ``workspace/memory/`` files; LT-5's
+    own reconcile coverage lives in
+    ``tests/agent/middlewares/test_lt5_memory_backflow.py``.
+    """
+    from agent.middlewares import subagent_completion_drain as drain_mod
+
+    monkeypatch.setattr(drain_mod, "_backflow_shared_memory", lambda: None)

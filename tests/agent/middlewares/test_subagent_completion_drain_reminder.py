@@ -52,6 +52,9 @@ def patched_drain(monkeypatch: pytest.MonkeyPatch) -> dict:
 
     monkeypatch.setattr(drain_mod, "rehydrate", _rehydrate)
     monkeypatch.setattr(drain_mod, "drain", _drain)
+    # LT-5 memory reconcile has its own suite; this file only covers the
+    # reminder-append contract and must not touch workspace/memory/.
+    monkeypatch.setattr(drain_mod, "_backflow_shared_memory", lambda: None)
     return state
 
 

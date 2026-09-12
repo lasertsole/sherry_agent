@@ -17,6 +17,11 @@ Design guarantees:
 - every failure is swallowed (log + return None) — the drain must never
   break the parent turn.
 
+LT-5 memory backflow: a non-empty drain also reconciles the shared
+``MEMORY.md``/``USER.md`` files with the process-wide ``MemoryStore`` (reload
+from disk, then persist) so anything a child session wrote is visible to the
+parent turn. Like the drain itself, the reconcile is fail-open.
+
 The sync ``before_model`` is best-effort: production turns are async-only
 (``astream``/``ainvoke``). Inside a running event loop it is a debug-logged
 no-op; otherwise it runs the async impl via ``asyncio.run``.
@@ -60,6 +65,34 @@ def _is_internal_completion(msg: Any) -> bool:
     return bool(meta.get("internal")) and meta.get("provenance") == "subagent_completion"
 
 
+def _backflow_shared_memory() -> None:
+    """LT-5: reconcile the shared memory files around a subagent completion.
+
+    Parent and children share one process-wide ``MemoryStore`` and the same
+    ``facts/`` directory, so a child's writes are already file-visible. What can
+    drift is the parent's in-memory view (live entries + frozen snapshot) when a
+    writer outside this process updated ``MEMORY.md``/``USER.md``. Reloading
+    first is load-bearing: persisting a stale in-memory list would clobber a
+    concurrent writer, so this reconciles load → persist per target.
+
+    Never raises: a completion carrier must still reach the parent turn even
+    when memory I/O fails.
+    """
+    try:
+        from agent.tools.memory import memory_store
+
+        memory_store.load_from_disk()
+        for target in ("memory", "user"):
+            memory_store.save_to_disk(target)
+        logger.debug(
+            "completion drain: memory backflow reconciled (memory={} entries, user={} entries)",
+            len(memory_store.memory_entries),
+            len(memory_store.user_entries),
+        )
+    except Exception:
+        logger.exception("completion drain: memory backflow failed; continuing")
+
+
 class SubagentCompletionDrainMiddleware(AgentMiddleware):
     """Inject queued subagent-completion steering messages before a model call.
 
@@ -84,6 +117,7 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
             items = await drain(key)
             if not items:
                 return None
+            _backflow_shared_memory()
             logger.info(
                 "completion drain: injecting {} subagent completion message(s) into session {}",
                 len(items),
