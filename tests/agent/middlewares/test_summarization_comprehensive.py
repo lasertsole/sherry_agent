@@ -1897,3 +1897,131 @@ class TestSummarizationAsync:
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 1
         mw._before_agent_impl({"session_id": sid})
         assert state_register_mem.get_state(sid, mget("_COMPRESSION_COUNT_KEY")) == 0
+
+
+# ======================================================================
+# LT-7: TaskFlow state injection into the compression summary prompt
+# ======================================================================
+
+_LT7_STORE_PATCH_TARGET = "agent.tools.taskflow.registry.store_sqlite.get_active_flows_sync"
+
+
+def _lt7_flow(
+    session_id,
+    *,
+    flow_id="lt7-flow",
+    status="running",
+    description="deploy to staging",
+    steps=None,
+    wait=None,
+):
+    """Build one active-flow dict shaped exactly like get_active_flows_sync()."""
+    return {
+        "flow_id": flow_id,
+        "status": status,
+        "state": {
+            "creator_session_key": f"agent:main:session:{session_id}",
+            "description": description,
+            "steps": list(steps or []),
+        },
+        "wait": wait,
+    }
+
+
+def _lt7_steps():
+    """3 done + dispatched + ready + blocked: exercises the 2-item displays."""
+    return [
+        {"step_id": "s1", "task": "task-alpha", "status": "done"},
+        {"step_id": "s2", "task": "task-beta", "status": "done"},
+        {"step_id": "s3", "task": "task-gamma", "status": "done"},
+        {"step_id": "s4", "task": "task-delta", "status": "dispatched"},
+        {"step_id": "s5", "task": "task-epsilon", "status": "ready"},
+        {"step_id": "s6", "task": "task-zeta", "status": "blocked"},
+    ]
+
+
+class TestTaskFlowContextInjection:
+    """LT-7: the summary prompt carries the authoritative TaskFlow state."""
+
+    def test_summary_prompt_includes_taskflow(self, sid, monkeypatch):
+        # Given: one active flow owned by this session, one owned by another.
+        mine = _lt7_flow(sid, flow_id="lt7-mine", steps=_lt7_steps())
+        other = _lt7_flow("someone-else", flow_id="lt7-other")
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [mine, other])
+        mw = make_middleware()
+
+        # When: the summary prompt is built for this session.
+        prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+
+        # Then: the TaskFlow block is present and scoped to this session only.
+        assert "Current TaskFlow State" in prompt
+        assert "### lt7-mine (running)" in prompt
+        assert "lt7-other" not in prompt
+
+    def test_summary_prompt_no_taskflow(self, sid, monkeypatch):
+        # Given: no active flow exists for the session.
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [])
+        mw = make_middleware()
+
+        # When: the summary prompt is built for this session.
+        prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+
+        # Then: no TaskFlow block is injected (backward-compatible prompt).
+        assert "Current TaskFlow State" not in prompt
+        assert "T8CONV-TEXT" in prompt
+
+    def test_summary_prompt_taskflow_step_progress(self, sid, monkeypatch):
+        # Given: an active flow with 6 steps in 4 distinct statuses.
+        flow = _lt7_flow(sid, steps=_lt7_steps())
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [flow])
+        mw = make_middleware()
+
+        # When: the summary prompt is built for this session.
+        prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+
+        # Then: per-status progress and the bounded step lists are present.
+        assert "done=3" in prompt
+        assert "3/6 done" in prompt
+        assert "dispatched=1" in prompt
+        assert "ready=1" in prompt
+        assert "blocked=1" in prompt
+        # Last 2 done steps shown; the older done step is omitted.
+        assert "✓ task-gamma" in prompt
+        assert "✓ task-beta" in prompt
+        assert "task-alpha" not in prompt
+        # First 2 pending steps shown with their status icons; the 3rd omitted.
+        assert "→ task-delta" in prompt
+        assert "○ task-epsilon" in prompt
+        assert "task-zeta" not in prompt
+
+    def test_summary_prompt_taskflow_failure_safe(self, sid, monkeypatch):
+        # Given: the TaskFlow store raises on read.
+        def _boom():
+            raise RuntimeError("taskflow store unavailable")
+
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, _boom)
+        mw = make_middleware()
+
+        # When: the summary prompt is built for this session.
+        prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+
+        # Then: compression is not blocked and no TaskFlow block is injected.
+        assert "Current TaskFlow State" not in prompt
+        assert "T8CONV-TEXT" in prompt
+        assert "creating a context checkpoint" in prompt
+
+    def test_summary_first_vs_update(self, sid, monkeypatch):
+        # Given: an active flow for the session.
+        flow = _lt7_flow(sid, steps=_lt7_steps())
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [flow])
+        mw = make_middleware()
+
+        # When: both the first-run and the update prompts are built.
+        first = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
+        update = mw._build_summary_prompt("T8CONV-TEXT", "T8PREV-TEXT", session_id=sid)
+
+        # Then: both variants carry the TaskFlow block alongside their template.
+        assert "Current TaskFlow State" in first
+        assert "creating a context checkpoint" in first
+        assert "Current TaskFlow State" in update
+        assert "updating a context checkpoint" in update

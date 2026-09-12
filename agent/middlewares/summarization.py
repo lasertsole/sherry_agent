@@ -259,6 +259,70 @@ _SUMMARY_PROMPT_UPDATE = (
 )
 
 
+def _get_taskflow_context_sync(session_id: str) -> str:
+    """Render this session's active TaskFlow state for the summary prompt (LT-7).
+
+    Reuses LT-2's sync registry read, scoped by ``creator_session_key``. Returns
+    "" — never raises — so an unavailable TaskFlow store cannot block compression.
+    """
+    try:
+        from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+        from agent.tools.taskflow.tools._shared import (
+            requester_session_key,
+            step_status,
+            steps_summary,
+        )
+
+        creator_key = requester_session_key(session_id)
+        active_flows = taskflow_store.get_active_flows_sync()
+        mine = [
+            flow
+            for flow in active_flows
+            if (flow.get("state") or {}).get("creator_session_key") == creator_key
+        ]
+        if not mine:
+            return ""
+
+        lines = ["## Current TaskFlow State (authoritative)"]
+        for flow in mine[:3]:
+            state = flow.get("state") or {}
+            steps = state.get("steps") or []
+            counts = steps_summary(steps)
+            total = len(steps)
+            done = counts.get("done", 0)
+            desc = (state.get("description") or "")[:60]
+
+            lines.append(f"### {flow['flow_id']} ({flow['status']})")
+            lines.append(f"Desc: {desc}")
+            lines.append(
+                f"Progress: {done}/{total} done · "
+                + " · ".join(
+                    f"{s}={counts.get(s, 0)}" for s in ("done", "dispatched", "ready", "blocked")
+                )
+            )
+
+            # Most recent 2 completed steps, then the first 2 pending ones.
+            done_steps = [step for step in steps if step_status(step) == "done"]
+            for step in done_steps[-2:]:
+                lines.append(f"  ✓ {(step.get('task') or '')[:60]}")
+
+            pending = [step for step in steps if step_status(step) != "done"]
+            icons = {"dispatched": "→", "ready": "○", "blocked": "⊘"}
+            for step in pending[:2]:
+                status = step_status(step)
+                icon = icons.get(status, "?")
+                lines.append(f"  {icon} {(step.get('task') or '')[:60]}")
+
+            wait = flow.get("wait") or {}
+            if wait:
+                lines.append(f"Waiting: {wait.get('reason', 'unknown')}")
+
+        return "\n".join(lines)
+    except Exception:
+        logger.debug("LT-7: taskflow context unavailable for session {}", session_id)
+        return ""
+
+
 # ======================================================================
 # Serialization for summary LLM
 # ======================================================================
@@ -1344,26 +1408,38 @@ class Summarization(AgentMiddleware):
     # Summary prompt construction
     # ------------------------------------------------------------------
 
-    def _build_summary_prompt(self, messages_text: str, previous_summary: str | None) -> str:
+    def _build_summary_prompt(
+        self,
+        messages_text: str,
+        previous_summary: str | None,
+        session_id: str = "",
+    ) -> str:
         conversation = (
             f"Here is the conversation so far:\n\n<conversation>\n{messages_text}\n</conversation>"
         )
+        parts = [conversation]
+
         if previous_summary:
-            return "\n\n".join(
-                [
-                    conversation,
-                    f"Here is the summary of the conversation before the <conversation> above:\n\n"
-                    f"<prior-summary>\n{previous_summary}\n</prior-summary>",
-                    _SUMMARY_PROMPT_UPDATE,
-                ]
+            parts.append(
+                f"Here is the summary of the conversation before the <conversation> above:\n\n"
+                f"<prior-summary>\n{previous_summary}\n</prior-summary>"
             )
-        return "\n\n".join([conversation, _SUMMARY_PROMPT_FIRST])
+            parts.append(_SUMMARY_PROMPT_UPDATE)
+        else:
+            parts.append(_SUMMARY_PROMPT_FIRST)
+
+        if session_id:
+            taskflow_ctx = _get_taskflow_context_sync(session_id)
+            if taskflow_ctx:
+                parts.append(taskflow_ctx)
+
+        return "\n\n".join(parts)
 
     # ------------------------------------------------------------------
     # LLM summary creation (sync / async)
     # ------------------------------------------------------------------
 
-    def _create_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
+    def _create_summary(self, messages_to_summarize: list[AnyMessage], session_id: str = "") -> str:
         if not messages_to_summarize:
             return "No previous conversation history."
 
@@ -1372,7 +1448,7 @@ class Summarization(AgentMiddleware):
         if not serialized.strip():
             return "No previous conversation history."
 
-        prompt = self._build_summary_prompt(serialized, previous_summary)
+        prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
 
         try:
             response = self._model.invoke(
@@ -1388,7 +1464,9 @@ class Summarization(AgentMiddleware):
             logger.error("LLM summary failed: {}, using fallback", e)
             return _build_static_fallback_summary(messages_to_summarize)
 
-    async def _acreate_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
+    async def _acreate_summary(
+        self, messages_to_summarize: list[AnyMessage], session_id: str = ""
+    ) -> str:
         if not messages_to_summarize:
             return "No previous conversation history."
 
@@ -1397,7 +1475,7 @@ class Summarization(AgentMiddleware):
         if not serialized.strip():
             return "No previous conversation history."
 
-        prompt = self._build_summary_prompt(serialized, previous_summary)
+        prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
 
         try:
             response = await self._model.ainvoke(
@@ -1637,7 +1715,9 @@ class Summarization(AgentMiddleware):
                     summary_text = _build_static_fallback_summary(messages_to_summarize)
                     strategy_used = "fallback"
                 else:
-                    summary_text = self._create_summary(messages_to_summarize)
+                    summary_text = self._create_summary(
+                        messages_to_summarize, session_id=session_id
+                    )
                     strategy_used = "llm_summary"
 
                 new_messages = self._build_new_messages(summary_text)
@@ -1723,7 +1803,9 @@ class Summarization(AgentMiddleware):
                     summary_text = _build_static_fallback_summary(messages_to_summarize)
                     strategy_used = "fallback"
                 else:
-                    summary_text = await self._acreate_summary(messages_to_summarize)
+                    summary_text = await self._acreate_summary(
+                        messages_to_summarize, session_id=session_id
+                    )
                     strategy_used = "llm_summary"
 
                 new_messages = self._build_new_messages(summary_text)
