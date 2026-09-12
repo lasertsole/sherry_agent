@@ -44,6 +44,9 @@ getTaskSummary)。
 - `taskflow_cancel(flow_id, reason, expected_revision)`:取消流(终态)。
 - `taskflow_summary(flow_id)`:只读回读状态、revision、child_session_key、步骤与
   结果;也是冲突后的重读入口。
+- `taskflow_progress(flow_id)`:只读进度报告(面向用户):完成百分比、各状态计数、
+  前 3 个待办步骤、基于已完成步骤 `dispatched_at` 间隔的预估剩余时间,以及等待原因与
+  已注入结果数。不改任何状态;需要原始步骤/结果或最新 revision 时用 `taskflow_summary`。
 - `taskflow_budget(flow_id, action, token_budget, expected_revision)`:查询或设置流的
   token/费用预算。`action="query"` 报告已用 token、估算费用、剩余额度与状态
   (`ok` / `WARNING`(≥80%) / `EXCEEDED`(≥100%));`action="set"` 设置正整数

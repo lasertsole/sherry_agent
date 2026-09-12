@@ -1,7 +1,7 @@
 """Behavior tests for the taskflow tool family, its skill file, and wiring.
 
 Covers the six acceptance checks:
-1. build_main_tools() exposes all 11 taskflow_* tools
+1. build_main_tools() exposes all 12 taskflow_* tools
 2. create -> run_task -> resume -> finish full chain, readable back across a
    simulated restart (fresh connections / new event loop)
 3. concurrent double-write on one flow: exactly one expectedRevision conflict
@@ -42,15 +42,16 @@ EXPECTED_TOOL_NAMES = [
     "taskflow_fail",
     "taskflow_cancel",
     "taskflow_summary",
+    "taskflow_progress",
+    "taskflow_budget",
     "taskflow_dispatch",
     "taskflow_wait_all",
-    "taskflow_budget",
 ]
 
 
 def _tool_map() -> dict:
     tools = build_taskflow_tools()
-    assert len(tools) == 11
+    assert len(tools) == 12
     return {t.name: t for t in tools}
 
 
@@ -88,9 +89,10 @@ def test_builder_returns_tools_in_pinned_order():
         "taskflow_fail",
         "taskflow_cancel",
         "taskflow_summary",
+        "taskflow_progress",
+        "taskflow_budget",
         "taskflow_dispatch",
         "taskflow_wait_all",
-        "taskflow_budget",
     ]
     assert all(t.metadata.get("scope") == "main_only" for t in tools)
 
@@ -296,7 +298,7 @@ def test_family_loads_without_p0_1_wiring():
     server runtime, no spawn-pipeline import at module scope (the dispatch
     entry is a lazy module-level injectable reference)."""
     tools = build_taskflow_tools()
-    assert len(tools) == 11
+    assert len(tools) == 12
     assert all(t.name.startswith("taskflow_") for t in tools)
     # The injection seam exists and can be replaced (used by every dispatch test).
     assert hasattr(taskflow_dispatch_module, "dispatch_child")
