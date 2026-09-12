@@ -1,3 +1,107 @@
 [
-
+    {
+        "name": "clawhub",
+        "description": "Search and install agent skills from ClawHub, the public skill registry.",
+        "location": "./skills/builtin/core/clawhub/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
+        "name": "code-wiki",
+        "description": "Generate wiki docs + Mermaid diagrams for any codebase. Use when the user asks to document a codebase, generate architecture diagrams, or create a structured wiki for a repo.",
+        "location": "./skills/builtin/code_wiki/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "cron",
+        "description": "Schedule reminders and recurring tasks. Actions: add, list, remove or set_context.",
+        "location": "./skills/builtin/core/cron/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "heartbeat",
+        "description": "Periodic wake-up service that checks HEARTBEAT.md for pending tasks and executes them automatically. Use this skill to write or update HEARTBEAT.md.",
+        "location": "./skills/builtin/core/heartbeat/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "image_to_text",
+        "description": "Recognize and describe the content of an image. Accepts either a local file path OR a URL (http/https). Use this whenever the user uploads or refers to an image and expects you to see/analyze it — even if the image is provided as a URL, not a local path. Enables non-multimodal LLMs to have vision capabilities.",
+        "location": "./skills/builtin/core/image_to_text/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "llm-wiki",
+        "description": "Karpathy's LLM Wiki: build/query interlinked markdown KB.",
+        "location": "./skills/builtin/llm_wiki/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "multimodal_rag",
+        "description": "Private knowledge base for indexing multimodal files or folders into a knowledge graph, supporting multi-hop graph retrieval",
+        "location": "./skills/builtin/core/multimodal_rag/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "skill_creator",
+        "description": "Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.",
+        "location": "./skills/builtin/core/skill_creator/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
+        "name": "speech_to_text",
+        "description": "Transcribe speech (such as .mp3, .wav, .ogg) into text. Use whenever the user uploads or refers to an audio file and expects you to understand its spoken content. Enables non-multimodal LLMs to transcribe audio by running this skill's script via the terminal tool.",
+        "location": "./skills/builtin/core/speech_to_text/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "taskflow",
+        "description": "Durable multi-step task flows with optimistic locking, detached subagent step dispatch, waiting and idempotent resume via the taskflow_* tool family",
+        "location": "./skills/builtin/core/taskflow/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
+        "name": "text_to_image",
+        "description": "When a user needs to generate an image from a text description, use the python_repl tool to call generate_image().",
+        "location": "./skills/builtin/text_to_image/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "todolist",
+        "description": "Session-scoped task tracking with delegation routing and TaskFlow-backed DAG execution. Use for 3+ step work or any multi-item request.",
+        "location": "./skills/builtin/core/todolist/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
+        "name": "ulw-execute",
+        "description": "Orchestrator execution doctrine. Run a plan file to completion by delegating every implementation unit to subagents, verifying with the Sisyphus contract, and using TaskFlow for dependency-ordered DAG execution.",
+        "location": "./skills/builtin/core/ulw-execute/SKILL.md",
+        "scope": "main_only",
+        "active": true
+    },
+    {
+        "name": "video_text_to_text",
+        "description": "Describe/transcribe video content (such as .mp4, .mkv, .avi) into text. Use whenever the user uploads or refers to a video file and expects you to understand what happens in it. Enables non-multimodal LLMs to understand video by running this skill's script via the terminal tool.",
+        "location": "./skills/builtin/core/video_text_to_text/SKILL.md",
+        "scope": "all",
+        "active": true
+    },
+    {
+        "name": "windows-file-triage",
+        "description": "用户含糊地说\"看看这个是啥/这是什么文件/这个 exe 安全吗\"却没有给路径或附件时,在 Windows 上定位并鉴定未知文件的完整流程:按最近修改时间扫 Downloads/Desktop/CWD 找到证物,再用版本信息 + Authenticode 签名验明正身并出报告",
+        "location": "./skills/auto/windows-file-triage/SKILL.md",
+        "scope": "all",
+        "active": true
+    }
 ]

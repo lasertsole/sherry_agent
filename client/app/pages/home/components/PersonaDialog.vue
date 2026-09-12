@@ -4,24 +4,26 @@
     :header="t('config.persona.title')"
     :modal="true"
     :closable="true"
-    class="w-[95vw] md:w-[1280px]"
+    class="persona-dialog w-[95vw] md:w-[1280px]"
     @show="onDialogShow">
-    <div class="flex flex-col gap-3 md:flex-row">
+    <div class="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
       <!-- Left column: existing 3-tab persona editor + save-preset action -->
-      <div class="flex min-w-0 flex-1 flex-col gap-3">
+      <div class="flex min-w-0 min-h-0 flex-1 flex-col gap-3">
         <div
           v-if="loading"
           class="flex items-center justify-center py-8">
           <ProgressSpinner style="width: 2rem; height: 2rem" />
         </div>
         <template v-else>
-          <TabView v-model:activeIndex="activeTab">
+          <TabView
+            v-model:activeIndex="activeTab"
+            class="flex min-h-0 flex-1 flex-col">
             <TabPanel
               v-for="tab in tabs"
               :key="tab.key"
               :value="tab.key"
               :header="t(tab.i18nKey)">
-              <div class="flex flex-col gap-2">
+              <div class="flex min-h-0 flex-1 flex-col gap-2">
                 <div class="flex items-center justify-between">
                   <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(tab.i18nDescKey) }}</span>
                   <div class="flex items-center gap-2">
@@ -49,10 +51,10 @@
                 </div>
                 <Textarea
                   v-model="editContent[tab.key]"
-                  rows="12"
-                  class="w-full font-mono text-sm"
+                  rows="18"
+                  class="w-full min-h-0 flex-1 font-mono text-sm"
                   :maxlength="MAX_CHARS"
-                  style="height: 72vh; min-height: 72vh; max-height: 72vh; overflow: auto" />
+                  style="overflow: auto" />
               </div>
             </TabPanel>
           </TabView>
@@ -69,18 +71,9 @@
       </div>
 
       <!-- Right column: persona preset list -->
-      <div class="flex w-full shrink-0 flex-col gap-2 md:w-[300px]">
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-semibold">{{ t('config.persona.preset.title') }}</span>
-          <Button
-            :label="t('config.persona.preset.newPreset')"
-            icon="pi pi-plus"
-            severity="secondary"
-            text
-            size="small"
-            @click="startNewPreset" />
-        </div>
-        <div class="flex max-h-[60vh] flex-1 flex-col gap-1 overflow-y-auto">
+      <div class="flex w-full min-h-0 flex-col gap-2 md:w-[300px] md:shrink-0">
+        <span class="text-sm font-semibold">{{ t('config.persona.preset.title') }}</span>
+        <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:max-h-none">
           <!-- Virtual read-only entry: the default persona (Sherry) -->
           <div
             role="button"
@@ -360,12 +353,6 @@ const selectPreset = (preset: PersonaPreset) => {
   activeDefault.value = false;
 };
 
-/** Click 新增 ("New"): clear the edit state only — the form content is kept for save-as-new. */
-const startNewPreset = () => {
-  editingPresetId.value = null;
-  activeDefault.value = true;
-};
-
 /**
  * Click 保存预设 ("Save Preset"):
  * - editing an existing preset → overwrite it directly (no name dialog);
@@ -500,7 +487,6 @@ const handleApply = async () => {
         "restoreDefault": "恢复默认",
         "preset": {
           "title": "预设人格",
-          "newPreset": "新增",
           "savePreset": "保存预设",
           "apply": "应用",
           "editingBadge": "编辑中",
@@ -546,7 +532,6 @@ const handleApply = async () => {
         "restoreDefault": "Restore Default",
         "preset": {
           "title": "Preset Personas",
-          "newPreset": "New",
           "savePreset": "Save Preset",
           "apply": "Apply",
           "editingBadge": "Editing",
@@ -592,7 +577,6 @@ const handleApply = async () => {
         "restoreDefault": "デフォルトに戻す",
         "preset": {
           "title": "プリセット人格",
-          "newPreset": "追加",
           "savePreset": "プリセット保存",
           "apply": "適用",
           "editingBadge": "編集中",
@@ -638,7 +622,6 @@ const handleApply = async () => {
         "restoreDefault": "기본값 복원",
         "preset": {
           "title": "프리셋 페르소나",
-          "newPreset": "추가",
           "savePreset": "프리셋 저장",
           "apply": "적용",
           "editingBadge": "편집 중",
@@ -679,3 +662,39 @@ const handleApply = async () => {
   }
 }
 </i18n>
+
+<style scoped>
+/* 让对话框内容区成为 flex 列容器：根布局用 flex-1 精确填充内容区高度，
+   内部 flex 链（TabView → panels → panel → textarea）自适应伸缩，
+   避免 72vh 等固定高度把内容区撑出垂直滚动条。
+   Dialog 被 Teleport 到 <body>，scoped 的选择器（依赖 data-v 祖先）匹配不到
+   .p-dialog-content，所以用非 scoped 规则 + 唯一标记类 .persona-dialog 精准锁定。 */
+:deep(.p-tabview-panels) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+:deep(.p-tabview-panel) {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+</style>
+
+<style>
+.persona-dialog > .p-dialog-content {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 让对话框填满可用高度（PrimeVue 默认 max-height:90% 但高度内容驱动，
+   不撑满的话 textarea 固有高度(rows)决定大小）。窗口高度 >=600px 时撑满 90vh，
+   低于 600px 保持内容驱动，避免极端小窗下各区域被过度压缩。 */
+@media (min-height: 600px) {
+  .persona-dialog {
+    height: 90vh;
+  }
+}
+</style>
