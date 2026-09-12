@@ -109,6 +109,63 @@ def _build_boulder_block(session_id: str) -> str:
         return ""
 
 
+def _build_taskflow_block(session_id: str) -> str:
+    """Render pending TaskFlows for this session. Returns "" on none or failure.
+
+    Scans the taskflow registry for non-terminal flows whose
+    ``state['creator_session_key']`` matches this session and injects a concise
+    summary (max 3 flows) so the agent can proactively continue unfinished work
+    on session start.
+    """
+    try:
+        from agent.tools.taskflow.registry import store_sqlite
+        from agent.tools.taskflow.tools._shared import (
+            requester_session_key,
+            step_status,
+            steps_summary,
+        )
+
+        creator_key = requester_session_key(session_id)
+        active_flows = store_sqlite.get_active_flows_sync()
+
+        # Filter: only flows created by THIS session.
+        mine = [
+            flow
+            for flow in active_flows
+            if (flow.get("state") or {}).get("creator_session_key") == creator_key
+        ]
+        if not mine:
+            return ""
+
+        lines = ["## Pending TaskFlows"]
+        for flow in mine[:3]:  # max 3 flows
+            state = flow.get("state") or {}
+            steps = state.get("steps") or []
+            counts = steps_summary(steps)
+            total = len(steps)
+            done = counts.get("done", 0)
+            desc = state.get("description", "")[:60]
+            status = flow.get("status", "?")
+
+            # Find the next actionable step (first non-done).
+            pending = [s for s in steps if step_status(s) not in ("done",)]
+            next_hint = ""
+            if pending:
+                next_step = pending[0]
+                next_id = next_step.get("step_id", "?")
+                next_task = (next_step.get("task", "") or "")[:40]
+                next_hint = f' | next: {next_id} "{next_task}"'
+
+            lines.append(
+                f'- [{status}] {flow["flow_id"]}: "{desc}" | {done}/{total} steps done{next_hint}'
+            )
+
+        lines.append("Use taskflow_summary to inspect a flow and continue execution.")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
@@ -200,10 +257,36 @@ def build_system_prompt(
             if content
         )
 
-    # --- Todo + boulder blocks ----------------------------------------
+    # --- Facts listing (LT-1) -----------------------------------------
+    # One-liner listing non-empty facts files so the agent knows what's
+    # available to read via the memory tool's fact_read/fact_search actions.
+    # ~100-150 chars, far cheaper than embedding full facts content.
+    if selected_file_names is None:
+        try:
+            from agent.tools.memory_tiered import get_tiered_store
+
+            facts_listing = get_tiered_store().get_facts_listing()
+            if facts_listing:
+                file_paths.append(
+                    "FACTS (on-demand, use memory tool with fact_read/fact_search):\n  "
+                    + facts_listing
+                )
+        except Exception:  # noqa: S110 - non-critical: a facts-layer failure must not break the prompt
+            pass
+
+    # --- Todo + boulder + taskflow blocks -----------------------------
     # Rebuilt from live state on every call, so they survive context
     # compression; skipped entirely when there is no session to scope them to.
-    blocks = [_build_todo_block(session_id), _build_boulder_block(session_id)] if session_id else []
+    # The taskflow block follows the memory-block rule: only injected when the
+    # caller did not filter to explicit files.
+    if session_id:
+        blocks = [
+            _build_todo_block(session_id),
+            _build_boulder_block(session_id),
+            _build_taskflow_block(session_id) if selected_file_names is None else "",
+        ]
+    else:
+        blocks = []
 
     # --- Assembling the final prompt ----------------------------------
     # Fold static files + memory + live blocks into one ordered list, then skills.
