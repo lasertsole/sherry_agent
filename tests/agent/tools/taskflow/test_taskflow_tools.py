@@ -314,6 +314,28 @@ async def test_create_rejects_duplicate(isolated_db: Path):
 
 
 @pytest.mark.asyncio
+async def test_create_stores_creator_session_key(isolated_db: Path):
+    tools = _tool_map()
+    out = await tools["taskflow_create"].coroutine(
+        flow_id="flow-1", description="session probe", session_id="abc"
+    )
+    assert "revision=1" in out
+    flow = await store_sqlite.get_flow("flow-1")
+    assert flow is not None
+    assert flow["state"]["creator_session_key"] == "agent:main:session:abc"
+
+
+@pytest.mark.asyncio
+async def test_create_without_session_id(isolated_db: Path):
+    tools = _tool_map()
+    out = await tools["taskflow_create"].coroutine(flow_id="flow-1", description="legacy probe")
+    assert "revision=1" in out
+    flow = await store_sqlite.get_flow("flow-1")
+    assert flow is not None
+    assert "creator_session_key" not in flow["state"]
+
+
+@pytest.mark.asyncio
 async def test_set_waiting_then_resume_cycle(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-2")

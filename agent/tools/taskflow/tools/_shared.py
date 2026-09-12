@@ -23,16 +23,25 @@ def requester_session_key(session_id: str) -> str:
     return f"agent:main:session:{session_id}"
 
 
-def default_state(description: str, initial_state: dict | None) -> dict:
+def default_state(
+    description: str,
+    initial_state: dict | None,
+    *,
+    creator_session_key: str = "",
+) -> dict:
     """Build the initial state_json payload with guaranteed invariants.
 
     ``steps`` and ``results`` are always lists (run_task / resume append to
     them); ``description`` and any caller keys are preserved.
+    ``creator_session_key`` (LT-2) associates the flow with the parent session
+    for cross-session auto-resume injection.
     """
     state = dict(initial_state or {})
     state["description"] = description or str(state.get("description") or "")
     state["steps"] = list(state.get("steps") or [])
     state["results"] = list(state.get("results") or [])
+    if creator_session_key:
+        state["creator_session_key"] = creator_session_key
     return state
 
 

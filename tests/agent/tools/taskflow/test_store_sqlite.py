@@ -221,6 +221,91 @@ def test_get_flow_sync_without_event_loop(isolated_db: Path):
     assert store.get_flow_sync("no-such-flow") is None
 
 
+# ---------------------------------------------------------------------------
+# get_active_flows_sync (LT-2): non-terminal flows for prompt auto-resume
+# ---------------------------------------------------------------------------
+
+
+def _create_flows(*specs: tuple[str, str]) -> None:
+    """Create flows (flow_id, status) on their own event loop, sync-style."""
+
+    async def _setup() -> None:
+        for flow_id, status in specs:
+            await store_sqlite.create_flow(flow_id, _make_state(flow_id), status=status)
+
+    asyncio.run(_setup())
+
+
+def test_get_active_flows_sync_returns_running(isolated_db: Path):
+    _create_flows(("flow-running", TaskFlowStatus.RUNNING.value))
+
+    active = store_sqlite.get_active_flows_sync()
+
+    assert [flow["flow_id"] for flow in active] == ["flow-running"]
+    assert active[0]["status"] == TaskFlowStatus.RUNNING.value
+    assert active[0]["state"]["description"] == "flow-running"
+
+
+def test_get_active_flows_sync_returns_waiting(isolated_db: Path):
+    _create_flows(("flow-waiting", TaskFlowStatus.WAITING.value))
+
+    active = store_sqlite.get_active_flows_sync()
+
+    assert [flow["flow_id"] for flow in active] == ["flow-waiting"]
+    assert active[0]["status"] == TaskFlowStatus.WAITING.value
+
+
+def test_get_active_flows_sync_excludes_terminal(isolated_db: Path):
+    _create_flows(
+        ("flow-running", TaskFlowStatus.RUNNING.value),
+        ("flow-done", TaskFlowStatus.DONE.value),
+        ("flow-failed", TaskFlowStatus.FAILED.value),
+        ("flow-cancelled", TaskFlowStatus.CANCELLED.value),
+    )
+
+    active = store_sqlite.get_active_flows_sync()
+
+    assert [flow["flow_id"] for flow in active] == ["flow-running"]
+
+
+def test_get_active_flows_sync_empty(isolated_db: Path):
+    assert store_sqlite.get_active_flows_sync() == []
+
+
+def test_get_active_flows_sync_ordered_by_rev(isolated_db: Path):
+    async def _setup() -> None:
+        await store_sqlite.create_flow("flow-low", _make_state("low"))
+        await store_sqlite.create_flow("flow-mid", _make_state("mid"))
+        await store_sqlite.update_flow("flow-mid", INITIAL_REVISION, wait={"reason": "bump"})
+        await store_sqlite.create_flow("flow-high", _make_state("high"))
+        for _ in range(3):
+            current = await store_sqlite.get_flow("flow-high")
+            assert current is not None
+            await store_sqlite.update_flow(
+                "flow-high", current["expected_revision"], wait={"reason": "bump"}
+            )
+
+    asyncio.run(_setup())
+
+    active = store_sqlite.get_active_flows_sync()
+
+    assert [flow["flow_id"] for flow in active] == ["flow-high", "flow-mid", "flow-low"]
+    assert [flow["expected_revision"] for flow in active] == [4, 2, 1]
+
+
+def test_get_active_flows_sync_failure_returns_empty(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A failing sync init/read must fail open with an empty list, not raise."""
+
+    def _boom() -> None:
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(store_sqlite, "_ensure_tables_sync", _boom)
+
+    assert store_sqlite.get_active_flows_sync() == []
+
+
 def test_full_persistence_across_restart_new_event_loop(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):

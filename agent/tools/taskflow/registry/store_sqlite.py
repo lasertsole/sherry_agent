@@ -384,3 +384,31 @@ def get_flow_sync(flow_id: str) -> dict | None:
     except Exception as e:
         logger.warning("Failed to sync-read taskflow {}: {}", flow_id, e)
     return None
+
+
+def get_active_flows_sync() -> list[dict]:
+    """Synchronously read all non-terminal flows (stdlib sqlite3).
+
+    Returns flows with status 'running' or 'waiting'. Caller filters by
+    ``state['creator_session_key']`` to scope to the current session.
+    Mirrors the sync read pattern of get_flow_sync(): threading.Lock-guarded
+    table creation, connect-level busy timeout, failures logged and swallowed
+    with an empty list return.
+    """
+    try:
+        _ensure_tables_sync()
+        conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
+        try:
+            cursor = conn.execute(
+                _SELECT_COLUMNS_SQL
+                + " WHERE status IN (?, ?)"
+                + " ORDER BY expected_revision DESC",
+                (TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+        return [_row_to_flow(row) for row in rows]
+    except Exception as e:
+        logger.warning("Failed to sync-read active taskflows: {}", e)
+        return []

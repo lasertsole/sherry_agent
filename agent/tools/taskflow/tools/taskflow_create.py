@@ -1,11 +1,16 @@
 """taskflow_create: create a durable task flow (openclaw createManaged)."""
 
+from typing import Annotated
+
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import INITIAL_REVISION
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowExistsError
-from ._shared import default_state
+from ._shared import default_state, requester_session_key
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 
 @tool("taskflow_create")
@@ -13,6 +18,7 @@ async def taskflow_create(
     flow_id: str,
     description: str = "",
     initial_state: dict | None = None,
+    session_id: SessionId = "",
 ) -> str:
     """Create a durable task flow and return its initial revision.
 
@@ -24,7 +30,8 @@ async def taskflow_create(
     if not flow_id:
         return "Error: flow_id is required"
 
-    state = default_state(description, initial_state)
+    creator_key = requester_session_key(session_id) if session_id else ""
+    state = default_state(description, initial_state, creator_session_key=creator_key)
     try:
         flow = await store_sqlite.create_flow(flow_id, state)
     except FlowExistsError:
