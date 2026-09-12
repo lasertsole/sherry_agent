@@ -278,6 +278,64 @@ class MemoryStore:
 
         return self._success_response(target, "Entry added.")
 
+    def append_entries(self, new_entries: str) -> dict[str, Any]:
+        """Append multiple §-delimited entries to MEMORY.md (Memory Flush, P0-1).
+
+        Unlike ``add()`` (one entry, reject on overflow), this batch method skips
+        entries already present and evicts the oldest entries to stay within
+        ``memory_char_limit``. Runs under the same cross-platform file lock.
+        """
+        raw = new_entries.strip()
+        if not raw:
+            return {"success": True, "message": "No entries to add."}
+
+        parsed = [entry.strip() for entry in re.split(r"\s*§\s*", raw) if entry.strip()]
+        if not parsed:
+            return {"success": True, "message": "No entries to add."}
+
+        candidates: list[str] = []
+        for entry in parsed:
+            scan_error = _scan_memory_content(entry)
+            if scan_error:
+                logger.warning(f"Memory Flush: rejected entry -- {scan_error}")
+                continue
+            candidates.append(entry)
+        if not candidates:
+            return {"success": True, "message": "No entries to add."}
+
+        with self._file_lock(self._path_for("memory")):
+            self._reload_target("memory")
+            entries = self.memory_entries
+            limit = self.memory_char_limit
+
+            existing_set = set(entries)
+            new_items = [e for e in candidates if e not in existing_set]
+            if not new_items:
+                return {
+                    "success": True,
+                    "message": "All entries already exist (no duplicates added).",
+                }
+
+            all_entries = entries + new_items
+            combined = ENTRY_DELIMITER.join(all_entries)
+
+            # Capacity overflow: evict the oldest entries until the file fits.
+            while len(combined) > limit and len(all_entries) > 1:
+                all_entries.pop(0)
+                combined = ENTRY_DELIMITER.join(all_entries)
+
+            self._set_entries("memory", all_entries)
+            self.save_to_disk("memory")
+
+        return {
+            "success": True,
+            "message": (
+                f"Added {len(new_items)} entries (deduplicated {len(candidates) - len(new_items)})."
+            ),
+            "entry_count": len(all_entries),
+            "usage": f"{len(combined)}/{limit} chars",
+        }
+
     def replace(self, target: str, old_text: str, new_content: str) -> dict[str, Any]:
         """Find entry containing old_text substring, replace it with new_content."""
         old_text = old_text.strip()

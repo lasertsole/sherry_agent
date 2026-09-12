@@ -556,6 +556,8 @@ class Summarization(AgentMiddleware):
         keep: tuple = ("messages", 10),
         main_llm_context_window: int | None = None,
         need_update_system_prompt: bool = False,
+        memory_store: Any = None,
+        llm_factory: Any = None,
         **kwargs,
     ):
         self._model = model
@@ -565,6 +567,8 @@ class Summarization(AgentMiddleware):
         self._need_update_system_prompt = need_update_system_prompt
         self._compress_last_turn: bool = False
         self._compaction_just_happened: bool = False
+        self._memory_store = memory_store
+        self._llm_factory = llm_factory
 
         self._effectiveness_tracker = CompressionEffectivenessTracker(self._estimate_tokens)
         self._truncator = MessageTruncator()
@@ -1617,6 +1621,18 @@ class Summarization(AgentMiddleware):
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
 
+                # P0-1: persist cross-session facts before these messages are discarded.
+                if self._memory_store and self._llm_factory:
+                    from agent.middlewares.memory_flush import run_memory_flush_sync
+
+                    est_tokens = self._estimate_tokens(messages_to_summarize)
+                    run_memory_flush_sync(
+                        messages_to_summarize,
+                        est_tokens,
+                        self._memory_store,
+                        self._llm_factory,
+                    )
+
                 if skip_llm:
                     summary_text = _build_static_fallback_summary(messages_to_summarize)
                     strategy_used = "fallback"
@@ -1690,6 +1706,18 @@ class Summarization(AgentMiddleware):
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
+
+                # P0-1: persist cross-session facts before these messages are discarded.
+                if self._memory_store and self._llm_factory:
+                    from agent.middlewares.memory_flush import run_memory_flush
+
+                    est_tokens = self._estimate_tokens(messages_to_summarize)
+                    await run_memory_flush(
+                        messages_to_summarize,
+                        est_tokens,
+                        self._memory_store,
+                        self._llm_factory,
+                    )
 
                 if skip_llm:
                     summary_text = _build_static_fallback_summary(messages_to_summarize)
