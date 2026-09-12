@@ -52,6 +52,11 @@ getTaskSummary)。
   (`ok` / `WARNING`(≥80%) / `EXCEEDED`(≥100%));`action="set"` 设置正整数
   `token_budget`,终态流拒绝。`taskflow_resume` 传入 `token_usage` 时会把子会话的
   token 用量与估算费用累加到流上。
+- `taskflow_list(status_filter)`:只读跨会话看板:列出注册表中**所有** TaskFlow(不限
+  当前会话/频道)。`status_filter` 取 `"active"`(默认,running+waiting)、`"all"`(含
+  终态)或具体状态名(`running`/`waiting`/`done`/`failed`/`cancelled`)。每行:flow_id、
+  状态、描述(截断 40 字符)、步骤 done/total、创建者会话 key(截断 16 字符)、最近活动
+  时间(取流内最新时间戳,无则 `-`)。按 expected_revision 降序(最近活动在前)。
 
 ## 乐观锁与冲突重试
 

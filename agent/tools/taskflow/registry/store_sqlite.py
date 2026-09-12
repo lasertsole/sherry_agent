@@ -561,3 +561,41 @@ def get_active_flows_sync() -> list[dict]:
     except Exception as e:
         logger.warning("Failed to sync-read active taskflows: {}", e)
         return []
+
+
+def get_all_flows_sync(status_filter: str = "active") -> list[dict]:
+    """Synchronously read flows for the cross-session board (stdlib sqlite3).
+
+    Unlike :func:`get_active_flows_sync`, this never scopes by session: it is
+    the global view behind the ``taskflow_list`` tool.
+
+    ``status_filter`` selects the rows:
+
+    * ``"active"`` (default): running + waiting (delegates to
+      :func:`get_active_flows_sync`).
+    * ``"all"``: every flow, terminal statuses included.
+    * any other value: exact status match (``status = ?``), e.g. ``"done"``.
+
+    Rows are ordered by ``expected_revision DESC`` (most recently active first).
+    Fail-open: init/read failures are logged and swallowed, returning ``[]``.
+    """
+    if status_filter == "active":
+        return get_active_flows_sync()
+    try:
+        _ensure_tables_sync()
+        conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
+        try:
+            if status_filter == "all":
+                cursor = conn.execute(_SELECT_COLUMNS_SQL + " ORDER BY expected_revision DESC")
+            else:
+                cursor = conn.execute(
+                    _SELECT_COLUMNS_SQL + " WHERE status = ?" + " ORDER BY expected_revision DESC",
+                    (status_filter,),
+                )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+        return [_row_to_flow(row) for row in rows]
+    except Exception as e:
+        logger.warning("Failed to sync-read taskflows (filter={!r}): {}", status_filter, e)
+        return []

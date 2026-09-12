@@ -1,4 +1,4 @@
-"""TaskFlow tool family: 12 tools mirroring the openclaw managedFlows API surface.
+"""TaskFlow tool family: 13 tools mirroring the openclaw managedFlows API surface.
 
 Mapping: taskflow_create=createManaged, taskflow_run_task=runTask,
 taskflow_set_waiting=setWaiting, taskflow_resume=resume,
@@ -6,7 +6,8 @@ taskflow_finish=finish, taskflow_fail=fail, taskflow_cancel=requestCancel/cancel
 taskflow_summary=getTaskSummary, taskflow_progress=human-readable progress
 report, taskflow_dispatch=batch dispatch of ready steps,
 taskflow_wait_all=flow-scoped wait for dispatched steps,
-taskflow_budget=token/cost budget query and set.
+taskflow_budget=token/cost budget query and set,
+taskflow_list=cross-session board of every flow.
 """
 
 from langchain_core.tools import BaseTool
@@ -17,6 +18,7 @@ from .taskflow_create import taskflow_create
 from .taskflow_dispatch import taskflow_dispatch
 from .taskflow_fail import taskflow_fail
 from .taskflow_finish import taskflow_finish
+from .taskflow_list import taskflow_list
 from .taskflow_progress import taskflow_progress
 from .taskflow_resume import taskflow_resume
 from .taskflow_run_task import taskflow_run_task
@@ -37,11 +39,12 @@ _TASKFLOW_TOOLS: list[BaseTool] = [
     taskflow_budget,
     taskflow_dispatch,
     taskflow_wait_all,
+    taskflow_list,
 ]
 
 
 def build_taskflow_tools() -> list[BaseTool]:
-    """Build and return the 12 taskflow tools.
+    """Build and return the 13 taskflow tools.
 
     Meant to be registered in ``_MAIN_TOOLS_BUILDERS``. Business errors are
     returned as readable strings (handle_tool_error=True as backstop), and
