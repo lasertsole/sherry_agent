@@ -479,8 +479,8 @@ memory_store: MemoryStore = MemoryStore()
 def memory_tool(
     action: str,
     target: str = "memory",
-    content: str = None,
-    old_text: str = None,
+    content: str | None = None,
+    old_text: str | None = None,
 ) -> str:
     """
     Single entry point for the memory tool. Dispatches to MemoryStore methods.
@@ -496,7 +496,7 @@ def memory_tool(
         f"content_preview='{content_preview}', old_text_preview='{old_text_preview}'"
     )
 
-    if target not in ("memory", "user"):
+    if action in ("add", "replace", "remove") and target not in ("memory", "user"):
         logger.warning(f"Invalid memory target: {target}")
         return _tool_error(f"Invalid target '{target}'. Use 'memory' or 'user'.", success=False)
 
@@ -518,9 +518,41 @@ def memory_tool(
                 return _tool_error("old_text is required for 'remove' action.", success=False)
             result = memory_store.remove(target, old_text)
 
+        elif action == "fact_add":
+            if not content:
+                return _tool_error("Content is required for 'fact_add' action.", success=False)
+            if not target:
+                return _tool_error(
+                    "Target (category) is required for 'fact_add' action.", success=False
+                )
+            from agent.tools.memory_tiered import get_tiered_store
+
+            return json.dumps(get_tiered_store().add_fact(target, content), ensure_ascii=False)
+
+        elif action == "fact_read":
+            cat = None if target == "all" or not target else target
+            from agent.tools.memory_tiered import get_tiered_store
+
+            facts = get_tiered_store().read_facts(cat)
+            return json.dumps({"success": True, "facts": facts}, ensure_ascii=False)
+
+        elif action == "fact_search":
+            if not content:
+                return _tool_error(
+                    "Content (search query) is required for 'fact_search' action.", success=False
+                )
+            from agent.tools.memory_tiered import get_tiered_store
+
+            results = get_tiered_store().search_facts(content)
+            return json.dumps(
+                {"success": True, "results": results, "count": len(results)}, ensure_ascii=False
+            )
+
         else:
             return _tool_error(
-                f"Unknown action '{action}'. Use: add, replace, remove", success=False
+                f"Unknown action '{action}'. "
+                "Use: add, replace, remove, fact_add, fact_read, fact_search",
+                success=False,
             )
 
         elapsed = time.time() - start_time
@@ -551,16 +583,30 @@ def check_memory_requirements() -> bool:
 class MemoryActionSchema(BaseModel):
     """Schema for memory tool arguments."""
 
-    action: Literal["add", "replace", "remove"] = Field(description="The action to perform.")
-    target: Literal["memory", "user"] = Field(
-        description="Which memory store: 'memory' for personal notes, 'user' for user profile."
+    action: Literal["add", "replace", "remove", "fact_add", "fact_read", "fact_search"] = Field(
+        description=(
+            "The action to perform. "
+            "'add'/'replace'/'remove' manage MEMORY.md and USER.md entries. "
+            "'fact_add' writes a fact to facts/<target>.md (target=category). "
+            "'fact_read' reads facts (target=category or 'all'). "
+            "'fact_search' searches facts by substring (content=query)."
+        )
+    )
+    target: str = Field(
+        default="memory",
+        description=(
+            "Which store: 'memory' or 'user' for add/replace/remove; "
+            "category name (environment|project|decisions|user_prefs|tool_lessons) for fact_add; "
+            "category name or 'all' for fact_read."
+        ),
     )
     content: str | None = Field(
-        default=None, description="The entry content. Required for 'add' and 'replace'."
+        default=None,
+        description="Entry content (add/replace), fact text (fact_add), or search query (fact_search).",
     )
     old_text: str | None = Field(
         default=None,
-        description="Short unique substring identifying the entry to replace or remove.",
+        description="Short unique substring for replace/remove. Not used for fact_* actions.",
     )
 
 
@@ -587,7 +633,14 @@ class MemoryTool(BaseTool):
         "- 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n\n"
         "ACTIONS: add (new entry), replace (update existing -- old_text identifies it), "
         "remove (delete -- old_text identifies it).\n\n"
-        "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state."
+        "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state.\n\n"
+        "FACTS LAYER (structured, on-demand, not in system prompt):\n"
+        "Use 'fact_add' to save categorized facts to facts/<category>.md files.\n"
+        "Categories: environment, project, decisions, user_prefs, tool_lessons.\n"
+        "Use 'fact_read' (target=category or 'all') to read facts.\n"
+        "Use 'fact_search' (content=query) to search facts by substring.\n"
+        "Facts files hold 4000 chars each — use for detailed, categorized knowledge\n"
+        "that doesn't fit in MEMORY.md's 2200-char budget."
     )
     args_schema: type[BaseModel] = MemoryActionSchema
     # scope="main_only": usable ONLY by the main agent; subagents can never get
@@ -600,13 +653,23 @@ class MemoryTool(BaseTool):
 
     @override
     def _run(
-        self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any
+        self,
+        action: str,
+        target: str = "memory",
+        content: str | None = None,
+        old_text: str | None = None,
+        **kwargs: Any,
     ) -> str:
         return memory_tool(action, target, content, old_text)
 
     @override
     async def _arun(
-        self, action: str, target: str, content: str, old_text: str | None = None, **kwargs: Any
+        self,
+        action: str,
+        target: str = "memory",
+        content: str | None = None,
+        old_text: str | None = None,
+        **kwargs: Any,
     ) -> str:
         return memory_tool(action, target, content, old_text)
 

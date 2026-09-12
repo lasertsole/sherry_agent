@@ -75,3 +75,7 @@ from .model_backend import (
     ModelBackendConfig as ModelBackendConfig,
     MODEL_BACKEND as MODEL_BACKEND,
 )
+from .tiered_memory import (
+    TieredMemoryConfig as TieredMemoryConfig,
+    TIERED_MEMORY as TIERED_MEMORY,
+)

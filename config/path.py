@@ -45,6 +45,7 @@ WORKSPACE_DIR = ROOT_DIR / "workspace"
 WORKSPACE_TEMPLATE_DIR = WORKSPACE_DIR / "template"
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
 MEMORY_DIR = WORKSPACE_DIR / "memory"
+FACTS_DIR = MEMORY_DIR / "facts"
 HEARTBEAT_PATH = WORKSPACE_DIR / "HEARTBEAT.md"
 # The HEARTBEAT template is language-independent; it lives directly under the
 # template dir (English text), NOT inside the locale subdirectories.
