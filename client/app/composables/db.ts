@@ -214,11 +214,11 @@ export interface CachedSubagentRun {
 }
 
 /**
- * Locally persisted AI persona preset: a named snapshot of the three editable workspace
+ * Locally persisted AI persona preset: a named snapshot of the editable workspace
  * persona files, saved/restored from the "persona dialog".
  *
  * `content` maps each persona file basename to its full text; keys are exactly
- * 'IDENTITY.md' / 'SOUL.md' / 'USER.md' (the same basenames used by the
+ * 'SOUL.md' / 'USER.md' (the same basenames used by the
  * persona dialog tabs and the backend `/system_prompt` API). Uniqueness of `name` is
  * validated at the application layer (trim + case-insensitive), not by the database
  * (Dexie has no unique indexes).
@@ -228,7 +228,7 @@ export interface PersonaPreset {
   id?: number;
   /** Display name (stored trimmed, original case kept; duplicate check is case-insensitive) */
   name: string;
-  /** Persona file contents keyed by exact basenames: 'IDENTITY.md' | 'SOUL.md' | 'USER.md' */
+  /** Persona file contents keyed by exact basenames: 'SOUL.md' | 'USER.md' */
   content: Record<string, string>;
   /** Creation time (epoch ms) */
   createdAt: number;
@@ -673,7 +673,7 @@ export async function findPersonaPresetByName(name: string): Promise<PersonaPres
  * infrastructure failures.
  *
  * @param name    Preset display name (stored trimmed)
- * @param content Persona file contents keyed by 'IDENTITY.md' / 'SOUL.md' / 'USER.md'
+ * @param content Persona file contents keyed by 'SOUL.md' / 'USER.md'
  * @returns       Auto-increment id of the newly created preset
  */
 export async function createPersonaPreset(name: string, content: Record<string, string>): Promise<number> {
@@ -693,7 +693,7 @@ export async function createPersonaPreset(name: string, content: Record<string, 
  * (the name stays the identity of the preset; renaming is not supported).
  *
  * @param id      Persona preset id
- * @param content New persona file contents (keyed by 'IDENTITY.md' / 'SOUL.md' / 'USER.md')
+ * @param content New persona file contents (keyed by 'SOUL.md' / 'USER.md')
  */
 export async function updatePersonaPreset(id: number, content: Record<string, string>): Promise<void> {
   await db.personaPresets.update(id, { content, updatedAt: Date.now() });

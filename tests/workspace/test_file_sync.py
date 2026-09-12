@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.unit]
 @pytest.fixture
 def file_sync_isolation(tmp_path, monkeypatch):
     """Isolate workspace + template dirs and the file-name list used by file_sync."""
-    file_names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"]
+    file_names = ["AGENTS.md", "SOUL.md", "USER.md"]
 
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -60,7 +60,7 @@ def test_existing_files_are_not_overwritten(file_sync_isolation):
     # AGENTS.md already exists -> not copied; the others are.
     assert "AGENTS.md" not in copied
     assert user_file.read_text(encoding="utf-8") == "USER-CUSTOMIZED"
-    for name in ("SOUL.md", "IDENTITY.md", "USER.md"):
+    for name in ("SOUL.md", "USER.md"):
         assert (ctx["ws"] / name).exists()
 
 
@@ -84,7 +84,7 @@ def test_missing_template_logs_warning_and_continues(file_sync_isolation, caplog
 
     # AGENTS.md template missing -> skipped, others still copied.
     assert "AGENTS.md" not in copied
-    assert set(copied) == {"SOUL.md", "IDENTITY.md", "USER.md"}
+    assert set(copied) == {"SOUL.md", "USER.md"}
     assert any("missing and no template" in r.getMessage() for r in caplog.records)
 
 

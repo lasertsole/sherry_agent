@@ -1,7 +1,7 @@
 # System Prompt 命令
 
 管理定义 Agent 行为的系统提示词文件
-（如 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`）。
+（如 `AGENTS.md`、`SOUL.md`、`USER.md`）。
 
 ## `system_prompt_read`
 

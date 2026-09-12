@@ -6,7 +6,6 @@ CORE_SYSTEM_FILE_NAMES: list[str] = [
 
 COMMUNITY_SYSTEM_FILE_NAMES: list[str] = [
     "SOUL.md",
-    "IDENTITY.md",
     "USER.md",
 ]
 

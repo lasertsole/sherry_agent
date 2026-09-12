@@ -10,6 +10,8 @@ from server.service.file_store import FileStore
 # editable through the /system_prompt API: the persona dialog UI no longer exposes
 # it, and the backend must reject any write attempt (defense in depth). The template
 # read is filtered the same way so the API can never leak/extend its edit surface.
+# IDENTITY.md was removed entirely (dropped from ALL_SYSTEM_FILE_NAMES + templates),
+# so it is absent from both the injection chain and this file whitelist.
 EDITABLE_SYSTEM_FILE_NAMES = [name for name in ALL_SYSTEM_FILE_NAMES if name != "AGENTS.md"]
 
 

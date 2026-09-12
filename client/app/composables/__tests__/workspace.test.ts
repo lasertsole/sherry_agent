@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('read_system_prompt_handler', () => {
   it('returns res.data as a Record', async () => {
-    const data = { 'IDENTITY.md': 'Sherry', 'SOUL.md': 'detective' };
+    const data = { 'SOUL.md': 'Sherry', 'USER.md': 'detective' };
     const mock = stubFetchApi({ code: 200, data });
     await expect(read_system_prompt_handler()).resolves.toEqual(data);
     expect(mock).toHaveBeenCalledWith({
@@ -50,10 +50,10 @@ describe('read_system_prompt_handler', () => {
 describe('write_system_prompt_file_handler', () => {
   it('returns true on success', async () => {
     const mock = stubFetchApi({ code: 200 });
-    await expect(write_system_prompt_file_handler({ 'IDENTITY.md': 'X' })).resolves.toBe(true);
+    await expect(write_system_prompt_file_handler({ 'SOUL.md': 'X' })).resolves.toBe(true);
     expect(mock).toHaveBeenCalledWith({
       url: '/system_prompt',
-      opts: { file_to_content: { 'IDENTITY.md': 'X' } },
+      opts: { file_to_content: { 'SOUL.md': 'X' } },
       method: 'post'
     });
   });

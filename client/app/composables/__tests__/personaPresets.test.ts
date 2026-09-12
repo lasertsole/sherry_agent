@@ -37,7 +37,6 @@ import { usePersonaPresets } from '../usePersonaPresets';
 
 /** Persona file contents keyed by the editable workspace basenames (v1 fixture). */
 const baseContent = (): Record<string, string> => ({
-  'IDENTITY.md': 'identity-v1',
   'SOUL.md': 'soul-v1',
   'USER.md': 'user-v1'
 });
@@ -118,7 +117,6 @@ describe('persona preset db helpers (real Dexie over fake-indexeddb)', () => {
     await db.personaPresets.update(id, { createdAt: stale, updatedAt: stale });
 
     const updated: Record<string, string> = {
-      'IDENTITY.md': 'identity-v2',
       'SOUL.md': 'soul-v2',
       'USER.md': 'user-v2'
     };
@@ -152,9 +150,8 @@ describe('persona preset db helpers (real Dexie over fake-indexeddb)', () => {
     expect(await listPersonaPresets()).toHaveLength(1);
   });
 
-  it('roundtrips content whose keys are exactly the three editable persona files', async () => {
+  it('roundtrips content whose keys are exactly the editable persona files', async () => {
     const content: Record<string, string> = {
-      'IDENTITY.md': 'identity text',
       'SOUL.md': 'soul text',
       'USER.md': 'user preferences text'
     };
@@ -162,8 +159,8 @@ describe('persona preset db helpers (real Dexie over fake-indexeddb)', () => {
     const stored = await getPersonaPreset(id);
     // Deep-equal roundtrip: every value read back exactly as written.
     expect(stored?.content).toEqual(content);
-    // The key set is exactly the three basenames, spelled verbatim.
-    expect(Object.keys(stored?.content ?? {}).sort()).toEqual(['IDENTITY.md', 'SOUL.md', 'USER.md']);
+    // The key set is exactly the editable basenames, spelled verbatim.
+    expect(Object.keys(stored?.content ?? {}).sort()).toEqual(['SOUL.md', 'USER.md']);
   });
 });
 
@@ -208,7 +205,6 @@ describe('usePersonaPresets composable (shared singleton over real Dexie)', () =
     }
 
     const updated: Record<string, string> = {
-      'IDENTITY.md': 'identity-v2',
       'SOUL.md': 'soul-v2',
       'USER.md': 'user-v2'
     };

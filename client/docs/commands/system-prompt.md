@@ -1,7 +1,7 @@
 # System Prompt Commands
 
 Manage the system prompt files that define the agent's behavior
-(e.g., `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`).
+(e.g., `AGENTS.md`, `SOUL.md`, `USER.md`).
 
 ## `system_prompt_read`
 

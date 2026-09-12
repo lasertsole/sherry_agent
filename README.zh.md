@@ -206,7 +206,6 @@ EMA_AI_agent/
 ├── tests/                  # 测试套件（pytest）
 │
 ├── workspace/              # 角色档案与行为定义
-│   ├── IDENTITY.md         # 姓名、年龄、兴趣、人际关系
 │   ├── SOUL.md             # 性格反差、语言风格
 │   ├── AGENTS.md           # 工具使用优先级、安全边界
 │   ├── USER.md             # 用户偏好与已知信息
@@ -315,7 +314,6 @@ pnpm tauri dev    # 原生桌面模式
 
 Agent 的行为由 `workspace/` 下的文件驱动：
 
-- **IDENTITY.md**：定义姓名、年龄、兴趣、人际关系等。
 - **SOUL.md**：定义性格反差、语言风格与行为逻辑。
 - **AGENTS.md**：定义工具使用优先级、安全边界与伦理准则。
 - **USER.md**：存储用户相关的交互偏好与已知信息。

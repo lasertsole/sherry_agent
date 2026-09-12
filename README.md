@@ -206,7 +206,6 @@ EMA_AI_agent/
 ├── tests/                  # Mirror-structured pytest suite (tests/<source>/...) + run_tests_split.py (marker-based runner)
 │
 ├── workspace/              # Character profile & behavior definition
-│   ├── IDENTITY.md         # Name, age, interests, relationships
 │   ├── SOUL.md             # Personality contrasts, speech style
 │   ├── AGENTS.md           # Tool usage priorities, safety boundaries
 │   ├── USER.md             # User-specific interaction preferences
@@ -355,7 +354,6 @@ Three tests in `tests/integration/` (`test_real_e2e.py`, `test_spawn_direct_e2e.
 
 The Agent's behavior is driven by the files under `workspace/`:
 
-- **IDENTITY.md**: Defines name, age, interests, relationships, etc.
 - **SOUL.md**: Defines personality contrasts, speech style, and behavioral logic.
 - **AGENTS.md**: Defines tool usage priorities, safety boundaries, and ethical guidelines.
 - **USER.md**: Stores user-specific interaction preferences and known facts.

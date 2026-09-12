@@ -203,7 +203,7 @@ const MAX_CHARS = 2000;
 interface PersonaTab {
   /** Unique key for the tab; the same basename may exist across layers. */
   key: string;
-  /** Actual filename sent to the backend (e.g. 'IDENTITY.md'). */
+  /** Actual filename sent to the backend (e.g. 'SOUL.md'). */
   file: string;
   i18nKey: string;
   i18nDescKey: string;
@@ -212,13 +212,6 @@ interface PersonaTab {
 }
 
 const tabs: PersonaTab[] = [
-  {
-    key: 'IDENTITY.md',
-    file: 'IDENTITY.md',
-    i18nKey: 'config.tabs.identity',
-    i18nDescKey: 'config.desc.identity',
-    readFn: readSystemPrompt
-  },
   {
     key: 'SOUL.md',
     file: 'SOUL.md',
@@ -537,12 +530,10 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "identity": "身份信息",
         "soul": "人格灵魂",
         "user": "用户信息"
       },
       "desc": {
-        "identity": "Agent身份：名字、emoji、头像",
         "soul": "Agent人格、语气、性格",
         "user": "用户信息和偏好"
       }
@@ -585,12 +576,10 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "identity": "Identity",
         "soul": "Soul",
         "user": "User Profile"
       },
       "desc": {
-        "identity": "Agent identity: name, emoji, avatar",
         "soul": "Agent personality, tone, character",
         "user": "User info and preferences"
       }
@@ -633,12 +622,10 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "identity": "身元情報",
         "soul": "人格・魂",
         "user": "ユーザー情報"
       },
       "desc": {
-        "identity": "Agent 身元：名前、絵文字、アバター",
         "soul": "Agent 人格、トーン、性格",
         "user": "ユーザー情報と好み"
       }
@@ -681,12 +668,10 @@ const handleApply = async () => {
         }
       },
       "tabs": {
-        "identity": "신원 정보",
         "soul": "인격·영혼",
         "user": "사용자 정보"
       },
       "desc": {
-        "identity": "Agent 신원：이름, 이모지, 아바타",
         "soul": "Agent 인격, 어조, 성격",
         "user": "사용자 정보 및 선호도"
       }

@@ -1,7 +1,7 @@
 """Lazy sync of workspace system files from the language template directory.
 
 The ``workspace/`` root may not ship with its persona files (AGENTS.md,
-SOUL.md, IDENTITY.md, USER.md) pre-created; they are instead copied in from
+SOUL.md, USER.md) pre-created; they are instead copied in from
 ``workspace/template/<lang>/`` on first use. This keeps user-authored edits in
 the workspace root authoritative — existing files are never overwritten — while
 still guaranteeing that any task expecting a system file finds it present.
