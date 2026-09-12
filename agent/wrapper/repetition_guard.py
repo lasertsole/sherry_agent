@@ -29,7 +29,7 @@ Everything else is delegated to the middleware:
 
 Integration (in ``agent/core.py``)::
 
-    from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
+    from .wrapper.repetition_guard import RepetitionGuardWrapper
     from .middlewares.output_repetition_guard import OutputRepetitionGuard
 
     _agent = create_agent(

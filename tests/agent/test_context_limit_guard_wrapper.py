@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from agent.context_limit_guard_wrapper import ContextLimitGuardWrapper
+from agent.wrapper.context_limit import ContextLimitGuardWrapper
 from runtime import state_register_mem
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]

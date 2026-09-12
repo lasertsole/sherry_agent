@@ -36,7 +36,7 @@ from langgraph.graph.state import CompiledStateGraph
 from config.features import CONTEXT_GUARD, SUMMARIZATION, TOKEN_ESTIMATION
 from runtime import state_register_mem
 from agent.middlewares.summarization_components import _FORCE_RECOVERY_KEY
-from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
+from .repetition_guard import RepetitionGuardWrapper
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 _CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]

@@ -1,7 +1,7 @@
 """Integration: ``built_agent`` builds through the pluggable wrapper registry.
 
 Heavy dependencies are faked by the ``patched_agent_core`` fixture, so these
-tests pin the seam where ``agent.core`` delegates to ``agent.graph_wrappers``.
+tests pin the seam where ``agent.core`` delegates to ``agent.wrapper.registry``.
 """
 
 from collections.abc import Iterator
@@ -10,13 +10,13 @@ from typing import Any
 import pytest
 
 from agent import core as agent_core
-from agent.context_limit_guard_wrapper import ContextLimitGuardWrapper
-from agent.graph_wrappers import (
+from agent.wrapper.context_limit import ContextLimitGuardWrapper
+from agent.wrapper.registry import (
     register_graph_wrapper,
     reset_graph_wrappers,
     unregister_graph_wrapper,
 )
-from agent.stream_repetition_guard_wrapper import RepetitionGuardWrapper
+from agent.wrapper.repetition_guard import RepetitionGuardWrapper
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 

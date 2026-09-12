@@ -26,11 +26,11 @@ def __getattr__(name: str) -> Any:
 
         return build_async_sqlite_checkpointer
     if name == "ContextLimitGuardWrapper":
-        from .context_limit_guard_wrapper import ContextLimitGuardWrapper
+        from .wrapper.context_limit import ContextLimitGuardWrapper
 
         return ContextLimitGuardWrapper
     if name == "RepetitionGuardWrapper":
-        from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
+        from .wrapper.repetition_guard import RepetitionGuardWrapper
 
         return RepetitionGuardWrapper
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

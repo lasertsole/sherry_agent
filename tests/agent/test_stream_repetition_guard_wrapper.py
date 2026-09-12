@@ -1,4 +1,4 @@
-"""Unit tests for agent/stream_repetition_guard_wrapper.py — RepetitionGuardWrapper (slim).
+"""Unit tests for agent/wrapper/repetition_guard.py — RepetitionGuardWrapper (slim).
 
 The slim wrapper handles ONLY what the middleware cannot — real-time
 stream-level internal repetition cutting. Cross-call detection, per-turn
@@ -121,8 +121,8 @@ from agent.middlewares.output_repetition_guard import (
     _STREAM_WARNING,
 )
 import agent.middlewares.output_repetition_guard as _org_module
-import agent.stream_repetition_guard_wrapper as _wrapper_module
-from agent.stream_repetition_guard_wrapper import RepetitionGuardWrapper
+import agent.wrapper.repetition_guard as _wrapper_module
+from agent.wrapper.repetition_guard import RepetitionGuardWrapper
 
 
 # ======================================================================

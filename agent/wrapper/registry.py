@@ -20,8 +20,8 @@ from collections.abc import Callable
 from langgraph.graph.state import CompiledStateGraph
 
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
-from .context_limit_guard_wrapper import ContextLimitGuardWrapper
-from .stream_repetition_guard_wrapper import RepetitionGuardWrapper
+from .context_limit import ContextLimitGuardWrapper
+from .repetition_guard import RepetitionGuardWrapper
 
 # One wrapper step: receives the current graph, returns a wrapped graph.
 GraphWrapperFactory = Callable[[CompiledStateGraph], CompiledStateGraph]

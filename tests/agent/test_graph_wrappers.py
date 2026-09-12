@@ -1,4 +1,4 @@
-"""Tests for the pluggable graph-wrapper chain (``agent.graph_wrappers``).
+"""Tests for the pluggable graph-wrapper chain (``agent.wrapper.registry``).
 
 The registry is process-global state, so every test runs under the autouse
 ``_reset_registry`` fixture. Order-sensitive tests first strip the default
@@ -11,9 +11,9 @@ from typing import Any
 import pytest
 
 from agent import core as agent_core
-from agent import graph_wrappers as gw
-from agent.context_limit_guard_wrapper import ContextLimitGuardWrapper
-from agent.stream_repetition_guard_wrapper import RepetitionGuardWrapper
+from agent.wrapper import registry as gw
+from agent.wrapper.context_limit import ContextLimitGuardWrapper
+from agent.wrapper.repetition_guard import RepetitionGuardWrapper
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 

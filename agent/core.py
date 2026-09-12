@@ -26,8 +26,8 @@ from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.todo_continuation import TodoContinuationEnforcer
-from agent.graph_wrappers import apply_graph_wrappers
-from .context_limit_guard_wrapper import ContextLimitGuardWrapper
+from agent.wrapper.registry import apply_graph_wrappers
+from .wrapper.context_limit import ContextLimitGuardWrapper
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 
@@ -176,7 +176,7 @@ async def built_agent(
                 ),
             ],
         )
-        # Wrap with the pluggable graph-wrapper chain (agent/graph_wrappers).
+        # Wrap with the pluggable graph-wrapper chain (agent/wrapper/registry.py).
         # Defaults, innermost first:
         #
         # 1. RepetitionGuardWrapper: stream-level repetition
