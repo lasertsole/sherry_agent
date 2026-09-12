@@ -4,7 +4,8 @@ Database path: agent/tools/taskflow/data/taskflow_registry.db
 Table schema: task_flows(flow_id TEXT PK, state_json TEXT NOT NULL,
 wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL,
 child_session_key TEXT, total_tokens INTEGER DEFAULT 0,
-total_cost REAL DEFAULT 0.0, token_budget INTEGER DEFAULT 0)
+total_cost REAL DEFAULT 0.0, token_budget INTEGER DEFAULT 0,
+deadline_ts REAL)
 
 Connection lifecycle mirrors the subagent registry blueprint
 (agent/tools/subagent/registry/store_sqlite.py): EVERY connection (aiosqlite
@@ -35,7 +36,7 @@ import aiosqlite
 from loguru import logger
 
 from config.features import TASKFLOW_INFRA
-from ..config import INITIAL_REVISION, TABLE_NAME, TaskFlowStatus
+from ..config import INITIAL_REVISION, TABLE_NAME, TERMINAL_STATUSES, TaskFlowStatus
 
 _DB_DIR = Path(__file__).resolve().parent.parent / "data"
 _DB_PATH = _DB_DIR / "taskflow_registry.db"
@@ -60,13 +61,14 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     child_session_key TEXT,
     total_tokens INTEGER DEFAULT 0,
     total_cost REAL DEFAULT 0.0,
-    token_budget INTEGER DEFAULT 0
+    token_budget INTEGER DEFAULT 0,
+    deadline_ts REAL
 );
 """
 
 _SELECT_COLUMNS_SQL = (
     f"SELECT flow_id, state_json, wait_json, expected_revision, status, child_session_key, "
-    f"total_tokens, total_cost, token_budget "
+    f"total_tokens, total_cost, token_budget, deadline_ts "
     f"FROM {TABLE_NAME}"
 )
 
@@ -99,6 +101,28 @@ def _ensure_token_columns_sync(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError:
             # Column already exists - nothing to do.
             pass
+
+
+# Additive migration DDL for databases created before GAP-4 (no deadline).
+_DEADLINE_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN deadline_ts REAL"
+
+
+async def _ensure_deadline_column(db: aiosqlite.Connection) -> None:
+    """Additive migration: add the GAP-4 deadline_ts column when absent."""
+    try:
+        await db.execute(_DEADLINE_COLUMN_DDL)
+    except aiosqlite.OperationalError:
+        # Column already exists - nothing to do.
+        pass
+
+
+def _ensure_deadline_column_sync(conn: sqlite3.Connection) -> None:
+    """Additive deadline-column migration for the stdlib sqlite3 paths."""
+    try:
+        conn.execute(_DEADLINE_COLUMN_DDL)
+    except sqlite3.OperationalError:
+        # Column already exists - nothing to do.
+        pass
 
 
 # Once-per-process async schema-init state. asyncio primitives are single-loop
@@ -187,6 +211,7 @@ def _row_to_flow(row: tuple) -> dict:
         total_tokens,
         total_cost,
         token_budget,
+        deadline_ts,
     ) = row
     return {
         "flow_id": flow_id,
@@ -198,6 +223,7 @@ def _row_to_flow(row: tuple) -> dict:
         "total_tokens": int(total_tokens or 0),
         "total_cost": float(total_cost or 0.0),
         "token_budget": int(token_budget or 0),
+        "deadline_ts": float(deadline_ts) if deadline_ts is not None else None,
     }
 
 
@@ -248,6 +274,7 @@ async def _init_db() -> None:
         await _switch_to_wal_if_needed(db)
         await db.execute(_CREATE_TABLE_SQL)
         await _ensure_token_columns(db)
+        await _ensure_deadline_column(db)
         await db.commit()
 
 
@@ -302,6 +329,7 @@ def _ensure_tables_sync() -> None:
         try:
             conn.execute(_CREATE_TABLE_SQL)
             _ensure_token_columns_sync(conn)
+            _ensure_deadline_column_sync(conn)
             conn.commit()
         finally:
             conn.close()
@@ -314,19 +342,39 @@ async def create_flow(
     *,
     status: str = TaskFlowStatus.RUNNING.value,
     child_session_key: str | None = None,
+    deadline_ts: float | None = None,
 ) -> dict:
     """Insert a new flow at INITIAL_REVISION; FlowExistsError on duplicate id."""
     flow_id = (flow_id or "").strip()
     if not flow_id:
         raise ValueError("flow_id must be a non-empty string")
     await ensure_db()
+    columns = [
+        "flow_id",
+        "state_json",
+        "wait_json",
+        "expected_revision",
+        "status",
+        "child_session_key",
+    ]
+    placeholders = ["?", "?", "NULL", "?", "?", "?"]
+    params: list[object] = [
+        flow_id,
+        _dump_json(state),
+        INITIAL_REVISION,
+        status,
+        child_session_key,
+    ]
+    if deadline_ts is not None:
+        columns.append("deadline_ts")
+        placeholders.append("?")
+        params.append(float(deadline_ts))
     try:
         async with _connect() as db:
             await db.execute(
-                f"INSERT INTO {TABLE_NAME} "
-                "(flow_id, state_json, wait_json, expected_revision, status, child_session_key) "
-                "VALUES (?, ?, NULL, ?, ?, ?)",
-                (flow_id, _dump_json(state), INITIAL_REVISION, status, child_session_key),
+                f"INSERT INTO {TABLE_NAME} ({', '.join(columns)}) "
+                f"VALUES ({', '.join(placeholders)})",
+                params,
             )
             await db.commit()
     except aiosqlite.IntegrityError as e:
@@ -358,6 +406,7 @@ async def update_flow(
     total_tokens: int | None = None,
     total_cost: float | None = None,
     token_budget: int | None = None,
+    deadline_ts: float | None | _Unset = UNSET,
 ) -> dict:
     """Optimistic-locking mutation of one flow row.
 
@@ -369,6 +418,7 @@ async def update_flow(
     * ``status``: replace status when not None.
     * ``child_session_key``: replace when not UNSET.
     * ``total_tokens``/``total_cost``/``token_budget``: replace when not None.
+    * ``deadline_ts``: replace when not UNSET and not None.
 
     Returns the updated flow dict. Raises FlowNotFoundError when the flow does
     not exist, FlowConflictError (carrying the latest revision) when another
@@ -397,6 +447,9 @@ async def update_flow(
     if token_budget is not None:
         assignments.append("token_budget = ?")
         params.append(int(token_budget))
+    if not isinstance(deadline_ts, _Unset) and deadline_ts is not None:
+        assignments.append("deadline_ts = ?")
+        params.append(float(deadline_ts))
     if not assignments:
         raise ValueError("update_flow called with nothing to update")
 
@@ -427,6 +480,22 @@ async def update_flow(
     flow = await get_flow(flow_id)
     assert flow is not None  # the UPDATE just matched this row
     return flow
+
+
+async def get_overdue_flows(now_ts: float) -> list[dict]:
+    """Return non-terminal flows whose deadline_ts < now_ts."""
+    await ensure_db()
+    terminal = tuple(sorted(TERMINAL_STATUSES))
+    placeholders = ", ".join("?" for _ in terminal)
+    async with _connect() as db:
+        async with db.execute(
+            _SELECT_COLUMNS_SQL
+            + " WHERE deadline_ts IS NOT NULL AND deadline_ts < ? "
+            + f"AND status NOT IN ({placeholders})",
+            (now_ts, *terminal),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [_row_to_flow(row) for row in rows]
 
 
 def get_flow_sync(flow_id: str) -> dict | None:

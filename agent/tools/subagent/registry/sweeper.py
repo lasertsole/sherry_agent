@@ -105,7 +105,42 @@ async def _do_sweep() -> None:
     if swept > 0:
         logger.debug("Sweeper pruned {} stale lifecycle entries", swept)
 
+    expired_flows = await _expire_overdue_taskflows()
+    if expired_flows > 0:
+        logger.warning("Sweeper: {} TaskFlow(s) exceeded deadline, marked as failed", expired_flows)
+
     await run_with_work_admission(_persist_async(), label="sweeper-persist")
+
+
+async def _expire_overdue_taskflows() -> int:
+    """Mark non-terminal TaskFlows whose deadline has passed as failed."""
+    from agent.tools.taskflow.config import TaskFlowStatus
+    from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+
+    try:
+        overdue = await taskflow_store.get_overdue_flows(time.time())
+        expired = 0
+        for flow in overdue:
+            deadline_ts = flow["deadline_ts"]
+            try:
+                state = dict(flow.get("state") or {})
+                state["failure_reason"] = "Deadline exceeded: " + time.strftime(
+                    "%Y-%m-%d %H:%M", time.localtime(deadline_ts)
+                )
+                await taskflow_store.update_flow(
+                    flow["flow_id"],
+                    flow["expected_revision"],
+                    state=state,
+                    status=TaskFlowStatus.FAILED.value,
+                )
+                expired += 1
+                logger.warning("TaskFlow '{}' deadline exceeded, marked failed", flow["flow_id"])
+            except Exception as e:
+                logger.warning("Failed to expire TaskFlow '{}': {}", flow["flow_id"], e)
+        return expired
+    except Exception as e:
+        logger.warning("TaskFlow deadline sweep failed: {}", e)
+        return 0
 
 
 async def _expire_suspended_by_requester_type() -> int:

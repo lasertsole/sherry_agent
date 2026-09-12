@@ -5,11 +5,12 @@ instructs the caller to retry with the revision reported here.
 """
 
 import json
+import time
 
 from langchain_core.tools import tool
 
 from ..registry import store_sqlite
-from ._shared import not_found_error, step_status, steps_summary
+from ._shared import is_terminal, not_found_error, step_status, steps_summary
 
 
 @tool("taskflow_summary")
@@ -46,6 +47,18 @@ async def taskflow_summary(flow_id: str) -> str:
             )
     counts = steps_summary(steps)
     lines.append("step statuses: " + " ".join(f"{status}={n}" for status, n in counts.items()))
+    deadline_ts = flow.get("deadline_ts")
+    if deadline_ts:
+        now = time.time()
+        deadline_text = time.strftime("%Y-%m-%d %H:%M", time.localtime(deadline_ts))
+        if now > deadline_ts and not is_terminal(flow["status"]):
+            lines.append(f"deadline: EXCEEDED (was {deadline_text})")
+        else:
+            remaining_h = (deadline_ts - now) / 3600
+            if remaining_h > 0:
+                lines.append(f"deadline: {deadline_text} ({remaining_h:.1f}h remaining)")
+            else:
+                lines.append(f"deadline: {deadline_text} (passed)")
     lines.append(f"results: {len(results)}")
     for item in results:
         if isinstance(item, dict):
