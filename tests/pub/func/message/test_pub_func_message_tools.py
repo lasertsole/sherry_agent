@@ -208,9 +208,11 @@ class TestToolOutputPrune:
         result, tokens_reduced = prune_tool_outputs(
             messages, protect_tokens=1000, min_reduction_tokens=100, protected_tools={"memory"}
         )
-        # memory output is protected even though it is old; search output is pruned.
+        # memory output is protected even though it is old; search output is
+        # pruned to its one-line summary (P0-4), never the opaque marker.
         assert result[2].content == "m" * 8000
-        assert result[4].content == PRUNE_MARKER
+        assert result[4].content == f"[tool] output 8000 chars, first 100: {'p' * 100}..."
+        assert PRUNE_MARKER not in result[4].content
         assert tokens_reduced == 8000 // 4
 
     def test_stops_at_summary_message(self):
@@ -228,9 +230,11 @@ class TestToolOutputPrune:
         result, tokens_reduced = prune_tool_outputs(
             messages, protect_tokens=500, min_reduction_tokens=100
         )
-        # Traversal stops at the summary: only the post-summary tool output is pruned.
+        # Traversal stops at the summary: only the post-summary tool output is
+        # pruned to its one-line summary (P0-4).
         assert result[2].content == "o" * 8000
-        assert result[5].content == PRUNE_MARKER
+        assert result[5].content == f"[tool] output 8000 chars, first 100: {'n' * 100}..."
+        assert PRUNE_MARKER not in result[5].content
         assert tokens_reduced == 8000 // 4
 
     def test_min_reduction_tokens_not_met_returns_unchanged(self):
