@@ -42,6 +42,7 @@ async def taskflow_run_task(
     label: str | None = None,
     expected_revision: int | None = None,
     depends_on: list[str] | None = None,
+    validation_criteria: str | None = None,
     session_id: SessionId = "",
 ) -> str:
     """Register a step on the flow and dispatch it to a detached child subagent.
@@ -55,9 +56,15 @@ async def taskflow_run_task(
     not yet ``done`` the step is registered as ``blocked`` and NOT dispatched
     (no child is spawned); resume/dispatch unlock it later. An unknown
     dependency id is rejected before any spawn or state change.
+
+    Pass validation_criteria (natural-language acceptance criteria) to store
+    them on the step; taskflow_resume echoes them with the child result so the
+    orchestrator can judge whether the result passes. The tool itself never
+    enforces the criteria.
     """
     flow_id = (flow_id or "").strip()
     task = (task or "").strip()
+    criteria = (validation_criteria or "").strip()
     if not flow_id:
         return "Error: flow_id is required"
     if not task:
@@ -85,6 +92,8 @@ async def taskflow_run_task(
     step_id = f"step-{len(steps) + 1}"
 
     candidate = new_step(step_id, task, depends_on=deps, status=StepStatus.READY)
+    if criteria:
+        candidate["validation_criteria"] = criteria
     if not deps_satisfied(candidate, steps):
         candidate["status"] = str(StepStatus.BLOCKED)
         steps.append(candidate)
@@ -115,6 +124,8 @@ async def taskflow_run_task(
         fresh_steps = list(fresh_state.get("steps") or [])
         step_id = f"step-{len(fresh_steps) + 1}"
         dispatched = new_step(step_id, task, depends_on=deps, status=StepStatus.DISPATCHED)
+        if criteria:
+            dispatched["validation_criteria"] = criteria
         dispatched["child_session_key"] = child_session_key
         dispatched["dispatched_at"] = dispatched_at
         fresh_steps.append(dispatched)

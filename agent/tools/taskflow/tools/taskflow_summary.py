@@ -42,9 +42,11 @@ async def taskflow_summary(flow_id: str) -> str:
         if isinstance(step, dict):
             depends_on = step.get("depends_on") or []
             deps_text = "[" + ", ".join(str(dep) for dep in depends_on) + "]"
+            criteria = str(step.get("validation_criteria") or "").strip()
+            criteria_text = f" validation_criteria={criteria}" if criteria else ""
             lines.append(
                 f"  - [{step.get('step_id')}] {step_status(step)} {step.get('task')} "
-                f"-> {step.get('child_session_key')} depends_on={deps_text}"
+                f"-> {step.get('child_session_key')} depends_on={deps_text}{criteria_text}"
             )
     counts = steps_summary(steps)
     lines.append("step statuses: " + " ".join(f"{status}={n}" for status, n in counts.items()))

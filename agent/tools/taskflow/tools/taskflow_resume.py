@@ -38,6 +38,7 @@ async def taskflow_resume(
     result: str = "",
     expected_revision: int | None = None,
     token_usage: dict | None = None,
+    validation_criteria: str | None = None,
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
 
@@ -48,6 +49,11 @@ async def taskflow_resume(
     fast on concurrent writers. Pass
     token_usage={"input_tokens": N, "output_tokens": M, "model_name": "..."} to
     accumulate the child's token spend and estimated cost onto the flow.
+
+    When the step carries validation_criteria (set by taskflow_run_task or
+    passed here), the response echoes them with a warning that the result
+    still needs validation: the orchestrator judges the result against the
+    criteria. The criteria are not enforced by the tool.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -91,6 +97,19 @@ async def taskflow_resume(
     # caller dispatches them explicitly (taskflow_dispatch).
     steps = list(state.get("steps") or [])
     step_id = mark_step_done(steps, child_session_key)
+    validation_text = ""
+    if step_id is not None:
+        step = next((s for s in steps if s.get("step_id") == step_id), None)
+        if step is not None:
+            criteria = (validation_criteria or "").strip()
+            if criteria:
+                step["validation_criteria"] = criteria
+            stored_criteria = str(step.get("validation_criteria") or "").strip()
+            if stored_criteria:
+                validation_text = (
+                    f"\n  validation_criteria: {stored_criteria}"
+                    f"\n  ⚠ Result needs validation against criteria"
+                )
     newly_ready = unlock_dependents(steps)
     state["steps"] = steps
     counts = steps_summary(steps)
@@ -142,4 +161,5 @@ async def taskflow_resume(
         f"TaskFlow resumed: flow_id={flow_id}, revision={updated['expected_revision']}, "
         f"results={len(results)}, status={updated['status']}, step_id={step_id}, "
         f"unlocked=[{unlocked_text}], step_statuses={counts_text}"
+        f"{validation_text}"
     )
