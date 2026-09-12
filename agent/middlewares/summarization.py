@@ -48,6 +48,8 @@ from pub.func.message.llm_error_classifier import (
 )
 from agent.middlewares.summarization_components import (
     CompressionEffectivenessTracker,
+    INEFFECTIVE_THRESHOLD,
+    MAX_TOTAL_COMPRESSION_ATTEMPTS,
     MessageTruncator,
     OrphanPairRepairer,
     find_tool_name,
@@ -107,6 +109,21 @@ _TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
 # T4/T5 overflow retry counter: session-level, shared by every classified
 # overflow error, same state_register_mem pattern as the keys above.
 _OVERFLOW_RETRIES_KEY = "summarization_overflow_retries"
+
+# P0-2: anti-thrash keys that must survive a process restart. The
+# CompressionEffectivenessTracker mutates these in ``state_register_mem``
+# only; this module mirrors the current values into the SQLite-backed
+# ``state_register_db`` and rehydrates them on first access after a restart.
+_COOLDOWN_PERSIST_KEYS: tuple[str, ...] = (
+    _SKIP_LLM_KEY,
+    _COMPRESSION_COUNT_KEY,
+    _COMPRESSION_INEFFECTIVE_KEY,
+)
+
+# Sessions already rehydrated in THIS process. A restart resets this set,
+# which is exactly the "first access for this session in a new process"
+# condition the restore guard needs.
+_RESTORED_COOLDOWN_SESSIONS: set[str] = set()
 
 # Classified provider error -> (recovery trigger label, session retry key).
 # Any future classifier value missing from these maps is treated as a
@@ -1324,8 +1341,40 @@ class Summarization(AgentMiddleware):
     # Anti-thrashing: progressive escalation
     # ------------------------------------------------------------------
 
+    def _cooldown_degraded(self, session_id: str) -> bool:
+        skip_llm = state_register_mem.get_state(session_id, _SKIP_LLM_KEY, False)
+        ineffective = state_register_mem.get_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0) or 0
+        attempts = state_register_mem.get_state(session_id, _COMPRESSION_COUNT_KEY, 0) or 0
+        return (
+            bool(skip_llm)
+            or ineffective >= INEFFECTIVE_THRESHOLD
+            or attempts >= MAX_TOTAL_COMPRESSION_ATTEMPTS
+        )
+
+    def _persist_cooldown_state(self, session_id: str) -> None:
+        for key in _COOLDOWN_PERSIST_KEYS:
+            value = state_register_mem.get_state(session_id, key)
+            if value is not None:
+                state_register_db.set_state(session_id, key, value)
+
+    def _restore_cooldown_state(self, session_id: str) -> None:
+        for key in _COOLDOWN_PERSIST_KEYS:
+            value = state_register_db.get_state(session_id, key)
+            if value is not None:
+                state_register_mem.set_state(session_id, key, value)
+
+    def _maybe_restore_cooldown_state(self, session_id: str) -> None:
+        if session_id in _RESTORED_COOLDOWN_SESSIONS:
+            return
+        _RESTORED_COOLDOWN_SESSIONS.add(session_id)
+        self._restore_cooldown_state(session_id)
+
     def _should_skip_compression(self, session_id: str) -> bool:
-        return self._effectiveness_tracker.should_skip(session_id)
+        was_degraded = self._cooldown_degraded(session_id)
+        result = self._effectiveness_tracker.should_skip(session_id)
+        if was_degraded or self._cooldown_degraded(session_id):
+            self._persist_cooldown_state(session_id)
+        return result
 
     def _record_compression(
         self,
@@ -1334,9 +1383,12 @@ class Summarization(AgentMiddleware):
         after_messages: Sequence[BaseMessage],
         strategy_used: str = "",
     ) -> None:
+        was_degraded = self._cooldown_degraded(session_id)
         self._effectiveness_tracker.record(
             session_id, before_messages, after_messages, strategy_used
         )
+        if was_degraded or self._cooldown_degraded(session_id):
+            self._persist_cooldown_state(session_id)
 
     # ------------------------------------------------------------------
     # Cutoff determination (budget-based tail selection)
@@ -1661,10 +1713,13 @@ class Summarization(AgentMiddleware):
             if count >= DEGRADATION_NO_TEXT_THRESHOLD:
                 attempts = state_register_mem.get_state(session_id, _RECOVERY_ATTEMPTS_KEY, 0)
                 if attempts < MAX_RECOVERY_ATTEMPTS:
+                    was_degraded = self._cooldown_degraded(session_id)
                     state_register_mem.set_state(session_id, _RECOVERY_ATTEMPTS_KEY, attempts + 1)
                     state_register_mem.set_state(session_id, _FORCE_RECOVERY_KEY, True)
                     state_register_mem.set_state(session_id, _COMPRESSION_INEFFECTIVE_KEY, 0)
                     state_register_mem.set_state(session_id, _COMPRESSION_COUNT_KEY, 0)
+                    if was_degraded:
+                        self._persist_cooldown_state(session_id)
                     logger.warning(
                         "Degradation detected ({} empty responses), forcing recovery",
                         count,
@@ -1856,6 +1911,7 @@ class Summarization(AgentMiddleware):
         session_id = state.get("session_id", "")
         if session_id.strip():
             self._reset_turn_state(session_id)
+            self._maybe_restore_cooldown_state(session_id)
             # T1 PREFLIGHT: budget-truncate / compact the OVERFLOWED history
             # before the turn starts (4-route decision, truncate track is
             # always allowed; compact routes are cooldown-gated).
@@ -1866,6 +1922,7 @@ class Summarization(AgentMiddleware):
         session_id = state.get("session_id", "")
         if session_id.strip():
             self._reset_turn_state(session_id)
+            self._maybe_restore_cooldown_state(session_id)
             return await self._at1_preflight(state, session_id)
         return None
 
