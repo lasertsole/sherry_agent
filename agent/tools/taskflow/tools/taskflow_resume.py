@@ -37,6 +37,7 @@ async def taskflow_resume(
     child_session_key: str = "",
     result: str = "",
     expected_revision: int | None = None,
+    token_usage: dict | None = None,
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
 
@@ -44,7 +45,9 @@ async def taskflow_resume(
     flow to running when it was waiting. Resuming with the SAME
     child_session_key and result again is a no-op (already resumed), so
     duplicate deliveries never inject twice. Pass expected_revision to fail
-    fast on concurrent writers.
+    fast on concurrent writers. Pass
+    token_usage={"input_tokens": N, "output_tokens": M, "model_name": "..."} to
+    accumulate the child's token spend and estimated cost onto the flow.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -97,6 +100,27 @@ async def taskflow_resume(
         TaskFlowStatus.RUNNING.value if flow["status"] == TaskFlowStatus.WAITING.value else None
     )
 
+    # Aggregate the child's token spend when the caller reports it. The
+    # idempotency guard above already returned for a duplicate delivery, so a
+    # redelivered result never double-counts.
+    total_tokens: int | None = None
+    total_cost: float | None = None
+    if token_usage:
+        from config.features import MODEL_PRICING
+
+        input_tokens = int(token_usage.get("input_tokens") or 0)
+        output_tokens = int(token_usage.get("output_tokens") or 0)
+        pricing_table = MODEL_PRICING["model_pricing_per_m_tokens"]
+        model_name = str(token_usage.get("model_name") or "")
+        pricing = pricing_table.get(model_name, pricing_table["_default"])
+
+        total_tokens = int(flow.get("total_tokens") or 0) + input_tokens + output_tokens
+        cost_delta = (
+            input_tokens * pricing["input"] / 1_000_000
+            + output_tokens * pricing["output"] / 1_000_000
+        )
+        total_cost = round(float(flow.get("total_cost") or 0.0) + cost_delta, 6)
+
     try:
         updated = await store_sqlite.update_flow(
             flow_id,
@@ -104,6 +128,8 @@ async def taskflow_resume(
             state=state,
             wait=None,
             status=new_status,
+            total_tokens=total_tokens,
+            total_cost=total_cost,
         )
     except FlowConflictError as exc:
         return conflict_error(exc)

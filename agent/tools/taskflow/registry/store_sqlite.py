@@ -3,7 +3,8 @@
 Database path: agent/tools/taskflow/data/taskflow_registry.db
 Table schema: task_flows(flow_id TEXT PK, state_json TEXT NOT NULL,
 wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL,
-child_session_key TEXT)
+child_session_key TEXT, total_tokens INTEGER DEFAULT 0,
+total_cost REAL DEFAULT 0.0, token_budget INTEGER DEFAULT 0)
 
 Connection lifecycle mirrors the subagent registry blueprint
 (agent/tools/subagent/registry/store_sqlite.py): EVERY connection (aiosqlite
@@ -56,14 +57,49 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     wait_json TEXT,
     expected_revision INTEGER NOT NULL,
     status TEXT NOT NULL,
-    child_session_key TEXT
+    child_session_key TEXT,
+    total_tokens INTEGER DEFAULT 0,
+    total_cost REAL DEFAULT 0.0,
+    token_budget INTEGER DEFAULT 0
 );
 """
 
 _SELECT_COLUMNS_SQL = (
-    f"SELECT flow_id, state_json, wait_json, expected_revision, status, child_session_key "
+    f"SELECT flow_id, state_json, wait_json, expected_revision, status, child_session_key, "
+    f"total_tokens, total_cost, token_budget "
     f"FROM {TABLE_NAME}"
 )
+
+# Additive migration DDL for databases created before GAP-3. Fresh databases
+# get these columns from _CREATE_TABLE_SQL; an existing table needs ALTER TABLE.
+# Each statement is attempted independently: the "duplicate column name"
+# OperationalError on an already-migrated column is the expected no-op.
+_TOKEN_COLUMN_DDL: list[str] = [
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN total_tokens INTEGER DEFAULT 0",
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN total_cost REAL DEFAULT 0.0",
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN token_budget INTEGER DEFAULT 0",
+]
+
+
+async def _ensure_token_columns(db: aiosqlite.Connection) -> None:
+    """Additive migration: add the GAP-3 token columns when absent."""
+    for ddl in _TOKEN_COLUMN_DDL:
+        try:
+            await db.execute(ddl)
+        except aiosqlite.OperationalError:
+            # Column already exists - nothing to do.
+            pass
+
+
+def _ensure_token_columns_sync(conn: sqlite3.Connection) -> None:
+    """Additive token-column migration for the stdlib sqlite3 paths."""
+    for ddl in _TOKEN_COLUMN_DDL:
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            # Column already exists - nothing to do.
+            pass
+
 
 # Once-per-process async schema-init state. asyncio primitives are single-loop
 # by design, so the lock is only ever touched by the owning loop (see
@@ -141,7 +177,17 @@ def _load_json(raw: str | None) -> dict | None:
 
 
 def _row_to_flow(row: tuple) -> dict:
-    flow_id, state_json, wait_json, expected_revision, status, child_session_key = row
+    (
+        flow_id,
+        state_json,
+        wait_json,
+        expected_revision,
+        status,
+        child_session_key,
+        total_tokens,
+        total_cost,
+        token_budget,
+    ) = row
     return {
         "flow_id": flow_id,
         "state": _load_json(state_json) or {},
@@ -149,6 +195,9 @@ def _row_to_flow(row: tuple) -> dict:
         "expected_revision": int(expected_revision),
         "status": status,
         "child_session_key": child_session_key,
+        "total_tokens": int(total_tokens or 0),
+        "total_cost": float(total_cost or 0.0),
+        "token_budget": int(token_budget or 0),
     }
 
 
@@ -198,6 +247,7 @@ async def _init_db() -> None:
     async with _connect() as db:
         await _switch_to_wal_if_needed(db)
         await db.execute(_CREATE_TABLE_SQL)
+        await _ensure_token_columns(db)
         await db.commit()
 
 
@@ -251,6 +301,7 @@ def _ensure_tables_sync() -> None:
         conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
         try:
             conn.execute(_CREATE_TABLE_SQL)
+            _ensure_token_columns_sync(conn)
             conn.commit()
         finally:
             conn.close()
@@ -304,6 +355,9 @@ async def update_flow(
     wait: dict | None | _Unset = UNSET,
     status: str | None = None,
     child_session_key: str | None | _Unset = UNSET,
+    total_tokens: int | None = None,
+    total_cost: float | None = None,
+    token_budget: int | None = None,
 ) -> dict:
     """Optimistic-locking mutation of one flow row.
 
@@ -314,6 +368,7 @@ async def update_flow(
     * ``wait``: replace wait_json; None clears it; UNSET keeps it.
     * ``status``: replace status when not None.
     * ``child_session_key``: replace when not UNSET.
+    * ``total_tokens``/``total_cost``/``token_budget``: replace when not None.
 
     Returns the updated flow dict. Raises FlowNotFoundError when the flow does
     not exist, FlowConflictError (carrying the latest revision) when another
@@ -333,6 +388,15 @@ async def update_flow(
     if not isinstance(child_session_key, _Unset):
         assignments.append("child_session_key = ?")
         params.append(child_session_key)
+    if total_tokens is not None:
+        assignments.append("total_tokens = ?")
+        params.append(int(total_tokens))
+    if total_cost is not None:
+        assignments.append("total_cost = ?")
+        params.append(float(total_cost))
+    if token_budget is not None:
+        assignments.append("token_budget = ?")
+        params.append(int(token_budget))
     if not assignments:
         raise ValueError("update_flow called with nothing to update")
 

@@ -44,6 +44,11 @@ getTaskSummary)。
 - `taskflow_cancel(flow_id, reason, expected_revision)`:取消流(终态)。
 - `taskflow_summary(flow_id)`:只读回读状态、revision、child_session_key、步骤与
   结果;也是冲突后的重读入口。
+- `taskflow_budget(flow_id, action, token_budget, expected_revision)`:查询或设置流的
+  token/费用预算。`action="query"` 报告已用 token、估算费用、剩余额度与状态
+  (`ok` / `WARNING`(≥80%) / `EXCEEDED`(≥100%));`action="set"` 设置正整数
+  `token_budget`,终态流拒绝。`taskflow_resume` 传入 `token_usage` 时会把子会话的
+  token 用量与估算费用累加到流上。
 
 ## 乐观锁与冲突重试
 

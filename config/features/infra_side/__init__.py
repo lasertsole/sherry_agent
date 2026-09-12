@@ -71,3 +71,7 @@ from .channels import (
     ChannelsConfig as ChannelsConfig,
     CHANNELS as CHANNELS,
 )
+from .model_pricing import (
+    ModelPricingConfig as ModelPricingConfig,
+    MODEL_PRICING as MODEL_PRICING,
+)
