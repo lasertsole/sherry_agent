@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import cast
 from skills.loader import get_skills_text
-from config import WORKSPACE_DIR, TEMP_DIR
+from config import WORKSPACE_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
 
@@ -166,6 +166,21 @@ def _build_taskflow_block(session_id: str) -> str:
         return ""
 
 
+def _build_continuity_block(session_id: str) -> str:
+    """Render the last session's end state for cross-session continuity.
+
+    Injects the previous session's tail AI reply + related TaskFlow ids so the
+    agent can proactively continue unfinished work on session start. Returns ""
+    on none or any failure (fail-open).
+    """
+    try:
+        from context_engine.session_continuity import build_continuity_prompt
+
+        return build_continuity_prompt(session_id)
+    except Exception:
+        return ""
+
+
 def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
@@ -174,12 +189,6 @@ def _read_text(path: Path) -> str:
         return text[:MAX_FILE_CHARS] + "\n...[truncated]"
     return text
 
-
-skill_guide_text: str = f"""
-补充说明：
-1.将<skill_folder>替换成技能文件SKILL.md所在的目录 比如技能文件在 "./skills/text_to_image/SKILL.md", 那么文件目录就在 "./skills/text_to_image"
-2.技能生成的临时资源（如图片、语音等）存放在{TEMP_DIR.as_posix()}目录下
-"""
 
 _WORKSPACE_STATE_KEY = "workspace"
 
@@ -207,11 +216,9 @@ def build_system_prompt(
     """Assemble the system prompt from persona files, memory, live blocks and skills."""
     # --- Skill block ---------------------------------------------------
     # Compose the skill prompt from the selected skills (or all of them when
-    # None). A one-line skill guide is always appended to orient the agent.
-    # caller_scope="main": the main agent sees every skill except those
+    # None). caller_scope="main": the main agent sees every skill except those
     # frontmatter-scoped "subagent_only".
     skill_paths: str = get_skills_text(selected_skill_names, caller_scope="main")
-    skill_paths = f"{skill_paths}\n\n{skill_guide_text}"
 
     # --- Workspace persona block --------------------------------------
     # Why the workspace snapshot is frozen per session:
@@ -274,16 +281,17 @@ def build_system_prompt(
         except Exception:  # noqa: S110 - non-critical: a facts-layer failure must not break the prompt
             pass
 
-    # --- Todo + boulder + taskflow blocks -----------------------------
+    # --- Todo + boulder + taskflow + continuity blocks ----------------
     # Rebuilt from live state on every call, so they survive context
     # compression; skipped entirely when there is no session to scope them to.
-    # The taskflow block follows the memory-block rule: only injected when the
-    # caller did not filter to explicit files.
+    # The taskflow/continuity blocks follow the memory-block rule: only injected
+    # when the caller did not filter to explicit files.
     if session_id:
         blocks = [
             _build_todo_block(session_id),
             _build_boulder_block(session_id),
             _build_taskflow_block(session_id) if selected_file_names is None else "",
+            _build_continuity_block(session_id) if selected_file_names is None else "",
         ]
     else:
         blocks = []
