@@ -339,6 +339,7 @@ import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
 import { tools } from '../config';
 import type { ChatController } from '@/composables/messages';
+import { acquireAgentSocket, releaseAgentSocket } from '@/composables/bridge';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
 
 // Image preview
@@ -442,6 +443,20 @@ const isSending = ref(false);
 /** Current ongoing streaming request controller (used to stop generation) */
 const activeAgentController = ref<ChatController | null>(null);
 
+/**
+ * Turn number currently receiving streamed chunks (a normal send or a HITL
+ * resume). Shared by the chat-stream and HITL slices so every session-level
+ * chunk of the ONE persistent socket lands on the right bubble.
+ */
+const streamingTurn = ref<number | null>(null);
+
+/**
+ * The session's ONE persistent agent WebSocket. Acquired once per page, it is
+ * reused for every send / stop / HITL response, so replies can never be
+ * misrouted between concurrent sends.
+ */
+const agentSocket = acquireAgentSocket(mySid);
+
 /** Input box draft (controlled, two-way bound to inputBox.vue via defineModel) */
 const draft = ref('');
 
@@ -458,6 +473,8 @@ const hitl = useHitlApproval({
   sessionId,
   isSending,
   activeAgentController,
+  socket: agentSocket,
+  streamingTurn,
   loadSessionHistory,
   drafts,
   chunks
@@ -578,6 +595,8 @@ const stream = useChatStream({
   draft,
   isSending,
   activeAgentController,
+  socket: agentSocket,
+  streamingTurn,
   t,
   getPendingMedia,
   clearMediaSelection,
@@ -591,6 +610,10 @@ const stream = useChatStream({
 const {
   handleSend,
   handleStop,
+  handleSocketChunk,
+  handleTurnStarted,
+  handleQueued,
+  handleSocketDone,
   reconnectState,
   queueBadge,
   clearQueueBadge,
@@ -598,6 +621,17 @@ const {
   onStreamReconnected,
   onStreamReconnectFailed
 } = stream;
+
+// The page installs the session-level socket handlers ONCE: every frame of the
+// persistent session socket (chunk / hitl_request / turn_started / queued /
+// done) is routed here regardless of which send produced it.
+agentSocket.setHandlers({
+  onChunk: handleSocketChunk,
+  onHitl: hitl.handleHitlRequest,
+  onTurnStarted: handleTurnStarted,
+  onQueued: handleQueued,
+  onDone: handleSocketDone
+});
 
 /**
  * Reference to the input box component instance: when the session is deleted (frontend broadcasts `SESSION_ABORT_STREAM_EVENT`),
@@ -778,6 +812,8 @@ onUnmounted(() => {
   off('stream:reconnecting', onStreamReconnecting);
   off('stream:reconnected', onStreamReconnected);
   off('stream:reconnect:failed', onStreamReconnectFailed);
+  // This instance's KeepAlive slot was evicted: release its persistent socket.
+  releaseAgentSocket(mySid);
 });
 </script>
 

@@ -3,16 +3,39 @@
  * the unified bridge), stopping a generation, WS reconnect banner + queue
  * badge state and the post-interrupt delayed reconciliation.
  */
-import { onUnmounted, ref } from 'vue';
+import { computed, onUnmounted, ref, toRaw } from 'vue';
 import type { Ref } from 'vue';
 import type { Composer } from 'vue-i18n';
 import { CHAT_ROLE } from '@/types/chat-role';
 import type { MessageItem, HitlRequestData } from '../pages/home/type';
 import type { MultiModalMessage } from '@/types/message';
 import type { ChatController } from './messages';
-import type { AgentChunkType, QueuedInfo } from './bridge';
+import type { AgentChunkType, AgentSocket, QueuedInfo, TurnStartedInfo } from './bridge';
 import type { StreamChunkMeta } from './use-stream-chunks';
 import type { DraftPersistence } from './use-draft-persistence';
+
+/** One locally-registered send, keyed by its protocol `msg_id`. */
+interface SendEntry {
+  turnNum: number;
+  userMsg: MessageItem;
+  aiMsg: MessageItem;
+}
+
+/** One queued badge (a queued send awaiting its turn). */
+interface QueueBadge {
+  msgId: string;
+  position: number;
+  queueSize: number;
+  turn: number;
+}
+
+/** Generate a protocol `msg_id` (RFC4122 v4 UUID, with a non-crypto fallback). */
+function generateMsgId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 /** Collaborators of the chat stream slice. */
 export interface ChatStreamDeps {
@@ -28,6 +51,10 @@ export interface ChatStreamDeps {
   isSending: Ref<boolean>;
   /** The ongoing send-generation controller. */
   activeAgentController: Ref<ChatController | null>;
+  /** The session's persistent agent socket (acquired once by the page). */
+  socket: AgentSocket;
+  /** Turn number currently receiving streamed chunks (send or HITL resume). */
+  streamingTurn: Ref<number | null>;
   /** i18n translator. */
   t: Composer['t'];
   /** Snapshot the pending media base64 payloads (taken at send time). */
@@ -65,6 +92,12 @@ export interface ChatStreamDeps {
     handleHitlRequest: (data: HitlRequestData) => void;
     abortResume: () => void;
     clearRequest: () => void;
+    /** Whether the given turn belongs to an in-flight HITL resume. */
+    isResumeTurn: (turnNum: number | null) => boolean;
+    /** The resume turn finished successfully (HITL slice owns its commit). */
+    onTurnFinished: (turnNum: number) => void;
+    /** The resume turn failed. */
+    onTurnError: () => void;
   };
 }
 
@@ -80,6 +113,8 @@ export function useChatStream(deps: ChatStreamDeps) {
     draft,
     isSending,
     activeAgentController,
+    socket,
+    streamingTurn,
     t,
     getPendingMedia,
     clearMediaSelection,
@@ -120,40 +155,224 @@ export function useChatStream(deps: ChatStreamDeps) {
     reconnectState.value = null;
   };
 
+  /** Locally-registered sends, keyed by protocol `msg_id` (for `turn_started` routing). */
+  const sendByMsgId = new Map<string, SendEntry>();
+  /** Earlier member turns of a batch, keyed by the batch's trailing turn. */
+  const batchMembers = new Map<number, number[]>();
+  /** Most recently sent `msg_id` (fallback for `queued` frames without an id). */
+  let lastSendMsgId: string | null = null;
+
   /**
-   * Queue badge state: null = nothing queued; otherwise show 'Queued · position N of M'.
-   * Data source is bridge.sendChatMessageWs forwarding the backend `queued` frame for a send
-   * issued while the session was still streaming (the message will stream once earlier turns finish).
-   * `turn` records which local turn the badge belongs to, so clears are turn-scoped and a
-   * concurrently finishing earlier stream can never wipe a newer queued send's badge.
+   * Queue badges (one per queued send; a batch may enqueue several).
+   * Data source is the backend `queued` frame for a send issued while the session
+   * was still streaming (the message streams once earlier turns finish). Badges are
+   * keyed by `msgId`, so `turn_started` can clear ALL badges of the turn's member
+   * sends and a concurrent earlier stream can never wipe a newer badge.
    */
-  const queueBadge = ref<{ position: number; queueSize: number; turn: number } | null>(null);
+  const queueBadges = ref<QueueBadge[]>([]);
+
+  /** Aggregate badge shown in the input toolbar (the queued send closest to running). */
+  const queueBadge = computed<{ position: number; queueSize: number } | null>(() => {
+    if (queueBadges.value.length === 0) return null;
+    const next = queueBadges.value.reduce((min, badge) => (badge.position < min.position ? badge : min));
+    return { position: next.position, queueSize: next.queueSize };
+  });
 
   /**
    * `queued` frame → queue badge. Only drives THIS instance's badge: matched against the frozen
    * `mySid`, not the live `sessionId` computed — the latter reads the globally shared route object
    * and flips to another sid while this KeepAlive-cached instance sits in the background.
    * @param info
-   * @param turnNum
    */
-  const handleQueued = (info: QueuedInfo, turnNum: number) => {
+  const handleQueued = (info: QueuedInfo) => {
     if (info.sessionId !== mySid) return;
-    queueBadge.value = { position: info.position, queueSize: info.queueSize, turn: turnNum };
+    const msgId = info.messageId ?? lastSendMsgId ?? '';
+    const turn = (msgId ? sendByMsgId.get(msgId)?.turnNum : undefined) ?? streamingTurn.value ?? 0;
+    queueBadges.value = [
+      ...queueBadges.value.filter(badge => badge.msgId !== msgId),
+      { msgId, position: info.position, queueSize: info.queueSize, turn }
+    ];
+  };
+
+  /** Drop the badges belonging to the given turn (turn-scoped clear helper). */
+  const clearQueueBadgeForTurn = (turnNum: number | null) => {
+    if (turnNum === null) return;
+    queueBadges.value = queueBadges.value.filter(badge => badge.turn !== turnNum);
+  };
+
+  /** Drop the badges of the given member `msg_id`s (turn_started consolidation). */
+  const clearQueueBadgesFor = (msgIds: string[]) => {
+    const ids = new Set(msgIds);
+    queueBadges.value = queueBadges.value.filter(badge => !ids.has(badge.msgId));
+  };
+
+  /** Drop every queue badge unconditionally (used when the stream/session is torn down). */
+  const clearQueueBadge = () => {
+    queueBadges.value = [];
   };
 
   /**
-   * Drop the queue badge when it belongs to the given turn (turn-scoped clear helper).
-   * @param turnNum
+   * Session-level chunk handler: every `chunk` frame of this session is routed to
+   * the turn currently receiving the reply (set by `handleSend` and updated by
+   * `turn_started`). This is the handler the page installs once.
+   *
+   * This handler must NEVER touch the queue badges: `streamingTurn` points at the
+   * turn that is streaming NOW, while a newer send of this session may already be
+   * queued (badge visible) but not started; a chunk of the running turn must not
+   * wipe that queued send's badge. Badge clearing is owned by `handleTurnStarted`
+   * (all member badges of the starting batch) and by the done/error/stop paths.
+   * @param content
+   * @param type
+   * @param _sessionId
+   * @param meta
    */
-  const clearQueueBadgeForTurn = (turnNum: number) => {
-    if (queueBadge.value?.turn === turnNum) {
-      queueBadge.value = null;
+  const handleSocketChunk = (content: string, type: AgentChunkType, _sessionId: string, meta?: StreamChunkMeta) => {
+    const turn = streamingTurn.value;
+    if (turn === null) return;
+    chunks.appendStreamChunk(mySid, content, type, turn, meta);
+  };
+
+  /**
+   * `turn_started` handler: a generation turn (idle single-send OR a batch of queued
+   * sends) began.
+   *
+   * Consolidation: the backend persists a batch as ONE turn (the next turn after the
+   * running turn), so every member is unified onto the EARLIEST member's turn — the
+   * server's batch turn. The batch renders as N user bubbles + exactly ONE trailing
+   * AI reply: the earlier members' EMPTY AI placeholders are removed, the trailing
+   * member's bubble receives the whole reply, and every member queue badge is cleared.
+   * Unifying the turn numbers keeps the live view identical to the canonical history
+   * (a reload no longer changes anything).
+   * @param info
+   */
+  const handleTurnStarted = (info: TurnStartedInfo) => {
+    if (info.sessionId !== mySid) return;
+    const members = info.messageIds
+      .map(id => sendByMsgId.get(id))
+      .filter((entry): entry is SendEntry => entry !== undefined)
+      .sort((a, b) => a.turnNum - b.turnNum);
+    if (members.length === 0) return;
+
+    const unifiedTurn = members[0]!.turnNum;
+    const replyTarget = members[members.length - 1]!;
+    for (const member of members) {
+      // Collapse the earlier sends' draft turns into the unified turn so the done
+      // handler commits the batch exactly once.
+      if (member.turnNum !== unifiedTurn) drafts.untrackDraftTurn(mySid, member.turnNum);
+      member.turnNum = unifiedTurn;
+      member.userMsg.turn_num = unifiedTurn;
+      member.aiMsg.turn_num = unifiedTurn;
+      // Drop the non-trailing EMPTY AI placeholders; the trailing one receives the
+      // whole reply (it already sits after every member user bubble).
+      if (member !== replyTarget && !member.aiMsg.content && !(member.aiMsg.reasoning ?? '')) {
+        // `chatMessages.value` elements are Vue proxies while `member.aiMsg` is the
+        // raw object, so compare through `toRaw` (a plain `!==` never matched and
+        // left the earlier placeholders in place).
+        chatMessages.value = chatMessages.value.filter(row => toRaw(row) !== member.aiMsg);
+      }
+    }
+    clearQueueBadgesFor(info.messageIds);
+    streamingTurn.value = unifiedTurn;
+    chatMessages.value = [...chatMessages.value];
+  };
+
+  /** Drop the send registry entries of a finished turn (and its batch members). */
+  const dropSendEntries = (turnNum: number, memberTurns: number[]) => {
+    const turns = new Set<number>([turnNum, ...memberTurns]);
+    for (const [msgId, entry] of sendByMsgId) {
+      if (turns.has(entry.turnNum)) sendByMsgId.delete(msgId);
     }
   };
 
-  /** Drop the queue badge unconditionally (used when the stream/session is torn down). */
-  const clearQueueBadge = () => {
-    queueBadge.value = null;
+  /** Attach the model metadata carried by the done frame onto the turn's AI message. */
+  const attachDoneMeta = (
+    turnNum: number,
+    meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }
+  ) => {
+    if (!meta) return;
+    const ai = chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turnNum);
+    if (ai) {
+      if (meta.modelName !== undefined) ai.modelName = meta.modelName;
+      if (meta.inputTokens !== undefined) ai.inputTokens = meta.inputTokens;
+      if (meta.outputTokens !== undefined) ai.outputTokens = meta.outputTokens;
+      chatMessages.value = [...chatMessages.value];
+    }
+  };
+
+  /**
+   * Session-level `done` handler: the generation turn finished successfully.
+   * Commits the turn's draft, untracks the batch members and reconciles history.
+   * A HITL resume turn is completed by the HITL slice instead.
+   * @param meta
+   * @param meta.modelName
+   * @param meta.inputTokens
+   * @param meta.outputTokens
+   */
+  const handleSocketDone = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => {
+    const turn = streamingTurn.value;
+    if (turn === null) return;
+    if (hitl.isResumeTurn(turn)) {
+      hitl.onTurnFinished(turn);
+      streamingTurn.value = null;
+      return;
+    }
+    attachDoneMeta(turn, meta);
+    clearQueueBadgeForTurn(turn);
+    const members = batchMembers.get(turn) ?? [];
+    batchMembers.delete(turn);
+    void drafts.commitDraftTurn(mySid, turn).then(() => {
+      drafts.untrackDraftTurn(mySid, turn);
+      for (const memberTurn of members) drafts.untrackDraftTurn(mySid, memberTurn);
+      dropSendEntries(turn, members);
+      activeAgentController.value = null;
+      isSending.value = false;
+      streamingTurn.value = null;
+      void loadSessionHistory(mySid);
+    });
+  };
+
+  /**
+   * Session-level error handler: mark running tools failed and surface the failure
+   * on the turn's AI bubble.
+   * @param err
+   */
+  const handleSocketError = (err: unknown) => {
+    const turn = streamingTurn.value;
+    activeAgentController.value = null;
+    clearQueueBadgeForTurn(turn);
+    const aiMsg =
+      turn === null ? undefined : chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turn);
+    const isResume = hitl.isResumeTurn(turn);
+    if (err instanceof StreamInterruptedError) {
+      // Network stream loss (final failure after the reconnect budget is exhausted): content may have partially rendered,
+      // so never overwrite existing body text with the failure message; only show the interruption hint when the AI body is empty.
+      // Draft kept + one-shot reconciliation of the server-persisted result 25s later (the server may still be generating).
+      if (aiMsg && !aiMsg.content) {
+        aiMsg.content = t('errors.streamInterrupted');
+        chatMessages.value = [...chatMessages.value];
+      }
+      chunks.markRunningToolsFailed();
+      if (turn !== null) void drafts.writeDraftTurn(mySid, turn);
+      if (isResume) hitl.onTurnError();
+      else schedulePostInterruptReconcile(mySid);
+      isSending.value = false;
+      streamingTurn.value = null;
+      return;
+    }
+    if (aiMsg) {
+      aiMsg.content = t('errors.replyFailed', { reason: String(err) });
+      chatMessages.value = [...chatMessages.value];
+    }
+    chunks.markRunningToolsFailed();
+    // Persist a draft snapshot that includes the failed state
+    if (turn !== null) {
+      void drafts.writeDraftTurn(mySid, turn);
+      dropSendEntries(turn, batchMembers.get(turn) ?? []);
+      batchMembers.delete(turn);
+    }
+    if (isResume) hitl.onTurnError();
+    isSending.value = false;
+    streamingTurn.value = null;
   };
 
   /**
@@ -235,99 +454,27 @@ export function useChatStream(deps: ChatStreamDeps) {
     clearMediaSelection();
     draft.value = '';
 
+    // Capture the busy flag BEFORE flipping `isSending`: a send issued while the
+    // session is already streaming is QUEUED (the backend confirms with a `queued`
+    // frame) and does NOT start a turn now. Overwriting `streamingTurn` with the
+    // queued turn would misroute the running turn's remaining chunks AND make the
+    // running turn's chunks clear the queued send's badge. Only an idle send starts
+    // a turn immediately; `turn_started` moves `streamingTurn` to the batch's
+    // trailing turn once the queued batch actually starts.
+    const wasSending = isSending.value;
     isSending.value = true;
+    if (!wasSending) streamingTurn.value = turnNum;
 
     // Register this turn as an "active draft turn" so appendStreamChunk can persist accordingly;
     // the first registration immediately writes a "cache-on-send" frame (user message + empty AI placeholder).
     // Removed when the stream completes normally (onDone); kept on error/abort/reject so the draft caches the failed-stage content.
     drafts.trackDraftTurn(sid, turnNum);
 
-    /**
-     * Streamed chunk callback: reuse the shared `appendStreamChunk` to manage message segmentation dynamically by semantic type
-     * (text/tool_start/tool_end), sharing the same rendering logic as the HITL resume path.
-     * First chunk of this turn = the (possibly queued) message started streaming: drop this turn's
-     * queue badge. Turn-scoped, so chunks of an earlier in-flight stream never clear a newer badge.
-     * @param content
-     * @param type
-     * @param _sessionId
-     * @param meta
-     */
-    const onStreamChunk = (content: string, type: AgentChunkType, _sessionId: string, meta?: StreamChunkMeta) => {
-      clearQueueBadgeForTurn(turnNum);
-      chunks.appendStreamChunk(sid, content, type, turnNum, meta);
-    };
-
-    /**
-     * Attach the model metadata carried by the done frame onto this turn's AI message.
-     * @param meta
-     * @param meta.modelName
-     * @param meta.inputTokens
-     * @param meta.outputTokens
-     */
-    const attachDoneMeta = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => {
-      if (!meta) return;
-      const ai = chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turnNum);
-      if (ai) {
-        if (meta.modelName !== undefined) ai.modelName = meta.modelName;
-        if (meta.inputTokens !== undefined) ai.inputTokens = meta.inputTokens;
-        if (meta.outputTokens !== undefined) ai.outputTokens = meta.outputTokens;
-        chatMessages.value = [...chatMessages.value];
-      }
-    };
-
-    /**
-     * Stream finished normally: persist the final draft, untrack the turn and reconcile against the server.
-     * @param meta
-     * @param meta.modelName
-     * @param meta.inputTokens
-     * @param meta.outputTokens
-     */
-    const onStreamDone = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => {
-      clearQueueBadgeForTurn(turnNum);
-      attachDoneMeta(meta);
-      void drafts.commitDraftTurn(sid, turnNum).then(() => {
-        drafts.untrackDraftTurn(sid, turnNum);
-        activeAgentController.value = null;
-        isSending.value = false;
-        void loadSessionHistory(sid);
-      });
-    };
-
-    /**
-     * Stream error: mark running tools failed and surface the failure on the AI placeholder.
-     * @param err
-     */
-    const onStreamError = (err: unknown) => {
-      activeAgentController.value = null;
-      // This turn will never stream: drop its queue badge (covers both error branches below).
-      clearQueueBadgeForTurn(turnNum);
-      if (err instanceof StreamInterruptedError) {
-        // Network stream loss (final failure after the reconnect budget is exhausted): content may have partially rendered,
-        // so never overwrite existing body text with the failure message; only show the interruption hint when the AI body is empty.
-        // Draft kept + one-shot reconciliation of the server-persisted result 25s later (the server may still be generating).
-        if (!aiMsg.content) {
-          aiMsg.content = t('errors.streamInterrupted');
-        }
-        chunks.markRunningToolsFailed();
-        void drafts.writeDraftTurn(sid, turnNum);
-        isSending.value = false;
-        schedulePostInterruptReconcile(sid);
-        return;
-      }
-      aiMsg.content = t('errors.replyFailed', { reason: String(err) });
-      chunks.markRunningToolsFailed();
-      // Persist a draft snapshot that includes the failed state
-      void drafts.writeDraftTurn(sid, turnNum);
-      isSending.value = false;
-    };
-
-    /**
-     * Backend enqueued this send (session was busy): show the queue badge above the input box.
-     * @param info
-     */
-    const onStreamQueued = (info: QueuedInfo) => {
-      handleQueued(info, turnNum);
-    };
+    // Frozen protocol: every send carries a client-generated `msg_id`; record it so
+    // `turn_started.message_ids` / `queued.message_id` map back to this local turn.
+    const msgId = generateMsgId();
+    lastSendMsgId = msgId;
+    sendByMsgId.set(msgId, { turnNum, userMsg, aiMsg });
 
     try {
       const req: MultiModalMessage = { text };
@@ -337,25 +484,31 @@ export function useChatStream(deps: ChatStreamDeps) {
       activeAgentController.value = postAgentStream(
         sid,
         req,
-        onStreamChunk,
-        onStreamDone,
-        onStreamError,
+        handleSocketChunk,
+        handleSocketDone,
+        handleSocketError,
         hitl.handleHitlRequest,
-        onStreamQueued
+        handleQueued,
+        msgId
       );
     } catch (e) {
       // Synchronous throw (rare); the stream never started, so just unlock directly.
       // Draft kept here as well: user message + empty AI placeholder + failure message are all cached.
       activeAgentController.value = null;
+      sendByMsgId.delete(msgId);
       aiMsg.content = t('errors.sendFailed', { reason: String(e) });
+      chatMessages.value = [...chatMessages.value];
       void drafts.writeDraftTurn(sid, turnNum);
+      streamingTurn.value = null;
       isSending.value = false;
     }
   };
 
-  /** Stop the current AI reply generation (local frontend abort + notify the backend to stop) */
+  /** Stop the current AI reply generation: send `{type:'stop'}` on the SAME socket (never close it). */
   const handleStop = () => {
-    activeAgentController.value?.abort();
+    // Session-level stop: one frame halts the session's generation, and every
+    // in-flight send of this session settles as aborted on the shared socket.
+    void socket.stop();
     activeAgentController.value = null;
     // If a HITL resume stream recovery is in flight, abort that controller as well
     // (its abort sends {type:'stop'} to the backend, making answering=False and triggering a CancelledError)
@@ -371,14 +524,20 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
     // After aborting, the pending-approval card has already been handled by this approval flow; no need to show it again
     hitl.clearRequest();
-    // The queued badge (if any) belongs to the aborted send: drop it so it cannot linger
+    // Every queued badge belongs to the aborted sends: drop them so they cannot linger
     clearQueueBadge();
+    streamingTurn.value = null;
     isSending.value = false;
   };
 
   return {
     handleSend,
     handleStop,
+    handleSocketChunk,
+    handleTurnStarted,
+    handleQueued,
+    handleSocketDone,
+    handleSocketError,
     reconnectState,
     queueBadge,
     clearQueueBadge,

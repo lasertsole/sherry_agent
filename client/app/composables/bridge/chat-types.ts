@@ -11,6 +11,13 @@
 export interface ChatRequest {
   /** Session ID (when omitted the backend treats it as the "default" session) */
   session_id?: string;
+  /**
+   * Client-generated id for this send (frozen protocol `msg_id`, REQUIRED on the wire).
+   * The server echoes it back on `queued`, and includes it in `turn_started` / `done` /
+   * `error` / `stopped` `message_ids`, which is how replies are routed back to the
+   * originating send on the shared per-session socket.
+   */
+  msg_id?: string;
   /** Text content */
   text: string;
   /** Image base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to image_path_list) */
@@ -31,7 +38,15 @@ export interface ChatRequest {
  * Streaming event frames returned by the backend `/sessions/agent/ws` in browser mode.
  * Corresponds to `{"event": ..., "session_id": ..., "content": ...}` in `server/trigger/ws/messages.py`.
  */
-export type AgentWsEventType = 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request' | 'queued';
+export type AgentWsEventType =
+  | 'turn_started'
+  | 'chunk'
+  | 'done'
+  | 'error'
+  | 'stopped'
+  | 'hitl_request'
+  | 'queued'
+  | 'todo_updated';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';
@@ -46,7 +61,7 @@ export interface HitlInterruptData {
 
 /** HITL decision sent by the client to resume the agent. */
 export interface HitlResponse {
-  decision: 'approve' | 'reject' | 'edit';
+  decision: 'approve' | 'reject' | 'edit' | 'yolo';
   message?: string;
   edited_args?: Record<string, unknown>;
 }
@@ -55,6 +70,13 @@ export interface AgentWsEvent {
   event: AgentWsEventType;
   session_id?: string | null;
   content?: string;
+  /** Turn id (carried only on `turn_started`; identifies the generation turn). */
+  turn_id?: string;
+  /**
+   * Client `msg_id`s belonging to this generation turn (carried on `turn_started`,
+   * `done`, `error` and `stopped`). Used to resolve/reject the originating sends.
+   */
+  message_ids?: string[];
   /** Chunk type (only present on "chunk" events). Defaults to "text" for backwards compat. */
   type?: AgentChunkType;
   /** Tool-call metadata (only present on "tool_result" chunks). */
@@ -105,6 +127,14 @@ export class StreamInterruptedError extends Error {
  * (see `server/trigger/ws/messages.py:171-183`).
  */
 export const WS_RECONNECT_MAX_ATTEMPTS = 3;
+
+/**
+ * Fixed liveness-reconnect delay used by the persistent per-session agent socket
+ * once the exponential reconnect budget is exhausted (or when there is no
+ * in-flight send to recover). Mirrors the 5s auto-reconnect of the `ws.ts`
+ * singletons.
+ */
+export const WS_FALLBACK_RECONNECT_MS = 5000;
 
 /**
  * Exponential backoff: wait time in milliseconds before the `attempt`-th (1-based) reconnect.

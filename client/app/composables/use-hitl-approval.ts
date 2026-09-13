@@ -1,11 +1,12 @@
 /**
  * HITL (human-in-the-loop) approval slice for one session page: the pending
- * approval card state, the approve/reject decision flow (via an independent
- * `resumeHitl` WebSocket) and the three-tier-persistence card restore.
+ * approval card state, the approve/reject decision flow (sent as a
+ * `hitl_response` frame on the session's persistent socket) and the
+ * three-tier-persistence card restore.
  */
 import { ref } from 'vue';
 import type { Ref } from 'vue';
-import type { AgentChunkType } from './bridge';
+import type { AgentChunkType, AgentSocket } from './bridge';
 import type { MessageItem, HitlRequestData } from '../pages/home/type';
 import type { ChatController } from './messages';
 import type { StreamChunkMeta } from './use-stream-chunks';
@@ -42,6 +43,10 @@ export interface HitlApprovalDeps {
   isSending: Ref<boolean>;
   /** The ongoing send-generation controller (released when a resume takes over). */
   activeAgentController: Ref<ChatController | null>;
+  /** The session's persistent agent socket (HITL resumes on the SAME socket). */
+  socket: AgentSocket;
+  /** Turn number currently receiving streamed chunks (send or HITL resume). */
+  streamingTurn: Ref<number | null>;
   /** Rebuild the history list after a resume stream completes. */
   loadSessionHistory: (sid: string) => Promise<void>;
   /** Draft persistence slice. */
@@ -55,13 +60,23 @@ export interface HitlApprovalDeps {
  * @param deps
  */
 export function useHitlApproval(deps: HitlApprovalDeps) {
-  const { chatMessages, sessionId, isSending, activeAgentController, loadSessionHistory, drafts, chunks } = deps;
+  const {
+    chatMessages,
+    sessionId,
+    isSending,
+    activeAgentController,
+    socket,
+    streamingTurn,
+    loadSessionHistory,
+    drafts,
+    chunks
+  } = deps;
 
   /** HITL approval request (set when agent pauses waiting for human approval) */
   const hitlRequest = ref<HitlRequestData | null>(null);
 
-  /** Ongoing HITL resume controller (single-flight: only one allowed per session) */
-  let activeHitlController: { closed: boolean; abort: () => void } | null = null;
+  /** Turn number of the in-flight HITL resume (null when none). */
+  let activeResumeTurn: number | null = null;
 
   /**
    * Handle HITL approval request: show approval dialog
@@ -74,12 +89,11 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
   /**
    * User approve/reject HITL request.
    *
-   * Decision no longer depends on `sendHitlResponse` mounted on the closure returned by `streamChatMessage` during real-time message sending —
-   * that closure is only available when `!done && socket.readyState === OPEN`,
-   * after page refresh/session switch/browser reopen socket is closed、controller is null, approval will silently no-op.
-   * Here changed to independent `resumeHitl`: directly open a new WS to backend `/sessions/agent/ws`,
-   * send `hitl_response` frame to streamingly restore agent from LangGraph checkpoint, thus
-   * supporting three-layer persistence (session switch, refresh, browser reopen) and still being able to complete approval.
+   * The resume goes over the SAME persistent per-session socket (no fresh
+   * WebSocket): `hitl_response` is sent on the existing connection, so chunks
+   * and sequential `hitl_request` frames keep flowing through the page's
+   * session-level handlers, and the approval still works after a refresh /
+   * session switch / browser reopen (the socket reconnects on its own).
    * @param decision
    * @param message
    */
@@ -89,76 +103,32 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
       hitlRequest.value = null;
       return;
     }
-    // single-flight only used to prevent duplicate submission for 'same pending approval item', absolutely cannot silently discard new decisions.
-    // For sequential HITL (multiple dangerous tools requiring approval one by one), the previous resume WS is still in
-    // streaming recovery (closed=false), if directly return at this point will cause subsequent 'approve/reject' clicks to have no response at all.
-    // Correct approach: first abort/release the still-running controller slot, then open a new resume WS for this decision —
-    // ensuring every click has a real channel to send hitl_response, absolutely no silent no-op.
-    if (activeHitlController && !activeHitlController.closed) {
-      // Abort old link's stream recovery (its abort will send {type:'stop'} to backend), and release its slot,
-      // avoid it mistakenly clearing the already replaced activeHitlController once it resolves later.
-      activeHitlController.abort();
-      activeHitlController = null;
+    // Sequential HITL: a previous resume may still be streaming. Stop it so every
+    // click has a real channel (never a silent no-op) before starting the new one.
+    if (activeResumeTurn !== null) {
+      void socket.stop();
+      activeResumeTurn = null;
     }
 
-    // Record the turn number for this approval: new messages from resume will go to 'current max turn + 1'
+    // Record the turn number for this approval: new messages from resume go to 'current max turn + 1'
     const turnNum = chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
+    activeResumeTurn = turnNum;
+    streamingTurn.value = turnNum;
+    isSending.value = true;
 
     // Register this resume turn as draft (consistent with handleSend), so appendStreamChunk can write to disk in real-time;
-    // remove during reconciliation when resume stream completes normally, retain draft to cache failure stage content on reject/failure.
+    // removed during reconciliation when resume stream completes normally, retained to cache the failure stage on reject/failure.
     drafts.trackDraftTurn(sid, turnNum);
-
-    const onChunk = (content: string, type: AgentChunkType, _sessionId: string, meta?: StreamChunkMeta) => {
-      chunks.appendStreamChunk(sid, content, type, turnNum, meta);
-    };
-
-    const { controller, promise } = resumeHitl(sid, decision, message, onChunk, handleHitlRequest);
-    activeHitlController = controller;
 
     // Reject: this tool won't be executed, backend won't send back tool_end, so mark the currently still running
     // tool card as failed (UI changes from spinner to red ✗), avoid permanent loading state.
     if (decision === 'reject') {
       chunks.markRunningToolsFailed();
-      // Reject won't trigger backend response, immediately write draft with failed status to disk, ensuring failed progress is visible after refresh
       void drafts.writeDraftTurn(sid, turnNum);
     }
 
-    /**
-     * Clean up the hanging state of this HITL approval chain.
-     *
-     * Key point: When HITL interrupt occurs, backend **does not close** the original generation stream's WebSocket (waiting for resume),
-     * so the promise returned by `postAgentStream` in `handleSend` hangs permanently, its `onDone` never triggers,
-     * `isSending` stays at `true`. Must manually reset after approval completes, otherwise input box/generate button will be permanently locked.
-     */
-    const finish = () => {
-      if (activeHitlController === controller) activeHitlController = null;
-      // The original generation stream is abandoned: release its controller slot and reset the sending state
-      activeAgentController.value = null;
-      isSending.value = false;
-      // If no new hitl_request is triggered during approval, close the approval card
-      if (hitlRequest.value) {
-        hitlRequest.value = null;
-      }
-    };
-    promise
-      .then(() => {
-        // Normal completion: write final draft first then reconcile remove (consistent with handleSend onDone)
-        return drafts.commitDraftTurn(sid, turnNum).then(() => {
-          drafts.untrackDraftTurn(sid, turnNum);
-          finish();
-          void loadSessionHistory(sid);
-        });
-      })
-      .catch(() => {
-        // Also clean up on error, keep input available; card closing is decided by other processes
-        if (activeHitlController === controller) activeHitlController = null;
-        activeAgentController.value = null;
-        // HITL resume failed: ongoing tools did not complete normally, marked as failed (red ✗)
-        chunks.markRunningToolsFailed();
-        // Retain draft: cache the completed stages before failure
-        void drafts.writeDraftTurn(sid, turnNum);
-        isSending.value = false;
-      });
+    // Resume over the persistent socket — no new connection, no socket close.
+    socket.sendHitlResponse({ decision, message });
 
     // This approval has been answered; collapse the card (it pops up again if the agent pauses once more during the resume)
     hitlRequest.value = null;
@@ -176,7 +146,7 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
   const restorePendingHitl = async (sid: string) => {
     if (!sid) return;
     // Do not re-raise if an approval is already in flight or a card already exists
-    if (hitlRequest.value || (activeHitlController && !activeHitlController.closed)) return;
+    if (hitlRequest.value || activeResumeTurn !== null) return;
     const pending = await getPendingInterrupt(sid);
     if (pending && typeof pending === 'object' && !Array.isArray(pending) && typeof pending.tool_name === 'string') {
       hitlRequest.value = {
@@ -188,10 +158,35 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
     }
   };
 
-  /** Abort the in-flight HITL resume stream, if any (its abort sends `{type:'stop'}` to the backend). */
+  /** Whether the given turn belongs to the in-flight HITL resume. */
+  const isResumeTurn = (turnNum: number | null): boolean => turnNum !== null && turnNum === activeResumeTurn;
+
+  /** The resume turn finished successfully: commit its draft and reconcile. */
+  const onTurnFinished = (turnNum: number) => {
+    if (turnNum !== activeResumeTurn) return;
+    activeResumeTurn = null;
+    const sid = sessionId.value || 'default';
+    void drafts.commitDraftTurn(sid, turnNum).then(() => {
+      drafts.untrackDraftTurn(sid, turnNum);
+      activeAgentController.value = null;
+      isSending.value = false;
+      void loadSessionHistory(sid);
+    });
+  };
+
+  /** The resume turn failed: release the controller slot and unlock the input. */
+  const onTurnError = () => {
+    activeResumeTurn = null;
+    activeAgentController.value = null;
+    isSending.value = false;
+  };
+
+  /** Abort the in-flight HITL resume, if any (sends `{type:'stop'}` on the same socket). */
   const abortResume = () => {
-    activeHitlController?.abort();
-    activeHitlController = null;
+    if (activeResumeTurn === null) return;
+    void socket.stop();
+    if (streamingTurn.value === activeResumeTurn) streamingTurn.value = null;
+    activeResumeTurn = null;
   };
 
   /** Close the pending-approval card without answering it. */
@@ -204,6 +199,9 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
     handleHitlRequest,
     handleHitlDecision,
     restorePendingHitl,
+    isResumeTurn,
+    onTurnFinished,
+    onTurnError,
     abortResume,
     clearRequest
   };

@@ -45,7 +45,8 @@ export type { ChatStreamCallbacks, TransportStrategy } from './bridge/chat';
 export { TauriTransport, BrowserTransport, createTransport } from './bridge/chat';
 export { sendChatMessage, streamChatMessage, stopChatMessage } from './bridge/chat';
 export { sendChatMessageWs } from './bridge/ws-stream';
-export { resumeHitl } from './bridge/chat-resume';
+export type { AgentSocket, AgentSocketHandlers, TurnStartedInfo } from './bridge/agent-socket';
+export { acquireAgentSocket, releaseAgentSocket, closeAllAgentSockets } from './bridge/agent-socket';
 
 // ── Session & subagents ─────────────────────────────────
 export type { SubagentRun } from './bridge/session';

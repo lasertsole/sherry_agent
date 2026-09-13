@@ -66,6 +66,9 @@ class FakeWebSocket {
 }
 
 beforeEach(() => {
+  // Each connection now lives in a per-session singleton registry: drop any
+  // socket a previous test left alive so this test gets a fresh connection.
+  bridge.closeAllAgentSockets();
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
 });
@@ -92,21 +95,23 @@ describe('sendChatMessage (browser WebSocket)', () => {
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
 
     ws.open();
+    // The upload is async; wait until the payload (with the resolved URL) is sent.
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1));
     // base64 payload is uploaded and its resolved URL sent as image_path_list.
-    expect(ws.sent).toEqual([
-      JSON.stringify({
-        session_id: 's1',
-        multi_modal_message: {
-          text: 'hi',
-          image_base64_list: [],
-          image_path_list: ['http://localhost:8080/uploads/img1.png'],
-          audio_bytes_list: [],
-          audio_path_list: [],
-          video_bytes_list: [],
-          video_path_list: []
-        }
-      })
-    ]);
+    const payload = JSON.parse(ws.sent[0]!);
+    expect(payload).toMatchObject({
+      session_id: 's1',
+      multi_modal_message: {
+        text: 'hi',
+        image_base64_list: [],
+        image_path_list: ['http://localhost:8080/uploads/img1.png'],
+        audio_bytes_list: [],
+        audio_path_list: [],
+        video_bytes_list: [],
+        video_path_list: []
+      }
+    });
+    expect(typeof payload.msg_id).toBe('string');
 
     ws.frame({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' });
     ws.frame({ event: 'chunk', session_id: 's1', content: 'lo', type: 'text' });
@@ -116,7 +121,8 @@ describe('sendChatMessage (browser WebSocket)', () => {
 
     ws.frame({ event: 'done', session_id: 's1', content: '' });
     await promise;
-    expect(ws.closed).toBe(true);
+    // One persistent socket per session: `done` settles the send but keeps it open.
+    expect(ws.closed).toBe(false);
   });
 
   it('streams DeepSeek thinking-mode reasoning chunks and interleaves with text', async () => {
@@ -159,27 +165,28 @@ describe('sendChatMessage (browser WebSocket)', () => {
 
     ws.frame({ event: 'done', session_id: 's1', content: '' });
     await promise;
-    expect(ws.closed).toBe(true);
+    expect(ws.closed).toBe(false);
   });
 
   it('defaults text and images when not provided', async () => {
     const promise = bridge.sendChatMessage({ session_id: 's9', text: '' }, () => {});
     const ws = FakeWebSocket.instances[0]!;
     ws.open();
-    expect(ws.sent[0]).toBe(
-      JSON.stringify({
-        session_id: 's9',
-        multi_modal_message: {
-          text: '',
-          image_base64_list: [],
-          image_path_list: [],
-          audio_bytes_list: [],
-          audio_path_list: [],
-          video_bytes_list: [],
-          video_path_list: []
-        }
-      })
-    );
+    expect(ws.sent).toHaveLength(1);
+    const payload = JSON.parse(ws.sent[0]!);
+    expect(payload).toMatchObject({
+      session_id: 's9',
+      multi_modal_message: {
+        text: '',
+        image_base64_list: [],
+        image_path_list: [],
+        audio_bytes_list: [],
+        audio_path_list: [],
+        video_bytes_list: [],
+        video_path_list: []
+      }
+    });
+    expect(typeof payload.msg_id).toBe('string');
     ws.frame({ event: 'done', session_id: 's9', content: '' });
     await promise;
   });
@@ -190,30 +197,28 @@ describe('sendChatMessage (browser WebSocket)', () => {
     ws.open();
     ws.frame({ event: 'error', session_id: 's1', content: 'boom' });
     await expect(promise).rejects.toThrow('boom');
-    expect(ws.closed).toBe(true);
+    // The persistent socket survives an error frame (a later send reuses it).
+    expect(ws.closed).toBe(false);
   });
 
   it('rejects with StreamInterruptedError after exhausting reconnect on socket error before done', async () => {
     vi.useFakeTimers();
     try {
       const promise = bridge.sendChatMessage({ session_id: 's1', text: '' }, () => {});
-      // First connection fails -> Case A: enter exponential-backoff reconnect (the old behavior was to reject immediately with 'WebSocket connection error')
-      let ws = FakeWebSocket.instances[0]!;
-      ws.error();
+      // First connection fails -> Case A: enter exponential-backoff reconnect.
+      FakeWebSocket.instances[0]!.error();
       expect(FakeWebSocket.instances).toHaveLength(1);
-      // Advance the backoff delays in sequence to trigger reconnects; each new connection fails again until the retry budget is exhausted
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
+      // Advance each backoff delay and fail the CURRENT (newest) socket: the
+      // superseded-socket guard ignores errors from already-replaced sockets.
       await vi.advanceTimersByTimeAsync(1000); // wsReconnectDelayMs(1)
-      ws.error();
+      FakeWebSocket.instances[1]!.error();
       expect(FakeWebSocket.instances).toHaveLength(2);
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(2000); // wsReconnectDelayMs(2)
-      ws.error();
+      FakeWebSocket.instances[2]!.error();
       expect(FakeWebSocket.instances).toHaveLength(3);
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
       await vi.advanceTimersByTimeAsync(4000); // wsReconnectDelayMs(3)
       // After reaching WS_RECONNECT_MAX_ATTEMPTS (3) it still fails => StreamInterruptedError(midStream=false)
-      ws.error();
+      FakeWebSocket.instances[3]!.error();
       await expect(promise).rejects.toMatchObject({
         name: 'StreamInterruptedError',
         midStream: false
@@ -227,19 +232,15 @@ describe('sendChatMessage (browser WebSocket)', () => {
     vi.useFakeTimers();
     try {
       const promise = bridge.sendChatMessage({ session_id: 's1', text: '' }, () => {});
-      let ws = FakeWebSocket.instances[0]!;
       // A pre-chunk disconnect is Case A (no chunk produced yet), so it is safe to retry and resend
-      ws.closeFromServer();
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
+      FakeWebSocket.instances[0]!.closeFromServer();
       await vi.advanceTimersByTimeAsync(1000);
-      ws.closeFromServer();
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
+      FakeWebSocket.instances[1]!.closeFromServer();
       await vi.advanceTimersByTimeAsync(2000);
-      ws.closeFromServer();
-      ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!;
+      FakeWebSocket.instances[2]!.closeFromServer();
       await vi.advanceTimersByTimeAsync(4000);
       // Reject once retries are exhausted (no longer throws the old 'WebSocket closed before stream completion')
-      ws.closeFromServer();
+      FakeWebSocket.instances[3]!.closeFromServer();
       await expect(promise).rejects.toMatchObject({ name: 'StreamInterruptedError' });
     } finally {
       vi.useRealTimers();
@@ -263,13 +264,14 @@ describe('sendChatMessage (browser WebSocket)', () => {
   });
 });
 
-describe('stopChatMessage (browser WebSocket)', () => {
+describe('stopChatMessage (persistent session socket)', () => {
   beforeEach(() => {
+    bridge.closeAllAgentSockets();
     FakeWebSocket.instances = [];
     vi.stubGlobal('WebSocket', FakeWebSocket);
   });
 
-  it('connects to the WS url and sends a stop frame on open', async () => {
+  it('opens the WS url and sends a stop frame on open without closing the socket', async () => {
     const promise = bridge.stopChatMessage('abc');
     const ws = FakeWebSocket.instances[0]!;
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
@@ -280,10 +282,11 @@ describe('stopChatMessage (browser WebSocket)', () => {
 
     ws.onmessage?.({ data: JSON.stringify({ event: 'stopped', session_id: 'abc' }) });
     await promise;
-    expect(ws.closed).toBe(true);
+    // Frozen protocol: stop is sent on the SAME socket and does NOT close it.
+    expect(ws.closed).toBe(false);
   });
 
-  it('rejects when a different session id is stopped', async () => {
+  it('ignores a stopped frame for a different session id', async () => {
     const promise = bridge.stopChatMessage('abc');
     const ws = FakeWebSocket.instances[0]!;
     ws.onopen?.({});
@@ -300,20 +303,44 @@ describe('stopChatMessage (browser WebSocket)', () => {
     expect(ws.closed).toBe(false);
   });
 
-  it('rejects on WebSocket error', async () => {
-    const promise = bridge.stopChatMessage('abc');
-    const ws = FakeWebSocket.instances[0]!;
-    ws.onerror?.({});
-    await expect(promise).rejects.toThrow('WebSocket stop failed');
-    expect(ws.closed).toBe(true);
+  it('does not reject on WebSocket error (the persistent socket reconnects instead)', async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = bridge.stopChatMessage('abc');
+      const ws = FakeWebSocket.instances[0]!;
+      ws.onopen?.({});
+      ws.onerror?.({});
+
+      let settled = false;
+      promise.then(
+        () => (settled = true),
+        () => (settled = true)
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      // No pending send to recover -> fallback liveness reconnect after 5s.
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(FakeWebSocket.instances.length).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('rejects when closed before confirmation', async () => {
+  it('does not reject when the socket closes before confirmation', async () => {
     const promise = bridge.stopChatMessage('abc');
     const ws = FakeWebSocket.instances[0]!;
-    ws.onclose?.({});
-    await expect(promise).rejects.toThrow('WebSocket closed before stop confirmation');
-    expect(ws.closed).toBe(true);
+    ws.onopen?.({});
+    ws.closeFromServer();
+
+    let settled = false;
+    promise.then(
+      () => (settled = true),
+      () => (settled = true)
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(ws.readyState).toBe(FakeWebSocket.CLOSED);
   });
 });
 

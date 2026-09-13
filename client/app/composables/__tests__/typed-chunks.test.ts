@@ -9,6 +9,7 @@ vi.mock('../requestApi', () => ({
 }));
 
 import * as bridge from '../bridge';
+import { closeAllAgentSockets } from '../bridge/agent-socket';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -61,6 +62,8 @@ class FakeWebSocket {
 }
 
 beforeEach(() => {
+  // Persistent per-session socket singleton: reset so every test reconnects.
+  closeAllAgentSockets();
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
 });

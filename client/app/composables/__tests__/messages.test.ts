@@ -22,6 +22,7 @@ const fetchApiMock = vi.hoisted(() => vi.fn());
 vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
 
 import { get_history_by_turn_page, clearSession, postAgentStream } from '../messages';
+import { closeAllAgentSockets } from '../bridge/agent-socket';
 
 function stubFetchApi(data: unknown) {
   fetchApiMock.mockReset();
@@ -250,6 +251,9 @@ describe('postAgentStream', () => {
   }
 
   beforeEach(() => {
+    // The persistent per-session socket is a module singleton: reset it so each
+    // test opens a fresh connection.
+    closeAllAgentSockets();
     sockets = [];
     vi.stubGlobal('WebSocket', FakeWebSocket);
   });
@@ -275,20 +279,21 @@ describe('postAgentStream', () => {
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
     ws.open();
     // Tauri mode guarded out; browser uses streamChatMessage -> sendChatMessageWs.
-    expect(ws.sent).toEqual([
-      JSON.stringify({
-        session_id: 's1',
-        multi_modal_message: {
-          text: 'hi',
-          image_base64_list: [],
-          image_path_list: [],
-          audio_bytes_list: [],
-          audio_path_list: [],
-          video_bytes_list: [],
-          video_path_list: []
-        }
-      })
-    ]);
+    expect(ws.sent).toHaveLength(1);
+    const payload = JSON.parse(ws.sent[0]!);
+    expect(payload).toMatchObject({
+      session_id: 's1',
+      multi_modal_message: {
+        text: 'hi',
+        image_base64_list: [],
+        image_path_list: [],
+        audio_bytes_list: [],
+        audio_path_list: [],
+        video_bytes_list: [],
+        video_path_list: []
+      }
+    });
+    expect(typeof payload.msg_id).toBe('string');
 
     ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'hel', type: 'text' }) });
     ws.onmessage?.({ data: JSON.stringify({ event: 'chunk', session_id: 's1', content: 'lo', type: 'text' }) });
@@ -326,20 +331,21 @@ describe('postAgentStream', () => {
     ws.onmessage?.({ data: JSON.stringify({ event: 'done', session_id: 's7', content: '' }) });
     await done;
 
-    expect(ws.sent).toEqual([
-      JSON.stringify({
-        session_id: 's7',
-        multi_modal_message: {
-          text: 'ping',
-          image_base64_list: [],
-          image_path_list: [],
-          audio_bytes_list: [],
-          audio_path_list: [],
-          video_bytes_list: [],
-          video_path_list: []
-        }
-      })
-    ]);
+    expect(ws.sent).toHaveLength(1);
+    const payload = JSON.parse(ws.sent[0]!);
+    expect(payload).toMatchObject({
+      session_id: 's7',
+      multi_modal_message: {
+        text: 'ping',
+        image_base64_list: [],
+        image_path_list: [],
+        audio_bytes_list: [],
+        audio_path_list: [],
+        video_bytes_list: [],
+        video_path_list: []
+      }
+    });
+    expect(typeof payload.msg_id).toBe('string');
   });
 
   it('calls onError on an error frame', async () => {

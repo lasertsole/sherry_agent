@@ -14,6 +14,7 @@ vi.mock('../requestApi', () => ({
 
 import * as bridge from '../bridge';
 import * as messages from '../messages';
+import { closeAllAgentSockets } from '../bridge/agent-socket';
 
 // messages.ts imports streamChatMessage as a direct binding; intercept it via the hoisted
 // mutable reference to observe the callbacks postAgentStream hands to it.
@@ -89,6 +90,8 @@ class FakeWebSocket {
 }
 
 beforeEach(() => {
+  // Persistent per-session socket singleton: reset so every test reconnects.
+  closeAllAgentSockets();
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
 });

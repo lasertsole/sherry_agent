@@ -17,9 +17,8 @@ import type {
   StreamController
 } from './chat-types';
 import { getInvoke, getListen, isTauri } from './transport';
-import { WS_BASE_URL } from '../env';
 import { sendChatMessageWs } from './ws-stream';
-import { createWsMessageHandler } from '../ws-message';
+import { acquireAgentSocket } from './agent-socket';
 
 /** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
 interface AgentStreamStart {
@@ -250,64 +249,11 @@ export async function stopChatMessage(sessionId: string): Promise<void> {
 }
 
 /**
- * Browser mode: send a stop command over the agent WebSocket
- * (`/sessions/agent/ws`) instead of relying on the legacy HTTP stop endpoint.
+ * Browser mode: send a stop command over the session's persistent agent
+ * WebSocket (`/sessions/agent/ws`) instead of opening a fresh socket. The
+ * connection is intentionally left open for the next send.
  * @param sessionId
  */
 function stopChatMessageBrowser(sessionId: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const url = `${WS_BASE_URL}/sessions/agent/ws`;
-
-    let socket: WebSocket | null = null;
-
-    try {
-      socket = new WebSocket(url);
-    } catch (e) {
-      reject(e);
-      return;
-    }
-
-    // Resolve once the server acknowledges the stop.
-    const handleStopFrame = createWsMessageHandler<{ event?: string; session_id?: string }>({
-      stopped: data => {
-        if (data.session_id === sessionId) {
-          cleanup();
-          resolve();
-        }
-      }
-    });
-
-    socket.onmessage = event => {
-      try {
-        handleStopFrame(event);
-      } catch {
-        // ignore non-JSON frames
-      }
-    };
-
-    socket.onopen = () => {
-      socket?.send(JSON.stringify({ type: 'stop', session_id: sessionId }));
-    };
-
-    socket.onerror = () => {
-      cleanup();
-      reject(new Error(`WebSocket stop failed: ${url}`));
-    };
-
-    socket.onclose = () => {
-      cleanup();
-      reject(new Error('WebSocket closed before stop confirmation'));
-    };
-
-    const cleanup = () => {
-      if (socket) {
-        socket.onmessage = null;
-        socket.onopen = null;
-        socket.onerror = null;
-        socket.onclose = null;
-        socket.close();
-        socket = null;
-      }
-    };
-  });
+  return acquireAgentSocket(sessionId).stop();
 }

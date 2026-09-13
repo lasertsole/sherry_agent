@@ -19,6 +19,12 @@ import { logUtil } from '~/utils/log';
  */
 export interface ChatController extends AbortController {
   sendHitlResponse?: (response: HitlResponse) => void;
+  /**
+   * Client-generated protocol `msg_id` of this send (frozen protocol). Used by
+   * the page to correlate `turn_started.message_ids` / `queued.message_id` back
+   * to the local turn, so a batch of queued sends collapses into one reply.
+   */
+  msgId?: string;
 }
 
 /**
@@ -221,6 +227,7 @@ export async function getPendingInterrupt(session_id: string): Promise<HitlInter
  * @param onError Error callback
  * @param onHitl HITL interrupt callback
  * @param onQueued Queued callback (backend enqueued the message because the session is busy)
+ * @param msgId Optional client-generated protocol `msg_id` (a UUID is generated when omitted)
  * @returns {ChatController} The caller can abort the request via controller.abort()
  */
 export function postAgentStream(
@@ -230,15 +237,23 @@ export function postAgentStream(
   onDone?: OnDoneCallback,
   onError?: (err: unknown) => void,
   onHitl?: OnHitlCallback,
-  onQueued?: OnQueuedCallback
+  onQueued?: OnQueuedCallback,
+  msgId?: string
 ): ChatController {
   const controller: ChatController = new AbortController();
   let stopFn: (() => void) | null = null;
+
+  // Frozen protocol: every send carries a client-generated `msg_id`. The server
+  // echoes it on `queued` and lists it in `turn_started` / `done` / `error` /
+  // `stopped`, letting the persistent socket resolve the right pending send.
+  const resolvedMsgId = msgId ?? generateMsgId();
+  controller.msgId = resolvedMsgId;
 
   // Bridge to the unified streaming entry of bridge (browser WS / Tauri IPC).
   const { controller: stream, promise } = streamChatMessage(
     {
       session_id,
+      msg_id: resolvedMsgId,
       text: multi_modal_message.text ?? '',
       image_base64_list: multi_modal_message.image_base64_list,
       audio_bytes_list: multi_modal_message.audio_bytes_list,
@@ -272,4 +287,12 @@ export function postAgentStream(
     });
 
   return controller;
+}
+
+/** Generate a protocol `msg_id` (RFC4122 v4 UUID, with a non-crypto fallback). */
+function generateMsgId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }

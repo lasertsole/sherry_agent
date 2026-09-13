@@ -12,6 +12,7 @@ vi.mock('../requestApi', () => ({
 
 import * as bridge from '../bridge';
 import * as messages from '../messages';
+import { closeAllAgentSockets } from '../bridge/agent-socket';
 
 // `messages.ts` imports `streamChatMessage` as a direct binding, so to observe
 // the HITL callbacks handed to it we mock `../bridge` and keep a controllable
@@ -98,6 +99,8 @@ class FakeWebSocket {
 }
 
 beforeEach(() => {
+  // Persistent per-session socket singleton: reset so every test reconnects.
+  closeAllAgentSockets();
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
 });
@@ -329,28 +332,30 @@ describe('HITL resilience (edge cases)', () => {
     const { controller, promise } = openStream();
     const ws = await awaitSocket();
 
-    // abort() marks stream done, sends a stop frame, and closes the socket.
+    // abort() settles the send and sends a stop frame, but keeps the persistent
+    // socket open (frozen protocol).
     controller.abort();
     controller.sendHitlResponse?.({ decision: 'approve' });
     // Only the initial chat payload + the stop frame are sent; no hitl_response.
-    expect(ws.sent).toEqual([
-      JSON.stringify({
-        session_id: 's1',
-        multi_modal_message: {
-          text: 'hi',
-          image_base64_list: [],
-          image_path_list: [],
-          audio_bytes_list: [],
-          audio_path_list: [],
-          video_bytes_list: [],
-          video_path_list: []
-        }
-      }),
-      JSON.stringify({ type: 'stop', session_id: 's1' })
-    ]);
-    // User-initiated abort does NOT reject the stream promise (the release
-    // guard early-returns on the already-done flag), so it stays pending.
+    expect(ws.sent).toHaveLength(2);
+    const payload = JSON.parse(ws.sent[0]!);
+    expect(payload).toMatchObject({
+      session_id: 's1',
+      multi_modal_message: {
+        text: 'hi',
+        image_base64_list: [],
+        image_path_list: [],
+        audio_bytes_list: [],
+        audio_path_list: [],
+        video_bytes_list: [],
+        video_path_list: []
+      }
+    });
+    expect(typeof payload.msg_id).toBe('string');
+    expect(JSON.parse(ws.sent[1]!)).toEqual({ type: 'stop', session_id: 's1' });
+    expect(ws.sent.every(f => !f.includes('hitl_response'))).toBe(true);
     expect(controller.closed).toBe(true);
+    expect(ws.closed).toBe(false);
     void promise;
   });
 
@@ -405,13 +410,15 @@ describe('HITL trigger patterns match the backend guardrails', () => {
   });
 });
 
-describe('resumeHitl yolo decision (fresh resume WebSocket)', () => {
-  it('sends a yolo hitl_response frame on the dedicated resume socket', async () => {
-    const onChunk = vi.fn();
-    const { promise } = bridge.resumeHitl('s1', 'yolo', '', onChunk);
+describe('HITL resume on the persistent session socket', () => {
+  it('sends a yolo hitl_response frame on the SAME socket (no fresh connection)', async () => {
+    // The page acquires the session socket once; the resume reuses it.
+    const socket = bridge.acquireAgentSocket('s1');
     const ws = await awaitSocket();
-
     expect(ws.url).toBe('ws://localhost:8080/sessions/agent/ws');
+
+    socket.sendHitlResponse({ decision: 'yolo', message: '' });
+
     const frame = JSON.parse(ws.sent[0]!);
     expect(frame).toEqual({
       type: 'hitl_response',
@@ -419,9 +426,22 @@ describe('resumeHitl yolo decision (fresh resume WebSocket)', () => {
       decision: 'yolo',
       message: ''
     });
+    // Resume never opens a second WebSocket.
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
 
-    ws.frame({ event: 'done', session_id: 's1' });
-    await expect(promise).resolves.toBeUndefined();
-    expect(onChunk).not.toHaveBeenCalled();
+  it('queues a hitl_response until the persistent socket opens', async () => {
+    const socket = bridge.acquireAgentSocket('s1');
+    const ws = FakeWebSocket.instances[0]!;
+    // Called while the socket is still CONNECTING: the frame must be queued, not dropped.
+    socket.sendHitlResponse({ decision: 'approve' });
+    expect(ws.sent).toHaveLength(0);
+    ws.open();
+    expect(JSON.parse(ws.sent[0]!)).toMatchObject({
+      type: 'hitl_response',
+      session_id: 's1',
+      decision: 'approve',
+      message: ''
+    });
   });
 });
