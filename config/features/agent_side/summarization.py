@@ -51,6 +51,7 @@ class SummarizationConfig(TypedDict):
     truncatable_recent_skip: int
     ttl_registry_max_entries: int
     preemptive_truncate_max_chars: int
+    compression_todo_update_enabled: bool
 
 
 SUMMARIZATION: SummarizationConfig = {
@@ -102,4 +103,5 @@ SUMMARIZATION: SummarizationConfig = {
     "truncatable_recent_skip": 6,
     "ttl_registry_max_entries": 512,
     "preemptive_truncate_max_chars": 2000,
+    "compression_todo_update_enabled": True,
 }

@@ -615,6 +615,22 @@ def _parse_file_ops_from_summary(summary_text: str) -> dict | None:
     return {"read_files": read_files, "modified_files": mod_files}
 
 
+def _schedule_compression_todo_update(session_id: str, discarded_messages: Sequence[Any]) -> None:
+    """Fire-and-forget the post-compression todo update (never blocks/raises).
+
+    Call-time import keeps ``summarization`` out of the ``context_engine.nudge``
+    import graph; the scheduler itself gates (feature switch, non-empty todo
+    list, per-session lock) and skips when no event loop is running (sync
+    compression path).
+    """
+    try:
+        from agent.middlewares.context_engine.nudge import schedule_compression_todo_update
+
+        schedule_compression_todo_update(session_id, discarded_messages)
+    except Exception:
+        logger.exception("compression todo update scheduling failed (fail-open)")
+
+
 # ======================================================================
 # Main Middleware Class
 # ======================================================================
@@ -1804,6 +1820,8 @@ class Summarization(AgentMiddleware):
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
 
+                _schedule_compression_todo_update(session_id, messages_to_summarize)
+
                 # P0-1: persist cross-session facts before these messages are discarded.
                 if self._memory_store and self._llm_factory:
                     from agent.middlewares.memory_flush import run_memory_flush_sync
@@ -1904,6 +1922,8 @@ class Summarization(AgentMiddleware):
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
+
+                _schedule_compression_todo_update(session_id, messages_to_summarize)
 
                 # P0-1: persist cross-session facts before these messages are discarded.
                 if self._memory_store and self._llm_factory:

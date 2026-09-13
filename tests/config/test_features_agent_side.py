@@ -92,6 +92,7 @@ SPOT_DEFAULTS = [
     (SUMMARIZATION, "compression_trigger_ratio", 0.80),
     (SUMMARIZATION, "preemptive_truncate_max_chars", 2000),
     (SUMMARIZATION, "protected_tools", frozenset({"memory", "skill_view", "skill_list"})),
+    (SUMMARIZATION, "compression_todo_update_enabled", True),
     (
         SUMMARIZATION,
         "auto_continue_prompt",

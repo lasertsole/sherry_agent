@@ -57,6 +57,10 @@ def build_todolist_tools() -> list[BaseTool]:
     for t in _TODOLIST_TOOLS:
         t.handle_tool_error = True
         t.metadata = {"scope": "main_only"}
+    # ``todowrite`` is the only todo-MUTATING tool: the post-compression todo
+    # nudge admits tools by this metadata marker, so ``todoread`` stays untagged
+    # on purpose (the fork receives the current list in its prompt).
+    todowrite.metadata = {"scope": "main_only", "todo_update": True}
     if _TODOWRITE_FORMAT_RULES not in todowrite.description:
         todowrite.description += _TODOWRITE_FORMAT_RULES
     return list(_TODOLIST_TOOLS)
