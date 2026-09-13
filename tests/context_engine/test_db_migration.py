@@ -23,6 +23,10 @@ Covers:
   database, so a stale high watermark can no longer swallow appended steps.
 - Write smoke: the real ``add_messages`` persists a turn against a fresh
   baseline database (reasoning tokens, context eligibility, message tree).
+- Legacy self-heal (regression): a database with watermark 9 and a base-only
+  ``messages`` table is healed on the real connect path — the newer columns,
+  every named index and all auxiliary tables appear while the existing row
+  survives unchanged.
 """
 
 from __future__ import annotations
@@ -355,5 +359,113 @@ class TestAddMessagesSmoke:
             # Message tree: the human row is a root, the ai row chains to it.
             assert rows[0]["parent_message_id"] is None
             assert rows[1]["parent_message_id"] is not None
+        finally:
+            db.close()
+
+
+class TestLegacySchemaSelfHeal:
+    """Regression: a legacy database is healed unconditionally on connect.
+
+    A legacy DB (former incremental chain) records a watermark above the step
+    count, so ``_migrate`` normalizes it without replaying the baseline; the
+    real connect path must therefore repair the missing schema itself.
+    """
+
+    # The base ``messages`` columns a former-chain database carries before the
+    # newer additive columns existed (matches the live defect report).
+    _LEGACY_MESSAGE_DDL = """
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn_num INTEGER NOT NULL,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT,
+            tool_call_id TEXT,
+            tool_calls TEXT,
+            tool_status TEXT,
+            tool_name TEXT,
+            timestamp TEXT NOT NULL,
+            finish_reason TEXT,
+            reasoning TEXT,
+            reasoning_content TEXT,
+            images TEXT,
+            audios TEXT,
+            videos TEXT,
+            model_name TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            origin TEXT,
+            ts_ms INTEGER NOT NULL
+        )
+    """
+
+    _HEALED_COLUMNS = frozenset(
+        {
+            "reasoning_tokens",
+            "idempotency_key",
+            "context_eligible",
+            "parent_message_id",
+            "compacted",
+            "compaction_checkpoint_id",
+        }
+    )
+
+    def test_connect_heals_watermark_9_legacy_database(self, monkeypatch, tmp_path):
+        """``_connect_with_retry()`` heals a watermark-9 DB missing the newer
+        columns; the pre-existing row survives untouched."""
+        path = tmp_path / "legacy_mes_memory.db"
+        legacy = sqlite3.connect(path)
+        try:
+            legacy.execute(
+                "CREATE TABLE _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
+            )
+            legacy.execute("INSERT INTO _migrations (v, at) VALUES (9, 0)")
+            legacy.execute(self._LEGACY_MESSAGE_DDL)
+            legacy.execute(
+                "INSERT INTO messages (turn_num, session_id, role, content, timestamp, ts_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (1, "legacy-session", "human", "ping", "20260101000000", 42),
+            )
+            legacy.commit()
+        finally:
+            legacy.close()
+
+        monkeypatch.setattr(db_module, "_db_path", path)
+
+        db = db_module._connect_with_retry()
+        try:
+            # The newer columns were added; the column set is now complete.
+            assert self._HEALED_COLUMNS <= _message_columns(db)
+            assert _message_columns(db) == set(EXPECTED_MESSAGE_COLUMNS)
+            # The missing indexes and auxiliary tables were re-created.
+            assert EXPECTED_INDEXES <= _index_names(db)
+            assert EXPECTED_AUX_TABLES <= _table_names(db)
+            # The baseline was not replayed: watermark normalized to v1 only.
+            assert _versions(db) == [1]
+            # The pre-existing row survived unchanged, new columns defaulted.
+            row = db.execute(
+                "SELECT turn_num, session_id, role, content, timestamp, ts_ms, "
+                "context_eligible, compacted FROM messages ORDER BY id"
+            ).fetchone()
+            assert row is not None
+            assert (
+                row["turn_num"],
+                row["session_id"],
+                row["role"],
+                row["content"],
+                row["timestamp"],
+                row["ts_ms"],
+            ) == (1, "legacy-session", "human", "ping", "20260101000000", 42)
+            assert row["context_eligible"] == 1
+            assert row["compacted"] == 0
+        finally:
+            db.close()
+
+        # A second real connect is a clean, idempotent no-op.
+        db = db_module._connect_with_retry()
+        try:
+            assert db.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
+            assert _message_columns(db) == set(EXPECTED_MESSAGE_COLUMNS)
+            assert _versions(db) == [1]
         finally:
             db.close()

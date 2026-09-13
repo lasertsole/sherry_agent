@@ -76,6 +76,7 @@ def _connect_with_retry() -> sqlite3.Connection:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA foreign_keys=ON")
             _migrate(db)
+            _self_heal_schema(db)
             return db
         except sqlite3.OperationalError as exc:
             if not _is_locked_error(exc):
@@ -251,6 +252,158 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_compaction_session
         ON compaction_checkpoints(session_id, checkpoint_seq);
     """)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Self-healing DDL (additive, idempotent) — runs unconditionally on connect.
+#
+# Legacy databases carry a high ``_migrations`` watermark from the former
+# incremental chain, so ``_migrate`` resumes past the single baseline and never
+# replays it. ``_self_heal_schema`` converges such a database to the current
+# schema by adding the columns, indexes and auxiliary tables that its
+# watermark claims (wrongly) to have. A fresh database is fully built by
+# ``build_schema_v1`` before the heal runs, hence the early return when the
+# ``messages`` table is absent. No statement ever drops or rewrites rows.
+# ---------------------------------------------------------------------------
+
+# (column_name, ALTER TABLE DDL) for the additive columns a legacy ``messages``
+# table may lack. Duplicate-column errors on already-migrated databases are the
+# expected no-op.
+_HEAL_MESSAGE_COLUMN_DDL: tuple[tuple[str, str], ...] = (
+    ("ts_ms", "ALTER TABLE messages ADD COLUMN ts_ms INTEGER NOT NULL DEFAULT 0"),
+    ("images", "ALTER TABLE messages ADD COLUMN images TEXT"),
+    ("audios", "ALTER TABLE messages ADD COLUMN audios TEXT"),
+    ("videos", "ALTER TABLE messages ADD COLUMN videos TEXT"),
+    ("model_name", "ALTER TABLE messages ADD COLUMN model_name TEXT"),
+    ("input_tokens", "ALTER TABLE messages ADD COLUMN input_tokens INTEGER"),
+    ("output_tokens", "ALTER TABLE messages ADD COLUMN output_tokens INTEGER"),
+    ("origin", "ALTER TABLE messages ADD COLUMN origin TEXT"),
+    ("reasoning_tokens", "ALTER TABLE messages ADD COLUMN reasoning_tokens INTEGER"),
+    ("idempotency_key", "ALTER TABLE messages ADD COLUMN idempotency_key TEXT"),
+    (
+        "context_eligible",
+        "ALTER TABLE messages ADD COLUMN context_eligible INTEGER NOT NULL DEFAULT 1",
+    ),
+    ("parent_message_id", "ALTER TABLE messages ADD COLUMN parent_message_id INTEGER"),
+    ("compacted", "ALTER TABLE messages ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0"),
+    (
+        "compaction_checkpoint_id",
+        "ALTER TABLE messages ADD COLUMN compaction_checkpoint_id INTEGER",
+    ),
+)
+
+# Named indexes from build_schema_v1, re-created with IF NOT EXISTS.
+_HEAL_INDEX_DDL: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(session_id, parent_message_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency "
+    "ON messages(idempotency_key) WHERE idempotency_key IS NOT NULL",
+)
+
+# Auxiliary tables and their indexes from build_schema_v1 (verbatim DDL).
+_HEAL_AUX_TABLE_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS message_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL UNIQUE,
+        embedding BLOB NOT NULL,
+        model TEXT NOT NULL,
+        dim INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (message_id) REFERENCES messages(id)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_embeddings_session ON message_embeddings(session_id);",
+    """
+    CREATE TABLE IF NOT EXISTS compression_locks (
+        session_id TEXT PRIMARY KEY,
+        holder TEXT NOT NULL,
+        acquired_at REAL NOT NULL,
+        ttl INTEGER NOT NULL DEFAULT 300,
+        renew_count INTEGER DEFAULT 0
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(session_id, seq)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);",
+    """
+    CREATE TABLE IF NOT EXISTS context_epoch (
+        session_id TEXT PRIMARY KEY,
+        baseline TEXT NOT NULL,
+        snapshot TEXT NOT NULL,
+        baseline_seq INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_leafs (
+        session_id TEXT PRIMARY KEY,
+        leaf_message_id INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS compaction_checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        checkpoint_seq INTEGER NOT NULL,
+        pre_compaction_turn INTEGER NOT NULL,
+        post_compaction_turn INTEGER NOT NULL,
+        summary_text TEXT,
+        created_at TEXT NOT NULL
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_compaction_session "
+    "ON compaction_checkpoints(session_id, checkpoint_seq);",
+)
+
+
+def _self_heal_schema(db: sqlite3.Connection) -> None:
+    """Converge a legacy MesMemory database to the current schema, additively.
+
+    ``_migrate`` is version-gated and never replays the single baseline, so a
+    former-chain database (high watermark, incomplete schema) stays broken
+    forever without this pass. The heal runs unconditionally after ``_migrate``
+    on every connect: missing ``messages`` columns are added with guarded
+    ALTERs, and every index / auxiliary table from ``build_schema_v1`` is
+    re-created with ``IF NOT EXISTS``. Existing rows and tables are never
+    dropped or rewritten, so the pass is safe to repeat on every connect.
+    """
+    exists = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+    ).fetchone()
+    if exists is None:
+        # Fresh database: build_schema_v1 already created the complete schema.
+        return
+
+    existing_columns = {row[1] for row in db.execute("PRAGMA table_info(messages)")}
+    for column, ddl in _HEAL_MESSAGE_COLUMN_DDL:
+        if column in existing_columns:
+            continue
+        try:
+            db.execute(ddl)
+            logger.info("mes_memory self-heal: added messages.{}", column)
+        except sqlite3.OperationalError:
+            # Duplicate column name (concurrent add) - expected no-op.
+            pass
+    for ddl in _HEAL_INDEX_DDL:
+        db.execute(ddl)
+    for ddl in _HEAL_AUX_TABLE_DDL:
+        db.execute(ddl)
     db.commit()
 
 
