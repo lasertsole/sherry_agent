@@ -839,8 +839,12 @@ class Summarization(AgentMiddleware):
         attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) + 1
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, attempts)
         # P0-2: the armed cooldown must survive a restart, or a fresh process
-        # immediately re-attempts the compression that just happened.
-        self._persist_cooldown_state(session_id)
+        # immediately re-attempts the compression that just happened. Persist
+        # ONLY the rounds key here — the effectiveness-count keys keep their
+        # original "persisted on the degraded path only" semantics, while a
+        # blanket _persist_cooldown_state() would drag those keys along and
+        # leak stale counters across a turn reset.
+        state_register_db.set_state(session_id, _COOLDOWN_ROUNDS_KEY, COMPACTION_COOLDOWN_ROUNDS)
 
     def _execute_compact(
         self,
