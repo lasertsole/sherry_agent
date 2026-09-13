@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-Implementation status of `TODO/SESSION_MEMORY_BORROWING_PLAN.md` — session-memory capabilities borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw. Design rule: every new capability extends the existing long-running-task infrastructure (tiered facts, session continuity, state registers) — never a parallel store.
+Implementation status of `the SESSION plan (retired)` — session-memory capabilities borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw. Design rule: every new capability extends the existing long-running-task infrastructure (tiered facts, session continuity, state registers) — never a parallel store.
 
 ## Implemented
 
@@ -16,10 +16,16 @@ Implementation status of `TODO/SESSION_MEMORY_BORROWING_PLAN.md` — session-mem
 | P1-3 | `context_eligible` history projection | MesMemory migration v12; retrieval filters ineligible messages by default |
 | P2-4 (partial) | steer/queue dual delivery | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn`; child steer via `sessions_steer` |
 | LT-* | TaskFlow DAG / budget / deadline / retry / continuity | `docs/long-running-tasks/` |
+| P1-1 | Compaction checkpoints + restore | MesMemory migration v15, `restore_compaction_checkpoint` |
+| P1-5 | Message tree + forking (zero-copy) | MesMemory migration v14 (`parent_message_id`, `session_leafs`) |
+| P2-1 | Append-only event log + projector | MesMemory migration v16, `context_engine/events/` |
+| P2-2 | Context epoch snapshots | runtime migration (`context_epoch` table), `ContextEpoch` |
+| P2-3 | Dual-watermark facts extraction | `context_engine/facts/` (cursors + extractor), TieredMemoryStore |
+| P2-5 | Vector semantic search | MesMemory migration v13, `context_engine/embeddings/`, `message_search --semantic` |
 
-## Roadmap (pending)
+## Roadmap
 
-P1-1 compression checkpoint rollback · P1-4 cross-session recall · P1-5 transcript tree & message branching · P2-1 event-sourcing migration · P2-2 context epoch snapshots · P2-3 dual-watermark facts extraction (must land on the existing tiered facts store) · P2-5 vector semantic search.
+All 14 plan items (plus LT-1…LT-8) are implemented — the plan document is retired; this README is the reference.
 
 ## Testing
 

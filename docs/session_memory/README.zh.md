@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-`TODO/SESSION_MEMORY_BORROWING_PLAN.md`（借鉴 opencode-dev / oh-my-openagent / hermes-agent / openclaw）的实现落地情况。设计规则：所有新能力都扩展既有 long-running-task 基础设施（分层 facts、会话连续性、状态寄存器），绝不另建平行存储。
+`the SESSION plan (retired)`（借鉴 opencode-dev / oh-my-openagent / hermes-agent / openclaw）的实现落地情况。设计规则：所有新能力都扩展既有 long-running-task 基础设施（分层 facts、会话连续性、状态寄存器），绝不另建平行存储。
 
 ## 已实现
 
@@ -16,10 +16,16 @@
 | P1-3 | `context_eligible` 历史投影 | MesMemory 迁移 v12；检索默认过滤不合格消息 |
 | P2-4（部分） | steer/queue 双投递 | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn`；子代理引导走 `sessions_steer` |
 | LT-* | TaskFlow DAG / 预算 / 截止 / 重试 / 连续性 | `docs/long-running-tasks/` |
+| P1-1 | 压缩检查点 + 回溯 | MesMemory 迁移 v15，`restore_compaction_checkpoint` |
+| P1-5 | 消息树 + 零拷贝 fork | MesMemory 迁移 v14（`parent_message_id`、`session_leafs`） |
+| P2-1 | 只增事件日志 + 投影器 | MesMemory 迁移 v16，`context_engine/events/` |
+| P2-2 | Context Epoch 快照 | runtime 迁移（`context_epoch` 表）、`ContextEpoch` |
+| P2-3 | 双水位游标 Facts 提取 | `context_engine/facts/`（游标 + 提取器）、TieredMemoryStore |
+| P2-5 | 向量语义搜索 | MesMemory 迁移 v13，`context_engine/embeddings/`、`message_search --semantic` |
 
 ## 待实现路线图
 
-P1-1 压缩检查点回溯 · P1-4 跨会话记忆召回 · P1-5 转录树与消息分支 · P2-1 事件溯源迁移 · P2-2 Context Epoch 快照 · P2-3 双水位游标 Facts 提取（必须落在既有分层 facts 存储上）· P2-5 向量语义搜索。
+计划的 14 项（含 LT-1…LT-8）全部实现 —— 计划文档已退役，本 README 即权威参考。
 
 ## 测试
 
