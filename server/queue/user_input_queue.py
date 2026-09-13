@@ -42,6 +42,11 @@ Public API (consumed by Tasks 5/7/9/10 -- signatures are a contract):
     single ``UPDATE ... RETURNING`` guarded by ``BEGIN IMMEDIATE``, so
     concurrent claimers never double-claim. Returns the row as CLAIMED, or
     None when the queue is empty/fully expired.
+  - ``await claim_batch(session_id, limit) -> list[UserInputQueueRow]``
+    Atomically claims up to ``limit`` OLDEST non-expired QUEUED rows in ONE
+    ``UPDATE ... RETURNING`` under ``BEGIN IMMEDIATE`` (race-free), FIFO
+    sorted, so a finished turn can drain a whole batch into one agent turn.
+    Returns an empty list when the queue is empty/fully expired.
   - ``await mark_terminal(row_id, status) -> None``
     Transitions an ACTIVE row to ``DELIVERED | FAILED | VOIDED`` (any other
     status raises ``ValueError``); unknown row ids are a no-op.
@@ -144,6 +149,21 @@ WHERE id = (
     WHERE session_id = ? AND status = 'QUEUED' AND expires_at > ?
     ORDER BY created_at ASC, id ASC
     LIMIT 1
+)
+RETURNING {_ROW_COLUMNS};
+"""
+
+# Atomic race-free batch claim: same single-statement shape as _CLAIM_NEXT_SQL,
+# but the subquery selects up to ``limit`` FIFO rows at once. ``UPDATE ...
+# RETURNING`` does NOT guarantee output order, so callers sort FIFO in Python.
+_CLAIM_BATCH_SQL = f"""
+UPDATE user_input_queue
+SET status = 'CLAIMED', updated_at = ?
+WHERE id IN (
+    SELECT id FROM user_input_queue
+    WHERE session_id = ? AND status = 'QUEUED' AND expires_at > ?
+    ORDER BY created_at ASC, id ASC
+    LIMIT ?
 )
 RETURNING {_ROW_COLUMNS};
 """
@@ -506,6 +526,23 @@ class QueueRepository:
         return _row_from_db(claimed) if claimed is not None else None
 
     @staticmethod
+    async def claim_batch(
+        db: aiosqlite.Connection, session_id: str, now: float, limit: int
+    ) -> list[UserInputQueueRow]:
+        """Claim up to ``limit`` OLDEST non-expired QUEUED rows, FIFO-ordered.
+
+        Single ``UPDATE ... RETURNING`` guarded by ``BEGIN IMMEDIATE``: the
+        selection and the CLAIMED flip are one statement, so concurrent
+        claimers can never receive the same row. ``RETURNING`` does not
+        preserve the subquery's ORDER BY, so the result is re-sorted in Python
+        by ``(created_at, id)`` before it is handed back.
+        """
+        cursor = await db.execute(_CLAIM_BATCH_SQL, (now, session_id, now, limit))
+        rows = [_row_from_db(row) async for row in cursor]
+        rows.sort(key=lambda row: (row.created_at, row.id))
+        return rows
+
+    @staticmethod
     async def mark_terminal(
         db: aiosqlite.Connection, terminal: str, row_id: str, now: float
     ) -> bool:
@@ -644,6 +681,23 @@ class UserInputQueue:
         now = time.time()
         async with self._conn.write_transaction() as db:
             return await QueueRepository.claim_next(db, session_id, now)
+
+    async def claim_batch(self, session_id: str, limit: int) -> list[UserInputQueueRow]:
+        """Atomically claim up to ``limit`` OLDEST non-expired QUEUED rows.
+
+        Same race-free guarantee as :meth:`claim_next` (one ``UPDATE ...
+        RETURNING`` under ``BEGIN IMMEDIATE``), but claims a FIFO batch in a
+        single transaction so a busy session's queued inputs can be drained
+        into ONE agent turn. Returns the rows as CLAIMED in FIFO order, or an
+        empty list when the queue is empty / fully expired. ``limit`` is
+        clamped to >= 1 so a misconfigured cap can never silently claim
+        nothing (a non-positive ``LIMIT`` in SQLite means "no limit").
+        """
+        await self._ensure_db()
+        now = time.time()
+        effective_limit = max(1, int(limit))
+        async with self._conn.write_transaction() as db:
+            return await QueueRepository.claim_batch(db, session_id, now, effective_limit)
 
     async def mark_terminal(
         self, row_id: str, status: UserInputQueueStatus | Literal["DELIVERED", "FAILED", "VOIDED"]

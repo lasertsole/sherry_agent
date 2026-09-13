@@ -15,6 +15,8 @@ Covers the Task 1 spec behaviors:
 
 import asyncio
 import threading
+import time
+import uuid
 from pathlib import Path
 
 import aiosqlite
@@ -86,6 +88,46 @@ async def test_claim_next_returns_oldest_first(store: UserInputQueue):
         claimed.append(row)
     assert [r.payload for r in claimed] == [_payload(f"msg-{i}") for i in range(3)]
     assert all(r.status == UserInputQueueStatus.CLAIMED for r in claimed)
+
+
+@pytest.mark.asyncio
+async def test_claim_batch_returns_fifo_bounded_batch(store: UserInputQueue):
+    """claim_batch claims up to ``limit`` oldest rows, FIFO-ordered."""
+    for i in range(5):
+        await store.enqueue("s1", _payload(f"msg-{i}"), source="user")
+
+    batch = await store.claim_batch("s1", 3)
+    assert [r.payload for r in batch] == [_payload(f"msg-{i}") for i in range(3)]
+    assert all(r.status == UserInputQueueStatus.CLAIMED for r in batch)
+
+    # The remaining two rows are still claimable; claimed rows are never re-claimed.
+    rest = await store.claim_batch("s1", 10)
+    assert [r.payload for r in rest] == [_payload("msg-3"), _payload("msg-4")]
+    assert await store.claim_batch("s1", 10) == []
+    assert await store.count_active("s1") == 5, "all rows still ACTIVE (CLAIMED)"
+
+
+@pytest.mark.asyncio
+async def test_claim_batch_empty_and_expired_rows(store: UserInputQueue, tmp_path: Path):
+    """claim_batch returns [] on an empty session and skips expired rows."""
+    assert await store.claim_batch("no-such-session", 5) == []
+
+    expired_id = uuid.uuid4().hex
+    now = time.time()
+    conn = await aiosqlite.connect(store._db_path)  # noqa: SLF001
+    try:
+        await conn.execute(
+            "INSERT INTO user_input_queue "
+            "(id, session_id, payload, source, reply_target, client_msg_id, status, "
+            " created_at, updated_at, expires_at) "
+            "VALUES (?, 's1', ?, 'user', NULL, NULL, 'QUEUED', ?, ?, ?)",
+            (expired_id, _payload("stale"), now - 10, now - 10, now - 1),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    assert await store.claim_batch("s1", 5) == [], "expired rows must not be claimable"
 
 
 @pytest.mark.asyncio

@@ -322,6 +322,9 @@ def e2e_env(monkeypatch, tmp_path):
         return holder["graph"]
 
     monkeypatch.setattr(messages_mod, "built_agent", _fake_built_agent)
+    # The subagent conftest stubs pub.func.build_agent_config to a {} lambda;
+    # the real agent config (thread_id) is required for the real checkpointer.
+    monkeypatch.setattr(messages_mod, "build_agent_config", build_agent_config)
     monkeypatch.setattr(agent_core, "built_agent", _fake_built_agent, raising=False)
 
     tracked: dict[str, Any] = {}

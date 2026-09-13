@@ -198,13 +198,14 @@ def channel_env(core, tmp_path, monkeypatch):  # noqa: ARG001 - core pins module
 
     monkeypatch.setattr(iqs, "detect_state", fake_detect_state)
 
-    generate_calls: list[tuple[str, str]] = []
+    generate_calls: list[tuple[str, list[str]]] = []
 
-    async def fake_generate(session_id, multi_modal_message, is_stream=True, origin=None):  # noqa: ANN001
-        generate_calls.append((session_id, multi_modal_message.text))
-        yield {"type": "text", "content": f"echo:{multi_modal_message.text}"}
+    async def fake_generate_multi(session_id, messages, is_stream=True, origin=None):  # noqa: ANN001
+        texts = [m.text for m in messages]
+        generate_calls.append((session_id, texts))
+        yield {"type": "text", "content": f"echo:{'|'.join(texts)}"}
 
-    monkeypatch.setattr(core, "async_generate", fake_generate)
+    monkeypatch.setattr(core, "async_generate_multi", fake_generate_multi)
 
     stub_runner = _make_stub_turn_runner()
     monkeypatch.setattr(core, "_get_turn_runner", lambda: stub_runner)
@@ -254,8 +255,8 @@ async def test_user_message_starts_turn_and_reply_goes_to_captured_reply_target(
     await core._process_inbound(message, env.fake_channel)
     await _wait_until(lambda: env.stub_runner.finished)
 
-    # Turn driven through the AI service with the queued text.
-    assert env.generate_calls == [(env.sid, "hello")]
+    # Turn driven through the AI service with the queued text (as a batch).
+    assert env.generate_calls == [(env.sid, ["hello"])]
 
     # Reply captured at enqueue time (chat-A), passive msg_id preserved.
     assert len(env.fake_channel.sent) == 1
@@ -271,8 +272,8 @@ async def test_user_message_starts_turn_and_reply_goes_to_captured_reply_target(
     assert rows[0].source == "user"
     assert rows[0].reply_target == _reply_target("chat-A", "m1")
 
-    # Drain seam notified with the CLAIMED row id.
-    assert env.stub_runner.finished == [(env.sid, rows[0].id)]
+    # Drain seam notified with the CLAIMED row id (batched as a one-row list).
+    assert env.stub_runner.finished == [(env.sid, [rows[0].id])]
 
 
 @pytest.mark.asyncio
@@ -521,8 +522,8 @@ async def test_channel_executor_resolves_own_claimed_row_when_queued_row_predate
     await executor.execute(env.sid, "fresh", "user", _reply_target("chat-B", None))
     await _wait_until(lambda: env.stub_runner.finished)
 
-    assert env.generate_calls == [(env.sid, "fresh")], "the executor drives its own message"
-    assert env.stub_runner.finished == [(env.sid, placeholder.id)], (
+    assert env.generate_calls == [(env.sid, ["fresh"])], "the executor drives its own message"
+    assert env.stub_runner.finished == [(env.sid, [placeholder.id])], (
         "the executor's own CLAIMED placeholder must be resolved, not rows[0]"
     )
     rows = {row.id: row.status for row in await env.store.list_active(env.sid)}

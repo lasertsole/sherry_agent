@@ -34,13 +34,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from loguru import logger
 
-from config.features import WS_STREAM
+from config.features import INPUT_QUEUE, WS_STREAM
 from server.queue.user_input_queue import UserInputQueueStatus
+from server.service.input_queue_service import BatchTurnExecutor, TurnInput, route_for
 from server.service.stream_driver import StreamDriver
 from server.utils.ws_helpers import send_ws_json
 from pub.types.message import MultiModalMessage
@@ -52,6 +54,8 @@ from pub.types.message import MultiModalMessage
 _DRAIN_TASKS: dict[str, asyncio.Task] = {}
 _DRAIN_ERROR_BACKOFF_S: float = WS_STREAM["drain_error_backoff_s"]
 _OUTBOUND_ROUTERS: dict[str, Any] = {}
+# Max rows drained into ONE batched agent turn (config/features/infra_side).
+_BATCH_MAX_ROWS: int = INPUT_QUEUE["batch_max_rows"]
 
 
 def _iqs() -> Any:
@@ -87,9 +91,33 @@ def set_hitl_pending(session_id: str, value: bool) -> None:
     _set(session_id, value)
 
 
+def is_hitl_pending(session_id: str) -> bool:
+    """Seam over session_state's HITL flag reader (lazy, cycle-safe).
+
+    The drain consults this exact flag so it never claims/executes while the
+    graph is suspended awaiting a ``hitl_response``.
+    """
+    from agent.tools.subagent.registry.session_state import (  # noqa: PLC0415
+        is_hitl_pending as _read,
+    )
+
+    return _read(session_id)
+
+
 def async_generate(*args: Any, **kwargs: Any) -> Any:
     """Seam over the agent's ``async_generate`` stream (lazy, cycle-safe)."""
     from server.service import async_generate as _generate  # noqa: PLC0415
+
+    return _generate(*args, **kwargs)
+
+
+def async_generate_multi(*args: Any, **kwargs: Any) -> Any:
+    """Seam over the batched ``async_generate_multi`` stream (lazy, cycle-safe).
+
+    One drained turn feeds the whole claimed FIFO batch as multiple
+    HumanMessages to a SINGLE graph call.
+    """
+    from server.service import async_generate_multi as _generate  # noqa: PLC0415
 
     return _generate(*args, **kwargs)
 
@@ -186,23 +214,35 @@ async def _send_turn_error(session_id: str, route: str, content: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def on_turn_finished(session_id: str, claim_row_id: str | None = None) -> None:
-    """Mark the given turn's row terminal, then kick the session drain.
+async def on_turn_finished(
+    session_id: str, claim_row_ids: str | Sequence[str] | None = None
+) -> None:
+    """Mark the finished turn's row(s) terminal, then kick the session drain.
 
-    ``claim_row_id`` identifies the CLAIMED row of the turn that just finished
-    (resolved by the executor at its start). ``None`` means the completion
-    cannot be attributed to a row (auto-turn, cancelled turn, resume turn):
-    nothing is marked and the drain defers while a foreign CLAIMED row exists.
+    ``claim_row_ids`` identifies the CLAIMED row(s) of the turn that just
+    finished (resolved by the executor at its start). Accepts a single id or a
+    sequence (a batched turn owns several rows). ``None`` (or an empty
+    sequence) means the completion cannot be attributed to a row (auto-turn,
+    cancelled turn, resume turn): nothing is marked and the drain defers while
+    a foreign CLAIMED row exists.
     """
-    if claim_row_id is not None:
-        try:
-            await (
-                _iqs()
-                .get_default_queue()
-                .mark_terminal(claim_row_id, UserInputQueueStatus.DELIVERED)
-            )
-        except Exception as e:
-            logger.warning(f"TurnRunner: failed to mark row {claim_row_id} DELIVERED: {e}")
+    normalized: list[str] | None
+    if claim_row_ids is None:
+        normalized = None
+    elif isinstance(claim_row_ids, str):
+        normalized = [claim_row_ids]
+    else:
+        normalized = [row_id for row_id in claim_row_ids if row_id is not None]
+    if not normalized:
+        normalized = None
+
+    if normalized is not None:
+        queue = _iqs().get_default_queue()
+        for row_id in normalized:
+            try:
+                await queue.mark_terminal(row_id, UserInputQueueStatus.DELIVERED)
+            except Exception as e:
+                logger.warning(f"TurnRunner: failed to mark row {row_id} DELIVERED: {e}")
     else:
         try:
             rows = await _iqs().get_default_queue().list_active(session_id)
@@ -225,16 +265,48 @@ async def on_turn_finished(session_id: str, claim_row_id: str | None = None) -> 
     _DRAIN_TASKS[session_id] = task
 
 
+def _row_group_key(row: Any) -> str:
+    """Frozen grouping key: the row's reply_target, or ``"ws"`` when unset."""
+    return row.reply_target or "ws"
+
+
+def _row_route(row: Any) -> str:
+    """Registry route kind for a row: ``"channel"`` with a target, else ``"ws"``."""
+    return route_for(row.reply_target)
+
+
+def _group_claimed_rows(rows: Sequence[Any]) -> dict[str, list[Any]]:
+    """Group claimed rows by route group key, preserving FIFO order within each."""
+    groups: dict[str, list[Any]] = {}
+    for row in rows:
+        groups.setdefault(_row_group_key(row), []).append(row)
+    return groups
+
+
 async def _drain_loop(session_id: str) -> None:
-    """Execute the session's queued rows FIFO until the queue runs dry."""
+    """Execute the session's queued rows in FIFO batches until the queue runs dry.
+
+    Each iteration claims up to ``_BATCH_MAX_ROWS`` QUEUED rows in ONE atomic
+    transaction, groups them by route, and drives ONE ``execute_batch`` per
+    group (a batch of one for a lone row). While the session is HITL-pending
+    the loop claims nothing: the suspended graph owns the next turn and the
+    resume completion re-kicks the drain.
+    """
     try:
         while True:
             try:
-                queue = _iqs().get_default_queue()
-                row = await queue.claim_next(session_id)
-                if row is None:
+                if is_hitl_pending(session_id):
+                    logger.debug(
+                        f"TurnRunner: drain deferred for session {session_id}; "
+                        "HITL decision pending"
+                    )
                     break
-                await _execute_claimed_row(session_id, row)
+                queue = _iqs().get_default_queue()
+                rows = await queue.claim_batch(session_id, _BATCH_MAX_ROWS)
+                if not rows:
+                    break
+                for group_rows in _group_claimed_rows(rows).values():
+                    await _execute_batch_group(session_id, group_rows)
             except Exception as e:
                 logger.warning(
                     f"TurnRunner: drain failed for session {session_id}; "
@@ -246,30 +318,65 @@ async def _drain_loop(session_id: str) -> None:
             _DRAIN_TASKS.pop(session_id, None)
 
 
-async def _execute_claimed_row(session_id: str, row: Any) -> None:
-    """Execute one claimed row; a single failure never stops the drain."""
+async def _invoke_executor_batch(
+    executor: Any, session_id: str, batch: list[TurnInput], reply_target: str | None
+) -> None:
+    """Drive one route group: ``execute_batch`` when available, else per-row ``execute``.
+
+    Execute-only fakes (legacy tests, custom executors) never had
+    ``execute_batch``; they keep working row-by-row.
+    """
+    execute_batch = getattr(executor, "execute_batch", None)
+    if execute_batch is not None:
+        await execute_batch(session_id, batch, reply_target)
+        return
+    for item in batch:
+        await executor.execute(session_id, item.message, item.source, reply_target)
+
+
+async def _execute_batch_group(session_id: str, rows: list[Any]) -> None:
+    """Execute one route group as ONE turn; failure finalizes every row.
+
+    A single failing batch never stops the drain: pre-flight executor lookup
+    misses and executor exceptions mark ALL group rows FAILED + send one error
+    frame, then the drain continues with the next group.
+    """
     queue = _iqs().get_default_queue()
-    route = row.reply_target or "ws"
+    route = _row_route(rows[0])
+    reply_target = rows[0].reply_target
+    batch = [
+        TurnInput(
+            message=_parse_payload_text(row.payload),
+            source=row.source,
+            message_id=row.client_msg_id,
+            claim_row_id=row.id,
+        )
+        for row in rows
+    ]
     executor = get_registry().resolve(route)
     if executor is None:
         logger.warning(
-            f"TurnRunner: no executor registered for route '{route}'; marking row {row.id} FAILED"
+            f"TurnRunner: no executor registered for route '{route}'; "
+            f"marking {len(rows)} row(s) FAILED"
         )
-        await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
+        for row in rows:
+            await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
         await _send_turn_error(session_id, route, f"No executor registered for route '{route}'")
         return
 
-    message = _parse_payload_text(row.payload)
     try:
-        await executor.execute(session_id, message, row.source, row.reply_target)
+        await _invoke_executor_batch(executor, session_id, batch, reply_target)
     except Exception as e:
         logger.warning(
-            f"TurnRunner: executor '{route}' failed for session {session_id} row {row.id}: {e}"
+            f"TurnRunner: executor '{route}' failed for session {session_id} "
+            f"({len(rows)} row(s)): {e}"
         )
-        await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
+        for row in rows:
+            await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
         await _send_turn_error(session_id, route, str(e))
         return
-    await queue.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
+    for row in rows:
+        await queue.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
 
 
 # ---------------------------------------------------------------------------
@@ -277,26 +384,33 @@ async def _execute_claimed_row(session_id: str, row: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-class WsTurnExecutor:
+class WsTurnExecutor(BatchTurnExecutor):
     """TurnExecutor for ws-routed rows: serialize behind live turns, then drive.
 
-    - Resolves its own CLAIMED row id at start (submit inserts the placeholder
-      before dispatch; the drain claims before executing — deterministic).
+    - Resolves its own CLAIMED row(s) at start when the batch does not already
+      carry them (idle-branch placeholder: submit inserts it before dispatch;
+      the drain claims before executing — both deterministic).
     - If a live task is registered for the session (resume turn), awaits it
       first — never two concurrent streams per session.
-    - Drives ``async_generate`` as a child task registered in the WS module's
-      ``_active_tasks`` so ``stop`` / ``detect_state`` see it. A cancelled
-      child sends the "stopped" frame; the row's fate then belongs to the T6
-      marker (VOIDED) or the drain loop (FAILED), not to this executor.
+    - Drives ``async_generate_multi`` (ONE graph turn for the whole batch) as a
+      child task registered in the WS module's ``_active_tasks`` so ``stop`` /
+      ``detect_state`` see it. A cancelled child sends the "stopped" frame and
+      its CLAIMED rows are marked VOIDED (freeing their client_msg_id dedup
+      keys) — a cancelled row is never left CLAIMED.
     - Its finally always calls :func:`on_turn_finished`, which also drains any
       rows queued while this turn was running.
     """
 
-    async def execute(
-        self, session_id: str, message: str, source: str, reply_target: str | None
+    async def execute_batch(
+        self, session_id: str, batch: Sequence[TurnInput], reply_target: str | None
     ) -> None:
         queue = _iqs().get_default_queue()
-        claim_row_id = await self._resolve_claim_row_id(queue, session_id)
+        batch = await self._resolve_claim_rows(queue, session_id, batch)
+        claim_row_ids = [item.claim_row_id for item in batch if item.claim_row_id]
+        turn_info: dict[str, Any] = {
+            "turn_id": uuid.uuid4().hex,
+            "message_ids": [item.message_id for item in batch if item.message_id],
+        }
         active = _get_active_tasks()
         completed = False
         child: asyncio.Task | None = None
@@ -316,61 +430,97 @@ class WsTurnExecutor:
                     # The adopted turn was stopped, not us — keep going.
 
             websocket = get_websocket_by_session_id(session_id)
-            child = asyncio.create_task(self._drive(session_id, message, websocket))
+            child = asyncio.create_task(self._drive(session_id, batch, websocket, turn_info))
             try:
                 await child
             except asyncio.CancelledError:
+                # Child was cancelled (stop): "stopped" already sent; its
+                # CLAIMED rows must never be left CLAIMED (that keeps the
+                # client_msg_id dedup key busy) — VOID them so the drain moves on.
+                await self._void_claimed_rows(queue, claim_row_ids)
                 current = asyncio.current_task()
                 if current is not None and current.cancelling():
                     raise
-                # Child was cancelled (stop): "stopped" already sent; row fate
-                # is decided by the T6 marker / drain loop, not here.
                 return
             completed = True
         finally:
             if child is not None and active.get(session_id) is child:
                 active.pop(session_id, None)
             if completed:
-                await on_turn_finished(session_id, claim_row_id)
+                await on_turn_finished(session_id, claim_row_ids or None)
             else:
                 await on_turn_finished(session_id)
 
     @staticmethod
-    async def _resolve_claim_row_id(queue: Any, session_id: str) -> str | None:
+    async def _void_claimed_rows(queue: Any, claim_row_ids: Sequence[str]) -> None:
+        for row_id in claim_row_ids:
+            try:
+                await queue.mark_terminal(row_id, UserInputQueueStatus.VOIDED)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"TurnRunner: failed to VOID cancelled row {row_id}: {e}")
+
+    @staticmethod
+    async def _resolve_claim_rows(
+        queue: Any, session_id: str, batch: Sequence[TurnInput]
+    ) -> list[TurnInput]:
+        """Backfill claim rows on a batch that carries none (idle single-send).
+
+        The idle-branch placeholder is the sole CLAIMED row at turn start; its
+        id + client_msg_id become this turn's claim_row_id/message_id. A drain
+        batch already carries both, so it is returned unchanged.
+        """
+        if any(item.claim_row_id for item in batch):
+            return list(batch)
         try:
             rows = await queue.list_active(session_id)
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(f"TurnRunner: claim-row lookup failed for {session_id}: {e}")
-            return None
+            return list(batch)
         # list_active is FIFO by created_at: a QUEUED row may predate this
         # turn's CLAIMED placeholder (input queued under hitl_pending, crash
         # leftovers). The executor's own row is the CLAIMED one -- exactly one
-        # exists at this point (the idle-branch placeholder / the drain's
-        # single in-flight claim).
+        # exists at this point.
         claimed = next(
             (row for row in rows if row.status is UserInputQueueStatus.CLAIMED),
             None,
         )
-        claim_row_id = claimed.id if claimed is not None else None
-        if claim_row_id is None:
+        if claimed is None:
             logger.warning(
                 f"TurnRunner: no CLAIMED row found for session {session_id} at turn start"
             )
-        return claim_row_id
+            return list(batch)
+        return [
+            TurnInput(
+                message=item.message,
+                source=item.source,
+                message_id=item.message_id or claimed.client_msg_id,
+                claim_row_id=claimed.id,
+            )
+            for item in batch
+        ]
 
-    async def _drive(self, session_id: str, message: str, websocket: Any) -> None:
-        """Drive one generation, forwarding frames (runs as the child task).
+    async def _drive(
+        self,
+        session_id: str,
+        batch: Sequence[TurnInput],
+        websocket: Any,
+        turn_info: dict[str, Any],
+    ) -> None:
+        """Drive ONE generation for the whole batch (runs as the child task).
 
         Audit 2.1.3: the loop itself is the shared :class:`StreamDriver`
-        template; ``_WsTurnStreamDriver`` carries this site's knobs. Cleanup
-        lives in :meth:`execute`'s finally, so ``on_finish`` is a no-op here.
+        template; ``_WsTurnStreamDriver`` carries this site's knobs plus the
+        turn identity so ``turn_started`` is emitted once before any chunk.
+        Cleanup lives in :meth:`execute_batch`'s finally, so ``on_finish`` is a
+        no-op here.
         """
         active = _get_active_tasks()
         current = asyncio.current_task()
         if current is not None:
             active[session_id] = current
-        await _WsTurnStreamDriver(session_id, websocket).drive(
-            async_generate(session_id, MultiModalMessage(text=message))
+        messages = [MultiModalMessage(text=item.message) for item in batch]
+        await _WsTurnStreamDriver(session_id, websocket, turn_info).drive(
+            async_generate_multi(session_id, messages)
         )
 
 

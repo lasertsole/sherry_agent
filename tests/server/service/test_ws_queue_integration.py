@@ -148,12 +148,12 @@ async def _no_interrupt(session_id: str) -> dict[str, Any] | None:
 
 
 def _simple_generate_factory(calls, *, on_text=None):
-    async def fake(session_id, message, is_stream=True, origin=None):
-        text = getattr(message, "text", str(message))
-        calls.append((session_id, text))
+    async def fake(session_id, messages, is_stream=True, origin=None):
+        texts = [getattr(m, "text", str(m)) for m in messages]
+        calls.append((session_id, texts))
         if on_text is not None:
-            await on_text(text)
-        yield {"type": "text", "content": f"echo:{text}"}
+            await on_text(texts)
+        yield {"type": "text", "content": f"echo:{'|'.join(texts)}"}
         yield {"type": "meta", "model_name": "fake", "input_tokens": 3, "output_tokens": 5}
 
     return fake
@@ -195,7 +195,9 @@ def ws_env(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         wsm, "async_generate", _simple_generate_factory(inline_calls), raising=False
     )
-    monkeypatch.setattr(turn_runner, "async_generate", _simple_generate_factory(drain_calls))
+    monkeypatch.setattr(
+        turn_runner, "async_generate_multi", _simple_generate_factory(drain_calls)
+    )
     monkeypatch.setattr(wsm, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(turn_runner, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(
@@ -254,7 +256,7 @@ async def test_idle_message_starts_turn_and_completes_without_queued_frame(ws_en
         await _wait_until(lambda: turn_runner._DRAIN_TASKS == {}, what="drain exited")
         assert "queued" not in _events(socket), "STARTED must not send a queued frame"
         assert inline_calls == [], "handler must NOT drive an inline async_generate turn"
-        assert drain_calls == [("s1", "hello")], "the executor drives the turn exactly once"
+        assert drain_calls == [("s1", ["hello"])], "the executor drives the turn exactly once"
         assert _events(socket)[-1] == "done"
         assert wsm._active_tasks == {}, "executor task must be unregistered after completion"
 
@@ -336,8 +338,8 @@ async def test_stop_cancels_current_turn_and_drain_continues_fifo(ws_env):
     cancelled = asyncio.Event()
     block = asyncio.Event()
 
-    async def block_and_void(text: str):
-        if text != "first":
+    async def block_and_void(texts: list[str]):
+        if "first" not in texts:
             return
         started.set()
         try:
@@ -350,7 +352,9 @@ async def test_stop_cancels_current_turn_and_drain_continues_fifo(ws_env):
             raise
 
     wsm.async_generate = _simple_generate_factory(ws_env.inline_calls)  # unused here
-    turn_runner.async_generate = _simple_generate_factory(drain_calls, on_text=block_and_void)
+    turn_runner.async_generate_multi = _simple_generate_factory(
+        drain_calls, on_text=block_and_void
+    )
 
     async with _handler_session(socket):
         socket.push(_msg_frame("s1", "m1", "first"))
@@ -395,7 +399,9 @@ async def test_stop_with_no_active_turn_only_acks(ws_env):
     async with _handler_session(socket):
         socket.push({"type": "stop", "session_id": "s1"})
         await _wait_until(lambda: socket.frames, what="stop ack")
-        assert socket.frames == [{"event": "stopped", "session_id": "s1", "content": ""}]
+        assert socket.frames == [
+            {"event": "stopped", "session_id": "s1", "content": "", "message_ids": []}
+        ]
         assert ws_env.wsm._active_tasks == {}
 
 
@@ -455,6 +461,7 @@ async def test_hitl_interrupt_sets_hitl_pending(ws_env, monkeypatch):
         "event": "hitl_request",
         "session_id": "s1",
         "content": {"tool_name": "write_file"},
+        "message_ids": ["m1"],
     }
     assert session_state._is_hitl_pending("s1") is True, "hitl_pending must be set for real"
     rows = await store.list_active("s1")

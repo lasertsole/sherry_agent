@@ -174,7 +174,7 @@ async def test_on_turn_finished_marks_claimed_row_and_drains_one_queued(env):
     executor = RecordingExecutor()
     registry.register("ws", executor)
 
-    await tr.on_turn_finished("s1", claim_row_id=r0.id)
+    await tr.on_turn_finished("s1", claim_row_ids=r0.id)
 
     await _wait_until(lambda: _status_of(store, r1.id) == "DELIVERED", what="queued row drained")
     assert _status_of(store, r0.id) == "DELIVERED", "given CLAIMED row must be marked DELIVERED"
@@ -228,7 +228,8 @@ async def test_drain_exits_cleanly_when_queue_empty(env):
 
 
 @pytest.mark.asyncio
-async def test_single_failure_marks_failed_sends_error_frame_and_continues(env):
+async def test_single_failure_marks_failed_sends_error_frame_and_continues(env, monkeypatch):
+    """With one-row batches, a failure is FAILED + error frame and the drain continues."""
     tr, store, registry, sockets = env.tr, env.store, env.registry, env.sockets
     socket = FakeSocket()
     sockets["s1"] = socket
@@ -236,6 +237,9 @@ async def test_single_failure_marks_failed_sends_error_frame_and_continues(env):
     bad = await _enqueue(store, "s1", "bad")
     ok2 = await _enqueue(store, "s1", "ok-2")
     registry.register("ws", RecordingExecutor(fail_texts={"bad"}))
+    # Force one-row batches so each row is its own route group (the drain's
+    # continue-after-failure property, independent of batch size).
+    monkeypatch.setattr(tr, "_BATCH_MAX_ROWS", 1)
 
     await tr.on_turn_finished("s1")
 
@@ -246,6 +250,57 @@ async def test_single_failure_marks_failed_sends_error_frame_and_continues(env):
     assert _status_of(store, ok2.id) == "DELIVERED", "drain must continue after a failure"
     errors = [f for f in socket.frames if f.get("event") == "error"]
     assert len(errors) == 1 and "boom: bad" in errors[0].get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_batch_failure_marks_all_group_rows_failed_and_sends_one_error(env):
+    """An executor exception finalizes EVERY claimed row of a multi-row batch."""
+    tr, store, registry, sockets = env.tr, env.store, env.registry, env.sockets
+    socket = FakeSocket()
+    sockets["s1"] = socket
+    rows = [await _enqueue(store, "s1", text) for text in ("a", "b", "c")]
+
+    class BoomBatchExecutor(iqs.BatchTurnExecutor):
+        async def execute_batch(self, session_id, batch, reply_target) -> None:  # noqa: ANN001
+            raise RuntimeError("boom-batch")
+
+    registry.register("ws", BoomBatchExecutor())
+
+    await tr.on_turn_finished("s1")
+
+    drain = tr._DRAIN_TASKS.get("s1")
+    await asyncio.wait_for(drain, timeout=10)
+    assert all(_status_of(store, row.id) == "FAILED" for row in rows)
+    errors = [f for f in socket.frames if f.get("event") == "error"]
+    assert len(errors) == 1 and "boom-batch" in errors[0].get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_drain_batches_queued_rows_into_one_execute_batch(env):
+    """A finished turn drains ALL queued rows into ONE execute_batch call, FIFO."""
+    tr, store, registry = env.tr, env.store, env.registry
+
+    class BatchRecordingExecutor(iqs.BatchTurnExecutor):
+        def __init__(self) -> None:
+            self.batches: list[list[iqs.TurnInput]] = []
+
+        async def execute_batch(self, session_id, batch, reply_target) -> None:  # noqa: ANN001
+            self.batches.append(list(batch))
+
+    rows = [await _enqueue(store, "s1", text) for text in ("a", "b", "c")]
+    executor = BatchRecordingExecutor()
+    registry.register("ws", executor)
+
+    await tr.on_turn_finished("s1")
+
+    drain = tr._DRAIN_TASKS.get("s1")
+    await asyncio.wait_for(drain, timeout=10)
+    assert len(executor.batches) == 1, "one route group => exactly one execute_batch"
+    batch = executor.batches[0]
+    assert [item.message for item in batch] == ["a", "b", "c"], "batch must be FIFO"
+    assert [item.claim_row_id for item in batch] == [row.id for row in rows]
+    assert all(item.source == "user" for item in batch)
+    assert all(_status_of(store, row.id) == "DELIVERED" for row in rows)
 
 
 @pytest.mark.asyncio
@@ -299,8 +354,8 @@ async def test_channel_router_receives_error_frame_on_failure(env):
 
 
 @pytest.mark.asyncio
-async def test_drain_survives_claim_next_failure_and_keeps_processing(env, monkeypatch):
-    """A claim_next DB error must not kill the drain: log, back off, retry."""
+async def test_drain_survives_claim_batch_failure_and_keeps_processing(env, monkeypatch):
+    """A claim_batch DB error must not kill the drain: log, back off, retry."""
     tr, store, registry = env.tr, env.store, env.registry
     r1 = await _enqueue(store, "s1", "first")
     r2 = await _enqueue(store, "s1", "second")
@@ -314,11 +369,11 @@ async def test_drain_survives_claim_next_failure_and_keeps_processing(env, monke
         def __getattr__(self, name):
             return getattr(real_store, name)
 
-        async def claim_next(self, session_id: str):
+        async def claim_batch(self, session_id: str, limit: int):
             if not claim_failures:
                 claim_failures.append(session_id)
                 raise RuntimeError("db hiccup")
-            return await real_store.claim_next(session_id)
+            return await real_store.claim_batch(session_id, limit)
 
     monkeypatch.setattr(iqs, "get_default_queue", lambda: FlakyClaimQueue())
     monkeypatch.setattr(tr, "_DRAIN_ERROR_BACKOFF_S", 0.01)
@@ -327,7 +382,7 @@ async def test_drain_survives_claim_next_failure_and_keeps_processing(env, monke
 
     drain = tr._DRAIN_TASKS.get("s1")
     await asyncio.wait_for(drain, timeout=10)
-    assert len(claim_failures) == 1, "claim_next must fail exactly once"
+    assert len(claim_failures) == 1, "claim_batch must fail exactly once"
     assert [call[1] for call in executor.calls] == ["first", "second"], (
         "queued rows must still be processed after the failed claim"
     )
@@ -388,22 +443,30 @@ async def test_drain_defers_when_claimed_row_is_foreign_then_picks_up_after(env)
 # ---------------------------------------------------------------------------
 
 
-def _fake_generate_factory(calls, started=None, *, block=None, on_cancel=None, text_filter=None):
-    """Async-generator fake of async_generate; yields one text chunk + meta."""
+def _fake_generate_multi_factory(
+    calls, started=None, *, block=None, on_cancel=None, text_filter=None
+):
+    """Async-generator fake of async_generate_multi; yields one text chunk + meta.
 
-    async def fake(session_id, message, is_stream=True, origin=None):
-        text = getattr(message, "text", str(message))
-        calls.append((session_id, text))
-        if started is not None and (text_filter is None or text == text_filter):
+    Records ``(session_id, [message texts])`` per call so a multi-message batch
+    turn is observable. ``started``/``block``/``on_cancel``/``text_filter`` key
+    off whether ``text_filter`` is one of the batch's texts.
+    """
+
+    async def fake(session_id, messages, is_stream=True, origin=None):
+        texts = [getattr(m, "text", str(m)) for m in messages]
+        calls.append((session_id, texts))
+        matched = text_filter is None or text_filter in texts
+        if started is not None and matched:
             started.set()
-        if block is not None and (text_filter is None or text == text_filter):
+        if block is not None and matched:
             try:
                 await block.wait()
             except asyncio.CancelledError:
                 if on_cancel is not None:
                     await on_cancel()
                 raise
-        yield {"type": "text", "content": f"echo:{text}"}
+        yield {"type": "text", "content": f"echo:{'|'.join(texts)}"}
         yield {"type": "meta", "model_name": "fake", "input_tokens": 3, "output_tokens": 5}
 
     return fake
@@ -416,9 +479,9 @@ async def test_ws_executor_drives_turn_sends_frames_and_marks_delivered(env, mon
     sockets["s1"] = socket
     row = await _enqueue(store, "s1", "hello")
     registry.register("ws", tr.WsTurnExecutor())
-    calls: list[tuple[str, str]] = []
-    # turn_runner resolves async_generate as a module global at call time
-    monkeypatch.setattr(tr, "async_generate", _fake_generate_factory(calls))
+    calls: list[tuple[str, list[str]]] = []
+    # turn_runner resolves async_generate_multi as a module global at call time
+    monkeypatch.setattr(tr, "async_generate_multi", _fake_generate_multi_factory(calls))
 
     await tr.on_turn_finished("s1")
 
@@ -426,12 +489,17 @@ async def test_ws_executor_drives_turn_sends_frames_and_marks_delivered(env, mon
         lambda: _status_of(store, row.id) == "DELIVERED" and len(socket.frames) >= 2,
         what="ws turn driven + frames sent",
     )
+    started_frame = next(f for f in socket.frames if f.get("event") == "turn_started")
+    assert started_frame["session_id"] == "s1"
+    assert started_frame["turn_id"]
+    assert started_frame["message_ids"] == []
     chunk = next(f for f in socket.frames if f.get("event") == "chunk")
     assert chunk["content"] == "echo:hello" and chunk["session_id"] == "s1"
     done = next(f for f in socket.frames if f.get("event") == "done")
     assert done["model_name"] == "fake" and done["input_tokens"] == 3
+    assert done["message_ids"] == []
     assert env.active_tasks == {}, "driven child task must be unregistered"
-    assert calls == [("s1", "hello")]
+    assert calls == [("s1", ["hello"])]
 
 
 @pytest.mark.asyncio
@@ -441,8 +509,8 @@ async def test_ws_executor_adopts_inline_turn_instead_of_double_running(env, mon
     row = await _enqueue(store, "s1", "live")
     registry.register("ws", tr.WsTurnExecutor())
 
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(tr, "async_generate", _fake_generate_factory(calls))
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(tr, "async_generate_multi", _fake_generate_multi_factory(calls))
     gate = asyncio.Event()
 
     async def inline_task():
@@ -453,7 +521,7 @@ async def test_ws_executor_adopts_inline_turn_instead_of_double_running(env, mon
 
     await tr.on_turn_finished("s1")
     await asyncio.sleep(0.05)
-    assert calls == [], "an adopted turn must NOT drive async_generate again"
+    assert calls == [], "an adopted turn must NOT drive async_generate_multi again"
     assert _status_of(store, row.id) != "DELIVERED", (
         "row is delivered only after the adopted turn finishes"
     )
@@ -474,7 +542,7 @@ async def test_ws_executor_hitl_sets_pending_flag_and_sends_hitl_request(env, mo
     row = await _enqueue(store, "s1", "with-tool")
     registry.register("ws", tr.WsTurnExecutor())
 
-    monkeypatch.setattr(tr, "async_generate", _fake_generate_factory([]))
+    monkeypatch.setattr(tr, "async_generate_multi", _fake_generate_multi_factory([]))
     monkeypatch.setattr(tr, "get_pending_interrupt", _interrupt_present)
 
     await tr.on_turn_finished("s1")
@@ -486,6 +554,7 @@ async def test_ws_executor_hitl_sets_pending_flag_and_sends_hitl_request(env, mo
     hitl_frames = [f for f in socket.frames if f.get("event") == "hitl_request"]
     assert len(hitl_frames) == 1
     assert hitl_frames[0]["content"] == {"tool_name": "write_file"}
+    assert hitl_frames[0]["message_ids"] == []
     assert env.hitl_sets == [("s1", True)], "hitl_pending must be set when a hitl_request is sent"
     done = next((f for f in socket.frames if f.get("event") == "done"), None)
     assert done is None, "no done frame must follow a hitl_request"
@@ -496,29 +565,25 @@ async def _interrupt_present(session_id: str) -> dict[str, Any] | None:
 
 
 @pytest.mark.asyncio
-async def test_ws_executor_stop_cancels_child_and_drain_continues_fifo(env, monkeypatch):
-    """Stop: child cancelled → row VOIDED by marker → 'stopped' frame → drain continues."""
+async def test_ws_executor_stop_cancels_batch_and_drain_continues_fifo(env, monkeypatch):
+    """Stop: the claimed batch is VOIDED (executor), 'stopped' sent, drain continues."""
     tr, store, registry, sockets = env.tr, env.store, env.registry, env.sockets
     socket = FakeSocket()
     sockets["s1"] = socket
     r1 = await _enqueue(store, "s1", "first")
-    r2 = await _enqueue(store, "s1", "second")
     registry.register("ws", tr.WsTurnExecutor())
 
     started = asyncio.Event()
     cancelled = asyncio.Event()
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, list[str]]] = []
 
     async def on_cancel():
-        for row in await store.list_active("s1"):
-            if row.status is UserInputQueueStatus.CLAIMED:
-                await store.mark_terminal(row.id, "VOIDED")  # T6 marker stand-in
         cancelled.set()
 
     monkeypatch.setattr(
         tr,
-        "async_generate",
-        _fake_generate_factory(
+        "async_generate_multi",
+        _fake_generate_multi_factory(
             calls, started=started, block=asyncio.Event(), on_cancel=on_cancel, text_filter="first"
         ),
     )
@@ -527,6 +592,8 @@ async def test_ws_executor_stop_cancels_child_and_drain_continues_fifo(env, monk
     await _wait_until(lambda: "s1" in env.active_tasks, what="child task registered")
     child = env.active_tasks["s1"]
     assert not child.done()
+    # A second input arrives while the claimed batch turn runs -> it stays QUEUED.
+    r2 = await _enqueue(store, "s1", "second")
     child.cancel()
 
     await _wait_until(
@@ -536,6 +603,8 @@ async def test_ws_executor_stop_cancels_child_and_drain_continues_fifo(env, monk
     assert cancelled.is_set()
     events = [f.get("event") for f in socket.frames]
     assert "stopped" in events, "a stopped frame must be sent to the socket"
+    stopped = next(f for f in socket.frames if f.get("event") == "stopped")
+    assert stopped["message_ids"] == []
     assert "echo:second" in [f.get("content") for f in socket.frames if f.get("event") == "chunk"]
     assert env.active_tasks == {}, "child task must be unregistered after cancellation"
 
@@ -562,12 +631,12 @@ async def test_ws_executor_resolves_own_claimed_row_when_queued_row_predates_dis
     older = await _enqueue(store, "s1", "queued-while-busy")  # QUEUED, created first
     placeholder = await store.insert_claimed("s1", _payload("fresh"), "user")  # newer
 
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(tr, "async_generate", _fake_generate_factory(calls))
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(tr, "async_generate_multi", _fake_generate_multi_factory(calls))
 
     await tr.WsTurnExecutor().execute("s1", "fresh", "user", None)
 
-    assert calls == [("s1", "fresh")], "the executor drives its own message"
+    assert calls == [("s1", ["fresh"])], "the executor drives its own message"
     assert _status_of(store, placeholder.id) == "DELIVERED", (
         "the executor's own CLAIMED placeholder must be marked DELIVERED"
     )

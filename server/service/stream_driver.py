@@ -39,7 +39,7 @@ module eagerly without the circular-import poison described in its docstring.
 import asyncio
 import time
 from typing import Any
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 
 
 class StreamDriver:
@@ -49,9 +49,36 @@ class StreamDriver:
     done_reasoning_tokens: Any = 0
     done_finish_reason: Any = ""
 
-    def __init__(self, session_id: str, websocket: Any) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        websocket: Any,
+        turn_info: Mapping[str, Any] | None = None,
+    ) -> None:
         self.session_id = session_id
         self.websocket = websocket
+        # Generation turns carry the batch's turn identity; HITL resume and the
+        # idle auto-turn pass None (no ``turn_started`` frame, empty
+        # ``message_ids``). ``turn_info`` is a plain mapping with a ``turn_id``
+        # and the claimed rows' ``message_ids`` -- kept transport-plain so this
+        # module stays import-light (no server.service dependency).
+        self.turn_info = turn_info
+
+    def _message_ids(self) -> list[str]:
+        if not self.turn_info:
+            return []
+        raw = self.turn_info.get("message_ids") or []
+        return [str(mid) for mid in raw if mid is not None]
+
+    async def _send_turn_started(self) -> None:
+        await self.send_frame(
+            {
+                "event": "turn_started",
+                "session_id": self.session_id,
+                "turn_id": self.turn_info.get("turn_id") if self.turn_info else None,
+                "message_ids": self._message_ids(),
+            }
+        )
 
     # ---- site hooks -----------------------------------------------------
 
@@ -83,6 +110,10 @@ class StreamDriver:
         start_time = time.time()
         meta: dict[str, Any] = {}
         try:
+            if self.turn_info is not None:
+                # ONCE per generation turn, before any chunk: lets the client
+                # bind its optimistic bubbles to this turn's claimed rows.
+                await self._send_turn_started()
             async for chunk in source:
                 if not isinstance(chunk, dict):
                     continue
@@ -102,6 +133,7 @@ class StreamDriver:
                         "event": "hitl_request",
                         "session_id": self.session_id,
                         "content": interrupt,
+                        "message_ids": self._message_ids(),
                     }
                 )
                 self.apply_hitl_pending()
@@ -118,6 +150,7 @@ class StreamDriver:
                             "reasoning_tokens", self.done_reasoning_tokens
                         ),
                         "finish_reason": meta.get("finish_reason", self.done_finish_reason),
+                        "message_ids": self._message_ids(),
                     }
                 )
         except asyncio.CancelledError:
@@ -129,6 +162,7 @@ class StreamDriver:
                     "event": "stopped",
                     "session_id": self.session_id,
                     "content": "Request cancelled",
+                    "message_ids": self._message_ids(),
                 }
             )
             raise
@@ -140,6 +174,7 @@ class StreamDriver:
                     "event": "error",
                     "session_id": self.session_id,
                     "content": str(e),
+                    "message_ids": self._message_ids(),
                 }
             )
         finally:

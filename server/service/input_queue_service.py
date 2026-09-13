@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Protocol, runtime_checkable
@@ -68,11 +68,13 @@ __all__ = [
     "ROUTE_CHANNEL",
     "ROUTE_WS",
     "STARTED",
+    "BatchTurnExecutor",
     "OutboundRouter",
     "SubmitResult",
     "SubmitStatus",
     "TurnExecutor",
     "TurnExecutorRegistry",
+    "TurnInput",
     "get_default_queue",
     "get_default_registry",
     "queued",
@@ -117,6 +119,24 @@ def queued(position: int) -> SubmitResult:
     return SubmitResult(SubmitStatus.QUEUED, position)
 
 
+@dataclass(frozen=True, slots=True)
+class TurnInput:
+    """One user input belonging to a single agent turn.
+
+    A turn is fed to the executor as a FIFO batch of these. ``source`` is the
+    persisted row classification (``"user"`` | ``"cron"``); ``message_id`` is
+    the client idempotency key (``row.client_msg_id`` / WS frame ``msg_id``)
+    surfaced to the client on the ``turn_started`` frame; ``claim_row_id`` is
+    the queue row this input was claimed from (``row.id``), used to finalize
+    the row once the turn completes.
+    """
+
+    message: str
+    source: Source = "user"
+    message_id: str | None = None
+    claim_row_id: str | None = None
+
+
 @runtime_checkable
 class TurnExecutor(Protocol):
     """Drives one full agent turn for a session. provides the real implementation (generalizes auto_turn's
@@ -124,11 +144,46 @@ class TurnExecutor(Protocol):
     per-session lock is released, via ``asyncio.create_task`` -- implementers
     own their own busy-flag lifecycle (answering/hitl_pending) and turn
     completion (on_turn_finished drains the queue).
+
+    ``execute`` drives a single message; ``execute_batch`` drives a FIFO batch
+    of messages as ONE turn (one reply). Executors that cannot batch still
+    satisfy the protocol shape as long as they expose both methods (subclass
+    :class:`BatchTurnExecutor`, whose ``execute`` delegates to
+    ``execute_batch``); the TurnRunner drain falls back to per-row ``execute``
+    for legacy execute-only executors.
     """
 
     async def execute(
         self, session_id: str, message: str, source: Source, reply_target: str | None
     ) -> None: ...
+
+    async def execute_batch(
+        self, session_id: str, batch: Sequence[TurnInput], reply_target: str | None
+    ) -> None: ...
+
+
+class BatchTurnExecutor:
+    """Base for executors that drive a whole FIFO batch as one turn.
+
+    Subclasses implement only :meth:`execute_batch`; the single-message
+    ``TurnExecutor.execute`` contract is satisfied here by delegating with a
+    one-element batch, so callers that still speak one-message-at-a-time
+    (``submit_user_input``'s idle branch) keep working unchanged.
+    """
+
+    async def execute(
+        self, session_id: str, message: str, source: Source, reply_target: str | None
+    ) -> None:
+        await self.execute_batch(
+            session_id,
+            [TurnInput(message=message, source=source)],
+            reply_target,
+        )
+
+    async def execute_batch(
+        self, session_id: str, batch: Sequence[TurnInput], reply_target: str | None
+    ) -> None:
+        raise NotImplementedError
 
 
 @runtime_checkable

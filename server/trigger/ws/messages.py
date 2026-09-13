@@ -170,7 +170,13 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     await _cancel_session(session_id)
                     # ack on the (possibly separate) stop connection
                     await _send_ws(
-                        websocket, {"event": "stopped", "session_id": session_id, "content": ""}
+                        websocket,
+                        {
+                            "event": "stopped",
+                            "session_id": session_id,
+                            "content": "",
+                            "message_ids": [],
+                        },
                     )
                     continue
 

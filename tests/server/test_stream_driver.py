@@ -19,8 +19,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 class _RecordingDriver(StreamDriver):
     """Test double recording every frame + hook invocation."""
 
-    def __init__(self, session_id="s1", *, interrupt=None, stream_error=None):
-        super().__init__(session_id, websocket=object())
+    def __init__(self, session_id="s1", *, interrupt=None, stream_error=None, turn_info=None):
+        super().__init__(session_id, websocket=object(), turn_info=turn_info)
         self.frames: list[dict] = []
         self.interrupt_payload = interrupt
         self.stream_error = stream_error
@@ -122,6 +122,7 @@ class TestDoneAndInterrupt:
             "output_tokens": 22,
             "reasoning_tokens": 0,
             "finish_reason": "",
+            "message_ids": [],
         }
 
     def test_done_frame_uses_class_defaults_without_meta(self):
@@ -138,19 +139,52 @@ class TestDoneAndInterrupt:
             "output_tokens": 0,
             "reasoning_tokens": 0,
             "finish_reason": "",
+            "message_ids": [],
         }
 
+    def test_turn_info_emits_turn_started_once_and_tags_terminal_frames(self):
+        driver = _RecordingDriver(
+            turn_info={"turn_id": "t-1", "message_ids": ["m1", "m2"]}
+        )
+
+        _run(driver.drive(_chunks_source([{"type": "text", "content": "x"}])))
+
+        assert driver.frames[0] == {
+            "event": "turn_started",
+            "session_id": "s1",
+            "turn_id": "t-1",
+            "message_ids": ["m1", "m2"],
+        }
+        assert [f["event"] for f in driver.frames] == ["turn_started", "chunk", "done"]
+        assert driver.frames[-1]["message_ids"] == ["m1", "m2"]
+
+    def test_no_turn_info_emits_no_turn_started(self):
+        driver = _RecordingDriver()
+
+        _run(driver.drive(_chunks_source([{"type": "text", "content": "x"}])))
+
+        assert all(f["event"] != "turn_started" for f in driver.frames)
+
     def test_interrupt_sends_hitl_request_and_sets_flag(self):
-        driver = _RecordingDriver(interrupt={"tool_name": "bash"})
+        driver = _RecordingDriver(
+            interrupt={"tool_name": "bash"}, turn_info={"turn_id": "t-1", "message_ids": ["m1"]}
+        )
 
         _run(driver.drive(_chunks_source([])))
 
         assert driver.frames == [
             {
+                "event": "turn_started",
+                "session_id": "s1",
+                "turn_id": "t-1",
+                "message_ids": ["m1"],
+            },
+            {
                 "event": "hitl_request",
                 "session_id": "s1",
                 "content": {"tool_name": "bash"},
-            }
+                "message_ids": ["m1"],
+            },
         ]
         assert driver.hitl_flagged is True
         assert driver.logged_interrupt is True
@@ -184,6 +218,7 @@ class TestCancelAndError:
             "event": "stopped",
             "session_id": "s1",
             "content": "Request cancelled",
+            "message_ids": [],
         }
         assert driver.logged_cancelled is True
         assert driver.finished is True  # finally still runs
@@ -204,6 +239,7 @@ class TestCancelAndError:
             "event": "error",
             "session_id": "s1",
             "content": "model exploded",
+            "message_ids": [],
         }
         assert isinstance(driver.logged_error[0], ValueError)
         assert driver.finished is True

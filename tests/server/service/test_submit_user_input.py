@@ -25,6 +25,7 @@ on a tmp SQLite file, fake TurnExecutors injected through a real
 import asyncio
 import json
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -64,17 +65,25 @@ class FakeStateDetector:
         return SessionState(session_id=session_key, busy=self.busy, reason=self.reason)
 
 
-class FakeTurnExecutor:
-    """Records execute() calls; satisfies the TurnExecutor protocol."""
+class FakeTurnExecutor(iqs.BatchTurnExecutor):
+    """Records execute()/execute_batch() calls; satisfies the TurnExecutor protocol.
+
+    Subclasses :class:`BatchTurnExecutor` so the one-message ``execute`` contract
+    still records the legacy ``(session_id, message, source, reply_target)``
+    tuples while ``execute_batch`` keeps the batch observable.
+    """
 
     def __init__(self, name: str = "fake") -> None:
         self.name = name
         self.calls: list[tuple[str, str, str, str | None]] = []
+        self.batches: list[list[iqs.TurnInput]] = []
 
-    async def execute(
-        self, session_id: str, message: str, source: str, reply_target: str | None
+    async def execute_batch(
+        self, session_id: str, batch: Sequence[iqs.TurnInput], reply_target: str | None
     ) -> None:
-        self.calls.append((session_id, message, source, reply_target))
+        self.batches.append(list(batch))
+        for item in batch:
+            self.calls.append((session_id, item.message, item.source, reply_target))
 
 
 class FakeOutboundRouter:

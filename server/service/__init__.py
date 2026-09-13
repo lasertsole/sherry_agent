@@ -12,6 +12,7 @@ from .workplace import (
 )
 from .messages import (
     async_generate as async_generate,
+    async_generate_multi as async_generate_multi,
     clear_session as clear_session,
     get_history_by_turn_page as get_history_by_turn_page,
     get_pending_interrupt as get_pending_interrupt,

@@ -5,7 +5,7 @@ from loguru import logger
 from agent import built_agent
 from langgraph.types import Command
 from typing import Any, Literal
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from runtime import state_register_mem
 from context_engine import get_session_ids
 from pub.types.message import MultiModalMessage
@@ -161,12 +161,19 @@ class _GenerateTurn(StreamTurn):
     def __init__(
         self,
         session_id: str,
-        multi_modal_message: MultiModalMessage,
+        multi_modal_message: MultiModalMessage | None = None,
         is_stream: bool = True,
         origin: dict | None = None,
+        *,
+        messages: Sequence[MultiModalMessage] | None = None,
     ) -> None:
         super().__init__(session_id)
-        self.multi_modal_message = multi_modal_message
+        if messages is not None:
+            self.messages: list[MultiModalMessage] = list(messages)
+        elif multi_modal_message is not None:
+            self.messages = [multi_modal_message]
+        else:
+            raise ValueError("_GenerateTurn requires multi_modal_message or messages")
         self.is_stream = is_stream
         self.origin = origin
         # Agent reference held across the turn so a Phase 2 text continuation
@@ -184,9 +191,10 @@ class _GenerateTurn(StreamTurn):
         self._agent = await built_agent(force_rebuild=True)
 
     def _log_started(self) -> None:
+        total_len = sum(len(m.text) if m.text else 0 for m in self.messages)
         logger.debug(
             f"Agent execution started: session_id={self.session_id}, is_stream={self.is_stream}, "
-            f"input_text_length={len(self.multi_modal_message.text) if self.multi_modal_message.text else 0}"
+            f"message_count={len(self.messages)}, input_text_length={total_len}"
         )
 
     async def _create_source(self) -> tuple[Literal["stream", "invoke"], Any]:
@@ -201,10 +209,15 @@ class _GenerateTurn(StreamTurn):
                 "messages": [HumanMessage(content=prompt)],
             }
         else:
-            content_list: list[str | dict[str, Any]] = _get_content_list(self.multi_modal_message)
+            # ONE graph turn fed with the whole FIFO batch: each queued input
+            # becomes its own HumanMessage so the model sees them as distinct
+            # user messages in order, and produces ONE combined reply.
             input_dict = {
                 "session_id": self.session_id,
-                "messages": [HumanMessage(content=content_list, metadata=self.origin)],
+                "messages": [
+                    HumanMessage(content=_get_content_list(m), metadata=self.origin)
+                    for m in self.messages
+                ],
             }
         if self.is_stream:
             return "stream", self._agent.astream(
@@ -466,6 +479,26 @@ async def async_generate(
     origin: dict | None = None,
 ) -> AsyncGenerator[dict[str, str]]:
     engine = _GenerateTurn(session_id, multi_modal_message, is_stream, origin)
+    async for frame in engine.run():
+        yield frame
+
+
+async def async_generate_multi(
+    session_id: str,
+    messages: Sequence[MultiModalMessage],
+    is_stream: bool = True,
+    origin: dict | None = None,
+) -> AsyncGenerator[dict[str, str]]:
+    """Drive ONE agent turn fed with a FIFO batch of user messages.
+
+    The whole batch becomes a single graph input whose ``messages`` list holds
+    one ``HumanMessage`` per input, in order, so a finished turn can drain all
+    of a session's queued inputs into one combined reply. An empty batch is a
+    no-op (no graph call).
+    """
+    if not messages:
+        return
+    engine = _GenerateTurn(session_id, is_stream=is_stream, origin=origin, messages=messages)
     async for frame in engine.run():
         yield frame
 

@@ -1,7 +1,7 @@
 import asyncio
 import concurrent.futures
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from threading import Thread
 from typing import Any
 
@@ -9,7 +9,7 @@ from loguru import logger
 
 from runtime import relation_register
 from server.queue.user_input_queue import UserInputQueueStatus
-from server.service import async_generate
+from server.service import async_generate_multi
 from server.service import input_queue_service as iqs
 from pub.types.message import MultiModalMessage
 from channels import BaseChannel, channel_manager
@@ -110,38 +110,45 @@ async def _send_reply(target: dict[str, Any], content: str, message_id: str | No
         logger.exception("channel send failed for {} / {}", channel_name, target.get("chat_id"))
 
 
-class _ChannelTurnExecutor:
+class _ChannelTurnExecutor(iqs.BatchTurnExecutor):
     """TurnExecutor for channel routes (route="channel").
 
-    Drives one full agent turn for a session, replying to the ENQUEUE-TIME
-    reply_target, then hands turn completion to the turn runner
-    (``on_turn_finished`` marks the CLAIMED placeholder DELIVERED and drains
-    the session's QUEUED rows).
+    Drives ONE full agent turn for a FIFO batch of queued channel inputs,
+    replying to the ENQUEUE-TIME reply_target, then hands turn completion to
+    the turn runner (``on_turn_finished`` marks the CLAIMED placeholder(s)
+    DELIVERED and drains the session's QUEUED rows).
     """
 
-    async def execute(
-        self, session_id: str, message: str, source: str, reply_target: str | None
+    async def execute_batch(
+        self, session_id: str, batch: Sequence[iqs.TurnInput], reply_target: str | None
     ) -> None:
-        claim_row_id = await self._resolve_claim_row_id(session_id)
+        claim_row_ids = [item.claim_row_id for item in batch if item.claim_row_id]
+        if not claim_row_ids:
+            resolved = await self._resolve_claim_row_id(session_id)
+            if resolved is not None:
+                claim_row_ids = [resolved]
         completed = False
         try:
-            await self._drive_turn(session_id, message, reply_target)
+            await self._drive_turn(session_id, [item.message for item in batch], reply_target)
             completed = True
         finally:
-            if not completed and claim_row_id is not None:
+            if not completed and claim_row_ids:
                 # A crashed/malformed turn must not leave the placeholder
                 # CLAIMED (an orphaned placeholder blocks the session until
                 # the 24h recover sweep): finalize it FAILED so the drain
                 # can report the error frame instead.
-                try:
-                    await iqs.get_default_queue().mark_terminal(claim_row_id, "FAILED")
-                except Exception:
-                    logger.exception(
-                        "failed to mark row {} FAILED for session {}", claim_row_id, session_id
-                    )
+                for row_id in claim_row_ids:
+                    try:
+                        await iqs.get_default_queue().mark_terminal(row_id, "FAILED")
+                    except Exception:
+                        logger.exception(
+                            "failed to mark row {} FAILED for session {}", row_id, session_id
+                        )
             try:
                 turn_runner = _get_turn_runner()
-                await turn_runner.on_turn_finished(session_id, claim_row_id if completed else None)
+                await turn_runner.on_turn_finished(
+                    session_id, (claim_row_ids or None) if completed else None
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -163,7 +170,9 @@ class _ChannelTurnExecutor:
             return None
         return claimed.id
 
-    async def _drive_turn(self, session_id: str, message: str, reply_target: str | None) -> None:
+    async def _drive_turn(
+        self, session_id: str, messages: Sequence[str], reply_target: str | None
+    ) -> None:
         target = _parse_reply_target(session_id, reply_target)
         if target is None:
             # Environmental: the channel route always carries a reply_target
@@ -171,10 +180,10 @@ class _ChannelTurnExecutor:
             logger.warning("channel turn for session {} has no reply_target; dropping", session_id)
             return
 
-        user_input: MultiModalMessage = MultiModalMessage(text=message)
+        user_inputs: list[MultiModalMessage] = [MultiModalMessage(text=text) for text in messages]
         ai_reply: str = ""
-        stream = async_generate(
-            session_id=session_id, multi_modal_message=user_input, is_stream=False
+        stream = async_generate_multi(
+            session_id=session_id, messages=user_inputs, is_stream=False
         )
         async for item in stream:
             ai_reply += item["content"]

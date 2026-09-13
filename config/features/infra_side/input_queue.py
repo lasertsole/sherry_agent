@@ -11,6 +11,7 @@ class InputQueueConfig(TypedDict):
     max_active_per_session: int
     expiry_seconds: float
     lock_sweep_threshold: int
+    batch_max_rows: int
 
 
 INPUT_QUEUE: InputQueueConfig = {
@@ -19,4 +20,5 @@ INPUT_QUEUE: InputQueueConfig = {
     "max_active_per_session": 20,
     "expiry_seconds": 86400.0,
     "lock_sweep_threshold": 256,
+    "batch_max_rows": 20,
 }

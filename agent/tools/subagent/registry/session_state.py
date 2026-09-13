@@ -71,7 +71,13 @@ from typing import Any
 
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 
-__all__ = ["SessionState", "detect_state", "is_session_busy", "set_hitl_pending"]
+__all__ = [
+    "SessionState",
+    "detect_state",
+    "is_hitl_pending",
+    "is_session_busy",
+    "set_hitl_pending",
+]
 
 REASON_WS_TASK = "ws_task"
 REASON_ANSWERING = "answering"
@@ -150,6 +156,16 @@ def set_hitl_pending(session_id: str, value: bool) -> None:
 def _is_hitl_pending(session_id: str) -> bool:
     with _HITL_LOCK:
         return session_id in _HITL_PENDING
+
+
+def is_hitl_pending(session_key: str) -> bool:
+    """True iff the session is waiting on a HITL decision (signal 3).
+
+    Public read of the exact flag ``detect_state`` consults; the TurnRunner
+    drain uses it to refuse to claim/execute queued rows while the graph is
+    suspended awaiting a ``hitl_response``.
+    """
+    return _is_hitl_pending(normalize_session_key(session_key))
 
 
 def _is_auto_turn_inflight(session_id: str) -> bool:
