@@ -136,7 +136,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 
 **FTS5 Triggers:** each FTS table has `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` triggers on `messages` that keep the index in sync automatically. Deleting rows (e.g. `delete_messages_by_session`) therefore needs no separate FTS cleanup.
 
-**Migrations:** schema creation is versioned in a `_migrations` table. A fresh database runs a single complete baseline (`build_schema_v1`, recorded as v1) that creates the full schema above in one step. Databases created by the former incremental chain already carry the full schema and are left untouched (`_migrate` is a no-op for them). Future schema changes are appended as v2, v3, … — never inserted in the middle.
+**Migrations:** schema creation is versioned in a `_migrations` table. A fresh database runs a single complete baseline (`build_schema_v1`, recorded as v1) that creates the full schema above in one step. A database left at a higher watermark by the former incremental chain is normalized to the baseline — `_migrate` warns and rewrites its watermark to the current step count, keeping schema and data intact and never replaying the baseline — so future appended steps stay effective. Future schema changes are appended as v2, v3, … — never inserted in the middle.
 
 
 ---
