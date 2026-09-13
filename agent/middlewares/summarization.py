@@ -11,6 +11,7 @@ from langchain.agents.middleware import (
     ExtendedModelResponse,
 )
 from workspace.prompt_builder import build_system_prompt
+from agent.middlewares.compaction_lock import CompactionLock, CompactionLockError
 from runtime import state_register_db, state_register_mem
 from typing import Any, cast
 from collections.abc import Callable, Awaitable, Sequence
@@ -823,6 +824,14 @@ class Summarization(AgentMiddleware):
             new_tokens,
             ratio,
         )
+
+    @property
+    def _compaction_lock(self) -> CompactionLock:
+        cached = self.__dict__.get("_compaction_lock_instance")
+        if cached is None:
+            cached = CompactionLock()
+            self.__dict__["_compaction_lock_instance"] = cached
+        return cached
 
     def _record_compaction_bookkeeping(self, session_id: str) -> None:
         """After an ACTUAL compression: arm the cooldown, count the turn attempt."""
@@ -1760,6 +1769,19 @@ class Summarization(AgentMiddleware):
         request: ModelRequest[ContextT],
         session_id: str,
     ) -> ModelRequest[ContextT]:
+        """Serialize per-session compactions (SESSION plan P0-3); fail-open."""
+        try:
+            with self._compaction_lock.acquire_sync(session_id):
+                return self._apply_compression_under_lock(request, session_id)
+        except CompactionLockError as exc:
+            logger.warning("compaction lock unavailable, skipping compression: {}", exc)
+            return request
+
+    def _apply_compression_under_lock(
+        self,
+        request: ModelRequest[ContextT],
+        session_id: str,
+    ) -> ModelRequest[ContextT]:
         original_messages: list[AnyMessage] = request.state.get("messages", [])
         recovery_ctx = self._capture_recovery_context(original_messages, session_id)
 
@@ -1844,6 +1866,19 @@ class Summarization(AgentMiddleware):
     # ------------------------------------------------------------------
 
     async def _aapply_compression(
+        self,
+        request: ModelRequest[ContextT],
+        session_id: str,
+    ) -> ModelRequest[ContextT]:
+        """Async twin of _apply_compression: same lock, fail-open on timeout."""
+        try:
+            async with self._compaction_lock.acquire(session_id):
+                return await self._aapply_compression_under_lock(request, session_id)
+        except CompactionLockError as exc:
+            logger.warning("compaction lock unavailable, skipping compression: {}", exc)
+            return request
+
+    async def _aapply_compression_under_lock(
         self,
         request: ModelRequest[ContextT],
         session_id: str,

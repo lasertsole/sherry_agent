@@ -34,6 +34,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_origin_column,
         add_session_role_index,
         add_reasoning_tokens_column,
+        build_compression_locks_tb,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -73,6 +74,29 @@ def _connect_with_retry() -> sqlite3.Connection:
                 raise
             time.sleep(_RETRY_DELAY_S * attempt)
     raise sqlite3.OperationalError("database is locked")
+
+
+def build_compression_locks_tb(db: sqlite3.Connection) -> None:
+    """Create the compression_locks table (SESSION plan P0-3).
+
+    One row per session currently compacting; the PRIMARY KEY on session_id
+    makes concurrent acquire attempts mutually exclusive at the SQLite level.
+    """
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS compression_locks (
+        session_id TEXT PRIMARY KEY,
+        holder TEXT NOT NULL,
+        acquired_at REAL NOT NULL,
+        ttl INTEGER NOT NULL DEFAULT 300,
+        renew_count INTEGER DEFAULT 0
+    )
+    """)
+    db.commit()
+
+
+def get_db_path() -> Path:
+    """Public read access to the MesMemory database file path."""
+    return _db_path
 
 
 def get_db():
