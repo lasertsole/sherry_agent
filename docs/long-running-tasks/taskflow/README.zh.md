@@ -292,9 +292,6 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ## 已知限制
 
-- **`done` ≠ 成功**：步骤 `done` 仅表示"已注入结果"，不表示"子代理成功"。无步骤级 `failed`/`skipped` 状态。即使子代理会话失败，`taskflow_resume` 仍标记步骤 `done` 并解锁后继。故障感知重试是未来缺口（`LONG_RUNNING_TASK_GAP_ANALYSIS.md` 中的 gap #8）。
+- **`done` ≠ 成功**：步骤 `done` 仅表示"已注入结果"，不表示"子代理成功"。无步骤级 `failed`/`skipped` 状态。即使子代理会话失败，`taskflow_resume` 仍标记步骤 `done` 并解锁后继。故障感知恢复可为步骤附加 `retry_policy`：`taskflow_wait_all` 在重试预算内会重新派发已结束的子代理，预算耗尽后以失败注记标记 `done`。
 - **`taskflow_wait_all` 超时为有界轮询**：永不完成的子代理会话不会自动使流失败。超时返回部分报告。
 - **步骤 id 为顺序分配**：注册时分配 `step-{len(steps)+1}`。如果步骤被并发追加，id 在冲突重试时由 `build_state` 重新计算。
-- **无跨会话自动恢复**：新会话不会自动扫描未完成的流（gap LT-2）。模型需显式调用 `taskflow_summary` 发现待处理流。
-- **无截止时间/预算跟踪**：`task_flows` 表无 `deadline_ts` 或 `total_tokens` 列（gap #3、#4）。流可无限运行。
-- **无空闲检测**：`WAITING` 状态且无活跃子代理的流不会被自动标记（gap #11）。

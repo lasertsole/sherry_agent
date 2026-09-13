@@ -292,9 +292,6 @@ The `build_state` callback receives a fresh flow and an attempt number, so it ca
 
 ## Known Limitations
 
-- **`done` ≠ success**: step `done` only means "a result was injected", not "the child succeeded". No step-level `failed`/`skipped` statuses exist. Even if a child session fails, `taskflow_resume` still marks the step `done` and unlocks successors. Failure-aware retry is a future gap (gap #8 in `LONG_RUNNING_TASK_GAP_ANALYSIS.md`).
+- **`done` ≠ success**: step `done` only means "a result was injected", not "the child succeeded". No step-level `failed`/`skipped` statuses exist. Even if a child session fails, `taskflow_resume` still marks the step `done` and unlocks successors. For failure-aware recovery, attach a `retry_policy` to the step: `taskflow_wait_all` re-dispatches a settled child while retry budget remains, and marks the step `done` with a failure-note once the budget is exhausted.
 - **`taskflow_wait_all` timeout is bounded polling**: a never-settling child session does not automatically fail the flow. The timeout returns a partial report.
 - **Step ids are sequential**: `step-{len(steps)+1}` assigned at registration time. If steps are appended concurrently, the id is re-computed inside `build_state` on conflict retry.
-- **No cross-session auto-resume**: new sessions do not automatically scan for uncompleted flows (gap LT-2). The model must explicitly call `taskflow_summary` to discover pending flows.
-- **No deadline/budget tracking**: `task_flows` table has no `deadline_ts` or `total_tokens` columns (gaps #3, #4). A flow can run indefinitely.
-- **No idle detection**: a `WAITING` flow with no active child is not automatically flagged (gap #11).
