@@ -15,6 +15,26 @@ _SUBMODULE_LOADED = False
 
 _real_init_cache: dict[str, object] = {}
 
+# ``agent.middlewares`` re-exports resolved lazily from their concrete modules.
+# Production code imports these names from the *package* at call time
+# (``nudge.py::_create_nudge_agent``, ``spawn/core.py::_build_child_agent``)
+# and hands them to ``create_agent``. A previous no-op ``lambda: None`` binding
+# here made the package lie: ``create_agent`` received ``None`` middleware
+# entries and crashed with ``AttributeError: type object 'NoneType' has no
+# attribute 'wrap_tool_call'`` — inside the compression-todo fork's fail-open
+# path, so every TestForkIsolation case failed in full-suite runs while
+# passing in isolation. Resolve the REAL classes instead (same rationale as
+# the real ``runtime.clear_all_register_sessions`` binding below); the
+# concrete modules are light, so the package ``__init__`` stays unloaded.
+_MIDDLEWARE_EXPORTS: dict[str, str] = {
+    "IterationBudget": "agent.middlewares.iteration_budget",
+    "ToolGuardrails": "agent.middlewares.tool_guardrails",
+    "ToolCallNormalize": "agent.middlewares.tool_call_normalize",
+    "Summarization": "agent.middlewares.summarization",
+    "HeartbeatStaleness": "agent.middlewares.heartbeat_staleness",
+    "MaxTokensBoostMiddleware": "agent.middlewares.max_tokens_boost",
+}
+
 
 def _real_init_attr(pkg: str, name: str):
     """Resolve ``name`` against the REAL package ``__init__`` of stubbed ``pkg``.
@@ -88,6 +108,10 @@ def _make_stub(mod_name: str) -> stdlib_types.ModuleType:
             # importlib fallbacks below raised FileNotFoundError (which hasattr
             # does not catch) and crashed the torch import mid-init.
             raise AttributeError(f"module {_pkg!r} has no attribute {name!r}")
+        if _pkg == "agent.middlewares":
+            mw_module = _MIDDLEWARE_EXPORTS.get(name)
+            if mw_module is not None:
+                return getattr(importlib.import_module(mw_module), name)
         try:
             sub = importlib.import_module(f"{_pkg}.{name}")
         except ModuleNotFoundError as exc:
@@ -166,14 +190,8 @@ def _setup_subagent_alias():
     )
     sys.modules["agent"].checkpointer = sys.modules["agent.checkpointer"]
 
-    for mw_name in [
-        "IterationBudget",
-        "ToolGuardrails",
-        "ToolCallNormalize",
-        "Summarization",
-        "HeartbeatStaleness",
-    ]:
-        setattr(sys.modules["agent.middlewares"], mw_name, lambda *a, **kw: None)
+    # ``agent.middlewares`` re-exports resolve to the REAL classes through the
+    # stub's __getattr__ mapping (_MIDDLEWARE_EXPORTS) — never to no-op lambdas.
     sys.modules["agent"].middlewares = sys.modules["agent.middlewares"]
 
     sys.modules["agent.core"].StateSchema = dict
