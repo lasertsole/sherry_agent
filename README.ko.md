@@ -24,7 +24,9 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **세션 체크포인팅**: 스레드 세이프 비동기 SQLite 체크포인터(`langgraph-checkpoint-sqlite`)가 재시작 후에도 에이전트 상태를 유지하며, 오래된 체크포인트는 자동 정리
 - **대화 요약**: Summarization 미들웨어가 auxiliary LLM으로 긴 대화 이력을 도중에 압축
 - **프라이빗 지식 그래프 RAG**: `multimodal_rag` 스킬이 문서/폴더를 엔티티-관계 그래프로 인덱싱(벤더드 LightRAG + RAG-Anything, `snkv` 벡터 스토리지)하고 멀티홉 그래프 검색으로 답변
+- **경험 추출(Experience Extraction)**: 다섯 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 턴마다 실행되는 facts 파이프라인(`context_engine/facts/`), 10턴마다의 memory nudge, todo가 모두 완료될 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, `facts/*.md`, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
 - ▶️ _아키텍처, 데이터 모델, API 세부사항은 [Context Engine README](context_engine/README.md) 참조_
+- ▶️ _트리거 × 메커니즘 × 기록 위치의 전체 매핑은 [Experience Extraction README](docs/experience_extraction/README.ko.md) 참조_
 
 ### 2. 🛠️ 동적 스킬 시스템
 - **SKILL.md 표준**: 스킬은 YAML 프론트매터(`name`, `description`, 선택적 `scope: all | main_only | subagent_only`)를 가진 Markdown 파일이며, 로더가 `skills/` 하위의 모든 `SKILL.md`를 자동으로 발견합니다
@@ -79,6 +81,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 | **웹 검색** | langchain-tavily(Tavily API) |
 | **LLM 프로바이더** | langchain-openai, langchain-deepseek, langchain-community + 20개 이상 프로바이더 레지스트리(OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM 등) |
 | **구조화 출력** | instructor, json_repair |
+| **평가(Evaluation)** | RAGAS(그래프 RAG 품질 지표) + 자체 샌드박스 평가 프레임워크(`evals/`) |
 | **MCP** | langchain-mcp-adapters(`plugins/mcp_server/`에서 서버 구성) |
 | **작업 스케줄링** | croniter, asyncio |
 | **비동기 메시징** | asyncio 큐(MessageBus, EventBus) |
@@ -99,6 +102,8 @@ EMA_AI_agent/
 │   ├── middlewares/        # 미들웨어 파이프라인(요약, 가드레일, HITL 등)
 │   └── tools/              # 에이전트가 사용하는 도구
 │       ├── subagent/       # 멀티레벨 서브에이전트 시스템(spawn/registry/swarm 등)
+│       ├── todolist/       # 세션 범위 todo 계획 레이어
+│       │   └── knowledge/  # Plan 지식 베이스 + `knowledge` 도구
 │       ├── file_tools/     # 파일 I/O 도구(읽기, 쓰기, 패치, 검색)
 │       ├── skill_tools/    # 스킬 관리 도구(나열, 조회, 관리)
 │       ├── pub_base/       # 공유 도구 유틸리티 및 기반
@@ -123,16 +128,38 @@ EMA_AI_agent/
 │   ├── src-tauri/          # Tauri 2 네이티브 셸(Rust)
 │   └── README.md           # 클라이언트 문서
 │
-├── config/                 # 중앙화된 설정
+├── config/                 # 중앙화된 설정(paths, feature TypedDicts, schema, settings)
 │   ├── __init__.py         # API 호스트/포트(127.0.0.1:8080)
 │   ├── path.py             # 파일 경로 설정
 │   ├── schema.py           # 설정 스키마 모델
-│   └── num.py              # 수치/튜닝 파라미터
+│   ├── sherry_settings.py  # sherry.jsonc 로더
+│   └── features/           # 객체별 feature TypedDict와 기본 인스턴스
 │
 ├── context_engine/         # 메모리 엔진(MesMemory)
 │   ├── core.py             # 히스토리 조회 및 FTS5 검색 API
 │   ├── store/              # 세션 메시지 스토어(SQLite + FTS5, WAL)
+│   ├── facts/              # 턴별 facts 파이프라인(cursor / extractor / queue)
+│   ├── events/             # append-only 이벤트 로그 + projector
+│   ├── embeddings/         # 벡터 시맨틱 검색(indexer / search)
 │   └── curator/            # 자동 스킬 큐레이션
+│
+├── docs/                   # 서브시스템 설계 문서(언어별 README)
+│   ├── experience_extraction/ # 다섯 개 경험 추출 라이프사이클 경로
+│   ├── session_memory/     # SESSION 계획 역량(P0–P2)
+│   ├── summarization/      # 압축 트리거 및 쿨다운
+│   ├── loop-prevention/    # 폭주 루프 방지 하네스
+│   ├── sandbox/            # 평가 샌드박스 및 도구 격리
+│   └── long-running-tasks/ # TaskFlow 오케스트레이션
+│
+├── evals/                  # 평가 프레임워크(dispatcher + 5개 스위트)
+│   ├── evals.py            # 스위트 러너: uv run python evals/evals.py [suite]
+│   ├── sandbox.py          # 실행 중 저장소 쓰기를 리디렉션하는 샌드박스
+│   ├── graph_rag/          # 그래프 RAG 파이프라인의 RAGAS 지표
+│   ├── subagent/           # 서브에이전트 스폰 파이프라인 벤치마크
+│   ├── long_running_task/  # TaskFlow DAG 평가
+│   ├── session_memory/     # 세션 메모리 스택 점검
+│   ├── nudge_extraction/   # AI 판정 plan 추출
+│   └── results/            # 실행별 리포트(gitignore됨)
 │
 ├── logs/                   # 로깅 시스템
 │   ├── logger.py           # 로그 설정(loguru)
@@ -145,7 +172,7 @@ EMA_AI_agent/
 │   ├── STT_model/          # Speech-to-Text 모델(FunASR)
 │   ├── embed_model/        # 임베딩 모델(로컬 bge-m3 GGUF 또는 클라우드 API)
 │   ├── reranker_model/     # 크로스 인코더 리랭커(로컬 GGUF 또는 클라우드 API)
-│   └── extract_model/      # 엔티티 추출 모델(서드파티 가중치)
+│   ├── extract_model/      # 엔티티 추출 모델(서드파티 가중치)
 │   └── providers/          # LLM 프로바이더 사양 및 레지스트리
 │       └── registry.py    # 20개 이상 프로바이더의 ProviderSpec
 │
@@ -231,6 +258,8 @@ EMA_AI_agent/
 | 서브모듈 | 설명 | 문서 |
 |-----------|-------------|---------------|
 | **Context Engine** | 단기 세션 메시지 메모리(MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
+| **경험 추출** | 대화 이력을 재사용 가능한 경험으로 축적하는 다섯 개 라이프사이클 경로 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **세션 메모리** | SESSION 계획 역량: memory flush, 압축 쿨다운, compaction lock, 이벤트 로그, 시맨틱 검색 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **서브에이전트 시스템** | 멀티레벨 서브에이전트 스폰, 병렬 실행 및 결과 전달 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **미들웨어** | 에이전트 라이프사이클 미들웨어 파이프라인 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **채널** | 채널 인터페이스 및 어댑터 시스템 | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
@@ -307,6 +336,65 @@ pnpm tauri dev    # 네이티브 데스크톱 모드
 ```
 
 클라이언트는 기본적으로 `http://127.0.0.1:8080`의 Python 백엔드에 연결됩니다(`client/.env`의 `VITE_API_BACK_URL`로 설정 가능). 자세한 내용은 [클라이언트 README](client/README.md)를 참조하세요.
+
+---
+
+## 🧪 테스트
+
+테스트는 `tests/` 아래에 **소스 트리를 미러링**하며(`tests/agent/...`, `tests/server/...`, `tests/context_engine/...`), uv를 통해 **pytest**로 실행합니다(단일 테스트 파일이나 소규모 선택은 `uv run pytest`). 모든 테스트 파일은 모듈 수준 `pytestmark`(`unit` / `integration` / `module` / `system` / `regression`)를 가지며, 이것이 어느 runner 그룹에서 실행될지 결정합니다.
+
+### 권장: 프로세스 격리 runner
+
+전체 스위트(및 CI)에는 split runner를 사용하세요. 이 runner는 **세 개의 순차 pytest 프로세스**(결코 병렬 아님)로 MARKER(디렉터리가 아님) 기준으로 테스트를 선택하고, 종료 코드를 집계하며, 그룹별 요약과 최종 판정(모든 그룹 통과 시에만 종료 코드 0)을 출력합니다:
+
+```bash
+uv run python tests/run_tests_split.py                  # 허메틱 스위트(기본, llm_e2e 제외)
+uv run python tests/run_tests_split.py --with-llm-e2e   # 실제 LLM e2e 테스트만(전용 job 모드)
+uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 뒤 인자는 pytest로 전달
+```
+
+| 그룹 | Marker | 내용 |
+| :---- | :----- | :------- |
+| **A** | `unit` | 순수 로직, 완전 mock 테스트 |
+| **B** | `integration or module or system` | 허메틱 통합 / 모듈 / 시스템 테스트 |
+| **C** | `regression` | 크로스 모듈 회귀 테스트 |
+
+**왜 프로세스를 분리할까?** `tests/agent/tools/subagent/conftest.py`는 conftest *임포트* 시점에 stub callable을 프로세스 전역 `sys.modules`에 설치합니다. 단일 프로세스 전체 스위트 실행에서 pytest는 수집 단계(테스트 실행 전)에 모든 conftest와 테스트 모듈을 임포트하므로, 그 stub이 프로세스 전체에서 살아남아 스위트를 넘어 누출됩니다. 지연(호출 시점) 임포트는 stub을 해석하지만, 더 일찍 실제 객체를 바인딩한 모듈은 오래된 바인딩을 유지합니다. 그 결과 subagent 테스트에서 멀리 떨어진 스위트에서 혼란스럽고 순서에 의존하는 실패가 나타납니다(예: 스킬 스코프 단언이 stub의 고정 스킬 목록을 보거나 `TypeError` 트레이스백이 conftest lambda를 지목). 그룹을 별도 프로세스로 실행하면 이런 크로스 스위트 오염이 구조적으로 불가능해집니다. (stub 자체는 `c730a46`부터 복원 안전합니다. runner는 심층 방어의 운영 계층입니다.)
+
+**Windows 참고:** 자식 pytest 프로세스의 환경에 `PYTHONIOENCODING=utf-8`이 주입되고 runner가 `errors="replace"`로 출력을 캡처하므로, GBK 콘솔 코드페이지가 출력을 손상시키거나 실행을 크래시시키지 않습니다.
+
+### 실제 LLM e2e 테스트(`llm_e2e` marker)
+
+`tests/integration/`의 두 테스트 파일(`test_real_e2e.py`, `test_spawn_direct_e2e.py`)에 있는 세 개의 테스트가 **실제 LLM API**를 호출합니다. 이들은:
+
+- **기본적으로 선택 해제**되며(`-m "not llm_e2e"`, `pyproject.toml` addopts와 runner 양쪽에 설정),
+- `@pytest.mark.timeout` 예산(pytest-timeout)으로 제한됩니다: 단순 테스트 300초, 동시 테스트 600초,
+- 명시적으로, **전용 job**에서 실행합니다: `uv run python tests/run_tests_split.py --with-llm-e2e`(`-m llm_e2e` 선택) 또는 `uv run pytest -m llm_e2e`.
+
+**예상 런타임**(단독, 실제 백엔드): 단순 작업 약 30–60초, 복잡한 최악의 경우 약 10분, 동시 작업 약 2–9분. 이 예산을 초과하면 정상적인 지연이 아니라 실제 hang이며, 테스트별 timeout이 이를 제한합니다(단순 300초 / 동시 600초).
+
+**CI:** 이 저장소에는 현재 CI 구성이 없습니다. `tests/run_tests_split.py`가 **CI 준비 완료 진입점**입니다: `uv run python tests/run_tests_split.py`를 기본 파이프라인에 연결하고(허메틱, 두 프로세스 합계 약 7분), `--with-llm-e2e`는 별도의 더 느린 job으로 예약하세요(API 토큰을 소모하며, 다른 스위트와 병렬로 절대 실행하지 마세요).
+
+> **참고:** `tests/full/`은 위 표준 그룹 밖의 보조/실험 디렉터리입니다. 특히 `tests/full/test_main_agent_e2e.py`는 라이브 네트워크 테스트로 `llm_e2e` 태그가 **없으므로**, 태그를 달기 전에는 CI에 연결하지 마세요.
+
+### Evals
+
+`evals/`는 pytest와 나란히 있는 자체 제작 샌드박스 평가 프레임워크입니다. 등록된 모든 스위트를 실행하거나 이름으로 하나만 실행할 수 있습니다:
+
+```bash
+uv run python evals/evals.py                # 등록된 모든 스위트
+uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실행
+```
+
+| 스위트 | 평가 내용 |
+| :---- | :---------------- |
+| `graph_rag` | multimodal_rag 파이프라인을 RAGAS로 채점(faithfulness, answer relevancy, context recall, context precision) |
+| `subagent` | 실제 `spawn_subagent_direct` 파이프라인의 결정적 작업 벤치(작업 성공률 + 지연) |
+| `long_running_task` | 의존성 DAG에 대한 TaskFlow 오케스트레이션 루프(스텝 성공률, 흐름 완료, wall time) |
+| `session_memory` | 세션 메모리 스택 7개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 듀얼 워터마크 facts 추출, 시맨틱 검색 랭킹 |
+| `nudge_extraction` | plan 추출 과정을 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
+
+모든 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기가 임시 샌드박스로 리디렉션됨), 리포트를 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 리포트는 절대 커밋되지 않습니다.
 
 ---
 

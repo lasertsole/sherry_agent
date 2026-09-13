@@ -24,7 +24,9 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **セッションチェックポイント**：スレッドセーフな非同期 SQLite チェックポインター（`langgraph-checkpoint-sqlite`）がエージェント状態を再起動をまたいで永続化し、古いチェックポイントは自動クリーンアップ
 - **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮
 - **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
+- **経験抽出（Experience Extraction）**：5 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。ターンごとの facts パイプライン（`context_engine/facts/`）、10 ターンごとの memory nudge、todo がすべて完了したときの plan 抽出、圧縮前の memory flush、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、`facts/*.md`、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
 - ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
+- ▶️ _トリガー × メカニズム × 書き込み先の全体マップは [Experience Extraction README](docs/experience_extraction/README.ja.md) を参照_
 
 ### 2. 🛠️ 動的スキルシステム
 - **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーが `skills/` 配下のすべての `SKILL.md` を自動検出します
@@ -79,6 +81,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 | **Web 検索** | langchain-tavily（Tavily API） |
 | **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-community + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
 | **構造化出力** | instructor、json_repair |
+| **評価（Evaluation）** | RAGAS（グラフ RAG 品質指標）+ 自製サンドボックス評価フレームワーク（`evals/`） |
 | **MCP** | langchain-mcp-adapters（`plugins/mcp_server/` でサーバーを設定） |
 | **タスクスケジューリング** | croniter、asyncio |
 | **非同期メッセージング** | asyncio キュー（MessageBus、EventBus） |
@@ -99,6 +102,8 @@ EMA_AI_agent/
 │   ├── middlewares/        # ミドルウェアパイプライン（要約、ガードレール、HITL など）
 │   └── tools/              # エージェント利用可能なツール
 │       ├── subagent/       # マルチレベルサブエージェントシステム（spawn/registry/swarm など）
+│       ├── todolist/       # セッションスコープの todo 計画レイヤー
+│       │   └── knowledge/  # Plan ナレッジベース + `knowledge` ツール
 │       ├── file_tools/     # ファイル I/O ツール（読み・書き・パッチ・検索）
 │       ├── skill_tools/    # スキル管理ツール（一覧・閲覧・管理）
 │       ├── pub_base/       # 共有ツールユーティリティと基盤
@@ -123,16 +128,38 @@ EMA_AI_agent/
 │   ├── src-tauri/          # Tauri 2 ネイティブシェル（Rust）
 │   └── README.md           # クライアントドキュメント
 │
-├── config/                 # 集中設定
+├── config/                 # 集中設定（paths、feature TypedDicts、schema、settings）
 │   ├── __init__.py         # API ホスト/ポート（127.0.0.1:8080）
 │   ├── path.py             # ファイルパス設定
 │   ├── schema.py           # 設定スキーマモデル
-│   └── num.py              # 数値/チューニングパラメータ
+│   ├── sherry_settings.py  # sherry.jsonc ローダー
+│   └── features/           # オブジェクト単位の feature TypedDict と既定インスタンス
 │
 ├── context_engine/         # メモリエンジン（MesMemory）
 │   ├── core.py             # 履歴取得と FTS5 検索 API
 │   ├── store/              # セッションメッセージストア（SQLite + FTS5、WAL）
+│   ├── facts/              # ターンごとの facts パイプライン（cursor / extractor / queue）
+│   ├── events/             # 追記型イベントログ + projector
+│   ├── embeddings/         # ベクトルセマンティック検索（indexer / search）
 │   └── curator/            # 自動スキルキュレーション
+│
+├── docs/                   # サブシステム設計ドキュメント（言語別 README）
+│   ├── experience_extraction/ # 5 つの経験抽出ライフサイクル経路
+│   ├── session_memory/     # SESSION 計画のケイパビリティ（P0–P2）
+│   ├── summarization/      # 圧縮トリガーとクールダウン
+│   ├── loop-prevention/    # 暴走ループ防止ハーネス
+│   ├── sandbox/            # 評価サンドボックスとツール分離
+│   └── long-running-tasks/ # TaskFlow オーケストレーション
+│
+├── evals/                  # 評価フレームワーク（dispatcher + 5 スイート）
+│   ├── evals.py            # スイートランナー: uv run python evals/evals.py [suite]
+│   ├── sandbox.py          # 実行中のリポジトリ書き込みをリダイレクトするサンドボックス
+│   ├── graph_rag/          # グラフ RAG パイプラインの RAGAS 指標
+│   ├── subagent/           # サブエージェント spawn パイプラインのベンチマーク
+│   ├── long_running_task/  # TaskFlow DAG 評価
+│   ├── session_memory/     # セッションメモリスタックのチェック
+│   ├── nudge_extraction/   # AI 判定の plan 抽出
+│   └── results/            # 実行ごとのレポート（gitignore 済み）
 │
 ├── logs/                   # ロギングシステム
 │   ├── logger.py           # ログ設定（loguru）
@@ -145,7 +172,7 @@ EMA_AI_agent/
 │   ├── STT_model/          # Speech-to-Text モデル（FunASR）
 │   ├── embed_model/        # 埋め込みモデル（ローカル bge-m3 GGUF またはクラウド API）
 │   ├── reranker_model/     # リランカーモデル（ローカル GGUF またはクラウド API）
-│   └── extract_model/      # エンティティ抽出モデル（サードパーティ重み）
+│   ├── extract_model/      # エンティティ抽出モデル（サードパーティ重み）
 │   └── providers/          # LLM プロバイダー仕様とレジストリ
 │       └── registry.py    # 20 以上のプロバイダーの ProviderSpec
 │
@@ -231,6 +258,8 @@ EMA_AI_agent/
 | サブモジュール | 説明 | ドキュメント |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
+| **経験抽出** | 会話履歴を再利用可能な経験として蓄積する 5 つのライフサイクル経路 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **セッションメモリ** | SESSION 計画のケイパビリティ: memory flush、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
@@ -307,6 +336,65 @@ pnpm tauri dev    # ネイティブデスクトップモード
 ```
 
 クライアントはデフォルトで `http://127.0.0.1:8080` の Python バックエンドに接続します（`client/.env` の `VITE_API_BACK_URL` で変更可能）。詳細は[クライアント README](client/README.md) を参照。
+
+---
+
+## 🧪 テスト
+
+テストは `tests/` 配下にあり、**ソースツリーをミラー**しています（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`）。uv 経由で **pytest** で実行します（単一ファイルや小規模な選択は `uv run pytest`）。すべてのテストファイルはモジュールレベルの `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`）を持ち、どの runner グループで実行されるかを決定します。
+
+### 推奨：プロセス分離 runner
+
+フルスイート（および CI）には split runner を使います。これは **3 つの逐次 pytest プロセス**（並列には決してしない）で MARKER（ディレクトリではなく）によりテストを選択し、終了コードを集約して、グループごとのサマリーと最終判定（全グループ通過時のみ終了コード 0）を出力します：
+
+```bash
+uv run python tests/run_tests_split.py                  # ハーメティックスイート（既定、llm_e2e 除外）
+uv run python tests/run_tests_split.py --with-llm-e2e   # 実 LLM e2e テストのみ（専用 job モード）
+uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 以降の引数は pytest に転送
+```
+
+| グループ | Marker | 内容 |
+| :---- | :----- | :------- |
+| **A** | `unit` | 純ロジック、完全 mock のテスト |
+| **B** | `integration or module or system` | ハーメティックな統合 / モジュール / システムテスト |
+| **C** | `regression` | クロスモジュール回帰テスト |
+
+**なぜプロセスを分けるのか？** `tests/agent/tools/subagent/conftest.py` は conftest の *インポート* 時に stub callable をプロセスグローバルの `sys.modules` にインストールします。単一プロセスのフルスイート実行では、pytest は収集段階（テスト実行前）にすべての conftest とテストモジュールをインポートするため、それらの stub はプロセス全体で生き続け、スイートを越えて漏れます。遅延（呼び出し時）インポートは stub に解決されますが、より早く実オブジェクトを束縛したモジュールは古い束縛を保持します。結果として、subagent テストから遠く離れたスイートで不可解で順序依存の失敗が起きます（例：スキルスコープのアサーションが stub の固定スキルリストを見る、`TypeError` のトレースバックが conftest の lambda を指す）。グループを別プロセスで実行すれば、このクロススイート汚染は構造的に不可能になります。（stub 自体は `c730a46` 以降リストア安全です。runner は多層防御の運用レイヤーです。）
+
+**Windows の注意：** 子 pytest プロセスの環境には `PYTHONIOENCODING=utf-8` が注入され、runner は `errors="replace"` で出力を取得するため、GBK コンソールコードページが出力を壊したり実行をクラッシュさせたりすることはありません。
+
+### 実 LLM e2e テスト（`llm_e2e` marker）
+
+`tests/integration/` の 2 つのテストファイル（`test_real_e2e.py`、`test_spawn_direct_e2e.py`）にある 3 つのテストが**実 LLM API** を呼び出します。これらは：
+
+- **既定で選択解除**され（`-m "not llm_e2e"`、`pyproject.toml` の addopts と runner の両方で設定）、
+- `@pytest.mark.timeout` の予算（pytest-timeout）で制限され：単純テスト 300 秒、同時テスト 600 秒、
+- 明示的に、**専用 job** で実行します：`uv run python tests/run_tests_split.py --with-llm-e2e`（`-m llm_e2e` を選択）または `uv run pytest -m llm_e2e`。
+
+**想定実行時間**（単独、実バックエンド）：単純タスク約 30–60 秒、複雑な最悪ケース約 10 分、同時タスク約 2–9 分。この予算を超える場合は通常の遅さではなく実際のハングであり、テストごとの timeout が制限します（単純 300 秒 / 同時 600 秒）。
+
+**CI：** このリポジトリには現在 CI 設定がありません。`tests/run_tests_split.py` が **CI 対応済みのエントリーポイント**です：`uv run python tests/run_tests_split.py` をメインパイプラインに組み込み（ハーメティック、2 プロセスで計約 7 分）、`--with-llm-e2e` は別のより遅い job としてスケジュールしてください（API トークンを消費するため、他のスイートと並列に実行しないでください）。
+
+> **注意：** `tests/full/` は上記の標準グループ外の補助/実験ディレクトリです。特に `tests/full/test_main_agent_e2e.py` はライブネットワークテストで `llm_e2e` タグが**付いていない**ため、タグを付ける前に CI に組み込まないでください。
+
+### Evals
+
+`evals/` は pytest と並ぶ自製のサンドボックス評価フレームワークです。登録済みの全スイート、または名前で 1 つを実行できます：
+
+```bash
+uv run python evals/evals.py                # 登録済みの全スイート
+uv run python evals/evals.py graph_rag      # 名前で単一スイートを実行
+```
+
+| スイート | 評価内容 |
+| :---- | :---------------- |
+| `graph_rag` | multimodal_rag パイプラインを RAGAS で採点（faithfulness、answer relevancy、context recall、context precision） |
+| `subagent` | 実 `spawn_subagent_direct` パイプラインを決定論的タスクのベンチで評価（タスク成功率 + レイテンシ） |
+| `long_running_task` | 依存 DAG 上の TaskFlow オーケストレーションループ（ステップ成功率、フロー完了、wall time） |
+| `session_memory` | セッションメモリスタックの 7 チェック：クールダウン、compaction lock、チェックポイント復元、冪等リプレイ、コンテキスト適格性、デュアルウォーターマーク facts 抽出、セマンティック検索ランキング |
+| `nudge_extraction` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
+
+すべてのスイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスにリダイレクトされます）、レポートを `evals/results/<suite>/<run_id>/` に書き込みます。このディレクトリは **gitignore** 済みで、実行ごとのレポートがコミットされることはありません。
 
 ---
 

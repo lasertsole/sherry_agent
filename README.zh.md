@@ -24,7 +24,9 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **会话检查点**：线程安全的异步 SQLite checkpointer（`langgraph-checkpoint-sqlite`）跨重启持久化 Agent 状态，过期检查点自动清理
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
+- **经验抽取（Experience Extraction）**：五条生命周期路径将对话历史沉淀为可复用经验：每回合 facts 管线（`context_engine/facts/`）、每 10 回合的 memory nudge、todo 全部完成时的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、`facts/*.md`、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
+- ▶️ _详见 [Experience Extraction README](docs/experience_extraction/README.zh.md) 了解触发条件 × 机制 × 落库位置的完整映射_
 
 ### 2. 🛠️ 动态技能系统
 - **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
@@ -79,6 +81,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 | **联网搜索** | langchain-tavily（Tavily API） |
 | **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-community + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
 | **结构化输出** | instructor、json_repair |
+| **评估（Evaluation）** | RAGAS（图谱 RAG 质量指标）+ 自建沙箱化评估框架（`evals/`） |
 | **MCP** | langchain-mcp-adapters（在 `plugins/mcp_server/` 中配置服务器） |
 | **任务调度** | croniter、asyncio |
 | **异步消息** | asyncio 队列（MessageBus、EventBus） |
@@ -99,6 +102,8 @@ EMA_AI_agent/
 │   ├── middlewares/        # 中间件流水线（摘要、护栏、HITL 等）
 │   └── tools/              # Agent 可用工具
 │       ├── subagent/       # 多层级子代理系统（spawn/registry/swarm 等）
+│       ├── todolist/       # 会话级 todo 规划层
+│       │   └── knowledge/  # Plan 知识库 + `knowledge` 工具
 │       ├── file_tools/     # 文件 I/O 工具（读、写、补丁、搜索）
 │       ├── skill_tools/    # 技能管理工具（列表、查看、管理）
 │       ├── pub_base/       # 共享工具基础组件
@@ -123,16 +128,38 @@ EMA_AI_agent/
 │   ├── src-tauri/          # Tauri 2 原生壳（Rust）
 │   └── README.md           # 客户端文档
 │
-├── config/                 # 集中配置
+├── config/                 # 集中配置（paths、feature TypedDicts、schema、settings）
 │   ├── __init__.py         # API 主机/端口（127.0.0.1:8080）
 │   ├── path.py             # 文件路径配置
 │   ├── schema.py           # 配置模型
-│   └── num.py              # 数值/调优参数
+│   ├── sherry_settings.py  # sherry.jsonc 加载器
+│   └── features/           # 逐对象的 feature TypedDict 与默认实例
 │
 ├── context_engine/         # 记忆引擎（MesMemory）
 │   ├── core.py             # 历史检索与 FTS5 搜索 API
 │   ├── store/              # 会话消息存储（SQLite + FTS5，WAL）
+│   ├── facts/              # 每回合 facts 管线（cursor / extractor / queue）
+│   ├── events/             # 追加式事件日志 + projector
+│   ├── embeddings/         # 向量语义搜索（indexer / search）
 │   └── curator/            # 自动技能维护
+│
+├── docs/                   # 子系统设计文档（各语言 README）
+│   ├── experience_extraction/ # 五条经验抽取生命周期路径
+│   ├── session_memory/     # SESSION 计划能力（P0–P2）
+│   ├── summarization/      # 压缩触发条件与冷却
+│   ├── loop-prevention/    # 防失控循环防护
+│   ├── sandbox/            # 评估沙箱与工具隔离
+│   └── long-running-tasks/ # TaskFlow 编排
+│
+├── evals/                  # 评估框架（dispatcher + 5 个套件）
+│   ├── evals.py            # 套件运行器：uv run python evals/evals.py [suite]
+│   ├── sandbox.py          # 运行期间重定向仓库写入的沙箱
+│   ├── graph_rag/          # 图谱 RAG 管线的 RAGAS 指标
+│   ├── subagent/           # 子代理派生管线基准
+│   ├── long_running_task/  # TaskFlow DAG 评估
+│   ├── session_memory/     # 会话内存栈检查
+│   ├── nudge_extraction/   # AI 评判的 plan 抽取
+│   └── results/            # 每次运行的报告（已 gitignore）
 │
 ├── logs/                   # 日志系统
 │   ├── logger.py           # 日志配置（loguru）
@@ -145,7 +172,7 @@ EMA_AI_agent/
 │   ├── STT_model/          # 语音识别模型（FunASR）
 │   ├── embed_model/        # 向量嵌入模型（本地 bge-m3 GGUF 或云端 API）
 │   ├── reranker_model/     # 重排序模型（本地 GGUF 或云端 API）
-│   └── extract_model/      # 实体抽取模型（第三方权重）
+│   ├── extract_model/      # 实体抽取模型（第三方权重）
 │   └── providers/          # LLM 提供商规范与注册表
 │       └── registry.py    # 20+ 提供商的 ProviderSpec
 │
@@ -231,6 +258,8 @@ EMA_AI_agent/
 | 子模块 | 说明 | 文档 |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
+| **经验抽取** | 将对话历史沉淀为可复用经验的五条生命周期路径 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **渠道** | 渠道接口与适配器系统 | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
@@ -307,6 +336,65 @@ pnpm tauri dev    # 原生桌面模式
 ```
 
 客户端默认连接 `http://127.0.0.1:8080` 的 Python 后端（可通过 `client/.env` 中的 `VITE_API_BACK_URL` 配置）。详见[客户端 README](client/README.md)。
+
+---
+
+## 🧪 测试
+
+测试位于 `tests/` 下，**镜像源码树**（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`），通过 uv 用 **pytest** 运行（单个测试文件或小范围选择用 `uv run pytest`）。每个测试文件都带一个模块级 `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`），决定它属于哪个 runner 分组。
+
+### 推荐：进程隔离 runner
+
+完整套件（以及 CI）请使用拆分 runner：它以**三个顺序执行的 pytest 进程**（从不并行）按 MARKER（而非目录）选择测试，汇总退出码，并打印每组摘要与最终裁决（仅当所有组通过时退出码为 0）：
+
+```bash
+uv run python tests/run_tests_split.py                  # 密闭套件（默认，排除 llm_e2e）
+uv run python tests/run_tests_split.py --with-llm-e2e   # 仅真实 LLM e2e 测试（独立 job 模式）
+uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 之后的参数转发给 pytest
+```
+
+| 组 | Marker | 内容 |
+| :---- | :----- | :------- |
+| **A** | `unit` | 纯逻辑、完全 mock 的测试 |
+| **B** | `integration or module or system` | 密闭的集成 / 模块 / 系统测试 |
+| **C** | `regression` | 跨模块回归测试 |
+
+**为什么必须分进程？** `tests/agent/tools/subagent/conftest.py` 会在 conftest *导入* 时把 stub 可调用对象装进进程级全局 `sys.modules`。在单进程完整套件运行中，pytest 会在收集阶段（任何测试执行之前）导入所有 conftest 与测试模块，于是这些 stub 在整个进程内一直有效并跨套件泄漏：惰性（调用时）导入会解析到 stub，而更早绑定真实对象的模块仍保留旧绑定。结果就是远离 subagent 测试的套件出现令人困惑、依赖顺序的失败（例如技能作用域断言看到 stub 固定技能列表、`TypeError` 回溯指向 conftest lambda）。分进程运行让这种跨套件污染在结构上不可能发生。（stub 自 `c730a46` 起已可安全还原；runner 是纵深防御的运维层。）
+
+**Windows 说明：** 子 pytest 进程的环境会被注入 `PYTHONIOENCODING=utf-8`，runner 以 `errors="replace"` 捕获其输出，因此 GBK 控制台代码页既不会破坏输出也不会让运行崩溃。
+
+### 真实 LLM e2e 测试（`llm_e2e` marker）
+
+`tests/integration/` 中的两个测试文件（`test_real_e2e.py`、`test_spawn_direct_e2e.py`）包含三个会调用**真实 LLM API** 的测试。它们：
+
+- **默认被取消选择**（`-m "not llm_e2e"`，同时写在 `pyproject.toml` addopts 与 runner 中），
+- 受 `@pytest.mark.timeout` 预算约束（pytest-timeout）：简单测试 300 秒，并发测试 600 秒，
+- 需显式运行，且放在**独立 job**：`uv run python tests/run_tests_split.py --with-llm-e2e`（选择 `-m llm_e2e`）或 `uv run pytest -m llm_e2e`。
+
+**预期耗时**（单独运行、真实后端）：简单任务约 30–60 秒；复杂最坏情况约 10 分钟；并发任务约 2–9 分钟。超过这些预算说明是真正卡住，而非正常慢，单测超时会将其限制住（简单 300 秒 / 并发 600 秒）。
+
+**CI：** 本仓库当前没有 CI 配置；`tests/run_tests_split.py` 是**可直接接入 CI 的入口**：把 `uv run python tests/run_tests_split.py` 接到主流水线（密闭；两个进程合计约 7 分钟），并把 `--with-llm-e2e` 安排为单独的、更慢的 job（它消耗 API token；绝不要与其他套件并行运行）。
+
+> **注意：** `tests/full/` 是标准分组之外的辅助/实验目录。其中 `tests/full/test_main_agent_e2e.py` 是真实联网测试，**未**打上 `llm_e2e` 标记，未经标记不要接入 CI。
+
+### Evals
+
+`evals/` 是与 pytest 并列的自建、沙箱化评估框架。可运行全部已注册套件，或按名称运行单个：
+
+```bash
+uv run python evals/evals.py                # 全部已注册套件
+uv run python evals/evals.py graph_rag      # 按名称运行单个套件
+```
+
+| 套件 | 评估内容 |
+| :---- | :---------------- |
+| `graph_rag` | multimodal_rag 管线，用 RAGAS 评分（faithfulness、answer relevancy、context recall、context precision） |
+| `subagent` | 真实 `spawn_subagent_direct` 管线在一组确定性任务上的表现（任务成功率 + 延迟） |
+| `long_running_task` | TaskFlow 编排环在有依赖的 DAG 上的表现（步骤成功率、流程完成度、墙钟时间） |
+| `session_memory` | 会话内存栈的 7 项检查：冷却、compaction lock、检查点恢复、幂等重放、上下文资格、双水位 facts 抽取、语义搜索排序 |
+| `nudge_extraction` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
+
+每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。
 
 ---
 

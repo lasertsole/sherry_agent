@@ -24,7 +24,9 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Session Checkpointing**: thread-safe async SQLite checkpointer (`langgraph-checkpoint-sqlite`) persists agent state across restarts; stale checkpoints are cleaned automatically
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware
 - **Private Knowledge Graph RAG**: the `multimodal_rag` skill indexes documents/folders into an entity–relationship graph (vendored LightRAG + RAG-Anything on `snkv` vector storage) and answers via multi-hop graph retrieval
+- **Experience Extraction**: five lifecycle paths turn conversation history into durable experience: the per-turn facts pipeline (`context_engine/facts/`), a 10-turn memory nudge, plan extraction when the todo list completes, the pre-compression memory flush, and the post-compression todo fork. They write to MEMORY.md / USER.md, `facts/*.md`, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
 - ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
+- ▶️ _See the [Experience Extraction README](docs/experience_extraction/README.md) for the trigger × mechanism × destination map_
 
 ### 2. 🛠️ Dynamic Skill System
 - **SKILL.md Standard**: skills are Markdown files with YAML frontmatter (`name`, `description`, optional `scope: all | main_only | subagent_only`) — the loader auto-discovers every `SKILL.md` under `skills/`
@@ -79,6 +81,7 @@ Built on **Python 3.13** (dependency management via [uv](https://docs.astral.sh/
 | **Web Search** | langchain-tavily (Tavily API) |
 | **LLM Providers** | langchain-openai, langchain-deepseek, langchain-community + a 20+ provider registry (OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM, and more) |
 | **Structured Output** | instructor, json_repair |
+| **Evaluation** | RAGAS (graph-RAG quality metrics) + a homegrown sandboxed suite runner (`evals/`) |
 | **MCP** | langchain-mcp-adapters (servers configured in `plugins/mcp_server/`) |
 | **Task Scheduling** | croniter, asyncio |
 | **Async Messaging** | asyncio queues (MessageBus, EventBus) |
@@ -99,6 +102,8 @@ EMA_AI_agent/
 │   ├── middlewares/        # Middleware pipeline (summarization, guardrails, HITL, ...)
 │   └── tools/              # Agent-accessible tools
 │       ├── subagent/       # Multi-level subagent system (spawn/registry/swarm/...)
+│       ├── todolist/       # Session-scoped todo planning layer
+│       │   └── knowledge/  # Plan knowledge base + `knowledge` tool
 │       ├── file_tools/     # File I/O tools (read, write, patch, search)
 │       ├── skill_tools/    # Skill management tools (list, view, manage)
 │       ├── pub_base/       # Shared tool utilities & infrastructure
@@ -123,16 +128,38 @@ EMA_AI_agent/
 │   ├── src-tauri/          # Tauri 2 native shell (Rust)
 │   └── README.md           # Client documentation
 │
-├── config/                 # Centralized configuration
+├── config/                 # Centralized configuration (paths, feature TypedDicts, schema, settings)
 │   ├── __init__.py         # API host/port (127.0.0.1:8080)
 │   ├── path.py             # File path configuration
 │   ├── schema.py           # Configuration schema models
-│   └── num.py              # Numeric/tuning parameters
+│   ├── sherry_settings.py  # sherry.jsonc loader
+│   └── features/           # Per-object feature TypedDicts + default instances
 │
 ├── context_engine/         # Memory engine (MesMemory)
 │   ├── core.py             # History retrieval & FTS5 search APIs
 │   ├── store/              # Session message store (SQLite + FTS5, WAL)
+│   ├── facts/              # Per-turn facts pipeline (cursor / extractor / queue)
+│   ├── events/             # Append-only event log + projector
+│   ├── embeddings/         # Vector semantic search (indexer / search)
 │   └── curator/            # Auto-skill curation
+│
+├── docs/                   # Subsystem design docs (per-language READMEs)
+│   ├── experience_extraction/ # Five experience-extraction lifecycle paths
+│   ├── session_memory/     # SESSION plan capabilities (P0–P2)
+│   ├── summarization/      # Compression triggers & cooldown
+│   ├── loop-prevention/    # Runaway-loop prevention harness
+│   ├── sandbox/            # Eval sandbox & tool isolation
+│   └── long-running-tasks/ # TaskFlow orchestration
+│
+├── evals/                  # Evaluation framework (dispatcher + 5 suites)
+│   ├── evals.py            # Suite runner: uv run python evals/evals.py [suite]
+│   ├── sandbox.py          # Sandbox that redirects repo writes during a run
+│   ├── graph_rag/          # RAGAS metrics for the graph-RAG pipeline
+│   ├── subagent/           # Subagent spawn-pipeline benchmark
+│   ├── long_running_task/  # TaskFlow DAG eval
+│   ├── session_memory/     # Session-memory stack checks
+│   ├── nudge_extraction/   # AI-judged plan extraction
+│   └── results/            # Per-run reports (gitignored)
 │
 ├── logs/                   # Logging system
 │   ├── logger.py           # Log configuration (loguru)
@@ -231,6 +258,8 @@ Each major subsystem has its own detailed README:
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
 | **Context Engine** | Short-term session message memory (MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
+| **Experience Extraction** | Five lifecycle paths turning conversation history into durable experience | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **Session Memory** | SESSION-plan capabilities: memory flush, compression cooldown, compaction lock, event log, semantic search | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
 | **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) |
@@ -347,6 +376,25 @@ Three tests in `tests/integration/` (`test_real_e2e.py`, `test_spawn_direct_e2e.
 **CI:** this repository currently has no CI configuration; `tests/run_tests_split.py` is the **CI-ready entry point** — wire `uv run python tests/run_tests_split.py` into the primary pipeline (hermetic; two processes ≈ 7 min total) and schedule `--with-llm-e2e` as a separate, slower job (it costs API tokens; never run it in parallel with other suites).
 
 > **Note:** `tests/full/` is an auxiliary/experimental directory outside the standard groups above. In particular `tests/full/test_main_agent_e2e.py` is a live-network test that is **not** tagged `llm_e2e` — do not wire it into CI without tagging it first.
+
+### Evals
+
+`evals/` is a homegrown, sandboxed evaluation framework that sits beside pytest. Run every registered suite, or one by name:
+
+```bash
+uv run python evals/evals.py                # all registered suites
+uv run python evals/evals.py graph_rag      # a single suite by name
+```
+
+| Suite | What it evaluates |
+| :---- | :---------------- |
+| `graph_rag` | The multimodal_rag pipeline, scored with RAGAS (faithfulness, answer relevancy, context recall, context precision) |
+| `subagent` | The real `spawn_subagent_direct` pipeline on a bench of deterministic tasks (task success + latency) |
+| `long_running_task` | The TaskFlow orchestration loop over a dependent DAG (step success, flow completion, wall time) |
+| `session_memory` | The session-memory stack over 7 checks: cooldown, compaction lock, checkpoint restore, idempotent replay, context eligibility, dual-watermark facts extraction, semantic search ranking |
+| `nudge_extraction` | The plan-extraction pass, judged by an auxiliary LLM for grounded, reusable, non-generic skills |
+
+Every suite runs inside `evals/sandbox.py`, which redirects repo writes into a temp sandbox, and writes its reports under `evals/results/<suite>/<run_id>/`. That directory is **gitignored**; per-run reports are never committed.
 
 ---
 
