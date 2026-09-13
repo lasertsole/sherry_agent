@@ -30,6 +30,11 @@ class MessageSearchSchema(BaseModel):
         description="Optional: only search messages from specific roles (comma-separated). E.g. 'user,assistant' to skip tool outputs.",
     )
     limit: int = Field(default=3, description="Max sessions to summarize (default: 3, max: 5).")
+    semantic: bool = Field(
+        default=False,
+        description="Semantic mode: rank past messages by embedding similarity to the "
+        "query instead of FTS keyword matching (SESSION plan P2-5).",
+    )
 
 
 class ConversationTruncator:
@@ -473,11 +478,40 @@ def session_search(
         return _tool_error(f"Search failed: {str(e)}", success=False)
 
 
+def _run_semantic_search(query: str, session_id: str | None, limit: int) -> str:
+    """SESSION plan P2-5: embedding-similarity ranking over MesMemory messages."""
+    import asyncio
+
+    from context_engine.embeddings import semantic_search
+
+    matches = asyncio.run(semantic_search(query, session_id, limit))
+    if not matches:
+        return (
+            "No semantically similar messages found. The embedding index may "
+            "still be empty — keyword search (semantic omitted) covers unindexed rows."
+        )
+
+    lines = ["Semantic matches (highest similarity first):"]
+    for match in matches:
+        content = match.get("content")
+        if isinstance(content, (list, dict)):
+            import json
+
+            content = json.dumps(content, ensure_ascii=False)
+        preview = str(content)[:300]
+        lines.append(
+            f"- [{match['score']}] ({match['session_id']} turn {match['turn_num']}, "
+            f"{match['role']}) {preview}"
+        )
+    return "\n".join(lines)
+
+
 @tool("message_search", args_schema=MessageSearchSchema)
 def _message_search_tool(
     query: str | None = None,
     role_filter: str | None = None,
     limit: int = 3,
+    semantic: bool = False,
     session_id: Annotated[str, InjectedState("session_id")] = "",
 ) -> str:
     """Search your long-term memory of past conversations, or browse recent sessions. This is your recall --
@@ -506,6 +540,11 @@ def _message_search_tool(
     sessions that only mention some terms. If a broad OR query returns nothing, try individual
     keyword searches in parallel. Returns summaries of the top matching sessions.
     """
+    if semantic:
+        if not query:
+            return "Error: semantic search requires a query."
+        return _run_semantic_search(query, session_id or None, limit)
+
     return session_search(query, session_id, role_filter, limit)
 
 

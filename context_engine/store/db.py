@@ -37,6 +37,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         build_compression_locks_tb,
         add_idempotency_key_column,
         add_context_eligible_column,
+        build_message_embeddings_tb,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -123,6 +124,31 @@ def add_context_eligible_column(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
     if "context_eligible" not in cols:
         db.execute("ALTER TABLE messages ADD COLUMN context_eligible INTEGER NOT NULL DEFAULT 1")
+    db.commit()
+
+
+def build_message_embeddings_tb(db: sqlite3.Connection) -> None:
+    """Create the message_embeddings table (SESSION plan P2-5).
+
+    Vector index over message content for semantic search. Embeddings are
+    generated lazily by ``context_engine.embeddings.indexer`` and joined back
+    to ``messages`` for retrieval.
+    """
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS message_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL UNIQUE,
+        embedding BLOB NOT NULL,
+        model TEXT NOT NULL,
+        dim INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (message_id) REFERENCES messages(id)
+    )
+    """)
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_embeddings_session ON message_embeddings(session_id)"
+    )
     db.commit()
 
 
