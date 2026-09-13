@@ -158,7 +158,7 @@ Only middlewares that implement a given hook participate in that phase; the tabl
 ### ContextEngineHook
 
 **Module:** `agent/middlewares/context_engine/core.py` · **Class:** `ContextEngineHook(AgentMiddleware)`
-**Hooks:** `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`, `after_agent` / `aafter_agent`
+**Hooks:** `wrap_model_call` / `awrap_model_call`, `after_agent` / `aafter_agent`
 
 First in the list, therefore the outermost wrap layer.
 
@@ -168,18 +168,20 @@ First in the list, therefore the outermost wrap layer.
 2. Fall back to `state_register_db`; if still missing, rebuild via `workspace.prompt_builder.build_system_prompt(session_id)`.
 3. Inject with `request.override(system_message=...)` and cache the prompt back to `state_register_mem`.
 
-**`wrap_tool_call` — skill-review accounting**
-
-Increments `nudge_review_skill_count` in `state_register_db` for every tool call, unless the tool's metadata sets `nudge: true` (self-exempting nudge/limit tools).
-
 **`after_agent` / `aafter_agent` — turn finalization**
 
 1. Increment `nudge_review_memory_count` in `state_register_db`.
-2. If a counter reaches its threshold — `_NUDGE_MEMORY_THRESHOLD = 10` turns, `_NUDGE_SKILL_THRESHOLD = 10` tool calls — launch the corresponding **nudge sub-agent** (below) under the per-session locks `nudge_review_memory_lock` / `nudge_review_skill_lock` in `state_register_mem`. While a lock is held, `after_agent` skips the nudge decision (the counter still increments).
+2. Decide **two independent triggers**:
+   - **memory nudge**: when the counter reaches `_NUDGE_MEMORY_THRESHOLD = 10` turns, launch `_nudge_memory` under the per-session lock `nudge_review_memory_lock` (`state_register_mem`); the counter resets to 0 when it fires.
+   - **plan extraction**: when `CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]` is on and `_detect_todo_all_complete(session_id)` reports the todo list just became all-`completed` / `cancelled`, launch `_nudge_plan_extraction` under the lock `nudge_plan_extraction_lock` (`state_register_mem`). The `nudge_plan_extraction_fired` flag (`state_register_db`) guarantees a single fire per completion cycle; it resets whenever the list is not all-complete.
+   While either lock is held, `after_agent` skips the nudge decision (the memory counter still increments).
 3. Persist the last turn to MesMemory: `slice_last_turn` → `sanitize_tool_use_result_pairing` → `add_messages(session_id, messages)` (SQLite).
-4. Sync `after_agent` runs sub-agents via `run_async`; `aafter_agent` runs persistence and nudges concurrently through `asyncio.gather`.
+4. Sync `after_agent` runs sub-agents via `run_async`; `aafter_agent` runs persistence and nudges concurrently through `asyncio.gather`. On a plan-extraction turn the per-turn facts pipeline yields: `_nudge_plan_extraction` absorbs the pending facts interval in the same pass (Part 3 below).
 
-**Nudge sub-agents** (`context_engine/nudge.py`): separate `create_agent` instances built on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool` rejects any tool whose metadata lacks `nudge: true`, so nudge agents can only touch the memory/skill tools. Prompts: `_MEMORY_REVIEW_PROMPT` (memory review), `_SKILL_REVIEW_PROMPT` (skill library review), `_COMBINED_REVIEW_PROMPT` (both at once).
+**Nudge sub-agents** (`context_engine/nudge.py`): separate `create_agent` instances built on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool` rejects any tool whose metadata lacks `nudge: true`, so a nudge agent can only touch tools whitelisted for the nudge phase. Two prompts exist:
+
+- `_MEMORY_REVIEW_PROMPT` (memory review): a periodic pass that saves durable user preferences and expectations via the memory tool.
+- `_PLAN_EXTRACTION_PROMPT` (plan extraction): a single pass fired when every todo is complete, producing three outputs. **Part 1** writes structured JSON knowledge via the `knowledge` tool (`action="write"`) under `workspace/knowledge/plans/<plan-name>/`, with `failure_set` / `success_path` / `method` at the task, wave, and plan layers. **Part 2** updates the skill library via `skill_manage` (the former standalone skill-review guidance is merged here). **Part 3** writes durable facts via `memory(action="fact_add")` into the tiered facts store; this block is rendered only when a pending facts interval exists, and the facts consumed watermark advances only after the pass succeeds. Its context comes from `_build_plan_context`: the plan file, the todo list, the start-work ledger (`.omo/start-work/ledger.jsonl`), and this session's subagent runs (`result_text` / `outcome` / task only).
 
 > The previous version of this document claimed knowledge-graph maintenance (`after_turn`) and a `MemoryCache`. **Neither exists in the current code.** System prompts come from the state registers and `build_system_prompt()`; there is no knowledge-graph call anywhere in the middleware layer.
 
@@ -457,8 +459,9 @@ Common interface (`runtime/state_register.py`): `set_state`, `get_state`, `get_a
 | Key(s) | Owner | Register |
 |---|---|---|
 | `system_prompt` | ContextEngineHook / Summarization | mem + db |
-| `nudge_review_memory_count`, `nudge_review_skill_count` | ContextEngineHook | db |
-| `nudge_review_memory_lock`, `nudge_review_skill_lock` | ContextEngineHook | mem |
+| `nudge_review_memory_count` | ContextEngineHook | db |
+| `nudge_plan_extraction_fired` | ContextEngineHook | db |
+| `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | ContextEngineHook | mem |
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` keys (compression counters, ineffective streak, last tokens/strategy, skip-LLM flag, recovery state, last user question) | Summarization | mem |
@@ -577,7 +580,6 @@ user turn arrives
 │   └─ wrap_tool_call
 │       · IterationBudget  consume 1; error ToolMessage when exhausted
 │       · ToolGuardrails  pre-check block/halt → run → evaluate → warn/block/halt
-│       · ContextEngineHook  skill-review counter (unless tool metadata nudge: true)
 │       · HeartbeatStaleness  raise if killed; set heartbeat_tool, clear after return
 │       · HumanInTheLoop  reject calls with denied/timed-out approval
 │
@@ -586,7 +588,8 @@ user turn arrives
     → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook
     · HeartbeatStaleness  stop heartbeat timer
     · MultimodalProcessor  clean mutil_temp (> 7 days / non-numeric stems)
-    · ContextEngineHook  memory-review counter → maybe nudge sub-agents (locks)
+    · ContextEngineHook  memory counter (10-turn) → maybe memory nudge
+                        → plan extraction once all todos completed/cancelled
                         → persist last turn to MesMemory (slice → sanitize → add_messages)
 ```
 

@@ -156,7 +156,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### ContextEngineHook
 
 **模块：** `agent/middlewares/context_engine/core.py` · **类：** `ContextEngineHook(AgentMiddleware)`
-**钩子：** `wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`、`after_agent` / `aafter_agent`
+**钩子：** `wrap_model_call` / `awrap_model_call`、`after_agent` / `aafter_agent`
 
 列表中的第一个，因此是最外层的包装层。
 
@@ -166,18 +166,20 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 2. 回退到 `state_register_db`；若仍缺失，则通过 `workspace.prompt_builder.build_system_prompt(session_id)` 重建。
 3. 通过 `request.override(system_message=...)` 注入，并把提示词缓存回 `state_register_mem`。
 
-**`wrap_tool_call` —— 技能复盘计数**
-
-对每一次工具调用，将 `state_register_db` 中的 `nudge_review_skill_count` 加一，除非该工具的元数据设置了 `nudge: true`（nudge/limit 工具自我豁免）。
-
 **`after_agent` / `aafter_agent` —— 回合收尾**
 
 1. 将 `state_register_db` 中的 `nudge_review_memory_count` 加一。
-2. 若计数器达到阈值——`_NUDGE_MEMORY_THRESHOLD = 10` 回合、`_NUDGE_SKILL_THRESHOLD = 10` 次工具调用——则在 `state_register_mem` 的会话级锁 `nudge_review_memory_lock` / `nudge_review_skill_lock` 保护下启动对应的 **nudge 子 Agent**（见下）。持锁期间 `after_agent` 跳过 nudge 判定（计数器仍会递增）。
+2. 判定 **两个相互独立的触发**：
+   - **记忆 nudge**：当计数器达到 `_NUDGE_MEMORY_THRESHOLD = 10` 回合时，在 `state_register_mem` 的会话级锁 `nudge_review_memory_lock` 下启动 `_nudge_memory`；触发后计数器归零。
+   - **计划提取**：当 `CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]` 开启，且 `_detect_todo_all_complete(session_id)` 报告 todo 列表刚刚全部变为 `completed` / `cancelled` 时，在锁 `nudge_plan_extraction_lock`（`state_register_mem`）下启动 `_nudge_plan_extraction`。`nudge_plan_extraction_fired` 标志（`state_register_db`）保证每个完成周期只触发一次；只要列表未全部完成就重置。
+   任一锁被持有时，`after_agent` 跳过 nudge 判定（记忆计数器仍会递增）。
 3. 将最后一个回合持久化到 MesMemory：`slice_last_turn` → `sanitize_tool_use_result_pairing` → `add_messages(session_id, messages)`（SQLite）。
-4. 同步 `after_agent` 通过 `run_async` 运行子 Agent；`aafter_agent` 通过 `asyncio.gather` 并发执行持久化与 nudge。
+4. 同步 `after_agent` 通过 `run_async` 运行子 Agent；`aafter_agent` 通过 `asyncio.gather` 并发执行持久化与 nudge。在计划提取回合，逐回合的 facts 管线会让位：`_nudge_plan_extraction` 在同一次运行中吸收待处理的 facts 区间（见下 Part 3）。
 
-**Nudge 子 Agent**（`context_engine/nudge.py`）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用记忆/技能类工具。提示词：`_MEMORY_REVIEW_PROMPT`（记忆复盘）、`_SKILL_REVIEW_PROMPT`（技能库复盘）、`_COMBINED_REVIEW_PROMPT`（两者合并）。
+**Nudge 子 Agent**（`context_engine/nudge.py`）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
+
+- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：周期性运行，通过记忆工具保存用户的持久偏好与期望。
+- `_PLAN_EXTRACTION_PROMPT`（计划提取）：在所有 todo 完成时触发一次的运行，产出三项内容。**Part 1** 通过 `knowledge` 工具（`action="write"`）把结构化 JSON 知识写入 `workspace/knowledge/plans/<plan-name>/`，在 task、wave、plan 三个层级分别记录 `failure_set` / `success_path` / `method`。**Part 2** 通过 `skill_manage` 更新技能库（原先独立的技能复盘指引并入此处）。**Part 3** 通过 `memory(action="fact_add")` 将持久事实写入分层 facts 存储；仅当存在待处理的 facts 区间时才渲染该部分，且只有运行成功后才推进 facts 消费游标。其上下文来自 `_build_plan_context`：计划文件、todo 列表、start-work 台账（`.omo/start-work/ledger.jsonl`）以及本会话的 subagent runs（仅 `result_text` / `outcome` / 任务）。
 
 > 本文档的旧版本声称存在知识图谱维护（`after_turn`）和 `MemoryCache`。**当前代码中两者都不存在。** 系统提示词来自状态寄存器与 `build_system_prompt()`；中间件层没有任何知识图谱调用。
 
@@ -448,8 +450,9 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | 键 | 归属 | 寄存器 |
 |---|---|---|
 | `system_prompt` | ContextEngineHook / Summarization | mem + db |
-| `nudge_review_memory_count`、`nudge_review_skill_count` | ContextEngineHook | db |
-| `nudge_review_memory_lock`、`nudge_review_skill_lock` | ContextEngineHook | mem |
+| `nudge_review_memory_count` | ContextEngineHook | db |
+| `nudge_plan_extraction_fired` | ContextEngineHook | db |
+| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | ContextEngineHook | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问） | Summarization | mem |
@@ -569,7 +572,6 @@ agent = create_agent(
 │   └─ wrap_tool_call
 │       · IterationBudget  消耗 1；耗尽时返回错误 ToolMessage
 │       · ToolGuardrails  预检 block/halt → 执行 → 评估 → warn/block/halt
-│       · ContextEngineHook  技能复盘计数（除非工具元数据 nudge: true）
 │       · HeartbeatStaleness  已杀死则抛出；设置 heartbeat_tool，返回后清除
 │       · HumanInTheLoop  拒绝审批被拒/超时的调用
 │
@@ -578,7 +580,8 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook
     · HeartbeatStaleness  停止心跳定时器
     · MultimodalProcessor  清理 mutil_temp（> 7 天 / 非数字文件名）
-    · ContextEngineHook  记忆复盘计数 → 视情况启动 nudge 子 Agent（持锁）
+    · ContextEngineHook  记忆计数（10 回合）→ 视情况启动记忆 nudge
+                        → 所有 todo 完成/取消后触发一次计划提取
                         → 将最后回合持久化到 MesMemory（slice → sanitize → add_messages）
 ```
 

@@ -156,7 +156,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### ContextEngineHook
 
 **モジュール：** `agent/middlewares/context_engine/core.py` · **クラス：** `ContextEngineHook(AgentMiddleware)`
-**フック：** `wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`、`after_agent` / `aafter_agent`
+**フック：** `wrap_model_call` / `awrap_model_call`、`after_agent` / `aafter_agent`
 
 リストの先頭、したがって最外層のラップ層です。
 
@@ -166,18 +166,20 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 2. なければ `state_register_db` にフォールバックし、それでも無ければ `workspace.prompt_builder.build_system_prompt(session_id)` で再構築します。
 3. `request.override(system_message=...)` で注入し、プロンプトを `state_register_mem` にキャッシュバックします。
 
-**`wrap_tool_call` — スキルレビューの計上**
-
-ツールメタデータが `nudge: true` を設定していない限り（nudge/limit ツール自身の免除）、すべてのツール呼び出しに対して `state_register_db` の `nudge_review_skill_count` をインクリメントします。
-
 **`after_agent` / `aafter_agent` — ターンの仕上げ**
 
 1. `state_register_db` の `nudge_review_memory_count` をインクリメントします。
-2. カウンターが閾値に達した場合（`_NUDGE_MEMORY_THRESHOLD = 10` ターン、`_NUDGE_SKILL_THRESHOLD = 10` ツール呼び出し）、`state_register_mem` のセッション単位ロック `nudge_review_memory_lock` / `nudge_review_skill_lock` の下で対応する **nudge サブエージェント**（下記）を起動します。ロック保持中は `after_agent` が nudge 判定をスキップします（カウンターは引き続き増加）。
+2. **2 つの独立したトリガー**を判定します：
+   - **メモリ nudge**：カウンターが `_NUDGE_MEMORY_THRESHOLD = 10` ターンに達したら、`state_register_mem` のセッション単位ロック `nudge_review_memory_lock` の下で `_nudge_memory` を起動します。発火時にカウンターは 0 に戻ります。
+   - **プラン抽出**：`CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]` が有効で、`_detect_todo_all_complete(session_id)` が todo リストがちょうど全て `completed` / `cancelled` になったと報告したら、ロック `nudge_plan_extraction_lock`（`state_register_mem`）の下で `_nudge_plan_extraction` を起動します。`nudge_plan_extraction_fired` フラグ（`state_register_db`）が完了サイクルごとに 1 回だけの発火を保証し、リストが全て完了でなくなればリセットされます。
+   いずれかのロックが保持されている間、`after_agent` は nudge 判定をスキップします（メモリカウンターは引き続き増加）。
 3. 最終ターンを MesMemory に永続化：`slice_last_turn` → `sanitize_tool_use_result_pairing` → `add_messages(session_id, messages)`（SQLite）。
-4. 同期 `after_agent` は `run_async` でサブエージェントを実行し、`aafter_agent` は `asyncio.gather` で永続化と nudge を並行実行します。
+4. 同期 `after_agent` は `run_async` でサブエージェントを実行し、`aafter_agent` は `asyncio.gather` で永続化と nudge を並行実行します。プラン抽出のターンでは、ターンごとの facts パイプラインが譲歩します：`_nudge_plan_extraction` が同じパスで未処理の facts 区間を取り込みます（下記 Part 3）。
 
-**Nudge サブエージェント**（`context_engine/nudge.py`）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントはメモリ/スキル系ツールしか使えません。プロンプト：`_MEMORY_REVIEW_PROMPT`（メモリレビュー）、`_SKILL_REVIEW_PROMPT`（スキルライブラリレビュー）、`_COMBINED_REVIEW_PROMPT`（両方同時）。
+**Nudge サブエージェント**（`context_engine/nudge.py`）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
+
+- `_MEMORY_REVIEW_PROMPT`（メモリレビュー）：ユーザーの持続的な好みや期待をメモリツールで保存する定期パス。
+- `_PLAN_EXTRACTION_PROMPT`（プラン抽出）：全ての todo が完了したときに 1 回発火するパスで、3 つの成果物を生成します。**Part 1** は `knowledge` ツール（`action="write"`）で構造化 JSON ナレッジを `workspace/knowledge/plans/<plan-name>/` に書き込み、task・wave・plan の 3 層で `failure_set` / `success_path` / `method` を持ちます。**Part 2** は `skill_manage` でスキルライブラリを更新します（旧来の独立したスキルレビュー指針はここに統合）。**Part 3** は `memory(action="fact_add")` で持続的な事実を階層型 facts ストアに書き込みます。このブロックは未処理の facts 区間が存在する場合にのみ描画され、消費ウォーターマークはパス成功後にのみ進みます。そのコンテキストは `_build_plan_context` から取得します：プランファイル、todo リスト、start-work 台帳（`.omo/start-work/ledger.jsonl`）、およびこのセッションの subagent runs（`result_text` / `outcome` / タスクのみ）。
 
 > 本ドキュメントの旧版はナレッジグラフ保守（`after_turn`）と `MemoryCache` を主張していました。**現在のコードにはどちらも存在しません。** システムプロンプトは状態レジスタと `build_system_prompt()` から供給され、ミドルウェア層のどこにもナレッジグラフ呼び出しはありません。
 
@@ -454,8 +456,9 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 | キー | 所有者 | レジスタ |
 |---|---|---|
 | `system_prompt` | ContextEngineHook / Summarization | mem + db |
-| `nudge_review_memory_count`、`nudge_review_skill_count` | ContextEngineHook | db |
-| `nudge_review_memory_lock`、`nudge_review_skill_lock` | ContextEngineHook | mem |
+| `nudge_review_memory_count` | ContextEngineHook | db |
+| `nudge_plan_extraction_fired` | ContextEngineHook | db |
+| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | ContextEngineHook | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` キー（圧縮カウンター、無効連続、直近トークン/戦略、スキップ LLM フラグ、リカバリ状態、直近ユーザー質問） | Summarization | mem |
@@ -575,7 +578,6 @@ agent = create_agent(
 │   └─ wrap_tool_call
 │       · IterationBudget  1 消費。尽きたらエラー ToolMessage
 │       · ToolGuardrails  block/halt を事前チェック → 実行 → 評価 → warn/block/halt
-│       · ContextEngineHook  スキルレビューカウンター（ツールメタデータ nudge: true を除く）
 │       · HeartbeatStaleness  kill 済みなら送出。heartbeat_tool を設定し、返却後にクリア
 │       · HumanInTheLoop  承認が拒否/タイムアウトした呼び出しを拒否
 │
@@ -584,7 +586,8 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook
     · HeartbeatStaleness  ハートビートタイマーを停止
     · MultimodalProcessor  mutil_temp を清掃（7 日超 / 非数値ファイル名）
-    · ContextEngineHook  メモリレビューカウンター → 必要なら nudge サブエージェント（ロック）
+    · ContextEngineHook  メモリカウンター（10 ターン）→ 必要ならメモリ nudge
+                        → 全 todo が completed/cancelled になったら 1 回プラン抽出
                         → 最終ターンを MesMemory に永続化（slice → sanitize → add_messages）
 ```
 
