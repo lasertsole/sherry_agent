@@ -38,6 +38,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_idempotency_key_column,
         add_context_eligible_column,
         build_message_embeddings_tb,
+        build_message_tree_tb,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -149,6 +150,29 @@ def build_message_embeddings_tb(db: sqlite3.Connection) -> None:
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_embeddings_session ON message_embeddings(session_id)"
     )
+    db.commit()
+
+
+def build_message_tree_tb(db: sqlite3.Connection) -> None:
+    """Message tree structures (SESSION plan P1-5).
+
+    ``parent_message_id`` chains messages into a per-session tree (NULL =
+    root); ``session_leafs`` records the current leaf of each session so a
+    fork can point a new session at any node without copying messages.
+    """
+    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+    if "parent_message_id" not in cols:
+        db.execute("ALTER TABLE messages ADD COLUMN parent_message_id INTEGER")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(session_id, parent_message_id)"
+    )
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS session_leafs (
+        session_id TEXT PRIMARY KEY,
+        leaf_message_id INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """)
     db.commit()
 
 

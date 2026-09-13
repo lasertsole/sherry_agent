@@ -221,6 +221,52 @@ _BUILDERS: dict[str, MessageRowBuilder] = {
 }
 
 
+def get_session_leaf(session_id: str) -> int | None:
+    """Current tree leaf of a session (SESSION plan P1-5); None = no tree yet."""
+    row = _db.execute(
+        "SELECT leaf_message_id FROM session_leafs WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def set_session_leaf(session_id: str, leaf_message_id: int) -> None:
+    _db.execute(
+        "INSERT INTO session_leafs (session_id, leaf_message_id, updated_at) "
+        "VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
+        "leaf_message_id = excluded.leaf_message_id, updated_at = excluded.updated_at",
+        (session_id, leaf_message_id, datetime.now().strftime("%Y%m%d%H%M%S")),
+    )
+
+
+def get_message_by_id(session_id: str, message_id: int) -> dict | None:
+    # Lookup by id only: ids are globally unique (AUTOINCREMENT PK) and a fork
+    # intentionally crosses session boundaries (shared tree nodes).
+    row = _db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+    return _decode_json_columns(dict(row)) if row else None
+
+
+def get_message_path_to_root(session_id: str, leaf_message_id: int) -> list[dict]:
+    """Walk the message tree from a leaf back to its root, oldest first."""
+    path: list[dict] = []
+    current_id: int | None = leaf_message_id
+    seen: set[int] = set()
+    while current_id is not None and current_id not in seen:
+        seen.add(current_id)
+        msg = get_message_by_id(session_id, current_id)
+        if not msg:
+            break
+        path.append(msg)
+        current_id = msg.get("parent_message_id")
+    path.reverse()
+    return path
+
+
+def fork_from_message(source_session_id: str, target_message_id: int, new_session_id: str) -> None:
+    """Fork at a node: the new session's leaf points at the source message —
+    no message copying, the tree IS the history."""
+    set_session_leaf(new_session_id, target_message_id)
+
+
 def _idempotency_key(session_id: str, turn_num: int, ts_ms: int, index: int, m: BaseMessage) -> str:
     """Stable per-row key for INSERT OR IGNORE dedup (SESSION plan P1-2)."""
     payload = json.dumps(
@@ -297,62 +343,74 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 0 if message.additional_kwargs.get("context_eligible") is False else 1
             )
 
-        # Bulk-insert all accumulated rows of this turn (autocommit: each row
-        # commits on execution).
-        _db.executemany(
-            """
-            INSERT OR IGNORE INTO messages (
-                session_id,
-                turn_num,
-                role,
-                content,
-                tool_call_id,
-                tool_calls,
-                tool_status,
-                tool_name,
-                timestamp,
-                ts_ms,
-                finish_reason,
-                reasoning,
-                reasoning_content,
-                images,
-                audios,
-                videos,
-                model_name,
-                input_tokens,
-                output_tokens,
-                reasoning_tokens,
-                origin,
-                idempotency_key,
-                context_eligible
-            ) VALUES (
-                :session_id,
-                :turn_num,
-                :role,
-                :content,
-                :tool_call_id,
-                :tool_calls,
-                :tool_status,
-                :tool_name,
-                :timestamp,
-                :ts_ms,
-                :finish_reason,
-                :reasoning,
-                :reasoning_content,
-                :images,
-                :audios,
-                :videos,
-                :model_name,
-                :input_tokens,
-                :output_tokens,
-                :reasoning_tokens,
-                :origin,
-                :idempotency_key,
-                :context_eligible
+        # SESSION plan P1-5: chain the batch into the message tree. The first
+        # row parents to the session's current leaf (or NULL when forking from
+        # nothing); each following row chains to the previous one. Inserted
+        # row-by-row (turn-sized batches) so every lastrowid is available.
+        parent_id: int | None = get_session_leaf(session_id)
+        for row in insert_rows:
+            row["parent_message_id"] = parent_id
+            cursor = _db.execute(
+                """
+                INSERT OR IGNORE INTO messages (
+                    session_id,
+                    turn_num,
+                    role,
+                    content,
+                    tool_call_id,
+                    tool_calls,
+                    tool_status,
+                    tool_name,
+                    timestamp,
+                    ts_ms,
+                    finish_reason,
+                    reasoning,
+                    reasoning_content,
+                    images,
+                    audios,
+                    videos,
+                    model_name,
+                    input_tokens,
+                    output_tokens,
+                    reasoning_tokens,
+                    origin,
+                    idempotency_key,
+                    context_eligible,
+                    parent_message_id
+                ) VALUES (
+                    :session_id,
+                    :turn_num,
+                    :role,
+                    :content,
+                    :tool_call_id,
+                    :tool_calls,
+                    :tool_status,
+                    :tool_name,
+                    :timestamp,
+                    :ts_ms,
+                    :finish_reason,
+                    :reasoning,
+                    :reasoning_content,
+                    :images,
+                    :audios,
+                    :videos,
+                    :model_name,
+                    :input_tokens,
+                    :output_tokens,
+                    :reasoning_tokens,
+                    :origin,
+                    :idempotency_key,
+                    :context_eligible,
+                    :parent_message_id
+                )
+                """,
+                row,
             )
-        """,
-            insert_rows,
-        )
+            if cursor.lastrowid:
+                parent_id = cursor.lastrowid
+
+        if parent_id is not None:
+            set_session_leaf(session_id, parent_id)
 
     # SESSION plan P1-2: mark the batch as flushed so an in-process retry of
     # the same message list is skipped instead of double-written.
