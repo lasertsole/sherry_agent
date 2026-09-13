@@ -5,6 +5,7 @@ from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing import override
 from context_engine import add_messages
+from context_engine.store.core import get_max_turn_num
 from typing import Any, cast
 from collections.abc import Callable, Awaitable
 from workspace.prompt_builder import build_system_prompt
@@ -102,6 +103,20 @@ def _reconcile_denials_for_persistence(messages: list[BaseMessage]) -> list[Base
 
         out.append(msg)
     return out
+
+
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+async def _run_facts_pipeline(session_id: str, turn_num: int) -> None:
+    """SESSION plan P2-3: dual-watermark facts extraction (fail-open)."""
+    try:
+        from context_engine.facts.queue import enqueue_turn, process_pending
+
+        await enqueue_turn(session_id, turn_num)
+        await process_pending(session_id)
+    except Exception:
+        logger.exception("facts pipeline failed (fail-open) for {}", session_id)
 
 
 class ContextEngineHook(AgentMiddleware):
@@ -347,5 +362,14 @@ class ContextEngineHook(AgentMiddleware):
                     await _nudge_skill(session_id, system_prompt, nudge_messages)
 
         await asyncio.gather(_persist(), _nudge())
+
+        # SESSION plan P2-3: enqueue the persisted turn for facts extraction
+        # and consume pending ranges. Fire-and-forget — extraction never
+        # blocks or breaks the turn (fail-open like every background hook).
+        turn_num = get_max_turn_num(session_id)
+        if turn_num > 0:
+            facts_task = asyncio.create_task(_run_facts_pipeline(session_id, turn_num))
+            _BACKGROUND_TASKS.add(facts_task)
+            facts_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
         return None

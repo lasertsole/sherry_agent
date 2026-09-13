@@ -47,7 +47,9 @@ def _parse_facts(raw: str) -> list[dict[str, str]]:
 
     parsed: Any = json_repair.loads(raw)
     if not isinstance(parsed, list):
-        return []
+        # A non-list response is a pipeline failure, not "no facts": raising
+        # keeps the watermark unadvanced so the range is replayed (at-least-once).
+        raise ValueError(f"facts extraction returned {type(parsed).__name__}, expected list")
     facts: list[dict[str, str]] = []
     for item in parsed:
         if not isinstance(item, dict):
