@@ -1161,7 +1161,7 @@ async def _before_turn_inject_recall(self, session_id: str, messages: list) -> l
 
 ## P1-5 转录树 + 消息分支（来源：openclaw）
 
-> 状态 (2026-09-13): ⬜ 待实现
+> 状态 (2026-09-13): ✅ 已实现 — MesMemory 迁移 v14（parent_message_id + session_leafs）；add_messages 链接到会话 leaf；原语 get_message_by_id / get_message_path_to_root / fork_from_message（fork 零拷贝，跨会话共享树节点）。测试: tests/context_engine/store/test_message_tree.py
 
 ### 现状
 
@@ -1615,7 +1615,7 @@ def drain_steers(self, session_id: str) -> list[dict]:
 
 ## P2-5 向量嵌入语义搜索（来源：openclaw）
 
-> 状态 (2026-09-13): ⬜ 待实现
+> 状态 (2026-09-13): ✅ 已实现 — MesMemory 迁移 v13（message_embeddings 表）；context_engine/embeddings 包（惰性 embed 后端 + LEFT-JOIN 幂等索引器 + 余弦搜索）；message_search 工具新增 semantic 模式。测试: tests/context_engine/embeddings/
 
 ### 现状
 
