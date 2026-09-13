@@ -1,7 +1,9 @@
 import threading
 import time
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
+from loguru import logger
 from config import SRC_DIR
 from config.features import MES_MEMORY
 
@@ -16,6 +18,8 @@ SQLITE_BUSY_TIMEOUT_S = MES_MEMORY["busy_timeout_s"]
 _CONNECT_ATTEMPTS = MES_MEMORY["connect_attempts"]
 _RETRY_DELAY_S = MES_MEMORY["retry_delay_s"]
 
+type MigrationStep = Callable[[sqlite3.Connection], None]
+
 
 def _migrate(db: sqlite3.Connection) -> None:
     db.execute(
@@ -27,9 +31,26 @@ def _migrate(db: sqlite3.Connection) -> None:
     # APPEND-ONLY: steps are versioned by list index and the runner resumes at
     # MAX(_migrations), never replaying earlier indices. Future schema changes
     # are appended at the END as v2, v3, … — never inserted in the middle.
-    # Databases created by the former incremental chain already carry the full
-    # schema; with no users to migrate, v1 is the complete baseline.
-    steps = [build_schema_v1]
+    steps = _migration_steps()
+    if cur > len(steps):
+        # Premise: no historical deployments — every database in the wild was
+        # created either by the former incremental chain (which already carried
+        # the full schema) or by this single-v1 baseline. A stale high watermark
+        # left by the former chain (e.g. 18) would make every future appended
+        # step a no-op — range(cur, len(steps)) stays empty forever — so warn
+        # and normalize the watermark down to the baseline instead.
+        logger.warning(
+            "mes_memory migrations watermark {} exceeds known steps {}; resetting to baseline",
+            cur,
+            len(steps),
+        )
+        db.execute("DELETE FROM _migrations")
+        db.execute(
+            "INSERT INTO _migrations (v,at) VALUES (?,?)",
+            (len(steps), int(time.time())),
+        )
+        db.commit()
+        cur = len(steps)
     for i in range(cur, len(steps)):
         steps[i](db)
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
@@ -231,6 +252,19 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
         ON compaction_checkpoints(session_id, checkpoint_seq);
     """)
     db.commit()
+
+
+def _migration_steps() -> list[MigrationStep]:
+    """Ordered, append-only migration steps; version = index + 1.
+
+    Future schema changes append a new step at the END (``build_schema_v2``,
+    then ``build_schema_v3``, …) — never inserted in the middle, because the
+    runner resumes at ``MAX(_migrations)`` and does not replay earlier indices.
+    ``build_schema_v1`` is the complete baseline: databases created by the
+    former incremental chain already carry the full schema, and with no users
+    to migrate it covers every other database.
+    """
+    return [build_schema_v1]
 
 
 def get_db_path() -> Path:

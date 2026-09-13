@@ -2,8 +2,11 @@
 
 The former incremental chain (v1..v18) was collapsed into one complete
 baseline: ``build_schema_v1`` creates the whole current schema in one shot,
-a fresh database records exactly v1, and databases already past v1 (created
-by the old chain, e.g. the production v18 file) are a silent no-op.
+a fresh database records exactly v1, and a stale high watermark left by the
+former chain (e.g. the production v18 file) is normalized down to v1 without
+replaying the baseline or touching existing schema/data. Normalization
+matters: ``_migrate`` resumes at ``MAX(_migrations)``, so a watermark above
+the step count would make every future append a silent no-op.
 
 Covers:
 - Fresh database → ``_migrations`` holds exactly v1 and the full schema is
@@ -13,8 +16,11 @@ Covers:
   tables.
 - Idempotency: running ``_migrate`` twice on the same connection neither
   raises nor changes the schema.
-- High-version no-op: a database already at v18 (former chain) is left
-  untouched — no steps are replayed, no error, ``MAX(v)`` stays 18.
+- Stale watermark: a database recorded at v18 is reset to exactly v1 — the
+  baseline is not replayed and legacy schema/data survive untouched.
+- Append effectiveness (regression): a monkeypatched extra step (a simulated
+  future v2) runs on both a fresh database and a normalized former-v18
+  database, so a stale high watermark can no longer swallow appended steps.
 - Write smoke: the real ``add_messages`` persists a turn against a fresh
   baseline database (reasoning tokens, context eligibility, message tree).
 """
@@ -31,6 +37,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from context_engine.store import core as store_core
+from context_engine.store import db as db_module
 from context_engine.store.db import _migrate, build_schema_v1
 
 pytestmark = pytest.mark.unit
@@ -209,9 +216,15 @@ class TestIdempotency:
         ) == snapshot
 
 
-class TestHighVersionNoOp:
-    def test_database_past_baseline_is_untouched(self):
-        """A v18 database (former incremental chain) is left exactly as it was."""
+class TestStaleWatermarkNormalization:
+    """A watermark past the known steps is normalized down to the baseline."""
+
+    def test_database_past_baseline_is_normalized_without_replay(self):
+        """A v18 database is reset to v1 without replaying any step.
+
+        The high watermark is bookkeeping only — the former chain already
+        created the schema — so normalization must not re-run the baseline.
+        """
         db = _connect()
         db.execute(
             "CREATE TABLE IF NOT EXISTS _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
@@ -221,11 +234,91 @@ class TestHighVersionNoOp:
 
         _migrate(db)
 
-        assert db.execute("SELECT MAX(v) FROM _migrations").fetchone()[0] == 18
-        assert _versions(db) == [18]  # no step replayed, nothing appended
+        assert _versions(db) == [1]  # == len(steps): the single v1 baseline
         # The baseline never ran: no baseline table, no column backfill.
         assert "events" not in _table_names(db)
         assert _message_columns(db) == {"id", "legacy"}
+
+    def test_realistic_former_chain_database_keeps_schema_and_data(self):
+        """The production upgrade path: a full-schema v18 database keeps its
+        schema and rows; only the watermark is rewritten to v1."""
+        db = _connect()
+        _migrate(db)  # full baseline schema, recorded as v1
+        db.execute(
+            "INSERT INTO messages (turn_num, session_id, role, timestamp, ts_ms) "
+            "VALUES (1, 'legacy-session', 'human', '20260101000000', 1)"
+        )
+        db.execute("DELETE FROM _migrations")
+        db.execute("INSERT INTO _migrations (v, at) VALUES (?, ?)", (18, 0))
+        schema_before = (
+            _table_names(db),
+            _index_names(db),
+            _trigger_names(db),
+            _message_columns(db),
+        )
+
+        _migrate(db)
+
+        assert _versions(db) == [1]
+        assert (
+            _table_names(db),
+            _index_names(db),
+            _trigger_names(db),
+            _message_columns(db),
+        ) == schema_before
+        assert db.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
+
+
+class TestFutureAppendEffectiveness:
+    """Regression: an appended step must run on fresh and stale-watermark DBs."""
+
+    def test_appended_step_runs_on_fresh_database(self, monkeypatch):
+        ran: list[int] = []
+
+        def fake_schema_v2(_db: sqlite3.Connection) -> None:
+            ran.append(2)
+
+        monkeypatch.setattr(
+            db_module, "_migration_steps", lambda: [build_schema_v1, fake_schema_v2]
+        )
+
+        db = _connect()
+        _migrate(db)
+
+        assert _versions(db) == [1, 2]
+        assert ran == [2]
+
+        _migrate(db)  # now at v2: the appended step must not re-run
+        assert _versions(db) == [1, 2]
+        assert ran == [2]
+
+    def test_appended_step_runs_on_normalized_former_high_watermark_database(self, monkeypatch):
+        """A stale v18 watermark used to swallow every future append.
+
+        ``range(18, len(steps))`` is empty, so the simulated v2 stays dormant
+        until the watermark is normalized — and must then run.
+        """
+        db = _connect()
+        _migrate(db)  # realistic former-chain database: full schema
+        db.execute("DELETE FROM _migrations")
+        db.execute("INSERT INTO _migrations (v, at) VALUES (?, ?)", (18, 0))
+
+        _migrate(db)  # normalization pass against the single-step baseline
+        assert _versions(db) == [1]
+
+        ran: list[int] = []
+
+        def fake_schema_v2(_db: sqlite3.Connection) -> None:
+            ran.append(2)
+
+        monkeypatch.setattr(
+            db_module, "_migration_steps", lambda: [build_schema_v1, fake_schema_v2]
+        )
+
+        _migrate(db)
+
+        assert _versions(db) == [1, 2]
+        assert ran == [2]
 
 
 class TestAddMessagesSmoke:
