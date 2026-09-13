@@ -17,7 +17,8 @@ model_weight/
 
 # Runtime data (src/, temp/, cron) — regenerated every run, never commit
 src/
-temp
+# root temp/ — scratch/evidence dir, root only (cf. /workspace/ below)
+/temp/
 cron_jobs.json
 skills/.curator_state
 
