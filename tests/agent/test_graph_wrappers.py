@@ -115,7 +115,12 @@ class TestUnregisterGraphWrapper:
 
 
 class TestApplyDefaults:
-    def test_apply_wraps_dummy_with_real_default_wrappers(self) -> None:
+    def test_apply_wraps_dummy_with_real_default_wrappers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # CI runs without .env (MAIN_LLM_MAX_TOKEN unset): pin the window the
+        # default ContextLimitGuardWrapper is constructed with.
+        monkeypatch.setattr(gw, "main_llm_max_tokens", 65_536)
         inner = _DummyGraph()
         result = gw.apply_graph_wrappers(inner)
 
