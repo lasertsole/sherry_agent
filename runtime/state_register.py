@@ -107,6 +107,22 @@ class StateRegisterDB(Register):
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS context_epoch (
+                    session_id TEXT PRIMARY KEY,
+                    baseline TEXT NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    baseline_seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def _init_db_original(self):
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS states (
@@ -230,3 +246,95 @@ class StateRegisterDB(Register):
 
 
 state_register_db = StateRegisterDB()
+
+
+class ContextEpoch:
+    """System-context snapshot lifecycle (SESSION plan P2-2, from opencode-dev).
+
+    initialize → first baseline; prepare → reconcile/replace decision;
+    replace → compaction rebuild; advance → snapshot-only update.
+    """
+
+    def __init__(self, db: StateRegisterDB):
+        self._db = db
+
+    def initialize(self, session_id: str, system_context: dict) -> None:
+        import json
+        from datetime import datetime
+
+        baseline = json.dumps(system_context, ensure_ascii=False)
+        now = datetime.now().strftime("%Y%m%d%H%M%S")
+        with sqlite3.connect(self._db.db_path) as conn:
+            conn.execute(
+                "INSERT INTO context_epoch (session_id, baseline, snapshot, baseline_seq, "
+                "created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET baseline = excluded.baseline, "
+                "snapshot = excluded.snapshot, updated_at = excluded.updated_at",
+                (session_id, baseline, baseline, now, now),
+            )
+            conn.commit()
+
+    def prepare(
+        self,
+        session_id: str,
+        current_context: dict,
+        latest_compaction_seq: int | None,
+    ) -> tuple[dict, str]:
+        """Load the epoch and decide: ok | reconcile | replace."""
+        import json
+
+        row = (
+            sqlite3.connect(self._db.db_path)
+            .execute(
+                "SELECT baseline, snapshot, baseline_seq FROM context_epoch WHERE session_id = ?",
+                (session_id,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            self.initialize(session_id, current_context)
+            return current_context, "ok"
+
+        baseline_raw, snapshot_raw, baseline_seq = row
+        baseline = json.loads(baseline_raw)
+        snapshot = json.loads(snapshot_raw)
+
+        if latest_compaction_seq is not None and latest_compaction_seq > baseline_seq:
+            self.replace(session_id, current_context, latest_compaction_seq)
+            return current_context, "replace"
+
+        current_json = json.dumps(current_context, ensure_ascii=False, sort_keys=True)
+        snapshot_json = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+        if current_json != snapshot_json:
+            self.advance(session_id, current_context)
+            return current_context, "reconcile"
+
+        _ = baseline
+        return snapshot, "ok"
+
+    def replace(self, session_id: str, new_context: dict, seq: int) -> None:
+        import json
+        from datetime import datetime
+
+        ctx_json = json.dumps(new_context, ensure_ascii=False)
+        now = datetime.now().strftime("%Y%m%d%H%M%S")
+        with sqlite3.connect(self._db.db_path) as conn:
+            conn.execute(
+                "UPDATE context_epoch SET baseline = ?, snapshot = ?, baseline_seq = ?, "
+                "updated_at = ? WHERE session_id = ?",
+                (ctx_json, ctx_json, seq, now, session_id),
+            )
+            conn.commit()
+
+    def advance(self, session_id: str, new_snapshot: dict) -> None:
+        import json
+        from datetime import datetime
+
+        snapshot_json = json.dumps(new_snapshot, ensure_ascii=False)
+        now = datetime.now().strftime("%Y%m%d%H%M%S")
+        with sqlite3.connect(self._db.db_path) as conn:
+            conn.execute(
+                "UPDATE context_epoch SET snapshot = ?, updated_at = ? WHERE session_id = ?",
+                (snapshot_json, now, session_id),
+            )
+            conn.commit()

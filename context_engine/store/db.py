@@ -40,6 +40,8 @@ def _migrate(db: sqlite3.Connection) -> None:
         build_message_embeddings_tb,
         build_message_tree_tb,
         build_compaction_checkpoints_tb,
+        build_events_tb,
+        build_context_epoch_tb,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -204,6 +206,42 @@ def build_compaction_checkpoints_tb(db: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_compaction_session "
         "ON compaction_checkpoints(session_id, checkpoint_seq)"
     )
+    db.commit()
+
+
+def build_events_tb(db: sqlite3.Connection) -> None:
+    """Append-only event log (SESSION plan P2-1).
+
+    Key state changes are recorded as events; UNIQUE(session_id, seq) makes
+    the per-session sequence gapless and replayable.
+    """
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(session_id, seq)
+    )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq)")
+    db.commit()
+
+
+def build_context_epoch_tb(db: sqlite3.Connection) -> None:
+    """Context epoch snapshots (SESSION plan P2-2)."""
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS context_epoch (
+        session_id TEXT PRIMARY KEY,
+        baseline TEXT NOT NULL,
+        snapshot TEXT NOT NULL,
+        baseline_seq INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """)
     db.commit()
 
 
