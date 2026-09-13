@@ -23,12 +23,16 @@ Old rows are never backfilled.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 
 from typing import Any
 
 import pytest
 
+from langchain_core.messages import AIMessage, HumanMessage
+
+from context_engine.store import db as store_db
 from context_engine.store.db import (
     _migrate,
     add_audio_video_columns,
@@ -180,3 +184,119 @@ class TestSessionRoleIndexMigration:
         _migrate(db)
 
         assert "idx_messages_session_role" in _index_names(db)
+
+
+def _message_columns(db: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+
+
+def _build_pre_guard_schema(db: sqlite3.Connection) -> None:
+    """Recreate the production defect state: watermark 17, guard not yet applied.
+
+    Every migration step before ``ensure_message_columns`` has run — the
+    watermark is past the point where ``add_reasoning_tokens_column`` entered
+    the list — yet the column itself is missing, exactly like the real
+    ``src/store/mes_memory/mes_memory.db``.
+    """
+    store_db.build_messages_tb(db)
+    store_db.build_messages_fts_tb(db)
+    store_db.build_messages_fts_trigram_tb(db)
+    store_db.add_images_column(db)
+    store_db.add_audio_video_columns(db)
+    store_db.add_model_token_columns(db)
+    store_db.add_origin_column(db)
+    store_db.add_session_role_index(db)
+    store_db.add_reasoning_tokens_column(db)
+    store_db.build_compression_locks_tb(db)
+    store_db.add_idempotency_key_column(db)
+    store_db.add_context_eligible_column(db)
+    store_db.build_message_embeddings_tb(db)
+    store_db.build_message_tree_tb(db)
+    store_db.build_compaction_checkpoints_tb(db)
+    store_db.build_events_tb(db)
+    store_db.build_context_epoch_tb(db)
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
+    )
+    db.execute("INSERT INTO _migrations (v, at) VALUES (?, ?)", (17, 0))
+    db.commit()
+
+
+class TestWatermarkPassedColumnBackfill:
+    def test_missing_reasoning_tokens_is_backfilled_and_writable(self, monkeypatch, tmp_path):
+        """A watermark past the step index still gets the missing column back."""
+        db = sqlite3.connect(
+            tmp_path / "mes_memory_defect.db",
+            check_same_thread=False,
+            isolation_level=None,
+        )
+        db.row_factory = sqlite3.Row
+        _build_pre_guard_schema(db)
+
+        # Simulate the defect: watermark 17 (past the reasoning_tokens step),
+        # column absent because the step was inserted after that index.
+        db.execute("ALTER TABLE messages DROP COLUMN reasoning_tokens")
+        assert "reasoning_tokens" not in _message_columns(db)
+        assert db.execute("SELECT MAX(v) FROM _migrations").fetchone()[0] == 17
+
+        # The real store path must run against the temp DB (test_store_origin pattern).
+        from context_engine.store import core as store_core
+
+        monkeypatch.setattr(store_core, "_db", db)
+
+        _migrate(db)
+
+        assert "reasoning_tokens" in _message_columns(db)
+        assert db.execute("SELECT MAX(v) FROM _migrations").fetchone()[0] > 17
+
+        # The production failure path: add_messages must now persist a turn.
+        ai = AIMessage(
+            content="pong",
+            usage_metadata={
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "total_tokens": 3,
+                "output_token_details": {"reasoning_tokens": 7},
+            },
+        )
+        asyncio.run(
+            store_core.add_messages(
+                "sess-migration-backfill",
+                [HumanMessage(content="ping"), ai],
+            )
+        )
+        rows = db.execute(
+            "SELECT role, reasoning_tokens FROM messages WHERE session_id = ? ORDER BY id",
+            ("sess-migration-backfill",),
+        ).fetchall()
+        assert [row["role"] for row in rows] == ["human", "ai"]
+        assert [row["reasoning_tokens"] for row in rows] == [None, 7]
+        db.close()
+
+    def test_ensure_message_columns_backfills_every_expected_column(self):
+        """A bare base table gains the whole expected set; a second pass is a no-op."""
+        db = _connect()
+        build_messages_tb(db)
+
+        store_db.ensure_message_columns(db)
+        store_db.ensure_message_columns(db)
+
+        expected = {name for name, _decl in store_db._EXPECTED_MESSAGE_COLUMNS}
+        assert expected <= _message_columns(db)
+
+    def test_add_reasoning_tokens_column_is_idempotent(self):
+        """The PRAGMA guard makes a direct double-call a silent no-op."""
+        db = _connect()
+        build_messages_tb(db)
+
+        store_db.add_reasoning_tokens_column(db)
+        store_db.add_reasoning_tokens_column(db)
+
+        assert "reasoning_tokens" in _message_columns(db)
+
+    def test_add_reasoning_tokens_column_propagates_real_errors(self):
+        """A non-duplicate OperationalError must propagate, not be swallowed."""
+        db = _connect()
+
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            store_db.add_reasoning_tokens_column(db)

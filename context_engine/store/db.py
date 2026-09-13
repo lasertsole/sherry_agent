@@ -24,6 +24,12 @@ def _migrate(db: sqlite3.Connection) -> None:
     cur = db.execute("SELECT MAX(v) as v FROM _migrations").fetchone()[0]
     if cur is None:
         cur = 0
+    # APPEND-ONLY: steps are versioned by list index and the runner resumes at
+    # MAX(_migrations), never replaying earlier indices. A step inserted in the
+    # middle is therefore permanently skipped by any database already past that
+    # index (the production defect where every migration had run yet
+    # messages.reasoning_tokens was missing). Append new steps at the end;
+    # ensure_message_columns below backfills columns missed that way.
     steps = [
         build_messages_tb,
         build_messages_fts_tb,
@@ -42,6 +48,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         build_compaction_checkpoints_tb,
         build_events_tb,
         build_context_epoch_tb,
+        ensure_message_columns,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -378,14 +385,57 @@ def add_reasoning_tokens_column(db: sqlite3.Connection) -> None:
     Persists the reasoning-token count thinking models report under
     ``usage_metadata["output_token_details"]["reasoning_tokens"]`` (AI rows).
     Nullable INTEGER: pre-existing rows and non-reasoning models stay NULL.
-    The try/except ignores the error raised when the column is already
-    present, making the migration idempotent.
+    A PRAGMA check keeps the step idempotent; unlike a blanket
+    ``except sqlite3.OperationalError``, real failures (locks, missing table)
+    keep propagating.
     """
-    try:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+    if "reasoning_tokens" not in cols:
         db.execute("ALTER TABLE messages ADD COLUMN reasoning_tokens INTEGER")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
+    db.commit()
+
+
+# Every column ``messages`` must carry, as ``(name, declaration)``: the base
+# schema plus every additive migration, aligned with the INSERT column list in
+# context_engine/store/core.py::add_messages.
+_EXPECTED_MESSAGE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("content", "TEXT"),
+    ("tool_call_id", "TEXT"),
+    ("tool_calls", "TEXT"),
+    ("tool_status", "TEXT"),
+    ("tool_name", "TEXT"),
+    ("finish_reason", "TEXT"),
+    ("reasoning", "TEXT"),
+    ("reasoning_content", "TEXT"),
+    ("images", "TEXT"),
+    ("audios", "TEXT"),
+    ("videos", "TEXT"),
+    ("model_name", "TEXT"),
+    ("input_tokens", "INTEGER"),
+    ("output_tokens", "INTEGER"),
+    ("reasoning_tokens", "INTEGER"),
+    ("origin", "TEXT"),
+    ("idempotency_key", "TEXT"),
+    ("context_eligible", "INTEGER NOT NULL DEFAULT 1"),
+    ("parent_message_id", "INTEGER"),
+    ("compacted", "INTEGER NOT NULL DEFAULT 0"),
+    ("compaction_checkpoint_id", "INTEGER"),
+)
+
+
+def ensure_message_columns(db: sqlite3.Connection) -> None:
+    """Backfill every expected ``messages`` column that is missing.
+
+    Index-based versioning (see the APPEND-ONLY note in ``_migrate``) skips a
+    column step inserted after a database already passed its index. This
+    append-only guard re-checks the full expected set on every upgrade and
+    adds only what is absent — the PRAGMA read makes re-running a no-op.
+    """
+    existing = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+    for name, decl in _EXPECTED_MESSAGE_COLUMNS:
+        if name not in existing:
+            db.execute(f"ALTER TABLE messages ADD COLUMN {name} {decl}")
+    db.commit()
 
 
 def build_messages_fts_tb(db: sqlite3.Connection) -> None:
