@@ -66,10 +66,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field
 
+import agent.middlewares.summarization as summarization_module
 import context_engine.store.core as mes_store_core
 from agent.middlewares.summarization import Summarization
 from agent.middlewares.tool_call_normalize import ToolCallNormalize
 from context_engine.store.db import _migrate as mes_migrate
+from runtime import state_register_mem
 from server.queue import UserInputQueue, UserInputQueueStatus
 from server.service.interrupt_marker import write_interrupted_marker
 
@@ -265,6 +267,51 @@ async def _seed_dangling_state(
 def _index_of(messages: list[BaseMessage], message_id: str) -> int:
     ids = [getattr(m, "id", None) for m in messages]
     return ids.index(message_id)
+
+
+# ---------------------------------------------------------------------------
+# Hermetic durable-state isolation (P0-2 anti-thrash cooldown)
+# ---------------------------------------------------------------------------
+
+# Session ids this module drives through the REAL Summarization middleware.
+# P0-2 (e8fc684) mirrored the anti-thrash cooldown into the SQLite-backed
+# ``state_register_db`` and rehydrates it on first access in a new process.
+# This spike reuses fixed session ids, so the cooldown armed by the compaction
+# it itself performs was restored on the NEXT run and suppressed the
+# ("messages", N) trigger FACT C depends on: the test passed on a clean DB,
+# then failed forever. A fresh in-memory durable register per test removes that
+# cross-run coupling without weakening any assertion.
+_SPIKE_SESSION_IDS = ("spike-session", "spike-c1", "spike-c2", "prod-interrupt-session")
+
+
+class _InMemoryStateRegisterDB:
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, str], Any] = {}
+
+    def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
+        return self._store.get((session_id, key), default)
+
+    def set_state(self, session_id: str, key: str, value: Any) -> bool:
+        self._store[(session_id, key)] = value
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _isolate_summarization_durable_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep the P0-2 persisted cooldown out of this hermetic spike.
+
+    The real ``state_register_db`` outlives the test process, so an armed
+    cooldown from an earlier run would suppress the proactive trigger. Isolate
+    the middleware's durable register per test and clear the volatile register,
+    so compression (and therefore FACT C) fires deterministically.
+    """
+    monkeypatch.setattr(summarization_module, "state_register_db", _InMemoryStateRegisterDB())
+    for session_id in _SPIKE_SESSION_IDS:
+        state_register_mem.clear_session(session_id)
+        summarization_module._RESTORED_COOLDOWN_SESSIONS.discard(session_id)
+    yield
+    for session_id in _SPIKE_SESSION_IDS:
+        state_register_mem.clear_session(session_id)
 
 
 # ---------------------------------------------------------------------------
