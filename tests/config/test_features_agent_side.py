@@ -145,7 +145,7 @@ SPOT_DEFAULTS = [
     (HITL_DEFAULTS, "default_clarify_timeout", 3600),
     (HITL_DEFAULTS, "default_description_prefix", "Action requires human approval"),
     (CONTEXT_ENGINE_HOOK, "nudge_memory_threshold", 10),
-    (CONTEXT_ENGINE_HOOK, "nudge_skill_threshold", 10),
+    (CONTEXT_ENGINE_HOOK, "plan_extraction_enabled", True),
     (CONTEXT_ENGINE_HOOK, "multimodal_temp_retention_days", 7),
     (CONTEXT_GUARD, "output_cut_ratio", 0.20),
     (CONTEXT_GUARD, "check_interval", 20),

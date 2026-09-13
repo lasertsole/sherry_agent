@@ -1,6 +1,5 @@
 import asyncio
 from loguru import logger
-from langgraph.types import Command
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing import override
@@ -9,10 +8,9 @@ from context_engine.store.core import get_max_turn_num
 from typing import Any, cast
 from collections.abc import Callable, Awaitable
 from workspace.prompt_builder import build_system_prompt
-from langgraph.prebuilt.tool_node import ToolCallRequest
 from runtime import state_register_db, state_register_mem
 from config.features import CONTEXT_ENGINE_HOOK
-from .nudge import _nudge_memory, _nudge_skill, _nudge_combined
+from .nudge import _nudge_memory, _nudge_plan_extraction, _PLAN_EXTRACTION_LOCK_KEY
 from pub.func import sanitize_tool_use_result_pairing, slice_last_turn, run_async
 from langchain.agents.middleware import AgentMiddleware, ModelResponse, ModelRequest
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, SystemMessage
@@ -22,11 +20,10 @@ from agent.middlewares.base import require_session_id
 
 # Nudge config keys
 _NUDGE_MEMORY_COUNT_KEY = "nudge_review_memory_count"
-_NUDGE_SKILL_COUNT_KEY = "nudge_review_skill_count"
 _NUDGE_MEMORY_LOCK_KEY = "nudge_review_memory_lock"
-_NUDGE_SKILL_LOCK_KEY = "nudge_review_skill_lock"
 _NUDGE_MEMORY_THRESHOLD = CONTEXT_ENGINE_HOOK["nudge_memory_threshold"]
-_NUDGE_SKILL_THRESHOLD = CONTEXT_ENGINE_HOOK["nudge_skill_threshold"]
+_PLAN_EXTRACTION_FIRED_KEY = "nudge_plan_extraction_fired"
+_PLAN_EXTRACTION_ENABLED = CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]
 
 
 def _reconcile_denials_for_persistence(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -105,11 +102,53 @@ def _reconcile_denials_for_persistence(messages: list[BaseMessage]) -> list[Base
     return out
 
 
+def _detect_todo_all_complete(session_id: str) -> bool:
+    """Detect when the todo list just became all-complete (fire once).
+
+    Conditions:
+    1. todos exist (non-empty)
+    2. every todo is ``completed`` or ``cancelled``
+    3. plan extraction has not already fired for this completion cycle
+
+    Returns True after setting ``_PLAN_EXTRACTION_FIRED_KEY`` so a later turn
+    cannot fire the same completion again; the flag is reset to False whenever
+    the todo list is not (or no longer) all-complete. Reads fail open — a
+    broken todo store must never break the turn.
+    """
+    try:
+        from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
+        todos = get_todos_sync(session_id)
+    except Exception:
+        logger.exception("todo-complete detection failed (fail-open) for {}", session_id)
+        return False
+
+    if not todos:
+        return False
+
+    all_done = all(t.get("status") in ("completed", "cancelled") for t in todos)
+    if not all_done:
+        state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, False)
+        return False
+
+    already_fired = state_register_db.get_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, False)
+    if already_fired:
+        return False
+
+    state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, True)
+    return True
+
+
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 async def _run_facts_pipeline(session_id: str, turn_num: int) -> None:
-    """SESSION plan P2-3: dual-watermark facts extraction (fail-open)."""
+    """SESSION plan P2-3: dual-watermark facts extraction (fail-open).
+
+    Skipped on plan-extraction turns: ``_nudge_plan_extraction`` absorbs the
+    pending range with its own single LLM pass (decision #2 in
+    TODO/NUDGE_EXTRACTION_PLAN.md), so the same turn never runs two extractors.
+    """
     try:
         from context_engine.facts.queue import enqueue_turn, process_pending
 
@@ -127,7 +166,7 @@ class ContextEngineHook(AgentMiddleware):
     def _is_lock(session_id: str) -> bool:
         return state_register_mem.get_state(
             session_id, _NUDGE_MEMORY_LOCK_KEY, False
-        ) or state_register_mem.get_state(session_id, _NUDGE_SKILL_LOCK_KEY, False)
+        ) or state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False)
 
     @staticmethod
     def _get_and_reload_system_prompt(session_id) -> str:
@@ -170,24 +209,6 @@ class ContextEngineHook(AgentMiddleware):
             )
         )
 
-    # ------------------------------------------------------------------
-    # Shared: tool call nudge counter (called by both sync and async)
-    # ------------------------------------------------------------------
-    def _wrap_tool_call_impl(
-        self,
-        request: ToolCallRequest,
-    ) -> None:
-        """Increment nudge skill counter."""
-        metadata = getattr(request.tool, "metadata", None)
-        if isinstance(metadata, dict) and metadata.get("nudge", False):
-            return
-
-        session_id = self._get_session_id_or_raise(request.state)
-        nudge_review_skill_count: int = (
-            state_register_db.get_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0) + 1
-        )
-        state_register_db.set_state(session_id, _NUDGE_SKILL_COUNT_KEY, nudge_review_skill_count)
-
     @override
     def wrap_model_call(
         self,
@@ -208,36 +229,17 @@ class ContextEngineHook(AgentMiddleware):
         request = self._wrap_model_call_impl(request)
         return await handler(request)
 
-    @override
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
-        self._wrap_tool_call_impl(request)
-        return handler(request)
-
-    @override
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
-    ) -> ToolMessage | Command[Any]:
-        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
-        self._wrap_tool_call_impl(request)
-        return await handler(request)
-
     # ------------------------------------------------------------------
     # Shared: nudge logic (session validation + count management)
     # ------------------------------------------------------------------
     def _after_agent_impl(
         self, state: StateT
     ) -> tuple[str, str, list[BaseMessage], bool, bool] | None:
-        """Validate session, increment counters, and decide if nudge should fire.
+        """Validate session, advance the memory counter, and decide nudges.
 
-        Returns (session_id, system_prompt, messages, need_memory, need_skill)
-        or None if the agent should bail early (lock active).
+        Returns
+        ``(session_id, system_prompt, messages, need_memory, need_plan_extraction)``
+        or None if the agent should bail early (nudge lock active).
         """
         session_id: str = state.get("session_id", "")
         if session_id.strip() == "":
@@ -251,9 +253,6 @@ class ContextEngineHook(AgentMiddleware):
         nudge_review_memory_count: int = (
             state_register_db.get_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0) + 1
         )
-        nudge_review_skill_count: int = state_register_db.get_state(
-            session_id, _NUDGE_SKILL_COUNT_KEY, 0
-        )
 
         # If nudge is locked, skip this turn
         if self._is_lock(session_id):
@@ -263,39 +262,30 @@ class ContextEngineHook(AgentMiddleware):
             return None
 
         need_nudge_review_memory: bool = nudge_review_memory_count >= _NUDGE_MEMORY_THRESHOLD
-        need_nudge_skill_memory: bool = nudge_review_skill_count >= _NUDGE_SKILL_THRESHOLD
+        need_plan_extraction: bool = _PLAN_EXTRACTION_ENABLED and _detect_todo_all_complete(
+            session_id
+        )
 
         logger.debug(
             "nudge_review_memory_count is {}, need_nudge_review_memory is {}",
             nudge_review_memory_count,
             need_nudge_review_memory,
         )
-        logger.debug(
-            "nudge_review_skill_count is {}, need_nudge_skill_memory is {}",
-            nudge_review_skill_count,
-            need_nudge_skill_memory,
-        )
+        logger.debug("need_plan_extraction is {}", need_plan_extraction)
 
-        if need_nudge_skill_memory and need_nudge_review_memory:
+        if need_nudge_review_memory:
             state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0)
-            state_register_db.set_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0)
         else:
-            if need_nudge_review_memory:
-                state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0)
-            else:
-                state_register_db.set_state(
-                    session_id, _NUDGE_MEMORY_COUNT_KEY, nudge_review_memory_count
-                )
-
-            if need_nudge_skill_memory:
-                state_register_db.set_state(session_id, _NUDGE_SKILL_COUNT_KEY, 0)
+            state_register_db.set_state(
+                session_id, _NUDGE_MEMORY_COUNT_KEY, nudge_review_memory_count
+            )
 
         return (
             session_id,
             system_prompt,
             messages,
             need_nudge_review_memory,
-            need_nudge_skill_memory,
+            need_plan_extraction,
         )
 
     @override
@@ -305,15 +295,12 @@ class ContextEngineHook(AgentMiddleware):
         if result is None:
             return None
 
-        session_id, system_prompt, messages, need_memory, need_skill = result
+        session_id, system_prompt, messages, need_memory, need_plan_extraction = result
 
-        if need_memory and need_skill:
-            run_async(_nudge_combined(session_id, system_prompt, messages))
-        else:
-            if need_memory:
-                run_async(_nudge_memory(session_id, system_prompt, messages))
-            if need_skill:
-                run_async(_nudge_skill(session_id, system_prompt, messages))
+        if need_memory:
+            run_async(_nudge_memory(session_id, system_prompt, messages))
+        if need_plan_extraction:
+            run_async(_nudge_plan_extraction(session_id, system_prompt, messages))
 
         return None
 
@@ -326,7 +313,7 @@ class ContextEngineHook(AgentMiddleware):
         if result is None:
             return None
 
-        session_id, system_prompt, messages, need_memory, need_skill = result
+        session_id, system_prompt, messages, need_memory, need_plan_extraction = result
 
         # Persist last turn messages to MesMemory
         all_messages: list[BaseMessage] = cast("list[BaseMessage]", state["messages"])
@@ -353,21 +340,25 @@ class ContextEngineHook(AgentMiddleware):
             await add_messages(session_id=session_id, messages=format_last_turn_messages)
 
         async def _nudge() -> None:
-            if need_memory and need_skill:
-                await _nudge_combined(session_id, system_prompt, nudge_messages)
-            else:
-                if need_memory:
-                    await _nudge_memory(session_id, system_prompt, nudge_messages)
-                if need_skill:
-                    await _nudge_skill(session_id, system_prompt, nudge_messages)
+            if need_memory:
+                await _nudge_memory(session_id, system_prompt, nudge_messages)
+            if need_plan_extraction:
+                await _nudge_plan_extraction(session_id, system_prompt, nudge_messages)
 
         await asyncio.gather(_persist(), _nudge())
 
         # SESSION plan P2-3: enqueue the persisted turn for facts extraction
         # and consume pending ranges. Fire-and-forget — extraction never
         # blocks or breaks the turn (fail-open like every background hook).
+        #
+        # Facts yield (confirmed decision #2): on a plan-extraction turn the
+        # dedicated pipeline is NOT started — _nudge_plan_extraction absorbs the
+        # pending range with its single LLM pass and advances the consumed
+        # watermark. Turns not yet enqueued are replayed by the next
+        # non-plan-extraction turn (the dual watermark is crash-safe), so no
+        # interval is lost and no turn ever runs two extractors.
         turn_num = get_max_turn_num(session_id)
-        if turn_num > 0:
+        if turn_num > 0 and not need_plan_extraction:
             facts_task = asyncio.create_task(_run_facts_pipeline(session_id, turn_num))
             _BACKGROUND_TASKS.add(facts_task)
             facts_task.add_done_callback(_BACKGROUND_TASKS.discard)
