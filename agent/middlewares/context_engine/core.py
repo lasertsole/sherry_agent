@@ -146,8 +146,8 @@ async def _run_facts_pipeline(session_id: str, turn_num: int) -> None:
     """SESSION plan P2-3: dual-watermark facts extraction (fail-open).
 
     Skipped on plan-extraction turns: ``_nudge_plan_extraction`` absorbs the
-    pending range with its own single LLM pass (decision #2 in
-    TODO/NUDGE_EXTRACTION_PLAN.md), so the same turn never runs two extractors.
+    pending range with its own single LLM pass (the session-memory facts /
+    plan-extraction merge decision), so the same turn never runs two extractors.
     """
     try:
         from context_engine.facts.queue import enqueue_turn, process_pending
