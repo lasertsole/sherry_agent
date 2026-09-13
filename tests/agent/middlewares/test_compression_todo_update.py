@@ -19,6 +19,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import Coroutine
 from types import SimpleNamespace
@@ -29,6 +30,8 @@ from langchain.agents.middleware import ModelRequest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langgraph.prebuilt.tool_node import InjectedState
+from pydantic import BaseModel
 
 import agent.middlewares.context_engine.nudge as nudge_mod
 from agent.middlewares.context_engine.nudge import (
@@ -65,6 +68,12 @@ class _FakeStateRegister:
 
     def set_state(self, session_id: str, key: str, value: Any) -> None:
         self.data[(session_id, key)] = value
+
+    def clear_session(self, session_id: str) -> bool:
+        keys = [key for key in self.data if key[0] == session_id]
+        for key in keys:
+            del self.data[key]
+        return bool(keys)
 
 
 class _StubSummaryModel:
@@ -738,6 +747,25 @@ class _StubTodoUpdateModel(BaseChatModel):
         )
 
 
+class _FailingAfterToolModel(_StubTodoUpdateModel):
+    """Executes the todowrite call, then raises on the follow-up model call."""
+
+    @property
+    def _llm_type(self) -> str:
+        return "stub-failing-after-tool"
+
+    def _generate(
+        self,
+        messages: list[Any],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        if any(isinstance(m, ToolMessage) for m in messages):
+            raise RuntimeError("model exploded after tool result")
+        return super()._generate(messages, stop, run_manager, **kwargs)
+
+
 class _FakeTodoStore:
     def __init__(self) -> None:
         self.by_session: dict[str, list[dict]] = {}
@@ -772,10 +800,9 @@ def fake_todo_store(monkeypatch: pytest.MonkeyPatch) -> _FakeTodoStore:
 
 class TestForkIsolation:
     @pytest.mark.asyncio
-    async def test_engine_state_zero_pollution_and_own_state_present(
+    async def test_engine_state_zero_pollution_and_derived_cleanup(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        fake_nudge_state: _FakeStateRegister,
         fake_todo_store: _FakeTodoStore,
         sid: str,
     ) -> None:
@@ -791,14 +818,73 @@ class TestForkIsolation:
         fake_todo_store.by_session[sid] = [{"content": "initial", "status": "pending"}]
         monkeypatch.setattr("models.build_main_llm", lambda: _StubTodoUpdateModel())
 
+        observed: dict[str, dict[str, Any]] = {}
+        real_clear_session = state_register_mem.clear_session
+
+        def _spy_clear_session(session: str) -> bool:
+            if session == derived:
+                observed["derived"] = state_register_mem.get_all_states(derived)
+            return real_clear_session(session)
+
+        monkeypatch.setattr(state_register_mem, "clear_session", _spy_clear_session)
+
         await update_todos_from_compaction(sid, [HumanMessage(content="did work")])
 
         assert state_register_mem.get_state(sid, "iteration_budget") == 42
         assert state_register_mem.get_state(sid, "iteration_budget_used") == 7
         assert state_register_mem.get_state(sid, "tool_guardrail_state") is guard_state
-        assert state_register_mem.get_state(derived, "iteration_budget", None) == 90
-        assert state_register_mem.get_state(derived, "iteration_budget_used", 0) >= 1
-        assert state_register_mem.has_key(derived, "tool_guardrail_state")
+        # The fork's middlewares really ran — under the DERIVED key.
+        assert observed["derived"]["iteration_budget"] == 90
+        assert observed["derived"]["iteration_budget_used"] >= 1
+        assert "tool_guardrail_state" in observed["derived"]
+        # ...and the derived session is gone afterwards (no mem accumulation).
+        assert state_register_mem.has_session(derived) is False
+        assert state_register_mem.get_all_states(derived) == {}
+
+    @pytest.mark.asyncio
+    async def test_derived_state_cleared_on_failure_and_lock_released(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_todo_store: _FakeTodoStore,
+        sid: str,
+    ) -> None:
+        derived = f"{sid}{_COMPRESSION_TODO_SESSION_SUFFIX}"
+        fake_todo_store.by_session[sid] = [{"content": "initial", "status": "pending"}]
+        monkeypatch.setattr("models.build_main_llm", lambda: _FailingAfterToolModel())
+
+        await update_todos_from_compaction(sid, [HumanMessage(content="did work")])
+
+        # The tool call went through (middleware state existed), then the model
+        # raised — the finally cleanup still removed the derived session.
+        assert fake_todo_store.get_todos_sync(sid) == [
+            {"content": "todo updated by fork", "status": "completed"}
+        ]
+        assert state_register_mem.has_session(derived) is False
+        assert state_register_mem.get_all_states(derived) == {}
+        assert state_register_mem.get_state(sid, _COMPRESSION_TODO_LOCK_KEY, True) is False
+
+    @pytest.mark.asyncio
+    async def test_clear_session_failure_is_fail_open(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_nudge_state: _FakeStateRegister,
+        fake_todo_store: _FakeTodoStore,
+        sid: str,
+    ) -> None:
+        fake_todo_store.by_session[sid] = [{"content": "initial", "status": "pending"}]
+        monkeypatch.setattr("models.build_main_llm", lambda: _StubTodoUpdateModel())
+
+        def _boom(session: str) -> bool:
+            raise RuntimeError("registry down")
+
+        monkeypatch.setattr(fake_nudge_state, "clear_session", _boom)
+
+        await update_todos_from_compaction(sid, [HumanMessage(content="did work")])
+
+        assert fake_todo_store.get_todos_sync(sid) == [
+            {"content": "todo updated by fork", "status": "completed"}
+        ]
+        assert fake_nudge_state.get_state(sid, _COMPRESSION_TODO_LOCK_KEY, True) is False
 
     @pytest.mark.asyncio
     async def test_shim_writes_main_session_todos_not_derived(
@@ -848,3 +934,79 @@ class TestForkIsolation:
         assert created[0].get("checkpointer") is None
         assert state_register_mem.get_all_states(sid) == {}
         assert fake_todo_store.get_todos_sync(f"{sid}{_COMPRESSION_TODO_SESSION_SUFFIX}") == []
+
+
+# ---------------------------------------------------------------------------
+# todowrite shim: schema derived from the real tool
+# ---------------------------------------------------------------------------
+
+
+class TestTodowriteShim:
+    def test_shim_reuses_real_schema_and_description(self) -> None:
+        real = {t.name: t for t in build_todolist_tools()}["todowrite"]
+        shim = nudge_mod._build_main_session_todowrite("sess-shim")
+        real_schema = real.args_schema
+        shim_schema = shim.args_schema
+        assert isinstance(real_schema, type) and issubclass(real_schema, BaseModel)
+        assert isinstance(shim_schema, type) and issubclass(shim_schema, BaseModel)
+
+        assert shim.name == real.name == "todowrite"
+        assert shim.description == real.description
+        assert shim_schema is real_schema
+        assert set(shim_schema.model_fields) == set(real_schema.model_fields)
+        assert shim.metadata is not None
+        assert shim.metadata.get("todo_update") is True
+        assert shim.metadata.get("scope") == "main_only"
+        assert shim.handle_tool_error is True
+
+    def test_shim_preserves_injected_state_annotation(self) -> None:
+        real = {t.name: t for t in build_todolist_tools()}["todowrite"]
+        shim = nudge_mod._build_main_session_todowrite("sess-shim")
+        real_schema = real.args_schema
+        shim_schema = shim.args_schema
+        assert isinstance(real_schema, type) and issubclass(real_schema, BaseModel)
+        assert isinstance(shim_schema, type) and issubclass(shim_schema, BaseModel)
+
+        for schema in (real_schema, shim_schema):
+            field = schema.model_fields["session_id"]
+            assert any(isinstance(meta, InjectedState) for meta in field.metadata)
+
+    @pytest.mark.asyncio
+    async def test_shim_ignores_injected_session_and_writes_main(
+        self, fake_todo_store: _FakeTodoStore
+    ) -> None:
+        main_sid = "shim-main"
+        derived = f"{main_sid}{_COMPRESSION_TODO_SESSION_SUFFIX}"
+        fake_todo_store.by_session[main_sid] = [{"content": "initial", "status": "pending"}]
+        shim = nudge_mod._build_main_session_todowrite(main_sid)
+
+        out = await shim.ainvoke(
+            {
+                "todos": [{"content": "from shim", "status": "completed"}],
+                "session_id": derived,
+            }
+        )
+
+        assert json.loads(out) == [{"content": "from shim", "status": "completed"}]
+        assert fake_todo_store.get_todos_sync(main_sid) == [
+            {"content": "from shim", "status": "completed"}
+        ]
+        assert fake_todo_store.get_todos_sync(derived) == []
+        assert [write[0] for write in fake_todo_store.writes] == [main_sid]
+
+    @pytest.mark.asyncio
+    async def test_shim_forwards_plan_ref(self, fake_todo_store: _FakeTodoStore) -> None:
+        main_sid = "shim-plan"
+        shim = nudge_mod._build_main_session_todowrite(main_sid)
+
+        await shim.ainvoke(
+            {
+                "todos": [{"content": "x", "status": "pending"}],
+                "plan_ref": ".omo/plans/p.md",
+                "session_id": "derived",
+            }
+        )
+
+        assert fake_todo_store.writes == [
+            (main_sid, [{"content": "x", "status": "pending"}], ".omo/plans/p.md")
+        ]

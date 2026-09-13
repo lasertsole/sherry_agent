@@ -623,32 +623,37 @@ def _build_main_session_todowrite(main_session_id: str) -> BaseTool:
 
     The fork graph runs under a derived session key (engine-state isolation), so
     the state-injected real ``todowrite`` would resolve the wrong session and
-    could not see the main session at all. This shim carries the real tool's
+    could not see the main session at all. This shim reuses the real tool's
+    ``args_schema`` and ``description`` verbatim — zero schema drift: the
+    injected ``session_id`` (the DERIVED key) is dropped, every other field is
+    forwarded to the service, and a future field the service does not accept
+    fails fast instead of being silently dropped. It carries the real tool's
     ``todo_update`` metadata marker and delegates to the real service with the
-    main session id captured — the fork's only writable target.
+    main session id captured.
     """
-    from langchain_core.tools import tool
+    from agent.tools.todolist.tools import build_todolist_tools
+    from langchain_core.tools import StructuredTool
 
-    @tool("todowrite")
-    async def _todowrite(todos: list[dict], plan_ref: str | None = None) -> str:
-        """Update the todo list for the session (full replacement).
+    real_todowrite = next(t for t in build_todolist_tools() if t.name == "todowrite")
 
-        Pass the COMPLETE list every time.
-        Status: pending|in_progress|completed|cancelled.
-        Priority: high|medium|low.
-        Category (optional): quick|deep|ultrabrain|visual|git|writing.
-        Delegation (optional): self|subagent.
-        Plan_ref (optional): .omo/plans/*.md path.
-        Flow_id (optional): TaskFlow flow id this todo tracks.
-        Step_id (optional): TaskFlow step id (e.g. step-2) for DAG status.
-        """
+    async def _todowrite(**kwargs: Any) -> str:
+        kwargs.pop("session_id", None)
         from agent.tools.todolist import service
 
-        result = await service.TodoService.update_todos(main_session_id, todos, plan_ref=plan_ref)
+        result = await service.TodoService.update_todos(main_session_id, **kwargs)
         return json.dumps(result, ensure_ascii=False, indent=2)
 
-    _todowrite.metadata = {"scope": "main_only", _COMPRESSION_TODO_METADATA_KEY: True}
-    return _todowrite
+    shim = StructuredTool.from_function(
+        coroutine=_todowrite,
+        name=real_todowrite.name,
+        description=real_todowrite.description,
+        args_schema=real_todowrite.args_schema,
+    )
+    # ``from_function`` strips the description; restore the real tool's exact text.
+    shim.description = real_todowrite.description
+    shim.metadata = {"scope": "main_only", _COMPRESSION_TODO_METADATA_KEY: True}
+    shim.handle_tool_error = True
+    return shim
 
 
 async def update_todos_from_compaction(session_id: str, discarded_messages: Sequence[Any]) -> None:
@@ -669,8 +674,11 @@ async def update_todos_from_compaction(session_id: str, discarded_messages: Sequ
 
     Fail-open by construction: a missing todo list, an unreadable slice, or any
     agent error is logged and swallowed. The per-session lock is always
-    released.
+    released, and the derived session's middleware state is cleared in
+    ``finally`` so per-compression engine state does not accumulate in
+    ``state_register_mem``.
     """
+    derived_session_id = f"{session_id}{_COMPRESSION_TODO_SESSION_SUFFIX}"
     state_register_mem.set_state(session_id, _COMPRESSION_TODO_LOCK_KEY, True)
     try:
         from agent.tools.todolist.registry.store_sqlite import get_todos_sync
@@ -697,7 +705,7 @@ async def update_todos_from_compaction(session_id: str, discarded_messages: Sequ
         )
         res = await agent.ainvoke(
             input={
-                "session_id": f"{session_id}{_COMPRESSION_TODO_SESSION_SUFFIX}",
+                "session_id": derived_session_id,
                 "messages": [HumanMessage(content=context)],
             }
         )
@@ -706,6 +714,14 @@ async def update_todos_from_compaction(session_id: str, discarded_messages: Sequ
         logger.exception("compression todo update failed (fail-open) for {}", session_id)
     finally:
         state_register_mem.set_state(session_id, _COMPRESSION_TODO_LOCK_KEY, False)
+        try:
+            state_register_mem.clear_session(derived_session_id)
+        except Exception as exc:
+            logger.debug(
+                "compression todo update: failed to clear derived state for {}: {}",
+                derived_session_id,
+                exc,
+            )
 
 
 def schedule_compression_todo_update(session_id: str, discarded_messages: Sequence[Any]) -> bool:
