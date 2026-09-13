@@ -181,6 +181,16 @@ def _build_continuity_block(session_id: str) -> str:
         return ""
 
 
+def _build_knowledge_block(session_id: str) -> str:
+    """Inject the current plan's knowledge summary; "" on none or any failure."""
+    try:
+        from agent.tools.todolist.knowledge.prompt_block import build_knowledge_block
+
+        return build_knowledge_block(session_id)
+    except Exception:
+        return ""
+
+
 def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
@@ -291,6 +301,7 @@ def build_system_prompt(
             _build_todo_block(session_id),
             _build_boulder_block(session_id),
             _build_taskflow_block(session_id) if selected_file_names is None else "",
+            _build_knowledge_block(session_id) if selected_file_names is None else "",
             _build_continuity_block(session_id) if selected_file_names is None else "",
         ]
     else:

@@ -38,6 +38,10 @@ from .registry import store_sqlite as store
 # without the taskflow package.
 _TASKFLOW_STEP_DONE = "done"
 
+# Session state key holding the plan file pointer (.omo/plans/*.md) that the
+# prompt builder reads to locate the plan's knowledge summary.
+_PLAN_REF_STATE_KEY = "plan_ref"
+
 
 class TodoStoreError(Exception):
     """Raised when a todo mutation is rejected (E4 transition barrier)."""
@@ -176,17 +180,28 @@ class TodoService:
     """Session-scoped todo mutations: validate, barrier, persist, push, return."""
 
     @staticmethod
-    async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
+    async def update_todos(
+        session_id: str,
+        todos: list[dict],
+        plan_ref: str | None = None,
+    ) -> list[dict]:
         """Full-replace a session's todos, enforcing E6 then the E4 barrier.
 
-        The barrier runs BEFORE any write, so a rejected transition leaves the
-        persisted rows untouched. Returns the freshly read-back list.
+        A non-empty ``plan_ref`` is remembered once per session under the
+        ``plan_ref`` state key; the prompt builder reads it to locate the
+        plan's knowledge summary. The barrier runs BEFORE any write, so a
+        rejected transition leaves the persisted rows untouched. Returns the
+        freshly read-back list.
         """
         validated = _validate_todos(todos)
         for todo in validated:
             if todo.get("status") == "completed":
                 await _assert_transition_allowed(todo)
         await store.replace_all(session_id, validated)
+        if plan_ref:
+            from runtime import state_register_db
+
+            state_register_db.set_state(session_id, _PLAN_REF_STATE_KEY, plan_ref)
         latest = await store.get_todos(session_id)
         await _push_todo_update(session_id, latest)
         return latest

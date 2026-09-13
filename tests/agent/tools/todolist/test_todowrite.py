@@ -28,7 +28,9 @@ def _todowrite():
 def _fake_update(returned: list[dict]):
     """A ``TodoService.update_todos`` stand-in that records its call."""
 
-    async def _update(session_id: str, todos: list[dict]) -> list[dict]:
+    async def _update(
+        session_id: str, todos: list[dict], plan_ref: str | None = None
+    ) -> list[dict]:
         _update.calls.append((session_id, todos))
         return returned
 

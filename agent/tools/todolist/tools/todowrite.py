@@ -37,6 +37,7 @@ _reminded_sessions: set[str] = set()
 @tool("todowrite")
 async def todowrite(
     todos: list[dict],
+    plan_ref: str | None = None,
     session_id: SessionId = "",
 ) -> str:
     """Update the todo list for the current session (full replacement).
@@ -55,7 +56,7 @@ async def todowrite(
     taskflow_run_task(flow_id, task, depends_on=[...]); the blocked/ready/
     dispatched/done status and unlock-on-resume are owned by TaskFlow.
     """
-    result = await service.TodoService.update_todos(session_id, todos)
+    result = await service.TodoService.update_todos(session_id, todos, plan_ref=plan_ref)
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if session_id not in _reminded_sessions:
         _reminded_sessions.add(session_id)

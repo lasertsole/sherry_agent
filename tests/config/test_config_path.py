@@ -143,6 +143,11 @@ class TestSubPaths:
 
         assert KNOWLEDGE_INDEX_DIR == KNOWLEDGE_DIR / "index"
 
+    def test_plan_knowledge_dir(self):
+        from config.path import KNOWLEDGE_DIR, PLAN_KNOWLEDGE_DIR
+
+        assert PLAN_KNOWLEDGE_DIR == KNOWLEDGE_DIR / "plans"
+
 
 class TestTemplateLangResolution:
     """Test workspace template language resolution with fallback."""
