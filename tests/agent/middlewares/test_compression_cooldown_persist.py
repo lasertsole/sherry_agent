@@ -19,6 +19,7 @@ from runtime import state_register_mem
 pytestmark = [pytest.mark.module]
 
 _SKIP_LLM_KEY = getattr(summarization_module, "_SKIP_LLM_KEY")
+_COOLDOWN_ROUNDS_KEY = getattr(summarization_module, "_COOLDOWN_ROUNDS_KEY")
 _COMPRESSION_COUNT_KEY = getattr(summarization_module, "_COMPRESSION_COUNT_KEY")
 _COMPRESSION_INEFFECTIVE_KEY = getattr(summarization_module, "_COMPRESSION_INEFFECTIVE_KEY")
 _LAST_STRATEGY_KEY = getattr(summarization_module, "_LAST_STRATEGY_KEY")
@@ -161,3 +162,52 @@ def test_successful_compression_resets_persisted_state(fake_db, sid):
     assert fake_db.get_state(sid, _COMPRESSION_INEFFECTIVE_KEY) == 0
     assert fake_db.get_state(sid, _SKIP_LLM_KEY) is False
     assert fake_db.get_state(sid, _COMPRESSION_COUNT_KEY) == 4
+
+
+def test_armed_cooldown_rounds_persist_to_db(fake_db, sid):
+    mw = _make_middleware()
+
+    # When an actual compression arms the cooldown.
+    mw._record_compaction_bookkeeping(sid)
+
+    # Then the armed rounds are mirrored to the durable register.
+    assert fake_db.get_state(sid, _COOLDOWN_ROUNDS_KEY) == (
+        summarization_module.COMPACTION_COOLDOWN_ROUNDS
+    )
+
+
+def test_restart_rehydrates_cooldown_rounds(fake_db, sid):
+    mw = _make_middleware()
+
+    # Given an armed cooldown persisted by a prior process.
+    mw._record_compaction_bookkeeping(sid)
+    state_register_mem.clear_session(sid)
+    monkey_restore = summarization_module._RESTORED_COOLDOWN_SESSIONS
+    monkey_restore.discard(sid)
+
+    # When the new process rehydrates on first access.
+    mw._maybe_restore_cooldown_state(sid)
+
+    # Then the armed rounds are back in memory and the proactive trigger
+    # is suppressed exactly as before the restart.
+    assert state_register_mem.get_state(sid, _COOLDOWN_ROUNDS_KEY) == (
+        summarization_module.COMPACTION_COOLDOWN_ROUNDS
+    )
+    assert mw._tick_cooldown(sid) is True
+
+
+def test_exhausted_cooldown_rehydrates_as_inactive(fake_db, sid):
+    mw = _make_middleware()
+
+    # Given a cooldown that was fully decremented before the restart.
+    state_register_mem.set_state(sid, _COOLDOWN_ROUNDS_KEY, 0)
+    mw._persist_cooldown_state(sid)
+    state_register_mem.clear_session(sid)
+    summarization_module._RESTORED_COOLDOWN_SESSIONS.discard(sid)
+
+    # When the new process rehydrates.
+    mw._maybe_restore_cooldown_state(sid)
+
+    # Then zero rounds stay zero and the proactive trigger is allowed.
+    assert state_register_mem.get_state(sid, _COOLDOWN_ROUNDS_KEY) == 0
+    assert mw._tick_cooldown(sid) is False

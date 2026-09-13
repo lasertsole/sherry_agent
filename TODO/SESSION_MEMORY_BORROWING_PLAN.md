@@ -3,7 +3,7 @@
 > 参考来源: opencode-dev · oh-my-openagent-dev · hermes-agent-main · openclaw
 > 配套文件: session-memory-comparison.md
 > 日期: 2026-09-10
-> **状态 (2026-09-12)**: LT-1/LT-2/P0-1/P0-4/LT-7/LT-8 以及 #3/#4/#6/#11 已实现（参见 `docs/long-running-tasks/` 和 `agent/tools/taskflow/`）。本文档保留作为设计参考。
+> **状态 (2026-09-13)**: LT-1/LT-2/P0-1/P0-2/P0-4/LT-7/LT-8 以及 #3/#4/#6/#11 已实现；P2-4 部分实现（SteeringQueue + drain 中间件 + auto_turn，主会话实时 steer 由 sessions_steer/auto_turn 承接）。待实现：P0-3、P1-1、P1-2、P1-3、P1-4、P1-5、P2-1、P2-2、P2-3、P2-5。所有新实现以既有 long-running-task 设施为基座（facts 走 memory_tiered、会话连续性走 session_continuity、状态走 state_register），不建平行存储。
 
 ## 目录
 
@@ -269,6 +269,8 @@ def append_entries(self, new_entries: str) -> None:
 
 ## P0-2 压缩失败冷却持久化（来源：hermes-agent）
 
+> 状态 (2026-09-13): ✅ 已实现 — `_COOLDOWN_PERSIST_KEYS` 纳入 `_COOLDOWN_ROUNDS_KEY`，`_record_compaction_bookkeeping` 置位即落盘 `state_register.db`，重启经 `_maybe_restore_cooldown_state` 再水化。测试: `tests/agent/middlewares/test_compression_cooldown_persist.py`。
+
 ### 现状
 
 sherry-agent 的压缩冷却是内存态（`StateRegisterMeM` 中的 `_tick_cooldown()`），重启后冷却丢失，可能导致重启后立即重试之前失败的压缩。
@@ -394,6 +396,8 @@ if self._is_in_cooldown(session_id):
 ---
 
 ## P0-3 压缩锁防并发分裂（来源：hermes-agent）
+
+> 状态 (2026-09-13): ⬜ 待实现
 
 ### 现状
 
@@ -697,6 +701,8 @@ async def _prune_tool_outputs(self, messages, budget):
 
 ## P1-1 压缩检查点回溯（来源：openclaw）
 
+> 状态 (2026-09-13): ⬜ 待实现
+
 ### 现状
 
 sherry-agent 压缩后旧消息直接丢失（被摘要替代），无法回溯到压缩前状态。检查点器每会话只保留最新，无法恢复历史状态。
@@ -833,6 +839,8 @@ async def restore_compaction_checkpoint(session_id: str, checkpoint_id: int):
 
 ## P1-2 增量幂等持久化标记（来源：hermes-agent）
 
+> 状态 (2026-09-13): ⬜ 待实现
+
 ### 现状
 
 sherry-agent 用 `_turn_assign_lock` 和 `ts_ms` 严格递增时间戳防止并发回合合并，但消息写入后无幂等标记，崩溃重试可能重复写入。
@@ -900,6 +908,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency ON messages(idempoten
 
 ## P1-3 活跃上下文投影 + context_eligible（来源：openclaw）
 
+> 状态 (2026-09-13): ⬜ 待实现
+
 ### 现状
 
 sherry-agent 加载历史时按 `turn_num` 分页全量加载，所有消息都进入上下文，包括工具中间进度等无意义消息。
@@ -951,6 +961,8 @@ def get_messages_by_lastest_n_turns(session_id, n_turns, only_eligible=True):
 ---
 
 ## P1-4 Recall 自动跨会话记忆召回（来源：oh-my-openagent）
+
+> 状态 (2026-09-13): ⬜ 待实现
 
 ### 现状
 
@@ -1149,6 +1161,8 @@ async def _before_turn_inject_recall(self, session_id: str, messages: list) -> l
 
 ## P1-5 转录树 + 消息分支（来源：openclaw）
 
+> 状态 (2026-09-13): ⬜ 待实现
+
 ### 现状
 
 sherry-agent 的消息是线性列表，无分支概念。Fork 会话需要全量复制消息。
@@ -1217,6 +1231,8 @@ async def fork_from_message(source_session_id: str, target_message_id: int,
 ---
 
 ## P2-1 事件溯源迁移（来源：opencode-dev）
+
+> 状态 (2026-09-13): ⬜ 待实现
 
 ### 现状
 
@@ -1326,6 +1342,8 @@ class EventProjector:
 ---
 
 ## P2-2 Context Epoch 系统上下文快照（来源：opencode-dev）
+
+> 状态 (2026-09-13): ⬜ 待实现
 
 ### 现状
 
@@ -1438,6 +1456,8 @@ class ContextEpoch:
 
 ## P2-3 双水位游标 Facts 提取（来源：oh-my-openagent）
 
+> 状态 (2026-09-13): ⬜ 待实现 — 实现必须落在既有 `agent/tools/memory_tiered.py` facts/*.md 体系上（LT-1），不建 memory.md 平行存储。
+
 ### 现状
 
 sherry-agent 无自动事实提取，MEMORY.md 完全依赖模型主动调用 memory 工具。
@@ -1534,6 +1554,8 @@ _FACTS_EXTRACTION_PROMPT = """\
 
 ## P2-4 steer/queue 双投递模式（来源：opencode-dev）
 
+> 状态 (2026-09-13): ◐ 部分实现 — 队列注入已有 `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware`（before_model 排空）+ `server/service/auto_turn.py` 消费；子代理实时引导由 `sessions_steer` 承接。主会话活跃 turn 内的用户 steer 通道未单独建道。
+
 ### 现状
 
 sherry-agent 的输入是 FIFO 队列，无法在活跃 turn 中注入引导。用户必须在模型完成当前回合后才能追加输入。
@@ -1592,6 +1614,8 @@ def drain_steers(self, session_id: str) -> list[dict]:
 ---
 
 ## P2-5 向量嵌入语义搜索（来源：openclaw）
+
+> 状态 (2026-09-13): ⬜ 待实现
 
 ### 现状
 

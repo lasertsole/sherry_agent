@@ -118,6 +118,7 @@ _COOLDOWN_PERSIST_KEYS: tuple[str, ...] = (
     _SKIP_LLM_KEY,
     _COMPRESSION_COUNT_KEY,
     _COMPRESSION_INEFFECTIVE_KEY,
+    _COOLDOWN_ROUNDS_KEY,
 )
 
 # Sessions already rehydrated in THIS process. A restart resets this set,
@@ -828,6 +829,9 @@ class Summarization(AgentMiddleware):
         state_register_mem.set_state(session_id, _COOLDOWN_ROUNDS_KEY, COMPACTION_COOLDOWN_ROUNDS)
         attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) + 1
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, attempts)
+        # P0-2: the armed cooldown must survive a restart, or a fresh process
+        # immediately re-attempts the compression that just happened.
+        self._persist_cooldown_state(session_id)
 
     def _execute_compact(
         self,
