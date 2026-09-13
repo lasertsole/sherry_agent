@@ -422,6 +422,80 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     _db.commit()
 
 
+def create_compaction_checkpoint(
+    session_id: str,
+    pre_compaction_turn: int,
+    post_compaction_turn: int,
+    summary_text: str = "",
+) -> int:
+    """Record a checkpoint after a successful compaction (SESSION plan P1-1)."""
+    seq_row = _db.execute(
+        "SELECT COALESCE(MAX(checkpoint_seq), -1) + 1 FROM compaction_checkpoints "
+        "WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    seq = seq_row[0]
+    created = datetime.now().strftime("%Y%m%d%H%M%S")
+    cursor = _db.execute(
+        "INSERT INTO compaction_checkpoints (session_id, checkpoint_seq, "
+        "pre_compaction_turn, post_compaction_turn, summary_text, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (session_id, seq, pre_compaction_turn, post_compaction_turn, summary_text, created),
+    )
+    return int(cursor.lastrowid or 0)
+
+
+def get_compaction_checkpoint(session_id: str, checkpoint_id: int) -> dict | None:
+    row = _db.execute(
+        "SELECT * FROM compaction_checkpoints WHERE session_id = ? AND id = ?",
+        (session_id, checkpoint_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def mark_messages_compacted(
+    session_id: str,
+    up_to_turn: int | None = None,
+    from_turn: int | None = None,
+    checkpoint_id: int | None = None,
+) -> int:
+    """Soft-delete messages by turn range (kept on disk, excluded from context)."""
+    sql = "UPDATE messages SET compacted = 1, compaction_checkpoint_id = ? WHERE session_id = ?"
+    params: list[Any] = [checkpoint_id, session_id]
+    if up_to_turn is not None:
+        sql += " AND turn_num <= ?"
+        params.append(up_to_turn)
+    if from_turn is not None:
+        sql += " AND turn_num >= ?"
+        params.append(from_turn)
+    cursor = _db.execute(sql, params)
+    return cursor.rowcount
+
+
+def unmark_messages_compacted(session_id: str, up_to_turn: int) -> int:
+    cursor = _db.execute(
+        "UPDATE messages SET compacted = 0, compaction_checkpoint_id = NULL "
+        "WHERE session_id = ? AND turn_num <= ?",
+        (session_id, up_to_turn),
+    )
+    return cursor.rowcount
+
+
+def restore_compaction_checkpoint(session_id: str, checkpoint_id: int) -> dict:
+    """Restore the context to a checkpoint: compact everything after it, unmark
+    everything up to it. Returns the checkpoint for the caller."""
+    checkpoint = get_compaction_checkpoint(session_id, checkpoint_id)
+    if checkpoint is None:
+        raise ValueError(f"checkpoint not found: {checkpoint_id}")
+    _db.execute(
+        "UPDATE messages SET compacted = 1, compaction_checkpoint_id = ? "
+        "WHERE session_id = ? AND turn_num > ?",
+        (checkpoint_id, session_id, checkpoint["pre_compaction_turn"]),
+    )
+    unmark_messages_compacted(session_id, up_to_turn=checkpoint["pre_compaction_turn"])
+    return checkpoint
+
+
 def _decode_json_columns(row: dict) -> dict:
     """Decode a message row's JSON-encoded cells in place and return it (audit 3.1.5).
 
@@ -451,6 +525,7 @@ def get_turns_by_turn_num_scope(
     target_turn_num: int,
     half_scope: int = 5,
     only_eligible: bool = True,
+    include_compacted: bool = False,
 ) -> list[dict]:
     """Fetch messages whose turn_num falls within a range centered on a target turn.
 
@@ -474,11 +549,12 @@ def get_turns_by_turn_num_scope(
         max_turn_num = min(max_turn_num, target_turn_num + half_scope)
         min_turn_num = max(min_turn_num, target_turn_num - half_scope)
 
+        compacted_filter = "" if include_compacted else " AND compacted = 0"
         eligible_filter = " AND context_eligible = 1" if only_eligible else ""
         rows = _db.execute(
             f"""
             SELECT * FROM messages 
-            WHERE session_id = ? AND turn_num >= ? AND turn_num <= ?{eligible_filter}
+            WHERE session_id = ? AND turn_num >= ? AND turn_num <= ?{compacted_filter}{eligible_filter}
             ORDER BY turn_num DESC, id ASC
         """,
             (session_id, min_turn_num, max_turn_num),
@@ -500,6 +576,7 @@ def get_history_by_turn_page(
     turn_page_size: Annotated[int, Field(ge=1)] = 10,
     turn_page_num: Annotated[int, Field(ge=1)] = 1,
     only_eligible: bool = True,
+    include_compacted: bool = False,
 ) -> list[dict]:
     """Fetch a page of message history, paginated by turn number.
 
@@ -533,10 +610,11 @@ def get_history_by_turn_page(
             target_start_turn_num = min_turn_num
 
         eligible_filter = " and context_eligible = 1" if only_eligible else ""
+        compacted_filter = "" if include_compacted else " and compacted = 0"
         rows = _db.execute(
             f"""
             select * from messages
-            where session_id = ? and turn_num >= ? and turn_num <= ?{eligible_filter}
+            where session_id = ? and turn_num >= ? and turn_num <= ?{eligible_filter}{compacted_filter}
             ORDER BY turn_num DESC, id ASC
         """,
             (session_id, target_start_turn_num, target_end_turn_num),

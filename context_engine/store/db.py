@@ -39,6 +39,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_context_eligible_column,
         build_message_embeddings_tb,
         build_message_tree_tb,
+        build_compaction_checkpoints_tb,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -173,6 +174,36 @@ def build_message_tree_tb(db: sqlite3.Connection) -> None:
         updated_at TEXT NOT NULL
     )
     """)
+    db.commit()
+
+
+def build_compaction_checkpoints_tb(db: sqlite3.Connection) -> None:
+    """Compaction checkpoints + soft-delete columns (SESSION plan P1-1).
+
+    ``compacted`` marks messages folded into a summary (kept on disk, excluded
+    from context); ``compaction_checkpoint_id`` links them to the checkpoint
+    that can restore them.
+    """
+    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+    if "compacted" not in cols:
+        db.execute("ALTER TABLE messages ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0")
+    if "compaction_checkpoint_id" not in cols:
+        db.execute("ALTER TABLE messages ADD COLUMN compaction_checkpoint_id INTEGER")
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS compaction_checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        checkpoint_seq INTEGER NOT NULL,
+        pre_compaction_turn INTEGER NOT NULL,
+        post_compaction_turn INTEGER NOT NULL,
+        summary_text TEXT,
+        created_at TEXT NOT NULL
+    )
+    """)
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_compaction_session "
+        "ON compaction_checkpoints(session_id, checkpoint_seq)"
+    )
     db.commit()
 
 
