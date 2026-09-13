@@ -134,8 +134,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 
 **FTS5 트리거:** 각 FTS 테이블은 `messages` 테이블에 `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` 트리거를 두어 인덱스를 자동 동기화합니다. 따라서 행 삭제 시(예: `delete_messages_by_session`) 별도의 FTS 정리가 필요 없습니다.
 
-**마이그레이션:** 스키마 생성은 `_migrations` 테이블로 버전 관리됩니다. 순서는 다음과 같습니다:
-`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns` → `add_origin_column`.
+**마이그레이션:** 스키마 생성은 `_migrations` 테이블로 버전 관리됩니다. 새 데이터베이스는 단일 완전 베이스라인(`build_schema_v1`, v1로 기록)을 한 번 실행해 위의 전체 스키마를 생성합니다. 기존 증분 체인으로 만들어진 데이터베이스는 이미 전체 스키마를 갖추고 있으므로 `_migrate`는 아무것도 변경하지 않습니다(no-op). 향후 스키마 변경은 v2, v3, … 로 끝에 추가하며 중간에 삽입하지 않습니다.
 
 ---
 

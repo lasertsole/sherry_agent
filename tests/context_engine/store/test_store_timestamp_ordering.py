@@ -14,7 +14,7 @@ strictly increasing per process) in the base schema and orders
 ``get_session_ids`` by ``MAX(ts_ms)``; the visible formats never change.
 The migration/backfill steps that once added the column to pre-existing
 databases were removed once every tracked database had them applied —
-fresh databases get ``ts_ms`` straight from ``build_messages_tb``.
+fresh databases get ``ts_ms`` straight from the ``build_schema_v1`` baseline.
 """
 
 import asyncio

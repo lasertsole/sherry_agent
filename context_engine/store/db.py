@@ -25,31 +25,11 @@ def _migrate(db: sqlite3.Connection) -> None:
     if cur is None:
         cur = 0
     # APPEND-ONLY: steps are versioned by list index and the runner resumes at
-    # MAX(_migrations), never replaying earlier indices. A step inserted in the
-    # middle is therefore permanently skipped by any database already past that
-    # index (the production defect where every migration had run yet
-    # messages.reasoning_tokens was missing). Append new steps at the end;
-    # ensure_message_columns below backfills columns missed that way.
-    steps = [
-        build_messages_tb,
-        build_messages_fts_tb,
-        build_messages_fts_trigram_tb,
-        add_images_column,
-        add_audio_video_columns,
-        add_model_token_columns,
-        add_origin_column,
-        add_session_role_index,
-        add_reasoning_tokens_column,
-        build_compression_locks_tb,
-        add_idempotency_key_column,
-        add_context_eligible_column,
-        build_message_embeddings_tb,
-        build_message_tree_tb,
-        build_compaction_checkpoints_tb,
-        build_events_tb,
-        build_context_epoch_tb,
-        ensure_message_columns,
-    ]
+    # MAX(_migrations), never replaying earlier indices. Future schema changes
+    # are appended at the END as v2, v3, … — never inserted in the middle.
+    # Databases created by the former incremental chain already carry the full
+    # schema; with no users to migrate, v1 is the complete baseline.
+    steps = [build_schema_v1]
     for i in range(cur, len(steps)):
         steps[i](db)
         db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
@@ -90,62 +70,105 @@ def _connect_with_retry() -> sqlite3.Connection:
     raise sqlite3.OperationalError("database is locked")
 
 
-def build_compression_locks_tb(db: sqlite3.Connection) -> None:
-    """Create the compression_locks table (SESSION plan P0-3).
+def build_schema_v1(db: sqlite3.Connection) -> None:
+    """Create the complete MesMemory schema — the single migration baseline (v1).
 
-    One row per session currently compacting; the PRIMARY KEY on session_id
-    makes concurrent acquire attempts mutually exclusive at the SQLite level.
+    One call creates every table, index, FTS5 virtual table and trigger the
+    current code expects, so a fresh database is fully provisioned by the
+    single v1 step. The DDL below is the verbatim union of the former
+    incremental chain (v1..v18): messages base columns plus every additive
+    column (images/audios/videos, model tokens, origin, reasoning_tokens,
+    idempotency_key, context_eligible, parent_message_id, compacted,
+    compaction_checkpoint_id), all named indexes, both FTS5 tables with their
+    six sync triggers, and the auxiliary tables (message_embeddings,
+    compression_locks, events, context_epoch, session_leafs,
+    compaction_checkpoints).
     """
     db.executescript("""
-    CREATE TABLE IF NOT EXISTS compression_locks (
-        session_id TEXT PRIMARY KEY,
-        holder TEXT NOT NULL,
-        acquired_at REAL NOT NULL,
-        ttl INTEGER NOT NULL DEFAULT 300,
-        renew_count INTEGER DEFAULT 0
-    )
-    """)
-    db.commit()
-
-
-def add_idempotency_key_column(db: sqlite3.Connection) -> None:
-    """Add the idempotency_key column + partial unique index (SESSION plan P1-2).
-
-    Crash-retried writes of the same message batch are deduplicated at the
-    storage level: INSERT OR IGNORE against the unique index skips rows whose
-    idempotency key was already persisted.
-    """
-    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
-    if "idempotency_key" not in cols:
-        db.execute("ALTER TABLE messages ADD COLUMN idempotency_key TEXT")
-    db.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency "
-        "ON messages(idempotency_key) WHERE idempotency_key IS NOT NULL"
-    )
-    db.commit()
-
-
-def add_context_eligible_column(db: sqlite3.Connection) -> None:
-    """Add the context_eligible flag (SESSION plan P1-3).
-
-    1 = eligible for history-context retrieval, 0 = stored only. All existing
-    rows default to 1, so retrieval behavior is unchanged until a message is
-    explicitly marked ineligible.
-    """
-    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
-    if "context_eligible" not in cols:
-        db.execute("ALTER TABLE messages ADD COLUMN context_eligible INTEGER NOT NULL DEFAULT 1")
-    db.commit()
-
-
-def build_message_embeddings_tb(db: sqlite3.Connection) -> None:
-    """Create the message_embeddings table (SESSION plan P2-5).
-
-    Vector index over message content for semantic search. Embeddings are
-    generated lazily by ``context_engine.embeddings.indexer`` and joined back
-    to ``messages`` for retrieval.
-    """
-    db.executescript("""
+    CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        turn_num INTEGER NOT NULL,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT,
+        tool_call_id TEXT,
+        tool_calls TEXT,
+        tool_status TEXT,
+        tool_name TEXT,
+        timestamp TEXT NOT NULL,
+        ts_ms INTEGER NOT NULL,
+        finish_reason TEXT,
+        reasoning TEXT,
+        reasoning_content TEXT,
+        images TEXT,
+        audios TEXT,
+        videos TEXT,
+        model_name TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        origin TEXT,
+        reasoning_tokens INTEGER,
+        idempotency_key TEXT,
+        context_eligible INTEGER NOT NULL DEFAULT 1,
+        parent_message_id INTEGER,
+        compacted INTEGER NOT NULL DEFAULT 0,
+        compaction_checkpoint_id INTEGER
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num);
+    CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role);
+    CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(session_id, parent_message_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency
+        ON messages(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content
+    );
+    
+    CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content) VALUES (
+        new.id,
+        COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
+        );
+    END;
+    
+    CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+        DELETE FROM messages_fts WHERE rowid = old.id;
+    END;
+    
+    CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
+        DELETE FROM messages_fts WHERE rowid = old.id;
+        INSERT INTO messages_fts(rowid, content) VALUES (
+        new.id,
+        COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
+        );
+    END;
+    
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
+        content,
+        tokenize='trigram'
+    );
+    
+    CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_insert AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts_trigram(rowid, content) VALUES (
+            new.id,
+            COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
+        );
+    END;
+    
+    CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_delete AFTER DELETE ON messages BEGIN
+        DELETE FROM messages_fts_trigram WHERE rowid = old.id;
+    END;
+    
+    CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_update AFTER UPDATE ON messages BEGIN
+        DELETE FROM messages_fts_trigram WHERE rowid = old.id;
+        INSERT INTO messages_fts_trigram(rowid, content) VALUES (
+            new.id,
+            COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
+        );
+    END;
+    
     CREATE TABLE IF NOT EXISTS message_embeddings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -155,74 +178,18 @@ def build_message_embeddings_tb(db: sqlite3.Connection) -> None:
         dim INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (message_id) REFERENCES messages(id)
-    )
-    """)
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_embeddings_session ON message_embeddings(session_id)"
-    )
-    db.commit()
-
-
-def build_message_tree_tb(db: sqlite3.Connection) -> None:
-    """Message tree structures (SESSION plan P1-5).
-
-    ``parent_message_id`` chains messages into a per-session tree (NULL =
-    root); ``session_leafs`` records the current leaf of each session so a
-    fork can point a new session at any node without copying messages.
-    """
-    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
-    if "parent_message_id" not in cols:
-        db.execute("ALTER TABLE messages ADD COLUMN parent_message_id INTEGER")
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(session_id, parent_message_id)"
-    )
-    db.executescript("""
-    CREATE TABLE IF NOT EXISTS session_leafs (
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_embeddings_session ON message_embeddings(session_id);
+    
+    CREATE TABLE IF NOT EXISTS compression_locks (
         session_id TEXT PRIMARY KEY,
-        leaf_message_id INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    """)
-    db.commit()
-
-
-def build_compaction_checkpoints_tb(db: sqlite3.Connection) -> None:
-    """Compaction checkpoints + soft-delete columns (SESSION plan P1-1).
-
-    ``compacted`` marks messages folded into a summary (kept on disk, excluded
-    from context); ``compaction_checkpoint_id`` links them to the checkpoint
-    that can restore them.
-    """
-    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
-    if "compacted" not in cols:
-        db.execute("ALTER TABLE messages ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0")
-    if "compaction_checkpoint_id" not in cols:
-        db.execute("ALTER TABLE messages ADD COLUMN compaction_checkpoint_id INTEGER")
-    db.executescript("""
-    CREATE TABLE IF NOT EXISTS compaction_checkpoints (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        checkpoint_seq INTEGER NOT NULL,
-        pre_compaction_turn INTEGER NOT NULL,
-        post_compaction_turn INTEGER NOT NULL,
-        summary_text TEXT,
-        created_at TEXT NOT NULL
-    )
-    """)
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_compaction_session "
-        "ON compaction_checkpoints(session_id, checkpoint_seq)"
-    )
-    db.commit()
-
-
-def build_events_tb(db: sqlite3.Connection) -> None:
-    """Append-only event log (SESSION plan P2-1).
-
-    Key state changes are recorded as events; UNIQUE(session_id, seq) makes
-    the per-session sequence gapless and replayable.
-    """
-    db.executescript("""
+        holder TEXT NOT NULL,
+        acquired_at REAL NOT NULL,
+        ttl INTEGER NOT NULL DEFAULT 300,
+        renew_count INTEGER DEFAULT 0
+    );
+    
     CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -231,15 +198,10 @@ def build_events_tb(db: sqlite3.Connection) -> None:
         seq INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         UNIQUE(session_id, seq)
-    )
-    """)
-    db.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq)")
-    db.commit()
-
-
-def build_context_epoch_tb(db: sqlite3.Connection) -> None:
-    """Context epoch snapshots (SESSION plan P2-2)."""
-    db.executescript("""
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
+    
     CREATE TABLE IF NOT EXISTS context_epoch (
         session_id TEXT PRIMARY KEY,
         baseline TEXT NOT NULL,
@@ -247,7 +209,26 @@ def build_context_epoch_tb(db: sqlite3.Connection) -> None:
         baseline_seq INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-    )
+    );
+    
+    CREATE TABLE IF NOT EXISTS session_leafs (
+        session_id TEXT PRIMARY KEY,
+        leaf_message_id INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    
+    CREATE TABLE IF NOT EXISTS compaction_checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        checkpoint_seq INTEGER NOT NULL,
+        pre_compaction_turn INTEGER NOT NULL,
+        post_compaction_turn INTEGER NOT NULL,
+        summary_text TEXT,
+        created_at TEXT NOT NULL
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_compaction_session
+        ON compaction_checkpoints(session_id, checkpoint_seq);
     """)
     db.commit()
 
@@ -270,224 +251,3 @@ def get_db():
         _db = _connect_with_retry()
 
     return _db
-
-
-def build_messages_tb(db: sqlite3.Connection) -> None:
-    db.executescript("""
-    CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        turn_num INTEGER NOT NULL,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT,
-        tool_call_id TEXT,
-        tool_calls TEXT,
-        tool_status TEXT,
-        tool_name TEXT,
-        timestamp TEXT NOT NULL,
-        ts_ms INTEGER NOT NULL,
-        finish_reason TEXT,
-        reasoning TEXT,
-        reasoning_content TEXT,
-        images TEXT,
-        audios TEXT,
-        videos TEXT
-    );
-    
-    CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num);""")
-
-
-def add_images_column(db: sqlite3.Connection) -> None:
-    """Add an `images` column to the messages table (JSON-encoded list of paths).
-
-    This is a one-time additive migration for databases created before the
-    column existed. It uses try/except to ignore the error raised when the
-    column is already present.
-    """
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN images TEXT")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
-
-
-def add_audio_video_columns(db: sqlite3.Connection) -> None:
-    """Add `audios` and `videos` columns to the messages table.
-
-    Both are JSON-encoded lists (base64 for user messages, persistent file
-    paths for AI messages), mirroring the existing `images` column. This is a
-    one-time additive migration for databases created before these columns
-    existed; try/except ignores the error raised when they already present.
-    """
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN audios TEXT")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN videos TEXT")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
-
-
-def add_model_token_columns(db: sqlite3.Connection) -> None:
-    """Add `model_name`, `input_tokens`, and `output_tokens` columns.
-
-    Persist which model produced each AI message plus its token usage so the
-    frontend can display them. This is a one-time additive migration for
-    databases created before these columns existed; try/except ignores the
-    error raised when they are already present.
-    """
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN model_name TEXT")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN input_tokens INTEGER")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN output_tokens INTEGER")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
-
-
-def add_origin_column(db: sqlite3.Connection) -> None:
-    """Add an `origin` column to the messages table (message provenance tag).
-
-    NULL = a real user-visible message; "subagent_completion" = a background
-    subagent-completion injection (written by add_messages per the metadata
-    contract in agent/tools/subagent/announce/completion_message.py). The
-    column is nullable TEXT and pre-existing rows stay NULL, so this is
-    backward compatible with databases created before the column existed.
-    The try/except ignores the error raised when the column is already
-    present, making the migration idempotent.
-    """
-    try:
-        db.execute("ALTER TABLE messages ADD COLUMN origin TEXT")
-    except sqlite3.OperationalError:
-        # Column already exists — nothing to do.
-        pass
-
-
-def add_session_role_index(db: sqlite3.Connection) -> None:
-    db.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role)")
-
-
-def add_reasoning_tokens_column(db: sqlite3.Connection) -> None:
-    """Add a `reasoning_tokens` column to the messages table.
-
-    Persists the reasoning-token count thinking models report under
-    ``usage_metadata["output_token_details"]["reasoning_tokens"]`` (AI rows).
-    Nullable INTEGER: pre-existing rows and non-reasoning models stay NULL.
-    A PRAGMA check keeps the step idempotent; unlike a blanket
-    ``except sqlite3.OperationalError``, real failures (locks, missing table)
-    keep propagating.
-    """
-    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
-    if "reasoning_tokens" not in cols:
-        db.execute("ALTER TABLE messages ADD COLUMN reasoning_tokens INTEGER")
-    db.commit()
-
-
-# Every column ``messages`` must carry, as ``(name, declaration)``: the base
-# schema plus every additive migration, aligned with the INSERT column list in
-# context_engine/store/core.py::add_messages.
-_EXPECTED_MESSAGE_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("content", "TEXT"),
-    ("tool_call_id", "TEXT"),
-    ("tool_calls", "TEXT"),
-    ("tool_status", "TEXT"),
-    ("tool_name", "TEXT"),
-    ("finish_reason", "TEXT"),
-    ("reasoning", "TEXT"),
-    ("reasoning_content", "TEXT"),
-    ("images", "TEXT"),
-    ("audios", "TEXT"),
-    ("videos", "TEXT"),
-    ("model_name", "TEXT"),
-    ("input_tokens", "INTEGER"),
-    ("output_tokens", "INTEGER"),
-    ("reasoning_tokens", "INTEGER"),
-    ("origin", "TEXT"),
-    ("idempotency_key", "TEXT"),
-    ("context_eligible", "INTEGER NOT NULL DEFAULT 1"),
-    ("parent_message_id", "INTEGER"),
-    ("compacted", "INTEGER NOT NULL DEFAULT 0"),
-    ("compaction_checkpoint_id", "INTEGER"),
-)
-
-
-def ensure_message_columns(db: sqlite3.Connection) -> None:
-    """Backfill every expected ``messages`` column that is missing.
-
-    Index-based versioning (see the APPEND-ONLY note in ``_migrate``) skips a
-    column step inserted after a database already passed its index. This
-    append-only guard re-checks the full expected set on every upgrade and
-    adds only what is absent — the PRAGMA read makes re-running a no-op.
-    """
-    existing = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
-    for name, decl in _EXPECTED_MESSAGE_COLUMNS:
-        if name not in existing:
-            db.execute(f"ALTER TABLE messages ADD COLUMN {name} {decl}")
-    db.commit()
-
-
-def build_messages_fts_tb(db: sqlite3.Connection) -> None:
-    db.executescript("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-            content
-        );
-        
-        CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, content) VALUES (
-            new.id,
-            COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-            );
-        END;
-        
-        CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
-            DELETE FROM messages_fts WHERE rowid = old.id;
-        END;
-        
-        CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
-            DELETE FROM messages_fts WHERE rowid = old.id;
-            INSERT INTO messages_fts(rowid, content) VALUES (
-            new.id,
-            COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-            );
-        END;
-    """)
-
-
-def build_messages_fts_trigram_tb(db: sqlite3.Connection) -> None:
-    db.executescript("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
-            content,
-            tokenize='trigram'
-        );
-        
-        CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_insert AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts_trigram(rowid, content) VALUES (
-                new.id,
-                COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-            );
-        END;
-        
-        CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_delete AFTER DELETE ON messages BEGIN
-            DELETE FROM messages_fts_trigram WHERE rowid = old.id;
-        END;
-        
-        CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_update AFTER UPDATE ON messages BEGIN
-            DELETE FROM messages_fts_trigram WHERE rowid = old.id;
-            INSERT INTO messages_fts_trigram(rowid, content) VALUES (
-                new.id,
-                COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-            );
-        END;
-    """)

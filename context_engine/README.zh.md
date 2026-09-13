@@ -134,8 +134,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 
 **FTS5 触发器：** 每个 FTS 表都在 `messages` 上建有 `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` 触发器，自动同步索引。因此删除行（例如 `delete_messages_by_session`）无需单独清理 FTS。
 
-**迁移：** 建表过程通过 `_migrations` 表做版本化管理。步骤依次为：
-`build_messages_tb` → `build_messages_fts_tb` → `build_messages_fts_trigram_tb` → `add_images_column` → `add_audio_video_columns` → `add_model_token_columns` → `add_origin_column`。
+**迁移：** 建表过程通过 `_migrations` 表做版本化管理。全新库执行单一完整基线（`build_schema_v1`，记为 v1），一次创建上述完整 schema；由旧增量链创建的库已包含完整 schema，`_migrate` 对其不做任何改动（no-op）。未来的 schema 变更以 v2、v3…… 追加在末尾，绝不插入中间。
 
 ---
 
