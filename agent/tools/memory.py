@@ -278,12 +278,58 @@ class MemoryStore:
 
         return self._success_response(target, "Entry added.")
 
-    def append_entries(self, new_entries: str) -> dict[str, Any]:
-        """Append multiple §-delimited entries to MEMORY.md (Memory Flush, P0-1).
+    @staticmethod
+    def _target_for_entry(entry: str) -> str:
+        """Route a flushed entry to its target file.
 
+        ``User:``-prefixed entries (case-insensitive, any spaces before the
+        colon) belong in USER.md; everything else (Environment / Project /
+        Decision / Tool / no prefix) goes to MEMORY.md.
+        """
+        return "user" if re.match(r"^\s*user\s*:", entry, re.IGNORECASE) else "memory"
+
+    def _append_to_target(self, target: str, candidates: list[str]) -> dict[str, Any]:
+        """Append ``candidates`` to one target under its own lock and limit.
+
+        Deduplicates against that file's existing entries and evicts the oldest
+        entries while the file exceeds its own char limit. Returns write stats
+        without mutating anything when every candidate already exists.
+        """
+        with self._file_lock(self._path_for(target)):
+            self._reload_target(target)
+            entries = self._entries_for(target)
+            limit = self._char_limit(target)
+
+            existing_set = set(entries)
+            new_items = [e for e in candidates if e not in existing_set]
+
+            all_entries = entries + new_items
+            combined = ENTRY_DELIMITER.join(all_entries)
+
+            # Capacity overflow: evict the oldest entries until the file fits.
+            while len(combined) > limit and len(all_entries) > 1:
+                all_entries.pop(0)
+                combined = ENTRY_DELIMITER.join(all_entries)
+
+            if new_items:
+                self._set_entries(target, all_entries)
+                self.save_to_disk(target)
+
+        return {
+            "added": len(new_items),
+            "deduplicated": len(candidates) - len(new_items),
+            "entry_count": len(all_entries),
+            "usage": f"{len(combined)}/{limit} chars",
+        }
+
+    def append_entries(self, new_entries: str) -> dict[str, Any]:
+        """Append multiple §-delimited entries, routed by category (Memory Flush, P0-1).
+
+        ``User:``-prefixed entries go to USER.md; all others go to MEMORY.md.
         Unlike ``add()`` (one entry, reject on overflow), this batch method skips
-        entries already present and evicts the oldest entries to stay within
-        ``memory_char_limit``. Runs under the same cross-platform file lock.
+        entries already present and evicts the oldest entries to stay within each
+        target's own char limit. Each target is written under its own
+        cross-platform file lock.
         """
         raw = new_entries.strip()
         if not raw:
@@ -303,37 +349,35 @@ class MemoryStore:
         if not candidates:
             return {"success": True, "message": "No entries to add."}
 
-        with self._file_lock(self._path_for("memory")):
-            self._reload_target("memory")
-            entries = self.memory_entries
-            limit = self.memory_char_limit
+        by_target: dict[str, list[str]] = {"memory": [], "user": []}
+        for entry in candidates:
+            by_target[self._target_for_entry(entry)].append(entry)
 
-            existing_set = set(entries)
-            new_items = [e for e in candidates if e not in existing_set]
-            if not new_items:
-                return {
-                    "success": True,
-                    "message": "All entries already exist (no duplicates added).",
-                }
+        results: dict[str, dict[str, Any]] = {}
+        for target in ("memory", "user"):
+            if by_target[target]:
+                results[target] = self._append_to_target(target, by_target[target])
 
-            all_entries = entries + new_items
-            combined = ENTRY_DELIMITER.join(all_entries)
+        labels = {"memory": "MEMORY.md", "user": "USER.md"}
+        written = [labels[t] for t in ("memory", "user") if results.get(t, {}).get("added", 0) > 0]
+        total_added = sum(r["added"] for r in results.values())
+        total_deduped = sum(r["deduplicated"] for r in results.values())
 
-            # Capacity overflow: evict the oldest entries until the file fits.
-            while len(combined) > limit and len(all_entries) > 1:
-                all_entries.pop(0)
-                combined = ENTRY_DELIMITER.join(all_entries)
-
-            self._set_entries("memory", all_entries)
-            self.save_to_disk("memory")
+        if not written:
+            message = "All entries already exist (no duplicates added)."
+        else:
+            message = (
+                f"Added {total_added} entries to {', '.join(written)} "
+                f"(deduplicated {total_deduped})."
+            )
 
         return {
             "success": True,
-            "message": (
-                f"Added {len(new_items)} entries (deduplicated {len(candidates) - len(new_items)})."
+            "message": message,
+            "entry_count": sum(r["entry_count"] for r in results.values()),
+            "usage": "; ".join(
+                f"{labels[t]} {results[t]['usage']}" for t in ("memory", "user") if t in results
             ),
-            "entry_count": len(all_entries),
-            "usage": f"{len(combined)}/{limit} chars",
         }
 
     def replace(self, target: str, old_text: str, new_content: str) -> dict[str, Any]:
