@@ -22,38 +22,35 @@ type MigrationStep = Callable[[sqlite3.Connection], None]
 
 
 def _migrate(db: sqlite3.Connection) -> None:
+    columns = [row[1] for row in db.execute("PRAGMA table_info(_migrations)")]
+    if "v" in columns:
+        # Legacy index-keyed tracking table: its watermark is a position in the
+        # former steps list and cannot be translated to names. Replace it
+        # without pre-seeding any applied name, so the idempotent baseline
+        # (every DDL statement is IF NOT EXISTS) re-runs once and records
+        # itself. ``_self_heal_schema`` runs first on the connect path, so a
+        # legacy ``messages`` table already carries every column the replayed
+        # baseline's indexes reference.
+        db.execute("DROP TABLE _migrations")
     db.execute(
-        "CREATE TABLE IF NOT EXISTS _migrations (v INTEGER PRIMARY KEY, at INTEGER NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, at INTEGER NOT NULL)"
     )
-    cur = db.execute("SELECT MAX(v) as v FROM _migrations").fetchone()[0]
-    if cur is None:
-        cur = 0
-    # APPEND-ONLY: steps are versioned by list index and the runner resumes at
-    # MAX(_migrations), never replaying earlier indices. Future schema changes
-    # are appended at the END as v2, v3, … — never inserted in the middle.
-    steps = _migration_steps()
-    if cur > len(steps):
-        # Premise: no historical deployments — every database in the wild was
-        # created either by the former incremental chain (which already carried
-        # the full schema) or by this single-v1 baseline. A stale high watermark
-        # left by the former chain (e.g. 18) would make every future appended
-        # step a no-op — range(cur, len(steps)) stays empty forever — so warn
-        # and normalize the watermark down to the baseline instead.
-        logger.warning(
-            "mes_memory migrations watermark {} exceeds known steps {}; resetting to baseline",
-            cur,
-            len(steps),
-        )
-        db.execute("DELETE FROM _migrations")
+    applied = {row[0] for row in db.execute("SELECT name FROM _migrations").fetchall()}
+    # Names, not list positions, decide what has run: every step whose name is
+    # absent runs, so one inserted anywhere in _migration_steps() — even before
+    # the position a database has already passed — still executes. The former
+    # index-keyed resume (MAX(v) over the positional list) skipped exactly such
+    # insertions permanently, losing the reasoning_tokens column in production.
+    # List order is still significant: a step may depend on its predecessors.
+    for name, step in _migration_steps():
+        if name in applied:
+            continue
+        step(db)
         db.execute(
-            "INSERT INTO _migrations (v,at) VALUES (?,?)",
-            (len(steps), int(time.time())),
+            "INSERT OR REPLACE INTO _migrations (name, at) VALUES (?, ?)",
+            (name, int(time.time())),
         )
         db.commit()
-        cur = len(steps)
-    for i in range(cur, len(steps)):
-        steps[i](db)
-        db.execute("INSERT INTO _migrations (v,at) VALUES (?,?)", (i + 1, int(time.time())))
     db.commit()
 
 
@@ -75,8 +72,13 @@ def _connect_with_retry() -> sqlite3.Connection:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA foreign_keys=ON")
-            _migrate(db)
+            # Converge the additive schema of a legacy database first: the
+            # baseline replays once the legacy tracking table is replaced, and
+            # its ``CREATE INDEX`` statements reference ``messages`` columns
+            # that ``CREATE TABLE IF NOT EXISTS`` cannot add to an existing
+            # table. The heal is a no-op on an up-to-date database.
             _self_heal_schema(db)
+            _migrate(db)
             return db
         except sqlite3.OperationalError as exc:
             if not _is_locked_error(exc):
@@ -258,13 +260,15 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 # Self-healing DDL (additive, idempotent) — runs unconditionally on connect.
 #
-# Legacy databases carry a high ``_migrations`` watermark from the former
-# incremental chain, so ``_migrate`` resumes past the single baseline and never
-# replays it. ``_self_heal_schema`` converges such a database to the current
-# schema by adding the columns, indexes and auxiliary tables that its
-# watermark claims (wrongly) to have. A fresh database is fully built by
-# ``build_schema_v1`` before the heal runs, hence the early return when the
-# ``messages`` table is absent. No statement ever drops or rewrites rows.
+# Legacy databases carry a positional (``_migrations.v``) watermark from the
+# former incremental chain; ``_migrate`` replaces that tracking table and the
+# idempotent baseline re-runs. ``CREATE TABLE IF NOT EXISTS`` cannot add
+# columns to an already-existing ``messages`` table, so the heal runs BEFORE
+# ``_migrate`` on every connect: it adds any missing ``messages`` columns with
+# guarded ALTERs and re-creates every index / auxiliary table with
+# ``IF NOT EXISTS``, leaving the replayed baseline's index DDL satisfiable. A
+# fresh database has no ``messages`` table yet, hence the early return before
+# ``build_schema_v1`` provisions it. No statement ever drops or rewrites rows.
 # ---------------------------------------------------------------------------
 
 # (column_name, ALTER TABLE DDL) for the additive columns a legacy ``messages``
@@ -375,19 +379,19 @@ _HEAL_AUX_TABLE_DDL: tuple[str, ...] = (
 def _self_heal_schema(db: sqlite3.Connection) -> None:
     """Converge a legacy MesMemory database to the current schema, additively.
 
-    ``_migrate`` is version-gated and never replays the single baseline, so a
-    former-chain database (high watermark, incomplete schema) stays broken
-    forever without this pass. The heal runs unconditionally after ``_migrate``
-    on every connect: missing ``messages`` columns are added with guarded
-    ALTERs, and every index / auxiliary table from ``build_schema_v1`` is
-    re-created with ``IF NOT EXISTS``. Existing rows and tables are never
-    dropped or rewritten, so the pass is safe to repeat on every connect.
+    The baseline cannot add columns to an existing ``messages`` table, so a
+    former-chain database (incomplete schema) stays broken without this pass.
+    The heal runs unconditionally before ``_migrate`` on every connect: missing
+    ``messages`` columns are added with guarded ALTERs, and every index /
+    auxiliary table from ``build_schema_v1`` is re-created with ``IF NOT
+    EXISTS``. Existing rows and tables are never dropped or rewritten, so the
+    pass is safe to repeat on every connect.
     """
     exists = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
     ).fetchone()
     if exists is None:
-        # Fresh database: build_schema_v1 already created the complete schema.
+        # Fresh database: _migrate provisions the complete schema right after.
         return
 
     existing_columns = {row[1] for row in db.execute("PRAGMA table_info(messages)")}
@@ -407,17 +411,20 @@ def _self_heal_schema(db: sqlite3.Connection) -> None:
     db.commit()
 
 
-def _migration_steps() -> list[MigrationStep]:
-    """Ordered, append-only migration steps; version = index + 1.
+def _migration_steps() -> list[tuple[str, MigrationStep]]:
+    """Ordered ``(name, step)`` pairs; names are stable and never renamed.
 
-    Future schema changes append a new step at the END (``build_schema_v2``,
-    then ``build_schema_v3``, …) — never inserted in the middle, because the
-    runner resumes at ``MAX(_migrations)`` and does not replay earlier indices.
-    ``build_schema_v1`` is the complete baseline: databases created by the
-    former incremental chain already carry the full schema, and with no users
-    to migrate it covers every other database.
+    ``_migrate`` runs every step whose name is not yet recorded, so adding a
+    step anywhere in this list reaches every database that has not applied
+    that name — unlike the former index-keyed resume, which silently skipped a
+    step inserted before a database's high-water mark. Order is still
+    significant (a step may depend on its predecessors), so new steps should
+    be appended; names, not positions, decide what has run.
+
+    ``build_schema_v1`` is the complete baseline: a fresh database is fully
+    provisioned by this single step, recorded as ``0001_initial_schema``.
     """
-    return [build_schema_v1]
+    return [("0001_initial_schema", build_schema_v1)]
 
 
 def get_db_path() -> Path:
