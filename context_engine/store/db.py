@@ -35,6 +35,8 @@ def _migrate(db: sqlite3.Connection) -> None:
         add_session_role_index,
         add_reasoning_tokens_column,
         build_compression_locks_tb,
+        add_idempotency_key_column,
+        add_context_eligible_column,
     ]
     for i in range(cur, len(steps)):
         steps[i](db)
@@ -91,6 +93,36 @@ def build_compression_locks_tb(db: sqlite3.Connection) -> None:
         renew_count INTEGER DEFAULT 0
     )
     """)
+    db.commit()
+
+
+def add_idempotency_key_column(db: sqlite3.Connection) -> None:
+    """Add the idempotency_key column + partial unique index (SESSION plan P1-2).
+
+    Crash-retried writes of the same message batch are deduplicated at the
+    storage level: INSERT OR IGNORE against the unique index skips rows whose
+    idempotency key was already persisted.
+    """
+    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+    if "idempotency_key" not in cols:
+        db.execute("ALTER TABLE messages ADD COLUMN idempotency_key TEXT")
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency "
+        "ON messages(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+    db.commit()
+
+
+def add_context_eligible_column(db: sqlite3.Connection) -> None:
+    """Add the context_eligible flag (SESSION plan P1-3).
+
+    1 = eligible for history-context retrieval, 0 = stored only. All existing
+    rows default to 1, so retrieval behavior is unchanged until a message is
+    explicitly marked ineligible.
+    """
+    cols = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+    if "context_eligible" not in cols:
+        db.execute("ALTER TABLE messages ADD COLUMN context_eligible INTEGER NOT NULL DEFAULT 1")
     db.commit()
 
 

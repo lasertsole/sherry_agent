@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 import threading
@@ -207,11 +208,33 @@ class ToolMessageRowBuilder(MessageRowBuilder):
         }
 
 
+# SESSION plan P1-2: crash-retry idempotency for message persistence. Messages
+# already flushed in this process carry "_db_persisted" in additional_kwargs
+# and are skipped on retry; the per-row idempotency key deduplicates at the
+# storage level (partial unique index) for cross-process replay safety.
+_DB_PERSISTED_KEY = "_db_persisted"
+
 _BUILDERS: dict[str, MessageRowBuilder] = {
     "ai": AIMessageRowBuilder(),
     "human": HumanMessageRowBuilder(),
     "tool": ToolMessageRowBuilder(),
 }
+
+
+def _idempotency_key(session_id: str, turn_num: int, ts_ms: int, index: int, m: BaseMessage) -> str:
+    """Stable per-row key for INSERT OR IGNORE dedup (SESSION plan P1-2)."""
+    payload = json.dumps(
+        {
+            "role": m.type,
+            "content": m.content,
+            "tool_call_id": getattr(m, "tool_call_id", None),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+    return f"{session_id}:{turn_num}:{ts_ms}:{index}:{digest}"
 
 
 async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
@@ -228,15 +251,25 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     if messages is None or len(messages) == 0:
         return
 
-    # Rows to be bulk-inserted by executemany.
+    # SESSION plan P1-2: skip messages this process already flushed (crash-retry dedup).
+    pending: list[BaseMessage] = [
+        m for m in messages if not m.additional_kwargs.get(_DB_PERSISTED_KEY)
+    ]
+    if not pending:
+        return
+
+    # Rows to be bulk-inserted by executemany (paired with their source message
+    # so the idempotency key can be computed after the turn stamp is assigned).
     insert_rows: list[dict] = []
-    for m in messages:
+    paired: list[tuple[BaseMessage, dict]] = []
+    for m in pending:
         builder = _BUILDERS.get(m.type)
         if builder is None:
             continue
         row = builder.build(m, session_id)
         if row is not None:
             insert_rows.append(row)
+            paired.append((m, row))
 
     # Audit #5: assign the turn number atomically. Re-read MAX(turn_num) and
     # insert while holding the module-level lock, so two concurrent writers on
@@ -251,16 +284,24 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
         # persist turn N+1 with an earlier ts_ms than turn N.
         turn_ms, base_timestamp = _next_turn_stamp()
         current_turn = get_max_turn_num(session_id) + 1
-        for row in insert_rows:
+        for index, (message, row) in enumerate(paired):
             row["turn_num"] = current_turn
             row["timestamp"] = base_timestamp
             row["ts_ms"] = turn_ms
+            row["idempotency_key"] = _idempotency_key(
+                session_id, current_turn, turn_ms, index, message
+            )
+            # SESSION plan P1-3: emitters mark ineligible messages via
+            # additional_kwargs["context_eligible"] = False (default eligible).
+            row["context_eligible"] = (
+                0 if message.additional_kwargs.get("context_eligible") is False else 1
+            )
 
         # Bulk-insert all accumulated rows of this turn (autocommit: each row
         # commits on execution).
         _db.executemany(
             """
-            INSERT INTO messages (
+            INSERT OR IGNORE INTO messages (
                 session_id,
                 turn_num,
                 role,
@@ -281,7 +322,9 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 input_tokens,
                 output_tokens,
                 reasoning_tokens,
-                origin
+                origin,
+                idempotency_key,
+                context_eligible
             ) VALUES (
                 :session_id,
                 :turn_num,
@@ -303,11 +346,18 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
                 :input_tokens,
                 :output_tokens,
                 :reasoning_tokens,
-                :origin
+                :origin,
+                :idempotency_key,
+                :context_eligible
             )
         """,
             insert_rows,
         )
+
+    # SESSION plan P1-2: mark the batch as flushed so an in-process retry of
+    # the same message list is skipped instead of double-written.
+    for message in pending:
+        message.additional_kwargs[_DB_PERSISTED_KEY] = True
 
     # No-op in autocommit mode; kept so the batch also commits as one unit if
     # the connection ever switches to implicit-transaction mode.
@@ -322,8 +372,9 @@ def _decode_json_columns(row: dict) -> dict:
     ``images``/``audios``/``videos`` columns back into Python objects and pops
     the internal ordering column ``ts_ms``.
     """
-    # Internal ordering column — not part of the client-facing shape.
+    # Internal columns — not part of the client-facing shape.
     row.pop("ts_ms", None)
+    row.pop("idempotency_key", None)
     if isinstance(row["content"], str):
         row["content"] = json.loads(row["content"])
     if isinstance(row["tool_calls"], str):
@@ -338,7 +389,10 @@ def _decode_json_columns(row: dict) -> dict:
 
 
 def get_turns_by_turn_num_scope(
-    session_id: str, target_turn_num: int, half_scope: int = 5
+    session_id: str,
+    target_turn_num: int,
+    half_scope: int = 5,
+    only_eligible: bool = True,
 ) -> list[dict]:
     """Fetch messages whose turn_num falls within a range centered on a target turn.
 
@@ -362,10 +416,11 @@ def get_turns_by_turn_num_scope(
         max_turn_num = min(max_turn_num, target_turn_num + half_scope)
         min_turn_num = max(min_turn_num, target_turn_num - half_scope)
 
+        eligible_filter = " AND context_eligible = 1" if only_eligible else ""
         rows = _db.execute(
-            """
+            f"""
             SELECT * FROM messages 
-            WHERE session_id = ? AND turn_num >= ? AND turn_num <= ?
+            WHERE session_id = ? AND turn_num >= ? AND turn_num <= ?{eligible_filter}
             ORDER BY turn_num DESC, id ASC
         """,
             (session_id, min_turn_num, max_turn_num),
@@ -386,6 +441,7 @@ def get_history_by_turn_page(
     min_turn_num: Annotated[int, Field(ge=1)] = 1,
     turn_page_size: Annotated[int, Field(ge=1)] = 10,
     turn_page_num: Annotated[int, Field(ge=1)] = 1,
+    only_eligible: bool = True,
 ) -> list[dict]:
     """Fetch a page of message history, paginated by turn number.
 
@@ -418,10 +474,11 @@ def get_history_by_turn_page(
         if target_start_turn_num < min_turn_num:
             target_start_turn_num = min_turn_num
 
+        eligible_filter = " and context_eligible = 1" if only_eligible else ""
         rows = _db.execute(
-            """
+            f"""
             select * from messages
-            where session_id = ? and turn_num >= ? and turn_num <= ?
+            where session_id = ? and turn_num >= ? and turn_num <= ?{eligible_filter}
             ORDER BY turn_num DESC, id ASC
         """,
             (session_id, target_start_turn_num, target_end_turn_num),
@@ -436,13 +493,19 @@ def get_history_by_turn_page(
         return result
 
 
-def get_messages_by_lastest_n_turns(session_id: str, last_n: int = 5) -> list[dict]:
+def get_messages_by_lastest_n_turns(
+    session_id: str, last_n: int = 5, only_eligible: bool = True
+) -> list[dict]:
     """Convenience wrapper: fetch the last `last_n` turns of history.
 
     Delegates to paginated history with page 1 and the desired page size.
     """
     return get_history_by_turn_page(
-        session_id, min_turn_num=1, turn_page_size=last_n, turn_page_num=1
+        session_id,
+        min_turn_num=1,
+        turn_page_size=last_n,
+        turn_page_num=1,
+        only_eligible=only_eligible,
     )
 
 
