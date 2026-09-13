@@ -1,0 +1,163 @@
+# Three-stage local gate layout:
+#
+#   pre-commit (fast, <5s)   : ruff, ruff-format, naming-convention, boundary
+#                              guards, frontend-fix, eslint
+#   commit-msg (<1s)         : commitlint (Angular convention)
+#   pre-push (<60s, heavy)   : basedpyright, vue-tsc, dpdm, knip, import-linter
+#
+# Heavy whole-project analyses (type inference, import graph, dead-code scan)
+# run once per push instead of once per commit — fast feedback stays at
+# commit time, push is the last local gate before CI re-verifies remotely.
+#
+# One-time setup per clone:
+#   uv sync                      # provides pre-commit in the project venv
+#   uv run pre-commit install    # writes all three hooks via default_install_hook_types
+#
+# Frontend hooks delegate to the client/ pnpm toolchain via scripts/hooks/
+# frontend-style.sh so tool versions and the flat-config live in
+# client/package.json instead of being duplicated here.
+
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
+repos:
+  # ---- backend: ruff (rule set pinned in pyproject [tool.ruff.lint]) ------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff
+        stages: [pre-commit]
+      - id: ruff-format
+        args: [--check]
+        # v0.16.6 adds markdown to the hook's types; this repo keeps docs
+        # hand-formatted (client eslint config also disables prettier on md).
+        types_or: [python, pyi, jupyter]
+        stages: [pre-commit]
+
+  # ---- backend layer contract (import-linter, whole-graph analysis) -------
+  - repo: local
+    hooks:
+      - id: import-linter
+        name: import-linter (server layer contract)
+        entry: bash scripts/hooks/import-linter.sh
+        language: system
+        pass_filenames: false
+        require_serial: true
+        files: ^server/.*\.py$
+        stages: [pre-push]
+
+  # ---- boundary guard: frontend/Rust files must stay inside client/ -------
+  # Canary hook: `files` matches the target suffixes, `exclude` removes
+  # client/; when the intersection is non-empty a stray file exists and the
+  # hook always fails.
+  - repo: local
+    hooks:
+      - id: frontend-file-boundary
+        name: enforce css/rs/js/ts/mjs/vue in client/
+        entry: bash scripts/hooks/reject-stray-frontend.sh
+        language: system
+        files: \.(css|rs|js|ts|mjs|vue)$
+        exclude: ^client/
+        stages: [pre-commit]
+
+  # ---- skill boundary guard: SKILL.md must stay inside skills/ ------------
+  # Same canary shape as the frontend guard above: `files` matches SKILL.md
+  # by name, `exclude` removes the allowed skills/ tree; any leftover file
+  # means a skill definition escaped the skills/ folder and the hook fails.
+  - repo: local
+    hooks:
+      - id: skill-file-boundary
+        name: enforce SKILL.md in skills/
+        entry: bash scripts/hooks/reject-stray-skill.sh
+        language: system
+        files: SKILL\.md$
+        exclude: ^skills/
+        stages: [pre-commit]
+
+  # ---- naming convention guard (part2 item 九) ----------------------------
+  # Layer 1 of the naming matrix: file name formats (.py snake_case, .ts
+  # kebab-case, .vue PascalCase). Layer 2 lives in ruff (N rules) and eslint
+  # (@typescript-eslint/naming-convention).
+  - repo: local
+    hooks:
+      - id: naming-convention
+        name: file naming convention
+        entry: bash scripts/hooks/check-naming-convention.sh
+        language: system
+        files: \.(py|ts|tsx|js|jsx|mjs|cjs|vue|scss|css)$
+        stages: [pre-commit]
+
+  # ---- frontend: fix-then-check (client/ pnpm toolchain) ------------------
+  - repo: local
+    hooks:
+      # Phase 1: auto-fix — prettier --write + eslint --fix
+      - id: frontend-fix
+        name: prettier + eslint (auto-fix)
+        entry: bash scripts/hooks/frontend-fix.sh
+        language: system
+        require_serial: true
+        files: ^client/
+        types_or: [ts, tsx, vue, javascript, jsx, css, scss, json]
+        stages: [pre-commit]
+      # Phase 2: check-only — eslint catches unfixable lint issues
+      - id: eslint
+        name: eslint (check)
+        entry: bash scripts/hooks/frontend-style.sh eslint
+        language: system
+        require_serial: true
+        files: ^client/
+        types_or: [ts, tsx, vue, javascript, jsx]
+        stages: [pre-commit]
+
+  # ---- commit message: commitlint (Angular convention) --------------------
+  - repo: local
+    hooks:
+      - id: commitlint
+        name: commitlint (angular)
+        entry: bash scripts/hooks/commitlint.sh
+        language: system
+        stages: [commit-msg]
+
+  # ---- pre-push: whole-project type + architecture + dead-code gates ------
+  - repo: local
+    hooks:
+      # Python types — every file in the push. Pyright still resolves the
+      # full import graph for correctness; only pushed files are REPORTED.
+      # (Whole-project mode crawls .venv/logs for ~14min on slow filesystems —
+      # far beyond the pre-push budget; per-file is bounded by the push size.)
+      - id: basedpyright
+        name: basedpyright (types, pre-push)
+        entry: uv run --no-sync basedpyright
+        language: system
+        types: [python]
+        require_serial: true
+        stages: [pre-push]
+
+      # Frontend types — whole project
+      - id: vue-tsc
+        name: vue-tsc (client types, pre-push)
+        entry: bash scripts/hooks/frontend-style.sh vue-tsc --noEmit -p .nuxt/tsconfig.app.json
+        language: system
+        pass_filenames: false
+        require_serial: true
+        files: ^client/.*\.(ts|tsx|vue|js|mjs|json)$
+        stages: [pre-push]
+
+      # Frontend circular dependencies — whole import graph
+      - id: dpdm
+        name: dpdm (circular deps, pre-push)
+        entry: bash scripts/hooks/dpdm.sh
+        language: system
+        pass_filenames: false
+        require_serial: true
+        files: ^client/.*\.(ts|tsx|vue|js|mjs)$
+        stages: [pre-push]
+
+      # Frontend dead code — whole-graph scan
+      - id: knip
+        name: knip (unused exports/files, pre-push)
+        entry: bash scripts/hooks/knip.sh
+        language: system
+        pass_filenames: false
+        require_serial: true
+        files: ^client/.*\.(ts|tsx|vue|js|mjs)$
+        stages: [pre-push]

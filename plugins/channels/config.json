@@ -1,0 +1,11 @@
+{
+  "qq": {
+    "enabled": true,
+    "allow_from": [
+      "*"
+    ],
+    "secret": "",
+    "heartbeat": false,
+    "cron": false
+  }
+}

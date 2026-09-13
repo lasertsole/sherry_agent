@@ -1,0 +1,101 @@
+{
+  "a11y": {
+    "previewImage": "预览图片"
+  },
+  "common": {
+    "confirmDelete": "确认删除",
+    "delete": "删除",
+    "cancel": "取消"
+  },
+  "chatInput": {
+    "maxImages": "最多只能上传 {count} 张图片",
+    "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张",
+    "maxAudios": "最多只能上传 {count} 段音频",
+    "maxAudiosExceed": "最多只能上传 {count} 段音频，已超出 {extra} 段",
+    "maxVideos": "最多只能上传 {count} 段视频",
+    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
+  },
+  "chatBox": {
+    "defaultAiName": "橘雪莉"
+  },
+  "chat": {
+    "backgroundMessage": "后台任务"
+  },
+  "errors": {
+    "requestFailed": "请求失败",
+    "pageError": "页面错误",
+    "replyFailed": "（回复失败：{reason}）",
+    "sendFailed": "（发送失败：{reason}）",
+    "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步"
+  },
+  "connection": {
+    "offline": "网络已断开",
+    "backendDown": "后端服务未连接",
+    "backOnline": "网络已恢复"
+  },
+  "history": {
+    "noSessions": "暂无会话记录",
+    "newSession": "新会话"
+  },
+  "sidebar": {
+    "tasksLoading": "正在加载任务…",
+    "noTasks": "暂无后台任务",
+    "tasksUpdatedAt": "更新于 {time}",
+    "tasksAgoSeconds": "{sec} 秒前",
+    "statusRunning": "运行中",
+    "statusInterrupted": "已中断",
+    "statusPending": "待配送",
+    "statusInProgress": "配送中",
+    "statusDelivered": "已送达",
+    "statusDone": "已完成",
+    "statusError": "出错",
+    "statusTimeout": "超时",
+    "statusKilled": "已终止",
+    "statusUnknown": "未知",
+    "roleRoot": "主任务",
+    "roleChild": "子任务"
+  },
+  "toolbar": {
+    "newChat": "新建对话",
+    "knowledgeBase": "知识库",
+    "uploadImage": "上传图片",
+    "image": "图片",
+    "audio": "音频",
+    "uploadAudio": "上传音频",
+    "video": "视频",
+    "uploadVideo": "上传视频",
+    "skills": "技能",
+    "knowledgeGraph": "知识图谱",
+    "stats": "统计",
+    "systemConfig": "系统配置",
+    "persona": "AI人格",
+    "memory": "记忆",
+    "heartbeat": "心跳",
+    "cron": "定时任务",
+    "logs": "日志",
+    "notification": "通知",
+    "extend": "扩展",
+    "settingsMenu": "菜单",
+    "collapseSidebar": "折叠侧边栏",
+    "expandSidebar": "展开侧边栏"
+  },
+  "todolist": {
+    "progress": "已完成 {done}/{total}",
+    "title": "任务计划",
+    "flowLabel": "TaskFlow: {flow}",
+    "linkedStep": "TaskFlow {flow} · {step}",
+    "delegated": "已委派给子代理",
+    "expand": "展开计划",
+    "collapse": "收起计划"
+  },
+  "config": {
+    "save": "保存",
+    "cancel": "取消",
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    }
+  }
+}

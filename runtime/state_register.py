@@ -1,0 +1,334 @@
+import json
+import sqlite3
+import threading
+from typing import Any
+from pathlib import Path
+from loguru import logger
+from config import SRC_DIR
+from runtime import Register
+
+
+class StateRegisterMeM(Register):
+    def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
+        self._lock = threading.Lock()
+        self._states = {}
+        self._initialized = True
+
+    def set_state(self, session_id: str, key: str, value: Any) -> bool:
+        try:
+            with self._lock:
+                self._states.setdefault(session_id, {})[key] = value
+            return True
+        except Exception:
+            logger.exception(f"set_state failed: session_id={session_id}, key={key}")
+        return False
+
+    def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
+        try:
+            with self._lock:
+                if session_id not in self._states:
+                    return default
+
+                return self._states[session_id].get(key, default)
+        except Exception:
+            logger.exception(f"get_state failed: session_id={session_id}, key={key}")
+        return default
+
+    def get_all_states(self, session_id: str) -> dict[str, Any]:
+        try:
+            with self._lock:
+                # Snapshot: caller mutations must not reach shared state (audit #13).
+                return dict(self._states.get(session_id, {}))
+        except Exception:
+            logger.exception(f"get_all_states failed: session_id={session_id}")
+        return {}
+
+    def delete_state(self, session_id: str, key: str) -> bool:
+        try:
+            with self._lock:
+                if session_id not in self._states:
+                    return False
+
+                if key in self._states[session_id]:
+                    del self._states[session_id][key]
+                    return True
+        except Exception:
+            logger.exception(f"delete_state failed: session_id={session_id}, key={key}")
+        return False
+
+    def clear_session(self, session_id: str) -> bool:
+        try:
+            with self._lock:
+                if session_id in self._states:
+                    self._states.pop(session_id, None)
+                    return True
+        except Exception:
+            logger.exception(f"clear_session failed: session_id={session_id}")
+        return False
+
+    def has_session(self, session_id: str) -> bool:
+        try:
+            with self._lock:
+                return session_id in self._states
+        except Exception:
+            logger.exception(f"has_session failed: session_id={session_id}")
+        return False
+
+    def has_key(self, session_id: str, key: str) -> bool:
+        try:
+            with self._lock:
+                if session_id not in self._states:
+                    return False
+                return key in self._states[session_id]
+        except Exception:
+            logger.exception(f"has_key failed: session_id={session_id}, key={key}")
+        return False
+
+    def update_states(self, session_id: str, states: dict[str, Any]) -> bool:
+        try:
+            with self._lock:
+                self._states.setdefault(session_id, {}).update(states)
+            return True
+        except Exception:
+            logger.exception(f"update_states failed: session_id={session_id}")
+        return False
+
+
+state_register_mem = StateRegisterMeM()
+
+
+class StateRegisterDB(Register):
+    def __init__(self):
+        self.db_path: Path = (SRC_DIR / "data" / "state_register.db").resolve()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS states (
+                    session_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    PRIMARY KEY (session_id, key)
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS context_epoch (
+                    session_id TEXT PRIMARY KEY,
+                    baseline TEXT NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    baseline_seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+
+    def set_state(self, session_id: str, key: str, value: Any) -> bool:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO states (session_id, key, value) VALUES (?, ?, ?)",
+                    (session_id, key, json.dumps(value)),
+                )
+                conn.commit()
+            return True
+        except Exception:
+            logger.exception(f"set_state_db failed: session_id={session_id}, key={key}")
+        return False
+
+    def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT value FROM states WHERE session_id = ? AND key = ?", (session_id, key)
+                )
+                row = cursor.fetchone()
+
+            if row:
+                return json.loads(row[0])
+            return default
+        except Exception:
+            logger.exception(f"get_state_db failed: session_id={session_id}, key={key}")
+        return default
+
+    def get_all_states(self, session_id: str) -> dict[str, Any]:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT key, value FROM states WHERE session_id = ?", (session_id,))
+                rows = cursor.fetchall()
+            return {row[0]: json.loads(row[1]) for row in rows}
+        except Exception:
+            logger.exception(f"get_all_states_db failed: session_id={session_id}")
+        return {}
+
+    def delete_state(self, session_id: str, key: str) -> bool:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM states WHERE session_id = ? AND key = ?", (session_id, key)
+                )
+                affected = cursor.rowcount
+                conn.commit()
+            return affected > 0
+        except Exception:
+            logger.exception(f"delete_state_db failed: session_id={session_id}, key={key}")
+        return False
+
+    def get_all_session_ids(self) -> list[str]:
+        """Return all distinct session_id values from the database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT DISTINCT session_id FROM states")
+                return [row[0] for row in cursor.fetchall()]
+        except Exception:
+            logger.exception("get_all_session_ids failed")
+        return []
+
+    # Register can't clear StateRegisterDB
+    def clear_session(self, session_id: str) -> bool:
+        return False
+
+    def has_session(self, session_id: str) -> bool:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM states WHERE session_id = ? LIMIT 1", (session_id,))
+                result = cursor.fetchone() is not None
+            return result
+        except Exception:
+            logger.exception(f"has_session_db failed: session_id={session_id}")
+        return False
+
+    def has_key(self, session_id: str, key: str) -> bool:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM states WHERE session_id = ? AND key = ? LIMIT 1",
+                    (session_id, key),
+                )
+                result = cursor.fetchone() is not None
+            return result
+        except Exception:
+            logger.exception(f"has_key_db failed: session_id={session_id}, key={key}")
+        return False
+
+    def update_states(self, session_id: str, states: dict[str, Any]) -> bool:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                for key, value in states.items():
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO states (session_id, key, value) VALUES (?, ?, ?)",
+                        (session_id, key, json.dumps(value)),
+                    )
+                conn.commit()
+            return True
+        except Exception:
+            logger.exception(f"update_states_db failed: session_id={session_id}")
+        return False
+
+
+state_register_db = StateRegisterDB()
+
+
+class ContextEpoch:
+    """System-context snapshot lifecycle (SESSION plan P2-2, from opencode-dev).
+
+    initialize → first baseline; prepare → reconcile/replace decision;
+    replace → compaction rebuild; advance → snapshot-only update.
+    """
+
+    def __init__(self, db: StateRegisterDB):
+        self._db = db
+
+    def initialize(self, session_id: str, system_context: dict) -> None:
+        import json
+        from datetime import datetime
+
+        baseline = json.dumps(system_context, ensure_ascii=False)
+        now = datetime.now().strftime("%Y%m%d%H%M%S")
+        with sqlite3.connect(self._db.db_path) as conn:
+            conn.execute(
+                "INSERT INTO context_epoch (session_id, baseline, snapshot, baseline_seq, "
+                "created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET baseline = excluded.baseline, "
+                "snapshot = excluded.snapshot, updated_at = excluded.updated_at",
+                (session_id, baseline, baseline, now, now),
+            )
+            conn.commit()
+
+    def prepare(
+        self,
+        session_id: str,
+        current_context: dict,
+        latest_compaction_seq: int | None,
+    ) -> tuple[dict, str]:
+        """Load the epoch and decide: ok | reconcile | replace."""
+        import json
+
+        row = (
+            sqlite3.connect(self._db.db_path)
+            .execute(
+                "SELECT baseline, snapshot, baseline_seq FROM context_epoch WHERE session_id = ?",
+                (session_id,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            self.initialize(session_id, current_context)
+            return current_context, "ok"
+
+        baseline_raw, snapshot_raw, baseline_seq = row
+        baseline = json.loads(baseline_raw)
+        snapshot = json.loads(snapshot_raw)
+
+        if latest_compaction_seq is not None and latest_compaction_seq > baseline_seq:
+            self.replace(session_id, current_context, latest_compaction_seq)
+            return current_context, "replace"
+
+        current_json = json.dumps(current_context, ensure_ascii=False, sort_keys=True)
+        snapshot_json = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+        if current_json != snapshot_json:
+            self.advance(session_id, current_context)
+            return current_context, "reconcile"
+
+        _ = baseline
+        return snapshot, "ok"
+
+    def replace(self, session_id: str, new_context: dict, seq: int) -> None:
+        import json
+        from datetime import datetime
+
+        ctx_json = json.dumps(new_context, ensure_ascii=False)
+        now = datetime.now().strftime("%Y%m%d%H%M%S")
+        with sqlite3.connect(self._db.db_path) as conn:
+            conn.execute(
+                "UPDATE context_epoch SET baseline = ?, snapshot = ?, baseline_seq = ?, "
+                "updated_at = ? WHERE session_id = ?",
+                (ctx_json, ctx_json, seq, now, session_id),
+            )
+            conn.commit()
+
+    def advance(self, session_id: str, new_snapshot: dict) -> None:
+        import json
+        from datetime import datetime
+
+        snapshot_json = json.dumps(new_snapshot, ensure_ascii=False)
+        now = datetime.now().strftime("%Y%m%d%H%M%S")
+        with sqlite3.connect(self._db.db_path) as conn:
+            conn.execute(
+                "UPDATE context_epoch SET snapshot = ?, updated_at = ? WHERE session_id = ?",
+                (snapshot_json, now, session_id),
+            )
+            conn.commit()

@@ -1,0 +1,65 @@
+from langchain_core.tools import BaseTool
+from .file_tools import (
+    build_read_file_tool as build_read_file_tool,
+    build_write_file_tool as build_write_file_tool,
+    build_patch_file_tool as build_patch_file_tool,
+    build_search_files_tool as build_search_files_tool,
+)
+from .skill_tools import (
+    build_skill_list_tool as build_skill_list_tool,
+    build_skill_manage_tool as build_skill_manage_tool,
+    build_skill_view_tool as build_skill_view_tool,
+)
+from collections.abc import Callable
+from .mcp_plugin import build_mcp_tools
+from .terminal import build_terminal_tool
+from .subagent import build_subagent_runtime_tools
+from .web_search import build_web_search_tool
+from .python_repl import build_python_repl_tool
+from .question import build_question_tool
+from .memory import build_memory_tool, memory_store as memory_store
+from .memory_tiered import get_tiered_store as get_tiered_store
+from .message_search import build_message_search_tool
+from .taskflow import build_taskflow_tools
+from .todolist import build_todolist_tools
+from .todolist.knowledge import build_knowledge_tools
+
+
+def tool_flatten(
+    builders: list[Callable[[], BaseTool | list[BaseTool]]],
+) -> list[BaseTool]:
+    """Call each builder; if result is a list, extend; otherwise append."""
+    tools: list[BaseTool] = []
+    for b in builders:
+        result = b()
+        if isinstance(result, list):
+            tools.extend(result)
+        else:
+            tools.append(result)
+    return tools
+
+
+_MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
+    build_python_repl_tool,
+    build_read_file_tool,
+    build_write_file_tool,
+    build_patch_file_tool,
+    build_memory_tool,
+    build_web_search_tool,
+    build_terminal_tool,
+    build_mcp_tools,
+    build_skill_manage_tool,
+    build_skill_list_tool,
+    build_skill_view_tool,
+    build_message_search_tool,
+    build_subagent_runtime_tools,
+    build_taskflow_tools,
+    build_todolist_tools,
+    build_knowledge_tools,
+    build_question_tool,
+]
+
+
+def build_main_tools() -> list[BaseTool]:
+    """Core tools + subagent"""
+    return tool_flatten(_MAIN_TOOLS_BUILDERS)

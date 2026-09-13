@@ -1,0 +1,900 @@
+"""Cron service for scheduling agent tasks."""
+
+import json
+import os
+import time
+import uuid
+import asyncio
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+from loguru import logger
+from bus import MessageBus
+from config import ROOT_DIR
+from datetime import datetime
+from models import build_main_llm
+from pub.types.bus import InboundMessage, OutboundMessage
+from channels import channel_manager
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
+from langgraph.graph.state import CompiledStateGraph
+from typing import Any, Literal
+from collections.abc import Callable, Coroutine
+from workspace.prompt_builder import build_system_prompt
+from .types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+
+from runtime import relation_register
+
+cron_store_path: Path = ROOT_DIR / "cron_jobs.json"
+
+# The browser WebSocket client connects as `session_id=default`
+# (client/app/composables/ws.ts), so pushes target that session so the UI
+# refreshes live when a cron job completes.
+CRON_WS_SESSION_ID: str = "default"
+
+
+async def _push_cron_notification(job: CronJob) -> None:
+    """Push a `notification` WS event after a cron job completes so the
+    browser's notification bell/dialog is updated live.
+
+    Mirrors the subagent notification payload shape
+    (server/trigger/subagent/core.py): `{"event": "notification", "content": ...}`.
+    The content is prefixed with `cron:` so the client can attribute the source,
+    and it carries the job name plus outcome (ok/error). Best-effort: failures
+    are logged and never break the flow.
+    """
+    try:
+        websocket = relation_register.get_websocket_by_session_id(CRON_WS_SESSION_ID)
+        if websocket is None:
+            return
+        status: str = job.state.last_status or "ok"
+        content: str = f"cron: {job.name} [{status}]"
+        res: dict[str, Any] = {"event": "notification", "content": content}
+        await websocket.send_text(json.dumps(res))
+    except Exception as e:
+        logger.error("Cron: failed to push notification: %s", e)
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+@dataclass
+class CronJobFailureState:
+    """In-memory failure tracking for one cron job (cron breaker, §5.3).
+
+    Deliberately memory-only: ``cron_jobs.json`` keeps its schema and the
+    breaker never persists failure counters — only the pre-existing
+    ``enabled`` job flag is ever written back via ``_save_store()``.
+    """
+
+    consecutive_failures: int = 0
+    last_error: str = ""
+    # time.monotonic timestamp marking the start of the current backoff
+    # window (set when degradation is first reached, refreshed on every
+    # further failure while degraded).
+    degraded_since: float | None = None
+    backoff_ms: int = 0
+
+
+def _compute_next_run(
+    schedule: CronSchedule, now_ms: int, anchor_ms: int | None = None
+) -> int | None:
+    """Compute next run time in ms.
+
+    For ``every`` schedules, ``anchor_ms`` pins the interval grid to the
+    slot the job just consumed, so the job's own duration never pushes the
+    schedule out (audit #22: fixed-phase intervals). Without an anchor the
+    grid starts at ``now_ms`` (first schedule).
+    """
+    if schedule.kind == "at":
+        return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
+
+    if schedule.kind == "every":
+        if not schedule.every_ms or schedule.every_ms <= 0:
+            return None
+        base = anchor_ms if anchor_ms and anchor_ms > 0 else now_ms
+        next_ms = base + schedule.every_ms
+        if next_ms <= now_ms:
+            # Jump to the first grid point strictly after now — missed slots
+            # (job overrun, service pause) are skipped, never burst-fired.
+            missed = (now_ms - next_ms) // schedule.every_ms + 1
+            next_ms += missed * schedule.every_ms
+        return next_ms
+
+    if schedule.kind == "cron" and schedule.expr:
+        try:
+            from zoneinfo import ZoneInfo
+
+            from croniter import croniter
+
+            # Use caller-provided reference time for deterministic scheduling
+            base_time = now_ms / 1000
+            tz = ZoneInfo(schedule.tz) if schedule.tz else datetime.now().astimezone().tzinfo
+            base_dt = datetime.fromtimestamp(base_time, tz=tz)
+            cron = croniter(schedule.expr, base_dt)
+            next_dt = cron.get_next(datetime)
+            return int(next_dt.timestamp() * 1000)
+        except Exception:
+            return None
+
+    return None
+
+
+def _validate_schedule_for_add(schedule: CronSchedule) -> None:
+    """Validate schedule fields that would otherwise create non-runnable jobs."""
+    if schedule.tz and schedule.kind != "cron":
+        raise ValueError("tz can only be used with cron schedules")
+
+    if schedule.kind == "cron" and schedule.tz:
+        try:
+            from zoneinfo import ZoneInfo
+
+            ZoneInfo(schedule.tz)
+        except Exception:
+            err_text = f"unknown timezone '{schedule.tz}'"
+            logger.error(err_text)
+            raise ValueError(err_text) from None
+
+
+class CronService:
+    """Service for managing and executing scheduled jobs."""
+
+    _MAX_RUN_HISTORY = 20
+
+    # Cron breaker thresholds (see docs/harness/loop-prevention/README.md): after
+    # DEGRADED_THRESHOLD consecutive failures a job degrades into an
+    # exponential-backoff mode; at DISABLED_THRESHOLD it is auto-disabled
+    # and a notification is published.
+    DEGRADED_THRESHOLD = 5
+    DISABLED_THRESHOLD = 10
+    DEGRADE_BACKOFF_BASE_MS = 5000
+    DEGRADE_BACKOFF_MAX_MS = 300000
+
+    def __init__(self):
+        self.store_path = cron_store_path
+        self.on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None
+        self._store: CronStore | None = None
+        self._last_mtime: float = 0.0
+        self._timer_task: asyncio.Task | None = None
+        self._running = False
+        # Per-job failure tracking for the breaker. Memory-only by design:
+        # never persisted, never passed to _save_store's serialization.
+        self._failure_states: dict[str, CronJobFailureState] = {}
+
+    def set_on_job(self, callback: Callable[[CronJob], Coroutine[Any, Any, str | None]]) -> None:
+        self.on_job = callback
+
+    def _load_store(self) -> CronStore:
+        """Load jobs from disk. Reloads automatically if file was modified externally."""
+        if self._store and self.store_path.exists():
+            mtime = self.store_path.stat().st_mtime
+            if mtime != self._last_mtime:
+                self._store = None
+        if self._store:
+            return self._store
+
+        if self.store_path.exists():
+            try:
+                data = json.loads(self.store_path.read_text(encoding="utf-8"))
+                jobs = []
+                for j in data.get("jobs", []):
+                    jobs.append(
+                        CronJob(
+                            id=j["id"],
+                            name=j["name"],
+                            enabled=j.get("enabled", True),
+                            schedule=CronSchedule(
+                                kind=j["schedule"]["kind"],
+                                at_ms=j["schedule"].get("atMs"),
+                                every_ms=j["schedule"].get("everyMs"),
+                                expr=j["schedule"].get("expr"),
+                                tz=j["schedule"].get("tz"),
+                            ),
+                            payload=CronPayload(
+                                kind=j["payload"].get("kind", "agent_turn"),
+                                message=j["payload"].get("message", ""),
+                                deliver=j["payload"].get("deliver", False),
+                                channel=j["payload"].get("channel"),
+                                to=j["payload"].get("to"),
+                            ),
+                            state=CronJobState(
+                                next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
+                                last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
+                                last_status=j.get("state", {}).get("lastStatus"),
+                                last_error=j.get("state", {}).get("lastError"),
+                            ),
+                            created_at_ms=j.get("createdAtMs", 0),
+                            updated_at_ms=j.get("updatedAtMs", 0),
+                            delete_after_run=j.get("deleteAfterRun", False),
+                        )
+                    )
+                self._store = CronStore(jobs=jobs)
+                self._last_mtime = self.store_path.stat().st_mtime
+            except Exception as e:
+                logger.warning("Failed to load cron store: %s", e)
+                self._store = CronStore()
+        else:
+            self._store = CronStore()
+
+        return self._store
+
+    def _save_store(self) -> None:
+        """Save jobs to disk."""
+        if not self._store:
+            return
+
+        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+
+        data = {
+            "version": self._store.version,
+            "jobs": [
+                {
+                    "id": j.id,
+                    "name": j.name,
+                    "enabled": j.enabled,
+                    "schedule": {
+                        "kind": j.schedule.kind,
+                        "atMs": j.schedule.at_ms,
+                        "everyMs": j.schedule.every_ms,
+                        "expr": j.schedule.expr,
+                        "tz": j.schedule.tz,
+                    },
+                    "payload": {
+                        "kind": j.payload.kind,
+                        "message": j.payload.message,
+                        "deliver": j.payload.deliver,
+                        "channel": j.payload.channel,
+                        "to": j.payload.to,
+                    },
+                    "state": {
+                        "nextRunAtMs": j.state.next_run_at_ms,
+                        "lastRunAtMs": j.state.last_run_at_ms,
+                        "lastStatus": j.state.last_status,
+                        "lastError": j.state.last_error,
+                    },
+                    "createdAtMs": j.created_at_ms,
+                    "updatedAtMs": j.updated_at_ms,
+                    "deleteAfterRun": j.delete_after_run,
+                }
+                for j in self._store.jobs
+            ],
+        }
+
+        self.store_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    async def start(self) -> None:
+        """Start the cron service."""
+        self._running = True
+        self._load_store()
+        self._recompute_next_runs()
+        self._save_store()
+        self._arm_timer()
+        logger.info(
+            "Cron service started with %s jobs", len(self._store.jobs if self._store else [])
+        )
+
+    def stop(self) -> None:
+        """Stop the cron service."""
+        self._running = False
+        if self._timer_task:
+            self._timer_task.cancel()
+            self._timer_task = None
+
+    def _recompute_next_runs(self) -> None:
+        """Recompute next run times for all enabled jobs.
+
+        ``every`` jobs keep a still-future persisted slot: the interval grid
+        anchored at the last scheduled run survives restarts (audit #22).
+        Slots that are missing or already past are re-anchored from now.
+        """
+        if not self._store:
+            return
+        now = _now_ms()
+        for job in self._store.jobs:
+            if job.enabled:
+                if (
+                    job.schedule.kind == "every"
+                    and job.state.next_run_at_ms
+                    and job.state.next_run_at_ms > now
+                ):
+                    continue
+                job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
+
+    def _get_next_wake_ms(self) -> int | None:
+        """Get the earliest next run time across all jobs."""
+        if not self._store:
+            return None
+        times = [
+            j.state.next_run_at_ms for j in self._store.jobs if j.enabled and j.state.next_run_at_ms
+        ]
+        return min(times) if times else None
+
+    def _arm_timer(self) -> None:
+        """Schedule the next timer tick."""
+        if self._timer_task:
+            self._timer_task.cancel()
+
+        if not self._running:
+            return
+
+        next_wake = self._get_next_wake_ms()
+        if not next_wake:
+            return
+
+        delay_ms = max(0, next_wake - _now_ms())
+        delay_s = delay_ms / 1000
+
+        async def tick():
+            await asyncio.sleep(delay_s)
+            if self._running:
+                await self._on_timer()
+
+        loop = _get_cron_loop()
+        self._timer_task = loop.create_task(tick())
+
+    async def _on_timer(self) -> None:
+        """Handle timer tick - run due jobs."""
+        self._load_store()
+        if not self._store:
+            return
+
+        now = _now_ms()
+        due_jobs = [
+            j
+            for j in self._store.jobs
+            if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
+        ]
+
+        for job in due_jobs:
+            await self._execute_job(job)
+
+        self._save_store()
+        self._arm_timer()
+
+    async def _execute_job(self, job: CronJob) -> None:
+        """Execute a single job."""
+        start_ms = _now_ms()
+        logger.info("Cron: executing job %s (%s)", job.name, job.id)
+
+        try:
+            if self.on_job:
+                await self.on_job(job)
+
+            job.state.last_status = "ok"
+            job.state.last_error = None
+            logger.info("Cron: job %s completed", job.name)
+
+        except Exception as e:
+            job.state.last_status = "error"
+            job.state.last_error = str(e)
+            logger.error("Cron: job %s failed: %s", job.name, e)
+
+        # Notify the bell: a cron job just completed (ok or error).
+        await _push_cron_notification(job)
+
+        end_ms = _now_ms()
+        job.state.last_run_at_ms = start_ms
+        job.updated_at_ms = end_ms
+
+        # Write execution log to logs/output/cron/ instead of run_history
+        self._write_execution_log(job, start_ms, end_ms)
+
+        # Handle one-shot jobs
+        if job.schedule.kind == "at":
+            if job.delete_after_run:
+                self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
+            else:
+                job.enabled = False
+                job.state.next_run_at_ms = None
+        else:
+            # Re-anchor to the slot just consumed (audit #22): the grid phase
+            # survives job duration; manual runs consume the pending slot.
+            job.state.next_run_at_ms = _compute_next_run(
+                job.schedule, _now_ms(), anchor_ms=job.state.next_run_at_ms
+            )
+
+    def _write_execution_log(self, job: CronJob, start_ms: int, end_ms: int) -> None:
+        """Write job execution log to logs/output/cron/ instead of in-memory run_history."""
+        log_dir = ROOT_DIR / "logs" / "output" / "cron"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"{job.id}.log"
+
+        from datetime import datetime
+
+        start_dt = datetime.fromtimestamp(start_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        end_dt = datetime.fromtimestamp(end_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        duration_ms = end_ms - start_ms
+
+        log_entry = {
+            "timestamp": end_dt,
+            "job_id": job.id,
+            "job_name": job.name,
+            "start_time": start_dt,
+            "end_time": end_dt,
+            "duration_ms": duration_ms,
+            "status": job.state.last_status,
+            "error": job.state.last_error,
+            "message": job.payload.message,
+        }
+
+        import json
+
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+        logger.info("Cron: execution log written to %s", log_file)
+
+    # ========== Failure breaker (see docs/harness/loop-prevention/README.md) ==========
+
+    async def _on_cron_job(self, cron_job: CronJob) -> None:
+        """Agent callback executed by ``_execute_job``, wrapped with the breaker.
+
+        Gates: disabled jobs are skipped; degraded jobs (>= DEGRADED_THRESHOLD
+        consecutive failures) are skipped while inside their exponential
+        backoff window. On success the failure state resets. On failure the
+        failure is recorded FIRST and the exception is re-raised afterwards
+        (record-then-re-raise) so ``_execute_job`` still records
+        ``last_status="error"`` and pushes the WS bell notification.
+        """
+        payload: CronPayload = cron_job.payload
+
+        # Breaker gate 1: disabled jobs never execute here.
+        if not cron_job.enabled:
+            logger.info("Cron: job {} is disabled, skipping execution", cron_job.id)
+            return
+
+        # Breaker gate 2: degraded mode — skip while inside the backoff window.
+        state = self._failure_states.get(cron_job.id)
+        if state is not None and state.consecutive_failures >= self.DEGRADED_THRESHOLD:
+            backoff_ms = min(
+                self.DEGRADE_BACKOFF_BASE_MS
+                * (2 ** (state.consecutive_failures - self.DEGRADED_THRESHOLD)),
+                self.DEGRADE_BACKOFF_MAX_MS,
+            )
+            elapsed_ms = (time.monotonic() - (state.degraded_since or time.monotonic())) * 1000
+            if elapsed_ms < backoff_ms:
+                logger.info(
+                    "Cron: job {} degraded, backing off ({:.1f}s/{:.1f}s elapsed) — skipping",
+                    cron_job.id,
+                    elapsed_ms / 1000,
+                    backoff_ms / 1000,
+                )
+                return
+
+        start = time.monotonic()
+        try:
+            # --- existing agent invocation logic (unchanged semantics) ---
+            message: str = payload.message
+            channel: str = payload.channel
+            to: str = payload.to
+
+            from agent.tools import (
+                build_python_repl_tool,
+                build_read_file_tool,
+                build_write_file_tool,
+            )
+
+            tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
+
+            # Sandbox-hardening cron agents are BACKGROUND callers — stamp
+            # every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass
+            # in terminal.py / python_repl.py) denies sandbox=False outright (no HITL
+            # middleware on background graphs to approve it).
+            for _t in tools:
+                if not isinstance(_t.metadata, dict):
+                    _t.metadata = {}
+                _t.metadata["caller_scope"] = "background"
+
+            main_llm = build_main_llm()  # Create a fresh LLM instance for the current event loop
+
+            agent: CompiledStateGraph = create_agent(
+                system_prompt=build_system_prompt(),
+                model=main_llm,
+                tools=tools,
+            )
+
+            result: dict[str, Any] = await agent.ainvoke(
+                input={"messages": [HumanMessage(content=message)]}
+            )
+            res: str = result["messages"][-1].content
+
+            bus: MessageBus = channel_manager.get_bus()
+
+            msg: InboundMessage = InboundMessage(
+                channel=channel,
+                sender_id="cron tool",
+                chat_id=to,
+                content=res,
+            )
+            await bus.publish_inbound(msg)
+
+        except Exception as e:
+            # One-shot `at` jobs are handled by _execute_job (disable/delete
+            # after run) — they are never breaker-counted.
+            if cron_job.schedule.kind != "at":
+                await self._record_failure(cron_job, str(e))
+            raise
+
+        # Success: reset the breaker state and record the measured duration.
+        duration_s = time.monotonic() - start
+        self._failure_states[cron_job.id] = CronJobFailureState()
+        logger.info("Cron: job {} agent turn succeeded in {:.2f}s", cron_job.id, duration_s)
+        self._save_store()
+
+    async def _record_failure(self, job: CronJob, error: str) -> None:
+        """Record one failure for ``job`` and apply the breaker transitions.
+
+        Degrade: at DEGRADED_THRESHOLD the job enters backoff mode; the backoff
+        doubles with each further failure (capped at DEGRADE_BACKOFF_MAX_MS).
+        Disable: at DISABLED_THRESHOLD the job is disabled, the store is saved
+        (persisting the ``enabled=False`` flag) and a best-effort notification
+        is published to the job's payload channel.
+        """
+        state = self._failure_states.setdefault(job.id, CronJobFailureState())
+        state.consecutive_failures += 1
+        state.last_error = error
+
+        if state.consecutive_failures >= self.DEGRADED_THRESHOLD:
+            state.backoff_ms = min(
+                self.DEGRADE_BACKOFF_BASE_MS
+                * (2 ** (state.consecutive_failures - self.DEGRADED_THRESHOLD)),
+                self.DEGRADE_BACKOFF_MAX_MS,
+            )
+            # Start of the current backoff window (refreshed per failure).
+            state.degraded_since = time.monotonic()
+            logger.warning(
+                "Cron: job {} degraded (failures={}, backoff={:.1f}s)",
+                job.id,
+                state.consecutive_failures,
+                state.backoff_ms / 1000,
+            )
+
+        if state.consecutive_failures >= self.DISABLED_THRESHOLD:
+            job.enabled = False
+            job.updated_at_ms = _now_ms()
+            self._save_store()
+            logger.error(
+                "Cron: job {} auto-disabled after {} consecutive failures (last error: {})",
+                job.id,
+                state.consecutive_failures,
+                error[:200],
+            )
+            await self._notify_cron_disabled(job, job.payload, state)
+
+    async def _notify_cron_disabled(
+        self, job: CronJob, payload: CronPayload, state: CronJobFailureState
+    ) -> None:
+        """Best-effort outbound notification that ``job`` was auto-disabled.
+
+        Uses the job's payload channel/to (there is no ``job.channel_id``
+        field). A missing channel degrades to an error log: no publish, no
+        crash. Publish failures are logged and never mask the breaker's
+        original exception (the caller re-raises it).
+        """
+        if not payload.channel:
+            logger.error(
+                "Cron: job {} auto-disabled after {} consecutive failures "
+                "(no payload channel configured — notification skipped)",
+                job.id,
+                state.consecutive_failures,
+            )
+            return
+
+        content = (
+            f"Cron job '{job.name}' ({job.id}) has been auto-disabled after "
+            f"{state.consecutive_failures} consecutive failures. "
+            f"Last error: {state.last_error[:200]}. "
+            f"Check the job configuration or re-enable it manually."
+        )
+        try:
+            bus: MessageBus = channel_manager.get_bus()
+            await bus.publish_outbound(
+                OutboundMessage(
+                    channel=payload.channel,
+                    chat_id=payload.to or "",
+                    content=content,
+                    metadata={"job_id": job.id},
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Cron: failed to publish auto-disable notification for job {}: {}", job.id, e
+            )
+
+    # ========== Public API ==========
+
+    def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
+        """List all jobs."""
+        store = self._load_store()
+        jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
+        return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float("inf"))
+
+    def add_job(
+        self,
+        name: str,
+        schedule: CronSchedule,
+        message: str,
+        deliver: bool = False,
+        channel: str | None = None,
+        to: str | None = None,
+        delete_after_run: bool = False,
+    ) -> CronJob:
+        """Add a new job."""
+        # Auto-start if not running
+        if not self._running:
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(self.start())
+                else:
+                    loop.run_until_complete(self.start())
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.start())
+
+        store = self._load_store()
+        _validate_schedule_for_add(schedule)
+        now = _now_ms()
+
+        job = CronJob(
+            id=str(uuid.uuid4())[:8],
+            name=name,
+            enabled=True,
+            schedule=schedule,
+            payload=CronPayload(
+                kind="agent_turn",
+                message=message,
+                deliver=deliver,
+                channel=channel,
+                to=to,
+            ),
+            state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
+            created_at_ms=now,
+            updated_at_ms=now,
+            delete_after_run=delete_after_run,
+        )
+
+        store.jobs.append(job)
+        self._save_store()
+        self._arm_timer()
+
+        logger.info("Cron: added job %s (%s)", name, job.id)
+        return job
+
+    def register_system_job(self, job: CronJob) -> CronJob:
+        """Register an internal system job (idempotent on restart)."""
+        # Auto-start if not running
+        if not self._running:
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(self.start())
+                else:
+                    loop.run_until_complete(self.start())
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.start())
+
+        store = self._load_store()
+        now = _now_ms()
+        job.state = CronJobState(next_run_at_ms=_compute_next_run(job.schedule, now))
+        job.created_at_ms = now
+        job.updated_at_ms = now
+        store.jobs = [j for j in store.jobs if j.id != job.id]
+        store.jobs.append(job)
+        self._save_store()
+        self._arm_timer()
+        logger.info("Cron: registered system job %s (%s)", job.name, job.id)
+        return job
+
+    def remove_job(self, job_id: str) -> Literal["removed", "protected", "not_found"]:
+        """Remove a job by ID, unless it is a protected system job."""
+        store = self._load_store()
+        job = next((j for j in store.jobs if j.id == job_id), None)
+        if job is None:
+            return "not_found"
+        if job.payload.kind == "system_event":
+            logger.info("Cron: refused to remove protected system job %s", job_id)
+            return "protected"
+
+        before = len(store.jobs)
+        store.jobs = [j for j in store.jobs if j.id != job_id]
+        removed = len(store.jobs) < before
+
+        if removed:
+            self._save_store()
+            self._arm_timer()
+            logger.info("Cron: removed job %s", job_id)
+            return "removed"
+
+        return "not_found"
+
+    def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
+        """Enable or disable a job."""
+        store = self._load_store()
+        for job in store.jobs:
+            if job.id == job_id:
+                if enabled:
+                    # Manual re-enable clears the breaker's failure state
+                    # (deliberate reset semantics: enabling means trusting the job again).
+                    self._failure_states[job_id] = CronJobFailureState()
+                job.enabled = enabled
+                job.updated_at_ms = _now_ms()
+                if enabled:
+                    job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+                else:
+                    job.state.next_run_at_ms = None
+                self._save_store()
+                self._arm_timer()
+                return job
+        return None
+
+    async def run_job(self, job_id: str, force: bool = False) -> bool:
+        """Manually run a job."""
+        store = self._load_store()
+        for job in store.jobs:
+            if job.id == job_id:
+                if not force and not job.enabled:
+                    return False
+                await self._execute_job(job)
+                self._save_store()
+                self._arm_timer()
+                return True
+        return False
+
+    def get_job(self, job_id: str) -> CronJob | None:
+        """Get a job by ID."""
+        store = self._load_store()
+        return next((j for j in store.jobs if j.id == job_id), None)
+
+    def get_failure_state(self, job_id: str) -> dict | None:
+        """Return the job's failure-tracking state as a plain dict, or None.
+
+        Public breaker API (consumed by the REST layer,). Returns a
+        zeroed view once the state has been reset — entries are never removed.
+        """
+        state = self._failure_states.get(job_id)
+        if state is None:
+            return None
+        return {
+            "consecutive_failures": state.consecutive_failures,
+            "last_error": state.last_error,
+            "degraded_since": state.degraded_since,
+            "backoff_ms": state.backoff_ms,
+        }
+
+    def reset_failures(self, job_id: str) -> bool:
+        """Reset the job's breaker state; restore it if the breaker disabled it.
+
+        Returns False when the job does not exist. Re-enables the job only for
+        the breaker's own fingerprint (failure count reached DISABLED_THRESHOLD
+        while the job is disabled) — manual disables with low failure counts
+        are preserved. Re-enabling mirrors ``enable_job``: next run recomputed
+        and the timer re-armed.
+        """
+        store = self._load_store()
+        job = next((j for j in store.jobs if j.id == job_id), None)
+        if job is None:
+            return False
+
+        state = self._failure_states.get(job_id)
+        if (
+            state is not None
+            and not job.enabled
+            and state.consecutive_failures >= self.DISABLED_THRESHOLD
+        ):
+            job.enabled = True
+            job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+            job.updated_at_ms = _now_ms()
+            self._arm_timer()
+
+        self._failure_states[job_id] = CronJobFailureState()
+        self._save_store()
+        return True
+
+    def status(self) -> dict:
+        """Get service status."""
+        store = self._load_store()
+        return {
+            "enabled": self._running,
+            "jobs": len(store.jobs),
+            "next_wake_at_ms": self._get_next_wake_ms(),
+        }
+
+
+cron_service = CronService()
+_cron_loop: asyncio.AbstractEventLoop | None = None
+_cron_loop_lock = threading.Lock()
+
+
+def _get_cron_loop() -> asyncio.AbstractEventLoop:
+    """Return the cron service's dedicated event loop (thread-safe)."""
+    global _cron_loop
+    with _cron_loop_lock:
+        if _cron_loop is None or _cron_loop.is_closed():
+            _cron_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_cron_loop)
+        return _cron_loop
+
+
+def _start_cron_service_thread():
+    """Run cron_service.start in a dedicated daemon thread with its own event loop."""
+    global _started
+    with _start_lock:
+        if _started:
+            return
+        _started = True
+
+    loop = _get_cron_loop()
+
+    try:
+        loop.run_until_complete(cron_service.start())
+        loop.run_forever()
+    except Exception:
+        logger.exception("Cron service thread exited")
+    finally:
+        loop.close()
+
+
+async def _on_cron_job(cron_job: CronJob) -> None:
+    """Backward-compatible module-level shim delegating to the singleton.
+
+    ``init()`` wires this as the execution callback and legacy callers/tests
+    invoke it directly; the implementation now lives in
+    ``CronService._on_cron_job`` (failure-breaker-wrapped agent callback).
+    """
+    await cron_service._on_cron_job(cron_job)
+
+
+_started = False
+_start_lock = threading.Lock()
+
+
+def _http_only_mode() -> bool:
+    """True when crash-loop HTTP-only mode is active (SHERRY_HTTP_ONLY=1).
+
+    ``server.__main__`` sets the env var when the CrashLoopBreaker trips
+    (3+ unclean boots within 5 min) BEFORE importing/serving anything, so a
+    plain env read here is reliable. In that mode the cron scheduler daemon
+    thread must NOT start -- but the REST routes stay usable: ``GET /cron``
+    inspection and manual ``run_job`` / ``/cron/trigger`` are explicit user
+    actions, so they remain available.
+    """
+    return os.environ.get("SHERRY_HTTP_ONLY") == "1"
+
+
+def init() -> None:
+    """Wire the job-execution callback and start the cron service thread.
+
+    Used to run at module import time, which made any bare import of the
+    cron scripts (tests, tooling, API consumers) spawn a daemon thread
+    unexpectedly. Importing this module is now
+    side-effect-free; the service entry point calls ``init()`` once.
+
+    Idempotent: subsequent calls are no-ops. (``CronService.add_job`` /
+    ``register_system_job`` additionally lazily start the service on the
+    caller's event loop when used without ``init()``.)
+    """
+    global _started
+    cron_service.set_on_job(_on_cron_job)
+    with _start_lock:
+        if _started:
+            return
+        _started = True
+
+    if _http_only_mode():
+        # Crash-loop HTTP-only mode: skip the daemon-thread start so the
+        # scheduler cannot feed the crash loop. REST routes remain usable
+        # (GET /cron inspection, manual run_job = explicit user action); the
+        # job-execution callback above is still wired for them.
+        logger.warning(
+            "Cron: SHERRY_HTTP_ONLY=1 (crash-loop tripped) -- cron-service "
+            "daemon thread NOT started; REST routes remain usable "
+            "(GET /cron, manual run_job)",
+        )
+        return
+
+    threading.Thread(target=_start_cron_service_thread, daemon=True, name="cron-service").start()

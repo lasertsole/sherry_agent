@@ -1,0 +1,31 @@
+# VCS / tooling
+.git
+.github
+.omo
+.playwright-mcp
+.vscode
+
+# Local Python env — built fresh inside the image
+.venv
+**/__pycache__
+*.pyc
+
+# Secrets — never bake into the image
+.env
+client/.env
+
+# Desktop client (Tauri 2 + Nuxt 4; separate build pipeline)
+client/
+
+# Runtime data — created at runtime, mount volumes here in production
+src/
+temp/
+logs/output/
+cron_jobs.json
+
+# Model weights are downloaded at runtime into models/*/model_weight/
+models/*/model_weight/
+
+# Local docs / scratch
+AUDIT_REPORT.md
+*.log

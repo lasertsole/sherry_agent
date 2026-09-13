@@ -1,0 +1,85 @@
+version: 2
+
+updates:
+  # ── 后端 Python (uv) ───────────────────────────────────
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      # 生产依赖合并一个 PR
+      production-deps:
+        patterns:
+          - "langchain*"
+          - "langgraph*"
+          - "robyn"
+          - "loguru"
+          - "dotenv"
+          - "aiosqlite"
+          - "croniter"
+          - "pillow"
+          - "opencv-python-headless"
+          - "instructor"
+          - "json_repair"
+          - "json5"
+          - "gguf"
+          - "pipmaster"
+          - "snkv"
+          - "websockets"
+          - "websocket-client"
+      # 开发依赖合并一个 PR
+      dev-deps:
+        dependency-type: "development"
+    commit-message:
+      prefix: "deps(backend)"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # ── 前端 npm (pnpm) ────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/client"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      # Nuxt/Vue 生态合并一个 PR
+      nuxt-ecosystem:
+        patterns:
+          - "nuxt"
+          - "vue"
+          - "vue-router"
+          - "@nuxtjs/*"
+          - "@pinia/*"
+          - "pinia*"
+      # PrimeVue/Tailwind 生态合并一个 PR
+      ui-ecosystem:
+        patterns:
+          - "primevue"
+          - "@primevue/*"
+          - "tailwindcss"
+          - "@tailwindcss/*"
+      # 开发/测试工具合并一个 PR
+      dev-tools:
+        dependency-type: "development"
+    commit-message:
+      prefix: "deps(frontend)"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # ── GitHub Actions 版本 ────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(ci)"
+    labels:
+      - "dependencies"
+      - "ci"

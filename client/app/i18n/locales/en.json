@@ -1,0 +1,101 @@
+{
+  "a11y": {
+    "previewImage": "Preview image"
+  },
+  "common": {
+    "confirmDelete": "Confirm Delete",
+    "delete": "Delete",
+    "cancel": "Cancel"
+  },
+  "chatInput": {
+    "maxImages": "You can upload at most {count} images",
+    "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",
+    "maxAudios": "You can upload at most {count} audio files",
+    "maxAudiosExceed": "You can upload at most {count} audio files, {extra} over the limit",
+    "maxVideos": "You can upload at most {count} video files",
+    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
+  },
+  "chatBox": {
+    "defaultAiName": "Sherry"
+  },
+  "chat": {
+    "backgroundMessage": "Background task"
+  },
+  "errors": {
+    "requestFailed": "Request failed",
+    "pageError": "Page error",
+    "replyFailed": "(Reply failed: {reason})",
+    "sendFailed": "(Send failed: {reason})",
+    "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly."
+  },
+  "connection": {
+    "offline": "Network offline",
+    "backendDown": "Backend service unreachable",
+    "backOnline": "Connection restored"
+  },
+  "history": {
+    "noSessions": "No conversations",
+    "newSession": "New Session"
+  },
+  "sidebar": {
+    "tasksLoading": "Loading tasks...",
+    "noTasks": "No background tasks yet",
+    "tasksUpdatedAt": "Updated {time}",
+    "tasksAgoSeconds": "{sec}s ago",
+    "statusRunning": "Running",
+    "statusInterrupted": "Interrupted",
+    "statusPending": "Pending",
+    "statusInProgress": "Delivering",
+    "statusDelivered": "Delivered",
+    "statusDone": "Done",
+    "statusError": "Error",
+    "statusTimeout": "Timeout",
+    "statusKilled": "Killed",
+    "statusUnknown": "Unknown",
+    "roleRoot": "Root",
+    "roleChild": "Task"
+  },
+  "toolbar": {
+    "newChat": "New Chat",
+    "knowledgeBase": "Knowledge Base",
+    "uploadImage": "Upload Image",
+    "image": "Image",
+    "audio": "Audio",
+    "uploadAudio": "Upload Audio",
+    "video": "Video",
+    "uploadVideo": "Upload Video",
+    "skills": "Skills",
+    "knowledgeGraph": "Knowledge Graph",
+    "stats": "Statistics",
+    "systemConfig": "System Config",
+    "persona": "AI Persona",
+    "memory": "Memory",
+    "heartbeat": "Heartbeat",
+    "cron": "Cron Tasks",
+    "logs": "Logs",
+    "notification": "Notifications",
+    "extend": "Extend",
+    "settingsMenu": "Menu",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
+  },
+  "todolist": {
+    "progress": "{done}/{total} done",
+    "title": "Task Plan",
+    "flowLabel": "TaskFlow: {flow}",
+    "linkedStep": "TaskFlow {flow} · {step}",
+    "delegated": "Delegated to subagent",
+    "expand": "Expand plan",
+    "collapse": "Collapse plan"
+  },
+  "config": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    }
+  }
+}
