@@ -298,9 +298,16 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
         return
 
     # SESSION plan P1-2: skip messages this process already flushed (crash-retry dedup).
-    pending: list[BaseMessage] = [
-        m for m in messages if not m.additional_kwargs.get(_DB_PERSISTED_KEY)
-    ]
+    # Unknown roles are skipped before the dedup probe: message-like objects
+    # without a registered builder (EC-01 add_messages bounds) are not
+    # required to carry ``additional_kwargs`` at all.
+    pending: list[BaseMessage] = []
+    for m in messages:
+        if getattr(m, "type", None) not in _BUILDERS:
+            continue
+        if m.additional_kwargs.get(_DB_PERSISTED_KEY):
+            continue
+        pending.append(m)
     if not pending:
         return
 
