@@ -59,7 +59,7 @@ It sets the fired flag on the transition and resets it to `False` whenever the l
 
 When `plan_extraction_enabled` is on and detection fires, `_nudge_plan_extraction` runs under `nudge_plan_extraction_lock`:
 
-1. `_build_plan_context` gathers the plan file (`plan_ref` state first, else the first todo carrying one), the todo list, the start-work ledger (`.omo/start-work/ledger.jsonl`), and this session's subagent runs (`result_text` truncated to 24 KB, `outcome`, task). It returns `{}` when there is no todo list, and returns nothing at all.
+1. `_build_plan_context` gathers the plan file (`plan_ref` state first, else the first todo carrying one), the todo list, the start-work ledger (`.omo/start-work/ledger.jsonl`), and this session's subagent runs (`result_text` truncated to 24 KB, `outcome`, task). It returns `{}` when there is no todo list, which makes the caller skip the pass.
 2. `_fetch_pending_facts` renders the not-yet-consumed facts interval for Part 3.
 3. The prompt `_PLAN_EXTRACTION_PROMPT` is rendered with the plan context and the facts section, then sent to a nudge agent (same builder, same `nudge: True` gate) with the conversation.
 4. After a successful `ainvoke`, if a pending facts range existed, `_advance_facts_consumed` advances the consumed watermark.
@@ -110,7 +110,7 @@ The fork result messages are logged only. Nothing reaches the main graph or its 
 | Read-only forks, no checkpointer | Every nudge / extraction fork's result messages are logged and discarded. The forks have no checkpointer, so they cannot write the main graph's state. |
 | Per-session re-entrancy locks | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` and `compression_todo_update_lock` prevent overlapping runs of the same extraction path. While a nudge lock is held, `after_agent` skips the nudge decision. |
 | Fail-open boundaries | Every path wraps its work in `try/except`, logs, and returns. No extraction failure propagates into a turn, a compression, or another extraction. |
-| Background-task reference retention | `_BACKGROUND_TASKS`, `_COMPRESSION_TODO_TASKS` and `_COMPRESSION_TODO_TASKS` set hold strong refs so asyncio cannot garbage-collect an in-flight task. |
+| Background-task reference retention | `_BACKGROUND_TASKS` and `_COMPRESSION_TODO_TASKS` sets hold strong refs so asyncio cannot garbage-collect an in-flight task. |
 
 ## Storage & Limits
 

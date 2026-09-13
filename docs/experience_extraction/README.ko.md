@@ -59,7 +59,7 @@
 
 `plan_extraction_enabled`가 켜져 있고 감지가 발화하면 `_nudge_plan_extraction`이 `nudge_plan_extraction_lock` 아래에서 실행됩니다:
 
-1. `_build_plan_context`가 plan 파일(`plan_ref` 상태 우선, 없으면 `plan_ref`를 가진 첫 todo), todo 목록, start-work ledger(`.omo/start-work/ledger.jsonl`), 이 세션의 자식 Agent 실행 기록(`result_text`는 24 KB로 절단, `outcome`, task)을 모읍니다. todo 목록이 없으면 `{}`를 반환하고 그대로 끝냅니다.
+1. `_build_plan_context`가 plan 파일(`plan_ref` 상태 우선, 없으면 `plan_ref`를 가진 첫 todo), todo 목록, start-work ledger(`.omo/start-work/ledger.jsonl`), 이 세션의 자식 Agent 실행 기록(`result_text`는 24 KB로 절단, `outcome`, task)을 모읍니다. todo 목록이 없으면 `{}`를 반환하며, 호출자는 이를 보고 건너뜁니다.
 2. `_fetch_pending_facts`가 아직 소비되지 않은 facts 구간을 Part 3용으로 렌더링합니다.
 3. plan 컨텍스트와 facts 섹션을 채운 `_PLAN_EXTRACTION_PROMPT`를 대화와 함께 nudge agent(같은 빌더, 같은 `nudge: True` 게이트)로 보냅니다.
 4. `ainvoke` 성공 후, 대기 facts 구간이 있으면 `_advance_facts_consumed`가 consumed 워터마크를 진행합니다.
