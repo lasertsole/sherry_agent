@@ -3,6 +3,47 @@
 > 配套实现: agent/tools/todolist/（规划与纪律层，已实现并含 E1–E7；原 TODOLIST_PLAN.md 设计稿已删除）
 > 参考来源: oh-my-openagent-dev (D:\selfProj\oh-my-openagent-dev)
 > 日期: 2026-09-07
+> **修订: 2026-09-13（项目大改后适配核对）— 见下方「适配修订」节；与旧文冲突处以该节为准。**
+
+---
+
+## 适配修订（2026-09-13）
+
+> 本计划撰写于 2026-09-07；此后项目发生多轮大改（config 合并、Summarization T1–T5 重构、
+> P2-3 facts 管线落地、session-memory 迁移 v10–v17、events/embeddings 设施）。实施前必须遵守本节结论。
+
+### 已确认决策
+
+1. **知识存储位置 = `workspace/`**（原设计项目内 `.omo/` 下的知识根目录作废）。
+   落点为既有配置常量 `config.path.KNOWLEDGE_DIR`（= `workspace/knowledge`）下的
+   `plans/<plan-name>/` 子目录。`index/` 已被 `KNOWLEDGE_INDEX_DIR` 预留给知识图谱索引，
+   `plans/` 隔离避免撞名。相对路径字面量一律禁止，全部经 `config/path.py` + pathlib。
+
+2. **facts 管线与 plan extraction 合并（同回合只跑一次 LLM）**。
+   plan extraction 触发时**吸收**该回合的待处理 facts 区间：同一次辅助 LLM 调用同时产出
+   ①计划知识 JSON（`workspace/knowledge/plans/...`）②持久事实（经 `TieredMemoryStore.add_fact`
+   写入 `workspace/memory/facts/*.md`），并推进 `context_engine/facts/cursor` 的 consumed 水位。
+   未触发 plan extraction 的回合仍走既有 per-turn facts 管线（`ContextEngineHook.aafter_agent`
+   的 `_run_facts_pipeline`）。**禁止同回合双跑提取。**
+
+3. **`plan_ref`（已确认 2026-09-13）**：注入机制见下方「plan_ref — 会话与计划文件的唯一桥梁」小节。
+
+### 实施必须适配项（相对原始设计）
+
+| # | 适配点 | 原因（项目已变） | 处理 |
+|---|---|---|---|
+| A1 | 删除 `config/features/agent_side/context_engine_hook.py` 的 `nudge_skill_threshold`（TypedDict 必填键 + 实例） | config 合并后常量统一入 features | 同步更新 `tests/config/test_features_agent_side.py:148` |
+| A2 | 新增 `plan_extraction_enabled: bool` 到 `CONTEXT_ENGINE_HOOK` | 原设计无开关 | 默认 `True` |
+| A3 | `aafter_agent` 现已挂 facts 后台任务（`_run_facts_pipeline`） | P2-3 晚于本计划落地 | 按决策 2 合并；plan 触发回合跳过独立 facts 消费 |
+| A4 | ledger 实际路径 = `.omo/start-work/ledger.jsonl` | start-work 工作流产物的真实位置 | 修正 `_build_plan_context` 读取路径并核对条目字段 |
+| A5 | `knowledge` 工具必须带 `metadata={"nudge": True, ...}` | `_NudgeLimitTool._is_nudge_allowed` 白名单（nudge.py:232-234） | 照抄 `skill_manage.py:900` |
+| A6 | 建议附 `scope: "main_only"` | 与 skill_manage / taskflow / todolist 一致 | 防止下发子代理 |
+| A7 | 路径全部走 `config/path.py` + pathlib | 相对路径依赖 cwd | 导入 `KNOWLEDGE_DIR` / `ROOT_DIR`，禁止字符串拼路径 |
+| A8 | 工具层错误返回 `"Error: ..."` 文本 | 仓库 error-as-text 契约 | 裸 `assert`/异常不外泄到工具边界 |
+| A9 | `datetime.utcnow()` 已弃用（Python 3.13） | 原设计旧写法 | 用 `datetime.now(timezone.utc)` 或仓库 `YYYYmmddHHMMSS` 惯例 |
+| A10 | `_build_knowledge_block` 需 `selected_file_names is None` 门控 + try/except fail-open | prompt_builder 既有块约定（facts_listing / continuity） | 参考 `_build_continuity_block`（prompt_builder.py:289-295） |
+| A11 | skill 计数器删除涉及两处 | 原设计只列常量 | `wrap_tool_call` 计数（core.py:186-189）+ `_NUDGE_SKILL_LOCK_KEY` 锁检查（core.py:129-130）一并清理 |
+| A12 | sync `after_agent` 与 async `aafter_agent` 两处派发都要改 | 双路径并存 | 返回元组改为 `need_memory` / `need_plan_extraction` |
 
 ## 设计哲学
 
@@ -40,7 +81,7 @@
 │ _nudge_memory()       │ _nudge_plan_extraction()                      │
 │ _MEMORY_REVIEW_PROMPT │ _PLAN_EXTRACTION_PROMPT (含 skill 更新指引)   │
 │ 保存到 memory store   │ 写入两处:                                      │
-│                       │   ① .omo/knowledge/<plan-name>/*.json (JSON) │
+│                       │   ① workspace/knowledge/plans/... (JSON)     │
 │                       │   ② skills/ 目录 (SKILL.md + references/)     │
 └───────────────────────┴──────────────────────────────────────────────┘
 
@@ -54,14 +95,14 @@
 │    → _build_plan_context(session_id)                                  │
 │      → 读取 plan 文件 (.omo/plans/*.md)                              │
 │      → 读取 todos (todos.db)                                         │
-│      → 读取 ledger (.omo/ledger.jsonl)                               │
+│      → 读取 ledger (.omo/start-work/ledger.jsonl)                    │
 │      → 读取 subagent runs (registry queries)                         │
 │    → 启动 nudge agent (with _NudgeLimitTool)                         │
 │    → nudge agent 同时执行两种操作:                                   │
 │      ① 调用 knowledge(action="write") 写入 JSON 知识文件             │
 │      ② 调用 skill_manage 更新 skill 库 (SKILL.md + references/)      │
 │ 3. knowledge tool (action="write")                                    │
-│    → knowledge_store.py 持久化到 .omo/knowledge/<plan-name>/*.json  │
+│    → knowledge_store.py 持久化到 workspace/knowledge/plans/...      │
 │                                                                      │
 │ ── 知识查询 (两层设计) ───────────────────────────────────────────── │
 │ Tier 1: 系统提示词注入 (压缩免疫)                                    │
@@ -82,12 +123,14 @@
 ### 存储结构
 
 ```
-.omo/
-  knowledge/
-    <plan-name>/
-      task-<position>.json      # 每个 todo item 一份
-      wave-<index>.json          # 每个波次汇总一份
-      plan-summary.json          # 整个计划的总结
+workspace/
+  knowledge/                     # = config.path.KNOWLEDGE_DIR
+    plans/                       # 计划知识（本方案）★2026-09-13 由项目内旧知识根目录迁入
+      <plan-name>/
+        task-<position>.json     # 每个 todo item 一份
+        wave-<index>.json        # 每个波次汇总一份
+        plan-summary.json        # 整个计划的总结
+    index/                       # 预留：KNOWLEDGE_INDEX_DIR（知识图谱索引），勿占用
 ```
 
 ### task-<position>.json — 单任务知识
@@ -228,6 +271,11 @@ if need_nudge_review_memory:
 
 if need_plan_extraction:
     _nudge_plan_extraction(...)
+
+# ★适配(2026-09-13) 合并决策：本回合由 plan extraction 吸收 facts 待处理区间——
+#   单次 LLM 同时产出计划知识 JSON 与持久事实（TieredMemoryStore.add_fact），
+#   并推进 context_engine/facts/cursor 的 consumed 水位；未触发的回合才走
+#   ContextEngineHook.aafter_agent 的独立 _run_facts_pipeline。禁止同回合双跑。
 ```
 
 ### todo-all-complete 检测
@@ -285,6 +333,27 @@ def _detect_todo_all_complete(session_id: str) -> bool:
 
 ---
 
+### plan_ref — 会话与计划文件的唯一桥梁
+
+**作用**（三个下游消费者全靠它）：
+
+| 消费者 | 用途 | 缺失后果 |
+|---|---|---|
+| `_build_plan_context()` | 读取 `.omo/plans/*.md` 全文进提取 prompt（让 nudge agent 拿到计划意图与验收标准）；用文件 basename 推导 `plan_name` | `plan_content` 为空 → 提取“盲跑”，质量骤降 |
+| 知识命名空间 | `plan_name` 是 `workspace/knowledge/plans/<plan-name>/` 的目录键，也是 `knowledge(action="read", plan_name=...)` 的查询键 | 退化为 `session-<id>` 命名 → **跨会话/跨机器无法按计划名检索**，失败集复用的核心价值失效 |
+| `_build_knowledge_block()` | 用同一 `plan_name` 定位 `plan-summary.json` 做 Tier-1 注入 | 知识块返回空 → 压缩后知识不可见 |
+
+**现状**：`plan_ref` 是 `todos` 表的可选列（`agent/tools/todolist/registry/store_sqlite.py`），`todowrite` 文档化为 “.omo/plans/*.md path”，但**没有任何代码自动填充** —— 完全依赖模型自觉；模型不写则整条链路降级为 `session-<id>`。
+
+**注入机制（已确认 2026-09-13，实施时照此执行）**：
+
+1. `todowrite` 增加可选顶层参数 `plan_ref: str | None`；`TodoService.update_todos` 将其写入 `state_register_db` 会话键 `plan_ref`（一次设定，后续沿用）。
+2. 读取优先级：`state_register_db` 的 `plan_ref` → todos 中首个非空 `plan_ref` → 回退 `session-<id>`。
+3. 收益：不依赖每条 todo 携带；会话级一次设定即可；`_build_knowledge_block` 在无 todos 时也能注入。
+4. 边界：计划文件被删除/改名时按 A10 fail-open 返回空，不影响回合。
+
+---
+
 ## 计划上下文构建器
 
 ### _build_plan_context()
@@ -296,7 +365,7 @@ def _build_plan_context(session_id: str) -> dict:
     读取:
     1. Plan 文件 (.omo/plans/*.md 或 todos 中的 plan_ref)
     2. Todos (todos.db)
-    3. Ledger (.omo/ledger.jsonl)
+    3. Ledger (.omo/start-work/ledger.jsonl)
     4. Subagent runs (registry queries)
 
     返回:
@@ -310,6 +379,8 @@ def _build_plan_context(session_id: str) -> dict:
     }
     """
     import json, os
+
+    from config.path import ROOT_DIR
 
     # 1. 读取 todos
     from agent.tools.todolist.registry.store_sqlite import get_todos_sync
@@ -338,7 +409,8 @@ def _build_plan_context(session_id: str) -> dict:
 
     # 3. 读取 ledger
     ledger_entries = []
-    ledger_path = ".omo/ledger.jsonl"
+    # ★适配(2026-09-13): 实际 ledger 在 start-work 工作流目录
+    ledger_path = str(ROOT_DIR / ".omo" / "start-work" / "ledger.jsonl")
     if os.path.exists(ledger_path):
         with open(ledger_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -555,7 +627,7 @@ genuinely nothing stands out, skip Part 2 and say 'No skill updates needed.'
 ## Important
 
 The knowledge you write via the knowledge tool (action='write') is stored
-as JSON files in .omo/knowledge/. In future sessions, you can query this
+as JSON files in workspace/knowledge/plans/. In future sessions, you can query this
 knowledge using the SAME tool with action='read' to look up failure_set,
 success_path, and method from previously completed plans before starting
 similar work. A condensed summary is also auto-injected into the system
@@ -676,7 +748,7 @@ async def knowledge(
 ```python
 """Plan-aware knowledge storage.
 
-Knowledge files are sidecar JSON files in .omo/knowledge/<plan-name>/.
+Knowledge files are sidecar JSON files in workspace/knowledge/plans/<plan-name>/.
 Plan file and todos.db are read-only — never modified by nudge.
 """
 
@@ -685,7 +757,10 @@ import os
 from datetime import datetime
 from typing import Literal
 
-_KNOWLEDGE_ROOT = ".omo/knowledge"
+# ★适配(2026-09-13): 存储迁至 workspace；路径走 config.path，plans/ 隔离 index/
+from config.path import KNOWLEDGE_DIR
+
+_KNOWLEDGE_ROOT = KNOWLEDGE_DIR / "plans"
 
 
 class KnowledgeStore:
@@ -1159,7 +1234,7 @@ TodoService 已实现于 agent/tools/todolist/service.py。`_detect_todo_all_com
 def _build_knowledge_block(session_id: str) -> str:
     """注入当前 plan 的知识摘要（压缩免疫）。
 
-    从 .omo/knowledge/<plan-name>/plan-summary.json 读取:
+    从 workspace/knowledge/plans/<plan-name>/plan-summary.json 读取:
     - key_failures top 3-5
     - key_successes top 3-5
     - reusable_patterns
@@ -1184,7 +1259,9 @@ def _build_knowledge_block(session_id: str) -> str:
     except Exception:
         return ""
 
-    summary_path = os.path.join(".omo", "knowledge", plan_name, "plan-summary.json")
+    from config.path import KNOWLEDGE_DIR
+
+    summary_path = KNOWLEDGE_DIR / "plans" / plan_name / "plan-summary.json"
     if not os.path.exists(summary_path):
         return ""
 
@@ -1346,7 +1423,7 @@ Phase C: 系统提示词注入 (Tier 1, 依赖 Phase A 的 knowledge_store.py)
 | ------------------ | ------------------------------------------------------- | ----------------------------------------------- |
 | 触发时机           | todo-list all-complete                                  | 时机精确：工作刚完成，上下文完整                |
 | 存储格式           | JSON (知识) + Markdown (skill)                          | JSON 程序化查询；SKILL.md 保持人类可读          |
-| 存储位置           | ① .omo/knowledge/<plan-name>/*.json ② skills/           | 知识 sidecar 只读；skill 库可加载进系统提示词   |
+| 存储位置           | ① workspace/knowledge/plans/<plan-name>/*.json ② skills/ | ★2026-09-13 修订：知识随 workspace 持久化；skill 库可加载进系统提示词 |
 | 知识层级           | 3 层: task / wave / plan                                | 对应 HTN 的三层：原子任务 / 并行波次 / 整体计划 |
 | failure_set 字段   | 错误 + 根因 + 失败方案                                  | 未来避免重复同样的错误                          |
 | success_path 字段  | 有序步骤 + 具体库名/函数名                              | 未来可复制成功路径                              |
@@ -1359,6 +1436,8 @@ Phase C: 系统提示词注入 (Tier 1, 依赖 Phase A 的 knowledge_store.py)
 | skill counter 废弃 | 删除 _NUDGE_SKILL_COUNT_KEY + _wrap_tool_call_impl      | 不再按 tool call 计数触发 skill 提取            |
 | 工具统一           | 单一 `knowledge` 工具 (action 区分 write/read/list)     | 提取和查询用同一工具，传参区分，减少工具数量    |
 | 知识查询策略       | 两层: Tier 1 系统提示词注入摘要 + Tier 2 工具按需查详细 | 摘要压缩免疫(~20行)；完整明细不占提示词空间     |
+| ★知识/facts 合并   | plan 触发回合吸收 facts 区间，单次 LLM 双产出 | 避免同回合双跑提取（P2-3 管线后置） |
+| ★plan_ref 注入（已确认） | todowrite 顶层参数 → state_register_db 会话键为主；todos.plan_ref 为辅；session-<id> 兜底 | 无自动填充则退化为 session-<id>，跨会话不可检索 |
 
 ---
 
@@ -1370,7 +1449,7 @@ Phase C: 系统提示词注入 (Tier 1, 依赖 Phase A 的 knowledge_store.py)
 | 上下文         | 全对话历史                            | plan + todos + ledger + subagent runs (结构化) |
 | 提取目标       | skill 库更新 (SKILL.md + references/) | ① JSON 知识文件 + ② skill 库更新 (两部分合并)  |
 | 存储格式       | Markdown (SKILL.md)                   | ① JSON 程序化查询 + ② Markdown (SKILL.md)      |
-| 存储位置       | skills/ 目录                          | ① .omo/knowledge/<plan-name>/ ② skills/ 目录   |
+| 存储位置       | skills/ 目录                          | ① workspace/knowledge/plans/<plan-name>/ ② skills/ 目录 |
 | skill 更新指引 | 独立 _SKILL_REVIEW_PROMPT             | 合并进 _PLAN_EXTRACTION_PROMPT Part 2          |
 | 提取质量       | 低（时机不对、上下文不聚焦）          | 高（时机精确、上下文结构化）                   |
 | 非计划对话     | 仍然触发（每 10 turn）                | 不触发（无 todos = 无提取）                    |
