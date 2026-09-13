@@ -54,22 +54,25 @@ def slice_last_n_turn(messages: list[BaseMessage], n: int) -> SliceLastNTurn:
     if messages is None or len(messages) == 0:
         return {"messages": [], "tokens": 0, "dropped": 0}
 
-    turn_count = 0
-    last_user_idx = -1
+    # A turn starts at the first HumanMessage of a run of consecutive
+    # HumanMessages. Batch-drained turns feed N HumanMessages in one agent
+    # turn, so the boundary must be the FIRST of the run — otherwise the
+    # earlier batch messages would be dropped from persistence.
+    turn_starts: list[int] = [
+        i
+        for i, msg in enumerate(messages)
+        if isinstance(msg, HumanMessage)
+        and (i == 0 or not isinstance(messages[i - 1], HumanMessage))
+    ]
 
-    for i, msg in enumerate(reversed(messages)):
-        if turn_count >= n:
-            break
+    if not turn_starts or n <= 0:
+        # No HumanMessage (or non-positive n): keep everything.
+        start_idx = 0
+    else:
+        start_idx = turn_starts[max(len(turn_starts) - n, 0)]
 
-        if isinstance(msg, HumanMessage):
-            last_user_idx = len(messages) - 1 - i
-            turn_count += 1
-
-    if last_user_idx < 0:
-        last_user_idx = 0
-
-    kept: list[BaseMessage] = messages[last_user_idx:]
-    dropped = last_user_idx
+    kept: list[BaseMessage] = messages[start_idx:]
+    dropped = start_idx
 
     kept = [_truncate_msg(msg) for msg in kept]
 
