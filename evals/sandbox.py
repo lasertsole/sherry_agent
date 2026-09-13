@@ -42,6 +42,8 @@ class EvalSandbox:
         self.root = results_dir / "sandbox"
         self.workspace = self.root / "workspace"
         self.src = self.root / "src"
+        self.auto_skills_dir = self.root / "skills" / "auto"
+        self.knowledge_plans_dir = self.workspace / "knowledge" / "plans"
         self._originals: dict[object, dict[str, Any]] = {}
         self._applied = False
 
@@ -82,6 +84,41 @@ class EvalSandbox:
             return list(cache)
 
         self._set(agent_tools, "build_main_tools", safe_build_main_tools)
+
+    def _redirect_skills_and_knowledge(self) -> None:
+        """Redirect auto-skill + plan-knowledge writes into the sandbox.
+
+        Additive isolation for suites that exercise the plan-extraction pass.
+        ``skill_manage`` and the skill-usage / skill-utils helpers bind
+        ``config.AUTO_SKILLS_DIR`` at import time, and the plan-knowledge store
+        binds ``config.path.PLAN_KNOWLEDGE_DIR``; each owning module is patched
+        directly so every write lands under this run's directory.
+
+        ``build_skills_snapshot`` is neutralized because it rewrites the tracked
+        ``skills/skills_snapshot.json`` in the real repo (the loader keeps
+        reading the real skill roots); the snapshot is irrelevant to evals.
+        """
+        self.auto_skills_dir.mkdir(parents=True, exist_ok=True)
+        for module_name in (
+            "agent.tools.skill_tools.skill_manage",
+            "agent.tools.pub_base.skill_usage",
+            "agent.tools.pub_base.skill_utils",
+        ):
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+            if hasattr(module, "AUTO_SKILLS_DIR"):
+                self._set(module, "AUTO_SKILLS_DIR", self.auto_skills_dir)
+
+        skills_pkg = importlib.import_module("skills")
+        self._set(skills_pkg, "build_skills_snapshot", lambda: None)
+
+        self.knowledge_plans_dir.mkdir(parents=True, exist_ok=True)
+        knowledge_store = importlib.import_module("agent.tools.todolist.knowledge.knowledge_store")
+        self._set(knowledge_store, "_KNOWLEDGE_ROOT", self.knowledge_plans_dir)
+        config_path = importlib.import_module("config.path")
+        self._set(config_path, "PLAN_KNOWLEDGE_DIR", self.knowledge_plans_dir)
 
     def apply(self) -> None:
         """Apply every redirection. Idempotent within one instance."""
@@ -137,6 +174,7 @@ class EvalSandbox:
 
         self._set(drain, "_backflow_shared_memory", _noop_backflow)
         self._restrict_child_tools()
+        self._redirect_skills_and_knowledge()
 
         self._set(os, "environ", {**os.environ})
         os.environ["SANDBOX_POLICY"] = "auto" if platform.system() == "Windows" else "required"

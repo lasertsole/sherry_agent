@@ -23,6 +23,7 @@ SUITES: dict[str, str] = {
     "subagent": "evals.subagent.suite",
     "long_running_task": "evals.long_running_task.suite",
     "session_memory": "evals.session_memory.suite",
+    "nudge_extraction": "evals.nudge_extraction.suite",
 }
 
 
