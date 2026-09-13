@@ -22,6 +22,7 @@ SUITES: dict[str, str] = {
     "graph_rag": "evals.graph_rag.suite",
     "subagent": "evals.subagent.suite",
     "long_running_task": "evals.long_running_task.suite",
+    "session_memory": "evals.session_memory.suite",
 }
 
 

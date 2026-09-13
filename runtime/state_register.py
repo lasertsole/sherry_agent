@@ -107,22 +107,6 @@ class StateRegisterDB(Register):
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS context_epoch (
-                    session_id TEXT PRIMARY KEY,
-                    baseline TEXT NOT NULL,
-                    snapshot TEXT NOT NULL,
-                    baseline_seq INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-            conn.commit()
-
-    def _init_db_original(self):
-        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS states (
@@ -130,6 +114,16 @@ class StateRegisterDB(Register):
                     key TEXT NOT NULL,
                     value TEXT NOT NULL,
                     PRIMARY KEY (session_id, key)
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS context_epoch (
+                    session_id TEXT PRIMARY KEY,
+                    baseline TEXT NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    baseline_seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
             """)
             conn.commit()
