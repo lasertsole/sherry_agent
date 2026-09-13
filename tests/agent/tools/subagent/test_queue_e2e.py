@@ -428,8 +428,9 @@ async def test_ac2_queue_fifo_drain(e2e_env):
     # The queued positions are asserted on the SubmitResult above; only the
     # turn-runner path (chunk/done) frames appear on the bound socket.
 
-    # A completes NORMALLY (no answering flip) -> on_turn_finished drains
-    # B then C, FIFO.
+    # A completes NORMALLY (no answering flip) -> on_turn_finished drains the
+    # session's QUEUED rows as ONE batched turn (batch-drain contract): both
+    # inputs ride the same graph input in FIFO order and get ONE combined reply.
     model.holds[0].set()
     await _wait_until(
         lambda: _no_active_rows(e2e_env.user_queue, sid),
@@ -437,12 +438,13 @@ async def test_ac2_queue_fifo_drain(e2e_env):
     )
     await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="drain finished")
 
-    assert len(model.received) == 3
-    assert [_text_of(call[-1]) for call in model.received] == [
+    assert len(model.received) == 2, "turn A + ONE drain turn for the whole batch"
+    drained = model.received[1]
+    assert [_text_of(m) for m in drained if isinstance(m, HumanMessage)] == [
         "msg-a",
         "msg-b",
         "msg-c",
-    ]
+    ], f"queued inputs must ride the batch in FIFO order, got {drained}"
 
     seq: list[str] = []
     for f in socket.frames:
@@ -450,7 +452,7 @@ async def test_ac2_queue_fifo_drain(e2e_env):
             seq.append("done")
         elif f.get("event") == "chunk":
             raw = json.dumps(f, ensure_ascii=False)
-            for needle in ("partial-", "final", "reply-1", "reply-2"):
+            for needle in ("partial-", "final", "reply-1"):
                 if needle in raw:
                     seq.append(needle)
                     break
@@ -459,8 +461,6 @@ async def test_ac2_queue_fifo_drain(e2e_env):
         "final",
         "done",
         "reply-1",
-        "done",
-        "reply-2",
         "done",
     ], f"frame events seen: {[f.get('event') for f in socket.frames]}"
 
