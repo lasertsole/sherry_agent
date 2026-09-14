@@ -1,5 +1,6 @@
 from config.features import SUMMARIZATION
 from langchain_core.messages import BaseMessage, ToolMessage, AIMessage
+from pub.func.estimate_tokens import estimate_text_tokens
 
 CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
 CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
@@ -66,14 +67,13 @@ def target_truncate_tool_outputs(
     result = list(messages)
     total_reduced = 0
 
-    for idx, old_len in candidates:
+    for idx, _ in candidates:
         if total_reduced >= target_reduction_tokens:
             break
         msg = result[idx]
         content = str(getattr(msg, "content", ""))
         truncated = _truncate_content(content, max_output_chars)
-        new_len = len(truncated)
-        reduced_tokens = (old_len - new_len) // 4
+        reduced_tokens = estimate_text_tokens(content) - estimate_text_tokens(truncated)
         total_reduced += max(reduced_tokens, 0)
         result[idx] = msg.model_copy(update={"content": truncated})
 

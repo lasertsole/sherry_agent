@@ -21,6 +21,7 @@ Style parity:
 import json
 from config.features import SUMMARIZATION
 from langchain_core.messages import BaseMessage, AIMessage
+from pub.func.estimate_tokens import estimate_text_tokens
 
 MAX_TOOL_ARGS_CHARS = SUMMARIZATION["max_tool_args_chars"]
 MIN_ARGS_CHARS_TO_TRUNCATE = SUMMARIZATION["min_args_chars_to_truncate"]
@@ -62,8 +63,8 @@ def truncate_tool_args(
     AIMessage <-> ToolMessage pairing (tool_call_id) stays intact.
 
     Returns ``(new_messages, freed_tokens)`` where ``freed_tokens`` is
-    the estimated token saving (chars // 4, same estimator convention
-    as ``target_truncate_tool_outputs``).
+    the estimated token saving (``estimate_text_tokens``, same estimator
+    convention as ``target_truncate_tool_outputs``).
     """
     protected = protected_tools or set()
     keep_until = max(len(messages) - skip_recent, 0)
@@ -102,7 +103,9 @@ def truncate_tool_args(
             new_tcs.append({**tc, "args": new_args})
 
             new_args_str = json.dumps(new_args, ensure_ascii=False)
-            freed_total += max((len(args_str) - len(new_args_str)) // 4, 0)
+            freed_total += max(
+                estimate_text_tokens(args_str) - estimate_text_tokens(new_args_str), 0
+            )
             modified = True
 
         if modified:

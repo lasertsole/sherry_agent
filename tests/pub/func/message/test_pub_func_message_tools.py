@@ -36,6 +36,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from pub.func.estimate_tokens import estimate_text_tokens
 from pub.func.message.target_truncation import target_truncate_tool_outputs
 from pub.func.message.tool_args_truncate import truncate_tool_args
 from pub.func.message.tool_output_dedup import dedup_tool_outputs
@@ -112,7 +113,9 @@ class TestToolOutputDedup:
         result, tokens_reduced = dedup_tool_outputs(messages)
         assert result[2].content == DEDUP_PLACEHOLDER
         assert result[4].content == "y" * 1000
-        assert tokens_reduced == (1000 - len(DEDUP_PLACEHOLDER)) // 4
+        assert tokens_reduced == estimate_text_tokens("x" * 1000) - estimate_text_tokens(
+            DEDUP_PLACEHOLDER
+        )
 
     def test_no_duplicates_returns_unchanged(self):
         messages = [

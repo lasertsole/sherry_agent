@@ -13,8 +13,8 @@ Two defenses:
    threshold the Summarization anti-thrash gate is forced open for the
    session (``_FORCE_RECOVERY_KEY``) so the next pre-call check compresses
    instead of skipping (cooldown / attempt-cap).
-2. **Mid-stream output budget** — accumulated model text is estimated at
-   ``_CHARS_PER_TOKEN`` characters per token; once it exceeds
+2. **Mid-stream output budget** — accumulated model text is estimated with
+   the CJK-aware ``estimate_text_tokens`` helper; once it exceeds
    ``output_cut_ratio`` of the window, further text chunks are no longer
    forwarded to the client and a one-time truncation marker is emitted
    instead. The graph still accumulates the full AIMessage — the truncated
@@ -33,13 +33,13 @@ from loguru import logger
 from langchain_core.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
 
-from config.features import CONTEXT_GUARD, SUMMARIZATION, TOKEN_ESTIMATION
+from config.features import CONTEXT_GUARD, SUMMARIZATION
 from runtime import state_register_mem
 from agent.middlewares.summarization_components import _FORCE_RECOVERY_KEY
+from pub.func.estimate_tokens import estimate_text_tokens
 from .repetition_guard import RepetitionGuardWrapper
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
-_CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
 _TRUNCATION_MARKER = (
     "[System notice: the response exceeded the mid-stream output budget and was truncated.]"
 )
@@ -147,13 +147,14 @@ class ContextLimitGuardWrapper:
                     token_counter += 1
                     if token_counter >= self._check_interval:
                         token_counter = 0
-                        if len(call_output_text) // _CHARS_PER_TOKEN > self._output_token_budget:
+                        est_output_tokens = estimate_text_tokens(call_output_text)
+                        if est_output_tokens > self._output_token_budget:
                             output_cut = True
                             logger.warning(
                                 "ContextLimitGuard: mid-stream output budget "
                                 "({} est. tokens > {}) exceeded for session {} — "
                                 "truncating client view",
-                                len(call_output_text) // _CHARS_PER_TOKEN,
+                                est_output_tokens,
                                 self._output_token_budget,
                                 session_id,
                             )

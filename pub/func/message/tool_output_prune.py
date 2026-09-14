@@ -15,6 +15,7 @@ from langchain_core.messages import (
     ToolMessage,
     AIMessage,
 )
+from pub.func.estimate_tokens import estimate_text_tokens
 
 PRUNE_PROTECT_TOKENS = SUMMARIZATION["prune_protect_tokens"]
 PRUNE_MIN_REDUCTION_TOKENS = SUMMARIZATION["prune_min_reduction_tokens"]
@@ -111,7 +112,7 @@ def prune_tool_outputs(
     if estimator is None:
 
         def _default_estimator(msgs):
-            return sum(len(str(getattr(m, "content", ""))) // 4 for m in msgs)
+            return sum(estimate_text_tokens(str(getattr(m, "content", ""))) for m in msgs)
 
         estimator = _default_estimator
 
@@ -133,8 +134,8 @@ def prune_tool_outputs(
         if getattr(msg, "status", "") == "compacted":
             continue
 
-        content_len = len(str(getattr(msg, "content", "")))
-        token_est = content_len // 4
+        content_str = str(getattr(msg, "content", ""))
+        token_est = estimate_text_tokens(content_str)
         total_tool_tokens += token_est
 
         if total_tool_tokens <= protect_tokens:

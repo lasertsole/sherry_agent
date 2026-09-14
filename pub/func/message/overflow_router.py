@@ -54,10 +54,10 @@ def compute_pressure(
 ) -> int:
     """Token pressure = max(estimated + system_prompt, reported).
 
-    The character-based estimate (CHARS_PER_TOKEN=4) can underestimate real
-    usage; when the API reported actual token usage (T3 ``reported_tokens``),
-    the reported value wins. With no report, fall back to the local estimate
-    plus the system-prompt overhead.
+    The local estimate (``pub.func.estimate_tokens``, CJK-aware) can still
+    underestimate real usage; when the API reported actual token usage (T3
+    ``reported_tokens``), the reported value wins. With no report, fall back
+    to the local estimate plus the system-prompt overhead.
     """
     pressure = estimated_tokens + system_prompt_tokens
     if reported_tokens is not None:

@@ -6,6 +6,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage
 
 from config.features import MESSAGE_PIPELINE
+from pub.func.estimate_tokens import estimate_text_tokens
 
 DEFAULT_PROTECTED_TOOLS = MESSAGE_PIPELINE["tool_output_dedup_default_protected_tools"]
 
@@ -62,12 +63,11 @@ def dedup_tool_outputs(
             continue
         if tc_id in keep_tc_ids:
             continue
-        old_len = len(str(getattr(msg, "content", "")))
+        old_content = str(getattr(msg, "content", ""))
         tool_name = sig.split("::")[0]
         placeholder = f"[Duplicated call to {tool_name} - output cleared, see latest result]"
-        new_len = len(placeholder)
-        if old_len > new_len:
-            tokens_reduced += (old_len - new_len) // 4
+        if len(old_content) > len(placeholder):
+            tokens_reduced += estimate_text_tokens(old_content) - estimate_text_tokens(placeholder)
         to_replace[i] = placeholder
 
     if not to_replace:
