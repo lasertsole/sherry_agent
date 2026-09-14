@@ -36,7 +36,7 @@ def store_db(tmp_path):
     """Production-shaped store on a temp file (messages + FTS + ts_ms)."""
     import sqlite3
 
-    db = sqlite3.connect(str(tmp_path / "store.db"))
+    db = sqlite3.connect(str(tmp_path / "store.db"), check_same_thread=False)
     db.row_factory = sqlite3.Row
     _migrate(db)
     with PatchStoreDb(db):

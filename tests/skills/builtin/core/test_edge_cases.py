@@ -21,7 +21,7 @@ pytestmark = [pytest.mark.regression, pytest.mark.timeout(120)]
 def store_db(tmp_path):
     import sqlite3
 
-    db = sqlite3.connect(str(tmp_path / "store.db"))
+    db = sqlite3.connect(str(tmp_path / "store.db"), check_same_thread=False)
     db.row_factory = sqlite3.Row
     _migrate(db)
     saved = store_core._db

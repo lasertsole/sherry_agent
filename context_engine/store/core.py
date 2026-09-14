@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -283,34 +284,17 @@ def _idempotency_key(session_id: str, turn_num: int, ts_ms: int, index: int, m: 
     return f"{session_id}:{turn_num}:{ts_ms}:{index}:{digest}"
 
 
-async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
-    """Persist a batch of LangChain messages as a new turn in the messages table.
+def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
+    """Persist one turn — the synchronous core of :func:`add_messages`.
 
-    All messages passed in one call share the same (auto-incremented) turn_num
-    and a single timestamp derived from the current time.
-
-    Args:
-        session_id: The session these messages belong to.
-        messages: The LangChain BaseMessage list (human / ai / tool roles).
+    Runs every row builder (up to 5 ``json.dumps`` per message), the
+    idempotency-key hashing and all SQLite statements. :func:`add_messages`
+    awaits this through :func:`asyncio.to_thread` so the serialization and the
+    DB I/O never block the event loop (audit #38). Thread safety is unchanged:
+    ``_turn_assign_lock`` still serializes turn assignment, ``_turn_stamp_lock``
+    keeps stamps strictly increasing, and the shared connection is opened with
+    ``check_same_thread=False``.
     """
-    # Early exit when there is nothing to persist.
-    if messages is None or len(messages) == 0:
-        return
-
-    # SESSION plan P1-2: skip messages this process already flushed (crash-retry dedup).
-    # Unknown roles are skipped before the dedup probe: message-like objects
-    # without a registered builder (EC-01 add_messages bounds) are not
-    # required to carry ``additional_kwargs`` at all.
-    pending: list[BaseMessage] = []
-    for m in messages:
-        if getattr(m, "type", None) not in _BUILDERS:
-            continue
-        if m.additional_kwargs.get(_DB_PERSISTED_KEY):
-            continue
-        pending.append(m)
-    if not pending:
-        return
-
     # Rows to be bulk-inserted by executemany (paired with their source message
     # so the idempotency key can be computed after the turn stamp is assigned).
     insert_rows: list[dict] = []
@@ -427,6 +411,44 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     # No-op in autocommit mode; kept so the batch also commits as one unit if
     # the connection ever switches to implicit-transaction mode.
     _db.commit()
+
+
+async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
+    """Persist a batch of LangChain messages as a new turn in the messages table.
+
+    All messages passed in one call share the same (auto-incremented) turn_num
+    and a single timestamp derived from the current time. Serialization and
+    SQLite I/O are offloaded to a worker thread (audit #38); turn assignment,
+    stamps, FTS triggers and exception behavior are identical to the previous
+    on-loop implementation.
+
+    Args:
+        session_id: The session these messages belong to.
+        messages: The LangChain BaseMessage list (human / ai / tool roles).
+    """
+    # Early exit when there is nothing to persist.
+    if messages is None or len(messages) == 0:
+        return
+
+    # SESSION plan P1-2: skip messages this process already flushed (crash-retry dedup).
+    # Unknown roles are skipped before the dedup probe: message-like objects
+    # without a registered builder (EC-01 add_messages bounds) are not
+    # required to carry ``additional_kwargs`` at all.
+    pending: list[BaseMessage] = []
+    for m in messages:
+        if getattr(m, "type", None) not in _BUILDERS:
+            continue
+        if m.additional_kwargs.get(_DB_PERSISTED_KEY):
+            continue
+        pending.append(m)
+    if not pending:
+        return
+
+    # Audit #38: run the whole persistence core (row builders → json.dumps,
+    # idempotency hashing, locked turn assignment, INSERTs) on a worker thread.
+    # The module locks make the offload safe, and the awaited call keeps
+    # exception propagation identical to the previous on-loop implementation.
+    await asyncio.to_thread(_persist_batch, session_id, pending)
 
 
 def create_compaction_checkpoint(
