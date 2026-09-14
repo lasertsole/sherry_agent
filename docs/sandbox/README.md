@@ -146,7 +146,7 @@ Three states parsed from the `SANDBOX_POLICY` environment variable:
 
 ## 📊 Precedence Matrix
 
-Authoritative table from `agent/tools/pub_base/sandbox.py`, tested cell-by-cell in `tests/integration/test_sandbox_matrix.py`:
+Authoritative table from `agent/tools/pub_base/sandbox.py`, tested cell-by-cell in `tests/agent/tools/test_sandbox_matrix.py`:
 
 | # | Policy | `sandbox` flag | Backend available? | Caller scope | Outcome |
 | :- | :----- | :------------- | :----------------- | :----------- | :------ |
@@ -188,7 +188,7 @@ When the model requests `sandbox=False` in the main session (non-YOLO), the grap
 
 | Suite | Covers |
 | :---- | :----- |
-| `tests/integration/test_sandbox_matrix.py` | 14 tests, one per matrix-cell behavior (cells 1-5 once per tool, cell 6 four times), including the real-graph HITL interrupt and the exactly-one-warning degrade assertion |
+| `tests/agent/tools/test_sandbox_matrix.py` | 14 tests, one per matrix-cell behavior (cells 1-5 once per tool, cell 6 four times), including the real-graph HITL interrupt and the exactly-one-warning degrade assertion |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | scrub rules, precedence, keep/deny edges (29 tests) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | policy parsing, strict `ValueError`, fresh-read semantics, dispatch |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction, probe caching (all subprocess mocked) |

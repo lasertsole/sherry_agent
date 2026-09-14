@@ -23,7 +23,7 @@ production module:
 
 Hermetic: real ``create_agent`` graph + ``InMemorySaver`` +
 ``RecordingFakeChatModel`` (mirrors the Task 3 harness in
-``tests/integration/test_interrupt_marker_approach.py``), MesMemory on a tmp
+``tests/context_engine/store/test_interrupt_marker_approach.py``), MesMemory on a tmp
 sqlite3 connection monkeypatched over ``context_engine.store.core._db``, and a
 real ``UserInputQueue`` on a tmp SQLite file.
 """
@@ -63,7 +63,7 @@ HEAL_CONTENT = "tool result missing after context trim."
 
 
 # ---------------------------------------------------------------------------
-# Harness — mirrors tests/integration/test_interrupt_marker_approach.py (T3)
+# Harness — mirrors tests/context_engine/store/test_interrupt_marker_approach.py (T3)
 # ---------------------------------------------------------------------------
 
 

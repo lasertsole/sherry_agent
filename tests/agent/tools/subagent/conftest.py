@@ -204,7 +204,7 @@ def _setup_subagent_alias():
     # so the import chain resolves and tests can assert on injection
     # behavior. If the REAL `skills.loader` is already in sys.modules
     # (full-suite collection imports it via other mirrored suites such as
-    # tests/integration before this conftest loads), leave it untouched:
+    # tests/agent/tools/skill_tools before this conftest loads), leave it untouched:
     # call-time imports
     # (skill_list.py:42) must resolve the real module so test monkeypatches
     # stay visible, and unconditionally swapping it here is exactly what

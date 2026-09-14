@@ -2,7 +2,7 @@
 
 PURPOSE
 -------
-``tests/integration/test_real_e2e.py`` drives the subagent executor with a real
+``tests/agent/tools/subagent/test_real_e2e.py`` drives the subagent executor with a real
 LLM, but it never exercises the **main agent graph** — i.e. the actual
 ``create_agent``/``langgraph`` path the server uses. This test closes that gap:
 it builds a minimal ``create_agent`` graph whose model is the **live

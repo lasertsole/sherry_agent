@@ -349,7 +349,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Production registration contract: `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
-| `tests/integration/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
+| `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
 The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **2653 passed / 0 failed** (GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P).
 

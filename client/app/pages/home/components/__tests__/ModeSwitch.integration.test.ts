@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils';
 import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 
 // `useColorMode` is a Nuxt auto-import, not available in a bare happy-dom
-// environment. It is pre-stubbed in tests/integration/setup.ts; each test can
+// environment. It is pre-stubbed in app/composables/__tests__/setup.ts; each test can
 // override the returned ref via vi.mocked(getColorMode) to observe writes.
 type ColorModeApi = { preference: string };
 

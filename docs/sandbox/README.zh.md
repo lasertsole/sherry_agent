@@ -146,7 +146,7 @@ bwrap
 
 ## 📊 优先级矩阵
 
-权威表格来自 `agent/tools/pub_base/sandbox.py`，由 `tests/integration/test_sandbox_matrix.py` 逐格测试：
+权威表格来自 `agent/tools/pub_base/sandbox.py`，由 `tests/agent/tools/test_sandbox_matrix.py` 逐格测试：
 
 | # | 策略 | `sandbox` 标志 | 后端可用？ | 调用方作用域 | 结果 |
 | :- | :--- | :------------- | :--------- | :----------- | :--- |
@@ -188,7 +188,7 @@ SANDBOX_POLICY=auto      # required | auto | off（大小写不敏感，默认�
 
 | 测试套件 | 覆盖内容 |
 | :------- | :------- |
-| `tests/integration/test_sandbox_matrix.py` | 14 个测试，逐格覆盖矩阵行为（第 1-5 格每个工具一次，第 6 格四次），包括真实图上的 HITL 中断与"恰好一条警告"的降级断言 |
+| `tests/agent/tools/test_sandbox_matrix.py` | 14 个测试，逐格覆盖矩阵行为（第 1-5 格每个工具一次，第 6 格四次），包括真实图上的 HITL 中断与"恰好一条警告"的降级断言 |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 清洗规则、优先级、保留/拒绝边界（29 个测试） |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 策略解析、严格 `ValueError`、即时读取语义、平台分发 |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造、探测缓存（子进程全部 mock） |

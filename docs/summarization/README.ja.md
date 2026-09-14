@@ -348,7 +348,7 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 本番登録契約: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
-| `tests/integration/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
+| `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
 プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **2653 passed / 0 failed** で合格（GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P）。
 

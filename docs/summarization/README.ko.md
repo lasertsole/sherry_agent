@@ -347,7 +347,7 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 프로덕션 등록 계약: `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
-| `tests/integration/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
+| `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
 전체 프로세스 겸리 스위트(`uv run python tests/run_tests_split.py`) 통과: **2653 passed / 0 failed** (GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P).
 

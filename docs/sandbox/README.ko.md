@@ -146,7 +146,7 @@ bwrap
 
 ## 📊 우선순위 매트릭스
 
-`agent/tools/pub_base/sandbox.py`의 권위 있는 표이며, `tests/integration/test_sandbox_matrix.py`가 칸마다 테스트합니다:
+`agent/tools/pub_base/sandbox.py`의 권위 있는 표이며, `tests/agent/tools/test_sandbox_matrix.py`가 칸마다 테스트합니다:
 
 | # | 정책 | `sandbox` 플래그 | 백엔드 가능? | 호출자 범위 | 결과 |
 | :- | :--- | :--------------- | :----------- | :---------- | :--- |
@@ -188,7 +188,7 @@ SANDBOX_POLICY=auto      # required | auto | off (대소문자 무시, 기본값
 
 | 테스트 스위트 | 커버 범위 |
 | :------------ | :-------- |
-| `tests/integration/test_sandbox_matrix.py` | 14개 테스트, 매트릭스 칸별 동작 하나씩(1-5번 칸은 도구별 한 번, 6번 칸은 네 번). 실제 그래프의 HITL 인터럽트와 "경고 정확히 한 번" 강등 단언 포함 |
+| `tests/agent/tools/test_sandbox_matrix.py` | 14개 테스트, 매트릭스 칸별 동작 하나씩(1-5번 칸은 도구별 한 번, 6번 칸은 네 번). 실제 그래프의 HITL 인터럽트와 "경고 정확히 한 번" 강등 단언 포함 |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 세척 규칙, 우선순위, 보존/거부 경계 (29개 테스트) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 정책 파싱, 엄격한 `ValueError`, 즉시 읽기 의미론, 플랫폼 디스패치 |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성, 프로브 캐싱 (서브프로세스 전부 mock) |

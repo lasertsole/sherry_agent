@@ -146,7 +146,7 @@ bwrap
 
 ## 📊 優先順位マトリクス
 
-`agent/tools/pub_base/sandbox.py` 由来の権威ある表で、`tests/integration/test_sandbox_matrix.py` がセルごとにテストします:
+`agent/tools/pub_base/sandbox.py` 由来の権威ある表で、`tests/agent/tools/test_sandbox_matrix.py` がセルごとにテストします:
 
 | # | ポリシー | `sandbox` フラグ | バックエンド可? | 呼び出し元スコープ | 結果 |
 | :- | :------- | :--------------- | :-------------- | :----------------- | :--- |
@@ -188,7 +188,7 @@ SANDBOX_POLICY=auto      # required | auto | off (大小文字を無視、デフ
 
 | テストスイート | カバー範囲 |
 | :------------- | :--------- |
-| `tests/integration/test_sandbox_matrix.py` | 14テスト、マトリクスのセルごとの動作につき1つ(セル1-5はツールごとに1回、セル6は4回)。実グラフ上の HITL インタラプトと「警告ちょうど1件」の降格アサーションを含む |
+| `tests/agent/tools/test_sandbox_matrix.py` | 14テスト、マトリクスのセルごとの動作につき1つ(セル1-5はツールごとに1回、セル6は4回)。実グラフ上の HITL インタラプトと「警告ちょうど1件」の降格アサーションを含む |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 洗浄規則、優先順位、保持/拒否の境界 (29テスト) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | ポリシーパース、厳格な `ValueError`、即時読み込みの意味論、プラットフォームディスパッチ |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築、プローブキャッシュ (subprocess はすべてモック) |

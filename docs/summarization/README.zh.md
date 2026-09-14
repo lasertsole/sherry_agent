@@ -344,7 +344,7 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 生产注册契约：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
-| `tests/integration/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
+| `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 
 全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**2653 passed / 0 failed**（GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P）。
 
