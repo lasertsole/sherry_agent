@@ -334,11 +334,11 @@ Summarization(
 
 | 套件 | 用例 | 覆盖 |
 | :---- | :---- | :----- |
-| `tests/unit/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` 各档位、候选规则、稳定路由字符串 |
-| `tests/unit/test_tool_result_ttl.py` | 28 | 原地截断、配对不变量、非空占位符、注册表上限、预算截断 |
-| `tests/unit/test_llm_error_classifier.py` | 20 | 413 状态码、文本提示、7 种溢出模式、cause 链深度、只读保证 |
-| `tests/unit/test_pub_func_message_tools.py` | 29 | 去重 / 修剪 / 定向截断 / 回合工具，外加工具参数截断：头+尾格式、小参数跳过、释放量钳制、受保护工具、跳过最近消息、配对与无变异 |
-| `tests/unit/test_config_num.py` | 43 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
+| `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` 各档位、候选规则、稳定路由字符串 |
+| `tests/pub/func/message/test_tool_result_ttl.py` | 28 | 原地截断、配对不变量、非空占位符、注册表上限、预算截断 |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 状态码、文本提示、7 种溢出模式、cause 链深度、只读保证 |
+| `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 去重 / 修剪 / 定向截断 / 回合工具，外加工具参数截断：头+尾格式、小参数跳过、释放量钳制、受保护工具、跳过最近消息、配对与无变异 |
+| `tests/config/test_num_contract.py` | 46 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
 | `tests/module/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
 | `tests/module/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
 | `tests/module/test_summarization_trigger.py` | 3 | 生产注册契约：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |

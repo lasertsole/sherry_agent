@@ -339,11 +339,11 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 
 | Suite | Cases | Covers |
 | :---- | :---- | :----- |
-| `tests/unit/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` bands, candidate rules, stable route strings |
-| `tests/unit/test_tool_result_ttl.py` | 28 | In-place truncation, pairing invariant, non-empty placeholders, registry bound, budget truncation |
-| `tests/unit/test_llm_error_classifier.py` | 20 | 413 status, text hints, 7 overflow patterns, cause-chain depth, read-only guarantees |
-| `tests/unit/test_pub_func_message_tools.py` | 29 | dedup / prune / target-truncate / turn-utils plus tool-args truncation: head+tail format, small-args skip, freed clamp, protected tools, skip-recent, pairing & no-mutation |
-| `tests/unit/test_config_num.py` | 43 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
+| `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` bands, candidate rules, stable route strings |
+| `tests/pub/func/message/test_tool_result_ttl.py` | 28 | In-place truncation, pairing invariant, non-empty placeholders, registry bound, budget truncation |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 status, text hints, 7 overflow patterns, cause-chain depth, read-only guarantees |
+| `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | dedup / prune / target-truncate / turn-utils plus tool-args truncation: head+tail format, small-args skip, freed clamp, protected tools, skip-recent, pairing & no-mutation |
+| `tests/config/test_num_contract.py` | 46 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
 | `tests/module/test_compression_comprehensive.py` | 48 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity |
 | `tests/module/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
 | `tests/module/test_summarization_trigger.py` | 3 | Production registration contract: `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
