@@ -307,7 +307,7 @@ async def start_sweeper() -> None:
 
 
 async def stop_sweeper() -> None:
-    """Stop the sweeper background task and wait for cancellation."""
+    """Stop the sweeper background task, wait for cancellation, and cancel pending deferred-cleanup timers."""
     global _running, _sweeper_task, _backoff
     _running = False
     if _sweeper_task is not None:
@@ -317,6 +317,11 @@ async def stop_sweeper() -> None:
         except asyncio.CancelledError:  # noqa: S110
             pass
         _sweeper_task = None
+    # Deferred-cleanup timers are driven by the sweeper's lifecycle: cancel
+    # them together with it so no timer outlives the stopped subsystem.
+    from .lifecycle import shutdown_deferred_cleanup
+
+    await shutdown_deferred_cleanup()
     # Fresh backoff state on next start (conservative direction).
     _backoff = None
 

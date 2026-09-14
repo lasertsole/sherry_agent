@@ -80,6 +80,28 @@ def sweep_stale_lifecycle_state() -> int:
     return pruned
 
 
+async def shutdown_deferred_cleanup() -> int:
+    """Cancel and await every pending deferred-cleanup timer.
+
+    Idempotent: drains the registry, cancels each live timer, and awaits all
+    of them with exceptions swallowed (timers are fire-and-forget, no caller
+    consumes their result). Returns how many timers were cancelled. Call it
+    from the loop that owns the timers — a foreign, already-closed loop
+    cannot be awaited here.
+    """
+    timers = list(_deferred_cleanup_timers.values())
+    _deferred_cleanup_timers.clear()
+    if not timers:
+        return 0
+
+    for timer in timers:
+        if not timer.done():
+            timer.cancel()
+    await asyncio.gather(*timers, return_exceptions=True)
+    logger.info("Cancelled {} deferred cleanup timer(s) on shutdown", len(timers))
+    return len(timers)
+
+
 async def complete_subagent_run(
     run_id: str,
     outcome: RunOutcome,
