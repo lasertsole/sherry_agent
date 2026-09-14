@@ -86,6 +86,23 @@ repos:
         files: \.(py|ts|tsx|js|jsx|mjs|cjs|vue|scss|css)$
         stages: [pre-commit]
 
+  # ---- vendored security backstop (audit item #58) ------------------------
+  # vendored_{lightrag,raganything}/ are excluded from basedpyright and only
+  # partially covered by ruff (S110), yet they broker API keys for several LLM
+  # providers. This scan covers the real risk surface there: hardcoded
+  # secrets (incl. api_key names and known credential prefixes) and dangerous
+  # calls (eval/exec/shell=True/verify=False/pickle/os.system/yaml.load).
+  # Exemptions live in scripts/checks/vendored_security_baseline.txt, one
+  # reviewed row per hit - never a glob.
+  - repo: local
+    hooks:
+      - id: vendored-security
+        name: vendored security scan (secrets + dangerous calls)
+        entry: uv run --no-sync python scripts/checks/check_vendored_security.py
+        language: system
+        files: ^skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_(lightrag|raganything)/
+        stages: [pre-commit]
+
   # ---- frontend: fix-then-check (client/ pnpm toolchain) ------------------
   - repo: local
     hooks:
