@@ -4,6 +4,7 @@
 **审计方法**：6 个并行审计子代理覆盖全栈（后端安全、Agent 核心、数据层/运行时/模型、前端 Nuxt+Tauri、基础设施/技能/CI、代码质量/架构/类型），对关键发现进行源码直接复核。
 **审计日期**：2026-08-24（第一轮）/ 2026-09-04（第二轮）/ 2026-09-14（第三轮全栈重审）
 **更新日期**：2026-09-14 — 全栈重审后合并所有未修复条目，新增前端审计和代码质量审计，编号连续重排。
+**已修复移除**：2026-09-15 — 以下编号条目已修复并从本报告移除（编号保留空缺，未重排，外部引用仍按原编号）：#19、#20、#27、#38、#44、#45、#48、#50、#51、#53、#57、#58、#59、#61、#63、#68、#70、#73、#75。
 
 ---
 
@@ -199,23 +200,6 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：使用 Tauri 2.x 细粒度 shell scope，仅允许特定预定义命令，移除通用 `allow-spawn`/`allow-execute`。
 - **状态**：新发现。
 
-## 19. Tauri 使用 RC 版本
-
-**文件**：`client/src-tauri/Cargo.toml:23` — `tauri = "2.0.0-rc.17"`；`Cargo.toml:18` — `tauri-build = "2.0.0-rc.13"`
-
-- RC 版本可能存在未修复的安全问题和 API 不稳定性。
-- **修复**：升级到 Tauri 2.x 稳定版。
-- **状态**：新发现。
-
-## 20. 无全局前端错误处理器
-
-**文件**：全局 — 无 `window.onerror` 或 `window.onunhandledrejection`
-
-- 未被 `errorCaptured` 覆盖的错误（如 setTimeout/setInterval 回调中的异步错误、模块级代码错误）会静默丢失。
-- 33 处 `void` 前缀的 fire-and-forget 异步调用，如果内部 reject 会导致未处理的 Promise 拒绝。
-- **修复**：在 `app.vue` 或 Nuxt plugin 中安装 `window.addEventListener('error', ...)` 和 `window.addEventListener('unhandledrejection', ...)`。
-- **状态**：新发现。
-
 ## 21. `context_engine/embeddings/search.py` — 异步路径中的同步 SQLite + 阻塞 I/O
 
 **文件**：`context_engine/embeddings/search.py:23-28`
@@ -264,15 +248,6 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 
 - 每个 child agent 创建 `await build_async_sqlite_checkpointer()` + `await child_checkpointer.setup()`，但从未显式关闭。aiosqlite 连接泄漏。swarm 场景下大量并发子代理会产生大量连接。
 - **修复**：在 child agent 执行完成后 `await child_checkpointer.aclose()`。
-- **状态**：新发现。
-
-## 27. 前端所有对话框组件静态导入 — 无懒加载
-
-**文件**：`client/app/pages/home/index.vue:195-204`
-
-- 10 个对话框组件（SkillsDialog、StatsDialog、ConfigDialog、PersonaDialog、MemoryDialog、HeartbeatDialog、CronDialog、LogsDialog、ExtendDialog、NotificationDialog）全部静态导入，打包到主 chunk。
-- `@antv/g6`（>500KB）和 `@antv/g2`（>500KB）重型库未懒加载。
-- **修复**：使用 `defineAsyncComponent(() => import(...))` 懒加载。
 - **状态**：新发现。
 
 ## 28. 技能上传/切换端点零测试覆盖
@@ -357,14 +332,6 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 - **修复**：维护 per-group 增量计数器。
 - **状态**：未修复。
 
-## 38. `add_messages` — 5N 次 `json.dumps` 在事件循环线程上
-
-**文件**：`context_engine/store/core.py:108,110,162,172-174,190,272`
-
-- `async def` 函数中，每条消息最多 5 次 `json.dumps`（content/tool_calls/images/audios/videos）。`_decode_json_columns` 中每行最多 5 次 `json.loads`。
-- **修复**：移到 `asyncio.to_thread()` 或用 `orjson`。
-- **状态**：未修复。
-
 ## 39. `StateRegisterDB` — 每次操作新建 SQLite 连接
 
 **文件**：`runtime/state_register.py:133-229`
@@ -402,20 +369,6 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 - `_recovery_tasks` 和 `recovery_attempts_persisted` 字典无界增长，`cancel_recovery` 可能不被所有 run 调用。
 - **状态**：新发现。
 
-## 44. `agent/tools/subagent/announce/core.py` — fire-and-forget task 未跟踪
-
-**文件**：`agent/tools/subagent/announce/core.py:175`
-
-- `asyncio.create_task(_check())` — task 引用未存储，异常静默丢失（Python 3.13 会警告）。
-- **状态**：新发现。
-
-## 45. `agent/tools/subagent/registry/lifecycle.py` — `_deferred_cleanup_timers` 无 shutdown 清理
-
-**文件**：`agent/tools/subagent/registry/lifecycle.py:42`
-
-- `_deferred_cleanup_timers: dict[str, asyncio.Task] = {}` — 无 shutdown 函数取消所有 pending timers。
-- **状态**：新发现。
-
 ## 46. `agent/tools/subagent/registry/settle_wake.py` — 异步路径中的同步 SQLite
 
 **文件**：`agent/tools/subagent/registry/settle_wake.py:103`
@@ -436,33 +389,11 @@ from models.providers.registry import find_by_name
 - **修复**：将 provider 匹配逻辑移到 models 层或新建 resolver 层。
 - **状态**：新发现。
 
-## 48. `context_engine/facts/cursor.py` — 双重 JSON 编码
-
-**文件**：`context_engine/facts/cursor.py:36,45`
-
-- `json.dumps(max(current, int(turn_num)))` 将 int 包装为 JSON，然后 `StateRegisterDB.set_state` 再次 `json.dumps(value)` → 双重编码。读取时需双重 `json.loads()`。
-- **状态**：新发现。
-
 ## 49. `context_engine/events/store.py` — `__import__()` 反模式 + `db: Any` 类型
 
 **文件**：`context_engine/events/store.py:17,19-23,39`
 
 - 使用 `__import__()` 做延迟导入而非正常 import 语句。`db: Any = None` 参数未类型化。
-- **状态**：新发现。
-
-## 50. 前端 WS 重连 timer 未存储引用
-
-**文件**：`client/app/composables/ws.ts:230-233,365-368`
-
-- `onclose` 中使用 `setTimeout` 重连，但 timer 引用未存储。手动 `closeWs` 后旧 timer 可能触发多余重连。
-- **状态**：新发现。
-
-## 51. 前端 API 返回类型宽松 — 无运行时验证
-
-**文件**：`client/app/types/response.d.ts:1-5`；`client/app/composables/ws-message.ts:18`
-
-- `Response` 类型中 `data?: unknown`，所有 API 返回值需手动断言。`requestApi.ts:180` 强制 `return data as Response`。
-- WS 帧数据 `JSON.parse(event.data as string) as T` 无运行时 schema 验证。
 - **状态**：新发现。
 
 ## 52. 前端 DOMPurify 允许 `style` 属性
@@ -471,13 +402,6 @@ from models.providers.registry import find_by_name
 
 - DOMPurify 配置允许 `style` 属性，可被用于 CSS 注入攻击（如 `background: url(...)` 发起外部请求）。
 - **修复**：如不需要 GFM 表格对齐，移除 `style`；或添加 `ALLOWED_URI_REGEXP` 限制 URL 模式。
-- **状态**：新发现。
-
-## 53. 前端 `requestApi.ts` catch 块完全吞掉错误
-
-**文件**：`client/app/composables/requestApi.ts:166-170`
-
-- catch 块完全吞掉错误（`catch {}`），调用者无法区分"空结果"和"请求失败"。
 - **状态**：新发现。
 
 ## 54. `runtime/crash_loop_breaker.py` — 配置在导入时读取
@@ -501,44 +425,12 @@ from models.providers.registry import find_by_name
 - `_EMBED_MODEL_NAME = "bge-m3"`、`_EMBED_DIM = 1024`、`_BATCH_SIZE = 32` — 不可配置。
 - **状态**：新发现。
 
-## 57. Dependabot 自动合并开发依赖 minor 版本
-
-**文件**：`.github/workflows/dependabot-auto-merge.yml`
-
-- `dependency-type == "development"` 的所有更新（patch + minor）自动合并。minor 版本可能引入破坏性变更或漏洞。
-- **修复**：限制为仅 patch 版本自动合并。
-- **状态**：新发现。
-
-## 58. Vendored 代码排除安全检查
-
-**文件**：`pyproject.toml:142-143`；`.pre-commit-config.yaml`
-
-- `vendored_lightrag/` 和 `vendored_raganything/` 通过 `per-file-ignores` 排除 ruff/basedpyright 检查。这些代码处理多个 LLM 提供商的 API 密钥。
-- **状态**：新发现。
-
-## 59. Dockerfile `COPY . .` 过宽
-
-**文件**：`Dockerfile`
-
-- 最终阶段 `COPY . .` 复制整个仓库。`.dockerignore` 排除了 `.env` 和 `client/`，但未排除 `workspace/`（persona 文件）、`evals/results/`、`skills/plugins/`（上传的第三方技能）。
-- **修复**：在 `.dockerignore` 中添加 `workspace/`、`evals/results/`、`skills/plugins/`。
-- **状态**：新发现。
-
 ## 60. Windows 上 sandbox 降级为无沙箱
 
 **文件**：`agent/tools/pub_base/sandbox.py`
 
 - `SANDBOX_POLICY=auto`（默认）在 Windows 上降级为无沙箱。bwrap 仅 Linux 可用，seatbelt 仅 macOS 可用。
 - Windows 部署完全依赖正则黑名单和 builtins 限制（可被反射绕过：`().__class__.__bases__[0].__subclasses__()`）。
-- **状态**：新发现。
-
-## 61. `context_engine/core.py` — 静默吞异常
-
-**文件**：`context_engine/core.py:235-236,415-416`
-
-- `_TrigramStrategy.search` 捕获 `sqlite3.OperationalError` 并静默返回 `[]`。`_attach_search_context` 捕获 `Exception` 并静默设置 `match["context"] = []`。无日志。
-- `context_engine/session_continuity.py:113` `build_continuity_prompt` 捕获 `Exception` 返回 `""`，无日志。
-- `context_engine/curator/orchestrator.py` 多处 `except Exception` 在 debug 级别记录（135, 196, 219, 243, 313, 331, 468, 521）。
 - **状态**：新发现。
 
 ## 62. 全局异常处理器暴露 `str(error)`
@@ -551,13 +443,6 @@ from models.providers.registry import find_by_name
 ---
 
 # 🟢 低（Low）— 小问题 / 清理
-
-## 63. Checkpointer 主连接无关闭方法
-
-**文件**：`agent/checkpointer/async_sqlite_checkpointer.py:16-23`
-
-- `ThreadSafeAsyncSqliteSaver` 无 `close()`/`aclose()` 方法，连接永不关闭。
-- **状态**：未修复。
 
 ## 64. `sender_task.cancel()` 未 `await`（2 处）
 
@@ -591,27 +476,12 @@ from models.providers.registry import find_by_name
 - 从异步上下文调用会抛 `RuntimeError`。作为 sync 工具入口点，在 thread pool 中执行时安全，但是脆弱的隐式假设。
 - **状态**：未修复。
 
-## 68. `runtime/state_register.py` — 所有方法返回默认值掩盖错误
-
-**文件**：`runtime/state_register.py` 全文件
-
-- 每个方法捕获 `Exception` 并返回默认值（`False`、`None`、`{}`），调用者无法区分"键不存在"和"数据库错误"。
-- **状态**：新发现。
-
 ## 69. 前端 `JSON.parse(JSON.stringify())` 深拷贝
 
 **文件**：`client/app/composables/db.ts:501`
 
 - 对于大量消息的 turn，每次状态变更都全量序列化/反序列化。
 - **修复**：使用 `structuredClone`（更快）。
-- **状态**：新发现。
-
-## 70. 前端 WS singleton 从不在 app 生命周期中关闭
-
-**文件**：`client/app/composables/ws.ts:20,288`
-
-- `wsInstance` 和 `subagentWsInstance` 是模块级单例，`closeWs`/`closeSubagentWs` 存在但从未在 app 生命周期中调用。
-- **修复**：在 `app.vue` 的 `onBeforeUnmount` 或 `beforeunload` 中调用。
 - **状态**：新发现。
 
 ## 71. 前端 dev server 绑定 `0.0.0.0`
@@ -629,11 +499,6 @@ from models.providers.registry import find_by_name
 - `plugins/channels/qq/` — 有 .py 文件但无 `__init__.py`
 - **状态**：新发现。
 
-## 73. AGENTS.md 文档不准确
-
-- AGENTS.md 称"2-process split runner"，实际 `run_tests_split.py` 运行 3 个顺序进程（A=unit, B=integration+module+system, C=regression）。
-- **状态**：新发现。
-
 ## 74. `evals/nudge_extraction/suite.py` 加载 `.env` 到 eval 环境
 
 **文件**：`evals/nudge_extraction/suite.py:528-529`
@@ -641,10 +506,6 @@ from models.providers.registry import find_by_name
 - `load_dotenv(REPO_ROOT / ".env", override=False)` — eval 运行可访问生产 API 密钥。
 - **状态**：新发现。
 
-## 75. 多个 eval 套件使用 `os._exit(0)`
-
-- 因 aiosqlite 连接泄漏而强制退出，跳过 atexit 处理器和 finally 块。
-- **状态**：新发现。
 
 ---
 
@@ -725,15 +586,8 @@ from models.providers.registry import find_by_name
 
 - #17 Token 存储在 localStorage
 - #18 Tauri Shell 权限过宽
-- #19 Tauri RC 版本
-- #20 无全局错误处理器
-- #27 对话框未懒加载
-- #50 WS 重连 timer 未存储引用
-- #51 API 返回类型宽松
 - #52 DOMPurify 允许 `style` 属性
-- #53 requestApi catch 吞掉错误
 - #69 `JSON.parse(JSON.stringify())` 深拷贝
-- #70 WS singleton 从不关闭
 - #71 dev server 绑定 `0.0.0.0`
 - Tauri Rust 源文件均为 0 字节（仅脚手架，无实际实现）
 - `@nuxtjs/i18n` 精确锁定版本（非范围）
@@ -767,43 +621,39 @@ from models.providers.registry import find_by_name
 
 ## P0 — 立即修复
 
-1. **#1** `catalog.py` HTTP 路径穿越（加 `is_relative_to` 检查）
-2. **#3** `DELETE /sessions` session_id 路径穿越删除（清洗 session_id）
-3. **#16** clawhub 供应链（锁定版本 + `env=scrub_env()`）
-4. **#17** 前端 Token 从 localStorage 迁移到 httpOnly cookie
-5. **#18** Tauri Shell 权限收紧
+- **#1** `catalog.py` HTTP 路径穿越（加 `is_relative_to` 检查）
+- **#3** `DELETE /sessions` session_id 路径穿越删除（清洗 session_id）
+- **#16** clawhub 供应链（锁定版本 + `env=scrub_env()`）
+- **#17** 前端 Token 从 localStorage 迁移到 httpOnly cookie
+- **#18** Tauri Shell 权限收紧
 
 ## P1 — 尽快修复
 
-6. **加认证**：`server/trigger/core.py` 加 token/API-key 中间件并作用于所有路由与 WebSocket，去掉通配 CORS。覆盖 #5-#8、#31、#62。
-7. **#2** `delegate.py` `time.sleep` 阻塞事件循环（提供 `result_async`）
-8. **#10** 内网 IP 黑名单（SSRF 防护）
-9. **#14** `execute` 取消 child 任务
-10. **#19** Tauri 升级到稳定版
-11. **#20** 安装全局前端错误处理器
-12. **#28** 为技能上传/切换端点编写测试
-13. **#29** CI 添加 SAST/依赖漏洞扫描
-14. **#47** `config/schema.py` 从 models 导入违规
+- **加认证**：`server/trigger/core.py` 加 token/API-key 中间件并作用于所有路由与 WebSocket，去掉通配 CORS。覆盖 #5-#8、#31、#62。
+- **#2** `delegate.py` `time.sleep` 阻塞事件循环（提供 `result_async`）
+- **#10** 内网 IP 黑名单（SSRF 防护）
+- **#14** `execute` 取消 child 任务
+- **#28** 为技能上传/切换端点编写测试
+- **#29** CI 添加 SAST/依赖漏洞扫描
+- **#47** `config/schema.py` 从 models 导入违规
 
 ## P2 — 计划修复
 
-15. **异步/阻塞收口**：#4 store 迁移 `aiosqlite`、#11-#13 multimodal_processor/summarization/StateRegisterDB 阻塞 I/O 移 `to_thread`、#15 compaction_lock、#21-#23 embeddings/session_continuity/curator 异步路径阻塞
-16. **资源泄漏**：#26 child checkpointer、#41-#45 无界增长的全局变量
-17. **性能**：#36-#37 冗余扫描与计数、#38-#39 JSON 序列化与连接风暴收口
-18. **fail-open 与确认闸门**：#9-② 重审扫描器故障放行策略、#9-③ 为高风险工具增加首次调用确认闸门、#9-① 技能描述 XML 转义
-19. **前端**：#27 对话框懒加载、#50 WS timer、#51 类型安全、#52 DOMPurify、#53 错误处理
-20. **#25** 移除 `verify=False` 和全局 `disable_warnings`
+- **异步/阻塞收口**：#4 store 迁移 `aiosqlite`、#11-#13 multimodal_processor/summarization/StateRegisterDB 阻塞 I/O 移 `to_thread`、#15 compaction_lock、#21-#23 embeddings/session_continuity/curator 异步路径阻塞
+- **资源泄漏**：#26 child checkpointer、#41-#43 无界增长的全局变量
+- **性能**：#36-#37 冗余扫描与计数、#39 连接风暴收口
+- **fail-open 与确认闸门**：#9-② 重审扫描器故障放行策略、#9-③ 为高风险工具增加首次调用确认闸门、#9-① 技能描述 XML 转义
+- **前端**：#52 DOMPurify
+- **#25** 移除 `verify=False` 和全局 `disable_warnings`
 
 ## P3 — 低优先级清理
 
-21. **大文件拆分**：summarization.py (1996行) 优先拆分
-22. **类型注解**：292 个函数缺少返回类型，149 处 `Any`（agent/）
-23. **错误处理统一**：64 处 `except Exception:` 至少添加日志
-24. **全局状态治理**：52 处模块级可变变量评估封装
-25. **#30** bus 单队列路由
-26. **#32** 知识图谱遍历参数钳制
-27. **#57** Dependabot 限制为 patch 自动合并
-28. **#59** Dockerfile `.dockerignore` 补充
-29. **#60** Windows sandbox 策略
-30. **#63-#75** 逐项修复低优先级项
-31. 修复后重新审计，确认以上各域闭合
+- **大文件拆分**：summarization.py (1996行) 优先拆分
+- **类型注解**：292 个函数缺少返回类型，149 处 `Any`（agent/）
+- **错误处理统一**：64 处 `except Exception:` 至少添加日志
+- **全局状态治理**：52 处模块级可变变量评估封装
+- **#30** bus 单队列路由
+- **#32** 知识图谱遍历参数钳制
+- **#60** Windows sandbox 策略
+- **#64-#67、#69、#71-#72、#74** 逐项修复低优先级项
+- 修复后重新审计，确认以上各域闭合
