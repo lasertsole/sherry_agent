@@ -5,6 +5,9 @@ at-least-once replay contract (crash between extract and advance_consumed),
 and dedup behavior of the tiered store.
 """
 
+import json
+import sqlite3
+
 import pytest
 from langchain_core.messages import HumanMessage
 
@@ -115,6 +118,43 @@ async def test_crash_replay_writes_once_and_advances(isolated_db, tiered, monkey
     facts = tiered.read_facts("decisions")
     assert facts.get("decisions", "").count("adopt sqlite WAL") == 1
     assert failing.calls  # the failing attempt did reach the extractor
+
+
+async def test_cursor_is_single_encoded(isolated_db):
+    """Audit #48: set_state adds the only JSON encoding — the cursor passes a bare int."""
+    sid = "p48-single"
+    cursor.advance_enqueued(sid, 7)
+
+    conn = sqlite3.connect(isolated_db.parent / "state_register.db")
+    try:
+        raw = conn.execute(
+            "SELECT value FROM states WHERE session_id = ? AND key = ?",
+            (sid, "facts_cursor_enqueued"),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert raw == "7", f"cursor value must be JSON-encoded once, got {raw!r}"
+
+
+async def test_legacy_double_encoded_cursor_still_reads(isolated_db):
+    """Audit #48: values written by the old double-encoding path stay readable."""
+    sid = "p48-legacy"
+    from runtime import state_register_db as sdb
+
+    # Legacy shape: cursor json.dumps(...) followed by set_state's json.dumps.
+    sdb.set_state(sid, "facts_cursor_enqueued", json.dumps(5))
+    sdb.set_state(sid, "facts_cursor_consumed", json.dumps(2))
+
+    assert cursor.get_cursor(sid) == {
+        "enqueued_through_turn": 5,
+        "consumed_through_turn": 2,
+    }
+    assert cursor.get_pending(sid) == (3, 5)
+
+    # Advancing after a legacy read keeps writing the single-encoded shape.
+    cursor.advance_enqueued(sid, 9)
+    assert cursor.get_cursor(sid)["enqueued_through_turn"] == 9
 
 
 async def test_no_pending_turns_is_noop(isolated_db, tiered):

@@ -17,11 +17,25 @@ _CONSUMED_KEY = "facts_cursor_consumed"
 
 
 def _read(key: str, session_id: str) -> int:
+    """Read a cursor watermark as a non-negative int.
+
+    Current writes store a bare ``int`` (``StateRegisterDB.set_state`` applies
+    the single JSON encoding). Values written before audit #48 were encoded by
+    this module AND again by ``set_state``, so ``get_state`` returns their
+    inner JSON text (e.g. ``"5"`` for a stored 5) — decode that legacy shape
+    too. Unrecognizable values read as 0.
+    """
     raw = state_register_db.get_state(session_id, key, 0)
     try:
         return max(0, int(raw))
     except (TypeError, ValueError):
-        return 0
+        pass
+    if isinstance(raw, str):
+        try:
+            return max(0, int(json.loads(raw)))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0
+    return 0
 
 
 def get_cursor(session_id: str) -> dict[str, int]:
@@ -33,7 +47,8 @@ def get_cursor(session_id: str) -> dict[str, int]:
 
 def advance_enqueued(session_id: str, turn_num: int) -> None:
     current = _read(_ENQUEUED_KEY, session_id)
-    state_register_db.set_state(session_id, _ENQUEUED_KEY, json.dumps(max(current, int(turn_num))))
+    # Bare int: set_state adds the single JSON encoding (audit #48).
+    state_register_db.set_state(session_id, _ENQUEUED_KEY, max(current, int(turn_num)))
 
 
 def advance_consumed(session_id: str, turn_num: int) -> None:
@@ -42,7 +57,8 @@ def advance_consumed(session_id: str, turn_num: int) -> None:
     if target > enqueued:
         raise ValueError(f"consumed({target}) > enqueued({enqueued}) for session {session_id}")
     current = _read(_CONSUMED_KEY, session_id)
-    state_register_db.set_state(session_id, _CONSUMED_KEY, json.dumps(max(current, target)))
+    # Bare int: set_state adds the single JSON encoding (audit #48).
+    state_register_db.set_state(session_id, _CONSUMED_KEY, max(current, target))
 
 
 def get_pending(session_id: str) -> tuple[int, int]:
