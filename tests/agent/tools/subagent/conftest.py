@@ -267,6 +267,50 @@ def _setup_subagent_alias():
 _setup_subagent_alias()
 
 
+# Hermetic stand-ins that would break the REAL spawn chain (llm_e2e tests):
+#   * ``agent.checkpointer`` — ``spawn/core.py::_build_child_agent`` hands the
+#     factory's result to LangGraph ``create_agent``, which type-checks it
+#     against ``BaseCheckpointSaver`` and rejects the ``SimpleNamespace``
+#     stand-in with "Invalid checkpointer provided".
+#   * ``models`` — the ``build_main_llm`` / ``build_auxiliary_llm`` no-op
+#     lambdas would give the child agent a ``None`` model (crash at invoke).
+#   * ``pub.func`` — the ``build_agent_config`` stand-in returns ``{}``, so the
+#     real checkpointer gets no ``configurable.thread_id`` (KeyError at invoke).
+#   * ``agent.core`` — its stand-in state schema is plain ``dict``, dropping the
+#     ``session_id`` channel every middleware requires from agent state.
+# llm_e2e-marked tests execute the real spawn → child-agent → LLM path, so for
+# the duration of such a test these modules are dropped from ``sys.modules``;
+# the call-time imports inside ``spawn/core.py`` then load the real packages,
+# exactly like production. Everything else stays stubbed and the stand-ins are
+# restored at teardown, so the hermetic suites are untouched.
+_E2E_REAL_MODULES: tuple[str, ...] = (
+    "agent.checkpointer",
+    "agent.core",
+    "models",
+    "pub.func",
+)
+
+
+@pytest.fixture(autouse=True)
+def _real_dependencies_for_llm_e2e(request: pytest.FixtureRequest):
+    """Swap the checkpointer/LLM stubs for the real modules under llm_e2e."""
+    if request.node.get_closest_marker("llm_e2e") is None:
+        yield
+        return
+    saved = {name: sys.modules.pop(name) for name in _E2E_REAL_MODULES if name in sys.modules}
+    try:
+        yield
+    finally:
+        sys.modules.update(saved)
+        # Importing the real ``agent.checkpointer`` re-binds it as an attribute
+        # of the stubbed ``agent`` package; point that back at the stand-in so
+        # ``from agent import checkpointer`` keeps behaving for hermetic tests.
+        agent_pkg = sys.modules.get("agent")
+        checkpointer_stub = saved.get("agent.checkpointer")
+        if agent_pkg is not None and checkpointer_stub is not None:
+            agent_pkg.checkpointer = checkpointer_stub
+
+
 @pytest.fixture(autouse=True)
 def _stub_lt5_memory_backflow(monkeypatch):
     """Keep this suite off the real workspace memory files.
