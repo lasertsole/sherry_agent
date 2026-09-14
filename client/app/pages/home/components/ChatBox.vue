@@ -55,7 +55,9 @@
                 { hidden: isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL }
               ]"
               :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
-              :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName" />
+              :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName"
+              loading="lazy"
+              decoding="async" />
             <span
               v-else
               :class="['pi pi-user', { hidden: isConsecutive(message.id) }]"></span>
@@ -218,6 +220,8 @@
                       role="button"
                       tabindex="0"
                       :aria-label="t('a11y.previewImage')"
+                      loading="lazy"
+                      decoding="async"
                       @click="openPreview(resolveImageSrc(message, src))"
                       @keydown.enter.prevent="openPreview(resolveImageSrc(message, src))"
                       @keydown.space.prevent="openPreview(resolveImageSrc(message, src))"
@@ -238,7 +242,7 @@
                     :key="i"
                     :src="resolveAudioSrc(message, src)"
                     controls
-                    preload="metadata"
+                    preload="none"
                     class="w-full max-w-[280px] rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60" />
                 </div>
               </template>
@@ -250,7 +254,7 @@
                     :key="i"
                     :src="resolveVideoSrc(message, src)"
                     controls
-                    preload="metadata"
+                    preload="none"
                     class="max-w-[280px] max-h-56 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-black" />
                 </div>
               </template>

@@ -143,31 +143,55 @@
           :keepalive="{ max: KEEP_ALIVE_MAX }" />
       </div>
 
+      <!-- Dialogs are lazily loaded (defineAsyncComponent below): `v-if` is what makes the
+           laziness real — an async component that is always rendered would fetch its chunk as
+           soon as this page mounts. Each dialog reloads its data from @show/@hide or on mount,
+           so mounting on open (and unmounting on close) preserves the visible behavior while
+           keeping the dialog + its heavy deps (e.g. @antv/g2 via StatsDialog) out of the
+           initial page chunk. NotificationDialog is the one exception: its ws:notification
+           subscription and unread badge must stay live while the dialog is closed, so it stays
+           permanently mounted (async chunk still loaded off the critical path). -->
+
       <!-- Skills dialog -->
-      <SkillsDialog v-model="showSkillsDialog" />
+      <SkillsDialog
+        v-if="showSkillsDialog"
+        v-model="showSkillsDialog" />
 
       <!-- Statistics dialog -->
-      <StatsDialog v-model="showStatsDialog" />
+      <StatsDialog
+        v-if="showStatsDialog"
+        v-model="showStatsDialog" />
 
       <!-- System config dialog -->
       <ConfigDialog
+        v-if="showConfigDialog"
         v-model="showConfigDialog"
         @saved="loadCharacter" />
 
       <!-- AI persona dialog -->
-      <PersonaDialog v-model="showPersonaDialog" />
+      <PersonaDialog
+        v-if="showPersonaDialog"
+        v-model="showPersonaDialog" />
 
       <!-- Memory dialog -->
-      <MemoryDialog v-model="showMemoryDialog" />
+      <MemoryDialog
+        v-if="showMemoryDialog"
+        v-model="showMemoryDialog" />
 
       <!-- Heartbeat tasks dialog -->
-      <HeartbeatDialog v-model="showHeartbeatDialog" />
+      <HeartbeatDialog
+        v-if="showHeartbeatDialog"
+        v-model="showHeartbeatDialog" />
 
       <!-- Cron (scheduled tasks) dialog -->
-      <CronDialog v-model="showCronDialog" />
+      <CronDialog
+        v-if="showCronDialog"
+        v-model="showCronDialog" />
 
       <!-- Logs dialog -->
-      <LogsDialog v-model="showLogsDialog" />
+      <LogsDialog
+        v-if="showLogsDialog"
+        v-model="showLogsDialog" />
 
       <!-- Notification dialog (listens to ws:notification, merges consecutive identical
          notifications, reports the unread count via changed) -->
@@ -176,7 +200,9 @@
         @changed="(n: number) => (notificationUnread = n)" />
 
       <!-- Extend dialog (integrations / mcp) -->
-      <ExtendDialog v-model="showExtendDialog" />
+      <ExtendDialog
+        v-if="showExtendDialog"
+        v-model="showExtendDialog" />
     </div>
   </div>
 </template>
@@ -192,20 +218,34 @@ useErrorCaptured();
 import SessionSidebar from './components/SessionSidebar.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
-import SkillsDialog from './components/SkillsDialog.vue';
-import StatsDialog from './components/StatsDialog.vue';
-import ConfigDialog from './components/ConfigDialog.vue';
-import PersonaDialog from './components/PersonaDialog.vue';
-import MemoryDialog from './components/MemoryDialog.vue';
-import HeartbeatDialog from './components/HeartbeatDialog.vue';
-import CronDialog from './components/CronDialog.vue';
-import LogsDialog from './components/LogsDialog.vue';
-import ExtendDialog from './components/ExtendDialog.vue';
-import NotificationDialog from './components/NotificationDialog.vue';
+import AsyncChunkFallback from '@/components/AsyncChunkFallback.vue';
 // function
-import { computed, onMounted } from 'vue';
+import { computed, defineAsyncComponent, onMounted, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { headerTools } from './config';
+
+/**
+ * Wrap a dialog `import()` in an async component.
+ *
+ * Dialogs are code-split so their own module graph (and heavy deps such as
+ * @antv/g2 for StatsDialog) is not part of the initial `/home` chunk. The
+ * `loadingComponent` covers the first-open chunk fetch; `delay: 150` avoids a
+ * spinner flash on fast (cached) loads.
+ * @param loader Dynamic import of the dialog SFC
+ */
+const lazyDialog = (loader: () => Promise<{ default: Component }>) =>
+  defineAsyncComponent({ loader, loadingComponent: AsyncChunkFallback, delay: 150 });
+
+const SkillsDialog = lazyDialog(() => import('./components/SkillsDialog.vue'));
+const StatsDialog = lazyDialog(() => import('./components/StatsDialog.vue'));
+const ConfigDialog = lazyDialog(() => import('./components/ConfigDialog.vue'));
+const PersonaDialog = lazyDialog(() => import('./components/PersonaDialog.vue'));
+const MemoryDialog = lazyDialog(() => import('./components/MemoryDialog.vue'));
+const HeartbeatDialog = lazyDialog(() => import('./components/HeartbeatDialog.vue'));
+const CronDialog = lazyDialog(() => import('./components/CronDialog.vue'));
+const LogsDialog = lazyDialog(() => import('./components/LogsDialog.vue'));
+const ExtendDialog = lazyDialog(() => import('./components/ExtendDialog.vue'));
+const NotificationDialog = lazyDialog(() => import('./components/NotificationDialog.vue'));
 
 const { t, locale, setLocale } = useI18n();
 

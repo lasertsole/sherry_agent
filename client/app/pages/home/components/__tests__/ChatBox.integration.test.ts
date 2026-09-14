@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mount } from '@vue/test-utils';
 import ChatBox from '@/pages/home/components/ChatBox.vue';
 import { CHAT_ROLE, type MessageItem } from '@/pages/home/type';
+import { useImagePreview } from '@/composables/useImagePreview';
 
 const base = (over: Partial<MessageItem>): MessageItem => ({
   session_id: 'default',
@@ -106,6 +107,54 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     const wrapper = mount(ChatBox, { props: { messages: [] } });
     expect(wrapper.find('.flex-1').exists()).toBe(true);
     expect(wrapper.text()).not.toContain('橘雪莉');
+  });
+
+  it('lazy-loads history media attachments', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({
+            id: 31,
+            role: CHAT_ROLE.AI,
+            content: 'media message',
+            images: ['iVBORw0KGgoAAAANSUhEUg=='],
+            audios: ['QUJDRA=='],
+            videos: ['RUZHSA==']
+          })
+        ]
+      }
+    });
+
+    // Images decode off the main thread and only when near the viewport.
+    const image = wrapper.find('img[src^="data:image"]');
+    expect(image.exists()).toBe(true);
+    expect(image.attributes('loading')).toBe('lazy');
+    expect(image.attributes('decoding')).toBe('async');
+
+    // Audio/video download nothing until the user presses play.
+    expect(wrapper.find('audio').attributes('preload')).toBe('none');
+    expect(wrapper.find('video').attributes('preload')).toBe('none');
+  });
+
+  it('keeps the image preview interaction intact for lazy images', async () => {
+    const { previewSrc, isPreviewVisible, closePreview } = useImagePreview();
+    closePreview();
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({
+            id: 32,
+            role: CHAT_ROLE.AI,
+            content: 'media message',
+            images: ['iVBORw0KGgoAAAANSUhEUg==']
+          })
+        ]
+      }
+    });
+    await wrapper.find('img[src^="data:image"]').trigger('click');
+    expect(isPreviewVisible.value).toBe(true);
+    expect(previewSrc.value).toBe('data:image/*;base64,iVBORw0KGgoAAAANSUhEUg==');
+    closePreview();
   });
 });
 

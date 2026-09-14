@@ -73,12 +73,17 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { SubagentRun } from '@/composables/bridge';
-import SubagentFlowGraph from './SubagentFlowGraph.vue';
 import SubagentRunDetail from './SubagentRunDetail.vue';
+
+// The flow graph drags in @antv/g6 (>500 kB) and is only rendered once a run
+// tree exists (v-else below), so the import stays on demand: sessions without
+// background tasks never fetch the graph chunk. The graph shows its own loading
+// state as soon as it mounts, so no extra fallback is needed here.
+const SubagentFlowGraph = defineAsyncComponent(() => import('./SubagentFlowGraph.vue'));
 
 const props = defineProps<{
   /** run_id to initially locate/expand (passed in when clicking a sidebar task item) */
