@@ -1,5 +1,7 @@
 """Module tests for runtime/state_register.py — StateRegisterMeM and StateRegisterDB."""
 
+import sqlite3
+
 import pytest
 from runtime.core import Register
 from runtime.state_register import StateRegisterMeM
@@ -125,3 +127,73 @@ class TestStateRegisterMeM:
         reg.set_state("s1", "k", "v")
         reg.__init__()  # Should not wipe state
         assert reg.get_state("s1", "k") == "v"
+
+
+class TestStateRegisterDBFailures:
+    """Audit #68: DB faults are logged and distinguishable from "no data"."""
+
+    @pytest.fixture
+    def db_reg(self, tmp_path, monkeypatch):
+        import runtime.state_register as state_register_mod
+
+        monkeypatch.setattr(state_register_mod, "SRC_DIR", tmp_path)
+        return state_register_mod.StateRegisterDB()
+
+    @pytest.fixture
+    def error_logs(self):
+        from loguru import logger
+
+        records: list[str] = []
+        sink_id = logger.add(lambda m: records.append(str(m)), level="ERROR")
+        try:
+            yield records
+        finally:
+            logger.remove(sink_id)
+
+    def test_missing_key_and_session_are_silent(self, db_reg, error_logs):
+        """Absent data is a normal path: default value, no error log."""
+        assert db_reg.get_state("s", "k", "fallback") == "fallback"
+        assert db_reg.has_session("s") is False
+        assert db_reg.has_key("s", "k") is False
+        assert db_reg.delete_state("s", "k") is False
+        assert db_reg.get_all_states("s") == {}
+        assert db_reg.get_all_session_ids() == []
+        assert error_logs == []
+
+    def test_database_error_returns_defaults_and_logs(self, db_reg, error_logs, monkeypatch):
+        """Every method keeps its default return, but the fault is visible."""
+
+        def _broken_connect(*args, **kwargs):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(sqlite3, "connect", _broken_connect)
+
+        assert db_reg.set_state("s", "k", 1) is False
+        assert db_reg.get_state("s", "k", "fallback") == "fallback"
+        assert db_reg.get_all_states("s") == {}
+        assert db_reg.delete_state("s", "k") is False
+        assert db_reg.get_all_session_ids() == []
+        assert db_reg.has_session("s") is False
+        assert db_reg.has_key("s", "k") is False
+        assert db_reg.update_states("s", {"k": 2}) is False
+
+        assert len(error_logs) == 8
+        assert all("database error" in record for record in error_logs)
+        assert any("get_state" in record for record in error_logs)
+        assert any("update_states" in record for record in error_logs)
+
+    def test_corrupt_json_value_is_logged_separately(self, db_reg, error_logs):
+        """A corrupt stored value gets its own classification, not a DB error."""
+        conn = sqlite3.connect(db_reg.db_path)
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO states (session_id, key, value) VALUES (?, ?, ?)",
+                ("s", "k", "{not json"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        assert db_reg.get_state("s", "k", "fallback") == "fallback"
+        assert any("corrupt JSON" in record for record in error_logs)
+        assert not any("database error" in record for record in error_logs)

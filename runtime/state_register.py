@@ -8,6 +8,25 @@ from config import SRC_DIR
 from runtime import Register
 
 
+def _log_state_db_failure(operation: str, exc: BaseException, **context: object) -> None:
+    """Classify a swallowed StateRegisterDB failure for observability (audit #68).
+
+    The fail-safe contract is unchanged — callers still receive the method's
+    default value. What changes is that a real fault is no longer confusable
+    with "no data": database errors, corrupt JSON values and unexpected faults
+    each get a distinct, greppable message at ERROR level.
+    """
+    details = ", ".join(f"{key}={value}" for key, value in context.items())
+    if isinstance(exc, sqlite3.Error):
+        logger.error("state_register_db {}: database error ({}): {}", operation, details, exc)
+    elif isinstance(exc, json.JSONDecodeError):
+        logger.error("state_register_db {}: corrupt JSON value ({}): {}", operation, details, exc)
+    else:
+        logger.opt(exception=exc).error(
+            "state_register_db {}: unexpected error ({})", operation, details
+        )
+
+
 class StateRegisterMeM(Register):
     def __init__(self):
         if getattr(self, "_initialized", False):
@@ -138,8 +157,8 @@ class StateRegisterDB(Register):
                 )
                 conn.commit()
             return True
-        except Exception:
-            logger.exception(f"set_state_db failed: session_id={session_id}, key={key}")
+        except Exception as exc:
+            _log_state_db_failure("set_state", exc, session_id=session_id, key=key)
         return False
 
     def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
@@ -154,8 +173,8 @@ class StateRegisterDB(Register):
             if row:
                 return json.loads(row[0])
             return default
-        except Exception:
-            logger.exception(f"get_state_db failed: session_id={session_id}, key={key}")
+        except Exception as exc:
+            _log_state_db_failure("get_state", exc, session_id=session_id, key=key)
         return default
 
     def get_all_states(self, session_id: str) -> dict[str, Any]:
@@ -165,8 +184,8 @@ class StateRegisterDB(Register):
                 cursor.execute("SELECT key, value FROM states WHERE session_id = ?", (session_id,))
                 rows = cursor.fetchall()
             return {row[0]: json.loads(row[1]) for row in rows}
-        except Exception:
-            logger.exception(f"get_all_states_db failed: session_id={session_id}")
+        except Exception as exc:
+            _log_state_db_failure("get_all_states", exc, session_id=session_id)
         return {}
 
     def delete_state(self, session_id: str, key: str) -> bool:
@@ -179,8 +198,8 @@ class StateRegisterDB(Register):
                 affected = cursor.rowcount
                 conn.commit()
             return affected > 0
-        except Exception:
-            logger.exception(f"delete_state_db failed: session_id={session_id}, key={key}")
+        except Exception as exc:
+            _log_state_db_failure("delete_state", exc, session_id=session_id, key=key)
         return False
 
     def get_all_session_ids(self) -> list[str]:
@@ -190,8 +209,8 @@ class StateRegisterDB(Register):
                 cursor = conn.cursor()
                 cursor.execute("SELECT DISTINCT session_id FROM states")
                 return [row[0] for row in cursor.fetchall()]
-        except Exception:
-            logger.exception("get_all_session_ids failed")
+        except Exception as exc:
+            _log_state_db_failure("get_all_session_ids", exc)
         return []
 
     # Register can't clear StateRegisterDB
@@ -205,8 +224,8 @@ class StateRegisterDB(Register):
                 cursor.execute("SELECT 1 FROM states WHERE session_id = ? LIMIT 1", (session_id,))
                 result = cursor.fetchone() is not None
             return result
-        except Exception:
-            logger.exception(f"has_session_db failed: session_id={session_id}")
+        except Exception as exc:
+            _log_state_db_failure("has_session", exc, session_id=session_id)
         return False
 
     def has_key(self, session_id: str, key: str) -> bool:
@@ -219,8 +238,8 @@ class StateRegisterDB(Register):
                 )
                 result = cursor.fetchone() is not None
             return result
-        except Exception:
-            logger.exception(f"has_key_db failed: session_id={session_id}, key={key}")
+        except Exception as exc:
+            _log_state_db_failure("has_key", exc, session_id=session_id, key=key)
         return False
 
     def update_states(self, session_id: str, states: dict[str, Any]) -> bool:
@@ -234,8 +253,8 @@ class StateRegisterDB(Register):
                     )
                 conn.commit()
             return True
-        except Exception:
-            logger.exception(f"update_states_db failed: session_id={session_id}")
+        except Exception as exc:
+            _log_state_db_failure("update_states", exc, session_id=session_id)
         return False
 
 
