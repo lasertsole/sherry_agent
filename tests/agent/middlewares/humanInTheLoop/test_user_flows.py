@@ -374,7 +374,7 @@ class TestUC08CronDueBatch:
 class TestUC09MultimodalFlow:
     @pytest.fixture()
     def mm(self, tmp_path, monkeypatch):
-        from agent.middlewares import multimodal_processor as mm_mod
+        from agent.middlewares import media_pipeline as mm_mod
 
         monkeypatch.setattr(mm_mod, "SRC_DIR", tmp_path / "src")
         return mm_mod.MultimodalProcessor(), tmp_path / "src"

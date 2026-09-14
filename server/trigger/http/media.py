@@ -23,7 +23,7 @@ _CONTENT_TYPES: dict[str, str] = {
     ".ogg": "audio/ogg",
 }
 
-# Media files are written by multimodal_processor to
+# Media files are written by media_pipeline to
 # <SRC_DIR>/<session_id>/media/<filename>
 MEDIA_DIR_NAME = SERVER_HTTP["media_dir_name"]
 

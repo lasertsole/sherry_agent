@@ -384,6 +384,6 @@ def test_cleanup_edge_cases_covered_reference():
     """The EC-16 file-cleanup matrix is covered jointly by
     TestUC09MultimodalFlow.test_expired_temp_files_cleaned and the UC-09 body
     (non-numeric filename deletion / expired deletion / new files kept)."""
-    import agent.middlewares.multimodal_processor as mm_mod
+    import agent.middlewares.media_pipeline as mm_mod
 
     assert hasattr(mm_mod.MultimodalProcessor, "_after_agent_impl")
