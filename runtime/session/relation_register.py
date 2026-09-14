@@ -1,10 +1,10 @@
 from loguru import logger
 import threading
-from .core import Register
+from .core import SessionRegister
 from robyn import WebSocketAdapter
 
 
-class RelationManager(Register):
+class RelationManager(SessionRegister):
     def __init__(self):
         if self._initialized:
             return

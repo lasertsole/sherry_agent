@@ -1,4 +1,4 @@
-"""Unit tests for runtime.crash_loop_breaker (CrashLoopBreaker boot lifecycle guard).
+"""Unit tests for runtime.process.crash_loop_breaker (CrashLoopBreaker boot lifecycle guard).
 
 Every test redirects the module-level STATE_PATH into tmp_path via
 monkeypatch.setattr with a dotted string target (self-restoring: each runner group
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
-from runtime.crash_loop_breaker import (
+from runtime.process.crash_loop_breaker import (
     RETENTION_S,
     WINDOW_S,
     clear,
@@ -32,7 +32,7 @@ pytestmark = [pytest.mark.unit]
 def state_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Patch the breaker's STATE_PATH to a tmp_path file; monkeypatch restores it."""
     p = tmp_path / "boot_lifecycle.json"
-    monkeypatch.setattr("runtime.crash_loop_breaker.STATE_PATH", p)
+    monkeypatch.setattr("runtime.process.crash_loop_breaker.STATE_PATH", p)
     return p
 
 

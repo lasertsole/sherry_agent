@@ -4,14 +4,14 @@ from abc import ABC, abstractmethod
 from loguru import logger
 
 
-class Register(ABC):
+class SessionRegister(ABC):
     _instances = {}
     # RLock: clear_all_register_sessions re-enters it via subclass().__new__.
     # Guards singleton creation and registry scans (audit #13).
     _registry_lock = threading.RLock()
 
     def __new__(cls, *args, **kwargs):
-        with Register._registry_lock:
+        with SessionRegister._registry_lock:
             if cls not in cls._instances:
                 instance = super().__new__(cls)
                 instance._initialized = False
@@ -25,7 +25,7 @@ class Register(ABC):
     @classmethod
     @final
     def clear_all_register_sessions(cls, session_id: str) -> None:
-        with Register._registry_lock:
+        with SessionRegister._registry_lock:
             for subclass in cls.__subclasses__():
                 if subclass in cls._instances and cls._instances[subclass] is not None:
                     instance = subclass()
@@ -33,7 +33,7 @@ class Register(ABC):
 
 
 def clear_all_register_sessions(session_id: str, clear_persistent_states: bool = False) -> None:
-    Register.clear_all_register_sessions(session_id)
+    SessionRegister.clear_all_register_sessions(session_id)
 
     if clear_persistent_states:
         from runtime import state_register_db

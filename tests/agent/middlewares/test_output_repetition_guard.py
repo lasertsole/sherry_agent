@@ -41,8 +41,8 @@ _llama_chat_sub = types.ModuleType("llama_cpp.llama_chat_format")
 _llama_chat_sub.Qwen25VLChatHandler = type("Qwen25VLChatHandler", (), {})
 sys.modules.setdefault("llama_cpp.llama_chat_format", _llama_chat_sub)
 
-from runtime.core import Register
-from runtime.state_register import StateRegisterMeM
+from runtime.session.core import SessionRegister
+from runtime.session.state_register import StateRegisterMeM
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain.agents.middleware.types import (
     ModelRequest,
@@ -353,14 +353,14 @@ class TestExtractAiMessage:
 @pytest.fixture
 def fresh_state(monkeypatch):
     """Provide an isolated StateRegisterMeM patched into the middleware module."""
-    if StateRegisterMeM in Register._instances:
-        del Register._instances[StateRegisterMeM]
+    if StateRegisterMeM in SessionRegister._instances:
+        del SessionRegister._instances[StateRegisterMeM]
     reg = StateRegisterMeM()
     monkeypatch.setattr("agent.middlewares.output_repetition_guard.state_register_mem", reg)
     yield reg
     # teardown: remove any state set during the test
-    if StateRegisterMeM in Register._instances:
-        del Register._instances[StateRegisterMeM]
+    if StateRegisterMeM in SessionRegister._instances:
+        del SessionRegister._instances[StateRegisterMeM]
 
 
 class TestCrossCallRepetition:

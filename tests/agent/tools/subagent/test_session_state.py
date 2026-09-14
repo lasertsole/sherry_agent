@@ -33,7 +33,7 @@ _SESSION_STATE_MODULE = "agent.tools.subagent.registry.session_state"
 
 
 class FakeStateRegister:
-    """Minimal stand-in for runtime.state_register.state_register_mem."""
+    """Minimal stand-in for runtime.session.state_register.state_register_mem."""
 
     def __init__(self, answering: dict[str, object] | None = None):
         self.answering = answering or {}

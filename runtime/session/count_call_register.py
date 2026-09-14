@@ -1,7 +1,7 @@
 import inspect
 import threading
 from loguru import logger
-from .core import Register
+from .core import SessionRegister
 from typing import Any
 from collections.abc import Callable
 from pydantic import BaseModel, Field
@@ -14,7 +14,7 @@ class Trigger(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
-class CountCallRegister(Register):
+class CountCallRegister(SessionRegister):
     """
     Count register for tracking and triggering callbacks
     """

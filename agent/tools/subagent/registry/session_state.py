@@ -56,7 +56,7 @@ Guarantees:
     - call-time truth only: no caching, no TTL — each call re-reads the
       sources (cheap dict/state lookups);
     - no heavy imports at module load: ``server.trigger.ws.messages`` (robyn +
-      channel boot), ``runtime.state_register`` and
+      channel boot), ``runtime.session.state_register`` and
       ``server.service.auto_turn`` (pulls ``server.service.messages``) are
       imported lazily inside the accessors so this module stays importable
       in isolated contexts.
@@ -108,7 +108,7 @@ def _get_active_tasks() -> dict[str, asyncio.Task[Any]]:
 
 def _get_state_register():
     """Lazy accessor for the in-memory state register (read-only use)."""
-    from runtime.state_register import state_register_mem
+    from runtime.session.state_register import state_register_mem
 
     return state_register_mem
 

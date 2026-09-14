@@ -1,11 +1,27 @@
-from .core import Register, clear_all_register_sessions
-from .state_register import StateRegisterMeM, state_register_mem, StateRegisterDB, state_register_db
-from .count_call_register import CountCallRegister, count_call_register
-from .relation_register import RelationManager, relation_register
-from .timer_call_register import TimerCallRegister, timer_call_register
-from .periodic_backoff import PeriodicBackoff
+from .session.core import SessionRegister, clear_all_register_sessions
+from .session.state_register import (
+    StateRegisterMeM,
+    state_register_mem,
+    StateRegisterDB,
+    state_register_db,
+)
+from .session.count_call_register import CountCallRegister, count_call_register
+from .session.relation_register import RelationManager, relation_register
+from .session.timer_call_register import TimerCallRegister, timer_call_register
+from .process.crash_loop_breaker import (
+    record_boot,
+    is_tripped,
+    clear,
+    mark_clean_exit,
+    was_last_exit_clean,
+)
+from .process.periodic_backoff import PeriodicBackoff
+
+# 向后兼容别名：旧代码引用 ``runtime.Register``
+Register = SessionRegister
 
 __all__ = [
+    "SessionRegister",
     "Register",
     "clear_all_register_sessions",
     "StateRegisterMeM",
@@ -18,5 +34,10 @@ __all__ = [
     "relation_register",
     "TimerCallRegister",
     "timer_call_register",
+    "record_boot",
+    "is_tripped",
+    "clear",
+    "mark_clean_exit",
+    "was_last_exit_clean",
     "PeriodicBackoff",
 ]

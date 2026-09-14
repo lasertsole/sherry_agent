@@ -38,15 +38,15 @@ else:
 
 
 if __name__ == "__main__":
-    # Crash-loop gate (runtime.crash_loop_breaker): record this boot before
+    # Crash-loop gate (runtime.process.crash_loop_breaker): record this boot before
     # any background service is allowed to start. The clean-exit marker is
     # ONE-SHOT, so it must be read BEFORE record_boot consumes it.
     import atexit
 
     from loguru import logger
 
-    import runtime.crash_loop_breaker as breaker
-    from runtime.crash_loop_breaker import mark_clean_exit, was_last_exit_clean
+    import runtime.process.crash_loop_breaker as breaker
+    from runtime.process.crash_loop_breaker import mark_clean_exit, was_last_exit_clean
 
     _prev_exit_clean = was_last_exit_clean()
     tripped = breaker.record_boot(clean=_prev_exit_clean, reason="startup")

@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from loguru import logger
 from server.trigger.core import app
 from runtime import state_register_mem
-from runtime.relation_register import relation_register
+from runtime.session.relation_register import relation_register
 from agent.tools.subagent.registry.session_state import set_hitl_pending
 from server.service import get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs

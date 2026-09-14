@@ -173,7 +173,7 @@ class TestYolo:
 
     def test_yolo_flag_persists_across_restart(self, tmp_path, monkeypatch):
         import sqlite3
-        from runtime.state_register import StateRegisterDB
+        from runtime.session.state_register import StateRegisterDB
 
         db_path = tmp_path / "state_register.db"
 

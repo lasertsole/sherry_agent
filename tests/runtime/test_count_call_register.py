@@ -1,12 +1,12 @@
-"""Module tests for runtime/count_call_register.py — CountCallRegister."""
+"""Module tests for runtime/session/count_call_register.py — CountCallRegister."""
 
 import sys
 import threading
 
 import pytest
 from unittest.mock import MagicMock
-from runtime.core import Register
-from runtime.count_call_register import CountCallRegister
+from runtime.session.core import SessionRegister
+from runtime.session.count_call_register import CountCallRegister
 
 
 pytestmark = [pytest.mark.module]
@@ -18,8 +18,8 @@ class TestCountCallRegister:
     @pytest.fixture
     def reg(self):
         """Fresh CountCallRegister instance."""
-        if CountCallRegister in Register._instances:
-            del Register._instances[CountCallRegister]
+        if CountCallRegister in SessionRegister._instances:
+            del SessionRegister._instances[CountCallRegister]
         r = CountCallRegister()
         yield r
         for sid in list(r.session_id_to_counter.keys()):

@@ -1,10 +1,10 @@
-"""Unit test for runtime/TODOManager.py — Register ABC and clear_all_register_sessions."""
+"""Unit test for runtime/TODOManager.py — SessionRegister ABC and clear_all_register_sessions."""
 
-from runtime.core import Register, clear_all_register_sessions
+from runtime.session.core import SessionRegister, clear_all_register_sessions
 
 
-class ConcreteRegister(Register):
-    """Concrete implementation for testing the Register ABC."""
+class ConcreteRegister(SessionRegister):
+    """Concrete implementation for testing the SessionRegister ABC."""
 
     def __init__(self):
         if self._initialized:
@@ -22,7 +22,7 @@ pytestmark = [pytest.mark.unit]
 
 
 class TestRegisterSingleton:
-    """Test Register singleton pattern."""
+    """Test SessionRegister singleton pattern."""
 
     def test_same_instance(self):
         a = ConcreteRegister()
@@ -34,7 +34,7 @@ class TestRegisterSingleton:
         assert reg._initialized is True
 
     def test_different_subclasses_are_different_singletons(self):
-        class AnotherRegister(Register):
+        class AnotherRegister(SessionRegister):
             def __init__(self):
                 if self._initialized:
                     return

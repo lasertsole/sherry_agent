@@ -32,7 +32,7 @@ from agent.tools.subagent.registry.session_state import (
     REASON_AUTO_TURN_INFLIGHT,
     detect_state,
 )
-from runtime.relation_register import relation_register
+from runtime.session.relation_register import relation_register
 from server.service import get_pending_interrupt
 from server.service.messages import async_generate
 from server.service.turn_runner import on_turn_finished

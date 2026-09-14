@@ -5,7 +5,7 @@ from typing import Any
 from collections.abc import Callable
 
 from loguru import logger
-from runtime.state_register import state_register_mem
+from runtime.session.state_register import state_register_mem
 
 from .types import (
     ApprovalDecision,

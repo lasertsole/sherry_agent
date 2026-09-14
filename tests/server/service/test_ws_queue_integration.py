@@ -195,9 +195,7 @@ def ws_env(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         wsm, "async_generate", _simple_generate_factory(inline_calls), raising=False
     )
-    monkeypatch.setattr(
-        turn_runner, "async_generate_multi", _simple_generate_factory(drain_calls)
-    )
+    monkeypatch.setattr(turn_runner, "async_generate_multi", _simple_generate_factory(drain_calls))
     monkeypatch.setattr(wsm, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(turn_runner, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(
@@ -352,9 +350,7 @@ async def test_stop_cancels_current_turn_and_drain_continues_fifo(ws_env):
             raise
 
     wsm.async_generate = _simple_generate_factory(ws_env.inline_calls)  # unused here
-    turn_runner.async_generate_multi = _simple_generate_factory(
-        drain_calls, on_text=block_and_void
-    )
+    turn_runner.async_generate_multi = _simple_generate_factory(drain_calls, on_text=block_and_void)
 
     async with _handler_session(socket):
         socket.push(_msg_frame("s1", "m1", "first"))
@@ -490,7 +486,7 @@ async def test_generation_streams_via_relation_register_registration(ws_env, mon
     _send_ws(None, ...) and was silently dropped, so the client never saw any
     streaming output. This test runs the REAL registry lookup end to end.
     """
-    from runtime.relation_register import relation_register
+    from runtime.session.relation_register import relation_register
 
     monkeypatch.setattr(
         turn_runner,
@@ -537,7 +533,7 @@ async def test_stop_frame_does_not_hijack_session_binding(ws_env, monkeypatch):
     frames; if a stop frame registered that socket, a concurrently streaming
     turn would have its frames routed into a dead end.
     """
-    from runtime.relation_register import relation_register
+    from runtime.session.relation_register import relation_register
 
     # Stream the first turn through the REAL registry lookup (ws_env patches
     # this seam to an empty holder, which would starve socket_a of frames).
@@ -598,7 +594,7 @@ async def test_handler_catchall_failure_sends_error_frame(ws_env, monkeypatch):
     or MultiModalMessage construction raising) would leave the socket hanging
     forever with neither a done nor an error terminal state.
     """
-    from runtime.relation_register import relation_register
+    from runtime.session.relation_register import relation_register
 
     saved = (
         dict(relation_register.websocket_id_to_session_id),

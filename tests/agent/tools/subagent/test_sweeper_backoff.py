@@ -8,7 +8,7 @@ from config.
 import asyncio
 
 import pytest
-from runtime.periodic_backoff import PeriodicBackoff
+from runtime.process.periodic_backoff import PeriodicBackoff
 
 from agent.tools.subagent.config import get_config
 from agent.tools.subagent.registry import sweeper

@@ -15,7 +15,7 @@ from typing import Any
 from langchain_core.messages import ToolCall
 from loguru import logger
 from langgraph.errors import GraphInterrupt
-from runtime.state_register import state_register_mem
+from runtime.session.state_register import state_register_mem
 
 from .types import (
     ApprovalResult,

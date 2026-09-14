@@ -19,7 +19,7 @@ Contract pinned here:
 """
 
 import pytest
-from runtime.relation_register import relation_register
+from runtime.session.relation_register import relation_register
 
 pytestmark = pytest.mark.unit
 

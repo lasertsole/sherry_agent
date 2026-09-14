@@ -7,7 +7,7 @@
 import asyncio
 import time
 from loguru import logger
-from runtime.periodic_backoff import PeriodicBackoff
+from runtime.process.periodic_backoff import PeriodicBackoff
 from ..config import get_config
 from ..types.registry import ExecutionStatus
 

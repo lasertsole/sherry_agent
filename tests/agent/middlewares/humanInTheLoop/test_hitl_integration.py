@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from runtime.state_register import state_register_mem
+from runtime.session.state_register import state_register_mem
 
 from agent.middlewares.humanInTheLoop import (
     ApprovalDecision,

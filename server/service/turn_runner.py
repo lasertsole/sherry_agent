@@ -23,7 +23,7 @@ handler, by ``auto_turn``, and transitively by half the app; one eager project
 import here creates a circular-import poison (a partially-initialized
 ``turn_runner`` in ``sys.modules`` that other modules' ``from server.service
 import turn_runner`` resolve to mid-cycle, leaving *their* imports — e.g.
-``runtime.relation_register`` — half-initialized too). Only stdlib + loguru +
+``runtime.session.relation_register`` — half-initialized too). Only stdlib + loguru +
 the pure store/model modules (``server.queue.user_input_queue``,
 ``type.message``) are imported eagerly. The WS-active-task registry is reached
 through the lazy :func:`_get_active_tasks` seam; all queue access goes through
@@ -77,7 +77,7 @@ def get_registry() -> Any:
 
 def get_websocket_by_session_id(session_id: str) -> Any:
     """Seam over the live socket lookup (lazy, cycle-safe)."""
-    from runtime.relation_register import relation_register  # noqa: PLC0415
+    from runtime.session.relation_register import relation_register  # noqa: PLC0415
 
     return relation_register.get_websocket_by_session_id(session_id)
 

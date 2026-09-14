@@ -2,21 +2,21 @@
 
 Audit findings being pinned by these tests:
 
-* ``runtime/core.py`` — ``Register.__new__`` mutates the class-level
+* ``runtime/session/core.py`` — ``SessionRegister.__new__`` mutates the class-level
   ``_instances`` dict without a lock (two threads can each build an
   instance); ``clear_all_register_sessions`` iterates subclasses unlocked.
-* ``runtime/state_register.py`` — ``StateRegisterMeM._states`` mutated
+* ``runtime/session/state_register.py`` — ``StateRegisterMeM._states`` mutated
   unlocked; ``get_all_states`` returns the LIVE dict (callers can mutate
   shared state through it).
-* ``runtime/relation_register.py`` — the websocket/channel mappings are
+* ``runtime/session/relation_register.py`` — the websocket/channel mappings are
   updated across several dicts non-atomically (a concurrent unregister can
   leave half-applied state).
-* ``runtime/count_call_register.py`` — ``register``/``unregister`` mutate
+* ``runtime/session/count_call_register.py`` — ``register``/``unregister`` mutate
   the counter/trigger maps unlocked (an ``unregister`` interleaving with
   the locked ``increase`` can crash it with ``KeyError``).
-* ``runtime/timer_call_register.py`` — ``session_id_to_timers`` mutated
+* ``runtime/session/timer_call_register.py`` — ``session_id_to_timers`` mutated
   unlocked (``unregister`` vs ``reset_timer`` race → ``KeyError``).
-* ``runtime/_callback_executor.py`` — ``_ensure_running`` can double-spawn
+* ``runtime/session/_callback_executor.py`` — ``_ensure_running`` can double-spawn
   the background loop thread under concurrent first use.
 
 Test method: races are made DETERMINISTIC with instrumented fakes
@@ -36,13 +36,13 @@ from loguru import logger
 
 logger.remove()
 
-from runtime._callback_executor import CallbackExecutor  # noqa: E402
-import runtime._callback_executor as cb_executor_mod  # noqa: E402
-from runtime.core import Register  # noqa: E402
-from runtime.count_call_register import CountCallRegister  # noqa: E402
-from runtime.relation_register import RelationManager  # noqa: E402
-from runtime.state_register import StateRegisterMeM  # noqa: E402
-from runtime.timer_call_register import Timer, TimerCallRegister  # noqa: E402
+from runtime.session._callback_executor import CallbackExecutor  # noqa: E402
+import runtime.session._callback_executor as cb_executor_mod  # noqa: E402
+from runtime.session.core import SessionRegister  # noqa: E402
+from runtime.session.count_call_register import CountCallRegister  # noqa: E402
+from runtime.session.relation_register import RelationManager  # noqa: E402
+from runtime.session.state_register import StateRegisterMeM  # noqa: E402
+from runtime.session.timer_call_register import Timer, TimerCallRegister  # noqa: E402
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -162,7 +162,7 @@ class StubExecutor:
 
 
 def _fresh(cls) -> Any:
-    """Build an isolated instance of a Register subclass (bypasses singleton)."""
+    """Build an isolated instance of a SessionRegister subclass (bypasses singleton)."""
     inst = object.__new__(cls)
     inst._initialized = False
     inst.__init__()
@@ -179,7 +179,7 @@ def _run_threads(workers: list) -> None:
 
 
 # ---------------------------------------------------------------------------
-# runtime/core.py — Register.__new__ + clear_all_register_sessions
+# runtime/session/core.py — SessionRegister.__new__ + clear_all_register_sessions
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +194,7 @@ class TestRegisterSingleton:
         created: list = []
         probe = type(
             "ProbeRegister",
-            (Register,),
+            (SessionRegister,),
             {"clear_session": lambda self, session_id: created.append(session_id)},
         )
         slow = RaceWriteDict()
@@ -223,7 +223,7 @@ class TestRegisterSingleton:
         def make(name):
             return type(
                 name,
-                (Register,),
+                (SessionRegister,),
                 {"clear_session": lambda self, session_id: cleared.append(session_id)},
             )
 
@@ -238,7 +238,7 @@ class TestRegisterSingleton:
             def worker():
                 barrier.wait()
                 try:
-                    Register.clear_all_register_sessions("sess-clear")
+                    SessionRegister.clear_all_register_sessions("sess-clear")
                 except Exception as e:  # pragma: no cover - red path
                     errors.append(e)
 
@@ -247,12 +247,12 @@ class TestRegisterSingleton:
             assert not errors, f"clear_all raised under concurrency: {errors}"
             assert cleared.count("sess-clear") >= 2, "both registers must be cleared"
         finally:
-            Register._instances.pop(probe_a, None)
-            Register._instances.pop(probe_b, None)
+            SessionRegister._instances.pop(probe_a, None)
+            SessionRegister._instances.pop(probe_b, None)
 
 
 # ---------------------------------------------------------------------------
-# runtime/state_register.py — StateRegisterMeM
+# runtime/session/state_register.py — StateRegisterMeM
 # ---------------------------------------------------------------------------
 
 
@@ -298,7 +298,7 @@ class TestStateRegisterMeM:
 
 
 # ---------------------------------------------------------------------------
-# runtime/relation_register.py — multi-dict websocket/channel mappings
+# runtime/session/relation_register.py — multi-dict websocket/channel mappings
 # ---------------------------------------------------------------------------
 
 
@@ -372,7 +372,7 @@ class TestRelationManager:
 
 
 # ---------------------------------------------------------------------------
-# runtime/count_call_register.py — unlocked register/unregister vs increase
+# runtime/session/count_call_register.py — unlocked register/unregister vs increase
 # ---------------------------------------------------------------------------
 
 
@@ -438,7 +438,7 @@ class TestCountCallRegister:
 
 
 # ---------------------------------------------------------------------------
-# runtime/timer_call_register.py — unlocked unregister vs reset_timer
+# runtime/session/timer_call_register.py — unlocked unregister vs reset_timer
 # ---------------------------------------------------------------------------
 
 
@@ -503,7 +503,7 @@ class TestTimerCallRegister:
 
 
 # ---------------------------------------------------------------------------
-# runtime/_callback_executor.py — double-spawn of the background loop thread
+# runtime/session/_callback_executor.py — double-spawn of the background loop thread
 # ---------------------------------------------------------------------------
 
 

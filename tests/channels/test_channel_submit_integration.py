@@ -36,7 +36,7 @@ from typing import Any
 import pytest
 
 from pub.func import string_to_unique_int
-from runtime.relation_register import relation_register
+from runtime.session.relation_register import relation_register
 from server.queue.user_input_queue import UserInputQueue, UserInputQueueStatus
 from server.service import input_queue_service as iqs
 

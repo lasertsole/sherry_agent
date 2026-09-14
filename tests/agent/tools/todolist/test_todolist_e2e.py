@@ -539,7 +539,7 @@ class TestTodolistFullPipeline:
         """Given a saved previous-session end state for the channel, When a NEW
         session builds its prompt, Then ## Last Session (continuity) appears."""
         from context_engine.session_continuity import save_session_end_state
-        from runtime.relation_register import relation_register
+        from runtime.session.relation_register import relation_register
 
         old_sid = "e2e-cont-old"
         new_sid = "e2e-cont-new"
@@ -807,7 +807,7 @@ class TestTodolistPromptBlocks:
         prompt builds, Then all five dynamic block headers are present."""
         import agent.tools.taskflow.tools._dispatch as dispatch_mod
         from context_engine.session_continuity import save_session_end_state
-        from runtime.relation_register import relation_register
+        from runtime.session.relation_register import relation_register
 
         tools = _tools()
         flow_tools = _flow_tools()

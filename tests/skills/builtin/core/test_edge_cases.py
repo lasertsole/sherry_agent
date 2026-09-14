@@ -129,7 +129,7 @@ class TestStateRegisterBounds:
         state_register_mem.clear_session("ec05u")
 
     def test_db_register_roundtrip(self, tmp_path):
-        from runtime.state_register import StateRegisterDB
+        from runtime.session.state_register import StateRegisterDB
 
         db = StateRegisterDB()
         db.db_path = tmp_path / "state.db"
@@ -143,7 +143,7 @@ class TestStateRegisterBounds:
 
     def test_clear_all_register_sessions_wipes_mem(self):
         from runtime import state_register_mem
-        from runtime.core import clear_all_register_sessions
+        from runtime.session.core import clear_all_register_sessions
 
         state_register_mem.set_state("ec05c", "k", "v")
         clear_all_register_sessions("ec05c")

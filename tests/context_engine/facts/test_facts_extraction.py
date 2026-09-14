@@ -33,7 +33,7 @@ def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_db", store_db.get_db())
 
     state_db = tmp_path / "state_register.db"
-    monkeypatch.setattr("runtime.state_register.state_register_db.db_path", state_db)
+    monkeypatch.setattr("runtime.session.state_register.state_register_db.db_path", state_db)
     from runtime import state_register_db as sdb
 
     monkeypatch.setattr(sdb, "db_path", state_db)

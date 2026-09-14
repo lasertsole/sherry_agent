@@ -175,7 +175,7 @@ def _get_channel_chat_for_session(session_id: str) -> tuple[str, str]:
     has no channel binding (pure websocket sessions) or on any failure.
     """
     try:
-        from runtime.relation_register import relation_register
+        from runtime.session.relation_register import relation_register
 
         binding = relation_register.get_channel_chat_id_by_session_id(session_id)
         if binding:

@@ -1,10 +1,10 @@
-"""Module tests for runtime/_callback_executor.py — CallbackExecutor."""
+"""Module tests for runtime/session/_callback_executor.py — CallbackExecutor."""
 
 import time
 import asyncio
 import threading
 import pytest
-from runtime._callback_executor import CallbackExecutor
+from runtime.session._callback_executor import CallbackExecutor
 
 
 pytestmark = [pytest.mark.module]

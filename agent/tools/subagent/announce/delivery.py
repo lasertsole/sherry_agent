@@ -145,7 +145,7 @@ def _detect_session_state(session_key: str):
 
 def _get_bound_websocket(session_id: str):
     """WS-binding seam (lazy): a live socket means a WS session; None means channel/unbound."""
-    from runtime.relation_register import relation_register
+    from runtime.session.relation_register import relation_register
 
     return relation_register.get_websocket_by_session_id(session_id)
 

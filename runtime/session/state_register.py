@@ -5,7 +5,7 @@ from typing import Any
 from pathlib import Path
 from loguru import logger
 from config import SRC_DIR
-from runtime import Register
+from .core import SessionRegister
 
 
 def _log_state_db_failure(operation: str, exc: BaseException, **context: object) -> None:
@@ -27,7 +27,7 @@ def _log_state_db_failure(operation: str, exc: BaseException, **context: object)
         )
 
 
-class StateRegisterMeM(Register):
+class StateRegisterMeM(SessionRegister):
     def __init__(self):
         if getattr(self, "_initialized", False):
             return
@@ -118,7 +118,7 @@ class StateRegisterMeM(Register):
 state_register_mem = StateRegisterMeM()
 
 
-class StateRegisterDB(Register):
+class StateRegisterDB(SessionRegister):
     def __init__(self):
         self.db_path: Path = (SRC_DIR / "data" / "state_register.db").resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,7 +213,7 @@ class StateRegisterDB(Register):
             _log_state_db_failure("get_all_session_ids", exc)
         return []
 
-    # Register can't clear StateRegisterDB
+    # SessionRegister can't clear StateRegisterDB
     def clear_session(self, session_id: str) -> bool:
         return False
 

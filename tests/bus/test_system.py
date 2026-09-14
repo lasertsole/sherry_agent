@@ -130,8 +130,8 @@ class TestRegisterIntegration:
 
     def test_clear_all_registers(self):
         """Verify clear_all_register_sessions cascades to all register types."""
-        from runtime.state_register import StateRegisterMeM
-        from runtime.count_call_register import CountCallRegister
+        from runtime.session.state_register import StateRegisterMeM
+        from runtime.session.count_call_register import CountCallRegister
 
         # Ensure singletons exist
         sm = StateRegisterMeM()
@@ -151,11 +151,11 @@ class TestRegisterIntegration:
 
     def test_multi_session_isolation(self):
         """Verify sessions are properly isolated."""
-        from runtime.state_register import StateRegisterMeM
-        from runtime.core import Register
+        from runtime.session.state_register import StateRegisterMeM
+        from runtime.session.core import SessionRegister
 
-        if StateRegisterMeM in Register._instances:
-            del Register._instances[StateRegisterMeM]
+        if StateRegisterMeM in SessionRegister._instances:
+            del SessionRegister._instances[StateRegisterMeM]
         sm = StateRegisterMeM()
 
         sm.set_state("session-1", "data", "for-1")

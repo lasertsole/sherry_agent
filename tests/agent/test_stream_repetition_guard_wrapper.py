@@ -109,8 +109,8 @@ import agent as _agent_pkg  # noqa: E402
 if not hasattr(_agent_pkg, "middlewares"):
     _agent_pkg.middlewares = _am_stub
 
-from runtime.core import Register
-from runtime.state_register import StateRegisterMeM
+from runtime.session.core import SessionRegister
+from runtime.session.state_register import StateRegisterMeM
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from agent.middlewares.output_repetition_guard import (
@@ -247,14 +247,14 @@ pytestmark = [pytest.mark.unit]
 def fresh_state(monkeypatch):
     """Provide an isolated StateRegisterMeM patched into both the wrapper
     and middleware modules."""
-    if StateRegisterMeM in Register._instances:
-        del Register._instances[StateRegisterMeM]
+    if StateRegisterMeM in SessionRegister._instances:
+        del SessionRegister._instances[StateRegisterMeM]
     reg = StateRegisterMeM()
     monkeypatch.setattr(_org_module, "state_register_mem", reg)
     monkeypatch.setattr(_wrapper_module, "state_register_mem", reg)
     yield reg
-    if StateRegisterMeM in Register._instances:
-        del Register._instances[StateRegisterMeM]
+    if StateRegisterMeM in SessionRegister._instances:
+        del SessionRegister._instances[StateRegisterMeM]
 
 
 # ======================================================================

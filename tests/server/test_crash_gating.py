@@ -5,7 +5,7 @@ NEVER imported here -- both carry heavy import side-effect chains (agent core
 init, route registration, background threads). The gating layers are asserted
 through the small predicate units the production code uses:
 
-- ``runtime.crash_loop_breaker`` (record_boot / is_tripped / mark_clean_exit /
+- ``runtime.process.crash_loop_breaker`` (record_boot / is_tripped / mark_clean_exit /
   was_last_exit_clean) drives the trip decision ``server.__main__`` makes;
 - ``skills.builtin.core.cron.scripts.base._http_only_mode`` is the cron
   daemon-thread start-gate predicate (importing the cron base module is safe:
@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 import skills.builtin.core.cron.scripts.base as cron_base
-from runtime.crash_loop_breaker import (
+from runtime.process.crash_loop_breaker import (
     is_tripped,
     mark_clean_exit,
     record_boot,
@@ -41,7 +41,7 @@ pytestmark = [pytest.mark.unit]
 def state_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Patch the breaker's STATE_PATH into tmp_path (restored by monkeypatch)."""
     p = tmp_path / "boot_lifecycle.json"
-    monkeypatch.setattr("runtime.crash_loop_breaker.STATE_PATH", p)
+    monkeypatch.setattr("runtime.process.crash_loop_breaker.STATE_PATH", p)
     return p
 
 

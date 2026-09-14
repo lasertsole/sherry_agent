@@ -97,7 +97,7 @@ pytestmark = [pytest.mark.integration]
 
 @pytest.fixture
 def wrapper_disabled_state():
-    """The wrapper's per-turn state uses runtime.state_register_mem.
+    """The wrapper's per-turn state uses runtime.session.state_register_mem.
 
     Use the real (in-memory) register so set_state/get_state work exactly
     as they would in production. Ensure a unique session per test to avoid

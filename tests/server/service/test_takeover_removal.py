@@ -86,7 +86,7 @@ class _RecordingSocket:
 
 
 class _FakeStateRegister:
-    """Minimal stand-in for runtime.state_register.state_register_mem."""
+    """Minimal stand-in for runtime.session.state_register.state_register_mem."""
 
     def __init__(self) -> None:
         self.answering: dict[str, object] = {}

@@ -154,9 +154,8 @@ def _setup_subagent_alias():
     # message models), `server` (empty __init__), `bus` (async queues).
 
     # Bind the runtime package names that real runtime submodules re-import
-    # from the package (runtime/state_register.py does
-    # `from runtime import Register`, middlewares do
-    # `from runtime import state_register_mem`). Register MUST be bound
+    # from the package (middlewares do
+    # `from runtime import state_register_mem`). SessionRegister MUST be bound
     # before importing state_register. `clear_all_register_sessions` binds
     # the REAL implementation: a 0-arg no-op lambda here used to overwrite
     # the attribute on the already-real runtime module in full-suite runs
@@ -164,16 +163,17 @@ def _setup_subagent_alias():
     # arguments but 1 was given). Binding the real function is
     # signature-compatible and keeps the package alias a pass-through, not
     # a behavior swap.
-    import runtime.core  # noqa: F401  (side-effect: must be in sys.modules for aliasing below)
+    import runtime.session.core  # noqa: F401  (side-effect: must be in sys.modules for aliasing below)
 
-    sys.modules["runtime"].Register = sys.modules["runtime.core"].Register
-    import runtime.state_register  # noqa: F401  (side-effect: same, bound via sys.modules)
+    sys.modules["runtime"].SessionRegister = sys.modules["runtime.session.core"].SessionRegister
+    sys.modules["runtime"].Register = sys.modules["runtime.session.core"].SessionRegister
+    import runtime.session.state_register  # noqa: F401  (side-effect: same, bound via sys.modules)
 
     sys.modules["runtime"].state_register_mem = sys.modules[
-        "runtime.state_register"
+        "runtime.session.state_register"
     ].state_register_mem
     sys.modules["runtime"].clear_all_register_sessions = sys.modules[
-        "runtime.core"
+        "runtime.session.core"
     ].clear_all_register_sessions
 
     sys.modules["agent"].tools = sys.modules["agent.tools"]

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage
 
-from runtime.state_register import state_register_mem
+from runtime.session.state_register import state_register_mem
 
 from agent.middlewares.humanInTheLoop import HITLConfig, HumanInTheLoop
 from agent.middlewares.humanInTheLoop.approval import (

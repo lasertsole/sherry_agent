@@ -2,7 +2,7 @@
 
 import pytest
 
-from runtime.state_register import ContextEpoch, StateRegisterDB
+from runtime.session.state_register import ContextEpoch, StateRegisterDB
 
 pytestmark = [pytest.mark.unit]
 

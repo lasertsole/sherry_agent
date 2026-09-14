@@ -80,7 +80,7 @@ from pub.func.message.tool_result_ttl import (
     record_first_seen,
     select_expired,
 )
-from runtime.state_register import state_register_db, state_register_mem
+from runtime.session.state_register import state_register_db, state_register_mem
 
 COMPACTION_COOLDOWN_ROUNDS = SUMMARIZATION["compaction_cooldown_rounds"]
 COMPRESSION_RESERVE_TOKENS = SUMMARIZATION["compression_reserve_tokens"]

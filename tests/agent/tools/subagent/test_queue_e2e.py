@@ -71,8 +71,8 @@ from agent.tools.subagent.registry.pending_injections import (
 from context_engine.store import core as mes_store_core
 from context_engine.store.db import _migrate as mes_migrate
 from pub.func.build_agent_config import build_agent_config
-from runtime.relation_register import relation_register
-from runtime.state_register import state_register_mem
+from runtime.session.relation_register import relation_register
+from runtime.session.state_register import state_register_mem
 from server.queue.user_input_queue import UserInputQueue, UserInputQueueStatus
 from server.service import auto_turn as at
 from server.service import input_queue_service as iqs

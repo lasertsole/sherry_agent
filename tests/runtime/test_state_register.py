@@ -1,10 +1,10 @@
-"""Module tests for runtime/state_register.py — StateRegisterMeM and StateRegisterDB."""
+"""Module tests for runtime/session/state_register.py — StateRegisterMeM and StateRegisterDB."""
 
 import sqlite3
 
 import pytest
-from runtime.core import Register
-from runtime.state_register import StateRegisterMeM
+from runtime.session.core import SessionRegister
+from runtime.session.state_register import StateRegisterMeM
 
 
 pytestmark = [pytest.mark.module]
@@ -16,8 +16,8 @@ class TestStateRegisterMeM:
     @pytest.fixture
     def reg(self):
         """Fresh StateRegisterMeM with singleton reset."""
-        if StateRegisterMeM in Register._instances:
-            del Register._instances[StateRegisterMeM]
+        if StateRegisterMeM in SessionRegister._instances:
+            del SessionRegister._instances[StateRegisterMeM]
         r = StateRegisterMeM()
         yield r
         for sid in list(r._states.keys()):
@@ -134,7 +134,7 @@ class TestStateRegisterDBFailures:
 
     @pytest.fixture
     def db_reg(self, tmp_path, monkeypatch):
-        import runtime.state_register as state_register_mod
+        import runtime.session.state_register as state_register_mod
 
         monkeypatch.setattr(state_register_mod, "SRC_DIR", tmp_path)
         return state_register_mod.StateRegisterDB()

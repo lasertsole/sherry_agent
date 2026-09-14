@@ -84,13 +84,13 @@ def clean_registers():
 @pytest.fixture
 def mock_state_register_mem():
     """Provide a clean StateRegisterMeM instance for module tests."""
-    from runtime.state_register import StateRegisterMeM
+    from runtime.session.state_register import StateRegisterMeM
 
     # Force a fresh instance by clearing the singleton
-    from runtime.core import Register
+    from runtime.session.core import SessionRegister
 
-    if StateRegisterMeM in Register._instances:
-        del Register._instances[StateRegisterMeM]
+    if StateRegisterMeM in SessionRegister._instances:
+        del SessionRegister._instances[StateRegisterMeM]
     reg = StateRegisterMeM()
     yield reg
     # Cleanup: clear all sessions

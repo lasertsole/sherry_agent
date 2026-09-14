@@ -2,7 +2,7 @@
 
 The sub-agent EventBus carries prefixed main-session keys
 (``agent:main:session:{id}`` — see ``events/bridge.py``) while the service
-side (``server/service/messages.py``) and ``runtime/relation_register`` work
+side (``server/service/messages.py``) and ``runtime/session/relation_register`` work
 with bare session ids. These helpers convert between the two forms.
 
 Tolerance contract:

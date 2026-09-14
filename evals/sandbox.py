@@ -151,7 +151,7 @@ class EvalSandbox:
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
             self._set(importlib.import_module(module_name), "SRC_DIR", checkpoint_dir.parent)
 
-        state_register = importlib.import_module("runtime.state_register")
+        state_register = importlib.import_module("runtime.session.state_register")
         state_db = self.src / "data" / "state_register.db"
         state_db.parent.mkdir(parents=True, exist_ok=True)
         self._set(state_register.state_register_db, "db_path", state_db)

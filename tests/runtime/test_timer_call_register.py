@@ -1,4 +1,4 @@
-"""Module tests for runtime/timer_call_register.py — TimerCallRegister."""
+"""Module tests for runtime/session/timer_call_register.py — TimerCallRegister."""
 
 import asyncio
 import time
@@ -6,8 +6,8 @@ from collections.abc import Generator
 
 import pytest
 from unittest.mock import MagicMock
-from runtime.core import Register
-from runtime.timer_call_register import TimerCallRegister
+from runtime.session.core import SessionRegister
+from runtime.session.timer_call_register import TimerCallRegister
 
 
 def _settle(seconds: float = 0.5) -> None:
@@ -33,8 +33,8 @@ class TestTimerCallRegister:
     @pytest.fixture
     def reg(self) -> Generator[TimerCallRegister]:
         """Fresh TimerCallRegister instance; its loop is stopped afterwards."""
-        if TimerCallRegister in Register._instances:
-            del Register._instances[TimerCallRegister]
+        if TimerCallRegister in SessionRegister._instances:
+            del SessionRegister._instances[TimerCallRegister]
         r = TimerCallRegister()
         yield r
         for sid in list(r.session_id_to_timers.keys()):

@@ -3,7 +3,7 @@ import inspect
 import threading
 import uuid
 from loguru import logger
-from .core import Register
+from .core import SessionRegister
 from typing import Any
 from collections.abc import Callable
 from pydantic import BaseModel, Field
@@ -19,7 +19,7 @@ class Timer(BaseModel):
     task_name: str | None = None  # Background task name, for lookup/cancel
 
 
-class TimerCallRegister(Register):
+class TimerCallRegister(SessionRegister):
     """
     Countdown register class
     Unit: minutes, range: 1-60

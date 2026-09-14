@@ -9,7 +9,7 @@ everything defined here).
 from __future__ import annotations
 
 from config.features import REPETITION_GUARD
-from runtime.state_register import StateRegisterMeM
+from runtime.session.state_register import StateRegisterMeM
 
 # ---------------------------------------------------------------------------
 # Per-session state keys (stored in ``state_register_mem``).

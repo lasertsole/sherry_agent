@@ -62,8 +62,8 @@ from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
 )
 from pub.func.build_agent_config import build_agent_config
-from runtime.relation_register import relation_register
-from runtime.state_register import state_register_mem
+from runtime.session.relation_register import relation_register
+from runtime.session.state_register import state_register_mem
 from server.queue import UserInputQueue
 from pub.types.message import MultiModalMessage
 

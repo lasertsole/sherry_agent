@@ -2,8 +2,8 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-from runtime.core import Register
-from runtime.state_register import StateRegisterMeM
+from runtime.session.core import SessionRegister
+from runtime.session.state_register import StateRegisterMeM
 
 
 pytestmark = [pytest.mark.module]
@@ -15,8 +15,8 @@ class TestIterationBudget:
     @pytest.fixture
     def fresh_state_register(self):
         """Provide a fresh StateRegisterMeM."""
-        if StateRegisterMeM in Register._instances:
-            del Register._instances[StateRegisterMeM]
+        if StateRegisterMeM in SessionRegister._instances:
+            del SessionRegister._instances[StateRegisterMeM]
         reg = StateRegisterMeM()
         yield reg
 
