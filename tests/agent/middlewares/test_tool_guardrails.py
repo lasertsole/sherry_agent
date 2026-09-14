@@ -38,14 +38,26 @@ def make_mw(**cfg):
     return mod.ToolGuardrails(mod.ToolCallGuardrailConfig(**cfg))
 
 
+def _is_stagnant(gs, name, result_hash, is_idempotent):
+    """Mirror _wrap_tool_call_impl: scan pre-append for same tool + result."""
+    if not is_idempotent or result_hash is None:
+        return False
+    return any(rec.name == name and rec.result_hash == result_hash for rec in reversed(gs.records))
+
+
 def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=True):
     """Mimic production order: record appended BEFORE _evaluate (impl L263-272)."""
+    is_stagnant = _is_stagnant(gs, name, result_hash, is_idempotent)
     gs.records.append(
         mod._ToolCallRecord(
-            name=name, args_hash=args_hash, is_error=is_error, result_hash=result_hash
+            name=name,
+            args_hash=args_hash,
+            is_error=is_error,
+            result_hash=result_hash,
+            is_stagnant=is_stagnant,
         )
     )
-    return mw._evaluate(gs, name, args_hash, result_hash, is_error, is_idempotent)
+    return mw._evaluate(gs, name, args_hash, result_hash, is_error, is_idempotent, is_stagnant)
 
 
 IDEMPOTENT_TOOL = SimpleNamespace(metadata={"idempotent": True})
@@ -124,45 +136,61 @@ def test_regression_no_progress_warn_then_block():
 
 # ------------------------------------------------------------------- new: ping-pong
 def test_ping_pong_symmetric_warn_and_block():
-    mw = make_mw()
+    mw = make_mw(no_progress_warn_after=100, no_progress_block_after=200)
     gs = mod._TurnGuardrailState()
-    # alternating A,B with unique result hashes → legacy no-progress never fires
-    seq = [("A" if i % 2 == 1 else "B", f"h{i}") for i in range(1, 8)]  # A,B,A,B,A,B,A
+    # Alternating A,B with the SAME per-tool result → each call beyond the first
+    # is stagnant (no progress), which is what ping-pong now requires.
+    seq = [("A", "ha"), ("B", "hb")] * 4 + [("A", "ha")]  # 9 calls: A,B,A,B,A,B,A,B,A
     actions = []
     for i, (name, h) in enumerate(seq, start=1):
         act = call(mw, gs, name, f"args-{name}", h)
         actions.append(act)
-        if i == 5:  # pair count 4 == ping_pong_warn_after
+        if i == 7:  # pair count 4 == ping_pong_warn_after
             assert act == WARN
             assert gs.last_pathology == ("ping_pong", 4, 6)
-        if i == 6:  # pair count 5
+        if i == 8:  # pair count 5
             assert act == WARN
             assert gs.last_pathology == ("ping_pong", 5, 6)
-    assert all(a == ALLOW for a in actions[:4])  # pair counts 1..3 < warn
-    assert actions[6] == BLOCK  # pair count 6 == ping_pong_block_after
+    assert all(a == ALLOW for a in actions[:6])  # pair counts 1..3 < warn
+    assert actions[8] == BLOCK  # pair count 6 == ping_pong_block_after
     assert "A" in gs.blocked_tools
     assert gs.last_pathology == ("ping_pong", 6, 6)
     assert gs.ping_pong_counts["A,B"] == 6
 
 
 def test_ping_pong_asymmetric_reset():
-    mw = make_mw()
+    mw = make_mw(no_progress_warn_after=100, no_progress_block_after=200)
     gs = mod._TurnGuardrailState()
-    for i, name in enumerate(["A", "B", "A", "B"], start=1):  # 3 qualifying pairs
-        assert call(mw, gs, name, f"args-{name}", f"h{i}") == ALLOW
+    for i, (name, h) in enumerate([("A", "ha"), ("B", "hb")] * 3, start=1):
+        assert call(mw, gs, name, f"args-{name}", h) == ALLOW
     assert gs.ping_pong_counts["A,B"] == 3
     assert gs.last_pathology is None
     # asymmetric: B succeeds as non-idempotent (result_hash None) → the compared
     # pair (B,B) resets immediately; stale "A,B" resets on the next call (prev=B has no hash)
     assert call(mw, gs, "B", "args-B", None, is_idempotent=False) == ALLOW
     assert gs.ping_pong_counts["B,B"] == 0
-    assert call(mw, gs, "A", "args-A", "h6") == ALLOW  # zeroes stale "A,B"
+    assert call(mw, gs, "A", "args-A", "ha") == ALLOW  # zeroes stale "A,B"
     assert gs.ping_pong_counts["A,B"] == 0
     # accumulation restarts from 0: 3 fresh qualifying pairs → still below warn(4)
-    for name, h in [("B", "h7"), ("A", "h8"), ("B", "h9")]:
+    for name, h in [("B", "hb"), ("A", "ha"), ("B", "hb")]:
         assert call(mw, gs, name, f"args-{name}", h) == ALLOW
     assert gs.ping_pong_counts["A,B"] == 3
     assert gs.last_pathology is None
+
+
+def test_changed_idempotent_result_is_progress_not_stagnation():
+    """Given a repeated tool whose result CHANGED, When evaluated, Then it no
+    longer counts as a ping-pong pair nor as an argument-churn variant call."""
+    mw = make_mw(no_progress_warn_after=100, no_progress_block_after=200)
+    gs = mod._TurnGuardrailState()
+    assert call(mw, gs, "A", "args-A", "ha") == ALLOW
+    assert call(mw, gs, "B", "args-B", "hb") == ALLOW
+    assert call(mw, gs, "A", "args-A", "ha") == ALLOW  # stagnant, but pair not complete
+    assert gs.arg_churn_variants == {("A", "args-A"): 1}
+    # B now returns a changed result → progress: no pair increment, no variant count
+    assert call(mw, gs, "B", "args-B", "hb2") == ALLOW
+    assert gs.ping_pong_counts["A,B"] == 0
+    assert gs.arg_churn_variants == {("A", "args-A"): 1}
 
 
 # ------------------------------------------------------------------ new: arg-churn
@@ -172,7 +200,7 @@ def test_arg_churn_warn_at_three_variants():
     actions = []
     for v in range(1, 4):
         actions.append(call(mw, gs, "T", f"err-args-{v}", None, is_error=True))
-        for _ in range(3):
+        for _ in range(4):  # first call is not stagnant; the next 3 count
             actions.append(call(mw, gs, "T", f"v-args-{v}", f"h{v}"))
     assert max(gs.ping_pong_counts.values()) <= 2  # errors keep ping-pong suppressed
     assert actions[7] == WARN  # after 2 variants: only legacy no-progress WARN
@@ -180,7 +208,6 @@ def test_arg_churn_warn_at_three_variants():
     assert gs.last_pathology == ("argument_churn", 3, 5)
     assert len(gs.arg_churn_variants) == 3
     assert all(c == 3 for c in gs.arg_churn_variants.values())
-    assert gs.arg_churn_last_result == "h3"
 
 
 def test_arg_churn_block_at_five_variants():
@@ -189,7 +216,7 @@ def test_arg_churn_block_at_five_variants():
     actions = []
     for v in range(1, 6):
         actions.append(call(mw, gs, "T", f"err-args-{v}", None, is_error=True))
-        for _ in range(3):
+        for _ in range(4):
             actions.append(call(mw, gs, "T", f"v-args-{v}", f"h{v}"))
     assert actions[-1] == BLOCK  # distinct qualified variants hit 5 → churn BLOCK
     assert "T" in gs.blocked_tools
@@ -199,13 +226,12 @@ def test_arg_churn_block_at_five_variants():
 def test_arg_churn_reset_on_progress():
     mw = make_mw()
     gs = mod._TurnGuardrailState()
-    call(mw, gs, "T", "v-args-1", "h1")
+    call(mw, gs, "T", "v-args-1", "h1")  # first sight → not stagnant, no count
+    call(mw, gs, "T", "v-args-1", "h1")  # stagnant → variant count 1
     assert gs.arg_churn_variants == {("T", "v-args-1"): 1}
-    assert gs.arg_churn_last_result == "h1"
     # non-idempotent success = real progress → churn state fully cleared
     assert call(mw, gs, "T", "v-args-2", None, is_idempotent=False) == ALLOW
     assert gs.arg_churn_variants == {}
-    assert gs.arg_churn_last_result == ""
 
 
 # ----------------------------------------------------- new: wrap-level message routing
@@ -213,15 +239,15 @@ def test_wrap_message_routing_ping_pong_warn():
     mw = make_mw()
     sess = "sess-pp-warn"
     msgs = []
-    for i in range(1, 6):
+    for i in range(1, 8):  # 7 calls: pair count reaches ping_pong_warn_after
         name = "A" if i % 2 == 1 else "B"
         msgs.append(wrap_call(mw, sess, name, {"k": name}, "same-output", f"c{i}"))
     assert msgs[0].content == "same-output"  # allow → passthrough
-    assert "idempotent no-progress" in msgs[2].content  # call 3: legacy WARN (pair=2)
+    assert "idempotent no-progress" in msgs[2].content  # call 3: legacy WARN (np=2)
     assert "ping-pong loop" not in msgs[2].content
-    assert "idempotent no-progress" in msgs[3].content  # call 4: pair=3
-    assert "ping-pong loop" in msgs[4].content  # call 5: pair=4 → ping-pong message
-    assert "⚠" in msgs[4].content
+    assert "idempotent no-progress" in msgs[3].content  # call 4: np=2 for B
+    assert "ping-pong loop" in msgs[6].content  # call 7: pair=4 → ping-pong message
+    assert "⚠" in msgs[6].content
     gs = mw._get_state(sess)
     assert gs.last_pathology == ("ping_pong", 4, 6)
 
@@ -232,10 +258,10 @@ def test_wrap_message_routing_arg_churn_block():
     outs = []
     for v in range(1, 6):
         outs.append(wrap_call(mw, sess, "T", {"e": v}, f"err{v}", f"e{v}", status="error"))
-        for j in range(3):
+        for j in range(4):  # first call not stagnant; the next 3 qualify the variant
             outs.append(wrap_call(mw, sess, "T", {"v": v}, f"res{v}", f"s{v}-{j}"))
-    assert "argument churn" in outs[11].content  # end of variant 3: churn WARN
-    assert "⚠" in outs[11].content
+    assert "argument churn" in outs[14].content  # end of variant 3: churn WARN
+    assert "⚠" in outs[14].content
     assert outs[-1].status == "error"  # end of variant 5: churn BLOCK
     assert "argument churn" in outs[-1].content
     assert "🚫" in outs[-1].content

@@ -52,6 +52,9 @@ class _ToolCallRecord:
     args_hash: str
     is_error: bool
     result_hash: str | None = None
+    # True when this idempotent call returned a result some earlier call of the
+    # same tool already produced (no progress); a changed result is progress.
+    is_stagnant: bool = False
 
 
 @dataclass
@@ -64,7 +67,6 @@ class _TurnGuardrailState:
     halt_decision: GuardrailAction | None = None
     ping_pong_counts: dict[str, int] = field(default_factory=dict)
     arg_churn_variants: dict[tuple[str, str], int] = field(default_factory=dict)
-    arg_churn_last_result: str = ""
     last_pathology: tuple[str, int, int] | None = None
     recovery_mode: bool = False
     recovery_violation_count: int = 0
@@ -129,6 +131,7 @@ class ToolGuardrails(AgentMiddleware):
         result_hash: str | None,
         is_error: bool,
         is_idempotent: bool,
+        is_stagnant: bool,
     ) -> GuardrailAction:
         gs.last_pathology = None
 
@@ -201,7 +204,7 @@ class ToolGuardrails(AgentMiddleware):
 
         if action in (GuardrailAction.ALLOW, GuardrailAction.WARN):
             action = self._evaluate_pair_pathologies(
-                gs, tool_name, args_hash, result_hash, is_error, action
+                gs, tool_name, args_hash, result_hash, is_error, action, is_stagnant
             )
 
         if action == GuardrailAction.BLOCK and self.config.recovery_mode_enabled:
@@ -241,17 +244,21 @@ class ToolGuardrails(AgentMiddleware):
         result_hash: str | None,
         is_error: bool,
         action: GuardrailAction,
+        is_stagnant: bool,
     ) -> GuardrailAction:
         """Steps 4-5: ping-pong and argument-churn detection (escalation-only).
 
         Only invoked when the legacy three pathologies produced ALLOW/WARN; the
         returned action may only move UP the chain (ALLOW < WARN < BLOCK < HALT).
+        A call counts as "no progress" only when it is *stagnant* — the same
+        tool already produced this exact result in the turn. A changed result is
+        progress and resets both pair streaks and the current variant streak.
         """
         # --- step 4: ping-pong (current AND previous record both without progress)
         if len(gs.records) >= 2:
             prev_rec = gs.records[-2]
-            curr_no = result_hash is not None
-            prev_no = prev_rec.result_hash is not None
+            curr_no = is_stagnant
+            prev_no = prev_rec.is_stagnant
             pair_key = ",".join(sorted([prev_rec.name, tool_name]))
             if curr_no and prev_no:
                 gs.ping_pong_counts[pair_key] = gs.ping_pong_counts.get(pair_key, 0) + 1
@@ -266,8 +273,9 @@ class ToolGuardrails(AgentMiddleware):
                     if _ACTION_RANK[pp_action] > _ACTION_RANK[action]:
                         action = pp_action
             else:
-                # Pair broken (error or real progress): every accumulating pair
-                # streak restarts from zero, not just the current pair key.
+                # Pair broken (error, real progress, or a changed result): every
+                # accumulating pair streak restarts from zero, not just the
+                # current pair key.
                 for broken_key in gs.ping_pong_counts:
                     gs.ping_pong_counts[broken_key] = 0
                 gs.ping_pong_counts[pair_key] = 0
@@ -276,10 +284,9 @@ class ToolGuardrails(AgentMiddleware):
         if is_error:
             return action
 
-        if result_hash is not None:
+        if is_stagnant:
             variant_key = (tool_name, args_hash)
             gs.arg_churn_variants[variant_key] = gs.arg_churn_variants.get(variant_key, 0) + 1
-            gs.arg_churn_last_result = result_hash
             if action in (GuardrailAction.ALLOW, GuardrailAction.WARN):
                 distinct = sum(
                     1
@@ -299,10 +306,9 @@ class ToolGuardrails(AgentMiddleware):
                     )
                     if _ACTION_RANK[ac_action] > _ACTION_RANK[action]:
                         action = ac_action
-        else:
+        elif result_hash is None:
             # non-idempotent success = real progress → churn state fully reset
             gs.arg_churn_variants.clear()
-            gs.arg_churn_last_result = ""
 
         return action
 
@@ -367,16 +373,26 @@ class ToolGuardrails(AgentMiddleware):
         result_content = str(result.content) if result.content else ""
         result_hash = self._result_hash(result_content) if not is_error and is_idempotent else None
 
+        is_stagnant = False
+        if is_idempotent and result_hash is not None:
+            for rec in reversed(gs.records):
+                if rec.name == tool_name and rec.result_hash == result_hash:
+                    is_stagnant = True
+                    break
+
         gs.records.append(
             _ToolCallRecord(
                 name=tool_name,
                 args_hash=args_hash,
                 is_error=is_error,
                 result_hash=result_hash,
+                is_stagnant=is_stagnant,
             )
         )
 
-        action = self._evaluate(gs, tool_name, args_hash, result_hash, is_error, is_idempotent)
+        action = self._evaluate(
+            gs, tool_name, args_hash, result_hash, is_error, is_idempotent, is_stagnant
+        )
         self._save_state(session_id, gs)
 
         if action == GuardrailAction.HALT:
