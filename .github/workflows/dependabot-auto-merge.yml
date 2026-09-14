@@ -17,10 +17,11 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Auto-merge dev dependency groups (patch + minor)
+      - name: Auto-merge development deps (patch only)
         if: |
           contains(fromJson(steps.metadata.outputs.updated-dependencies-json), 'dependency-type') &&
-          steps.metadata.outputs.dependency-type == 'development'
+          steps.metadata.outputs.dependency-type == 'development' &&
+          steps.metadata.outputs.update-type == 'version-update:semver-patch'
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

@@ -23,6 +23,11 @@ temp/
 logs/output/
 cron_jobs.json
 
+# Runtime/user data — never baked into the image
+workspace/
+evals/results/
+skills/plugins/
+
 # Model weights are downloaded at runtime into models/*/model_weight/
 models/*/model_weight/
 
