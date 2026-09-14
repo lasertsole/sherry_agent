@@ -1,5 +1,6 @@
 import type { NitroFetchRequest } from 'nitropack';
 import type { Response } from '~/types/response';
+import { logUtil } from '~/utils/log';
 
 interface Params {
   url: NitroFetchRequest;
@@ -46,6 +47,22 @@ const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unk
 };
 
 /**
+ * Narrow payload guard for a resolved API response (audit #51).
+ *
+ * The backend answers with a JSON object/array, or — on legacy endpoints such as
+ * `/get_pending_interrupt` — a bare `text/plain` string (e.g. `"None"`). Any
+ * other shape (number/boolean/undefined) cannot satisfy the `Response` contract
+ * the callers consume, so it is rejected at this boundary instead of being
+ * forced through `as Response`.
+ * @param value Value resolved by ofetch
+ */
+function isApiPayload(value: unknown): value is Response {
+  if (value === null) return false;
+  if (typeof value === 'string') return true;
+  return typeof value === 'object';
+}
+
+/**
  * Request with server-side rendering support
  * @param { NitroFetchRequest } url Request path
  * @param { object } opts Request parameters
@@ -54,7 +71,7 @@ const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unk
  * @param { {[key: string]: any} } headeropts Request header parameters
  * @param { boolean } server Whether server-side rendering is used
  * @param { Array<()=>void> } watch Watch for whether a re-request is needed
- * @returns {Promise<Response>} Request result
+ * @returns {Promise<Response | null>} Request result; null means the request failed
  */
 
 async function requestBaseApi({
@@ -63,7 +80,7 @@ async function requestBaseApi({
   method = 'get',
   contentType = 'application/json',
   headeropts = {}
-}: Params): Promise<Response> {
+}: Params): Promise<Response | null> {
   const requestURL = opts instanceof FormData ? url : replacePathVariables(url, opts);
 
   // Set up request parameters
@@ -84,6 +101,7 @@ async function requestBaseApi({
   // happens after the request ends (one toast).
   let networkFailed = false;
   let httpFailed = false;
+  let requestFailed = false;
   let lastStatus: number | null = null;
 
   // Use $fetch (not useFetch): this wrapper is only called after mount (event callbacks/composables),
@@ -91,13 +109,12 @@ async function requestBaseApi({
   // unique key per call to bypass the useAsyncData cache. $fetch is the underlying ofetch instance
   // used by useFetch, with identical interceptor and retry semantics, but without cache or
   // setup-timing constraints.
-  // Note that $fetch throws on failure, whereas the original useFetch semantics resolve(null); to
-  // preserve the caller contract of handling empty values (the outer retryFetch only retries on
-  // explicit throws such as missing path parameters), exceptions are caught here and turned into
-  // null; failure info is conveyed by the onResponseError flags + the unified toast.
+  // Note that $fetch throws on failure, whereas the original useFetch semantics resolve(null); the
+  // outer retryFetch only retries on explicit throws such as missing path parameters, so exceptions
+  // are caught here and turned into null; failure info is conveyed by the flags + the unified toast.
   let data: Response | null;
   try {
-    data = await $fetch<Response>(requestURL, {
+    const raw = await $fetch<unknown>(requestURL, {
       method,
       // The ofetch library auto-detects the request URL; for requests whose url already contains a
       // domain, baseURL is not prepended. The fallback (local backend address when VITE_API_BACK_URL
@@ -163,36 +180,49 @@ async function requestBaseApi({
         lastStatus = response?.status ?? null;
       }
     });
-  } catch {
-    // Aligned with the original useFetch semantics: failures are not thrown to the caller; they
-    // fall to null for the caller to handle as empty values.
+
+    // Runtime boundary check (audit #51): reject payloads that cannot satisfy
+    // the Response contract before callers assert on them.
+    data = isApiPayload(raw) ? raw : null;
+    if (data === null) {
+      requestFailed = true;
+      logUtil.e(`[requestApi] Unexpected response payload from ${String(requestURL)}:`, raw);
+    }
+  } catch (error) {
+    // No longer swallowed (audit #53): a failure that is neither a network error
+    // nor a 4xx/5xx (interceptor throw, unparsable body, abort) is recorded and
+    // logged here, then reported through the same single-toast path below. The
+    // caller still receives null (null = request failed; a Response whose `data`
+    // is missing/empty = an empty result).
+    requestFailed = true;
     data = null;
+    logUtil.e(`[requestApi] Request failed: ${String(requestURL)}`, error);
   }
 
-  // Retries exhausted and still failing → pop one global error toast (network error; or HTTP error
-  // with no successful data).
+  // Retries exhausted and still failing → pop one global error toast (network error; HTTP error
+  // with no successful data; or an unexpected/thrown failure).
   // This is the single decision point: the flags inside the callbacks never trigger a toast
   // directly, avoiding duplicate toasts from retry:3.
-  if (import.meta.client && (networkFailed || (httpFailed && !data))) {
+  if (import.meta.client && (networkFailed || requestFailed || (httpFailed && !data))) {
     sendRequestErrorToast(`${requestURL}${lastStatus !== null ? ` (HTTP ${lastStatus})` : ''}`);
   }
 
-  return data as Response;
+  return data;
 }
 
 /**
  * Wrap a request with retries
  *
- * @param { ()=>Promise<Response> } fetchFunc Request function
+ * @param { ()=>Promise<Response | null> } fetchFunc Request function
  * @param { number } retryMaxCount Maximum number of retries
  * @param { number } retryDelay Delay between retries, in milliseconds
- * @returns {Promise<Response>} The response object
+ * @returns {Promise<Response | null>} The response object, or null when the request failed
  */
 function retryFetch(
-  fetchFunc: () => Promise<Response>,
+  fetchFunc: () => Promise<Response | null>,
   retryMaxCount: number = 3,
   retryDelay: number = 1000
-): Promise<Response> {
+): Promise<Response | null> {
   return fetchFunc().catch(err => {
     if (retryMaxCount <= 0) {
       return Promise.reject(err);
@@ -217,7 +247,7 @@ function retryFetch(
  * @param { 'get' | 'post' | 'put' | 'patch' | 'delete' } method Request method
  * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
  * @param { [key: string]: any } headeropts Request header parameters
- * @returns {Promise<Response>} Request result
+ * @returns {Promise<Response | null>} Request result; null means the request failed
  */
 export async function fetchApi({
   url,
@@ -225,7 +255,7 @@ export async function fetchApi({
   method = 'get',
   contentType = 'application/json',
   headeropts = {}
-}: Params): Promise<Response> {
+}: Params): Promise<Response | null> {
   return retryFetch(() =>
     requestBaseApi({
       url,

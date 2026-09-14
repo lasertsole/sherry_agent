@@ -78,7 +78,7 @@ export async function get_history_by_turn_page(
   const effectiveMinTurn = cachedMinTurn > min_turn_num ? cachedMinTurn : Math.max(min_turn_num, 1);
 
   try {
-    const res: Response = await fetchApi({
+    const res: Response | null = await fetchApi({
       url: '/get_history_by_turn_page',
       opts: {
         session_id,
@@ -88,6 +88,8 @@ export async function get_history_by_turn_page(
       },
       method: 'get'
     });
+    // null = request failed (audit #53): fall back to the local cache, same as the catch below.
+    if (res === null) return cached;
 
     // The server's /get_history_by_turn_page directly returns an array of message rows
     // (list[dict]), not a { data: [...] } wrapper object. Compatibility handling here: if the
@@ -149,10 +151,12 @@ export async function clearSession(session_id: string): Promise<boolean> {
  */
 export async function getSessionList(): Promise<SessionRecord[]> {
   try {
-    const res: Response = await fetchApi({
+    const res: Response | null = await fetchApi({
       url: '/sessions',
       method: 'get'
     });
+    // null = the request failed (audit #53): same fallback as the catch below.
+    if (res === null) return [];
     // The server's /sessions directly returns an array, not a { data: [...] } wrapper object.
     // Compatibility handling here: if the response itself is an array, use it directly;
     // otherwise fall back to reading res.data.
@@ -183,7 +187,7 @@ export async function getSessionList(): Promise<SessionRecord[]> {
  */
 export async function getPendingInterrupt(session_id: string): Promise<HitlInterruptData | null> {
   try {
-    const res: Response = await fetchApi({
+    const res: Response | null = await fetchApi({
       url: '/get_pending_interrupt',
       opts: { session_id },
       method: 'get'

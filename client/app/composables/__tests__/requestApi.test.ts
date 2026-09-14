@@ -114,3 +114,30 @@ describe('fetchApi error handling', () => {
     expect((globalThis as any).$fetch).toHaveBeenCalledTimes(1);
   }, 15000);
 });
+
+describe('fetchApi response payload validation (audit #51)', () => {
+  it('returns object and array payloads unchanged', async () => {
+    stubFetch({ code: 200, data: [1, 2, 3] });
+    await expect(fetchApi({ url: '/items', method: 'get' })).resolves.toEqual({
+      code: 200,
+      data: [1, 2, 3]
+    });
+
+    stubFetch([{ id: 1 }]);
+    await expect(fetchApi({ url: '/sessions', method: 'get' })).resolves.toEqual([{ id: 1 }]);
+  });
+
+  it('returns legacy text payloads unchanged (text/plain "None")', async () => {
+    stubFetch('None');
+    await expect(fetchApi({ url: '/get_pending_interrupt', method: 'get' })).resolves.toBe('None');
+  });
+
+  it.each([
+    ['a number', 42],
+    ['a boolean', true],
+    ['an undefined body', undefined]
+  ])('rejects %s payload by resolving null', async (_label, payload) => {
+    stubFetch(payload);
+    await expect(fetchApi({ url: '/weird', method: 'get' })).resolves.toBeNull();
+  });
+});

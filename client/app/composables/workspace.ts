@@ -2,12 +2,12 @@ import type { Response } from '@/types/response';
 
 export async function read_system_prompt_handler(): Promise<Record<string, string>> {
   try {
-    const res: Response = await fetchApi({
+    const res: Response | null = await fetchApi({
       url: '/system_prompt',
       opts: {},
       method: 'get'
     });
-    return (res.data as Record<string, string> | undefined) || {};
+    return (res?.data as Record<string, string> | undefined) || {};
   } catch {
     return {};
   }

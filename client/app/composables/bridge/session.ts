@@ -93,7 +93,7 @@ export async function fetchSubagentRuns(
     request: { session_id: sessionId, scope }
   });
   if (native !== null) return native.value.runs ?? [];
-  const res: ApiResponse = await fetchApi({
+  const res: ApiResponse | null = await fetchApi({
     url: '/subagents/runs',
     opts: { session_id: sessionId, scope },
     method: 'get'
@@ -118,7 +118,7 @@ export async function fetchSubagentRunSubtree(runId: string): Promise<SubagentRu
     request: { run_id: runId }
   });
   if (native !== null) return native.value.runs ?? [];
-  const res: ApiResponse = await fetchApi({
+  const res: ApiResponse | null = await fetchApi({
     url: '/subagents/runs',
     opts: { run_id: runId },
     method: 'get'
@@ -144,7 +144,7 @@ export async function deleteSubagentRunSubtree(runId: string): Promise<number> {
     request: { run_id: runId }
   });
   if (native !== null) return native.value?.removed ?? 0;
-  const res: ApiResponse = await fetchApi({
+  const res: ApiResponse | null = await fetchApi({
     url: '/subagents/runs',
     opts: { run_id: runId },
     method: 'delete'
@@ -178,7 +178,7 @@ export async function steerSubagentRun(
   runId: string,
   payload: { new_task?: string; new_instructions?: string } = {}
 ): Promise<SubagentRun | null> {
-  const res: ApiResponse = await fetchApi({
+  const res: ApiResponse | null = await fetchApi({
     url: '/subagents/steer',
     opts: { run_id: runId, ...payload },
     method: 'post'
