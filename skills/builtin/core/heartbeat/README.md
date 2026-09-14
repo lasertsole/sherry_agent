@@ -148,7 +148,7 @@ if self.on_execute:
 
 - `run` → `on_execute(tasks)` runs the task; only a **non-empty** response is evaluated by `evaluate_response()`; only a positive verdict reaches `on_notify()`.
 - An exception inside the tick is logged (`logger.exception`) and recorded as a **backoff failure**: the next sleep doubles (interval_s × 2ⁿ, capped at 7200 s) and the failure reason is kept. A clean tick fully resets the backoff.
-- After **5 consecutive failures** the loop stops itself with a CRITICAL log ("Heartbeat paused ... manual recovery required"). Only a process restart resumes the schedule; `trigger_now()` still fires one-shot ticks. See [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) and the [loop-prevention harness doc](../../../../docs/harness/loop-prevention/README.md).
+- After **5 consecutive failures** the loop stops itself with a CRITICAL log ("Heartbeat paused ... manual recovery required"). Only a process restart resumes the schedule; `trigger_now()` still fires one-shot ticks. See [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) and the [loop-prevention harness doc](../../../../docs/loop-prevention/README.md).
 
 ---
 

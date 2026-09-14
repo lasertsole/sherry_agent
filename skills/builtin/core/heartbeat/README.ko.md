@@ -148,7 +148,7 @@ if self.on_execute:
 
 - `run` → `on_execute(tasks)`가 작업을 실행합니다. **비어 있지 않은** 응답만 `evaluate_response()`로 평가되며, 긍정 판정일 때만 `on_notify()`에 도달합니다.
 - tick 내부의 예외는 기록되고(`logger.exception`) **백오프 실패**로 집계됩니다: 다음 sleep은 2배(interval_s × 2ⁿ, 상한 7200초)가 되며 실패 사유가 유지됩니다. tick이 성공하면 백오프는 완전히 리셋됩니다.
-- **연속 5회** 실패 시 루프가 스스로 멈추고 CRITICAL 로그를 남깁니다("Heartbeat paused ... manual recovery required"). 일정 재개는 프로세스 재시작뿐입니다. `trigger_now()`는 여전히 1회성 tick을 실행할 수 있습니다. [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py)와 [무한 루프 방지 문서](../../../../docs/harness/loop-prevention/README.md)를 참조하세요.
+- **연속 5회** 실패 시 루프가 스스로 멈추고 CRITICAL 로그를 남깁니다("Heartbeat paused ... manual recovery required"). 일정 재개는 프로세스 재시작뿐입니다. `trigger_now()`는 여전히 1회성 tick을 실행할 수 있습니다. [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py)와 [무한 루프 방지 문서](../../../../docs/loop-prevention/README.md)를 참조하세요.
 
 ---
 

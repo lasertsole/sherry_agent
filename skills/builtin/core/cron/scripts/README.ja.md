@@ -284,4 +284,4 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - サービスは `cron-service` デーモンスレッド上の独立したイベントループで動作し、メインサーバーのループとは独立しています。`run_job()` と `start()` は実行中のイベントループから await する必要があります。
 - WebSocket 通知はセッション `"default"`（ブラウザクライアントのセッション）宛てのため、クライアント接続中のみデスクトップ通知が届きます。
 
-▶️ 詳細：[docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)
+▶️ 詳細：[docs/loop-prevention/README.md](../../../../../docs/loop-prevention/README.md) · [中文](../../../../../docs/loop-prevention/README.zh.md) · [한국어](../../../../../docs/loop-prevention/README.ko.md) · [日本語](../../../../../docs/loop-prevention/README.ja.md)

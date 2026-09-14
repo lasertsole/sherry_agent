@@ -148,7 +148,7 @@ if self.on_execute:
 
 - `run` → `on_execute(tasks)` 执行任务；只有**非空**响应才会交给 `evaluate_response()` 评估；只有评估为真才会到达 `on_notify()`。
 - tick 内部的异常会被记录（`logger.exception`）并记为一次**退避失败**：下次 sleep 翻倍（interval_s × 2ⁿ，上限 7200 秒），并保留失败原因。tick 成功则完整重置退避。
-- 连续失败 **5 次**后，循环自行停止并输出 CRITICAL 日志（"Heartbeat paused ... manual recovery required"）。只有重启进程才能恢复调度；`trigger_now()` 仍可触发单次 tick。参见 [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) 与[防失控循环文档](../../../../docs/harness/loop-prevention/README.md)。
+- 连续失败 **5 次**后，循环自行停止并输出 CRITICAL 日志（"Heartbeat paused ... manual recovery required"）。只有重启进程才能恢复调度；`trigger_now()` 仍可触发单次 tick。参见 [`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) 与[防失控循环文档](../../../../docs/loop-prevention/README.md)。
 
 ---
 

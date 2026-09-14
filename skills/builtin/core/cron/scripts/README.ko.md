@@ -284,4 +284,4 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - 서비스는 `cron-service` 데몬 스레드의 독립적인 이벤트 루프에서 동작하며 메인 서버 루프와 별개입니다. `run_job()`과 `start()`는 실행 중인 이벤트 루프에서 await해야 합니다.
 - WebSocket 알림은 세션 `"default"`(브라우저 클라이언트 세션)를 대상으로 하므로, 클라이언트가 연결된 동안에만 데스크톱 알림이 도착합니다.
 
-▶️ 전체 문서: [docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)
+▶️ 전체 문서: [docs/loop-prevention/README.md](../../../../../docs/loop-prevention/README.md) · [中文](../../../../../docs/loop-prevention/README.zh.md) · [한국어](../../../../../docs/loop-prevention/README.ko.md) · [日本語](../../../../../docs/loop-prevention/README.ja.md)

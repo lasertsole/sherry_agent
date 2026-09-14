@@ -148,7 +148,7 @@ if self.on_execute:
 
 - `run` → `on_execute(tasks)` がタスクを実行。**空でない**応答のみが `evaluate_response()` で評価され、肯定判定のときだけ `on_notify()` に到達します。
 - tick 内で例外が発生すると記録（`logger.exception`）され、**バックオフ失敗**としてカウントされます：次の sleep は 2 倍（interval_s × 2ⁿ、上限 7200 秒）になり、失敗理由が保持されます。tick が成功するとバックオフは完全にリセットされます。
-- **連続 5 回**の失敗でループは自ら停止し、CRITICAL ログを出力します（"Heartbeat paused ... manual recovery required"）。スケジュールの再開はプロセス再起動のみです。`trigger_now()` は引き続き単発 tick を実行できます。[`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) と[暴走ループ防止ハーネス文書](../../../../docs/harness/loop-prevention/README.md)を参照。
+- **連続 5 回**の失敗でループは自ら停止し、CRITICAL ログを出力します（"Heartbeat paused ... manual recovery required"）。スケジュールの再開はプロセス再起動のみです。`trigger_now()` は引き続き単発 tick を実行できます。[`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) と[暴走ループ防止ハーネス文書](../../../../docs/loop-prevention/README.md)を参照。
 
 ---
 

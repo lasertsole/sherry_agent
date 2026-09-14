@@ -284,4 +284,4 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - 服务运行在 `cron-service` 守护线程的独立事件循环上，与主服务器循环相互独立；`run_job()` 和 `start()` 必须在运行中的事件循环内 await。
 - WebSocket 通知目标是会话 `"default"`（浏览器客户端会话），因此仅在客户端连接期间才能收到桌面通知。
 
-▶️ 完整文档：[docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)
+▶️ 完整文档：[docs/loop-prevention/README.md](../../../../../docs/loop-prevention/README.md) · [中文](../../../../../docs/loop-prevention/README.zh.md) · [한국어](../../../../../docs/loop-prevention/README.ko.md) · [日本語](../../../../../docs/loop-prevention/README.ja.md)

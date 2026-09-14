@@ -284,4 +284,4 @@ Jobs with `payload.kind == "system_event"` are protected: `CronService.remove_jo
 - The service runs on its own event loop in the `cron-service` daemon thread, independent of the main server loop; `run_job()` and `start()` must be awaited from a running loop.
 - The WebSocket notification targets session `"default"` (the browser client session), so desktop notifications only arrive while a client is connected.
 
-▶️ Full details: [docs/harness/loop-prevention/README.md](../../../../../docs/harness/loop-prevention/README.md) · [中文](../../../../../docs/harness/loop-prevention/README.zh.md) · [한국어](../../../../../docs/harness/loop-prevention/README.ko.md) · [日本語](../../../../../docs/harness/loop-prevention/README.ja.md)
+▶️ Full details: [docs/loop-prevention/README.md](../../../../../docs/loop-prevention/README.md) · [中文](../../../../../docs/loop-prevention/README.zh.md) · [한국어](../../../../../docs/loop-prevention/README.ko.md) · [日本語](../../../../../docs/loop-prevention/README.ja.md)
