@@ -337,7 +337,7 @@ for rec in reversed(gs.records):
 
 ## 缺陷 8：`StateRegisterMeM.get_state` 返回引用而非副本（TOCTOU）
 
-**位置**：`runtime/state_register.py` line 28-37
+**位置**：`runtime/session/state_register.py` line 47-56
 
 ```python
 def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
@@ -347,7 +347,7 @@ def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
         return self._states[session_id].get(key, default)  # ← 返回引用
 ```
 
-对比 `get_all_states`（line 39-46）返回了 `dict(...)` 快照：
+对比 `get_all_states`（line 58-65）返回了 `dict(...)` 快照：
 
 ```python
 def get_all_states(self, session_id: str) -> dict[str, Any]:
@@ -433,7 +433,7 @@ def _result_hash(content: str) -> str:
 | E1-E20 | 已正确处理的 20 种边界         | 防御性编码 | —      | 见上表                   |
 | 6      | `tool_call["id"]` 无防御       | 未处理     | P3     | line 395,412,436,501,515 |
 | 7      | `records` 无界增长             | 未处理     | P3     | line 370, 180            |
-| 8      | `get_state` 返回引用（TOCTOU） | 未处理     | P2     | state_register.py:28     |
+| 8      | `get_state` 返回引用（TOCTOU） | 未处理     | P2     | state_register.py:47     |
 | 9      | `is_error` 大小写敏感          | 未处理     | P3     | line 366                 |
 | 10     | 函数内导入 `_args_hash`        | 风格       | P4     | line 116                 |
 | 11     | `tool_name="unknown"` 交叉污染 | 未处理     | P4     | line 361                 |
@@ -452,7 +452,7 @@ def _result_hash(content: str) -> str:
 | 5   | 幂等结果变化不触发重置（缺陷 1, 2, 3 的根因） | line 178-305      | P0     | 所有三个机制                 |
 | 6   | `tool_call["id"]` 直接索引无防御              | line 395 等       | P3     | 消息构造（KeyError 崩溃）    |
 | 7   | `gs.records` 无界增长                         | line 370          | P3     | 内存 / no_progress 遍历性能  |
-| 8   | `get_state` 返回引用（TOCTOU 竞争）           | state_register:28 | P2     | 并发安全                     |
+| 8   | `get_state` 返回引用（TOCTOU 竞争）           | state_register:47 | P2     | 并发安全                     |
 | 9   | `is_error` 大小写敏感                         | line 366          | P3     | exact/same_tool_failure 漏检 |
 | 10  | 函数内导入 `_args_hash`                       | line 116          | P4     | 风格 / 可维护性              |
 | 11  | `tool_name="unknown"` 计数器交叉污染          | line 361          | P4     | 计数器准确性                 |

@@ -31,7 +31,7 @@
 | **P0** | 1   | `channels/manager.py` _dispatch_outbound vs _consume_loop   | 竞争消费同一队列，消息丢失                                          | 统一消费者                        |
 | **P1** | 2   | `context_engine/store/core.py:14` `_db = get_db()`          | 导入即触发 SQLite 连接 + migration                                  | Lazy init                         |
 | **P1** | 3   | `state_register_mem` 全局耦合                               | 所有中间件直接依赖全局单例，裸字符串 key                            | SessionState Facade + Enum key    |
-| **P1** | 4   | `runtime/state_register.py`                                 | 每次 SQLite 操作新开连接；无 Protocol                               | 连接池/Repository + Protocol      |
+| **P1** | 4   | `runtime/session/state_register.py`                         | 每次 SQLite 操作新开连接；无 Protocol                               | 连接池/Repository + Protocol      |
 | **P1** | 5   | `summarization.py` 2250 行                                  | 15+ 职责的上帝类；12+ sync/async 双路径                             | 拆分为 6 个模块                   |
 | **P2** | 6   | ITTT/VTTT/reranker/extract 模块级单例                       | 与 main_llm 工厂模式不一致                                          | 统一工厂函数                      |
 | **P2** | 7   | `RepetitionGuardWrapper` + `ContextLimitGuard` 导入私有常量 | 跨模块私有依赖（8 个私有符号）                                      | 依赖倒置 + Protocol               |
@@ -281,9 +281,9 @@ class SessionState:
 - **问题**: 纯为绕循环依赖而存在
 - **模式**: Dependency Injection
 
-#### 2.1.4 [CONFIRMED] `runtime/state_register.py` — 无公共接口 + 每次新开连接
+#### 2.1.4 [CONFIRMED] `runtime/session/state_register.py` — 无公共接口 + 每次新开连接
 
-- **文件**: `runtime/state_register.py`
+- **文件**: `runtime/session/state_register.py`
 - **问题**: `StateRegisterMem` 和 `StateRegisterDB` 方法签名相同但无 Protocol（Register ABC 仅要求 `clear_session()`，太薄）；DB 每次操作 `sqlite3.connect()`；`state_register_db` 在 `__init__` 中调用 `_init_db()` 即触发 SQLite 连接 + CREATE TABLE
 - **模式**: Interface Segregation (Protocol) + 连接池 + Lazy init
 
@@ -717,7 +717,7 @@ class SessionState:
 | ---- | ------------------------------------------------------ | ----------------------- | ----------- |
 | 1.1  | `context_engine/store/core.py:14` eager DB → lazy      | Lazy init               | 0.5 天      |
 | 1.2  | 中间件 `session_id` 提取 + `state_register_mem` Facade | Mixin + Enum key        | 1 天        |
-| 1.3  | `runtime/state_register.py` Protocol + 连接池 + lazy   | Interface Seg. + 连接池 | 1-2 天      |
+| 1.3  | `runtime/session/state_register.py` Protocol + 连接池 + lazy   | Interface Seg. + 连接池 | 1-2 天      |
 | 1.4  | `summarization.py` 拆分（2250 行 → 6 模块）            | 分层 + 共享 impl        | 3-5 天      |
 
 ### Phase 2: 拆解 God 模块 + DRY 清理（P2）

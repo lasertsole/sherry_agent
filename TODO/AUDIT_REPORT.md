@@ -22,7 +22,7 @@ content = full_path.read_text(...)  # 读取任意文件
 - `skill_path` 来自 URL wildcard 参数，直接拼接 `ROOT_DIR`，无 `resolve()` 或 `is_relative_to()` 检查。
 - **利用**：`GET /skills/../../.env` → 窃取 `MAIN_LLM_API_KEY`。
 - **修复**：加 `full_path.resolve().is_relative_to(ROOT_DIR.resolve())` 检查。
-- **状态**：原 #1 `skills.py` 路径穿越已重构为 `skills/lifecycle.py` 并修复，但 `catalog.py` 引入了新的同类型漏洞。
+- **状态**：原 #1 `skills.py` 路径穿越已重构为 `server/trigger/http/skills/lifecycle.py` 并修复，但 `catalog.py` 引入了新的同类型漏洞。
 
 ## 2. `delegate.py` — `time.sleep()` 在事件循环线程上阻塞
 
@@ -112,7 +112,7 @@ shutil.rmtree(path)  # 删除任意目录
 
 ## 10. SSRF — 未校验媒体 URL 下载
 
-**文件**：`agent/middlewares/multimodal_processor.py:411-413`；`agent/tools/pub_base/media_handlers.py:91`
+**文件**：`agent/middlewares/media_handlers.py:90-92`（音频/视频 URL 下载）；`agent/middlewares/media_handlers.py:186-188`（图片 URL 仅经 `is_url` 校验后透传）
 
 ```python
 req = urllib.request.Request(url, headers={...})
@@ -125,9 +125,9 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：增加内网 IP 黑名单（拒绝 RFC1918/loopback/link-local 地址）。
 - **状态**：未修复。
 
-## 11. `multimodal_processor` — 异步钩子中的阻塞网络 I/O + 文件 I/O + CPU 密集操作
+## 11. `media_pipeline` — 异步钩子中的阻塞网络 I/O + 文件 I/O + CPU 密集操作
 
-**文件**：`agent/middlewares/multimodal_processor.py:411-413,426-428`
+**文件**：`agent/middlewares/media_pipeline.py:208,223,179,185,190`；`agent/middlewares/media_handlers.py:91,103,204`
 
 - `abefore_agent`/`aafter_agent`（async）直接调用同步的 `_before_agent_impl`/`_after_agent_impl`：`urllib.request.urlopen()`（网络）、`Image.open()`（CPU 解码）、`write_bytes()`（文件 I/O）、`iterdir()`/`unlink()`（文件系统操作）——全部在事件循环线程上同步执行。
 - **影响**：一个大文件下载或图像解码阻塞所有其他会话的流。
@@ -136,7 +136,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 
 ## 12. `StateRegisterDB` 同步 SQLite 在异步中间件路径中被调用
 
-**文件**：`runtime/state_register.py:133,147,163,174,189,203,214,229`
+**文件**：`runtime/session/state_register.py:152,166,182,193,208,222,233,247`
 
 - 每个方法都打开**新的** `sqlite3.connect()` + 执行 + 关闭。被 `awrap_model_call`/`awrap_tool_call`/`aafter_agent`（全 async）每次 agent 回合调用**多次**。
 - **修复**：改 `aiosqlite` 或在异步路径中用 `asyncio.to_thread` 包装。
@@ -334,18 +334,18 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 
 ## 39. `StateRegisterDB` — 每次操作新建 SQLite 连接
 
-**文件**：`runtime/state_register.py:133-229`
+**文件**：`runtime/session/state_register.py:150-247`
 
 - `set_state`/`get_state`/`has_session` 每个方法都 `sqlite3.connect()` + `close()`。`update_states` 在单连接内循环插入，未用 `executemany`。
-- `ContextEpoch.prepare()` (line 281) 创建连接后未关闭（其他方法用了 `with` 但此方法没有）。
+- `ContextEpoch.prepare()` (line 300) 创建连接后未关闭（其他方法用了 `with` 但此方法没有）。
 - **修复**：复用模块级连接（加锁）或使用 `aiosqlite`。
 - **状态**：未修复。
 
 ## 40. `ContextEpoch` 连接泄漏
 
-**文件**：`runtime/state_register.py:281`
+**文件**：`runtime/session/state_register.py:300`
 
-- `prepare()` 方法内联 `sqlite3.connect(self._db.db_path)` 但未关闭——其他方法（261, 315, 329）用了 `with` 上下文管理器，此方法没有。
+- `prepare()` 方法内联 `sqlite3.connect(self._db.db_path)` 但未关闭——其他方法（280, 334, 348）用了 `with` 上下文管理器，此方法没有。
 - **状态**：新发现。
 
 ## 41. `agent/tools/subagent/registry/memory.py` — `_runs` 字典无界增长
@@ -404,9 +404,9 @@ from models.providers.registry import find_by_name
 - **修复**：如不需要 GFM 表格对齐，移除 `style`；或添加 `ALLOWED_URI_REGEXP` 限制 URL 模式。
 - **状态**：新发现。
 
-## 54. `runtime/crash_loop_breaker.py` — 配置在导入时读取
+## 54. `runtime/process/crash_loop_breaker.py` — 配置在导入时读取
 
-**文件**：`runtime/crash_loop_breaker.py:35-38`
+**文件**：`runtime/process/crash_loop_breaker.py:35-39`
 
 - `WINDOW_S`、`TRIP_THRESHOLD`、`RETENTION_S` 在模块级读取配置，运行时配置变更不会生效。
 - **状态**：新发现。
@@ -600,7 +600,7 @@ from models.providers.registry import find_by_name
 - `server/service/workplace.py:23-25` `write_system_prompt_file` 校验 `ALL_SYSTEM_FILE_NAMES` 允许列表。受控。
 - `server/service/env.py:140-143` `write_env_file` 拒绝未知键。受控。
 - `agent/tools/pub_base/skill_utils.py:38-41` `yaml.load` 用 `CSafeLoader`/`SafeLoader`。非反序列化漏洞。
-- `context_engine/store/core.py`、`runtime/state_register.py` 全部 SQL 均参数化。无 SQLi。
+- `context_engine/store/core.py`、`runtime/session/state_register.py` 全部 SQL 均参数化。无 SQLi。
 - `agent/tools/skill_tools/skill_manage.py` 路径校验、名称正则、文件大小上限。已加固。
 - `server/trigger/http/logs.py` 路径穿越已修复（`_resolve_log_path` 含 `resolve()` + `is_relative_to(LOG_DIR)`）。
 - `server/trigger/http/skills/lifecycle.py` 上传端点路径穿越已修复（`_validate_skill_name` 正则 + `resolved.relative_to` 检查）。
@@ -639,7 +639,7 @@ from models.providers.registry import find_by_name
 
 ## P2 — 计划修复
 
-- **异步/阻塞收口**：#4 store 迁移 `aiosqlite`、#11-#13 multimodal_processor/summarization/StateRegisterDB 阻塞 I/O 移 `to_thread`、#15 compaction_lock、#21-#23 embeddings/session_continuity/curator 异步路径阻塞
+- **异步/阻塞收口**：#4 store 迁移 `aiosqlite`、#11-#13 media_pipeline/summarization/StateRegisterDB 阻塞 I/O 移 `to_thread`、#15 compaction_lock、#21-#23 embeddings/session_continuity/curator 异步路径阻塞
 - **资源泄漏**：#26 child checkpointer、#41-#43 无界增长的全局变量
 - **性能**：#36-#37 冗余扫描与计数、#39 连接风暴收口
 - **fail-open 与确认闸门**：#9-② 重审扫描器故障放行策略、#9-③ 为高风险工具增加首次调用确认闸门、#9-① 技能描述 XML 转义
