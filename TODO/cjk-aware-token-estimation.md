@@ -1,6 +1,7 @@
 # TODO: CJK 感知的 Token 估算 — 全局替换 `len // 4` 模式
 
-> 状态: **执行中** — 核心函数已创建，调用点替换待执行
+> 状态: **已完成** — 三层降级估算已上线，Tier B 9 处替换完成，Tier C 保持不变
+> 完成记录: 2026-09-15 — T1–T6 测试新增、S1–S9 适配完成，pytest/ruff/basedpyright/lint-imports 与 split runner 全绿
 > 创建时间: 2026-09-14
 > 优先级: P1
 > 关联文件: `pub/func/estimate_tokens.py`（**已新建**）· `pub/func/cjk.py` · `config/features/agent_side/token_estimation.py`
