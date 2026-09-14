@@ -391,10 +391,9 @@ const MAX_LINES = 5000;
 
 /* ==================== Frontend logs (clientLog composable: history + live) ==================== */
 
-// Install the browser console capture once: output goes into an in-memory buffer (live) +
-// IndexedDB (history across restarts). The capture is a process-level module singleton and
-// idempotent; it provides the same "history + live" two-part capability as the server tab.
-installClientLogCapture();
+// The browser console capture is installed by the `client-log` Nuxt plugin at startup,
+// not here: this dialog is lazily loaded on first open, so installing capture in its setup
+// would lose every log emitted before the user ever opens the Log Viewer.
 
 const frontendLines = ref<ClientLogEntry[]>([]);
 const logTypes = ref<ClientLogType[]>([]); // fixed order all/log/error
