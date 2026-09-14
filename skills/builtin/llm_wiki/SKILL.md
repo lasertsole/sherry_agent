@@ -2,14 +2,12 @@
 name: llm-wiki
 description: "Karpathy's LLM Wiki: build/query interlinked markdown KB."
 version: 3.0.0
-author: Hermes Agent (adapted for EMA_AI_agent)
+author: EMA AI Agent
 license: MIT
-platforms: [windows]
 metadata:
-  hermes:
-    tags: [wiki, knowledge-base, research, notes, markdown, rag-alternative]
-    category: research
-    related_skills: [obsidian, arxiv]
+  tags: [wiki, knowledge-base, research, notes, markdown, rag-alternative]
+  category: research
+  related_skills: [obsidian, arxiv]
 ---
 
 # Karpathy's LLM Wiki
@@ -33,74 +31,74 @@ Use this skill when the user:
 - Asks to lint, audit, or health-check their wiki
 - References their wiki, knowledge base, or "notes" in a research context
 
-## Wiki 目录结构
+## Wiki Directory Structure
 
-所有路径均通过脚本动态计算，基于项目根目录下的 `src/data/wiki/`。
+All paths are computed dynamically by the scripts, based on `src/data/wiki/` under the project root.
 
 ```json
 {
   "wiki": {
     "root": ["SCHEMA.md", "index.md", "log.md"],
     "raw": {
-      "description": "原始资料（只读，不可修改）",
-      "articles": "网页文章/网络资料",
-      "papers": "论文/研究报告",
-      "transcripts": "对话记录/访谈",
-      "assets": "图片/附件资源"
+      "description": "Raw sources (read-only, never modified)",
+      "articles": "Web articles / online sources",
+      "papers": "Papers / research reports",
+      "transcripts": "Transcripts / interviews",
+      "assets": "Images / attachment resources"
     },
-    "entities": "人物/组织档案",
-    "concepts": "概念/主题解析",
-    "comparisons": "对比分析",
-    "queries": "查询结果存档"
+    "entities": "Entity profiles (people/orgs)",
+    "concepts": "Concept/topic analyses",
+    "comparisons": "Side-by-side comparisons",
+    "queries": "Filed query results"
   }
 }
 ```
 
-## 快速开始
+## Quick Start
 
-### 查看Wiki路径和结构
+### Inspect the Wiki path and structure
 
 ```python
-from skills.builtin.llm-wiki.scripts import get_wiki_path, print_structure
+from skills.builtin.llm_wiki.scripts import get_wiki_path, print_structure
 
-print(f"Wiki路径: {get_wiki_path()}")
-print(f"目录结构: {print_structure()}")
+print(f"Wiki path: {get_wiki_path()}")
+print(f"Directory structure: {print_structure()}")
 ```
 
-### 初始化Wiki
+### Initialize the Wiki
 
 ```python
-from skills.builtin.llm-wiki.scripts import init_wiki
+from skills.builtin.llm_wiki.scripts import init_wiki
 
 result = init_wiki()
 print(result)
 ```
 
-### 搜索Wiki内容
+### Search the Wiki
 
 ```python
-from skills.builtin.llm-wiki.scripts import search_wiki
+from skills.builtin.llm_wiki.scripts import search_wiki
 
-results = search_wiki("关键词")
+results = search_wiki("keyword")
 for r in results:
-    print(f"{r['file']} — {r['matches']}处匹配")
+    print(f"{r['file']} — {r['matches']} matches")
 ```
 
-### 健康检查
+### Health Check
 
 ```python
-from skills.builtin.llm-wiki.scripts import lint_wiki
+from skills.builtin.llm_wiki.scripts import lint_wiki
 
 report = lint_wiki()
 print(report)
 ```
 
-### 保存原始资料
+### Save a Raw Source
 
 ```python
-from skills.builtin.llm-wiki.scripts import save_source
+from skills.builtin.llm_wiki.scripts import save_source
 
-result = save_source("资料内容", category="articles", filename="my-source.md")
+result = save_source("source content", category="articles", filename="my-source.md")
 print(result)
 ```
 
@@ -126,18 +124,18 @@ src/data/wiki/
 **Layer 2 — The Wiki:** Agent-owned markdown files. Created, updated, and cross-referenced by the agent.
 **Layer 3 — The Schema:** `SCHEMA.md` defines structure, conventions, and tag taxonomy.
 
-## 本项目可用工具说明
+## Available Tools in This Project
 
-| 操作 | 可用工具 | 说明 |
-|------|---------|------|
-| 读取文件 | `read_file` | 读取任意文件内容 |
-| 写入文件 | `write_file` | 创建或覆盖文件 |
-| 追加文件 | `write_file(append=true)` | 追加内容到文件末尾 |
-| 修改文件 | `patch_file` | 替换文件中的指定内容 |
-| 运行命令 | `terminal` | 执行shell命令（创建目录、移动文件等） |
-| 运行Python | `python_repl` | 执行Python代码（调用脚本） |
-| 搜索网络 | `tavily_search` | 联网搜索信息 |
-| 搜索记忆 | `_message_search_tool` | 搜索历史对话 |
+| Operation | Available tool | Notes |
+|-----------|----------------|-------|
+| Read a file | `read_file` | Read any file's contents |
+| Write a file | `write_file` | Create or overwrite a file |
+| Append to a file | `write_file(append=true)` | Append content to the end of a file |
+| Modify a file | `patch_file` | Replace specified content in a file |
+| Run commands | `terminal` | Execute shell commands (create dirs, move files, ...) |
+| Run Python | `python_repl` | Execute Python code (call the scripts) |
+| Web search | `tavily_search` | Search the web |
+| Search memory | `_message_search_tool` | Search past conversation history |
 
 ## Resuming an Existing Wiki (CRITICAL — do this every session)
 
@@ -148,10 +146,10 @@ When the user has an existing wiki, **always orient yourself before doing anythi
 ③ **Scan recent `log.md`** — read the last 20-30 entries to understand recent activity.
 
 ```python
-from skills.builtin.llm-wiki.scripts import get_wiki_path
+from skills.builtin.llm_wiki.scripts import get_wiki_path
 
 wiki = get_wiki_path()
-# 使用 read_file 工具读取
+# Read using the read_file tool
 # read_file(str(wiki / "SCHEMA.md"))
 # read_file(str(wiki / "index.md"))
 # read_file(str(wiki / "log.md"), offset=<last 30 lines>)
@@ -167,7 +165,7 @@ Only after orientation should you ingest, query, or lint. This prevents:
 
 When the user asks to create or start a wiki:
 
-1. 调用 `init_wiki()` 创建目录结构
+1. Call `init_wiki()` to create the directory structure
 2. Ask the user what domain the wiki covers — be specific
 3. Write `SCHEMA.md` customized to the domain (see template below)
 4. Write initial `index.md` with sectioned header
@@ -182,7 +180,7 @@ Adapt to the user's domain. The schema constrains agent behavior and ensures con
 # Wiki Schema
 
 ## Domain
-[What this wiki covers — e.g., "魔女岛回忆", "AI/ML research", "personal health"]
+[What this wiki covers — e.g., "witch-island-history", "AI/ML research", "personal health"]
 
 ## Conventions
 - File names: lowercase, hyphens, no spaces (e.g., `witch-island-history.md`)
@@ -339,10 +337,10 @@ When the user asks a question about the wiki's domain:
 When the user asks to lint, health-check, or audit the wiki:
 
 ```python
-from skills.builtin.llm-wiki.scripts import lint_wiki
+from skills.builtin.llm_wiki.scripts import lint_wiki
 
 report = lint_wiki()
-# 检查 orphan_pages, broken_links, frontmatter_issues, large_pages 等
+# Check orphan_pages, broken_links, frontmatter_issues, large_pages, etc.
 ```
 
 ① **Orphan pages:** Pages with no inbound `[[wikilinks]]`.

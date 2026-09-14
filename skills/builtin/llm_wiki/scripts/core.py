@@ -21,16 +21,16 @@ WIKI_STRUCTURE = {
     "wiki": {
         "root": ["SCHEMA.md", "index.md", "log.md"],
         "raw": {
-            "description": "原始资料（只读，不可修改）",
-            "articles": "网页文章/网络资料",
-            "papers": "论文/研究报告",
-            "transcripts": "对话记录/访谈",
-            "assets": "图片/附件资源",
+            "description": "Raw sources (read-only, never modified)",
+            "articles": "Web articles / online sources",
+            "papers": "Papers / research reports",
+            "transcripts": "Transcripts / interviews",
+            "assets": "Images / attachment resources",
         },
-        "entities": "人物/组织档案",
-        "concepts": "概念/主题解析",
-        "comparisons": "对比分析",
-        "queries": "查询结果存档",
+        "entities": "Entity profiles (people/orgs)",
+        "concepts": "Concept/topic analyses",
+        "comparisons": "Side-by-side comparisons",
+        "queries": "Filed query results",
     }
 }
 

@@ -162,13 +162,13 @@ def get_structure() -> dict:
         "wiki_root": str(get_wiki_path()),
         "structure": {
             "<repo_name>/": {
-                "README.md": "项目概览 + 模块地图",
-                "architecture.md": "系统架构 + Mermaid 流程图",
-                "getting-started.md": "搭建、首次运行、工作流",
-                "modules/": {"<module>.md": "每个模块的深入分析"},
+                "README.md": "Project overview + module map",
+                "architecture.md": "System architecture + Mermaid flowchart",
+                "getting-started.md": "Setup, first run, workflows",
+                "modules/": {"<module>.md": "Per-module deep-dive"},
                 "diagrams/": {
-                    "class-diagram.md": "Mermaid class 图",
-                    "sequences.md": "Mermaid 时序图",
+                    "class-diagram.md": "Mermaid class diagram",
+                    "sequences.md": "Mermaid sequence diagram",
                 },
             }
         },

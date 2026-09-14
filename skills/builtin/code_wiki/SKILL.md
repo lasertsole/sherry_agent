@@ -43,6 +43,14 @@ Do NOT use this for:
 
 ### 1. Resolve the target
 
+Capture this agent project's root first — it anchors where output is written. If
+the host exports `REPO_ROOT`, use it; otherwise it is the cwd at skill entry
+(never the repo being documented):
+
+```bash
+REPO_ROOT="${REPO_ROOT:-$PWD}"
+```
+
 For a GitHub URL:
 
 ```bash
@@ -61,10 +69,11 @@ REPO_SHA=$(git rev-parse HEAD 2>/dev/null || echo "uncommitted")
 REPO_NAME=$(basename "$PWD")
 ```
 
-Then set the output dir:
+Then set the output dir — inside this agent project, under `src/data/`:
 
 ```bash
-OUTPUT_DIR="$HOME/.hermes/wikis/$REPO_NAME"
+WIKI_ROOT="$REPO_ROOT/src/data/wikis"
+OUTPUT_DIR="$WIKI_ROOT/$REPO_NAME"
 mkdir -p "$OUTPUT_DIR/modules" "$OUTPUT_DIR/diagrams"
 ```
 
@@ -165,7 +174,7 @@ Only write this if the project is a library or API server. Document each public 
 State exactly what was generated and where:
 
 ```
-Generated wiki at ~/.hermes/wikis/<repo-name>/:
+Generated wiki at src/data/wikis/<repo-name>/:
   README.md                   project overview, module map
   architecture.md             system architecture + flowchart
   getting-started.md          setup, first run, workflows
@@ -196,7 +205,7 @@ If `.codewiki-state.json` already exists at the target path:
 - **Restating code as prose.** A doc that paraphrases function signatures is worse than just linking to the function.
 - **Mermaid > 50 nodes** don't render legibly. Split them.
 - **Documenting tests, generated code, or vendored deps** as if they were product code. Skip them.
-- **In-repo output without asking.** Default is `~/.hermes/wikis/`. Only write into the repo when explicitly requested.
+- **Writing into the documented repo without asking.** Default output lives in this agent project at `src/data/wikis/`. Only write into the target repo when explicitly requested.
 - **Mermaid special chars need quotes:** `A["Tool / Agent"]` not `A[Tool / Agent]`. `<br>` for line breaks inside a node.
 - **Nested code fences.** When writing markdown that contains a Mermaid block, use 4-backtick outer fences.
 - **classDiagram generics** render as `~T~` (e.g. `List~Tool~`), not `<T>`.
