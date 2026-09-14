@@ -123,7 +123,7 @@
 
 - 心跳在其 tick *内部*记录成功（tick 自己吞掉错误），所以只有真正的 tick 失败才计数。暂停之后 `trigger_now()` 依然有效：手动戳一下就能绕过休眠中的循环。
 - `stop_sweeper()` 会丢弃退避对象（`_backoff=None`），所以手动重启的清扫从全新状态开始。退避对象是懒创建的（`_get_backoff`），从不在 import 时创建。
-- 生产环境中清扫器由 `server/trigger/channels/core.py` 的 `_schedule_sweeper` 启动，它把协程跳转到主事件循环上（`run_coroutine_threadsafe`）；该接线由 `tests/unit/server/test_sweeper_wiring.py` 覆盖。
+- 生产环境中清扫器由 `server/trigger/channels/core.py` 的 `_schedule_sweeper` 启动，它把协程跳转到主事件循环上（`run_coroutine_threadsafe`）；该接线由 `tests/agent/tools/subagent/registry/test_sweeper_wiring.py` 覆盖。
 - 退避状态存放在 Python 对象里：重启进程会重置心跳与清扫器的熔断器。
 
 ### 后台级：cron 任务失败熔断器
@@ -211,17 +211,17 @@
 
 | 测试套件 | 覆盖内容 |
 |---|---|
-| `tests/unit/middlewares/test_tool_guardrails.py` | 病理检测、升级阶梯、恢复模式 |
-| `tests/unit/runtime/test_periodic_backoff.py` | 间隔数学、耗尽、成功重置 |
-| `tests/unit/runtime/test_crash_loop_breaker.py` | 触发窗口 / 保留期、干净标记、损坏状态 |
-| `tests/unit/cron/test_cron_failure_breaker.py` | 退化 → 停用、重置语义 |
-| `tests/unit/heartbeat/test_heartbeat_backoff.py` | 服务退避接线、耗尽暂停 |
-| `tests/unit/subagent/test_sweeper_backoff.py` | 清扫器退避接线、循环停止 |
-| `tests/unit/server/test_sweeper_wiring.py` | 清扫器启动接线 |
-| `tests/unit/server/test_crash_gating.py` | 启动门控、HTTP-only 模式 |
-| `tests/unit/server/test_cron_api.py` | Cron REST，含 failure-state / reset-failures |
-| `tests/unit/test_token_limit_continuation.py` | 截断检测、文本续写循环、boost 重呼（含 callbacks 剥离） |
-| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | 子代理 middleware 接线、非流式默认 |
+| `tests/agent/middlewares/test_tool_guardrails.py` | 病理检测、升级阶梯、恢复模式 |
+| `tests/runtime/test_periodic_backoff.py` | 间隔数学、耗尽、成功重置 |
+| `tests/runtime/test_crash_loop_breaker.py` | 触发窗口 / 保留期、干净标记、损坏状态 |
+| `tests/skills/builtin/core/cron/test_cron_failure_breaker.py` | 退化 → 停用、重置语义 |
+| `tests/skills/builtin/core/heartbeat/test_heartbeat_backoff.py` | 服务退避接线、耗尽暂停 |
+| `tests/agent/tools/subagent/test_sweeper_backoff.py` | 清扫器退避接线、循环停止 |
+| `tests/agent/tools/subagent/registry/test_sweeper_wiring.py` | 清扫器启动接线 |
+| `tests/server/test_crash_gating.py` | 启动门控、HTTP-only 模式 |
+| `tests/server/test_cron_api.py` | Cron REST，含 failure-state / reset-failures |
+| `tests/agent/middlewares/test_token_limit_continuation.py` | 截断检测、文本续写循环、boost 重呼（含 callbacks 剥离） |
+| `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` | 子代理 middleware 接线、非流式默认 |
 
 ## ⚠️ 诚实与局限
 

@@ -17,7 +17,7 @@ summarization redesign:
 
 All tests use real langchain_core messages (the tools dispatch on
 isinstance checks) and plain asserts, following the style of
-tests/unit/test_message_utils.py. Windows-safe: ASCII only, no network.
+tests/pub/func/message/test_message_utils.py. Windows-safe: ASCII only, no network.
 """
 
 # pyright: reportUnknownParameterType=false

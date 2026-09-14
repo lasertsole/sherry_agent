@@ -2,7 +2,7 @@
 
 PURPOSE
 -------
-The existing ``tests/unit/test_hitl_integration.py`` verifies the
+The existing ``tests/agent/middlewares/humanInTheLoop/test_hitl_integration.py`` verifies the
 middleware's *contract* (``check_command`` → ESCALATE, ``get_pending_interrupt``
 shape) but never drives a **real LangGraph execution** that calls the real
 ``langgraph.types.interrupt`` from within ``after_model``.

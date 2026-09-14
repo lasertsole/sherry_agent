@@ -11,7 +11,7 @@ Isolation iron rules:
   (the real ``cron_jobs.json`` is NEVER touched);
 - the module-level ``cron_service`` singleton is never used and ``start()``
   is never called (no threads, no event loops beyond ``asyncio.run``);
-- every patch goes through ``monkeypatch`` (self-restoring; ``tests/unit``
+- every patch goes through ``monkeypatch`` (self-restoring; each runner group
   runs in a single pytest process).
 """
 

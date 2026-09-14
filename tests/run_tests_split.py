@@ -5,14 +5,14 @@ across suites.
 
 Why this exists
 ---------------
-``tests/unit/subagent/conftest.py`` installs stub callables into
+``tests/agent/tools/subagent/conftest.py`` installs stub callables into
 process-global ``sys.modules`` at conftest import time. Under a single-process
 full-suite run, pytest imports *all* conftests and test modules during
 collection, before any test executes — so that pollution is live for every
 test in the process, regardless of directory (see
-``.omo/evidence/pre-existing-failures/REPORT.md`` §3). Running ``tests/unit``
-in a different process from ``tests/integration + tests/system +
-tests/module`` makes cross-suite pollution structurally impossible.
+``.omo/evidence/pre-existing-failures/REPORT.md`` §3). Running the subagent
+tree in a different process from the other test groups makes cross-suite
+pollution structurally impossible.
 
 Groups (run SEQUENTIALLY, never in parallel — CPU/model resource contention):
   A  marker: unit
@@ -128,7 +128,7 @@ def child_env() -> dict[str, str]:
     # explicit agent.core.init()), but any residual
     # snapshot/scanner path stays fire-and-forget log-only and no test
     # asserts it; scanner unit tests patch module attributes and are immune
-    # (see tests/unit/test_skill_scanner.py autouse fixture).
+    # (see tests/server/service/test_skill_scanner.py autouse fixture).
     env["SKILL_SCANNER_ENABLED"] = "0"
     return env
 

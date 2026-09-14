@@ -32,16 +32,16 @@ uv run pytest tests/regression -k "UC-03 or cron" -q
 | F4 | 会话清空 | delete_messages_by_session + FTS 触发器联动 | — | UC-03 |
 | F5 | FTS5 搜索 | 三路路由（unicode61/trigram/LIKE）+ 注入上限 | `tests/module/test_fts5_recall.py`, `test_fts5_query_caps.py` | UC-05, EC-04 |
 | F6 | 时间戳碰撞 | 同秒/同毫秒单调递增 | `test_store_timestamp_ordering.py` | UC-15, EC-11 |
-| F7 | cron 调度 | at/every/cron 三型 / 固定相位网格 / 漂移修复 | `tests/unit/cron/test_cron_interval_drift.py`, `test_cron_failure_breaker.py` | UC-07, UC-08, EC-06, EC-07 |
-| F8 | HITL 审批 | 6 层管道（hardline/deny/YOLO/allowlist/session/dangerous） | `tests/unit/test_hitl_integration.py`, `test_hitl_sandbox_bypass.py` | UC-06, EC-15 |
+| F7 | cron 调度 | at/every/cron 三型 / 固定相位网格 / 漂移修复 | `tests/skills/builtin/core/cron/test_cron_interval_drift.py`, `test_cron_failure_breaker.py` | UC-07, UC-08, EC-06, EC-07 |
+| F8 | HITL 审批 | 6 层管道（hardline/deny/YOLO/allowlist/session/dangerous） | `tests/agent/middlewares/humanInTheLoop/test_hitl_integration.py`, `test_hitl_sandbox_bypass.py` | UC-06, EC-15 |
 | F9 | 多模态输入 | base64 落盘 / 提示词注入 / 历史剥离 / 过期清理 | — | UC-09, EC-16 |
 | F10 | 迭代预算 | wrap_model_call 计数 / 耗尽终态消息 / 回合重置 | — | UC-11, EC-08 |
-| F11 | 工具护栏 | 5 病理 × ALLOW/WARN/BLOCK/HALT + 恢复模式 | `tests/unit/middlewares/test_tool_guardrails.py`（17 个） | UC-12, EC-10 |
-| F12 | 重复输出守卫 | 跨调用 / 字符连跑 / 短语重复 / 流级检查 | `tests/unit/middlewares/test_tool_guardrails.py`（部分）、`stream_repetition_guard_wrapper` | UC-13 |
-| F13 | 心跳看门狗 | 停滞计数 / 击杀 / 超时异常 | `tests/unit/heartbeat/test_heartbeat_backoff.py` | UC-14 |
+| F11 | 工具护栏 | 5 病理 × ALLOW/WARN/BLOCK/HALT + 恢复模式 | `tests/agent/middlewares/test_tool_guardrails.py`（17 个） | UC-12, EC-10 |
+| F12 | 重复输出守卫 | 跨调用 / 字符连跑 / 短语重复 / 流级检查 | `tests/agent/middlewares/test_tool_guardrails.py`（部分）、`stream_repetition_guard_wrapper` | UC-13 |
+| F13 | 心跳看门狗 | 停滞计数 / 击杀 / 超时异常 | `tests/skills/builtin/core/heartbeat/test_heartbeat_backoff.py` | UC-14 |
 | F14 | 消息总线 | 有界双队列 / 背压 / 顺序 | — | UC-16, EC-09 |
-| F15 | 状态注册表 | mem/db 双寄存器 / clear_all 联动 | `tests/unit/state/` | EC-05 |
-| F16 | 技能加载 | 扫描 / 第三方默认停用 / 快照缓存 / 循环导入消除 | `tests/unit/skills/test_loader.py`, `tests/module/test_skill_scope.py` | EC-12 |
+| F15 | 状态注册表 | mem/db 双寄存器 / clear_all 联动 | `tests/agent/tools/subagent/registry/` | EC-05 |
+| F16 | 技能加载 | 扫描 / 第三方默认停用 / 快照缓存 / 循环导入消除 | `tests/skills/test_loader.py`, `tests/module/test_skill_scope.py` | EC-12 |
 | F17 | 模型共享件 | read_env_file_value / resolve_gguf_path / 三件套基类 | `tests/module/test_models_utils.py`, `test_base_local_llama.py` | EC-13 |
 | F18 | robyn 服务 | 单进程固定 / 帧投递 / 持久化 | 人工 e2e（见 §5） | — |
 
@@ -110,7 +110,7 @@ tests/regression/
 2. 修复后必须让**整组 C** 通过（回归测试之间共享行为约定）。
 3. 新功能合入时：先在 §2 矩阵登记引用测试，再补 UC/EC 用例。
 4. 预先存在的环境性失败（不纳入本方案，已 stash 验证在 HEAD 上同样存在）：
-   - `tests/unit/test_rag_anything_integration.py` / `tests/unit/test_snkv_storage.py` — 导入链需要 embed 权重文件 + HF 网络；权重缺失的机器上收集期报 `cannot import name 'build_embed_model'`，导致 `pytest tests/unit` 整组收集 INTERNALERROR（这也是 split runner GROUP A rc=2 的原因）。修复方向：将二者的 graph_rag 导入改为延迟/权重就绪探测。
+   - `tests/skills/builtin/core/multimodal_rag/test_rag_anything_integration.py` / `tests/skills/builtin/core/multimodal_rag/test_snkv_storage.py` — 导入链需要 embed 权重文件 + HF 网络；权重缺失的机器上收集期报 `cannot import name 'build_embed_model'`，导致 `pytest -m unit` 整组收集 INTERNALERROR（这也是 split runner GROUP A rc=2 的原因）。修复方向：将二者的 graph_rag 导入改为延迟/权重就绪探测。
    - `tests/module/test_python_repl_tool.py::test_popen_gets_scrubbed_env` — 本机 bwrap 可用时沙箱 wrap 产生 2 次 Popen（外层 bwrap + 内层命令），测试写死 1 次。
    - `tests/module/test_main_agent_e2e.py` — 真 LLM 网络测试，偶发。
-   - 运行 GROUP A 时临时绕过：`pytest tests/unit -q --ignore=tests/unit/test_rag_anything_integration.py --ignore=tests/unit/test_snkv_storage.py`
+   - 运行 GROUP A 时临时绕过：`pytest -m unit -q --ignore=tests/skills/builtin/core/multimodal_rag/test_rag_anything_integration.py --ignore=tests/skills/builtin/core/multimodal_rag/test_snkv_storage.py`

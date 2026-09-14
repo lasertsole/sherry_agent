@@ -30,7 +30,7 @@ change (guardrail G5) — asserted by the "existing signals still win" and
 All signal sources are faked/controlled per test — no real WS server, no
 robyn, no LLM. The one real-wiring test imports
 ``server.service.auto_turn`` directly (proven hermetic by
-tests/unit/test_auto_turn.py) to prove the lazy-import seam resolves.
+tests/server/service/test_auto_turn.py) to prove the lazy-import seam resolves.
 """
 
 import threading

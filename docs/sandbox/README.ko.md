@@ -195,7 +195,7 @@ SANDBOX_POLICY=auto      # required | auto | off (대소문자 무시, 기본값
 | `tests/module/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드, 스키마, 생성 형태 |
 | `tests/module/test_hitl_characterization.py` | 19개 테스트, 샌드박스 강화 이전의 HITL / terminal 레거시 동작 고정 |
 | `tests/module/test_hitl_sandbox_bypass.py` | 17개 테스트, 우회 승인 흐름, YOLO 통과, 범위 스탬핑 |
-| `tests/unit/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 스탬핑 |
+| `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 스탬핑 |
 
 매트릭스 테스트는 `subprocess.Popen`을 전역으로 패치하고, 도구 모듈 경계에서 `get_backend`를 스텁하며, 환경 변수로 `SANDBOX_POLICY`를 설정해 실제 `read_policy`가 매 칸에서 실행되게 합니다.
 

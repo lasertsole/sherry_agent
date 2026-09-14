@@ -7,7 +7,7 @@ saw the runner's OWN live entry the moment Task 2 (55d4457) added the
 ``auto_turn_inflight`` signal - every auto turn self-abandoned before start and
 the idle auto-turn feature died silently.
 
-Unlike tests/unit/test_auto_turn.py and test_takeover_removal.py (which stub
+Unlike tests/server/service/test_auto_turn.py and test_takeover_removal.py (which stub
 ``at.detect_state`` to idle - the exact stub that blinded the unit layer to
 this bug), these tests drive the REAL ``detect_state`` and control its other
 signals through the session_state seams (``_get_active_tasks`` /

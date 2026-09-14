@@ -129,7 +129,7 @@ Semantics worth knowing:
 
 - The heartbeat records success *inside* its tick (which swallows its own errors), so only genuine tick failures count. `trigger_now()` still works after a pause: a manual poke bypasses the sleeping loop.
 - `stop_sweeper()` discards the backoff object (`_backoff=None`), so a manually restarted sweep begins fresh. The backoff object is created lazily (`_get_backoff`), never at import time.
-- In production the sweeper is started by `_schedule_sweeper` in `server/trigger/channels/core.py`, which hops the coroutine onto the main event loop (`run_coroutine_threadsafe`); the wiring is covered by `tests/unit/server/test_sweeper_wiring.py`.
+- In production the sweeper is started by `_schedule_sweeper` in `server/trigger/channels/core.py`, which hops the coroutine onto the main event loop (`run_coroutine_threadsafe`); the wiring is covered by `tests/agent/tools/subagent/registry/test_sweeper_wiring.py`.
 - Backoff state lives in Python objects: restarting the process resets heartbeat and sweeper breakers.
 
 ### Background level: cron job failure breaker
@@ -217,17 +217,17 @@ Manual recovery cheatsheet:
 
 | Suite | Covers |
 |---|---|
-| `tests/unit/middlewares/test_tool_guardrails.py` | Pathology detection, escalation ladder, recovery mode |
-| `tests/unit/runtime/test_periodic_backoff.py` | Interval math, exhaustion, success reset |
-| `tests/unit/runtime/test_crash_loop_breaker.py` | Trip window / retention, clean marker, corrupt state |
-| `tests/unit/cron/test_cron_failure_breaker.py` | Degrade → disable, reset semantics |
-| `tests/unit/heartbeat/test_heartbeat_backoff.py` | Service backoff wiring, exhaustion pause |
-| `tests/unit/subagent/test_sweeper_backoff.py` | Sweeper backoff wiring, loop stop |
-| `tests/unit/server/test_sweeper_wiring.py` | Sweeper startup wiring |
-| `tests/unit/server/test_crash_gating.py` | Boot gating, HTTP-only mode |
-| `tests/unit/server/test_cron_api.py` | Cron REST incl. failure-state / reset-failures |
-| `tests/unit/test_token_limit_continuation.py` | Truncation detection, text continuation loop, boost re-call incl. callback stripping |
-| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | Child-agent middleware wiring, non-stream default |
+| `tests/agent/middlewares/test_tool_guardrails.py` | Pathology detection, escalation ladder, recovery mode |
+| `tests/runtime/test_periodic_backoff.py` | Interval math, exhaustion, success reset |
+| `tests/runtime/test_crash_loop_breaker.py` | Trip window / retention, clean marker, corrupt state |
+| `tests/skills/builtin/core/cron/test_cron_failure_breaker.py` | Degrade → disable, reset semantics |
+| `tests/skills/builtin/core/heartbeat/test_heartbeat_backoff.py` | Service backoff wiring, exhaustion pause |
+| `tests/agent/tools/subagent/test_sweeper_backoff.py` | Sweeper backoff wiring, loop stop |
+| `tests/agent/tools/subagent/registry/test_sweeper_wiring.py` | Sweeper startup wiring |
+| `tests/server/test_crash_gating.py` | Boot gating, HTTP-only mode |
+| `tests/server/test_cron_api.py` | Cron REST incl. failure-state / reset-failures |
+| `tests/agent/middlewares/test_token_limit_continuation.py` | Truncation detection, text continuation loop, boost re-call incl. callback stripping |
+| `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` | Child-agent middleware wiring, non-stream default |
 
 ## ⚠️ Honesty & Limitations
 

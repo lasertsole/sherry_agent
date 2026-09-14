@@ -195,7 +195,7 @@ SANDBOX_POLICY=auto      # required | auto | off (大小文字を無視、デフ
 | `tests/module/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード、スキーマ、起動形態 |
 | `tests/module/test_hitl_characterization.py` | 19テスト、サンドボックス強化前の HITL / terminal レガシー動作を固定 |
 | `tests/module/test_hitl_sandbox_bypass.py` | 17テスト、バイパス承認フロー、YOLO 素通し、スコープスタンピング |
-| `tests/unit/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` スタンピング |
+| `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` スタンピング |
 
 マトリクステストは `subprocess.Popen` をグローバルにパッチし、ツールモジュールの継ぎ目で `get_backend` をスタブし、環境変数で `SANDBOX_POLICY` を設定して、実際の `read_policy` が各セルで走るようにしています。
 

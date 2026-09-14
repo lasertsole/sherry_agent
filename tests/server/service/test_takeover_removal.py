@@ -15,7 +15,7 @@ Guarded here:
    ``_is_auto_turn_inflight`` (session_state lazy seam over module-level
    ``_INFLIGHT``) observes the session as ``auto_turn_inflight``.
 
-Stub style follows tests/unit/test_auto_turn.py (fake generate generator +
+Stub style follows tests/server/service/test_auto_turn.py (fake generate generator +
 fake detect_state + monkeypatched seams; no real WS, no LLM).
 """
 

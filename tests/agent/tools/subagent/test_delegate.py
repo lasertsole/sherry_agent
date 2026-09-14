@@ -7,7 +7,7 @@ from agent.tools.subagent.types.spawn import ContextMode
 
 
 # Deterministic skill dataset mirroring the conftest stub (see
-# tests/unit/subagent/conftest.py). delegate.py:45 binds get_skills_text /
+# tests/agent/tools/subagent/conftest.py). delegate.py:45 binds get_skills_text /
 # scan_skills at module import time, so WHICH module object those names come
 # from depends on when agent.tools.subagent was first imported (conftest stub
 # in unit-solo runs, real skills.loader in full-suite collection). The

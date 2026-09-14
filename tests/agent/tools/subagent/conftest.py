@@ -1,4 +1,4 @@
-"""conftest for tests/unit/subagent/: auto-load the agent.tools.subagent module alias."""
+"""conftest for tests/agent/tools/subagent/: auto-load the agent.tools.subagent module alias."""
 
 import importlib
 import importlib.util
@@ -82,8 +82,8 @@ def _make_stub(mod_name: str) -> stdlib_types.ModuleType:
 
     Heavy package ``__init__`` files (``agent``, ``pub.func`` -> cv2 via
     ``media/*``, ``context_engine`` store, ...) are stubbed to keep the
-    subagent import chain isolated. But ``tests/unit/subagent`` sorts
-    alphabetically before ``tests/unit/test_*.py``, so this conftest would
+    subagent import chain isolated. But ``tests/agent/tools/subagent`` sorts
+    alphabetically before the sibling ``tests/agent/tools/test_*.py`` modules, so this conftest would
     poison ``sys.modules`` for the whole run. To keep the other tests
     working, stubs whose real package directory exists get:
 
@@ -198,7 +198,7 @@ def _setup_subagent_alias():
 
     # `agent.tools.subagent.delegate` does `from skills.loader import
     # get_skills_text, scan_skills` at module scope. When nothing has loaded
-    # the real loader yet (tests/unit/subagent solo), inject a stub
+    # the real loader yet (tests/agent/tools/subagent solo), inject a stub
     # `skills.loader` module exposing configurable, deterministic functions
     # so the import chain resolves and tests can assert on injection
     # behavior. If the REAL `skills.loader` is already in sys.modules

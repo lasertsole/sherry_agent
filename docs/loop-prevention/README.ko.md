@@ -126,7 +126,7 @@
 
 - 하트비트는 tick *내부에서* 성공을 기록하고(tick이 자기 에러를 삼킴), 진짜 tick 실패만 카운트됩니다. 일시정지 후에도 `trigger_now()`는 동작합니다: 수동 호출은 잠자는 루프를 우회합니다.
 - `stop_sweeper()`는 백오프 객체를 버리고(`_backoff=None`) 수동으로 재시작한 스윕이 새로 시작되게 합니다. 백오프 객체는 지연 생성되고(`_get_backoff`) import 시점에 만들어지지 않습니다.
-- 프로덕션에서 스위퍼는 `server/trigger/channels/core.py`의 `_schedule_sweeper`가 시작하며, 코루틴을 메인 이벤트 루프로 옮깁니다(`run_coroutine_threadsafe`); 이 배선은 `tests/unit/server/test_sweeper_wiring.py`가 커버합니다.
+- 프로덕션에서 스위퍼는 `server/trigger/channels/core.py`의 `_schedule_sweeper`가 시작하며, 코루틴을 메인 이벤트 루프로 옮깁니다(`run_coroutine_threadsafe`); 이 배선은 `tests/agent/tools/subagent/registry/test_sweeper_wiring.py`가 커버합니다.
 - 백오프 상태는 Python 객체에 존재합니다: 프로세스를 재시작하면 하트비트와 스위퍼 브레이커가 리셋됩니다.
 
 ### 백그라운드 수준: cron 작업 실패 브레이커
@@ -214,17 +214,17 @@
 
 | 스위트 | 커버 범위 |
 |---|---|
-| `tests/unit/middlewares/test_tool_guardrails.py` | 병리 감지, 격상 사다리, 복구 모드 |
-| `tests/unit/runtime/test_periodic_backoff.py` | 간격 수학, 소진, 성공 리셋 |
-| `tests/unit/runtime/test_crash_loop_breaker.py` | 작동 윈도우 / 보존, 클린 마커, 손상된 상태 |
-| `tests/unit/cron/test_cron_failure_breaker.py` | 강등 → 비활성, 리셋 의미론 |
-| `tests/unit/heartbeat/test_heartbeat_backoff.py` | 서비스 백오프 배선, 소진 일시정지 |
-| `tests/unit/subagent/test_sweeper_backoff.py` | 스위퍼 백오프 배선, 루프 정지 |
-| `tests/unit/server/test_sweeper_wiring.py` | 스위퍼 시작 배선 |
-| `tests/unit/server/test_crash_gating.py` | 부팅 게이팅, HTTP 전용 모드 |
-| `tests/unit/server/test_cron_api.py` | Cron REST, failure-state / reset-failures 포함 |
-| `tests/unit/test_token_limit_continuation.py` | 잘림 감지, 텍스트 continuation 루프, 부스트 재호출(callbacks 제거 포함) |
-| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | 자식 에이전트 미들웨어 배선, 비스트리밍 기본값 |
+| `tests/agent/middlewares/test_tool_guardrails.py` | 병리 감지, 격상 사다리, 복구 모드 |
+| `tests/runtime/test_periodic_backoff.py` | 간격 수학, 소진, 성공 리셋 |
+| `tests/runtime/test_crash_loop_breaker.py` | 작동 윈도우 / 보존, 클린 마커, 손상된 상태 |
+| `tests/skills/builtin/core/cron/test_cron_failure_breaker.py` | 강등 → 비활성, 리셋 의미론 |
+| `tests/skills/builtin/core/heartbeat/test_heartbeat_backoff.py` | 서비스 백오프 배선, 소진 일시정지 |
+| `tests/agent/tools/subagent/test_sweeper_backoff.py` | 스위퍼 백오프 배선, 루프 정지 |
+| `tests/agent/tools/subagent/registry/test_sweeper_wiring.py` | 스위퍼 시작 배선 |
+| `tests/server/test_crash_gating.py` | 부팅 게이팅, HTTP 전용 모드 |
+| `tests/server/test_cron_api.py` | Cron REST, failure-state / reset-failures 포함 |
+| `tests/agent/middlewares/test_token_limit_continuation.py` | 잘림 감지, 텍스트 continuation 루프, 부스트 재호출(callbacks 제거 포함) |
+| `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` | 자식 에이전트 미들웨어 배선, 비스트리밍 기본값 |
 
 ## ⚠️ 정직함과 한계
 

@@ -1,7 +1,7 @@
 """Unit tests for runtime.crash_loop_breaker (CrashLoopBreaker boot lifecycle guard).
 
 Every test redirects the module-level STATE_PATH into tmp_path via
-monkeypatch.setattr with a dotted string target (self-restoring: tests/unit
+monkeypatch.setattr with a dotted string target (self-restoring: each runner group
 runs in ONE pytest process, patches must never leak).
 """
 

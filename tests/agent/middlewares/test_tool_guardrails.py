@@ -1,7 +1,7 @@
 """Unit tests for agent/middlewares/tool_guardrails.py (Task 1: ping-pong + arg-churn).
 
 Load iron rule: the module is loaded via ``importlib.util.spec_from_file_location``
-by absolute path — NEVER ``from agent.middlewares import ...`` (tests/unit/subagent/
+by absolute path — NEVER ``from agent.middlewares import ...`` (tests/agent/tools/subagent/
 conftest.py installs permanent sys.modules stubs that would shadow the real module).
 """
 

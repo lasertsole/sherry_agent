@@ -1,6 +1,6 @@
 """Unit tests for the taskflow SQLite persistence layer (task_flows table).
 
-Mirrors tests/unit/subagent/test_store_sqlite.py: the store is a module-level
+Mirrors tests/agent/tools/subagent/test_store_sqlite.py: the store is a module-level
 function API around module constants, so tests isolate via monkeypatched
 ``_DB_DIR``/``_DB_PATH`` + reset once-per-process init state; the real data
 directory is never touched. The concurrency regression test ports the F3

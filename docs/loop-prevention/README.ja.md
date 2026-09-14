@@ -127,7 +127,7 @@
 
 - ハートビートは tick の*内部で*成功を記録し(tick は自身のエラーを飲み込む)、本当の tick 失敗だけがカウントされます。一時停止後も `trigger_now()` は機能します: 手動のつつきは眠っているループを迂回します。
 - `stop_sweeper()` はバックオフオブジェクトを破棄し(`_backoff=None`)、手動で再開したスイープは新鮮な状態で始まります。バックオフオブジェクトは遅延生成(`_get_backoff`)で、import 時には作られません。
-- 本番ではスイーパーは `server/trigger/channels/core.py` の `_schedule_sweeper` が起動し、コルーチンをメインイベントループへ乗せます(`run_coroutine_threadsafe`); この配線は `tests/unit/server/test_sweeper_wiring.py` がカバーします。
+- 本番ではスイーパーは `server/trigger/channels/core.py` の `_schedule_sweeper` が起動し、コルーチンをメインイベントループへ乗せます(`run_coroutine_threadsafe`); この配線は `tests/agent/tools/subagent/registry/test_sweeper_wiring.py` がカバーします。
 - バックオフ状態は Python オブジェクトの中にあります: プロセスを再起動すればハートビートとスイーパーのブレーカーはリセットされます。
 
 ### バックグラウンドレベル: cron ジョブ失敗ブレーカー
@@ -215,17 +215,17 @@
 
 | スイート | カバー範囲 |
 |---|---|
-| `tests/unit/middlewares/test_tool_guardrails.py` | 病理検知、格上げラダー、リカバリモード |
-| `tests/unit/runtime/test_periodic_backoff.py` | 間隔の計算、枯渇、成功リセット |
-| `tests/unit/runtime/test_crash_loop_breaker.py` | 作動ウィンドウ / 保持、クリーンマーカー、壊れた状態 |
-| `tests/unit/cron/test_cron_failure_breaker.py` | 降格 → 無効化、リセットの意味論 |
-| `tests/unit/heartbeat/test_heartbeat_backoff.py` | サービスバックオフ配線、枯渇時の一時停止 |
-| `tests/unit/subagent/test_sweeper_backoff.py` | スイーパーバックオフ配線、ループ停止 |
-| `tests/unit/server/test_sweeper_wiring.py` | スイーパー起動配線 |
-| `tests/unit/server/test_crash_gating.py` | 起動ゲーティング、HTTP 専用モード |
-| `tests/unit/server/test_cron_api.py` | Cron REST、failure-state / reset-failures を含む |
-| `tests/unit/test_token_limit_continuation.py` | 切断検出、テキスト継続ループ、ブースト再呼び出し(callbacks 剥離を含む) |
-| `tests/unit/subagent/test_max_tokens_boost_wiring.py` | 子エージェントのミドルウェア配線、非ストリーミングデフォルト |
+| `tests/agent/middlewares/test_tool_guardrails.py` | 病理検知、格上げラダー、リカバリモード |
+| `tests/runtime/test_periodic_backoff.py` | 間隔の計算、枯渇、成功リセット |
+| `tests/runtime/test_crash_loop_breaker.py` | 作動ウィンドウ / 保持、クリーンマーカー、壊れた状態 |
+| `tests/skills/builtin/core/cron/test_cron_failure_breaker.py` | 降格 → 無効化、リセットの意味論 |
+| `tests/skills/builtin/core/heartbeat/test_heartbeat_backoff.py` | サービスバックオフ配線、枯渇時の一時停止 |
+| `tests/agent/tools/subagent/test_sweeper_backoff.py` | スイーパーバックオフ配線、ループ停止 |
+| `tests/agent/tools/subagent/registry/test_sweeper_wiring.py` | スイーパー起動配線 |
+| `tests/server/test_crash_gating.py` | 起動ゲーティング、HTTP 専用モード |
+| `tests/server/test_cron_api.py` | Cron REST、failure-state / reset-failures を含む |
+| `tests/agent/middlewares/test_token_limit_continuation.py` | 切断検出、テキスト継続ループ、ブースト再呼び出し(callbacks 剥離を含む) |
+| `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` | 子エージェントのミドルウェア配線、非ストリーミングデフォルト |
 
 ## ⚠️ 正直さと限界
 

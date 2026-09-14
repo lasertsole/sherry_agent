@@ -1,18 +1,18 @@
-"""Fixtures and helpers for tests/unit/taskflow/.
+"""Fixtures and helpers for tests/agent/tools/taskflow/.
 
 Two concerns are shared here:
 
 1. ``isolated_db``: point the taskflow store module at a per-test tmp SQLite
    file and reset its once-per-process init state (mirrors the pattern in
-   tests/unit/subagent/test_store_sqlite.py).
+   tests/agent/tools/subagent/test_store_sqlite.py).
 
-2. Stub-tolerant loaders for REAL modules: when tests/unit/subagent is
+2. Stub-tolerant loaders for REAL modules: when tests/agent/tools/subagent is
    collected in the same pytest process, its conftest installs sys.modules
    stubs at import time (including ``skills.loader`` and a no-op
    ``agent.tools.build_main_tools``). Tests that must observe REAL behavior
    (skill file discovery, the real _MAIN_TOOLS_BUILDERS wiring) therefore load
    the real source files under private module names, mirroring the
-   ``_real_init_attr`` pattern established in tests/unit/subagent/conftest.py.
+   ``_real_init_attr`` pattern established in tests/agent/tools/subagent/conftest.py.
 """
 
 import asyncio
@@ -88,7 +88,7 @@ def _real_agent_tools() -> Any:
 def _fix_stub_run_async() -> None:
     """Make ``from pub.func import run_async`` work inside the stub regime.
 
-    The tests/unit/subagent conftest stubs ``pub.func`` with a PEP 562
+    The tests/agent/tools/subagent conftest stubs ``pub.func`` with a PEP 562
     ``__getattr__`` that resolves a missing name by importing the same-named
     submodule and returning its re-export. For ``run_async`` that import has
     a side effect: the import machinery binds the ``pub.func.run_async``
@@ -159,8 +159,8 @@ def skill_visible_to_real() -> Callable[[dict[str, Any], str], bool]:
 def build_main_tools_real() -> Callable[[], list]:
     """Call build_main_tools, robust against the unit-test stub regime.
 
-    In a solo run of tests/unit/taskflow the real agent.tools package is
-    importable and the call goes through normally. When tests/unit/subagent
+    In a solo run of tests/agent/tools/taskflow the real agent.tools package is
+    importable and the call goes through normally. When tests/agent/tools/subagent
     is collected first in the same process, its conftest replaces
     ``agent.tools.build_main_tools`` with ``lambda: []``; in that case fall
     back to the real package __init__ loaded under a private name.

@@ -2,7 +2,7 @@
 
 Answers a single question: is the session currently processing a turn? Four
 independent signals, all keyed by the BARE session id, checked in the fixed
-precedence order (frozen by tests/unit/state/test_detect_state_extension.py):
+precedence order (frozen by tests/agent/tools/subagent/registry/test_detect_state_extension.py):
 
     ws_task > answering > hitl_pending > auto_turn_inflight > idle
 
@@ -181,7 +181,7 @@ def _is_auto_turn_inflight(session_id: str) -> bool:
 def detect_state(session_key: str) -> SessionState:
     """Return the busy/idle state of a parent session with the deciding reason.
 
-    Signal precedence (frozen by tests/unit/state/test_detect_state_extension.py,
+    Signal precedence (frozen by tests/agent/tools/subagent/registry/test_detect_state_extension.py,
     guardrail G5 — the original ws_task > answering order is unchanged):
 
         ws_task > answering > hitl_pending > auto_turn_inflight > idle

@@ -195,7 +195,7 @@ SANDBOX_POLICY=auto      # required | auto | off（大小写不敏感，默认�
 | `tests/module/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫、schema、启动形态 |
 | `tests/module/test_hitl_characterization.py` | 19 个测试，锁定沙箱改造前的 HITL / terminal 遗留行为 |
 | `tests/module/test_hitl_sandbox_bypass.py` | 17 个测试，覆盖绕过审批流、YOLO 直通、作用域标记 |
-| `tests/unit/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 标记 |
+| `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 标记 |
 
 矩阵测试全局 patch `subprocess.Popen`，在工具模块接缝处 stub `get_backend`，并通过环境变量设置 `SANDBOX_POLICY`，让真实的 `read_policy` 在每一格中运行。
 

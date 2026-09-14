@@ -12,7 +12,7 @@ or message removal here would produce broken tool pairing hitting the
 provider on the SAME call. Therefore: in-place content mutation only,
 placeholders must be non-empty, message list length/order/identity unchanged.
 
-Style follows tests/unit/test_pub_func_message_tools.py: real langchain_core
+Style follows tests/pub/func/message/test_pub_func_message_tools.py: real langchain_core
 messages, class grouping, plain asserts. Windows-safe: ASCII only.
 """
 

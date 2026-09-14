@@ -506,7 +506,7 @@ async def test_channel_executor_resolves_own_claimed_row_when_queued_row_predate
     A QUEUED row may predate dispatch (input queued under hitl_pending /
     crash leftovers); list_active is FIFO by created_at, so rows[0] can be
     that older QUEUED row. Mirrors the WsTurnExecutor regression in
-    tests/unit/runner/test_turn_runner.py (fix 32a5d2f).
+    tests/server/service/test_turn_runner.py (fix 32a5d2f).
     """
     env = channel_env
     relation_register.register_channel_chat(env.sid, "qq", "chat-A")
