@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // ws.ts uses `emit` from the shared mitt bus. Tests subscribe through the
 // same bus (`on`) to observe emitted events.
 import { on, off } from '../mitt';
-import { useWs, closeWs } from '../ws';
+import { useWs, closeWs, useSubagentWs, closeSubagentWs } from '../ws';
 
 class FakeWebSocket {
   static OPEN = 1;
@@ -57,6 +57,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   closeWs();
+  closeSubagentWs();
 });
 
 describe('resolveWsBaseUrl via useWs connection URL', () => {
@@ -199,6 +200,72 @@ describe('reconnect storm guards', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(FakeWebSocket.instances[1]).toBe(b);
     expect(b.readyState).toBe(FakeWebSocket.OPEN);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Reconnect-timer ownership (audit #50)
+ *
+ * The 5s auto-reconnect setTimeout handle must be stored so that an explicit
+ * close (or an explicit new connect) cancels it — otherwise a manual teardown
+ * still re-opens a socket, and a consumer reconnect can be killed by the stale
+ * timer of the connection it replaced.
+ * ------------------------------------------------------------------------- */
+describe('reconnect timer ownership', () => {
+  it('manual closeWs cancels the pending auto-reconnect', () => {
+    vi.useFakeTimers();
+    useWs();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    socket.closeFromServer();
+    expect(vi.getTimerCount()).toBe(1); // the 5s reconnect
+
+    closeWs();
+    expect(vi.getTimerCount()).toBe(0);
+
+    vi.advanceTimersByTime(15000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('an explicit reconnect before the deadline cancels the stale timer', () => {
+    vi.useFakeTimers();
+    useWs();
+    const first = FakeWebSocket.instances[0]!;
+    first.open();
+    first.closeFromServer();
+
+    useWs(); // a consumer opens a new connection before the 5s timer fires
+    const second = FakeWebSocket.instances[1]!;
+    second.open();
+
+    vi.advanceTimersByTime(5000);
+    // Without the cancel the stale timer would close `second` and create a third socket.
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(FakeWebSocket.instances[1]).toBe(second);
+    expect(second.readyState).toBe(FakeWebSocket.OPEN);
+  });
+
+  it('closeSubagentWs cancels the subagent reconnect', () => {
+    vi.useFakeTimers();
+    useSubagentWs();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+
+    closeSubagentWs();
+    socket.closeFromServer(); // late onclose of the closed socket
+    vi.advanceTimersByTime(15000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('the subagent channel still auto-reconnects on an unexpected close', () => {
+    vi.useFakeTimers();
+    useSubagentWs();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+
+    socket.closeFromServer();
+    vi.advanceTimersByTime(5000);
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 });
 

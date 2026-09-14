@@ -49,6 +49,29 @@ const { setLocale, t } = useI18n();
 // (e.g. request interceptors).
 registerToastApi(useToast());
 
+/**
+ * Tear down both module-level WebSocket singletons (`/sessions/ws` and `/subagents/ws`).
+ *
+ * Without this, the sockets' 5s auto-reconnect timers outlive the app: after a manual close
+ * or a page teardown a pending reconnect would still open a fresh socket. `closeWs` /
+ * `closeSubagentWs` clear their reconnect timers, so calling them here ends the reconnect
+ * loops (audit #70).
+ */
+function closeWsSingletons() {
+  closeWs();
+  closeSubagentWs();
+}
+
+// Close the singletons when the document unloads (browser refresh/tab close; `beforeunload`
+// also covers the Tauri webview) and when the root component unmounts.
+onMounted(() => {
+  window.addEventListener('beforeunload', closeWsSingletons);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', closeWsSingletons);
+  closeWsSingletons();
+});
+
 // Top-level fallback for page-level error capture (03-errorCaptured factory doc §3.3, App-layer capture):
 // captures errors from child components outside NuxtPage (ImagePreviewOverlay / connection banner /
 // layout, etc.).
@@ -127,6 +150,7 @@ function readCookie(name: string): string | null {
  * Therefore `setLocale` can only switch immediately and cannot persist. To satisfy "still the
  * preferred language after refresh/reopen", we write the preference cookie manually (same key set
  * as readCookie on first load; behavior consistent with persistLocalePreference in home/index.vue).
+ * @param code
  */
 function persistLocalePreference(code: LocaleCode) {
   if (!import.meta.client) return;

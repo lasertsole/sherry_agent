@@ -56,6 +56,22 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 /** Timeout-check handle for the current ping */
 let pongTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Auto-reconnect timer handle (module-level so closeWs / an explicit connect can
+ * cancel a pending reconnect; audit #50). Without the stored handle, a manual
+ * close left the 5s timer running and it re-opened a socket the caller had
+ * explicitly torn down.
+ */
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Cancel a pending auto-reconnect (called on manual close and before any explicit connect). */
+function clearReconnectTimer(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
 /** A ping has been sent and no reply frame has been received yet */
 let pendingPong = false;
 
@@ -153,6 +169,11 @@ export function useWs(options?: { onReconnect?: () => void }): {
   const wsUrl = `${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`;
 
   function connect(): void {
+    // An explicit connect supersedes any scheduled auto-reconnect: left armed,
+    // that stale timer would fire after this connection is OPEN and rebuild it
+    // (killing the healthy socket).
+    clearReconnectTimer();
+
     // An existing connection is still handshaking: reuse it directly, never
     // close and rebuild — otherwise multiple callers (connection.ts startup +
     // NotificationDialog mount) would close each other's not-yet-finished
@@ -226,8 +247,10 @@ export function useWs(options?: { onReconnect?: () => void }): {
       wsInstance = null;
       emit('ws:disconnected', undefined);
 
-      // Auto-reconnect (after 5 seconds)
-      setTimeout(() => {
+      // Auto-reconnect (after 5 seconds). The handle is stored so closeWs()
+      // cancels it instead of leaving a zombie reconnect behind (audit #50).
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
         options?.onReconnect?.();
         connect();
       }, 5000);
@@ -250,6 +273,8 @@ export function closeWs(): void {
   // The heartbeat timer is a module-level handle; clean it up together with the
   // singleton close (a safety net beyond onclose, to prevent leaks)
   stopHeartbeat();
+  // Cancel any pending auto-reconnect: a manual close must stay closed
+  clearReconnectTimer();
   pendingPong = false;
   missedPongs = 0;
   everConnected = false;
@@ -290,6 +315,17 @@ let subagentWsInstance: WebSocket | null = null;
 /** Whether the subagent connection is ready (ready frame received) */
 let subagentReady = false;
 
+/** Stored auto-reconnect handle for the subagent channel (cleared by closeSubagentWs, mirrors the session channel). */
+let subagentReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Cancel a pending subagent auto-reconnect. */
+function clearSubagentReconnectTimer(): void {
+  if (subagentReconnectTimer !== null) {
+    clearTimeout(subagentReconnectTimer);
+    subagentReconnectTimer = null;
+  }
+}
+
 /**
  * Create and obtain the subagent real-time push WebSocket connection (singleton)
  *
@@ -316,6 +352,10 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
   const wsUrl = `${WS_BASE_URL}/subagents/ws`;
 
   function connect(): void {
+    // Explicit connect supersedes a scheduled auto-reconnect (same race as the
+    // session channel: a stale timer would rebuild an already-OPEN socket).
+    clearSubagentReconnectTimer();
+
     // Close the old connection
     if (subagentWsInstance) {
       subagentWsInstance.close();
@@ -354,6 +394,11 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
     };
 
     socket.onclose = () => {
+      // Superseded-socket guard (mirrors the session channel): a socket already
+      // replaced by closeSubagentWs / a newer connect must not clear the live
+      // singleton or schedule a competing reconnect.
+      if (subagentWsInstance !== socket) return;
+
       subagentReady = false;
       isConnected.value = false;
       isReady.value = false;
@@ -361,8 +406,9 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
       subagentWsInstance = null;
       emit('ws:subagents:disconnected', undefined);
 
-      // Auto-reconnect (after 5 seconds)
-      setTimeout(() => {
+      // Auto-reconnect (after 5 seconds); the stored handle is cancelled by closeSubagentWs.
+      subagentReconnectTimer = setTimeout(() => {
+        subagentReconnectTimer = null;
         options?.onReconnect?.();
         connect();
       }, 5000);
@@ -382,6 +428,7 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
  * Manually close the subagent WebSocket connection (for cleanup)
  */
 export function closeSubagentWs(): void {
+  clearSubagentReconnectTimer();
   if (subagentWsInstance) {
     subagentWsInstance.close();
     subagentWsInstance = null;
