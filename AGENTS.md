@@ -37,7 +37,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/` | Shared utilities (message pipeline, retry, validators) | `pub/func/message/` |
 | `models/` | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker) | `models/LLMs/main_llm.py` |
-| `runtime/` | Runtime state registers, crash loop breaker, periodic backoff | `runtime/state_register.py` |
+| `runtime/` | Runtime state registers (`session/`) + process-level services (`process/`) | `runtime/session/state_register.py` |
 | `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression) | `tests/run_tests_split.py` |
 | `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
 | `docs/` | VitePress documentation site | `docs/long-running-tasks/README.md` |

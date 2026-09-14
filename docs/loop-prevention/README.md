@@ -11,7 +11,7 @@ Two design rules run through every guard below:
 1. **Degrade, never crash.** Protection never takes the process down: background services *stop*, turns *end gracefully*, and the boot gate *narrows the footprint* to HTTP-only mode.
 2. **Always leave a hatch.** Every breaker has a documented manual reset (REST endpoint, state-file delete, or process restart).
 
-**Source of truth:** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/max_tokens_boost.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/periodic_backoff.py`, `runtime/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
+**Source of truth:** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/max_tokens_boost.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
 
 ## 🎯 Overview & Threat Model
 
@@ -114,7 +114,7 @@ Registers a 1-minute timer per turn (`timer_call_register`) that compares `heart
 
 ### Background level: `PeriodicBackoff`, one breaker, three services
 
-`runtime/periodic_backoff.py` is a pure state machine (no threads, no I/O):
+`runtime/process/periodic_backoff.py` is a pure state machine (no threads, no I/O):
 
 - `record_failure()`: `consecutive_failures += 1`; `current_interval = min(base × factor^n, max_interval)`; exhausted when `consecutive_failures >= max_consecutive_failures`.
 - `record_success()`: full reset. Defaults: `factor=2.0`, `max_interval=7200s`, `max_consecutive_failures=5`.
@@ -148,7 +148,7 @@ Per-job state machine in `skills/builtin/core/cron/scripts/base.py` (`CronJobFai
 
 ### Process level: `CrashLoopBreaker` + boot gating
 
-`runtime/crash_loop_breaker.py` persists a boot journal to `src/data/boot_lifecycle.json` (keys: `boots` with `{ts, clean, reason}` entries, reason capped at 200 chars; `last_exit_clean` one-shot marker):
+`runtime/process/crash_loop_breaker.py` persists a boot journal to `src/data/boot_lifecycle.json` (keys: `boots` with `{ts, clean, reason}` entries, reason capped at 200 chars; `last_exit_clean` one-shot marker):
 
 | Parameter | Value | Meaning |
 |---|---|---|

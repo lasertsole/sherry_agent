@@ -483,7 +483,7 @@ materialize_subagent_attachments(attachments, child_workspace, ...)
 registry/sweeper.py — loop sleeping backoff.current_interval (base =
 sweeper_interval_seconds, default 60 s)
 
-Failure backoff (runtime/periodic_backoff.PeriodicBackoff): each failed
+Failure backoff (runtime/process/periodic_backoff.PeriodicBackoff): each failed
 sweep doubles the next sleep (min(60 s × 2ⁿ, 7200 s), warning logged);
 after 5 consecutive failures the loop stops itself (CRITICAL log, no
 auto re-arm). A successful sweep fully resets the backoff, and

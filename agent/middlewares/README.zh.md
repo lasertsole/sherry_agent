@@ -444,7 +444,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | `state_register_db`（`StateRegisterDB`） | SQLite（`src/data/state_register.db`） | 重启后仍保留；不支持 `clear_session`（返回 `False`）；提供 `get_all_session_ids` |
 | `timer_call_register`（`TimerCallRegister`） | asyncio 定时器 | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)` |
 
-通用接口（`runtime/state_register.py`）：`set_state`、`get_state`、`get_all_states`、`delete_state`、`clear_session`、`has_session`、`has_key`、`update_states`。
+通用接口（`runtime/session/state_register.py`）：`set_state`、`get_state`、`get_all_states`、`delete_state`、`clear_session`、`has_session`、`has_key`、`update_states`。
 
 ### 命名空间约定
 

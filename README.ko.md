@@ -192,12 +192,16 @@ EMA_AI_agent/
 │       └── client.py       # 클라이언트 데이터 모델
 │
 ├── runtime/                # 런타임 상태 및 유틸리티
-│   ├── core.py             # 싱글톤 Register 기반 + 세션별 정리
-│   ├── relation_register.py # 세션/socket 관계 레지스트리
-│   ├── state_register.py   # 상태 레지스트리
-│   ├── count_call_register.py # 사용량/통계 카운터
-│   ├── timer_call_register.py # 타이머 레지스트리
-│   └── _callback_executor.py # 비동기 콜백 실행기
+│   ├── session/            # 세션 단위 레지스트리
+│   │   ├── core.py         # 싱글톤 SessionRegister 기반 + 세션별 정리
+│   │   ├── relation_register.py # 세션/socket 관계 레지스트리
+│   │   ├── state_register.py   # 상태 레지스트리
+│   │   ├── count_call_register.py # 사용량/통계 카운터
+│   │   ├── timer_call_register.py # 타이머 레지스트리
+│   │   └── _callback_executor.py # 비동기 콜백 실행기
+│   └── process/            # 프로세스 단위 서비스
+│       ├── crash_loop_breaker.py # 부팅 크래시 루프 감지
+│       └── periodic_backoff.py   # 주기적 백오프 상태
 │
 ├── server/                 # Robyn 백엔드 서비스
 │   ├── __main__.py         # 서버 엔트리포인트(python -m server)

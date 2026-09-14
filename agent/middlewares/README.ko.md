@@ -450,7 +450,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `state_register_db` (`StateRegisterDB`) | SQLite (`src/data/state_register.db`) | 재시작 후에도 유지. `clear_session` 미지원(`False` 반환), `get_all_session_ids` 제공 |
 | `timer_call_register` (`TimerCallRegister`) | asyncio 타이머 | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)` |
 
-공통 인터페이스(`runtime/state_register.py`): `set_state`, `get_state`, `get_all_states`, `delete_state`, `clear_session`, `has_session`, `has_key`, `update_states`.
+공통 인터페이스(`runtime/session/state_register.py`): `set_state`, `get_state`, `get_all_states`, `delete_state`, `clear_session`, `has_session`, `has_key`, `update_states`.
 
 ### 네임스페이스 컨벤션
 

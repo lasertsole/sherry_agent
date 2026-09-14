@@ -481,7 +481,7 @@ materialize_subagent_attachments(attachments, child_workspace, ...)
 registry/sweeper.py — 循环睡眠 backoff.current_interval（基准 =
 sweeper_interval_seconds，默认 60 秒）
 
-失败退避（runtime/periodic_backoff.PeriodicBackoff）：每轮 sweep 失败会把
+失败退避（runtime/process/periodic_backoff.PeriodicBackoff）：每轮 sweep 失败会把
 下次睡眠翻倍（min(60 秒 × 2ⁿ, 7200 秒)，并记录 warning 日志）；连续失败
 5 次后循环自行停止（CRITICAL 日志，不会自动恢复）。成功的 sweep 会完整
 重置退避；stop_sweeper() 会丢弃退避状态，下次启动从零开始。

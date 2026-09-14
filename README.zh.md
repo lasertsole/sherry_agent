@@ -192,12 +192,16 @@ EMA_AI_agent/
 │       └── client.py       # 客户端数据模型
 │
 ├── runtime/                # 运行时状态与工具
-│   ├── core.py             # 单例 Register 基类 + 按会话清理
-│   ├── relation_register.py # 会话/socket 关系注册表
-│   ├── state_register.py   # 状态注册表
-│   ├── count_call_register.py # 用量/统计计数器
-│   ├── timer_call_register.py # 定时器注册表
-│   └── _callback_executor.py # 异步回调执行器
+│   ├── session/            # 会话级寄存器
+│   │   ├── core.py         # 单例 SessionRegister 基类 + 按会话清理
+│   │   ├── relation_register.py # 会话/socket 关系注册表
+│   │   ├── state_register.py   # 状态注册表
+│   │   ├── count_call_register.py # 用量/统计计数器
+│   │   ├── timer_call_register.py # 定时器注册表
+│   │   └── _callback_executor.py # 异步回调执行器
+│   └── process/            # 进程级服务
+│       ├── crash_loop_breaker.py # 启动崩溃循环检测
+│       └── periodic_backoff.py   # 周期退避状态
 │
 ├── server/                 # Robyn 后端服务
 │   ├── __main__.py         # 服务入口（python -m server）

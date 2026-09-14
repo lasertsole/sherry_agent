@@ -192,12 +192,16 @@ EMA_AI_agent/
 │       └── client.py       # Client data models
 │
 ├── runtime/                # Runtime state & utilities
-│   ├── core.py             # Singleton Register base + per-session cleanup
-│   ├── relation_register.py # Session/socket relation registry
-│   ├── state_register.py   # State registry
-│   ├── count_call_register.py # Usage/statistics counters
-│   ├── timer_call_register.py # Timer registry
-│   └── _callback_executor.py # Async callback executor
+│   ├── session/            # Session-scoped registers
+│   │   ├── core.py         # Singleton SessionRegister base + per-session cleanup
+│   │   ├── relation_register.py # Session/socket relation registry
+│   │   ├── state_register.py   # State registry
+│   │   ├── count_call_register.py # Usage/statistics counters
+│   │   ├── timer_call_register.py # Timer registry
+│   │   └── _callback_executor.py # Async callback executor
+│   └── process/            # Process-scoped services
+│       ├── crash_loop_breaker.py # Boot crash-loop detection
+│       └── periodic_backoff.py   # Periodic backoff state
 │
 ├── server/                 # Robyn backend service
 │   ├── __main__.py         # Server entry point (python -m server)

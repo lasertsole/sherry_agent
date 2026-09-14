@@ -148,7 +148,7 @@ if self.on_execute:
 
 - `run` → `on_execute(tasks)` がタスクを実行。**空でない**応答のみが `evaluate_response()` で評価され、肯定判定のときだけ `on_notify()` に到達します。
 - tick 内で例外が発生すると記録（`logger.exception`）され、**バックオフ失敗**としてカウントされます：次の sleep は 2 倍（interval_s × 2ⁿ、上限 7200 秒）になり、失敗理由が保持されます。tick が成功するとバックオフは完全にリセットされます。
-- **連続 5 回**の失敗でループは自ら停止し、CRITICAL ログを出力します（"Heartbeat paused ... manual recovery required"）。スケジュールの再開はプロセス再起動のみです。`trigger_now()` は引き続き単発 tick を実行できます。[`runtime/periodic_backoff.py`](../../../../runtime/periodic_backoff.py) と[暴走ループ防止ハーネス文書](../../../../docs/loop-prevention/README.md)を参照。
+- **連続 5 回**の失敗でループは自ら停止し、CRITICAL ログを出力します（"Heartbeat paused ... manual recovery required"）。スケジュールの再開はプロセス再起動のみです。`trigger_now()` は引き続き単発 tick を実行できます。[`runtime/process/periodic_backoff.py`](../../../../runtime/process/periodic_backoff.py) と[暴走ループ防止ハーネス文書](../../../../docs/loop-prevention/README.md)を参照。
 
 ---
 
@@ -247,7 +247,7 @@ heartbeat_service.stop()  # _running = False に設定し、asyncio タスクを
 | パラメータ | デフォルト | 説明 |
 |-----------|---------|-------------|
 | `interval_s` | `30 * 60`（1800 秒） | tick 間の秒数。ループは各 tick の**前に sleep する**ため、最初のチェックは `start()` の 1 周期後に発生します。失敗バックオフの基底間隔でもあります |
-| 失敗バックオフ | `factor=2.0`、上限 `7200 秒`、`5` 回で停止 | `HeartbeatService.__init__` にハードコードされた `PeriodicBackoff` パラメータ（`runtime/periodic_backoff.py`）。連続する tick 失敗で sleep は最大 2 時間まで伸び、その後は再起動までサービスが停止します |
+| 失敗バックオフ | `factor=2.0`、上限 `7200 秒`、`5` 回で停止 | `HeartbeatService.__init__` にハードコードされた `PeriodicBackoff` パラメータ（`runtime/process/periodic_backoff.py`）。連続する tick 失敗で sleep は最大 2 時間まで伸び、その後は再起動までサービスが停止します |
 | `enabled` | `True` | `False` の場合、`start()` は "Heartbeat disabled" をログ出力して何もしません |
 | `timezone` | `None` | 決定プロンプトの "Current Time" 行のために `current_time_str()` へ渡されます |
 | `on_execute` / `on_notify` | `None` | 非同期コールバック。未設定の場合、実行 / 配信はスキップされます |

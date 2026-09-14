@@ -484,7 +484,7 @@ materialize_subagent_attachments(attachments, child_workspace, ...)
 registry/sweeper.py — backoff.current_interval을 sleep하는 루프
 (기준 = sweeper_interval_seconds, 기본 60초)
 
-실패 백오프(runtime/periodic_backoff.PeriodicBackoff): 스윕이 실패할 때마다
+실패 백오프(runtime/process/periodic_backoff.PeriodicBackoff): 스윕이 실패할 때마다
 다음 sleep이 2배(min(60초 × 2ⁿ, 7200초), warning 로그). 연속 5회 실패 시
 루프가 스스로 중지(CRITICAL 로그, 자동 재개 없음). 성공한 스윕은 백오프를
 완전히 리셋. stop_sweeper()는 상태를 폐기하므로 다음 시작은 새 상태로

@@ -11,7 +11,7 @@
 1. **성능을 낮추되, 절대 크래시하지 않는다.** 보호 기능은 프로세스를 죽이지 않습니다: 백그라운드 서비스는 *정지*하고, 턴은 *우아하게 끝나며*, 부팅 게이트는 프로세스를 HTTP 전용 모드로 *축소*합니다.
 2. **항상 탈출구를 남긴다.** 모든 브레이커에는 문서화된 수동 리셋(REST 엔드포인트, 상태 파일 삭제, 프로세스 재시작)이 있습니다.
 
-**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/max_tokens_boost.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/periodic_backoff.py`, `runtime/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
+**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/max_tokens_boost.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
 
 ## 🎯 개요와 위협 모델
 
@@ -111,7 +111,7 @@
 
 ### 백그라운드 수준: `PeriodicBackoff`, 브레이커 하나, 서비스 셋
 
-`runtime/periodic_backoff.py`는 순수 상태 머신입니다(스레드 없음, I/O 없음):
+`runtime/process/periodic_backoff.py`는 순수 상태 머신입니다(스레드 없음, I/O 없음):
 
 - `record_failure()`: `consecutive_failures += 1`; `current_interval = min(base × factor^n, max_interval)`; `consecutive_failures >= max_consecutive_failures`일 때 소진.
 - `record_success()`: 완전 리셋. 기본값: `factor=2.0`, `max_interval=7200s`, `max_consecutive_failures=5`.
@@ -145,7 +145,7 @@
 
 ### 프로세스 수준: `CrashLoopBreaker` + 부팅 게이팅
 
-`runtime/crash_loop_breaker.py`는 부팅 저널을 `src/data/boot_lifecycle.json`에 영속화합니다(키: `{ts, clean, reason}` 항목을 담은 `boots`, reason은 200자 제한; `last_exit_clean` 일회용 마커):
+`runtime/process/crash_loop_breaker.py`는 부팅 저널을 `src/data/boot_lifecycle.json`에 영속화합니다(키: `{ts, clean, reason}` 항목을 담은 `boots`, reason은 200자 제한; `last_exit_clean` 일회용 마커):
 
 | 파라미터 | 값 | 의미 |
 |---|---|---|

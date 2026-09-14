@@ -513,7 +513,7 @@ default              -> "[tool] output {len} chars, first 100: ..."
 
 세션이 정리될 때, `context_engine/session_continuity.py`가 종료 상태를 영속화하여 다음 세션이 연속성을 제시할 수 있게 합니다. `server/DAO/messages.py::clear_session`은 삭제 전에 `auto_save_on_session_end(session_id)`를 **0단계**로 호출합니다(`server/DAO/messages.py:27-33`). 이 함수는:
 
-1. `runtime.relation_register`를 통해 `channel_id`/`chat_id`를 해석합니다(`_get_channel_chat_for_session`, `session_continuity.py:167`).
+1. `runtime.session.relation_register`를 통해 `channel_id`/`chat_id`를 해석합니다(`_get_channel_chat_for_session`, `session_continuity.py:167`).
 2. 최근 3턴을 읽고 마지막 AI 응답을 `_MAX_SUMMARY_CHARS = 500`으로 자릅니다(`session_continuity.py:28`).
 3. 해당 세션의 활성 flow id를 수집합니다.
 4. `save_session_end_state(...)`를 `src/data/session_continuity/{safe-key}.json`에 씁니다(`session_continuity.py:25`). 필드는 `last_session_id`, `ended_at`, `ended_ts`, `summary`, `taskflow_ids`입니다.

@@ -44,7 +44,7 @@ SESSION メモリプランの全 14 機能（opencode-dev / oh-my-openagent / he
 - **`context_engine/events/`** —— 追記型イベントログ（セッション単位の無欠番シーケンス：`types.py`、`store.py`）、チェックポイントイベントを P1-1 読みモデルへ写像する `EventProjector`。
 - **`context_engine/embeddings/`** —— ベクトル意味検索：遅延 embed バックエンド（上書き可能）、冪等 LEFT-JOIN インデクサ、コサイン順位付け。`message_search` ツール（`semantic: true`）で公開。
 - **`agent/middlewares/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）。
-- **`runtime/state_register.py`** —— `context_epoch` テーブル上の `ContextEpoch` ライフサイクル（initialize / prepare / replace / advance）。
+- **`runtime/session/state_register.py`** —— `context_epoch` テーブル上の `ContextEpoch` ライフサイクル（initialize / prepare / replace / advance）。
 
 ## テスト
 

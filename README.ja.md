@@ -192,12 +192,16 @@ EMA_AI_agent/
 │       └── client.py       # クライアントデータモデル
 │
 ├── runtime/                # ランタイム状態とユーティリティ
-│   ├── core.py             # シングルトン Register 基底 + セッション単位のクリーンアップ
-│   ├── relation_register.py # セッション/socket 関係レジストリ
-│   ├── state_register.py   # ステートレジストリ
-│   ├── count_call_register.py # 使用量/統計カウンター
-│   ├── timer_call_register.py # タイマーレジストリ
-│   └── _callback_executor.py # 非同期コールバック実行器
+│   ├── session/            # セッション単位レジストリ
+│   │   ├── core.py         # シングルトン SessionRegister 基底 + セッション単位のクリーンアップ
+│   │   ├── relation_register.py # セッション/socket 関係レジストリ
+│   │   ├── state_register.py   # ステートレジストリ
+│   │   ├── count_call_register.py # 使用量/統計カウンター
+│   │   ├── timer_call_register.py # タイマーレジストリ
+│   │   └── _callback_executor.py # 非同期コールバック実行器
+│   └── process/            # プロセス単位サービス
+│       ├── crash_loop_breaker.py # 起動クラッシュループ検出
+│       └── periodic_backoff.py   # 周期バックオフ状態
 │
 ├── server/                 # Robyn バックエンドサービス
 │   ├── __main__.py         # サーバーエントリーポイント（python -m server）

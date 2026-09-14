@@ -44,7 +44,7 @@ SESSION 메모리 플랜의 전체 14개 기능(opencode-dev / oh-my-openagent /
 - **`context_engine/events/`** —— 추가 전용 이벤트 로그(세션별 무결 시퀀스: `types.py`, `store.py`), 체크포인트 이벤트를 P1-1 읽기 모델에 매핑하는 `EventProjector`.
 - **`context_engine/embeddings/`** —— 벡터 의미 검색: 지연 embed 백엔드(프로젝트 임베드 모델, 테스트에서 대체 가능), 멱등 LEFT-JOIN 인덱서, 코사인 순위付け. `message_search` 도구(`semantic: true`)로 노출.
 - **`agent/middlewares/compaction_lock.py`** —— SQLite 압축 락(TTL 자가 복구, 동기 + 비동기 획득, 타임아웃 시 fail-open).
-- **`runtime/state_register.py`** —— `context_epoch` 테이블 기반의 `ContextEpoch` 라이프사이클(initialize / prepare / replace / advance).
+- **`runtime/session/state_register.py`** —— `context_epoch` 테이블 기반의 `ContextEpoch` 라이프사이클(initialize / prepare / replace / advance).
 
 ## 테스트
 

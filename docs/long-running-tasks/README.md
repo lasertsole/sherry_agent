@@ -513,7 +513,7 @@ default              -> "[tool] output {len} chars, first 100: ..."
 
 When a session is cleared, `context_engine/session_continuity.py` persists an end-state so the next session can offer continuity. `server/DAO/messages.py::clear_session` calls `auto_save_on_session_end(session_id)` as **step 0**, before any deletion (`server/DAO/messages.py:27-33`). That function:
 
-1. Resolves `channel_id`/`chat_id` through `runtime.relation_register` (`_get_channel_chat_for_session`, `session_continuity.py:167`).
+1. Resolves `channel_id`/`chat_id` through `runtime.session.relation_register` (`_get_channel_chat_for_session`, `session_continuity.py:167`).
 2. Reads the last 3 turns and clips the last AI reply to `_MAX_SUMMARY_CHARS = 500` (`session_continuity.py:28`).
 3. Collects active flow ids for the session.
 4. Writes `save_session_end_state(...)` to a JSON file at `src/data/session_continuity/{safe-key}.json` (`session_continuity.py:25`), with fields `last_session_id`, `ended_at`, `ended_ts`, `summary`, `taskflow_ids`.

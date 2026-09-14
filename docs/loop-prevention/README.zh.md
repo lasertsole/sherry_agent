@@ -11,7 +11,7 @@
 1. **只降级，绝不崩溃。** 防护永远不会拖垮进程：后台服务*停止*，回合*优雅结束*，启动门控把进程*收缩*到纯 HTTP 模式。
 2. **永远留一个逃生口。** 每个熔断器都有成文的手动重置方式（REST 端点、删除状态文件、或重启进程）。
 
-**事实来源：** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/periodic_backoff.py`、`runtime/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**事实来源：** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
 
 ## 🎯 总览与威胁模型
 
@@ -108,7 +108,7 @@
 
 ### 后台级：`PeriodicBackoff`，一个熔断器，三个服务
 
-`runtime/periodic_backoff.py` 是一台纯状态机（无线程、无 I/O）：
+`runtime/process/periodic_backoff.py` 是一台纯状态机（无线程、无 I/O）：
 
 - `record_failure()`：`consecutive_failures += 1`；`current_interval = min(base × factor^n, max_interval)`；`consecutive_failures >= max_consecutive_failures` 时耗尽。
 - `record_success()`：完全重置。默认值：`factor=2.0`、`max_interval=7200s`、`max_consecutive_failures=5`。
@@ -142,7 +142,7 @@
 
 ### 进程级：`CrashLoopBreaker` + 启动门控
 
-`runtime/crash_loop_breaker.py` 把启动日志持久化到 `src/data/boot_lifecycle.json`（键：`boots`，含 `{ts, clean, reason}` 条目，reason 上限 200 字符；`last_exit_clean` 一次性标记）：
+`runtime/process/crash_loop_breaker.py` 把启动日志持久化到 `src/data/boot_lifecycle.json`（键：`boots`，含 `{ts, clean, reason}` 条目，reason 上限 200 字符；`last_exit_clean` 一次性标记）：
 
 | 参数 | 值 | 含义 |
 |---|---|---|

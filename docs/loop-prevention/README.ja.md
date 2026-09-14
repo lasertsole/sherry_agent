@@ -11,7 +11,7 @@
 1. **劣化はするが、クラッシュはしない。** 保護機能がプロセスを落とすことはありません: バックグラウンドサービスは*停止*し、ターンは*安全に終了し*、起動ゲートはプロセスを HTTP 専用モードへ*縮小*します。
 2. **必ずハッチを残す。** すべてのブレーカーには文書化された手動リセット(REST エンドポイント、状態ファイルの削除、プロセスの再起動)があります。
 
-**一次情報:** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/periodic_backoff.py`、`runtime/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**一次情報:** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
 
 ## 🎯 概要と脅威モデル
 
@@ -112,7 +112,7 @@
 
 ### バックグラウンドレベル: `PeriodicBackoff`、ブレーカー一つ、サービス三つ
 
-`runtime/periodic_backoff.py` は純粋な状態機械です(スレッドなし、I/O なし):
+`runtime/process/periodic_backoff.py` は純粋な状態機械です(スレッドなし、I/O なし):
 
 - `record_failure()`: `consecutive_failures += 1`; `current_interval = min(base × factor^n, max_interval)`; `consecutive_failures >= max_consecutive_failures` で枯渇。
 - `record_success()`: 完全リセット。デフォルト: `factor=2.0`、`max_interval=7200s`、`max_consecutive_failures=5`。
@@ -146,7 +146,7 @@
 
 ### プロセスレベル: `CrashLoopBreaker` + 起動ゲーティング
 
-`runtime/crash_loop_breaker.py` はブートジャーナルを `src/data/boot_lifecycle.json` に永続化します(キー: `{ts, clean, reason}` エントリを持つ `boots`、reason は 200 文字上限; `last_exit_clean` は一回限りのマーカー):
+`runtime/process/crash_loop_breaker.py` はブートジャーナルを `src/data/boot_lifecycle.json` に永続化します(キー: `{ts, clean, reason}` エントリを持つ `boots`、reason は 200 文字上限; `last_exit_clean` は一回限りのマーカー):
 
 | パラメータ | 値 | 意味 |
 |---|---|---|

@@ -453,7 +453,7 @@ All cross-call middleware state is session-scoped and lives in two registers plu
 | `state_register_db` (`StateRegisterDB`) | SQLite (`src/data/state_register.db`) | Survives restarts; `clear_session` is not supported (returns `False`); exposes `get_all_session_ids` |
 | `timer_call_register` (`TimerCallRegister`) | Asyncio timers | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)` |
 
-Common interface (`runtime/state_register.py`): `set_state`, `get_state`, `get_all_states`, `delete_state`, `clear_session`, `has_session`, `has_key`, `update_states`.
+Common interface (`runtime/session/state_register.py`): `set_state`, `get_state`, `get_all_states`, `delete_state`, `clear_session`, `has_session`, `has_key`, `update_states`.
 
 ### Namespace Convention
 
