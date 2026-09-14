@@ -4,51 +4,51 @@ description: Session-scoped task tracking with delegation routing and TaskFlow-b
 scope: main_only
 ---
 
-# TodoList: 会话级任务跟踪
+# TodoList: Session-scoped task tracking
 
-会话级的轻量计划/清单层。它负责"想清楚、盯住、逼完成";真正的跨会话 DAG 执行、依赖解锁与并行派发由 TaskFlow 承担。
+The session-scoped lightweight planning/checklist layer. It is responsible for "thinking it through, keeping watch, and driving it to completion"; the actual cross-session DAG execution, dependency unlocking, and parallel dispatch are handled by TaskFlow.
 
-## 何时使用
+## When to use
 
-- 收到 3+ 步骤的复杂工作时,先建 todo 列表再动手。
-- 一个请求包含多个独立条目时,拆成原子 todo。
-- 范围不确定时也用它:写下来才能看清边界。
-- 每完成一步更新状态,全部完成后用空列表 `[]` 清除。
+- When a complex job arrives with 3+ steps, build a todo list before starting.
+- When a request contains multiple independent items, split it into atomic todos.
+- Use it also when the scope is unclear: writing it down is what makes the boundaries visible.
+- Update the status after each completed step; once everything is done, clear the list with an empty list `[]`.
 
-## 工具
+## Tools
 
-- `todowrite(todos)`: **全量替换**当前会话的 todo 列表。每次都要传完整列表,不是增量补丁。
-- `todoread()`: 从数据库读回当前列表。不确定当前状态时先读再写。
+- `todowrite(todos)`: **fully replaces** the current session's todo list. Always pass the complete list, not an incremental patch.
+- `todoread()`: read the current list back from the database. When unsure of the current state, read before writing.
 
-## 字段
+## Fields
 
-- `content`: 单条 todo 的文本。推荐格式 `[WHERE] [HOW] to [WHY] - expect [RESULT]`,一条只做一个能在 1-3 次工具调用内完成的原子动作。
-- `status`: `pending | in_progress | completed | cancelled`,默认 `pending`。
-- `priority`: `high | medium | low`,默认 `medium`。
-- `category`(可选): `quick | deep | ultrabrain | visual | git | writing`,委派路由裁决。
-- `delegation`(可选): `self | subagent`,是否自己干还是派给子代理。
-- `subagent_id`(可选): 派出子代理后填入其 `child_session_key`。
-- `plan_ref`(可选): 关联的 `.omo/plans/*.md` 路径。
-- `flow_id`(可选): 关联的 TaskFlow flow id。
-- `step_id`(可选): 关联的 TaskFlow step id(如 `step-2`)。
+- `content`: the text of a single todo. Recommended format `[WHERE] [HOW] to [WHY] - expect [RESULT]`; one todo should be a single atomic action completable within 1-3 tool calls.
+- `status`: `pending | in_progress | completed | cancelled`, default `pending`.
+- `priority`: `high | medium | low`, default `medium`.
+- `category` (optional): `quick | deep | ultrabrain | visual | git | writing`, the delegation routing decision.
+- `delegation` (optional): `self | subagent`, whether to do it yourself or delegate it to a subagent.
+- `subagent_id` (optional): filled with the subagent's `child_session_key` after it is spawned.
+- `plan_ref` (optional): the associated `.omo/plans/*.md` path.
+- `flow_id` (optional): the associated TaskFlow flow id.
+- `step_id` (optional): the associated TaskFlow step id (e.g. `step-2`).
 
-## 规则
+## Rules
 
-- 每次 `todowrite` 传完整列表,不要试图只改一行。
-- **同一时刻只能有一个 `in_progress`。** 当前项没完成前,不要把下一项置为进行中。
-- **只有验证通过后才能标记 `completed`。** 先跑验收标准,再改状态;验证不过就保持未完成或改 `cancelled` 后重规划。
-- `delegation: subagent` 的 todo,在子代理返回前不得标记 `completed`。
-- 批量把多条一起标完成会掩盖真实进度,逐条标记。
-- 完成状态一经写入,后续 turn 的续作系统会据此判断是否放行。
+- Every `todowrite` passes the complete list; never try to change only one line.
+- **Only one `in_progress` at a time.** Until the current item is complete, do not set the next item to in progress.
+- **Only mark `completed` after verification passes.** Run the acceptance criteria first, then change the status; if verification fails, leave it incomplete or switch it to `cancelled` and re-plan.
+- A todo with `delegation: subagent` must not be marked `completed` before the subagent returns.
+- Marking many items complete in one batch hides the real progress; mark them one by one.
+- Once a completed status is written, the continuation system in later turns uses it to decide whether to proceed.
 
-## DAG / 依赖 / 波次不在这里
+## DAG / dependencies / waves are not here
 
-todolist 层**不**跟踪 `depends_on`、**不**保存波次、**不**缓存 step 状态,也**不**做 frontier 重算。这些全部归 TaskFlow:
+The todolist layer does **not** track `depends_on`, does **not** store waves, does **not** cache step status, and does **not** recompute the frontier. All of that belongs to TaskFlow:
 
-- 声明依赖: `taskflow_run_task(flow_id, task, depends_on=["step-1"])`。依赖未满足时步骤记为 `blocked` 且不派发。
-- 并行派发就绪步骤: `taskflow_dispatch(flow_id, step_ids)`。
-- 等待本流派发的子会话 settle: `taskflow_wait_all(flow_id, ...)`。
-- 注入结果并解锁后继: `taskflow_resume(flow_id, child_session_key, result)`。resume 只解锁,不自动派发。
-- 回读 DAG 状态: `taskflow_summary(flow_id)` 渲染每步的 `status`(`blocked | ready | dispatched | done`)与 `depends_on`。
+- Declare dependencies: `taskflow_run_task(flow_id, task, depends_on=["step-1"])`. While dependencies are unmet, the step is recorded as `blocked` and is not dispatched.
+- Dispatch ready steps in parallel: `taskflow_dispatch(flow_id, step_ids)`.
+- Wait for the child sessions dispatched by this flow to settle: `taskflow_wait_all(flow_id, ...)`.
+- Inject results and unlock successors: `taskflow_resume(flow_id, child_session_key, result)`. Resume only unlocks; it does not dispatch automatically.
+- Read back DAG state: `taskflow_summary(flow_id)` renders each step's `status` (`blocked | ready | dispatched | done`) and `depends_on`.
 
-todo 只通过可选的 `flow_id` / `step_id` 指向对应 flow step,需要 DAG 状态时用 `taskflow_summary` 回读,不要在 todo 层重建调度器。依赖图、解锁与并行派发只有一个权威源:TaskFlow。
+A todo points at the corresponding flow step only through the optional `flow_id` / `step_id`; when DAG state is needed, read it back with `taskflow_summary` — do not rebuild a scheduler at the todo layer. The dependency graph, unlocking, and parallel dispatch have exactly one authoritative source: TaskFlow.
