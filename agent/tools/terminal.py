@@ -87,8 +87,9 @@ class SafeShellInput(ShellInput):
     sandbox: bool = Field(
         default=True,
         description=(
-            "沙箱开关。false 时执行环境清洗后的原始环境；"
-            "主会话将请求人工审批，子代理/后台代理会被拒绝"
+            "Sandbox toggle. When false, runs in the raw env-scrubbed environment; "
+            "the main session will request human approval, while subagents/background "
+            "agents are denied"
         ),
     )
 

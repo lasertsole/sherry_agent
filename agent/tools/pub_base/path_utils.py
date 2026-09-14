@@ -187,14 +187,14 @@ def resolve_external_path(
         name="external_file_access",
         args={"path": str(resolved)},
         description=(
-            f"外部文件访问审批\n"
-            f"  路径: {resolved}\n"
-            f"  项目根: {ROOT_DIR}\n"
-            f"  意图: {action_desc or '未指定'}\n\n"
-            f"选项:\n"
-            f"  approve — 允许（本次会话有效，子 agent 沿用）\n"
-            f"  yolo    — 永久允许所有外部路径（不再弹窗）\n"
-            f"  reject  — 拒绝"
+            f"External file access approval\n"
+            f"  Path: {resolved}\n"
+            f"  Project root: {ROOT_DIR}\n"
+            f"  Intent: {action_desc or 'unspecified'}\n\n"
+            f"Options:\n"
+            f"  approve — allow (valid for this session, inherited by subagents)\n"
+            f"  yolo    — permanently allow all external paths (no more prompts)\n"
+            f"  reject  — deny"
         ),
     )
     review_config = ReviewConfig(
