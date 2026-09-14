@@ -641,7 +641,7 @@ class SessionState:
 ### 5.5 [CONFIRMED] middleware sync/async 双路径
 
 - **唯一存在全量复制的中间件**: `summarization.py`（12+ 方法对）
-- **已正确使用共享 impl 的中间件**: multimodal_processor、tool_guardrails、iteration_budget、context_engine/core — 都通过 `_xxx_impl` 方法被 sync 和 async 版本共享
+- **已正确使用共享 impl 的中间件**: media_pipeline、tool_guardrails、iteration_budget、context_engine/core — 都通过 `_xxx_impl` 方法被 sync 和 async 版本共享
 - **模式**: 将 summarization 的 sync/async 对重构为共享 `_impl` 模式
 
 ---

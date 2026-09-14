@@ -185,7 +185,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### MultimodalProcessor
 
-**모듈:** `agent/middlewares/multimodal_processor.py` · **클래스:** `MultimodalProcessor(AgentMiddleware)`
+**모듈:** `agent/middlewares/media_pipeline.py` · **클래스:** `MultimodalProcessor(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`
 
 `before_agent`는 내용이 멀티모달 리스트인 **마지막** `HumanMessage`를 처리합니다:
@@ -650,7 +650,7 @@ agent/middlewares/
 ├── llm_retry.py                 # LLMRetryMiddleware (LLMRetryConfig, FallbackCandidate, ContentFilterError 포함)
 ├── max_tokens_boost.py          # MaxTokensBoostMiddleware (도구 호출 잘림 재호출)
 ├── media_handlers.py            # MultimodalProcessor의 미디어 타입별 전략
-├── multimodal_processor.py      # MultimodalProcessor
+├── media_pipeline.py            # MultimodalProcessor
 ├── output_repetition_guard.py   # OutputRepetitionGuard (__init__.py가 재익스포트)
 ├── repetition_detectors.py      # 순수 반복 감지 프리미티브
 ├── repetition_state.py          # 세션 단위 반복 상태 헬퍼

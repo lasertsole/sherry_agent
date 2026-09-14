@@ -187,7 +187,7 @@ First in the list, therefore the outermost wrap layer.
 
 ### MultimodalProcessor
 
-**Module:** `agent/middlewares/multimodal_processor.py` · **Class:** `MultimodalProcessor(AgentMiddleware)`
+**Module:** `agent/middlewares/media_pipeline.py` · **Class:** `MultimodalProcessor(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`
 
 `before_agent` processes the **last** `HumanMessage` when its content is a multimodal list:
@@ -652,7 +652,7 @@ agent/middlewares/
 ├── llm_retry.py                 # LLMRetryMiddleware (+ LLMRetryConfig, FallbackCandidate, ContentFilterError)
 ├── max_tokens_boost.py          # MaxTokensBoostMiddleware (tool-call truncation re-call)
 ├── media_handlers.py            # per-media-type strategies for MultimodalProcessor
-├── multimodal_processor.py      # MultimodalProcessor
+├── media_pipeline.py            # MultimodalProcessor
 ├── output_repetition_guard.py   # OutputRepetitionGuard (re-exported by __init__.py)
 ├── repetition_detectors.py      # pure repetition-detection primitives
 ├── repetition_state.py          # session-scoped repetition state helpers

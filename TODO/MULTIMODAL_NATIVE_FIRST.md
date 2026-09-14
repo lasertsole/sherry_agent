@@ -31,7 +31,7 @@ User 上传图片 → MultimodalProcessor.before_agent
 
 | 文件                                                | 行数 | 角色                                       |
 | --------------------------------------------------- | ---- | ------------------------------------------ |
-| `agent/middlewares/multimodal_processor.py`         | 224  | 媒体处理 + 技能提示注入                    |
+| `agent/middlewares/media_pipeline.py`               | 224  | 媒体处理 + 技能提示注入                    |
 | `agent/middlewares/media_handlers.py`               | 301  | 各媒体类型处理器（存盘）                   |
 | `agent/middlewares/llm_retry.py`                    | 426  | LLM 调用重试 + fallback chain              |
 | `pub/func/message/llm_error_classifier.py`          | 470  | 错误分类引擎                               |
@@ -218,7 +218,7 @@ def reset_cache() -> None:
 
 新增 `main_llm_supports_vision: str` 字段，默认 `"auto"`。
 
-#### `agent/middlewares/multimodal_processor.py`
+#### `agent/middlewares/media_pipeline.py`
 
 **重构 `_before_agent_impl` 为两阶段：**
 
@@ -451,7 +451,7 @@ def _try_multimodal_fallback(
             set_capability(provider, model, mt, "unsupported")
 
     # Rewrite messages: strip media blocks, add skill hints
-    from agent.middlewares.multimodal_processor import apply_skill_fallback
+    from agent.middlewares.media_pipeline import apply_skill_fallback
     messages = getattr(request, "messages", [])
     new_messages = apply_skill_fallback(messages, session_id)
     try:
@@ -470,7 +470,7 @@ def _try_multimodal_fallback(
 | 文件                                                          | 测试点                                                                                                                                |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `tests/agent/middlewares/test_llm_capability_cache.py` (新增) | 读写缓存、模型 key 隔离、未知模型返回 "auto"、并发写安全、reset、同进程跨 session 共享                                                |
-| `tests/agent/middlewares/test_multimodal_processor.py` (新增) | 三态分支（true/false/auto）、auto+缓存=supported 保留 block、auto+缓存=unsupported 走技能、auto+缓存=auto 设 flag、各媒体类型独立判断 |
+| `tests/agent/middlewares/test_media_pipeline.py` (新增) | 三态分支（true/false/auto）、auto+缓存=supported 保留 block、auto+缓存=unsupported 走技能、auto+缓存=auto 设 flag、各媒体类型独立判断 |
 | `tests/pub/func/message/test_llm_error_classifier.py` (扩展)  | `multimodal_not_supported` 模式匹配、不误匹配普通 "image" 关键词、400 + 关键词组合                                                    |
 | `tests/agent/middlewares/test_llm_retry.py` (扩展)            | 模型报 multimodal 错误 → 写缓存 → fallback → retry 成功、非 auto 模式不触发 fallback、模型 key 校验                                   |
 
@@ -521,7 +521,7 @@ LangChain 1.3.9 `ModelRequest` 构造函数接受 `messages` 参数（见 test_l
 
 1. `llm_capability_cache.py` — 进程内存缓存读写模块 + 测试
 2. `llm_error_classifier.py` — 新增 `multimodal_not_supported` 分类 + 测试
-3. `multimodal_processor.py` — 重构 `_before_agent_impl` + 新增 `apply_skill_fallback` + 测试
+3. `media_pipeline.py` — 重构 `_before_agent_impl` + 新增 `apply_skill_fallback` + 测试
 4. `llm_retry.py` — 新增 multimodal fallback 分支 + 测试
 5. `context_engine_hook.py` — 新增配置字段
 6. 端到端验证：auto 模式 → 发图 → 模型报错 → 写缓存 → fallback → 同进程后续 session 直接走技能
