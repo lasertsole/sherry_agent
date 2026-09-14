@@ -15,7 +15,6 @@ import asyncio
 import csv
 import faulthandler
 import json
-import os
 import re
 import sys
 import time
@@ -291,10 +290,11 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001 — eval records the failure and exits cleanly
         print(f"[evals] long_running_task FAILED: {exc}", flush=True)
         sys.stdout.flush()
-        os._exit(1)
+        raise SystemExit(1) from exc
     finally:
         setattr(dispatch_module, "dispatch_child", original_dispatch)
         sandbox.restore()
+        sandbox.close_aiosqlite_connections()
 
     successes = sum(1 for s in samples if s["success"])
     aggregate = {
@@ -320,11 +320,7 @@ def main() -> None:
     print(f"[evals] long_running_task aggregate: {aggregate}", flush=True)
     print(f"[evals] report: {results_dir}", flush=True)
 
-    # Spawned children leak aiosqlite checkpointer connections that keep the
-    # process alive after asyncio.run() ends (same hang tests/conftest.py
-    # works around); the report is already on disk, so exit hard.
     sys.stdout.flush()
-    os._exit(0)
 
 
 if __name__ == "__main__":

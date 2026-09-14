@@ -26,6 +26,9 @@ import platform
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
+from loguru import logger
+
 SAFE_TOOL_NAMES = frozenset({"read_file", "search_files", "question"})
 
 _STORE_MODULES: dict[str, str] = {
@@ -46,6 +49,7 @@ class EvalSandbox:
         self.knowledge_plans_dir = self.workspace / "knowledge" / "plans"
         self._originals: dict[object, dict[str, Any]] = {}
         self._applied = False
+        self._opened_connections: list[aiosqlite.Connection] = []
 
     def _set(self, module: object, attr: str, value: Any) -> None:
         self._originals.setdefault(module, {})[attr] = getattr(module, attr, None)
@@ -124,6 +128,7 @@ class EvalSandbox:
         """Apply every redirection. Idempotent within one instance."""
         if self._applied:
             return
+        self._track_aiosqlite_connections()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.src.mkdir(parents=True, exist_ok=True)
 
@@ -189,3 +194,36 @@ class EvalSandbox:
                 except (AttributeError, TypeError):
                     pass
         self._applied = False
+
+    def _track_aiosqlite_connections(self) -> None:
+        recorded: list[aiosqlite.Connection] = []
+        real_connect = aiosqlite.connect
+
+        def _recording_connect(*args: Any, **kwargs: Any) -> aiosqlite.Connection:
+            conn = real_connect(*args, **kwargs)
+            recorded.append(conn)
+            return conn
+
+        self._opened_connections = recorded
+        self._set(aiosqlite, "connect", _recording_connect)
+
+    def close_aiosqlite_connections(self) -> int:
+        """Close every aiosqlite connection opened while the sandbox was applied.
+
+        Spawned children leak checkpointer connections that production code
+        does not close (#26); each one parks a non-daemon worker thread that
+        blocks interpreter shutdown — the reason the suites used os._exit().
+        Recording at aiosqlite.connect catches every connection regardless of
+        origin (same technique as tests/conftest.py). Call after the suite's
+        asyncio.run() returned: close() only needs the ambient loop for its
+        completion future, which the connection's own worker thread resolves.
+        """
+        closed = 0
+        for conn in self._opened_connections:
+            try:
+                asyncio.run(conn.close())
+                closed += 1
+            except Exception:  # noqa: BLE001 — teardown must never mask results
+                logger.debug("eval teardown: aiosqlite close skipped", exc_info=True)
+        self._opened_connections.clear()
+        return closed

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 import time
 import uuid
@@ -284,6 +283,7 @@ def main() -> None:
         checks = asyncio.run(_run_checks(results_dir))
     finally:
         sandbox.restore()
+        sandbox.close_aiosqlite_connections()
 
     passed = sum(1 for c in checks if c.get("passed"))
     aggregate = {
@@ -300,9 +300,6 @@ def main() -> None:
     print(f"\n[evals] session_memory aggregate: {aggregate}", flush=True)
     print(f"[evals] report: {results_dir}", flush=True)
     sys.stdout.flush()
-    # Child checkpoint connections keep the loop alive after asyncio.run (same
-    # known hang tests/conftest.py works around); the report is on disk.
-    os._exit(0)
 
 
 if __name__ == "__main__":

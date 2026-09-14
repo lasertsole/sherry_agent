@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
-import os
 import sys
 import time
 import uuid
@@ -126,6 +125,7 @@ def main() -> None:
         samples, latencies = asyncio.run(_run_bench())
     finally:
         sandbox.restore()
+        sandbox.close_aiosqlite_connections()
 
     successes = sum(1 for s in samples if s["success"])
     aggregate = {
@@ -148,12 +148,7 @@ def main() -> None:
 
     print(f"[evals] subagent aggregate: {aggregate}", flush=True)
     print(f"[evals] report: {results_dir}", flush=True)
-
-    # Spawned children leak aiosqlite checkpointer connections that keep the
-    # process alive after asyncio.run() ends (same hang tests/conftest.py
-    # works around); the report is already on disk, so exit hard.
     sys.stdout.flush()
-    os._exit(0)
 
 
 if __name__ == "__main__":

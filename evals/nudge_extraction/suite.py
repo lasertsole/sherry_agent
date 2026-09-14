@@ -575,6 +575,7 @@ def main() -> None:
         }
     finally:
         sandbox.restore()
+        sandbox.close_aiosqlite_connections()
 
     pollution = _diff_snapshots(protection_before, _snapshot(protected))
     pollution_passed = not (pollution["added"] or pollution["removed"] or pollution["changed"])
@@ -614,7 +615,6 @@ def main() -> None:
         print(f"  [{check['check']}] passed={check['passed']}", flush=True)
     print(f"[evals] report: {results_dir}", flush=True)
     sys.stdout.flush()
-    os._exit(0)
 
 
 if __name__ == "__main__":
