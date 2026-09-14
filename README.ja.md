@@ -373,7 +373,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 以降の引数�
 
 **想定実行時間**（単独、実バックエンド）：単純タスク約 30–60 秒、複雑な最悪ケース約 10 分、同時タスク約 2–9 分。この予算を超える場合は通常の遅さではなく実際のハングであり、テストごとの timeout が制限します（単純 300 秒 / 同時 600 秒）。
 
-**CI：** このリポジトリには現在 CI 設定がありません。`tests/run_tests_split.py` が **CI 対応済みのエントリーポイント**です：`uv run python tests/run_tests_split.py` をメインパイプラインに組み込み（ハーメティック、2 プロセスで計約 7 分）、`--with-llm-e2e` は別のより遅い job としてスケジュールしてください（API トークンを消費するため、他のスイートと並列に実行しないでください）。
+**CI：** `.github/workflows/ci.yml` は `main` への push/PR ごとに `uv run python tests/run_tests_split.py` を実行し、スイートを **3 つの逐次 pytest プロセス**（並列には決してしない）で走らせます：A = `unit`、B = `integration` + `module` + `system`、C = `regression`。`--with-llm-e2e` は別のより遅い job として維持してください（API トークンを消費するため、他のスイートと並列に実行しないでください）。
 
 > **注意：** `tests/full/` は上記の標準グループ外の補助/実験ディレクトリです。特に `tests/full/test_main_agent_e2e.py` はライブネットワークテストで `llm_e2e` タグが**付いていない**ため、タグを付ける前に CI に組み込まないでください。
 

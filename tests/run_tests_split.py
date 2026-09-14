@@ -79,9 +79,9 @@ def parse_args() -> tuple[RunnerOptions, list[str]]:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Run the test suite in two isolated pytest processes "
-            "(unit | integration+system+module) so import-time sys.modules "
-            "stubs cannot leak across suites."
+            "Run the test suite in three isolated pytest processes "
+            "(unit | integration+module+system | regression) so import-time "
+            "sys.modules stubs cannot leak across suites."
         ),
         epilog="Extra args after '--' are forwarded to pytest, e.g. -- -k spawn -q",
     )
@@ -182,7 +182,7 @@ def main() -> int:
         if isinstance(stream, io.TextIOWrapper):
             _ = stream.reconfigure(encoding="utf-8", errors="replace")
 
-    print("Process-isolated test runner (2 sequential pytest processes)")
+    print("Process-isolated test runner (3 sequential pytest processes)")
     print(f"  repo root : {REPO_ROOT}")
     print(
         f"  llm_e2e   : {'SELECTED ONLY (dedicated job)' if options.with_llm_e2e else 'DESELECTED (default)'}"

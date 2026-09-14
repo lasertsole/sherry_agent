@@ -1,6 +1,6 @@
 # CI: hermetic test gate.
 #
-# Runs the repo's own 2-process split runner (tests/run_tests_split.py):
+# Runs the repo's own 3-process split runner (tests/run_tests_split.py):
 #   GROUP A = marker:unit, GROUP B = marker:integration+module+system, C = regression.
 # Real-LLM network tests (llm_e2e / tests/full) are excluded by design and
 # have a dedicated manually-dispatched workflow (llm-e2e.yml).

@@ -373,7 +373,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 之后的参数�
 
 **预期耗时**（单独运行、真实后端）：简单任务约 30–60 秒；复杂最坏情况约 10 分钟；并发任务约 2–9 分钟。超过这些预算说明是真正卡住，而非正常慢，单测超时会将其限制住（简单 300 秒 / 并发 600 秒）。
 
-**CI：** 本仓库当前没有 CI 配置；`tests/run_tests_split.py` 是**可直接接入 CI 的入口**：把 `uv run python tests/run_tests_split.py` 接到主流水线（密闭；两个进程合计约 7 分钟），并把 `--with-llm-e2e` 安排为单独的、更慢的 job（它消耗 API token；绝不要与其他套件并行运行）。
+**CI：** `.github/workflows/ci.yml` 会在每次向 `main` 推送/提 PR 时运行 `uv run python tests/run_tests_split.py`，以**三个顺序执行的 pytest 进程**（从不并行）跑完整套件：A = `unit`，B = `integration` + `module` + `system`，C = `regression`。`--with-llm-e2e` 仍作为单独的、更慢的 job（它消耗 API token；绝不要与其他套件并行运行）。
 
 > **注意：** `tests/full/` 是标准分组之外的辅助/实验目录。其中 `tests/full/test_main_agent_e2e.py` 是真实联网测试，**未**打上 `llm_e2e` 标记，未经标记不要接入 CI。
 

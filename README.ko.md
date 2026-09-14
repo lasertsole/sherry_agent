@@ -373,7 +373,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 뒤 인자는 pyt
 
 **예상 런타임**(단독, 실제 백엔드): 단순 작업 약 30–60초, 복잡한 최악의 경우 약 10분, 동시 작업 약 2–9분. 이 예산을 초과하면 정상적인 지연이 아니라 실제 hang이며, 테스트별 timeout이 이를 제한합니다(단순 300초 / 동시 600초).
 
-**CI:** 이 저장소에는 현재 CI 구성이 없습니다. `tests/run_tests_split.py`가 **CI 준비 완료 진입점**입니다: `uv run python tests/run_tests_split.py`를 기본 파이프라인에 연결하고(허메틱, 두 프로세스 합계 약 7분), `--with-llm-e2e`는 별도의 더 느린 job으로 예약하세요(API 토큰을 소모하며, 다른 스위트와 병렬로 절대 실행하지 마세요).
+**CI:** `.github/workflows/ci.yml`는 `main`에 대한 모든 push/PR에서 `uv run python tests/run_tests_split.py`를 실행하며, 스위트를 **세 개의 순차 pytest 프로세스**(결코 병렬 아님)로 수행합니다: A = `unit`, B = `integration` + `module` + `system`, C = `regression`. `--with-llm-e2e`는 별도의 더 느린 job으로 유지하세요(API 토큰을 소모하며, 다른 스위트와 병렬로 절대 실행하지 마세요).
 
 > **참고:** `tests/full/`은 위 표준 그룹 밖의 보조/실험 디렉터리입니다. 특히 `tests/full/test_main_agent_e2e.py`는 라이브 네트워크 테스트로 `llm_e2e` 태그가 **없으므로**, 태그를 달기 전에는 CI에 연결하지 마세요.
 

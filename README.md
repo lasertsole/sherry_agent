@@ -373,7 +373,7 @@ Three tests in `tests/integration/` (`test_real_e2e.py`, `test_spawn_direct_e2e.
 
 **Expected runtimes** (solo, real backend): simple task ≈ 30–60 s; complex worst case ≈ 10 min; concurrent tasks ≈ 2–9 min. A run that exceeds these budgets is a real hang, not normal slowness — the per-test timeout bounds it (300 s simple / 600 s concurrent).
 
-**CI:** this repository currently has no CI configuration; `tests/run_tests_split.py` is the **CI-ready entry point** — wire `uv run python tests/run_tests_split.py` into the primary pipeline (hermetic; two processes ≈ 7 min total) and schedule `--with-llm-e2e` as a separate, slower job (it costs API tokens; never run it in parallel with other suites).
+**CI:** `.github/workflows/ci.yml` runs `uv run python tests/run_tests_split.py` on every push/PR to `main`, executing the suite as **three sequential pytest processes** (never parallel): A = `unit`, B = `integration` + `module` + `system`, C = `regression`. The `--with-llm-e2e` suite stays a separate, slower job (it costs API tokens; never run it in parallel with other suites).
 
 > **Note:** `tests/full/` is an auxiliary/experimental directory outside the standard groups above. In particular `tests/full/test_main_agent_e2e.py` is a live-network test that is **not** tagged `llm_e2e` — do not wire it into CI without tagging it first.
 
