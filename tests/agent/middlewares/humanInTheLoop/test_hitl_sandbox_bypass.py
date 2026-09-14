@@ -362,8 +362,8 @@ class TestMainSessionBypassApproval:
         first_action = payload["action_requests"][0]
         assert first_action["name"] == "terminal"
         assert first_action["args"]["sandbox"] is False
-        assert "沙箱绕过" in str(first_action.get("description", "")), (
-            "approval text must mention 沙箱绕过"
+        assert "Sandbox bypass" in str(first_action.get("description", "")), (
+            "approval text must mention sandbox bypass"
         )
         assert payload["review_configs"][0]["allowed_decisions"] == ["approve", "reject"]
 
@@ -474,7 +474,7 @@ class TestMainSessionBypassApproval:
         first_action = payload["action_requests"][0]
         assert first_action["name"] == "python_repl"
         assert first_action["args"]["sandbox"] is False
-        assert "沙箱绕过" in str(first_action.get("description", ""))
+        assert "Sandbox bypass" in str(first_action.get("description", ""))
         assert payload["review_configs"][0]["allowed_decisions"] == ["approve", "reject"]
 
     def test_main_python_repl_sandbox_false_resume_approve_executes_with_scrubbed_env(

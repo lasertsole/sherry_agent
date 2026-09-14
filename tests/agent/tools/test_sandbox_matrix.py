@@ -463,8 +463,8 @@ class TestCell4AutoSandboxFalseNonYoloGraphInterrupt:
         first_action = payload["action_requests"][0]
         assert first_action["name"] == tool_name
         assert first_action["args"]["sandbox"] is False
-        assert "沙箱绕过" in str(first_action.get("description", "")), (
-            "approval text must mention 沙箱绕过"
+        assert "Sandbox bypass" in str(first_action.get("description", "")), (
+            "approval text must mention sandbox bypass"
         )
         assert payload["review_configs"][0]["allowed_decisions"] == ["approve", "reject"]
 

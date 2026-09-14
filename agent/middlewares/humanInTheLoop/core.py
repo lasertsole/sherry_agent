@@ -292,8 +292,8 @@ class HumanInTheLoop(AgentMiddleware):
             name=tool_name,
             args=tool_call.get("args", {}),
             description=(
-                "沙箱绕过审批：该调用请求 sandbox=False"
-                "（经环境清洗后直接执行，无 OS 沙箱隔离）。"
+                "Sandbox bypass approval: this call requests sandbox=False "
+                "(executes directly after env scrubbing, with no OS sandbox isolation)."
                 + (f" {action_desc}" if action_desc else "")
             ),
         )
