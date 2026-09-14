@@ -110,7 +110,10 @@ def build_continuity_prompt(session_id: str) -> str:
             "refer to the above context first."
         )
         return "\n".join(parts)
-    except Exception:
+    except Exception as e:
+        # Fail-open, but never silent (audit #61): a broken lookup must be
+        # visible. Session id only — no conversation content.
+        logger.warning("Failed to build continuity prompt for session {}: {}", session_id, e)
         return ""
 
 

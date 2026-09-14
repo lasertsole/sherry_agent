@@ -185,6 +185,24 @@ class TestContinuityPrompt:
 
         assert session_continuity.build_continuity_prompt("sess-new") == ""
 
+    def test_continuity_prompt_failure_logs_warning(self, continuity_dir, monkeypatch):
+        """Audit #61: the fail-open path stays "" but emits a warning."""
+        from context_engine import session_continuity
+
+        def _boom(session_id):
+            raise RuntimeError("relation_register unavailable")
+
+        monkeypatch.setattr(session_continuity, "_get_channel_chat_for_session", _boom)
+        records: list[str] = []
+        sink_id = session_continuity.logger.add(lambda m: records.append(str(m)), level="WARNING")
+        try:
+            assert session_continuity.build_continuity_prompt("sess-new") == ""
+        finally:
+            session_continuity.logger.remove(sink_id)
+
+        assert any("continuity" in record.lower() for record in records)
+        assert any("sess-new" in record for record in records)
+
 
 class TestClearSessionSave:
     @pytest.mark.asyncio

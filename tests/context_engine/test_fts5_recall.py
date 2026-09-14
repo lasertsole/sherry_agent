@@ -627,3 +627,54 @@ class TestJsonEncodedContent:
         # >=3 CJK chars -> trigram
         results = _patched_search("你好世界", fts5_db)
         assert len(results) >= 1, "Trigram FTS5 should match Chinese content through JSON encoding"
+
+
+# ============================================================================
+# Audit #61: fail-open paths must log instead of swallowing silently
+# ============================================================================
+
+
+class TestSwallowedFailureLogging:
+    """A swallowed search/context failure stays fail-open but is logged."""
+
+    def test_trigram_operational_error_is_logged_and_fail_open(self, monkeypatch):
+        """A failing trigram MATCH returns [] and emits one warning."""
+        import context_engine.core as core_mod
+
+        class _BoomDB:
+            def execute(self, *args, **kwargs):
+                raise sqlite3.OperationalError("fts5: syntax error near ...")
+
+        monkeypatch.setattr(core_mod, "_db", _BoomDB())
+        records: list[str] = []
+        sink_id = core_mod.logger.add(lambda m: records.append(str(m)), level="WARNING")
+        try:
+            # 6 CJK chars in one token -> the trigram strategy is selected.
+            results = core_mod.search_messages("深度求索助手", "sess-log-trigram")
+        finally:
+            core_mod.logger.remove(sink_id)
+
+        assert results == []
+        assert any("Trigram search failed" in record for record in records)
+        assert any("sess-log-trigram" in record for record in records)
+
+    def test_context_attach_failure_is_logged_and_fail_open(
+        self, populate_english_data, monkeypatch
+    ):
+        """Search still returns matches when context expansion blows up."""
+        import context_engine.core as core_mod
+
+        def _boom(_content):
+            raise RuntimeError("context decode exploded")
+
+        monkeypatch.setattr(core_mod, "_decode_content", _boom)
+        records: list[str] = []
+        sink_id = core_mod.logger.add(lambda m: records.append(str(m)), level="WARNING")
+        try:
+            results = _patched_search("docker", populate_english_data)
+        finally:
+            core_mod.logger.remove(sink_id)
+
+        assert results, "the search matches must still be returned"
+        assert all(match["context"] == [] for match in results)
+        assert any("Search context attach failed" in record for record in records)

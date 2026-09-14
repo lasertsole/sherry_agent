@@ -232,7 +232,17 @@ class _TrigramStrategy(_SearchStrategy):
         with _lock:
             try:
                 tri_cursor = _shared_db().execute(tri_sql, tri_params)
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as exc:
+                # Fail-open, but never silent (audit #61): a genuine FTS/schema
+                # fault must be visible. Only the query length is logged — the
+                # user's text never reaches the log.
+                logger.warning(
+                    "Trigram search failed (fail-open -> []): session_id={}, query_chars={}, "
+                    "error={}",
+                    req.session_id,
+                    len(req.query),
+                    exc,
+                )
                 matches = []
             else:
                 matches = [dict(row) for row in tri_cursor.fetchall()]
@@ -412,7 +422,16 @@ def _attach_search_context(matches: list[dict[str, Any]], session_id: str) -> No
             else:
                 preview = ""
             matches[r["ord"]]["context"].append({"role": r["role"], "content": preview[:200]})
-    except Exception:
+    except Exception as exc:
+        # Fail-open, but never silent (audit #61): a broken context query must
+        # be visible. Session id + match count only — no message content.
+        logger.warning(
+            "Search context attach failed (fail-open -> empty contexts): session_id={}, "
+            "matches={}, error={}",
+            session_id,
+            len(matches),
+            exc,
+        )
         for match in matches:
             match["context"] = []
 
