@@ -189,12 +189,12 @@ SANDBOX_POLICY=auto      # required | auto | off (대소문자 무시, 기본값
 | 테스트 스위트 | 커버 범위 |
 | :------------ | :-------- |
 | `tests/integration/test_sandbox_matrix.py` | 14개 테스트, 매트릭스 칸별 동작 하나씩(1-5번 칸은 도구별 한 번, 6번 칸은 네 번). 실제 그래프의 HITL 인터럽트와 "경고 정확히 한 번" 강등 단언 포함 |
-| `tests/module/test_env_scrub.py` | 세척 규칙, 우선순위, 보존/거부 경계 (29개 테스트) |
-| `tests/module/test_sandbox_policy.py` | 정책 파싱, 엄격한 `ValueError`, 즉시 읽기 의미론, 플랫폼 디스패치 |
-| `tests/module/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성, 프로브 캐싱 (서브프로세스 전부 mock) |
-| `tests/module/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드, 스키마, 생성 형태 |
-| `tests/module/test_hitl_characterization.py` | 19개 테스트, 샌드박스 강화 이전의 HITL / terminal 레거시 동작 고정 |
-| `tests/module/test_hitl_sandbox_bypass.py` | 17개 테스트, 우회 승인 흐름, YOLO 통과, 범위 스탬핑 |
+| `tests/agent/tools/pub_base/test_env_scrub.py` | 세척 규칙, 우선순위, 보존/거부 경계 (29개 테스트) |
+| `tests/agent/tools/pub_base/test_sandbox_policy.py` | 정책 파싱, 엄격한 `ValueError`, 즉시 읽기 의미론, 플랫폼 디스패치 |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성, 프로브 캐싱 (서브프로세스 전부 mock) |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드, 스키마, 생성 형태 |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19개 테스트, 샌드박스 강화 이전의 HITL / terminal 레거시 동작 고정 |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17개 테스트, 우회 승인 흐름, YOLO 통과, 범위 스탬핑 |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 스탬핑 |
 
 매트릭스 테스트는 `subprocess.Popen`을 전역으로 패치하고, 도구 모듈 경계에서 `get_backend`를 스텁하며, 환경 변수로 `SANDBOX_POLICY`를 설정해 실제 `read_policy`가 매 칸에서 실행되게 합니다.

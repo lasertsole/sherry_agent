@@ -27,7 +27,7 @@ What this proves, end to end and without a single network byte:
 
 ZERO NETWORK: the MAIN model is a capturing stub and the AUXILIARY model is a
 failing stub — nothing in the chain touches HTTP. This test belongs to the
-hermetic module group (B, ``tests/module``) and is explicitly NOT part of the
+hermetic module group (B, the ``module`` marker) and is explicitly NOT part of the
 ``llm_e2e`` marker system (see README "Testing": that marker is reserved for
 real-LLM network e2e tests; this one is the static path only).
 

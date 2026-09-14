@@ -342,11 +342,11 @@ Summarization(
 | `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 상태, 텍스트 힌트, 7개 오버플로 패턴, cause 체인 깊이, 읽기 전용 보장 |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 중복 제거 / 프루닝 / 타깃 트렁케이트 / 턴 유틸리티에 도구 인자 트렁케이트 추가: 머리+꼬리 형식, 작은 인자 스킵, 확보량 클램프, 보호 도구, 최근 스킵, 페어링 및 무변경 |
 | `tests/config/test_num_contract.py` | 46 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
-| `tests/module/test_compression_comprehensive.py` | 48 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티 |
-| `tests/module/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
-| `tests/module/test_summarization_trigger.py` | 3 | 프로덕션 등록 계약: `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
-| `tests/module/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
-| `tests/module/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티 |
+| `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 프로덕션 등록 계약: `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
+| `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
+| `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
 | `tests/integration/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
 전체 프로세스 겸리 스위트(`uv run python tests/run_tests_split.py`) 통과: **2653 passed / 0 failed** (GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P).

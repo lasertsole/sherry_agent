@@ -4,10 +4,10 @@ Ensure MinerU pipeline models are downloaded and configured.
 Can be imported and called programmatically or run as a standalone script.
 
 Usage (standalone):
-    python tests/scripts/ensure_mineru_models.py
+    python skills/builtin/core/multimodal_rag/scripts/graph_rag/ensure_mineru_models.py
 
-Usage (import):
-    from tests.scripts.ensure_mineru_models import ensure_mineru_models
+Usage (import, from inside the graph_rag package):
+    from .ensure_mineru_models import ensure_mineru_models
     ensure_mineru_models(source="huggingface")  # or "modelscope"
 """
 

@@ -4,7 +4,7 @@ A minimal ``LightRAG`` stand-in plus a deterministic ``datetime`` shim,
 shared by the unified parser debug CLI (``lightrag/parser/cli.py``),
 the golden-fixture regen script (``scripts/regen_native_docx_golden.py``),
 and the byte-equivalence golden tests
-(``tests/parser/docx/test_native_docx_golden.py``).
+(upstream LightRAG's ``test_native_docx_golden.py``).
 
 Every engine is driven the same way — ``get_parser(engine).parse(
 ParseContext(rag, ...))`` — and ``ParseContext`` reads the same ``rag``

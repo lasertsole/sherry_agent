@@ -10,7 +10,7 @@ L588-628):
 4. sync/async parity (identical message transforms)
 
 Harness style (StubModel / ModelRequest / sid fixture) copied from
-tests/module/test_summarization_comprehensive.py. New module-level names are
+tests/agent/middlewares/test_summarization_comprehensive.py. New module-level names are
 accessed ONLY at runtime via mget() (module-getattr pattern) so collection
 does not break before implementation.
 """

@@ -1,7 +1,7 @@
 # 全套回归方案（Regression Test Plan）
 
 > 覆盖范围：sherry_agent 全部后端功能域 + 用户操作模拟 + 边界情况。
-> 生成日期：2026-09-06。运行器：`tests/run_tests_split.py`（组 C = 本目录）。
+> 生成日期：2026-09-06。运行器：`tests/run_tests_split.py`（组 C = `regression` marker）。
 
 ---
 
@@ -9,13 +9,13 @@
 
 ```bash
 # 只跑回归组
-uv run pytest tests/regression -q
+uv run pytest -m regression -q
 
 # 全套分进程回归（A: unit → B: integration/system/module → C: regression）
 uv run python tests/run_tests_split.py
 
 # 按场景过滤
-uv run pytest tests/regression -k "UC-03 or cron" -q
+uv run pytest -m regression -k "UC-03 or cron" -q
 ```
 
 标记约定：`pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]`（组 B/C 同进程约束一致）。
@@ -26,11 +26,11 @@ uv run pytest tests/regression -k "UC-03 or cron" -q
 
 | # | 功能域 | 关键行为 | 已有测试（引用） | 本目录回归流 |
 |---|--------|----------|------------------|--------------|
-| F1 | 消息持久化 | add_messages / ts_ms 严格递增 / 14 位显示戳 | `tests/module/test_store_timestamp_ordering.py` | UC-01, EC-11 |
-| F2 | 历史检索 | turn 分页 / 越界 / 边界钳制 | `tests/module/test_fts5_recall.py`（部分） | UC-04, EC-03 |
-| F3 | 会话列表 | MAX(ts_ms) 排序 / 子代理排除 / 标题派生 | `tests/module/test_get_session_ids.py` | UC-02 |
+| F1 | 消息持久化 | add_messages / ts_ms 严格递增 / 14 位显示戳 | `tests/context_engine/store/test_store_timestamp_ordering.py` | UC-01, EC-11 |
+| F2 | 历史检索 | turn 分页 / 越界 / 边界钳制 | `tests/context_engine/test_fts5_recall.py`（部分） | UC-04, EC-03 |
+| F3 | 会话列表 | MAX(ts_ms) 排序 / 子代理排除 / 标题派生 | `tests/context_engine/store/test_get_session_ids.py` | UC-02 |
 | F4 | 会话清空 | delete_messages_by_session + FTS 触发器联动 | — | UC-03 |
-| F5 | FTS5 搜索 | 三路路由（unicode61/trigram/LIKE）+ 注入上限 | `tests/module/test_fts5_recall.py`, `test_fts5_query_caps.py` | UC-05, EC-04 |
+| F5 | FTS5 搜索 | 三路路由（unicode61/trigram/LIKE）+ 注入上限 | `tests/context_engine/test_fts5_recall.py`, `test_fts5_query_caps.py` | UC-05, EC-04 |
 | F6 | 时间戳碰撞 | 同秒/同毫秒单调递增 | `test_store_timestamp_ordering.py` | UC-15, EC-11 |
 | F7 | cron 调度 | at/every/cron 三型 / 固定相位网格 / 漂移修复 | `tests/skills/builtin/core/cron/test_cron_interval_drift.py`, `test_cron_failure_breaker.py` | UC-07, UC-08, EC-06, EC-07 |
 | F8 | HITL 审批 | 6 层管道（hardline/deny/YOLO/allowlist/session/dangerous） | `tests/agent/middlewares/humanInTheLoop/test_hitl_integration.py`, `test_hitl_sandbox_bypass.py` | UC-06, EC-15 |
@@ -41,8 +41,8 @@ uv run pytest tests/regression -k "UC-03 or cron" -q
 | F13 | 心跳看门狗 | 停滞计数 / 击杀 / 超时异常 | `tests/skills/builtin/core/heartbeat/test_heartbeat_backoff.py` | UC-14 |
 | F14 | 消息总线 | 有界双队列 / 背压 / 顺序 | — | UC-16, EC-09 |
 | F15 | 状态注册表 | mem/db 双寄存器 / clear_all 联动 | `tests/agent/tools/subagent/registry/` | EC-05 |
-| F16 | 技能加载 | 扫描 / 第三方默认停用 / 快照缓存 / 循环导入消除 | `tests/skills/test_loader.py`, `tests/module/test_skill_scope.py` | EC-12 |
-| F17 | 模型共享件 | read_env_file_value / resolve_gguf_path / 三件套基类 | `tests/module/test_models_utils.py`, `test_base_local_llama.py` | EC-13 |
+| F16 | 技能加载 | 扫描 / 第三方默认停用 / 快照缓存 / 循环导入消除 | `tests/skills/test_loader.py`, `tests/agent/tools/skill_tools/test_skill_scope.py` | EC-12 |
+| F17 | 模型共享件 | read_env_file_value / resolve_gguf_path / 三件套基类 | `tests/models/test_models_utils.py`, `test_base_local_llama.py` | EC-13 |
 | F18 | robyn 服务 | 单进程固定 / 帧投递 / 持久化 | 人工 e2e（见 §5） | — |
 
 ---
@@ -98,10 +98,8 @@ uv run pytest tests/regression -k "UC-03 or cron" -q
 ## 5. 文件结构
 
 ```
-tests/regression/
-├── __init__.py
-├── test_user_flows.py      # UC-01 ~ UC-16（用户操作模拟，封闭）
-└── test_edge_cases.py      # EC-01 ~ EC-16（边界情况）
+tests/agent/middlewares/humanInTheLoop/test_user_flows.py  # UC-01 ~ UC-16（用户操作模拟，封闭）
+tests/skills/builtin/core/test_edge_cases.py               # EC-01 ~ EC-16（边界情况）
 ```
 
 ## 6. 失败处理约定
@@ -111,6 +109,6 @@ tests/regression/
 3. 新功能合入时：先在 §2 矩阵登记引用测试，再补 UC/EC 用例。
 4. 预先存在的环境性失败（不纳入本方案，已 stash 验证在 HEAD 上同样存在）：
    - `tests/skills/builtin/core/multimodal_rag/test_rag_anything_integration.py` / `tests/skills/builtin/core/multimodal_rag/test_snkv_storage.py` — 导入链需要 embed 权重文件 + HF 网络；权重缺失的机器上收集期报 `cannot import name 'build_embed_model'`，导致 `pytest -m unit` 整组收集 INTERNALERROR（这也是 split runner GROUP A rc=2 的原因）。修复方向：将二者的 graph_rag 导入改为延迟/权重就绪探测。
-   - `tests/module/test_python_repl_tool.py::test_popen_gets_scrubbed_env` — 本机 bwrap 可用时沙箱 wrap 产生 2 次 Popen（外层 bwrap + 内层命令），测试写死 1 次。
-   - `tests/module/test_main_agent_e2e.py` — 真 LLM 网络测试，偶发。
+   - `tests/agent/tools/pub_base/test_python_repl_tool.py::test_popen_gets_scrubbed_env` — 本机 bwrap 可用时沙箱 wrap 产生 2 次 Popen（外层 bwrap + 内层命令），测试写死 1 次。
+   - `tests/full/test_main_agent_e2e.py` — 真 LLM 网络测试，偶发。
    - 运行 GROUP A 时临时绕过：`pytest -m unit -q --ignore=tests/skills/builtin/core/multimodal_rag/test_rag_anything_integration.py --ignore=tests/skills/builtin/core/multimodal_rag/test_snkv_storage.py`

@@ -189,12 +189,12 @@ When the model requests `sandbox=False` in the main session (non-YOLO), the grap
 | Suite | Covers |
 | :---- | :----- |
 | `tests/integration/test_sandbox_matrix.py` | 14 tests, one per matrix-cell behavior (cells 1-5 once per tool, cell 6 four times), including the real-graph HITL interrupt and the exactly-one-warning degrade assertion |
-| `tests/module/test_env_scrub.py` | scrub rules, precedence, keep/deny edges (29 tests) |
-| `tests/module/test_sandbox_policy.py` | policy parsing, strict `ValueError`, fresh-read semantics, dispatch |
-| `tests/module/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction, probe caching (all subprocess mocked) |
-| `tests/module/test_terminal_tool.py` / `test_python_repl_tool.py` | tool-level guards, schema, spawn forms |
-| `tests/module/test_hitl_characterization.py` | 19 tests locking pre-sandbox HITL / terminal legacy behavior |
-| `tests/module/test_hitl_sandbox_bypass.py` | 17 tests for the bypass approval flow, YOLO pass-through, scope stamping |
+| `tests/agent/tools/pub_base/test_env_scrub.py` | scrub rules, precedence, keep/deny edges (29 tests) |
+| `tests/agent/tools/pub_base/test_sandbox_policy.py` | policy parsing, strict `ValueError`, fresh-read semantics, dispatch |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction, probe caching (all subprocess mocked) |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | tool-level guards, schema, spawn forms |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19 tests locking pre-sandbox HITL / terminal legacy behavior |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17 tests for the bypass approval flow, YOLO pass-through, scope stamping |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` stamping |
 
 Matrix tests patch `subprocess.Popen` globally, stub `get_backend` at the tool-module seam, and set `SANDBOX_POLICY` through the environment so the real `read_policy` runs in every cell.

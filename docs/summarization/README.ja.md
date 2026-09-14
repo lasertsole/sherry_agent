@@ -343,11 +343,11 @@ Summarization(
 | `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 ステータス、テキストヒント、7 つのオーバーフローパターン、cause チェーン深さ、読み取り専用保証 |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 重複排除 / プルーン / ターゲット切り詰め / ターンユーティリティ、さらにツール引数切り詰め: 先頭+末尾形式、小さい引数のスキップ、解放量のクランプ、保護対象ツール、直近スキップ、ペアリングと無ミューテーション |
 | `tests/config/test_num_contract.py` | 46 | 定数契約（ウォッチドッグ `CONTRACT_NAMES` が文書化済みの全ノブをカバー） |
-| `tests/module/test_compression_comprehensive.py` | 48 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ |
-| `tests/module/test_compression_e2e_static.py` | 18 | 6 つのエンドツーエンドシナリオ + 3 つのオーバーフローカウンタ回帰テスト × 2 登録順、静的フォールバック圧縮、ゼロネットワーク |
-| `tests/module/test_summarization_trigger.py` | 3 | 本番登録契約: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
-| `tests/module/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
-| `tests/module/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ |
+| `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 つのエンドツーエンドシナリオ + 3 つのオーバーフローカウンタ回帰テスト × 2 登録順、静的フォールバック圧縮、ゼロネットワーク |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 本番登録契約: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
+| `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
+| `tests/agent/middlewares/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
 | `tests/integration/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
 プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **2653 passed / 0 failed** で合格（GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P）。

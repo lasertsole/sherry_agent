@@ -160,9 +160,10 @@ def _setup_subagent_alias():
     # before importing state_register. `clear_all_register_sessions` binds
     # the REAL implementation: a 0-arg no-op lambda here used to overwrite
     # the attribute on the already-real runtime module in full-suite runs
-    # and crash tests/system (TypeError: takes 0 positional arguments but 1
-    # was given). Binding the real function is signature-compatible and
-    # keeps the package alias a pass-through, not a behavior swap.
+    # and crash the ``system`` marker group (TypeError: takes 0 positional
+    # arguments but 1 was given). Binding the real function is
+    # signature-compatible and keeps the package alias a pass-through, not
+    # a behavior swap.
     import runtime.core  # noqa: F401  (side-effect: must be in sys.modules for aliasing below)
 
     sys.modules["runtime"].Register = sys.modules["runtime.core"].Register
@@ -202,8 +203,9 @@ def _setup_subagent_alias():
     # `skills.loader` module exposing configurable, deterministic functions
     # so the import chain resolves and tests can assert on injection
     # behavior. If the REAL `skills.loader` is already in sys.modules
-    # (full-suite collection imports it via tests/module + tests/integration
-    # before this conftest loads), leave it untouched: call-time imports
+    # (full-suite collection imports it via other mirrored suites such as
+    # tests/integration before this conftest loads), leave it untouched:
+    # call-time imports
     # (skill_list.py:42) must resolve the real module so test monkeypatches
     # stay visible, and unconditionally swapping it here is exactly what
     # leaked the stub's fixed skill list across suites.

@@ -1,6 +1,6 @@
 """Regression contract for the Summarization trigger registration.
 
-Moved from the former ``tests/diagnose/`` and deduped: the trigger-banding
+Moved from the former flat ``diagnose`` suite and deduped: the trigger-banding
 parametrizations are covered by ``test_summarization_comprehensive.py``
 (``_preemptive_check`` 0.70/0.80 bands, ``_check_trigger`` boundaries).
 This file pins only what that suite does NOT:

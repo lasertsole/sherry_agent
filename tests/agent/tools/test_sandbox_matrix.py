@@ -202,7 +202,7 @@ def _loguru_warnings():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Real-graph harness (mirrors tests/module/test_hitl_sandbox_bypass.py)
+# Real-graph harness (mirrors tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py)
 # ─────────────────────────────────────────────────────────────────────────────
 class _ScriptedModel(BaseChatModel):
     """Emits one scripted tool call, then idles."""

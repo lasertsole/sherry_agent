@@ -130,7 +130,7 @@ def _semantic_groups_with_spans(
         byte-for-byte against ``langchain-experimental`` 0.3.2–0.4.x (the range pinned
         in ``pyproject.toml``: ``langchain-experimental>=0.3.2,<1``). If that pin is
         widened, re-verify against the new upstream ``split_text`` —
-        ``tests/chunker/test_chunker_semantic_vector.py`` has a drift guard that
+        the upstream ``test_chunker_semantic_vector.py`` has a drift guard that
         compares this mirror's grouping to the live ``splitter.split_text`` output.
     """
     single_sentences_list = re.split(splitter.sentence_split_regex, text)

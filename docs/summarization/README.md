@@ -344,11 +344,11 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 status, text hints, 7 overflow patterns, cause-chain depth, read-only guarantees |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | dedup / prune / target-truncate / turn-utils plus tool-args truncation: head+tail format, small-args skip, freed clamp, protected tools, skip-recent, pairing & no-mutation |
 | `tests/config/test_num_contract.py` | 46 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
-| `tests/module/test_compression_comprehensive.py` | 48 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity |
-| `tests/module/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
-| `tests/module/test_summarization_trigger.py` | 3 | Production registration contract: `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
-| `tests/module/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
-| `tests/module/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity |
+| `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Production registration contract: `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
+| `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
+| `tests/agent/middlewares/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
 | `tests/integration/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
 The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **2653 passed / 0 failed** (GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P).

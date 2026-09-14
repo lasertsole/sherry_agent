@@ -673,7 +673,7 @@ from models.providers.registry import find_by_name
 | `agent/middlewares/output_repetition_guard.py`  | 536  |
 | `agent/tools/subagent/registry/lifecycle.py`    | 536  |
 
-**共 56 个核心源码文件超过 300 行**（不含 vendored/tests/docs/client）。
+**共 56 个核心源码文件超过 300 行**（不含 vendored / tests / docs / client）。
 
 ---
 

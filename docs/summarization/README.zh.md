@@ -339,11 +339,11 @@ Summarization(
 | `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 状态码、文本提示、7 种溢出模式、cause 链深度、只读保证 |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 去重 / 修剪 / 定向截断 / 回合工具，外加工具参数截断：头+尾格式、小参数跳过、释放量钳制、受保护工具、跳过最近消息、配对与无变异 |
 | `tests/config/test_num_contract.py` | 46 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
-| `tests/module/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
-| `tests/module/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
-| `tests/module/test_summarization_trigger.py` | 3 | 生产注册契约：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
-| `tests/module/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
-| `tests/module/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
+| `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 生产注册契约：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
+| `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
+| `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
 | `tests/integration/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 
 全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**2653 passed / 0 failed**（GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P）。

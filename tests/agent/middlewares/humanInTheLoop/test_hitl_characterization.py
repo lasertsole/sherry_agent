@@ -549,7 +549,8 @@ class TestHitlGraphFlow:
         # does NOT fire: still no check_command, no interrupt, straight
         # through the allow-through plugin-tool-approval layer to execution.
         # The sandbox=False interrupt path is covered by
-        # tests/module/test_hitl_sandbox_bypass.py (TestMainSessionBypassApproval).
+        # tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py
+        # (TestMainSessionBypassApproval).
         graph, hitl = _build_graph(
             scripted_calls=[
                 {

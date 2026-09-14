@@ -189,12 +189,12 @@ SANDBOX_POLICY=auto      # required | auto | off (大小文字を無視、デフ
 | テストスイート | カバー範囲 |
 | :------------- | :--------- |
 | `tests/integration/test_sandbox_matrix.py` | 14テスト、マトリクスのセルごとの動作につき1つ(セル1-5はツールごとに1回、セル6は4回)。実グラフ上の HITL インタラプトと「警告ちょうど1件」の降格アサーションを含む |
-| `tests/module/test_env_scrub.py` | 洗浄規則、優先順位、保持/拒否の境界 (29テスト) |
-| `tests/module/test_sandbox_policy.py` | ポリシーパース、厳格な `ValueError`、即時読み込みの意味論、プラットフォームディスパッチ |
-| `tests/module/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築、プローブキャッシュ (subprocess はすべてモック) |
-| `tests/module/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード、スキーマ、起動形態 |
-| `tests/module/test_hitl_characterization.py` | 19テスト、サンドボックス強化前の HITL / terminal レガシー動作を固定 |
-| `tests/module/test_hitl_sandbox_bypass.py` | 17テスト、バイパス承認フロー、YOLO 素通し、スコープスタンピング |
+| `tests/agent/tools/pub_base/test_env_scrub.py` | 洗浄規則、優先順位、保持/拒否の境界 (29テスト) |
+| `tests/agent/tools/pub_base/test_sandbox_policy.py` | ポリシーパース、厳格な `ValueError`、即時読み込みの意味論、プラットフォームディスパッチ |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築、プローブキャッシュ (subprocess はすべてモック) |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード、スキーマ、起動形態 |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19テスト、サンドボックス強化前の HITL / terminal レガシー動作を固定 |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17テスト、バイパス承認フロー、YOLO 素通し、スコープスタンピング |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` スタンピング |
 
 マトリクステストは `subprocess.Popen` をグローバルにパッチし、ツールモジュールの継ぎ目で `get_backend` をスタブし、環境変数で `SANDBOX_POLICY` を設定して、実際の `read_policy` が各セルで走るようにしています。

@@ -189,12 +189,12 @@ SANDBOX_POLICY=auto      # required | auto | off（大小写不敏感，默认�
 | 测试套件 | 覆盖内容 |
 | :------- | :------- |
 | `tests/integration/test_sandbox_matrix.py` | 14 个测试，逐格覆盖矩阵行为（第 1-5 格每个工具一次，第 6 格四次），包括真实图上的 HITL 中断与"恰好一条警告"的降级断言 |
-| `tests/module/test_env_scrub.py` | 清洗规则、优先级、保留/拒绝边界（29 个测试） |
-| `tests/module/test_sandbox_policy.py` | 策略解析、严格 `ValueError`、即时读取语义、平台分发 |
-| `tests/module/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造、探测缓存（子进程全部 mock） |
-| `tests/module/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫、schema、启动形态 |
-| `tests/module/test_hitl_characterization.py` | 19 个测试，锁定沙箱改造前的 HITL / terminal 遗留行为 |
-| `tests/module/test_hitl_sandbox_bypass.py` | 17 个测试，覆盖绕过审批流、YOLO 直通、作用域标记 |
+| `tests/agent/tools/pub_base/test_env_scrub.py` | 清洗规则、优先级、保留/拒绝边界（29 个测试） |
+| `tests/agent/tools/pub_base/test_sandbox_policy.py` | 策略解析、严格 `ValueError`、即时读取语义、平台分发 |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造、探测缓存（子进程全部 mock） |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫、schema、启动形态 |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19 个测试，锁定沙箱改造前的 HITL / terminal 遗留行为 |
+| `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17 个测试，覆盖绕过审批流、YOLO 直通、作用域标记 |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 标记 |
 
 矩阵测试全局 patch `subprocess.Popen`，在工具模块接缝处 stub `get_backend`，并通过环境变量设置 `SANDBOX_POLICY`，让真实的 `read_policy` 在每一格中运行。
