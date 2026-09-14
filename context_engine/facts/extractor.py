@@ -7,22 +7,22 @@ from typing import Any
 from loguru import logger
 
 _EXTRACTION_PROMPT = """\
-从以下对话片段中提取持久有用的事实（跨会话有价值的信息）。
+Extract durably useful facts from the following conversation slice (information valuable across sessions).
 
-提取规则:
-1. 用户偏好和习惯
-2. 项目约定和环境事实
-3. 关键技术决策和原因
-4. 工具使用经验
-5. 不提取临时任务进度
+Extraction rules:
+1. User preferences and habits
+2. Project conventions and environment facts
+3. Key technical decisions and their reasons
+4. Tool usage lessons
+5. Do not extract temporary task progress
 
-可用类别（category 必须是其中之一）: {categories}
+Available categories (category must be one of them): {categories}
 
-对话片段:
+Conversation slice:
 {conversation_text}
 
-输出 JSON 数组，每个元素: {{"category": "...", "fact": "..."}}
-没有值得提取的事实时输出空数组 []。
+Output a JSON array, each element: {{"category": "...", "fact": "..."}}
+When there is nothing worth extracting, output an empty array [].
 """
 
 _VALID_CATEGORIES: tuple[str, ...] = (
