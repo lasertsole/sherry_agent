@@ -273,8 +273,17 @@ async def subagents_list_runtime_tool(
 # main agent. ``metadata["scope"] = "main_only"`` is enforced non-overridably by
 # ``spawn.inherited_tool_policy.apply_tool_policy`` — subagents can never
 # receive these tools, regardless of allow/deny lists or ORCHESTRATOR unblock.
-sessions_kill_runtime_tool.metadata = {"scope": "main_only"}
-sessions_steer_runtime_tool.metadata = {"scope": "main_only"}
+#
+# Idempotency metadata for ToolGuardrails: the five mutating tools declare
+# ``idempotent: False``; the two pure list tools declare ``idempotent: True``
+# so their repeatable results can feed no-progress detection.
+sessions_spawn_runtime_tool.metadata = {"idempotent": False}
+sessions_yield_runtime_tool.metadata = {"idempotent": False}
+sessions_send_runtime_tool.metadata = {"idempotent": False}
+sessions_kill_runtime_tool.metadata = {"scope": "main_only", "idempotent": False}
+sessions_steer_runtime_tool.metadata = {"scope": "main_only", "idempotent": False}
+agents_list_runtime_tool.metadata = {"idempotent": True}
+subagents_list_runtime_tool.metadata = {"idempotent": True}
 
 
 _SUBAGENT_RUNTIME_TOOLS: list[BaseTool] = [

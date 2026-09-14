@@ -49,6 +49,12 @@ EXPECTED_TOOL_NAMES = [
     "taskflow_list",
 ]
 
+READ_ONLY_TASKFLOW_TOOLS = {
+    "taskflow_summary",
+    "taskflow_progress",
+    "taskflow_list",
+}
+
 
 def _tool_map() -> dict:
     tools = build_taskflow_tools()
@@ -97,6 +103,34 @@ def test_builder_returns_tools_in_pinned_order():
         "taskflow_list",
     ]
     assert all(t.metadata.get("scope") == "main_only" for t in tools)
+
+
+def test_read_only_taskflow_tools_declare_idempotent_true():
+    """Given the taskflow family, When built, Then pure reporting tools hash."""
+    tools = {t.name: t for t in build_taskflow_tools()}
+    for name in READ_ONLY_TASKFLOW_TOOLS:
+        assert tools[name].metadata["idempotent"] is True, name
+
+
+def test_side_effecting_taskflow_tools_declare_idempotent_false():
+    """Given the taskflow family, When built, Then every mutating tool refuses
+    result hashing (idempotent=False)."""
+    tools = {t.name: t for t in build_taskflow_tools()}
+    for name, tool in tools.items():
+        if name in READ_ONLY_TASKFLOW_TOOLS:
+            continue
+        assert tool.metadata["idempotent"] is False, name
+
+
+def test_taskflow_idempotency_metadata_survives_repeated_builds():
+    """Given repeated builds, When merging metadata, Then no key is dropped."""
+    for _ in range(2):
+        tools = {t.name: t for t in build_taskflow_tools()}
+    for name, tool in tools.items():
+        assert tool.metadata == {
+            "scope": "main_only",
+            "idempotent": name in READ_ONLY_TASKFLOW_TOOLS,
+        }, name
 
 
 def test_every_registered_tool_is_documented_in_skill():

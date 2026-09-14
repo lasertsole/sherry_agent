@@ -51,16 +51,26 @@ If not, it's too big — split it.
 
 _TODOLIST_TOOLS: list[BaseTool] = [todowrite, todoread]
 
+_READ_ONLY_TODOLIST: set[str] = {"todoread"}
+
 
 def build_todolist_tools() -> list[BaseTool]:
-    """Build and return the todowrite/todoread tools for main-agent wiring."""
+    """Build and return the todowrite/todoread tools for main-agent wiring.
+
+    Each tool declares its ``idempotent`` metadata (``todoread`` is a pure read,
+    ``todowrite`` mutates the list) for the ToolGuardrails middleware.
+    """
     for t in _TODOLIST_TOOLS:
         t.handle_tool_error = True
-        t.metadata = {"scope": "main_only"}
+        t.metadata = {
+            **(t.metadata or {}),
+            "scope": "main_only",
+            "idempotent": t.name in _READ_ONLY_TODOLIST,
+        }
     # ``todowrite`` is the only todo-MUTATING tool: the post-compression todo
     # nudge admits tools by this metadata marker, so ``todoread`` stays untagged
     # on purpose (the fork receives the current list in its prompt).
-    todowrite.metadata = {"scope": "main_only", "todo_update": True}
+    todowrite.metadata = {**(todowrite.metadata or {}), "todo_update": True}
     if _TODOWRITE_FORMAT_RULES not in todowrite.description:
         todowrite.description += _TODOWRITE_FORMAT_RULES
     return list(_TODOLIST_TOOLS)

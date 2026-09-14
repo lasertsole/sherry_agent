@@ -10,6 +10,7 @@ Covers the shared contract:
 """
 
 from types import SimpleNamespace
+from typing import Any
 
 from agent.tools.subagent.spawn.inherited_tool_policy import (
     apply_tool_policy,
@@ -161,3 +162,36 @@ class TestDefensiveMetadataHandling:
         result = apply_tool_policy([t], [], None)
         assert [x.name for x in result] == ["read"]
         assert t.metadata == {"caller_scope": "subagent"}
+
+
+class TestRuntimeToolIdempotencyMetadata:
+    """The 7 runtime subagent tools declare guardrail idempotency metadata:
+    5 mutating tools ``False`` (never hash their results), the 2 list tools
+    ``True``; the ``main_only`` scope tag survives the metadata merge."""
+
+    @staticmethod
+    def _runtime_tools() -> dict[str, Any]:
+        from agent.tools.subagent.tools.runtime_tools import build_subagent_runtime_tools
+
+        return {t.name: t for t in build_subagent_runtime_tools()}
+
+    def test_mutating_runtime_tools_declare_idempotent_false(self):
+        tools = self._runtime_tools()
+        for name in (
+            "sessions_spawn",
+            "sessions_yield",
+            "sessions_send",
+            "sessions_kill",
+            "sessions_steer",
+        ):
+            assert tools[name].metadata["idempotent"] is False, name
+
+    def test_list_runtime_tools_declare_idempotent_true(self):
+        tools = self._runtime_tools()
+        for name in ("agents_list", "subagents_list"):
+            assert tools[name].metadata["idempotent"] is True, name
+
+    def test_main_only_scope_survives_idempotency_merge(self):
+        tools = self._runtime_tools()
+        assert tools["sessions_kill"].metadata["scope"] == "main_only"
+        assert tools["sessions_steer"].metadata["scope"] == "main_only"

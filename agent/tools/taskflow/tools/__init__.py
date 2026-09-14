@@ -42,6 +42,15 @@ _TASKFLOW_TOOLS: list[BaseTool] = [
     taskflow_list,
 ]
 
+# Pure reporting tools: the guardrails may hash their results to detect a
+# no-progress loop. Every other tool mutates flow state and must declare
+# ``idempotent: False`` so its result is never treated as a repeatable value.
+_READ_ONLY_TASKFLOW: set[str] = {
+    "taskflow_summary",
+    "taskflow_progress",
+    "taskflow_list",
+}
+
 
 def build_taskflow_tools() -> list[BaseTool]:
     """Build and return the 13 taskflow tools.
@@ -50,9 +59,15 @@ def build_taskflow_tools() -> list[BaseTool]:
     returned as readable strings (handle_tool_error=True as backstop), and
     the family is tagged ``scope=main_only``: shared flow state is managed by
     the main agent, matching the taskflow skill's scope, so the subagent
-    tool-policy drops it unconditionally.
+    tool-policy drops it unconditionally. Each tool also declares its
+    ``idempotent`` metadata (read-only reporting tools ``True``, mutating
+    tools ``False``) for the ToolGuardrails middleware.
     """
     for t in _TASKFLOW_TOOLS:
         t.handle_tool_error = True
-        t.metadata = {"scope": "main_only"}
+        t.metadata = {
+            **(t.metadata or {}),
+            "scope": "main_only",
+            "idempotent": t.name in _READ_ONLY_TASKFLOW,
+        }
     return list(_TASKFLOW_TOOLS)

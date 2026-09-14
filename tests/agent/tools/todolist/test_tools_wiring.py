@@ -58,6 +58,22 @@ def test_builder_returns_both_tools_with_metadata_and_handle_tool_error():
         assert tool.metadata.get("scope") == "main_only", f"{tool.name} scope mismatch"
 
 
+def test_metadata_declares_idempotency_and_preserves_todo_update():
+    """Given the todolist family, When built, Then read is idempotent, write is
+    not, and the nudge whitelist marker survives the metadata merge."""
+    tools = {t.name: t for t in build_todolist_tools()}
+
+    assert tools["todoread"].metadata["idempotent"] is True
+    assert tools["todowrite"].metadata["idempotent"] is False
+    assert tools["todowrite"].metadata["todo_update"] is True
+    assert tools["todoread"].metadata == {"scope": "main_only", "idempotent": True}
+    assert tools["todowrite"].metadata == {
+        "scope": "main_only",
+        "idempotent": False,
+        "todo_update": True,
+    }
+
+
 def test_todowrite_description_includes_e2_rules_exactly_once():
     """The E2 format block is appended once, even across repeated builds."""
     built = {t.name: t for t in build_todolist_tools()}
