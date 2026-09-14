@@ -100,6 +100,7 @@ SPOT_DEFAULTS = [
         "if you are unsure how to proceed.",
     ),
     (TOKEN_ESTIMATION, "chars_per_token", 4),
+    (TOKEN_ESTIMATION, "chars_per_token_cjk", 2),
     (TOOL_GUARDRAILS, "warnings_enabled", True),
     (TOOL_GUARDRAILS, "hard_stop_enabled", False),
     (TOOL_GUARDRAILS, "exact_failure_block_after", 5),

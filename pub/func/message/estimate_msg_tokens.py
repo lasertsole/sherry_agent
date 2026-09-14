@@ -1,31 +1,12 @@
-import json
-from langchain_core.messages import BaseMessage
-from config.features import TOKEN_ESTIMATION
+"""Backward-compatible re-export.
 
-CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
+The canonical implementation now lives in :mod:`pub.func.estimate_tokens`
+(three-tier fallback: API-reported → CJK-aware heuristic → legacy ``// 4``).
+"""
 
+from pub.func.estimate_tokens import (
+    estimate_msg_tokens as estimate_msg_tokens,
+    estimate_messages_tokens as estimate_messages_tokens,
+)
 
-def estimate_msg_tokens(msg: BaseMessage) -> int:
-    total = 0
-    content = msg.content
-
-    if isinstance(content, str):
-        total += len(content)
-    else:
-        total += len(json.dumps(content)) if content is not None else 0
-
-    tool_calls = getattr(msg, "tool_calls", None)
-    if tool_calls:
-        for tc in tool_calls:
-            total += len(str(tc.get("name", "")))
-            total += len(str(tc.get("args", "")))
-
-    tool_call_id = getattr(msg, "tool_call_id", None)
-    if tool_call_id:
-        total += len(str(tool_call_id))
-
-    return total // CHARS_PER_TOKEN
-
-
-def estimate_messages_tokens(messages) -> int:
-    return sum(estimate_msg_tokens(m) for m in messages)
+__all__ = ["estimate_msg_tokens", "estimate_messages_tokens"]

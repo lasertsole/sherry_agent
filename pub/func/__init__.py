@@ -14,7 +14,6 @@ from .format import (
 from .message import (
     slice_last_turn as slice_last_turn,
     slice_last_n_turn as slice_last_n_turn,
-    estimate_msg_tokens as estimate_msg_tokens,
     extract_final_answer as extract_final_answer,
 )
 from .validator import is_url as is_url
@@ -33,6 +32,12 @@ from .cjk import (
     contains_cjk as contains_cjk,
     is_cjk_codepoint as is_cjk_codepoint,
     count_cjk as count_cjk,
+)
+from .estimate_tokens import (
+    estimate_text_tokens as estimate_text_tokens,
+    estimate_msg_tokens as estimate_msg_tokens,
+    estimate_messages_tokens as estimate_messages_tokens,
+    extract_reported_tokens as extract_reported_tokens,
 )
 from .path import (
     has_traversal_component as has_traversal_component,

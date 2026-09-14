@@ -25,6 +25,7 @@ from langchain_core.messages import (
     RemoveMessage,
 )
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from pub.func.estimate_tokens import estimate_text_tokens
 from pub.func.message.estimate_msg_tokens import estimate_msg_tokens, estimate_messages_tokens
 from pub.func.message.turn_utils import split_into_turns, split_turn
 from pub.func.message.tool_output_dedup import dedup_tool_outputs
@@ -769,7 +770,7 @@ class Summarization(AgentMiddleware):
     def _estimate_system_prompt_tokens(self, session_id: str) -> int:
         prompt = state_register_mem.get_state(session_id, "system_prompt", "")
         if isinstance(prompt, str) and prompt:
-            return len(prompt) // 4
+            return estimate_text_tokens(prompt)
         return 0
 
     def _decide_overflow_route(self, messages: list[AnyMessage], session_id: str) -> str | None:
@@ -785,7 +786,11 @@ class Summarization(AgentMiddleware):
             return None
 
         usable = self._usable_budget()
-        est = self._estimate_tokens(list(messages))
+        # Pure local estimate (reported_tokens=0 skips the Tier-1 auto-extract):
+        # an AIMessage's usage_metadata describes the prompt that produced it, so
+        # once newer messages follow it that value is stale and must not drive
+        # this estimate-driven preflight — reported usage is T3's input.
+        est = estimate_messages_tokens(list(messages), reported_tokens=0)
         system_est = self._estimate_system_prompt_tokens(session_id)
         pressure = compute_pressure(est, None, system_est)
         truncatable = find_truncatable_tool_results(list(messages))

@@ -6,9 +6,9 @@ boundaries for both soft and hard overflow zones, and the truncatable
 candidate rules (recent-skip window, minimum-token floor, descending
 order, non-ToolMessage exclusion).
 
-All payloads are ASCII: estimate_msg_tokens uses CHARS_PER_TOKEN=4 and
-underestimates CJK, so tests build content of exact char lengths to hit
-deterministic token counts.
+All payloads are ASCII: the CJK-aware estimator degenerates to
+`len // CHARS_PER_TOKEN` for ASCII, so tests build content of exact char
+lengths to hit deterministic token counts.
 """
 
 from config.features import SUMMARIZATION, TOKEN_ESTIMATION
@@ -39,11 +39,11 @@ USABLE_BUDGET = 65536 - 16000
 def _chars_for(tokens: int, call_id: str) -> str:
     """ASCII content whose estimate_msg_tokens is exactly ``tokens``.
 
-    estimate_msg_tokens counts len(content) + len(tool_call_id), floor-divided
-    by CHARS_PER_TOKEN — so content length = tokens*4 - len(call_id) hits the
-    token count exactly.
+    estimate_msg_tokens floors each component separately (content vs
+    tool_call_id): every call_id used here is shorter than CHARS_PER_TOKEN,
+    so it contributes 0 estimated tokens and the content carries all of them.
     """
-    return "x" * (tokens * CHARS_PER_TOKEN - len(call_id))
+    return "x" * (tokens * CHARS_PER_TOKEN)
 
 
 def _tool(tokens: int, call_id: str) -> ToolMessage:

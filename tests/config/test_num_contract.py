@@ -293,6 +293,8 @@ class TestPreservedConstants:
     def test_chars_per_token(self):
         assert TOKEN_ESTIMATION["chars_per_token"] == 4
         assert isinstance(TOKEN_ESTIMATION["chars_per_token"], int)
+        assert TOKEN_ESTIMATION["chars_per_token_cjk"] == 2
+        assert isinstance(TOKEN_ESTIMATION["chars_per_token_cjk"], int)
 
 
 class TestUploadLimits:
