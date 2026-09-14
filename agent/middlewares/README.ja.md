@@ -434,7 +434,7 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 
 **防御 1 — モデル呼び出し境界での強制圧縮：** 実際の `usage_metadata` 入力/出力トークンを `messages` チャンクから捕捉し、モデル呼び出し境界ごと（`updates` モード）とストリーム終端で、現在の呼び出し（`input_tokens` のみ）と予測ビュー（`input + output`、出力は次の呼び出しの入力になるため）の両方をコンテキストウィンドウの `COMPRESSION_TRIGGER_RATIO`（80 %）に対してチェックします。しきい値に達したら、Summarization の強制リカバリキー（`summarization_force_recovery`）を `state_register_mem` に設定し、次の呼び出し前チェックがクールダウン/試行上限のアンチスラッシングゲートに阻まれずに圧縮を実行するようにします。
 
-**防御 2 — ストリーム途中の出力予算：** 蓄積されたモデルテキストを `_CHARS_PER_TOKEN = 4` 文字/トークンで推定し、`check_interval = 20` チャンクごとにチェックします。推定値がウィンドウの `output_cut_ratio = 0.20` を超えると、以降のテキストチャンクはクライアントへ転送されなくなり（ツール呼び出しチャンクは通過）、代わりに 1 回限りの切り詰めマーカー（`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`）が出力されます。グラフ内部では完全な `AIMessage` が蓄積され続けます — 切り詰められた末尾こそ、次の圧縮パスが除去する対象です。
+**防御 2 — ストリーム途中の出力予算：** 蓄積されたモデルテキストはトークナイザ不要の CJK 対応 `estimate_text_tokens` で推定し（CJK 文字は `// 2`、それ以外は `// 4`、純 ASCII は従来の `len // 4` に退化）、`check_interval = 20` チャンクごとにチェックします。推定値がウィンドウの `output_cut_ratio = 0.20` を超えると、以降のテキストチャンクはクライアントへ転送されなくなり（ツール呼び出しチャンクは通過）、代わりに 1 回限りの切り詰めマーカー（`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`）が出力されます。グラフ内部では完全な `AIMessage` が蓄積され続けます — 切り詰められた末尾こそ、次の圧縮パスが除去する対象です。
 
 `ainvoke` はそのまま委譲します（非ストリーミング経路は Summarization の T1–T3 トリガーが既にカバー）。未知の属性は内部グラフに委譲されます。コンストラクタ：`(inner, context_window, output_cut_ratio=0.20, check_interval=20)` — `context_window` は `MAIN_LLM_MAX_TOKEN` で、Summarization のトリガーと同じソースです。
 

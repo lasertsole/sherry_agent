@@ -434,7 +434,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 **방어 1 — 모델 호출 경계 강제 압축:** 실제 `usage_metadata` 입력/출력 토큰을 `messages` 청크에서 포착하고, 모델 호출 경계마다(`updates` 모드)와 스트림 종료 시, 현재 호출(`input_tokens` 단독)과 예측 뷰(`input + output`, 출력은 다음 호출의 입력이 되므로)를 모두 컨텍스트 윈도우의 `COMPRESSION_TRIGGER_RATIO`(80%)와 대조합니다. 임계값에 도달하면 Summarization의 강제 복구 키(`summarization_force_recovery`)를 `state_register_mem`에 기록하여, 다음 사전 점검이 쿨다운/시도 상한 안티스래싱 게이트에 막히지 않고 압축을 수행하게 합니다.
 
-**방어 2 — 스트림 도중 출력 예산:** 누적된 모델 텍스트를 `_CHARS_PER_TOKEN = 4`자/토큰으로 추정하여 `check_interval = 20` 청크마다 점검합니다. 추정치가 윈도우의 `output_cut_ratio = 0.20`을 초과하면 이후 텍스트 청크는 클라이언트로 전달되지 않고(도구 호출 청크는 계속 통과), 대신 1회성 절단 마커(`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`)가 출력됩니다. 그래프 내부에는 여전히 완전한 `AIMessage`가 누적됩니다 — 잘린 꼬리가 바로 다음 압축 패스가 제거하는 대상입니다.
+**방어 2 — 스트림 도중 출력 예산:** 누적된 모델 텍스트는 토크나이저가 필요 없는 CJK 인식 `estimate_text_tokens`로 추정하며(CJK 문자 `// 2`, 나머지 `// 4` — 순수 ASCII는 기존 `len // 4`로 퇴화), `check_interval = 20` 청크마다 점검합니다. 추정치가 윈도우의 `output_cut_ratio = 0.20`을 초과하면 이후 텍스트 청크는 클라이언트로 전달되지 않고(도구 호출 청크는 계속 통과), 대신 1회성 절단 마커(`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`)가 출력됩니다. 그래프 내부에는 여전히 완전한 `AIMessage`가 누적됩니다 — 잘린 꼬리가 바로 다음 압축 패스가 제거하는 대상입니다.
 
 `ainvoke`는 그대로 위임합니다(비스트리밍 경로는 Summarization의 T1–T3 트리거가 이미 담당). 알 수 없는 속성은 내부 그래프에 위임됩니다. 생성자: `(inner, context_window, output_cut_ratio=0.20, check_interval=20)` — `context_window`는 `MAIN_LLM_MAX_TOKEN`으로, Summarization 트리거와 같은 소스입니다.
 

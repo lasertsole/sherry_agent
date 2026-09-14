@@ -4,7 +4,7 @@
 
 > How the agent keeps long conversations inside the model's context window: five trigger points watch the whole lifecycle (before the turn, before every model call, after every model response, and on provider overflow errors), a pure 4-route router picks the cheapest fix (truncate big tool results and oversized tool-call args first, AI-compact only when forced), and anti-thrash guards make sure compression can never spiral.
 
-Source of truth: `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/message/estimate_msg_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
+Source of truth: `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -137,7 +137,7 @@ All three threshold inputs derive from the **usable budget**, not the raw window
 
 ```
 usable_budget  = max(context_window − COMPRESSION_RESERVE_TOKENS(16_000), 0)   # _usable_budget :615
-system_est     = len(system_prompt) // 4          # _estimate_system_prompt_tokens :626
+system_est     = estimate_text_tokens(system_prompt)   # _estimate_system_prompt_tokens :770
 truncate line  = usable × PREEMPTIVE_TRUNCATE_RATIO (0.70)
 compact line   = usable × COMPRESSION_TRIGGER_RATIO (0.80)
 truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
@@ -152,15 +152,20 @@ Window math (test contracts): window `41 600` → usable `25 600`, lines `17 920
 
 ## 🪙 Token Estimation (No Tokenizer)
 
-`pub/func/message/estimate_msg_tokens.py` (29 lines) is deliberately tokenizer-free and deterministic:
+`pub/func/estimate_tokens.py` (109 lines) is deliberately tokenizer-free and deterministic, with a three-tier fallback:
+
+- **T1 — API-reported usage:** `estimate_messages_tokens` returns the last `AIMessage`'s `usage_metadata` (or an explicit `reported_tokens`) verbatim when present — the provider's ground-truth count short-circuits all local estimation;
+- **T2 — CJK-aware heuristic:** `estimate_text_tokens` splits the text into CJK characters (`// CHARS_PER_TOKEN_CJK = 2`) and the rest (`// CHARS_PER_TOKEN = 4`), reusing `pub.func.cjk.count_cjk` for detection;
+- **T3 — legacy `len // 4`:** not a separate code path — the T2 degenerate case when `count_cjk(text) == 0`, so pure-ASCII estimates keep the legacy numbers exactly.
 
 ```python
-tokens = (content chars            # str content, or len(json.dumps(content))
-        + Σ tool_call name/args chars
-        + tool_call_id chars) // CHARS_PER_TOKEN   # CHARS_PER_TOKEN = 4
+tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
+       + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
+# message-level: str content (or len(json.dumps(content)))
+#              + Σ tool_call name/args chars + tool_call_id chars
 ```
 
-It is fast, stable across runs (same input → same number → reproducible tests), and intentionally conservative-approximate. Nothing in the trigger/budget path depends on a model tokenizer.
+`pub/func/message/estimate_msg_tokens.py` is now a backward-compatible re-export of the same helpers. The estimator is fast, stable across runs (same input → same number → reproducible tests), and intentionally conservative-approximate. Nothing in the trigger/budget path depends on a model tokenizer.
 
 ## ✂️ The Truncate Track: Budget Truncation & the TTL Module
 
@@ -327,7 +332,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO section caps |
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | file-ops ratchet list cap |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | recovery-context request cap |
-| `CHARS_PER_TOKEN` (estimator) | `4` | deterministic token estimate divisor |
+| `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK` (estimator) | `4` / `2` | deterministic token estimate divisors (non-CJK / CJK); defined in `config/features/agent_side/token_estimation.py` |
 | `PRUNE_TTL_SECONDS` | `300` | TTL-expiry horizon — consumed only by the TTL trio (test-only today) |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL first-seen registry bound (test-only today) |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | imported by the middleware, never read |
@@ -359,7 +364,7 @@ The full process-isolated suite (`uv run python tests/run_tests_split.py`) passe
 - **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
 - **The TTL registry is not wired into production.** `record_first_seen` / `select_expired` / `truncate_expired` (and `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`) are consumed only by tests; the middleware uses exclusively `truncate_to_budget`. A grep of `agent/` finds no production call sites for the TTL trio. The registry is also volatile (in-memory, keyed by `tool_call_id`, lost on restart).
 - **Retained-but-inert code.** `_preemptive_check` (:589) and `_preemptive_truncate` (:1159) have no call sites anymore — the two-band preemption they implemented was replaced by the 4-route decision. They are kept for reference.
-- **The estimator is `chars // 4`, not a tokenizer.** It is intentionally deterministic (reproducible tests, stable budgets) and calibrated for mixed English/code; CJK-heavy content will be under-counted (Chinese averages closer to 1–2 chars/token than 4).
+- **The estimator is a three-tier tokenizer-free heuristic, not a tokenizer.** T1 returns provider-reported usage when available; T2 is the CJK-aware heuristic (CJK characters at `CHARS_PER_TOKEN_CJK = 2`, everything else at `CHARS_PER_TOKEN = 4`); T3 is the legacy `len // 4`, which survives only as the pure-ASCII degenerate case of T2. It is intentionally deterministic (reproducible tests, stable budgets); the old pure `// 4` version under-counted CJK-heavy content (Chinese averages closer to 1–2 chars/token than 4) — T2 corrects exactly that.
 - **Where reported usage wins.** T3 is the only reported-usage-driven trigger (`compute_pressure` takes the max). The T1/T2 route decision is estimate-driven (estimate + system-prompt overhead only); the legacy `_check_trigger` clause fallback uses `max(local estimate, reported)`.
 - **T3 never alters the returned response.** A T3 dispatch's durable effects are the in-place truncation of tool results (message objects are shared with the graph state) and the anti-thrash bookkeeping; the compact route's `request.override` at T3 is local and the original response is always returned. The whole T3 body is fail-open.
 - **T4/T5 bypass the anti-thrash matrix by design** — that is the point of "forced". After `MAX_OVERFLOW_RETRIES (3)` (shared T4/T5 counter, reset each turn), or if the forced-compression step itself fails, the ORIGINAL provider exception propagates (never swallowed, never replaced by the compression error).

@@ -4,7 +4,7 @@
 
 > エージェントが長い会話をモデルのコンテキストウィンドウの中に収め続ける仕組み: 5つのトリガーポイントがライフサイクル全体（ターン開始前、すべてのモデル呼び出し前、すべてのモデル応答後、プロバイダのオーバーフローエラー時）を監視し、純粋関数型の4ルートルーターが最も安価な修復手段を選び（まず大きいツール結果と過大なツール呼び出し引数を切り詰め、強制されたときだけ AI 圧縮）、アンチスラッシングガードが圧縮の暴走を構造的に防ぎます。
 
-一次情報: `agent/middlewares/summarization.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/message/estimate_msg_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`、および 2 つの登録箇所 `agent/core.py` と `agent/tools/subagent/spawn/core.py`。本文書の行番号と定数はすべてこのコードと突き合わせて検証済みです。
+一次情報: `agent/middlewares/summarization.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`、および 2 つの登録箇所 `agent/core.py` と `agent/tools/subagent/spawn/core.py`。本文書の行番号と定数はすべてこのコードと突き合わせて検証済みです。
 
 ## 目次
 
@@ -136,7 +136,7 @@ AIMessage(<summary>, lc_source="summarization")
 
 ```
 usable_budget  = max(context_window − COMPRESSION_RESERVE_TOKENS(16_000), 0)   # _usable_budget :615
-system_est     = len(system_prompt) // 4          # _estimate_system_prompt_tokens :626
+system_est     = estimate_text_tokens(system_prompt)   # _estimate_system_prompt_tokens :770
 truncate line  = usable × PREEMPTIVE_TRUNCATE_RATIO (0.70)
 compact line   = usable × COMPRESSION_TRIGGER_RATIO (0.80)
 truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
@@ -151,15 +151,20 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 ## 🪙 トークン推定（トークナイザなし）
 
-`pub/func/message/estimate_msg_tokens.py`（29 行）は意図的にトークナイザを使わず、決定論的に動作します:
+`pub/func/estimate_tokens.py`（109 行）は意図的にトークナイザを使わず、決定論的に動作し、3 段階のフォールバックを持ちます:
+
+- **T1 — API 報告使用量:** 最後の `AIMessage` が `usage_metadata` を持つ場合（または呼び出し側が `reported_tokens` を明示した場合）、`estimate_messages_tokens` はその値をそのまま返します — プロバイダーの実測値がローカル推定をすべてショートカットします;
+- **T2 — CJK 対応ヒューリスティック:** `estimate_text_tokens` はテキストを CJK 文字（`// CHARS_PER_TOKEN_CJK = 2`）とそれ以外（`// CHARS_PER_TOKEN = 4`）に分け、検出には `pub.func.cjk.count_cjk` を再利用します;
+- **T3 — レガシー `len // 4`:** 独立したコード経路ではなく、`count_cjk(text) == 0` のときの T2 の退化ケースです — そのため純 ASCII の推定値は旧来の数値と完全に一致します。
 
 ```python
-tokens = (content chars            # str content, or len(json.dumps(content))
-        + Σ tool_call name/args chars
-        + tool_call_id chars) // CHARS_PER_TOKEN   # CHARS_PER_TOKEN = 4
+tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
+       + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
+# メッセージ単位: str content（または len(json.dumps(content))）
+#            + Σ tool_call name/args 文字 + tool_call_id 文字
 ```
 
-速く、実行間で安定し（同じ入力 → 同じ数値 → 再現可能なテスト）、意図的に保守的な近似です。トリガー/予算経路のどの部分もモデルのトークナイザに依存しません。
+`pub/func/message/estimate_msg_tokens.py` は同じヘルパー群の後方互換 re-export になりました。速く、実行間で安定し（同じ入力 → 同じ数値 → 再現可能なテスト）、意図的に保守的な近似です。トリガー/予算経路のどの部分もモデルのトークナイザに依存しません。
 
 ## ✂️ 切り詰めトラック：予算切り詰めとTTLモジュール
 
@@ -326,7 +331,7 @@ Summarization(
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO セクション上限 |
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | ファイル操作ラチェットのリスト上限 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 復帰コンテキストの要求上限 |
-| `CHARS_PER_TOKEN`（推定器） | `4` | 決定論的トークン推定の除数 |
+| `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`（推定器） | `4` / `2` | 決定論的トークン推定の除数（非 CJK / CJK）; `config/features/agent_side/token_estimation.py` で定義 |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 有効期限の地平 —— TTL トリオのみ消費（現在はテスト専用） |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 初回観測レジストリの上限（現在はテスト専用） |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | ミドルウェアがインポート、一度も読まれない |
@@ -358,7 +363,7 @@ Summarization(
 - **飾りインポート。** `summarization.py` 先頭の `json`、`hashlib`、`SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT` はインポートされるが一度も読まれません。`DEGRADATION_MONITOR_COUNT` と `FILE_OPS_SECTION_MAX_CHARS` は `config/features/agent_side/summarization.py` の `SUMMARIZATION` TypedDict に定義があるが消費者はいません。
 - **TTL レジストリは本番に接続されていません。** `record_first_seen` / `select_expired` / `truncate_expired`（および `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）を消費するのはテストだけです; ミドルウェアはもっぱら `truncate_to_budget` を使います。`agent/` 全域の grep でも TTL トリオの本番呼び出し箇所は見つかりません。レジストリは揮発性でもあります（インメモリ、`tool_call_id` キー、再起動で喪失）。
 - **残存するが不活性なコード。** `_preemptive_check`（:589）と `_preemptive_truncate`（:1159）にはもう呼び出し箇所がありません —— これらが実装していた 2 バンドの先取りは 4 ルート判定に置き換えられました。参考のため保持されています。
-- **推定器はトークナイザではなく `chars // 4` です。** 意図的に決定論的（再現可能なテスト、安定した予算）で、英語/コード混在コンテンツで較正されています; CJK 多めのコンテンツは過少計数されます（中国語は 4 ではなく 1–2 字/トークンに近い）。
+- **推定器はトークナイザではなく、3 段階のトークナイザフリー・ヒューリスティックです。** API 報告使用量があれば T1 がそれを返し、T2 が CJK 対応ヒューリスティック（CJK 文字は `CHARS_PER_TOKEN_CJK = 2`、それ以外は `CHARS_PER_TOKEN = 4`）、T3 のレガシー `len // 4` は T2 の純 ASCII 退化ケースとしてのみ残ります。意図的に決定論的（再現可能なテスト、安定した予算）です; 旧来の純 `// 4` は CJK 多めのコンテンツを過少計数していました（中国語は 4 ではなく 1–2 字/トークンに近い）— T2 はまさにそこを修正します。
 - **報告値が勝つ場所。** T3 だけが報告使用量駆動のトリガーです（`compute_pressure` は max を取る）。T1/T2 のルート判定は推定駆動です（推定値 + システムプロンプトのオーバーヘッドのみ）; レガシーの `_check_trigger` 節フォールバックは `max(ローカル推定値, 報告値)` を使います。
 - **T3 は返される応答を決して変えません。** T3 ディスパッチの永続効果はツール結果のその場での切り詰め（メッセージオブジェクトはグラフ状態と共有）とアンチスラッシングの帳簿記録だけです; T3 の compact ルートの `request.override` はローカルであり、元の応答が常に返ります。T3 本体全体が fail-open です。
 - **T4/T5 は設計上アンチスラッシングマトリクスを迂回します** —— それが「強制」の要点です。`MAX_OVERFLOW_RETRIES (3)`（T4/T5 共有の単一カウンタ、ターンごとにリセット）を超えるか、強制圧縮ステップ自体が失敗すると、元のプロバイダ例外が伝播します（決して飲み込まれず、圧縮エラーで置き換えられることもありません）。

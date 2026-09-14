@@ -4,7 +4,7 @@
 
 > Agent 如何让长对话保持在模型的上下文窗口之内：五个触发点覆盖整个生命周期（回合开始前、每次模型调用前、每次模型响应后、以及 provider 溢出报错时），一个纯函数式的四路路由选择最省钱的修复手段（先截断超大工具输出和超大的工具调用参数，实在不行才让 AI 压缩历史），防抖护栏保证压缩永远不会失控打转。
 
-事实来源：`agent/middlewares/summarization.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/message/estimate_msg_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
+事实来源：`agent/middlewares/summarization.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -132,7 +132,7 @@ AIMessage(<summary>, lc_source="summarization")
 
 ```
 usable_budget  = max(context_window − COMPRESSION_RESERVE_TOKENS(16_000), 0)   # _usable_budget :615
-system_est     = len(system_prompt) // 4          # _estimate_system_prompt_tokens :626
+system_est     = estimate_text_tokens(system_prompt)   # _estimate_system_prompt_tokens :770
 truncate line  = usable × PREEMPTIVE_TRUNCATE_RATIO (0.70)
 compact line   = usable × COMPRESSION_TRIGGER_RATIO (0.80)
 truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
@@ -147,15 +147,20 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 ## 🪙 Token 估算（无分词器）
 
-`pub/func/message/estimate_msg_tokens.py`（29 行）刻意不依赖分词器、完全确定：
+`pub/func/estimate_tokens.py`（109 行）刻意不依赖分词器、完全确定，并提供三层降级：
+
+- **T1——API 上报用量：** 当最后一条 `AIMessage` 带 `usage_metadata`（或调用方显式传入 `reported_tokens`）时，`estimate_messages_tokens` 原样返回该值——provider 的真实计数会短路全部本地估算；
+- **T2——CJK 感知启发式：** `estimate_text_tokens` 把文本拆成 CJK 字符（`// CHARS_PER_TOKEN_CJK = 2`）与其余字符（`// CHARS_PER_TOKEN = 4`），复用 `pub.func.cjk.count_cjk` 做检测；
+- **T3——遗留 `len // 4`：** 不是独立代码路径——当 `count_cjk(text) == 0` 时它就是 T2 的退化情形，因此纯 ASCII 估算与旧数字完全一致。
 
 ```python
-tokens = (content chars            # str content, or len(json.dumps(content))
-        + Σ tool_call name/args chars
-        + tool_call_id chars) // CHARS_PER_TOKEN   # CHARS_PER_TOKEN = 4
+tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
+       + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
+# 消息级：str content（或 len(json.dumps(content))）
+#        + Σ tool_call name/args 字符 + tool_call_id 字符
 ```
 
-它快、跨运行稳定（相同输入 → 相同数字 → 测试可复现），并且有意做成保守近似。触发/预算路径上的任何环节都不依赖模型分词器。
+`pub/func/message/estimate_msg_tokens.py` 现为同一组 helper 的向后兼容 re-export。它快、跨运行稳定（相同输入 → 相同数字 → 测试可复现），并且有意做成保守近似。触发/预算路径上的任何环节都不依赖模型分词器。
 
 ## ✂️ 截断轨道：预算截断与 TTL 模块
 
@@ -322,7 +327,7 @@ Summarization(
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO 段落上限 |
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | 文件操作棘轮列表上限 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 恢复上下文请求上限 |
-| `CHARS_PER_TOKEN`（估算器） | `4` | 确定性 token 估算除数 |
+| `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`（估算器） | `4` / `2` | 确定性 token 估算除数（非 CJK / CJK）；定义于 `config/features/agent_side/token_estimation.py` |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 过期地平线 —— 仅 TTL 三件套消费（如今仅测试） |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 首见注册表上限（如今仅测试） |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | 被中间件导入、从未读取 |
@@ -354,7 +359,7 @@ Summarization(
 - **纯装饰性导入。** `summarization.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。
 - **TTL 注册表没有接入生产。** `record_first_seen` / `select_expired` / `truncate_expired`（以及 `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）只有测试在用；中间件只使用 `truncate_to_budget`。对 `agent/` 的 grep 找不到 TTL 三件套的任何生产调用点。注册表同样是易失的（内存态、以 `tool_call_id` 为键、重启即失）。
 - **保留但失效的代码。** `_preemptive_check`（:589）与 `_preemptive_truncate`（:1159）已无调用点 —— 它们实现的二档抢先机制已被四路决策取代，仅为参考保留。
-- **估算器是 `chars // 4`，不是分词器。** 它刻意保持确定性（测试可复现、预算稳定），按英文/代码混合内容校准；CJK 密集内容会被低估（中文平均更接近 1–2 字符/token 而非 4）。
+- **估算器是三层、不依赖分词器的启发式，而不是分词器。** 有 API 上报用量时 T1 直接返回；T2 是 CJK 感知启发式（CJK 字符按 `CHARS_PER_TOKEN_CJK = 2`、其余按 `CHARS_PER_TOKEN = 4`）；T3 是遗留的 `len // 4`，仅作为 T2 的纯 ASCII 退化情形保留。它刻意保持确定性（测试可复现、预算稳定）；旧版纯 `// 4` 会低估 CJK 密集内容（中文平均更接近 1–2 字符/token 而非 4）——T2 正是修正这一点。
 - **上报值何时胜出。** T3 是唯一由上报用量驱动的触发点（`compute_pressure` 取 max）。T1/T2 的路由决策由估算驱动（仅估算 + 系统提示词开销）；遗留的 `_check_trigger` 子句兜底使用 `max(本地估算, 上报值)`。
 - **T3 绝不改写返回的响应。** T3 派发的持久效果是工具输出的原地截断（消息对象与图状态共享）和防抖记账；T3 的 compact 路由 `request.override` 只在本地生效，原始响应始终返回。整个 T3 函数体 fail-open。
 - **T4/T5 设计上绕过防抖矩阵** —— 这正是"强制"的意义所在。超过 `MAX_OVERFLOW_RETRIES (3)`（T4/T5 共用的单一计数器，每回合重置）、或强制压缩步骤自身失败时，原始 provider 异常向上传播（绝不吞掉、绝不被压缩错误顶替）。

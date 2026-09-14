@@ -4,7 +4,7 @@
 
 > 에이전트가 긴 대화를 모델의 컨텍스트 윈도우 안에 유지하는 방법: 다섯 개의 트리거 지점이 전체 라이프사이클(턴 시작 전, 모든 모델 호출 전, 모든 모델 응답 후, 프로바이더 오버플로 에러 시)을 감시하고, 순수 함수형 4-경로 라우터가 가장 저렴한 수리책을 고르며(큰 도구 결과와 과도하게 큰 도구 호출 인자를 먼저 잘라내고, 강제될 때만 AI 압축), 안티-스래싱 가드가 압축이 통제 없이 불어나는 일을 원천 차단합니다.
 
-사실상의 기준(source of truth): `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/message/estimate_msg_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -135,7 +135,7 @@ AIMessage(<summary>, lc_source="summarization")
 
 ```
 usable_budget  = max(context_window − COMPRESSION_RESERVE_TOKENS(16_000), 0)   # _usable_budget :615
-system_est     = len(system_prompt) // 4          # _estimate_system_prompt_tokens :626
+system_est     = estimate_text_tokens(system_prompt)   # _estimate_system_prompt_tokens :770
 truncate line  = usable × PREEMPTIVE_TRUNCATE_RATIO (0.70)
 compact line   = usable × COMPRESSION_TRIGGER_RATIO (0.80)
 truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
@@ -150,15 +150,20 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 ## 🪙 토큰 추정 (토크나이저 없음)
 
-`pub/func/message/estimate_msg_tokens.py`(29행)는 의도적으로 토크나이저 없이 결정론적으로 동작합니다:
+`pub/func/estimate_tokens.py`(109행)는 의도적으로 토크나이저 없이 결정론적으로 동작하며, 3단계 폴백을 가집니다:
+
+- **T1 — API 보고 사용량:** 마지막 `AIMessage`가 `usage_metadata`를 가지면(또는 호출자가 `reported_tokens`를 명시하면) `estimate_messages_tokens`가 그 값을 그대로 반환합니다 — provider의 실측값이 모든 로컬 추정을 단축합니다;
+- **T2 — CJK 인식 휴리스틱:** `estimate_text_tokens`는 텍스트를 CJK 문자(`// CHARS_PER_TOKEN_CJK = 2`)와 나머지(`// CHARS_PER_TOKEN = 4`)로 나누고, 감지에는 `pub.func.cjk.count_cjk`를 재사용합니다;
+- **T3 — 레거시 `len // 4`:** 별도 코드 경로가 아니라 `count_cjk(text) == 0`일 때의 T2 퇴화 케이스입니다 — 따라서 순수 ASCII 추정치는 기존 숫자와 정확히 일치합니다.
 
 ```python
-tokens = (content chars            # str content, or len(json.dumps(content))
-        + Σ tool_call name/args chars
-        + tool_call_id chars) // CHARS_PER_TOKEN   # CHARS_PER_TOKEN = 4
+tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
+       + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
+# 메시지 단위: str content(또는 len(json.dumps(content)))
+#           + Σ tool_call name/args 문자 + tool_call_id 문자
 ```
 
-빠르고, 실행 간 안정적이며(같은 입력 → 같은 숫자 → 재현 가능한 테스트), 의도적으로 보수적으로 근사합니다. 트리거/예산 경로의 어떤 것도 모델 토크나이저에 의존하지 않습니다.
+`pub/func/message/estimate_msg_tokens.py`는 이제 같은 헬퍼들의 하위 호환 re-export입니다. 빠르고, 실행 간 안정적이며(같은 입력 → 같은 숫자 → 재현 가능한 테스트), 의도적으로 보수적으로 근사합니다. 트리거/예산 경로의 어떤 것도 모델 토크나이저에 의존하지 않습니다.
 
 ## ✂️ 트렁케이트 트랙: 예산 트렁케이션과 TTL 모듈
 
@@ -325,7 +330,7 @@ Summarization(
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO 섹션 상한 |
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | 파일 작업 래칫 목록 상한 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 복구 컨텍스트 요청 상한 |
-| `CHARS_PER_TOKEN`(추정기) | `4` | 결정론적 토큰 추정 제수 |
+| `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`(추정기) | `4` / `2` | 결정론적 토큰 추정 제수(비 CJK / CJK); `config/features/agent_side/token_estimation.py`에 정의 |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 만료 지평 — TTL 트리오만 소비 (오늘날 테스트 전용) |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 최초 관찰 레지스트리 한계 (오늘날 테스트 전용) |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | 미들웨어가 임포트, 절대 읽지 않음 |
@@ -357,7 +362,7 @@ Summarization(
 - **문서 장식용 임포트.** `summarization.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.
 - **TTL 레지스트리는 프로덕션에 연결되어 있지 않습니다.** `record_first_seen` / `select_expired` / `truncate_expired`(및 `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`)는 테스트만 소비합니다; 미들웨어는 오직 `truncate_to_budget`만 사용합니다. `agent/` 전역 grep에서 TTL 트리오의 프로덕션 호출 지점은 발견되지 않습니다. 레지스트리는 또한 휘발적입니다(인메모리, `tool_call_id` 키, 재시작 시 소실).
 - **남아 있지만 비활성인 코드.** `_preemptive_check`(:589)와 `_preemptive_truncate`(:1159)는 더 이상 호출 지점이 없습니다 — 이들이 구현한 2-밴드 선점은 4-경로 결정으로 대체되었습니다. 참조용으로만 유지됩니다.
-- **추정기는 토크나이저가 아니라 `chars // 4`입니다.** 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)이며 영어/코드 혼합 콘텐츠로 보정되었습니다; CJK 중심 콘텐츠는 과소 계수됩니다(중국어는 4가 아닌 1–2자/토큰에 가까움).
+- **추정기는 토크나이저가 아니라 3단계 토크나이저프리 휴리스틱입니다.** API 보고 사용량이 있으면 T1이 반환하고, T2는 CJK 인식 휴리스틱(CJK 문자 `CHARS_PER_TOKEN_CJK = 2`, 나머지 `CHARS_PER_TOKEN = 4`), T3의 레거시 `len // 4`는 T2의 순수 ASCII 퇴화 케이스로만 남습니다. 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)입니다; 예전 순수 `// 4`는 CJK 중심 콘텐츠를 과소 계수했지만(중국어는 4가 아닌 1–2자/토큰에 가까움), T2가 바로 그 지점을 수정합니다.
 - **보고된 사용량이 이기는 곳.** T3만이 보고된 사용량 기반 트리거입니다(`compute_pressure`는 max를 취함). T1/T2 라우트 결정은 추정 기반입니다(추정치 + 시스템 프롬프트 오버헤드만); 레거시 `_check_trigger` 절 폴백은 `max(로컬 추정치, 보고값)`을 사용합니다.
 - **T3는 반환되는 응답을 절대 바꾸지 않습니다.** T3 디스패치의 지속 효과는 도구 결과의 제자리 트렁케이션(메시지 객체는 그래프 상태와 공유됨)과 안티-스래싱 장부 기록뿐입니다; T3 compact 라우트의 `request.override`는 로컬이며 원본 응답이 항상 반환됩니다. T3 본문 전체가 fail-open입니다.
 - **T4/T5는 설계상 안티-스래싱 매트릭스를 우회합니다** — 그것이 "강제"의 요점입니다. `MAX_OVERFLOW_RETRIES (3)`(T4/T5 단일 공유 카운터, 턴마다 리셋) 초과, 또는 강제 압축 단계 자체의 실패 시, 원본 프로바이더 예외가 전파됩니다(절대 삼켜지지 않고, 절대 압축 에러로 대체되지 않음).

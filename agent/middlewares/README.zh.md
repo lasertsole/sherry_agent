@@ -428,7 +428,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 **防御一——模型调用边界强制压缩：** 从 `messages` 块中捕获真实的 `usage_metadata` 输入/输出 token；在每个模型调用边界（`updates` 模式）及流结束时，同时按当前调用（仅 `input_tokens`）与预测视图（`input + output`，因为输出会成为下次调用的输入）对照上下文窗口的 `COMPRESSION_TRIGGER_RATIO`（80 %）阈值。达到/越过阈值时，向 `state_register_mem` 写入 Summarization 的强制恢复键（`summarization_force_recovery`），使下一次调用前检查执行压缩，而不被冷却 / 尝试上限的防抖闸门跳过。
 
-**防御二——流中输出预算：** 累积的模型文本按 `_CHARS_PER_TOKEN = 4` 字符/token 估算，每 `check_interval = 20` 个块检查一次；一旦估算值超过窗口的 `output_cut_ratio = 0.20`，后续文本块不再转发给客户端（工具调用块仍然通过），改为发出一次性截断标记（`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`）。图内仍累积完整的 `AIMessage`——被截掉的尾部正是下一轮压缩要移除的内容。
+**防御二——流中输出预算：** 累积的模型文本按 CJK 感知的 `estimate_text_tokens` 估算（CJK 字符 `// 2`、其余字符 `// 4`；纯 ASCII 退化为与旧 `len // 4` 相同的结果），每 `check_interval = 20` 个块检查一次；一旦估算值超过窗口的 `output_cut_ratio = 0.20`，后续文本块不再转发给客户端（工具调用块仍然通过），改为发出一次性截断标记（`"[System notice: the response exceeded the mid-stream output budget and was truncated.]"`）。图内仍累积完整的 `AIMessage`——被截掉的尾部正是下一轮压缩要移除的内容。
 
 `ainvoke` 原样委托（Summarization 的 T1–T3 触发点已覆盖非流式路径）；未知属性委托给内部图。构造函数：`(inner, context_window, output_cut_ratio=0.20, check_interval=20)`——`context_window` 即 `MAIN_LLM_MAX_TOKEN`，与 Summarization 触发点同源。
 
