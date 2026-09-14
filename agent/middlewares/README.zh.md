@@ -221,9 +221,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 |---|---|---|---|---|
 | 精确失败重复 | 相同工具 + 相同参数（参数 JSON `sort_keys` 后取 MD5）失败 | 2（`exact_failure_warn_after`） | 5（`exact_failure_block_after`） | 5 次时 HALT |
 | 同工具失败累积 | 相同工具以**不同**参数反复失败 | 3（`same_tool_failure_warn_after`） | 8（`same_tool_failure_halt_after`） | 8 次时 HALT |
-| 幂等无进展 | 元数据 `idempotent: true` 的工具返回相同的结果哈希 | 2（`no_progress_warn_after`） | 5（`no_progress_block_after`） | 5 次时 HALT |
-| 乒乓 | 两个工具之间不间断的只读 A → B → A → B 往返 | 4（`ping_pong_warn_after`） | 6（`ping_pong_block_after`） | 6 次时 HALT |
-| 参数翻新 | 同一幂等工具轮换不同参数变体 | 3 种变体（`arg_churn_warn_after`） | 5 种变体（`arg_churn_block_after`） | 5 种时 HALT |
+| 幂等无进展 | 同一幂等工具（元数据 `idempotent: true`）返回本回合中它已产出过的结果哈希 | 2（`no_progress_warn_after`） | 5（`no_progress_block_after`） | 5 次时 HALT |
+| 乒乓 | 两个工具之间不间断的 A → B → A → B 往返，且相邻两次调用均无进展（stagnant） | 4（`ping_pong_warn_after`） | 6（`ping_pong_block_after`） | 6 次时 HALT |
+| 参数翻新 | 同一幂等工具轮换参数变体，但结果保持不变（无进展） | 3 种变体（`arg_churn_warn_after`） | 5 种变体（`arg_churn_block_after`） | 5 种时 HALT |
 
 - `before_agent` 重置回合级护栏状态（`state_register_mem` 中的键 `tool_guardrail_state`）——严格回合作用域，新回合从干净状态开始。
 - `wrap_tool_call` 先做拦截预检（对被阻止的工具/终止状态直接返回错误 `ToolMessage`，不执行），再运行工具，然后评估结果：
@@ -231,7 +231,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `block` 将工具记入 `blocked_tools`；
   - `halt` 为本回合剩余时间设置粘性终止（`halt_decision`）。
 - **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，*precheck* 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT——一个受管的重试窗口，而不是一堵立即竖起的墙。
-- **乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都是成功的幂等调用（两条记录都带结果哈希）时才累加。任何错误，或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。结果内容从不参与比较：不间断的只读往返本身就是循环信号。非幂等工具的成功同样会重置参数翻新状态。
+- **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
 - `ToolCallGuardrailConfig` 默认值：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1`——当 `hard_stop_enabled=True` 时，每个*阻止*阈值都会变成 HALT（旧的严格之墙）；`recovery_mode_enabled=False` 则恢复立即阻止的行为。
 
 ▶️ 完整文档：[docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)

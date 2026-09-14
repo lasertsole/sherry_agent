@@ -45,14 +45,14 @@ Active on the main agent, worker agents, and nudge sub-agents. Every tool call r
 |---|---|---|---|---|
 | Exact-failure repetition | Same tool + same (hashed) args keeps failing | 2 | 5 | HALT at 5 |
 | Same-tool failure storm | Same tool keeps failing, args may vary | 3 | 8 | HALT at 8 |
-| Idempotent no-progress | Identical (hashed) result on an idempotent tool | 2 | 5 | HALT at 5 |
-| Ping-pong | Unbroken read-only A → B → A → B bouncing | 4 | 6 | HALT at 6 |
-| Argument churn | Same idempotent tool cycling argument variants | 3 variants | 5 variants | HALT at 5 |
+| Idempotent no-progress | Same idempotent tool returning a result hash an earlier call of it already produced | 2 | 5 | HALT at 5 |
+| Ping-pong | Unbroken A → B → A → B bouncing where both consecutive calls are stagnant | 4 | 6 | HALT at 6 |
+| Argument churn | Same idempotent tool cycling argument variants whose result stays unchanged (stagnant) | 3 variants | 5 variants | HALT at 5 |
 
 Details that matter:
 
 - **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the *precheck* path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT. In effect: a managed retry window instead of an immediate wall. Set `recovery_mode_enabled=False` for the old strict behavior, or `hard_stop_enabled=True` to turn every BLOCK threshold into HALT (see table).
-- **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are successful idempotent calls (both records carry a result hash). Any error, or any successful non-idempotent (mutating) call, zeroes every accumulated pair streak. Result content is never compared: unbroken read-only bouncing is treated as a loop signal on its own. A non-idempotent tool success likewise resets argument-churn state.
+- **No progress means stagnation** (`is_stagnant`): a successful idempotent call is only no-progress when the *same tool* already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
 - Guard state is strictly **turn-scoped**: `before_agent` resets it, so a fresh turn starts clean.
 
 ### Turn level: `IterationBudget`

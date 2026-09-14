@@ -221,9 +221,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 |---|---|---|---|---|
 | 완전한 실패 반복 | 동일 도구 + 동일 인자(인자 JSON을 `sort_keys`한 MD5)의 실패 | 2 (`exact_failure_warn_after`) | 5 (`exact_failure_block_after`) | 5에서 HALT |
 | 동일 도구 실패 누적 | 동일 도구가 **다른** 인자로 반복 실패 | 3 (`same_tool_failure_warn_after`) | 8 (`same_tool_failure_halt_after`) | 8에서 HALT |
-| 멱등 무진행 | 메타데이터 `idempotent: true` 도구가 동일한 결과 해시를 반환 | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | 5에서 HALT |
-| 핑퐁 | 두 도구 사이의 끊김 없는 읽기 전용 A → B → A → B 왕복 | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | 6에서 HALT |
-| 인자 갱신 | 같은 멱등 도구가 인자 변형을 순환 | 3개 변형 (`arg_churn_warn_after`) | 5개 변형 (`arg_churn_block_after`) | 5에서 HALT |
+| 멱등 무진행 | 동일한 멱등 도구(메타데이터 `idempotent: true`)가 그 턴에서 이미 반환한 결과 해시를 반환 | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | 5에서 HALT |
+| 핑퐁 | 두 도구 사이의 끊김 없는 A → B → A → B 왕복으로, 연속된 두 호출이 모두 무진행 | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | 6에서 HALT |
+| 인자 갱신 | 같은 멱등 도구가 결과가 변하지 않는 인자 변형을 순환 | 3개 변형 (`arg_churn_warn_after`) | 5개 변형 (`arg_churn_block_after`) | 5에서 HALT |
 
 - `before_agent`는 턴 단위 가드 상태를 리셋합니다(`state_register_mem`의 키 `tool_guardrail_state`) — 엄격히 턴 범위이므로 새 턴은 깨끗하게 시작합니다.
 - `wrap_tool_call`은 차단된 도구와 정지 상태를 사전 점검(실행하지 않고 오류 `ToolMessage` 반환)한 뒤 도구를 실행하고 결과를 평가합니다:
@@ -231,7 +231,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `block`은 도구를 `blocked_tools`에 기록;
   - `halt`는 턴의 나머지 기간에 대한 스티키 정지를 설정(`halt_decision`).
 - **복구 모드** (`recovery_mode_enabled=True` 기본값): 첫 BLOCK은 턴을 벽돌로 만들지 않습니다. 턴은 복구 상태로 들어가고, *precheck* 경로가 차단된 도구를 풀어주어 재시도가 새로 평가됩니다. 이후 BLOCK마다 위반 카운터가 증가하고, 카운터가 `recovery_max_violations`(기본 1)를 초과하면 HALT로 격상됩니다 — 즉석 벽이 아니라 관리되는 재시도 창입니다.
-- **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, *연속된 두* 호출이 모두 성공한 멱등 호출일 때(두 기록 모두 결과 해시 보유)만 누적됩니다. 에러가 하나라도 있거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 결과 내용은 비교하지 않습니다: 끊김 없는 읽기 전용 왕복은 그 자체로 루프 신호입니다. 비멱등 도구의 성공 역시 인자 갱신 상태를 리셋합니다.
+- **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, *연속된 두* 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
 - `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — `hard_stop_enabled=True`이면 모든 *차단* 임계값이 HALT로 변환되고(이전의 엄격한 벽), `recovery_mode_enabled=False`이면 즉시 차단 동작으로 돌아갑니다.
 
 ▶️ 전체 문서: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)

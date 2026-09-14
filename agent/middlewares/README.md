@@ -223,9 +223,9 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
 |---|---|---|---|---|
 | Exact failure repetition | Same tool + same arguments (MD5 of the JSON args, `sort_keys`) failing | 2 (`exact_failure_warn_after`) | 5 (`exact_failure_block_after`) | HALT at 5 |
 | Same-tool failure accumulation | Same tool failing with **different** arguments | 3 (`same_tool_failure_warn_after`) | 8 (`same_tool_failure_halt_after`) | HALT at 8 |
-| Idempotent no-progress | Tool with metadata `idempotent: true` returning an identical result hash | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | HALT at 5 |
-| Ping-pong | Unbroken read-only A → B → A → B bouncing between two tools | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | HALT at 6 |
-| Argument churn | Same idempotent tool cycling through argument variants | 3 variants (`arg_churn_warn_after`) | 5 variants (`arg_churn_block_after`) | HALT at 5 |
+| Idempotent no-progress | Same idempotent tool (metadata `idempotent: true`) returning a result hash an earlier call of that tool already produced this turn | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | HALT at 5 |
+| Ping-pong | Unbroken A → B → A → B bouncing between two tools where both consecutive calls are stagnant | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | HALT at 6 |
+| Argument churn | Same idempotent tool cycling through argument variants whose result stays unchanged (stagnant) | 3 variants (`arg_churn_warn_after`) | 5 variants (`arg_churn_block_after`) | HALT at 5 |
 
 - `before_agent` resets the per-turn guard state (key `tool_guardrail_state` in `state_register_mem`) — strictly turn-scoped, so a fresh turn starts clean.
 - `wrap_tool_call` pre-checks blocked tools and halt state (returns an error `ToolMessage` without executing), runs the tool, then evaluates the result:
@@ -233,7 +233,7 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
   - `block` records the tool in `blocked_tools`;
   - `halt` sets a sticky halt for the rest of the turn (`halt_decision`).
 - **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the *precheck* path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT — a managed retry window instead of an immediate wall.
-- **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are successful idempotent calls (both records carry a result hash). Any error, or any successful non-idempotent (mutating) call, zeroes every accumulated pair streak. Result content is never compared: unbroken read-only bouncing is a loop signal on its own. A non-idempotent tool success likewise resets argument-churn state.
+- **No progress means stagnation** (`is_stagnant`): a successful idempotent call only counts as no-progress when the *same tool* already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
 - `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — with `hard_stop_enabled=True` every *block* threshold converts into HALT (the old strict wall); `recovery_mode_enabled=False` restores the immediate block behavior.
 
 ▶️ Full details: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)

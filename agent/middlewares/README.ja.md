@@ -221,9 +221,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 |---|---|---|---|---|
 | 完全な失敗の繰り返し | 同じツール + 同じ引数（引数 JSON を `sort_keys` した MD5）の失敗 | 2（`exact_failure_warn_after`） | 5（`exact_failure_block_after`） | 5 で HALT |
 | 同一ツールの失敗蓄積 | 同じツールが**異なる**引数で失敗し続ける | 3（`same_tool_failure_warn_after`） | 8（`same_tool_failure_halt_after`） | 8 で HALT |
-| 冪等な無進捗 | メタデータ `idempotent: true` のツールが同一の結果ハッシュを返す | 2（`no_progress_warn_after`） | 5（`no_progress_block_after`） | 5 で HALT |
-| ピンポン | 2 つのツール間の途切れない読み取り専用 A → B → A → B の往復 | 4（`ping_pong_warn_after`） | 6（`ping_pong_block_after`） | 6 で HALT |
-| 引数改変 | 同じ冪等ツールが引数バリアントを巡回 | 3 変種（`arg_churn_warn_after`） | 5 変種（`arg_churn_block_after`） | 5 で HALT |
+| 冪等な無進捗 | 同一の冪等ツール（メタデータ `idempotent: true`）が、そのターン内で既に返したことのある結果ハッシュを返す | 2（`no_progress_warn_after`） | 5（`no_progress_block_after`） | 5 で HALT |
+| ピンポン | 2 つのツール間の途切れない A → B → A → B の往復で、連続する 2 呼び出しがともに無進捗 | 4（`ping_pong_warn_after`） | 6（`ping_pong_block_after`） | 6 で HALT |
+| 引数改変 | 同じ冪等ツールが、結果の変わらない引数バリアントを巡回 | 3 変種（`arg_churn_warn_after`） | 5 変種（`arg_churn_block_after`） | 5 で HALT |
 
 - `before_agent` はターン単位のガード状態をリセットします（`state_register_mem` のキー `tool_guardrail_state`）— 厳密にターン範囲なので、新しいターンはクリーンに始まります。
 - `wrap_tool_call` はブロック済みツールと停止状態を事前チェック（実行せずエラー `ToolMessage` を返す）し、ツールを実行してから結果を評価します：
@@ -231,7 +231,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `block` はツールを `blocked_tools` に記録；
   - `halt` はターンの残りに対する粘着性の停止を設定（`halt_decision`）。
 - **リカバリモード**（`recovery_mode_enabled=True` がデフォルト）: 最初の BLOCK でターンが死ぬことはありません。ターンはリカバリ状態に入り、*precheck* 経路がブロックされたツールを解放するので、再試行は新鮮に評価されます。それ以降の BLOCK ごとに違反カウンタが増え、カウンタが `recovery_max_violations`（デフォルト 1）を超えると HALT に格上げされます — 即席の壁ではなく管理された再試行ウィンドウです。
-- **ピンポンペア**は隣接する 2 つの呼び出しのツール名をハッシュし、*連続する 2 つ*の呼び出しが両方とも成功した冪等呼び出しである間（両方の記録が結果ハッシュを持つ間）だけ累積します。エラーが一度でも出たり、成功した非冪等（変異）呼び出しが一度でもあると、累積済みのすべてのペア連続記録がゼロに戻ります。結果の内容は比較しません: 途切れない読み取り専用の往復は、それ自体がループ信号として扱われます。非冪等ツールの成功も同様に引数改変状態をリセットします。
+- **無進捗とは停滞（stagnation、`is_stagnant`）のこと**：成功した冪等呼び出しは、**同一ツール**がそのターン内で既に同じ `result_hash` を返していた場合にのみ無進捗と判定されます。結果が変われば進捗です。**ピンポンペア**は隣接する 2 つの呼び出しのツール名をハッシュし、*連続する 2 つ*の呼び出しが両方とも無進捗である間だけ累積します。エラーが一度でも出たり、結果が変化（非停滞）したり、成功した非冪等（変異）呼び出しが一度でもあると、累積済みのすべてのペア連続記録がゼロに戻ります。冪等ツールの結果変化も同様に引数改変として数えられなくなり、非冪等ツールの成功は引数改変状態を完全にクリアします。
 - `ToolCallGuardrailConfig` の既定値：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1` — `hard_stop_enabled=True` にするとすべての *ブロック* しきい値が HALT に変わり（旧来の厳格な壁）、`recovery_mode_enabled=False` にすると即時ブロックの挙動に戻ります。
 
 ▶️ 詳細：[docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
