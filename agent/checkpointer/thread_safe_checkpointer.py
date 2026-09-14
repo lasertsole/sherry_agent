@@ -80,6 +80,7 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
 
     lock: asyncio.Lock  # type: ignore[reportIncompatibleVariableOverride]
     loop: Any  # explicitly None, avoids variance check
+    _closed: bool
 
     def __init__(
         self,
@@ -96,6 +97,25 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
         self.lock = _LoopSafeLock()  # type: ignore[assignment]
         self.loop = None  # explicitly no loop binding
         self.is_setup = False
+        self._closed = False
+
+    # ------------------------------------------------------------------
+    # Lifecycle — release the owned aiosqlite connection
+    # ------------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Close the owned aiosqlite connection (idempotent).
+
+        The factory that builds this saver also opens ``conn``, so the saver
+        is its sole owner: closing here releases the connection's non-daemon
+        worker thread and its file handle. Repeated calls are no-ops. No sync
+        bridge is offered — ``close()`` would have to call ``asyncio.run`` and
+        deadlock on a thread that already has a loop.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        await self.conn.close()
 
     # ------------------------------------------------------------------
     # Sync bridge methods – adapted for self.loop = None

@@ -138,3 +138,23 @@ class TestDeleteThreadHistory:
         assert remaining_writes == 0
         assert other_checkpoints == 1  # untouched session keeps its rows
         assert other_writes == 2
+
+
+@pytest.mark.asyncio
+class TestThreadSafeSaverAclose:
+    """Audit #63: the saver owns its aiosqlite connection and releases it idempotently."""
+
+    async def test_aclose_closes_connection_and_is_idempotent(self, tmp_path, monkeypatch):
+        import agent.checkpointer.async_sqlite_checkpointer as mod
+
+        monkeypatch.setattr(mod, "SRC_DIR", tmp_path)
+        saver = await mod.build_async_sqlite_checkpointer()
+        conn = saver.conn
+        assert conn._connection is not None
+
+        await saver.aclose()
+        assert conn._connection is None
+        assert saver._closed is True
+
+        await saver.aclose()  # idempotent: a second close must not raise
+        assert conn._connection is None
