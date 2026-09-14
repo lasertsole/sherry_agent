@@ -61,6 +61,7 @@ def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=Tru
 
 
 IDEMPOTENT_TOOL = SimpleNamespace(metadata={"idempotent": True})
+NON_IDEMPOTENT_TOOL = SimpleNamespace(metadata={"idempotent": False})
 
 
 def wrap_call(mw, sess, name, args, content, call_id, status="success", tool=IDEMPOTENT_TOOL):
@@ -268,6 +269,59 @@ def test_wrap_message_routing_arg_churn_block():
     gs = mw._get_state(sess)
     assert gs.last_pathology == ("argument_churn", 5, 5)
     assert "T" in gs.blocked_tools
+
+
+def test_records_are_bounded_by_max_records():
+    """Given a long turn, When records exceed the cap, Then only the most
+    recent _MAX_RECORDS records are retained."""
+    mw = make_mw()
+    sess = "sess-bounded"
+    total = mod._MAX_RECORDS + 25
+    for i in range(total):
+        wrap_call(mw, sess, "T", {"i": i}, f"content-{i}", f"c{i}", tool=NON_IDEMPOTENT_TOOL)
+    gs = mw._get_state(sess)
+    assert len(gs.records) == mod._MAX_RECORDS
+    assert gs.records[-1].args_hash == mod.args_hash({"i": total - 1})
+
+
+def test_missing_tool_call_id_does_not_crash():
+    """Given a tool_call dict without an id, When the guardrail blocks, Then the
+    error ToolMessage is built defensively instead of raising KeyError."""
+    mw = make_mw()
+    sess = "sess-no-id"
+    for i in range(1, 6):
+        wrap_call(mw, sess, "T", {"a": 1}, "same", f"c{i}")
+    request = ToolCallRequest(
+        tool_call={"name": "T", "args": {"a": 1}},
+        tool=IDEMPOTENT_TOOL,
+        state={"session_id": sess},
+        runtime=None,
+    )
+    out = mw._wrap_tool_call_impl(
+        request, ToolMessage(content="same", tool_call_id="c6", name="T", status="success")
+    )
+    assert out.status == "error"
+    assert out.tool_call_id == ""
+
+
+def test_error_status_is_case_insensitive():
+    """Given an uppercase ERROR status, When evaluated, Then it still counts as
+    a failure (exact-failure WARN on the second identical call)."""
+    mw = make_mw()
+    sess = "sess-error-case"
+    request = ToolCallRequest(
+        tool_call={"name": "T", "args": {"a": 1}, "id": "c1"},
+        tool=IDEMPOTENT_TOOL,
+        state={"session_id": sess},
+        runtime=None,
+    )
+    # LangChain's ToolMessage.status is a Literal["success", "error"], so the
+    # uppercase status is injected with a duck-typed result object.
+    upper = SimpleNamespace(content="boom", status="ERROR", tool_call_id="c1", name="T")
+    out1 = mw._wrap_tool_call_impl(request, upper)
+    assert out1 is upper  # first failure is ALLOW → passthrough
+    out2 = wrap_call(mw, sess, "T", {"a": 1}, "boom", "c2", status="error")
+    assert "exact failure repetition" in out2.content
 
 
 # --------------------------------------------------------- new: recovery mode (Task 6)

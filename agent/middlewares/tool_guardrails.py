@@ -16,7 +16,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from runtime import state_register_mem
 from config.features import TOOL_GUARDRAILS
-from agent.middlewares.base import require_session_id
+from agent.middlewares.base import args_hash, require_session_id
 
 
 class GuardrailAction(StrEnum):
@@ -73,6 +73,7 @@ class _TurnGuardrailState:
 
 
 _GUARDRAIL_STATE_KEY = "tool_guardrail_state"
+_MAX_RECORDS = 200
 
 _ACTION_RANK = {
     GuardrailAction.ALLOW: 0,
@@ -114,14 +115,8 @@ class ToolGuardrails(AgentMiddleware):
         state_register_mem.set_state(session_id, _GUARDRAIL_STATE_KEY, state)
 
     @staticmethod
-    def _args_hash(args: dict[str, Any]) -> str:
-        from agent.middlewares.base import args_hash
-
-        return args_hash(args)
-
-    @staticmethod
     def _result_hash(content: str) -> str:
-        return hashlib.md5(content.encode()).hexdigest()
+        return hashlib.md5(content.encode(errors="surrogateescape")).hexdigest()
 
     def _evaluate(
         self,
@@ -366,10 +361,10 @@ class ToolGuardrails(AgentMiddleware):
         gs = self._get_state(session_id)
         tool_name: str = request.tool_call.get("name", "unknown")
         tool_args: dict[str, Any] = request.tool_call.get("args", {})
-        args_hash = self._args_hash(tool_args)
+        args_digest = args_hash(tool_args)
         is_idempotent = self._is_idempotent(tool_name, request.tool)
 
-        is_error = getattr(result, "status", None) == "error"
+        is_error = str(getattr(result, "status", "")).lower() == "error"
         result_content = str(result.content) if result.content else ""
         result_hash = self._result_hash(result_content) if not is_error and is_idempotent else None
 
@@ -383,15 +378,17 @@ class ToolGuardrails(AgentMiddleware):
         gs.records.append(
             _ToolCallRecord(
                 name=tool_name,
-                args_hash=args_hash,
+                args_hash=args_digest,
                 is_error=is_error,
                 result_hash=result_hash,
                 is_stagnant=is_stagnant,
             )
         )
+        if len(gs.records) > _MAX_RECORDS:
+            gs.records = gs.records[-_MAX_RECORDS:]
 
         action = self._evaluate(
-            gs, tool_name, args_hash, result_hash, is_error, is_idempotent, is_stagnant
+            gs, tool_name, args_digest, result_hash, is_error, is_idempotent, is_stagnant
         )
         self._save_state(session_id, gs)
 
@@ -408,7 +405,7 @@ class ToolGuardrails(AgentMiddleware):
                 halt_msg = self._halt_message(tool_name, "excessive repetition")
             return ToolMessage(
                 content=halt_msg,
-                tool_call_id=request.tool_call["id"],
+                tool_call_id=request.tool_call.get("id", ""),
                 name=tool_name,
                 status="error",
             )
@@ -425,12 +422,12 @@ class ToolGuardrails(AgentMiddleware):
                         f"once (violations: {gs.recovery_violation_count}/"
                         f"{self.config.recovery_max_violations})."
                     ),
-                    tool_call_id=request.tool_call["id"],
+                    tool_call_id=request.tool_call.get("id", ""),
                     name=tool_name,
                     status="error",
                 )
             elif is_error:
-                exact_key = f"{tool_name}:{args_hash}"
+                exact_key = f"{tool_name}:{args_digest}"
                 exact_count = gs.exact_failure_counts.get(exact_key, 0)
                 same_count = gs.same_tool_failure_counts.get(tool_name, 0)
                 if same_count >= self.config.same_tool_failure_halt_after:
@@ -449,7 +446,7 @@ class ToolGuardrails(AgentMiddleware):
 
             return ToolMessage(
                 content=self._block_message(tool_name, pathology, count, limit),
-                tool_call_id=request.tool_call["id"],
+                tool_call_id=request.tool_call.get("id", ""),
                 name=tool_name,
                 status="error",
             )
@@ -461,7 +458,7 @@ class ToolGuardrails(AgentMiddleware):
                 pathology = "ping-pong loop" if kind == "ping_pong" else "argument churn"
                 warning = self._warning_message(tool_name, pathology, count, limit)
             elif is_error:
-                exact_key = f"{tool_name}:{args_hash}"
+                exact_key = f"{tool_name}:{args_digest}"
                 exact_count = gs.exact_failure_counts.get(exact_key, 0)
                 same_count = gs.same_tool_failure_counts.get(tool_name, 0)
 
@@ -514,7 +511,7 @@ class ToolGuardrails(AgentMiddleware):
         if gs.halt_decision is not None:
             return ToolMessage(
                 content=self._halt_message(tool_name, "previous halt"),
-                tool_call_id=request.tool_call["id"],
+                tool_call_id=request.tool_call.get("id", ""),
                 name=tool_name,
                 status="error",
             )
@@ -528,7 +525,7 @@ class ToolGuardrails(AgentMiddleware):
         if tool_name in gs.blocked_tools:
             return ToolMessage(
                 content=self._block_message(tool_name, "previously blocked", 0, 0),
-                tool_call_id=request.tool_call["id"],
+                tool_call_id=request.tool_call.get("id", ""),
                 name=tool_name,
                 status="error",
             )
