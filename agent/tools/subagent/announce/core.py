@@ -5,6 +5,7 @@ injection vs sub→user completion message), SILENT_REPLY_TOKEN processing, and
 descendant-wake deferral.
 """
 
+import asyncio
 import time
 from loguru import logger
 
@@ -24,6 +25,21 @@ from ..registry.completion import emit_ended_hook_once
 SILENT_REPLY_TOKEN = (
     "⟦ANNOUNCE_SKIP⟧"  # Sentinel that suppresses announce delivery when present in result text
 )
+
+# Strong references for fire-and-forget wake checks: without them the event
+# loop may GC the task mid-flight, and a task exception would be reported as
+# "never retrieved" at GC time instead of reaching the log (audit #44).
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _log_background_task_failure(task: asyncio.Task[None]) -> None:
+    """Done-callback: drop the task reference and surface any exception it raised."""
+    _background_tasks.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.opt(exception=error).warning("Background announce task failed: {}", error)
 
 
 async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
@@ -157,8 +173,6 @@ def _schedule_descendant_wake_if_needed(run: SubagentRunRecord) -> None:
     if not run.wake_on_descendant_settle:
         return
 
-    import asyncio
-
     async def _check():
         await asyncio.sleep(5.0)
         try:
@@ -172,4 +186,6 @@ def _schedule_descendant_wake_if_needed(run: SubagentRunRecord) -> None:
         except Exception as e:
             logger.debug("Descendant wake check failed for run {}: {}", run.run_id, e)
 
-    asyncio.create_task(_check())
+    task = asyncio.create_task(_check())
+    _background_tasks.add(task)
+    task.add_done_callback(_log_background_task_failure)
