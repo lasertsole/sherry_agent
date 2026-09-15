@@ -135,7 +135,7 @@ def build_fallback_chain():
     constructed is skipped with a warning so an optional fallback never
     breaks agent startup.
     """
-    from agent.middlewares.llm_retry import FallbackCandidate
+    from pub.types.llm import FallbackCandidate
 
     chain: list[FallbackCandidate] = []
     index = 1

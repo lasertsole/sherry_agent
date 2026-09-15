@@ -45,6 +45,7 @@ from loguru import logger
 from config.features import LLM_RETRY
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from pub.func.retry_utils import jittered_backoff
+from pub.types.llm import FallbackCandidate
 from runtime import state_register_mem
 
 _STALE_STREAK_KEY = "llm_stale_streak"
@@ -76,11 +77,10 @@ class LLMRetryConfig:
     stale_giveup_threshold: int = LLM_RETRY["stale_giveup_threshold"]
 
 
-@dataclass
-class FallbackCandidate:
-    provider: str
-    model_name: str
-    model: Any
+# ``FallbackCandidate`` lives in ``pub/types/llm.py`` (shared with models) and is
+# re-exported here for backwards compatibility: ``agent.middlewares.llm_retry``
+# and ``agent.middlewares`` keep exposing the name.
+__all__ = ["ContentFilterError", "FallbackCandidate", "LLMRetryConfig", "LLMRetryMiddleware"]
 
 
 class LLMRetryMiddleware(AgentMiddleware):
