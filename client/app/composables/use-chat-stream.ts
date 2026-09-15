@@ -194,13 +194,19 @@ export function useChatStream(deps: ChatStreamDeps) {
     ];
   };
 
-  /** Drop the badges belonging to the given turn (turn-scoped clear helper). */
+  /**
+   * Drop the badges belonging to the given turn (turn-scoped clear helper).
+   * @param turnNum
+   */
   const clearQueueBadgeForTurn = (turnNum: number | null) => {
     if (turnNum === null) return;
     queueBadges.value = queueBadges.value.filter(badge => badge.turn !== turnNum);
   };
 
-  /** Drop the badges of the given member `msg_id`s (turn_started consolidation). */
+  /**
+   * Drop the badges of the given member `msg_id`s (turn_started consolidation).
+   * @param msgIds
+   */
   const clearQueueBadgesFor = (msgIds: string[]) => {
     const ids = new Set(msgIds);
     queueBadges.value = queueBadges.value.filter(badge => !ids.has(badge.msgId));
@@ -276,7 +282,11 @@ export function useChatStream(deps: ChatStreamDeps) {
     chatMessages.value = [...chatMessages.value];
   };
 
-  /** Drop the send registry entries of a finished turn (and its batch members). */
+  /**
+   * Drop the send registry entries of a finished turn (and its batch members).
+   * @param turnNum
+   * @param memberTurns
+   */
   const dropSendEntries = (turnNum: number, memberTurns: number[]) => {
     const turns = new Set<number>([turnNum, ...memberTurns]);
     for (const [msgId, entry] of sendByMsgId) {
@@ -284,7 +294,14 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
   };
 
-  /** Attach the model metadata carried by the done frame onto the turn's AI message. */
+  /**
+   * Attach the model metadata carried by the done frame onto the turn's AI message.
+   * @param turnNum
+   * @param meta
+   * @param meta.modelName
+   * @param meta.inputTokens
+   * @param meta.outputTokens
+   */
   const attachDoneMeta = (
     turnNum: number,
     meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }
@@ -410,6 +427,17 @@ export function useChatStream(deps: ChatStreamDeps) {
    * @param text User input content
    */
   const handleSend = async (text: string) => {
+    // 128K MAX_TOKEN guard: warn (non-blocking) when the backend config is
+    // invalid; the warning stays silent when valid or when the fetch fails.
+    try {
+      const cfg = await getModelConfigCached();
+      if (!cfg.valid) {
+        toastWarn(t('chat.tokenGuard.title'), t('chat.tokenGuard.detail'), 6000);
+      }
+    } catch {
+      // Config fetch failure (backend down, etc.) — stay silent, never block sending.
+    }
+
     const sid = sessionId.value || 'default';
 
     // When the user sends a message, make sure the right side returns to the chat area (if it was previously on the background task list page)

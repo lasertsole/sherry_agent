@@ -19,7 +19,11 @@
     "defaultAiName": "Sherry"
   },
   "chat": {
-    "backgroundMessage": "Background task"
+    "backgroundMessage": "Background task",
+    "tokenGuard": {
+      "title": "Model Config Below Minimum",
+      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Environment."
+    }
   },
   "errors": {
     "requestFailed": "Request failed",

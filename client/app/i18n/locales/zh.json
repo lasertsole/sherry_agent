@@ -19,7 +19,11 @@
     "defaultAiName": "橘雪莉"
   },
   "chat": {
-    "backgroundMessage": "后台任务"
+    "backgroundMessage": "后台任务",
+    "tokenGuard": {
+      "title": "模型配置不达标",
+      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 环境配置中修正。"
+    }
   },
   "errors": {
     "requestFailed": "请求失败",

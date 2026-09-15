@@ -19,7 +19,11 @@
     "defaultAiName": "셰리"
   },
   "chat": {
-    "backgroundMessage": "백그라운드 작업"
+    "backgroundMessage": "백그라운드 작업",
+    "tokenGuard": {
+      "title": "모델 설정이 최소값 미만",
+      "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 128K (131072) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 환경 설정에서 수정하세요."
+    }
   },
   "errors": {
     "requestFailed": "요청 실패",

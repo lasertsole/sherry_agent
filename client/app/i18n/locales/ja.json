@@ -19,7 +19,11 @@
     "defaultAiName": "シェリー"
   },
   "chat": {
-    "backgroundMessage": "バックグラウンドタスク"
+    "backgroundMessage": "バックグラウンドタスク",
+    "tokenGuard": {
+      "title": "モデル設定が最小値未満",
+      "detail": "MAIN_LLM_MAX_TOKEN または AUXILIARY_LLM_MAX_TOKEN が 128K (131072) を下回っています。エージェントが実行を拒否する可能性があります。システム設定 → 環境設定で修正してください。"
+    }
   },
   "errors": {
     "requestFailed": "リクエストに失敗しました",

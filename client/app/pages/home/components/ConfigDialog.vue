@@ -205,6 +205,13 @@
 
               <template v-else>
                 <div
+                  v-if="hasMaxTokenKeys"
+                  class="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20 p-3 mb-2">
+                  <p class="m-0 text-xs text-amber-700 dark:text-amber-300">
+                    {{ t('config.env.maxTokenHint') }}
+                  </p>
+                </div>
+                <div
                   v-for="group in envGroups"
                   :key="group.name"
                   class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
@@ -333,6 +340,11 @@ const envHasChanges = computed(() =>
   envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
 );
 
+/** Whether the env tab exposes either MAX_TOKEN key (drives the 128K threshold banner) */
+const hasMaxTokenKeys = computed(() =>
+  envGroups.value.some(group => group.entries.some(e => e.key.endsWith('_MAX_TOKEN')))
+);
+
 /** Lazily loads the .env config when the env tab is opened (backend GET /env) */
 const loadEnvConfig = async () => {
   if (envLoaded.value) return;
@@ -362,6 +374,21 @@ const persistEnvChanges = async (): Promise<boolean> => {
     }
   }
   if (Object.keys(changes).length === 0) return true;
+
+  // MAX_TOKEN guard: pre-validate before the PUT so a sub-128K value is rejected
+  // in the dialog (the backend write_env_file enforces the same floor).
+  const TOKEN_KEYS = ['MAIN_LLM_MAX_TOKEN', 'AUXILIARY_LLM_MAX_TOKEN'];
+  const MIN_TOKEN = 131072;
+  for (const [key, value] of Object.entries(changes)) {
+    if (TOKEN_KEYS.includes(key)) {
+      const num = parseInt(value, 10);
+      if (Number.isNaN(num) || num < MIN_TOKEN) {
+        envLoadError.value = t('config.env.maxTokenError', { key });
+        return false;
+      }
+    }
+  }
+
   const ok = await writeEnvConfig(changes);
   if (ok) {
     // Sync the snapshot to serve as the baseline for the next diff
@@ -721,9 +748,12 @@ const handleSave = async () => {
     if (activeTab.value === 2 && envHasChanges.value) {
       const ok = await persistEnvChanges();
       if (!ok) {
-        envLoadError.value = t('config.env.saveFailed');
+        // persistEnvChanges may already have set a specific validation error
+        // (MAX_TOKEN guard); only fall back to the generic save-failed message.
+        if (!envLoadError.value) envLoadError.value = t('config.env.saveFailed');
         return;
       }
+      invalidateModelConfigCache();
     }
 
     // Sherry config: same contract as the env tab — abort on save failure without closing the dialog.
@@ -783,7 +813,9 @@ const onHide = () => {
         "loadError": "环境配置加载失败，请检查后端服务是否已启动。",
         "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
-        "noEnvFile": "未找到 .env 文件。"
+        "noEnvFile": "未找到 .env 文件。",
+        "maxTokenHint": "MAIN_LLM_MAX_TOKEN 和 AUXILIARY_LLM_MAX_TOKEN 必须 >= 131072 (128K)，否则 Agent 将拒绝启动。",
+        "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。"
       },
       "sherry": {
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
@@ -828,7 +860,9 @@ const onHide = () => {
         "loadError": "Failed to load environment config. Please check the backend service.",
         "saveFailed": "Failed to save environment config.",
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
-        "noEnvFile": "No .env file found."
+        "noEnvFile": "No .env file found.",
+        "maxTokenHint": "MAIN_LLM_MAX_TOKEN and AUXILIARY_LLM_MAX_TOKEN must be >= 131072 (128K), otherwise the agent will refuse to start.",
+        "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save."
       },
       "sherry": {
         "loadError": "Failed to load app config. Please check the backend service.",
@@ -873,7 +907,9 @@ const onHide = () => {
         "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
         "saveFailed": "環境設定の保存に失敗しました。",
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
-        "noEnvFile": ".env ファイルが見つかりません。"
+        "noEnvFile": ".env ファイルが見つかりません。",
+        "maxTokenHint": "MAIN_LLM_MAX_TOKEN と AUXILIARY_LLM_MAX_TOKEN は 131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。",
+        "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。"
       },
       "sherry": {
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
@@ -918,7 +954,9 @@ const onHide = () => {
         "loadError": "환경 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
         "saveFailed": "환경 설정을 저장하지 못했습니다.",
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
-        "noEnvFile": ".env 파일을 찾을 수 없습니다."
+        "noEnvFile": ".env 파일을 찾을 수 없습니다.",
+        "maxTokenHint": "MAIN_LLM_MAX_TOKEN 및 AUXILIARY_LLM_MAX_TOKEN은 131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다.",
+        "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다."
       },
       "sherry": {
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
