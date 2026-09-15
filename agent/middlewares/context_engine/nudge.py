@@ -15,6 +15,7 @@ from loguru import logger
 from config.features import SUMMARIZATION
 from config.path import ROOT_DIR
 from runtime import state_register_db, state_register_mem
+from runtime.lane import LaneType, lane_slot
 
 
 # Lazy import to avoid circular dependency with IterationBudget
@@ -499,15 +500,19 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
 
 
 async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
+    # NUDGE lane is event-loop-bound: acquire only on the main loop. The sync
+    # after_agent path no longer dispatches nudges (ContextEngineHook.after_agent),
+    # so no run_async() worker loop ever touches this semaphore.
     state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
     try:
-        _agent = await _create_nudge_agent(system_prompt)
-        res = await _agent.ainvoke(
-            input={
-                "session_id": session_id,
-                "messages": [*messages, HumanMessage(content=_MEMORY_REVIEW_PROMPT)],
-            }
-        )
+        async with lane_slot(LaneType.NUDGE):
+            _agent = await _create_nudge_agent(system_prompt)
+            res = await _agent.ainvoke(
+                input={
+                    "session_id": session_id,
+                    "messages": [*messages, HumanMessage(content=_MEMORY_REVIEW_PROMPT)],
+                }
+            )
         logger.debug("nudge memory res is {}", res["messages"][-1])
     finally:
         state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
@@ -602,13 +607,14 @@ async def _nudge_plan_extraction(
         prompt = _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
         prompt = prompt.replace("{facts_section}", _render_facts_section(pending))
 
-        _agent = await _create_nudge_agent(system_prompt)
-        res = await _agent.ainvoke(
-            input={
-                "session_id": session_id,
-                "messages": [*messages, HumanMessage(content=prompt)],
-            }
-        )
+        async with lane_slot(LaneType.NUDGE):
+            _agent = await _create_nudge_agent(system_prompt)
+            res = await _agent.ainvoke(
+                input={
+                    "session_id": session_id,
+                    "messages": [*messages, HumanMessage(content=prompt)],
+                }
+            )
         logger.debug("plan extraction res is {}", res["messages"][-1])
         if pending:
             _advance_facts_consumed(session_id, pending["end"])
@@ -698,17 +704,18 @@ async def update_todos_from_compaction(session_id: str, discarded_messages: Sequ
         context = _COMPRESSION_TODO_CONTEXT_TEMPLATE.replace(
             "{discarded_text}", discarded_text
         ).replace("{todos}", json.dumps(todos, ensure_ascii=False, indent=2))
-        agent = await _create_nudge_agent(
-            _COMPRESSION_TODO_PROMPT,
-            allowed_metadata_key=_COMPRESSION_TODO_METADATA_KEY,
-            tools=[_build_main_session_todowrite(session_id)],
-        )
-        res = await agent.ainvoke(
-            input={
-                "session_id": derived_session_id,
-                "messages": [HumanMessage(content=context)],
-            }
-        )
+        async with lane_slot(LaneType.NUDGE):
+            agent = await _create_nudge_agent(
+                _COMPRESSION_TODO_PROMPT,
+                allowed_metadata_key=_COMPRESSION_TODO_METADATA_KEY,
+                tools=[_build_main_session_todowrite(session_id)],
+            )
+            res = await agent.ainvoke(
+                input={
+                    "session_id": derived_session_id,
+                    "messages": [HumanMessage(content=context)],
+                }
+            )
         logger.debug("compression todo update res is {}", res["messages"][-1])
     except Exception:
         logger.exception("compression todo update failed (fail-open) for {}", session_id)

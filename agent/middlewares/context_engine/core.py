@@ -11,7 +11,7 @@ from workspace.prompt_builder import build_system_prompt
 from runtime import state_register_db, state_register_mem
 from config.features import CONTEXT_ENGINE_HOOK
 from .nudge import _nudge_memory, _nudge_plan_extraction, _PLAN_EXTRACTION_LOCK_KEY
-from pub.func import sanitize_tool_use_result_pairing, slice_last_turn, run_async
+from pub.func import sanitize_tool_use_result_pairing, slice_last_turn
 from langchain.agents.middleware import AgentMiddleware, ModelResponse, ModelRequest
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, SystemMessage
 from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse, StateT
@@ -290,18 +290,21 @@ class ContextEngineHook(AgentMiddleware):
 
     @override
     def after_agent(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
+        """Sync protocol hook — nudge is dispatched ONLY by ``aafter_agent``.
+
+        LangChain 1.3 builds the after_agent graph node as
+        ``RunnableCallable(sync_after_agent, async_after_agent)``: ``ainvoke``
+        (all production consumers: the WS/REST stream, auto-turn and every
+        child agent) calls the async override, while sync ``invoke`` calls this
+        method. The sync path previously dispatched the nudge agents through
+        ``run_async()`` — a NEW thread + NEW event loop — which cannot acquire
+        the event-loop-bound NUDGE lane semaphore without a cross-loop rebind.
+        Since no production caller invokes the main graph synchronously, that
+        dispatch is dead code; the counter/lock bookkeeping in
+        ``_after_agent_impl`` is kept so the sync hook stays protocol-complete.
+        """
         logger.debug("{} after_agent hook fired", type(self).__name__)
-        result = self._after_agent_impl(state)
-        if result is None:
-            return None
-
-        session_id, system_prompt, messages, need_memory, need_plan_extraction = result
-
-        if need_memory:
-            run_async(_nudge_memory(session_id, system_prompt, messages))
-        if need_plan_extraction:
-            run_async(_nudge_plan_extraction(session_id, system_prompt, messages))
-
+        self._after_agent_impl(state)
         return None
 
     @override

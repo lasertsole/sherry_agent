@@ -446,6 +446,10 @@ def delegate_task(
         max_concurrent=max_concurrent,
     )
 
+    # No run_async()/_arun bridge: delegate_task is a plain sync programmatic
+    # API (not a LangChain tool), so LangChain never dispatches it. Dispatch
+    # owns a transient loop here; the spawned SUBAGENT lane semaphore binds to
+    # it and Wave-1 rebinding covers a later main-loop acquire.
     if run_in_background:
         result = asyncio.run(_dispatch_async(**dispatch_kwargs))
         return _to_handle(result, background=True)

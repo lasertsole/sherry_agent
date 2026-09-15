@@ -180,21 +180,25 @@ class TestNudgeDispatch:
 
         assert sorted(calls) == ["memory", "persist", "plan"]
 
-    def test_after_agent_dispatches_plan_extraction(self, monkeypatch):
+    def test_after_agent_never_dispatches_nudge(self, monkeypatch):
+        """Sync after_agent is protocol-only: nudge dispatch belongs to aafter_agent.
+
+        The old sync path bridged through run_async() (a fresh thread + loop),
+        which cannot acquire the loop-bound NUDGE lane semaphore.
+        """
         hook = ContextEngineHook()
         monkeypatch.setattr(
             hook,
             "_after_agent_impl",
-            lambda state: ("sess-sync", "sys", [], False, True),
+            lambda state: ("sess-sync", "sys", [], True, True),
         )
-        monkeypatch.setattr(ce_core, "_nudge_memory", lambda *args: "memory-coro")
-        monkeypatch.setattr(ce_core, "_nudge_plan_extraction", lambda *args: "plan-coro")
-        scheduled: list[str] = []
-        monkeypatch.setattr(ce_core, "run_async", lambda coro: scheduled.append(coro))
+        calls: list[str] = []
+        monkeypatch.setattr(ce_core, "_nudge_memory", lambda *args: calls.append("memory"))
+        monkeypatch.setattr(ce_core, "_nudge_plan_extraction", lambda *args: calls.append("plan"))
 
         hook.after_agent({"session_id": "sess-sync", "messages": []}, None)
 
-        assert scheduled == ["plan-coro"]
+        assert calls == []
 
 
 # ---------------------------------------------------------------------------
