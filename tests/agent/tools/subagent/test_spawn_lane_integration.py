@@ -152,3 +152,34 @@ class TestSpawnLaneQueueing:
         await _wait_for_lane_drain(manager)
 
         assert executor.started == run_ids
+
+
+class TestMainLaneIndependence:
+    """§18: a MAIN-slot holder waiting on a child cannot starve that child."""
+
+    @pytest.mark.asyncio
+    async def test_subagent_runs_while_main_lane_slot_is_held(
+        self, _fresh_lane_manager: LaneManager, executor: _BlockingExecutor
+    ):
+        manager = _fresh_lane_manager
+        manager.set_concurrency(LaneType.MAIN, 1)
+        manager.set_concurrency(LaneType.SUBAGENT, 1)
+
+        main_lane = manager.get_lane(LaneType.MAIN)
+        await main_lane.acquire()  # the only MAIN slot: an in-flight main turn
+        try:
+            spawned = await spawn_subagent_direct(
+                task="child", requester_session_key="agent:main:session:lane_independence"
+            )
+            assert spawned.status == "accepted"
+
+            # The child reaches RUNNING on the independent SUBAGENT lane while the
+            # MAIN slot is still held, so "hold MAIN, wait for a child" cannot form
+            # a cross-lane wait cycle.
+            await _wait_for_status(spawned.run_id, ExecutionStatus.RUNNING)
+            assert executor.started == [spawned.run_id]
+            assert main_lane.active_count == 1
+        finally:
+            executor.release()
+            await _wait_for_lane_drain(manager)
+            main_lane.release()
