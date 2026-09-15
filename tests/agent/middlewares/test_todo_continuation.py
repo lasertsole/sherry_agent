@@ -4,14 +4,16 @@ Uses the installed langchain 1.3.9 hook contract: ``aafter_agent(state, runtime)
 returning ``None`` (the continuation prompt is delivered through the
 fire-and-forget ``maybe_trigger_auto_turn`` path, never a state update).
 
-Hermetic: ``store_sqlite.get_todos_sync`` is monkeypatched and
-``maybe_trigger_auto_turn`` is spied; every injected prompt is asserted to
-arrive as a ``HumanMessage`` whose text carries the design-doc marker. No real
-sleeps, no DB writes.
+Hermetic: ``store_sqlite.get_todos_sync`` is monkeypatched and the
+``maybe_trigger_auto_turn`` runtime hook is replaced by a spy (or deliberately
+left unregistered to prove the no-op degradation); every injected prompt is
+asserted to arrive as a ``HumanMessage`` whose text carries the design-doc
+marker. No real sleeps, no DB writes.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -20,6 +22,7 @@ from langchain_core.messages import HumanMessage
 import agent.middlewares.todo_continuation as tc
 from agent.tools.todolist import stagnation_tracker as st
 from agent.tools.todolist.registry import store_sqlite as todo_store
+from runtime import hooks
 
 pytestmark = [pytest.mark.unit]
 
@@ -64,18 +67,17 @@ def _clean() -> None:
 
 
 @pytest.fixture()
-def spy_auto_turn(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, HumanMessage]]:
-    """Capture ``maybe_trigger_auto_turn(session_key, injection)`` calls."""
+def spy_auto_turn() -> Iterator[list[tuple[str, HumanMessage]]]:
+    """Capture ``maybe_trigger_auto_turn(session_key, injection)`` hook calls."""
     calls: list[tuple[str, HumanMessage]] = []
 
     async def _spy(session_key: str, injection: HumanMessage) -> object:
         calls.append((session_key, injection))
         return object()
 
-    import server.service.auto_turn as auto_turn
-
-    monkeypatch.setattr(auto_turn, "maybe_trigger_auto_turn", _spy)
-    return calls
+    hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, _spy)
+    yield calls
+    hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
 
 
 # ============================================================================
@@ -243,15 +245,28 @@ async def test_auto_turn_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch) -
     async def _boom(session_key: str, injection: HumanMessage) -> object:
         raise RuntimeError("auto turn exploded")
 
-    import server.service.auto_turn as auto_turn
-
-    monkeypatch.setattr(auto_turn, "maybe_trigger_auto_turn", _boom)
-
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, _boom)
+    try:
+        result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    finally:
+        hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
 
     assert result is None
     # Fail-open: a failed injection must not mark the session as injected, so
     # the next turn retries instead of being locked out by a phantom cooldown.
+    assert _SID not in st._last_inject_time
+
+
+@pytest.mark.asyncio
+async def test_missing_hook_degrades_to_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No server assembled: the trigger hook resolves to None -> silent no-op."""
+    _patch_todos(monkeypatch, [_todo("build api", "pending")])
+    hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
+
+    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+
+    assert result is None
+    # Nothing injected -> not marked injected -> the next turn retries.
     assert _SID not in st._last_inject_time
 
 

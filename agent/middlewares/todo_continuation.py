@@ -2,9 +2,12 @@
 
 When a turn ends with incomplete todos, the enforcer injects a continuation
 directive that pulls the model back to work. Delivery reuses the existing
-fire-and-forget infrastructure in ``server/service/auto_turn.py``: the prompt is
-handed to ``maybe_trigger_auto_turn`` as a ``HumanMessage`` and injected on the
-next idle turn — the middleware itself never mutates state.
+fire-and-forget auto-turn infrastructure, resolved through ``runtime.hooks``
+(the agent layer must not reach up into the server layer): the prompt is
+handed to the registered trigger as a ``HumanMessage`` and injected on the
+next idle turn — the middleware itself never mutates state. When no trigger
+is registered (evals, unit tests, any process that never assembled a server)
+the injection is a no-op and the session stays retryable.
 
 Tailored from omo ``todo-continuation-enforcer``:
 
@@ -25,11 +28,14 @@ enforcer can never break a turn.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from loguru import logger
+
+from runtime import hooks
 
 __all__ = ["TodoContinuationEnforcer"]
 
@@ -94,6 +100,22 @@ def _turn_error(state: Any) -> BaseException | None:
         if isinstance(value, BaseException):
             return value
     return None
+
+
+_hook_misses_logged: set[str] = set()
+
+
+def _resolve_hook(name: str) -> Callable[..., Any] | None:
+    """Resolve a runtime hook, logging the first miss per name (once)."""
+    fn = hooks.resolve(name)
+    if fn is None and name not in _hook_misses_logged:
+        _hook_misses_logged.add(name)
+        logger.debug(
+            "todo continuation: runtime hook {!r} is not registered; "
+            "continuation delivery degrades to a no-op",
+            name,
+        )
+    return fn
 
 
 class TodoContinuationEnforcer(AgentMiddleware):
@@ -166,13 +188,20 @@ class TodoContinuationEnforcer(AgentMiddleware):
             return None
 
     async def _inject(self, session_id: str, prompt: str) -> None:
-        """Fire-and-forget the prompt; record the injection only on success."""
+        """Fire-and-forget the prompt; record the injection only on success.
+
+        The trigger is owned by the server layer and resolved through
+        ``runtime.hooks``; an unregistered hook is a no-op that leaves the
+        session retryable.
+        """
         try:
             from agent.tools.todolist import stagnation_tracker as st
-            from server.service.auto_turn import maybe_trigger_auto_turn
 
+            trigger = _resolve_hook(hooks.MAYBE_TRIGGER_AUTO_TURN)
+            if trigger is None:
+                return
             session_key = f"agent:main:session:{session_id}"
-            await maybe_trigger_auto_turn(session_key, HumanMessage(content=prompt))
+            await trigger(session_key, HumanMessage(content=prompt))
             st.mark_injected(session_id)
         except Exception:
             logger.exception(

@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ from agent.tools.todolist import service as todo_service
 from agent.tools.todolist.registry import store_sqlite as todo_store
 from agent.tools.todolist.service import TodoStoreError
 from agent.tools.todolist.tools import _FANOUT_REMINDER, build_todolist_tools
+from runtime import hooks
 
 pytestmark = [pytest.mark.integration]
 
@@ -249,18 +251,17 @@ def prompt_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_stores:
 
 
 @pytest.fixture()
-def spy_auto_turn(monkeypatch: pytest.MonkeyPatch) -> list:
-    """Capture ``maybe_trigger_auto_turn`` injections (E3 delivery seam)."""
+def spy_auto_turn() -> Iterator[list[tuple[str, HumanMessage]]]:
+    """Capture ``maybe_trigger_auto_turn`` injections through the runtime hook (E3 seam)."""
     calls: list[tuple[str, HumanMessage]] = []
 
     async def _spy(session_key: str, injection: HumanMessage) -> object:
         calls.append((session_key, injection))
         return object()
 
-    import server.service.auto_turn as auto_turn
-
-    monkeypatch.setattr(auto_turn, "maybe_trigger_auto_turn", _spy)
-    return calls
+    hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, _spy)
+    yield calls
+    hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
 
 
 # ===========================================================================
