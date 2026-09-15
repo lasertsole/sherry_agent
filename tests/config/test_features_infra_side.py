@@ -194,13 +194,25 @@ CASES: list[tuple[str, object, object, dict[str, object]]] = [
         fs.ChannelsConfig,
         {"dep_install_timeout_seconds": 120},
     ),
+    (
+        "LANE_SYSTEM",
+        fs.LANE_SYSTEM,
+        fs.LaneSystemConfig,
+        {
+            "subagent_max_concurrent": 8,
+            "nudge_max_concurrent": 4,
+            "nested_max_concurrent": 1,
+            "lane_wait_warn_ms": 5000,
+            "lane_drain_timeout_seconds": 30.0,
+        },
+    ),
 ]
 
 
-def test_all_seventeen_features_present() -> None:
-    # 16 data-driven cases plus GATEWAY, which is env-sourced and covered by
+def test_all_features_present() -> None:
+    # 17 data-driven cases plus GATEWAY, which is env-sourced and covered by
     # the dedicated builder tests below.
-    assert len(CASES) + 1 == 17
+    assert len(CASES) + 1 == 18
 
 
 @pytest.mark.parametrize(("name", "instance", "typed_dict", "_specimen"), CASES)
@@ -285,5 +297,64 @@ class TestPackageAggregator:
     def test_reexports_both_halves(self) -> None:
         import config.features as features
 
-        for name in ("SUMMARIZATION", "MODEL_BACKEND", "GATEWAY", "CRON_SERVICE", "CHANNELS"):
+        for name in (
+            "SUMMARIZATION",
+            "MODEL_BACKEND",
+            "GATEWAY",
+            "CRON_SERVICE",
+            "CHANNELS",
+            "LANE_SYSTEM",
+            "validate_lane_config",
+        ):
             assert hasattr(features, name), name
+
+
+class TestLaneConfig:
+    """The shipped lane limits must satisfy their own invariant on every CPU count."""
+
+    @pytest.mark.parametrize("cpu_count", [1, 4, 8, 12, 16, 64, 256])
+    def test_resolved_main_concurrency_is_always_invariant_safe(
+        self, monkeypatch: pytest.MonkeyPatch, cpu_count: int
+    ) -> None:
+        from config.features.infra_side import lane_system
+
+        monkeypatch.setattr(lane_system.os, "cpu_count", lambda: cpu_count)
+
+        resolved = lane_system._resolve_main_concurrency()
+        floor = (
+            lane_system.LANE_SYSTEM["subagent_max_concurrent"]
+            + lane_system.LANE_SYSTEM["nudge_max_concurrent"]
+        )
+
+        assert floor <= resolved <= 16
+
+    def test_shipped_default_passes_validation(self) -> None:
+        from config.features.infra_side import lane_system
+
+        lane_system.validate_lane_config()
+
+    def test_starved_main_lane_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from config.features.infra_side import lane_system
+
+        monkeypatch.setattr(
+            lane_system,
+            "LANE_SYSTEM",
+            {**lane_system.LANE_SYSTEM, "main_max_concurrent": 1},
+        )
+
+        with pytest.raises(ValueError, match="MAIN lane"):
+            lane_system.validate_lane_config()
+
+    @pytest.mark.parametrize(
+        "key",
+        ["subagent_max_concurrent", "nudge_max_concurrent", "nested_max_concurrent"],
+    )
+    def test_non_positive_lane_limits_are_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, key: str
+    ) -> None:
+        from config.features.infra_side import lane_system
+
+        monkeypatch.setattr(lane_system, "LANE_SYSTEM", {**lane_system.LANE_SYSTEM, key: 0})
+
+        with pytest.raises(ValueError, match=key):
+            lane_system.validate_lane_config()
