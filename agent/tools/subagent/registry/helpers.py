@@ -54,8 +54,12 @@ def resolve_archive_after_ms(config: SubagentConfig | None = None) -> int:
 
 
 def is_live_unended_run(run: SubagentRunRecord) -> bool:
-    """Return True if the run is RUNNING or INTERRUPTED (not yet terminated)."""
-    return run.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
+    """Return True if the run is PENDING, RUNNING, or INTERRUPTED (not yet terminated)."""
+    return run.execution.status in (
+        ExecutionStatus.PENDING,
+        ExecutionStatus.RUNNING,
+        ExecutionStatus.INTERRUPTED,
+    )
 
 
 def has_run_ended(run: SubagentRunRecord) -> bool:

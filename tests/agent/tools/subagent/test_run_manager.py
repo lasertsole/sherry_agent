@@ -28,8 +28,8 @@ class TestRegisterRun:
             task="Do something",
         )
         assert run.run_id
-        assert run.execution.status == ExecutionStatus.RUNNING
-        assert run.execution.started_at is not None
+        assert run.execution.status == ExecutionStatus.PENDING
+        assert run.execution.started_at is None
         assert get(run.run_id) is not None
 
     def test_with_optional_params(self):
@@ -119,6 +119,45 @@ class TestMarkRunRunning:
         mark_run_paused_after_yield(run.run_id)
         updated = mark_run_running(run.run_id)
         assert updated.execution.status == ExecutionStatus.RUNNING
+
+    def test_pending_to_running_stamps_started_at(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:abc",
+            requester_session_key="agent:main:session:p1",
+            task="test",
+        )
+        assert run.execution.status == ExecutionStatus.PENDING
+        assert run.execution.started_at is None
+
+        updated = mark_run_running(run.run_id)
+        assert updated.execution.status == ExecutionStatus.RUNNING
+        assert updated.execution.started_at is not None
+
+    def test_running_is_noop(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:abc",
+            requester_session_key="agent:main:session:p1",
+            task="test",
+        )
+        first = mark_run_running(run.run_id)
+        started_at = first.execution.started_at
+
+        second = mark_run_running(run.run_id)
+        assert second.execution.status == ExecutionStatus.RUNNING
+        assert second.execution.started_at == started_at
+
+    def test_terminal_is_noop(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:abc",
+            requester_session_key="agent:main:session:p1",
+            task="test",
+        )
+        complete_run(run.run_id, RunOutcome(status=RunOutcomeStatus.KILLED))
+        updated = mark_run_running(run.run_id)
+        assert updated.execution.status == ExecutionStatus.TERMINAL
+
+    def test_missing(self):
+        assert mark_run_running("nonexistent") is None
 
 
 class TestCompleteRun:

@@ -3,6 +3,7 @@ from agent.tools.subagent.registry.helpers import (
     cap_frozen_result_text,
     resolve_announce_retry_delay_seconds,
     is_live_unended_run,
+    is_stale_unended_run,
     has_run_ended,
     reconcile_orphaned_run,
 )
@@ -64,6 +65,10 @@ class TestRunLiveness:
         run = _make_run()
         assert is_live_unended_run(run)
 
+    def test_live_pending(self):
+        run = _make_run(execution=ExecutionState(status=ExecutionStatus.PENDING, started_at=None))
+        assert is_live_unended_run(run)
+
     def test_live_interrupted(self):
         run = _make_run(execution=ExecutionState(status=ExecutionStatus.INTERRUPTED))
         assert is_live_unended_run(run)
@@ -71,6 +76,10 @@ class TestRunLiveness:
     def test_not_live_terminal(self):
         run = _make_run(execution=ExecutionState(status=ExecutionStatus.TERMINAL))
         assert not is_live_unended_run(run)
+
+    def test_pending_never_stale(self):
+        run = _make_run(execution=ExecutionState(status=ExecutionStatus.PENDING, started_at=None))
+        assert not is_stale_unended_run(run)
 
     def test_has_ended(self):
         run = _make_run(execution=ExecutionState(status=ExecutionStatus.TERMINAL))

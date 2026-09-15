@@ -88,8 +88,8 @@ def register_run(
         expects_completion_message=expects_completion_message,
         wake_on_descendant_settle=wake_on_descendant_settle,
         execution=ExecutionState(
-            status=ExecutionStatus.RUNNING,
-            started_at=time.monotonic(),
+            status=ExecutionStatus.PENDING,
+            started_at=None,  # stamped on the PENDING → RUNNING transition inside the lane slot
         ),
         completion=CompletionState(required=completion_required),
         delivery=CompletionDeliveryState(
@@ -145,16 +145,25 @@ def mark_run_paused_after_yield(run_id: str) -> SubagentRunRecord | None:
 
 
 def mark_run_running(run_id: str) -> SubagentRunRecord | None:
-    """Transition an INTERRUPTED run back to RUNNING, clearing the pause reason."""
+    """Transition a PENDING or INTERRUPTED run to RUNNING, clearing the pause reason.
+
+    PENDING runs get ``started_at`` stamped here — that is the moment the run
+    actually holds a lane slot, so queue wait time is never counted as run
+    time. RUNNING and TERMINAL runs are returned unchanged (no-op).
+    """
     run = memory.get(run_id)
     if run is None:
         return None
+
+    if run.execution.status not in (ExecutionStatus.PENDING, ExecutionStatus.INTERRUPTED):
+        return run
 
     updated = run.model_copy(
         update={
             "execution": run.execution.model_copy(
                 update={
                     "status": ExecutionStatus.RUNNING,
+                    "started_at": time.monotonic(),
                 }
             ),
             "pause_reason": None,

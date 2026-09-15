@@ -27,19 +27,23 @@ def list_descendant_runs(requester_session_key: str) -> list[SubagentRunRecord]:
 
 
 def count_active_runs_for_session(session_key: str) -> int:
-    """Count runs with RUNNING status for the given requester session."""
+    """Count RUNNING or PENDING runs for the given requester session."""
     return sum(
         1
         for run in memory.values()
         if run.requester_session_key == session_key
-        and run.execution.status == ExecutionStatus.RUNNING
+        and run.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.PENDING)
     )
 
 
 def count_active_descendant_runs(session_key: str) -> int:
-    """Count RUNNING-status runs among all descendants of the given session."""
+    """Count RUNNING or PENDING runs among all descendants of the given session."""
     descendants = list_descendant_runs(session_key)
-    return sum(1 for run in descendants if run.execution.status == ExecutionStatus.RUNNING)
+    return sum(
+        1
+        for run in descendants
+        if run.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.PENDING)
+    )
 
 
 def count_pending_descendant_runs(session_key: str) -> int:
@@ -85,5 +89,9 @@ def list_runs_for_controller(controller_session_key: str) -> list[SubagentRunRec
 
 
 def count_all_active_runs() -> int:
-    """Count all RUNNING-status runs across all sessions (global concurrency view)."""
-    return sum(1 for run in memory.values() if run.execution.status == ExecutionStatus.RUNNING)
+    """Count all RUNNING or PENDING runs across all sessions (global concurrency view)."""
+    return sum(
+        1
+        for run in memory.values()
+        if run.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.PENDING)
+    )

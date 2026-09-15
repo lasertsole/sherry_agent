@@ -12,6 +12,7 @@ from .capability import SubagentSessionRole, ControlScope
 class ExecutionStatus(StrEnum):
     """Top-level execution phase of a sub-agent run."""
 
+    PENDING = "pending"  # registered, waiting for a SUBAGENT lane slot
     RUNNING = "running"
     INTERRUPTED = "interrupted"
     TERMINAL = "terminal"

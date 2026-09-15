@@ -100,3 +100,38 @@ def test_count_all_active_runs_global():
         assert count_all_active_runs_readonly() == 1
     finally:
         clear_registry()
+
+
+def test_pending_counts_as_active():
+    """PENDING runs hold a spawn slot: all three counters must include them."""
+    from agent.tools.subagent.registry import (
+        register_run,
+        count_active_runs_for_session,
+        count_active_descendant_runs,
+        count_all_active_runs,
+        clear as clear_registry,
+    )
+    from agent.tools.subagent.types.registry import ExecutionStatus
+
+    clear_registry()
+    try:
+        root = register_run(
+            child_session_key="agent:main:subagent:p_root",
+            requester_session_key="agent:main:session:root",
+            task="root task",
+            depth=1,
+        )
+        child = register_run(
+            child_session_key="agent:main:subagent:p_child",
+            requester_session_key=root.child_session_key,
+            task="child task",
+            depth=2,
+        )
+        assert root.execution.status == ExecutionStatus.PENDING
+        assert child.execution.status == ExecutionStatus.PENDING
+
+        assert count_active_runs_for_session("agent:main:session:root") == 1
+        assert count_active_descendant_runs("agent:main:session:root") == 2
+        assert count_all_active_runs() == 2
+    finally:
+        clear_registry()
