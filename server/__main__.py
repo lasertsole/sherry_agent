@@ -69,6 +69,29 @@ if __name__ == "__main__":
             SRC_DIR / "data" / "boot_lifecycle.json",
         )
 
+    # MAX_TOKEN gate (config.features.token_guard): both agents must run on a
+    # >= 128K context window. Fail fast BEFORE any agent-core work, so a
+    # misconfigured .env can never serve a crippled agent.
+    from config.features import LLM_CLIENT_DEFAULTS, assert_max_token_valid
+
+    _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
+    _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
+
+    # Resolve effective values (mirrors main_llm.py / auxiliary_llm/core.py logic):
+    # an unset AUXILIARY_LLM_MAX_TOKEN falls back to
+    # LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 128K), so leaving
+    # it unset blocks startup too. Local mode (AUXILIARY_LLM_MODEL_LOCAL=true)
+    # is NOT exempt.
+    _main_val = int(_main_raw) if _main_raw else None
+    _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+
+    try:
+        assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
+        assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+    except Exception as e:
+        logger.critical("STARTUP ABORTED: {}", e)
+        raise SystemExit(1) from e
+
     # Explicit agent-core initialization: skills snapshot + memory store +
     # main tools. Moved out of agent.core import time so tests/tooling can
     # import agent.core without disk I/O. Must run

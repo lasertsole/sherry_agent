@@ -8,7 +8,7 @@ and unrelated variables are never clobbered.
 
 import re
 
-from config.features import SERVER_HTTP
+from config.features import MIN_REQUIRED_MAX_TOKEN, SERVER_HTTP
 from config.path import ENV_PATH
 
 # Canonical display groups with a human-friendly order. Each group is matched by
@@ -22,6 +22,9 @@ OTHER_GROUP = "other"
 # TAVILY_API_KEY stays in .env on purpose: it is a secret-class value and .env
 # is gitignored, unlike the tracked sherry.jsonc.
 SPLIT_OUT_KEYS = SERVER_HTTP["env_split_out_keys"]
+
+# MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
+TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
 
 # Simple env-line parser: KEY = VALUE  (allow surrounding whitespace, quoted values).
 _ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
@@ -147,6 +150,21 @@ def write_env_file(changes: dict[str, str]) -> None:
         raise ValueError(f"Unknown environment keys: {', '.join(sorted(unknown))}")
 
     by_key = {e.key: e for e in entries}
+
+    # MAX_TOKEN guard: refuse to persist a sub-128K context window, so the
+    # .env can never be saved into a state that blocks the next server boot.
+    for key, value in changes.items():
+        if key in TOKEN_KEYS:
+            try:
+                num = int(value)
+            except ValueError:
+                raise ValueError(f"{key} must be an integer, got: {value}")
+            if num < MIN_REQUIRED_MAX_TOKEN:
+                raise ValueError(
+                    f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. "
+                    f"Refusing to save."
+                )
+
     for key, value in changes.items():
         # Always write the value as-is (the UI edits the bare, unquoted value).
         # Values that need quoting (spaces or special chars) are quoted here so

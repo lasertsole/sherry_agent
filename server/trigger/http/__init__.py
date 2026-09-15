@@ -17,3 +17,4 @@ import server.trigger.http.memory
 import server.trigger.http.heartbeat
 import server.trigger.http.cron
 import server.trigger.http.subagent  # noqa: F401  (side-effect route registration)
+import server.trigger.http.model_config  # noqa: F401  (side-effect route registration)
