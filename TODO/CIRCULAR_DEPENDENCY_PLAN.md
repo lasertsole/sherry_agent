@@ -2,6 +2,7 @@
 
 **创建日期**：2026-09-15
 **状态**：待评审
+**核实记录**：2026-09-15 — 对 9 组循环逐组、双向 grep 复核（`agent→server`、`context_engine→agent`、`workspace→agent`、`models→agent`、`middlewares↔tools`、`config→models`、`context_engine↔workspace`、`agent↔skills`、`skills↔server`）：**零组已消除**，9 组全部仍存在，编号 1–9 连续，本轮无删改；计划尚未开始落地（`runtime/hooks.py`、`runtime/data_provider.py`、`pub/types/llm.py` 三个新建文件均不存在，Phase 1–3 均未实施）。
 
 ## 背景
 
