@@ -128,6 +128,22 @@ if __name__ == "__main__":
 
     init_trigger()
 
+    # Runtime hook wiring (runtime/hooks.py): the agent layer resolves
+    # server-owned callbacks through the process registry instead of reaching
+    # up into server — this is what breaks the agent <-> server import cycle.
+    # The composition root is the only place that may see both layers; run
+    # AFTER init_trigger() so the trigger modules finished importing (the WS
+    # task table exists and turn_runner's own provider push already ran).
+    # Idempotent: registration is last-writer-wins.
+    from runtime import hooks
+
+    from server.service import auto_turn as auto_turn_service
+    from server.trigger.ws import messages as ws_messages
+
+    hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, auto_turn_service.maybe_trigger_auto_turn)
+    hooks.register(hooks.AUTO_TURN_MODULE, lambda: auto_turn_service)
+    hooks.register(hooks.WS_ACTIVE_TASKS, lambda: ws_messages._active_tasks)
+
     # Lane lifecycle: fail-fast config validation + drain gate, before app.start().
     from server.service.lane_lifecycle import install_lane_lifecycle
 
