@@ -37,7 +37,8 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/` | Shared utilities (message pipeline, retry, validators) | `pub/func/message/` |
 | `models/` | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker) | `models/LLMs/main_llm.py` |
-| `runtime/` | Runtime state registers (`session/`) + process-level services (`process/`) | `runtime/session/state_register.py` |
+| `runtime/` | Runtime state registers (`session/`) + process-level services (`process/`, `lane/`) | `runtime/session/state_register.py` |
+| `runtime/lane/` | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`) | `runtime/lane/core.py` |
 | `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression) | `tests/run_tests_split.py` |
 | `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
 | `docs/` | VitePress documentation site | `docs/long-running-tasks/README.md` |
@@ -60,9 +61,30 @@ User message → Robyn WS → agent.core.built_agent() graph
   ├─ graph wrappers: apply_graph_wrappers(inner)
   │    → ContextLimitGuard(RepetitionGuard(graph))
   │
-  └─ subagents: spawn_subagent_direct() → detached child agents
-       → announce pipeline → completion drain → parent
+  ├─ lanes: runtime/lane/lane_slot() gates every dispatch point —
+  │    MAIN(turn) / SUBAGENT(child) / NUDGE(memory) / NESTED(sessions.send)
+  │
+  └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
+       SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
+       stamped there) → detached child agents → announce pipeline → drain
 ```
+
+## Concurrency Lanes (`runtime/lane/`)
+
+Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, gate concurrent work instead of rejecting it: over-limit work waits FIFO.
+
+| Lane | Constrains | Default | Config key |
+|---|---|---|---|
+| `MAIN` | main-agent turn (`_run_executor`) | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
+| `SUBAGENT` | child-agent executions (spawn + steer) | 8 | `LANE_SYSTEM["subagent_max_concurrent"]` |
+| `NUDGE` | nudge/persistence calls (`nudge.py`, 3 sites) | 4 | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `NESTED` | `sessions_send` reply turns (serial) | 1 | `LANE_SYSTEM["nested_max_concurrent"]` |
+
+- Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
+- Queueing: a spawn that passes per-parent admission but exceeds the SUBAGENT lane is registered `PENDING` (no `forbidden`); `PENDING → RUNNING` happens inside the lane slot and only then is `started_at` stamped (queue wait is not run time). `PENDING` counts as active in registry queries and is killable; orphan recovery finalizes a PENDING run that lost its task with `ended_reason="pending_orphaned"`.
+- Drain mode: `set_drain_check(fn)` makes `Lane.acquire()` refuse (without consuming a permit) while the subagent gateway reports draining.
+- Observability: `GET /lane-status` → `{main|subagent|nudge|nested: {name, max_concurrent, active, queued}}`.
+- Hot updates (`LaneManager.set_concurrency`) only affect new acquires; in-flight slots keep their permits.
 
 ## Key Configuration
 
@@ -129,5 +151,6 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 - `config/features/**` must not import `agent/` or `models/` (circular)
 - after_agent hooks run in REVERSE list order — first registered = last executed
 - `workspace/memory/facts/` is created at runtime by TieredMemoryStore — gitignored
+- `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
 - `.gitignore` line `*.db` ignores all SQLite files — DB files are never committed
 - pre-push hook runs basedpyright on the entire diff — must be 0 errors before push

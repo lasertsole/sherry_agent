@@ -1,5 +1,8 @@
 # 全局 Lane 系统 — 完整实现计划
 
+> **状态**：已完成（2026-09-15）
+> **完成记录**：Wave 1–3 已全部落地并通过验证 —— `LANE_SYSTEM` + `runtime/lane/` 核心（含 23 个单测）、PENDING + SUBAGENT lane（kill/steer/sweeper/orphan/yield 全覆盖）、NUDGE/MAIN/NESTED lane + `server/service/lane_lifecycle.py` 装配 + `GET /lane-status` + 有界退出 drain；三处偏离已如实写入文档：MAIN 默认钳制到 `≥ SUBAGENT + NUDGE`、端点为 `server/trigger/http/lane.py` 的 `GET /lane-status`（按仓库路由惯例，无 `/api` 前缀）、退出 drain 走 `atexit`（仓库无异步关闭路径，`drain_all(timeout=0)` 不阻塞退出）；文档见 `AGENTS.md` 的「Concurrency Lanes」与 `docs/long-running-tasks/README{,.zh,.ja,.ko}.md` 的「并发 Lane / 並行レーン / 동시성 레인」。
+
 > 对标 OpenClaw 的 `CommandLane` 多 lane 并发排队架构，将 Sherry 的 agent 并发控制从"计数器拒绝"升级为"全局多 lane 排队"。
 
 ---
