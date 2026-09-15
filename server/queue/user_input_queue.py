@@ -126,6 +126,11 @@ CREATE TABLE IF NOT EXISTS user_input_queue (
 _CREATE_INDEX_SQLS = (
     # FIFO scans are per-session.
     "CREATE INDEX IF NOT EXISTS idx_user_input_queue_session ON user_input_queue (session_id)",
+    # Session-scoped status filters (claim subquery, count/list active):
+    # (session_id, status) turns the per-session scan into an index range and
+    # makes count_active a covering-index lookup.
+    "CREATE INDEX IF NOT EXISTS idx_user_input_queue_session_status "
+    "ON user_input_queue (session_id, status)",
     # Idempotency: at most one ACTIVE row per client_msg_id (dedup key).
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_input_queue_client_msg_active "
     "ON user_input_queue (client_msg_id) "
