@@ -22,9 +22,10 @@ from config.features import SUMMARIZATION
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 
-# ── The context window we feed the middleware (uncapped MAIN_LLM_MAX_TOKEN) ─
-# MAIN_LLM_MAX_TOKEN = 65_536  (from .env; Task 1 of the context-compression
-# plan reset it from the historical 65_536_000 placeholder)
+# ── The context window this suite feeds the middleware (test-fixed value) ─
+# 65_536 is pinned LOCALLY for exact threshold math; it is NOT the project
+# default. The runtime value comes from MAIN_LLM_MAX_TOKEN, which the token
+# guard enforces at >= 131_072.
 MAIN_LLM_MAX_TOKEN = 65_536
 # core.py trigger: ("tokens", int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO))
 EXPECTED_THRESHOLD = int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO)  # 52_428
@@ -77,7 +78,7 @@ class TestSummarizationTriggerContract:
         return inst
 
     def test_context_window_is_uncapped_env_value(self, summarizer):
-        """Verify the injected window is the un-capped .env value.
+        """Verify the injected window is used un-capped.
 
         The redesigned middleware takes the window as the constructor param
         ``main_llm_context_window`` instead of reading ``model.profile``.
@@ -85,7 +86,7 @@ class TestSummarizationTriggerContract:
         assert summarizer._main_llm_context_window == MAIN_LLM_MAX_TOKEN == 65_536, (
             f"Expected main_llm_context_window = {MAIN_LLM_MAX_TOKEN}, "
             f"got {summarizer._main_llm_context_window}. "
-            "Check models/LLMs/main_llm.py cap removal and the .env value."
+            "Check models/LLMs/main_llm.py cap removal and the constructor wiring."
         )
 
     def test_tokens_threshold_matches_core_config(self, summarizer):

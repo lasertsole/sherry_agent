@@ -13,6 +13,7 @@ Pipeline overview:
    10. Hook dispatch (spawned / progress / ended)
 """
 
+import os
 import re
 import uuid
 import asyncio
@@ -739,7 +740,12 @@ async def _build_child_agent(
     from langchain.agents import create_agent
     from models import build_main_llm, build_auxiliary_llm
     from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
-    from config.features import ITERATION_BUDGET, SUMMARIZATION
+    from config.features import (
+        ITERATION_BUDGET,
+        LLM_CLIENT_DEFAULTS,
+        SUMMARIZATION,
+        assert_max_token_valid,
+    )
     from agent.checkpointer import build_async_sqlite_checkpointer
     from agent.middlewares import (
         IterationBudget,
@@ -751,6 +757,15 @@ async def _build_child_agent(
     )
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
     from agent.tools import build_main_tools
+
+    # Subagent spawn bypasses built_agent(), so child LLM construction validates
+    # the same 128K MAX_TOKEN floor here instead of inheriting it implicitly.
+    _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
+    _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
+    _main_val = int(_main_raw) if _main_raw else None
+    _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+    assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
+    assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
     base_tools = tools if tools is not None else build_main_tools()
     filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)

@@ -51,10 +51,14 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
     monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
     monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
     monkeypatch.setattr(agent_core, "create_agent", lambda **_: fake_compiled_graph)
-    # CI runs without .env: MAIN_LLM_MAX_TOKEN is unset, so
-    # models.LLMs.main_llm.max_tokens is None and built_agent's trigger math
-    # (main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO) would raise. Pin the
-    # window deterministically on both consumers that snapshot it at import.
+    # CI runs without .env: give the MAX_TOKEN gate a valid pair through the
+    # real env vars (never by patching the guard itself).
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    # The gate passes, but models.LLMs.main_llm.max_tokens is still None in CI,
+    # so built_agent's trigger math (main_llm_max_tokens *
+    # COMPRESSION_TRIGGER_RATIO) would raise. Pin the window deterministically
+    # on both consumers that snapshot it at import.
     context_window = 65_536
     monkeypatch.setattr(agent_core, "main_llm_max_tokens", context_window)
     from agent.wrapper import registry as wrapper_registry

@@ -1,3 +1,5 @@
+import os
+
 from skills import build_skills_snapshot
 from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
@@ -7,7 +9,12 @@ from models import build_main_llm, build_auxiliary_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
-from config.features import ITERATION_BUDGET, SUMMARIZATION
+from config.features import (
+    ITERATION_BUDGET,
+    LLM_CLIENT_DEFAULTS,
+    SUMMARIZATION,
+    assert_max_token_valid,
+)
 from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (
@@ -106,6 +113,17 @@ async def built_agent(
 ) -> ContextLimitGuardWrapper:
     global _agent, _agent_loop
     import asyncio
+
+    # MAX_TOKEN guard, runtime second line of defense: even if the server booted
+    # with a valid .env, a mid-run edit that drops either value below 128K still
+    # refuses to build the graph. TokenGuardError propagates to the caller
+    # (server/service/messages.py surfaces it as a WS error chunk).
+    _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
+    _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
+    _main_val = int(_main_raw) if _main_raw else None
+    _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+    assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
+    assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
     current_loop = asyncio.get_running_loop()
 
