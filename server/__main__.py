@@ -38,6 +38,13 @@ else:
 
 
 if __name__ == "__main__":
+    # Provider registry injection: config.schema must not import models, so the
+    # registry (self-registering on import) is pulled in explicitly here as a
+    # boot guarantee. Idempotent — import of models.providers already registers.
+    from models.providers.registry import register_provider_registry
+
+    register_provider_registry()
+
     # Crash-loop gate (runtime.process.crash_loop_breaker): record this boot before
     # any background service is allowed to start. The clean-exit marker is
     # ONE-SHOT, so it must be read BEFORE record_boot consumes it.

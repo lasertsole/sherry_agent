@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config.schema import set_provider_registry
+
 
 @dataclass(frozen=True)
 class ProviderSpec:
@@ -168,4 +170,11 @@ def find_by_name(name: str) -> ProviderSpec | None:
     return _LOOKUP.get(name)
 
 
-__all__ = ["ProviderSpec", "PROVIDERS", "find_by_name"]
+def register_provider_registry() -> None:
+    """Push this registry into ``config.schema`` (idempotent)."""
+    set_provider_registry(lambda: PROVIDERS, find_by_name)
+
+
+register_provider_registry()
+
+__all__ = ["ProviderSpec", "PROVIDERS", "find_by_name", "register_provider_registry"]

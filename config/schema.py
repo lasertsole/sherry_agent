@@ -1,11 +1,53 @@
 """Configuration schema using Pydantic."""
 
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from config import ROOT_DIR
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic.alias_generators import to_camel
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# --- Provider registry injection -------------------------------------------
+# config must not import models (dependency contract). The registry pushes its
+# metadata in via ``set_provider_registry`` (models.providers.registry at import
+# time); config only consumes the callbacks — fail-closed when unregistered.
+
+_ProviderRegistryFn = Callable[[], Sequence[Any]]
+_ProviderFindFn = Callable[[str], Any | None]
+
+_provider_registry_fn: _ProviderRegistryFn | None = None
+_provider_find_fn: _ProviderFindFn | None = None
+
+
+def set_provider_registry(
+    get_providers: _ProviderRegistryFn, find_by_name: _ProviderFindFn
+) -> None:
+    """Register the provider metadata callbacks. Idempotent (last call wins)."""
+    global _provider_registry_fn, _provider_find_fn
+    _provider_registry_fn = get_providers
+    _provider_find_fn = find_by_name
+
+
+def _registry_missing() -> RuntimeError:
+    return RuntimeError(
+        "Provider registry is not registered: call "
+        "config.schema.set_provider_registry(get_providers, find_by_name) "
+        "(import models.providers.registry) before matching LLM providers."
+    )
+
+
+def _get_providers() -> Sequence[Any]:
+    if _provider_registry_fn is None:
+        raise _registry_missing()
+    return _provider_registry_fn()
+
+
+def _find_provider(name: str) -> Any | None:
+    if _provider_find_fn is None:
+        raise _registry_missing()
+    return _provider_find_fn(name)
 
 
 class Base(BaseModel):
@@ -182,7 +224,7 @@ class Config(BaseSettings):
         self, model: str | None = None
     ) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
-        from models.providers.registry import PROVIDERS
+        providers = _get_providers()
 
         forced = self.agents.defaults.provider
         if forced != "auto":
@@ -199,14 +241,14 @@ class Config(BaseSettings):
             return kw in model_lower or kw.replace("-", "_") in model_normalized
 
         # Explicit provider prefix wins — prevents `github-copilot/...codex` matching openai_codex.
-        for spec in PROVIDERS:
+        for spec in providers:
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
                 if spec.is_oauth or spec.is_local or p.api_key:
                     return p, spec.name
 
         # Match by keyword (order follows PROVIDERS registry)
-        for spec in PROVIDERS:
+        for spec in providers:
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
                 if spec.is_oauth or spec.is_local or p.api_key:
@@ -217,7 +259,7 @@ class Config(BaseSettings):
         # Prefer providers whose detect_by_base_keyword matches the configured api_base
         # (e.g. Ollama's "11434" in "http://localhost:11434") over plain registry order.
         local_fallback: tuple[ProviderConfig, str] | None = None
-        for spec in PROVIDERS:
+        for spec in providers:
             if not spec.is_local:
                 continue
             p = getattr(self.providers, spec.name, None)
@@ -232,7 +274,7 @@ class Config(BaseSettings):
 
         # Fallback: gateways first, then others (follows registry order)
         # OAuth providers are NOT valid fallbacks — they require explicit model selection
-        for spec in PROVIDERS:
+        for spec in providers:
             if spec.is_oauth:
                 continue
             p = getattr(self.providers, spec.name, None)
@@ -257,8 +299,6 @@ class Config(BaseSettings):
 
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for gateway/local providers."""
-        from models.providers.registry import find_by_name
-
         p, name = self._match_provider(model)
         if p and p.api_base:
             return p.api_base
@@ -266,7 +306,7 @@ class Config(BaseSettings):
         # (like Moonshot) set their base URL via env vars in _setup_env
         # to avoid polluting the global litellm.api_base.
         if name:
-            spec = find_by_name(name)
+            spec = _find_provider(name)
             if spec and (spec.is_gateway or spec.is_local) and spec.default_api_base:
                 return spec.default_api_base
         return None
