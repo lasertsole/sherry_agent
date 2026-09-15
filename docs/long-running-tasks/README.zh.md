@@ -642,6 +642,14 @@ LANE_SYSTEM: LaneSystemConfig = {
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤儿的 `pending_orphaned` 终结 |
 | `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | Lane 测试套件 |
 
+### 实现取舍
+
+实现时记录的三处有意取舍：
+
+- **MAIN 向上钳制到不变量。** 仅靠 CPU 缩放（`min(16, max(8, CPU))`）在 CPU ≤ 8 的机器上会得到 8，从而在启动时触发 `validate_lane_config()` 报错；因此默认值向上钳制到 `SUBAGENT + NUDGE`（12），在 4/8/12/16/64 核机器上均合法。
+- **`GET /lane-status` 不带 `/api` 前缀。** 初始设计中的 `/api/lane-status` 路由被放弃，改用仓库既有路由惯例：处理器位于 `server/trigger/http/lane.py`，与 `/channels`、`/cron` 等并列。
+- **退出 drain 走 `atexit`。** 仓库没有异步关闭 seam（Robyn 的 `shutdown_handler` 在 SIGINT/SIGTERM 时不会被调用），因此有界的 `drain_all(timeout=0)` 只报告最终的各 lane 计数、绝不拖慢退出；in-flight turn 交给操作系统回收。
+
 ## ⚙️ 配置注册表
 
 所有可调项都放在 `config/features/` 下，它是一个**按对象划分的 `TypedDict` 包**——而不是单个庞大的模块。它分为三部分：

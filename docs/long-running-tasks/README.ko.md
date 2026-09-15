@@ -642,6 +642,14 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 고아의 `pending_orphaned` 확정 |
 | `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | 레인 테스트 스위트 |
 
+### 구현 트레이드오프
+
+구현 시 기록된 의도적인 트레이드오프 세 가지:
+
+- **MAIN은 불변식까지 상향 클램프.** CPU 스케일링만으로는(`min(16, max(8, CPU))`) CPU ≤ 8 머신에서 8이 되어 시작 시 `validate_lane_config()`가 실패하므로, 기본값을 `SUBAGENT + NUDGE`(12)까지 올려 4/8/12/16/64코어 머신 모두에서 유효합니다.
+- **`GET /lane-status`에는 `/api` 접두사가 없습니다.** 최초 설계의 `/api/lane-status` 라우트를 버리고 저장소의 기존 라우팅 관례를 따랐습니다: 핸들러는 `server/trigger/http/lane.py`에 있으며 `/channels`, `/cron`과 나란히 있습니다.
+- **종료 drain은 `atexit` 경로.** 저장소에 비동기 셧다운 seam이 없으므로(Robyn의 `shutdown_handler`는 SIGINT/SIGTERM에서 호출되지 않음), 유계 `drain_all(timeout=0)`은 최종 레인별 카운터만 보고하고 종료를 지연시키지 않습니다. 실행 중 턴은 OS에 맡겨집니다.
+
 ## ⚙️ 설정 레지스트리
 
 모든 조정 값은 `config/features/` 아래에 있으며, 이는 **객체별 `TypedDict` 패키지**입니다 — 단일 거대 모듈이 아닙니다. 세 부분으로 나뉩니다:

@@ -642,6 +642,14 @@ At exit, the same seam flips drain mode (`set_draining(True)`) and runs a **boun
 | `agent/tools/subagent/orphan/recovery.py` | `pending_orphaned` finalize for PENDING orphans |
 | `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | Lane test suite |
 
+### Implementation notes
+
+Three deliberate trade-offs recorded by the implementation:
+
+- **MAIN clamps up to the invariant.** CPU scaling alone (`min(16, max(8, CPU))`) would resolve to 8 on any machine with ≤ 8 CPUs and fail `validate_lane_config()` at startup, so the default is clamped up to `SUBAGENT + NUDGE` (12) and stays valid on 4/8/12/16/64-core machines alike.
+- **`GET /lane-status` has no `/api` prefix.** The originally sketched `/api/lane-status` route was dropped for the repo's existing routing convention: the handler lives in `server/trigger/http/lane.py`, alongside `/channels`, `/cron`, etc.
+- **The exit drain runs from `atexit`.** The repo has no async shutdown seam (Robyn's `shutdown_handler` is never invoked on SIGINT/SIGTERM), so the bounded `drain_all(timeout=0)` reports the final per-lane counters and never delays exit; in-flight turns are abandoned to the OS.
+
 ## ⚙️ Configuration Registry
 
 All tunables live under `config/features/`, which is a **per-object `TypedDict` package** — not a single monolithic module. It is split into three parts:

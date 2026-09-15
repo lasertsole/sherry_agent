@@ -642,6 +642,14 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤児の `pending_orphaned` 確定 |
 | `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | レーンテストスイート |
 
+### 実装上のトレードオフ
+
+実装時に記録した意図的なトレードオフが 3 点あります：
+
+- **MAIN は不変条件まで切り上げ。** CPU スケーリング単独（`min(16, max(8, CPU))`）では CPU ≤ 8 のマシンで 8 となり、起動時に `validate_lane_config()` が失敗するため、既定値を `SUBAGENT + NUDGE`（12）まで切り上げ、4/8/12/16/64 コアのマシンいずれでも有効にしています。
+- **`GET /lane-status` に `/api` プレフィックスは付きません。** 当初設計の `/api/lane-status` ルートは採用せず、リポジトリ既存のルーティング慣例に従っています：ハンドラは `server/trigger/http/lane.py` にあり、`/channels` や `/cron` と並んでいます。
+- **終了 drain は `atexit` 経由。** リポジトリに非同期シャットダウン seam が存在しない（Robyn の `shutdown_handler` は SIGINT/SIGTERM では呼ばれない）ため、有界の `drain_all(timeout=0)` は最終的なレーン別カウンタを報告するだけで、終了を遅らせません。実行中のターンは OS に委ねられます。
+
 ## ⚙️ 設定レジストリ
 
 すべての調整値は `config/features/` 配下にあり、これは**オブジェクト単位 `TypedDict` パッケージ**です——単一の巨大モジュールではありません。3 つの部分に分かれます：
