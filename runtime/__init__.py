@@ -22,6 +22,7 @@ from .lane.core import (
     LaneType,
     get_lane_manager,
     lane_slot,
+    set_drain_check,
 )
 
 # 向后兼容别名：旧代码引用 ``runtime.Register``
@@ -52,4 +53,5 @@ __all__ = [
     "LaneType",
     "get_lane_manager",
     "lane_slot",
+    "set_drain_check",
 ]
