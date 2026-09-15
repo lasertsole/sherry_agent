@@ -6,11 +6,11 @@
 
 > Subagent limits aligned with OpenClaw (commits `794df0e..d200beb`):
 
-- **Global concurrency cap added**: `max_concurrent = 8` — enforced in the spawn pipeline; excess spawns return `forbidden` ("Global concurrent ..."). New registry queries: `count_all_active_runs` / `count_all_active_runs_readonly`.
+- **Global concurrency cap added**: `max_concurrent = 8` — originally enforced in the spawn pipeline; excess spawns returned `forbidden` ("Global concurrent ..."). **Superseded by the global SUBAGENT lane**: over-limit spawns now queue as `PENDING` and start when a lane slot frees (the cap field is retained for backward compatibility only). New registry queries: `count_all_active_runs` / `count_all_active_runs_readonly` — both count `PENDING` runs as active, since a queued child still holds an admission slot.
 - **`max_spawn_depth` default 3 → 2, now a hard cap**: values > 2 are rejected at construction and assignment; `delegate_task(max_spawn_depth=...)` raises `ValueError` beyond the cap. Depth tree: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
 - **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net.
 - **`archive_after_minutes` 1440 → 60**.
-- **`delegate_task`**: new per-call `max_concurrent` override (restored after dispatch).
+- **`delegate_task`**: per-call `max_concurrent` override, now deprecated — global concurrency is queued by the SUBAGENT lane, so passing it only emits a `DeprecationWarning` (the value is still applied and restored per call).
 - All configuration tables and diagrams in these docs (en/zh/ko/ja) plus the root READMEs were synced to the new defaults.
 
 ---
@@ -92,7 +92,9 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── build_subagent_initial_user_message(): [Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] envelope
   │
-  ├── 9. Async Dispatch: asyncio.create_task(_execute_subagent(...))
+  ├── 9. Async Dispatch: asyncio.create_task(_execute_subagent_with_lane(...))
+  │     └── waits for a SUBAGENT lane slot, then promotes PENDING → RUNNING
+  │         (stamps started_at) and delegates to _execute_subagent()
   │
   └── 10. Return SpawnResult { status: accepted | forbidden | error,
         child_session_key, run_id } + fire_spawned_hook(run)
@@ -100,7 +102,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 
 #### Child Agent Execution
 
-`_execute_subagent()` is a background asyncio Task responsible for the child Agent's full lifecycle:
+`_execute_subagent_with_lane()` is a background asyncio Task that first waits for a SUBAGENT lane slot (over-limit runs stay PENDING while queueing), promotes the run to RUNNING inside the slot, and then hands off to `_execute_subagent()` for the child Agent's full lifecycle:
 
 ```
 _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
@@ -180,7 +182,7 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 | **Scoping** | `scopes` | Granted permission scopes (e.g. `subagent:read`) |
 | | `inherited_tool_allow` / `inherited_tool_deny` | Tool policy applied to the child |
 | **Schema** | `output_schema` | JSON Schema for structured output validation |
-| **Execution** | `execution.status` | RUNNING → INTERRUPTED → TERMINAL |
+| **Execution** | `execution.status` | PENDING → RUNNING → INTERRUPTED → TERMINAL |
 | | `execution.outcome` | OK / ERROR / TIMEOUT / KILLED / UNKNOWN |
 | **Delivery** | `delivery.status` | PENDING → IN_PROGRESS → DELIVERED |
 | | `delivery.attempt_count` | Delivery retry count |
@@ -195,16 +197,18 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 #### 1. ExecutionState — Execution State Machine
 
 ```
-    RUNNING ──────────────────► INTERRUPTED
-      │                            │
-      │ (completed/error/timeout)  │ (resume / steer)
-      ▼                            │
-    TERMINAL ◄─────────────────────┘
+    PENDING ──(lane slot acquired)──► RUNNING ──────────────► INTERRUPTED
+      ▲                                 │                          │
+      │ (steer / resume re-queues)      │ (completed/error/        │ (steer / resume
+      └─────────────────────────────────┘  timeout)                │  re-queues)
+                                        ▼                          ▼
+                                      TERMINAL ◄───────────────────┘
 ```
 
-- `RUNNING`: Child Agent is executing
+- `PENDING`: Registered; waiting for a SUBAGENT lane slot. `started_at` is `None` — queue wait time is never counted as run time, and staleness/reconciliation checks skip the run
+- `RUNNING`: Child Agent is executing, holding a lane slot (`started_at` is stamped on promotion)
 - `INTERRUPTED`: Paused by yield (`pause_reason="yield"`) or steer (`pause_reason="steer"`)
-- `TERMINAL`: Final state, irreversible. `ended_reason` ∈ complete / error / killed / timeout / orphaned / wedged_recovery / finalized
+- `TERMINAL`: Final state, irreversible. `ended_reason` ∈ complete / error / killed / timeout / orphaned / pending_orphaned / wedged_recovery / finalized
 
 #### 2. CompletionDeliveryState — Delivery State Machine
 
@@ -513,6 +517,9 @@ For each orphaned run (live but no active task, or aborted_last_run):
   2. evaluate_recovery_gate():
        - age > 24 h (_WEDGED_AGE_SECONDS = 86400) or attempts exhausted
          (max 3) → "wedged" → force TERMINAL (ended_reason=wedged_recovery)
+       - PENDING with no active task (lost its lane task / process restart) →
+         "wedged" → finalize directly as TERMINAL/TIMEOUT
+         (ended_reason=pending_orphaned); no resume is attempted
        - aborted_last_run flag → "aborted_last_run" → attempt resume
        - otherwise → "recoverable"
   3. Resume = steer_subagent_run() with a [RECOVERY] message carrying the
@@ -866,7 +873,7 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `max_spawn_depth` | 2 | Maximum nesting depth (hard cap 2, cannot exceed) |
-| `max_concurrent` | 8 | Global concurrent subagent cap; excess spawns return forbidden |
+| `max_concurrent` | 8 | Deprecated legacy global cap; the SUBAGENT lane now queues over-limit spawns as `PENDING` instead of returning forbidden |
 | `max_children_per_agent` | 5 | Max concurrent children per agent |
 | `run_timeout_seconds` | 0.0 | Child agent execution timeout (0 = no timeout; background sweeps provide the safety net) |
 | `require_agent_id` | False | Whether agent_id is mandatory |

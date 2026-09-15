@@ -6,11 +6,11 @@
 
 > サブエージェント制限を OpenClaw に整合させました（コミット `794df0e..d200beb`）:
 
-- **グローバル同時実行上限を追加**: `max_concurrent = 8` — spawn パイプラインで強制。超過 spawn は `forbidden` を返す（"Global concurrent ..."）。registry に `count_all_active_runs` / `count_all_active_runs_readonly` を追加。
+- **グローバル同時実行上限を追加**: `max_concurrent = 8` — 当初は spawn パイプラインで強制し、超過 spawn は `forbidden` を返していました。**グローバル SUBAGENT lane に置き換え**: 超過 spawn は `PENDING` としてキューに入り、lane のスロットが空き次第開始します（このフィールドは後方互換のためだけに残っています）。registry に `count_all_active_runs` / `count_all_active_runs_readonly` を追加 — どちらも `PENDING` run をアクティブとして数えます（キュー内の子も admission スロットを占有するため）。
 - **`max_spawn_depth` デフォルト 3 → 2、ハード上限化**：2 超過の値は構築時と代入時の両方で拒否。`delegate_task(max_spawn_depth=...)` は上限超過で `ValueError` を送出。深度ツリー: MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
 - **`run_timeout_seconds` デフォルト 300 → 0.0（タイムアウトなし）**：spawn と steer は子を直接呼び出し。followup のタイムアウト検査はスキップ。sweeper の 2 時間 stale 検出が安全網。
 - **`archive_after_minutes` 1440 → 60**。
-- **`delegate_task`**：呼び出し毎の `max_concurrent` オーバーライドを追加（ディスパッチ後に復元）。
+- **`delegate_task`**：呼び出し毎の `max_concurrent` オーバーライドは非推奨 — グローバル同時実行は SUBAGENT lane がキューイングするため、渡すと `DeprecationWarning` を出すだけです（値は呼び出し毎に適用・復元されます）。
 - 本ドキュメント群（en/zh/ko/ja）とルート README の全設定テーブル・図を新デフォルト値に同期済み。
 
 ---
@@ -95,7 +95,9 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── build_subagent_initial_user_message()：[Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] エンベロープ
   │
-  ├── 9. 非同期ディスパッチ：asyncio.create_task(_execute_subagent(...))
+  ├── 9. 非同期ディスパッチ：asyncio.create_task(_execute_subagent_with_lane(...))
+  │     └── SUBAGENT lane のスロットを待ち、スロット内で PENDING → RUNNING に
+  │         昇格（started_at を記録）して _execute_subagent() に委譲
   │
   └── 10. SpawnResult { status: accepted | forbidden | error,
         child_session_key, run_id } を返却 + fire_spawned_hook(run)
@@ -103,7 +105,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 
 #### 子エージェントの実行（Child Agent Execution）
 
-`_execute_subagent()` は子エージェントの完全なライフサイクルを担うバックグラウンド asyncio Task です。
+`_execute_subagent_with_lane()` はバックグラウンド asyncio Task です：まず SUBAGENT lane のスロットを待ち（超過 run はここで PENDING のまま）、スロット内で run を RUNNING に昇格させ、その後 `_execute_subagent()` に委譲して子エージェントの完全なライフサイクルを実行します：
 
 ```
 _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
@@ -183,7 +185,7 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 | **スコープ** | `scopes` | 付与された権限スコープ（例：`subagent:read`） |
 | | `inherited_tool_allow` / `inherited_tool_deny` | 子に適用されるツールポリシー |
 | **スキーマ** | `output_schema` | 構造化出力検証用の JSON Schema |
-| **実行** | `execution.status` | RUNNING → INTERRUPTED → TERMINAL |
+| **実行** | `execution.status` | PENDING → RUNNING → INTERRUPTED → TERMINAL |
 | | `execution.outcome` | OK / ERROR / TIMEOUT / KILLED / UNKNOWN |
 | **配信** | `delivery.status` | PENDING → IN_PROGRESS → DELIVERED |
 | | `delivery.attempt_count` | 配信リトライ回数 |
@@ -198,16 +200,18 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 #### 1. ExecutionState — 実行状態マシン
 
 ```
-    RUNNING ──────────────────► INTERRUPTED
-      │                            │
-      │ (completed/error/timeout)  │ (resume / steer)
-      ▼                            │
-    TERMINAL ◄─────────────────────┘
+    PENDING ──(lane スロット獲得)──► RUNNING ──────────────► INTERRUPTED
+      ▲                                 │                        │
+      │ (steer / resume で再キュー)     │ (completed/error/      │ (steer / resume
+      └─────────────────────────────────┘  timeout)              │  で再キュー)
+                                        ▼                        ▼
+                                      TERMINAL ◄─────────────────┘
 ```
 
-- `RUNNING`：子エージェントが実行中
+- `PENDING`：登録済みで SUBAGENT lane のスロット待ち。`started_at` は `None` — キュー待ち時間は実行時間に加算されず、stale/リコンシリエーション検査もスキップします
+- `RUNNING`：子エージェントが実行中で、lane スロットを保持（昇格時に `started_at` を記録）
 - `INTERRUPTED`：yield（`pause_reason="yield"`）または steer（`pause_reason="steer"`）で一時停止
-- `TERMINAL`：終状態、不可逆。`ended_reason` ∈ complete / error / killed / timeout / orphaned / wedged_recovery / finalized
+- `TERMINAL`：終状態、不可逆。`ended_reason` ∈ complete / error / killed / timeout / orphaned / pending_orphaned / wedged_recovery / finalized
 
 #### 2. CompletionDeliveryState — 配信状態マシン
 
@@ -520,6 +524,9 @@ registry/sweeper.py — backoff.current_interval を sleep するループ
        - 稼働 24 時間超（_WEDGED_AGE_SECONDS = 86400）またはリトライ尽き
          （最大 3 回）→ "wedged" → TERMINAL を強制
          （ended_reason=wedged_recovery）
+       - PENDING かつアクティブ task 無し（lane task 喪失 / プロセス再起動）→
+         "wedged" → TERMINAL/TIMEOUT として直接ファイナライズ
+         （ended_reason=pending_orphaned）。レジュームは試行しません
        - aborted_last_run フラグ → "aborted_last_run" → レジューム試行
        - それ以外 → "recoverable"
   3. レジューム = steer_subagent_run()。[RECOVERY] メッセージに直近の
@@ -873,7 +880,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | パラメータ | 既定値 | 説明 |
 |------|--------|------|
 | `max_spawn_depth` | 2 | 最大ネスト深さ（ハード上限 2、超過不可） |
-| `max_concurrent` | 8 | グローバルな同時サブエージェント上限、超過 spawn は forbidden を返す |
+| `max_concurrent` | 8 | 非推奨の旧グローバル上限。SUBAGENT lane が超過 spawn を `PENDING` としてキューに入れ、forbidden を返さなくなりました |
 | `max_children_per_agent` | 5 | エージェントあたりの最大同時子数 |
 | `run_timeout_seconds` | 0.0 | 子エージェント実行タイムアウト（0 = タイムアウトなし、バックグラウンドスイープが安全網） |
 | `require_agent_id` | False | agent_id を必須にするか |

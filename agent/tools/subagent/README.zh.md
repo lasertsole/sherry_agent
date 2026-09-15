@@ -6,11 +6,11 @@
 
 > 子代理限制已对齐 OpenClaw（提交 `794df0e..d200beb`）：
 
-- **新增全局并发上限**：`max_concurrent = 8` —— 在 spawn 管线中强制执行；超限返回 `forbidden`（"Global concurrent ..."）。registry 新增查询：`count_all_active_runs` / `count_all_active_runs_readonly`。
+- **新增全局并发上限**：`max_concurrent = 8` —— 起初在 spawn 管线中强制执行，超限返回 `forbidden`（"Global concurrent ..."）。**已由全局 SUBAGENT lane 取代**：超限 spawn 现在以 `PENDING` 排队，待 lane 空出 slot 后开始执行（该字段仅为向后兼容保留）。registry 新增查询：`count_all_active_runs` / `count_all_active_runs_readonly` —— 两者都把 `PENDING` run 计入活跃，因为排队中的 child 仍占用准入名额。
 - **`max_spawn_depth` 默认 3 → 2，现为硬上限**：构造与赋值均拒绝 > 2；`delegate_task(max_spawn_depth=...)` 超限抛出 `ValueError`。深度树：MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
 - **`run_timeout_seconds` 默认 300 → 0.0（无超时）**：spawn 与 steer 直接调用子代理；followup 超时检查跳过；sweeper 的 2 小时 stale 检测仍是兜底。
 - **`archive_after_minutes` 1440 → 60**。
-- **`delegate_task`**：新增 per-call `max_concurrent` 覆盖（调用后恢复）。
+- **`delegate_task`**：per-call `max_concurrent` 覆盖，现已被废弃 —— 全局并发由 SUBAGENT lane 排队，传入该参数只会发出 `DeprecationWarning`（值仍会按调用应用并恢复）。
 - 本目录文档（en/zh/ko/ja）及根 README 的全部配置表与图示已同步新默认值。
 
 ---
@@ -92,7 +92,9 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── build_subagent_initial_user_message()：[Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] 信封
   │
-  ├── 9. 异步分发：asyncio.create_task(_execute_subagent(...))
+  ├── 9. 异步分发：asyncio.create_task(_execute_subagent_with_lane(...))
+  │     └── 先等待 SUBAGENT lane slot，再在 slot 内将 PENDING → RUNNING
+  │         （stamp started_at），随后委托 _execute_subagent()
   │
   └── 10. 返回 SpawnResult { status: accepted | forbidden | error,
         child_session_key, run_id } + fire_spawned_hook(run)
@@ -100,7 +102,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 
 #### 子 Agent 执行（Child Agent Execution）
 
-`_execute_subagent()` 是负责子 Agent 完整生命周期的后台 asyncio Task：
+`_execute_subagent_with_lane()` 是后台 asyncio Task：先等待 SUBAGENT lane slot（超限 run 在此保持 PENDING），在 slot 内把 run 提升为 RUNNING，然后交给 `_execute_subagent()` 执行子 Agent 的完整生命周期：
 
 ```
 _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
@@ -180,7 +182,7 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 | **范围** | `scopes` | 授予的权限范围（如 `subagent:read`） |
 | | `inherited_tool_allow` / `inherited_tool_deny` | 应用于子 Agent 的工具策略 |
 | **Schema** | `output_schema` | 结构化输出校验用的 JSON Schema |
-| **执行** | `execution.status` | RUNNING → INTERRUPTED → TERMINAL |
+| **执行** | `execution.status` | PENDING → RUNNING → INTERRUPTED → TERMINAL |
 | | `execution.outcome` | OK / ERROR / TIMEOUT / KILLED / UNKNOWN |
 | **交付** | `delivery.status` | PENDING → IN_PROGRESS → DELIVERED |
 | | `delivery.attempt_count` | 交付重试次数 |
@@ -195,16 +197,18 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 #### 1. ExecutionState — 执行状态机
 
 ```
-    RUNNING ──────────────────► INTERRUPTED
-      │                            │
-      │ (completed/error/timeout)  │ (resume / steer)
-      ▼                            │
-    TERMINAL ◄─────────────────────┘
+    PENDING ──(获得 lane slot)──► RUNNING ──────────────► INTERRUPTED
+      ▲                              │                        │
+      │ (steer / resume 重新排队)     │ (completed/error/      │ (steer / resume
+      └──────────────────────────────┘  timeout)              │  重新排队)
+                                     ▼                        ▼
+                                   TERMINAL ◄─────────────────┘
 ```
 
-- `RUNNING`：子 Agent 正在执行
+- `PENDING`：已注册，等待 SUBAGENT lane slot。`started_at` 为 `None` —— 排队等待时间不计入运行时长，stale/对账检查也会跳过该 run
+- `RUNNING`：子 Agent 正在执行，持有 lane slot（提升时 stamp `started_at`）
 - `INTERRUPTED`：因 yield（`pause_reason="yield"`）或 steer（`pause_reason="steer"`）暂停
-- `TERMINAL`：终态，不可逆。`ended_reason` ∈ complete / error / killed / timeout / orphaned / wedged_recovery / finalized
+- `TERMINAL`：终态，不可逆。`ended_reason` ∈ complete / error / killed / timeout / orphaned / pending_orphaned / wedged_recovery / finalized
 
 #### 2. CompletionDeliveryState — 交付状态机
 
@@ -510,6 +514,9 @@ sweeper_interval_seconds，默认 60 秒）
   2. evaluate_recovery_gate()：
        - 存活超过 24 小时（_WEDGED_AGE_SECONDS = 86400）或重试耗尽
          （最多 3 次）→ "wedged" → 强制 TERMINAL（ended_reason=wedged_recovery）
+       - PENDING 且无活跃 task（lane task 丢失 / 进程重启）→
+         "wedged" → 直接终结为 TERMINAL/TIMEOUT
+         （ended_reason=pending_orphaned）；不尝试恢复
        - aborted_last_run 标记 → "aborted_last_run" → 尝试恢复
        - 否则 → "recoverable"
   3. 恢复 = steer_subagent_run()，携带 [RECOVERY] 消息（附最近的人类/AI
@@ -863,7 +870,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `max_spawn_depth` | 2 | 最大嵌套深度（硬上限 2，不可超过） |
-| `max_concurrent` | 8 | 全局并发子 Agent 上限，超限 spawn 返回 forbidden |
+| `max_concurrent` | 8 | 已废弃的旧全局上限；SUBAGENT lane 现在把超限 spawn 以 `PENDING` 排队而非返回 forbidden |
 | `max_children_per_agent` | 5 | 每 Agent 最大并发子 Agent 数 |
 | `run_timeout_seconds` | 0.0 | 子 Agent 执行超时（0 = 无超时，依赖 sweeper stale 检测兜底） |
 | `require_agent_id` | False | 是否强制 agent_id |

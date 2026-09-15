@@ -6,11 +6,11 @@
 
 > 서브에이전트 제한이 OpenClaw와 정렬되었습니다 (커밋 `794df0e..d200beb`):
 
-- **전역 동시성 상한 추가**: `max_concurrent = 8` — spawn 파이프라인에서 강제; 초과 spawn은 `forbidden` 반환 ("Global concurrent ..."). registry에 `count_all_active_runs` / `count_all_active_runs_readonly` 쿼리 추가.
+- **전역 동시성 상한 추가**: `max_concurrent = 8` — 처음에는 spawn 파이프라인에서 강제되어 초과 spawn은 `forbidden`을 반환했습니다. **전역 SUBAGENT lane으로 대체됨**: 초과 spawn은 이제 `PENDING`으로 대기하다 lane slot이 비면 시작합니다 (이 필드는 하위 호환용으로만 유지됩니다). registry에 `count_all_active_runs` / `count_all_active_runs_readonly` 쿼리 추가 — 둘 다 `PENDING` run을 활성으로 계산합니다 (대기 중인 자식도 admission slot을 점유하므로).
 - **`max_spawn_depth` 기본값 3 → 2, 하드 상한화**: 2 초과 값은 생성과 할당 모두에서 거부; `delegate_task(max_spawn_depth=...)`는 상한 초과 시 `ValueError` 발생. 깊이 트리: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
 - **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망.
 - **`archive_after_minutes` 1440 → 60**.
-- **`delegate_task`**: 호출별 `max_concurrent` 오버라이드 추가 (디스패치 후 복원).
+- **`delegate_task`**: 호출별 `max_concurrent` 오버라이드는 폐기됨 — 전역 동시성은 SUBAGENT lane이 대기열로 처리하므로, 전달해도 `DeprecationWarning`만 발생합니다 (값은 호출별로 적용·복원됨).
 - 이 문서들(en/zh/ko/ja)과 루트 README의 모든 설정 테이블과 다이어그램이 새 기본값으로 동기화되었습니다.
 
 ---
@@ -94,7 +94,9 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── build_subagent_initial_user_message(): [Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] 봉투
   │
-  ├── 9. 비동기 디스패치: asyncio.create_task(_execute_subagent(...))
+  ├── 9. 비동기 디스패치: asyncio.create_task(_execute_subagent_with_lane(...))
+  │     └── SUBAGENT lane slot을 기다린 뒤 slot 안에서 PENDING → RUNNING으로
+  │         승격(started_at 기록)하고 _execute_subagent()에 위임
   │
   └── 10. SpawnResult { status: accepted | forbidden | error,
         child_session_key, run_id } 반환 + fire_spawned_hook(run)
@@ -102,7 +104,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 
 #### 자식 에이전트 실행 (Child Agent Execution)
 
-`_execute_subagent()`는 자식 에이전트의 전체 라이프사이클을 담당하는 백그라운드 asyncio Task입니다.
+`_execute_subagent_with_lane()`는 백그라운드 asyncio Task입니다: 먼저 SUBAGENT lane slot을 기다리고(초과 run은 여기서 PENDING 유지), slot 안에서 run을 RUNNING으로 승격한 뒤 `_execute_subagent()`에 위임해 자식 에이전트의 전체 라이프사이클을 실행합니다:
 
 ```
 _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
@@ -182,7 +184,7 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 | **범위** | `scopes` | 부여된 권한 스코프 (예: `subagent:read`) |
 | | `inherited_tool_allow` / `inherited_tool_deny` | 자식에게 적용되는 도구 정책 |
 | **스키마** | `output_schema` | 구조화 출력 검증용 JSON Schema |
-| **실행** | `execution.status` | RUNNING → INTERRUPTED → TERMINAL |
+| **실행** | `execution.status` | PENDING → RUNNING → INTERRUPTED → TERMINAL |
 | | `execution.outcome` | OK / ERROR / TIMEOUT / KILLED / UNKNOWN |
 | **전달** | `delivery.status` | PENDING → IN_PROGRESS → DELIVERED |
 | | `delivery.attempt_count` | 전달 재시도 횟수 |
@@ -197,16 +199,18 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 #### 1. ExecutionState — 실행 상태 머신
 
 ```
-    RUNNING ──────────────────► INTERRUPTED
-      │                            │
-      │ (completed/error/timeout)  │ (resume / steer)
-      ▼                            │
-    TERMINAL ◄─────────────────────┘
+    PENDING ──(lane slot 획득)──► RUNNING ──────────────► INTERRUPTED
+      ▲                              │                        │
+      │ (steer / resume 재대기)       │ (completed/error/      │ (steer / resume
+      └──────────────────────────────┘  timeout)              │  재대기)
+                                     ▼                        ▼
+                                   TERMINAL ◄─────────────────┘
 ```
 
-- `RUNNING`: 자식 에이전트 실행 중
+- `PENDING`: 등록됨, SUBAGENT lane slot 대기 중. `started_at`은 `None` — 대기 시간은 실행 시간에 포함되지 않으며 stale/대조 검사도 이 run을 건너뜁니다
+- `RUNNING`: 자식 에이전트 실행 중, lane slot 보유 (승격 시 `started_at` 기록)
 - `INTERRUPTED`: yield(`pause_reason="yield"`) 또는 steer(`pause_reason="steer"`)로 일시 중단
-- `TERMINAL`: 종료 상태, 되돌릴 수 없음. `ended_reason` ∈ complete / error / killed / timeout / orphaned / wedged_recovery / finalized
+- `TERMINAL`: 종료 상태, 되돌릴 수 없음. `ended_reason` ∈ complete / error / killed / timeout / orphaned / pending_orphaned / wedged_recovery / finalized
 
 #### 2. CompletionDeliveryState — 전달 상태 머신
 
@@ -515,6 +519,9 @@ registry/sweeper.py — backoff.current_interval을 sleep하는 루프
        - 가동 24시간 초과(_WEDGED_AGE_SECONDS = 86400) 또는 재시도 소진
          (최대 3회) → "wedged" → TERMINAL 강제
          (ended_reason=wedged_recovery)
+       - PENDING이고 활성 task 없음 (lane task 상실 / 프로세스 재시작) →
+         "wedged" → TERMINAL/TIMEOUT으로 직접 종결
+         (ended_reason=pending_orphaned); 재개 시도 안 함
        - aborted_last_run 플래그 → "aborted_last_run" → 재개 시도
        - 그 외 → "recoverable"
   3. 재개 = steer_subagent_run(). [RECOVERY] 메시지에 최근 human/AI
@@ -868,7 +875,7 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | 파라미터 | 기본값 | 설명 |
 |------|--------|------|
 | `max_spawn_depth` | 2 | 최대 중첩 깊이 (하드 상한 2, 초과 불가) |
-| `max_concurrent` | 8 | 전역 동시 하위 에이전트 상한, 초과 spawn은 forbidden 반환 |
+| `max_concurrent` | 8 | 폐기된 레거시 전역 상한; SUBAGENT lane이 초과 spawn을 `PENDING`으로 대기시키고 forbidden을 반환하지 않음 |
 | `max_children_per_agent` | 5 | 에이전트별 최대 동시 자식 수 |
 | `run_timeout_seconds` | 0.0 | 자식 에이전트 실행 타임아웃 (0 = 타임아웃 없음, 백그라운드 스윕이 안전망) |
 | `require_agent_id` | False | agent_id 필수 여부 |
