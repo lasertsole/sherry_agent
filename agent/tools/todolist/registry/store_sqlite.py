@@ -203,12 +203,35 @@ async def _switch_to_wal_if_needed(db: aiosqlite.Connection) -> None:
             )
 
 
+# Query-coverage index (2026-09 SQLite index audit). get_todos_by_flow filters
+# ``(session_id, flow_id)``; the ``(session_id, position)`` primary key only
+# covers the session_id prefix, so flow_id is otherwise matched row by row.
+# Created with ``IF NOT EXISTS`` on every schema init -- async and sync alike --
+# so a database that predates it converges on its next open, not just a fresh one.
+_INDEX_DDL: tuple[str, ...] = (
+    f"CREATE INDEX IF NOT EXISTS idx_todolist_session_flow ON {TABLE_NAME}(session_id, flow_id)",
+)
+
+
+async def _ensure_indexes(db: aiosqlite.Connection) -> None:
+    """Create the query-coverage index when absent (idempotent DDL)."""
+    for ddl in _INDEX_DDL:
+        await db.execute(ddl)
+
+
+def _ensure_indexes_sync(conn: sqlite3.Connection) -> None:
+    """Create the query-coverage index on the stdlib sqlite3 paths."""
+    for ddl in _INDEX_DDL:
+        conn.execute(ddl)
+
+
 async def _init_db() -> None:
     """One-time schema setup; safe to run concurrently (busy_timeout + IF NOT EXISTS)."""
     _DB_DIR.mkdir(parents=True, exist_ok=True)
     async with _connect() as db:
         await _switch_to_wal_if_needed(db)
         await db.execute(_CREATE_TABLE_SQL)
+        await _ensure_indexes(db)
         await db.commit()
 
 
@@ -261,6 +284,7 @@ def _ensure_tables_sync() -> None:
         conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
         try:
             conn.execute(_CREATE_TABLE_SQL)
+            _ensure_indexes_sync(conn)
             conn.commit()
         finally:
             conn.close()

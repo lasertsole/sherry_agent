@@ -129,6 +129,30 @@ def _ensure_deadline_column_sync(conn: sqlite3.Connection) -> None:
         pass
 
 
+# Query-coverage indexes (2026-09 SQLite index audit). Both are created with
+# ``IF NOT EXISTS`` on every schema init -- async and sync alike -- so a
+# database that predates them converges on its next open, not just a fresh one.
+# ``idx_taskflow_deadline`` is partial: get_overdue_flows only ever scans
+# non-NULL deadlines, so NULL rows stay out of the index entirely.
+_INDEX_DDL: tuple[str, ...] = (
+    f"CREATE INDEX IF NOT EXISTS idx_taskflow_status ON {TABLE_NAME}(status)",
+    f"CREATE INDEX IF NOT EXISTS idx_taskflow_deadline ON {TABLE_NAME}(deadline_ts) "
+    "WHERE deadline_ts IS NOT NULL",
+)
+
+
+async def _ensure_indexes(db: aiosqlite.Connection) -> None:
+    """Create the query-coverage indexes when absent (idempotent DDL)."""
+    for ddl in _INDEX_DDL:
+        await db.execute(ddl)
+
+
+def _ensure_indexes_sync(conn: sqlite3.Connection) -> None:
+    """Create the query-coverage indexes on the stdlib sqlite3 paths."""
+    for ddl in _INDEX_DDL:
+        conn.execute(ddl)
+
+
 # Once-per-process async schema-init state. asyncio primitives are single-loop
 # by design, so the lock is only ever touched by the owning loop (see
 # ensure_db); other loops poll _initialized instead of queueing on the lock.
@@ -279,6 +303,7 @@ async def _init_db() -> None:
         await db.execute(_CREATE_TABLE_SQL)
         await _ensure_token_columns(db)
         await _ensure_deadline_column(db)
+        await _ensure_indexes(db)
         await db.commit()
 
 
@@ -334,6 +359,7 @@ def _ensure_tables_sync() -> None:
             conn.execute(_CREATE_TABLE_SQL)
             _ensure_token_columns_sync(conn)
             _ensure_deadline_column_sync(conn)
+            _ensure_indexes_sync(conn)
             conn.commit()
         finally:
             conn.close()
