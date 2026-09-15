@@ -270,6 +270,7 @@ EMA_AI_agent/
 | **デスクトップクライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) |
 | **Cron サービス** | 定時/周期的エージェントタスク実行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat サービス** | 定期ウェイクアップタスクチェック | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
+| **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 
 ## ⚡ クイックスタート
 

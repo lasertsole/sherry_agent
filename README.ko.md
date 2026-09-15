@@ -270,6 +270,7 @@ EMA_AI_agent/
 | **데스크톱 클라이언트** | Tauri 2 + Nuxt 4 데스크톱/모바일 SPA 클라이언트 | [EN](client/README.md) · [ZH](client/README.zh.md) |
 | **Cron 서비스** | 예약/주기적 에이전트 작업 실행 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat 서비스** | 주기적 웨이크업 작업 확인 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
+| **Token Guard** | 두 LLM의 128K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 
 ## ⚡ 빠른 시작
 

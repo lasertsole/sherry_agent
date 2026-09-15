@@ -270,6 +270,7 @@ Each major subsystem has its own detailed README:
 | **Desktop Client** | Tauri 2 + Nuxt 4 desktop/mobile SPA client | [EN](client/README.md) · [ZH](client/README.zh.md) |
 | **Cron Service** | Scheduled/periodic agent task execution | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
+| **Token Guard** | Hard 128K context-window floor on both LLMs (boot, build, spawn, env write) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 
 ## ⚡ Quick Start
 

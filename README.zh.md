@@ -270,6 +270,7 @@ EMA_AI_agent/
 | **桌面客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [EN](client/README.md) · [ZH](client/README.zh.md) |
 | **Cron 服务** | 定时/周期性 Agent 任务执行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) |
 | **Heartbeat 服务** | 周期性唤醒任务检查 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) |
+| **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 
 ## ⚡ 快速开始
 
