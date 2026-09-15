@@ -67,6 +67,7 @@ from .infra_side import (
     HEARTBEAT_SERVICE as HEARTBEAT_SERVICE,
     HTTP_UPLOAD as HTTP_UPLOAD,
     INPUT_QUEUE as INPUT_QUEUE,
+    LANE_SYSTEM as LANE_SYSTEM,
     MES_MEMORY as MES_MEMORY,
     MESSAGE_PIPELINE as MESSAGE_PIPELINE,
     MODEL_PRICING as MODEL_PRICING,
@@ -85,6 +86,7 @@ from .infra_side import (
     HeartbeatServiceConfig as HeartbeatServiceConfig,
     HttpUploadConfig as HttpUploadConfig,
     InputQueueConfig as InputQueueConfig,
+    LaneSystemConfig as LaneSystemConfig,
     MesMemoryConfig as MesMemoryConfig,
     MessagePipelineConfig as MessagePipelineConfig,
     ModelPricingConfig as ModelPricingConfig,
@@ -94,4 +96,5 @@ from .infra_side import (
     SkillScannerConfig as SkillScannerConfig,
     SkillsToolingConfig as SkillsToolingConfig,
     WsStreamConfig as WsStreamConfig,
+    validate_lane_config as validate_lane_config,
 )

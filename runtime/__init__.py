@@ -16,6 +16,13 @@ from .process.crash_loop_breaker import (
     was_last_exit_clean,
 )
 from .process.periodic_backoff import PeriodicBackoff
+from .lane.core import (
+    Lane,
+    LaneManager,
+    LaneType,
+    get_lane_manager,
+    lane_slot,
+)
 
 # 向后兼容别名：旧代码引用 ``runtime.Register``
 Register = SessionRegister
@@ -40,4 +47,9 @@ __all__ = [
     "mark_clean_exit",
     "was_last_exit_clean",
     "PeriodicBackoff",
+    "Lane",
+    "LaneManager",
+    "LaneType",
+    "get_lane_manager",
+    "lane_slot",
 ]
