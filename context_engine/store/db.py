@@ -145,6 +145,10 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(session_id, parent_message_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency
         ON messages(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    -- compacted / context_eligible are deliberately NOT indexed (2026-09 SQLite
+    -- index audit): both are low-cardinality booleans filtered AFTER
+    -- idx_messages_turn_num has narrowed the scan to a turn range, so a
+    -- dedicated index would add write cost for no measurable read gain.
     
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
         content
@@ -298,6 +302,9 @@ _HEAL_MESSAGE_COLUMN_DDL: tuple[tuple[str, str], ...] = (
 )
 
 # Named indexes from build_schema_v1, re-created with IF NOT EXISTS.
+# compacted / context_eligible are deliberately absent (2026-09 index audit):
+# low-cardinality booleans already filtered after idx_messages_turn_num narrows
+# the scan; see the rationale next to the messages indexes in build_schema_v1.
 _HEAL_INDEX_DDL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num)",
