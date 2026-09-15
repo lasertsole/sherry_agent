@@ -121,6 +121,11 @@ if __name__ == "__main__":
 
     init_trigger()
 
+    # Lane lifecycle: fail-fast config validation + drain gate, before app.start().
+    from server.service.lane_lifecycle import install_lane_lifecycle
+
+    install_lane_lifecycle()
+
     # Pin robyn to a single worker process. `--fast` sets processes=(cpu*2)+1,
     # spawning a process pool; every in-memory registry (relation_register,
     # state registers, input queues, subagent registry) lives per-process, so
