@@ -1,5 +1,7 @@
 """Sub-agent nesting depth and concurrent-child limit validation."""
 
+import warnings
+
 from ..config import get_config
 from ..capabilities import is_subagent_session, extract_depth_from_session_key
 
@@ -42,7 +44,19 @@ def validate_concurrent_children(current_count: int) -> tuple[bool, str]:
 
 
 def validate_global_concurrent(current_count: int) -> tuple[bool, str]:
-    """Check whether the global subagent concurrency has reached the configured max."""
+    """[DEPRECATED] Global concurrency is now queued by the SUBAGENT lane.
+
+    Kept for backward compatibility (same signature and result as before); the
+    spawn pipeline no longer calls it, because over-limit runs queue as PENDING
+    instead of being refused. Use ``runtime.lane.LaneType.SUBAGENT`` for the
+    live global limit.
+    """
+    warnings.warn(
+        "validate_global_concurrent is deprecated; global concurrency is queued by "
+        "LaneType.SUBAGENT",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     config = get_config()
     if current_count >= config.max_concurrent:
         return (

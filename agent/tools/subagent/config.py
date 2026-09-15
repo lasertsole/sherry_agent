@@ -13,6 +13,8 @@ class SubagentConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     max_spawn_depth: int = 2
+    # Deprecated gate: spawn no longer rejects at this count — the SUBAGENT lane
+    # queues over-limit runs (PENDING). Readable for backward compatibility only.
     max_concurrent: int = 8
     max_children_per_agent: int = 5
     # 0 = no timeout (child agents may run indefinitely; background sweeps provide the safety net)

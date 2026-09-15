@@ -280,12 +280,13 @@ class TestDispatchModes:
         from agent.tools.subagent.config import get_config
 
         orig = get_config().max_concurrent
-        delegate_task(
-            "do something",
-            requester_session_key="agent:main:session:x",
-            max_concurrent=3,
-            run_in_background=True,
-        )
+        with pytest.warns(DeprecationWarning, match="max_concurrent"):
+            delegate_task(
+                "do something",
+                requester_session_key="agent:main:session:x",
+                max_concurrent=3,
+                run_in_background=True,
+            )
         assert seen["max_concurrent"] == 3
         # Global singleton restored after dispatch.
         assert get_config().max_concurrent == orig

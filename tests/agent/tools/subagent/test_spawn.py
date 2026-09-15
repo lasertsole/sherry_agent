@@ -59,14 +59,16 @@ class TestDepth:
         assert not ok
 
     def test_validate_global_concurrent_ok(self):
-        ok, reason = validate_global_concurrent(0)
+        with pytest.warns(DeprecationWarning):
+            ok, reason = validate_global_concurrent(0)
         assert ok
         assert reason == ""
 
     def test_validate_global_concurrent_exceeded(self):
         from agent.tools.subagent.config import get_config
 
-        ok, reason = validate_global_concurrent(get_config().max_concurrent)
+        with pytest.warns(DeprecationWarning):
+            ok, reason = validate_global_concurrent(get_config().max_concurrent)
         assert not ok
         assert "already at max" in reason
 
@@ -680,19 +682,29 @@ class TestSpawnSubagentDirect:
             clear_registry()
 
     @pytest.mark.asyncio
-    async def test_global_concurrent_limit(self):
+    async def test_global_concurrent_limit_now_queues(self):
+        """Global concurrency is lane-managed: over the legacy cap, spawn QUEUES (PENDING)."""
+        import asyncio
+
         from agent.tools.subagent.spawn.core import spawn_subagent_direct
         from agent.tools.subagent.config import get_config, set_config
-        from agent.tools.subagent.registry import clear as clear_registry, register_run
+        from agent.tools.subagent.registry import clear as clear_registry, get_run, register_run
         from agent.tools.subagent.types.registry import ExecutionStatus
+        from runtime.lane import LaneType, get_lane_manager
 
         orig_config = get_config()
+        manager = get_lane_manager()
+        lane = manager.get_lane(LaneType.SUBAGENT)
+        orig_lane_max = lane.max_concurrent
+        manager.set_concurrency(LaneType.SUBAGENT, 1)
+        await lane.acquire()
+        released = False
         try:
             limited_config = get_config().model_copy(update={"max_concurrent": 2})
             set_config(limited_config)
             clear_registry()
-            # CRITICAL: fake runs registered under a DIFFERENT requester key, so the
-            # per-session children check passes (0 < 5) and the GLOBAL gate fires.
+            # Fake runs use a DIFFERENT requester key so the per-session children
+            # check passes (0 < 5); the removed global gate used to refuse here.
             for i in range(2):
                 fake_run = register_run(
                     child_session_key=f"agent:main:subagent:gc{i}",
@@ -703,11 +715,37 @@ class TestSpawnSubagentDirect:
                 fake_run.execution.status = ExecutionStatus.RUNNING
 
             result = await spawn_subagent_direct(
-                task="Blocked task",
+                task="Queued task",
                 requester_session_key="agent:main:session:gc_test",
             )
-            assert result.status == "forbidden"
-            assert "Global concurrent" in result.error
+            assert result.status == "accepted"
+            assert result.error is None
+
+            run = get_run(result.run_id)
+            assert run is not None
+            # With every lane slot held, the accepted run waits as PENDING —
+            # queueing instead of the old forbidden rejection.
+            assert run.execution.status == ExecutionStatus.PENDING
+            assert run.execution.started_at is None
+
+            lane.release()
+            released = True
+            for _ in range(200):
+                current = get_run(result.run_id)
+                if current is not None and current.execution.status == ExecutionStatus.RUNNING:
+                    break
+                await asyncio.sleep(0.01)
+            current = get_run(result.run_id)
+            assert current is not None
+            assert current.execution.status == ExecutionStatus.RUNNING
+            assert current.execution.started_at is not None
         finally:
+            if not released:
+                lane.release()
+            for _ in range(200):
+                if lane.active_count == 0:
+                    break
+                await asyncio.sleep(0.01)
+            manager.set_concurrency(LaneType.SUBAGENT, orig_lane_max)
             set_config(orig_config)
             clear_registry()

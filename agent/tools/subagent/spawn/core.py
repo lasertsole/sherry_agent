@@ -9,7 +9,7 @@ Pipeline overview:
     6. Registry registration (with terminal-gen tracking for orphan detection)
     7. Swarm group reservation (if applicable)
     8. System prompt & context assembly
-    9. Background task launch via ``_execute_subagent``
+    9. Background task launch via ``_execute_subagent_with_lane`` (SUBAGENT lane queue)
    10. Hook dispatch (spawned / progress / ended)
 """
 
@@ -23,8 +23,8 @@ from ..config import get_config
 from ..types.spawn import SpawnMode, ContextMode
 from ..types.capability import SubagentSessionRole
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
-from ..registry import register_run
-from ..registry.read import count_active_runs_readonly, count_all_active_runs_readonly
+from ..registry import register_run, get_run, mark_run_running
+from ..registry.read import count_active_runs_readonly
 from ..registry.reconciliation import resolve_run_orphan_reason
 from ..registry.session_keys import normalize_session_key
 from ..session.cleanup import delete_subagent_session_for_cleanup
@@ -33,7 +33,6 @@ from .depth import (
     get_subagent_depth,
     validate_spawn_depth,
     validate_concurrent_children,
-    validate_global_concurrent,
 )
 from .target_policy import validate_target_policy
 from .plan import resolve_run_timeout_seconds, resolve_model_and_thinking_plan
@@ -248,10 +247,8 @@ async def spawn_subagent_direct(
     if not allowed:
         return SpawnResult(status="forbidden", error=reason)
 
-    global_active = count_all_active_runs_readonly()
-    allowed, reason = validate_global_concurrent(global_active)
-    if not allowed:
-        return SpawnResult(status="forbidden", error=reason)
+    # Global concurrency is no longer rejected here: the SUBAGENT lane queues
+    # over-limit runs (PENDING) instead of refusing them.
 
     # --- Phase 3: Runtime isolation & cwd ---
     isolation_cfg = resolve_runtime_isolation(requester_session_key, agent_id=agent_id, cwd=cwd)
@@ -450,7 +447,7 @@ async def spawn_subagent_direct(
     from agent.tools import build_main_tools
 
     bg_task = asyncio.create_task(
-        _execute_subagent(
+        _execute_subagent_with_lane(
             run=run,
             system_prompt=system_prompt,
             user_message=user_message,
@@ -482,6 +479,55 @@ async def spawn_subagent_direct(
         mode=spawn_mode,
         note=accepted_note,
     )
+
+
+async def _execute_subagent_with_lane(
+    run: SubagentRunRecord,
+    system_prompt: str,
+    user_message: str,
+    forked_messages: list,
+    tools: list | None,
+    timeout_seconds: float,
+    model_override: str | None = None,
+    output_schema: dict | None = None,
+) -> None:
+    """Wait for a SUBAGENT lane slot, promote PENDING → RUNNING inside it, then execute.
+
+    The lane queues over-limit runs instead of rejecting them: a spawn that
+    already passed per-parent admission always proceeds, waiting here while all
+    slots are busy. ``started_at`` is stamped only once the slot is held, so
+    queue wait time is never counted as run time.
+    """
+    from runtime.lane import LaneType, lane_slot
+
+    try:
+        async with lane_slot(LaneType.SUBAGENT):
+            current = get_run(run.run_id)
+            if current is None or current.execution.status == ExecutionStatus.TERMINAL:
+                return  # killed while waiting for a lane slot
+
+            if current.execution.status == ExecutionStatus.PENDING:
+                promoted = mark_run_running(run.run_id)
+                if promoted is None:
+                    return  # race: run disappeared between lookup and transition
+                current = promoted
+
+            await _execute_subagent(
+                run=current,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                forked_messages=forked_messages,
+                tools=tools,
+                timeout_seconds=timeout_seconds,
+                model_override=model_override,
+                output_schema=output_schema,
+            )
+    finally:
+        # Early return / cancellation paths never reach _execute_subagent's own
+        # cleanup, so the task reference is released here exactly once.
+        from ..registry import remove_task
+
+        remove_task(run.run_id)
 
 
 async def _execute_subagent(

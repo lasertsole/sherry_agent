@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -372,8 +373,10 @@ def delegate_task(
             :data:`SubagentConfig.max_spawn_depth`). Applied per-call.
         max_children_per_agent: Override concurrency cap (falls back to
             :data:`SubagentConfig.max_children_per_agent`). Applied per-call.
-        max_concurrent: Override global concurrent subagent cap (falls back to
-            :data:`SubagentConfig.max_concurrent`). Applied per-call.
+        max_concurrent: Deprecated. Retained for backward compatibility; global
+            subagent concurrency is queued by the SUBAGENT lane, so this
+            override no longer limits or rejects spawns (emits a
+            ``DeprecationWarning``).
         run_timeout_seconds: Wall-clock child timeout (falls back to
             :data:`SubagentConfig.run_timeout_seconds`). Applied per-call.
         context_mode: :class:`ContextMode` or its string name. Only
@@ -398,6 +401,14 @@ def delegate_task(
         raise ValueError("delegate_task: `task` must be a non-empty string")
     if not requester_session_key:
         raise ValueError("delegate_task: `requester_session_key` is required")
+
+    if max_concurrent is not None:
+        warnings.warn(
+            "delegate_task(max_concurrent=...) is deprecated: global subagent concurrency "
+            "is queued by the SUBAGENT lane, so this override no longer rejects spawns",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     # Normalize context_mode: accept ContextMode enum or "isolated"/"fork" string.
     if isinstance(context_mode, ContextMode):
