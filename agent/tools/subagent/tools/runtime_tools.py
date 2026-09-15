@@ -115,7 +115,8 @@ async def sessions_yield_runtime_tool(
     active = [
         c
         for c in children
-        if c.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
+        if c.execution.status
+        in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
     ]
     if not active:
         return "No active subagents found. You can continue without waiting."

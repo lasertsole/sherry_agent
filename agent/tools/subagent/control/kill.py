@@ -134,12 +134,13 @@ async def kill_subagent_run_with_cascade(
 
 
 def list_killable_children(session_key: str) -> list[SubagentRunRecord]:
-    """List non-terminal child runs that are eligible for killing."""
+    """List non-terminal child runs that are eligible for killing (PENDING included)."""
     children = list_runs_for_requester(session_key)
     return [
         c
         for c in children
-        if c.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
+        if c.execution.status
+        in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
     ]
 
 

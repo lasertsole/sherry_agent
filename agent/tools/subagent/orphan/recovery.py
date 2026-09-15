@@ -63,6 +63,29 @@ async def _recovery_loop(run_id: str, delay_seconds: float) -> None:
         logger.warning("Run {} is wedged, forcing terminal", run_id)
         from ..registry.memory import update as update_run
 
+        if run.execution.status == ExecutionStatus.PENDING:
+            # PENDING runs never started, so there is no context to resume.
+            # A PENDING orphan lost its task (process restart): finalize it.
+            from ..types.registry import ExecutionState
+
+            updated = run.model_copy(
+                update={
+                    "execution": ExecutionState(
+                        status=ExecutionStatus.TERMINAL,
+                        started_at=None,
+                        ended_at=time.monotonic(),
+                        outcome=RunOutcome(
+                            status=RunOutcomeStatus.TIMEOUT, error="pending orphaned"
+                        ),
+                    ),
+                    "ended_reason": "pending_orphaned",
+                }
+            )
+            set_run(updated)
+            await run_subagent_announce_flow(updated)
+            _recovery_tasks.pop(run_id, None)
+            return
+
         update_run(run_id, ended_reason="wedged_recovery")
         updated = reconcile_orphaned_run(run)
         if updated is not None:
@@ -97,6 +120,10 @@ def evaluate_recovery_gate(run: SubagentRunRecord) -> str:
         age = time.monotonic() - run.execution.started_at
         if age > _WEDGED_AGE_SECONDS:
             return "wedged"
+
+    if run.execution.status == ExecutionStatus.PENDING:
+        # PENDING runs hold no resumable context (never started, no steer target).
+        return "wedged"
 
     if run.recovery_attempts_persisted > _MAX_RECOVERY_ATTEMPTS:
         return "wedged"

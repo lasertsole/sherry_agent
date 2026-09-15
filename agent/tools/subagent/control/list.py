@@ -44,7 +44,12 @@ def build_subagent_list(session_key: str) -> dict:
     latest_index = build_latest_by_session_index(visible_runs)
     deduped = list(latest_index.values())
 
-    active = [r for r in deduped if r.execution.status == ExecutionStatus.RUNNING]
+    active = [
+        r
+        for r in deduped
+        if r.execution.status
+        in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
+    ]
     recent = [r for r in deduped if r.execution.status == ExecutionStatus.TERMINAL]
 
     active_summaries = []

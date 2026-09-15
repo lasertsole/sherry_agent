@@ -45,12 +45,13 @@ class SessionsYieldTool(BaseTool):
         session_key = f"agent:main:session:{self.session_id}"
         logger.info("sessions_yield called: session={}, reason={}", session_key, reason)
 
-        # Check for active child sub-agents
+        # Check for active child sub-agents (PENDING children queue in the lane)
         children = list_runs_for_requester(session_key)
         active = [
             c
             for c in children
-            if c.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
+            if c.execution.status
+            in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
         ]
 
         if not active:
