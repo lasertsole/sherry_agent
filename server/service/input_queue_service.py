@@ -277,13 +277,22 @@ def _payload_json(message: str) -> str:
 async def _run_executor(
     executor: TurnExecutor, session_id: str, message: str, source: Source, reply_target: str | None
 ) -> None:
-    """Fire-and-forget wrapper: a crashing executor must not die silently."""
-    try:
-        await executor.execute(session_id, message, source, reply_target)
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 - background task, log + keep serving
-        logger.exception("turn executor crashed for session {}", session_id)
+    """Fire-and-forget wrapper: a crashing executor must not die silently.
+
+    The whole turn runs inside one MAIN lane slot: per-session serialization
+    (``_SESSION_LOCKS`` + ``SessionState.detect_state``) is unchanged, and the
+    lane adds the cross-session global cap. A drain-mode refusal propagates
+    from ``lane_slot`` — the turn is dropped rather than started.
+    """
+    from runtime.lane import LaneType, lane_slot
+
+    async with lane_slot(LaneType.MAIN):
+        try:
+            await executor.execute(session_id, message, source, reply_target)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - background task, log + keep serving
+            logger.exception("turn executor crashed for session {}", session_id)
 
 
 async def submit_user_input(
