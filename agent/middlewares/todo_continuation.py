@@ -31,17 +31,6 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
-from agent.tools.todolist.registry.store_sqlite import get_todos_sync
-from agent.tools.todolist.stagnation_tracker import (
-    check_stagnation,
-    enter_recovery,
-    is_abort_error,
-    is_in_cooldown,
-    mark_injected,
-    reset,
-    should_enter_recovery,
-)
-
 __all__ = ["TodoContinuationEnforcer"]
 
 # Continuation directive (E3 design; behavior contract of this module).
@@ -117,6 +106,11 @@ class TodoContinuationEnforcer(AgentMiddleware):
     async def aafter_agent(self, state, runtime=None) -> None:
         """Inspect the finished turn; fire-and-forget a continuation if needed."""
         try:
+            # Lazy: agent.tools.todolist imports agent.middlewares at import time,
+            # so a top-level import here would close the middlewares/tools cycle.
+            from agent.tools.todolist import stagnation_tracker as st
+            from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
             if not isinstance(state, dict):
                 return None
             session_id = str(state.get("session_id") or "")
@@ -126,24 +120,24 @@ class TodoContinuationEnforcer(AgentMiddleware):
 
             # Abort-class failures (user cancel / timeout) must never continue.
             error = _turn_error(state)
-            if error is not None and is_abort_error(error):
+            if error is not None and st.is_abort_error(error):
                 logger.info("todo continuation: abort error for session {}; skipping", session_id)
                 return None
 
             todos = get_todos_sync(session_id)
             if not todos:
-                reset(session_id)
+                st.reset(session_id)
                 return None
 
             incomplete = [t for t in todos if t["status"] in _INCOMPLETE_STATUSES]
             if not incomplete:
-                reset(session_id)
+                st.reset(session_id)
                 return None
 
             # Stagnation: unchanged across N attempts → recovery or give up.
-            if check_stagnation(session_id, todos):
-                if should_enter_recovery(session_id):
-                    enter_recovery(session_id)
+            if st.check_stagnation(session_id, todos):
+                if st.should_enter_recovery(session_id):
+                    st.enter_recovery(session_id)
                     logger.info(
                         "todo continuation: recovery mode for session {} ({} remaining)",
                         session_id,
@@ -154,7 +148,7 @@ class TodoContinuationEnforcer(AgentMiddleware):
                     )
                 return None
 
-            if is_in_cooldown(session_id):
+            if st.is_in_cooldown(session_id):
                 logger.debug("todo continuation: session {} in cooldown; skipping", session_id)
                 return None
 
@@ -174,11 +168,12 @@ class TodoContinuationEnforcer(AgentMiddleware):
     async def _inject(self, session_id: str, prompt: str) -> None:
         """Fire-and-forget the prompt; record the injection only on success."""
         try:
+            from agent.tools.todolist import stagnation_tracker as st
             from server.service.auto_turn import maybe_trigger_auto_turn
 
             session_key = f"agent:main:session:{session_id}"
             await maybe_trigger_auto_turn(session_key, HumanMessage(content=prompt))
-            mark_injected(session_id)
+            st.mark_injected(session_id)
         except Exception:
             logger.exception(
                 "todo continuation: auto_turn injection failed for session {}; "

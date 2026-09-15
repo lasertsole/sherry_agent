@@ -4,9 +4,10 @@ Uses the installed langchain 1.3.9 hook contract: ``aafter_agent(state, runtime)
 returning ``None`` (the continuation prompt is delivered through the
 fire-and-forget ``maybe_trigger_auto_turn`` path, never a state update).
 
-Hermetic: ``get_todos_sync`` is monkeypatched and ``maybe_trigger_auto_turn`` is
-spied; every injected prompt is asserted to arrive as a ``HumanMessage`` whose
-text carries the design-doc marker. No real sleeps, no DB writes.
+Hermetic: ``store_sqlite.get_todos_sync`` is monkeypatched and
+``maybe_trigger_auto_turn`` is spied; every injected prompt is asserted to
+arrive as a ``HumanMessage`` whose text carries the design-doc marker. No real
+sleeps, no DB writes.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from langchain_core.messages import HumanMessage
 
 import agent.middlewares.todo_continuation as tc
 from agent.tools.todolist import stagnation_tracker as st
+from agent.tools.todolist.registry import store_sqlite as todo_store
 
 pytestmark = [pytest.mark.unit]
 
@@ -51,7 +53,7 @@ def _state(session_id: str = _SID, error: BaseException | None = None) -> dict:
 
 
 def _patch_todos(monkeypatch: pytest.MonkeyPatch, todos: list[dict]) -> None:
-    monkeypatch.setattr(tc, "get_todos_sync", lambda session_id: list(todos))
+    monkeypatch.setattr(todo_store, "get_todos_sync", lambda session_id: list(todos))
 
 
 @pytest.fixture(autouse=True)
