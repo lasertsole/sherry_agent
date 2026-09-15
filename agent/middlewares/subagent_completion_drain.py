@@ -35,8 +35,6 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from loguru import logger
 
-from agent.tools.subagent.announce.steering_queue import drain, rehydrate
-
 __all__ = ["SubagentCompletionDrainMiddleware"]
 
 # E5: appended to every drained subagent-completion carrier so the parent turn
@@ -107,6 +105,10 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
         proper completion metadata — injected directly, never reconstructed.
         """
         try:
+            # Lazy: agent.tools.subagent imports agent.middlewares at import time,
+            # so a top-level import here would close the middlewares/tools cycle.
+            from agent.tools.subagent.announce.steering_queue import drain, rehydrate
+
             key = ""
             if isinstance(state, dict):
                 key = state.get("session_id") or ""

@@ -20,6 +20,7 @@ from agent.middlewares.subagent_completion_drain import (
     _VERIFICATION_REMINDER,
     SubagentCompletionDrainMiddleware,
 )
+from agent.tools.subagent.announce import steering_queue as sq
 
 pytestmark = [pytest.mark.unit]
 
@@ -50,8 +51,8 @@ def patched_drain(monkeypatch: pytest.MonkeyPatch) -> dict:
     async def _drain(key: str) -> list:
         return list(state["items"])
 
-    monkeypatch.setattr(drain_mod, "rehydrate", _rehydrate)
-    monkeypatch.setattr(drain_mod, "drain", _drain)
+    monkeypatch.setattr(sq, "rehydrate", _rehydrate)
+    monkeypatch.setattr(sq, "drain", _drain)
     # LT-5 memory reconcile has its own suite; this file only covers the
     # reminder-append contract and must not touch workspace/memory/.
     monkeypatch.setattr(drain_mod, "_backflow_shared_memory", lambda: None)

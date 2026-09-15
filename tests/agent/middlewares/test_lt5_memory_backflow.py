@@ -20,7 +20,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 import agent.tools.memory as memory_module
-from agent.middlewares import subagent_completion_drain as drain_mod
+from agent.tools.subagent.announce import steering_queue as sq
 from agent.middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 
 pytestmark = [pytest.mark.unit]
@@ -52,8 +52,8 @@ def patched_drain(monkeypatch):
     async def _drain(key: str) -> list:
         return list(state["items"])
 
-    monkeypatch.setattr(drain_mod, "rehydrate", _rehydrate)
-    monkeypatch.setattr(drain_mod, "drain", _drain)
+    monkeypatch.setattr(sq, "rehydrate", _rehydrate)
+    monkeypatch.setattr(sq, "drain", _drain)
     return state
 
 
