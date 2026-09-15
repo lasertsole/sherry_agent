@@ -30,7 +30,8 @@ change (guardrail G5) — asserted by the "existing signals still win" and
 All signal sources are faked/controlled per test — no real WS server, no
 robyn, no LLM. The one real-wiring test imports
 ``server.service.auto_turn`` directly (proven hermetic by
-tests/server/service/test_auto_turn.py) to prove the lazy-import seam resolves.
+tests/server/service/test_auto_turn.py) to prove the runtime hook resolves to
+it; the companion test proves an unregistered hook degrades to not-live.
 """
 
 import threading
@@ -45,6 +46,7 @@ from agent.tools.subagent.registry.session_state import (
     is_session_busy,
     set_hitl_pending,
 )
+from runtime import hooks
 
 _SESSION_STATE_MODULE = "agent.tools.subagent.registry.session_state"
 
@@ -157,14 +159,12 @@ class TestAutoTurnInflightSignal:
         assert state.busy is False
         assert state.reason == "idle"
 
-    def test_real_auto_turn_module_wiring(self, active_tasks, state_register, monkeypatch):
-        """The lazy import seam resolves to the REAL auto_turn module (the
+    def test_real_auto_turn_module_wiring(self, active_tasks, state_register):
+        """The runtime hook resolves to the REAL auto_turn module (the
         fake-module tests above prove precedence; this one proves wiring)."""
         from server.service import auto_turn as real_auto_turn
 
-        monkeypatch.setattr(
-            f"{_SESSION_STATE_MODULE}._get_auto_turn_module", lambda: real_auto_turn
-        )
+        hooks.register(hooks.AUTO_TURN_MODULE, lambda: real_auto_turn)
         real_auto_turn._INFLIGHT["abc"] = make_live_task()
         try:
             state = detect_state("abc")
@@ -172,6 +172,16 @@ class TestAutoTurnInflightSignal:
             assert state.reason == "auto_turn_inflight"
         finally:
             real_auto_turn._INFLIGHT.pop("abc", None)
+            hooks.unregister(hooks.AUTO_TURN_MODULE)
+
+    def test_unregistered_hook_reports_not_live(self, active_tasks, state_register):
+        """No auto-turn hook registered (evals/unit tests): signal not-live."""
+        hooks.unregister(hooks.AUTO_TURN_MODULE)
+
+        state = detect_state("abc")
+
+        assert state.busy is False
+        assert state.reason == "idle"
 
 
 class TestPriorityOrder:

@@ -12,8 +12,9 @@ Guarded here:
    a closed socket (ConnectionClosed) is silently tolerated: no unhandled
    exception escapes, turn lifecycle unaffected.
 3. ``test_inflight_*`` — while a turn runs, ``detect_state`` /
-   ``_is_auto_turn_inflight`` (session_state lazy seam over module-level
-   ``_INFLIGHT``) observes the session as ``auto_turn_inflight``.
+   ``_is_auto_turn_inflight`` (session_state's runtime-hook seam over the
+   auto-turn module's ``_INFLIGHT``) observes the session as
+   ``auto_turn_inflight``.
 
 Stub style follows tests/server/service/test_auto_turn.py (fake generate generator +
 fake detect_state + monkeypatched seams; no real WS, no LLM).
@@ -238,7 +239,7 @@ async def test_send_text_closed_socket_tolerated_and_delivered(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_inflight_observable_by_detect_state_during_turn(monkeypatch):
-    """While a fake auto turn runs, the session_state lazy seam observes the
+    """While a fake auto turn runs, the session_state hook seam observes the
     session as auto_turn_inflight (module-level _INFLIGHT contract, Task 2)."""
     at = _mod()
     ss = _state_mod()

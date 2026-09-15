@@ -55,21 +55,27 @@ Guarantees:
       ``set_hitl_pending`` alone;
     - call-time truth only: no caching, no TTL — each call re-reads the
       sources (cheap dict/state lookups);
-    - no heavy imports at module load: ``server.trigger.ws.messages`` (robyn +
-      channel boot), ``runtime.session.state_register`` and
-      ``server.service.auto_turn`` (pulls ``server.service.messages``) are
-      imported lazily inside the accessors so this module stays importable
-      in isolated contexts.
+    - no heavy imports at module load: the WS task table and the auto-turn
+      module are reached through ``runtime.hooks`` getters (resolved at call
+      time; the server boots register them), and
+      ``runtime.session.state_register`` is imported lazily inside the
+      accessor — so this module stays importable in isolated contexts. When a
+      hook is unregistered (no server assembled: evals, unit tests) the
+      affected signal reports not-live instead of raising.
 """
 
 from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
+
 from agent.tools.subagent.registry.session_keys import normalize_session_key
+from runtime import hooks
 
 __all__ = [
     "SessionState",
@@ -99,11 +105,33 @@ _HITL_PENDING: set[str] = set()  # bare ids currently waiting on a HITL decision
 _HITL_LOCK = threading.Lock()  # guards _HITL_PENDING mutations (cheap, never awaited)
 
 
-def _get_active_tasks() -> dict[str, asyncio.Task[Any]]:
-    """Lazy accessor for the WS module's task table (read-only use)."""
-    from server.trigger.ws import messages as ws_messages
+_hook_misses_logged: set[str] = set()
 
-    return ws_messages._active_tasks
+
+def _resolve_hook(name: str) -> Callable[..., Any] | None:
+    """Resolve a runtime hook, logging the first miss per name (once)."""
+    fn = hooks.resolve(name)
+    if fn is None and name not in _hook_misses_logged:
+        _hook_misses_logged.add(name)
+        logger.debug(
+            "session_state: runtime hook {!r} is not registered; "
+            "consumers degrade to the documented fallback",
+            name,
+        )
+    return fn
+
+
+def _get_active_tasks() -> dict[str, asyncio.Task[Any]]:
+    """Call-time accessor for the live WS task table (read-only use).
+
+    The table is owned by the transport layer and pushed into
+    ``runtime.hooks.WS_ACTIVE_TASKS`` at server boot; without a registered
+    provider (no server assembled) callers see an empty table.
+    """
+    provider = _resolve_hook(hooks.WS_ACTIVE_TASKS)
+    if provider is None:
+        return {}
+    return provider()
 
 
 def _get_state_register():
@@ -124,16 +152,19 @@ def _is_answering(session_id: str) -> bool:
     return bool(_get_state_register().get_state(session_id, "answering"))
 
 
-def _get_auto_turn_module():
-    """Lazy accessor for the auto-turn module (read-only use of _INFLIGHT).
+def _get_auto_turn_module() -> Any | None:
+    """Call-time accessor for the auto-turn module (read-only use of _INFLIGHT).
 
-    Lazy because ``server.service.auto_turn`` pulls in
-    ``server.service.messages`` — far too heavy for module import time. Kept
-    as a seam so tests can fake the registry without the real import chain.
+    Resolved through ``runtime.hooks.AUTO_TURN_MODULE`` — the server boots a
+    getter for its auto-turn module (whose import chain pulls in the message
+    service, far too heavy for module import time). Kept as a seam so tests
+    can fake the registry. Without a registered getter (no server assembled)
+    the accessor returns ``None``.
     """
-    from server.service import auto_turn as auto_turn_module
-
-    return auto_turn_module
+    getter = _resolve_hook(hooks.AUTO_TURN_MODULE)
+    if getter is None:
+        return None
+    return getter()
 
 
 def set_hitl_pending(session_id: str, value: bool) -> None:
@@ -173,6 +204,8 @@ def _is_auto_turn_inflight(session_id: str) -> bool:
     # membership directly" — spec); lock mirrors auto_turn's own
     # mutation discipline. Done tasks are stale entries, not live turns.
     mod = _get_auto_turn_module()
+    if mod is None:
+        return False
     with mod._INFLIGHT_LOCK:
         task = mod._INFLIGHT.get(session_id)
     return task is not None and not task.done()

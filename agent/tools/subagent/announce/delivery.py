@@ -14,10 +14,14 @@ turn/model call and never alters the dual-path result.
 import asyncio
 import re
 import time
+from collections.abc import Callable
+from typing import Any
+
 from loguru import logger
 from langchain_core.messages import HumanMessage
 
 from config.features import SUBAGENT_INFRA
+from runtime import hooks
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus
 from ..types.delivery import DeliveryContext
 from ..config import get_config
@@ -117,11 +121,12 @@ def resolve_compaction_retry_delay_ms(attempt: int) -> float:
 # ── third delivery path (WS turn-input injection) ───────────────────
 # Additive to the dual-path dispatch: completed runs announcing to a main-agent
 # WS session also get their completion routed into the requester's turn
-# pipeline. All third-party touches below are lazy imports: module-level
-# imports of the registry package or the server service stack would either
-# break the announce import order (registry/__init__ ↔ announce cycle) or drag
-# in robyn/heavy deps. Every seam is monkeypatchable for tests.
-_AUTO_TURN_TRIGGERED = "triggered"  # AutoTurnOutcome value (str Enum); string compare avoids importing the server stack here
+# pipeline. Third-party touches below stay lazy seams: module-level imports of
+# the registry package would break the announce import order
+# (registry/__init__ ↔ announce cycle), and the server-owned auto-turn trigger
+# is resolved through runtime.hooks at call time so the agent layer never
+# reaches up into server. Every seam is monkeypatchable for tests.
+_AUTO_TURN_TRIGGERED = "triggered"  # AutoTurnOutcome value (str Enum); string compare keeps the server enum out of the agent layer
 
 _injection_store = None  # lazy PendingInjectionStore singleton (default registry db path)
 
@@ -157,11 +162,34 @@ def _enqueue_steering(session_key: str, injection: HumanMessage):
     return enqueue_steering(session_key, injection)
 
 
-def _trigger_auto_turn(session_key: str, injection: HumanMessage):
-    """auto-turn trigger seam (lazy; fire-and-forget, never awaits the turn)."""
-    from server.service.auto_turn import maybe_trigger_auto_turn
+_hook_misses_logged: set[str] = set()
 
-    return maybe_trigger_auto_turn(session_key, injection)
+
+def _resolve_hook(name: str) -> Callable[..., Any] | None:
+    """Resolve a runtime hook, logging the first miss per name (once)."""
+    fn = hooks.resolve(name)
+    if fn is None and name not in _hook_misses_logged:
+        _hook_misses_logged.add(name)
+        logger.debug(
+            "announce/delivery: runtime hook {!r} is not registered; "
+            "the caller falls back to the steering queue",
+            name,
+        )
+    return fn
+
+
+def _trigger_auto_turn(session_key: str, injection: HumanMessage):
+    """auto-turn trigger seam (fire-and-forget, never awaits the turn).
+
+    Resolved through ``runtime.hooks`` so the announce layer never reaches up
+    into the server stack. Unregistered (evals / unit tests / no server
+    assembled) -> ``None`` ("not triggered"), which the caller turns into the
+    steering-queue fallback (Q4: never drop).
+    """
+    trigger = _resolve_hook(hooks.MAYBE_TRIGGER_AUTO_TURN)
+    if trigger is None:
+        return None
+    return trigger(session_key, injection)
 
 
 def _resolve_builder_status(run: SubagentRunRecord) -> str:
