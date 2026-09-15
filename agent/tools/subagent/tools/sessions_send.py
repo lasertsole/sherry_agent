@@ -55,13 +55,17 @@ class SessionsSendTool(BaseTool):
             logger.debug("ANNOUNCE_SKIP sentinel detected in send message for run {}", run.run_id)
 
         from ..control.send import send_subagent_message
+        from runtime.lane import LaneType, lane_slot
 
-        await send_subagent_message(
-            run_id=run.run_id,
-            message=message,
-            caller_session_key=requester_key,
-            wait_for_reply=False,
-        )
+        # NESTED lane (default 1): sessions.send reply turns are serialized
+        # process-wide, so concurrent senders queue instead of interleaving.
+        async with lane_slot(LaneType.NESTED):
+            await send_subagent_message(
+                run_id=run.run_id,
+                message=message,
+                caller_session_key=requester_key,
+                wait_for_reply=False,
+            )
         return f"Message sent to {target_session_key}"
 
 
