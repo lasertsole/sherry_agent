@@ -148,7 +148,7 @@ The single executor `_dispatch_overflow_route` (:760 sync / :800 async) serves T
 - `truncate_tool_results_only` → `_run_budget_truncation` (:659) — step 1 truncates oversized tool-call args (returns new messages, see the truncate track below), step 2 truncates tool results in place — then a **recheck**: if the freed tokens were not enough (`new_tokens ≥ usable × 0.80`, estimated on the returned list), escalate to `compact_then_truncate`; otherwise pass through WITHOUT compression;
 - `compact_only` / `compact_then_truncate` → `_execute_compact` (:702 / async :731) → `_apply_compression` (exceptions logged, request unchanged) → `_record_compaction_bookkeeping` (:694: arm the cooldown, count the turn attempt) → for `compact_then_truncate`, budget truncation runs on the compacted result as backstop → route logged with old/new tokens and pressure ratio.
 
-Window math (test contracts): window `41 600` → usable `25 600`, lines `17 920` / `20 480`, truncate budget `15 360`. With `MAIN_LLM_MAX_TOKEN = 65536` the registered T2 clause sits at `52 428`.
+Window math (test contracts): window `41 600` → usable `25 600`, lines `17 920` / `20 480`, truncate budget `15 360`. With the test-pinned `MAIN_LLM_MAX_TOKEN = 65536` (the runtime `.env` value must be >= 131072 / 128K) the registered T2 clause sits at `52 428`.
 
 ## 🪙 Token Estimation (No Tokenizer)
 
@@ -351,7 +351,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/config/test_num_contract.py` | 46 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
-| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Production registration contract: `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Registration contract (test-pinned window): `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |

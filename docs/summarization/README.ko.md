@@ -146,7 +146,7 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 - `truncate_tool_results_only` → `_run_budget_truncation`(:659) — 1단계는 과도하게 큰 도구 호출 인자를 잘라내고(새 메시지 반환, 아래 트렁케이트 트랙 참조), 2단계는 도구 결과를 제자리에서 잘라냄 — 이후 **재확인**: 확보한 토큰이 부족하면(`new_tokens ≥ usable × 0.80`, 반환된 목록 기준으로 추정) `compact_then_truncate`로 승격; 아니면 압축 없이 통과;
 - `compact_only` / `compact_then_truncate` → `_execute_compact`(:702 / 비동기 :731) → `_apply_compression`(예외는 로그, 요청은 그대로) → `_record_compaction_bookkeeping`(:694: 쿨다운 무장, 턴 시도 1회 기록) → `compact_then_truncate`는 압축 결과에 예산 트렁케이션을 백스톱으로 한 번 더 실행 → 구/신 토큰과 압력 비율과 함께 라우트 로깅.
 
-윈도우 산술(테스트 계약): 윈도우 `41 600` → usable `25 600`, 두 경계선 `17 920` / `20 480`, 트렁케이트 예산 `15 360`. `MAIN_LLM_MAX_TOKEN = 65536`일 때 등록된 T2 절은 `52 428`에 놓입니다.
+윈도우 산술(테스트 계약): 윈도우 `41 600` → usable `25 600`, 두 경계선 `17 920` / `20 480`, 트렁케이트 예산 `15 360`. 테스트 고정값 `MAIN_LLM_MAX_TOKEN = 65536`일 때(런타임 `.env` 값은 131072 / 128K 이상 필요) 등록된 T2 절은 `52 428`에 놓입니다.
 
 ## 🪙 토큰 추정 (토크나이저 없음)
 
@@ -349,7 +349,7 @@ Summarization(
 | `tests/config/test_num_contract.py` | 46 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
-| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 프로덕션 등록 계약: `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 등록 계약(테스트 고정 윈도우): `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |

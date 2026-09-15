@@ -143,7 +143,7 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 - `truncate_tool_results_only` → `_run_budget_truncation`（:659）—— 第 1 步截断超大的工具调用参数（返回新消息，见下文截断轨道），第 2 步原地截断工具输出 —— 然后进行**复检**：如果释放的 token 不够（`new_tokens ≥ usable × 0.80`，按返回的列表估算），升级为 `compact_then_truncate`；否则直接放行、不做压缩；
 - `compact_only` / `compact_then_truncate` → `_execute_compact`（:702 / 异步 :731）→ `_apply_compression`（异常记日志、请求原样返回）→ `_record_compaction_bookkeeping`（:694：武装冷却期、计一次回合尝试）→ `compact_then_truncate` 还会对压缩结果再跑一次预算截断兜底 → 按新旧 token 与压力比记录路由日志。
 
-窗口算术（测试契约）：窗口 `41 600` → usable `25 600`，两条线 `17 920` / `20 480`，截断预算 `15 360`。当 `MAIN_LLM_MAX_TOKEN = 65536` 时，注册的 T2 子句落在 `52 428`。
+窗口算术（测试契约）：窗口 `41 600` → usable `25 600`，两条线 `17 920` / `20 480`，截断预算 `15 360`。当测试固定值 `MAIN_LLM_MAX_TOKEN = 65536` 时（运行时 `.env` 值必须 >= 131072 / 128K），注册的 T2 子句落在 `52 428`。
 
 ## 🪙 Token 估算（无分词器）
 
@@ -346,7 +346,7 @@ Summarization(
 | `tests/config/test_num_contract.py` | 46 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
-| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 生产注册契约：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 注册契约（测试固定窗口）：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |

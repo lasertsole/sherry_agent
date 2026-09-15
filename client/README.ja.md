@@ -290,6 +290,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | curator レビューと設定                               |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | チャネル切替と設定                                   |
 | `/env`                                                                                           | GET / PUT                | バックエンド `.env` の読み取り/更新                  |
+| `/model-config`                                                                                  | GET                      | モデル設定と有効性                               |
 | `/logs/files`、`/logs`                                                                           | GET                      | ログファイル一覧と末尾読み取り                       |
 | `/logs/ws`                                                                                       | WS                       | ライブログストリーム                                 |
 | `/images/upload`、`/audio/upload`、`/video/upload`                                               | POST                     | Base64 メディアアップロード → URL                    |

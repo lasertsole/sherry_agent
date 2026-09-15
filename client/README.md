@@ -290,6 +290,7 @@ REST (base URL `VITE_API_BACK_URL`, default `http://localhost:8080`):
 | `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | Curator review & settings                  |
 | `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | Channel toggles & config                   |
 | `/env`                                                                                           | GET / PUT                | Backend `.env` read/update                 |
+| `/model-config`                                                                                  | GET                      | Model config + validity                    |
 | `/logs/files`, `/logs`                                                                           | GET                      | Log file list & tail read                  |
 | `/logs/ws`                                                                                       | WS                       | Live log stream                            |
 | `/images/upload`, `/audio/upload`, `/video/upload`                                               | POST                     | Base64 media upload → URL                  |

@@ -147,7 +147,7 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 - `truncate_tool_results_only` → `_run_budget_truncation`（:659）—— ステップ 1 が過大なツール呼び出し引数を切り詰め（新しいメッセージを返す、下記の切り詰めトラック参照）、ステップ 2 がツール結果をその場で切り詰める —— その後**再確認**: 解放されたトークンが足りなければ（`new_tokens ≥ usable × 0.80`、返されたリスト上で推定）`compact_then_truncate` に昇格; 足りていれば圧縮なしで通過;
 - `compact_only` / `compact_then_truncate` → `_execute_compact`（:702 / 非同期 :731）→ `_apply_compression`（例外はログ記録、リクエストは元のまま）→ `_record_compaction_bookkeeping`（:694: クールダウンの武装、ターン試行 1 回の計上）→ `compact_then_truncate` はさらに圧縮結果に予算切り詰めをバックストップとして実行 → 旧/新トークンと圧力比とともにルートをログ記録。
 
-ウィンドウ算術（テスト契約）: ウィンドウ `41 600` → usable `25 600`、2 つの閾値線 `17 920` / `20 480`、切り詰め予算 `15 360`。`MAIN_LLM_MAX_TOKEN = 65536` のとき、登録済み T2 節は `52 428` に置かれます。
+ウィンドウ算術（テスト契約）: ウィンドウ `41 600` → usable `25 600`、2 つの閾値線 `17 920` / `20 480`、切り詰め予算 `15 360`。テスト固定値 `MAIN_LLM_MAX_TOKEN = 65536` のとき（実行時の `.env` 値は 131072 / 128K 以上が必要）、登録済み T2 節は `52 428` に置かれます。
 
 ## 🪙 トークン推定（トークナイザなし）
 
@@ -350,7 +350,7 @@ Summarization(
 | `tests/config/test_num_contract.py` | 46 | 定数契約（ウォッチドッグ `CONTRACT_NAMES` が文書化済みの全ノブをカバー） |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 つのエンドツーエンドシナリオ + 3 つのオーバーフローカウンタ回帰テスト × 2 登録順、静的フォールバック圧縮、ゼロネットワーク |
-| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 本番登録契約: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
+| `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 登録契約（テスト固定ウィンドウ）: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |

@@ -290,6 +290,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 | `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | curator 리뷰 및 설정                       |
 | `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | 채널 토글 및 설정                          |
 | `/env`                                                                                           | GET / PUT                | 백엔드 `.env` 읽기/업데이트                |
+| `/model-config`                                                                                  | GET                      | 모델 설정 및 유효성                       |
 | `/logs/files`, `/logs`                                                                           | GET                      | 로그 파일 목록 및 꼬리 읽기                |
 | `/logs/ws`                                                                                       | WS                       | 실시간 로그 스트림                         |
 | `/images/upload`, `/audio/upload`, `/video/upload`                                               | POST                     | Base64 미디어 업로드 → URL                 |
