@@ -136,6 +136,11 @@ async def activate_swarm_run(run_id: str) -> SubagentRunRecord | None:
             "swarm_run_state": SwarmRunState.ACTIVE.value,
             "execution": run.execution.model_copy(
                 update={
+                    # Activation is swarm admission, not lane execution: this scheduling
+                    # record never enters the SUBAGENT lane, and _count_active_swarm_runs
+                    # counts RUNNING/INTERRUPTED — leaving it PENDING would break the
+                    # group's concurrency cap.
+                    "status": ExecutionStatus.RUNNING,
                     "started_at": time.monotonic(),
                 }
             ),

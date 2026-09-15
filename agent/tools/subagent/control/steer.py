@@ -17,6 +17,7 @@ from ..registry import (
     cancel_task,
     replace_run_after_steer,
     save_kill_reconciliation,
+    mark_run_running,
 )
 from ..config import get_config
 from .controller import can_control_run, is_self_steer
@@ -150,8 +151,10 @@ async def steer_subagent_run(
         update={
             "execution": updated.execution.model_copy(
                 update={
-                    "status": ExecutionStatus.RUNNING,
-                    "started_at": time.monotonic(),
+                    # Enter the SUBAGENT lane as PENDING; the lane wrapper stamps
+                    # RUNNING/started_at once a slot is held (steer may queue).
+                    "status": ExecutionStatus.PENDING,
+                    "started_at": None,
                 }
             ),
             "pause_reason": None,
@@ -162,7 +165,7 @@ async def steer_subagent_run(
 
     timeout_seconds = config.run_timeout_seconds
     bg_task = asyncio.create_task(
-        _execute_steered_subagent(
+        _execute_steered_subagent_with_lane(
             run=restarted,
             child_agent=child_agent,
             steer_message=steer_message,
@@ -188,6 +191,41 @@ async def _abort_settle_wait(run_id: str, timeout: float = _ABORT_SETTLE_TIMEOUT
             return True
         await asyncio.sleep(0.1)
     return False
+
+
+async def _execute_steered_subagent_with_lane(
+    run: SubagentRunRecord,
+    child_agent,
+    steer_message: str,
+    timeout_seconds: float,
+) -> None:
+    """Wait for a SUBAGENT lane slot, promote PENDING → RUNNING, then run the steered sub-agent."""
+    from runtime.lane import LaneType, lane_slot
+
+    try:
+        async with lane_slot(LaneType.SUBAGENT):
+            current = get_run(run.run_id)
+            if current is None or current.execution.status == ExecutionStatus.TERMINAL:
+                return  # killed while waiting for a lane slot
+
+            if current.execution.status == ExecutionStatus.PENDING:
+                promoted = mark_run_running(run.run_id)
+                if promoted is None:
+                    return  # race: run disappeared between lookup and transition
+                current = promoted
+
+            await _execute_steered_subagent(
+                run=current,
+                child_agent=child_agent,
+                steer_message=steer_message,
+                timeout_seconds=timeout_seconds,
+            )
+    finally:
+        # Early return / cancellation paths never reach _execute_steered_subagent's
+        # own cleanup, so the task reference is released here exactly once.
+        from ..registry import remove_task as _remove_task
+
+        _remove_task(run.run_id)
 
 
 async def _execute_steered_subagent(
