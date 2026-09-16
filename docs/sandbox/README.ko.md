@@ -158,6 +158,8 @@ bwrap
 
 **검색 컨테인먼트(`_stays_within_root`).** `os.walk`는 디렉터리 심볼릭 링크를 내려가지 않지만, 파일 심볼릭 링크는 목록에 나타납니다. 두 검색 모드 모두 모든 히트를 `_stays_within_root(candidate, root)`(`candidate.resolve().relative_to(root.resolve())`, `ValueError` / `OSError` / `RuntimeError` 시 건너뜀)로 필터링하므로 검색 트리 밖으로 해석되는 심볼릭 링크는 결코 반환되지 않습니다 — `/etc/passwd`를 가리키는 파일 심볼릭 링크는 건너뜁니다. 검색 루트는 항상 이미 해석된 상태이며(프로젝트 내 검색은 추가로 `ROOT_DIR`에 묶임), allowlist에 등록된 외부 디렉터리 검색은 계속 동작합니다.
 
+**스캔 경계(P0-4).** 두 모드 모두 `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)로 스캔 자체를 제한합니다: `file_tools_search_time_budget_s`(기본 5.0초)가 만료되면 순회를 멈추고, `file_tools_search_max_matches`(기본 10,000)가 수집 히트 수를 제한하며, `file_tools_search_prune_dirs`(기본 `proc`, `sys`, `dev`)는 `dirnames[:]`에서 걸러져 의사 파일 시스템으로는 결코 내려가지 않습니다. 잘린 스캔은 결코 조용하지 않습니다 — JSON 결과에 `scan_truncated: true`, `scan_stop_reason`(`time_budget` / `max_matches`)과 힌트가 추가되고, 정리가 발생하면 `pruned_dir_count`도 붙습니다. 파일명 패턴은 `fnmatch`를 거치며(중괄호 확장 없음), 확장 수 상한이 필요하지 않습니다.
+
 **deepagents 참조 구현과의 설계 차이.** 참조 구현은 모든 경로를 가상 네임스페이스(`virtual_mode`)에 고정해 트래버설을 설계상 불가능하게 만듭니다. Sherry는 대신 실제 파일 시스템 경로를 유지하고(`prompt_builder`, 스킬 도구, terminal cwd가 모두 여기에 의존), 해석 **이후**에 컨테인먼트(위의 세 게이트)를 적용하며 `O_NOFOLLOW`로 TOCTOU를 닫습니다. `BackendProtocol`, `CompositeBackend`, `StateBackend`, 전체 가상 경로 네임스페이스는 의도적으로 채택하지 않았습니다. 그것은 아키텍처 재작성이며, Sherry에는 멀티 백엔드 사용 사례가 없습니다.
 
 ### 7. `PathGuard` 미들웨어
@@ -278,7 +280,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성(리드 실드 마운트 포함), 프로브 캐싱 (서브프로세스 전부 mock), 선택 실행되는 실제 bwrap 리드 실드 스모크 테스트 |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드(위험 명령 / 민감 파일 정규식), 스키마, 생성 형태, 제한 빌트인 방벽 |
 | `tests/agent/tools/pub_base/test_path_utils.py` | 외부 경로 흐름, 세 개의 구조적 게이트, 심볼릭 링크 루프 처리, 가상 경로 렌더링 |
-| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` | `O_NOFOLLOW`를 통한 심볼릭 링크 / TOCTOU 거부, 가상 경로, 검색 결과 컨테인먼트 |
+| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` / `test_search_bounds.py` | `O_NOFOLLOW`를 통한 심볼릭 링크 / TOCTOU 거부, 가상 경로, 검색 결과 컨테인먼트, 스캔 경계 |
 | `tests/agent/middlewares/test_path_guard.py` | `PathGuard` 스크리닝: 트래버설 컴포넌트, 하드 거부 바닥, 외부 경로 통과, 구조화된 오류 `ToolMessage` |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19개 테스트, 샌드박스 강화 이전의 HITL / terminal 레거시 동작 고정 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17개 테스트, 우회 승인 흐름, YOLO 통과, 범위 스탬핑 |

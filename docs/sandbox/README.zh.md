@@ -158,6 +158,8 @@ bwrap
 
 **搜索 containment（`_stays_within_root`）。** `os.walk` 不会进入目录符号链接，但文件符号链接仍会出现在列表里。两种搜索模式都用 `_stays_within_root(candidate, root)`（`candidate.resolve().relative_to(root.resolve())`，遇 `ValueError` / `OSError` / `RuntimeError` 即跳过）过滤每个命中，因此经符号链接解析到搜索树之外的文件绝不会返回——指向 `/etc/passwd` 的文件符号链接会被跳过。搜索根本身始终是已解析路径（项目内搜索还额外受 `ROOT_DIR` 约束），所以已获批准的外部目录搜索仍可正常工作。
 
+**扫描边界（P0-4）。** 两种模式还通过 `TOOLS_TIMEOUTS`（`config/features/agent_side/tools_timeouts.py`）限制扫描本身：`file_tools_search_time_budget_s`（默认 5.0 秒）到期即停止遍历，`file_tools_search_max_matches`（默认 10,000）限制收集到的命中数，`file_tools_search_prune_dirs`（默认 `proc`、`sys`、`dev`）在 `dirnames[:]` 中被过滤，伪文件系统绝不会被进入。被截断的扫描绝不静默：JSON 结果会带上 `scan_truncated: true`、`scan_stop_reason`（`time_budget` / `max_matches`）与提示；剪枝发生时另有 `pruned_dir_count`。文件名匹配走 `fnmatch`（不支持花括号展开），因此无需展开数上限。
+
 **与 deepagents 参考实现的设计差异。** 参考实现把每个路径锚定到虚拟命名空间（`virtual_mode`），使穿越在设计上不可能；Sherry 则保留真实文件系统路径——`prompt_builder`、技能工具与 terminal 的 cwd 都依赖它们——改在解析**之后**做 containment（上文三道门），并用 `O_NOFOLLOW` 关闭 TOCTOU。其 `BackendProtocol`、`CompositeBackend`、`StateBackend` 与完整的虚拟路径命名空间被刻意弃用：那是架构重写，而 Sherry 没有多后端场景。
 
 ### 7. `PathGuard` 中间件
@@ -278,7 +280,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造（含读遮蔽挂载）、探测缓存（子进程全部 mock），以及 1 条可选的真实 bwrap 读遮蔽冒烟测试 |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫（危险命令 / 敏感文件正则）、schema、启动形态、受限内建屏障 |
 | `tests/agent/tools/pub_base/test_path_utils.py` | 外部路径流程、三道结构门、符号链接环处理、虚拟路径回显 |
-| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` | 经 `O_NOFOLLOW` 拒绝符号链接 / TOCTOU、虚拟路径、搜索结果 containment |
+| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` / `test_search_bounds.py` | 经 `O_NOFOLLOW` 拒绝符号链接 / TOCTOU、虚拟路径、搜索结果 containment、扫描边界 |
 | `tests/agent/middlewares/test_path_guard.py` | `PathGuard` 筛选：穿越分量、硬拒绝下限、外部路径放行、结构化错误 `ToolMessage` |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19 个测试，锁定沙箱改造前的 HITL / terminal 遗留行为 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17 个测试，覆盖绕过审批流、YOLO 直通、作用域标记 |

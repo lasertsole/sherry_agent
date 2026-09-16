@@ -158,6 +158,8 @@ bwrap
 
 **検索コンテインメント(`_stays_within_root`)。** `os.walk` はディレクトリのシンボリックリンクを辿りませんが、ファイルのシンボリックリンクは一覧に現れます。両検索モードはすべてのヒットを `_stays_within_root(candidate, root)`(`candidate.resolve().relative_to(root.resolve())`、`ValueError` / `OSError` / `RuntimeError` でスキップ)でフィルタするため、検索ツリーの外に解決されるシンボリックリンクは決して返りません — `/etc/passwd` へのファイルシンボリックリンクはスキップされます。検索ルートは常に解決済みです(プロジェクト内検索はさらに `ROOT_DIR` で制限されます)ので、allowlist 済みの外部ディレクトリ検索はそのまま機能します。
 
+**スキャン境界(P0-4)。** 両モードは `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)でスキャン自体も制限します: `file_tools_search_time_budget_s`(既定 5.0 秒)の期限切れで走査を停止し、`file_tools_search_max_matches`(既定 10,000)が収集ヒット数を上限化し、`file_tools_search_prune_dirs`(既定 `proc`、`sys`、`dev`)は `dirnames[:]` から除外されるため疑似ファイルシステムには決して降りません。打ち切られたスキャンは決して黙りません — JSON 結果に `scan_truncated: true`、`scan_stop_reason`(`time_budget` / `max_matches`)とヒントが付き、プルーニングが発生した場合は `pruned_dir_count` も付きます。ファイル名パターンは `fnmatch` を通り(ブレース展開なし)、展開数上限は不要です。
+
 **deepagents 参考実装との設計差。** 参考実装はすべてのパスを仮想名前空間(`virtual_mode`)に固定することで、トラバーサルを設計上不可能にします。Sherry は代わりに実ファイルシステムパスを保持し(`prompt_builder`、スキルツール、terminal の cwd がすべて依存)、解決**後**にコンテインメント(上記の3ゲート)を適用し、`O_NOFOLLOW` で TOCTOU を閉じます。`BackendProtocol`、`CompositeBackend`、`StateBackend`、完全な仮想パス名前空間は意図的に採用していません。それはアーキテクチャの書き換えであり、Sherry にマルチバックエンドの用途がないためです。
 
 ### 7. `PathGuard` ミドルウェア
@@ -278,7 +280,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築(リードシールドのマウントを含む)、プローブキャッシュ (subprocess はすべてモック)、任意実行の実 bwrap リードシールドスモークテスト |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード(危険コマンド / 機密ファイル正規表現)、スキーマ、起動形態、制限ビルトインの障壁 |
 | `tests/agent/tools/pub_base/test_path_utils.py` | 外部パスフロー、3つの構造ゲート、シンボリックリンクループ処理、仮想パス描画 |
-| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` | `O_NOFOLLOW` によるシンボリックリンク / TOCTOU 拒否、仮想パス、検索結果コンテインメント |
+| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` / `test_search_bounds.py` | `O_NOFOLLOW` によるシンボリックリンク / TOCTOU 拒否、仮想パス、検索結果コンテインメント、スキャン境界 |
 | `tests/agent/middlewares/test_path_guard.py` | `PathGuard` スクリーニング: トラバーサルコンポーネント、ハード拒否フロア、外部パス素通し、構造化エラー `ToolMessage` |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19テスト、サンドボックス強化前の HITL / terminal レガシー動作を固定 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17テスト、バイパス承認フロー、YOLO 素通し、スコープスタンピング |
