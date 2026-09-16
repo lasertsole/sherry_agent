@@ -1,4 +1,5 @@
 import re
+import urllib.parse
 from pathlib import Path
 
 
@@ -6,9 +7,14 @@ def has_traversal_component(path_str: str) -> bool:
     """Return True if *path_str* contains traversal components (e.g. ``..``
     or Windows dot-only names like ``...`` / ``....`` that resolve to parent).
 
-    Quick check for obvious traversal attempts before doing full resolution.
+    Percent-encoded (``%2e%2e``, ``..%2f``) and backslash (``..\\``) forms are
+    decoded and normalized first so they cannot slip past the component check.
+    Pure function: no IO, no logging — called from skill tools and attachment
+    validation.
     """
-    parts = Path(path_str).parts
+    decoded = urllib.parse.unquote(path_str)
+    normalized = decoded.replace("\\", "/")
+    parts = Path(normalized).parts
     return any(re.compile(r"\.{2,}").fullmatch(p) for p in parts)
 
 
