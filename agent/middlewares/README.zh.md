@@ -187,7 +187,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### MultimodalProcessor
 
-**模块：** `agent/middlewares/media_pipeline.py` · **类：** `MultimodalProcessor(AgentMiddleware)`
+**模块：** `agent/middlewares/media_pipeline/core.py` · **类：** `MultimodalProcessor(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`after_agent` / `aafter_agent`
 
 `before_agent` 在最后一条 `HumanMessage` 的内容为多模态列表时对其进行处理：
@@ -203,7 +203,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### IterationBudget
 
-**模块：** `agent/middlewares/iteration_budget.py` · **类：** `IterationBudget(AgentMiddleware)`
+**模块：** `agent/middlewares/iteration_budget/core.py` · **类：** `IterationBudget(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
 
 对**一个回合内模型调用 + 工具调用总和**的硬上限。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 注册 `IterationBudget(90)`，worker Agent 注册 `IterationBudget(60)`。
@@ -214,7 +214,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### ToolGuardrails
 
-**模块：** `agent/middlewares/tool_guardrails.py` · **类：** `ToolGuardrails(AgentMiddleware)`
+**模块：** `agent/middlewares/tool_guardrails/core.py` · **类：** `ToolGuardrails(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_tool_call` / `awrap_tool_call`
 
 检测五种失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
@@ -240,7 +240,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### ToolCallNormalize
 
-**模块：** `agent/middlewares/tool_call_normalize.py` · **类：** `ToolCallNormalize(AgentMiddleware)`
+**模块：** `agent/middlewares/tool_call_normalize/core.py` · **类：** `ToolCallNormalize(AgentMiddleware)`
 **钩子：** 仅 `before_model` / `abefore_model`
 
 在上下文裁剪后修复 tool-call / tool-result 配对，防止提供方报 "Message ordering conflict" 错误。委托给 `pub.func.sanitize_tool_use_result_pairing(state["messages"])`（定义于 `pub/func/transcript_repair.py`），它会：
@@ -254,7 +254,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### PathGuard
 
-**模块：** `agent/middlewares/path_guard/__init__.py` · **类：** `PathGuard(AgentMiddleware)`
+**模块：** `agent/middlewares/path_guard/core.py` · **类：** `PathGuard(AgentMiddleware)`
 **钩子：** 仅 `wrap_tool_call` / `awrap_tool_call`
 
 为各工具自己的 `resolve_project_path()` / `resolve_external_path()` 模式提供纵深防御：忘记做路径检查的工具仍无法被诱导读取穿越路径或硬拒绝路径。在主 Agent 中注册在 `ToolCallNormalize` 之后；由于列表顺序即 wrap 钩子的外层顺序，它运行在 `ToolGuardrails` **之内**（`IterationBudget` → `ToolGuardrails` → `PathGuard` → 工具），拒绝会作为普通错误 `ToolMessage` 交给 ToolGuardrails 评估，与其他工具失败一视同仁。worker 链不注册：子 Agent 的工具保有自己的门禁，且子代理的外部路径本就硬拒绝。（计划原文"ToolCallNormalize 之后、ToolGuardrails 之前"在列表顺序上不可能——`ToolCallNormalize` 注册在 `ToolGuardrails` 之后；当前选择是最近的可满足位置。）
@@ -271,7 +271,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### SubagentCompletionDrainMiddleware
 
-**模块：** `agent/middlewares/subagent_completion_drain.py` · **类：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**模块：** `agent/middlewares/subagent_completion_drain/core.py` · **类：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
 **钩子：** 仅 `before_model` / `abefore_model`
 
 在主 Agent 中注册于 `ToolCallNormalize` 之后，因此它注入的消息在注入回合不会经过 sanitize 重写。它在 `before_model` 时重建并清空（drain）当前会话的 `SteeringQueue`——父会话忙碌期间由 announce 管线排队的完成载体消息——返回 `{"messages": [carrier, ...]}`，在下一次模型调用前注入重建的完成载体 `HumanMessage`。
@@ -282,7 +282,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### HeartbeatStaleness
 
-**模块：** `agent/middlewares/heartbeat_staleness.py` · **类：** `HeartbeatStaleness(AgentMiddleware)`
+**模块：** `agent/middlewares/heartbeat_staleness/core.py` · **类：** `HeartbeatStaleness(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`after_agent` / `aafter_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
 
 卡死回合的看门狗。**主 Agent 与 worker Agent 都有注册**（本文档旧版本声称只在 worker 使用——那是错的）。
@@ -333,7 +333,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### LLMRetryMiddleware
 
-**模块：** `agent/middlewares/llm_retry.py` · **类：** `LLMRetryMiddleware(AgentMiddleware)`（另有 `LLMRetryConfig`、`FallbackCandidate`、`ContentFilterError`）
+**模块：** `agent/middlewares/llm_retry/core.py` · **类：** `LLMRetryMiddleware(AgentMiddleware)`（另有 `LLMRetryConfig`、`FallbackCandidate`、`ContentFilterError`）
 **钩子：** 仅 `wrap_model_call` / `awrap_model_call`
 
 在主 Agent 中注册于 **`HumanInTheLoop` 与 `Summarization` 之间**：相对 `MaxTokensBoostMiddleware` 为内层（只看到 boost 重呼之后仍未解决的真正截断），相对 Summarization 为外层（重试环从外部包住 T4/T5 溢出恢复环）。worker 流水线中**不**注册。当状态中没有 `session_id` 时，中间件直接透传。
@@ -361,7 +361,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### Summarization
 
-**模块：** `agent/middlewares/summarization.py` · **类：** `Summarization(AgentMiddleware)`
+**模块：** `agent/middlewares/summarization/core.py` · **类：** `Summarization(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`（计数器重置）、`wrap_model_call` / `awrap_model_call`
 
 最内层的中间件——最贴近 LLM。从零实现的 `AgentMiddleware`（**并非** LangChain 的 `SummarizationMiddleware`）：触发条件命中后，按预算制截断点压缩历史——优先非 LLM 策略，仅在文本降级安全时才使用辅助 LLM 摘要。`keep` 参数被接受但未使用；尾部保留纯预算制：`clamp(context_window × 0.25, 2 000, 15 000)` 个 token（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
@@ -381,7 +381,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### MaxTokensBoostMiddleware
 
-**模块：** `agent/middlewares/max_tokens_boost.py` · **类：** `MaxTokensBoostMiddleware(AgentMiddleware)`
+**模块：** `agent/middlewares/max_tokens_boost/core.py` · **类：** `MaxTokensBoostMiddleware(AgentMiddleware)`
 **钩子：** `wrap_model_call` / `awrap_model_call`
 
 从**工具调用截断**中恢复：当模型调用返回 `finish_reason == "length"`（OpenAI）/
@@ -416,10 +416,10 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 ### OutputRepetitionGuard 与 RepetitionGuardWrapper
 
-**模块：** `agent/middlewares/output_repetition_guard.py` · **类：** `OutputRepetitionGuard(AgentMiddleware)`
+**模块：** `agent/middlewares/output_repetition_guard/core.py` · **类：** `OutputRepetitionGuard(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-事后式的输出重复检测器，带 `WARN → HALT` 升级。从 `agent.middlewares.output_repetition_guard` 导出，并被 `agent/middlewares/__init__.py` 再导出；在主 Agent（逐调用拦截，与下方的包装器互补）与 worker 流水线中**都有**注册。
+事后式的输出重复检测器，带 `WARN → HALT` 升级。从 `agent.middlewares.output_repetition_guard.core` 导出，并被 `agent/middlewares/__init__.py` 再导出；在主 Agent（逐调用拦截，与下方的包装器互补）与 worker 流水线中**都有**注册。
 
 主 Agent 的同类检测由 **`RepetitionGuardWrapper`**（`agent/stream_repetition_guard_wrapper.py`）完成：它包装编译后的图，在流式层面拦截（外加 `ainvoke` 事后兜底），复用相同的状态键与默认值。两处注册均传入 `phantom_stream_guard=True`。
 
@@ -647,12 +647,13 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 公开导出
 ├── base.py                      # require_session_id / args_hash 辅助
-├── mixins.py                    # BeforeAgentHooksMixin / AfterAgentHooksMixin
 ├── context_engine/              # ContextEngineHook + nudge 子 Agent
 │   ├── __init__.py              # 仅导出 ContextEngineHook
 │   ├── core.py                  # ContextEngineHook
 │   └── nudge.py                 # nudge 提示词 + 子 Agent 构建器
-├── heartbeat_staleness.py       # HeartbeatStaleness
+├── heartbeat_staleness/         # HeartbeatStaleness
+│   ├── __init__.py              # 导出 HeartbeatStaleness
+│   └── core.py                  # HeartbeatStaleness
 ├── humanInTheLoop/              # HumanInTheLoop + HITLConfig（有自己的 README）
 │   ├── __init__.py              # 导出 HumanInTheLoop、HITLConfig
 │   ├── types.py                 # 枚举 + 配置数据类（_STATE_PREFIX = "hitl"）
@@ -661,20 +662,50 @@ agent/middlewares/
 │   ├── gates.py                 # WriteApprovalGate、InterruptManager、MCPElicitationConsent、
 │   │                            # KanbanTriage、PairingStore、SlashConfirm
 │   └── core.py                  # HumanInTheLoop
-├── iteration_budget.py          # IterationBudget
-├── llm_retry.py                 # LLMRetryMiddleware（含 LLMRetryConfig、FallbackCandidate、ContentFilterError）
-├── max_tokens_boost.py          # MaxTokensBoostMiddleware（工具调用截断重呼）
-├── media_handlers.py            # MultimodalProcessor 的分媒体类型处理策略
-├── media_pipeline.py            # MultimodalProcessor
-├── output_repetition_guard.py   # OutputRepetitionGuard（由 __init__.py 再导出）
+├── iteration_budget/            # IterationBudget
+│   ├── __init__.py              # 导出 IterationBudget
+│   └── core.py                  # IterationBudget
+├── llm_retry/                   # LLMRetryMiddleware（含 LLMRetryConfig、FallbackCandidate、ContentFilterError）
+│   ├── __init__.py              # 仅导出 LLMRetryMiddleware
+│   └── core.py                  # LLMRetryMiddleware、LLMRetryConfig、FallbackCandidate、
+│                                # ContentFilterError
+├── max_tokens_boost/            # MaxTokensBoostMiddleware（工具调用截断重呼）
+│   ├── __init__.py              # 导出 MaxTokensBoostMiddleware
+│   └── core.py                  # MaxTokensBoostMiddleware
+├── media_pipeline/              # MultimodalProcessor
+│   ├── __init__.py              # 导出 MultimodalProcessor
+│   ├── core.py                  # MultimodalProcessor
+│   ├── media_handlers.py        # MultimodalProcessor 的分媒体类型处理策略
+│   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin（共享）
+├── output_repetition_guard/     # OutputRepetitionGuard
+│   ├── __init__.py              # 导出 OutputRepetitionGuard
+│   ├── core.py                  # OutputRepetitionGuard（由 __init__.py 再导出）
+│   ├── repetition_detectors.py  # 纯重复检测原语
+│   └── repetition_state.py      # 会话级重复状态辅助
 ├── path_guard/                  # PathGuard（工具调用的路径参数筛查）
-├── repetition_detectors.py      # 纯重复检测原语
-├── repetition_state.py          # 会话级重复状态辅助
-├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
-├── summarization.py             # Summarization
-├── summarization_components.py  # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
-├── tool_call_normalize.py       # ToolCallNormalize
-├── tool_guardrails.py           # ToolGuardrails
+│   ├── __init__.py              # 仅导出 PathGuard
+│   └── core.py                  # PathGuard
+├── subagent_completion_drain/   # SubagentCompletionDrainMiddleware
+│   ├── __init__.py              # 导出 SubagentCompletionDrainMiddleware
+│   └── core.py                  # SubagentCompletionDrainMiddleware
+├── summarization/               # Summarization
+│   ├── __init__.py              # 导出 Summarization
+│   ├── core.py                  # Summarization
+│   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
+│   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
+│   └── memory_flush.py          # 压缩前记忆落盘
+├── task_intent/                 # TaskIntentMiddleware
+│   ├── __init__.py              # 导出 TaskIntentMiddleware
+│   └── core.py                  # TaskIntentMiddleware
+├── todo_continuation/           # TodoContinuationEnforcer
+│   ├── __init__.py              # 导出 TodoContinuationEnforcer
+│   └── core.py                  # TodoContinuationEnforcer
+├── tool_call_normalize/         # ToolCallNormalize
+│   ├── __init__.py              # 导出 ToolCallNormalize
+│   └── core.py                  # ToolCallNormalize
+├── tool_guardrails/             # ToolGuardrails
+│   ├── __init__.py              # 导出 ToolGuardrails
+│   └── core.py                  # ToolGuardrails
 └── README.md                    # 本文件（+ .zh / .ja / .ko 变体）
 
 agent/stream_repetition_guard_wrapper.py   # RepetitionGuardWrapper（位于本包之外）

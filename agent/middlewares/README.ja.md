@@ -187,7 +187,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### MultimodalProcessor
 
-**モジュール：** `agent/middlewares/media_pipeline.py` · **クラス：** `MultimodalProcessor(AgentMiddleware)`
+**モジュール：** `agent/middlewares/media_pipeline/core.py` · **クラス：** `MultimodalProcessor(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`after_agent` / `aafter_agent`
 
 `before_agent` は、内容がマルチモーダルリストである**最後の** `HumanMessage` を処理します：
@@ -203,7 +203,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### IterationBudget
 
-**モジュール：** `agent/middlewares/iteration_budget.py` · **クラス：** `IterationBudget(AgentMiddleware)`
+**モジュール：** `agent/middlewares/iteration_budget/core.py` · **クラス：** `IterationBudget(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
 
 1 ターン内の**モデル呼び出し + ツール呼び出しの合計**に対するハード上限。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントは `IterationBudget(90)`、ワーカーエージェントは `IterationBudget(60)` を登録します。
@@ -214,7 +214,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### ToolGuardrails
 
-**モジュール：** `agent/middlewares/tool_guardrails.py` · **クラス：** `ToolGuardrails(AgentMiddleware)`
+**モジュール：** `agent/middlewares/tool_guardrails/core.py` · **クラス：** `ToolGuardrails(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_tool_call` / `awrap_tool_call`
 
 5 つの失敗病理を検出し、4 段階エスカレーション `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 列挙型）で反応します：
@@ -240,7 +240,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### ToolCallNormalize
 
-**モジュール：** `agent/middlewares/tool_call_normalize.py` · **クラス：** `ToolCallNormalize(AgentMiddleware)`
+**モジュール：** `agent/middlewares/tool_call_normalize/core.py` · **クラス：** `ToolCallNormalize(AgentMiddleware)`
 **フック：** `before_model` / `abefore_model` のみ
 
 コンテキストトリミング後の tool-call / tool-result ペアリングを修復し、プロバイダーの "Message ordering conflict" エラーを防ぎます。処理は `pub.func.sanitize_tool_use_result_pairing(state["messages"])`（`pub/func/transcript_repair.py` で定義）に委譲され、以下を行います：
@@ -254,7 +254,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### PathGuard
 
-**モジュール：** `agent/middlewares/path_guard/__init__.py` · **クラス：** `PathGuard(AgentMiddleware)`
+**モジュール：** `agent/middlewares/path_guard/core.py` · **クラス：** `PathGuard(AgentMiddleware)`
 **フック：** `wrap_tool_call` / `awrap_tool_call` のみ
 
 各ツール自身の `resolve_project_path()` / `resolve_external_path()` パターンに対する多層防御です。パス検査を忘れたツールでも、トラバーサルやハード拒否パスを読ませることはできません。メインエージェントでは `ToolCallNormalize` の直後に登録され、リスト順が wrap フックの外側順になるため `ToolGuardrails` の**内側**で実行されます（`IterationBudget` → `ToolGuardrails` → `PathGuard` → ツール）。拒否は通常のエラー `ToolMessage` として ToolGuardrails に評価され、他のツール失敗と同じ扱いになります。worker パイプラインには登録しません：子ツールは自前のゲートを保ち、サブエージェントの外部アクセスはそもそも強制拒否です。（計画の「ToolCallNormalize の後、ToolGuardrails の前」はリスト順として不可能です——`ToolCallNormalize` は `ToolGuardrails` の後に登録されています。現在の位置が満たせる最も近い配置です。）
@@ -271,7 +271,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### SubagentCompletionDrainMiddleware
 
-**モジュール：** `agent/middlewares/subagent_completion_drain.py` · **クラス：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**モジュール：** `agent/middlewares/subagent_completion_drain/core.py` · **クラス：** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
 **フック：** `before_model` / `abefore_model` のみ
 
 メインエージェントには `ToolCallNormalize` の直後に登録されるため、注入されるメッセージは注入ターンではサニタイズ書き換えをバイパスします。`before_model` でセッションの `SteeringQueue`（親がビジーの間に announce パイプラインが積んだ完了キャリアメッセージ）をリハイドレートして排出（drain）し、`{"messages": [carrier, ...]}` を返すことで、次のモデル呼び出しの直前に再構築された完了キャリア `HumanMessage` を注入します。
@@ -282,7 +282,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### HeartbeatStaleness
 
-**モジュール：** `agent/middlewares/heartbeat_staleness.py` · **クラス：** `HeartbeatStaleness(AgentMiddleware)`
+**モジュール：** `agent/middlewares/heartbeat_staleness/core.py` · **クラス：** `HeartbeatStaleness(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`after_agent` / `aafter_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
 
 スタックしたターン用のウォッチドッグ。**メインエージェントとワーカーエージェントの両方**に登録されています（本ドキュメントの旧版はワーカーのみと主張していました — 誤りです）。
@@ -333,7 +333,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### LLMRetryMiddleware
 
-**モジュール：** `agent/middlewares/llm_retry.py` · **クラス：** `LLMRetryMiddleware(AgentMiddleware)`（他に `LLMRetryConfig`、`FallbackCandidate`、`ContentFilterError`）
+**モジュール：** `agent/middlewares/llm_retry/core.py` · **クラス：** `LLMRetryMiddleware(AgentMiddleware)`（他に `LLMRetryConfig`、`FallbackCandidate`、`ContentFilterError`）
 **フック：** `wrap_model_call` / `awrap_model_call` のみ
 
 メインエージェントには **`HumanInTheLoop` と `Summarization` の間**で登録されます：`MaxTokensBoostMiddleware` に対しては内側（ブースト再呼び出しを経ても残った本当の切断だけを目にする）、Summarization に対しては外側（リトライループが T4/T5 オーバーフローリカバリリングを外側から包む）。ワーカーパイプラインには登録されません。状態に `session_id` がない場合は素通しです。
@@ -361,7 +361,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### Summarization
 
-**モジュール：** `agent/middlewares/summarization.py` · **クラス：** `Summarization(AgentMiddleware)`
+**モジュール：** `agent/middlewares/summarization/core.py` · **クラス：** `Summarization(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`（カウンターリセット）、`wrap_model_call` / `awrap_model_call`
 
 最内層のミドルウェア — LLM に最も近い位置。スクラッチで実装された `AgentMiddleware` です（LangChain の `SummarizationMiddleware` **ではありません**）：トリガーが発火すると、予算ベースのカットオフで履歴を圧縮します — 非 LLM 戦略を優先し、テキスト劣化が安全な場合にのみ補助 LLM による要約を使用。`keep` パラメータは受け付けますが未使用で、末尾保持は予算ベースです：`clamp(context_window × 0.25, 2 000, 15 000)` トークン（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
@@ -381,7 +381,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### MaxTokensBoostMiddleware
 
-**モジュール:** `agent/middlewares/max_tokens_boost.py` · **クラス:** `MaxTokensBoostMiddleware(AgentMiddleware)`
+**モジュール:** `agent/middlewares/max_tokens_boost/core.py` · **クラス:** `MaxTokensBoostMiddleware(AgentMiddleware)`
 **フック:** `wrap_model_call` / `awrap_model_call`
 
 **ツール呼び出し切断からの復旧**：モデル呼び出しが `finish_reason == "length"`
@@ -422,10 +422,10 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 
 ### OutputRepetitionGuard と RepetitionGuardWrapper
 
-**モジュール：** `agent/middlewares/output_repetition_guard.py` · **クラス：** `OutputRepetitionGuard(AgentMiddleware)`
+**モジュール：** `agent/middlewares/output_repetition_guard/core.py` · **クラス：** `OutputRepetitionGuard(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-事後型の出力繰り返し検知器で、`WARN → HALT` エスカレーションを持ちます。`agent.middlewares.output_repetition_guard` からエクスポートされ、`agent/middlewares/__init__.py` からも再エクスポートされています。メインエージェント（呼び出しごとのインターセプト、下記ラッパーの補完）とワーカーパイプラインの**両方**に登録されています。
+事後型の出力繰り返し検知器で、`WARN → HALT` エスカレーションを持ちます。`agent.middlewares.output_repetition_guard.core` からエクスポートされ、`agent/middlewares/__init__.py` からも再エクスポートされています。メインエージェント（呼び出しごとのインターセプト、下記ラッパーの補完）とワーカーパイプラインの**両方**に登録されています。
 
 メインエージェントでは同じ検知が **`RepetitionGuardWrapper`**（`agent/stream_repetition_guard_wrapper.py`）を通じて実行されます。これはコンパイル済みグラフをラップし、ストリームレベルでインターセプトし（`ainvoke` の事後バックストップ付き）、同じ状態キーとデフォルトを再利用します。どちらの登録も `phantom_stream_guard=True` を渡します。
 
@@ -653,12 +653,13 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 公開エクスポート
 ├── base.py                      # require_session_id / args_hash ヘルパー
-├── mixins.py                    # BeforeAgentHooksMixin / AfterAgentHooksMixin
 ├── context_engine/              # ContextEngineHook + nudge サブエージェント
 │   ├── __init__.py              # ContextEngineHook のみエクスポート
 │   ├── core.py                  # ContextEngineHook
 │   └── nudge.py                 # nudge プロンプト + サブエージェントビルダー
-├── heartbeat_staleness.py       # HeartbeatStaleness
+├── heartbeat_staleness/         # HeartbeatStaleness
+│   ├── __init__.py              # HeartbeatStaleness をエクスポート
+│   └── core.py                  # HeartbeatStaleness
 ├── humanInTheLoop/              # HumanInTheLoop + HITLConfig（独自の README を持つ）
 │   ├── __init__.py              # HumanInTheLoop、HITLConfig をエクスポート
 │   ├── types.py                 # 列挙型 + 設定データクラス（_STATE_PREFIX = "hitl"）
@@ -667,20 +668,50 @@ agent/middlewares/
 │   ├── gates.py                 # WriteApprovalGate、InterruptManager、MCPElicitationConsent、
 │   │                            # KanbanTriage、PairingStore、SlashConfirm
 │   └── core.py                  # HumanInTheLoop
-├── iteration_budget.py          # IterationBudget
-├── llm_retry.py                 # LLMRetryMiddleware（LLMRetryConfig、FallbackCandidate、ContentFilterError を含む）
-├── max_tokens_boost.py          # MaxTokensBoostMiddleware（ツール呼び出し切断の再呼び出し）
-├── media_handlers.py            # MultimodalProcessor のメディアタイプ別戦略
-├── media_pipeline.py            # MultimodalProcessor
-├── output_repetition_guard.py   # OutputRepetitionGuard（__init__.py が再エクスポート）
+├── iteration_budget/            # IterationBudget
+│   ├── __init__.py              # IterationBudget をエクスポート
+│   └── core.py                  # IterationBudget
+├── llm_retry/                   # LLMRetryMiddleware（LLMRetryConfig、FallbackCandidate、ContentFilterError を含む）
+│   ├── __init__.py              # LLMRetryMiddleware のみエクスポート
+│   └── core.py                  # LLMRetryMiddleware、LLMRetryConfig、FallbackCandidate、
+│                                # ContentFilterError
+├── max_tokens_boost/            # MaxTokensBoostMiddleware（ツール呼び出し切断の再呼び出し）
+│   ├── __init__.py              # MaxTokensBoostMiddleware をエクスポート
+│   └── core.py                  # MaxTokensBoostMiddleware
+├── media_pipeline/              # MultimodalProcessor
+│   ├── __init__.py              # MultimodalProcessor をエクスポート
+│   ├── core.py                  # MultimodalProcessor
+│   ├── media_handlers.py        # MultimodalProcessor のメディアタイプ別戦略
+│   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin（共有）
+├── output_repetition_guard/     # OutputRepetitionGuard
+│   ├── __init__.py              # OutputRepetitionGuard をエクスポート
+│   ├── core.py                  # OutputRepetitionGuard（__init__.py が再エクスポート）
+│   ├── repetition_detectors.py  # 純粋な繰り返し検知プリミティブ
+│   └── repetition_state.py      # セッション単位の繰り返し状態ヘルパー
 ├── path_guard/                  # PathGuard（ツール呼び出しのパス引数スクリーニング）
-├── repetition_detectors.py      # 純粋な繰り返し検知プリミティブ
-├── repetition_state.py          # セッション単位の繰り返し状態ヘルパー
-├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
-├── summarization.py             # Summarization
-├── summarization_components.py  # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
-├── tool_call_normalize.py       # ToolCallNormalize
-├── tool_guardrails.py           # ToolGuardrails
+│   ├── __init__.py              # PathGuard のみエクスポート
+│   └── core.py                  # PathGuard
+├── subagent_completion_drain/   # SubagentCompletionDrainMiddleware
+│   ├── __init__.py              # SubagentCompletionDrainMiddleware をエクスポート
+│   └── core.py                  # SubagentCompletionDrainMiddleware
+├── summarization/               # Summarization
+│   ├── __init__.py              # Summarization をエクスポート
+│   ├── core.py                  # Summarization
+│   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
+│   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
+│   └── memory_flush.py          # 圧縮前メモリフラッシュ
+├── task_intent/                 # TaskIntentMiddleware
+│   ├── __init__.py              # TaskIntentMiddleware をエクスポート
+│   └── core.py                  # TaskIntentMiddleware
+├── todo_continuation/           # TodoContinuationEnforcer
+│   ├── __init__.py              # TodoContinuationEnforcer をエクスポート
+│   └── core.py                  # TodoContinuationEnforcer
+├── tool_call_normalize/         # ToolCallNormalize
+│   ├── __init__.py              # ToolCallNormalize をエクスポート
+│   └── core.py                  # ToolCallNormalize
+├── tool_guardrails/             # ToolGuardrails
+│   ├── __init__.py              # ToolGuardrails をエクスポート
+│   └── core.py                  # ToolGuardrails
 └── README.md                    # このファイル（+ .zh / .ja / .ko 版）
 
 agent/stream_repetition_guard_wrapper.py   # RepetitionGuardWrapper（本パッケージの外に存在）

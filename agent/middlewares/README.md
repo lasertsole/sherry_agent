@@ -189,7 +189,7 @@ First in the list, therefore the outermost wrap layer.
 
 ### MultimodalProcessor
 
-**Module:** `agent/middlewares/media_pipeline.py` · **Class:** `MultimodalProcessor(AgentMiddleware)`
+**Module:** `agent/middlewares/media_pipeline/core.py` · **Class:** `MultimodalProcessor(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`
 
 `before_agent` processes the **last** `HumanMessage` when its content is a multimodal list:
@@ -205,7 +205,7 @@ First in the list, therefore the outermost wrap layer.
 
 ### IterationBudget
 
-**Module:** `agent/middlewares/iteration_budget.py` · **Class:** `IterationBudget(AgentMiddleware)`
+**Module:** `agent/middlewares/iteration_budget/core.py` · **Class:** `IterationBudget(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
 
 Hard cap on **model calls + tool calls combined** within one turn. Constructor: `__init__(max_iterations: int = 50)`; the main agent registers `IterationBudget(90)` and worker agents `IterationBudget(60)`.
@@ -216,7 +216,7 @@ Hard cap on **model calls + tool calls combined** within one turn. Constructor: 
 
 ### ToolGuardrails
 
-**Module:** `agent/middlewares/tool_guardrails.py` · **Class:** `ToolGuardrails(AgentMiddleware)`
+**Module:** `agent/middlewares/tool_guardrails/core.py` · **Class:** `ToolGuardrails(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_tool_call` / `awrap_tool_call`
 
 Detects five failure pathologies and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
@@ -242,7 +242,7 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
 
 ### ToolCallNormalize
 
-**Module:** `agent/middlewares/tool_call_normalize.py` · **Class:** `ToolCallNormalize(AgentMiddleware)`
+**Module:** `agent/middlewares/tool_call_normalize/core.py` · **Class:** `ToolCallNormalize(AgentMiddleware)`
 **Hooks:** `before_model` / `abefore_model` only
 
 Repairs tool-call / tool-result pairing after context trimming to prevent "Message ordering conflict" errors from the provider. Delegates to `pub.func.sanitize_tool_use_result_pairing(state["messages"])` (defined in `pub/func/transcript_repair.py`), which:
@@ -256,7 +256,7 @@ When the sanitizer changed nothing the hook returns `None` — no state write, n
 
 ### PathGuard
 
-**Module:** `agent/middlewares/path_guard/__init__.py` · **Class:** `PathGuard(AgentMiddleware)`
+**Module:** `agent/middlewares/path_guard/core.py` · **Class:** `PathGuard(AgentMiddleware)`
 **Hooks:** `wrap_tool_call` / `awrap_tool_call` only
 
 Defense-in-depth for the per-tool `resolve_project_path()` / `resolve_external_path()` pattern: a tool that forgets its own path checks still cannot be driven to a traversal or hard-denied path. Registered in the main agent directly after `ToolCallNormalize`; because list order composes wrap hooks outermost-first, it runs **inside** `ToolGuardrails` (`IterationBudget` → `ToolGuardrails` → `PathGuard` → tool) and a rejection is a normal error `ToolMessage` that ToolGuardrails evaluates like any other tool failure. Not registered in the worker pipeline: child tools keep their own gates, and subagent external access is hard-denied anyway. (The plan's literal "after `ToolCallNormalize`, before `ToolGuardrails`" is impossible list order — `ToolCallNormalize` is registered after `ToolGuardrails`; the chosen position is the closest satisfiable placement.)
@@ -273,7 +273,7 @@ On a rejection the middleware returns a structured error `ToolMessage` (`status=
 
 ### SubagentCompletionDrainMiddleware
 
-**Module:** `agent/middlewares/subagent_completion_drain.py` · **Class:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**Module:** `agent/middlewares/subagent_completion_drain/core.py` · **Class:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
 **Hooks:** `before_model` / `abefore_model` only
 
 Registered in the main agent after `ToolCallNormalize`, so the messages it injects bypass the sanitize rewrite on the injection turn. At `before_model` it rehydrates and drains the session's `SteeringQueue` — completion carriers queued by the announce pipeline while the parent was busy — and returns `{"messages": [carrier, ...]}`, injecting the rebuilt completion-carrier `HumanMessage`s right before the next model call.
@@ -284,7 +284,7 @@ Registered in the main agent after `ToolCallNormalize`, so the messages it injec
 
 ### HeartbeatStaleness
 
-**Module:** `agent/middlewares/heartbeat_staleness.py` · **Class:** `HeartbeatStaleness(AgentMiddleware)`
+**Module:** `agent/middlewares/heartbeat_staleness/core.py` · **Class:** `HeartbeatStaleness(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
 
 Watchdog for stuck turns. Registered in **both** the main agent and the worker agents (an earlier version of this document claimed worker-only — that was wrong).
@@ -335,7 +335,7 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 
 ### LLMRetryMiddleware
 
-**Module:** `agent/middlewares/llm_retry.py` · **Class:** `LLMRetryMiddleware(AgentMiddleware)` (plus `LLMRetryConfig`, `FallbackCandidate`, `ContentFilterError`)
+**Module:** `agent/middlewares/llm_retry/core.py` · **Class:** `LLMRetryMiddleware(AgentMiddleware)` (plus `LLMRetryConfig`, `FallbackCandidate`, `ContentFilterError`)
 **Hooks:** `wrap_model_call` / `awrap_model_call` only
 
 Registered in the main agent **between `HumanInTheLoop` and `Summarization`**: inner relative to `MaxTokensBoostMiddleware` (it only sees genuine truncations that survived the boost re-calls) and outer relative to Summarization (the retry loop wraps the T4/T5 overflow-recovery ring from the outside). Not registered in the worker pipeline. When the state carries no `session_id`, the middleware is a passthrough.
@@ -363,7 +363,7 @@ Each handler call runs through a classify → act loop built on `pub/func/messag
 
 ### Summarization
 
-**Module:** `agent/middlewares/summarization.py` · **Class:** `Summarization(AgentMiddleware)`
+**Module:** `agent/middlewares/summarization/core.py` · **Class:** `Summarization(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent` (counter reset), `wrap_model_call` / `awrap_model_call`
 
 The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware` (**not** LangChain's `SummarizationMiddleware`): when the trigger fires, it compacts history with a budget-based cutoff — non-LLM strategies first, auxiliary-LLM summarization only when text degradation is safe. The `keep` parameter is accepted but unused; tail retention is budget-based: `clamp(context_window × 0.25, 2 000, 15 000)` tokens (`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
@@ -381,7 +381,7 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 
 ### MaxTokensBoostMiddleware
 
-**Module:** `agent/middlewares/max_tokens_boost.py` · **Class:** `MaxTokensBoostMiddleware(AgentMiddleware)`
+**Module:** `agent/middlewares/max_tokens_boost/core.py` · **Class:** `MaxTokensBoostMiddleware(AgentMiddleware)`
 **Hooks:** `wrap_model_call` / `awrap_model_call`
 
 Recovers from **tool-call truncation**: when a model call returns with
@@ -425,10 +425,10 @@ and the IterationBudget is charged once per outer model call.
 
 ### OutputRepetitionGuard & RepetitionGuardWrapper
 
-**Module:** `agent/middlewares/output_repetition_guard.py` · **Class:** `OutputRepetitionGuard(AgentMiddleware)`
+**Module:** `agent/middlewares/output_repetition_guard/core.py` · **Class:** `OutputRepetitionGuard(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-Post-hoc output-repetition detector with `WARN → HALT` escalation. Exported from `agent.middlewares.output_repetition_guard` and re-exported by `agent/middlewares/__init__.py`; registered in **both** the main agent (per-call interception, complementing the wrapper below) and the worker pipeline.
+Post-hoc output-repetition detector with `WARN → HALT` escalation. Exported from `agent.middlewares.output_repetition_guard.core` and re-exported by `agent/middlewares/__init__.py`; registered in **both** the main agent (per-call interception, complementing the wrapper below) and the worker pipeline.
 
 For the main agent the same detection runs through **`RepetitionGuardWrapper`** (`agent/stream_repetition_guard_wrapper.py`), which wraps the compiled graph and intercepts at stream level (plus an `ainvoke` post-hoc backstop), reusing the same state keys and defaults. Both registrations pass `phantom_stream_guard=True`.
 
@@ -655,12 +655,13 @@ Async variants follow the `a` prefix convention: `abefore_agent`, `aafter_agent`
 agent/middlewares/
 ├── __init__.py                  # public exports
 ├── base.py                      # require_session_id / args_hash helpers
-├── mixins.py                    # BeforeAgentHooksMixin / AfterAgentHooksMixin
 ├── context_engine/              # ContextEngineHook + nudge sub-agents
 │   ├── __init__.py              # exports ContextEngineHook only
 │   ├── core.py                  # ContextEngineHook
 │   └── nudge.py                 # nudge prompts + sub-agent builders
-├── heartbeat_staleness.py       # HeartbeatStaleness
+├── heartbeat_staleness/         # HeartbeatStaleness
+│   ├── __init__.py              # exports HeartbeatStaleness
+│   └── core.py                  # HeartbeatStaleness
 ├── humanInTheLoop/              # HumanInTheLoop + HITLConfig (has its own README)
 │   ├── __init__.py              # exports HumanInTheLoop, HITLConfig
 │   ├── types.py                 # enums + config dataclass (_STATE_PREFIX = "hitl")
@@ -669,20 +670,50 @@ agent/middlewares/
 │   ├── gates.py                 # WriteApprovalGate, InterruptManager, MCPElicitationConsent,
 │   │                            # KanbanTriage, PairingStore, SlashConfirm
 │   └── core.py                  # HumanInTheLoop
-├── iteration_budget.py          # IterationBudget
-├── llm_retry.py                 # LLMRetryMiddleware (+ LLMRetryConfig, FallbackCandidate, ContentFilterError)
-├── max_tokens_boost.py          # MaxTokensBoostMiddleware (tool-call truncation re-call)
-├── media_handlers.py            # per-media-type strategies for MultimodalProcessor
-├── media_pipeline.py            # MultimodalProcessor
-├── output_repetition_guard.py   # OutputRepetitionGuard (re-exported by __init__.py)
+├── iteration_budget/            # IterationBudget
+│   ├── __init__.py              # exports IterationBudget
+│   └── core.py                  # IterationBudget
+├── llm_retry/                   # LLMRetryMiddleware (+ LLMRetryConfig, FallbackCandidate, ContentFilterError)
+│   ├── __init__.py              # exports LLMRetryMiddleware
+│   └── core.py                  # LLMRetryMiddleware, LLMRetryConfig, FallbackCandidate,
+│                                # ContentFilterError
+├── max_tokens_boost/            # MaxTokensBoostMiddleware (tool-call truncation re-call)
+│   ├── __init__.py              # exports MaxTokensBoostMiddleware
+│   └── core.py                  # MaxTokensBoostMiddleware
+├── media_pipeline/              # MultimodalProcessor
+│   ├── __init__.py              # exports MultimodalProcessor
+│   ├── core.py                  # MultimodalProcessor
+│   ├── media_handlers.py        # per-media-type strategies for MultimodalProcessor
+│   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin (shared)
+├── output_repetition_guard/     # OutputRepetitionGuard
+│   ├── __init__.py              # exports OutputRepetitionGuard
+│   ├── core.py                  # OutputRepetitionGuard (re-exported by __init__.py)
+│   ├── repetition_detectors.py  # pure repetition-detection primitives
+│   └── repetition_state.py      # session-scoped repetition state helpers
 ├── path_guard/                  # PathGuard (path-argument screening for tool calls)
-├── repetition_detectors.py      # pure repetition-detection primitives
-├── repetition_state.py          # session-scoped repetition state helpers
-├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
-├── summarization.py             # Summarization
-├── summarization_components.py  # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
-├── tool_call_normalize.py       # ToolCallNormalize
-├── tool_guardrails.py           # ToolGuardrails
+│   ├── __init__.py              # exports PathGuard only
+│   └── core.py                  # PathGuard
+├── subagent_completion_drain/   # SubagentCompletionDrainMiddleware
+│   ├── __init__.py              # exports SubagentCompletionDrainMiddleware
+│   └── core.py                  # SubagentCompletionDrainMiddleware
+├── summarization/               # Summarization
+│   ├── __init__.py              # exports Summarization
+│   ├── core.py                  # Summarization
+│   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
+│   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
+│   └── memory_flush.py          # pre-compression memory flush
+├── task_intent/                 # TaskIntentMiddleware
+│   ├── __init__.py              # exports TaskIntentMiddleware
+│   └── core.py                  # TaskIntentMiddleware
+├── todo_continuation/           # TodoContinuationEnforcer
+│   ├── __init__.py              # exports TodoContinuationEnforcer
+│   └── core.py                  # TodoContinuationEnforcer
+├── tool_call_normalize/         # ToolCallNormalize
+│   ├── __init__.py              # exports ToolCallNormalize
+│   └── core.py                  # ToolCallNormalize
+├── tool_guardrails/             # ToolGuardrails
+│   ├── __init__.py              # exports ToolGuardrails
+│   └── core.py                  # ToolGuardrails
 └── README.md                    # this file (+ .zh / .ja / .ko variants)
 
 agent/stream_repetition_guard_wrapper.py   # RepetitionGuardWrapper (lives outside this package)

@@ -187,7 +187,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### MultimodalProcessor
 
-**모듈:** `agent/middlewares/media_pipeline.py` · **클래스:** `MultimodalProcessor(AgentMiddleware)`
+**모듈:** `agent/middlewares/media_pipeline/core.py` · **클래스:** `MultimodalProcessor(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`
 
 `before_agent`는 내용이 멀티모달 리스트인 **마지막** `HumanMessage`를 처리합니다:
@@ -203,7 +203,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### IterationBudget
 
-**모듈:** `agent/middlewares/iteration_budget.py` · **클래스:** `IterationBudget(AgentMiddleware)`
+**모듈:** `agent/middlewares/iteration_budget/core.py` · **클래스:** `IterationBudget(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
 
 한 턴 안의 **모델 호출 + 도구 호출 합계**에 대한 하드 상한. 생성자: `__init__(max_iterations: int = 50)`. 메인 에이전트는 `IterationBudget(90)`, 워커 에이전트는 `IterationBudget(60)`을 등록합니다.
@@ -214,7 +214,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### ToolGuardrails
 
-**모듈:** `agent/middlewares/tool_guardrails.py` · **클래스:** `ToolGuardrails(AgentMiddleware)`
+**모듈:** `agent/middlewares/tool_guardrails/core.py` · **클래스:** `ToolGuardrails(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_tool_call` / `awrap_tool_call`
 
 다섯 가지 실패 병리를 감지하고 4단계 에스컬레이션 `ALLOW → WARN → BLOCK → HALT`(`GuardrailAction` 열거형)으로 대응합니다:
@@ -240,7 +240,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### ToolCallNormalize
 
-**모듈:** `agent/middlewares/tool_call_normalize.py` · **클래스:** `ToolCallNormalize(AgentMiddleware)`
+**모듈:** `agent/middlewares/tool_call_normalize/core.py` · **클래스:** `ToolCallNormalize(AgentMiddleware)`
 **후크:** `before_model` / `abefore_model` 전용
 
 컨텍스트 트리밍 후의 tool-call / tool-result 페어링을 복구하여 프로바이더의 "Message ordering conflict" 오류를 방지합니다. 처리는 `pub.func.sanitize_tool_use_result_pairing(state["messages"])`(`pub/func/transcript_repair.py`에 정의)로 위임되며, 다음을 수행합니다:
@@ -254,7 +254,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### PathGuard
 
-**모듈:** `agent/middlewares/path_guard/__init__.py` · **클래스:** `PathGuard(AgentMiddleware)`
+**모듈:** `agent/middlewares/path_guard/core.py` · **클래스:** `PathGuard(AgentMiddleware)`
 **후크:** `wrap_tool_call` / `awrap_tool_call` 전용
 
 각 도구의 `resolve_project_path()` / `resolve_external_path()` 패턴에 대한 심층 방어입니다. 자체 경로 검사를 잊은 도구도 트래버설이나 하드 거부 경로를 읽도록 유도될 수 없습니다. 메인 에이전트에서 `ToolCallNormalize` 바로 뒤에 등록되며, 리스트 순서가 wrap 후크의 바깥 순서이므로 `ToolGuardrails` **안쪽**에서 실행됩니다(`IterationBudget` → `ToolGuardrails` → `PathGuard` → 도구). 거부는 일반 오류 `ToolMessage`로 ToolGuardrails에 평가되어 다른 도구 실패와 동일하게 취급됩니다. worker 파이프라인에는 등록하지 않습니다: 자식 도구는 자체 게이트를 유지하고, 서브에이전트의 외부 접근은 어차피 강제 거부입니다. (계획의 "ToolCallNormalize 이후, ToolGuardrails 이전"은 리스트 순서로 불가능합니다 —— `ToolCallNormalize`는 `ToolGuardrails` 뒤에 등록되어 있습니다. 현재 위치가 충족 가능한 가장 가까운 배치입니다.)
@@ -271,7 +271,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### SubagentCompletionDrainMiddleware
 
-**모듈:** `agent/middlewares/subagent_completion_drain.py` · **클래스:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
+**모듈:** `agent/middlewares/subagent_completion_drain/core.py` · **클래스:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
 **후크:** `before_model` / `abefore_model` 전용
 
 메인 에이전트에 `ToolCallNormalize` 바로 뒤에 등록되므로, 주입되는 메시지는 주입 턴에서 sanitize 재작성을 우회합니다. `before_model`에서 세션의 `SteeringQueue`—부모가 바쁜 동안 announce 파이프라인이 적립한 완료 캐리어 메시지—를 재하이드레이트하고 배출(drain)하여 `{"messages": [carrier, ...]}`를 반환함으로써, 다음 모델 호출 직전에 재구축된 완료 캐리어 `HumanMessage`를 주입합니다.
@@ -282,7 +282,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### HeartbeatStaleness
 
-**모듈:** `agent/middlewares/heartbeat_staleness.py` · **클래스:** `HeartbeatStaleness(AgentMiddleware)`
+**모듈:** `agent/middlewares/heartbeat_staleness/core.py` · **클래스:** `HeartbeatStaleness(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
 
 멈춘 턴을 위한 워치독. **메인 에이전트와 워커 에이전트 양쪽에** 등록되어 있습니다(이 문서의 이전 버전은 워커 전용이라고 주장했습니다 — 잘못된 정보였습니다).
@@ -333,7 +333,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### LLMRetryMiddleware
 
-**모듈:** `agent/middlewares/llm_retry.py` · **클래스:** `LLMRetryMiddleware(AgentMiddleware)` (그 외 `LLMRetryConfig`, `FallbackCandidate`, `ContentFilterError`)
+**모듈:** `agent/middlewares/llm_retry/core.py` · **클래스:** `LLMRetryMiddleware(AgentMiddleware)` (그 외 `LLMRetryConfig`, `FallbackCandidate`, `ContentFilterError`)
 **후크:** `wrap_model_call` / `awrap_model_call` 전용
 
 메인 에이전트에 **`HumanInTheLoop`와 `Summarization` 사이**에 등록됩니다: `MaxTokensBoostMiddleware`에 대해서는 안쪽(부스트 재호출을 통과한 진짜 잘림만 목격), Summarization에 대해서는 바깥쪽(재시도 루프가 T4/T5 오버플로 복구 링을 바깥에서 감쌈). 워커 파이프라인에는 등록되지 않습니다. 상태에 `session_id`가 없으면 그냥 통과합니다.
@@ -361,7 +361,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### Summarization
 
-**모듈:** `agent/middlewares/summarization.py` · **클래스:** `Summarization(AgentMiddleware)`
+**모듈:** `agent/middlewares/summarization/core.py` · **클래스:** `Summarization(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`(카운터 리셋), `wrap_model_call` / `awrap_model_call`
 
 최내곽 미들웨어 — LLM에 가장 가까운 위치. 처음부터 직접 구현한 `AgentMiddleware`입니다(LangChain의 `SummarizationMiddleware` **아님**): 트리거가 발동하면 예산 기반 컷오프로 히스토리를 압축합니다 — 비(非)LLM 전략 우선, 텍스트 저하가 안전할 때만 보조 LLM 요약 사용. `keep` 파라미터는 받아들이지만 사용하지 않으며, 꼬리 보존은 예산 기반입니다: `clamp(context_window × 0.25, 2 000, 15 000)` 토큰(`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
@@ -381,7 +381,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### MaxTokensBoostMiddleware
 
-**모듈:** `agent/middlewares/max_tokens_boost.py` · **클래스:** `MaxTokensBoostMiddleware(AgentMiddleware)`
+**모듈:** `agent/middlewares/max_tokens_boost/core.py` · **클래스:** `MaxTokensBoostMiddleware(AgentMiddleware)`
 **훅:** `wrap_model_call` / `awrap_model_call`
 
 **도구 호출 잘림 복구**: 모델 호출이 `finish_reason == "length"`(OpenAI) /
@@ -422,10 +422,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### OutputRepetitionGuard와 RepetitionGuardWrapper
 
-**모듈:** `agent/middlewares/output_repetition_guard.py` · **클래스:** `OutputRepetitionGuard(AgentMiddleware)`
+**모듈:** `agent/middlewares/output_repetition_guard/core.py` · **클래스:** `OutputRepetitionGuard(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-사후(事後)형 출력 반복 감지기로, `WARN → HALT` 에스컬레이션을 가집니다. `agent.middlewares.output_repetition_guard`에서 익스포트되며 `agent/middlewares/__init__.py`에서도 재익스포트됩니다. 메인 에이전트(호출별 인터셉트, 아래 래퍼의 보완)와 워커 파이프라인 **양쪽에** 등록됩니다.
+사후(事後)형 출력 반복 감지기로, `WARN → HALT` 에스컬레이션을 가집니다. `agent.middlewares.output_repetition_guard.core`에서 익스포트되며 `agent/middlewares/__init__.py`에서도 재익스포트됩니다. 메인 에이전트(호출별 인터셉트, 아래 래퍼의 보완)와 워커 파이프라인 **양쪽에** 등록됩니다.
 
 메인 에이전트에서는 동일한 감지가 **`RepetitionGuardWrapper`**(`agent/stream_repetition_guard_wrapper.py`)를 통해 수행됩니다. 이것은 컴파일된 그래프를 래핑하고, 스트림 수준에서 인터셉트하며(`ainvoke`의 사후 백스톱 포함), 같은 상태 키와 기본값을 재사용합니다. 두 등록 모두 `phantom_stream_guard=True`를 전달합니다.
 
@@ -653,12 +653,13 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 공개 익스포트
 ├── base.py                      # require_session_id / args_hash 헬퍼
-├── mixins.py                    # BeforeAgentHooksMixin / AfterAgentHooksMixin
 ├── context_engine/              # ContextEngineHook + nudge 서브에이전트
 │   ├── __init__.py              # ContextEngineHook만 익스포트
 │   ├── core.py                  # ContextEngineHook
 │   └── nudge.py                 # nudge 프롬프트 + 서브에이전트 빌더
-├── heartbeat_staleness.py       # HeartbeatStaleness
+├── heartbeat_staleness/         # HeartbeatStaleness
+│   ├── __init__.py              # HeartbeatStaleness 익스포트
+│   └── core.py                  # HeartbeatStaleness
 ├── humanInTheLoop/              # HumanInTheLoop + HITLConfig (자체 README 보유)
 │   ├── __init__.py              # HumanInTheLoop, HITLConfig 익스포트
 │   ├── types.py                 # 열거형 + 설정 데이터클래스 (_STATE_PREFIX = "hitl")
@@ -667,20 +668,50 @@ agent/middlewares/
 │   ├── gates.py                 # WriteApprovalGate, InterruptManager, MCPElicitationConsent,
 │   │                            # KanbanTriage, PairingStore, SlashConfirm
 │   └── core.py                  # HumanInTheLoop
-├── iteration_budget.py          # IterationBudget
-├── llm_retry.py                 # LLMRetryMiddleware (LLMRetryConfig, FallbackCandidate, ContentFilterError 포함)
-├── max_tokens_boost.py          # MaxTokensBoostMiddleware (도구 호출 잘림 재호출)
-├── media_handlers.py            # MultimodalProcessor의 미디어 타입별 전략
-├── media_pipeline.py            # MultimodalProcessor
-├── output_repetition_guard.py   # OutputRepetitionGuard (__init__.py가 재익스포트)
+├── iteration_budget/            # IterationBudget
+│   ├── __init__.py              # IterationBudget 익스포트
+│   └── core.py                  # IterationBudget
+├── llm_retry/                   # LLMRetryMiddleware (LLMRetryConfig, FallbackCandidate, ContentFilterError 포함)
+│   ├── __init__.py              # LLMRetryMiddleware만 익스포트
+│   └── core.py                  # LLMRetryMiddleware, LLMRetryConfig, FallbackCandidate,
+│                                # ContentFilterError
+├── max_tokens_boost/            # MaxTokensBoostMiddleware (도구 호출 잘림 재호출)
+│   ├── __init__.py              # MaxTokensBoostMiddleware 익스포트
+│   └── core.py                  # MaxTokensBoostMiddleware
+├── media_pipeline/              # MultimodalProcessor
+│   ├── __init__.py              # MultimodalProcessor 익스포트
+│   ├── core.py                  # MultimodalProcessor
+│   ├── media_handlers.py        # MultimodalProcessor의 미디어 타입별 전략
+│   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin (공유)
+├── output_repetition_guard/     # OutputRepetitionGuard
+│   ├── __init__.py              # OutputRepetitionGuard 익스포트
+│   ├── core.py                  # OutputRepetitionGuard (__init__.py가 재익스포트)
+│   ├── repetition_detectors.py  # 순수 반복 감지 프리미티브
+│   └── repetition_state.py      # 세션 단위 반복 상태 헬퍼
 ├── path_guard/                  # PathGuard (도구 호출의 경로 인자 스크리닝)
-├── repetition_detectors.py      # 순수 반복 감지 프리미티브
-├── repetition_state.py          # 세션 단위 반복 상태 헬퍼
-├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
-├── summarization.py             # Summarization
-├── summarization_components.py  # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
-├── tool_call_normalize.py       # ToolCallNormalize
-├── tool_guardrails.py           # ToolGuardrails
+│   ├── __init__.py              # PathGuard만 익스포트
+│   └── core.py                  # PathGuard
+├── subagent_completion_drain/   # SubagentCompletionDrainMiddleware
+│   ├── __init__.py              # SubagentCompletionDrainMiddleware 익스포트
+│   └── core.py                  # SubagentCompletionDrainMiddleware
+├── summarization/               # Summarization
+│   ├── __init__.py              # Summarization 익스포트
+│   ├── core.py                  # Summarization
+│   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
+│   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
+│   └── memory_flush.py          # 압축 전 메모리 플러시
+├── task_intent/                 # TaskIntentMiddleware
+│   ├── __init__.py              # TaskIntentMiddleware 익스포트
+│   └── core.py                  # TaskIntentMiddleware
+├── todo_continuation/           # TodoContinuationEnforcer
+│   ├── __init__.py              # TodoContinuationEnforcer 익스포트
+│   └── core.py                  # TodoContinuationEnforcer
+├── tool_call_normalize/         # ToolCallNormalize
+│   ├── __init__.py              # ToolCallNormalize 익스포트
+│   └── core.py                  # ToolCallNormalize
+├── tool_guardrails/             # ToolGuardrails
+│   ├── __init__.py              # ToolGuardrails 익스포트
+│   └── core.py                  # ToolGuardrails
 └── README.md                    # 이 문서 (+ .zh / .ja / .ko 버전)
 
 agent/stream_repetition_guard_wrapper.py   # RepetitionGuardWrapper (이 패키지 바깥에 존재)
