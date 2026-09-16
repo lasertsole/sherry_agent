@@ -10,6 +10,7 @@ F. HITL interrupt behavior (F1-F5)
 G. YOLO deny list: always enforced, beats YOLO / allowlist / subagent (G1-G5)
 H. Directory-level allowlist + approve_dir decision (H1-H4)
 P0-3. Three-gate resolution: traversal strings, symlink loops, O_NOFOLLOW
+P1-2. Model-visible path rendering: to_virtual_path / display_path / safe_error_detail
 """
 
 import errno
@@ -23,6 +24,9 @@ from agent.tools.pub_base.path_utils import (
     resolve_project_path,
     resolve_external_path,
     resolve_path,
+    to_virtual_path,
+    display_path,
+    safe_error_detail,
     PathOutOfBoundsError,
     _get_yolo_deny_paths,
     _is_eloop_oserror,
@@ -228,6 +232,43 @@ class TestOpenNoFollow:
 
         fd = _open_no_follow(target, os.O_RDONLY)
         os.close(fd)
+
+
+# ── P1-2 model-visible path rendering ───────────────────────────────────
+
+
+class TestPathRendering:
+    def test_display_path_normal(self):
+        assert display_path(ROOT_DIR / "src" / "main.py") == "/src/main.py"
+
+    def test_display_path_outside_root_falls_back_to_name(self):
+        rendered = display_path(Path("/etc/passwd"))
+
+        assert rendered == "passwd"
+        assert str(ROOT_DIR) not in rendered
+
+    def test_to_virtual_path_rejects_outside_root(self):
+        with pytest.raises(ValueError):
+            to_virtual_path(Path("/etc/passwd"))
+
+    def test_to_virtual_path_renders_inside_root(self):
+        assert to_virtual_path(ROOT_DIR / "nested" / "file.txt") == "/nested/file.txt"
+
+    def test_safe_detail_strips_embedded_path(self):
+        exc = FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "/home/user/.env")
+
+        detail = safe_error_detail(exc)
+
+        assert detail == "FileNotFoundError: No such file or directory"
+        assert "/home/user/.env" not in detail
+
+    def test_safe_error_detail_uses_reason_when_present(self):
+        exc = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        assert safe_error_detail(exc) == "UnicodeDecodeError: invalid start byte"
+
+    def test_safe_error_detail_without_detail_returns_type_name(self):
+        assert safe_error_detail(ValueError()) == "ValueError"
 
 
 # ── B. External safe fast path ──────────────────────────────────────────

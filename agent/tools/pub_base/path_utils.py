@@ -120,6 +120,48 @@ def resolve_path(file_path: str) -> Path:
     return resolve_project_path(file_path)
 
 
+# ── Model-visible path rendering ────────────────────────────────────
+
+
+def to_virtual_path(real_path: Path) -> str:
+    """Convert a real filesystem path to a virtual path anchored at ROOT_DIR.
+
+    /home/user/project/src/main.py -> /src/main.py
+
+    Raises ValueError if the path is outside ROOT_DIR.
+    """
+    return "/" + real_path.resolve().relative_to(ROOT_DIR.resolve()).as_posix()
+
+
+def display_path(real_path: Path) -> str:
+    """Safely render a path for model-visible output.
+
+    Returns a virtual path in normal cases. If the path cannot be converted
+    (outside root, unresolvable symlink), falls back to just the filename
+    so ROOT_DIR never leaks.
+    """
+    try:
+        return to_virtual_path(real_path)
+    except (ValueError, OSError, RuntimeError):
+        return real_path.name or "/"
+
+
+def safe_error_detail(exc: Exception) -> str:
+    """Extract an agent-safe error detail string.
+
+    OSError.__str__ embeds the real file path. This returns only the
+    strerror ('Permission denied') so ROOT_DIR never leaks into error
+    messages visible to the model.
+    """
+    if isinstance(exc, OSError):
+        detail = exc.strerror
+    else:
+        detail = getattr(exc, "reason", None)
+        if detail is None:
+            detail = str(exc)
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+
 # ── State keys ──────────────────────────────────────────────────────
 
 _GLOBAL_SESSION = "__global__"
