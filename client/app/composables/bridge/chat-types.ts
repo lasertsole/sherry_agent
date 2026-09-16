@@ -39,14 +39,7 @@ export interface ChatRequest {
  * Corresponds to `{"event": ..., "session_id": ..., "content": ...}` in `server/trigger/ws/messages.py`.
  */
 export type AgentWsEventType =
-  | 'turn_started'
-  | 'chunk'
-  | 'done'
-  | 'error'
-  | 'stopped'
-  | 'hitl_request'
-  | 'queued'
-  | 'todo_updated';
+  'turn_started' | 'chunk' | 'done' | 'error' | 'stopped' | 'hitl_request' | 'queued' | 'todo_updated';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';
@@ -61,7 +54,7 @@ export interface HitlInterruptData {
 
 /** HITL decision sent by the client to resume the agent. */
 export interface HitlResponse {
-  decision: 'approve' | 'reject' | 'edit' | 'yolo';
+  decision: 'approve' | 'approve_dir' | 'reject' | 'edit' | 'yolo';
   message?: string;
   edited_args?: Record<string, unknown>;
 }

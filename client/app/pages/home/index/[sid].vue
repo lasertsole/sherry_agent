@@ -280,6 +280,14 @@
                     :title="t('hitl.yoloTooltip')"
                     @click="handleHitlDecision('yolo')" />
                   <Button
+                    v-if="(hitlRequest?.allowed_decisions ?? []).includes('approve_dir')"
+                    :label="t('hitl.approveDir')"
+                    icon="pi pi-folder"
+                    severity="secondary"
+                    size="small"
+                    :title="t('hitl.approveDirTooltip')"
+                    @click="handleHitlDecision('approve_dir')" />
+                  <Button
                     :label="t('hitl.approve')"
                     icon="pi pi-check"
                     size="small"
@@ -339,7 +347,6 @@ import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
 import { tools } from '../config';
 import type { ChatController } from '@/composables/messages';
-import { acquireAgentSocket, releaseAgentSocket } from '@/composables/bridge';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
 
 // Image preview
@@ -846,6 +853,8 @@ onUnmounted(() => {
     },
     "hitl": {
       "approve": "批准",
+      "approveDir": "批准整个目录",
+      "approveDirTooltip": "允许整个目录（本会话内有效，子代理同样适用），目录内文件不再弹出审批",
       "reject": "拒绝",
       "title": "操作需要审批",
       "tool": "工具",
@@ -873,6 +882,8 @@ onUnmounted(() => {
     },
     "hitl": {
       "approve": "Approve",
+      "approveDir": "Approve Entire Directory",
+      "approveDirTooltip": "Allow the entire directory for this session (also inherited by subagents) — files inside never prompt again",
       "reject": "Reject",
       "title": "Action Requires Approval",
       "tool": "Tool",
@@ -900,6 +911,8 @@ onUnmounted(() => {
     },
     "hitl": {
       "approve": "承認",
+      "approveDir": "ディレクトリ全体を承認",
+      "approveDirTooltip": "ディレクトリ全体を許可します（このセッション内有効、サブエージェントにも継承）。配下のファイルでは確認ダイアログは表示されません",
       "reject": "拒否",
       "title": "操作の承認が必要です",
       "tool": "ツール",
@@ -927,6 +940,8 @@ onUnmounted(() => {
     },
     "hitl": {
       "approve": "승인",
+      "approveDir": "디렉터리 전체 승인",
+      "approveDirTooltip": "디렉터리 전체를 허용합니다(이 세션에 한정, 하위 에이전트에도 상속). 디렉터리 내 파일은 다시 승인을 요구하지 않습니다",
       "reject": "거부",
       "title": "작업 승인이 필요합니다",
       "tool": "도구",

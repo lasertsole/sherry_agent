@@ -97,7 +97,7 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
    * @param decision
    * @param message
    */
-  const handleHitlDecision = (decision: 'approve' | 'reject' | 'yolo', message: string = '') => {
+  const handleHitlDecision = (decision: 'approve' | 'approve_dir' | 'reject' | 'yolo', message: string = '') => {
     const sid = sessionId.value;
     if (!sid) {
       hitlRequest.value = null;
@@ -158,10 +158,16 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
     }
   };
 
-  /** Whether the given turn belongs to the in-flight HITL resume. */
+  /**
+   * Whether the given turn belongs to the in-flight HITL resume.
+   * @param turnNum
+   */
   const isResumeTurn = (turnNum: number | null): boolean => turnNum !== null && turnNum === activeResumeTurn;
 
-  /** The resume turn finished successfully: commit its draft and reconcile. */
+  /**
+   * The resume turn finished successfully: commit its draft and reconcile.
+   * @param turnNum
+   */
   const onTurnFinished = (turnNum: number) => {
     if (turnNum !== activeResumeTurn) return;
     activeResumeTurn = null;
