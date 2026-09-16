@@ -2,109 +2,27 @@
 
 > 基于 `PROTECTION_COMPARISON.md` 对比报告，筛选 DeepAgents 中 Sherry 可落地的防护能力，给出具体实现方案。
 > 优先级：P0(安全关键，建议立即实施) → P1(增强体验) → P2(长期优化)
+>
+> **P0 处置记录（2026-09-17）**：P0-1 已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow`/`_raise_if_symlink_loop`，read/write/patch 全走，另见 `docs/sandbox/README*`）；P0-3 **已废弃**（base64+eval 无安全增益，且会削弱现有危险命令/敏感文件防线；terminal 本就以 shell 语义执行）；P0-4 已落地（配置键 `file_tools_search_max_matches`/`file_tools_search_time_budget_s`/`file_tools_search_prune_dirs` + `search_scan.py` 的 `bounded_walk`，提交 `6073f7c`/`c77846e`/`4db42e0`）。三个小节已从本页移除。
 
 ---
 
 ## 目录
 
-1. [P0-1：符号链接防护 (O_NOFOLLOW + 循环检测)](#p0-1符号链接防护)
-2. [P0-2：工具结果消息驱逐 (卸载到文件 + head/tail预览)](#p0-2工具结果消息驱逐)
-3. [P0-3：Base64 参数编码防 Shell 注入](#p0-3base64-参数编码防-shell-注入)
-4. [P0-4：Glob/Grep 资源限制 (时间预算+匹配上限+花括号展开限制)](#p0-4globgrep-资源限制)
-5. [P1-1：参数截断 (TruncateArgsSettings)](#p1-1参数截断)
-6. [P1-2：溢出尾部裁剪 (快速恢复路径)](#p1-2溢出尾部裁剪)
-7. [P1-3：模型感知摘要默认值](#p1-3模型感知摘要默认值)
-8. [P1-4：增量检查点优化 (DeltaChannel)](#p1-4增量检查点优化)
-9. [P1-5：消息增量缩减器 (去重+墓碑)](#p1-5消息增量缩减器)
-10. [P1-6：中间件脚手架保护](#p1-6中间件脚手架保护)
-11. [P1-7：多模态内容清理](#p1-7多模态内容清理)
-12. [P1-8：威胁模型文档](#p1-8威胁模型文档)
-13. [P2-1：ripgrep 双重超时看门狗](#p2-1ripgrep-双重超时看门狗)
-14. [P2-2：持久化工具审批策略 (字节修订 CAS)](#p2-2持久化工具审批策略)
-15. [P2-3：伪文件系统修剪](#p2-3伪文件系统修剪)
-16. [P2-4：read_file 结果切片](#p2-4read_file-结果切片)
-17. [实施优先级与依赖关系总览](#实施优先级与依赖关系总览)
-
----
-
-## P0-1：符号链接防护
-
-> **状态（2026-09-16）：能力已落地。** `O_NOFOLLOW` + 符号链接循环检测已实现于 `agent/tools/pub_base/path_utils.py`（`_open_no_follow` / `_raise_if_symlink_loop`），`read_file` / `write_file` / `patch_file` 全部经该入口打开，见 `docs/sandbox/README*.md`。本页原提案的 `pub/func/validator/symlink_guard.py` 未采用，后续无需按原方案重复实现。
-
-### 问题
-
-Sherry 的文件工具（`file_tools`）在读写文件时不检查符号链接，攻击者可通过符号链接将敏感文件（如 API key 配置）重定向到工作区文件，实现信息泄露或覆盖。
-
-### DeepAgents 做法
-
-- 所有 `os.open()` 调用使用 `O_NOFOLLOW` 标志，拒绝跟随符号链接
-- `_raise_if_symlink_loop()` 检测符号链接循环
-
-### 具体实现方案
-
-#### 文件清单
-
-| 文件                                           | 修改类型 | 说明                              |
-| ---------------------------------------------- | -------- | --------------------------------- |
-| `pub/func/validator/symlink_guard.py`          | 新建     | 符号链接检测原语                  |
-| `agent/tools/file_tools.py`                    | 修改     | 在 open 调用处加入防护            |
-| `config/features/agent_side/tools_timeouts.py` | 修改     | 添加 `symlink_guard_enabled` 开关 |
-
-#### 实现代码
-
-**`pub/func/validator/symlink_guard.py`**:
-
-```python
-"""符号链接防护原语。
-
-提供 O_NOFOLLOW 打开和符号链接循环检测，
-防止通过符号链接攻击泄露或覆盖敏感文件。
-"""
-
-from __future__ import annotations
-
-import os
-from pathlib import Path
-
-_MAX_SYMLINK_DEPTH = 40  # Linux 内核默认上限
-
-
-def open_no_follow(path: str | Path, flags: int = os.O_RDONLY, mode: int = 0o644):
-    """以 O_NOFOLLOW 方式打开文件，拒绝跟随符号链接。
-
-    在不支持 O_NOFOLLOW 的平台(如 Windows)上退化为
-    先 stat 检查再打开。
-    """
-    p = str(path)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-        fd = os.open(p, flags, mode)
-        return os.fdopen(fd)
-    # Windows 回退：先检查是否为符号链接
-    if os.path.islink(p):
-        raise ValueError(f"Refusing to open symlink: {p}")
-    return open(p, "r")  # 简化回退
-
-
-def raise_if_symlink_loop(path: str | Path) -> None:
-    """检测符号链接循环。
-
-    遍历符号链接链，若超过 _MAX_SYMLINK_DEPTH 则抛出异常。
-    """
-    p = Path(path)
-    seen: set[str] = set()
-    for _ in range(_MAX_SYMLINK_DEPTH):
-        if not p.is_symlink():
-            return
-        resolved = str(p.resolve(strict=False))
-        if resolved in seen:
-            raise ValueError(f"Symlink loop detected at: {path}")
-        seen.add(resolved)
-        p = Path(os.readlink(p))
-    raise ValueError(f"Symlink chain too deep (>{_MAX_SYMLINK_DEPTH}): {path}")
-```
-
-**集成点**：在 `agent/tools/file_tools.py` 的 `read_file` / `write_file` 函数中，在 open 前调用 `raise_if_symlink_loop()`，open 时使用 `open_no_follow()`。
+1. [P0-2：工具结果消息驱逐 (卸载到文件 + head/tail预览)](#p0-2工具结果消息驱逐)
+2. [P1-1：参数截断 (TruncateArgsSettings)](#p1-1参数截断)
+3. [P1-2：溢出尾部裁剪 (快速恢复路径)](#p1-2溢出尾部裁剪)
+4. [P1-3：模型感知摘要默认值](#p1-3模型感知摘要默认值)
+5. [P1-4：增量检查点优化 (DeltaChannel)](#p1-4增量检查点优化)
+6. [P1-5：消息增量缩减器 (去重+墓碑)](#p1-5消息增量缩减器)
+7. [P1-6：中间件脚手架保护](#p1-6中间件脚手架保护)
+8. [P1-7：多模态内容清理](#p1-7多模态内容清理)
+9. [P1-8：威胁模型文档](#p1-8威胁模型文档)
+10. [P2-1：ripgrep 双重超时看门狗](#p2-1ripgrep-双重超时看门狗)
+11. [P2-2：持久化工具审批策略 (字节修订 CAS)](#p2-2持久化工具审批策略)
+12. [P2-3：伪文件系统修剪](#p2-3伪文件系统修剪)
+13. [P2-4：read_file 结果切片](#p2-4read_file-结果切片)
+14. [实施优先级与依赖关系总览](#实施优先级与依赖关系总览)
 
 ---
 
@@ -335,119 +253,6 @@ clear_session() 清理链：
   → 若仍溢出:
     → P1-2 溢出尾部裁剪 — 快速移除尾部 ToolMessage 预览，秒级重试
     → 裁剪不够 → 完整压缩再试
-```
-
----
-
-## P0-3：Base64 参数编码防 Shell 注入
-
-### 问题
-
-Sherry 的 `terminal.py` 使用正则黑名单拦截危险命令，但正则无法覆盖所有 shell 元字符注入场景（如 `$()`, `;`, `|`, `&&`, backtick 等）。
-
-### DeepAgents 做法
-
-所有 sandbox shell 命令模板使用 base64 编码路径参数，从设计上避免 shell 转义问题。
-
-### 具体实现方案
-
-#### 文件清单
-
-| 文件                      | 修改类型 | 说明                              |
-| ------------------------- | -------- | --------------------------------- |
-| `agent/tools/terminal.py` | 修改     | 在 sandbox 后端中启用 base64 编码 |
-
-#### 实现代码
-
-在 `agent/tools/terminal.py` 的 `SafeShellTool` 中，为 sandbox 后端增加 base64 参数编码：
-
-```python
-import base64
-
-def _encode_sandbox_command(cmd: str) -> str:
-    """将命令 base64 编码，防止 shell 元字符注入。
-
-    仅用于 sandbox 后端，本地 shell 不适用。
-    """
-    return base64.b64encode(cmd.encode("utf-8")).decode("ascii")
-
-def _build_sandbox_script(encoded_cmd: str) -> str:
-    """构建 sandbox 内解码并执行的脚本。"""
-    return f'eval "$(echo {encoded_cmd} | base64 -d)"'
-```
-
-#### 注意事项
-
-- 此方案仅适用于有 sandbox 后端的场景
-- 本地 shell 执行仍需依赖正则黑名单 + HITL 审批
-- 需确保 sandbox 环境中有 `base64` 命令可用
-
----
-
-## P0-4：Glob/Grep 资源限制
-
-### 问题
-
-Sherry 的文件搜索工具（glob/grep）缺少时间预算和匹配上限，可能被大目录或恶意文件卡住。
-
-### DeepAgents 做法
-
-- `MAX_EXPANSIONS=1000` 花括号展开限制
-- `MAX_MATCHES=10000` glob 匹配上限
-- `TIME_BUDGET=5.0` glob 遍历时间预算
-- `PRUNE_AT_ROOT=('proc','sys','dev')` 跳过伪文件系统
-- `grep_max_count=1000` grep 匹配上限
-
-### 具体实现方案
-
-#### 文件清单
-
-| 文件                                           | 修改类型 | 说明                |
-| ---------------------------------------------- | -------- | ------------------- |
-| `config/features/agent_side/tools_timeouts.py` | 修改     | 添加 glob/grep 限制 |
-| `agent/tools/file_tools.py`                    | 修改     | 实现限制逻辑        |
-
-#### 配置新增
-
-在 `config/features/agent_side/tools_timeouts.py` 中添加：
-
-```python
-# 在 TOOLS_TIMEOUTS TypedDict 中添加:
-glob_max_matches: int          # 最大匹配数，默认 10000
-glob_time_budget_s: float      # 遍历时间预算，默认 5.0
-glob_max_expansions: int      # 花括号展开上限，默认 1000
-glob_prune_dirs: list[str]     # 跳过的伪文件系统目录
-grep_max_count: int            # grep 最大匹配数，默认 1000
-```
-
-#### 实现代码
-
-在文件搜索工具中：
-
-```python
-import time
-from config.features.agent_side.tools_timeouts import TOOLS_TIMEOUTS
-
-def _glob_with_budget(pattern: str, root: str) -> list[str]:
-    """带时间预算和匹配上限的 glob。"""
-    max_matches = TOOLS_TIMEOUTS["glob_max_matches"]
-    time_budget = TOOLS_TIMEOUTS["time_budget_s"]
-    prune_dirs = set(TOOLS_TIMEOUTS["glob_prune_dirs"])
-
-    results: list[str] = []
-    start = time.monotonic()
-
-    for dirpath, dirnames, filenames in os.walk(root):
-        # 修剪伪文件系统
-        dirnames[:] = [d for d in dirnames if d not in prune_dirs]
-        # 时间预算检查
-        if time.monotonic() - start > time_budget:
-            break
-        # 匹配上限检查
-        if len(results) >= max_matches:
-            break
-        # ... glob 匹配逻辑
-    return results
 ```
 
 ---
@@ -948,8 +753,8 @@ Sherry 缺少威胁模型文档，安全评审缺少系统性参考。
 | 威胁         | 现有防护       | 差距             |
 | ------------ | -------------- | ---------------- |
 | 路径遍历     | 三道结构门禁 + O_NOFOLLOW | 已落地（`path_utils.py`） |
-| 符号链接攻击 | `O_NOFOLLOW` + 循环检测 | 已落地（见 P0-1 状态说明） |
-| Shell注入    | 正则黑名单     | **需实施 P0-3**  |
+| 符号链接攻击 | `O_NOFOLLOW` + 循环检测 | 已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow` / `_raise_if_symlink_loop`，read/write/patch 全走） |
+| Shell注入    | 正则黑名单     | 已评估并否决（base64+`eval` 对以 shell 语义执行的 `terminal` 无增益，且置于 `_check_dangerous`/`_check_sensitive_file_access` 之前会让明文绕过防线；真实读屏障是 OS 沙箱读遮蔽。见头部处置记录） |
 | 工具结果OOM  | 截断           | **需实施 P0-2**  |
 | ...          | ...            | ...              |
 ```
@@ -1000,7 +805,7 @@ Sherry 的 HITL 审批是会话级的，重启后丢失。无操作员场景缺�
 
 ### 具体实现方案
 
-在 P0-4 的 `_glob_with_budget()` 中已包含此逻辑。
+已实现：配置键 `file_tools_search_prune_dirs`（默认 `["proc","sys","dev"]`）+ `agent/tools/file_tools/search_scan.py` 的 `bounded_walk()` 在扫描时剪枝（`search_files.py` 两模式共用）。
 
 ---
 
@@ -1024,10 +829,7 @@ read_file 工具的结果被截断后，完整内容丢失。DeepAgents 对 read
 
 ```
 Phase 1 (P0, 安全关键):
-  P0-1 符号链接防护 ──────────→ 独立实施
   P0-2 工具结果消息驱逐 ──────→ 独立实施
-  P0-3 Base64参数编码 ────────→ 依赖现有sandbox后端
-  P0-4 Glob/Grep资源限制 ─────→ 独立实施
 
 Phase 2 (P1, 增强体验):
   P1-1 参数截断 ─────────────→ 依赖现有Summarization
@@ -1044,7 +846,7 @@ Phase 3 (P1, 长期优化):
 Phase 4 (P2, 补充完善):
   P2-1 ripgrep双重超时 ───────→ 依赖文件搜索后端
   P2-2 持久化审批策略 ────────→ 依赖现有HITL
-  P2-3 伪文件系统修剪 ────────→ 已包含在P0-4中
+  P2-3 伪文件系统修剪 ────────→ 已实现（`file_tools_search_prune_dirs` + `search_scan.py::bounded_walk`）
   P2-4 read_file切片 ─────────→ 依赖P0-2
 ```
 
