@@ -276,3 +276,19 @@ class TestSessionGuard:
         assert prompt_env["state"]["calls"] == 0
         assert "## Current Todo List" not in prompt
         assert "## Active Work" not in prompt
+
+
+class TestProviderDegradation:
+    def test_unregistered_provider_degrades_blocks_to_empty(self, prompt_env):
+        """No registered provider -> dynamic blocks are empty, never a crash or a cross-package import."""
+        from runtime import data_provider
+        from workspace.prompt_builder import build_system_prompt
+
+        _seed_todos(prompt_env, [_todo("should not render")])
+        data_provider.clear_prompt_data_provider()
+
+        prompt = build_system_prompt(session_id="sess-no-provider")
+
+        assert "## Current Todo List" not in prompt
+        assert "AGENTS-PERSONA" in prompt
+        assert prompt_env["state"]["calls"] == 0

@@ -1,12 +1,19 @@
 """System prompt assembly."""
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+from loguru import logger
 from skills.loader import get_skills_text
 from config import WORKSPACE_DIR
 from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
+
+if TYPE_CHECKING:
+    from runtime.data_provider import PromptDataProvider
 
 MAX_FILE_CHARS: int = 20_000
 
@@ -21,12 +28,34 @@ _TODO_ICONS: dict[str, str] = {
     "cancelled": "✕",
 }
 
+# First miss per provider method is logged once (mirrors runtime.hooks consumers).
+_provider_misses_logged: set[str] = set()
+
+
+def _resolve_provider(method: str) -> PromptDataProvider | None:
+    """Resolve the prompt data provider, logging the first miss per method.
+
+    The provider is registered by ``agent.core.init()`` at server boot; a
+    process that never assembled the agent (unit tests, tooling) degrades the
+    dynamic prompt blocks to empty instead of importing across package
+    boundaries.
+    """
+    from runtime import data_provider
+
+    provider = data_provider.get_prompt_data_provider()
+    if provider is None and method not in _provider_misses_logged:
+        _provider_misses_logged.add(method)
+        logger.debug(
+            "prompt builder: prompt data provider is not registered; '{}' degrades to empty",
+            method,
+        )
+    return provider
+
 
 def _read_todos_sync(session_id: str) -> list[dict]:
-    """Read the session todo list synchronously (call-time import avoids cycles)."""
-    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
-
-    return get_todos_sync(session_id)
+    """Read the session todo list synchronously via the prompt data provider."""
+    provider = _resolve_provider("get_todos")
+    return provider.get_todos(session_id) if provider is not None else []
 
 
 def _build_todo_block(session_id: str) -> str:
@@ -118,15 +147,12 @@ def _build_taskflow_block(session_id: str) -> str:
     on session start.
     """
     try:
-        from agent.tools.taskflow.registry import store_sqlite
-        from agent.tools.taskflow.tools._shared import (
-            requester_session_key,
-            step_status,
-            steps_summary,
-        )
+        provider = _resolve_provider("get_active_flows")
+        if provider is None:
+            return ""
 
-        creator_key = requester_session_key(session_id)
-        active_flows = store_sqlite.get_active_flows_sync()
+        creator_key = provider.requester_session_key(session_id)
+        active_flows = provider.get_active_flows()
 
         # Filter: only flows created by THIS session.
         mine = [
@@ -141,14 +167,14 @@ def _build_taskflow_block(session_id: str) -> str:
         for flow in mine[:3]:  # max 3 flows
             state = flow.get("state") or {}
             steps = state.get("steps") or []
-            counts = steps_summary(steps)
+            counts = provider.steps_summary(steps)
             total = len(steps)
             done = counts.get("done", 0)
             desc = state.get("description", "")[:60]
             status = flow.get("status", "?")
 
             # Find the next actionable step (first non-done).
-            pending = [s for s in steps if step_status(s) not in ("done",)]
+            pending = [s for s in steps if provider.step_status(s) not in ("done",)]
             next_hint = ""
             if pending:
                 next_step = pending[0]
@@ -174,9 +200,8 @@ def _build_continuity_block(session_id: str) -> str:
     on none or any failure (fail-open).
     """
     try:
-        from context_engine.session_continuity import build_continuity_prompt
-
-        return build_continuity_prompt(session_id)
+        provider = _resolve_provider("build_continuity_prompt")
+        return provider.build_continuity_prompt(session_id) if provider is not None else ""
     except Exception:
         return ""
 
@@ -184,9 +209,8 @@ def _build_continuity_block(session_id: str) -> str:
 def _build_knowledge_block(session_id: str) -> str:
     """Inject the current plan's knowledge summary; "" on none or any failure."""
     try:
-        from agent.tools.todolist.knowledge.prompt_block import build_knowledge_block
-
-        return build_knowledge_block(session_id)
+        provider = _resolve_provider("build_todolist_knowledge_block")
+        return provider.build_todolist_knowledge_block(session_id) if provider is not None else ""
     except Exception:
         return ""
 
@@ -263,16 +287,16 @@ def build_system_prompt(
     # reflects fresh "memory"/"user" state. Only appended when the caller did
     # not filter to explicit files. `None` results are dropped.
     if selected_file_names is None:
-        from agent.tools.memory import memory_store
-
-        file_paths.extend(
-            content
-            for content in (
-                memory_store.format_for_system_prompt("memory"),
-                memory_store.format_for_system_prompt("user"),
+        provider = _resolve_provider("format_memory_for_system_prompt")
+        if provider is not None:
+            file_paths.extend(
+                content
+                for content in (
+                    provider.format_memory_for_system_prompt("memory"),
+                    provider.format_memory_for_system_prompt("user"),
+                )
+                if content
             )
-            if content
-        )
 
     # --- Facts listing (LT-1) -----------------------------------------
     # One-liner listing non-empty facts files so the agent knows what's
@@ -280,9 +304,8 @@ def build_system_prompt(
     # ~100-150 chars, far cheaper than embedding full facts content.
     if selected_file_names is None:
         try:
-            from agent.tools.memory_tiered import get_tiered_store
-
-            facts_listing = get_tiered_store().get_facts_listing()
+            provider = _resolve_provider("get_facts_listing")
+            facts_listing = provider.get_facts_listing() if provider is not None else ""
             if facts_listing:
                 file_paths.append(
                     "FACTS (on-demand, use memory tool with fact_read/fact_search):\n  "
