@@ -9,7 +9,6 @@ No external dependencies (rg, grep, find) required.
 
 import fnmatch
 import json
-import os
 import re
 from pathlib import Path
 from typing import Annotated, override
@@ -19,6 +18,7 @@ from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
+from agent.tools.file_tools.search_scan import ScanState, SearchQuery, bounded_walk
 from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
@@ -26,7 +26,6 @@ from agent.tools.pub_base import (
     is_text_file,
     resolve_external_path,
     resolve_project_path,
-    should_skip_dir,
 )
 
 SessionId = Annotated[str, InjectedState("session_id")]
@@ -51,31 +50,24 @@ def _stays_within_root(candidate: Path, root: Path) -> bool:
     return True
 
 
-def _search_content(
-    pattern: str,
-    root: Path,
-    file_glob: str | None,
-    limit: int,
-    offset: int,
-    context: int,
-) -> dict:
+def _search_content(query: SearchQuery, state: ScanState) -> dict:
     try:
-        regex = re.compile(pattern, re.IGNORECASE)
+        regex = re.compile(query.pattern, re.IGNORECASE)
     except re.error as e:
         return {"error": f"Invalid regex pattern: {e}"}
 
     matches: list[dict] = []
-    truncated = False
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not should_skip_dir(Path(dirpath) / d)]
-
+    for dirpath, filenames in bounded_walk(query.root, state):
         for fname in sorted(filenames):
-            if file_glob and not fnmatch.fnmatch(fname, file_glob):
+            if state.expired():
+                state.note_budget()
+                break
+            if query.file_glob and not fnmatch.fnmatch(fname, query.file_glob):
                 continue
 
-            fpath = Path(dirpath) / fname
-            if not _stays_within_root(fpath, root):
+            fpath = dirpath / fname
+            if not _stays_within_root(fpath, query.root):
                 continue
             if not fpath.is_file() or not is_text_file(fpath):
                 continue
@@ -87,8 +79,8 @@ def _search_content(
 
             for i, line in enumerate(lines):
                 if regex.search(line):
-                    ctx_before = lines[max(0, i - context) : i] if context else []
-                    ctx_after = lines[i + 1 : i + 1 + context] if context else []
+                    ctx_before = lines[max(0, i - query.context) : i] if query.context else []
+                    ctx_after = lines[i + 1 : i + 1 + query.context] if query.context else []
                     matches.append(
                         {
                             "path": display_path(fpath),
@@ -98,64 +90,48 @@ def _search_content(
                             "context_after": ctx_after,
                         }
                     )
-                    if len(matches) >= offset + limit + 1:
-                        truncated = True
+                    state.note_match(len(matches))
+                    if state.stopped:
                         break
-            if truncated:
+            if state.stopped:
                 break
-        if truncated:
+        if state.stopped:
             break
 
-    total = len(matches)
-    page = matches[offset : offset + limit]
-
-    result_matches = []
-    for m in page:
-        entry = {"path": m["path"], "line_number": m["line_number"], "content": m["content"]}
-        if context > 0:
-            entry["context_before"] = m["context_before"]
-            entry["context_after"] = m["context_after"]
-        result_matches.append(entry)
-
-    result = {"matches": result_matches, "total_count": total}
-    if truncated or total > offset + limit:
-        result["truncated"] = True
-        result["hint"] = f"Use offset={offset + limit} to see more results."
+    result = state.finish("matches", matches)
+    if query.context <= 0:
+        for entry in result["matches"]:
+            entry.pop("context_before", None)
+            entry.pop("context_after", None)
     return result
 
 
 # ── File search (glob-like) ──────────────────────────────────────────────
 
 
-def _search_files(pattern: str, root: Path, limit: int, offset: int) -> dict:
-    bare_name = pattern.split("/")[-1] if "/" in pattern else pattern
+def _search_files(query: SearchQuery, state: ScanState) -> dict:
+    bare_name = query.pattern.split("/")[-1] if "/" in query.pattern else query.pattern
 
     files: list[str] = []
-    truncated = False
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not should_skip_dir(Path(dirpath) / d)]
-
+    for dirpath, filenames in bounded_walk(query.root, state):
         for fname in sorted(filenames):
-            if fnmatch.fnmatch(fname, bare_name) or fnmatch.fnmatch(fname, f"*{bare_name}*"):
-                matched = Path(dirpath) / fname
-                if not _stays_within_root(matched, root):
-                    continue
-                files.append(display_path(matched))
-                if len(files) >= offset + limit + 1:
-                    truncated = True
-                    break
-        if truncated:
+            if state.expired():
+                state.note_budget()
+                break
+            if not (fnmatch.fnmatch(fname, bare_name) or fnmatch.fnmatch(fname, f"*{bare_name}*")):
+                continue
+            matched = dirpath / fname
+            if not _stays_within_root(matched, query.root):
+                continue
+            files.append(display_path(matched))
+            state.note_match(len(files))
+            if state.stopped:
+                break
+        if state.stopped:
             break
 
-    total = len(files)
-    page = files[offset : offset + limit]
-
-    result = {"files": page, "total_count": total}
-    if truncated or total > offset + limit:
-        result["truncated"] = True
-        result["hint"] = f"Use offset={offset + limit} to see more results."
-    return result
+    return state.finish("files", files)
 
 
 # ── LangChain tool ───────────────────────────────────────────────────────
@@ -247,10 +223,11 @@ class SearchFilesTool(BaseTool):
                 {"error": f"Path is not a directory: {display_path(resolved)}"}, ensure_ascii=False
             )
 
+        state = ScanState.start(offset, limit)
         if target == "files":
-            result = _search_files(pattern, resolved, limit, offset)
+            result = _search_files(SearchQuery(pattern, resolved), state)
         else:
-            result = _search_content(pattern, resolved, file_glob, limit, offset, context)
+            result = _search_content(SearchQuery(pattern, resolved, file_glob, context), state)
 
         return json.dumps(result, ensure_ascii=False)
 

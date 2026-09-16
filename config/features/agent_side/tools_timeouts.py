@@ -26,6 +26,9 @@ class ToolsTimeoutsConfig(TypedDict):
     file_tools_search_default_limit: int
     file_tools_search_max_limit: int
     file_tools_search_max_context: int
+    file_tools_search_max_matches: int
+    file_tools_search_time_budget_s: float
+    file_tools_search_prune_dirs: list[str]
     question_option_max_length: int
     question_min_length: int
     question_custom_max_length: int
@@ -52,6 +55,9 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "file_tools_search_default_limit": 50,
     "file_tools_search_max_limit": 200,
     "file_tools_search_max_context": 5,
+    "file_tools_search_max_matches": 10_000,
+    "file_tools_search_time_budget_s": 5.0,
+    "file_tools_search_prune_dirs": ["proc", "sys", "dev"],
     "question_option_max_length": 30,
     "question_min_length": 2,
     "question_custom_max_length": 6,
