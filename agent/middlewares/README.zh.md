@@ -164,7 +164,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 1. 先查 `state_register_mem` 中的 `system_prompt`。
 2. 回退到 `state_register_db`；若仍缺失，则通过 `workspace.prompt_builder.build_system_prompt(session_id)` 重建。
-3. 通过 `request.override(system_message=...)` 注入，并把提示词缓存回 `state_register_mem`。
+3. 若请求上已有的 `SystemMessage` 内容相同则原样复用——不 override、不新建 `SystemMessage`——使模型可见前缀保持逐字节一致；仅在实际变化时才通过 `request.override(system_message=...)` 注入。两种情况都会把提示词缓存回 `state_register_mem`。
 
 **`after_agent` / `aafter_agent` —— 回合收尾**
 
@@ -195,7 +195,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **`audio_url`**：下载到临时文件（30 秒超时）。**`audio_bytes` / `video_url` / `video_bytes`**：以同样方式解码保存（`_AUDIO_MAGIC` / `_VIDEO_MAGIC`）。
 - 消息文本末尾追加 `"[Uploaded media]"` 指令块，告知模型使用 `skill_view` 工具 `image_to_text` / `speech_to_text` / `video_text_to_text` 查看文件（模型本身没有原生视觉能力）。
 - 持久化路径写入 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`，随后由 MesMemory 写库供历史渲染使用。
-- **更早的** `HumanMessage` 中的 `image_url` 块会被剥离，避免过期的 base64 大对象滞留在上下文中。
+- **更早的** `HumanMessage` 中的 `image_url` 块会被剥离，避免过期的 base64 大对象滞留在上下文中；但仅在确实存在此类块时才执行剥离（廉价前置检查会跳过无可剥离内容的消息），且仅当剥离后的文本非空时才写回。
 
 `after_agent` 清理 `mutil_temp`：删除文件名主干不是纯数字时间戳、或超过 7 天的文件。
 
@@ -248,7 +248,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 为缺失的结果插入占位 `ToolMessage`（"tool result missing after context trim."）；
 - 清除错误状态 `AIMessage` 上的 `invalid_tool_calls`，避免其被序列化成 OpenAI tool_calls。
 
-钩子返回完整的消息替换：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。
+无变化时钩子返回 `None`——不写状态、不重建消息，模型可见前缀原样不动；仅在实际修复后才返回完整的消息替换：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。注意：前缀缓存的判据是**发给模型的序列化内容**，而非 Python 对象身份；跳过无变化重建可消除无意义的 checkpointer 状态写入，并彻底排除重建路径带来的内容漂移。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -353,7 +353,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **防抖动：** 每个**会话**至多 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 次压缩（而非每回合）；连续 `INEFFECTIVE_THRESHOLD = 2` 次无效压缩后（有效 = 消息数减少，或 token 缩减 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`），LLM 步骤被禁用（`summarization_skip_llm`），仅运行非 LLM 策略。计数器以会话级 `summarization_*` 键存于 `state_register_mem`（压缩次数、无效连击、上次 token、上次策略、跳过标志、恢复状态等）。
 - **截断：** 已有的摘要消息（以 `additional_kwargs["lc_source"] == "summarization"` 识别）超过 `SUMMARY_TOTAL_MAX_CHARS = 16 000` 字符时被重新截断，保留头部 30 % / 尾部 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`），并加入省略标记。
 - **输出：** 替换后的消息是 `HumanMessage` / `AIMessage` **成对出现**——一条中性的 `"What did we do so far?"`，后跟携带 `additional_kwargs={"lc_source": "summarization"}` 的 `AIMessage`——因此模型不会看到两条连续同角色消息，也无需事后配对修复。
-- `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。
+- `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。两条送达路径（压缩后直送、防抖闸门路径）在请求已带相同内容的 `SystemMessage` 时会跳过注入——不 override、不新建 `SystemMessage`——从而保持模型可见前缀逐字节一致。
 - **压缩后待办更新：** 当 `compression_todo_update_enabled`（默认开启）且本次压缩确实丢弃了消息时，异步路径会 fire-and-forget 一个专用 nudge agent（`_COMPRESSION_TODO_PROMPT`）：其图运行在派生会话键（`<id>::compression-todo`，因此 `IterationBudget` / `ToolGuardrails` 状态绝不会碰到主会话）下，工具集只有一个带 metadata 标记的 `todowrite` 垫片（`todo_update: True`，经 `_NudgeLimitTool(allowed_metadata_key="todo_update")` 放行）且绑定主会话。它根据被丢弃的对话片段核对会话待办列表——把实际完成的条目标为 `completed` / `cancelled`，把有据可查的新工作加为 `pending`，并用 `todowrite` 写回**完整**列表。它绝不阻塞或影响压缩；每会话 `compression_todo_update_lock` 防重入，同步路径仅在已有事件循环时调度。
 
 ▶️ 完整文档：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)

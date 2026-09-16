@@ -267,7 +267,7 @@ State lives in session-scoped `state_register_mem` under **thirteen** `summariza
 
 ## 🔄 System Prompt Refresh
 
-Main agent only (`need_update_system_prompt=True`): after a compression the middleware rebuilds the system prompt and writes it to the `system_prompt` state key, so the next model call sees persona files / long-term memory as they are now. Two delivery paths: `request.override(system_message=SystemMessage(...))` directly after compaction, and — when a T1 compact already happened but the anti-thrash gate blocks a second one — the rebuilt prompt is still injected in the gate path (:1993–2005), because chains without `ContextEngineHook` rely on this middleware delivering it.
+Main agent only (`need_update_system_prompt=True`): after a compression the middleware rebuilds the system prompt and writes it to the `system_prompt` state key, so the next model call sees persona files / long-term memory as they are now. Two delivery paths: `request.override(system_message=SystemMessage(...))` directly after compaction, and — when a T1 compact already happened but the anti-thrash gate blocks a second one — the rebuilt prompt is still delivered in the gate path (:1993–2005), because chains without `ContextEngineHook` rely on this middleware delivering it. On the gate path the rebuild is injected **only when the request's current system message differs**: if the content already matches, no `override` and no new `SystemMessage` are created (the prompt is not re-injected).
 
 ## 📌 Registration Sites
 

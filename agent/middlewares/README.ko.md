@@ -164,7 +164,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 1. `state_register_mem`의 `system_prompt`를 조회합니다.
 2. 없으면 `state_register_db`로 폴백하고, 그래도 없으면 `workspace.prompt_builder.build_system_prompt(session_id)`로 재구축합니다.
-3. `request.override(system_message=...)`로 주입하고, 프롬프트를 `state_register_mem`에 캐시백합니다.
+3. 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 그대로 재사용하고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다. 내용이 실제로 바뀐 경우에만 `request.override(system_message=...)`로 주입합니다. 어느 경우든 프롬프트는 `state_register_mem`에 캐시백합니다.
 
 **`after_agent` / `aafter_agent` — 턴 마무리**
 
@@ -195,7 +195,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **`audio_url`**: 임시 파일로 다운로드(30초 타임아웃). **`audio_bytes` / `video_url` / `video_bytes`**: 동일하게 디코딩·저장(`_AUDIO_MAGIC` / `_VIDEO_MAGIC`).
 - 메시지 텍스트 끝에 `"[Uploaded media]"` 지시 블록을 덧붙여, `skill_view` 도구인 `image_to_text` / `speech_to_text` / `video_text_to_text`로 파일을 확인하도록 모델에 지시합니다(모델은 네이티브 비전 능력이 없음).
 - 영속화된 경로는 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`에 저장되고, 이후 MesMemory에 기록되어 히스토리 렌더링에 사용됩니다.
-- **더 오래된** `HumanMessage`에서는 `image_url` 블록이 제거되어, 낡은 base64 덩어리가 컨텍스트에 남지 않습니다.
+- **더 오래된** `HumanMessage`에서는 `image_url` 블록이 제거되어, 낡은 base64 덩어리가 컨텍스트에 남지 않습니다. 다만 실제로 그러한 블록이 존재할 때만 수행되며(제거할 것이 없는 메시지는 저비용 사전 검사로 건너뜀), 제거 후 텍스트가 비어 있지 않을 때만 기록합니다.
 
 `after_agent`는 `mutil_temp`를 청소합니다: 파일명 본체가 순수 숫자 타임스탬프가 아니거나 7일보다 오래된 파일을 삭제합니다.
 
@@ -248,7 +248,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 누락된 결과에 대한 플레이스홀더 `ToolMessage`("tool result missing after context trim.") 삽입;
 - 오류 상태 `AIMessage`의 `invalid_tool_calls`를 클리어하여 OpenAI tool_calls로 직렬화되지 않도록 함.
 
-후크는 메시지 전체 교체를 반환합니다: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`.
+변경이 없으면 후크는 `None`을 반환합니다 —— 상태 기록도 메시지 재구축도 없으며, 모델이 보는 프리픽스는 그대로 유지됩니다. 실제로 복구했을 때만 메시지 전체 교체를 반환합니다: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`. 참고로 프리픽스 캐시의 판정 기준은 **모델로 전송되는 직렬화된 내용**이며, Python 객체 동일성이 아닙니다. 변경 없는 재구축을 건너뛰면 무의미한 checkpointer 상태 기록을 없애고 재구축 경로로 인한 내용 드리프트를 원천 차단합니다.
 
 ### SubagentCompletionDrainMiddleware
 
@@ -353,7 +353,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **안티스래싱:** 세션당 최대 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5`회 압축(턴당이 아님). 연속 `INEFFECTIVE_THRESHOLD = 2`회 무효 압축이면(유효 = 메시지 수 감소 또는 토큰 절감 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) LLM 단계를 비활성화(`summarization_skip_llm`)하고 비(非)LLM 전략만 실행합니다. 카운터는 세션 단위 `summarization_*` 키로 `state_register_mem`에 저장됩니다(압축 횟수, 무효 연속, 마지막 토큰, 마지막 전략, 스킵 플래그, 복구 상태 등).
 - **절단:** 기존 요약 메시지(`additional_kwargs["lc_source"] == "summarization"`로 식별)가 `SUMMARY_TOTAL_MAX_CHARS = 16 000`자를 넘으면 재절단되어, 머리 30% / 꼬리 30%(`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`)를 유지하고 생략 마커가 삽입됩니다.
 - **출력:** 교체 메시지는 `HumanMessage` / `AIMessage` **쌍**입니다 — 중립적인 `"What did we do so far?"` 뒤에 `additional_kwargs={"lc_source": "summarization"}`을 담은 `AIMessage`가 이어집니다 — 모델이 연속된 같은 역할 메시지를 보는 일이 없어 사후 페어링 복구도 필요 없습니다.
-- `need_update_system_prompt=True`(메인 에이전트만): 압축 후 시스템 프롬프트를 재구축 — 메모리 스토어를 다시 로드한 뒤 `build_system_prompt()` 호출 — 하여 `system_prompt` 키로 두 상태 레지스터에 기록합니다.
+- `need_update_system_prompt=True`(메인 에이전트만): 압축 후 시스템 프롬프트를 재구축 — 메모리 스토어를 다시 로드한 뒤 `build_system_prompt()` 호출 — 하여 `system_prompt` 키로 두 상태 레지스터에 기록합니다. 두 전달 경로(압축 직후, 안티-스래싱 게이트 경로)는 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 주입을 건너뛰고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다.
 - **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 nudge 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
 
 ▶️ 전체 문서: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)

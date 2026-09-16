@@ -265,7 +265,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 시스템 프롬프트 갱신
 
-메인 에이전트 전용(`need_update_system_prompt=True`): 압축 후 미들웨어가 시스템 프롬프트를 재구축해 `system_prompt` 상태 키에 기록하므로, 다음 모델 호출은 페르소나 파일 / 장기 기억을 지금 현재 상태 그대로 봅니다. 두 전달 경로: 압축 직후의 `request.override(system_message=SystemMessage(...))`, 그리고 — T1 compact가 이미 일어났지만 안티-스래싱 게이트가 두 번째 압축을 막을 때 — 재구축된 프롬프트는 게이트 경로에서 여전히 주입됩니다(:1993–2005). `ContextEngineHook` 없는 체인은 이 미들웨어가 전달해 주기 때문입니다.
+메인 에이전트 전용(`need_update_system_prompt=True`): 압축 후 미들웨어가 시스템 프롬프트를 재구축해 `system_prompt` 상태 키에 기록하므로, 다음 모델 호출은 페르소나 파일 / 장기 기억을 지금 현재 상태 그대로 봅니다. 두 전달 경로: 압축 직후의 `request.override(system_message=SystemMessage(...))`, 그리고 — T1 compact가 이미 일어났지만 안티-스래싱 게이트가 두 번째 압축을 막을 때 — 재구축된 프롬프트는 게이트 경로에서 여전히 전달됩니다(:1993–2005). `ContextEngineHook` 없는 체인은 이 미들웨어가 전달해 주기 때문입니다. 게이트 경로는 요청의 현재 system message와 **내용이 다를 때만** 주입합니다: 내용이 같으면 override도 새 `SystemMessage`도 만들지 않습니다(재주입하지 않음).
 
 ## 📌 등록 지점
 

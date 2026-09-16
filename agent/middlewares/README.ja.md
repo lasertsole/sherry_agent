@@ -164,7 +164,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 1. `state_register_mem` の `system_prompt` を参照します。
 2. なければ `state_register_db` にフォールバックし、それでも無ければ `workspace.prompt_builder.build_system_prompt(session_id)` で再構築します。
-3. `request.override(system_message=...)` で注入し、プロンプトを `state_register_mem` にキャッシュバックします。
+3. リクエストが既に同一内容の `SystemMessage` を持つ場合はそのまま再利用し —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。内容が実際に変わったときだけ `request.override(system_message=...)` で注入します。いずれの場合もプロンプトは `state_register_mem` にキャッシュバックします。
 
 **`after_agent` / `aafter_agent` — ターンの仕上げ**
 
@@ -195,7 +195,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **`audio_url`**：一時ファイルへダウンロード（タイムアウト 30 秒）。**`audio_bytes` / `video_url` / `video_bytes`**：同様にデコード・保存（`_AUDIO_MAGIC` / `_VIDEO_MAGIC`）。
 - メッセージテキストの末尾に `"[Uploaded media]"` 命令ブロックを追加し、`skill_view` ツールの `image_to_text` / `speech_to_text` / `video_text_to_text` でファイルを確認するようモデルに指示します（モデルはネイティブの視覚能力を持ちません）。
 - 永続化パスは `additional_kwargs["images"]` / `["audios"]` / `["videos"]` に格納され、後から MesMemory に書き込まれ履歴レンダリングに使われます。
-- **より古い** `HumanMessage` からは `image_url` ブロックが剥ぎ取られ、古い base64 がコンテキストに残りません。
+- **より古い** `HumanMessage` からは `image_url` ブロックが剥ぎ取られ、古い base64 がコンテキストに残りません。ただし、そのようなブロックが実際に存在する場合のみ実行され（剥ぎ取るものが無いメッセージは安価な事前チェックでスキップ）、剥ぎ取り後のテキストが空でない場合のみ書き戻します。
 
 `after_agent` は `mutil_temp` を清掃します：ファイル名の本体が純粋な数値タイムスタンプでないもの、または 7 日より古いものを削除します。
 
@@ -248,7 +248,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 欠落した結果に対するプレースホルダー `ToolMessage`（"tool result missing after context trim."）の挿入；
 - エラー状態の `AIMessage` の `invalid_tool_calls` をクリアし、OpenAI tool_calls としてシリアライズされないようにする。
 
-フックはメッセージ全体の置換を返します：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。
+変更がないときフックは `None` を返します —— 状態書き込みもメッセージ再構築も行わず、モデル可視のプレフィックスはそのままです。実際に修復したときだけメッセージ全体の置換を返します：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。なお、プレフィックスキャッシュの基準は**モデルに送られるシリアライズ済み内容**であり、Python オブジェクトの同一性ではありません。変更なしの再構築をスキップすることで、無意味な checkpointer 状態書き込みを排除し、再構築経路による内容ドリフトを完全に取り除けます。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -353,7 +353,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **アンチスラッシング：** 1 セッションあたり最大 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 回の圧縮（ターンごとではない）。連続 `INEFFECTIVE_THRESHOLD = 2` 回の無効な圧縮で（有効 = メッセージ数の減少、またはトークン削減 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`）、LLM ステップを無効化（`summarization_skip_llm`）し非 LLM 戦略のみを実行します。カウンターはセッション単位の `summarization_*` キーとして `state_register_mem` に保持されます（圧縮回数、無効連続回数、直近トークン、直近戦略、スキップフラグ、リカバリ状態など）。
 - **切り詰め：** 既存の要約メッセージ（`additional_kwargs["lc_source"] == "summarization"` で識別）が `SUMMARY_TOTAL_MAX_CHARS = 16 000` 文字を超えると再切り詰めされ、先頭 30 % / 末尾 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`）を保持し省略マーカーが入ります。
 - **出力：** 置換後のメッセージは `HumanMessage` / `AIMessage` の**ペア**です — 中立的な `"What did we do so far?"` に続き、`additional_kwargs={"lc_source": "summarization"}` を持つ `AIMessage` が続きます — モデルが連続した同役割メッセージを見ることはなく、事後のペア修復も不要です。
-- `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。
+- `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。2 つの配送経路（圧縮直後とアンチスラッシングゲート経路）は、リクエストが既に同一内容の `SystemMessage` を持つ場合に注入をスキップし —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。
 - **圧縮後の TODO 更新：** `compression_todo_update_enabled`（既定で有効）がオンで、かつ今回の圧縮が実際にメッセージを破棄した場合、非同期パスは専用 nudge エージェントを fire-and-forget で起動します（`_COMPRESSION_TODO_PROMPT`）。そのグラフは派生セッションキー（`<id>::compression-todo`。`IterationBudget` / `ToolGuardrails` の状態がメインセッションに触れることはありません）で動作し、ツールセットはメタデータ付き `todowrite` シム 1 つだけ（`todo_update: True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")` が許可）で、メインセッションに束縛されます。破棄された会話スライスに基づいて TODO リストを突き合わせ、実際に完了した項目を `completed` / `cancelled` に、根拠のある新規作業を `pending` として追加し、`todowrite` で**完全な**リストを書き戻します。圧縮をブロックすることも失敗させることもなく、セッション単位の `compression_todo_update_lock` が重複起動を防ぎ、同期パスはイベントループが動作している場合のみスケジュールします。
 
 ▶️ 詳細：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)

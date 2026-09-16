@@ -166,7 +166,7 @@ First in the list, therefore the outermost wrap layer.
 
 1. Look up `system_prompt` in `state_register_mem`.
 2. Fall back to `state_register_db`; if still missing, rebuild via `workspace.prompt_builder.build_system_prompt(session_id)`.
-3. Inject with `request.override(system_message=...)` and cache the prompt back to `state_register_mem`.
+3. If the request already carries a `SystemMessage` with the same content, reuse it as-is — no `override`, no new `SystemMessage` — so the model-visible prefix stays byte-identical; only when it actually changed inject with `request.override(system_message=...)`. Either way the prompt is cached back to `state_register_mem`.
 
 **`after_agent` / `aafter_agent` — turn finalization**
 
@@ -197,7 +197,7 @@ First in the list, therefore the outermost wrap layer.
 - **`audio_url`**: downloaded to a temp file (30 s timeout). **`audio_bytes` / `video_url` / `video_bytes`**: decoded and saved the same way (`_AUDIO_MAGIC` / `_VIDEO_MAGIC`).
 - An `"[Uploaded media]"` instruction block is appended to the message text, telling the model to inspect the files with the `skill_view` tools `image_to_text` / `speech_to_text` / `video_text_to_text` (the model has no native vision).
 - Persisted paths are stored in `additional_kwargs["images"]` / `["audios"]` / `["videos"]` and later written to MesMemory for history rendering.
-- `image_url` blocks are stripped from **older** `HumanMessage`s so stale base64 blobs do not linger in context.
+- `image_url` blocks are stripped from **older** `HumanMessage`s so stale base64 blobs do not linger in context — but only when such a block actually exists (a cheap pre-check skips messages with nothing to strip) and only when the stripped text is non-empty.
 
 `after_agent` cleans `mutil_temp`: deletes files whose stem is not a pure numeric timestamp or that are older than 7 days.
 
@@ -250,7 +250,7 @@ Repairs tool-call / tool-result pairing after context trimming to prevent "Messa
 - inserts a placeholder `ToolMessage` ("tool result missing after context trim.") for missing results;
 - clears `invalid_tool_calls` on error-status `AIMessage`s so they are not serialized as OpenAI tool calls.
 
-The hook returns a full message replacement: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`.
+When the sanitizer changed nothing the hook returns `None` — no state write, no message rebuild, so the model-visible prefix is left untouched. Only an actual repair returns a full message replacement: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`. Note that the prefix-cache criterion is the serialized content sent to the model, not Python object identity: skipping the no-change rebuild avoids a pointless checkpointer state write and rules out content drift from the rebuild path.
 
 ### SubagentCompletionDrainMiddleware
 
@@ -355,7 +355,7 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 - **Anti-thrashing:** at most `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` compressions **per session** (not per turn); after `INEFFECTIVE_THRESHOLD = 2` consecutive ineffective attempts (effectiveness = message-count reduction or token reduction ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) the LLM step is disabled (`summarization_skip_llm`) and only non-LLM strategies run. Counters live in `state_register_mem` under session-level `summarization_*` keys (compression count, ineffective streak, last tokens, last strategy, skip flag, recovery state, …).
 - **Truncation:** existing summary messages (identified by `additional_kwargs["lc_source"] == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS = 16 000` characters are re-truncated, keeping head 30 % / tail 30 % (`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`) with an omission marker.
 - **Output:** the replacement messages are a `HumanMessage` / `AIMessage` **pair** — a neutral `"What did we do so far?"` followed by an `AIMessage` carrying `additional_kwargs={"lc_source": "summarization"}` — so the model never sees two consecutive same-role messages and no post-hoc pairing repair is needed.
-- `need_update_system_prompt=True` (main agent only): after a compression the system prompt is rebuilt — `build_system_prompt()` after reloading the memory store — and written back to both state registers under `system_prompt`.
+- `need_update_system_prompt=True` (main agent only): after a compression the system prompt is rebuilt — `build_system_prompt()` after reloading the memory store — and written back to both state registers under `system_prompt`. Both delivery paths (directly after compaction, and the anti-thrash gate path) skip the injection when the request already carries a `SystemMessage` with identical content — no `override`, no new `SystemMessage` — keeping the model-visible prefix byte-identical.
 - **Post-compression todo update:** when `compression_todo_update_enabled` (default on) is set and a compaction actually discards messages, the async path fire-and-forgets a dedicated nudge agent (`_COMPRESSION_TODO_PROMPT`) whose graph runs under a derived session key (`<id>::compression-todo`, so `IterationBudget` / `ToolGuardrails` state can never touch the main session) and whose tool set is exactly one metadata-marked `todowrite` shim (`todo_update: True`, admitted by `_NudgeLimitTool(allowed_metadata_key="todo_update")`) bound to the main session. It reconciles the session todo list with the discarded slice — marking actually-finished items `completed` / `cancelled`, adding evidenced new work as `pending`, writing the COMPLETE list back via `todowrite`. It never blocks or fails compression; a per-session `compression_todo_update_lock` prevents overlapping runs and the sync path only schedules when an event loop is already running.
 
 ▶️ Full details: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)

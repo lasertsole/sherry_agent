@@ -266,7 +266,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 システムプロンプト更新
 
-メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも注入されます（:1993–2005）。`ContextEngineHook` を持たないチェーンはこのミドルウェアの配送に依存するためです。
+メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも配送されます（:1993–2005）。`ContextEngineHook` を持たないチェーンはこのミドルウェアの配送に依存するためです。ゲート経路は、リクエストの現在の system message と**内容が異なる場合にのみ**注入します: 内容が一致していれば override も新しい `SystemMessage` も作らず（再注入しません）。
 
 ## 📌 登録箇所
 

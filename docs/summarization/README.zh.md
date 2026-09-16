@@ -262,7 +262,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 系统提示词刷新
 
-仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中被注入（:1993–2005），因为不带 `ContextEngineHook` 的链路依赖本中间件送达它。
+仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（:1993–2005），因为不带 `ContextEngineHook` 的链路依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
 
 ## 📌 注册点
 
