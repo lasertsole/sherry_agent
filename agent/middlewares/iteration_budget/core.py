@@ -29,7 +29,7 @@ from runtime import state_register_mem
 from config.features import ITERATION_BUDGET
 
 from agent.middlewares.base import BeforeAgentHooksMixin, require_session_id
-from agent.middlewares.subagent_completion_drain import _is_internal_completion
+from agent.middlewares.subagent_completion_drain.core import _is_internal_completion
 
 
 class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):

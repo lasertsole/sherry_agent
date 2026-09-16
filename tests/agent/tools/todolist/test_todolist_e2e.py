@@ -34,7 +34,7 @@ import pytest
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 
-from agent.middlewares.todo_continuation import TodoContinuationEnforcer, _build_status_block
+from agent.middlewares.todo_continuation.core import TodoContinuationEnforcer, _build_status_block
 from agent.tools.memory import MemoryStore, memory_tool
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite as flow_store
@@ -192,7 +192,7 @@ def isolated_stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _reset_module_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Reset every process-global ledger + redirect memory/facts to tmp."""
-    import agent.middlewares.task_intent as task_intent
+    import agent.middlewares.task_intent.core as task_intent
     import agent.tools.memory as memory_module
     import agent.tools.memory_tiered as memory_tiered
     from agent.tools.todolist import stagnation_tracker as st
@@ -425,7 +425,7 @@ class TestTodolistFullPipeline:
         """Given a task-looking user message on a fresh session, When E7 runs,
         Then the full steering prompt is injected first and the short reminder
         on the next qualifying turn."""
-        import agent.middlewares.task_intent as task_intent
+        import agent.middlewares.task_intent.core as task_intent
 
         middleware = task_intent.TaskIntentMiddleware()
         sid = "e2e-e7"
@@ -580,7 +580,7 @@ class TestTodolistFullPipeline:
         When completed one by one (E4/E6 enforced each time), Then the prompt
         shows 100% done, E3 stops firing, the P0-1 memory flush persists a fact
         and the LT-1 FACTS listing updates."""
-        import agent.middlewares.memory_flush as memory_flush
+        import agent.middlewares.summarization.memory_flush as memory_flush
         import agent.tools.memory as memory_module
         import agent.tools.taskflow.tools._dispatch as dispatch_mod
 
@@ -698,7 +698,7 @@ class TestTodolistMiddlewareIntegration:
     async def test_e7_per_turn_dedup_in_chain(self, prompt_env: dict) -> None:
         """Given E7 in a middleware chain, When the chain runs at turn start and
         again after the model replied, Then steering is injected exactly once."""
-        import agent.middlewares.task_intent as task_intent
+        import agent.middlewares.task_intent.core as task_intent
 
         chain = [task_intent.TaskIntentMiddleware(), _RecordingMiddleware()]
         recorder = chain[1]
@@ -755,7 +755,7 @@ class TestTodolistMiddlewareIntegration:
     ) -> None:
         """Given one turn, When E6 downgrades a bad category, E4 blocks a live
         subagent completion and E7 injects steering, Then all three hold."""
-        import agent.middlewares.task_intent as task_intent
+        import agent.middlewares.task_intent.core as task_intent
 
         tools = _tools()
         sid = "e2e-combined"

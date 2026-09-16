@@ -172,7 +172,7 @@ class EvalSandbox:
         self._set(tiered, "FACTS_DIR", facts_dir)
         self._set(tiered, "tiered_store", None)
 
-        drain = importlib.import_module("agent.middlewares.subagent_completion_drain")
+        drain = importlib.import_module("agent.middlewares.subagent_completion_drain.core")
 
         async def _noop_backflow(*args: object, **kwargs: object) -> None:
             return None

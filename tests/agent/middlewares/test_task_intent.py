@@ -21,7 +21,7 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-import agent.middlewares.task_intent as ti
+import agent.middlewares.task_intent.core as ti
 
 pytestmark = [pytest.mark.unit]
 

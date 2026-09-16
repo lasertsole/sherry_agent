@@ -15,8 +15,8 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import HumanMessage
 
-from agent.middlewares import subagent_completion_drain as drain_mod
-from agent.middlewares.subagent_completion_drain import (
+from agent.middlewares.subagent_completion_drain import core as drain_mod
+from agent.middlewares.subagent_completion_drain.core import (
     _VERIFICATION_REMINDER,
     SubagentCompletionDrainMiddleware,
 )

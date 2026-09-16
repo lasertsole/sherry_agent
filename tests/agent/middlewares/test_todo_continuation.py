@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import HumanMessage
 
-import agent.middlewares.todo_continuation as tc
+import agent.middlewares.todo_continuation.core as tc
 from agent.tools.todolist import stagnation_tracker as st
 from agent.tools.todolist.registry import store_sqlite as todo_store
 from runtime import hooks

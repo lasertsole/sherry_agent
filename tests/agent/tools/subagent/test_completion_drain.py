@@ -15,13 +15,13 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.middlewares.iteration_budget import IterationBudget
-from agent.middlewares.output_repetition_guard import (
+from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
+from agent.middlewares.output_repetition_guard.repetition_state import (
     SESSION_STATE_KEYS,
-    OutputRepetitionGuard,
     _HISTORY_KEY,
     _REASONING_HISTORY_KEY,
 )
-from agent.middlewares.subagent_completion_drain import (
+from agent.middlewares.subagent_completion_drain.core import (
     SubagentCompletionDrainMiddleware,
     _VERIFICATION_REMINDER,
 )

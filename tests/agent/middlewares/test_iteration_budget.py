@@ -53,28 +53,36 @@ class TestIterationBudget:
 
     def test_consume_within_budget(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=3)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             assert ib._consume("s1") is True
             assert ib._consume("s1") is True
             assert ib._consume("s1") is True
 
     def test_consume_exhausts_budget(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=2)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             assert ib._consume("s1") is True  # used=1
             assert ib._consume("s1") is True  # used=2 (at limit)
             assert ib._consume("s1") is False  # used=2 >= max=2, exhausted
 
     def test_remaining(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=5)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             assert ib._remaining("s1") == 5
             ib._consume("s1")
             assert ib._remaining("s1") == 4
 
     def test_before_agent_resets_budget(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=3)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             # Consume some budget
             ib._consume("s1")
             ib._consume("s1")
@@ -85,7 +93,9 @@ class TestIterationBudget:
 
     def test_wrap_model_call_within_budget(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=5)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             request = MagicMock()
             request.state = self._make_state("s1")
             result = ib._wrap_model_call_impl(request)
@@ -93,7 +103,9 @@ class TestIterationBudget:
 
     def test_wrap_model_call_exhausted_returns_terminal(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=1)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             request = MagicMock()
             request.state = self._make_state("s1")
             # Consume budget
@@ -104,7 +116,9 @@ class TestIterationBudget:
 
     def test_wrap_tool_call_exhausted_returns_terminal(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=1)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             request = MagicMock()
             request.state = self._make_state("s1")
             request.tool_call = {"name": "test_tool", "id": "call_123"}
@@ -116,7 +130,9 @@ class TestIterationBudget:
 
     def test_separate_sessions_independent(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=1)
-        with patch("agent.middlewares.iteration_budget.state_register_mem", fresh_state_register):
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
             assert ib._consume("s1") is True  # s1 used=1
             assert ib._consume("s2") is True  # s2 used=1 (fresh)
             assert ib._consume("s1") is False  # s1 exhausted
