@@ -14,13 +14,14 @@ Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sand
 | :------- | :-------------- | :------ |
 | **Secrets in env vars** | Child process inherits every variable, including `*_API_KEY` | L1 env scrubbing |
 | **Filesystem writes** | Child writes anywhere the agent user can write | L2 OS sandbox (Linux / macOS) |
+| **Filesystem reads** | Child reads `~/.ssh`, `.env`, credential stores | L2 read-shield (sensitive-path masking, Linux / macOS) + sensitive-file regex (terminal) |
 | **Process / session scope** | Child shares namespaces and survives the parent | L2 `--unshare-all`, `--die-with-parent` |
 | **Deliberate bypass** | Model asks for `sandbox=False` | Human approval gate (HITL) |
 
 Two layers plus one gate:
 
 - **L1. Environment scrubbing** (`scrub_env`): unconditional, at every spawn point, even when a human approved `sandbox=False`.
-- **L2. OS-native sandbox**: bubblewrap on Linux, Seatbelt on macOS. Windows has no OS backend (see [Honesty & Limitations](#️-honesty--limitations)).
+- **L2. OS-native sandbox**: bubblewrap on Linux, Seatbelt on macOS — write containment plus a sensitive-path read-shield (see [§2](#2-os-native-sandbox-backends-l2)). Windows has no OS backend (see [Honesty & Limitations](#️-honesty--limitations)).
 - **Human approval gate**: `sandbox=False` bypasses only in the main session, through a HITL interrupt.
 
 ## 🧱 Isolation Capabilities
@@ -50,6 +51,9 @@ bwrap
   --ro-bind / /                              # whole root filesystem: READ-ONLY
   --bind <project root> <project root>       # the only writable locations:
   --bind <temp dir> <temp dir>               # project root + temp dir (deduped if equal)
+  --ro-bind /var/empty <sensitive dir>       # read-shield: mask sensitive directories
+  --ro-bind /dev/null <sensitive file>       # read-shield: mask sensitive files
+                                             # (--tmpfs <path> if /var/empty is absent)
   --tmpfs /tmp  --dev /dev  --proc /proc
   --unshare-all                              # all namespaces unshared
   --die-with-parent  --new-session
@@ -60,19 +64,24 @@ bwrap
 
 `--clearenv` before all `--setenv` turns the scrubbed dict into a real env allowlist. The root filesystem is read-only; writes land only in the project root and the temp dir.
 
+**Read-shield (P0-1).** `--ro-bind / /` only makes reads possible-everywhere, not harmless: without masking, the model can `cat ~/.ssh/id_rsa`. Both backends therefore mask a default sensitive-path list — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — extended by the `SHERRY_DENY_READ_PATHS` environment variable (`os.pathsep`-separated, `~` expanded). The bwrap shield mounts an empty directory over each existing directory (or `--ro-bind /dev/null` over a sensitive file); missing paths are skipped (there is nothing to read, and bwrap cannot create a mount point under the read-only root bind), and on hosts without `/var/empty` directories fall back to `--tmpfs <path>`. The shield sits **after** the writable binds so a writable project root can never re-expose a masked path.
+
 **macOS: Seatbelt (`sandbox-exec`)**. The command runs as `sandbox-exec -p <profile> -- <cmd...>` with this profile:
 
 ```text
 (version 1)
 (allow default)
 (deny file-write*)
+(deny file-read* (subpath "<sensitive path>"))     # one per sensitive path, ~ expanded
+(deny file-read* (regex #"(^|/)\.env$"))           # .env / .env.* at any depth
+(deny file-read* (regex #"(^|/)\.env\."))
 (allow file-write* (subpath "<project root>"))
 (allow file-write* (subpath "<temp dir>"))
 (allow file-write* (literal "/dev/null"))
 (allow file-write* (literal "/dev/tty"))
 ```
 
-Order is the spec: `(deny file-write*)` under `(allow default)` means "everything allowed except file writes", then explicit allows re-open the two writable paths plus the `/dev/null` and `/dev/tty` literals. Paths are embedded via `json.dumps`, so quotes or backslashes in a path cannot break out into injected sbpl forms.
+Order is the spec: `(deny file-write*)` under `(allow default)` means "everything allowed except file writes", then explicit allows re-open the two writable paths plus the `/dev/null` and `/dev/tty` literals. The read-shield's `deny file-read*` rules sit directly after `(deny file-write*)`: one `subpath` rule per sensitive path (same default list + `SHERRY_DENY_READ_PATHS` as bwrap) and two regex rules covering `.env` / `.env.*` anywhere. Missing paths are still denied — a denial on a nonexistent path is harmless. Paths are embedded via `json.dumps`, so quotes or backslashes in a path cannot break out into injected sbpl forms.
 
 **Probe (availability check)**. Both backends implement `probe() -> bool` with a class-level cache (probed once per process, failures cached too):
 
@@ -93,6 +102,18 @@ Order is the spec: `(deny file-write*)` under `(allow default)` means "everythin
 | 6 | `|`, `&&`, or `;` followed by `rm` / `shutdown` / `reboot` / `mkfs` | chained variants such as `echo ok && rm -rf /` |
 
 Matching the **joined** string matters: the older element-exact blacklist let `["echo ok", "rm -rf /"]` slip through because each element looked harmless alone. On a match the tool raises `ToolException("Blocked: unsafe command.")`, surfaced as an error tool result via `handle_tool_error=True`. The gate runs regardless of the `sandbox` flag. `python_repl` has no equivalent regex; its wrapper script restricts builtins instead.
+
+**Sensitive-file gate (P0-2).** Right after the dangerous-command regex and before any spawn, terminal also rejects commands that read well-known secrets, raising `ToolException("Blocked: sensitive file access. …")` and telling the model to use `read_file` (whose external paths go through human approval):
+
+| Pattern | Catches |
+| :------ | :------ |
+| `(cat\|head\|tail\|less\|more) … /etc/(passwd\|shadow\|sudoers)` | system credential files |
+| `(cat\|head\|tail) … .env` | `.env` / `.env.*` reads |
+| `cp … .ssh/` | copying SSH material out |
+| `curl … -d @… .env` | exfiltrating a dotenv via upload |
+| `(cat\|head\|tail) … ~/.ssh/`, `(cat\|head\|tail) … ~/.aws/` | home credential stores |
+
+**This is a mitigation, not a barrier.** `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, shell variables, and globs all bypass a literal regex — the real read barrier is the L2 read-shield above, and an approved `sandbox=False` call is deliberately unsandboxed. The regex exists to stop the obvious, common attempts and to route the model to the approval flow.
 
 ### 4. Human-in-the-loop bypass approval
 
@@ -192,6 +213,15 @@ SANDBOX_POLICY=auto      # required | auto | off (case-insensitive, default: aut
 
 Invalid values raise a `ValueError` at first use instead of silently using the default. The variable is re-read on every tool call, so you can flip it at runtime.
 
+### `SHERRY_DENY_READ_PATHS`
+
+```bash
+# .env or shell environment (os.pathsep-separated; ~ is expanded)
+SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
+```
+
+Adds paths to the read-shield list of both OS backends (the defaults above are always included). The variable is read on every `wrap()` call.
+
 ### What the model sees
 
 Both tools accept a `sandbox` boolean per call, default `True`. The model is told that `false` executes with the scrubbed environment after human approval in the main session, and that subagents and background agents are refused.
@@ -210,8 +240,8 @@ When the model requests `sandbox=False` in the main session (non-YOLO), the grap
 | `tests/agent/tools/test_sandbox_matrix.py` | 14 tests, one per matrix-cell behavior (cells 1-5 once per tool, cell 6 four times), including the real-graph HITL interrupt and the exactly-one-warning degrade assertion |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | scrub rules, precedence, keep/deny edges (29 tests) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | policy parsing, strict `ValueError`, fresh-read semantics, dispatch |
-| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction, probe caching (all subprocess mocked) |
-| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | tool-level guards, schema, spawn forms |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction (incl. read-shield mounts), probe caching (all subprocess mocked), plus an optional real-bwrap read-shield smoke test |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | tool-level guards (dangerous / sensitive-file regexes), schema, spawn forms, restricted-builtins barrier |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19 tests locking pre-sandbox HITL / terminal legacy behavior |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17 tests for the bypass approval flow, YOLO pass-through, scope stamping |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` stamping |
@@ -220,8 +250,9 @@ Matrix tests patch `subprocess.Popen` globally, stub `get_backend` at the tool-m
 
 ## ⚠️ Honesty & Limitations
 
-- **bwrap and Seatbelt construction logic is unit-tested but not verified on real Linux/macOS machines.** The backend source docstrings state this explicitly ("only the construction logic is verified, never run on a real Linux/macOS box"); all backend tests mock subprocess. Trust the wrap output, not yet a real containment guarantee.
-- **Windows has no OS-sandbox backend.** Protection there is env scrubbing + cwd clamp + the dangerous-command regex + the HITL gate. Nothing prevents file writes outside the project root.
+- **bwrap and Seatbelt construction logic is unit-tested but not verified on real Linux/macOS machines.** The backend source docstrings state this explicitly ("only the construction logic is verified, never run on a real Linux/macOS box"); all backend tests mock subprocess, and the read-shield has one optional real-bwrap smoke test that skips when the probe fails. Trust the wrap output, not yet a real containment guarantee.
+- **Windows has no OS-sandbox backend.** Protection there is env scrubbing + cwd clamp + the dangerous-command regex + the sensitive-file regex + the HITL gate. Nothing prevents file writes outside the project root, and **read protection is unavailable**: without an OS backend there is no read-shield, so the application-level regexes are the only read gate.
+- **The sensitive-file regex is a mitigation, not a barrier.** It matches literal command shapes; `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, variables, and globs bypass it by design of the layer. The OS read-shield is the actual read barrier where a backend exists.
 - **The degrade path executes unsandboxed by design.** `auto` + no backend = one logged warning, then a normal unsandboxed run. That is intentional availability-over-strictness; pick `SANDBOX_POLICY=required` if you need the opposite.
 - **Env scrubbing is name-based.** A secret stored under a name without any blocked substring (and not on the deny list) passes through. There is no value scanning or dynamic secret detection, and that is deliberate.
 - **No network sandboxing, seccomp, or AppArmor profiles are claimed or configured.** Isolation comes from the bwrap / Seatbelt constructions exactly as shown above, nothing more.

@@ -21,6 +21,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
@@ -83,6 +84,7 @@ middleware = [
     IterationBudget(90),
     ToolGuardrails(),
     ToolCallNormalize(),
+    PathGuard(),
     SubagentCompletionDrainMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
@@ -249,6 +251,23 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 清除错误状态 `AIMessage` 上的 `invalid_tool_calls`，避免其被序列化成 OpenAI tool_calls。
 
 无变化时钩子返回 `None`——不写状态、不重建消息，模型可见前缀原样不动；仅在实际修复后才返回完整的消息替换：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。注意：前缀缓存的判据是**发给模型的序列化内容**，而非 Python 对象身份；跳过无变化重建可消除无意义的 checkpointer 状态写入，并彻底排除重建路径带来的内容漂移。
+
+### PathGuard
+
+**模块：** `agent/middlewares/path_guard/__init__.py` · **类：** `PathGuard(AgentMiddleware)`
+**钩子：** 仅 `wrap_tool_call` / `awrap_tool_call`
+
+为各工具自己的 `resolve_project_path()` / `resolve_external_path()` 模式提供纵深防御：忘记做路径检查的工具仍无法被诱导读取穿越路径或硬拒绝路径。在主 Agent 中注册在 `ToolCallNormalize` 之后；由于列表顺序即 wrap 钩子的外层顺序，它运行在 `ToolGuardrails` **之内**（`IterationBudget` → `ToolGuardrails` → `PathGuard` → 工具），拒绝会作为普通错误 `ToolMessage` 交给 ToolGuardrails 评估，与其他工具失败一视同仁。worker 链不注册：子 Agent 的工具保有自己的门禁，且子代理的外部路径本就硬拒绝。（计划原文"ToolCallNormalize 之后、ToolGuardrails 之前"在列表顺序上不可能——`ToolCallNormalize` 注册在 `ToolGuardrails` 之后；当前选择是最近的可满足位置。）
+
+筛选刻意保守：
+
+- 只检查参数名 `file_path` / `path` / `directory` / `dir` 的字符串值；形如 `scheme://` 的 URL 跳过，非路径语义不会被误读；
+- 拒绝 `..` 穿越分量（先做 URL 解码与反斜杠规范化——复用 `has_traversal_component`）；
+- 能被 `resolve_project_path()` 接受的路径原样放行；
+- 解析到 `ROOT_DIR` 之外的值**除非**命中硬拒绝下限（YOLO 排除列表 / `/etc/passwd`、`/etc/shadow`、`/etc/sudoers`），否则放行；
+- 其余外部路径交给工具自身的 `resolve_external_path()` HITL 流程——中间件从不批准、不改写参数、不触发中断，因为工具在执行时还会再跑同一道门（在这里拦截等于做两次决定）。
+
+拒绝时中间件返回结构化错误 `ToolMessage`（`status="error"`，保留原 `tool_call_id` / 工具名），不执行工具。外部路径的细节见 [docs/sandbox/README.zh.md §5](../../docs/sandbox/README.zh.md#5-外部文件路径门禁文件工具)。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -505,6 +524,7 @@ agent = create_agent(
         IterationBudget(90),  # 回合级调用预算
         ToolGuardrails(),  # 失败病理检测
         ToolCallNormalize(),  # tool_use/tool_result 修复
+        PathGuard(),  # 路径参数筛查
         HeartbeatStaleness(),  # 卡死回合看门狗
         HumanInTheLoop(HITLConfig()),  # 审批门控
         Summarization(  # 上下文压缩（最内层）
@@ -573,6 +593,7 @@ agent = create_agent(
 │   └─ wrap_tool_call
 │       · IterationBudget  消耗 1；耗尽时返回错误 ToolMessage
 │       · ToolGuardrails  预检 block/halt → 执行 → 评估 → warn/block/halt
+│       · PathGuard  在工具执行前拒绝穿越 / 硬拒绝的路径参数
 │       · HeartbeatStaleness  已杀死则抛出；设置 heartbeat_tool，返回后清除
 │       · HumanInTheLoop  拒绝审批被拒/超时的调用
 │
@@ -646,6 +667,7 @@ agent/middlewares/
 ├── media_handlers.py            # MultimodalProcessor 的分媒体类型处理策略
 ├── media_pipeline.py            # MultimodalProcessor
 ├── output_repetition_guard.py   # OutputRepetitionGuard（由 __init__.py 再导出）
+├── path_guard/                  # PathGuard（工具调用的路径参数筛查）
 ├── repetition_detectors.py      # 纯重复检测原语
 ├── repetition_state.py          # 会话级重复状态辅助
 ├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
@@ -674,6 +696,7 @@ from agent.middlewares import (
     IterationBudget,
     ContextEngineHook,
     ToolCallNormalize,
+    PathGuard,
     HeartbeatStaleness,
     MultimodalProcessor,
     HumanInTheLoop,

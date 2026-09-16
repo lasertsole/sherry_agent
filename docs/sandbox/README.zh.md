@@ -14,13 +14,14 @@
 | :----- | :--------- | :--- |
 | **环境变量中的密钥** | 子进程继承全部变量，包括 `*_API_KEY` | L1 环境变量清洗 |
 | **文件系统写入** | 子进程可以写到 agent 用户能写的任何地方 | L2 操作系统沙箱（Linux / macOS） |
+| **文件系统读取** | 子进程可以读 `~/.ssh`、`.env`、各类凭据库 | L2 读遮蔽（敏感路径掩蔽，Linux / macOS）+ terminal 敏感文件正则 |
 | **进程 / 会话作用域** | 子进程共享命名空间，且可能在父进程结束后存活 | L2 `--unshare-all`、`--die-with-parent` |
 | **主动绕过** | 模型请求 `sandbox=False` | 人工审批门（HITL） |
 
 两层防线加一道门：
 
 - **L1. 环境变量清洗**（`scrub_env`）：无条件、在每个子进程创建点执行，即使人工批准了 `sandbox=False` 也不例外。
-- **L2. 操作系统原生沙箱**：Linux 用 bubblewrap，macOS 用 Seatbelt。Windows 没有操作系统级后端（见[诚实声明与局限](#️-诚实声明与局限)）。
+- **L2. 操作系统原生沙箱**：Linux 用 bubblewrap，macOS 用 Seatbelt——写入围堵之外还有敏感路径读遮蔽（见[§2](#2-操作系统原生沙箱后端l2)）。Windows 没有操作系统级后端（见[诚实声明与局限](#️-诚实声明与局限)）。
 - **人工审批门**：`sandbox=False` 的绕过只可能发生在主会话，且必须经过 HITL 中断审批。
 
 ## 🧱 隔离能力
@@ -50,6 +51,9 @@ bwrap
   --ro-bind / /                              # 整个根文件系统：只读
   --bind <项目根目录> <项目根目录>             # 唯一可写的位置：
   --bind <临时目录> <临时目录>                 # 项目根目录 + 临时目录（相同则去重）
+  --ro-bind /var/empty <敏感目录>             # 读遮蔽：用空目录掩蔽敏感目录
+  --ro-bind /dev/null <敏感文件>              # 读遮蔽：掩蔽敏感文件
+                                             #（无 /var/empty 时回退为 --tmpfs <路径>）
   --tmpfs /tmp  --dev /dev  --proc /proc
   --unshare-all                              # 隔离全部命名空间
   --die-with-parent  --new-session
@@ -60,19 +64,24 @@ bwrap
 
 `--clearenv` 出现在所有 `--setenv` 之前，两者结合才把清洗后的字典变成真正的环境变量白名单。根文件系统只读；写入只能落在项目根目录和临时目录。
 
+**读遮蔽（P0-1）。** `--ro-bind / /` 只是让"读"处处可行，并不无害：没有掩蔽时模型可以 `cat ~/.ssh/id_rsa`。因此两个后端都会掩蔽一份默认敏感路径清单——`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker`——并可用环境变量 `SHERRY_DENY_READ_PATHS` 扩展（以 `os.pathsep` 分隔，展开 `~`）。bwrap 的读遮蔽会在每个存在的目录上挂载空目录（对敏感文件则 `--ro-bind /dev/null`）；不存在的路径直接跳过（本来就没有东西可读，而且 bwrap 无法在只读根绑定之下创建挂载点）；主机没有 `/var/empty` 时目录回退为 `--tmpfs <路径>`。遮蔽挂载位于可写绑定**之后**，因此可写的项目根目录永远无法重新暴露被掩蔽的路径。
+
 **macOS：Seatbelt（`sandbox-exec`）**。命令以 `sandbox-exec -p <profile> -- <cmd...>` 运行，profile 如下：
 
 ```text
 (version 1)
 (allow default)
 (deny file-write*)
+(deny file-read* (subpath "<敏感路径>"))            # 每个敏感路径一条，展开 ~
+(deny file-read* (regex #"(^|/)\.env$"))           # 任意深度的 .env / .env.*
+(deny file-read* (regex #"(^|/)\.env\."))
 (allow file-write* (subpath "<项目根目录>"))
 (allow file-write* (subpath "<临时目录>"))
 (allow file-write* (literal "/dev/null"))
 (allow file-write* (literal "/dev/tty"))
 ```
 
-顺序即规范：`(allow default)` 之下的 `(deny file-write*)` 表示"除文件写入外全部放行"，随后用显式 allow 重新打开两个可写路径以及 `/dev/null`、`/dev/tty` 两个字面量。路径通过 `json.dumps` 嵌入，路径里的引号或反斜杠无法逃逸成注入的 sbpl 片段。
+顺序即规范：`(allow default)` 之下的 `(deny file-write*)` 表示"除文件写入外全部放行"，随后用显式 allow 重新打开两个可写路径以及 `/dev/null`、`/dev/tty` 两个字面量。读遮蔽的 `deny file-read*` 规则紧跟在 `(deny file-write*)` 之后：每个敏感路径一条 `subpath` 规则（默认清单与 bwrap 相同，同样支持 `SHERRY_DENY_READ_PATHS` 扩展），另加两条正则覆盖任意位置的 `.env` / `.env.*`。不存在的路径照样拒绝——对不存在路径的拒绝无害。路径通过 `json.dumps` 嵌入，路径里的引号或反斜杠无法逃逸成注入的 sbpl 片段。
 
 **探测（可用性检查）**。两个后端都实现 `probe() -> bool`，带类级缓存（每个进程只探测一次，失败结果同样缓存）：
 
@@ -93,6 +102,18 @@ bwrap
 | 6 | `|`、`&&` 或 `;` 后跟 `rm` / `shutdown` / `reboot` / `mkfs` | 链式变体，如 `echo ok && rm -rf /` |
 
 匹配**拼接后**的完整串很关键：旧的按元素精确匹配的黑名单放过过 `["echo ok", "rm -rf /"]`，因为每个元素单独看都无害。命中即抛出 `ToolException("Blocked: unsafe command.")`，经 `handle_tool_error=True` 变成错误工具结果。该拦截与 `sandbox` 取值无关，始终执行。`python_repl` 没有对应的正则；它的包装脚本改用受限内建。
+
+**敏感文件门禁（P0-2）。** 在危险命令正则之后、任何子进程创建之前，terminal 还会拒绝读取已知密钥位置的命令，抛出 `ToolException("Blocked: sensitive file access. …")`，并提示模型改用 `read_file`（其外部路径会走人工审批）：
+
+| 模式 | 拦截对象 |
+| :--- | :------- |
+| `(cat\|head\|tail\|less\|more) … /etc/(passwd\|shadow\|sudoers)` | 系统凭据文件 |
+| `(cat\|head\|tail) … .env` | `.env` / `.env.*` 读取 |
+| `cp … .ssh/` | 把 SSH 材料复制出去 |
+| `curl … -d @… .env` | 通过上传外泄 dotenv |
+| `(cat\|head\|tail) … ~/.ssh/`、`(cat\|head\|tail) … ~/.aws/` | 家目录凭据库 |
+
+**这是缓解，不是屏障。** `dd`、`sed`、`python -c "open(…)"`、`$(< file)`、shell 变量与通配符都能绕过字面正则——真正的读屏障是上面的 L2 读遮蔽；而已批准的 `sandbox=False` 调用按设计就是无沙箱的。该正则用于拦住明显、常见的尝试，并把模型引导到审批流程。
 
 ### 4. 人工审批的绕过通道
 
@@ -192,6 +213,15 @@ SANDBOX_POLICY=auto      # required | auto | off（大小写不敏感，默认�
 
 非法取值在首次使用时抛 `ValueError`，而不是静默使用默认值。该变量在每次工具调用时重新读取，可以运行期切换。
 
+### `SHERRY_DENY_READ_PATHS`
+
+```bash
+# .env 或 shell 环境变量（以 os.pathsep 分隔；~ 会被展开）
+SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
+```
+
+向两个操作系统后端的读遮蔽清单追加路径（上面的默认清单始终包含）。该变量在每次 `wrap()` 调用时读取。
+
 ### 模型看到什么
 
 两个工具都接受逐调用的 `sandbox` 布尔参数，默认 `True`。模型的工具描述会说明：`false` 表示在主会话经人工审批后、以清洗过的环境执行；子代理与后台代理的该请求会被拒绝。
@@ -210,8 +240,8 @@ SANDBOX_POLICY=auto      # required | auto | off（大小写不敏感，默认�
 | `tests/agent/tools/test_sandbox_matrix.py` | 14 个测试，逐格覆盖矩阵行为（第 1-5 格每个工具一次，第 6 格四次），包括真实图上的 HITL 中断与"恰好一条警告"的降级断言 |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 清洗规则、优先级、保留/拒绝边界（29 个测试） |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 策略解析、严格 `ValueError`、即时读取语义、平台分发 |
-| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造、探测缓存（子进程全部 mock） |
-| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫、schema、启动形态 |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造（含读遮蔽挂载）、探测缓存（子进程全部 mock），以及 1 条可选的真实 bwrap 读遮蔽冒烟测试 |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫（危险命令 / 敏感文件正则）、schema、启动形态、受限内建屏障 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19 个测试，锁定沙箱改造前的 HITL / terminal 遗留行为 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17 个测试，覆盖绕过审批流、YOLO 直通、作用域标记 |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 标记 |
@@ -220,8 +250,9 @@ SANDBOX_POLICY=auto      # required | auto | off（大小写不敏感，默认�
 
 ## ⚠️ 诚实声明与局限
 
-- **bwrap 与 Seatbelt 的构造逻辑只做了单元测试，未在真实 Linux/macOS 机器上验证。** 后端源码的 docstring 明确写了这一点（"仅验证构造逻辑，未在 Linux/macOS 实机验证"）；所有后端测试都 mock 了 subprocess。可以信任包装出的 argv，但还不构成真实的隔离保证。
-- **Windows 没有操作系统沙箱后端。** 那里的防护是环境变量清洗 + cwd 钳制 + 危险命令正则 + HITL 审批门。没有任何机制阻止写到项目根目录之外。
+- **bwrap 与 Seatbelt 的构造逻辑只做了单元测试，未在真实 Linux/macOS 机器上验证。** 后端源码的 docstring 明确写了这一点（"仅验证构造逻辑，未在 Linux/macOS 实机验证"）；所有后端测试都 mock 了 subprocess，读遮蔽另有 1 条可选的真实 bwrap 冒烟测试（探测失败即跳过）。可以信任包装出的 argv，但还不构成真实的隔离保证。
+- **Windows 没有操作系统沙箱后端。** 那里的防护是环境变量清洗 + cwd 钳制 + 危险命令正则 + 敏感文件正则 + HITL 审批门。没有任何机制阻止写到项目根目录之外，而且**读保护不可用**：没有操作系统后端就没有读遮蔽，应用层正则只是唯一的读取门禁。
+- **敏感文件正则是缓解，不是屏障。** 它只匹配字面命令形态；`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、变量与通配符都能绕过。后端存在时，真正的读屏障是操作系统读遮蔽。
 - **降级路径按设计就是无沙箱执行。** `auto` + 无后端 = 记录一条警告，然后照常无沙箱运行。这是"可用性优先于严格性"的有意取舍；需要相反语义请选 `SANDBOX_POLICY=required`。
 - **环境变量清洗只看名字。** 存放在不含任何被拦截子串名字下（也不在拒绝名单里）的密钥会原样通过。没有值扫描，也没有动态密钥检测，这是有意为之。
 - **不宣称、也未配置任何网络隔离、seccomp 或 AppArmor profile。** 隔离能力就是上文展示的 bwrap / Seatbelt 构造，仅此而已。

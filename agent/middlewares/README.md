@@ -21,6 +21,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
@@ -83,6 +84,7 @@ middleware = [
     IterationBudget(90),
     ToolGuardrails(),
     ToolCallNormalize(),
+    PathGuard(),
     SubagentCompletionDrainMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
@@ -252,12 +254,29 @@ Repairs tool-call / tool-result pairing after context trimming to prevent "Messa
 
 When the sanitizer changed nothing the hook returns `None` — no state write, no message rebuild, so the model-visible prefix is left untouched. Only an actual repair returns a full message replacement: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`. Note that the prefix-cache criterion is the serialized content sent to the model, not Python object identity: skipping the no-change rebuild avoids a pointless checkpointer state write and rules out content drift from the rebuild path.
 
+### PathGuard
+
+**Module:** `agent/middlewares/path_guard/__init__.py` · **Class:** `PathGuard(AgentMiddleware)`
+**Hooks:** `wrap_tool_call` / `awrap_tool_call` only
+
+Defense-in-depth for the per-tool `resolve_project_path()` / `resolve_external_path()` pattern: a tool that forgets its own path checks still cannot be driven to a traversal or hard-denied path. Registered in the main agent directly after `ToolCallNormalize`; because list order composes wrap hooks outermost-first, it runs **inside** `ToolGuardrails` (`IterationBudget` → `ToolGuardrails` → `PathGuard` → tool) and a rejection is a normal error `ToolMessage` that ToolGuardrails evaluates like any other tool failure. Not registered in the worker pipeline: child tools keep their own gates, and subagent external access is hard-denied anyway. (The plan's literal "after `ToolCallNormalize`, before `ToolGuardrails`" is impossible list order — `ToolCallNormalize` is registered after `ToolGuardrails`; the chosen position is the closest satisfiable placement.)
+
+Screening is deliberately conservative:
+
+- only string values under the argument names `file_path` / `path` / `directory` / `dir` are considered; URL-shaped values (`scheme://`) are skipped, so non-path semantics are never misread as filesystem paths;
+- `..` traversal components (URL-decoded, backslash-normalized — the shared `has_traversal_component` predicate) are rejected;
+- a value `resolve_project_path()` accepts passes through untouched;
+- a value resolving outside `ROOT_DIR` is passed through **unless** it hits the hard-deny floor (the YOLO deny list / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`);
+- every other external path is left to the tool's own `resolve_external_path()` HITL flow — the middleware never approves, rewrites args, or raises an interrupt, because the tool re-runs the same gate during execution (intercepting here would decide twice).
+
+On a rejection the middleware returns a structured error `ToolMessage` (`status="error"`, the original `tool_call_id` / tool name) without executing the tool. Related external-path details: [docs/sandbox/README.md §5](../../docs/sandbox/README.md#5-external-file-path-gate-file-tools).
+
 ### SubagentCompletionDrainMiddleware
 
 **Module:** `agent/middlewares/subagent_completion_drain.py` · **Class:** `SubagentCompletionDrainMiddleware(AgentMiddleware)`
 **Hooks:** `before_model` / `abefore_model` only
 
-Registered in the main agent immediately AFTER `ToolCallNormalize`, so the messages it injects bypass the sanitize rewrite on the injection turn. At `before_model` it rehydrates and drains the session's `SteeringQueue` — completion carriers queued by the announce pipeline while the parent was busy — and returns `{"messages": [carrier, ...]}`, injecting the rebuilt completion-carrier `HumanMessage`s right before the next model call.
+Registered in the main agent after `ToolCallNormalize`, so the messages it injects bypass the sanitize rewrite on the injection turn. At `before_model` it rehydrates and drains the session's `SteeringQueue` — completion carriers queued by the announce pipeline while the parent was busy — and returns `{"messages": [carrier, ...]}`, injecting the rebuilt completion-carrier `HumanMessage`s right before the next model call.
 
 - Each drained queue item is marked `CONSUMED` in the queue's SQLite store, so a carrier is injected exactly once (checkpoint persistence keeps HITL-resume replays safe).
 - Fail-open: a blank/missing `session_id`, an empty queue, or any error is swallowed (log + no-op) — the drain never breaks the parent turn, and the queue survives for retry.
@@ -513,6 +532,7 @@ agent = create_agent(
         IterationBudget(90),  # per-turn call budget
         ToolGuardrails(),  # failure-pathology detection
         ToolCallNormalize(),  # tool_use/tool_result repair
+        PathGuard(),  # path-argument screening
         HeartbeatStaleness(),  # stuck-turn watchdog
         HumanInTheLoop(HITLConfig()),  # approval gates
         Summarization(  # context compaction (innermost)
@@ -581,6 +601,7 @@ user turn arrives
 │   └─ wrap_tool_call
 │       · IterationBudget  consume 1; error ToolMessage when exhausted
 │       · ToolGuardrails  pre-check block/halt → run → evaluate → warn/block/halt
+│       · PathGuard  reject traversal / hard-denied path args before the tool runs
 │       · HeartbeatStaleness  raise if killed; set heartbeat_tool, clear after return
 │       · HumanInTheLoop  reject calls with denied/timed-out approval
 │
@@ -654,6 +675,7 @@ agent/middlewares/
 ├── media_handlers.py            # per-media-type strategies for MultimodalProcessor
 ├── media_pipeline.py            # MultimodalProcessor
 ├── output_repetition_guard.py   # OutputRepetitionGuard (re-exported by __init__.py)
+├── path_guard/                  # PathGuard (path-argument screening for tool calls)
 ├── repetition_detectors.py      # pure repetition-detection primitives
 ├── repetition_state.py          # session-scoped repetition state helpers
 ├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
@@ -682,6 +704,7 @@ from agent.middlewares import (
     IterationBudget,
     ContextEngineHook,
     ToolCallNormalize,
+    PathGuard,
     HeartbeatStaleness,
     MultimodalProcessor,
     HumanInTheLoop,

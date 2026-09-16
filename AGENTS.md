@@ -53,7 +53,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails
-  │    → ToolCallNormalize → SubagentCompletionDrain → TaskIntent(E7) → OutputRepetitionGuard
+  │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7) → OutputRepetitionGuard
   │    → MaxTokensBoost → HeartbeatStaleness → HITL → LLMRetry → Summarization
   │    → TodoContinuationEnforcer(E3)
   │

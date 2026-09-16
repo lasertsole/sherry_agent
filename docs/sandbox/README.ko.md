@@ -14,13 +14,14 @@
 | :-------- | :----------------- | :--- |
 | **환경 변수 속 시크릿** | 자식 프로세스가 `*_API_KEY`를 포함한 모든 변수를 상속 | L1 환경 변수 세척 |
 | **파일시스템 쓰기** | 자식이 에이전트 사용자가 쓸 수 있는 어디든 기록 | L2 OS 샌드박스 (Linux / macOS) |
+| **파일시스템 읽기** | 자식이 `~/.ssh`, `.env`, 각종 자격 증명 저장소를 읽음 | L2 리드 실드(민감 경로 마스킹, Linux / macOS) + terminal 민감 파일 정규식 |
 | **프로세스 / 세션 범위** | 자식이 네임스페이스를 공유하고 부모보다 오래 살 수 있음 | L2 `--unshare-all`, `--die-with-parent` |
 | **의도적 우회** | 모델이 `sandbox=False`를 요청 | 사람 승인 게이트 (HITL) |
 
 두 계층과 하나의 게이트:
 
 - **L1. 환경 변수 세척**(`scrub_env`): 무조건, 모든 생성 시점에서 실행. 사람이 `sandbox=False`를 승인한 경우에도 예외 없음.
-- **L2. OS 네이티브 샌드박스**: Linux는 bubblewrap, macOS는 Seatbelt. Windows에는 OS 백엔드가 없음([정직한 한계 고지](#️-정직한-한계-고지) 참조).
+- **L2. OS 네이티브 샌드박스**: Linux는 bubblewrap, macOS는 Seatbelt — 쓰기 봉쇄에 더해 민감 경로 리드 실드([§2](#2-os-네이티브-샌드박스-백엔드-l2) 참조). Windows에는 OS 백엔드가 없음([정직한 한계 고지](#️-정직한-한계-고지) 참조).
 - **사람 승인 게이트**: `sandbox=False` 우회는 메인 세션에서만 가능하며 HITL 인터럽트를 거칩니다.
 
 ## 🧱 격리 기능
@@ -50,6 +51,9 @@ bwrap
   --ro-bind / /                              # 루트 파일시스템 전체: 읽기 전용
   --bind <프로젝트 루트> <프로젝트 루트>        # 유일한 쓰기 가능 위치:
   --bind <임시 디렉터리> <임시 디렉터리>       # 프로젝트 루트 + 임시 디렉터리 (같으면 중복 제거)
+  --ro-bind /var/empty <민감 디렉터리>         # 리드 실드: 민감 디렉터리를 빈 디렉터리로 마스킹
+  --ro-bind /dev/null <민감 파일>              # 리드 실드: 민감 파일 마스킹
+                                              # (/var/empty가 없으면 --tmpfs <경로>)
   --tmpfs /tmp  --dev /dev  --proc /proc
   --unshare-all                              # 모든 네임스페이스 비공유
   --die-with-parent  --new-session
@@ -60,19 +64,24 @@ bwrap
 
 `--clearenv`가 모든 `--setenv`보다 앞에 오는 것과 결합해야 세척된 딕셔너리가 진짜 환경 변수 화이트리스트가 됩니다. 루트 파일시스템은 읽기 전용이고, 쓰기는 프로젝트 루트와 임시 디렉터리에만 가능합니다.
 
+**리드 실드 (P0-1).** `--ro-bind / /`는 읽기를 "어디서나 가능"하게 만들 뿐 무해하게 만들지는 않습니다. 마스킹이 없으면 모델은 `cat ~/.ssh/id_rsa`를 실행할 수 있습니다. 그래서 두 백엔드 모두 기본 민감 경로 목록 — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — 을 마스킹하고, 환경 변수 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 구분, `~` 확장)로 확장할 수 있습니다. bwrap 실드는 존재하는 각 디렉터리 위에 빈 디렉터리를 마운트하고(민감 파일에는 `--ro-bind /dev/null`), 존재하지 않는 경로는 건너뜁니다(읽을 것이 없고, bwrap은 읽기 전용 루트 바인드 아래에 마운트 지점을 만들 수 없습니다). `/var/empty`가 없는 호스트에서는 디렉터리가 `--tmpfs <경로>`로 폴백합니다. 실드는 쓰기 가능 바인드 **이후**에 놓여, 쓰기 가능한 프로젝트 루트가 마스킹된 경로를 다시 노출할 수 없습니다.
+
 **macOS: Seatbelt(`sandbox-exec`)**. 명령은 `sandbox-exec -p <profile> -- <cmd...>`로 실행되며 profile은 다음과 같습니다:
 
 ```text
 (version 1)
 (allow default)
 (deny file-write*)
+(deny file-read* (subpath "<민감 경로>"))           # 민감 경로마다 한 줄, ~ 확장
+(deny file-read* (regex #"(^|/)\.env$"))           # 임의 깊이의 .env / .env.*
+(deny file-read* (regex #"(^|/)\.env\."))
 (allow file-write* (subpath "<프로젝트 루트>"))
 (allow file-write* (subpath "<임시 디렉터리>"))
 (allow file-write* (literal "/dev/null"))
 (allow file-write* (literal "/dev/tty"))
 ```
 
-순서가 곧 규격입니다: `(allow default)` 아래의 `(deny file-write*)`는 "파일 쓰기만 금지하고 나머지는 허용"을 뜻하고, 이후 명시적 allow가 두 쓰기 가능 경로와 `/dev/null`, `/dev/tty` 리터럴을 다시 엽니다. 경로는 `json.dumps`로 삽입되어, 경로 안의 따옴표나 역슬래시가 sbpl 주입 코드로 탈출할 수 없습니다.
+순서가 곧 규격입니다: `(allow default)` 아래의 `(deny file-write*)`는 "파일 쓰기만 금지하고 나머지는 허용"을 뜻하고, 이후 명시적 allow가 두 쓰기 가능 경로와 `/dev/null`, `/dev/tty` 리터럴을 다시 엽니다. 리드 실드의 `deny file-read*` 규칙은 `(deny file-write*)` 바로 뒤에 놓입니다: 민감 경로마다 하나의 `subpath` 규칙(기본 목록과 `SHERRY_DENY_READ_PATHS` 확장은 bwrap과 공통)과 임의 위치의 `.env` / `.env.*`를 덮는 두 개의 정규식 규칙입니다. 존재하지 않는 경로도 여전히 거부됩니다 — 존재하지 않는 경로에 대한 거부는 무해합니다. 경로는 `json.dumps`로 삽입되어, 경로 안의 따옴표나 역슬래시가 sbpl 주입 코드로 탈출할 수 없습니다.
 
 **프로브(가용성 확인)**. 두 백엔드 모두 클래스 수준 캐시와 함께 `probe() -> bool`을 구현합니다(프로세스당 한 번 프로브, 실패 결과도 캐시):
 
@@ -93,6 +102,18 @@ bwrap
 | 6 | `|`, `&&`, `;` 뒤에 `rm` / `shutdown` / `reboot` / `mkfs` | `echo ok && rm -rf /` 같은 연쇄 변형 |
 
 **연결된** 문자열을 매칭하는 것이 중요합니다: 이전의 요소 단위 정확 매칭 블랙리스트는 각 요소가 따로 보면 무해해 보이는 `["echo ok", "rm -rf /"]`를 놓쳤습니다. 걸리면 `ToolException("Blocked: unsafe command.")`을 던지고, `handle_tool_error=True`를 통해 오류 도구 결과로 표면화됩니다. 이 게이트는 `sandbox` 값과 무관하게 항상 작동합니다. `python_repl`에는 대응하는 정규식이 없고, 대신 래퍼 스크립트가 빌트인을 제한합니다.
+
+**민감 파일 게이트 (P0-2).** 위험 명령 정규식 직후, 어떤 생성보다도 먼저, terminal은 알려진 시크릿을 읽는 명령도 거부하며 `ToolException("Blocked: sensitive file access. …")`을 던지고 모델에게 `read_file`(외부 경로는 사람 승인을 거침)을 쓰라고 안내합니다:
+
+| 패턴 | 대상 |
+| :--- | :--- |
+| `(cat\|head\|tail\|less\|more) … /etc/(passwd\|shadow\|sudoers)` | 시스템 자격 증명 파일 |
+| `(cat\|head\|tail) … .env` | `.env` / `.env.*` 읽기 |
+| `cp … .ssh/` | SSH 자료 복사 유출 |
+| `curl … -d @… .env` | dotenv 업로드 유출 |
+| `(cat\|head\|tail) … ~/.ssh/`, `(cat\|head\|tail) … ~/.aws/` | 홈 자격 증명 저장소 |
+
+**이것은 완화이지 방벽이 아닙니다.** `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 셸 변수, 글롭은 모두 리터럴 정규식을 우회할 수 있습니다 — 진짜 읽기 방벽은 위의 L2 리드 실드이며, 승인된 `sandbox=False` 호출은 설계대로 샌드박스 밖입니다. 이 정규식은 뻔하고 흔한 시도를 막고 모델을 승인 흐름으로 유도하기 위해 존재합니다.
 
 ### 4. 사람이 승인하는 우회 통로
 
@@ -192,6 +213,15 @@ SANDBOX_POLICY=auto      # required | auto | off (대소문자 무시, 기본값
 
 잘못된 값은 조용히 기본값을 쓰는 대신 처음 사용 시점에 `ValueError`를 던집니다. 이 변수는 도구 호출마다 다시 읽히므로 런타임에 바꿀 수 있습니다.
 
+### `SHERRY_DENY_READ_PATHS`
+
+```bash
+# .env 또는 셸 환경 변수 (os.pathsep 구분; ~ 확장)
+SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
+```
+
+두 OS 백엔드의 리드 실드 목록에 경로를 추가합니다(위의 기본 목록은 항상 포함). 이 변수는 `wrap()` 호출마다 읽힙니다.
+
 ### 모델이 보는 것
 
 두 도구 모두 호출별 `sandbox` 불리언을 받으며 기본값은 `True`입니다. 도구 설명은 모델에게 이렇게 알려줍니다: `false`는 메인 세션에서 사람 승인을 거쳐 세척된 환경으로 실행한다는 것, 서브에이전트와 백그라운드 에이전트의 요청은 거부된다는 것.
@@ -210,8 +240,8 @@ SANDBOX_POLICY=auto      # required | auto | off (대소문자 무시, 기본값
 | `tests/agent/tools/test_sandbox_matrix.py` | 14개 테스트, 매트릭스 칸별 동작 하나씩(1-5번 칸은 도구별 한 번, 6번 칸은 네 번). 실제 그래프의 HITL 인터럽트와 "경고 정확히 한 번" 강등 단언 포함 |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 세척 규칙, 우선순위, 보존/거부 경계 (29개 테스트) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 정책 파싱, 엄격한 `ValueError`, 즉시 읽기 의미론, 플랫폼 디스패치 |
-| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성, 프로브 캐싱 (서브프로세스 전부 mock) |
-| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드, 스키마, 생성 형태 |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성(리드 실드 마운트 포함), 프로브 캐싱 (서브프로세스 전부 mock), 선택 실행되는 실제 bwrap 리드 실드 스모크 테스트 |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드(위험 명령 / 민감 파일 정규식), 스키마, 생성 형태, 제한 빌트인 방벽 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19개 테스트, 샌드박스 강화 이전의 HITL / terminal 레거시 동작 고정 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17개 테스트, 우회 승인 흐름, YOLO 통과, 범위 스탬핑 |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 스탬핑 |
@@ -220,8 +250,9 @@ SANDBOX_POLICY=auto      # required | auto | off (대소문자 무시, 기본값
 
 ## ⚠️ 정직한 한계 고지
 
-- **bwrap과 Seatbelt의 구성 로직은 단위 테스트만 거쳤고 실제 Linux/macOS 머신에서 검증되지 않았습니다.** 백엔드 소스 docstring이 명시합니다("구성 로직만 검증, 실기 검증 없음"). 모든 백엔드 테스트는 subprocess를 mock합니다. 래프 출력은 믿을 수 있지만, 아직 실제 격리 보장은 아닙니다.
-- **Windows에는 OS 샌드박스 백엔드가 없습니다.** 그곳의 방어는 환경 변수 세척 + cwd 고정 + 위험 명령 정규식 + HITL 게이트입니다. 프로젝트 루트 밖의 파일 쓰기를 막는 장치는 없습니다.
+- **bwrap과 Seatbelt의 구성 로직은 단위 테스트만 거쳤고 실제 Linux/macOS 머신에서 검증되지 않았습니다.** 백엔드 소스 docstring이 명시합니다("구성 로직만 검증, 실기 검증 없음"). 모든 백엔드 테스트는 subprocess를 mock하며, 리드 실드에는 프로브 실패 시 건너뛰는 선택적 실제 bwrap 스모크 테스트가 하나 있습니다. 래프 출력은 믿을 수 있지만, 아직 실제 격리 보장은 아닙니다.
+- **Windows에는 OS 샌드박스 백엔드가 없습니다.** 그곳의 방어는 환경 변수 세척 + cwd 고정 + 위험 명령 정규식 + 민감 파일 정규식 + HITL 게이트입니다. 프로젝트 루트 밖의 파일 쓰기를 막는 장치는 없고, **읽기 보호도 사용할 수 없습니다**: OS 백엔드가 없으면 리드 실드도 없고, 애플리케이션 계층 정규식이 유일한 읽기 게이트입니다.
+- **민감 파일 정규식은 완화이지 방벽이 아닙니다.** 리터럴 명령 형태만 매칭하며, `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 변수, 글롭은 계층 설계상 우회할 수 있습니다. 백엔드가 있는 곳에서 실제 읽기 방벽은 OS 리드 실드입니다.
 - **강등 경로는 설계대로 샌드박스 없이 실행됩니다.** `auto` + 백엔드 없음 = 경고 한 줄 기록 후 평소처럼 샌드박스 없이 실행. 이것은 의도된 "가용성 우선" 선택이며, 반대가 필요하면 `SANDBOX_POLICY=required`를 고르세요.
 - **환경 변수 세척은 이름 기반입니다.** 차단 부분 문자열이 하나도 없는 이름(그리고 거부 목록에 없는 이름)으로 저장된 시크릿은 그대로 통과합니다. 값 스캔도 동적 시크릿 탐지도 없으며, 이는 의도된 것입니다.
 - **네트워크 샌드박싱, seccomp, AppArmor 프로파일은 주장하지도 구성하지도 않았습니다.** 격리는 위에 보여준 bwrap / Seatbelt 구성 정확히 그것뿐입니다.

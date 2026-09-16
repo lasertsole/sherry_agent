@@ -21,6 +21,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
@@ -83,6 +84,7 @@ middleware = [
     IterationBudget(90),
     ToolGuardrails(),
     ToolCallNormalize(),
+    PathGuard(),
     SubagentCompletionDrainMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
@@ -249,6 +251,23 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 오류 상태 `AIMessage`의 `invalid_tool_calls`를 클리어하여 OpenAI tool_calls로 직렬화되지 않도록 함.
 
 변경이 없으면 후크는 `None`을 반환합니다 —— 상태 기록도 메시지 재구축도 없으며, 모델이 보는 프리픽스는 그대로 유지됩니다. 실제로 복구했을 때만 메시지 전체 교체를 반환합니다: `[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`. 참고로 프리픽스 캐시의 판정 기준은 **모델로 전송되는 직렬화된 내용**이며, Python 객체 동일성이 아닙니다. 변경 없는 재구축을 건너뛰면 무의미한 checkpointer 상태 기록을 없애고 재구축 경로로 인한 내용 드리프트를 원천 차단합니다.
+
+### PathGuard
+
+**모듈:** `agent/middlewares/path_guard/__init__.py` · **클래스:** `PathGuard(AgentMiddleware)`
+**후크:** `wrap_tool_call` / `awrap_tool_call` 전용
+
+각 도구의 `resolve_project_path()` / `resolve_external_path()` 패턴에 대한 심층 방어입니다. 자체 경로 검사를 잊은 도구도 트래버설이나 하드 거부 경로를 읽도록 유도될 수 없습니다. 메인 에이전트에서 `ToolCallNormalize` 바로 뒤에 등록되며, 리스트 순서가 wrap 후크의 바깥 순서이므로 `ToolGuardrails` **안쪽**에서 실행됩니다(`IterationBudget` → `ToolGuardrails` → `PathGuard` → 도구). 거부는 일반 오류 `ToolMessage`로 ToolGuardrails에 평가되어 다른 도구 실패와 동일하게 취급됩니다. worker 파이프라인에는 등록하지 않습니다: 자식 도구는 자체 게이트를 유지하고, 서브에이전트의 외부 접근은 어차피 강제 거부입니다. (계획의 "ToolCallNormalize 이후, ToolGuardrails 이전"은 리스트 순서로 불가능합니다 —— `ToolCallNormalize`는 `ToolGuardrails` 뒤에 등록되어 있습니다. 현재 위치가 충족 가능한 가장 가까운 배치입니다.)
+
+스크리닝은 의도적으로 보수적입니다:
+
+- 인자 이름 `file_path` / `path` / `directory` / `dir`의 문자열 값만 검사하며, `scheme://` 형태의 URL은 건너뛰므로 비경로 의미론을 오독하지 않습니다;
+- `..` 트래버설 컴포넌트(URL 디코드·백슬래시 정규화 완료 —— 공용 `has_traversal_component`)는 거부합니다;
+- `resolve_project_path()`가 받아들이는 값은 그대로 통과합니다;
+- `ROOT_DIR` 밖으로 해석되는 값은 하드 거부 바닥(YOLO 거부 목록 / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`)에 걸리지 않는 한 통과합니다;
+- 그 밖의 외부 경로는 도구 자체의 `resolve_external_path()` HITL 흐름에 맡깁니다 —— 미들웨어는 승인도, 인자 재작성도, 인터럽트도 하지 않습니다. 도구가 실행 시 같은 게이트를 다시 돌기 때문에 여기서 개입하면 결정이 두 번 내려집니다.
+
+거부 시 도구를 실행하지 않고 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id` / 도구 이름 유지)를 반환합니다. 외부 경로 세부 사항: [docs/sandbox/README.ko.md §5](../../docs/sandbox/README.ko.md#5-외부-파일-경로-게이트파일-도구).
 
 ### SubagentCompletionDrainMiddleware
 
@@ -511,6 +530,7 @@ agent = create_agent(
         IterationBudget(90),  # 턴 단위 호출 예산
         ToolGuardrails(),  # 실패 병리 감지
         ToolCallNormalize(),  # tool_use/tool_result 복구
+        PathGuard(),  # 경로 인자 스크리닝
         HeartbeatStaleness(),  # 멈춘 턴 워치독
         HumanInTheLoop(HITLConfig()),  # 승인 게이트
         Summarization(  # 컨텍스트 압축 (최내곽)
@@ -579,6 +599,7 @@ agent = create_agent(
 │   └─ wrap_tool_call
 │       · IterationBudget  1 소모. 소진 시 오류 ToolMessage
 │       · ToolGuardrails  block/halt 사전 점검 → 실행 → 평가 → warn/block/halt
+│       · PathGuard  도구 실행 전에 트래버설 / 하드 거부 경로 인자 거부
 │       · HeartbeatStaleness  kill됐으면 발생. heartbeat_tool 설정 후 반환 시 클리어
 │       · HumanInTheLoop  승인 거부/타임아웃된 호출 거부
 │
@@ -652,6 +673,7 @@ agent/middlewares/
 ├── media_handlers.py            # MultimodalProcessor의 미디어 타입별 전략
 ├── media_pipeline.py            # MultimodalProcessor
 ├── output_repetition_guard.py   # OutputRepetitionGuard (__init__.py가 재익스포트)
+├── path_guard/                  # PathGuard (도구 호출의 경로 인자 스크리닝)
 ├── repetition_detectors.py      # 순수 반복 감지 프리미티브
 ├── repetition_state.py          # 세션 단위 반복 상태 헬퍼
 ├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
@@ -680,6 +702,7 @@ from agent.middlewares import (
     IterationBudget,
     ContextEngineHook,
     ToolCallNormalize,
+    PathGuard,
     HeartbeatStaleness,
     MultimodalProcessor,
     HumanInTheLoop,

@@ -21,6 +21,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
   - [ToolCallNormalize](#toolcallnormalize)
+  - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
@@ -83,6 +84,7 @@ middleware = [
     IterationBudget(90),
     ToolGuardrails(),
     ToolCallNormalize(),
+    PathGuard(),
     SubagentCompletionDrainMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
@@ -249,6 +251,23 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - エラー状態の `AIMessage` の `invalid_tool_calls` をクリアし、OpenAI tool_calls としてシリアライズされないようにする。
 
 変更がないときフックは `None` を返します —— 状態書き込みもメッセージ再構築も行わず、モデル可視のプレフィックスはそのままです。実際に修復したときだけメッセージ全体の置換を返します：`[RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]`。なお、プレフィックスキャッシュの基準は**モデルに送られるシリアライズ済み内容**であり、Python オブジェクトの同一性ではありません。変更なしの再構築をスキップすることで、無意味な checkpointer 状態書き込みを排除し、再構築経路による内容ドリフトを完全に取り除けます。
+
+### PathGuard
+
+**モジュール：** `agent/middlewares/path_guard/__init__.py` · **クラス：** `PathGuard(AgentMiddleware)`
+**フック：** `wrap_tool_call` / `awrap_tool_call` のみ
+
+各ツール自身の `resolve_project_path()` / `resolve_external_path()` パターンに対する多層防御です。パス検査を忘れたツールでも、トラバーサルやハード拒否パスを読ませることはできません。メインエージェントでは `ToolCallNormalize` の直後に登録され、リスト順が wrap フックの外側順になるため `ToolGuardrails` の**内側**で実行されます（`IterationBudget` → `ToolGuardrails` → `PathGuard` → ツール）。拒否は通常のエラー `ToolMessage` として ToolGuardrails に評価され、他のツール失敗と同じ扱いになります。worker パイプラインには登録しません：子ツールは自前のゲートを保ち、サブエージェントの外部アクセスはそもそも強制拒否です。（計画の「ToolCallNormalize の後、ToolGuardrails の前」はリスト順として不可能です——`ToolCallNormalize` は `ToolGuardrails` の後に登録されています。現在の位置が満たせる最も近い配置です。）
+
+スクリーニングは意図的に保守的です：
+
+- 引数名 `file_path` / `path` / `directory` / `dir` の文字列値のみを対象にし、`scheme://` 形式の URL はスキップするため、非パス意味論を誤読しません；
+- `..` トラバーサル成分（URL デコード・バックスラッシュ正規化済み——共有の `has_traversal_component`）は拒否します；
+- `resolve_project_path()` が受け入れる値はそのまま通します；
+- `ROOT_DIR` の外に解決される値は、ハード拒否フロア（YOLO 拒否リスト / `/etc/passwd`、`/etc/shadow`、`/etc/sudoers`）に当たらない限り通します；
+- それ以外の外部パスはツール自身の `resolve_external_path()` HITL フローに委ねます——ミドルウェアは承認・引数書き換え・インタラプトのいずれも行いません。ツールは実行時に同じゲートを再実行するため、ここで介入すると決定が二重になります。
+
+拒否時はツールを実行せず、構造化エラー `ToolMessage`（`status="error"`、元の `tool_call_id` / ツール名を保持）を返します。外部パスの詳細：[docs/sandbox/README.ja.md §5](../../docs/sandbox/README.ja.md#5-外部ファイルパスゲートファイルツール)。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -511,6 +530,7 @@ agent = create_agent(
         IterationBudget(90),  # ターン単位の呼び出し予算
         ToolGuardrails(),  # 失敗病理の検知
         ToolCallNormalize(),  # tool_use/tool_result の修復
+        PathGuard(),  # パス引数のスクリーニング
         HeartbeatStaleness(),  # スタックターンのウォッチドッグ
         HumanInTheLoop(HITLConfig()),  # 承認ゲート
         Summarization(  # コンテキスト圧縮（最内層）
@@ -579,6 +599,7 @@ agent = create_agent(
 │   └─ wrap_tool_call
 │       · IterationBudget  1 消費。尽きたらエラー ToolMessage
 │       · ToolGuardrails  block/halt を事前チェック → 実行 → 評価 → warn/block/halt
+│       · PathGuard  ツール実行前にトラバーサル / ハード拒否のパス引数を拒否
 │       · HeartbeatStaleness  kill 済みなら送出。heartbeat_tool を設定し、返却後にクリア
 │       · HumanInTheLoop  承認が拒否/タイムアウトした呼び出しを拒否
 │
@@ -652,6 +673,7 @@ agent/middlewares/
 ├── media_handlers.py            # MultimodalProcessor のメディアタイプ別戦略
 ├── media_pipeline.py            # MultimodalProcessor
 ├── output_repetition_guard.py   # OutputRepetitionGuard（__init__.py が再エクスポート）
+├── path_guard/                  # PathGuard（ツール呼び出しのパス引数スクリーニング）
 ├── repetition_detectors.py      # 純粋な繰り返し検知プリミティブ
 ├── repetition_state.py          # セッション単位の繰り返し状態ヘルパー
 ├── subagent_completion_drain.py # SubagentCompletionDrainMiddleware
@@ -680,6 +702,7 @@ from agent.middlewares import (
     IterationBudget,
     ContextEngineHook,
     ToolCallNormalize,
+    PathGuard,
     HeartbeatStaleness,
     MultimodalProcessor,
     HumanInTheLoop,

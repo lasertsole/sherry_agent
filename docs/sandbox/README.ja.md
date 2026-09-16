@@ -14,13 +14,14 @@
 | :----- | :----------------------- | :--- |
 | **環境変数内のシークレット** | 子プロセスが `*_API_KEY` を含む全変数を継承 | L1 環境変数洗浄 |
 | **ファイルシステムへの書き込み** | 子がエージェントユーザーの書けるどこへでも記録 | L2 OS サンドボックス (Linux / macOS) |
+| **ファイルシステムからの読み取り** | 子が `~/.ssh`、`.env`、各種クレデンシャルストアを読める | L2 リードシールド(機密パスのマスク、Linux / macOS) + terminal の機密ファイル正規表現 |
 | **プロセス / セッションスコープ** | 子が名前空間を共有し、親より長く生き残り得る | L2 `--unshare-all`、`--die-with-parent` |
 | **意図的なバイパス** | モデルが `sandbox=False` を要求 | 人間の承認ゲート (HITL) |
 
 2つの層と1つのゲート:
 
 - **L1. 環境変数洗浄**(`scrub_env`): 無条件、すべての生成時点で実行。人間が `sandbox=False` を承認した場合でも例外なし。
-- **L2. OS ネイティブサンドボックス**: Linux は bubblewrap、macOS は Seatbelt。Windows には OS バックエンドがありません([正直な制限事項](#️-正直な制限事項)参照)。
+- **L2. OS ネイティブサンドボックス**: Linux は bubblewrap、macOS は Seatbelt — 書き込み封じ込めに加えて機密パスのリードシールド([§2](#2-os-ネイティブサンドボックスバックエンド-l2)参照)。Windows には OS バックエンドがありません([正直な制限事項](#️-正直な制限事項)参照)。
 - **人間の承認ゲート**: `sandbox=False` によるバイパスはメインセッションでのみ可能で、HITL インタラプトを通ります。
 
 ## 🧱 分離機能
@@ -50,6 +51,9 @@ bwrap
   --ro-bind / /                              # ルートファイルシステム全体: 読み取り専用
   --bind <プロジェクトルート> <プロジェクトルート>   # 唯一の書き込み可能な場所:
   --bind <一時ディレクトリ> <一時ディレクトリ>       # プロジェクトルート + 一時ディレクトリ(同一なら重複除去)
+  --ro-bind /var/empty <機密ディレクトリ>      # リードシールド: 機密ディレクトリを空ディレクトリでマスク
+  --ro-bind /dev/null <機密ファイル>           # リードシールド: 機密ファイルをマスク
+                                             # (/var/empty が無い場合は --tmpfs <パス>)
   --tmpfs /tmp  --dev /dev  --proc /proc
   --unshare-all                              # 全名前空間を非共有化
   --die-with-parent  --new-session
@@ -60,19 +64,24 @@ bwrap
 
 `--clearenv` がすべての `--setenv` より先に来ることと組み合わせて、洗浄済みディクショナリが本当の環境変数ホワイトリストになります。ルートファイルシステムは読み取り専用で、書き込みはプロジェクトルートと一時ディレクトリにしか落ちません。
 
+**リードシールド (P0-1)。** `--ro-bind / /` は読み取りを「どこでも可能」にするだけで、無害にはしません。マスクがなければモデルは `cat ~/.ssh/id_rsa` を実行できます。そこで両バックエンドは既定の機密パスリスト — `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker` — をマスクし、環境変数 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 区切り、`~` 展開)で拡張できます。bwrap のシールドは存在する各ディレクトリの上に空ディレクトリをマウントし(機密ファイルには `--ro-bind /dev/null`)、存在しないパスはスキップします(読むものが無く、bwrap は読み取り専用ルートバインドの下にマウントポイントを作れません)。`/var/empty` が無いホストではディレクトリは `--tmpfs <パス>` にフォールバックします。シールドは書き込み可能バインドの**後**に置かれ、書き込み可能なプロジェクトルートがマスク済みパスを再露出させることはありません。
+
 **macOS: Seatbelt(`sandbox-exec`)**。コマンドは `sandbox-exec -p <profile> -- <cmd...>` として実行され、profile は次のとおりです:
 
 ```text
 (version 1)
 (allow default)
 (deny file-write*)
+(deny file-read* (subpath "<機密パス>"))            # 機密パスごとに1行、~ 展開
+(deny file-read* (regex #"(^|/)\.env$"))           # 任意の深さの .env / .env.*
+(deny file-read* (regex #"(^|/)\.env\."))
 (allow file-write* (subpath "<プロジェクトルート>"))
 (allow file-write* (subpath "<一時ディレクトリ>"))
 (allow file-write* (literal "/dev/null"))
 (allow file-write* (literal "/dev/tty"))
 ```
 
-順序こそが仕様です: `(allow default)` の下の `(deny file-write*)` は「ファイル書き込み以外はすべて許可」を意味し、その後の明示的 allow が2つの書き込み可能パスと `/dev/null`、`/dev/tty` のリテラルを再び開きます。パスは `json.dumps` で埋め込まれ、パス中の引用符やバックスラッシュが sbpl 注入コードとして脱出することはできません。
+順序こそが仕様です: `(allow default)` の下の `(deny file-write*)` は「ファイル書き込み以外はすべて許可」を意味し、その後の明示的 allow が2つの書き込み可能パスと `/dev/null`、`/dev/tty` のリテラルを再び開きます。リードシールドの `deny file-read*` ルールは `(deny file-write*)` の直後に置かれます: 機密パスごとに1つの `subpath` ルール(既定リストと `SHERRY_DENY_READ_PATHS` 拡張は bwrap と共通)と、任意の場所の `.env` / `.env.*` を覆う2つの正規表現ルールです。存在しないパスも拒否されます — 存在しないパスへの拒否は無害です。パスは `json.dumps` で埋め込まれ、パス中の引用符やバックスラッシュが sbpl 注入コードとして脱出することはできません。
 
 **プローブ(可用性確認)**。両バックエンドともクラスレベルキャッシュ付きの `probe() -> bool` を実装します(プロセスにつき1回プローブ、失敗結果もキャッシュ):
 
@@ -93,6 +102,18 @@ bwrap
 | 6 | `|`、`&&`、`;` の後に `rm` / `shutdown` / `reboot` / `mkfs` | `echo ok && rm -rf /` のような連鎖バリアント |
 
 **連結後**の文字列をマッチすることに意味があります: 旧来の要素単位の完全一致ブラックリストは、各要素を単独で見れば無害に見える `["echo ok", "rm -rf /"]` を見逃していました。マッチすると `ToolException("Blocked: unsafe command.")` を送出し、`handle_tool_error=True` を経由してエラーのツール結果として表面化します。このゲートは `sandbox` の値にかかわらず常に動きます。`python_repl` には対応する正規表現がなく、代わりにラッパースクリプトがビルトインを制限します。
+
+**機密ファイルゲート (P0-2)。** 危険コマンド正規表現の直後、どの生成よりも前に、terminal は既知のシークレットを読むコマンドも拒否し、`ToolException("Blocked: sensitive file access. …")` を送出して、`read_file`(外部パスは人間の承認を通る)を使うようモデルに伝えます:
+
+| パターン | 対象 |
+| :------- | :--- |
+| `(cat\|head\|tail\|less\|more) … /etc/(passwd\|shadow\|sudoers)` | システムのクレデンシャルファイル |
+| `(cat\|head\|tail) … .env` | `.env` / `.env.*` の読み取り |
+| `cp … .ssh/` | SSH 素材のコピー持ち出し |
+| `curl … -d @… .env` | dotenv のアップロードによる持ち出し |
+| `(cat\|head\|tail) … ~/.ssh/`、`(cat\|head\|tail) … ~/.aws/` | ホーム配下のクレデンシャルストア |
+
+**これは緩和であり、障壁ではありません。** `dd`、`sed`、`python -c "open(…)"`、`$(< file)`、シェル変数、グロブはリテラル正規表現をすべて迂回できます — 本当の読み取り障壁は上記の L2 リードシールドであり、承認済みの `sandbox=False` 呼び出しは設計どおりサンドボックス外です。正規表現は明白でよくある試行を止め、モデルを承認フローへ誘導するために存在します。
 
 ### 4. 人間が承認するバイパス経路
 
@@ -192,6 +213,15 @@ SANDBOX_POLICY=auto      # required | auto | off (大小文字を無視、デフ
 
 不正な値は黙ってデフォルトを使う代わりに、最初の使用時点で `ValueError` を送出します。この変数はツール呼び出しごとに再読込されるため、ランタイムで切り替えられます。
 
+### `SHERRY_DENY_READ_PATHS`
+
+```bash
+# .env またはシェル環境変数(os.pathsep 区切り; ~ は展開)
+SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
+```
+
+両 OS バックエンドのリードシールドリストにパスを追加します(上記の既定リストは常に含まれます)。この変数は `wrap()` 呼び出しごとに読み込まれます。
+
 ### モデルに見えるもの
 
 両ツールとも呼び出しごとの `sandbox` ブーリアンを受け付け、デフォルトは `True` です。ツールの説明はモデルにこう伝えます: `false` はメインセッションで人間の承認を経て洗浄済み環境で実行されること、サブエージェントとバックグラウンドエージェントの要求は拒否されること。
@@ -210,8 +240,8 @@ SANDBOX_POLICY=auto      # required | auto | off (大小文字を無視、デフ
 | `tests/agent/tools/test_sandbox_matrix.py` | 14テスト、マトリクスのセルごとの動作につき1つ(セル1-5はツールごとに1回、セル6は4回)。実グラフ上の HITL インタラプトと「警告ちょうど1件」の降格アサーションを含む |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 洗浄規則、優先順位、保持/拒否の境界 (29テスト) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | ポリシーパース、厳格な `ValueError`、即時読み込みの意味論、プラットフォームディスパッチ |
-| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築、プローブキャッシュ (subprocess はすべてモック) |
-| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード、スキーマ、起動形態 |
+| `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築(リードシールドのマウントを含む)、プローブキャッシュ (subprocess はすべてモック)、任意実行の実 bwrap リードシールドスモークテスト |
+| `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード(危険コマンド / 機密ファイル正規表現)、スキーマ、起動形態、制限ビルトインの障壁 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19テスト、サンドボックス強化前の HITL / terminal レガシー動作を固定 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17テスト、バイパス承認フロー、YOLO 素通し、スコープスタンピング |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` スタンピング |
@@ -220,8 +250,9 @@ SANDBOX_POLICY=auto      # required | auto | off (大小文字を無視、デフ
 
 ## ⚠️ 正直な制限事項
 
-- **bwrap と Seatbelt の構築ロジックはユニットテストのみで、実機の Linux/macOS では検証されていません。** バックエンドのソース docstring が明示しています(「構築ロジックのみ検証、実機検証なし」)。すべてのバックエンドテストは subprocess をモックします。ラップ出力は信頼できますが、現時点で実際の分離保証ではありません。
-- **Windows には OS サンドボックスバックエンドがありません。** そこの防御は環境変数洗浄 + cwd 固定 + 危険コマンド正規表現 + HITL ゲートです。プロジェクトルート外へのファイル書き込みを防ぐ仕組みはありません。
+- **bwrap と Seatbelt の構築ロジックはユニットテストのみで、実機の Linux/macOS では検証されていません。** バックエンドのソース docstring が明示しています(「構築ロジックのみ検証、実機検証なし」)。すべてのバックエンドテストは subprocess をモックし、リードシールドにはプローブ失敗時にスキップされる任意の実 bwrap スモークテストが1つあります。ラップ出力は信頼できますが、現時点で実際の分離保証ではありません。
+- **Windows には OS サンドボックスバックエンドがありません。** そこの防御は環境変数洗浄 + cwd 固定 + 危険コマンド正規表現 + 機密ファイル正規表現 + HITL ゲートです。プロジェクトルート外へのファイル書き込みを防ぐ仕組みはなく、**読み取り保護も利用できません**: OS バックエンドが無ければリードシールドも無く、アプリ層の正規表現が唯一の読み取りゲートです。
+- **機密ファイル正規表現は緩和であり、障壁ではありません。** リテラルなコマンド形状にしかマッチせず、`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、変数、グロブは層の設計上迂回できます。バックエンドが存在する場合の実際の読み取り障壁は OS リードシールドです。
 - **降格経路は設計どおりサンドボックスなしで実行されます。** `auto` + バックエンドなし = 警告1件を記録してから普段どおりサンドボックスなしで実行。これは意図された「可用性優先」の選択で、逆が必要なら `SANDBOX_POLICY=required` を選んでください。
 - **環境変数洗浄は名前ベースです。** ブロック対象の部分文字列を1つも含まない名前(かつ拒否リストにない名前)で保存されたシークレットはそのまま通ります。値のスキャンも動的シークレット検出もなく、それは意図的なものです。
 - **ネットワークサンドボックス、seccomp、AppArmor プロファイルは主張も設定もしていません。** 分離は上に示した bwrap / Seatbelt の構築そのものだけです。

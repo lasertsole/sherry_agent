@@ -2,6 +2,8 @@
 
 > Merged from `PATH_TRAVERSAL_HARDENING_TODO.md` + `VIRTUAL_MODE_MIGRATION_PLAN.md`. Identifies gaps in sherry_agent's path traversal defense and specifies fixes ported from deepagents' `virtual_mode`.
 
+> **Status (2026-09-16):** batch 2 landed — **P0-1** (OS-sandbox read-shield), **P0-2** (terminal sensitive-file gate; `python_repl` deliberately skipped: its restricted builtins already exclude `open`/`__import__`, locked by a regression test), **P1-1** (`PathGuard` middleware; adapted to LangChain 1.3's `wrap_tool_call` since `before_tool` does not exist), plus a `safe_error_detail` fidelity alignment with the reference `_safe_detail` (generic exception text is dropped, never `str(exc)`). Batch 1 (P0-3, P1-2, P2-1, P2-2) landed earlier in `bf0e25d..01238fb`.
+
 **Current defense layers** (see `docs/sandbox/README.md`):
 
 - L0: `pub/func/path.py` — `has_traversal_component()` + `validate_within_dir()`
@@ -24,11 +26,12 @@
 
 **Plan:**
 
-- [ ] `sandbox_bwrap.py` — after `--ro-bind / /`, add `--ro-bind /var/empty <sensitive_path>` for each sensitive path (covers with an empty dir):
+- [x] `sandbox_bwrap.py` — after `--ro-bind / /`, add `--ro-bind /var/empty <sensitive_path>` for each sensitive path (covers with an empty dir):
   ```
   ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, ~/.docker
   ```
-- [ ] `sandbox_seatbelt.py` — after `(deny file-write*)`, add deny-read rules:
+  (landed: masks are appended after the writable binds so a writable root cannot re-expose them; missing paths are skipped; `/var/empty`-less hosts fall back to `--tmpfs`; files are masked with `/dev/null`)
+- [x] `sandbox_seatbelt.py` — after `(deny file-write*)`, add deny-read rules:
   ```
   (deny file-read* (subpath "~/.ssh"))
   (deny file-read* (subpath "~/.aws"))
@@ -36,8 +39,9 @@
   (deny file-read* (regex #"(^|/)\\.env$"))
   (deny file-read* (regex #"(^|/)\\.env\\."))
   ```
-- [ ] Add a `_sensitive_read_paths()` helper shared by both backends, expandable via env `SHERRY_DENY_READ_PATHS`.
-- [ ] Windows: no OS backend — document that read protection is unavailable (honesty note).
+  (landed: `~` is expanded and paths are embedded via `json.dumps`)
+- [x] Add a `_sensitive_read_paths()` helper shared by both backends, expandable via env `SHERRY_DENY_READ_PATHS`.
+- [x] Windows: no OS backend — document that read protection is unavailable (honesty note).
 
 ---
 
@@ -49,7 +53,7 @@
 
 **Plan:**
 
-- [ ] Add `_SENSITIVE_FILE_PATTERNS` regex list to `terminal.py` (checked after `_check_dangerous`):
+- [x] Add `_SENSITIVE_FILE_PATTERNS` regex list to `terminal.py` (checked after `_check_dangerous`):
   ```python
   _SENSITIVE_FILE_PATTERNS = [
       re.compile(r"\b(?:cat|head|tail|less|more)\s+.*?(/etc/(?:passwd|shadow|sudoers))\b"),
@@ -60,9 +64,11 @@
       re.compile(r"\b(?:cat|head|tail)\s+.*?~/.aws/"),
   ]
   ```
-- [ ] `_check_sensitive_file_access(joined: str) -> None` — raises `ToolException` on match, telling the model to use `read_file` with external_path approval instead.
-- [ ] Call it from both `_run` and `_arun` after `_check_dangerous`, before spawn.
-- [ ] Wire the same check into `python_repl.py` for `open()` calls targeting sensitive paths (stretch — may require AST inspector or block `open` of deny-listed paths in the wrapper script).
+  (landed: compiled with `re.IGNORECASE`; it is a mitigation, not a read barrier — documented in code and docs)
+- [x] `_check_sensitive_file_access(joined: str) -> None` — raises `ToolException` on match, telling the model to use `read_file` with external_path approval instead.
+- [x] Call it from both `_run` and `_arun` after `_check_dangerous`, before spawn.
+- [x] Wire the same check into `python_repl.py` for `open()` calls targeting sensitive paths (stretch — may require AST inspector or block `open` of deny-listed paths in the wrapper script).
+  (landed as a deliberate **skip**: the wrapper's restricted builtins already exclude `open`/`__import__`, so a literal `open("/etc/passwd")` is a `NameError` before any file access; a source-level regex cannot stop the class-introspection escapes that remain, and would add false positives without raising the real barrier — the OS read-shield above is that barrier. Locked by `tests/agent/tools/pub_base/test_python_repl_tool.py`.)
 
 ---
 
@@ -203,13 +209,18 @@ with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
 
 **Plan:**
 
-- [ ] Create `agent/middlewares/path_guard/__init__.py` — a `before_tool` middleware that:
+- [x] Create `agent/middlewares/path_guard/__init__.py` — a `before_tool` middleware that:
+  (adapted: LangChain 1.3 has no `before_tool`; implemented as `wrap_tool_call`/`awrap_tool_call` — see the behavior notes below)
   - Scans tool call args for keys named `file_path`, `path`, `directory`, `dir`.
   - Calls `resolve_project_path(value)` — on `PathOutOfBoundsError`, tags the call for external-path approval (or rejects if no HITL context).
+    (adapted: rejects traversal input, system credential files, and the YOLO/sensitive deny floor with an error `ToolMessage`; every other external path is passed through so the tool's own `resolve_external_path()` owns the single approval decision — intercepting here would decide twice, since the tool re-runs the same gate during execution)
   - Injects the resolved path back into the args so tools receive a pre-validated `Path` object.
-- [ ] Register in `agent/middlewares/__init__.py` after `ToolCallNormalize` and before `ToolGuardrails`.
-- [ ] Deprecate the per-tool try/except blocks — keep them as a second line of defense but mark with `# redundant: path_guard middleware handles this`.
-- [ ] Test: create a tool with a `file_path` arg that does NOT call `resolve_project_path()`; verify the middleware still rejects `/etc/passwd`.
+    (deliberately NOT done: arguments are never rewritten; the middleware only blocks or passes through)
+- [x] Register in `agent/middlewares/__init__.py` after `ToolCallNormalize` and before `ToolGuardrails`.
+  (adapted: exported from `agent/middlewares/__init__.py`, registered in `agent/core.py` directly after `ToolCallNormalize` — the closest satisfiable list position; `ToolCallNormalize` is registered after `ToolGuardrails`, so the literal "between them" is impossible. Worker chain intentionally unchanged — plan says main chain; child tools keep their own gates and subagent external access is hard-denied.)
+- [x] Deprecate the per-tool try/except blocks — keep them as a second line of defense but mark with `# redundant: path_guard middleware handles this`.
+- [x] Test: create a tool with a `file_path` arg that does NOT call `resolve_project_path()`; verify the middleware still rejects `/etc/passwd`.
+  (landed as `tests/agent/middlewares/test_path_guard.py`: rejects `/etc/passwd`, `../../etc/passwd`, URL-encoded traversal, and `~/.ssh/id_rsa`; passes normal ROOT_DIR paths, tilde paths, URLs, and generic external paths; plus a wiring test pinning the chain position)
 
 ---
 
