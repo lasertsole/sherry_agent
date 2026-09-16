@@ -1,6 +1,5 @@
 import os
 
-from skills import build_skills_snapshot
 from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentState
@@ -81,6 +80,8 @@ def init() -> None:
     global _tools, _initialized
     if _initialized:
         return
+
+    from skills import build_skills_snapshot
 
     build_skills_snapshot()
     memory_store.load_from_disk()

@@ -43,8 +43,6 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from skills.loader import get_skills_text, scan_skills
-
 from .config import SubagentConfig, MAX_SPAWN_DEPTH_CAP, get_config
 from .registry import get_run
 from .spawn import SpawnResult, spawn_subagent_direct
@@ -210,6 +208,8 @@ def _validate_load_skills(load_skills: list[str] | None) -> list[str]:
     """
     if not load_skills:
         return []
+    from skills.loader import scan_skills
+
     known = {s["name"]: s for s in scan_skills()}
     resolved: list[str] = []
     for name in load_skills:
@@ -237,6 +237,8 @@ def _inject_skills(task: str, load_skills: list[str] | None) -> str:
     resolved = _validate_load_skills(load_skills)
     if not resolved:
         return task
+    from skills.loader import get_skills_text
+
     skills_xml = get_skills_text(selected_skill_names=resolved, caller_scope="subagent")
     if not skills_xml:
         return task

@@ -145,7 +145,7 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 
 - `workspace/` in `.gitignore` is anchored (`/workspace/`) — live persona files are NOT tracked
 - `tests/agent/tools/subagent/conftest.py` pollutes `sys.modules` globally — use stub-tolerant imports in cross-suite tests
-- `agent/core.py` calls `build_skills_snapshot()` at import time — side effect
+- `agent/core.py::init()` imports `skills` lazily and calls `build_skills_snapshot()` at assembly time (server boot); a process that never calls `init()` still gets a live disk scan from `scan_skills(use_cache=True)`
 - `Summarization` has both sync (`_apply_compression`) and async (`_aapply_compression`) paths — changes must cover both
 - `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - `config/features/**` must not import `agent/` or `models/` (circular)

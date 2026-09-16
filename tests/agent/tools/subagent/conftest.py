@@ -197,10 +197,10 @@ def _setup_subagent_alias():
 
     sys.modules["agent.core"].StateSchema = dict
 
-    # `agent.tools.subagent.delegate` does `from skills.loader import
-    # get_skills_text, scan_skills` at module scope. When nothing has loaded
-    # the real loader yet (tests/agent/tools/subagent solo), inject a stub
-    # `skills.loader` module exposing configurable, deterministic functions
+    # `agent.tools.subagent.delegate` imports `scan_skills` /
+    # `get_skills_text` from `skills.loader` at call time. When nothing has
+    # loaded the real loader yet (tests/agent/tools/subagent solo), inject a
+    # stub `skills.loader` module exposing configurable, deterministic functions
     # so the import chain resolves and tests can assert on injection
     # behavior. If the REAL `skills.loader` is already in sys.modules
     # (full-suite collection imports it via other mirrored suites such as

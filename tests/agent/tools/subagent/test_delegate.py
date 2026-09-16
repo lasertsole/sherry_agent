@@ -7,12 +7,11 @@ from agent.tools.subagent.types.spawn import ContextMode
 
 
 # Deterministic skill dataset mirroring the conftest stub (see
-# tests/agent/tools/subagent/conftest.py). delegate.py:45 binds get_skills_text /
-# scan_skills at module import time, so WHICH module object those names come
-# from depends on when agent.tools.subagent was first imported (conftest stub
-# in unit-solo runs, real skills.loader in full-suite collection). The
-# autouse fixture below pins the module-level bindings to this fixed dataset
-# so the skill-injection expectations hold regardless of binding order.
+# tests/agent/tools/subagent/conftest.py). delegate.py resolves
+# skills.loader.scan_skills / get_skills_text lazily inside its call sites, so
+# the autouse fixture below pins those loader attributes to this fixed dataset
+# — regardless of whether the loader in sys.modules is the conftest stub
+# (unit-solo runs) or the real skills.loader (full-suite collection).
 _SKILL_SCOPES = {
     "web_search": "all",
     "code_interpreter": "all",
@@ -50,13 +49,14 @@ pytestmark = [pytest.mark.unit]
 
 @pytest.fixture(autouse=True)
 def _deterministic_skill_bindings(monkeypatch):
-    """Pin delegate's module-level skill bindings (delegate.py:45) to the
-    deterministic dataset above — binding-order robustness, no assertion
-    changes: the tests below keep asserting the same injection/drop
-    behavior, just against a known skill set instead of whichever module
-    happened to be in sys.modules at import time."""
-    monkeypatch.setattr(delegate, "scan_skills", _scan_skills_stub)
-    monkeypatch.setattr(delegate, "get_skills_text", _get_skills_text_stub)
+    """Pin the skills.loader functions delegate imports at call time to the
+    deterministic dataset above — no assertion changes: the tests below keep
+    asserting the same injection/drop behavior, just against a known skill set
+    instead of whichever loader happened to be in sys.modules."""
+    import skills.loader as skills_loader
+
+    monkeypatch.setattr(skills_loader, "scan_skills", _scan_skills_stub)
+    monkeypatch.setattr(skills_loader, "get_skills_text", _get_skills_text_stub)
 
 
 def _accepted_result():
