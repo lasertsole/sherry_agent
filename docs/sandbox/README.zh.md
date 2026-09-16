@@ -144,6 +144,8 @@ bwrap
 
 模型可见输出绝不包含真实根路径：返回与错误中的路径统一渲染为虚拟路径（`/src/main.py`，`display_path()` / `to_virtual_path()`），外部或无法解析的目标回退为纯文件名；`safe_error_detail()` 只暴露 `strerror`（如 `Permission denied`）而不是 `OSError.__str__`。搜索结果另有 containment 过滤：任何真实路径解析到搜索根之外的命中（例如指向 `/etc/passwd` 的文件符号链接）都会被跳过。
 
+**与 deepagents 参考实现的设计差异。** 参考实现把每个路径锚定到虚拟命名空间（`virtual_mode`），使穿越在设计上不可能；Sherry 则保留真实文件系统路径——`prompt_builder`、技能工具与 terminal 的 cwd 都依赖它们——改在解析**之后**做 containment（上文三道门禁），并用 `O_NOFOLLOW` 关闭 TOCTOU。其 `BackendProtocol`、`CompositeBackend`、`StateBackend` 与完整的虚拟路径命名空间被刻意弃用：那是架构重写，而 Sherry 没有多后端场景。
+
 ## ⚙️ 实现与架构
 
 ### 策略：`SandboxPolicy`

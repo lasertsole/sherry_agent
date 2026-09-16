@@ -144,6 +144,8 @@ bwrap
 
 모델이 보는 출력에는 실제 루트 경로가 포함되지 않습니다: 반환/오류 경로는 가상 경로(`/src/main.py`, `display_path()` / `to_virtual_path()`)로 렌더링되고, 외부이거나 해석할 수 없는 대상은 파일 이름만으로 폴백합니다. `safe_error_detail()`은 `OSError.__str__` 대신 `strerror`(예: `Permission denied`)만 노출합니다. 검색 결과에는 컨테인먼트 필터가 추가로 적용되어 실제 경로가 검색 루트 밖으로 해석되는 히트(예: `/etc/passwd`로 향하는 파일 심볼릭 링크)는 건너뜁니다.
 
+**deepagents 참조 구현과의 설계 차이.** 참조 구현은 모든 경로를 가상 네임스페이스(`virtual_mode`)에 고정해 트래버설을 설계상 불가능하게 만듭니다. Sherry는 대신 실제 파일 시스템 경로를 유지하고(`prompt_builder`, 스킬 도구, terminal cwd가 모두 여기에 의존), 해석 **이후**에 컨테인먼트(위의 세 게이트)를 적용하며 `O_NOFOLLOW`로 TOCTOU를 닫습니다. `BackendProtocol`, `CompositeBackend`, `StateBackend`, 전체 가상 경로 네임스페이스는 의도적으로 채택하지 않았습니다. 그것은 아키텍처 재작성이며, Sherry에는 멀티 백엔드 사용 사례가 없습니다.
+
 ## ⚙️ 구현과 아키텍처
 
 ### 정책: `SandboxPolicy`

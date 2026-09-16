@@ -144,6 +144,8 @@ bwrap
 
 モデル可視の出力に実際のルートパスは含まれません: 返却パスとエラーパスは仮想パス(`/src/main.py`、`display_path()` / `to_virtual_path()`)として描画され、外部または解決不能なターゲットはファイル名のみにフォールバックします。`safe_error_detail()` は `OSError.__str__` ではなく `strerror`(例: `Permission denied`)のみを出します。検索結果はさらにコンテインメントフィルタされ、実パスが検索ルートの外に解決されるヒット(例: `/etc/passwd` へのファイルシンボリックリンク)はスキップされます。
 
+**deepagents 参考実装との設計差。** 参考実装はすべてのパスを仮想名前空間(`virtual_mode`)に固定することで、トラバーサルを設計上不可能にします。Sherry は代わりに実ファイルシステムパスを保持し(`prompt_builder`、スキルツール、terminal の cwd がすべて依存)、解決**後**にコンテインメント(上記の3ゲート)を適用し、`O_NOFOLLOW` で TOCTOU を閉じます。`BackendProtocol`、`CompositeBackend`、`StateBackend`、完全な仮想パス名前空間は意図的に採用していません。それはアーキテクチャの書き換えであり、Sherry にマルチバックエンドの用途がないためです。
+
 ## ⚙️ 実装とアーキテクチャ
 
 ### ポリシー: `SandboxPolicy`

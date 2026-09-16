@@ -28,6 +28,8 @@ def _reject_traversal_input(file_path: str) -> None:
     Rejects ``~``-prefixed input and any ``..`` path *component*. Component
     matching (``Path(...).parts``) is deliberate: a substring test would
     false-positive on legitimate names such as ``foo..bar`` or ``配置..md``.
+    The reference applies its ``~`` test to a slash-prefixed virtual path, so
+    that branch is dead code there; here it runs on the raw input instead.
     """
     if file_path.startswith("~") or any(part == ".." for part in Path(file_path).parts):
         raise PathOutOfBoundsError(f"Path traversal not allowed: {file_path}")

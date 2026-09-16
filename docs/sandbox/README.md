@@ -144,6 +144,8 @@ Inside `resolve_project_path()` (the ROOT_DIR side of the flow) the path passes 
 
 Model-visible output never contains the real root path: returned and error paths are rendered as virtual paths (`/src/main.py`) via `display_path()` / `to_virtual_path()`, falling back to the bare filename for external or unresolvable targets, and `safe_error_detail()` surfaces only the `strerror` (e.g. `Permission denied`) instead of `OSError.__str__`. Search results are additionally containment-filtered: any hit whose real path resolves outside the searched root (for example a file symlink to `/etc/passwd`) is skipped.
 
+**Design note vs. the deepagents reference.** The reference anchors every path to a virtual namespace (`virtual_mode`), making traversal structurally impossible by design; sherry keeps real filesystem paths — `prompt_builder`, the skill tools, and the terminal cwd all depend on them — and enforces containment *after* resolution (the gates above), closing the TOCTOU window with `O_NOFOLLOW`. Its `BackendProtocol`, `CompositeBackend`, `StateBackend`, and the full virtual path namespace were deliberately not adopted: that is an architecture rewrite, and sherry has no multi-backend use case.
+
 ## ⚙️ Implementation & Architecture
 
 ### Policy: `SandboxPolicy`
