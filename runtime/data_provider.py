@@ -17,6 +17,14 @@ directly, so a broken store still surfaces exactly as it did before the
 migration. Each consumer logs its first miss once (mirroring
 ``runtime.hooks``), so a missing prompt block stays diagnosable.
 
+The write side of the same seam: the curator (``context_engine``) consolidates
+agent-created skills through primitives owned by
+``agent.tools.skill_tools.skill_manage``. :class:`SkillWriteProvider` forwards
+those calls so ``context_engine`` never imports ``agent``. A missing skill
+writer degrades the curator's mutation paths to a logged no-op — never a
+partial write, never a partial delete — while a registered writer's exceptions
+surface unchanged.
+
 Leaf module by contract: standard library only, no project imports, and it
 never calls the provider itself. Registration is last-writer-wins, so repeated
 assembly is idempotent.
@@ -24,13 +32,17 @@ assembly is idempotent.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 __all__ = [
     "PromptDataProvider",
+    "SkillWriteProvider",
     "clear_prompt_data_provider",
+    "clear_skill_write_provider",
     "get_prompt_data_provider",
+    "get_skill_write_provider",
     "set_prompt_data_provider",
+    "set_skill_write_provider",
 ]
 
 
@@ -125,3 +137,65 @@ def clear_prompt_data_provider() -> None:
     """Drop the registration (no-op when absent); for test/teardown isolation."""
     global _provider
     _provider = None
+
+
+class SkillWriteProvider(Protocol):
+    """Write-side forwarding interface for curator skill mutations.
+
+    Method contracts (the registered agent-side implementation must provide
+    these exact signatures; the curator depends on them):
+
+    :meth:`create_skill` / :meth:`write_file`
+        Thin forwarders onto ``skill_manage._create_skill`` /
+        ``skill_manage._write_file``. Both return the same result dict the
+        underlying helper returns (the curator inspects ``success`` and logs
+        ``error``), and both keep the helper's validation intact.
+
+    :meth:`split_oversized_skill` / :meth:`umbrella_skill_char_target`
+        The shared umbrella-content budget seam. The splitter is the pure
+        (no-IO) helper that trims a generated SKILL.md body into
+        ``references/partNN.md`` files, returning ``(slim, merged_files)``;
+        the target is the config-backed character budget it defaults to and
+        the prompt hint quotes.
+    """
+
+    def create_skill(self, name: str, content: str) -> dict[str, Any]:
+        """Create a skill; returns ``skill_manage._create_skill``'s result dict."""
+        ...
+
+    def write_file(self, name: str, file_path: str, file_content: str) -> dict[str, Any]:
+        """Write one supporting file; returns ``skill_manage._write_file``'s result dict."""
+        ...
+
+    def split_oversized_skill(
+        self,
+        main_content: str,
+        target: int,
+        supporting_files: dict[str, str] | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        """Split an oversized SKILL.md body; pure, no IO."""
+        ...
+
+    def umbrella_skill_char_target(self) -> int:
+        """Return the shared umbrella SKILL.md character budget."""
+        ...
+
+
+_skill_writer: SkillWriteProvider | None = None
+
+
+def set_skill_write_provider(provider: SkillWriteProvider) -> None:
+    """Bind the process-wide skill writer (last registration wins; idempotent)."""
+    global _skill_writer
+    _skill_writer = provider
+
+
+def get_skill_write_provider() -> SkillWriteProvider | None:
+    """Return the registered skill writer, or ``None`` when nothing was registered."""
+    return _skill_writer
+
+
+def clear_skill_write_provider() -> None:
+    """Drop the skill-writer registration (no-op when absent); for test isolation."""
+    global _skill_writer
+    _skill_writer = None

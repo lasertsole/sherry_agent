@@ -35,6 +35,7 @@ from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.todo_continuation import TodoContinuationEnforcer
 from agent.wrapper.registry import apply_graph_wrappers
 from agent.prompt_data_provider import register_prompt_data_provider
+from agent.skill_write_provider import register_skill_write_provider
 from .wrapper.context_limit import ContextLimitGuardWrapper
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
@@ -72,6 +73,8 @@ def init() -> None:
     - Builds the main tool list.
     - Registers the prompt data provider so workspace/context_engine can read
       prompt data without importing the agent package.
+    - Registers the skill write provider so the curator can create/write
+      skills without importing the agent package.
 
     Idempotent: subsequent calls are no-ops.
     """
@@ -83,6 +86,7 @@ def init() -> None:
     memory_store.load_from_disk()
     _tools = build_main_tools()
     register_prompt_data_provider()
+    register_skill_write_provider()
     _initialized = True
 
 
