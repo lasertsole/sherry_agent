@@ -8,7 +8,7 @@ Covers:
   (``internal is True`` AND ``provenance == "subagent_completion"``) — the
   same contract built by ``agent/tools/subagent/announce/completion_message.py``
   and judged by ``_is_internal_completion``
-  (``agent/middlewares/subagent_completion_drain.py``).
+  (``agent/middlewares/subagent_completion_drain/core.py``).
 - Every other row (plain human, partial-contract human, ai, tool) persists
   ``origin IS NULL`` — never an empty string.
 - ``get_session_ids`` title derivation excludes origin-tagged rows:

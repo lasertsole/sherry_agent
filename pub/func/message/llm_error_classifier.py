@@ -2,8 +2,8 @@
 
 Classifies a provider exception raised during an LLM call into a
 :class:`FailoverReason` plus recovery-action hints (:class:`ClassifiedError`)
-consumed by the retry middleware (agent/middlewares/llm_retry.py) and the
-Summarization overflow-recovery loop (agent/middlewares/summarization.py).
+consumed by the retry middleware (agent/middlewares/llm_retry/core.py) and the
+Summarization overflow-recovery loop (agent/middlewares/summarization/core.py).
 
 Classification is a fixed priority pipeline over pattern tables (not
 per-provider adapters) because 20+ providers in models/providers/registry.py

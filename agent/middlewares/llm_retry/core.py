@@ -78,8 +78,7 @@ class LLMRetryConfig:
 
 
 # ``FallbackCandidate`` lives in ``pub/types/llm.py`` (shared with models) and is
-# re-exported here for backwards compatibility: ``agent.middlewares.llm_retry``
-# and ``agent.middlewares`` keep exposing the name.
+# re-exported here (and by ``agent.middlewares``) for backwards compatibility.
 __all__ = ["ContentFilterError", "FallbackCandidate", "LLMRetryConfig", "LLMRetryMiddleware"]
 
 

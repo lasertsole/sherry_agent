@@ -1,7 +1,7 @@
 """Unit tests for pub.func.message.llm_error_classifier (context-compression Task 2, TDD).
 
 The classifier is consumed by the Summarization middleware retry loop
-(agent/middlewares/summarization.py handler except-branches): its return value
+(agent/middlewares/summarization/core.py handler except-branches): its return value
 routes the error to the payload_too_large (T4) or context_overflow (T5) retry
 path, and None means "not a target error — caller must re-raise".
 

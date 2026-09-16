@@ -11,7 +11,7 @@ so no network / no API keys / no real provider is involved):
 - **FACT B** — ToolCallNormalize healing scope: an ``AIMessage`` with
   ``tool_calls`` and no following ``ToolMessage`` (the real shape when a cancel
   lands right after a model super-step) is healed at INPUT time by
-  ``ToolCallNormalize.before_model`` (``agent/middlewares/tool_call_normalize.py:12-26``
+  ``ToolCallNormalize.before_model`` (``agent/middlewares/tool_call_normalize/core.py:12-26``
   -> ``pub/func/transcript_repair.py:158-306``: synthesizes an error-status
   placeholder ToolMessage, :138-155, :270-289). WITHOUT that middleware a
   strict provider rejects the transcript (simulated 400 here). CRITICAL
@@ -30,7 +30,7 @@ so no network / no API keys / no real provider is involved):
   (the project ``Summarization`` subclass performs compaction inside
   ``wrap_model_call`` via ``request.override`` — request-scoped, never
   committed to graph state; its ``before_model`` override is log-only,
-  ``agent/middlewares/summarization.py:150-162, 466-493``).
+  ``agent/middlewares/summarization/core.py:150-162, 466-493``).
 - **FACT D** — deterministic-ID idempotency: repeated ``aupdate_state`` calls
   with the SAME message ID upsert (one message, content replaced in place);
   a different ID appends.

@@ -26,7 +26,7 @@ CRITICAL_CONTEXT_MAX_ITEMS = SUMMARIZATION["critical_context_max_items"]
 SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
 
 # CRITICAL INVARIANT: this module never does
-# ``from agent.middlewares.summarization import <name>`` for NEW names —
+# ``from agent.middlewares.summarization.core import <name>`` for NEW names —
 # the OLD middleware lacks the new module-level names and a top-level
 # import would break collection. Access new module-level names at runtime
 # via mget(name) == getattr(summarization_module, name); access new

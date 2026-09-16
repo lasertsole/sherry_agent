@@ -1,4 +1,4 @@
-"""Unit tests for agent/middlewares/tool_guardrails.py (Task 1: ping-pong + arg-churn).
+"""Unit tests for agent/middlewares/tool_guardrails/core.py (Task 1: ping-pong + arg-churn).
 
 Load iron rule: the module is loaded via ``importlib.util.spec_from_file_location``
 by absolute path — NEVER ``from agent.middlewares import ...`` (tests/agent/tools/subagent/

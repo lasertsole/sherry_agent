@@ -2,7 +2,7 @@
 
 The registry field bindings below (``config/features``) are the authoritative
 import contract for the summarization middleware
-(``agent/middlewares/summarization.py``); values live in ``config.features``,
+(``agent/middlewares/summarization/core.py``); values live in ``config.features``,
 whose semantics are documented in ``docs/summarization/README.md``.
 
 Also guards the legacy numeric baseline (archive_threshold, memory_threshold,

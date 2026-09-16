@@ -21,8 +21,10 @@ This complements :class:`ToolGuardrails` (which detects tool-call
 loops) by covering the case where the model loops on **text output**
 without calling any tools.
 
-Detection primitives live in :mod:`agent.middlewares.repetition_detectors`;
-session state handling lives in :mod:`agent.middlewares.repetition_state`.
+Detection primitives live in
+:mod:`agent.middlewares.output_repetition_guard.repetition_detectors`;
+session state handling lives in
+:mod:`agent.middlewares.output_repetition_guard.repetition_state`.
 This module is the middleware shell: escalation policy + hooks.
 """
 

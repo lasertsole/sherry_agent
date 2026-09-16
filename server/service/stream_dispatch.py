@@ -60,7 +60,7 @@ _pending_raw: dict[str, dict[str, list[str]]] = {}
 _CONTENT_FILTER_KEYWORDS = ("new_sensitive", "content_filter", "safety")
 
 # Cross-layer flags written for the middleware retry/fallback layer
-# (agent/middlewares/llm_retry.py consumes them at its post-handler seam):
+# (agent/middlewares/llm_retry/core.py consumes them at its post-handler seam):
 # - ``llm_partial_stream_stub``: the stream died mid-output (network cut
 #   or silent end) after partial model output was already streamed — the next
 #   model call must be retried, NOT boosted with larger max_tokens.

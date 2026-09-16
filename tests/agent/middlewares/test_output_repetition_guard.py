@@ -1,4 +1,4 @@
-"""Unit tests for agent/middlewares/output_repetition_guard.py — OutputRepetitionGuard.
+"""Unit tests for agent/middlewares/output_repetition_guard/core.py — OutputRepetitionGuard.
 
 Covers:
   * Session helpers (get_session_id)

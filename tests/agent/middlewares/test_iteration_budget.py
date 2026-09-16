@@ -1,4 +1,4 @@
-"""Module tests for agent/middlewares/iteration_budget.py — IterationBudget."""
+"""Module tests for agent/middlewares/iteration_budget/core.py — IterationBudget."""
 
 import pytest
 from unittest.mock import MagicMock, patch

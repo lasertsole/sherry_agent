@@ -40,7 +40,7 @@ enable_thinking = os.getenv("MAIN_LLM_ENABLE_THINKING", "").strip().lower() == "
 reasoning_effort = os.getenv("MAIN_LLM_REASONING_EFFORT")
 
 # Output-token budget when thinking is enabled. SAME env/default as
-# MaxTokensBoostMiddleware's boost base (agent/middlewares/max_tokens_boost.py)
+# MaxTokensBoostMiddleware's boost base (agent/middlewares/max_tokens_boost/core.py)
 # so the boost sequence always starts above the configured output cap.
 OUTPUT_MAX_TOKEN = int(os.getenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "8192"))
 
