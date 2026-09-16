@@ -270,6 +270,17 @@ class TestPathRendering:
     def test_safe_error_detail_without_detail_returns_type_name(self):
         assert safe_error_detail(ValueError()) == "ValueError"
 
+    def test_safe_error_detail_drops_generic_path_bearing_message(self):
+        # Reference `_safe_detail` (`virtual_mode=True`) never falls back to
+        # `str(exc)`: generic exception text (e.g. from `Path.rglob`) can embed
+        # the real root path, so only the type name may survive.
+        exc = RuntimeError(f"cannot scan {ROOT_DIR}/workspace")
+
+        detail = safe_error_detail(exc)
+
+        assert detail == "RuntimeError"
+        assert str(ROOT_DIR) not in detail
+
 
 # ── B. External safe fast path ──────────────────────────────────────────
 

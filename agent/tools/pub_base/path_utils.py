@@ -149,16 +149,22 @@ def display_path(real_path: Path) -> str:
 def safe_error_detail(exc: Exception) -> str:
     """Extract an agent-safe error detail string.
 
-    OSError.__str__ embeds the real file path. This returns only the
-    strerror ('Permission denied') so ROOT_DIR never leaks into error
-    messages visible to the model.
+    ``OSError.__str__`` embeds the real file path, so those surface only
+    ``strerror`` ('Permission denied', path-free); ``UnicodeDecodeError``
+    exposes ``.reason`` ('invalid start byte'). Every other exception's
+    message is deliberately DROPPED — generic exception text can still embed
+    the real root path (for example an error raised mid-``Path.rglob``), and
+    this module is always "virtual mode": ROOT_DIR must never leak into
+    agent-visible output. Only the exception type name survives.
+
+    Mirrors deepagents ``_safe_detail`` under ``virtual_mode=True``
+    (`backends/filesystem.py:1201-1214`), which likewise never falls back to
+    ``str(exc)``.
     """
     if isinstance(exc, OSError):
         detail = exc.strerror
     else:
         detail = getattr(exc, "reason", None)
-        if detail is None:
-            detail = str(exc)
     return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
 
 
