@@ -142,6 +142,9 @@ SPOT_DEFAULTS = [
     (TOOLS_TIMEOUTS, "message_search_max_session_chars", 100_000),
     (TOOLS_TIMEOUTS, "skill_manage_max_skill_file_bytes", 1_048_576),
     (TOOLS_TIMEOUTS, "file_tools_search_max_context", 5),
+    (TOOLS_TIMEOUTS, "file_tools_search_max_matches", 10_000),
+    (TOOLS_TIMEOUTS, "file_tools_search_time_budget_s", 5.0),
+    (TOOLS_TIMEOUTS, "file_tools_search_prune_dirs", ["proc", "sys", "dev"]),
     (HITL_DEFAULTS, "block_recurrence_limit", 3),
     (HITL_DEFAULTS, "default_timeout", 60),
     (HITL_DEFAULTS, "default_clarify_timeout", 3600),
@@ -216,7 +219,10 @@ def test_frozenset_field_type():
 def test_list_field_types():
     transient = SUBAGENT_INFRA["delivery_transient_retry_delays_ms"]
     compaction = SUBAGENT_INFRA["delivery_compaction_retry_delays_ms"]
+    prune_dirs = TOOLS_TIMEOUTS["file_tools_search_prune_dirs"]
     assert isinstance(transient, list)
     assert isinstance(compaction, list)
+    assert isinstance(prune_dirs, list)
     assert transient == [5000, 10000, 20000]
     assert compaction == [1000, 2000, 4000, 8000]
+    assert prune_dirs == ["proc", "sys", "dev"]
