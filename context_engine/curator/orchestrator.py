@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from loguru import logger
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 from datetime import datetime, UTC
 from context_engine.curator.usage import agent_created_report
@@ -10,6 +10,8 @@ from context_engine.curator.config import get_consolidate, get_min_idle_hours
 from context_engine.curator.report import _build_rename_summary, _write_run_report
 from context_engine.curator.transitions import should_run_now, apply_automatic_transitions
 
+if TYPE_CHECKING:
+    from runtime.data_provider import PromptDataProvider
 
 from context_engine.curator.helpers import _skill_dir as _resolve_skill_dir
 
@@ -487,6 +489,29 @@ def _log_refresh_task_failure(task: asyncio.Future) -> None:
         logger.debug("Curator: system prompt refresh task failed: {}", task.exception())
 
 
+# First miss per provider method is logged once (mirrors runtime.hooks consumers).
+_provider_misses_logged: set[str] = set()
+
+
+def _resolve_provider(method: str) -> "PromptDataProvider | None":
+    """Resolve the prompt data provider, logging the first miss per method.
+
+    The provider is registered by ``agent.core.init()`` at server boot; when it
+    is missing the refresh is skipped (never caching empty prompts) instead of
+    importing the agent package.
+    """
+    from runtime import data_provider
+
+    provider = data_provider.get_prompt_data_provider()
+    if provider is None and method not in _provider_misses_logged:
+        _provider_misses_logged.add(method)
+        logger.debug(
+            "curator: prompt data provider is not registered; '{}' skips the refresh",
+            method,
+        )
+    return provider
+
+
 def _refresh_all_cached_system_prompts() -> None:
     """Rebuild and overwrite the cached system_prompt for every known session.
 
@@ -497,7 +522,10 @@ def _refresh_all_cached_system_prompts() -> None:
     """
     try:
         from runtime import state_register_mem, state_register_db
-        from workspace.prompt_builder import build_system_prompt
+
+        provider = _resolve_provider("build_system_prompt")
+        if provider is None:
+            return
 
         # Rebuild skills_snapshot.json from disk FIRST so the subsequent
         # build_system_prompt(){scan_skills(use_cache=True)} cache-hit path
@@ -513,7 +541,7 @@ def _refresh_all_cached_system_prompts() -> None:
             return
 
         for sid in session_ids:
-            new_prompt = build_system_prompt(session_id=sid)
+            new_prompt = provider.build_system_prompt(sid)
             state_register_mem.set_state(sid, "system_prompt", new_prompt)
             state_register_db.update_states(sid, {"system_prompt": new_prompt})
 

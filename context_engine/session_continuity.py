@@ -16,16 +16,42 @@ Every function here is fail-open: a storage or lookup failure degrades to
 import json
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from config import SRC_DIR
+
+if TYPE_CHECKING:
+    from runtime.data_provider import PromptDataProvider
 
 # Persisted end-state files: src/data/session_continuity/{safe-key}.json.
 _CONTINUITY_DIR: Path = SRC_DIR / "data" / "session_continuity"
 
 # Tail AI reply is clipped to this many characters before persistence/injection.
 _MAX_SUMMARY_CHARS = 500
+
+# First miss per provider method is logged once (mirrors runtime.hooks consumers).
+_provider_misses_logged: set[str] = set()
+
+
+def _resolve_provider(method: str) -> "PromptDataProvider | None":
+    """Resolve the prompt data provider, logging the first miss per method.
+
+    The provider is registered by ``agent.core.init()`` at server boot; a
+    process that never assembled the agent degrades the taskflow lookup to an
+    empty list instead of importing across package boundaries.
+    """
+    from runtime import data_provider
+
+    provider = data_provider.get_prompt_data_provider()
+    if provider is None and method not in _provider_misses_logged:
+        _provider_misses_logged.add(method)
+        logger.debug(
+            "session continuity: prompt data provider is not registered; '{}' degrades to empty",
+            method,
+        )
+    return provider
 
 
 def save_session_end_state(
@@ -189,15 +215,17 @@ def _get_channel_chat_for_session(session_id: str) -> tuple[str, str]:
 def _get_active_taskflow_ids_sync(session_id: str) -> list[str]:
     """Collect the ids of active TaskFlows created by this session (LT-2).
 
-    Uses the taskflow registry's synchronous read and filters by
-    ``creator_session_key``. Returns ``[]`` on any failure (fail-open).
+    Reads the taskflow registry through the prompt data provider (the agent
+    layer owns it) and filters by ``creator_session_key``. Returns ``[]`` when
+    no provider is registered or on any failure (fail-open).
     """
     try:
-        from agent.tools.taskflow.registry import store_sqlite
-        from agent.tools.taskflow.tools._shared import requester_session_key
+        provider = _resolve_provider("get_active_flows")
+        if provider is None:
+            return []
 
-        creator_key = requester_session_key(session_id)
-        active_flows = store_sqlite.get_active_flows_sync()
+        creator_key = provider.requester_session_key(session_id)
+        active_flows = provider.get_active_flows()
         mine = [
             flow
             for flow in active_flows

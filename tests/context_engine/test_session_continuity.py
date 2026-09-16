@@ -78,7 +78,13 @@ def prompt_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "agent.tools.taskflow.registry.store_sqlite.get_active_flows_sync", lambda: []
     )
-    return tmp_path
+
+    from agent.prompt_data_provider import AgentPromptDataProvider
+    from runtime import data_provider
+
+    data_provider.set_prompt_data_provider(AgentPromptDataProvider())
+    yield tmp_path
+    data_provider.clear_prompt_data_provider()
 
 
 # ---------------------------------------------------------------------------

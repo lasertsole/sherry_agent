@@ -2,9 +2,38 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from loguru import logger
+
 from context_engine import get_turns_by_turn_num_scope
 from context_engine.facts import cursor
 from context_engine.facts.extractor import extract_facts
+
+if TYPE_CHECKING:
+    from runtime.data_provider import PromptDataProvider
+
+# First miss per provider method is logged once (mirrors runtime.hooks consumers).
+_provider_misses_logged: set[str] = set()
+
+
+def _resolve_provider(method: str) -> PromptDataProvider | None:
+    """Resolve the prompt data provider, logging the first miss per method.
+
+    The provider is registered by ``agent.core.init()`` at server boot; a
+    process that never assembled the agent cannot persist facts and leaves the
+    pending range untouched instead of importing across package boundaries.
+    """
+    from runtime import data_provider
+
+    provider = data_provider.get_prompt_data_provider()
+    if provider is None and method not in _provider_misses_logged:
+        _provider_misses_logged.add(method)
+        logger.debug(
+            "facts queue: prompt data provider is not registered; '{}' degrades to a no-op",
+            method,
+        )
+    return provider
 
 
 async def enqueue_turn(session_id: str, turn_num: int) -> None:
@@ -27,17 +56,22 @@ def _format_range(rows: list[dict]) -> str:
 async def process_pending(session_id: str, tiered_store=None) -> int:
     """Extract facts for every turn between the two watermarks.
 
-    Writes through the tiered facts store and advances the consumed watermark
-    only after a successful extraction (crash between the two replays the
-    range — at-least-once semantics).
+    Writes through the tiered facts store (injected in tests, otherwise
+    resolved through the prompt data provider) and advances the consumed
+    watermark only after a successful extraction (crash between the two
+    replays the range — at-least-once semantics). Without an injected store and
+    without a registered provider the range is left pending and 0 is returned.
     """
     start, end = cursor.get_pending(session_id)
     if end < start:
         return 0
 
-    from agent.tools.memory_tiered import get_tiered_store
-
-    store = tiered_store if tiered_store is not None else get_tiered_store()
+    store = tiered_store
+    if store is None:
+        provider = _resolve_provider("add_fact")
+        if provider is None:
+            return 0
+        store = provider
 
     written = 0
     middle = (start + end) // 2
