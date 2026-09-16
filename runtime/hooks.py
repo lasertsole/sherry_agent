@@ -31,6 +31,26 @@ Hook contracts (registration sites must provide these signatures; the
     ``() -> dict[str, asyncio.Task]``: getter returning the live per-session
     WS stream task table (owned and mutated in place by the transport layer;
     callers only read it). Missing hook -> consumers see an empty table.
+
+``SCAN_SKILL`` (``"scan_skill"``)
+    ``(path: str | os.PathLike[str]) -> ScanResult``: run the SkillSpector
+    supply-chain scan over one skill path (file or directory). Registered by
+    the server assembly; the skills package resolves it instead of importing
+    ``server``. Missing hook -> the skill-scan call sites keep their historical
+    fail-open behavior (skip the scan with a diagnostic) — the scanner is a
+    warning gate at those call sites, never a hard startup dependency.
+
+``BUILD_REJECT_MESSAGE`` (``"build_reject_message"``)
+    ``(result: ScanResult) -> str | None``: render the human-readable rejection
+    reason for a scan verdict. Registered alongside ``SCAN_SKILL``; missing
+    hook is treated exactly as the pre-hooks import failure (both names came
+    from one import statement).
+
+``BUILD_BACKGROUND_AGENT_TOOLS`` (``"build_background_agent_tools"``)
+    ``() -> list[BaseTool]``: build the fresh tool set for the cron skill's
+    background agent (python REPL + read/write file). Registered by the server
+    assembly; the cron script raises when the hook is missing, mirroring the
+    pre-hooks ImportError that failed the job (fail-closed).
 """
 
 from __future__ import annotations
@@ -40,7 +60,10 @@ from typing import Any
 
 __all__ = [
     "AUTO_TURN_MODULE",
+    "BUILD_BACKGROUND_AGENT_TOOLS",
+    "BUILD_REJECT_MESSAGE",
     "MAYBE_TRIGGER_AUTO_TURN",
+    "SCAN_SKILL",
     "WS_ACTIVE_TASKS",
     "clear",
     "register",
@@ -51,6 +74,9 @@ __all__ = [
 MAYBE_TRIGGER_AUTO_TURN = "maybe_trigger_auto_turn"
 AUTO_TURN_MODULE = "auto_turn_module"
 WS_ACTIVE_TASKS = "ws_active_tasks"
+SCAN_SKILL = "scan_skill"
+BUILD_REJECT_MESSAGE = "build_reject_message"
+BUILD_BACKGROUND_AGENT_TOOLS = "build_background_agent_tools"
 
 _registry: dict[str, Callable[..., Any]] = {}
 

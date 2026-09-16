@@ -107,6 +107,29 @@ if __name__ == "__main__":
     # need the agent core.
     from agent.core import init as init_agent_core
 
+    # Skills decoupling hook wiring (runtime/hooks.py): the skills package
+    # resolves the server-owned SkillSpector scanner and the agent-owned
+    # background tool builders through the process registry instead of
+    # importing server/agent directly. Registered BEFORE init_agent_core()
+    # because the boot snapshot (build_skills_snapshot) runs the built-in
+    # security scan, and before init_cron() because cron jobs build their
+    # agent from the tool-builder hook. Idempotent: registration is
+    # last-writer-wins.
+    from agent.tools import (
+        build_python_repl_tool,
+        build_read_file_tool,
+        build_write_file_tool,
+    )
+    from runtime import hooks
+    from server.service.skill_scanner import build_reject_message, scan_skill
+
+    hooks.register(hooks.SCAN_SKILL, scan_skill)
+    hooks.register(hooks.BUILD_REJECT_MESSAGE, build_reject_message)
+    hooks.register(
+        hooks.BUILD_BACKGROUND_AGENT_TOOLS,
+        lambda: [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()],
+    )
+
     init_agent_core()
 
     if not tripped:

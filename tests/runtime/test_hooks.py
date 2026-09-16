@@ -85,3 +85,6 @@ class TestHookNames:
         assert hooks.MAYBE_TRIGGER_AUTO_TURN == "maybe_trigger_auto_turn"
         assert hooks.AUTO_TURN_MODULE == "auto_turn_module"
         assert hooks.WS_ACTIVE_TASKS == "ws_active_tasks"
+        assert hooks.SCAN_SKILL == "scan_skill"
+        assert hooks.BUILD_REJECT_MESSAGE == "build_reject_message"
+        assert hooks.BUILD_BACKGROUND_AGENT_TOOLS == "build_background_agent_tools"
