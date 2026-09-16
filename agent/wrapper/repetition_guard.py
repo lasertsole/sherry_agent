@@ -53,14 +53,16 @@ from langchain_core.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
 
 from runtime import state_register_mem
-from agent.middlewares.output_repetition_guard import (
+from agent.middlewares.output_repetition_guard.core import (
     OutputRepetitionGuard,
-    SESSION_STATE_KEYS,
-    _INTERNAL_WARNED_KEY,
-    _HALTED_KEY,
-    _MIN_CONTENT_LENGTH,
     _CHAR_RUN_MIN as _CHAR_RUN_MIN,
+    _MIN_CONTENT_LENGTH,
     _STREAM_WARNING,
+)
+from agent.middlewares.output_repetition_guard.repetition_state import (
+    SESSION_STATE_KEYS,
+    _HALTED_KEY,
+    _INTERNAL_WARNED_KEY,
 )
 from config.features import REPETITION_GUARD
 

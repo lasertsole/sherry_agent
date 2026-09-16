@@ -44,7 +44,7 @@ from langchain.agents.middleware.types import (
 )
 
 from agent.middlewares.base import BeforeAgentHooksMixin
-from agent.middlewares.repetition_detectors import (
+from .repetition_detectors import (
     _CHAR_RUN_MIN as _CHAR_RUN_MIN,
     _TAIL_CHARS as _TAIL_CHARS,
     CharRunDetector,
@@ -56,7 +56,7 @@ from agent.middlewares.repetition_detectors import (
     normalize_for_hash,
     strip_inline_reasoning,
 )
-from agent.middlewares.repetition_state import (
+from .repetition_state import (
     SESSION_STATE_KEYS as SESSION_STATE_KEYS,
     _HALTED_KEY as _HALTED_KEY,
     _MAX_HISTORY as _MAX_HISTORY,

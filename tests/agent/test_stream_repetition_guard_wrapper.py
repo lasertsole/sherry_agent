@@ -113,14 +113,16 @@ from runtime.session.core import SessionRegister
 from runtime.session.state_register import StateRegisterMeM
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from agent.middlewares.output_repetition_guard import (
-    _HISTORY_KEY,
-    _INTERNAL_WARNED_KEY,
-    _HALTED_KEY,
-    _REASONING_HISTORY_KEY,
+from agent.middlewares.output_repetition_guard.core import (
     _STREAM_WARNING,
 )
-import agent.middlewares.output_repetition_guard as _org_module
+from agent.middlewares.output_repetition_guard.repetition_state import (
+    _HALTED_KEY,
+    _HISTORY_KEY,
+    _INTERNAL_WARNED_KEY,
+    _REASONING_HISTORY_KEY,
+)
+import agent.middlewares.output_repetition_guard.core as _org_module
 import agent.wrapper.repetition_guard as _wrapper_module
 from agent.wrapper.repetition_guard import RepetitionGuardWrapper
 

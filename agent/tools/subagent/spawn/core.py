@@ -677,7 +677,9 @@ async def _execute_subagent(
         # guardrails, iteration budget, ...). We delete exactly the 6 keys this
         # middleware owns, scoped to the child's own bucket via ``delete_state``.
         try:
-            from agent.middlewares.output_repetition_guard import SESSION_STATE_KEYS
+            from agent.middlewares.output_repetition_guard.repetition_state import (
+                SESSION_STATE_KEYS,
+            )
             from runtime import state_register_mem
 
             for _key in SESSION_STATE_KEYS:

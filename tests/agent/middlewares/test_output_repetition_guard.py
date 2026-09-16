@@ -50,20 +50,24 @@ from langchain.agents.middleware.types import (
     ExtendedModelResponse,
 )
 
-from agent.middlewares.output_repetition_guard import (
+from agent.middlewares.output_repetition_guard.core import (
     OutputRepetitionGuard,
-    SESSION_STATE_KEYS,
     check_stream_repetition,
     _STREAM_WARNING,
-    _HISTORY_KEY,
-    _WARN_COUNT_KEY,
-    _INTERNAL_WARNED_KEY,
+)
+from agent.middlewares.output_repetition_guard.repetition_detectors import (
+    _CHAR_RUN_MIN,
+    _TAIL_CHARS,
+)
+from agent.middlewares.output_repetition_guard.repetition_state import (
+    SESSION_STATE_KEYS,
     _HALTED_KEY,
+    _HISTORY_KEY,
+    _INTERNAL_WARNED_KEY,
+    _MAX_HISTORY,
     _REASONING_HISTORY_KEY,
     _REASONING_WARNED_KEY,
-    _MAX_HISTORY,
-    _TAIL_CHARS,
-    _CHAR_RUN_MIN,
+    _WARN_COUNT_KEY,
 )
 
 
@@ -356,7 +360,7 @@ def fresh_state(monkeypatch):
     if StateRegisterMeM in SessionRegister._instances:
         del SessionRegister._instances[StateRegisterMeM]
     reg = StateRegisterMeM()
-    monkeypatch.setattr("agent.middlewares.output_repetition_guard.state_register_mem", reg)
+    monkeypatch.setattr("agent.middlewares.output_repetition_guard.core.state_register_mem", reg)
     yield reg
     # teardown: remove any state set during the test
     if StateRegisterMeM in SessionRegister._instances:
