@@ -12,12 +12,14 @@ argv order is load-bearing:
 
 from __future__ import annotations
 
+import os
 import subprocess
 from unittest import mock
 
 import pytest
 
 import agent.tools.pub_base.sandbox_bwrap as sandbox_bwrap
+from agent.tools.pub_base.sandbox import _sensitive_read_paths
 from agent.tools.pub_base.sandbox_bwrap import BwrapBackend
 
 PROBE_ARGV = [
@@ -113,6 +115,130 @@ def test_wrap_return_type_is_tuple_of_list_and_dict():
     cmd, env = result
     assert isinstance(cmd, list)
     assert isinstance(env, dict)
+
+
+# --------------------------------------------------------------------------
+# Read shield (P0-1): sensitive paths masked from reads
+# --------------------------------------------------------------------------
+
+
+def _sublist_index(cmd: list[str], sub: list[str]) -> int:
+    for i in range(len(cmd) - len(sub) + 1):
+        if cmd[i : i + len(sub)] == sub:
+            return i
+    return -1
+
+
+class TestReadShield:
+    def test_existing_dir_masked_with_empty_dir_after_writable_binds(self, tmp_path, monkeypatch):
+        secret = tmp_path / "ssh"
+        secret.mkdir()
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret])
+        monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", empty)
+
+        cmd, _env = BwrapBackend().wrap(["echo"], {})
+
+        mask_index = _sublist_index(cmd, ["--ro-bind", str(empty), str(secret)])
+        assert mask_index != -1, f"missing read-shield mount in {cmd!r}"
+        last_writable_bind = max(i for i, token in enumerate(cmd) if token == "--bind")
+        assert mask_index > last_writable_bind, "read-shield must come after the writable binds"
+
+    def test_missing_empty_dir_falls_back_to_tmpfs(self, tmp_path, monkeypatch):
+        secret = tmp_path / "ssh"
+        secret.mkdir()
+        monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret])
+        monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", tmp_path / "absent")
+
+        cmd, _env = BwrapBackend().wrap(["echo"], {})
+
+        assert _sublist_index(cmd, ["--tmpfs", str(secret)]) != -1
+
+    def test_existing_file_masked_with_dev_null(self, tmp_path, monkeypatch):
+        secret = tmp_path / "credentials"
+        secret.write_text("token", encoding="utf-8")
+        monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret])
+
+        cmd, _env = BwrapBackend().wrap(["echo"], {})
+
+        assert _sublist_index(cmd, ["--ro-bind", "/dev/null", str(secret)]) != -1
+
+    def test_nonexistent_path_is_skipped_without_error(self, tmp_path, monkeypatch):
+        missing = tmp_path / "does-not-exist"
+        monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [missing])
+
+        cmd, _env = BwrapBackend().wrap(["echo"], {})
+
+        assert str(missing) not in cmd
+
+    def test_env_extension_and_defaults_reach_argv(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        (home / ".ssh").mkdir(parents=True)
+        custom = tmp_path / "custom-secret"
+        custom.mkdir()
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SHERRY_DENY_READ_PATHS", f"{custom}{os.pathsep}")
+        monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", empty)
+
+        cmd, _env = BwrapBackend().wrap(["echo"], {})
+
+        assert _sublist_index(cmd, ["--ro-bind", str(empty), str(custom)]) != -1
+        assert _sublist_index(cmd, ["--ro-bind", str(empty), str(home / ".ssh")]) != -1
+
+
+class TestSensitiveReadPaths:
+    def test_defaults_plus_env_are_deduped_and_expanded(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv(
+            "SHERRY_DENY_READ_PATHS",
+            f"~/custom-secret{os.pathsep}{home / '.ssh'}",
+        )
+
+        paths = [str(path) for path in _sensitive_read_paths()]
+
+        assert str(home / "custom-secret") in paths
+        assert str(home / ".ssh") in paths
+        assert paths.count(str(home / ".ssh")) == 1, "default + env duplicate must collapse"
+
+    def test_blank_env_entries_are_skipped(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SHERRY_DENY_READ_PATHS", f"{os.pathsep}  {os.pathsep}")
+
+        paths = _sensitive_read_paths()
+
+        assert all(str(path).strip() for path in paths)
+
+
+#: Real-bwrap smoke runs only where the probe passes (user namespaces allowed);
+#: construction tests above stay hermetic and mock nothing here.
+_BWRAP_USABLE = BwrapBackend().probe()
+
+
+@pytest.mark.skipif(not _BWRAP_USABLE, reason="bwrap probe failed on this host")
+def test_real_bwrap_read_shield_smoke(tmp_path, monkeypatch):
+    secret_dir = tmp_path / "secret"
+    secret_dir.mkdir()
+    secret_file = secret_dir / "id_rsa"
+    secret_file.write_text("PRIVATE-KEY", encoding="utf-8")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret_dir])
+    monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", empty)
+
+    cmd, _env = BwrapBackend().wrap(["/bin/sh", "-c", f"cat {secret_file}"], {})
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+
+    assert result.returncode != 0, "masked secret must not be readable"
+    assert "PRIVATE-KEY" not in result.stdout
+    assert secret_file.read_text(encoding="utf-8") == "PRIVATE-KEY", "host file untouched"
 
 
 # --------------------------------------------------------------------------

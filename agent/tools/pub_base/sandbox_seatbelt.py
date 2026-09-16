@@ -7,10 +7,35 @@ follow oh-my-openagent ``sandbox-platform.ts`` ``buildDarwinProfile``.
 """
 
 import json
+import os
 import shutil
 
-from agent.tools.pub_base.sandbox import SandboxBackend
+from agent.tools.pub_base.sandbox import SandboxBackend, _sensitive_read_paths
 from config.path import ROOT_DIR, TEMP_DIR
+
+#: ``.env`` / ``.env.*`` basenames, denied at any depth via an sbpl regex
+#: (``(^|/)`` anchors the basename; the leading ``/`` of an absolute path also
+#: satisfies it).
+_ENV_READ_DENY_RULES = (
+    r'(deny file-read* (regex #"(^|/)\.env$"))',
+    r'(deny file-read* (regex #"(^|/)\.env\."))',
+)
+
+
+def _read_deny_lines() -> list[str]:
+    """sbpl deny-read rules for sensitive paths plus ``.env``-family files.
+
+    Paths are expanded (``~``) and embedded through ``json.dumps`` so quotes or
+    backslashes cannot break out into injected sbpl forms. Missing paths are
+    still denied: a denial on a nonexistent path is harmless and keeps the
+    profile independent of the host's current directory layout.
+    """
+    lines = [
+        f"(deny file-read* (subpath {json.dumps(os.path.expanduser(str(path)))}))"
+        for path in _sensitive_read_paths()
+    ]
+    lines += list(_ENV_READ_DENY_RULES)
+    return lines
 
 
 class SeatbeltBackend(SandboxBackend):
@@ -35,7 +60,9 @@ class SeatbeltBackend(SandboxBackend):
 
         Order is load-bearing: ``(deny file-write*)`` under ``(allow default)``
         turns the sandbox into "allow everything except file writes", then
-        explicit allows re-open the writable paths. Template order is the spec.
+        explicit allows re-open the writable paths. The deny-read rules for
+        sensitive paths and ``.env`` files sit directly after
+        ``(deny file-write*)``. Template order is the spec.
         Paths are embedded via ``json.dumps`` (sbpl strings are JSON-like) so
         quotes/backslashes in paths cannot break out into injected sbpl forms.
         """
@@ -43,6 +70,7 @@ class SeatbeltBackend(SandboxBackend):
             "(version 1)",
             "(allow default)",
             "(deny file-write*)",
+            *_read_deny_lines(),
             f"(allow file-write* (subpath {json.dumps(str(ROOT_DIR))}))",
             f"(allow file-write* (subpath {json.dumps(str(TEMP_DIR))}))",
             '(allow file-write* (literal "/dev/null"))',

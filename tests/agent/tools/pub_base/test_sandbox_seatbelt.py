@@ -8,6 +8,7 @@ executed (probe is which-only by design; seatbelt offers no exit-code probe).
 
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -126,3 +127,54 @@ def test_seatbelt_json_escaping_for_quote_containing_path(monkeypatch):
     assert expected in profile
     # Raw unescaped form (quote not preceded by backslash) must NOT appear.
     assert 'we"ird;' not in profile
+
+
+# --------------------------------------------------------------------------
+# Read-deny rules (P0-1)
+# --------------------------------------------------------------------------
+
+
+class TestReadDenyRules:
+    def test_sensitive_path_emits_subpath_deny(self, monkeypatch):
+        monkeypatch.setattr(seatbelt_mod, "_sensitive_read_paths", lambda: [Path("/home/u/.ssh")])
+        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        assert '(deny file-read* (subpath "/home/u/.ssh"))' in profile
+
+    def test_env_family_denied_by_regex(self):
+        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        assert r'(deny file-read* (regex #"(^|/)\.env$"))' in profile
+        assert r'(deny file-read* (regex #"(^|/)\.env\."))' in profile
+
+    def test_read_deny_placed_after_write_deny(self, monkeypatch):
+        monkeypatch.setattr(seatbelt_mod, "_sensitive_read_paths", lambda: [Path("/home/u/.ssh")])
+        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        write_deny = profile.index("(deny file-write*)")
+        read_deny = profile.index("(deny file-read*")
+        assert write_deny < read_deny
+
+    def test_missing_paths_still_emit_rules_without_error(self, monkeypatch):
+        monkeypatch.setattr(
+            seatbelt_mod,
+            "_sensitive_read_paths",
+            lambda: [Path("/home/u/.no-such-dir-xyz")],
+        )
+        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        assert '(deny file-read* (subpath "/home/u/.no-such-dir-xyz"))' in profile
+
+    def test_env_extension_and_tilde_expansion_reach_profile(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SHERRY_DENY_READ_PATHS", "~/custom-secret")
+
+        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+
+        assert f"(deny file-read* (subpath {json.dumps(str(home / 'custom-secret'))}))" in profile
+        assert f"(deny file-read* (subpath {json.dumps(str(home / '.ssh'))}))" in profile
+
+    def test_quote_in_sensitive_path_is_json_escaped(self, monkeypatch):
+        weird = Path('/tmp/we"ird')
+        monkeypatch.setattr(seatbelt_mod, "_sensitive_read_paths", lambda: [weird])
+        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        assert f"(deny file-read* (subpath {json.dumps(str(weird))}))" in profile
+        assert 'we"ird' not in profile

@@ -22,6 +22,7 @@ check is not enough — a smoke test is mandatory).
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 from config.path import ROOT_DIR, TEMP_DIR
 from config.features import TOOLS_TIMEOUTS
@@ -41,6 +42,8 @@ except ImportError:  # pragma: no cover
         def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]: ...
 
 
+from agent.tools.pub_base.sandbox import _sensitive_read_paths  # noqa: E402
+
 # Probe smoke-test timeout (seconds), bound to the feature registry.
 _PROBE_TIMEOUT_SECONDS = TOOLS_TIMEOUTS["sandbox_bwrap_probe_timeout_seconds"]
 
@@ -56,6 +59,42 @@ _PROBE_ARGV = [
     "/dev",
     "true",
 ]
+
+#: Source directory for the read-shield bind. Some minimal distros do not ship
+#: ``/var/empty``; directory masks then fall back to ``--tmpfs`` (same empty
+#: view, no source directory required).
+_EMPTY_MASK_DIR = Path("/var/empty")
+
+#: Source device for masking a sensitive *file* (a directory cannot be bound
+#: over a file); reading it yields EOF.
+_NULL_DEVICE = "/dev/null"
+
+
+def _read_shield_args() -> list[str]:
+    """bwrap argv fragment that masks sensitive paths from reads.
+
+    Placed after the writable binds so a writable mount can never re-expose a
+    masked path. Mount points must already exist on the host — bwrap cannot
+    create one under the read-only root bind — so a missing sensitive path is
+    skipped (there is nothing to read there anyway). Directories are covered
+    with an empty directory (``--ro-bind /var/empty <path>``), falling back to
+    ``--tmpfs <path>`` when ``/var/empty`` is absent; files are covered with
+    ``--ro-bind /dev/null <path>``.
+    """
+    args: list[str] = []
+    for path in _sensitive_read_paths():
+        try:
+            if not path.exists():
+                continue
+            if not path.is_dir():
+                args += ["--ro-bind", _NULL_DEVICE, str(path)]
+            elif _EMPTY_MASK_DIR.is_dir():
+                args += ["--ro-bind", str(_EMPTY_MASK_DIR), str(path)]
+            else:
+                args += ["--tmpfs", str(path)]
+        except OSError:
+            continue
+    return args
 
 
 class BwrapBackend(SandboxBackend):
@@ -90,6 +129,7 @@ class BwrapBackend(SandboxBackend):
         ]
         for path in _writable_paths():
             argv += ["--bind", path, path]
+        argv += _read_shield_args()
         argv += [
             "--tmpfs",
             "/tmp",

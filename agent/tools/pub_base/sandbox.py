@@ -50,6 +50,7 @@ import os
 import platform
 from abc import ABC, abstractmethod
 from enum import Enum
+from pathlib import Path
 
 __all__ = [
     "SandboxPolicy",
@@ -58,6 +59,40 @@ __all__ = [
     "read_policy",
     "get_backend",
 ]
+
+#: Default read-deny paths, masked by both OS backends: well-known credential
+#: stores that no sandboxed command may read. Extend the list with the
+#: ``SHERRY_DENY_READ_PATHS`` env var (``os.pathsep``-separated, ``~`` expanded).
+DEFAULT_DENY_READ_PATHS: tuple[str, ...] = (
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.config/gh",
+    "~/.docker",
+)
+
+
+def _sensitive_read_paths() -> list[Path]:
+    """Return the sensitive read-deny paths: defaults + ``SHERRY_DENY_READ_PATHS``.
+
+    ``SHERRY_DENY_READ_PATHS`` extends the defaults with ``os.pathsep``-separated
+    entries (``:`` on Linux/macOS, e.g. ``~/.kube:~/.config/gh``); ``~`` is
+    expanded, blank entries are skipped, order is preserved and duplicates are
+    dropped. Paths are returned unresolved and may not exist — the bwrap backend
+    skips missing mount points (nothing to read), while the seatbelt backend
+    emits rules for them anyway (denying a missing path is harmless).
+    """
+    raw = os.getenv("SHERRY_DENY_READ_PATHS", "")
+    entries: list[str] = [*DEFAULT_DENY_READ_PATHS, *raw.split(os.pathsep)]
+    paths: list[Path] = []
+    for entry in entries:
+        cleaned = entry.strip()
+        if not cleaned:
+            continue
+        expanded = Path(os.path.expanduser(cleaned))
+        if expanded not in paths:
+            paths.append(expanded)
+    return paths
 
 
 class SandboxPolicy(Enum):
