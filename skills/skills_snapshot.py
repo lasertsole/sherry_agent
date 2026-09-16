@@ -2,6 +2,7 @@ import os
 import json
 from config import SKILLS_DIR
 from loguru import logger
+from runtime import hooks
 
 # One-directional dependency (audit #18): the loader owns read_skills_snapshot
 # (its only consumer) and must not import this module back.
@@ -18,18 +19,18 @@ def _scan_builtin_skills() -> None:
     suspicious verdict only logs a warning — it must never crash startup or
     break the snapshot build.     Verdicts are surfaced to the user via the log
     file, which the client surfaces in the UI.
+
+    The scanner is resolved through ``runtime.hooks`` (registered by the server
+    assembly); when the hook is missing this is the pre-hooks ``ImportError``
+    path — skip the scan with a diagnostic (fail-open, preserving the original
+    semantics exactly).
     """
-    try:
-        from server.service.skill_scanner import scan_skill
-    except ImportError:
-        # `server.service`'s package __init__ recurses into `agent`. When
-        # `agent` is imported first (e.g. an integration test importing a
-        # middleware before the HTTP server), that recursion fails mid-init.
-        # Failing open here keeps startup safe; the scan still runs in the
-        # normal server-first path where `server.service` is already imported.
+    scan_skill = hooks.resolve(hooks.SCAN_SKILL)
+    if scan_skill is None:
         logger.debug(
-            "Built-in skill scan skipped: server.service not yet importable "
-            "(agent import recursion)."
+            "Built-in skill scan skipped: '{}' hook is not registered "
+            "(fail-open, mirrors the pre-hooks ImportError path).",
+            hooks.SCAN_SKILL,
         )
         return
 

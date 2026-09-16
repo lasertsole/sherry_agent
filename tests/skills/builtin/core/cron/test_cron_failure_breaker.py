@@ -24,6 +24,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from runtime import hooks
 from skills.builtin.core.cron.scripts import base as cron_base
 from skills.builtin.core.cron.scripts.types import CronJob, CronPayload, CronSchedule
 
@@ -94,17 +95,30 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(cron_base, "build_system_prompt", lambda: "sp")
     monkeypatch.setattr(cron_base, "create_agent", lambda **kwargs: fake_agent)
 
-    # _on_cron_job imports the tool builders lazily from agent.tools at call time.
+    # _on_cron_job resolves its tool builders from the runtime hook registered
+    # by the server assembly; register a fake that routes through the
+    # monkeypatched agent.tools builders.
     import agent.tools as agent_tools
 
     for name in ("build_python_repl_tool", "build_read_file_tool", "build_write_file_tool"):
         monkeypatch.setattr(agent_tools, name, lambda: SimpleNamespace(metadata={}))
+    hooks.register(
+        hooks.BUILD_BACKGROUND_AGENT_TOOLS,
+        lambda: [
+            agent_tools.build_python_repl_tool(),
+            agent_tools.build_read_file_tool(),
+            agent_tools.build_write_file_tool(),
+        ],
+    )
 
     svc = cron_base.CronService()
     svc.store_path = tmp_path / "cron_jobs.json"
     svc.set_on_job(svc._on_cron_job)  # mirror init(): _execute_job -> _on_cron_job
 
-    return SimpleNamespace(svc=svc, bus=bus, agent=fake_agent, tmp_path=tmp_path)
+    try:
+        yield SimpleNamespace(svc=svc, bus=bus, agent=fake_agent, tmp_path=tmp_path)
+    finally:
+        hooks.unregister(hooks.BUILD_BACKGROUND_AGENT_TOOLS)
 
 
 def _add_job(

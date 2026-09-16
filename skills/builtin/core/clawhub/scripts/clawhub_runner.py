@@ -20,6 +20,7 @@ from typing import Any
 from config import ROOT_DIR, PLUGIN_SKILLS_DIR, SKILLS_STATE_FILE
 from loguru import logger
 from pydantic import validate_call
+from runtime import hooks
 
 #: Commands that can write third-party skills into ``skills/plugins/``.
 _MUTATING_COMMANDS = {"install", "update"}
@@ -106,21 +107,19 @@ def _scan_plugin_skills() -> dict[str, Any]:
 
     A skill whose ScanResult is ``DO_NOT_INSTALL`` is deleted from disk and its
     entry dropped from ``.state.json`` so it can never be activated. ``CAUTION``
-    skills are kept but logged. If the scanner is unavailable/errors the scan is
-    skipped with a warning (fail-open) — matching the upload path's rule that a
-    missing scanner must not break the app.
+    skills are kept but logged. If the scanner hooks are unavailable/error the
+    scan is skipped with a warning (fail-open) — matching the upload path's
+    rule that a missing scanner must not break the app. The hooks are
+    registered by the server assembly; a missing hook is treated exactly as the
+    pre-hooks ``ImportError`` was (both names came from one import statement).
 
     Returns a summary dict (``scanned``, ``rolled_back``, ``caution``, ``skipped``)
     describing the outcome, for surfaced in the clawhub command's return payload.
     """
     summary: dict[str, int] = {"scanned": 0, "rolled_back": 0, "caution": 0, "skipped": 0}
-    try:
-        from server.service.skill_scanner import build_reject_message, scan_skill
-    except ImportError:
-        # Same import-recursion caveat as skills/skills_snapshot.py: importing
-        # `server.service` from the agent/skills side may fail mid-init. Fail
-        # open so a clawhub install keeps working without a verdict; the scan
-        # still runs in the normal server path where server.service exists.
+    scan_skill = hooks.resolve(hooks.SCAN_SKILL)
+    build_reject_message = hooks.resolve(hooks.BUILD_REJECT_MESSAGE)
+    if scan_skill is None or build_reject_message is None:
         logger.warning(
             "SkillScanner unavailable in clawhub context; skipping post-install "
             "security scan (fail-open)."

@@ -23,7 +23,7 @@ from collections.abc import Callable, Coroutine
 from workspace.prompt_builder import build_system_prompt
 from .types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
-from runtime import relation_register
+from runtime import hooks, relation_register
 
 cron_store_path: Path = ROOT_DIR / "cron_jobs.json"
 
@@ -469,13 +469,14 @@ class CronService:
             channel: str = payload.channel
             to: str = payload.to
 
-            from agent.tools import (
-                build_python_repl_tool,
-                build_read_file_tool,
-                build_write_file_tool,
-            )
+            build_background_tools = hooks.resolve(hooks.BUILD_BACKGROUND_AGENT_TOOLS)
+            if build_background_tools is None:
+                raise RuntimeError(
+                    "runtime hook 'build_background_agent_tools' is not registered; "
+                    "the cron agent cannot be built"
+                )
 
-            tools = [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()]
+            tools = build_background_tools()
 
             # Sandbox-hardening cron agents are BACKGROUND callers — stamp
             # every tool so the tool layer's sandbox-bypass guard (_deny_sandbox_bypass

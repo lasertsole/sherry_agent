@@ -4,10 +4,10 @@ These tests exercise ``clawhub_runner._scan_plugin_skills`` — the function tha
 runs after a successful ``clawhub install/update`` and rolls back any skill
 flagged ``DO_NOT_INSTALL`` by the SkillSpector scanner.
 
-We stub the lazy ``server.service.skill_scanner`` import (the module may be
-unavailable in the agent/skills context) and monkeypatch the clawhub module's
-``PLUGIN_SKILLS_DIR`` / ``SKILLS_STATE_FILE`` globals to tmp dirs so the tests
-never touch the real ``skills/plugins/`` tree.
+We register fake ``runtime.hooks`` scan hooks (the scanner is resolved through
+the process registry, and may be unavailable outside the server) and
+monkeypatch the clawhub module's ``PLUGIN_SKILLS_DIR`` / ``SKILLS_STATE_FILE``
+globals to tmp dirs so the tests never touch the real ``skills/plugins/`` tree.
 
 Covered scenarios:
 * DO_NOT_INSTALL skill is removed from disk AND its state entry pruned.
@@ -16,17 +16,19 @@ Covered scenarios:
 * Scanner unavailable (UNAVAILABLE) -> kept (fail-open).
 * scan_skill raising -> kept (fail-open).
 * Missing plugins dir -> empty scan.
-* ImportError on the scanner module -> fail-open, no crash.
+* Missing scanner hook -> fail-open, no crash.
 * Orphaned state entries are pruned after a rollback.
 * Summary counters are accurate.
 """
 
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+from runtime import hooks
 from skills.builtin.core.clawhub.scripts import clawhub_runner
 
 
@@ -61,21 +63,17 @@ def _write_state(state_file: Path, state: dict[str, object]) -> None:
     state_file.write_text(json.dumps(state), encoding="utf-8")
 
 
-def _patch_scanner(scan_results=None, raise_on_call=None, import_error=False):
-    """Patch clawhub_runner's lazy ``server.service.skill_scanner`` import.
+@contextmanager
+def _patch_scanner(scan_results=None, raise_on_call=None, missing_hook=False):
+    """Register fake scan hooks in ``runtime.hooks`` for one test body.
 
     scan_results: a callable(path)->ScanResult stub, or a fixed result.
     raise_on_call: optional exception to raise from scan_skill.
-    import_error: if True, force the ImportError fail-open branch.
+    missing_hook: if True, register nothing so the fail-open branch is taken.
     """
-    if import_error:
-        # Remove the module from sys.modules so the lazy `from
-        # server.service.skill_scanner import ...` raises ImportError.
-        return patch.dict(
-            "sys.modules",
-            {"server.service.skill_scanner": None},
-            clear=False,
-        )
+    if missing_hook:
+        yield
+        return
     if callable(scan_results):
         scan_fn = scan_results
     else:
@@ -86,19 +84,29 @@ def _patch_scanner(scan_results=None, raise_on_call=None, import_error=False):
             raise raise_on_call
         return scan_fn(path)
 
-    scanner_mod = SimpleNamespace(
-        scan_skill=fake_scan_skill,
-        build_reject_message=lambda r: (
-            "Skill rejected by security scanner" if r.is_do_not_install else None
-        ),
+    hooks.register(hooks.SCAN_SKILL, fake_scan_skill)
+    hooks.register(
+        hooks.BUILD_REJECT_MESSAGE,
+        lambda r: "Skill rejected by security scanner" if r.is_do_not_install else None,
     )
-    return patch.dict(
-        "sys.modules",
-        {"server.service.skill_scanner": scanner_mod},
-    )
+    try:
+        yield
+    finally:
+        hooks.unregister(hooks.SCAN_SKILL)
+        hooks.unregister(hooks.BUILD_REJECT_MESSAGE)
 
 
 pytestmark = [pytest.mark.unit]
+
+
+@pytest.fixture(autouse=True)
+def _clean_scan_hooks():
+    """Every test starts and ends with no scanner hooks registered."""
+    hooks.unregister(hooks.SCAN_SKILL)
+    hooks.unregister(hooks.BUILD_REJECT_MESSAGE)
+    yield
+    hooks.unregister(hooks.SCAN_SKILL)
+    hooks.unregister(hooks.BUILD_REJECT_MESSAGE)
 
 
 @pytest.fixture
@@ -200,10 +208,10 @@ class TestScanPluginSkills:
 
         assert summary == {"scanned": 0, "rolled_back": 0, "caution": 0, "skipped": 0}
 
-    def test_import_error_fails_open(self, clamp_globals):
+    def test_missing_hook_fails_open(self, clamp_globals):
         plugins_dir, _state_file = clamp_globals
         _make_skill(plugins_dir, "anything")
-        with _patch_scanner(import_error=True):
+        with _patch_scanner(missing_hook=True):
             summary = clawhub_runner._scan_plugin_skills()
 
         assert summary == {"scanned": 0, "rolled_back": 0, "caution": 0, "skipped": 0}
