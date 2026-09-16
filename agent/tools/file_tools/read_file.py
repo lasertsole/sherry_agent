@@ -69,6 +69,7 @@ class ReadFileTool(BaseTool):
     # ── shared core ────────────────────────────────────────────────────────
 
     def _core(self, file_path: str, offset: int = 1, limit: int = 500, session_id: str = "") -> str:
+        # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
             resolved = resolve_project_path(file_path)
         except PathOutOfBoundsError:

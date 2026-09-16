@@ -82,6 +82,7 @@ class FormattedWriteFileTool(WriteFileTool):
         append: bool = False,
         session_id: str = "",
     ) -> str:
+        # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
             resolved = resolve_project_path(file_path)
         except PathOutOfBoundsError:
