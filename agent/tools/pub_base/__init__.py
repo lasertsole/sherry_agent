@@ -3,6 +3,7 @@ from .path_utils import (
     resolve_project_path,
     resolve_external_path,
     _extract_session_id,
+    _open_no_follow,
     PathOutOfBoundsError,
 )
 from .file_utils import is_text_file, should_skip_dir
@@ -27,6 +28,7 @@ __all__ = [
     "resolve_project_path",
     "resolve_external_path",
     "_extract_session_id",
+    "_open_no_follow",
     "PathOutOfBoundsError",
     "is_text_file",
     "should_skip_dir",

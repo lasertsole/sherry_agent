@@ -1,5 +1,6 @@
 """Shared path resolution utilities for file tools."""
 
+import errno
 import os
 from pathlib import Path
 
@@ -16,16 +17,85 @@ class PathOutOfBoundsError(ValueError):
     """
 
 
+# ── Path safety gates ───────────────────────────────────────────────
+
+_WIN32_ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
+def _reject_traversal_input(file_path: str) -> None:
+    """Gate 1: string-level rejection of traversal, before any filesystem I/O.
+
+    Rejects ``~``-prefixed input and any ``..`` path *component*. Component
+    matching (``Path(...).parts``) is deliberate: a substring test would
+    false-positive on legitimate names such as ``foo..bar`` or ``配置..md``.
+    """
+    if file_path.startswith("~") or any(part == ".." for part in Path(file_path).parts):
+        raise PathOutOfBoundsError(f"Path traversal not allowed: {file_path}")
+
+
+def _is_eloop_oserror(exc: BaseException | None) -> bool:
+    """Return True when exc is an OS-level symlink-loop (ELOOP) error."""
+    return isinstance(exc, OSError) and (
+        exc.errno == errno.ELOOP
+        or getattr(exc, "winerror", None) == _WIN32_ERROR_CANT_RESOLVE_FILENAME
+    )
+
+
+def _is_symlink_loop_error(exc: Exception) -> bool:
+    """Return True when exc (or a chained cause/context) signals a symlink loop."""
+    if _is_eloop_oserror(exc):
+        return True
+    return isinstance(exc, RuntimeError) and any(
+        _is_eloop_oserror(chained) for chained in (exc.__cause__, exc.__context__)
+    )
+
+
+def _raise_if_symlink_loop(path: Path) -> None:
+    """Gate 3: raise ELOOP when ``path`` is itself a looping symlink.
+
+    ``Path.resolve()`` stops silently at a symlink loop and hands back the
+    looping link, which would later fail in confusing ways. ``stat()`` maps
+    that condition to ``OSError(ELOOP)``, turning it into an explicit error.
+    """
+    if not path.is_symlink():
+        return
+    try:
+        path.stat()
+    except OSError as exc:
+        if _is_eloop_oserror(exc):
+            raise
+
+
+def _open_no_follow(path: Path, flags: int, mode: int = 0o644) -> int:
+    """``os.open`` with ``O_NOFOLLOW``; Windows fallback: an ``is_symlink`` check.
+
+    Closes the TOCTOU window between resolution and I/O: the final path
+    component is refused when it is a symlink, so a link swapped in after
+    validation cannot redirect the read/write outside ROOT_DIR. Raises
+    ``OSError(ELOOP)`` — the same errno Linux/macOS produce natively.
+    """
+    if not hasattr(os, "O_NOFOLLOW"):
+        if path.is_symlink():
+            raise OSError(errno.ELOOP, "Symbolic link not allowed")
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), mode)
+
+
 def resolve_project_path(file_path: str) -> Path:
     """Resolve file_path against ROOT_DIR; reject paths escaping the project.
 
-    Relative paths are joined onto ROOT_DIR; ~ is expanded. The result is
-    guaranteed to be ROOT_DIR or a descendant thereof — absolute paths that
-    resolve outside are rejected via :class:`PathOutOfBoundsError`.
+    Three gates run in order:
 
-    For paths that legitimately need to reach outside ROOT_DIR, use
-    :func:`resolve_external_path` instead.
+    1. String-level rejection of ``..`` components and ``~`` prefixes
+       (no filesystem access).
+    2. ``resolve()`` + ``relative_to(ROOT_DIR)`` containment — absolute
+       paths that resolve outside are rejected via
+       :class:`PathOutOfBoundsError`.
+    3. Symlink-loop detection on the resolved path (``OSError(ELOOP)``).
+
+    Relative paths are joined onto ROOT_DIR. For paths that legitimately
+    need to reach outside ROOT_DIR, use :func:`resolve_external_path` instead.
     """
+    _reject_traversal_input(file_path)
     p = Path(os.path.expanduser(file_path))
     if not p.is_absolute():
         p = ROOT_DIR / p
@@ -34,6 +104,7 @@ def resolve_project_path(file_path: str) -> Path:
         raise PathOutOfBoundsError(
             f"Path resolves outside project root and is not allowed: {resolved} (root={ROOT_DIR})"
         )
+    _raise_if_symlink_loop(resolved)
     return resolved
 
 

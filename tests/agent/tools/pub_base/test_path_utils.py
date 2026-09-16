@@ -9,7 +9,11 @@ E. Subagent authorization inheritance helpers (E1-E5)
 F. HITL interrupt behavior (F1-F5)
 G. YOLO deny list: always enforced, beats YOLO / allowlist / subagent (G1-G5)
 H. Directory-level allowlist + approve_dir decision (H1-H4)
+P0-3. Three-gate resolution: traversal strings, symlink loops, O_NOFOLLOW
 """
+
+import errno
+import os
 
 import pytest
 from pathlib import Path
@@ -21,9 +25,13 @@ from agent.tools.pub_base.path_utils import (
     resolve_path,
     PathOutOfBoundsError,
     _get_yolo_deny_paths,
+    _is_eloop_oserror,
+    _is_symlink_loop_error,
     _is_yolo,
     _is_yolo_denied,
     _is_subagent,
+    _open_no_follow,
+    _raise_if_symlink_loop,
     _candidate_session_ids,
     _add_to_allowlist,
     _extract_session_id,
@@ -98,13 +106,9 @@ class TestResolveProjectPath:
         resolved = resolve_project_path(str(target))
         assert resolved == target.resolve()
 
-    def test_tilde_expansion_inside_root(self, monkeypatch):
-        target = ROOT_DIR / "in_root_file.py"
-        monkeypatch.setattr(
-            "os.path.expanduser", lambda p: str(target) if p == "~/in_root_file.py" else p
-        )
-        resolved = resolve_project_path("~/in_root_file.py")
-        assert resolved == target.resolve()
+    def test_tilde_path_rejected(self):
+        with pytest.raises(PathOutOfBoundsError, match="not allowed"):
+            resolve_project_path("~/in_root_file.py")
 
     def test_absolute_path_outside_root_rejected(self):
         with pytest.raises(PathOutOfBoundsError):
@@ -114,6 +118,116 @@ class TestResolveProjectPath:
         with pytest.warns(DeprecationWarning):
             resolved = resolve_path("src/main.py")
         assert resolved == (ROOT_DIR / "src/main.py").resolve()
+
+
+# ── P0-3 gates: traversal strings, symlink loops, O_NOFOLLOW ────────────
+
+
+class TestResolveGates:
+    def test_double_dot_rejected_without_filesystem_access(self, monkeypatch):
+        def _boom(self):
+            raise AssertionError("resolve() must not run for traversal input")
+
+        monkeypatch.setattr(Path, "resolve", _boom)
+
+        with pytest.raises(PathOutOfBoundsError, match="traversal"):
+            resolve_project_path("../../etc/passwd")
+
+    def test_mid_path_traversal_rejected(self):
+        with pytest.raises(PathOutOfBoundsError, match="traversal"):
+            resolve_project_path("src/../../etc/passwd")
+
+    def test_dotdot_like_names_allowed(self):
+        assert resolve_project_path("foo..bar") == (ROOT_DIR / "foo..bar").resolve()
+        assert resolve_project_path("配置..md") == (ROOT_DIR / "配置..md").resolve()
+
+    def test_symlink_loop_detected(self, tmp_path, monkeypatch):
+        root = tmp_path.resolve()
+        monkeypatch.setattr("agent.tools.pub_base.path_utils.ROOT_DIR", root)
+        (root / "a").symlink_to(root / "b")
+        (root / "b").symlink_to(root / "a")
+
+        with pytest.raises(OSError) as excinfo:
+            resolve_project_path("a")
+
+        assert _is_eloop_oserror(excinfo.value)
+
+
+class TestSymlinkLoopHelpers:
+    def test_is_eloop_oserror_matches_eloop(self):
+        assert _is_eloop_oserror(OSError(errno.ELOOP, "loop")) is True
+
+    def test_is_eloop_oserror_rejects_other_errno(self):
+        assert _is_eloop_oserror(OSError(errno.ENOENT, "missing")) is False
+        assert _is_eloop_oserror(None) is False
+
+    def test_is_eloop_oserror_matches_winerror(self):
+        exc = OSError(0, "windows loop")
+        exc.winerror = 1921
+        assert _is_eloop_oserror(exc) is True
+
+    def test_is_symlink_loop_error_follows_chained_cause(self):
+        exc = RuntimeError("wrapped")
+        exc.__cause__ = OSError(errno.ELOOP, "loop")
+        assert _is_symlink_loop_error(exc) is True
+
+    def test_is_symlink_loop_error_plain_runtime(self):
+        assert _is_symlink_loop_error(RuntimeError("nope")) is False
+
+    def test_raise_if_symlink_loop_noop_for_regular_file(self, tmp_path):
+        regular = tmp_path / "plain.txt"
+        regular.write_text("x", encoding="utf-8")
+
+        _raise_if_symlink_loop(regular)
+
+    def test_raise_if_symlink_loop_raises_for_loop(self, tmp_path):
+        (tmp_path / "a").symlink_to(tmp_path / "b")
+        (tmp_path / "b").symlink_to(tmp_path / "a")
+
+        with pytest.raises(OSError) as excinfo:
+            _raise_if_symlink_loop(tmp_path / "a")
+
+        assert excinfo.value.errno == errno.ELOOP
+
+
+class TestOpenNoFollow:
+    def test_rejects_symlink_final_component(self, tmp_path):
+        target = tmp_path / "target.txt"
+        target.write_text("data", encoding="utf-8")
+        link = tmp_path / "link.txt"
+        link.symlink_to(target)
+
+        with pytest.raises(OSError) as excinfo:
+            _open_no_follow(link, os.O_RDONLY)
+
+        assert excinfo.value.errno == errno.ELOOP
+
+    def test_reads_regular_file(self, tmp_path):
+        target = tmp_path / "plain.txt"
+        target.write_text("plain-data", encoding="utf-8")
+
+        fd = _open_no_follow(target, os.O_RDONLY)
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
+                fd = -1
+                assert f.read() == "plain-data"
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+    def test_windows_fallback_uses_is_symlink_check(self, tmp_path, monkeypatch):
+        target = tmp_path / "target.txt"
+        target.write_text("data", encoding="utf-8")
+        link = tmp_path / "link.txt"
+        link.symlink_to(target)
+        monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+
+        with pytest.raises(OSError) as excinfo:
+            _open_no_follow(link, os.O_RDONLY)
+        assert excinfo.value.errno == errno.ELOOP
+
+        fd = _open_no_follow(target, os.O_RDONLY)
+        os.close(fd)
 
 
 # ── B. External safe fast path ──────────────────────────────────────────
