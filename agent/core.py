@@ -19,6 +19,7 @@ from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (
     Summarization,
     ToolCallNormalize,
+    PathGuard,
     MultimodalProcessor,
     ContextEngineHook,
     ToolGuardrails,
@@ -183,6 +184,7 @@ async def built_agent(
                 IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
                 ToolGuardrails(),
                 ToolCallNormalize(),
+                PathGuard(),
                 SubagentCompletionDrainMiddleware(),
                 TaskIntentMiddleware(),
                 OutputRepetitionGuard(),
