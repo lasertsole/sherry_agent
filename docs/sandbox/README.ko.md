@@ -119,6 +119,10 @@ bwrap
    - `yolo` — 모든 외부 경로를 영구 허용;
    - `reject` — 접근 거부.
 
+`resolve_project_path()`(ROOT_DIR 쪽 흐름) 내부에서 경로는 세 개의 구조적 게이트를 통과합니다: `..` 컴포넌트와 `~` 접두사는 파일 시스템 접근 전에 문자열 수준에서 거부되고, `resolve()` + `relative_to(ROOT_DIR)`가 탈출을 거부하며, 해석된 경로의 심볼릭 링크 루프는 `OSError(ELOOP)`를 던집니다. 이후 모든 파일 I/O는 `os.open(..., O_NOFOLLOW)`로 열리며(Windows는 `is_symlink` 검사로 폴백), 검증과 열기 사이에 교체된 심볼릭 링크는 따라가지 않고 거부됩니다 — TOCTOU 창이 닫힙니다.
+
+모델이 보는 출력에는 실제 루트 경로가 포함되지 않습니다: 반환/오류 경로는 가상 경로(`/src/main.py`, `display_path()` / `to_virtual_path()`)로 렌더링되고, 외부이거나 해석할 수 없는 대상은 파일 이름만으로 폴백합니다. `safe_error_detail()`은 `OSError.__str__` 대신 `strerror`(예: `Permission denied`)만 노출합니다. 검색 결과에는 컨테인먼트 필터가 추가로 적용되어 실제 경로가 검색 루트 밖으로 해석되는 히트(예: `/etc/passwd`로 향하는 파일 심볼릭 링크)는 건너뜁니다.
+
 ## ⚙️ 구현과 아키텍처
 
 ### 정책: `SandboxPolicy`

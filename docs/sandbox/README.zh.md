@@ -119,6 +119,10 @@ bwrap
    - `yolo` —— 永久允许所有外部路径；
    - `reject` —— 拒绝本次访问。
 
+在 `resolve_project_path()`（ROOT_DIR 一侧的流程）内部，路径要过三道结构性门禁：`..` 分量与 `~` 前缀在任何文件系统访问之前按字符串拒绝；`resolve()` + `relative_to(ROOT_DIR)` 拒绝越界；解析结果上的符号链接环抛出 `OSError(ELOOP)`。之后所有文件 I/O 都经 `os.open(..., O_NOFOLLOW)` 打开（Windows 回退为 `is_symlink` 检查），因此在校验与打开之间被换入的符号链接会被拒绝而不是跟随——TOCTOU 窗口就此闭合。
+
+模型可见输出绝不包含真实根路径：返回与错误中的路径统一渲染为虚拟路径（`/src/main.py`，`display_path()` / `to_virtual_path()`），外部或无法解析的目标回退为纯文件名；`safe_error_detail()` 只暴露 `strerror`（如 `Permission denied`）而不是 `OSError.__str__`。搜索结果另有 containment 过滤：任何真实路径解析到搜索根之外的命中（例如指向 `/etc/passwd` 的文件符号链接）都会被跳过。
+
 ## ⚙️ 实现与架构
 
 ### 策略：`SandboxPolicy`

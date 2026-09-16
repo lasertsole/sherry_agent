@@ -119,6 +119,10 @@ Independent of the L1/L2 sandbox above, file tools (`read_file`, `write_file`, `
    - `yolo` — permanently allow all external paths;
    - `reject` — deny the access.
 
+Inside `resolve_project_path()` (the ROOT_DIR side of the flow) the path passes three structural gates: `..` components and `~` prefixes are rejected as strings before any filesystem access, `resolve()` + `relative_to(ROOT_DIR)` rejects escapes, and a symlink loop on the resolved path raises `OSError(ELOOP)`. All file I/O then opens through `os.open(..., O_NOFOLLOW)` (Windows falls back to an `is_symlink` check), so a symlink swapped in between validation and open is refused instead of followed — closing the TOCTOU window.
+
+Model-visible output never contains the real root path: returned and error paths are rendered as virtual paths (`/src/main.py`) via `display_path()` / `to_virtual_path()`, falling back to the bare filename for external or unresolvable targets, and `safe_error_detail()` surfaces only the `strerror` (e.g. `Permission denied`) instead of `OSError.__str__`. Search results are additionally containment-filtered: any hit whose real path resolves outside the searched root (for example a file symlink to `/etc/passwd`) is skipped.
+
 ## ⚙️ Implementation & Architecture
 
 ### Policy: `SandboxPolicy`
