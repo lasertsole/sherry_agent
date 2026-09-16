@@ -199,15 +199,17 @@ class ContextEngineHook(AgentMiddleware):
     ) -> ModelRequest[ContextT]:
         """Inject system prompt into the request.
 
-        Returns the (possibly overridden) request.
+        Returns the (possibly overridden) request. When the request already
+        carries a SystemMessage with identical content, the request is returned
+        untouched: no new SystemMessage object and no override are created, so
+        the model-visible prefix stays byte-identical.
         """
-        return request.override(
-            system_message=SystemMessage(
-                content=self._get_and_reload_system_prompt(
-                    self._get_session_id_or_raise(request.state)
-                )
-            )
-        )
+        session_id = self._get_session_id_or_raise(request.state)
+        prompt_str = self._get_and_reload_system_prompt(session_id)
+        existing = request.system_message
+        if isinstance(existing, SystemMessage) and existing.content == prompt_str:
+            return request
+        return request.override(system_message=SystemMessage(content=prompt_str))
 
     @override
     def wrap_model_call(
