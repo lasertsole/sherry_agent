@@ -254,7 +254,7 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 - Base64 미디어는 먼저 `POST /images/upload`, `/audio/upload`, `/video/upload`로 업로드되고 URL로 참조됨
 - 서버 프레임: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; 청크는 `type`(`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`)과 도구 메타데이터를 포함
 - 스트림 중단 시 지수 백오프로 재연결(1s/2s/4s, `WS_RECONNECT_MAX_ATTEMPTS`로 최대 3회); 스트림 중 손실은 `StreamInterruptedError`를 발생시키고 mitt를 통해 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` 이벤트를 발행
-- HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `reject` / `edit`)으로 전송
+- HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `approve_dir` / `yolo` / `reject` / `edit`)으로 전송
 
 ### WebSocket 싱글턴(ws.ts)
 

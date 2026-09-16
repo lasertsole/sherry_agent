@@ -254,7 +254,7 @@ Browser-mode chat streaming details:
 - Base64 media is uploaded first via `POST /images/upload`, `/audio/upload`, `/video/upload` and referenced by URL
 - Server frames: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; chunks carry a `type` (`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`) and tool metadata
 - Interrupted streams reconnect with exponential backoff (1s/2s/4s, max 3 attempts via `WS_RECONNECT_MAX_ATTEMPTS`); a mid-stream loss raises `StreamInterruptedError` and emits `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` via mitt
-- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `reject` / `edit`)
+- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`)
 
 ### WebSocket Singletons (ws.ts)
 

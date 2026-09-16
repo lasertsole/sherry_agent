@@ -104,6 +104,21 @@ A `sandbox=False` call is a deliberate bypass request. In a **main-session** gra
 - **YOLO mode** (`is_yolo_mode`: `config.yolo_mode`, or `ApprovalMode.OFF`, or env `SHERRY_YOLO_MODE` in `1` / `true` / `yes`): the interrupt is skipped and the call executes directly (env scrub still applies).
 - **Background / subagent scope**: heartbeat and cron tools are stamped `caller_scope="background"`; the subagent pipeline stamps `caller_scope="subagent"`. Those graphs have no HITL middleware, so the tool layer itself hard-rejects `sandbox=False` with a `ToolException`. No interrupt exists there, and none is needed.
 
+### 5. External file path gate (file tools)
+
+Independent of the L1/L2 sandbox above, file tools (`read_file`, `write_file`, `patch_file`, `search_files`, ...) resolve every path through `agent/tools/pub_base/path_utils.py::resolve_external_path()`, which applies six checks in order:
+
+1. **Inside `ROOT_DIR`** — returned directly as a safe path.
+2. **YOLO deny list** — the security floor: `~/.ssh/`, `~/.aws/`, `~/.gnupg/`, `~/.config/gcloud/`, `~/.env`, `~/.gitconfig`, `~/.npmrc`, `~/.pypirc`, extendable via `yolo_deny_paths` in `sherry.jsonc`. A hit is rejected here regardless of what follows: YOLO mode, an allowlist match, and subagent authorization inheritance all stop at this gate.
+3. **YOLO mode** — global allow-all returns the path.
+4. **Session allowlist** — exact-path entries and directory entries (trailing `/`, matching the directory and every descendant) are session-scoped and inherited by subagents.
+5. **Subagent without prior authorization** — rejected: a subagent can never self-approve a new path.
+6. **Main session** — HITL interrupt with `allowed_decisions: ["approve", "approve_dir", "yolo", "reject"]`:
+   - `approve` — allow this file only (session-scoped, inherited by subagents);
+   - `approve_dir` — allow the file's entire parent directory (session-scoped prefix match, inherited by subagents);
+   - `yolo` — permanently allow all external paths;
+   - `reject` — deny the access.
+
 ## ⚙️ Implementation & Architecture
 
 ### Policy: `SandboxPolicy`

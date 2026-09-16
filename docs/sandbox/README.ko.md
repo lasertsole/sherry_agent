@@ -104,6 +104,21 @@ bwrap
 - **YOLO 모드**(`is_yolo_mode`: `config.yolo_mode`, 또는 `ApprovalMode.OFF`, 또는 환경 변수 `SHERRY_YOLO_MODE`가 `1` / `true` / `yes`): 인터럽트를 건너뛰고 바로 실행합니다(환경 세척은 여전히 적용).
 - **백그라운드 / 서브에이전트 범위**: heartbeat와 cron 도구는 `caller_scope="background"`로 스탬프되고, 서브에이전트 파이프라인은 `caller_scope="subagent"`로 스탬프합니다. 그 그래프에는 HITL 미들웨어가 없으므로 도구 계층이 직접 `sandbox=False`를 `ToolException`으로 강제 거부합니다. 거기에는 인터럽트가 없고, 필요하지도 않습니다.
 
+### 5. 외부 파일 경로 게이트(파일 도구)
+
+위의 L1/L2 샌드박스와 독립적으로, 파일 도구(`read_file`, `write_file`, `patch_file`, `search_files` 등)는 모든 경로를 `agent/tools/pub_base/path_utils.py::resolve_external_path()`로 해석하며 다음 6단계 검사를 순서대로 적용합니다:
+
+1. **`ROOT_DIR` 내부** — 안전한 경로로 그대로 반환합니다.
+2. **YOLO 거부 목록** — 보안 바닥: `~/.ssh/`, `~/.aws/`, `~/.gnupg/`, `~/.config/gcloud/`, `~/.env`, `~/.gitconfig`, `~/.npmrc`, `~/.pypirc`이며 `sherry.jsonc`의 `yolo_deny_paths`로 확장할 수 있습니다. 여기서 걸리면 그 자리에서 거부되며 이후 계층은 이를 넘을 수 없습니다: YOLO 모드, allowlist 일치, 서브에이전트 권한 상속 모두 이 게이트에서 멈춥니다.
+3. **YOLO 모드** — 전역 전체 허용, 경로를 반환합니다.
+4. **세션 allowlist** — 정확한 경로 항목과 디렉터리 항목(끝 `/`, 해당 디렉터리와 모든 하위 경로 일치)은 세션 범위이며 서브에이전트에 상속됩니다.
+5. **사전 승인 없는 서브에이전트** — 거부: 서브에이전트는 새 경로를 스스로 승인할 수 없습니다.
+6. **메인 세션** — HITL 인터럽트, `allowed_decisions: ["approve", "approve_dir", "yolo", "reject"]`:
+   - `approve` — 이 파일만 허용(세션 범위, 서브에이전트에 상속);
+   - `approve_dir` — 파일이 속한 디렉터리 전체 허용(세션 범위 접두사 일치, 서브에이전트에도 상속);
+   - `yolo` — 모든 외부 경로를 영구 허용;
+   - `reject` — 접근 거부.
+
 ## ⚙️ 구현과 아키텍처
 
 ### 정책: `SandboxPolicy`

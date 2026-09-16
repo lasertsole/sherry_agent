@@ -104,6 +104,21 @@ bwrap
 - **YOLO 模式**（`is_yolo_mode`：`config.yolo_mode`，或 `ApprovalMode.OFF`，或环境变量 `SHERRY_YOLO_MODE` 为 `1` / `true` / `yes`）：跳过中断，调用直接执行（环境变量清洗仍然生效）。
 - **后台 / 子代理作用域**：heartbeat 与 cron 工具被标记 `caller_scope="background"`；子代理管线标记 `caller_scope="subagent"`。那些图里没有 HITL 中间件，所以由工具层直接以 `ToolException` 硬拒 `sandbox=False`。那里不存在中断，也不需要。
 
+### 5. 外部文件路径门禁（文件工具）
+
+与上面的 L1/L2 沙箱相互独立，文件工具（`read_file`、`write_file`、`patch_file`、`search_files` 等）的每个路径都经过 `agent/tools/pub_base/path_utils.py::resolve_external_path()`，它按顺序执行六层检查：
+
+1. **位于 `ROOT_DIR` 之内** —— 作为安全路径直接返回。
+2. **YOLO 排除列表** —— 安全地板：`~/.ssh/`、`~/.aws/`、`~/.gnupg/`、`~/.config/gcloud/`、`~/.env`、`~/.gitconfig`、`~/.npmrc`、`~/.pypirc`，可通过 `sherry.jsonc` 的 `yolo_deny_paths` 扩展。命中即在此拒绝，后面的任何一层都无法越过：YOLO 模式、allowlist 命中、子代理授权继承都在此止步。
+3. **YOLO 模式** —— 全局放行，直接返回路径。
+4. **会话 allowlist** —— 精确路径条目与目录条目（以 `/` 结尾，匹配该目录及其全部后代）仅在本会话有效，并由子代理继承。
+5. **未获授权的子代理** —— 拒绝：子代理永远不能自行批准新路径。
+6. **主会话** —— HITL 中断，`allowed_decisions: ["approve", "approve_dir", "yolo", "reject"]`：
+   - `approve` —— 仅允许该文件（本会话有效，子代理继承）；
+   - `approve_dir` —— 允许该文件所在的整个目录（本会话内前缀匹配，子代理同样继承）；
+   - `yolo` —— 永久允许所有外部路径；
+   - `reject` —— 拒绝本次访问。
+
 ## ⚙️ 实现与架构
 
 ### 策略：`SandboxPolicy`

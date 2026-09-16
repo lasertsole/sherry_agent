@@ -104,6 +104,21 @@ bwrap
 - **YOLO モード**(`is_yolo_mode`: `config.yolo_mode`、または `ApprovalMode.OFF`、または環境変数 `SHERRY_YOLO_MODE` が `1` / `true` / `yes`): インタラプトを省き、直接実行します(環境洗浄は依然適用)。
 - **バックグラウンド / サブエージェントスコープ**: heartbeat と cron のツールには `caller_scope="background"` がスタンプされ、サブエージェントパイプラインは `caller_scope="subagent"` をスタンプします。それらのグラフには HITL ミドルウェアがないため、ツール層自体が `sandbox=False` を `ToolException` で強制拒否します。そこにインタラプトは存在せず、必要でもありません。
 
+### 5. 外部ファイルパスゲート(ファイルツール)
+
+上記の L1/L2 サンドボックスとは独立に、ファイルツール(`read_file`、`write_file`、`patch_file`、`search_files` など)はすべてのパスを `agent/tools/pub_base/path_utils.py::resolve_external_path()` で解決し、次の6段階のチェックを順に適用します:
+
+1. **`ROOT_DIR` の内側** — 安全なパスとしてそのまま返します。
+2. **YOLO 拒否リスト** — セキュリティフロア: `~/.ssh/`、`~/.aws/`、`~/.gnupg/`、`~/.config/gcloud/`、`~/.env`、`~/.gitconfig`、`~/.npmrc`、`~/.pypirc`(`sherry.jsonc` の `yolo_deny_paths` で拡張可能)。ここでヒットした時点で拒否され、以降の層は越えられません: YOLO モード、allowlist のヒット、サブエージェントへの権限継承もすべてこのゲートで止まります。
+3. **YOLO モード** — グローバル全許可。パスを返します。
+4. **セッション allowlist** — 完全一致パスのエントリとディレクトリエントリ(末尾 `/`、そのディレクトリと配下すべてに一致)はセッション限定で、サブエージェントに継承されます。
+5. **事前承認のないサブエージェント** — 拒否: サブエージェントが新しいパスを自己承認することはできません。
+6. **メインセッション** — HITL インタラプト、`allowed_decisions: ["approve", "approve_dir", "yolo", "reject"]`:
+   - `approve` — このファイルのみ許可(セッション限定、サブエージェントに継承);
+   - `approve_dir` — ファイルが属するディレクトリ全体を許可(セッション限定のプレフィックス一致、サブエージェントにも継承);
+   - `yolo` — すべての外部パスを恒久的に許可;
+   - `reject` — アクセスを拒否。
+
 ## ⚙️ 実装とアーキテクチャ
 
 ### ポリシー: `SandboxPolicy`

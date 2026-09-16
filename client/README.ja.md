@@ -254,7 +254,7 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 - Base64 メディアは先に `POST /images/upload`、`/audio/upload`、`/video/upload` でアップロードされ、URL で参照される
 - サーバーフレーム：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；チャンクは `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）とツールメタデータを保持
 - ストリーム切断時は指数バックオフで再接続（1s/2s/4s、`WS_RECONNECT_MAX_ATTEMPTS` により最大 3 回）；ストリーム中の損失は `StreamInterruptedError` を投げ、mitt 経由で `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` を発行
-- HITL 割り込みは `HitlInterruptData`（ツール名/引数/選択肢）を保持；判定は `hitl_response` フレーム（`approve` / `reject` / `edit`）として送信
+- HITL 割り込みは `HitlInterruptData`（ツール名/引数/選択肢）を保持；判定は `hitl_response` フレーム（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）として送信
 
 ### WebSocket シングルトン（ws.ts）
 

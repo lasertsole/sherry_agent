@@ -254,7 +254,7 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 - Base64 媒体先经 `POST /images/upload`、`/audio/upload`、`/video/upload` 上传并以 URL 引用
 - 服务端帧：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；chunk 携带 `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）与工具元数据
 - 流中断后按指数退避重连（1s/2s/4s，经 `WS_RECONNECT_MAX_ATTEMPTS` 最多 3 次）；流中丢失会抛出 `StreamInterruptedError`，并经 mitt 发出 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed`
-- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `reject` / `edit`）
+- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）
 
 ### WebSocket 单例（ws.ts）
 
