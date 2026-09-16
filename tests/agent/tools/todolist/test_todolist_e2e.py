@@ -223,7 +223,9 @@ def _reset_module_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.fixture()
-def prompt_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_stores: Path) -> dict:
+def prompt_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_stores: Path
+) -> Iterator[dict]:
     """Isolate persona files, boulder path, state cache, continuity dir, WS."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -247,7 +249,14 @@ def prompt_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_stores:
 
     monkeypatch.setattr(continuity, "_CONTINUITY_DIR", tmp_path / "continuity")
 
-    return {"tmp_path": tmp_path, "boulder_path": boulder_path, "workspace": workspace}
+    # The real provider path (production registers it in agent.core.init()).
+    from agent.prompt_data_provider import AgentPromptDataProvider
+    from runtime import data_provider
+
+    data_provider.set_prompt_data_provider(AgentPromptDataProvider())
+
+    yield {"tmp_path": tmp_path, "boulder_path": boulder_path, "workspace": workspace}
+    data_provider.clear_prompt_data_provider()
 
 
 @pytest.fixture()
