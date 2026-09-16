@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
+    display_path,
     is_text_file,
     resolve_external_path,
     resolve_project_path,
@@ -72,7 +73,7 @@ def _search_content(
                     ctx_after = lines[i + 1 : i + 1 + context] if context else []
                     matches.append(
                         {
-                            "path": str(fpath),
+                            "path": display_path(fpath),
                             "line_number": i + 1,
                             "content": line[:500],
                             "context_before": ctx_before,
@@ -119,7 +120,7 @@ def _search_files(pattern: str, root: Path, limit: int, offset: int) -> dict:
 
         for fname in sorted(filenames):
             if fnmatch.fnmatch(fname, bare_name) or fnmatch.fnmatch(fname, f"*{bare_name}*"):
-                files.append(str(Path(dirpath) / fname))
+                files.append(display_path(Path(dirpath) / fname))
                 if len(files) >= offset + limit + 1:
                     truncated = True
                     break
@@ -216,9 +217,13 @@ class SearchFilesTool(BaseTool):
                 return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         if not resolved.exists():
-            return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Path not found: {display_path(resolved)}"}, ensure_ascii=False
+            )
         if not resolved.is_dir():
-            return json.dumps({"error": f"Path is not a directory: {path}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Path is not a directory: {display_path(resolved)}"}, ensure_ascii=False
+            )
 
         if target == "files":
             result = _search_files(pattern, resolved, limit, offset)

@@ -10,8 +10,10 @@ from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
     _open_no_follow,
+    display_path,
     resolve_external_path,
     resolve_project_path,
+    safe_error_detail,
 )
 from langchain_core.callbacks import CallbackManagerForToolRun
 
@@ -78,9 +80,13 @@ class ReadFileTool(BaseTool):
                 return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         if not resolved.exists():
-            return json.dumps({"error": f"File not found: {file_path}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"File not found: {display_path(resolved)}"}, ensure_ascii=False
+            )
         if resolved.is_dir():
-            return json.dumps({"error": f"Path is a directory: {file_path}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Path is a directory: {display_path(resolved)}"}, ensure_ascii=False
+            )
 
         try:
             file_size = resolved.stat().st_size
@@ -97,7 +103,9 @@ class ReadFileTool(BaseTool):
                 if fd >= 0:
                     os.close(fd)
         except Exception as e:
-            return json.dumps({"error": f"Failed to read file: {e}"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Failed to read file: {safe_error_detail(e)}"}, ensure_ascii=False
+            )
 
         if raw.startswith("\ufeff"):
             raw = raw[1:]

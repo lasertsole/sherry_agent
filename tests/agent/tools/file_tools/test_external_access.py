@@ -124,7 +124,8 @@ class TestSearchFilesExternalDirectory:
 
         result = json.loads(out)
         assert result["total_count"] == 2
-        assert all(str(ext_dir) in f for f in result["files"])
+        assert sorted(result["files"]) == ["report_a.md", "report_b.md"]
+        assert all(str(ext_dir) not in f for f in result["files"]), "real path must not leak"
 
 
 # ── G. file_tools integration (real graph + interrupt/resume) ───────────

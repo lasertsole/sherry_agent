@@ -17,8 +17,10 @@ from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
     _open_no_follow,
+    display_path,
     resolve_external_path,
     resolve_project_path,
+    safe_error_detail,
 )
 
 SessionId = Annotated[str, InjectedState("session_id")]
@@ -101,9 +103,9 @@ class FormattedWriteFileTool(WriteFileTool):
             else:
                 _write_text_no_follow(resolved, _format_py_code(text) if is_py else text, append)
         except Exception as e:
-            return "Error: " + str(e)
+            return "Error: " + safe_error_detail(e)
 
-        return f"File written successfully to {resolved}."
+        return f"File written successfully to {display_path(resolved)}."
 
     @override
     def _run(
