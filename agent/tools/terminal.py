@@ -62,6 +62,14 @@ TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 # through the error ToolMessage channel.
 _BLOCKED_MESSAGE = "Blocked: unsafe command."
 
+# Sensitive-file access refusal: the model must go through read_file /
+# external-path approval instead of reading credentials via shell.
+_SENSITIVE_FILE_MESSAGE = (
+    "Blocked: sensitive file access. Use the read_file tool so external paths go "
+    "through the human approval gate instead of reading credentials or system "
+    "files from the shell."
+)
+
 # Regex blacklist over the " && "-joined command string (plan line 563).
 # Supersedes the old element-exact BLACKLIST set: "rm -rf /", "mkfs",
 # "shutdown", "reboot" are all covered, plus the joined/chained variants the
@@ -79,6 +87,23 @@ DANGEROUS_COMMAND_REGEX = re.compile(
     ),
     re.IGNORECASE,
 )
+
+# Sensitive-file regex list (P0-2), matched case-insensitively against the
+# joined command string after DANGEROUS_COMMAND_REGEX and before any spawn.
+# This is a MITIGATION, not a barrier: renaming the reader (`dd`, `sed`,
+# `python -c "open(...)"`, `$(< file)`), a variable, a shell glob, or a
+# heredoc all bypass a literal regex. The real read barrier is the OS sandbox
+# read-shield in sandbox_bwrap.py / sandbox_seatbelt.py.
+_SENSITIVE_FILE_PATTERNS = [
+    re.compile(
+        r"\b(?:cat|head|tail|less|more)\s+.*?(/etc/(?:passwd|shadow|sudoers))\b", re.IGNORECASE
+    ),
+    re.compile(r"\b(?:cat|head|tail)\s+.*?\.env\b", re.IGNORECASE),
+    re.compile(r"\bcp\s+.*?\.ssh/", re.IGNORECASE),
+    re.compile(r"\bcurl\s+.*?-d\s+@.*?\.env\b", re.IGNORECASE),
+    re.compile(r"\b(?:cat|head|tail)\s+.*?~/.ssh/", re.IGNORECASE),
+    re.compile(r"\b(?:cat|head|tail)\s+.*?~/.aws/", re.IGNORECASE),
+]
 
 
 class SafeShellInput(ShellInput):
@@ -138,6 +163,19 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         """Raise on a dangerous command (regex over the joined string)."""
         if DANGEROUS_COMMAND_REGEX.search(joined):
             raise ToolException(_BLOCKED_MESSAGE)
+
+    @staticmethod
+    def _check_sensitive_file_access(joined: str) -> None:
+        """Raise when the command string tries to read a sensitive file.
+
+        Runs after :meth:`_check_dangerous` and before any spawn. This is a
+        mitigation layer (literal regex), not a read barrier — see the
+        ``_SENSITIVE_FILE_PATTERNS`` comment for the known bypasses; the OS
+        sandbox read-shield is the actual barrier.
+        """
+        for pattern in _SENSITIVE_FILE_PATTERNS:
+            if pattern.search(joined):
+                raise ToolException(_SENSITIVE_FILE_MESSAGE)
 
     def _resolve_sandbox_argv(
         self, cmd_str: str, env: dict[str, str]
@@ -256,6 +294,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         cmd_str = self._join_commands(commands)
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
+        self._check_sensitive_file_access(cmd_str)
 
         env = scrub_env()
         if sandbox:
@@ -288,6 +327,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         cmd_str = self._join_commands(commands)
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
+        self._check_sensitive_file_access(cmd_str)
 
         env = scrub_env()
         argv: list[str] | None = None

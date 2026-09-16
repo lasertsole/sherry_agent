@@ -360,3 +360,27 @@ def test_run_with_timeout_absorbs_unexpected_kwargs():
     with unittest.mock.patch.object(python_repl.subprocess, "Popen", return_value=proc):
         out = python_repl._run_with_timeout("pass", 5, True, future_flag="x")
     assert isinstance(out, str)
+
+
+# ---------------------------------------------------------------------------
+# P0-2 assessment: no deny-read regex is added for python_repl because the
+# restricted builtins already exclude `open` / `__import__` — lock that barrier
+# so a future builtins-dict broadening cannot silently open the read path.
+# ---------------------------------------------------------------------------
+
+
+def test_open_is_unavailable_in_restricted_builtins():
+    out = python_repl._run_with_timeout('open("/etc/passwd")', 10, sandbox=False)
+    assert "NameError" in out
+    assert "open" in out
+
+
+def test_import_is_unavailable_in_restricted_builtins():
+    out = python_repl._run_with_timeout('__import__("os").getcwd()', 10, sandbox=False)
+    assert "NameError" in out
+    assert "__import__" in out
+
+
+def test_benign_repl_code_still_executes():
+    out = python_repl._run_with_timeout("print(sum(range(5)))", 10, sandbox=False)
+    assert out.strip() == "10"
