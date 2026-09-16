@@ -2,6 +2,8 @@
 
 > 生成日期：2026-09-16
 > 对比范围：`D:\selfProj\sherry_agent` vs `D:\selfProj\deepagents-main`
+>
+> **状态更新（2026-09-16）：** 本报告生成后，路径与符号链接防护已落地：`agent/tools/pub_base/path_utils.py` 的三道结构门禁 + `O_NOFOLLOW`（`read_file` / `write_file` / `patch_file`）、终端敏感文件闸门、`PathGuard` 中间件、OS 沙箱读遮蔽，以及模型可见输出不泄露 root 路径。详见 `docs/sandbox/README*.md`。下方矩阵与 §2 中标注 Sherry 缺失路径遍历 / 符号链接防护的条目（如"输入路径验证""符号链接防护"）已不再准确。
 
 ---
 

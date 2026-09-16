@@ -29,6 +29,8 @@
 
 ## P0-1：符号链接防护
 
+> **状态（2026-09-16）：能力已落地。** `O_NOFOLLOW` + 符号链接循环检测已实现于 `agent/tools/pub_base/path_utils.py`（`_open_no_follow` / `_raise_if_symlink_loop`），`read_file` / `write_file` / `patch_file` 全部经该入口打开，见 `docs/sandbox/README*.md`。本页原提案的 `pub/func/validator/symlink_guard.py` 未采用，后续无需按原方案重复实现。
+
 ### 问题
 
 Sherry 的文件工具（`file_tools`）在读写文件时不检查符号链接，攻击者可通过符号链接将敏感文件（如 API key 配置）重定向到工作区文件，实现信息泄露或覆盖。
@@ -945,8 +947,8 @@ Sherry 缺少威胁模型文档，安全评审缺少系统性参考。
 
 | 威胁         | 现有防护       | 差距             |
 | ------------ | -------------- | ---------------- |
-| 路径遍历     | session_id验证 | 缺少文件路径验证 |
-| 符号链接攻击 | 无             | **需实施 P0-1**  |
+| 路径遍历     | 三道结构门禁 + O_NOFOLLOW | 已落地（`path_utils.py`） |
+| 符号链接攻击 | `O_NOFOLLOW` + 循环检测 | 已落地（见 P0-1 状态说明） |
 | Shell注入    | 正则黑名单     | **需实施 P0-3**  |
 | 工具结果OOM  | 截断           | **需实施 P0-2**  |
 | ...          | ...            | ...              |
