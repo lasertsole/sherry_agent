@@ -558,6 +558,26 @@ class TestMainSessionBypassApproval:
 # ─────────────────────────────────────────────────────────────────────────────
 # Scenario 2b — background scope guards (-k "background")
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def _background_tool_hook():
+    """Register the real background-tool hook that cron resolves at call time."""
+    from agent.tools import (
+        build_python_repl_tool,
+        build_read_file_tool,
+        build_write_file_tool,
+    )
+    from runtime import hooks
+
+    hooks.register(
+        hooks.BUILD_BACKGROUND_AGENT_TOOLS,
+        lambda: [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()],
+    )
+    yield
+    hooks.unregister(hooks.BUILD_BACKGROUND_AGENT_TOOLS)
+
+
 class TestBackgroundScopeGuard:
     """heartbeat/cron stamping + the tool-layer guard background graphs rely on."""
 
@@ -576,10 +596,11 @@ class TestBackgroundScopeGuard:
                 f"{type(tool_obj).__name__} must be stamped caller_scope=background"
             )
 
-    def test_cron_job_tools_stamped_background_scope(self, monkeypatch):
-        # cron base.py builds its tools INSIDE _on_cron_job (function-local);
-        # stub the LLM/agent wiring and capture the tools list handed to
-        # create_agent — every tool must be stamped "background".
+    def test_cron_job_tools_stamped_background_scope(self, monkeypatch, _background_tool_hook):
+        # cron base.py builds its tools INSIDE _on_cron_job (function-local) from
+        # the registered background-tools hook; stub the LLM/agent wiring and
+        # capture the tools list handed to create_agent — every tool must be
+        # stamped "background".
         from skills.builtin.core.cron.scripts import base as cron_base
         from skills.builtin.core.cron.scripts.types import CronJob, CronPayload
 
