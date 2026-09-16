@@ -18,7 +18,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-from agent.middlewares.heartbeat_staleness import (
+from agent.middlewares.heartbeat_staleness.core import (
     _STATE_KEY_KILLED,
     _STATE_KEY_SKIP,
     _STATE_KEY_STALE,

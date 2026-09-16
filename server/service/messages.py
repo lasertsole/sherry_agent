@@ -12,7 +12,7 @@ from pub.types.message import MultiModalMessage
 from pub.func import build_agent_config, is_url
 from ..DAO import clear_session as clear_session_dao
 from context_engine.curator import reset_idle_for_seconds
-from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
+from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 

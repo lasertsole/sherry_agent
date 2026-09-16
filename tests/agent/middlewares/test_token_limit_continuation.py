@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
 
-from agent.middlewares import max_tokens_boost as mtb
+from agent.middlewares.max_tokens_boost import core as mtb
 from agent.middlewares.max_tokens_boost import MaxTokensBoostMiddleware
 from runtime import state_register_mem
 from server.service import messages as m

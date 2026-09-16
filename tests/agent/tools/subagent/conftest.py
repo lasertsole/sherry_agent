@@ -27,12 +27,12 @@ _real_init_cache: dict[str, object] = {}
 # the real ``runtime.clear_all_register_sessions`` binding below); the
 # concrete modules are light, so the package ``__init__`` stays unloaded.
 _MIDDLEWARE_EXPORTS: dict[str, str] = {
-    "IterationBudget": "agent.middlewares.iteration_budget",
-    "ToolGuardrails": "agent.middlewares.tool_guardrails",
-    "ToolCallNormalize": "agent.middlewares.tool_call_normalize",
-    "Summarization": "agent.middlewares.summarization",
-    "HeartbeatStaleness": "agent.middlewares.heartbeat_staleness",
-    "MaxTokensBoostMiddleware": "agent.middlewares.max_tokens_boost",
+    "IterationBudget": "agent.middlewares.iteration_budget.core",
+    "ToolGuardrails": "agent.middlewares.tool_guardrails.core",
+    "ToolCallNormalize": "agent.middlewares.tool_call_normalize.core",
+    "Summarization": "agent.middlewares.summarization.core",
+    "HeartbeatStaleness": "agent.middlewares.heartbeat_staleness.core",
+    "MaxTokensBoostMiddleware": "agent.middlewares.max_tokens_boost.core",
 }
 
 
@@ -321,6 +321,6 @@ def _stub_lt5_memory_backflow(monkeypatch):
     own reconcile coverage lives in
     ``tests/agent/middlewares/test_lt5_memory_backflow.py``.
     """
-    from agent.middlewares import subagent_completion_drain as drain_mod
+    from agent.middlewares.subagent_completion_drain import core as drain_mod
 
     monkeypatch.setattr(drain_mod, "_backflow_shared_memory", lambda: None)

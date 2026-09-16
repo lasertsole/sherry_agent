@@ -39,7 +39,7 @@ from langchain.messages import AIMessageChunk
 from langchain_core.messages import BaseMessage, ToolCall, ToolCallChunk, ToolMessage
 from loguru import logger
 from runtime import state_register_mem
-from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
+from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from .stream_diag import reraise_with_diag, stream_diag_init, stream_diag_summary
 

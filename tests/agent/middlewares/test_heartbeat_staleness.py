@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 
-from agent.middlewares.heartbeat_staleness import (
+from agent.middlewares.heartbeat_staleness.core import (
     _STATE_KEY_KILLED,
     _STATE_KEY_SKIP,
     _STATE_KEY_STALE,

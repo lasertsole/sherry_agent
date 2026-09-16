@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from langchain.agents.middleware.types import ModelRequest
 
-from agent.middlewares.llm_retry import (
+from agent.middlewares.llm_retry.core import (
     ContentFilterError,
     FallbackCandidate,
     LLMRetryConfig,
@@ -36,7 +36,9 @@ def _ok_result(req: ModelRequest) -> str:
 
 
 def _zero_backoff(monkeypatch) -> None:
-    monkeypatch.setattr("agent.middlewares.llm_retry.jittered_backoff", lambda attempt, **kw: 0.0)
+    monkeypatch.setattr(
+        "agent.middlewares.llm_retry.core.jittered_backoff", lambda attempt, **kw: 0.0
+    )
 
 
 @pytest.fixture(autouse=True)

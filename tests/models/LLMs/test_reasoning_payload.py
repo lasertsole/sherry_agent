@@ -195,7 +195,7 @@ class TestApplyThinkingBudget:
         import importlib
 
         importlib.reload(main_llm)
-        boost = importlib.reload(importlib.import_module("agent.middlewares.max_tokens_boost"))
+        boost = importlib.reload(importlib.import_module("agent.middlewares.max_tokens_boost.core"))
         try:
             # The builder reads the env at call time (env or os.environ).
             assert _build_max_tokens_boost()["base_max_tokens"] == 9000

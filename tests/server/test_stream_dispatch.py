@@ -14,7 +14,7 @@ import asyncio
 from typing import Any
 
 import pytest
-from agent.middlewares.heartbeat_staleness import HeartbeatTimeoutError
+from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.types import Command
 

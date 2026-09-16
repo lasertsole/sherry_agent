@@ -374,7 +374,7 @@ class TestUC08CronDueBatch:
 class TestUC09MultimodalFlow:
     @pytest.fixture()
     def mm(self, tmp_path, monkeypatch):
-        from agent.middlewares import media_pipeline as mm_mod
+        from agent.middlewares.media_pipeline import core as mm_mod
 
         monkeypatch.setattr(mm_mod, "SRC_DIR", tmp_path / "src")
         return mm_mod.MultimodalProcessor(), tmp_path / "src"
@@ -522,7 +522,7 @@ class TestUC11BudgetExhaustion:
 
 class TestUC12GuardrailsEscalation:
     def test_exact_failure_warn_then_block(self):
-        from agent.middlewares.tool_guardrails import (
+        from agent.middlewares.tool_guardrails.core import (
             ToolCallGuardrailConfig,
             ToolGuardrails,
         )
@@ -560,7 +560,7 @@ class TestUC12GuardrailsEscalation:
 
 class TestUC13RepetitionGuard:
     def test_char_run_warns_once_per_session(self):
-        from agent.middlewares.output_repetition_guard import check_stream_repetition
+        from agent.middlewares.output_repetition_guard.core import check_stream_repetition
 
         first = check_stream_repetition("uc13", "a" * 100)
         assert first is not None, "字符连跑必须触发一次性警告"
@@ -569,7 +569,7 @@ class TestUC13RepetitionGuard:
         assert second is None, "去重门：同会话至多警告一次"
 
     def test_benign_text_passes(self):
-        from agent.middlewares.output_repetition_guard import check_stream_repetition
+        from agent.middlewares.output_repetition_guard.core import check_stream_repetition
 
         assert (
             check_stream_repetition("uc13b", "这是一段完全正常的回复内容，没有任何重复模式。")
@@ -584,7 +584,7 @@ class TestUC13RepetitionGuard:
 
 class TestUC14HeartbeatKill:
     def test_stale_cycles_kill_then_timeout(self, monkeypatch):
-        from agent.middlewares.heartbeat_staleness import (
+        from agent.middlewares.heartbeat_staleness.core import (
             HeartbeatStaleness,
             HeartbeatTimeoutError,
         )
@@ -603,7 +603,7 @@ class TestUC14HeartbeatKill:
             hw.wrap_model_call(req, lambda r: "SHOULD_NOT_RUN")
 
     def test_progress_resets_stale_counter(self, monkeypatch):
-        from agent.middlewares.heartbeat_staleness import HeartbeatStaleness
+        from agent.middlewares.heartbeat_staleness.core import HeartbeatStaleness
         from runtime import state_register_mem
 
         hw = HeartbeatStaleness()
