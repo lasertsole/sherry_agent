@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+from pathlib import Path
 from typing import Annotated, override
 
 from pydantic import BaseModel
@@ -14,6 +16,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
+    _open_no_follow,
     resolve_external_path,
     resolve_project_path,
 )
@@ -36,6 +39,31 @@ def _format_py_code(text: str) -> str:
         return formatted
     except Exception:
         return text
+
+
+def _write_text_no_follow(resolved: Path, text: str, append: bool) -> None:
+    """Write text through ``_open_no_follow`` so a symlink final component is refused."""
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+    fd = _open_no_follow(resolved, flags, 0o644)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            fd = -1
+            f.write(text)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _read_text_no_follow(resolved: Path) -> str:
+    """Read text through ``_open_no_follow`` (used by the .py append+format flow)."""
+    fd = _open_no_follow(resolved, os.O_RDONLY)
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            fd = -1
+            return f.read()
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 class FormattedWriteFileTool(WriteFileTool):
@@ -62,21 +90,20 @@ class FormattedWriteFileTool(WriteFileTool):
             except PathOutOfBoundsError as e:
                 return json.dumps({"error": str(e)}, ensure_ascii=False)
 
-        is_py = resolved.suffix == ".py"
-        if is_py:
-            if append:
+        try:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            is_py = resolved.suffix == ".py"
+            if is_py and append:
                 # Append first, then format the entire file
-                result = super()._run(file_path=str(resolved), text=text, append=True)
-                full_text = resolved.read_text(encoding="utf-8")
-                formatted = _format_py_code(full_text)
-                super()._run(file_path=str(resolved), text=formatted, append=False)
-                return result
+                _write_text_no_follow(resolved, text, append=True)
+                formatted = _format_py_code(_read_text_no_follow(resolved))
+                _write_text_no_follow(resolved, formatted, append=False)
             else:
-                # New write: format the content upfront
-                text = _format_py_code(text)
-                return super()._run(file_path=str(resolved), text=text, append=False)
+                _write_text_no_follow(resolved, _format_py_code(text) if is_py else text, append)
+        except Exception as e:
+            return "Error: " + str(e)
 
-        return super()._run(file_path=str(resolved), text=text, append=append)
+        return f"File written successfully to {resolved}."
 
     @override
     def _run(

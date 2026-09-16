@@ -10,6 +10,7 @@ actual indentation pattern.
 """
 
 import json
+import os
 import difflib
 from typing import Annotated, override
 from difflib import SequenceMatcher
@@ -20,6 +21,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
+    _open_no_follow,
     resolve_external_path,
     resolve_project_path,
     fuzzy_find_and_replace,
@@ -133,7 +135,14 @@ class PatchFileTool(BaseTool):
             return json.dumps({"error": f"Path is a directory: {file_path}"}, ensure_ascii=False)
 
         try:
-            content = resolved.read_text(encoding="utf-8")
+            fd = _open_no_follow(resolved, os.O_RDONLY)
+            try:
+                with os.fdopen(fd, "r", encoding="utf-8") as f:
+                    fd = -1
+                    content = f.read()
+            finally:
+                if fd >= 0:
+                    os.close(fd)
         except Exception as e:
             return json.dumps({"error": f"Failed to read file: {e}"}, ensure_ascii=False)
 
@@ -163,7 +172,14 @@ class PatchFileTool(BaseTool):
             )
 
         try:
-            resolved.write_text(new_content, encoding="utf-8")
+            fd = _open_no_follow(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    fd = -1
+                    f.write(new_content)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
         except Exception as e:
             return json.dumps({"error": f"Failed to write file: {e}"}, ensure_ascii=False)
 

@@ -1,6 +1,7 @@
 """Read file tool with pagination support (offset + limit) and line numbers."""
 
 import json
+import os
 from typing import Annotated, override
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
@@ -8,6 +9,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
+    _open_no_follow,
     resolve_external_path,
     resolve_project_path,
 )
@@ -86,8 +88,14 @@ class ReadFileTool(BaseTool):
             file_size = 0
 
         try:
-            with resolved.open("r", encoding="utf-8", errors="replace") as f:
-                raw = f.read()
+            fd = _open_no_follow(resolved, os.O_RDONLY)
+            try:
+                with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
+                    fd = -1
+                    raw = f.read()
+            finally:
+                if fd >= 0:
+                    os.close(fd)
         except Exception as e:
             return json.dumps({"error": f"Failed to read file: {e}"}, ensure_ascii=False)
 
