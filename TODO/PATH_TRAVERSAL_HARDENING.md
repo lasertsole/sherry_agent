@@ -5,7 +5,7 @@
 **Current defense layers** (see `docs/sandbox/README.md`):
 
 - L0: `pub/func/path.py` — `has_traversal_component()` + `validate_within_dir()`
-- L1: `agent/tools/pub_base/path_utils.py` — `resolve_project_path()` + `resolve_external_path()` (5-gate HITL)
+- L1: `agent/tools/pub_base/path_utils.py` — `resolve_project_path()` + `resolve_external_path()` (6-gate HITL: ROOT_DIR → YOLO deny list (security floor) → YOLO → session allowlist (exact + directory prefix) → subagent denial → HITL `approve`/`approve_dir`/`yolo`/`reject`)
 - L2: `agent/tools/skill_tools/skill_manage.py` — traversal pre-check + subdir allowlist
 - L3: `agent/tools/subagent/spawn/attachments.py` — filename/mount-path sanitization
 - L4: OS sandbox (bwrap / seatbelt) — filesystem write containment
@@ -389,7 +389,7 @@ def has_traversal_component(path_str: str) -> bool:
 | P2-1 | P2       | Search results not filtered              | `search_files.py`                                                 | Tiny   |
 | P2-2 | P2       | No URL-decode in traversal check         | `pub/func/path.py`                                                | Tiny   |
 
-> **Note:** External path allowlist exact-match issue (originally P2 in the hardening todo) has been moved to `TODO/EXTERNAL_PATH_IMPROVEMENT_PLAN.md` as Improvement 1.
+> **Note:** External path allowlist exact-match issue (originally P2 in the hardening todo) became Improvement 1 of the external-path improvement plan — **now implemented and landed**: the session allowlist matches exact paths *and* directory prefixes, the YOLO deny list is the security floor, and HITL offers `approve` / `approve_dir` / `yolo` / `reject`. That plan file was deleted once its Improvement 1+2 landed; Improvement 3 (pre-mounted external directories) was deliberately not done and remains a non-goal.
 
 ### Recommended implementation order
 
