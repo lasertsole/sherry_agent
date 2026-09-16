@@ -34,6 +34,7 @@ from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddle
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.todo_continuation import TodoContinuationEnforcer
 from agent.wrapper.registry import apply_graph_wrappers
+from agent.prompt_data_provider import register_prompt_data_provider
 from .wrapper.context_limit import ContextLimitGuardWrapper
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
@@ -69,6 +70,8 @@ def init() -> None:
     - Loads memory markdown files from disk; they stay unchanged until
       compression is triggered during this server run.
     - Builds the main tool list.
+    - Registers the prompt data provider so workspace/context_engine can read
+      prompt data without importing the agent package.
 
     Idempotent: subsequent calls are no-ops.
     """
@@ -79,6 +82,7 @@ def init() -> None:
     build_skills_snapshot()
     memory_store.load_from_disk()
     _tools = build_main_tools()
+    register_prompt_data_provider()
     _initialized = True
 
 
