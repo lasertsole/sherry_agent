@@ -37,7 +37,9 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/` | Shared utilities (message pipeline, retry, validators) | `pub/func/message/` |
 | `models/` | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker) | `models/LLMs/main_llm.py` |
-| `runtime/` | Runtime state registers (`session/`) + process-level services (`process/`, `lane/`) | `runtime/session/state_register.py` |
+| `runtime/` | Runtime state registers (`session/`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py` |
+| `runtime/hooks.py` | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server` | `runtime/hooks.py` |
+| `runtime/data_provider.py` | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent` | `runtime/data_provider.py` |
 | `runtime/lane/` | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`) | `runtime/lane/core.py` |
 | `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression) | `tests/run_tests_split.py` |
 | `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
@@ -103,8 +105,15 @@ CodeGraph MCP (`@colbymchenry/codegraph`, wired in `opencode.json`) indexes the 
 
 ## Import Rules
 
-- `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
 - `server/**` layering: trigger → service → queue|DAO → utils (enforced by import-linter)
+- Cross-package bans (enforced by `uv run --no-sync lint-imports`, `[tool.importlinter]` in `pyproject.toml`; grimp counts function-level imports, so a lazy import does NOT satisfy them):
+  - `agent/**` MUST NOT import `server/**`
+  - `config/**` MUST NOT import `models/**`
+  - `context_engine/**` MUST NOT import `agent/**`
+  - `workspace/**` MUST NOT import `agent/**` or `context_engine/**`
+  - `skills/**` MUST NOT import `server/**`
+- Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary.
+- `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
 - `config/**` is importable from ALL layers (no restriction)
 - `config/num.py` is DELETED — all constants live in `config/features/agent_side/summarization.py` (SUMMARIZATION TypedDict) and other per-object modules
 
@@ -148,7 +157,6 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 - `agent/core.py::init()` imports `skills` lazily and calls `build_skills_snapshot()` at assembly time (server boot); a process that never calls `init()` still gets a live disk scan from `scan_skills(use_cache=True)`
 - `Summarization` has both sync (`_apply_compression`) and async (`_aapply_compression`) paths — changes must cover both
 - `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
-- `config/features/**` must not import `agent/` or `models/` (circular)
 - after_agent hooks run in REVERSE list order — first registered = last executed
 - `workspace/memory/facts/` is created at runtime by TieredMemoryStore — gitignored
 - `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
