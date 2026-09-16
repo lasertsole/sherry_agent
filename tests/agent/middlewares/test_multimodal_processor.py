@@ -9,7 +9,7 @@ common shape left behind by an earlier turn) is no longer rewritten.
 import pytest
 from langchain_core.messages import HumanMessage
 
-from agent.middlewares import media_pipeline as mm_mod
+from agent.middlewares.media_pipeline import core as mm_mod
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 

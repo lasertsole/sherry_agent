@@ -8,8 +8,8 @@ from langgraph.runtime import Runtime
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import BaseMessage, HumanMessage
 
-from agent.middlewares.mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
-from agent.middlewares.media_handlers import MediaPaths, _MEDIA_HANDLERS
+from .mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
+from .media_handlers import MediaPaths, _MEDIA_HANDLERS
 from pub.func.validator import is_safe_session_id
 
 
