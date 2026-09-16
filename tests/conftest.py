@@ -81,6 +81,15 @@ def clean_registers():
     # Cleanup after test if needed
 
 
+@pytest.fixture(autouse=True)
+def _isolated_prompt_data_provider():
+    """No test may leak a registered prompt data provider into the next test."""
+    from runtime import data_provider
+
+    yield
+    data_provider.clear_prompt_data_provider()
+
+
 @pytest.fixture
 def mock_state_register_mem():
     """Provide a clean StateRegisterMeM instance for module tests."""
