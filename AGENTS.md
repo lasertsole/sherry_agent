@@ -112,6 +112,7 @@ CodeGraph MCP (`@colbymchenry/codegraph`, wired in `opencode.json`) indexes the 
   - `context_engine/**` MUST NOT import `agent/**`
   - `workspace/**` MUST NOT import `agent/**` or `context_engine/**`
   - `skills/**` MUST NOT import `server/**`
+  - `skills/builtin/**` user scripts may still import `models`/`bus`/`channels`/`workspace`/`runtime` (one-way, by design) — this ban covers `server/**` only; whether to tighten those directions is evaluated separately and is not currently enforced
 - Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary.
 - `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
 - `config/**` is importable from ALL layers (no restriction)
