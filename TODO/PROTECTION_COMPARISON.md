@@ -5,10 +5,11 @@
 >
 > **复核记录（2026-09-17，本轮改了哪些结论）：**
 > 1. **矩阵结论翻转（Sherry 侧）**：「输入路径验证」「符号链接防护」由"Sherry 缺失 / DeepAgents 优势"改为**各有千秋**——Sherry 现已具备三道结构门禁（分量判定 `..`/`~`、resolve + `relative_to`、符号链接**环**检测）+ `_open_no_follow`（`O_NOFOLLOW` 闭合 TOCTOU，read/write/patch 全走）+ 虚拟路径回显 + 搜索 containment + `PathGuard` 中间件 + 外部路径六检查审批网关（`approve` / `approve_dir` / `yolo` / `reject`）。
-> 2. **Shell 注入行**：Sherry 新增 terminal 敏感文件闸门（`_SENSITIVE_FILE_PATTERNS`，**缓解而非屏障**，局限见 §2.2 / §2.14）；整体仍判 DeepAgents 的结构化参数编码（base64）更稳，并补注其 `LocalShellBackend` 直传 `shell=True` 且零校验（其 THREAT_MODEL 自述）。
+> 2. **Shell 注入行**：Sherry 新增 terminal 敏感文件闸门（`_SENSITIVE_FILE_PATTERNS`，**缓解而非屏障**，局限见 §2.2 / §2.14）；当时判 DeepAgents 的结构化参数编码（base64）更稳，并补注其 `LocalShellBackend` 直传 `shell=True` 且零校验（其 THREAT_MODEL 自述）。**该判断已被第二批复核否决（见第 6 条）。**
 > 3. **威胁模型文档行**：Sherry 由 ❌ 改为 ⚠️——无独立 `THREAT_MODEL.md`，但 `docs/sandbox/README*.md` 含威胁模型章节与局限清单（§2.14 / §4 同步）。
 > 4. **其余更正**：URL scheme 白名单 12 → **13**（§2.2）；Sherry 整数参数约束由"无"改为"Pydantic 约束 + clamp"（§2.2）；DeepAgents `O_NOFOLLOW` 覆盖澄清为 read/write/edit/download（非无差别全覆盖，§2.2）；Sherry 子代理类型校验补注 `agent_id` 正则 + allow-list（§2.7）；Sherry `python_repl` 更正为**无内存上限**（§2.8）；视频帧限制 5 → **6 项**（§2.11）；ripgrep 看门狗更正为 `SIGKILL` 双重有界等待（§2.13）；§2.14 新增 `PathGuard` 与前缀缓存稳定两行。
 > 5. **§3 同步**：§3.2 移出「O_NOFOLLOW 符号链接防护」「符号链接循环检测」（Sherry 已补齐）；§3.1 新增 PathGuard、外部路径审批网关、OS 沙箱读遮蔽、128K 四闸门四项。
+> 6. **第二批变更（2026-09-17，随 P0 项处置；基准 `main` @ `4db42e0`）**：P0-1 符号链接防护复核确认已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow`/`_raise_if_symlink_loop`，read/write/patch 全走）；**P0-3（base64 参数编码）经评估后否决**——`terminal` 本就以 shell 语义执行（`["/bin/sh","-c",cmd]` / `shell=True`），base64+`eval` 不减少风险，且置于 `_check_dangerous`/`_check_sensitive_file_access` 之前会让明文绕过现有防线，真实读屏障是 OS 沙箱读遮蔽；P0-4 搜索资源限制已落地（`file_tools_search_max_matches`=10000 / `file_tools_search_time_budget_s`=5.0 / `file_tools_search_prune_dirs`=`proc`/`sys`/`dev` + `agent/tools/file_tools/search_scan.py` 的 `bounded_walk`，提交 `6073f7c`/`c77846e`/`4db42e0`）。详见 `DEEPAGENTS_BORROWING_PLAN.md` 头部 P0 处置记录。
 >
 > 模块路径已按**包结构**核对：`agent/middlewares/<name>/core.py`（如 `path_guard/core.py`、`tool_guardrails/core.py`、`summarization/core.py`）；DeepAgents 路径按检出实际前缀 `libs/...` 标注。
 
@@ -54,7 +55,7 @@
 | LLM重试          |                   ✅ 8步分类+回退链+断路器                      |                       ❌ 仅上下文溢出重试                            |   **Sherry**   |
 | 消息驱逐         |                            ❌ 仅截断                            |                   ✅ 工具结果→文件系统+head/tail预览                 | **DeepAgents** |
 | 符号链接防护     |           ✅ 三闸 + O_NOFOLLOW + 环检测 + 搜索containment       |                  ✅ O_NOFOLLOW+符号链接环检测                        | **各有千秋**   |
-| Shell注入防护    |            ✅ 危险命令正则黑名单 + 终端敏感文件闸门(缓解)       | ✅ sandbox参数base64编码+花括号展开限制(LocalShell直传shell=True无校验) | **DeepAgents** |
+| Shell注入防护    |            ✅ 危险命令正则黑名单 + 终端敏感文件闸门(缓解)；base64 参数编码方案已评估并否决(对 terminal 无增益，见 DEEPAGENTS_BORROWING_PLAN 处置记录)       | ✅ sandbox参数base64编码+花括号展开限制(LocalShell直传shell=True无校验) | **DeepAgents** |
 | 崩溃回路断路     |                        ✅ 5min窗口3次                           |                              ❌ 无                                   |   **Sherry**   |
 | 心跳过期检测     |                    ✅ 空闲7min/工具内20min                      |                              ❌ 无                                   |   **Sherry**   |
 | 威胁模型文档     |      ⚠️ 无独立文档；docs/sandbox/README* 含威胁模型章节         |                  ✅ libs/deepagents/THREAT_MODEL.md                  | **DeepAgents** |
@@ -98,7 +99,7 @@
 | 搜索 containment   | ✅ `_stays_within_root()` 过滤解析后逃逸出根的符号链接                                            | ✅ 搜索在虚拟命名空间内解析                                                    |
 | 命名空间验证       | ❌ 无                                                                                             | ✅ `_validate_namespace()` 正则拒绝通配符注入                                  |
 | YAML安全加载       | ❌ 不适用                                                                                         | ✅ `yaml.safe_load()` 防YAML代码执行                                           |
-| Base64参数编码     | ❌ 无                                                                                             | ✅ 所有sandbox shell命令使用base64编码参数                                     |
+| Base64参数编码     | ❌ 无（该方案已评估并**否决**：对以 shell 语义执行的 `terminal` 无增益；见 `DEEPAGENTS_BORROWING_PLAN.md` 处置记录） | ✅ 所有sandbox shell命令使用base64编码参数                                     |
 | URL验证            | ✅ `is_url()` 13种scheme白名单                                                                    | ❌ 无独立URL验证                                                               |
 | 内容消毒           | ✅ `sanitize_content()` 去括号/CoT标签剥离                                                        | ✅ HTML注释剥离(memory 源，如 AGENTS.md)                                       |
 | 整数强制转换       | ⚠️ `read_file` 用 Pydantic 字段约束 + `limit` clamp(1–2000)，其余工具参数未统一 normalize         | ✅ `normalize_read_bounds()` 确保offset/limit安全                              |
@@ -250,15 +251,16 @@
 | JS执行内存限制  | ⚠️ python_repl 仅受限 builtins + 30s 超时，无内存上限                                        | ✅ 64MB默认(QuickJS 堆)  |
 | QuickJS PTC上限 | ❌ 不适用                                                                                    | ✅ 256(JS沙箱)           |
 | QuickJS任务上限 | ❌ 不适用                                                                                    | ✅ 每线程32(JS沙箱)      |
-| grep匹配上限    | ⚠️ 分页返回(limit/offset，默认50)，扫描无硬上限                                               | ✅ 默认1000              |
-| Glob展开上限    | ⚠️ 分页返回，无展开上限                                                                       | ✅ `MAX_EXPANSIONS=1000` |
-| Glob匹配上限    | ⚠️ 分页返回，无匹配上限                                                                       | ✅ `MAX_MATCHES=10000`   |
-| Glob时间预算    | ❌ 无                                                                                        | ✅ `TIME_BUDGET=5.0`     |
-| **结论**        | **Sherry 在进程级并发控制方面独有能力；DeepAgents 在JS沙箱资源限制和文件操作上限方面更丰富** |                          |
+| grep匹配上限    | ✅ 分页 + 扫描硬上限(10000 匹配) + 5s 时间预算 + 伪文件系统剪枝(proc/sys/dev)                                               | ✅ 默认1000              |
+| Glob展开上限    | ❌ 不适用（搜索走 `fnmatch`，无花括号展开）                                                                       | ✅ `MAX_EXPANSIONS=1000` |
+| Glob匹配上限    | ✅ 扫描硬上限 10000 匹配（`file_tools_search_max_matches`）                                                                       | ✅ `MAX_MATCHES=10000`   |
+| Glob时间预算    | ✅ 5s 时间预算（`file_tools_search_time_budget_s`）                                                                                        | ✅ `TIME_BUDGET=5.0`     |
+| 伪文件系统剪枝  | ✅ `proc`/`sys`/`dev`（`file_tools_search_prune_dirs`） | ✅ `PRUNE_AT_ROOT=('proc','sys','dev')` |
+| **结论**        | **Sherry 在进程级并发控制与文件搜索资源上限方面均有能力；DeepAgents 在JS沙箱资源限制与花括号展开上限方面领先** |                          |
 
 **关键文件**：
 
-- Sherry: `runtime/lane/core.py` + `config/features/infra_side/lane_system.py`
+- Sherry: `runtime/lane/core.py` + `config/features/infra_side/lane_system.py` + `agent/tools/file_tools/search_scan.py`（`ScanState`/`bounded_walk`） + `config/features/agent_side/tools_timeouts.py`（`file_tools_search_max_matches`/`file_tools_search_time_budget_s`/`file_tools_search_prune_dirs`） + `tests/agent/tools/file_tools/test_search_bounds.py`（10 例）
 - DeepAgents: `libs/deepagents/deepagents/backends/sandbox.py`（`MAX_EXPANSIONS`:67 / `MAX_MATCHES`:68 / `TIME_BUDGET`:69）+ `libs/partners/quickjs/langchain_quickjs/middleware.py`（64MB:56 / PTC 256:58 / eval 5.0s:57）+ `libs/partners/quickjs/langchain_quickjs/_repl.py:63`（每线程 32 任务）
 
 ---
@@ -444,7 +446,9 @@
 
 ### 3.2 DeepAgents 独有但 Sherry 缺失
 
-> 复核注（2026-09-17）：原表「O_NOFOLLOW 符号链接防护」「符号链接循环检测」两项经复核确认 Sherry 已补齐（`agent/tools/pub_base/path_utils.py:55,71`），移出本表；下列为本地检出复核后仍为 DeepAgents 独有的能力。
+> 复核注（2026-09-17）：原表「O_NOFOLLOW 符号链接防护」「符号链接循环检测」两项经复核确认 Sherry 已补齐（`agent/tools/pub_base/path_utils.py:55,71`），移出本表。
+>
+> 第二批（2026-09-17）：P0-4 落地后，「Glob时间预算+匹配上限」「伪文件系统修剪」两项移出本表（`agent/tools/file_tools/search_scan.py`，提交 `6073f7c`/`c77846e`/`4db42e0`）；「base64参数编码防Shell注入」经评估后**否决**，不再列为待借鉴项（见头部第 6 条）；「花括号展开限制」对 Sherry 不适用（搜索走 `fnmatch`，无花括号展开）。下列为复核后仍为 DeepAgents 独有的能力。
 
 | 能力                                   | 价值评估   | 实现复杂度 |
 | -------------------------------------- | ---------- | ---------- |
@@ -454,10 +458,6 @@
 | 模型感知摘要默认值                     | ⭐⭐⭐⭐   | 低         |
 | DeltaChannel增量检查点(O(N²)→O(N))     | ⭐⭐⭐⭐⭐ | 高         |
 | 消息增量缩减器(去重+墓碑+重置)         | ⭐⭐⭐⭐   | 高         |
-| base64参数编码防Shell注入              | ⭐⭐⭐⭐   | 低         |
-| 花括号展开限制(MAX_EXPANSIONS=1000)    | ⭐⭐⭐     | 低         |
-| Glob时间预算+匹配上限                  | ⭐⭐⭐     | 低         |
-| 伪文件系统修剪(/proc,/sys,/dev)        | ⭐⭐⭐     | 低         |
 | 多模态内容清理(替换不支持块)           | ⭐⭐⭐     | 中         |
 | 中间件脚手架保护(不可排除)             | ⭐⭐⭐⭐   | 低         |
 | 排除覆盖审计(typo检测)                 | ⭐⭐⭐     | 低         |
@@ -492,6 +492,6 @@
 
 - **Sherry Agent** 在**运行时行为安全**与**文件工具路径纵深防御**方面更强：工具调用病理检测、输出重复防护、LLM错误处理、并发控制、崩溃回路、心跳检测、TODO停滞追踪、`PathGuard` 参数级筛查、外部路径六检查审批、OS 沙箱读遮蔽等，形成了深度防御体系。适合**长时运行、多子代理、复杂工具编排**的场景。
 
-- **DeepAgents** 在**记忆/上下文工程与框架安全**方面更强：`virtual_mode` 虚拟命名空间路径模型、消息驱逐、增量检查点、base64 参数化 Shell、伪文件系统修剪、多模态内容清理、中间件脚手架保护、威胁模型文档等。适合**文件操作密集、多模型供应商**的场景。
+- **DeepAgents** 在**记忆/上下文工程与框架安全**方面更强：`virtual_mode` 虚拟命名空间路径模型、消息驱逐、增量检查点、多模态内容清理、中间件脚手架保护、威胁模型文档等（base64 参数化 Shell 经评估后否决；伪文件系统修剪与文件搜索上限已补齐，见 §2.8 / §3.2）。适合**文件操作密集、多模型供应商**的场景。
 
 两者互补性极强：Sherry 可从 DeepAgents 借鉴消息驱逐、增量检查点、参数截断、多模态内容清理和威胁模型文档；DeepAgents 可从 Sherry 借鉴工具病理检测、输出重复防护、LLM错误处理、并发控制、OS级沙箱和外部路径人审网关。
