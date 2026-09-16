@@ -513,7 +513,9 @@ async def resume_agent(
 
     Args:
         session_id:  Active session ID.
-        decision:    ``"approve"``, ``"reject"``, or ``"edit"``.
+        decision:    HITL decision passed through to LangGraph, e.g. ``"approve"``,
+                     ``"approve_dir"``, ``"yolo"``, ``"edit"``, or ``"reject"``.
+                     Must match the pending interrupt's ``allowed_decisions``.
         message:     Optional user message accompanying the decision.
         edited_args: When ``decision == "edit"``, the new tool arguments.
 
