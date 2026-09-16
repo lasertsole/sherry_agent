@@ -105,6 +105,33 @@ class TestGetSherrySetting:
             sherry_settings.parse_sherry_value("NOT_A_KEY", "x")
 
 
+class TestLoadSherryListSetting:
+    def test_reads_string_list_and_strips_entries(self, sherry_file):
+        sherry_file.write_text(
+            '{"yolo_deny_paths": ["~/.ssh/", " ~/.env ", "", 42]}',
+            encoding="utf-8",
+        )
+        assert sherry_settings.load_sherry_list_setting("yolo_deny_paths") == [
+            "~/.ssh/",
+            "~/.env",
+        ]
+
+    def test_missing_file_returns_empty(self, sherry_file):
+        assert sherry_settings.load_sherry_list_setting("yolo_deny_paths") == []
+
+    def test_missing_key_returns_empty(self, sherry_file):
+        sherry_file.write_text('{"LOG_LEVEL": "DEBUG"}', encoding="utf-8")
+        assert sherry_settings.load_sherry_list_setting("yolo_deny_paths") == []
+
+    def test_non_list_value_returns_empty(self, sherry_file):
+        sherry_file.write_text('{"yolo_deny_paths": "~/.ssh/"}', encoding="utf-8")
+        assert sherry_settings.load_sherry_list_setting("yolo_deny_paths") == []
+
+    def test_unparseable_file_returns_empty(self, sherry_file):
+        sherry_file.write_text("{ not json at all", encoding="utf-8")
+        assert sherry_settings.load_sherry_list_setting("yolo_deny_paths") == []
+
+
 class TestShippedConfigFile:
     def test_repo_sherry_jsonc_is_valid_and_complete(self):
         """The shipped sherry.jsonc must parse and carry every known key."""

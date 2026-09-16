@@ -114,6 +114,27 @@ def load_sherry_settings() -> dict[str, Any]:
     return settings
 
 
+def load_sherry_list_setting(key: str) -> list[str]:
+    """Load a top-level string-list setting from ``sherry.jsonc``.
+
+    List settings are intentionally outside the typed scalar registry above:
+    the caller owns the default and merges these user entries itself (see
+    ``path_utils._get_yolo_deny_paths``). A missing file/key, a non-list
+    value, or an unparseable document yields an empty list — the same
+    always-boot fallback the scalar loader uses.
+    """
+    try:
+        data = json5.loads(SHERRY_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    value = data.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
 def get_sherry_setting(key: str) -> Any:
     """Return one typed setting, falling back to its default."""
     if key not in SHERRY_SETTING_DEFAULTS:

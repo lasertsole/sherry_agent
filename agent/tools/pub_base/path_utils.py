@@ -74,21 +74,74 @@ def _is_yolo() -> bool:
     return bool(state_register_db.get_state(_GLOBAL_SESSION, _YOLO_KEY, False))
 
 
+def _get_yolo_deny_paths() -> list[str]:
+    """Return the YOLO deny list: config defaults + user entries from sherry.jsonc.
+
+    Defaults come first, user additions follow; duplicates are dropped so the
+    order stays stable and the first occurrence wins.
+    """
+    from config.features import HITL_DEFAULTS
+    from config.sherry_settings import load_sherry_list_setting
+
+    merged: list[str] = []
+    for pattern in (
+        *HITL_DEFAULTS.get("yolo_deny_paths", []),
+        *load_sherry_list_setting("yolo_deny_paths"),
+    ):
+        if isinstance(pattern, str) and pattern.strip() and pattern not in merged:
+            merged.append(pattern)
+    return merged
+
+
+def _is_yolo_denied(resolved: Path) -> bool:
+    """Check whether resolved is on the YOLO deny list.
+
+    Always enforced — even when YOLO is active, the allowlist matches, or a
+    subagent inherits its parent's authorization. ``~`` is expanded at check
+    time; a pattern with a trailing separator matches that directory and every
+    descendant, a pattern without one is an exact match.
+    """
+    resolved_str = str(resolved)
+    for pattern in _get_yolo_deny_paths():
+        if not isinstance(pattern, str) or not pattern.strip():
+            continue
+        raw = os.path.expanduser(pattern.strip())
+        is_dir = raw.endswith(("/", "\\"))
+        try:
+            expanded = Path(raw).resolve()
+            if is_dir:
+                if resolved.is_relative_to(expanded):
+                    return True
+            elif resolved_str == str(expanded):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _check_allowlist(resolved: Path, session_id: str) -> bool:
-    """Check if resolved path is in the session-level allowlist (exact match).
+    """Check if resolved path is in the session-level allowlist.
 
     Checks session_id (self), requester_session_key (parent), and global.
-    Exact match only — no directory-level inheritance.
+    A directory entry (trailing separator) matches the directory and every
+    path beneath it; any other entry is an exact path match.
     """
     from runtime import state_register_mem
 
+    resolved_str = str(resolved)
     for sid in _candidate_session_ids(session_id):
         entries = state_register_mem.get_state(sid, _ALLOWLIST_KEY, [])
         if not entries:
             continue
         for entry in entries:
-            if str(resolved) == entry:
+            if resolved_str == entry:
                 return True
+            if isinstance(entry, str) and entry.endswith(("/", "\\")):
+                try:
+                    if resolved.is_relative_to(Path(entry)):
+                        return True
+                except (TypeError, ValueError):
+                    continue
     return False
 
 
@@ -107,12 +160,17 @@ def _candidate_session_ids(session_id: str) -> list[str]:
     return ids
 
 
-def _add_to_allowlist(resolved: Path, session_id: str) -> None:
-    """Add exact resolved path to the session allowlist (no parent dir)."""
+def _add_to_allowlist(resolved: Path, session_id: str, *, mode: str = "file") -> None:
+    """Add a resolved path to the session allowlist.
+
+    ``mode="file"`` stores the exact path; ``mode="dir"`` stores a normalized
+    directory entry (trailing separator) matching the directory and every
+    descendant. Re-adding an existing entry is a no-op.
+    """
     from runtime import state_register_mem
 
     entries = state_register_mem.get_state(session_id, _ALLOWLIST_KEY, [])
-    path_str = str(resolved)
+    path_str = str(resolved).rstrip("/\\") + "/" if mode == "dir" else str(resolved)
     if path_str not in entries:
         entries.append(path_str)
         state_register_mem.set_state(session_id, _ALLOWLIST_KEY, entries)
@@ -138,10 +196,11 @@ def resolve_external_path(
 
     Checks (in order):
     1. Inside ROOT_DIR → return directly (safe path)
-    2. YOLO flag (state_register_db) → return
-    3. Session allowlist (state_register_mem, exact match) → return
-    4. Subagent without prior auth → deny (cannot self-approve)
-    5. Main agent → HITL interrupt (approve / yolo / reject)
+    2. YOLO deny list → deny (security floor: checked before YOLO and allowlist)
+    3. YOLO flag (state_register_db) → return
+    4. Session allowlist (exact or directory-prefix match) → return
+    5. Subagent without prior auth → deny (cannot self-approve)
+    6. Main agent → HITL interrupt (approve / approve_dir / yolo / reject)
 
     Args:
         file_path: The path to resolve (relative, absolute, or ~).
@@ -149,7 +208,8 @@ def resolve_external_path(
         action_desc: Optional description for the approval prompt.
 
     Raises:
-        PathOutOfBoundsError: If denied by user or subagent without prior auth.
+        PathOutOfBoundsError: If denied by the deny list, by user, or for a
+            subagent without prior authorization.
     """
     p = Path(os.path.expanduser(file_path))
     if not p.is_absolute():
@@ -160,22 +220,28 @@ def resolve_external_path(
     if resolved == ROOT_DIR or resolved.is_relative_to(ROOT_DIR):
         return resolved
 
-    # 2. YOLO — persistent global allow-all
+    # 2. YOLO deny list — always enforced, even when YOLO/allowlist would allow
+    if _is_yolo_denied(resolved):
+        raise PathOutOfBoundsError(
+            f"Path is in the YOLO deny list and cannot be accessed: {resolved}"
+        )
+
+    # 3. YOLO — persistent global allow-all
     if _is_yolo():
         return resolved
 
-    # 3. Session allowlist — exact match, inherited by subagents
+    # 4. Session allowlist — exact or directory-prefix match, inherited by subagents
     if _check_allowlist(resolved, session_id):
         return resolved
 
-    # 4. Subagent without prior authorization — cannot self-approve
+    # 5. Subagent without prior authorization — cannot self-approve
     if _is_subagent(session_id):
         raise PathOutOfBoundsError(
             f"External path not authorized for subagent: {resolved}. "
             f"Approve this path from the main session first."
         )
 
-    # 5. Main session — trigger HITL interrupt
+    # 6. Main session — trigger HITL interrupt
     from langchain.agents.middleware.human_in_the_loop import (
         ActionRequest,
         HITLRequest,
@@ -192,14 +258,16 @@ def resolve_external_path(
             f"  Project root: {ROOT_DIR}\n"
             f"  Intent: {action_desc or 'unspecified'}\n\n"
             f"Options:\n"
-            f"  approve — allow (valid for this session, inherited by subagents)\n"
-            f"  yolo    — permanently allow all external paths (no more prompts)\n"
-            f"  reject  — deny"
+            f"  approve      — allow this file only (session-scoped, inherited by subagents)\n"
+            f"  approve_dir  — allow entire directory {resolved.parent}/ (session-scoped, "
+            f"inherited by subagents)\n"
+            f"  yolo         — permanently allow all external paths (no more prompts)\n"
+            f"  reject       — deny"
         ),
     )
     review_config = ReviewConfig(
         action_name="external_file_access",
-        allowed_decisions=["approve", "yolo", "reject"],
+        allowed_decisions=["approve", "approve_dir", "yolo", "reject"],
     )
 
     hitl_response = interrupt(
@@ -217,7 +285,12 @@ def resolve_external_path(
 
     if decision_type == "approve":
         # Session-scoped: add exact path to allowlist
-        _add_to_allowlist(resolved, session_id)
+        _add_to_allowlist(resolved, session_id, mode="file")
+        return resolved
+
+    if decision_type == "approve_dir":
+        # Session-scoped: add the parent directory (prefix match covers children)
+        _add_to_allowlist(resolved.parent, session_id, mode="dir")
         return resolved
 
     if decision_type == "yolo":

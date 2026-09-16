@@ -1,12 +1,14 @@
 """Unit tests for path_utils: resolve_project_path + resolve_external_path.
 
-Covers the test matrix sections A-F:
+Covers the test matrix sections A-H:
 A. resolve_project_path basics (A1-A5)
 B. External safe fast path inside ROOT_DIR (B1-B3)
 C. YOLO mechanism (C1-C5)
-D. Session allowlist exact matching (D1-D7)
+D. Session allowlist matching (D1-D7)
 E. Subagent authorization inheritance helpers (E1-E5)
 F. HITL interrupt behavior (F1-F5)
+G. YOLO deny list: always enforced, beats YOLO / allowlist / subagent (G1-G5)
+H. Directory-level allowlist + approve_dir decision (H1-H4)
 """
 
 import pytest
@@ -18,13 +20,16 @@ from agent.tools.pub_base.path_utils import (
     resolve_external_path,
     resolve_path,
     PathOutOfBoundsError,
+    _get_yolo_deny_paths,
     _is_yolo,
+    _is_yolo_denied,
     _is_subagent,
     _candidate_session_ids,
     _add_to_allowlist,
     _extract_session_id,
 )
 from config import ROOT_DIR
+from config.features import HITL_DEFAULTS
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -218,6 +223,124 @@ class TestYolo:
         assert mock_interrupt.calls == []
 
 
+# ── G. YOLO deny list (security floor) ──────────────────────────────────
+
+
+class TestYoloDenyList:
+    def test_yolo_on_denied_path_rejected_without_prompt(self, clean_state, mock_interrupt):
+        clean_state.store[("__global__", "external_path_yolo")] = True
+        target = str(Path.home() / ".ssh" / "id_rsa")
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        with pytest.raises(PathOutOfBoundsError, match="deny list"):
+            resolve_external_path(target, session_id="s1")
+
+        assert mock_interrupt.calls == [], "deny list must reject before any HITL prompt"
+
+    def test_yolo_on_non_denied_path_allowed(self, tmp_path, clean_state, mock_interrupt):
+        clean_state.store[("__global__", "external_path_yolo")] = True
+        target = _external(tmp_path, "safe.txt")
+        mock_interrupt(response={"decisions": [{"type": "reject"}]})
+
+        assert resolve_external_path(target, session_id="s1") == Path(target)
+        assert mock_interrupt.calls == []
+
+    @pytest.mark.parametrize("state", ["yolo", "allowlist", "subagent_inherited"])
+    def test_ssh_key_denied_in_every_state(self, state, clean_state, mock_interrupt):
+        from runtime import state_register_mem
+
+        target = str(Path.home() / ".ssh" / "id_rsa")
+        if state == "yolo":
+            clean_state.store[("__global__", "external_path_yolo")] = True
+        elif state == "allowlist":
+            _add_to_allowlist(Path(target), "s1")
+        else:
+            _add_to_allowlist(Path(target), "parent_s1")
+            state_register_mem.set_state("child_1", "requester_session_key", "parent_s1")
+        session_id = "child_1" if state == "subagent_inherited" else "s1"
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        with pytest.raises(PathOutOfBoundsError, match="deny list"):
+            resolve_external_path(target, session_id=session_id)
+
+        assert mock_interrupt.calls == []
+
+    def test_sherry_custom_path_denied_even_with_allowlist_hit(
+        self, tmp_path, clean_state, mock_interrupt, monkeypatch
+    ):
+        secret_dir = tmp_path.resolve() / "secrets"
+        target = str(secret_dir / "credentials.json")
+        _add_to_allowlist(Path(target), "s1")
+        monkeypatch.setattr(
+            "agent.tools.pub_base.path_utils._get_yolo_deny_paths",
+            lambda: [str(secret_dir) + "/"],
+        )
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        with pytest.raises(PathOutOfBoundsError, match="deny list"):
+            resolve_external_path(target, session_id="s1")
+
+        assert mock_interrupt.calls == []
+
+    def test_entry_without_trailing_separator_is_exact_match(
+        self, tmp_path, clean_state, mock_interrupt, monkeypatch
+    ):
+        deny_file = tmp_path.resolve() / "credentials.json"
+        nested = str(tmp_path.resolve() / "nested" / "credentials.json")
+        monkeypatch.setattr(
+            "agent.tools.pub_base.path_utils._get_yolo_deny_paths",
+            lambda: [str(deny_file)],
+        )
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        with pytest.raises(PathOutOfBoundsError, match="deny list"):
+            resolve_external_path(str(deny_file), session_id="s1")
+        assert resolve_external_path(nested, session_id="s1") == Path(nested)
+
+
+class TestYoloDenyConfig:
+    def test_sherry_jsonc_custom_paths_merge_with_defaults(self, tmp_path, monkeypatch):
+        sherry = tmp_path / "sherry.jsonc"
+        sherry.write_text(
+            '{"yolo_deny_paths": ["~/custom-secrets/", "~/.ssh/"]}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("config.sherry_settings.SHERRY_CONFIG_PATH", sherry)
+
+        merged = _get_yolo_deny_paths()
+
+        defaults = list(HITL_DEFAULTS["yolo_deny_paths"])
+        assert merged[: len(defaults)] == defaults
+        assert "~/custom-secrets/" in merged
+        assert merged.count("~/.ssh/") == 1, "duplicate user entry must be dropped"
+
+    def test_custom_deny_path_rejects_via_sherry_jsonc(
+        self, tmp_path, clean_state, mock_interrupt, monkeypatch
+    ):
+        secret_dir = tmp_path.resolve() / "custom-secrets"
+        sherry = tmp_path / "sherry.jsonc"
+        sherry.write_text(
+            f'{{"yolo_deny_paths": ["{secret_dir}/"]}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("config.sherry_settings.SHERRY_CONFIG_PATH", sherry)
+        clean_state.store[("__global__", "external_path_yolo")] = True
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        with pytest.raises(PathOutOfBoundsError, match="deny list"):
+            resolve_external_path(str(secret_dir / "token.txt"), session_id="s1")
+
+        assert mock_interrupt.calls == []
+
+    def test_missing_sherry_file_falls_back_to_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("config.sherry_settings.SHERRY_CONFIG_PATH", tmp_path / "nope.jsonc")
+        assert _get_yolo_deny_paths() == list(HITL_DEFAULTS["yolo_deny_paths"])
+
+    def test_is_yolo_denied_expands_tilde(self):
+        assert _is_yolo_denied(Path.home() / ".ssh" / "id_rsa") is True
+        assert _is_yolo_denied(Path.home() / "public" / "notes.txt") is False
+
+
 # ── D. Session allowlist exact matching ─────────────────────────────────
 
 
@@ -285,9 +408,7 @@ class TestSessionAllowlist:
         assert resolved == Path(target)
         assert len(mock_interrupt.calls) == 1, "second access must not re-prompt"
 
-    def test_interrupt_payload_declares_three_decisions(
-        self, tmp_path, clean_state, mock_interrupt
-    ):
+    def test_interrupt_payload_declares_four_decisions(self, tmp_path, clean_state, mock_interrupt):
         target = _external(tmp_path, "app.conf")
         mock_interrupt(response={"decisions": [{"type": "approve"}]})
 
@@ -298,7 +419,87 @@ class TestSessionAllowlist:
         assert payload["action_requests"][0]["args"] == {"path": target}
         review = payload["review_configs"][0]
         assert review["action_name"] == "external_file_access"
-        assert review["allowed_decisions"] == ["approve", "yolo", "reject"]
+        assert review["allowed_decisions"] == ["approve", "approve_dir", "yolo", "reject"]
+
+
+# ── H. Directory-level allowlist + approve_dir ──────────────────────────
+
+
+class TestDirectoryAllowlist:
+    def test_approve_dir_adds_parent_and_children_skip_interrupt(
+        self, tmp_path, clean_state, mock_interrupt
+    ):
+        from runtime import state_register_mem
+
+        data_dir = tmp_path.resolve() / "data"
+        target = str(data_dir / "report.csv")
+        mock_interrupt(response={"decisions": [{"type": "approve_dir"}]})
+
+        resolved = resolve_external_path(target, session_id="s1")
+
+        assert resolved == Path(target)
+        assert state_register_mem.get_state("s1", "external_path_allowlist") == [
+            str(data_dir) + "/"
+        ]
+
+        sibling = str(data_dir / "other.csv")
+        mock_interrupt(response={"decisions": [{"type": "reject"}]})
+        assert resolve_external_path(sibling, session_id="s1") == Path(sibling)
+        assert len(mock_interrupt.calls) == 1, "directory entry covers its children"
+
+    def test_directory_entry_matches_children_not_sibling_directories(
+        self, tmp_path, clean_state, mock_interrupt
+    ):
+        data_dir = tmp_path.resolve() / "data"
+        database_dir = tmp_path.resolve() / "database"
+        _add_to_allowlist(data_dir, "s1", mode="dir")
+
+        inside = str(data_dir / "x.csv")
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+        assert resolve_external_path(inside, session_id="s1") == Path(inside)
+        assert mock_interrupt.calls == []
+
+        sibling = str(database_dir / "x.csv")
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+        assert resolve_external_path(sibling, session_id="s1") == Path(sibling)
+        assert len(mock_interrupt.calls) == 1, "sibling prefix must not match data/"
+
+    def test_child_inherits_parent_directory_entry(self, tmp_path, clean_state, mock_interrupt):
+        from runtime import state_register_mem
+
+        data_dir = tmp_path.resolve() / "data"
+        _add_to_allowlist(data_dir, "parent_s1", mode="dir")
+        state_register_mem.set_state("child_1", "requester_session_key", "parent_s1")
+        target = str(data_dir / "nested" / "x.csv")
+        mock_interrupt(response={"decisions": [{"type": "reject"}]})
+
+        assert resolve_external_path(target, session_id="child_1") == Path(target)
+        assert mock_interrupt.calls == []
+
+    def test_approve_still_adds_exact_file_only(self, tmp_path, clean_state, mock_interrupt):
+        from runtime import state_register_mem
+
+        data_dir = tmp_path.resolve() / "data"
+        target = str(data_dir / "report.csv")
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        resolve_external_path(target, session_id="s1")
+
+        assert state_register_mem.get_state("s1", "external_path_allowlist") == [target]
+        sibling = str(data_dir / "other.csv")
+        mock_interrupt(response={"decisions": [{"type": "reject"}]})
+
+        with pytest.raises(PathOutOfBoundsError, match="denied"):
+            resolve_external_path(sibling, session_id="s1")
+
+    def test_add_dir_entry_is_idempotent(self, clean_state):
+        from runtime import state_register_mem
+
+        data_dir = Path("/home/u/data")
+        _add_to_allowlist(data_dir, "s1", mode="dir")
+        _add_to_allowlist(data_dir, "s1", mode="dir")
+
+        assert state_register_mem.get_state("s1", "external_path_allowlist") == ["/home/u/data/"]
 
 
 # ── E. Subagent authorization inheritance ───────────────────────────────
