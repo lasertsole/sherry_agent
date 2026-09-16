@@ -11,7 +11,7 @@ from context_engine.curator.report import _build_rename_summary, _write_run_repo
 from context_engine.curator.transitions import should_run_now, apply_automatic_transitions
 
 if TYPE_CHECKING:
-    from runtime.data_provider import PromptDataProvider
+    from runtime.data_provider import PromptDataProvider, SkillWriteProvider
 
 from context_engine.curator.helpers import _skill_dir as _resolve_skill_dir
 
@@ -392,6 +392,23 @@ def _parse_multifile_umbrella(text: str) -> tuple[str, dict[str, str]]:
     return main, files
 
 
+def _fallback_umbrella(umbrella: str, reasons: list[str], source_content: str) -> str:
+    """Deterministic umbrella SKILL.md used when LLM generation is unavailable."""
+    return (
+        "---\n"
+        f"name: {umbrella}\n"
+        f"description: Umbrella skill consolidating {len(reasons)} related skills.\n"
+        "created_by: curator\n"
+        "---\n\n"
+        f"# {umbrella}\n\n"
+        "Consolidated from the following skills:\n\n"
+        + "\n".join(reasons)
+        + "\n\n"
+        + source_content
+        + "\n"
+    )
+
+
 def _generate_umbrella_skill(
     umbrella: str, reasons: list[str], source_content: str, file_inventory: str = ""
 ) -> tuple[str, dict[str, str]]:
@@ -402,10 +419,10 @@ def _generate_umbrella_skill(
     output cannot be split into blocks, ``supporting_files`` is empty and the
     whole response is used as the main content (historical behavior).
     """
-    from agent.tools.skill_tools.skill_manage import (
-        _UMBRELLA_SKILL_CHAR_TARGET,
-        split_oversized_skill,
-    )
+    writer = _resolve_skill_writer("split_oversized_skill")
+    if writer is None:
+        return _fallback_umbrella(umbrella, reasons, source_content), {}
+    char_target = writer.umbrella_skill_char_target()
     from langchain_core.messages import HumanMessage, SystemMessage
     from models import build_main_llm
 
@@ -425,7 +442,7 @@ def _generate_umbrella_skill(
         "- Do NOT wrap blocks in code fences.\n"
         "- The frontmatter of SKILL.md must have: name, description, created_by: curator.\n\n"
         "LENGTH BUDGET (important):\n"
-        f"- Keep SKILL.md itself concise and under ~{_UMBRELLA_SKILL_CHAR_TARGET:,} characters. "
+        f"- Keep SKILL.md itself concise and under ~{char_target:,} characters. "
         "It is loaded into the agent's prompt every time the skill is used, so bloating it "
         "wastes tokens.\n"
         "- When the merged content would exceed that budget, OFFLOAD bulky material into "
@@ -462,26 +479,13 @@ def _generate_umbrella_skill(
         text = str(response.content).strip() if response and response.content else ""
         main_content, supporting_files = _parse_multifile_umbrella(text)
         if main_content:
-            main_content, supporting_files = split_oversized_skill(
-                main_content, _UMBRELLA_SKILL_CHAR_TARGET, supporting_files
+            main_content, supporting_files = writer.split_oversized_skill(
+                main_content, char_target, supporting_files
             )
             return main_content, supporting_files
     except Exception as e:
         logger.warning("Curator LLM umbrella generation failed: {}", e)
-    fallback = (
-        "---\n"
-        f"name: {umbrella}\n"
-        f"description: Umbrella skill consolidating {len(reasons)} related skills.\n"
-        "created_by: curator\n"
-        "---\n\n"
-        f"# {umbrella}\n\n"
-        "Consolidated from the following skills:\n\n"
-        + "\n".join(reasons)
-        + "\n\n"
-        + source_content
-        + "\n"
-    )
-    return fallback, {}
+    return _fallback_umbrella(umbrella, reasons, source_content), {}
 
 
 def _log_refresh_task_failure(task: asyncio.Future) -> None:
@@ -510,6 +514,26 @@ def _resolve_provider(method: str) -> "PromptDataProvider | None":
             method,
         )
     return provider
+
+
+def _resolve_skill_writer(method: str) -> "SkillWriteProvider | None":
+    """Resolve the skill write provider, logging the first miss per method.
+
+    The provider is registered by ``agent.core.init()`` at server boot; when it
+    is missing every mutation path aborts without writing (and without deleting)
+    instead of importing the agent package, so a curator thread can never
+    half-apply a consolidation.
+    """
+    from runtime import data_provider
+
+    writer = data_provider.get_skill_write_provider()
+    if writer is None and method not in _provider_misses_logged:
+        _provider_misses_logged.add(method)
+        logger.debug(
+            "curator: skill write provider is not registered; '{}' is skipped",
+            method,
+        )
+    return writer
 
 
 def _refresh_all_cached_system_prompts() -> None:
@@ -591,10 +615,12 @@ def _collect_file_inventory(merged_skills: list) -> str:
 
 
 def _write_supporting_files(umbrella: str, supporting_files: dict[str, str]) -> None:
-    from agent.tools.skill_tools.skill_manage import _write_file
+    writer = _resolve_skill_writer("write_file")
+    if writer is None:
+        return
 
     for file_path, file_content in supporting_files.items():
-        wr = _write_file(umbrella, file_path, file_content)
+        wr = writer.write_file(umbrella, file_path, file_content)
         if wr.get("success"):
             logger.debug("Curator wrote umbrella support file {}/{}", umbrella, file_path)
         else:
@@ -604,7 +630,9 @@ def _write_supporting_files(umbrella: str, supporting_files: dict[str, str]) -> 
 
 
 def _migrate_source_files(umbrella: str, merged_skills: list, written: set[str]) -> None:
-    from agent.tools.skill_tools.skill_manage import _write_file
+    writer = _resolve_skill_writer("write_file")
+    if writer is None:
+        return
 
     for entry in merged_skills:
         src_name = entry.get("from", "").strip()
@@ -627,7 +655,7 @@ def _migrate_source_files(umbrella: str, merged_skills: list, written: set[str])
                     )
                     continue
                 file_content = f.read_text(encoding="utf-8")
-                wr = _write_file(umbrella, file_path, file_content)
+                wr = writer.write_file(umbrella, file_path, file_content)
                 if wr.get("success"):
                     logger.debug(
                         "Curator migrated {}/{} -> {}/{}", src_name, f.name, umbrella, f.name
@@ -640,7 +668,10 @@ def _migrate_source_files(umbrella: str, merged_skills: list, written: set[str])
 
 def _merge_umbrella_skills(consolidations: list) -> None:
     from context_engine.curator.usage import seed_record_if_missing
-    from agent.tools.skill_tools.skill_manage import _create_skill
+
+    writer = _resolve_skill_writer("create_skill")
+    if writer is None:
+        return
 
     for umbrella in sorted(_collect_umbrella_names(consolidations)):
         skill_dir = _resolve_skill_dir(umbrella)
@@ -659,7 +690,7 @@ def _merge_umbrella_skills(consolidations: list) -> None:
 
         if umbrella_content.startswith("---"):
             umbrella_content = umbrella_content + "\n"
-        result = _create_skill(umbrella, umbrella_content)
+        result = writer.create_skill(umbrella, umbrella_content)
         if result.get("success"):
             logger.info("Curator created umbrella skill: {}", umbrella)
         else:
@@ -728,6 +759,11 @@ def _apply_consolidation(llm_final: str) -> None:
     consolidations = parsed.get("consolidations", [])
     prunings = parsed.get("prunings", [])
     if not consolidations and not prunings:
+        return
+    if _resolve_skill_writer("apply_consolidation") is None:
+        # Without a writer, merging would be a no-op while the deletion phases
+        # below still ran -> source skills deleted without their umbrella.
+        # Abort the whole apply; the per-method gates keep direct callers safe.
         return
 
     _merge_umbrella_skills(consolidations)
