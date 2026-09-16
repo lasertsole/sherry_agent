@@ -13,7 +13,7 @@ import pytest
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-import agent.middlewares.summarization as summarization_module
+import agent.middlewares.summarization.core as summarization_module
 from runtime import state_register_mem
 
 pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]

@@ -68,7 +68,7 @@ from langchain_core.tools import tool
 from loguru import logger
 
 from agent.middlewares import IterationBudget, Summarization
-from agent.middlewares.summarization import (
+from agent.middlewares.summarization.core import (
     _COOLDOWN_ROUNDS_KEY,
     _COMPRESSION_COUNT_KEY,
     _OVERFLOW_RETRIES_KEY,

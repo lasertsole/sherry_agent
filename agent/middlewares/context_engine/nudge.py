@@ -694,7 +694,7 @@ async def update_todos_from_compaction(session_id: str, discarded_messages: Sequ
             logger.debug("compression todo update: no todos for session {}", session_id)
             return
 
-        from agent.middlewares.memory_flush import _render_discarded_text
+        from agent.middlewares.summarization.memory_flush import _render_discarded_text
 
         discarded_text = _render_discarded_text(discarded_messages)
         if not discarded_text.strip():

@@ -15,7 +15,7 @@ import pytest
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-import agent.middlewares.memory_flush as memory_flush_module
+import agent.middlewares.summarization.memory_flush as memory_flush_module
 import agent.tools.memory as memory_module
 from agent.middlewares.summarization import Summarization
 from agent.tools.memory import MemoryStore

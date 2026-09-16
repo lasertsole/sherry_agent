@@ -11,7 +11,7 @@ from langchain.agents.middleware import (
     ExtendedModelResponse,
 )
 from workspace.prompt_builder import build_system_prompt
-from agent.middlewares.compaction_lock import CompactionLock, CompactionLockError
+from .compaction_lock import CompactionLock, CompactionLockError
 from runtime import state_register_db, state_register_mem
 from typing import Any, cast
 from collections.abc import Callable, Awaitable, Sequence
@@ -48,7 +48,7 @@ from pub.func.message.llm_error_classifier import (
     PAYLOAD_TOO_LARGE,
     classify_provider_error,
 )
-from agent.middlewares.summarization_components import (
+from .summarization_components import (
     CompressionEffectivenessTracker,
     INEFFECTIVE_THRESHOLD,
     MAX_TOTAL_COMPRESSION_ATTEMPTS,
@@ -56,7 +56,7 @@ from agent.middlewares.summarization_components import (
     OrphanPairRepairer,
     find_tool_name,
 )
-from agent.middlewares.summarization_components import (
+from .summarization_components import (
     _COMPRESSION_COUNT_KEY as _COMPRESSION_COUNT_KEY,
     _COMPRESSION_INEFFECTIVE_KEY as _COMPRESSION_INEFFECTIVE_KEY,
     _COMPRESSION_LAST_TOKENS_KEY as _COMPRESSION_LAST_TOKENS_KEY,
@@ -148,7 +148,7 @@ def _rearm_task_intent_after_compact(session_id: str) -> None:
     must receive the full directive rather than the short reminder.
     """
     try:
-        from agent.middlewares.task_intent import rearm_after_compact
+        from agent.middlewares.task_intent.core import rearm_after_compact
 
         rearm_after_compact(session_id)
     except Exception:
@@ -1829,7 +1829,7 @@ class Summarization(AgentMiddleware):
 
                 # P0-1: persist cross-session facts before these messages are discarded.
                 if self._memory_store and self._llm_factory:
-                    from agent.middlewares.memory_flush import run_memory_flush_sync
+                    from .memory_flush import run_memory_flush_sync
 
                     est_tokens = self._estimate_tokens(messages_to_summarize)
                     run_memory_flush_sync(
@@ -1932,7 +1932,7 @@ class Summarization(AgentMiddleware):
 
                 # P0-1: persist cross-session facts before these messages are discarded.
                 if self._memory_store and self._llm_factory:
-                    from agent.middlewares.memory_flush import run_memory_flush
+                    from .memory_flush import run_memory_flush
 
                     est_tokens = self._estimate_tokens(messages_to_summarize)
                     await run_memory_flush(

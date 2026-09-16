@@ -66,7 +66,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field
 
-import agent.middlewares.summarization as summarization_module
+import agent.middlewares.summarization.core as summarization_module
 import context_engine.store.core as mes_store_core
 from agent.middlewares.summarization import Summarization
 from agent.middlewares.tool_call_normalize import ToolCallNormalize

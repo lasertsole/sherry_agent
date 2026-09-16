@@ -35,7 +35,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from config.features import CONTEXT_GUARD, SUMMARIZATION
 from runtime import state_register_mem
-from agent.middlewares.summarization_components import _FORCE_RECOVERY_KEY
+from agent.middlewares.summarization.summarization_components import _FORCE_RECOVERY_KEY
 from pub.func.estimate_tokens import estimate_text_tokens
 from .repetition_guard import RepetitionGuardWrapper
 

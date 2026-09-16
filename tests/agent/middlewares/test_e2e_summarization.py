@@ -65,7 +65,7 @@ from langchain_core.messages import (  # noqa: E402
     ToolMessage,
 )
 
-import agent.middlewares.summarization as summarization_module  # noqa: E402
+import agent.middlewares.summarization.core as summarization_module  # noqa: E402
 from agent.middlewares.summarization import Summarization  # noqa: E402
 from config import ENV_PATH  # noqa: E402
 from config.features import SUMMARIZATION  # noqa: E402

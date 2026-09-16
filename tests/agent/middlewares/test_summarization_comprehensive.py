@@ -13,7 +13,7 @@ from langchain_core.messages import (
 )
 from langchain.agents.middleware import ModelRequest
 
-import agent.middlewares.summarization as summarization_module
+import agent.middlewares.summarization.core as summarization_module
 from config.features import SUMMARIZATION
 from pub.func.message import estimate_msg_tokens, estimate_messages_tokens
 from runtime import state_register_mem

@@ -158,7 +158,9 @@ class TestForceCompress:
         assert state_register_mem.get_state(SID, "summarization_force_recovery", False) is True
 
     def test_flag_shared_with_summarization_contract(self):
-        from agent.middlewares.summarization import _FORCE_RECOVERY_KEY as MW_KEY
+        from agent.middlewares.summarization.summarization_components import (
+            _FORCE_RECOVERY_KEY as MW_KEY,
+        )
 
         _run(
             [_usage_chunk(input_tokens=950, output_tokens=0), _updates_chunk("tools")],

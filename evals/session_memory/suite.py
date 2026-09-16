@@ -42,7 +42,7 @@ def _sid(case: str) -> str:
 def _make_summarization():
     from types import SimpleNamespace
 
-    import agent.middlewares.summarization as summarization_module
+    import agent.middlewares.summarization.core as summarization_module
 
     calls: list[object] = []
 
@@ -74,7 +74,7 @@ def _make_summarization():
 
 async def check_cooldown_restart_survival(sid: str) -> dict[str, Any]:
     """P0-2: an armed cooldown survives a simulated restart and re-arms off."""
-    import agent.middlewares.summarization as summarization_module
+    import agent.middlewares.summarization.core as summarization_module
     from runtime import state_register_mem
 
     middleware, _ = _make_summarization()
@@ -102,7 +102,7 @@ async def check_cooldown_restart_survival(sid: str) -> dict[str, Any]:
 
 async def check_compaction_lock_mutual_exclusion(sid: str) -> dict[str, Any]:
     """P0-3: a held lock excludes a second holder; release re-enables it."""
-    from agent.middlewares.compaction_lock import CompactionLock, CompactionLockError
+    from agent.middlewares.summarization.compaction_lock import CompactionLock, CompactionLockError
 
     lock = CompactionLock()
     excluded = False

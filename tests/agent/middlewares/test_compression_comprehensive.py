@@ -31,7 +31,7 @@ from langchain.agents.middleware import (
     ModelResponse,
 )
 
-import agent.middlewares.summarization as summarization_module
+import agent.middlewares.summarization.core as summarization_module
 from config.features import SUMMARIZATION
 from pub.func.message.tool_result_ttl import record_first_seen
 from runtime import state_register_mem

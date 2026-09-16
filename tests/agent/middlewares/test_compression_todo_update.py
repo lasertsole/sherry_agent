@@ -436,7 +436,7 @@ class TestCompressionPathWiring:
     ) -> None:
         captured: list[tuple[str, list]] = []
         monkeypatch.setattr(
-            "agent.middlewares.summarization._schedule_compression_todo_update",
+            "agent.middlewares.summarization.core._schedule_compression_todo_update",
             lambda session_id, messages: captured.append((session_id, list(messages))),
         )
         message_list = _large_history()

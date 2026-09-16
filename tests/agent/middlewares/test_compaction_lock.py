@@ -11,9 +11,9 @@ import pytest
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage
 
-import agent.middlewares.summarization as summarization_module
+import agent.middlewares.summarization.core as summarization_module
 import context_engine.store.db as mes_memory_store
-from agent.middlewares.compaction_lock import CompactionLock, CompactionLockError
+from agent.middlewares.summarization.compaction_lock import CompactionLock, CompactionLockError
 
 pytestmark = [pytest.mark.unit]
 
