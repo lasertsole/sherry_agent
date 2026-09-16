@@ -35,6 +35,22 @@ SessionId = Annotated[str, InjectedState("session_id")]
 # ── Content search (grep-like) ───────────────────────────────────────────
 
 
+def _stays_within_root(candidate: Path, root: Path) -> bool:
+    """Containment check: reject results whose real path escapes the search root.
+
+    ``os.walk`` does not descend directory symlinks, but file symlinks still
+    surface in listings and reads; a link pointing outside the searched tree
+    must never produce a result. The root is always an already-resolved path
+    (project searches are additionally bounded by ROOT_DIR), so this also
+    keeps allowlisted external-directory searches working.
+    """
+    try:
+        candidate.resolve().relative_to(root.resolve())
+    except (ValueError, OSError, RuntimeError):
+        return False
+    return True
+
+
 def _search_content(
     pattern: str,
     root: Path,
@@ -59,6 +75,8 @@ def _search_content(
                 continue
 
             fpath = Path(dirpath) / fname
+            if not _stays_within_root(fpath, root):
+                continue
             if not fpath.is_file() or not is_text_file(fpath):
                 continue
 
@@ -120,7 +138,10 @@ def _search_files(pattern: str, root: Path, limit: int, offset: int) -> dict:
 
         for fname in sorted(filenames):
             if fnmatch.fnmatch(fname, bare_name) or fnmatch.fnmatch(fname, f"*{bare_name}*"):
-                files.append(display_path(Path(dirpath) / fname))
+                matched = Path(dirpath) / fname
+                if not _stays_within_root(matched, root):
+                    continue
+                files.append(display_path(matched))
                 if len(files) >= offset + limit + 1:
                     truncated = True
                     break
