@@ -79,14 +79,24 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         last_mes.content = [text_dict]
         self._persist_media_kwargs(last_mes, paths)
 
-        # Strip image_url blocks from history messages
+        # Strip image_url blocks from history messages. The cheap pre-check
+        # avoids extracting/assigning on messages with nothing to strip, and the
+        # assignment only happens when the stripped text is non-empty (same
+        # semantics as before, minus the needless rewrite).
         for mes in state_mes_list[:-1]:
             if not isinstance(mes, HumanMessage):
                 continue
             mes_content = getattr(mes, "content", None)
-            if isinstance(mes_content, list):
-                text_only = self._strip_image_url_from_content(mes_content)
-                mes.content = text_only if text_only else mes_content
+            if not isinstance(mes_content, list):
+                continue
+            has_image_url = any(
+                isinstance(item, dict) and item.get("type") == "image_url" for item in mes_content
+            )
+            if not has_image_url:
+                continue
+            text_only = self._strip_image_url_from_content(mes_content)
+            if text_only and text_only != mes_content:
+                mes.content = text_only
 
     @staticmethod
     def _attach_media_hints(text_dict: dict[str, Any], paths: MediaPaths) -> None:

@@ -2146,11 +2146,19 @@ class Summarization(AgentMiddleware):
                 # system prompt must still reach the model (chains without
                 # ContextEngineHook rely on this middleware delivering it),
                 # and the response still needs degradation monitoring — the
-                # flag is left for _monitor_degradation to consume.
+                # flag is left for _monitor_degradation to consume. Identical
+                # content is left untouched (no override, no new SystemMessage).
                 if self._need_update_system_prompt:
                     rebuilt = state_register_mem.get_state(session_id, "system_prompt", "")
                     if rebuilt:
-                        request = request.override(system_message=SystemMessage(content=rebuilt))
+                        existing = request.system_message
+                        content_matches = (
+                            isinstance(existing, SystemMessage) and existing.content == rebuilt
+                        )
+                        if not content_matches:
+                            request = request.override(
+                                system_message=SystemMessage(content=rebuilt)
+                            )
             response = self._execute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check. Gate path: T2 did NOT
@@ -2219,11 +2227,19 @@ class Summarization(AgentMiddleware):
                 # system prompt must still reach the model (chains without
                 # ContextEngineHook rely on this middleware delivering it),
                 # and the response still needs degradation monitoring — the
-                # flag is left for _monitor_degradation to consume.
+                # flag is left for _monitor_degradation to consume. Identical
+                # content is left untouched (no override, no new SystemMessage).
                 if self._need_update_system_prompt:
                     rebuilt = state_register_mem.get_state(session_id, "system_prompt", "")
                     if rebuilt:
-                        request = request.override(system_message=SystemMessage(content=rebuilt))
+                        existing = request.system_message
+                        content_matches = (
+                            isinstance(existing, SystemMessage) and existing.content == rebuilt
+                        )
+                        if not content_matches:
+                            request = request.override(
+                                system_message=SystemMessage(content=rebuilt)
+                            )
             response = await self._aexecute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check; see the sync twin.
