@@ -10,9 +10,9 @@ SESSION 메모리 플랜의 전체 14개 기능(opencode-dev / oh-my-openagent /
 
 | 항목 | 기능 | 위치 |
 |---|---|---|
-| P0-1 | 압축 전 메모리 플러시 | `agent/middlewares/memory_flush.py` |
-| P0-2 | 압축 쿨다운 재시작 간 유지 | `agent/middlewares/summarization.py`의 `_COOLDOWN_PERSIST_KEYS` |
-| P0-3 | SQLite 압축 락(TTL, fail-open) | `agent/middlewares/compaction_lock.py`, 마이그레이션 v10 |
+| P0-1 | 압축 전 메모리 플러시 | `agent/middlewares/summarization/memory_flush.py` |
+| P0-2 | 압축 쿨다운 재시작 간 유지 | `agent/middlewares/summarization/core.py`의 `_COOLDOWN_PERSIST_KEYS` |
+| P0-3 | SQLite 압축 락(TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, 마이그레이션 v10 |
 | P0-4 | 도구 출력 한 줄 요약 | `pub/func/message/tool_output_prune.py` |
 | P1-1 | 압축 체크포인트 + 복원 | 마이그레이션 v15, `restore_compaction_checkpoint` |
 | P1-2 | 메시지 멱등 영속화 | 마이그레이션 v11(`idempotency_key` + 부분 유니크 인덱스) |
@@ -43,7 +43,7 @@ SESSION 메모리 플랜의 전체 14개 기능(opencode-dev / oh-my-openagent /
 - **`context_engine/facts/`** —— 이중 워터마크 커서(`cursor.py`, `state_register.db` 영속화), 보조 LLM 추출기(`extractor.py`, json_repair 파싱 + 카테고리 폴백), 큐 편성(`queue.py`). `ContextEngineHook.aafter_agent`에 fire-and-forget 백그라운드 작업으로 연결되며 facts는 기존 `TieredMemoryStore.add_fact`(facts/*.md)로 기록됩니다.
 - **`context_engine/events/`** —— 추가 전용 이벤트 로그(세션별 무결 시퀀스: `types.py`, `store.py`), 체크포인트 이벤트를 P1-1 읽기 모델에 매핑하는 `EventProjector`.
 - **`context_engine/embeddings/`** —— 벡터 의미 검색: 지연 embed 백엔드(프로젝트 임베드 모델, 테스트에서 대체 가능), 멱등 LEFT-JOIN 인덱서, 코사인 순위付け. `message_search` 도구(`semantic: true`)로 노출.
-- **`agent/middlewares/compaction_lock.py`** —— SQLite 압축 락(TTL 자가 복구, 동기 + 비동기 획득, 타임아웃 시 fail-open).
+- **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 압축 락(TTL 자가 복구, 동기 + 비동기 획득, 타임아웃 시 fail-open).
 - **`runtime/session/state_register.py`** —— `context_epoch` 테이블 기반의 `ContextEpoch` 라이프사이클(initialize / prepare / replace / advance).
 
 ## 테스트

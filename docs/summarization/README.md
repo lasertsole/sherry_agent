@@ -4,7 +4,7 @@
 
 > How the agent keeps long conversations inside the model's context window: five trigger points watch the whole lifecycle (before the turn, before every model call, after every model response, and on provider overflow errors), a pure 4-route router picks the cheapest fix (truncate big tool results and oversized tool-call args first, AI-compact only when forced), and anti-thrash guards make sure compression can never spiral.
 
-Source of truth: `agent/middlewares/summarization.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
+Source of truth: `agent/middlewares/summarization/core.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -26,7 +26,7 @@ Source of truth: `agent/middlewares/summarization.py`, `pub/func/message/overflo
 
 ## 🎯 Overview
 
-`Summarization` (`agent/middlewares/summarization.py`, class at line 500) is a **from-scratch** `AgentMiddleware` — it does **not** inherit from LangChain's built-in `SummarizationMiddleware`. It hooks exactly two points of the agent lifecycle:
+`Summarization` (`agent/middlewares/summarization/core.py`, class at line 500) is a **from-scratch** `AgentMiddleware` — it does **not** inherit from LangChain's built-in `SummarizationMiddleware`. It hooks exactly two points of the agent lifecycle:
 
 - `before_agent` / `abefore_agent` (lines 1946 / 1950) — **T1 preflight**
 - `wrap_model_call` / `awrap_model_call` (lines 1960 / 2046) — **T2 dispatch, T3 post-response re-check, T4/T5 error-recovery ring**
@@ -361,7 +361,7 @@ The full process-isolated suite (`uv run python tests/run_tests_split.py`) passe
 ## ⚠️ Honesty & Limitations
 
 - **`keep=("messages", 10)` is accepted but unused.** The constructor stores it for API compatibility; tail retention is budget-based (`PRESERVE_RATIO` × window clamped to [2 000, 15 000]) plus the router's `TRUNCATABLE_RECENT_SKIP` margin. Changing `keep` has no effect.
-- **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
+- **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization/core.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
 - **The TTL registry is not wired into production.** `record_first_seen` / `select_expired` / `truncate_expired` (and `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`) are consumed only by tests; the middleware uses exclusively `truncate_to_budget`. A grep of `agent/` finds no production call sites for the TTL trio. The registry is also volatile (in-memory, keyed by `tool_call_id`, lost on restart).
 - **Retained-but-inert code.** `_preemptive_check` (:589) and `_preemptive_truncate` (:1159) have no call sites anymore — the two-band preemption they implemented was replaced by the 4-route decision. They are kept for reference.
 - **The estimator is a three-tier tokenizer-free heuristic, not a tokenizer.** T1 returns provider-reported usage when available; T2 is the CJK-aware heuristic (CJK characters at `CHARS_PER_TOKEN_CJK = 2`, everything else at `CHARS_PER_TOKEN = 4`); T3 is the legacy `len // 4`, which survives only as the pure-ASCII degenerate case of T2. It is intentionally deterministic (reproducible tests, stable budgets); the old pure `// 4` version under-counted CJK-heavy content (Chinese averages closer to 1–2 chars/token than 4) — T2 corrects exactly that.

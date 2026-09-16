@@ -274,7 +274,7 @@ heartbeat_service.stop()  # _running = False に設定し、asyncio タスクを
 
 ## 混同注意: `HeartbeatStaleness` ミドルウェア
 
-[`agent/middlewares/heartbeat_staleness.py`](../../../../agent/middlewares/heartbeat_staleness.py) は "heartbeat" という名前を共有していますが、**別のサブシステム**です。エージェントのターンがスタックしたことを検出するターンごとのウォッチドッグであり、`before_agent` で `timer_call_register` 経由の 1 分タイマーを開始し、`(heartbeat_iter, heartbeat_tool)` の進捗を追跡します。アイドル状態で 7 サイクル、ツール実行中で 20 サイクル進捗がないとターンを killed としてマークし、次のモデル/ツール呼び出しが `HeartbeatTimeoutError` を送出します。HEARTBEAT.md は読みませんし、本サービスの一部でもありません。
+[`agent/middlewares/heartbeat_staleness/core.py`](../../../../agent/middlewares/heartbeat_staleness/core.py) は "heartbeat" という名前を共有していますが、**別のサブシステム**です。エージェントのターンがスタックしたことを検出するターンごとのウォッチドッグであり、`before_agent` で `timer_call_register` 経由の 1 分タイマーを開始し、`(heartbeat_iter, heartbeat_tool)` の進捗を追跡します。アイドル状態で 7 サイクル、ツール実行中で 20 サイクル進捗がないとターンを killed としてマークし、次のモデル/ツール呼び出しが `HeartbeatTimeoutError` を送出します。HEARTBEAT.md は読みませんし、本サービスの一部でもありません。
 
 ---
 

@@ -74,12 +74,12 @@ Reads are served later by the same tool (`knowledge(action="read")`), and a cond
 
 ### 4. Pre-compression memory flush (session-memory P0-1)
 
-Both compression paths (`_apply_compression_under_lock` and `_aapply_compression_under_lock` in `agent/middlewares/summarization.py`) run the flush when a cutoff discards messages, before the summary is generated:
+Both compression paths (`_apply_compression_under_lock` and `_aapply_compression_under_lock` in `agent/middlewares/summarization/core.py`) run the flush when a cutoff discards messages, before the summary is generated:
 
 - `run_memory_flush_sync(...)` on the sync path;
 - `await run_memory_flush(...)` on the async path.
 
-`should_flush` (`agent/middlewares/memory_flush.py`) gates on `MEMORY_FLUSH["enabled"]` plus either `total_chars >= force_flush_chars` (50 000) or `estimated_tokens >= soft_threshold_tokens` (8 000). The flush is one `llm.ainvoke` / `llm.invoke` of `_FLUSH_PROMPT` over the about-to-be-discarded text, built by `_build_llm` with `model=MEMORY_FLUSH["model"]`, `max_tokens=2048`, `timeout=30`. It is **not** an agent and has no tools.
+`should_flush` (`agent/middlewares/summarization/memory_flush.py`) gates on `MEMORY_FLUSH["enabled"]` plus either `total_chars >= force_flush_chars` (50 000) or `estimated_tokens >= soft_threshold_tokens` (8 000). The flush is one `llm.ainvoke` / `llm.invoke` of `_FLUSH_PROMPT` over the about-to-be-discarded text, built by `_build_llm` with `model=MEMORY_FLUSH["model"]`, `max_tokens=2048`, `timeout=30`. It is **not** an agent and has no tools.
 
 The response is parsed for `§`-delimited entries. An empty result or `(none)` writes nothing. Otherwise `MemoryStore.append_entries` routes each entry: entries matching `^\s*user\s*:` (case-insensitive) go to USER.md, everything else (Environment / Project / Decision / Tool / no prefix) goes to MEMORY.md. `append_entries` deduplicates against the target file and, unlike `add`, evicts the oldest entries to stay inside each file's own limit.
 
@@ -87,7 +87,7 @@ The flush only extracts cross-session facts. Temporary task progress is delibera
 
 ### 5. Post-compression todo fork
 
-At the same compression point, `_schedule_compression_todo_update` (`summarization.py` -> `nudge.schedule_compression_todo_update`) schedules `update_todos_from_compaction` as a fire-and-forget `asyncio.create_task`. The scheduler gates on ALL of:
+At the same compression point, `_schedule_compression_todo_update` (`summarization/core.py` -> `nudge.schedule_compression_todo_update`) schedules `update_todos_from_compaction` as a fire-and-forget `asyncio.create_task`. The scheduler gates on ALL of:
 
 - `compression_todo_update_enabled` (`SUMMARIZATION`, default `True`);
 - the cut actually discarded messages;

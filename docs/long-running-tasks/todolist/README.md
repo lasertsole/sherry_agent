@@ -574,7 +574,7 @@ turn ends (no tool_call, agent loop exits)
       → user sends message → detect_state() busy → cancel → reset()
 ```
 
-**Files**: `stagnation_tracker.py` (~90 lines) + `todo_continuation.py` (~110 lines) + `agent/core.py` (~2 lines registration).
+**Files**: `stagnation_tracker.py` (~90 lines) + `todo_continuation/core.py` (~110 lines) + `agent/core.py` (~2 lines registration).
 
 ### E4: Transition Barrier — Dual Insurance
 
@@ -622,7 +622,7 @@ Worker returns result
   → NOT done: any gate fails → re-dispatch or fix
 ```
 
-Implementation: `verifier.py` (~80 lines) + `subagent_completion_drain.py` extension (~15 lines, appends Sisyphus verification reminder after subagent completion).
+Implementation: `verifier.py` (~80 lines) + `subagent_completion_drain/core.py` extension (~15 lines, appends Sisyphus verification reminder after subagent completion).
 
 ### E6: Delegation Routing — Todo & Subagent Linkage ★
 
@@ -681,7 +681,7 @@ Solves "model won't proactively call planning tools". Dual-mode design:
 5. E3 has backoff cooldown (limits frequency even if mis-triggered).
 6. Post-compression re-arm (clears armed flag; E1 system prompt simultaneously rebuilt).
 
-**Files**: `agent/middlewares/task_intent.py` (~160 lines) + `agent/core.py` (~2 lines registration).
+**Files**: `agent/middlewares/task_intent/core.py` (~160 lines) + `agent/core.py` (~2 lines registration).
 
 ---
 

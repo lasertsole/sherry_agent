@@ -274,7 +274,7 @@ heartbeat_service.stop()  # 置 _running = False 并取消 asyncio 任务
 
 ## 勿混淆：`HeartbeatStaleness` 中间件
 
-[`agent/middlewares/heartbeat_staleness.py`](../../../../agent/middlewares/heartbeat_staleness.py) 与本服务同名（"heartbeat"），但属于**完全不同的子系统**：它是针对单轮对话中卡死 Agent 的看门狗。它在 `before_agent` 中通过 `timer_call_register` 启动 1 分钟定时器，跟踪 `(heartbeat_iter, heartbeat_tool)` 进度；空闲状态下连续 7 个周期、或工具执行中连续 20 个周期无进展，则将本轮标记为 killed，使下一次模型/工具调用抛出 `HeartbeatTimeoutError`。它不读取 HEARTBEAT.md，也不属于本服务。
+[`agent/middlewares/heartbeat_staleness/core.py`](../../../../agent/middlewares/heartbeat_staleness/core.py) 与本服务同名（"heartbeat"），但属于**完全不同的子系统**：它是针对单轮对话中卡死 Agent 的看门狗。它在 `before_agent` 中通过 `timer_call_register` 启动 1 分钟定时器，跟踪 `(heartbeat_iter, heartbeat_tool)` 进度；空闲状态下连续 7 个周期、或工具执行中连续 20 个周期无进展，则将本轮标记为 killed，使下一次模型/工具调用抛出 `HeartbeatTimeoutError`。它不读取 HEARTBEAT.md，也不属于本服务。
 
 ---
 

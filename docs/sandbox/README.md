@@ -162,7 +162,7 @@ File tools do not rely on a sandbox process: every project path is resolved in-p
 
 ### 7. `PathGuard` middleware
 
-**Module:** `agent/middlewares/path_guard/__init__.py` · **Class:** `PathGuard(AgentMiddleware)` · **Hooks:** `wrap_tool_call` / `awrap_tool_call`
+**Module:** `agent/middlewares/path_guard/core.py` · **Class:** `PathGuard(AgentMiddleware)` · **Hooks:** `wrap_tool_call` / `awrap_tool_call`
 
 The file tools' gates only protect calls that reach them; `PathGuard` is the call-site screen registered in the main agent chain directly after `ToolCallNormalize` (`agent/core.py`). Because list order composes wrap hooks outermost-first, it runs **inside** `ToolGuardrails` (`IterationBudget` → `ToolGuardrails` → `PathGuard` → tool): a rejection is an ordinary error `ToolMessage` that ToolGuardrails evaluates like any other tool failure. It is not registered in the worker/subagent pipeline — child tools keep their own gates, and subagent external access is hard-denied anyway.
 

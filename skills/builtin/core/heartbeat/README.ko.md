@@ -274,7 +274,7 @@ heartbeat_service.stop()  # _running = False로 설정하고 asyncio 태스크�
 
 ## 혼동 주의: `HeartbeatStaleness` 미들웨어
 
-[`agent/middlewares/heartbeat_staleness.py`](../../../../agent/middlewares/heartbeat_staleness.py)는 "heartbeat"라는 이름을 공유하지만 **전혀 다른 하위 시스템**입니다. 에이전트 턴이 멈추는 것을 감지하는 턴 단위 워치독으로, `before_agent`에서 `timer_call_register`를 통해 1분 타이머를 시작하고 `(heartbeat_iter, heartbeat_tool)` 진행 상황을 추적합니다. 유휴 상태에서 7주기, 도구 실행 중 20주기 동안 진행이 없으면 해당 턴을 killed로 표시하여 다음 모델/도구 호출이 `HeartbeatTimeoutError`를 발생시킵니다. HEARTBEAT.md를 읽지 않으며 본 서비스의 일부가 아닙니다.
+[`agent/middlewares/heartbeat_staleness/core.py`](../../../../agent/middlewares/heartbeat_staleness/core.py)는 "heartbeat"라는 이름을 공유하지만 **전혀 다른 하위 시스템**입니다. 에이전트 턴이 멈추는 것을 감지하는 턴 단위 워치독으로, `before_agent`에서 `timer_call_register`를 통해 1분 타이머를 시작하고 `(heartbeat_iter, heartbeat_tool)` 진행 상황을 추적합니다. 유휴 상태에서 7주기, 도구 실행 중 20주기 동안 진행이 없으면 해당 턴을 killed로 표시하여 다음 모델/도구 호출이 `HeartbeatTimeoutError`를 발생시킵니다. HEARTBEAT.md를 읽지 않으며 본 서비스의 일부가 아닙니다.
 
 ---
 

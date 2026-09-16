@@ -74,12 +74,12 @@
 
 ### 4. 圧縮前 memory flush（session-memory P0-1）
 
-両方の圧縮経路（`agent/middlewares/summarization.py` の `_apply_compression_under_lock` と `_aapply_compression_under_lock`）は、cut がメッセージを破棄するとき、要約生成の前に flush を走らせる：
+両方の圧縮経路（`agent/middlewares/summarization/core.py` の `_apply_compression_under_lock` と `_aapply_compression_under_lock`）は、cut がメッセージを破棄するとき、要約生成の前に flush を走らせる：
 
 - 同期経路：`run_memory_flush_sync(...)`；
 - 非同期経路：`await run_memory_flush(...)`。
 
-`should_flush`（`agent/middlewares/memory_flush.py`）のゲートは `MEMORY_FLUSH["enabled"]` に加え、`total_chars >= force_flush_chars`（50 000）または `estimated_tokens >= soft_threshold_tokens`（8 000）。flush は破棄直前のテキストに対する `llm.ainvoke` / `llm.invoke` 1 回で、プロンプトは `_FLUSH_PROMPT`、`_build_llm` が `model=MEMORY_FLUSH["model"]`、`max_tokens=2048`、`timeout=30` で構築する。**agent ではなく**、ツールも持たない。
+`should_flush`（`agent/middlewares/summarization/memory_flush.py`）のゲートは `MEMORY_FLUSH["enabled"]` に加え、`total_chars >= force_flush_chars`（50 000）または `estimated_tokens >= soft_threshold_tokens`（8 000）。flush は破棄直前のテキストに対する `llm.ainvoke` / `llm.invoke` 1 回で、プロンプトは `_FLUSH_PROMPT`、`_build_llm` が `model=MEMORY_FLUSH["model"]`、`max_tokens=2048`、`timeout=30` で構築する。**agent ではなく**、ツールも持たない。
 
 応答は `§` 区切りの条目として解析される。空結果または `(none)` は何も書かない。そうでなければ `MemoryStore.append_entries` が各条目を振り分ける：`^\s*user\s*:`（大文字小文字無視）に一致するものは USER.md、それ以外（Environment / Project / Decision / Tool / 接頭辞なし）は MEMORY.md。`append_entries` は対象ファイルに対して重複排除し、`add` と違い最古の条目を退避させて各ファイルの上限内に収める。
 
@@ -87,7 +87,7 @@ flush はクロスセッション facts だけを抽出する。一時的なタ�
 
 ### 5. 圧縮後 todo fork
 
-同じ圧縮点で、`_schedule_compression_todo_update`（`summarization.py` -> `nudge.schedule_compression_todo_update`）が `update_todos_from_compaction` を fire-and-forget の `asyncio.create_task` としてスケジュールする。スケジューラのゲートは**すべて**を満たす必要がある：
+同じ圧縮点で、`_schedule_compression_todo_update`（`summarization/core.py` -> `nudge.schedule_compression_todo_update`）が `update_todos_from_compaction` を fire-and-forget の `asyncio.create_task` としてスケジュールする。スケジューラのゲートは**すべて**を満たす必要がある：
 
 - `compression_todo_update_enabled`（`SUMMARIZATION`、既定 `True`）；
 - cut が実際にメッセージを破棄した；

@@ -274,7 +274,7 @@ Failure behavior: no tool call returned, or any exception → **`True` (notify)*
 
 ## Not to Be Confused: `HeartbeatStaleness` Middleware
 
-[`agent/middlewares/heartbeat_staleness.py`](../../../../agent/middlewares/heartbeat_staleness.py) shares the "heartbeat" name but is a **different subsystem**: a per-turn watchdog for stuck agent turns. It starts a 1-minute timer via `timer_call_register` in `before_agent`, tracks `(heartbeat_iter, heartbeat_tool)` progress, and after 7 stale cycles while idle or 20 cycles while inside a tool marks the turn as killed, making the next model/tool call raise `HeartbeatTimeoutError`. It does not read HEARTBEAT.md and is not part of this service.
+[`agent/middlewares/heartbeat_staleness/core.py`](../../../../agent/middlewares/heartbeat_staleness/core.py) shares the "heartbeat" name but is a **different subsystem**: a per-turn watchdog for stuck agent turns. It starts a 1-minute timer via `timer_call_register` in `before_agent`, tracks `(heartbeat_iter, heartbeat_tool)` progress, and after 7 stale cycles while idle or 20 cycles while inside a tool marks the turn as killed, making the next model/tool call raise `HeartbeatTimeoutError`. It does not read HEARTBEAT.md and is not part of this service.
 
 ---
 

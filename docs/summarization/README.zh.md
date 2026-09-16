@@ -4,7 +4,7 @@
 
 > Agent 如何让长对话保持在模型的上下文窗口之内：五个触发点覆盖整个生命周期（回合开始前、每次模型调用前、每次模型响应后、以及 provider 溢出报错时），一个纯函数式的四路路由选择最省钱的修复手段（先截断超大工具输出和超大的工具调用参数，实在不行才让 AI 压缩历史），防抖护栏保证压缩永远不会失控打转。
 
-事实来源：`agent/middlewares/summarization.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
+事实来源：`agent/middlewares/summarization/core.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -26,7 +26,7 @@
 
 ## 🎯 概览
 
-`Summarization`（`agent/middlewares/summarization.py`，类定义在第 500 行）是一个**从零实现**的 `AgentMiddleware` —— 它**并不**继承 LangChain 内置的 `SummarizationMiddleware`。它只挂载 agent 生命周期的两个位置：
+`Summarization`（`agent/middlewares/summarization/core.py`，类定义在第 500 行）是一个**从零实现**的 `AgentMiddleware` —— 它**并不**继承 LangChain 内置的 `SummarizationMiddleware`。它只挂载 agent 生命周期的两个位置：
 
 - `before_agent` / `abefore_agent`（第 1946 / 1950 行）—— **T1 预检**
 - `wrap_model_call` / `awrap_model_call`（第 1960 / 2046 行）—— **T2 派发、T3 响应后复检、T4/T5 错误恢复环**
@@ -356,7 +356,7 @@ Summarization(
 ## ⚠️ 诚实与局限
 
 - **`keep=("messages", 10)` 被接受但从未使用。** 构造函数仅为 API 兼容而存储它；尾部保留由预算决定（`PRESERVE_RATIO` × 窗口，夹在 [2 000, 15 000]），加上路由的 `TRUNCATABLE_RECENT_SKIP` 边距。改 `keep` 没有任何效果。
-- **纯装饰性导入。** `summarization.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。
+- **纯装饰性导入。** `summarization/core.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。
 - **TTL 注册表没有接入生产。** `record_first_seen` / `select_expired` / `truncate_expired`（以及 `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）只有测试在用；中间件只使用 `truncate_to_budget`。对 `agent/` 的 grep 找不到 TTL 三件套的任何生产调用点。注册表同样是易失的（内存态、以 `tool_call_id` 为键、重启即失）。
 - **保留但失效的代码。** `_preemptive_check`（:589）与 `_preemptive_truncate`（:1159）已无调用点 —— 它们实现的二档抢先机制已被四路决策取代，仅为参考保留。
 - **估算器是三层、不依赖分词器的启发式，而不是分词器。** 有 API 上报用量时 T1 直接返回；T2 是 CJK 感知启发式（CJK 字符按 `CHARS_PER_TOKEN_CJK = 2`、其余按 `CHARS_PER_TOKEN = 4`）；T3 是遗留的 `len // 4`，仅作为 T2 的纯 ASCII 退化情形保留。它刻意保持确定性（测试可复现、预算稳定）；旧版纯 `// 4` 会低估 CJK 密集内容（中文平均更接近 1–2 字符/token 而非 4）——T2 正是修正这一点。

@@ -403,7 +403,7 @@ turn 结束后如果有未完成 todo，系统自动注入续作消息把 LLM �
 
 **工作流程**：turn 结束 → 读 todos → 过滤未完成 → 停滞检测 → 退避冷却 → 构建 continuation prompt → `maybe_trigger_auto_turn()` 注入。用户发消息 → 取消续作 → reset()。
 
-**文件**：`stagnation_tracker.py`（~90 行）+ `todo_continuation.py`（~110 行）+ `agent/core.py`（~2 行注册）。
+**文件**：`stagnation_tracker.py`（~90 行）+ `todo_continuation/core.py`（~110 行）+ `agent/core.py`（~2 行注册）。
 
 ### E4: 转换屏障 — 双保险
 
@@ -427,7 +427,7 @@ Worker 返回 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
   Gate 5: Cleanup（清理临时资源）
 ```
 
-**文件**：`verifier.py`（~80 行）+ `subagent_completion_drain.py` 扩展（~15 行，追加验证提醒）。
+**文件**：`verifier.py`（~80 行）+ `subagent_completion_drain/core.py` 扩展（~15 行，追加验证提醒）。
 
 ### E6: 委派路由 ★
 
@@ -461,7 +461,7 @@ Worker 返回 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
 
 **防循环设计**：E7b 优先于 E7a；E7a once-per-session；E7b 只在 before_model 运行；`_is_system_directive()` 过滤系统注入消息；E3 有退避冷却；压缩后 re-arm。
 
-**文件**：`agent/middlewares/task_intent.py`（~160 行）+ `agent/core.py`（~2 行注册）。
+**文件**：`agent/middlewares/task_intent/core.py`（~160 行）+ `agent/core.py`（~2 行注册）。
 
 ---
 

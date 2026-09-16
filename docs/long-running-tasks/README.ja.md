@@ -4,7 +4,7 @@
 
 > エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、13 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、グローバルなセッション横断 flow ボードを公開し、3 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
-一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/tools/memory_tiered.py`、`agent/middlewares/memory_flush.py`、`agent/middlewares/summarization.py`（LT-3 事実ベースライン + LT-7 ブロック）、`agent/middlewares/subagent_completion_drain.py`（LT-5 還流）、`agent/middlewares/task_intent.py`、`agent/middlewares/todo_continuation.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
+一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/tools/memory_tiered.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（LT-3 事実ベースライン + LT-7 ブロック）、`agent/middlewares/subagent_completion_drain/core.py`（LT-5 還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
 ## 目次
 
@@ -42,7 +42,7 @@
 | 3 | **締め切り** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **アイドル検出** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` の古いマーカー |
 | 5 | **階層メモリ** | `memory` ツールアクション + `agent/tools/memory_tiered.py` | `workspace/memory/*.md` + `facts/*.md` |
-| 6 | **圧縮前フラッシュ** | `agent/middlewares/memory_flush.py` | `workspace/memory/MEMORY.md` |
+| 6 | **圧縮前フラッシュ** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
 | 7 | **継続性 / 自動再開** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + プロンプトブロック |
 
 全体を貫く設計契約は**エラーをテキストとして返す**ことです：ツールは業務エラーをモデルへ投げず、`Error:` で始まる人間可読な文字列を返します。すべてのバックグラウンドフックは**フェイルオープン**です——レジストリが使えなくても sweeper がクラッシュしても、「長時間タスクのコンテキストなし」へ退化するだけで、ターンを壊すことはありません。
@@ -426,10 +426,10 @@ Literal["add", "replace", "remove", "fact_add", "fact_read", "fact_search"]
 
 ### 要約プロンプトの事実ベースライン（LT-3）
 
-システムプロンプトは L2 の一行インデックスしか運ばないため、圧縮パスが、モデルがまだ必要とする事実へのポインタを要約で消してしまう可能性がありました。これを防ぐため、`_build_summary_prompt`（`agent/middlewares/summarization.py:1488-1506`）が `get_tiered_store().read_facts()` を通じて**非空のすべての事実**を読み、`<facts-baseline>` ブロックを要約プロンプトへ追記します：
+システムプロンプトは L2 の一行インデックスしか運ばないため、圧縮パスが、モデルがまだ必要とする事実へのポインタを要約で消してしまう可能性がありました。これを防ぐため、`_build_summary_prompt`（`agent/middlewares/summarization/core.py:1488-1506`）が `get_tiered_store().read_facts()` を通じて**非空のすべての事実**を読み、`<facts-baseline>` ブロックを要約プロンプトへ追記します：
 
 ```python
-# summarization.py:1496
+# summarization/core.py:1496
 baseline_lines = ["<facts-baseline>"]
 baseline_lines.append(
     "Persistent facts from tiered memory (ground truth, survives compression):"
@@ -445,7 +445,7 @@ parts.append("\n".join(baseline_lines))
 
 ## 🔥 圧縮前メモリフラッシュ
 
-要約ミドルウェアが古いメッセージを破棄する前に、`agent/middlewares/memory_flush.py` は安価なモデルへ、永続的な事実を `MEMORY.md` に保存する最後の機会を与えます。トリガーは `should_flush(discarded_messages, estimated_tokens)`（`memory_flush.py:43`）：
+要約ミドルウェアが古いメッセージを破棄する前に、`agent/middlewares/summarization/memory_flush.py` は安価なモデルへ、永続的な事実を `MEMORY.md` に保存する最後の機会を与えます。トリガーは `should_flush(discarded_messages, estimated_tokens)`（`memory_flush.py:43`）：
 
 ```python
 if not MEMORY_FLUSH["enabled"]:
@@ -458,11 +458,11 @@ return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
 
 発火すると、`run_memory_flush`（非同期）/ `run_memory_flush_sync` が注入されたファクトリでモデルを構築し、単一のプレーンテキスト抽出プロンプト（`_FLUSH_PROMPT`、`memory_flush.py:19`）を使います。出力は `§` で区切られた `Environment / Project / Decision / User / Tool` の事実リストです。空の結果やリテラル `(none)` はスキップされます。抽出テキストは `MemoryStore.append_entries(new_entries)`（`memory.py:281`）へ渡され、`§` で分割し、各候補を注入スキャンし、既存集合と重複排除し、追記し、2200 文字を超える間は最古のエントリを追い出し、最後に一度のアトミック書き込みを行います。`append_entries` は常に `MEMORY.md` を対象にします。すべての失敗経路は `False` を返して握りつぶされます——フラッシュが圧縮をブロックすることは決してありません。
 
-⚠️ **配線状況。** `Summarization.__init__` は `memory_store` / `llm_factory` を受け取り（どちらも既定 `None`、`summarization.py:623-624`）、両方が設定されている場合にのみ、`_apply_compression`（`summarization.py:1703`）と `_aapply_compression`（`summarization.py:1791`）の中でフラッシュを呼びます。現在の本番インスタンス——メインエージェント `agent/core.py:170` とサブエージェント `agent/tools/subagent/spawn/core.py:784`——はこれらを渡して**いません**。したがってフラッシュは実装・テスト済みですが、呼び出し箇所がストアと `factory(model=…, max_tokens=…, timeout=…)` の形のファクトリを提供するまで潜在状態にあります。
+⚠️ **配線状況。** `Summarization.__init__` は `memory_store` / `llm_factory` を受け取り（どちらも既定 `None`、`summarization/core.py:623-624`）、両方が設定されている場合にのみ、`_apply_compression`（`summarization/core.py:1703`）と `_aapply_compression`（`summarization/core.py:1791`）の中でフラッシュを呼びます。現在の本番インスタンス——メインエージェント `agent/core.py:170` とサブエージェント `agent/tools/subagent/spawn/core.py:784`——はこれらを渡して**いません**。したがってフラッシュは実装・テスト済みですが、呼び出し箇所がストアと `factory(model=…, max_tokens=…, timeout=…)` の形のファクトリを提供するまで潜在状態にあります。
 
 ## 🔗 要約 ↔ TaskFlow 連携
 
-圧縮が LLM プロンプトを組み立てるとき、`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization.py:262`）がこのセッションのアクティブな flow を描画し、要約プロンプトの**最後**の部分として追記します（`_build_summary_prompt`、`summarization.py:1431-1434`）：
+圧縮が LLM プロンプトを組み立てるとき、`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:262`）がこのセッションのアクティブな flow を描画し、要約プロンプトの**最後**の部分として追記します（`_build_summary_prompt`、`summarization/core.py:1431-1434`）：
 
 ```python
 taskflow_ctx = _get_taskflow_context_sync(session_id)
@@ -470,14 +470,14 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-このブロックは `## Current TaskFlow State (authoritative)` を見出しとし（`summarization.py:286`）、セッションが所有する最大 3 つの flow（`requester_session_key(session_id)` で照合）について、flow id/ステータス、説明、`done/total` 進捗とステータス内訳、最後の 2 つの完了ステップ、最初の 2 つの保留ステップ、待機理由を列挙します。DAG ヘルパー `step_status` と `steps_summary` を再利用し、完全にフェイルオープンです（`except Exception → ""`）。決定論的フォールバック要約（`_build_static_fallback_summary`）はこのブロックを**含みません**；これは LLM プロンプト専用の追加です。
+このブロックは `## Current TaskFlow State (authoritative)` を見出しとし（`summarization/core.py:286`）、セッションが所有する最大 3 つの flow（`requester_session_key(session_id)` で照合）について、flow id/ステータス、説明、`done/total` 進捗とステータス内訳、最後の 2 つの完了ステップ、最初の 2 つの保留ステップ、待機理由を列挙します。DAG ヘルパー `step_status` と `steps_summary` を再利用し、完全にフェイルオープンです（`except Exception → ""`）。決定論的フォールバック要約（`_build_static_fallback_summary`）はこのブロックを**含みません**；これは LLM プロンプト専用の追加です。
 
 ## 🧠 サブエージェントメモリ還流（LT-5）
 
-`SubagentCompletionDrainMiddleware`（`agent/middlewares/subagent_completion_drain.py`）は、キューに入ったサブエージェント完了メッセージの親ターン側の取り込み点です：`before_model` でセッションの `SteeringQueue` を再水和して排出し、再構築された完了キャリアメッセージを注入します。**排出が非空のとき**、共有メモリを親のインメモリビューと照合します：
+`SubagentCompletionDrainMiddleware`（`agent/middlewares/subagent_completion_drain/core.py`）は、キューに入ったサブエージェント完了メッセージの親ターン側の取り込み点です：`before_model` でセッションの `SteeringQueue` を再水和して排出し、再構築された完了キャリアメッセージを注入します。**排出が非空のとき**、共有メモリを親のインメモリビューと照合します：
 
 ```python
-# subagent_completion_drain.py:68-93
+# subagent_completion_drain/core.py:68-93
 def _backflow_shared_memory() -> None:
     from agent.tools.memory import memory_store
     memory_store.load_from_disk()
@@ -508,7 +508,7 @@ def _backflow_shared_memory() -> None:
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
 
-`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`（`tool_output_prune.py:103`）は新しい順から古い順へメッセージを走査し、最初の要約メッセージで停止し、最新の `prune_protect_tokens`（40 000）を保護し、保護対象ツール（`{"memory", "skill_view", "skill_list"}`）をスキップし、解放トークンが `prune_min_reduction_tokens`（5 000）に達した場合にのみ確定します。置換されたメッセージは `additional_kwargs["status"] = "compacted"` と `["original_length"]` を持つ `model_copy` クローンです。要約は 200 文字に制限され、テンプレート例外はマーカーへフォールバックします。呼び出し元は `Summarization._run_non_llm_strategies` です（`summarization.py:1538`）。
+`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`（`tool_output_prune.py:103`）は新しい順から古い順へメッセージを走査し、最初の要約メッセージで停止し、最新の `prune_protect_tokens`（40 000）を保護し、保護対象ツール（`{"memory", "skill_view", "skill_list"}`）をスキップし、解放トークンが `prune_min_reduction_tokens`（5 000）に達した場合にのみ確定します。置換されたメッセージは `additional_kwargs["status"] = "compacted"` と `["original_length"]` を持つ `model_copy` クローンです。要約は 200 文字に制限され、テンプレート例外はマーカーへフォールバックします。呼び出し元は `Summarization._run_non_llm_strategies` です（`summarization/core.py:1538`）。
 
 ## 🔄 セッション継続性
 
@@ -537,7 +537,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 | 読み取り | 場所 | 目的 |
 | :--- | :--- | :--- |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | システムプロンプトの `## Pending TaskFlows` |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization.py:262` | 圧縮要約プロンプトの TaskFlow ブロック（LT-7） |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 圧縮要約プロンプトの TaskFlow ブロック（LT-7） |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | 永続化された継続性状態の `taskflow_ids` |
 
 `creator_session_key` は flow 作成時に `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"` として刻まれます（`taskflow_create.py:38`、`_shared.py:21`）。`get_active_flows_sync()`（`store_sqlite.py:538`）は `running` と `waiting` の flow だけをリビジョン順で返し、イベントループを必要としない stdlib `sqlite3` パスを使います；失敗時は `[]` を返します。
@@ -747,7 +747,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
                                                    └───────────────────────────┘
 ```
 
-コンパイル済みグラフはもはや `agent.core.py` 内でインラインにラップされません：**`agent/wrapper/`** パッケージがガードを所有します。`agent.wrapper.registry` はプロセス全体の、順序付きでプラグ可能なチェーン（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`）を公開し、`GraphWrapperFactory` エントリは**最内優先**で適用されます；既定値は歴史的なハードコードチェーンを再現します——まず `RepetitionGuardWrapper(phantom_stream_guard=True)`、次に `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。ストリーム重複ガードは `agent/wrapper/repetition_guard.py`、コンテキストウィンドウガードは `agent/wrapper/context_limit.py` にあります。`facts/` 層を支える **TieredMemoryStore（L2）** は `agent/tools/memory_tiered.py` にあり、**LT-5** 還流は `agent/middlewares/subagent_completion_drain.py` の `SubagentCompletionDrainMiddleware` が実行します。
+コンパイル済みグラフはもはや `agent.core.py` 内でインラインにラップされません：**`agent/wrapper/`** パッケージがガードを所有します。`agent.wrapper.registry` はプロセス全体の、順序付きでプラグ可能なチェーン（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`）を公開し、`GraphWrapperFactory` エントリは**最内優先**で適用されます；既定値は歴史的なハードコードチェーンを再現します——まず `RepetitionGuardWrapper(phantom_stream_guard=True)`、次に `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。ストリーム重複ガードは `agent/wrapper/repetition_guard.py`、コンテキストウィンドウガードは `agent/wrapper/context_limit.py` にあります。`facts/` 層を支える **TieredMemoryStore（L2）** は `agent/tools/memory_tiered.py` にあり、**LT-5** 還流は `agent/middlewares/subagent_completion_drain/core.py` の `SubagentCompletionDrainMiddleware` が実行します。
 
 ## 📚 API リファレンス
 
@@ -790,17 +790,17 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 生成済みの子を失わない永続化 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 締め切りの執行 |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | アイドル検出マーカー |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization.py:262` | LT-7 要約連携 |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | LT-7 要約連携 |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 自動再開プロンプトブロック |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | ツール出力の一行要約 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 継続性保存フック |
-| `should_flush` / `run_memory_flush` | `agent/middlewares/memory_flush.py:43,65` | 圧縮前フラッシュ |
+| `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 圧縮前フラッシュ |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md への一括追記 |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | セッション横断ボード読み取り |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 失敗分類 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all 再試行の計画/永続化 |
 | `get_tiered_store` | `agent/tools/memory_tiered.py:118` | L2 事実ストア + LT-3 ベースライン源 |
-| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain.py:68` | LT-5 メモリ還流の照合 |
+| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 メモリ還流の照合 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | プラグ可能なグラフラッパーチェーン |
 
 ## 🧪 テスト

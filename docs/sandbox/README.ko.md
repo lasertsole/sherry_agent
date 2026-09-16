@@ -162,7 +162,7 @@ bwrap
 
 ### 7. `PathGuard` 미들웨어
 
-**모듈:** `agent/middlewares/path_guard/__init__.py` · **클래스:** `PathGuard(AgentMiddleware)` · **후크:** `wrap_tool_call` / `awrap_tool_call` 전용
+**모듈:** `agent/middlewares/path_guard/core.py` · **클래스:** `PathGuard(AgentMiddleware)` · **후크:** `wrap_tool_call` / `awrap_tool_call` 전용
 
 파일 도구의 게이트는 거기까지 도달한 호출만 보호합니다. `PathGuard`는 메인 에이전트 체인에서 `ToolCallNormalize` 바로 뒤에 등록되는 호출 지점 스크린입니다(`agent/core.py`). 리스트 순서가 wrap 후크의 바깥 순서이므로 `ToolGuardrails` **안쪽**에서 실행됩니다(`IterationBudget` → `ToolGuardrails` → `PathGuard` → 도구). 거부는 일반 오류 `ToolMessage`로 ToolGuardrails에 평가되어 다른 도구 실패와 동일하게 취급됩니다. worker / 서브에이전트 파이프라인에는 등록하지 않습니다 — 자식 도구는 자체 게이트를 유지하고, 서브에이전트의 외부 접근은 어차피 강제 거부입니다.
 

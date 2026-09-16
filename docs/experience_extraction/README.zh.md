@@ -74,12 +74,12 @@
 
 ### 4. 压缩前 memory flush（session-memory P0-1）
 
-两条压缩路径（`agent/middlewares/summarization.py` 中的 `_apply_compression_under_lock` 与 `_aapply_compression_under_lock`）在 cut 丢弃消息时、生成摘要之前运行 flush：
+两条压缩路径（`agent/middlewares/summarization/core.py` 中的 `_apply_compression_under_lock` 与 `_aapply_compression_under_lock`）在 cut 丢弃消息时、生成摘要之前运行 flush：
 
 - 同步路径：`run_memory_flush_sync(...)`；
 - 异步路径：`await run_memory_flush(...)`。
 
-`should_flush`（`agent/middlewares/memory_flush.py`）的门槛是 `MEMORY_FLUSH["enabled"]`，外加 `total_chars >= force_flush_chars`（50 000）或 `estimated_tokens >= soft_threshold_tokens`（8 000）。flush 是对即将丢弃文本执行一次 `llm.ainvoke` / `llm.invoke`，提示为 `_FLUSH_PROMPT`，由 `_build_llm` 以 `model=MEMORY_FLUSH["model"]`、`max_tokens=2048`、`timeout=30` 构建。它**不是** agent，也没有工具。
+`should_flush`（`agent/middlewares/summarization/memory_flush.py`）的门槛是 `MEMORY_FLUSH["enabled"]`，外加 `total_chars >= force_flush_chars`（50 000）或 `estimated_tokens >= soft_threshold_tokens`（8 000）。flush 是对即将丢弃文本执行一次 `llm.ainvoke` / `llm.invoke`，提示为 `_FLUSH_PROMPT`，由 `_build_llm` 以 `model=MEMORY_FLUSH["model"]`、`max_tokens=2048`、`timeout=30` 构建。它**不是** agent，也没有工具。
 
 响应按 `§` 分隔解析条目。空结果或 `(none)` 不写任何内容。否则 `MemoryStore.append_entries` 逐条路由：匹配 `^\s*user\s*:`（大小写不敏感）的进入 USER.md，其余（Environment / Project / Decision / Tool / 无前缀）进入 MEMORY.md。`append_entries` 会针对目标文件去重，并且不同于 `add`，它通过淘汰最旧条目来保持在各自文件上限之内。
 
@@ -87,7 +87,7 @@ flush 只提取跨会话事实。临时任务进度有意留给摘要。任何�
 
 ### 5. 压缩后 todo fork
 
-在同一压缩点，`_schedule_compression_todo_update`（`summarization.py` -> `nudge.schedule_compression_todo_update`）把 `update_todos_from_compaction` 作为 fire-and-forget `asyncio.create_task` 调度。调度器需**全部**满足：
+在同一压缩点，`_schedule_compression_todo_update`（`summarization/core.py` -> `nudge.schedule_compression_todo_update`）把 `update_todos_from_compaction` 作为 fire-and-forget `asyncio.create_task` 调度。调度器需**全部**满足：
 
 - `compression_todo_update_enabled`（`SUMMARIZATION`，默认 `True`）；
 - cut 确实丢弃了消息；

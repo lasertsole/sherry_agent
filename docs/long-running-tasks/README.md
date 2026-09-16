@@ -4,7 +4,7 @@
 
 > How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 13 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, echoes step acceptance criteria for the orchestrator to validate, aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a global cross-session flow board, and carries context forward through a three-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
 
-Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/tools/memory_tiered.py`, `agent/middlewares/memory_flush.py`, `agent/middlewares/summarization.py` (LT-3 facts baseline + LT-7 block), `agent/middlewares/subagent_completion_drain.py` (LT-5 backflow), `agent/middlewares/task_intent.py`, `agent/middlewares/todo_continuation.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
+Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/tools/memory_tiered.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py` (LT-3 facts baseline + LT-7 block), `agent/middlewares/subagent_completion_drain/core.py` (LT-5 backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
 
 ## Table of Contents
 
@@ -42,7 +42,7 @@ The long-running-task stack lets the main agent decompose a multi-turn job into 
 | 3 | **Deadline** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **Idle detection** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` stale markers |
 | 5 | **Tiered memory** | `memory` tool actions + `agent/tools/memory_tiered.py` | `workspace/memory/*.md` + `facts/*.md` |
-| 6 | **Pre-compression flush** | `agent/middlewares/memory_flush.py` | `workspace/memory/MEMORY.md` |
+| 6 | **Pre-compression flush** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
 | 7 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
 
 The design contract throughout is **error-as-text**: tools never raise business errors at the model; they return human-readable strings beginning with `Error:`. Every background hook is **fail-open** — an unavailable registry or crashed sweeper degrades to "no long-running-task context", never to a broken turn.
@@ -426,10 +426,10 @@ Literal["add", "replace", "remove", "fact_add", "fact_read", "fact_search"]
 
 ### Facts baseline in the summary prompt (LT-3)
 
-The system prompt only carries a one-line L2 index, so a compression pass could otherwise summarize away the pointer to facts the model still needs. To prevent that, `_build_summary_prompt` (`agent/middlewares/summarization.py:1488-1506`) reads **every non-empty fact** through `get_tiered_store().read_facts()` and appends a `<facts-baseline>` block to the summary prompt:
+The system prompt only carries a one-line L2 index, so a compression pass could otherwise summarize away the pointer to facts the model still needs. To prevent that, `_build_summary_prompt` (`agent/middlewares/summarization/core.py:1488-1506`) reads **every non-empty fact** through `get_tiered_store().read_facts()` and appends a `<facts-baseline>` block to the summary prompt:
 
 ```python
-# summarization.py:1496
+# summarization/core.py:1496
 baseline_lines = ["<facts-baseline>"]
 baseline_lines.append(
     "Persistent facts from tiered memory (ground truth, survives compression):"
@@ -445,7 +445,7 @@ The block is labeled **ground truth** so the compression model preserves it inst
 
 ## 🔥 Pre-Compression Memory Flush
 
-Before the summarization middleware discards old messages, `agent/middlewares/memory_flush.py` gives a cheap model one last chance to persist durable facts into `MEMORY.md`. The trigger is `should_flush(discarded_messages, estimated_tokens)` (`memory_flush.py:43`):
+Before the summarization middleware discards old messages, `agent/middlewares/summarization/memory_flush.py` gives a cheap model one last chance to persist durable facts into `MEMORY.md`. The trigger is `should_flush(discarded_messages, estimated_tokens)` (`memory_flush.py:43`):
 
 ```python
 if not MEMORY_FLUSH["enabled"]:
@@ -458,11 +458,11 @@ return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
 
 When it fires, `run_memory_flush` (async) / `run_memory_flush_sync` builds the model with an injected factory and one plain-text extraction prompt (`_FLUSH_PROMPT`, `memory_flush.py:19`) whose output is a `§`-separated list of `Environment / Project / Decision / User / Tool` facts. An empty result or the literal `(none)` is skipped. The extracted text is handed to `MemoryStore.append_entries(new_entries)` (`memory.py:281`), which splits on `§`, scans every candidate for injection, dedups against the existing set, appends, evicts oldest entries while over 2200 chars, and performs one atomic write. `append_entries` always targets `MEMORY.md`. Every failure path returns `False` and is swallowed — the flush can never block compression.
 
-⚠️ **Wiring status.** `Summarization.__init__` accepts `memory_store` / `llm_factory` (both default `None`, `summarization.py:623-624`) and calls the flush only when both are set, inside `_apply_compression` (`summarization.py:1703`) and `_aapply_compression` (`summarization.py:1791`). The current production instantiations — main agent `agent/core.py:170` and subagent `agent/tools/subagent/spawn/core.py:784` — do **not** pass them, so the flush is implemented and tested but latent until a call site supplies the store and a factory shaped `factory(model=…, max_tokens=…, timeout=…)`.
+⚠️ **Wiring status.** `Summarization.__init__` accepts `memory_store` / `llm_factory` (both default `None`, `summarization/core.py:623-624`) and calls the flush only when both are set, inside `_apply_compression` (`summarization/core.py:1703`) and `_aapply_compression` (`summarization/core.py:1791`). The current production instantiations — main agent `agent/core.py:170` and subagent `agent/tools/subagent/spawn/core.py:784` — do **not** pass them, so the flush is implemented and tested but latent until a call site supplies the store and a factory shaped `factory(model=…, max_tokens=…, timeout=…)`.
 
 ## 🔗 Summary ↔ TaskFlow Coordination
 
-When compression builds its LLM prompt, `_get_taskflow_context_sync(session_id)` (`agent/middlewares/summarization.py:262`) renders this session's active flows and appends them as the **last** part of the summary prompt (`_build_summary_prompt`, `summarization.py:1431-1434`):
+When compression builds its LLM prompt, `_get_taskflow_context_sync(session_id)` (`agent/middlewares/summarization/core.py:262`) renders this session's active flows and appends them as the **last** part of the summary prompt (`_build_summary_prompt`, `summarization/core.py:1431-1434`):
 
 ```python
 taskflow_ctx = _get_taskflow_context_sync(session_id)
@@ -470,14 +470,14 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-The block is headed `## Current TaskFlow State (authoritative)` (`summarization.py:286`) and, for up to three flows owned by the session (matched through `requester_session_key(session_id)`), lists the flow id/status, description, `done/total` progress with the status breakdown, the last two completed steps, the first two pending steps, and any wait reason. It reuses the DAG helpers `step_status` and `steps_summary`, and is fully fail-open (`except Exception → ""`). The deterministic fallback summary (`_build_static_fallback_summary`) does **not** include this block; it is an LLM-prompt-only addition.
+The block is headed `## Current TaskFlow State (authoritative)` (`summarization/core.py:286`) and, for up to three flows owned by the session (matched through `requester_session_key(session_id)`), lists the flow id/status, description, `done/total` progress with the status breakdown, the last two completed steps, the first two pending steps, and any wait reason. It reuses the DAG helpers `step_status` and `steps_summary`, and is fully fail-open (`except Exception → ""`). The deterministic fallback summary (`_build_static_fallback_summary`) does **not** include this block; it is an LLM-prompt-only addition.
 
 ## 🧠 Subagent Memory Backflow (LT-5)
 
-`SubagentCompletionDrainMiddleware` (`agent/middlewares/subagent_completion_drain.py`) is the parent-turn ingestion point for queued subagent completions: at `before_model` it rehydrates and drains the session's `SteeringQueue` and injects the rebuilt completion-carrier messages. **When the drain is non-empty** it also reconciles the shared memory with the parent's in-memory view:
+`SubagentCompletionDrainMiddleware` (`agent/middlewares/subagent_completion_drain/core.py`) is the parent-turn ingestion point for queued subagent completions: at `before_model` it rehydrates and drains the session's `SteeringQueue` and injects the rebuilt completion-carrier messages. **When the drain is non-empty** it also reconciles the shared memory with the parent's in-memory view:
 
 ```python
-# subagent_completion_drain.py:68-93
+# subagent_completion_drain/core.py:68-93
 def _backflow_shared_memory() -> None:
     from agent.tools.memory import memory_store
     memory_store.load_from_disk()
@@ -508,7 +508,7 @@ Older oversized `ToolMessage` content is normally cleared to a marker during non
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
 
-`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)` (`tool_output_prune.py:103`) walks messages newest→oldest, stops at the first summary message, protects the newest `prune_protect_tokens` (40 000), skips protected tools (`{"memory", "skill_view", "skill_list"}`), and only commits when the freed tokens reach `prune_min_reduction_tokens` (5 000). Replaced messages are `model_copy` clones carrying `additional_kwargs["status"] = "compacted"` and `["original_length"]`. Summaries are capped at 200 chars; any template exception falls back to the marker. It is called from `Summarization._run_non_llm_strategies` (`summarization.py:1538`).
+`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)` (`tool_output_prune.py:103`) walks messages newest→oldest, stops at the first summary message, protects the newest `prune_protect_tokens` (40 000), skips protected tools (`{"memory", "skill_view", "skill_list"}`), and only commits when the freed tokens reach `prune_min_reduction_tokens` (5 000). Replaced messages are `model_copy` clones carrying `additional_kwargs["status"] = "compacted"` and `["original_length"]`. Summaries are capped at 200 chars; any template exception falls back to the marker. It is called from `Summarization._run_non_llm_strategies` (`summarization/core.py:1538`).
 
 ## 🔄 Session Continuity
 
@@ -537,7 +537,7 @@ Active flows are re-surfaced into the system prompt so a fresh session can pick 
 | Reader | Location | Purpose |
 | :--- | :--- | :--- |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | `## Pending TaskFlows` in the system prompt |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization.py:262` | TaskFlow block in the compression summary prompt (LT-7) |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | TaskFlow block in the compression summary prompt (LT-7) |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | `taskflow_ids` in the persisted continuity state |
 
 `creator_session_key` is stamped on the flow at creation (`taskflow_create.py:38`) as `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"` (`_shared.py:21`). `get_active_flows_sync()` (`store_sqlite.py:538`) returns only `running` and `waiting` flows ordered by revision, using the stdlib `sqlite3` path that works without an event loop; failures return `[]`.
@@ -747,7 +747,7 @@ The constants most relevant to this document:
                                                    └───────────────────────────┘
 ```
 
-The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/wrapper/`** package now owns the guards. `agent.wrapper.registry` exposes a process-global, ordered, pluggable chain (`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`) with `GraphWrapperFactory` entries applied **innermost-first**; the defaults reproduce the historical chain — `RepetitionGuardWrapper(phantom_stream_guard=True)` then `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. The stream repetition guard lives in `agent/wrapper/repetition_guard.py` and the context-window guard in `agent/wrapper/context_limit.py`. The **TieredMemoryStore (L2)** backing the `facts/` layer lives in `agent/tools/memory_tiered.py`, and the **LT-5** backflow is performed by `SubagentCompletionDrainMiddleware` in `agent/middlewares/subagent_completion_drain.py`.
+The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/wrapper/`** package now owns the guards. `agent.wrapper.registry` exposes a process-global, ordered, pluggable chain (`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`) with `GraphWrapperFactory` entries applied **innermost-first**; the defaults reproduce the historical chain — `RepetitionGuardWrapper(phantom_stream_guard=True)` then `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. The stream repetition guard lives in `agent/wrapper/repetition_guard.py` and the context-window guard in `agent/wrapper/context_limit.py`. The **TieredMemoryStore (L2)** backing the `facts/` layer lives in `agent/tools/memory_tiered.py`, and the **LT-5** backflow is performed by `SubagentCompletionDrainMiddleware` in `agent/middlewares/subagent_completion_drain/core.py`.
 
 ## 📚 API Reference
 
@@ -790,17 +790,17 @@ The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/
 | `update_flow_with_conflict_retry` | `_shared.py:191` | Never-lose-a-spawned-child persist |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | Deadline enforcement |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | Idle detection marker |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization.py:262` | LT-7 summary coordination |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | LT-7 summary coordination |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | Auto-resume prompt block |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | One-line tool summaries |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | Continuity save hook |
-| `should_flush` / `run_memory_flush` | `agent/middlewares/memory_flush.py:43,65` | Pre-compression flush |
+| `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | Pre-compression flush |
 | `append_entries` | `agent/tools/memory.py:281` | Batch MEMORY.md append |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | Cross-session board read |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 failure classification |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all retry planning/persist |
 | `get_tiered_store` | `agent/tools/memory_tiered.py:118` | L2 facts store + LT-3 baseline source |
-| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain.py:68` | LT-5 memory backflow reconcile |
+| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 memory backflow reconcile |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | Pluggable graph-wrapper chain |
 
 ## 🧪 Testing

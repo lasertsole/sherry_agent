@@ -10,9 +10,9 @@ All 14 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 | Item | Capability | Where |
 |---|---|---|
-| P0-1 | Pre-compression memory flush | `agent/middlewares/memory_flush.py` |
-| P0-2 | Compression cooldown persisted across restarts | `_COOLDOWN_PERSIST_KEYS` in `agent/middlewares/summarization.py` |
-| P0-3 | SQLite compaction lock (TTL, fail-open) | `agent/middlewares/compaction_lock.py`, migration v10 |
+| P0-1 | Pre-compression memory flush | `agent/middlewares/summarization/memory_flush.py` |
+| P0-2 | Compression cooldown persisted across restarts | `_COOLDOWN_PERSIST_KEYS` in `agent/middlewares/summarization/core.py` |
+| P0-3 | SQLite compaction lock (TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, migration v10 |
 | P0-4 | One-line tool-output summaries | `pub/func/message/tool_output_prune.py` |
 | P1-1 | Compaction checkpoints + restore | migration v15, `restore_compaction_checkpoint` |
 | P1-2 | Idempotent message persistence | migration v11 (`idempotency_key` + partial unique index) |
@@ -43,7 +43,7 @@ All 14 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 - **`context_engine/facts/`** — dual-watermark cursor (`cursor.py`, durable on `state_register.db`), auxiliary-LLM extractor (`extractor.py`, json_repair parsing + category fallback), queue orchestration (`queue.py`). Wired into `ContextEngineHook.aafter_agent` as a fire-and-forget background task; facts are written through the existing `TieredMemoryStore.add_fact` (facts/*.md).
 - **`context_engine/events/`** — append-only event log with gapless per-session sequences (`types.py`, `store.py`), and an `EventProjector` mapping checkpoint events onto the P1-1 read model.
 - **`context_engine/embeddings/`** — vector semantic search: lazy embed backend (project embed model, overridable), idempotent LEFT-JOIN-driven indexer, cosine ranking; exposed by the `message_search` tool (`semantic: true`).
-- **`agent/middlewares/compaction_lock.py`** — SQLite compaction lock (TTL self-healing, sync + async acquire, fail-open on timeout), wrapping both `_apply_compression` and `_aapply_compression`.
+- **`agent/middlewares/summarization/compaction_lock.py`** — SQLite compaction lock (TTL self-healing, sync + async acquire, fail-open on timeout), wrapping both `_apply_compression` and `_aapply_compression`.
 - **`runtime/session/state_register.py`** — `ContextEpoch` lifecycle (initialize / prepare / replace / advance) over the `context_epoch` table.
 
 ## Testing

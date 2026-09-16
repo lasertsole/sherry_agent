@@ -11,7 +11,7 @@
 1. **只降级，绝不崩溃。** 防护永远不会拖垮进程：后台服务*停止*，回合*优雅结束*，启动门控把进程*收缩*到纯 HTTP 模式。
 2. **永远留一个逃生口。** 每个熔断器都有成文的手动重置方式（REST 端点、删除状态文件、或重启进程）。
 
-**事实来源：** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
 
 ## 🎯 总览与威胁模型
 
@@ -102,7 +102,7 @@
 
 ### 管线级：子 Agent 完成 drain + announce 重试
 
-**注入 drain**（`agent/middlewares/subagent_completion_drain.py`）：一个 `before_model` 中间件，负责把会话的 `SteeringQueue` 重新水合并排空，在下一次模型调用之前注入排队的完成载体。SQLite 行在 drain 时标记为 `CONSUMED`，因此检查点回放（HITL 恢复）绝不可能再次注入同一条完成通知。该中间件完全 fail-open：所有失败都记日志后吞掉，父回合在没有注入的情况下继续。它封死了"子 Agent 早已完成、父 Agent 却永远等待"这条循环。
+**注入 drain**（`agent/middlewares/subagent_completion_drain/core.py`）：一个 `before_model` 中间件，负责把会话的 `SteeringQueue` 重新水合并排空，在下一次模型调用之前注入排队的完成载体。SQLite 行在 drain 时标记为 `CONSUMED`，因此检查点回放（HITL 恢复）绝不可能再次注入同一条完成通知。该中间件完全 fail-open：所有失败都记日志后吞掉，父回合在没有注入的情况下继续。它封死了"子 Agent 早已完成、父 Agent 却永远等待"这条循环。
 
 **投递重试 + 幂等**（`agent/tools/subagent/announce/delivery.py`、`idempotency.py`）：忙会话的完成通知按固定阶梯重试瞬态失败（5s / 10s / 20s，上限 `announce_retry_max=3`；压缩错误用 1s / 2s / 4s / 8s）。永久失败从不重试。每次投递都以 `subagent_announce:{run_id}:gen:{generation}` 为键存入有界的内存幂等集合，所以重试的 announce 无法二次注入。重试耗尽 → run 置为 FAILED；软重试上限 → SUSPENDED；命中 `max_announce_retry_count`（10）次重试或超过 24 小时时限的 run 会被丢弃。加上清扫器的孤儿恢复，子 Agent 生命周期的投递侧就此有了边界。
 

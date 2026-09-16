@@ -10,9 +10,9 @@ SESSION 内存计划的全部 14 项能力（借鉴自 opencode-dev / oh-my-open
 
 | 项 | 能力 | 位置 |
 |---|---|---|
-| P0-1 | 预压缩 Memory Flush | `agent/middlewares/memory_flush.py` |
-| P0-2 | 压缩冷却跨重启持久化 | `agent/middlewares/summarization.py` 的 `_COOLDOWN_PERSIST_KEYS` |
-| P0-3 | SQLite 压缩锁（TTL、fail-open） | `agent/middlewares/compaction_lock.py`，迁移 v10 |
+| P0-1 | 预压缩 Memory Flush | `agent/middlewares/summarization/memory_flush.py` |
+| P0-2 | 压缩冷却跨重启持久化 | `agent/middlewares/summarization/core.py` 的 `_COOLDOWN_PERSIST_KEYS` |
+| P0-3 | SQLite 压缩锁（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`，迁移 v10 |
 | P0-4 | 工具输出一行摘要 | `pub/func/message/tool_output_prune.py` |
 | P1-1 | 压缩检查点 + 回溯 | 迁移 v15，`restore_compaction_checkpoint` |
 | P1-2 | 消息幂等持久化 | 迁移 v11（`idempotency_key` + 部分唯一索引） |
@@ -43,7 +43,7 @@ SESSION 内存计划的全部 14 项能力（借鉴自 opencode-dev / oh-my-open
 - **`context_engine/facts/`** —— 双水位游标（`cursor.py`，持久化于 `state_register.db`）、辅助 LLM 提取器（`extractor.py`，json_repair 解析 + 类别回退）、队列编排（`queue.py`）。经 `ContextEngineHook.aafter_agent` 以 fire-and-forget 后台任务接入；事实写入既有 `TieredMemoryStore.add_fact`（facts/*.md）。
 - **`context_engine/events/`** —— 只增事件日志（会话内无间隙序列：`types.py`、`store.py`），`EventProjector` 将检查点事件映射到 P1-1 读模型。
 - **`context_engine/embeddings/`** —— 向量语义搜索：惰性嵌入后端（项目嵌入模型，可覆盖）、幂等 LEFT-JOIN 索引器、余弦排序；由 `message_search` 工具暴露（`semantic: true`）。
-- **`agent/middlewares/compaction_lock.py`** —— SQLite 压缩锁（TTL 自愈、同步 + 异步获取、超时 fail-open），包裹 `_apply_compression` 与 `_aapply_compression` 两条路径。
+- **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 压缩锁（TTL 自愈、同步 + 异步获取、超时 fail-open），包裹 `_apply_compression` 与 `_aapply_compression` 两条路径。
 - **`runtime/session/state_register.py`** —— `ContextEpoch` 生命周期（initialize / prepare / replace / advance），基于 `context_epoch` 表。
 
 ## 测试

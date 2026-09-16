@@ -11,7 +11,7 @@
 1. **劣化はするが、クラッシュはしない。** 保護機能がプロセスを落とすことはありません: バックグラウンドサービスは*停止*し、ターンは*安全に終了し*、起動ゲートはプロセスを HTTP 専用モードへ*縮小*します。
 2. **必ずハッチを残す。** すべてのブレーカーには文書化された手動リセット(REST エンドポイント、状態ファイルの削除、プロセスの再起動)があります。
 
-**一次情報:** `agent/middlewares/tool_guardrails.py`、`agent/middlewares/iteration_budget.py`、`agent/middlewares/max_tokens_boost.py`、`agent/middlewares/output_repetition_guard.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness.py`、`agent/middlewares/subagent_completion_drain.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**一次情報:** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
 
 ## 🎯 概要と脅威モデル
 
@@ -106,7 +106,7 @@
 
 ### パイプラインレベル: サブエージェント完了ドレイン + announce 再試行
 
-**注入ドレイン** (`agent/middlewares/subagent_completion_drain.py`): セッションの `SteeringQueue` を再水和して排出する `before_model` ミドルウェアで、次のモデル呼び出しの直前に待機中の完了キャリアを注入します。SQLite 行はドレイン時に `CONSUMED` と印付かれるため、チェックポイント再生(HITL 再開)が同じ完了を再注入することは決してありません。このミドルウェアは完全に fail-open です: すべての失敗はログに記録して飲み込まれ、親ターンは注入なしで続行します。これが「すでに終わった子を親が永遠に待つ」ループを塞ぎます。
+**注入ドレイン** (`agent/middlewares/subagent_completion_drain/core.py`): セッションの `SteeringQueue` を再水和して排出する `before_model` ミドルウェアで、次のモデル呼び出しの直前に待機中の完了キャリアを注入します。SQLite 行はドレイン時に `CONSUMED` と印付かれるため、チェックポイント再生(HITL 再開)が同じ完了を再注入することは決してありません。このミドルウェアは完全に fail-open です: すべての失敗はログに記録して飲み込まれ、親ターンは注入なしで続行します。これが「すでに終わった子を親が永遠に待つ」ループを塞ぎます。
 
 **配送再試行 + 冪等性** (`agent/tools/subagent/announce/delivery.py`、`idempotency.py`): ビジー状態のセッションでの完了通知は、固定ラダーで一時的失敗を再試行します(5s / 10s / 20s、最大 `announce_retry_max=3`; コンパクションエラーは 1s / 2s / 4s / 8s)。永続的失敗は再試行されません。すべての配送は `subagent_announce:{run_id}:gen:{generation}` をキーとして有界なインメモリ冪等セットに記録されるため、再試行された announce が二重注入することはできません。再試行の枯渇 → run は FAILED; ソフト再試行上限 → SUSPENDED; `max_announce_retry_count`(10)回の再試行に達した run、または 24 時間の年齢上限を超えた run は破棄されます。スイーパーの孤児回収と合わせて、サブエージェントライフサイクルの配送側に境界が引かれます。
 

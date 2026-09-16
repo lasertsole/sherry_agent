@@ -10,9 +10,9 @@ SESSION メモリプランの全 14 機能（opencode-dev / oh-my-openagent / he
 
 | 項目 | 機能 | 場所 |
 |---|---|---|
-| P0-1 | 圧縮前メモリフラッシュ | `agent/middlewares/memory_flush.py` |
-| P0-2 | 圧縮クールダウンの再起動間永続化 | `agent/middlewares/summarization.py` の `_COOLDOWN_PERSIST_KEYS` |
-| P0-3 | SQLite 圧縮ロック（TTL、fail-open） | `agent/middlewares/compaction_lock.py`、移行 v10 |
+| P0-1 | 圧縮前メモリフラッシュ | `agent/middlewares/summarization/memory_flush.py` |
+| P0-2 | 圧縮クールダウンの再起動間永続化 | `agent/middlewares/summarization/core.py` の `_COOLDOWN_PERSIST_KEYS` |
+| P0-3 | SQLite 圧縮ロック（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`、移行 v10 |
 | P0-4 | ツール出力の一行要約 | `pub/func/message/tool_output_prune.py` |
 | P1-1 | 圧縮チェックポイント + 復元 | 移行 v15、`restore_compaction_checkpoint` |
 | P1-2 | メッセージ冪等永続化 | 移行 v11（`idempotency_key` + 部分一意インデックス） |
@@ -43,7 +43,7 @@ SESSION メモリプランの全 14 機能（opencode-dev / oh-my-openagent / he
 - **`context_engine/facts/`** —— 双ウォーターマークカーソル（`cursor.py`、`state_register.db` に永続化）、補助 LLM 抽出器（`extractor.py`、json_repair 解析 + カテゴリフォールバック）、キュー編成（`queue.py`）。`ContextEngineHook.aafter_agent` に fire-and-forget で接続され、facts は既存の `TieredMemoryStore.add_fact`（facts/*.md）経由で書き込まれる。
 - **`context_engine/events/`** —— 追記型イベントログ（セッション単位の無欠番シーケンス：`types.py`、`store.py`）、チェックポイントイベントを P1-1 読みモデルへ写像する `EventProjector`。
 - **`context_engine/embeddings/`** —— ベクトル意味検索：遅延 embed バックエンド（上書き可能）、冪等 LEFT-JOIN インデクサ、コサイン順位付け。`message_search` ツール（`semantic: true`）で公開。
-- **`agent/middlewares/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）。
+- **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）。
 - **`runtime/session/state_register.py`** —— `context_epoch` テーブル上の `ContextEpoch` ライフサイクル（initialize / prepare / replace / advance）。
 
 ## テスト

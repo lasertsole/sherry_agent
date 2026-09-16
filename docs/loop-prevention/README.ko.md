@@ -11,7 +11,7 @@
 1. **성능을 낮추되, 절대 크래시하지 않는다.** 보호 기능은 프로세스를 죽이지 않습니다: 백그라운드 서비스는 *정지*하고, 턴은 *우아하게 끝나며*, 부팅 게이트는 프로세스를 HTTP 전용 모드로 *축소*합니다.
 2. **항상 탈출구를 남긴다.** 모든 브레이커에는 문서화된 수동 리셋(REST 엔드포인트, 상태 파일 삭제, 프로세스 재시작)이 있습니다.
 
-**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails.py`, `agent/middlewares/iteration_budget.py`, `agent/middlewares/max_tokens_boost.py`, `agent/middlewares/output_repetition_guard.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness.py`, `agent/middlewares/subagent_completion_drain.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
+**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
 
 ## 🎯 개요와 위협 모델
 
@@ -105,7 +105,7 @@
 
 ### 파이프라인 수준: 서브에이전트 완료 drain + announce 재시도
 
-**주입 drain** (`agent/middlewares/subagent_completion_drain.py`): 세션의 `SteeringQueue`를 재수화하고 비우는 `before_model` 미들웨어로, 다음 모델 호출 직전에 대기 중인 완료 캐리어를 주입합니다. SQLite 행은 drain 시 `CONSUMED`로 표시되므로 체크포인트 리플레이(HITL 재개)가 같은 완료를 다시 주입할 수 없습니다. 이 미들웨어는 완전히 fail-open입니다: 모든 실패는 로그로 남기고 삼켜지며, 부모 턴은 주입 없이 계속됩니다. 이것이 '이미 끝난 자식을 부모가 영원히 기다리는' 루프를 닫습니다.
+**주입 drain** (`agent/middlewares/subagent_completion_drain/core.py`): 세션의 `SteeringQueue`를 재수화하고 비우는 `before_model` 미들웨어로, 다음 모델 호출 직전에 대기 중인 완료 캐리어를 주입합니다. SQLite 행은 drain 시 `CONSUMED`로 표시되므로 체크포인트 리플레이(HITL 재개)가 같은 완료를 다시 주입할 수 없습니다. 이 미들웨어는 완전히 fail-open입니다: 모든 실패는 로그로 남기고 삼켜지며, 부모 턴은 주입 없이 계속됩니다. 이것이 '이미 끝난 자식을 부모가 영원히 기다리는' 루프를 닫습니다.
 
 **전달 재시도 + 멱등성** (`agent/tools/subagent/announce/delivery.py`, `idempotency.py`): 바쁜 세션의 완료 통지는 고정 사다리로 일시적 실패를 재시도합니다(5s / 10s / 20s, 최대 `announce_retry_max=3`; 컴팩션 에러는 1s / 2s / 4s / 8s). 영구 실패는 재시도하지 않습니다. 모든 전달은 `subagent_announce:{run_id}:gen:{generation}` 키로 유계 메모리 멱등 집합에 기록되므로, 재시도된 announce가 이중 주입할 수 없습니다. 재시도 소진 → run FAILED; 소프트 재시도 한도 → SUSPENDED; `max_announce_retry_count`(10) 재시도에 도달했거나 24시간 나이 한도를 넘은 run은 폐기됩니다. 스위퍼의 고아 복구와 함께 서브에이전트 라이프사이클의 전달 측면에 경계가 생깁니다.
 

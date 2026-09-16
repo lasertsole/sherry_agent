@@ -74,12 +74,12 @@
 
 ### 4. 압축 전 memory flush(session-memory P0-1)
 
-두 압축 경로(`agent/middlewares/summarization.py`의 `_apply_compression_under_lock`과 `_aapply_compression_under_lock`)는 cut이 메시지를 버릴 때, 요약 생성 전에 flush를 실행합니다:
+두 압축 경로(`agent/middlewares/summarization/core.py`의 `_apply_compression_under_lock`과 `_aapply_compression_under_lock`)는 cut이 메시지를 버릴 때, 요약 생성 전에 flush를 실행합니다:
 
 - 동기 경로: `run_memory_flush_sync(...)`;
 - 비동기 경로: `await run_memory_flush(...)`.
 
-`should_flush`(`agent/middlewares/memory_flush.py`)의 게이트는 `MEMORY_FLUSH["enabled"]`에 더해 `total_chars >= force_flush_chars`(50 000) 또는 `estimated_tokens >= soft_threshold_tokens`(8 000)입니다. flush는 버려지기 직전 텍스트에 대한 `llm.ainvoke` / `llm.invoke` 한 번이고, 프롬프트는 `_FLUSH_PROMPT`이며 `_build_llm`이 `model=MEMORY_FLUSH["model"]`, `max_tokens=2048`, `timeout=30`으로 만듭니다. **agent가 아니며** 도구도 없습니다.
+`should_flush`(`agent/middlewares/summarization/memory_flush.py`)의 게이트는 `MEMORY_FLUSH["enabled"]`에 더해 `total_chars >= force_flush_chars`(50 000) 또는 `estimated_tokens >= soft_threshold_tokens`(8 000)입니다. flush는 버려지기 직전 텍스트에 대한 `llm.ainvoke` / `llm.invoke` 한 번이고, 프롬프트는 `_FLUSH_PROMPT`이며 `_build_llm`이 `model=MEMORY_FLUSH["model"]`, `max_tokens=2048`, `timeout=30`으로 만듭니다. **agent가 아니며** 도구도 없습니다.
 
 응답은 `§`로 구분된 항목으로 파싱됩니다. 빈 결과나 `(none)`은 아무것도 쓰지 않습니다. 그렇지 않으면 `MemoryStore.append_entries`가 각 항목을 라우팅합니다: `^\s*user\s*:`(대소문자 무시)에 맞으면 USER.md, 나머지(Environment / Project / Decision / Tool / 접두사 없음)는 MEMORY.md. `append_entries`는 대상 파일에 대해 중복을 제거하고, `add`와 달리 가장 오래된 항목을 밀어내어 각 파일의 상한 안에 머뭅니다.
 
@@ -87,7 +87,7 @@ flush는 교차 세션 facts만 추출합니다. 임시 작업 진행은 의도�
 
 ### 5. 압축 후 todo fork
 
-같은 압축 지점에서 `_schedule_compression_todo_update`(`summarization.py` -> `nudge.schedule_compression_todo_update`)가 `update_todos_from_compaction`을 fire-and-forget `asyncio.create_task`로 예약합니다. 스케줄러는 **모두** 만족해야 합니다:
+같은 압축 지점에서 `_schedule_compression_todo_update`(`summarization/core.py` -> `nudge.schedule_compression_todo_update`)가 `update_todos_from_compaction`을 fire-and-forget `asyncio.create_task`로 예약합니다. 스케줄러는 **모두** 만족해야 합니다:
 
 - `compression_todo_update_enabled`(`SUMMARIZATION`, 기본 `True`);
 - cut이 실제로 메시지를 버렸음;
