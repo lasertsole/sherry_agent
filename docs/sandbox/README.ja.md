@@ -6,7 +6,7 @@
 
 2つのツールがモデルにあなたのマシン上でのコード実行を許しています: `terminal`(シェルコマンド)と `python_repl`(子プロセス内の Python)。幻覚やプロンプトインジェクションによる1つのコマンドが、環境変数から API キーを読み取ったり、プロジェクト外に書き込んだり、他のプロセスに触れたりできてしまいます。サンドボックス層はこの3つすべてを制限します。
 
-事実の基準(source of truth): `agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/terminal.py`、`agent/tools/python_repl.py`、`agent/middlewares/humanInTheLoop/`。
+事実の基準(source of truth): `agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/pub_base/path_utils.py`、`agent/tools/file_tools/`、`agent/tools/terminal.py`、`agent/tools/python_repl.py`、`agent/middlewares/humanInTheLoop/`、`agent/middlewares/path_guard/`。
 
 ## 🎯 概要と脅威モデル
 
@@ -15,14 +15,16 @@
 | **環境変数内のシークレット** | 子プロセスが `*_API_KEY` を含む全変数を継承 | L1 環境変数洗浄 |
 | **ファイルシステムへの書き込み** | 子がエージェントユーザーの書けるどこへでも記録 | L2 OS サンドボックス (Linux / macOS) |
 | **ファイルシステムからの読み取り** | 子が `~/.ssh`、`.env`、各種クレデンシャルストアを読める | L2 リードシールド(機密パスのマスク、Linux / macOS) + terminal の機密ファイル正規表現 |
+| **ファイルツールのパス引数** | ツール呼び出しが `read_file` にトラバーサルやハード拒否パスを要求 | §5 外部パスゲート + §6 3つの構造ゲート + §7 `PathGuard`(外部パスは依然 HITL 経由) |
 | **プロセス / セッションスコープ** | 子が名前空間を共有し、親より長く生き残り得る | L2 `--unshare-all`、`--die-with-parent` |
 | **意図的なバイパス** | モデルが `sandbox=False` を要求 | 人間の承認ゲート (HITL) |
 
-2つの層と1つのゲート:
+2つの層と1つのゲート — それに加えてファイルツール独自のパス防御スタック:
 
 - **L1. 環境変数洗浄**(`scrub_env`): 無条件、すべての生成時点で実行。人間が `sandbox=False` を承認した場合でも例外なし。
 - **L2. OS ネイティブサンドボックス**: Linux は bubblewrap、macOS は Seatbelt — 書き込み封じ込めに加えて機密パスのリードシールド([§2](#2-os-ネイティブサンドボックスバックエンド-l2)参照)。Windows には OS バックエンドがありません([正直な制限事項](#️-正直な制限事項)参照)。
 - **人間の承認ゲート**: `sandbox=False` によるバイパスはメインセッションでのみ可能で、HITL インタラプトを通ります。
+- **ファイルツールのパスゲート**(§5–§7): `resolve_project_path()` の3つの構造ゲートと `O_NOFOLLOW` I/O、仮想パス描画、検索コンテインメント、6段階の外部パス承認フロー、そして `PathGuard` ミドルウェアのスクリーニング。
 
 ## 🧱 分離機能
 
@@ -64,7 +66,7 @@ bwrap
 
 `--clearenv` がすべての `--setenv` より先に来ることと組み合わせて、洗浄済みディクショナリが本当の環境変数ホワイトリストになります。ルートファイルシステムは読み取り専用で、書き込みはプロジェクトルートと一時ディレクトリにしか落ちません。
 
-**リードシールド (P0-1)。** `--ro-bind / /` は読み取りを「どこでも可能」にするだけで、無害にはしません。マスクがなければモデルは `cat ~/.ssh/id_rsa` を実行できます。そこで両バックエンドは既定の機密パスリスト — `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker` — をマスクし、環境変数 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 区切り、`~` 展開)で拡張できます。bwrap のシールドは存在する各ディレクトリの上に空ディレクトリをマウントし(機密ファイルには `--ro-bind /dev/null`)、存在しないパスはスキップします(読むものが無く、bwrap は読み取り専用ルートバインドの下にマウントポイントを作れません)。`/var/empty` が無いホストではディレクトリは `--tmpfs <パス>` にフォールバックします。シールドは書き込み可能バインドの**後**に置かれ、書き込み可能なプロジェクトルートがマスク済みパスを再露出させることはありません。
+**リードシールド (P0-1)。** `--ro-bind / /` は読み取りを「どこでも可能」にするだけで、無害にはしません。マスクがなければモデルは `cat ~/.ssh/id_rsa` を実行できます。そこで両バックエンドは既定の機密パスリスト `DEFAULT_DENY_READ_PATHS` — `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker` — をマスクし、呼び出しごとに `_sensitive_read_paths()` が解決し、環境変数 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 区切り、`~` 展開、空項目はスキップ、順序は保持、重複は除去)で拡張できます。bwrap のシールドは存在する各ディレクトリの上に空ディレクトリをマウントし(機密ファイルには `--ro-bind /dev/null`)、存在しないパスはスキップします(読むものが無く、bwrap は読み取り専用ルートバインドの下にマウントポイントを作れません)。`/var/empty` が無いホストではディレクトリは `--tmpfs <パス>` にフォールバックします。シールドは書き込み可能バインドの**後**に置かれ、書き込み可能なプロジェクトルートがマスク済みパスを再露出させることはありません。
 
 **macOS: Seatbelt(`sandbox-exec`)**。コマンドは `sandbox-exec -p <profile> -- <cmd...>` として実行され、profile は次のとおりです:
 
@@ -103,7 +105,7 @@ bwrap
 
 **連結後**の文字列をマッチすることに意味があります: 旧来の要素単位の完全一致ブラックリストは、各要素を単独で見れば無害に見える `["echo ok", "rm -rf /"]` を見逃していました。マッチすると `ToolException("Blocked: unsafe command.")` を送出し、`handle_tool_error=True` を経由してエラーのツール結果として表面化します。このゲートは `sandbox` の値にかかわらず常に動きます。`python_repl` には対応する正規表現がなく、代わりにラッパースクリプトがビルトインを制限します。
 
-**機密ファイルゲート (P0-2)。** 危険コマンド正規表現の直後、どの生成よりも前に、terminal は既知のシークレットを読むコマンドも拒否し、`ToolException("Blocked: sensitive file access. …")` を送出して、`read_file`(外部パスは人間の承認を通る)を使うようモデルに伝えます:
+**機密ファイルゲート (P0-2、`_SENSITIVE_FILE_PATTERNS`)。** `_run` と `_arun` の両方で、`_check_sensitive_file_access(cmd_str)` は `_check_dangerous` の**後**、**どの生成よりも前**に実行されます: 6つのコンパイル済みパターンのいずれかが連結後のコマンド文字列にマッチすると `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)を送出し — 子プロセスは決して生成されません — モデルを `read_file`(外部パスは人間の承認を通る)へ誘導します:
 
 | パターン | 対象 |
 | :------- | :--- |
@@ -113,7 +115,7 @@ bwrap
 | `curl … -d @… .env` | dotenv のアップロードによる持ち出し |
 | `(cat\|head\|tail) … ~/.ssh/`、`(cat\|head\|tail) … ~/.aws/` | ホーム配下のクレデンシャルストア |
 
-**これは緩和であり、障壁ではありません。** `dd`、`sed`、`python -c "open(…)"`、`$(< file)`、シェル変数、グロブはリテラル正規表現をすべて迂回できます — 本当の読み取り障壁は上記の L2 リードシールドであり、承認済みの `sandbox=False` 呼び出しは設計どおりサンドボックス外です。正規表現は明白でよくある試行を止め、モデルを承認フローへ誘導するために存在します。
+**これは緩和であり、障壁ではありません。** `dd`、`sed`、`python -c "open(…)"`、`$(< file)`、シェル変数、グロブ、ヒアドキュメントはリテラル正規表現をすべて迂回できます — 本当の読み取り障壁は上記の L2 リードシールド([§2](#2-os-ネイティブサンドボックスバックエンド-l2))であり、承認済みの `sandbox=False` 呼び出しは設計どおりサンドボックス外です。正規表現は明白でよくある試行を止め、モデルを承認フローへ誘導するために存在します。
 
 ### 4. 人間が承認するバイパス経路
 
@@ -140,11 +142,42 @@ bwrap
    - `yolo` — すべての外部パスを恒久的に許可;
    - `reject` — アクセスを拒否。
 
-`resolve_project_path()`(ROOT_DIR 側のフロー)では、パスは3つの構造ゲートを通ります: `..` コンポーネントと `~` プレフィックスはファイルシステムアクセスの前に文字列として拒否され、`resolve()` + `relative_to(ROOT_DIR)` が脱出を拒否し、解決後のパス上のシンボリックリンクループは `OSError(ELOOP)` を送出します。その後、すべてのファイル I/O は `os.open(..., O_NOFOLLOW)` で開かれ(Windows は `is_symlink` チェックにフォールバック)、検証とオープンの間に差し替えられたシンボリックリンクは追跡されず拒否されます — TOCTOU ウィンドウが閉じます。
+`resolve_project_path()`(ROOT_DIR 側のフロー)では、パスはファイル I/O の前に3つの構造ゲートを通り、その後のすべてのオープンは最終コンポーネントがシンボリックリンクであることを拒否します(`O_NOFOLLOW`)。このモジュールはモデル可視パスを `ROOT_DIR` を含まない仮想パスとして描画もします。これらの機構と検索コンテインメントフィルタの詳細は §6、ツール実行前にパス引数をスクリーニングする `PathGuard` ミドルウェアは §7 にあります。
 
-モデル可視の出力に実際のルートパスは含まれません: 返却パスとエラーパスは仮想パス(`/src/main.py`、`display_path()` / `to_virtual_path()`)として描画され、外部または解決不能なターゲットはファイル名のみにフォールバックします。`safe_error_detail()` は `OSError.__str__` ではなく `strerror`(例: `Permission denied`)のみを出します。検索結果はさらにコンテインメントフィルタされ、実パスが検索ルートの外に解決されるヒット(例: `/etc/passwd` へのファイルシンボリックリンク)はスキップされます。
+### 6. ファイルツールのパスゲート: 3つの構造ゲート、no-follow I/O、仮想パス
+
+ファイルツールはサンドボックスプロセスに依存しません: すべてのプロジェクトパスは `agent/tools/pub_base/path_utils.py` がプロセス内で解決します。`resolve_project_path()` はツールがファイルシステムに触れる前に3つのゲートを順に適用し、拒否されたパスはツールの `except PathOutOfBoundsError` 分岐が §5 の外部パス HITL フローへ回します。
+
+1. **文字列レベルの拒否(`_reject_traversal_input`)。** `~` プレフィックスまたは任意の `..` コンポーネントは、ファイルシステムアクセスの前に `PathOutOfBoundsError` で拒否されます。判定はコンポーネント単位(`Path(file_path).parts`)で、意図的に部分文字列判定にしていません。部分文字列判定は `foo..bar` や `配置..md` のような正当な名前を誤検出するためです。
+2. **コンテインメント。** 相対パスはまず `ROOT_DIR` に結合され(`~` は事前展開)、次に `resolve()` が走ります。`resolved != ROOT_DIR and not resolved.is_relative_to(ROOT_DIR)` なら `PathOutOfBoundsError` を送出します。`ROOT_DIR` 自体は許可されます。
+3. **シンボリックリンクループ検出(`_raise_if_symlink_loop`)。** `Path.resolve()` はシンボリックリンクループで黙って停止し、ループしているリンクをそのまま返します。解決後のパスがシンボリックリンクなら、`stat()` がその状態を `OSError(ELOOP)`(Linux/macOS、または Windows の `winerror` 1921)に写像して再送出します。後続で不可解に失敗させる代わりに、明示的なエラーにします。
+
+**No-follow I/O(`_open_no_follow`)。** すべての読み書きは `os.open(path, flags | O_NOFOLLOW, mode)` で開くため、パスの最終コンポーネントがシンボリックリンクであってはなりません。解決とオープンの間に差し替えられたリンクは I/O を `ROOT_DIR` の外へリダイレクトできず、TOCTOU ウィンドウが閉じます。拒否は `OSError(ELOOP)` を送出し、Linux/macOS がネイティブに返す errno と同じです。Windows には `O_NOFOLLOW` がないため、ヘルパーは明示的な `path.is_symlink()` チェックにフォールバックし、同じエラーを送出します。`read_file`(読み取り)、`write_file`(書き込み、および `.py` の追記/整形フローの読み取り)、`patch_file`(読み取り + 書き込み)はすべてこれを通ります。
+
+**仮想パス描画。** `to_virtual_path()` は `ROOT_DIR` 配下の実パスを仮想パス(`/src/main.py`)に写像します。`display_path()` は通常その仮想パスを返し、ターゲットがルート外または解決不能(`ValueError` / `OSError` / `RuntimeError` を捕捉)の場合は `real_path.name or "/"` にフォールバックします — したがって `ROOT_DIR` は決して漏れません。`safe_error_detail()` は `OSError.strerror`(例: `Permission denied`)または `UnicodeDecodeError.reason`(`invalid start byte`)のみを返します。それ以外の例外メッセージは意図的に破棄されます。一般的な例外テキストは実際のルートパスを埋め込む可能性があるためです(たとえば `Path.rglob` の途中で送出されたエラー)。残るのは例外型名だけです。正味の効果: モデル可視の結果とエラー詳細に実際のプロジェクトルートは含まれません。
+
+**検索コンテインメント(`_stays_within_root`)。** `os.walk` はディレクトリのシンボリックリンクを辿りませんが、ファイルのシンボリックリンクは一覧に現れます。両検索モードはすべてのヒットを `_stays_within_root(candidate, root)`(`candidate.resolve().relative_to(root.resolve())`、`ValueError` / `OSError` / `RuntimeError` でスキップ)でフィルタするため、検索ツリーの外に解決されるシンボリックリンクは決して返りません — `/etc/passwd` へのファイルシンボリックリンクはスキップされます。検索ルートは常に解決済みです(プロジェクト内検索はさらに `ROOT_DIR` で制限されます)ので、allowlist 済みの外部ディレクトリ検索はそのまま機能します。
 
 **deepagents 参考実装との設計差。** 参考実装はすべてのパスを仮想名前空間(`virtual_mode`)に固定することで、トラバーサルを設計上不可能にします。Sherry は代わりに実ファイルシステムパスを保持し(`prompt_builder`、スキルツール、terminal の cwd がすべて依存)、解決**後**にコンテインメント(上記の3ゲート)を適用し、`O_NOFOLLOW` で TOCTOU を閉じます。`BackendProtocol`、`CompositeBackend`、`StateBackend`、完全な仮想パス名前空間は意図的に採用していません。それはアーキテクチャの書き換えであり、Sherry にマルチバックエンドの用途がないためです。
+
+### 7. `PathGuard` ミドルウェア
+
+**モジュール：** `agent/middlewares/path_guard/__init__.py` · **クラス：** `PathGuard(AgentMiddleware)` · **フック：** `wrap_tool_call` / `awrap_tool_call` のみ
+
+ファイルツールのゲートは、そこに到達した呼び出ししか守れません。`PathGuard` はメインエージェントチェーンで `ToolCallNormalize` の直後に登録される呼び出し地点のスクリーンです(`agent/core.py`)。リスト順が wrap フックの外側順になるため、`ToolGuardrails` の**内側**で実行されます(`IterationBudget` → `ToolGuardrails` → `PathGuard` → ツール)。拒否は通常のエラー `ToolMessage` として ToolGuardrails に評価され、他のツール失敗と同じ扱いになります。worker / サブエージェントパイプラインには登録しません — 子ツールは自前のゲートを保ち、サブエージェントの外部アクセスはそもそも強制拒否です。
+
+スクリーニングは意図的に保守的です：
+
+- 引数名 `file_path` / `path` / `directory` / `dir` の文字列値のみを検査し、`scheme://` 形式の URL はスキップするため、非パス意味論をファイルシステムパスと誤読しません;
+- `..` トラバーサルコンポーネントは共有の `has_traversal_component` 述語で拒否します — URL デコードとバックスラッシュ正規化を先に行うため、`%2e%2e` や `..\` はすり抜けられません。ドットのみのコンポーネント(`...`)もトラバーサルとして扱われます;
+- `resolve_project_path()` が受け入れる値はそのまま通します;
+- `ROOT_DIR` の外に解決される値は、ハード拒否フロアに当たらない限り通します: `_SYSTEM_DENY_PATHS`(`/etc/passwd`、`/etc/shadow`、`/etc/sudoers`)または YOLO 拒否リスト(`_is_yolo_denied`);
+- それ以外の外部パスはツール自身の `resolve_external_path()` HITL フローに委ねます — ミドルウェアは引数を書き換えず、インタラプトも発生させないため、1回の呼び出しは承認の決定をちょうど1つだけ生みます(ツールは実行時に同じゲートを再実行するため、ここで介入すると決定が二重になります);
+- 存在しない / 解決不能なターゲットと未知の例外クラスはツールに素通しし、エラーの表面化はツール自身に委ねます。
+
+拒否時、`PathGuard` は警告を記録し、ツールを実行せずに構造化エラー `ToolMessage`(`status="error"`、元の `tool_call_id` とツール名を保持)を返します。
+
+**第二の防衛線。** 4つのファイルツールは自前の `resolve_project_path()` / `resolve_external_path()` 呼び出しを保持しており、コード上で `# redundant: path_guard middleware handles this — kept as the second line of defense` と注記されています(`read_file`、`write_file`、`patch_file`、`search_files`)。ミドルウェアは自前のチェックを忘れたツールを拾う外側のスクリーンであり、ツールごとのゲートが引き続き権威で、外部パスは従来どおり人間の承認フローを通ります。ミドルウェア側の詳細: [Middlewares README §PathGuard](../../agent/middlewares/README.ja.md#pathguard)。
 
 ## ⚙️ 実装とアーキテクチャ
 
@@ -244,6 +277,9 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | ポリシーパース、厳格な `ValueError`、即時読み込みの意味論、プラットフォームディスパッチ |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築(リードシールドのマウントを含む)、プローブキャッシュ (subprocess はすべてモック)、任意実行の実 bwrap リードシールドスモークテスト |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード(危険コマンド / 機密ファイル正規表現)、スキーマ、起動形態、制限ビルトインの障壁 |
+| `tests/agent/tools/pub_base/test_path_utils.py` | 外部パスフロー、3つの構造ゲート、シンボリックリンクループ処理、仮想パス描画 |
+| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` | `O_NOFOLLOW` によるシンボリックリンク / TOCTOU 拒否、仮想パス、検索結果コンテインメント |
+| `tests/agent/middlewares/test_path_guard.py` | `PathGuard` スクリーニング: トラバーサルコンポーネント、ハード拒否フロア、外部パス素通し、構造化エラー `ToolMessage` |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19テスト、サンドボックス強化前の HITL / terminal レガシー動作を固定 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17テスト、バイパス承認フロー、YOLO 素通し、スコープスタンピング |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` スタンピング |
@@ -255,6 +291,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **bwrap と Seatbelt の構築ロジックはユニットテストのみで、実機の Linux/macOS では検証されていません。** バックエンドのソース docstring が明示しています(「構築ロジックのみ検証、実機検証なし」)。すべてのバックエンドテストは subprocess をモックし、リードシールドにはプローブ失敗時にスキップされる任意の実 bwrap スモークテストが1つあります。ラップ出力は信頼できますが、現時点で実際の分離保証ではありません。
 - **Windows には OS サンドボックスバックエンドがありません。** そこの防御は環境変数洗浄 + cwd 固定 + 危険コマンド正規表現 + 機密ファイル正規表現 + HITL ゲートです。プロジェクトルート外へのファイル書き込みを防ぐ仕組みはなく、**読み取り保護も利用できません**: OS バックエンドが無ければリードシールドも無く、アプリ層の正規表現が唯一の読み取りゲートです。
 - **機密ファイル正規表現は緩和であり、障壁ではありません。** リテラルなコマンド形状にしかマッチせず、`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、変数、グロブは層の設計上迂回できます。バックエンドが存在する場合の実際の読み取り障壁は OS リードシールドです。
+- **`python_repl` には機密ファイル正規表現がありません。** 上記の terminal 専用ゲートはそれをカバーしません。代わりにラッパースクリプトがビルトインを制限します(安全なサブセットは `open` / `__import__` を含みません) — 別の、より狭い制御です。
 - **降格経路は設計どおりサンドボックスなしで実行されます。** `auto` + バックエンドなし = 警告1件を記録してから普段どおりサンドボックスなしで実行。これは意図された「可用性優先」の選択で、逆が必要なら `SANDBOX_POLICY=required` を選んでください。
 - **環境変数洗浄は名前ベースです。** ブロック対象の部分文字列を1つも含まない名前(かつ拒否リストにない名前)で保存されたシークレットはそのまま通ります。値のスキャンも動的シークレット検出もなく、それは意図的なものです。
 - **ネットワークサンドボックス、seccomp、AppArmor プロファイルは主張も設定もしていません。** 分離は上に示した bwrap / Seatbelt の構築そのものだけです。

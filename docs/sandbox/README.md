@@ -6,7 +6,7 @@
 
 Two tools let the model execute code on your machine: `terminal` (shell commands) and `python_repl` (Python in a child process). A hallucinated or prompt-injected command could read API keys from the environment, write outside the project, or touch other processes. The sandbox layer confines all three.
 
-Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/middlewares/humanInTheLoop/`.
+Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
 
 ## 🎯 Overview & Threat Model
 
@@ -15,14 +15,16 @@ Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sand
 | **Secrets in env vars** | Child process inherits every variable, including `*_API_KEY` | L1 env scrubbing |
 | **Filesystem writes** | Child writes anywhere the agent user can write | L2 OS sandbox (Linux / macOS) |
 | **Filesystem reads** | Child reads `~/.ssh`, `.env`, credential stores | L2 read-shield (sensitive-path masking, Linux / macOS) + sensitive-file regex (terminal) |
+| **File-tool path arguments** | A tool call asks `read_file` for a traversal or hard-denied path | §5 external-path gate + §6 structural gates + §7 `PathGuard` (external paths still go through HITL) |
 | **Process / session scope** | Child shares namespaces and survives the parent | L2 `--unshare-all`, `--die-with-parent` |
 | **Deliberate bypass** | Model asks for `sandbox=False` | Human approval gate (HITL) |
 
-Two layers plus one gate:
+Two layers plus one gate — plus a separate path-defense stack for the file tools:
 
 - **L1. Environment scrubbing** (`scrub_env`): unconditional, at every spawn point, even when a human approved `sandbox=False`.
 - **L2. OS-native sandbox**: bubblewrap on Linux, Seatbelt on macOS — write containment plus a sensitive-path read-shield (see [§2](#2-os-native-sandbox-backends-l2)). Windows has no OS backend (see [Honesty & Limitations](#️-honesty--limitations)).
 - **Human approval gate**: `sandbox=False` bypasses only in the main session, through a HITL interrupt.
+- **File-tool path gate** (§5–§7): `resolve_project_path()`'s three structural gates and `O_NOFOLLOW` I/O, virtual-path rendering, search containment, the six-check external-path approval flow, and the `PathGuard` middleware screen.
 
 ## 🧱 Isolation Capabilities
 
@@ -64,7 +66,7 @@ bwrap
 
 `--clearenv` before all `--setenv` turns the scrubbed dict into a real env allowlist. The root filesystem is read-only; writes land only in the project root and the temp dir.
 
-**Read-shield (P0-1).** `--ro-bind / /` only makes reads possible-everywhere, not harmless: without masking, the model can `cat ~/.ssh/id_rsa`. Both backends therefore mask a default sensitive-path list — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — extended by the `SHERRY_DENY_READ_PATHS` environment variable (`os.pathsep`-separated, `~` expanded). The bwrap shield mounts an empty directory over each existing directory (or `--ro-bind /dev/null` over a sensitive file); missing paths are skipped (there is nothing to read, and bwrap cannot create a mount point under the read-only root bind), and on hosts without `/var/empty` directories fall back to `--tmpfs <path>`. The shield sits **after** the writable binds so a writable project root can never re-expose a masked path.
+**Read-shield (P0-1).** `--ro-bind / /` only makes reads possible-everywhere, not harmless: without masking, the model can `cat ~/.ssh/id_rsa`. Both backends therefore mask a default sensitive-path list — `DEFAULT_DENY_READ_PATHS` = `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — resolved per call by `_sensitive_read_paths()` and extended by the `SHERRY_DENY_READ_PATHS` environment variable (`os.pathsep`-separated, `~` expanded; blanks skipped, order preserved, duplicates dropped). The bwrap shield mounts an empty directory over each existing directory (or `--ro-bind /dev/null` over a sensitive file); missing paths are skipped (there is nothing to read, and bwrap cannot create a mount point under the read-only root bind), and on hosts without `/var/empty` directories fall back to `--tmpfs <path>`. The shield sits **after** the writable binds so a writable project root can never re-expose a masked path.
 
 **macOS: Seatbelt (`sandbox-exec`)**. The command runs as `sandbox-exec -p <profile> -- <cmd...>` with this profile:
 
@@ -103,7 +105,7 @@ Order is the spec: `(deny file-write*)` under `(allow default)` means "everythin
 
 Matching the **joined** string matters: the older element-exact blacklist let `["echo ok", "rm -rf /"]` slip through because each element looked harmless alone. On a match the tool raises `ToolException("Blocked: unsafe command.")`, surfaced as an error tool result via `handle_tool_error=True`. The gate runs regardless of the `sandbox` flag. `python_repl` has no equivalent regex; its wrapper script restricts builtins instead.
 
-**Sensitive-file gate (P0-2).** Right after the dangerous-command regex and before any spawn, terminal also rejects commands that read well-known secrets, raising `ToolException("Blocked: sensitive file access. …")` and telling the model to use `read_file` (whose external paths go through human approval):
+**Sensitive-file gate (P0-2, `_SENSITIVE_FILE_PATTERNS`).** In both `_run` and `_arun`, `_check_sensitive_file_access(cmd_str)` runs **after** `_check_dangerous` and **before any spawn**: when any of the six compiled patterns matches the joined command string it raises `ToolException("Blocked: sensitive file access. …")` (`_SENSITIVE_FILE_MESSAGE`) — no child process is ever created — and the message routes the model to `read_file`, whose external paths go through human approval:
 
 | Pattern | Catches |
 | :------ | :------ |
@@ -113,7 +115,7 @@ Matching the **joined** string matters: the older element-exact blacklist let `[
 | `curl … -d @… .env` | exfiltrating a dotenv via upload |
 | `(cat\|head\|tail) … ~/.ssh/`, `(cat\|head\|tail) … ~/.aws/` | home credential stores |
 
-**This is a mitigation, not a barrier.** `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, shell variables, and globs all bypass a literal regex — the real read barrier is the L2 read-shield above, and an approved `sandbox=False` call is deliberately unsandboxed. The regex exists to stop the obvious, common attempts and to route the model to the approval flow.
+**This is a mitigation, not a barrier.** `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, shell variables, globs, and heredocs all bypass a literal regex — the real read barrier is the L2 read-shield above ([§2](#2-os-native-sandbox-backends-l2)), and an approved `sandbox=False` call is deliberately unsandboxed. The regex exists to stop the obvious, common attempts and to route the model to the approval flow.
 
 ### 4. Human-in-the-loop bypass approval
 
@@ -140,11 +142,42 @@ Independent of the L1/L2 sandbox above, file tools (`read_file`, `write_file`, `
    - `yolo` — permanently allow all external paths;
    - `reject` — deny the access.
 
-Inside `resolve_project_path()` (the ROOT_DIR side of the flow) the path passes three structural gates: `..` components and `~` prefixes are rejected as strings before any filesystem access, `resolve()` + `relative_to(ROOT_DIR)` rejects escapes, and a symlink loop on the resolved path raises `OSError(ELOOP)`. All file I/O then opens through `os.open(..., O_NOFOLLOW)` (Windows falls back to an `is_symlink` check), so a symlink swapped in between validation and open is refused instead of followed — closing the TOCTOU window.
+Inside `resolve_project_path()` (the ROOT_DIR side of the flow) the path passes three structural gates before any file I/O, and every open then refuses a symlink final component (`O_NOFOLLOW`); the module also renders model-visible paths as virtual paths that never contain `ROOT_DIR`. Those mechanisms, plus the search containment filter, are detailed in §6; the `PathGuard` middleware that screens path arguments before a tool ever runs is §7.
 
-Model-visible output never contains the real root path: returned and error paths are rendered as virtual paths (`/src/main.py`) via `display_path()` / `to_virtual_path()`, falling back to the bare filename for external or unresolvable targets, and `safe_error_detail()` surfaces only the `strerror` (e.g. `Permission denied`) instead of `OSError.__str__`. Search results are additionally containment-filtered: any hit whose real path resolves outside the searched root (for example a file symlink to `/etc/passwd`) is skipped.
+### 6. File-tool path gate: structural gates, no-follow I/O, virtual paths
+
+File tools do not rely on a sandbox process: every project path is resolved in-process by `agent/tools/pub_base/path_utils.py`. `resolve_project_path()` applies three gates in order, before the tool touches the filesystem; when it rejects a path, the tool's `except PathOutOfBoundsError` branch re-routes it to the external-path HITL flow of §5.
+
+1. **String-level rejection (`_reject_traversal_input`).** A `~` prefix or any `..` component is rejected with `PathOutOfBoundsError` before any filesystem access. The check is component-based (`Path(file_path).parts`), deliberately not a substring test: a substring test would false-positive on legitimate names such as `foo..bar` or `配置..md`.
+2. **Containment.** Relative paths are joined onto `ROOT_DIR` (`~` expanded first), then `resolve()` runs; `resolved != ROOT_DIR and not resolved.is_relative_to(ROOT_DIR)` raises `PathOutOfBoundsError`. `ROOT_DIR` itself is allowed.
+3. **Symlink-loop detection (`_raise_if_symlink_loop`).** `Path.resolve()` stops silently at a symlink loop and hands back the looping link; if the resolved path is a symlink, `stat()` maps that condition to `OSError(ELOOP)` (Linux/macOS, or Windows `winerror` 1921) and the error is re-raised instead of failing later in confusing ways.
+
+**No-follow I/O (`_open_no_follow`).** Every read and write opens through `os.open(path, flags | O_NOFOLLOW, mode)`, so the final path component must not be a symlink: a link swapped in between resolution and open cannot redirect the I/O outside `ROOT_DIR` — the TOCTOU window is closed. The refusal raises `OSError(ELOOP)`, the same errno Linux/macOS produce natively; Windows has no `O_NOFOLLOW`, so the helper falls back to an explicit `path.is_symlink()` check raising the same error. `read_file` (read), `write_file` (write, plus read for the `.py` append/format flow) and `patch_file` (read + write) all go through it.
+
+**Virtual-path rendering.** `to_virtual_path()` maps a real path under `ROOT_DIR` to a virtual one (`/src/main.py`). `display_path()` returns that virtual path normally, and falls back to `real_path.name or "/"` when the target is outside the root or unresolvable (`ValueError` / `OSError` / `RuntimeError`) — so `ROOT_DIR` never leaks. `safe_error_detail()` returns only `OSError.strerror` (e.g. `Permission denied`) or `UnicodeDecodeError.reason` (`invalid start byte`); every other exception's message is deliberately dropped, because generic exception text can embed the real root path (for example an error raised mid-`Path.rglob`), leaving only the exception type name. Net effect: model-visible results and error details never contain the real project root.
+
+**Search containment (`_stays_within_root`).** `os.walk` does not descend directory symlinks, but file symlinks still surface in listings. Both search modes filter every hit through `_stays_within_root(candidate, root)` (`candidate.resolve().relative_to(root.resolve())`, skipping on `ValueError` / `OSError` / `RuntimeError`), so a symlink resolving outside the searched tree is never returned — a file symlink to `/etc/passwd` is skipped. The search root is always already resolved (project searches are additionally bounded by `ROOT_DIR`), which keeps allowlisted external-directory searches working.
 
 **Design note vs. the deepagents reference.** The reference anchors every path to a virtual namespace (`virtual_mode`), making traversal structurally impossible by design; sherry keeps real filesystem paths — `prompt_builder`, the skill tools, and the terminal cwd all depend on them — and enforces containment *after* resolution (the gates above), closing the TOCTOU window with `O_NOFOLLOW`. Its `BackendProtocol`, `CompositeBackend`, `StateBackend`, and the full virtual path namespace were deliberately not adopted: that is an architecture rewrite, and sherry has no multi-backend use case.
+
+### 7. `PathGuard` middleware
+
+**Module:** `agent/middlewares/path_guard/__init__.py` · **Class:** `PathGuard(AgentMiddleware)` · **Hooks:** `wrap_tool_call` / `awrap_tool_call`
+
+The file tools' gates only protect calls that reach them; `PathGuard` is the call-site screen registered in the main agent chain directly after `ToolCallNormalize` (`agent/core.py`). Because list order composes wrap hooks outermost-first, it runs **inside** `ToolGuardrails` (`IterationBudget` → `ToolGuardrails` → `PathGuard` → tool): a rejection is an ordinary error `ToolMessage` that ToolGuardrails evaluates like any other tool failure. It is not registered in the worker/subagent pipeline — child tools keep their own gates, and subagent external access is hard-denied anyway.
+
+Screening is deliberately conservative:
+
+- only string values under the argument names `file_path` / `path` / `directory` / `dir` are inspected; URL-shaped values (`scheme://`) are skipped, so non-path semantics are never misread as filesystem paths;
+- `..` traversal components are rejected via the shared `has_traversal_component` predicate — URL-decoded and backslash-normalized first, so `%2e%2e` and `..\` cannot slip past; dot-only components (`...`) count as traversal too;
+- a value `resolve_project_path()` accepts passes through untouched;
+- a value resolving outside `ROOT_DIR` passes through **unless** it hits the hard-deny floor: `_SYSTEM_DENY_PATHS` (`/etc/passwd`, `/etc/shadow`, `/etc/sudoers`) or the YOLO deny list (`_is_yolo_denied`);
+- every other external path is left to the tool's own `resolve_external_path()` HITL flow — the middleware never rewrites arguments and never raises an interrupt, so one call produces exactly one approval decision (the tool re-runs the same gate during execution; intercepting here would decide twice);
+- missing or unresolvable targets and unknown exception classes fall through to the tool, which owns its error surface.
+
+On a rejection `PathGuard` logs a warning and returns a structured error `ToolMessage` (`status="error"`, original `tool_call_id` and tool name) without executing the tool.
+
+**Second line of defense.** The four file tools keep their own `resolve_project_path()` / `resolve_external_path()` calls, marked in code with `# redundant: path_guard middleware handles this — kept as the second line of defense` (`read_file`, `write_file`, `patch_file`, `search_files`). The middleware is the outer screen for a tool that might forget its own check; per-tool gates stay authoritative, and external paths still go through the human approval flow. Middleware-side details: [Middlewares README §PathGuard](../../agent/middlewares/README.md#pathguard).
 
 ## ⚙️ Implementation & Architecture
 
@@ -244,6 +277,9 @@ When the model requests `sandbox=False` in the main session (non-YOLO), the grap
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | policy parsing, strict `ValueError`, fresh-read semantics, dispatch |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction (incl. read-shield mounts), probe caching (all subprocess mocked), plus an optional real-bwrap read-shield smoke test |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | tool-level guards (dangerous / sensitive-file regexes), schema, spawn forms, restricted-builtins barrier |
+| `tests/agent/tools/pub_base/test_path_utils.py` | the external-path flow, the three structural gates, symlink-loop handling, virtual-path rendering |
+| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` | symlink / TOCTOU refusal via `O_NOFOLLOW`, virtual paths, search-result containment |
+| `tests/agent/middlewares/test_path_guard.py` | `PathGuard` screening: traversal components, hard-deny floor, external-path pass-through, structured error `ToolMessage` |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19 tests locking pre-sandbox HITL / terminal legacy behavior |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17 tests for the bypass approval flow, YOLO pass-through, scope stamping |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` stamping |
@@ -255,6 +291,7 @@ Matrix tests patch `subprocess.Popen` globally, stub `get_backend` at the tool-m
 - **bwrap and Seatbelt construction logic is unit-tested but not verified on real Linux/macOS machines.** The backend source docstrings state this explicitly ("only the construction logic is verified, never run on a real Linux/macOS box"); all backend tests mock subprocess, and the read-shield has one optional real-bwrap smoke test that skips when the probe fails. Trust the wrap output, not yet a real containment guarantee.
 - **Windows has no OS-sandbox backend.** Protection there is env scrubbing + cwd clamp + the dangerous-command regex + the sensitive-file regex + the HITL gate. Nothing prevents file writes outside the project root, and **read protection is unavailable**: without an OS backend there is no read-shield, so the application-level regexes are the only read gate.
 - **The sensitive-file regex is a mitigation, not a barrier.** It matches literal command shapes; `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, variables, and globs bypass it by design of the layer. The OS read-shield is the actual read barrier where a backend exists.
+- **`python_repl` has no sensitive-file regex.** The terminal-only gates above do not cover it; its wrapper script instead restricts builtins (the safe subset omits `open` / `__import__`) — a different, narrower control.
 - **The degrade path executes unsandboxed by design.** `auto` + no backend = one logged warning, then a normal unsandboxed run. That is intentional availability-over-strictness; pick `SANDBOX_POLICY=required` if you need the opposite.
 - **Env scrubbing is name-based.** A secret stored under a name without any blocked substring (and not on the deny list) passes through. There is no value scanning or dynamic secret detection, and that is deliberate.
 - **No network sandboxing, seccomp, or AppArmor profiles are claimed or configured.** Isolation comes from the bwrap / Seatbelt constructions exactly as shown above, nothing more.

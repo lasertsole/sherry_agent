@@ -6,7 +6,7 @@
 
 두 도구가 모델이 여러분의 머신에서 코드를 실행하게 합니다: `terminal`(셸 명령)과 `python_repl`(자식 프로세스 안의 Python). 환각되거나 주입된 명령 하나가 환경 변수에서 API 키를 읽거나, 프로젝트 밖에 파일을 쓰거나, 다른 프로세스를 건드릴 수 있습니다. 샌드박스 계층은 이 세 가지를 모두 제한합니다.
 
-사실의 기준(source of truth): `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/middlewares/humanInTheLoop/`.
+사실의 기준(source of truth): `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
 
 ## 🎯 개요와 위협 모델
 
@@ -15,14 +15,16 @@
 | **환경 변수 속 시크릿** | 자식 프로세스가 `*_API_KEY`를 포함한 모든 변수를 상속 | L1 환경 변수 세척 |
 | **파일시스템 쓰기** | 자식이 에이전트 사용자가 쓸 수 있는 어디든 기록 | L2 OS 샌드박스 (Linux / macOS) |
 | **파일시스템 읽기** | 자식이 `~/.ssh`, `.env`, 각종 자격 증명 저장소를 읽음 | L2 리드 실드(민감 경로 마스킹, Linux / macOS) + terminal 민감 파일 정규식 |
+| **파일 도구 경로 인자** | 도구 호출이 `read_file`에 트래버설 또는 하드 거부 경로를 요청 | §5 외부 경로 게이트 + §6 세 개의 구조적 게이트 + §7 `PathGuard`(외부 경로는 여전히 HITL 경유) |
 | **프로세스 / 세션 범위** | 자식이 네임스페이스를 공유하고 부모보다 오래 살 수 있음 | L2 `--unshare-all`, `--die-with-parent` |
 | **의도적 우회** | 모델이 `sandbox=False`를 요청 | 사람 승인 게이트 (HITL) |
 
-두 계층과 하나의 게이트:
+두 계층과 하나의 게이트 — 여기에 파일 도구만의 경로 방어 스택이 더해집니다:
 
 - **L1. 환경 변수 세척**(`scrub_env`): 무조건, 모든 생성 시점에서 실행. 사람이 `sandbox=False`를 승인한 경우에도 예외 없음.
 - **L2. OS 네이티브 샌드박스**: Linux는 bubblewrap, macOS는 Seatbelt — 쓰기 봉쇄에 더해 민감 경로 리드 실드([§2](#2-os-네이티브-샌드박스-백엔드-l2) 참조). Windows에는 OS 백엔드가 없음([정직한 한계 고지](#️-정직한-한계-고지) 참조).
 - **사람 승인 게이트**: `sandbox=False` 우회는 메인 세션에서만 가능하며 HITL 인터럽트를 거칩니다.
+- **파일 도구 경로 게이트**(§5–§7): `resolve_project_path()`의 세 개의 구조적 게이트와 `O_NOFOLLOW` I/O, 가상 경로 렌더링, 검색 컨테인먼트, 6단계 외부 경로 승인 흐름, 그리고 `PathGuard` 미들웨어 스크리닝.
 
 ## 🧱 격리 기능
 
@@ -64,7 +66,7 @@ bwrap
 
 `--clearenv`가 모든 `--setenv`보다 앞에 오는 것과 결합해야 세척된 딕셔너리가 진짜 환경 변수 화이트리스트가 됩니다. 루트 파일시스템은 읽기 전용이고, 쓰기는 프로젝트 루트와 임시 디렉터리에만 가능합니다.
 
-**리드 실드 (P0-1).** `--ro-bind / /`는 읽기를 "어디서나 가능"하게 만들 뿐 무해하게 만들지는 않습니다. 마스킹이 없으면 모델은 `cat ~/.ssh/id_rsa`를 실행할 수 있습니다. 그래서 두 백엔드 모두 기본 민감 경로 목록 — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — 을 마스킹하고, 환경 변수 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 구분, `~` 확장)로 확장할 수 있습니다. bwrap 실드는 존재하는 각 디렉터리 위에 빈 디렉터리를 마운트하고(민감 파일에는 `--ro-bind /dev/null`), 존재하지 않는 경로는 건너뜁니다(읽을 것이 없고, bwrap은 읽기 전용 루트 바인드 아래에 마운트 지점을 만들 수 없습니다). `/var/empty`가 없는 호스트에서는 디렉터리가 `--tmpfs <경로>`로 폴백합니다. 실드는 쓰기 가능 바인드 **이후**에 놓여, 쓰기 가능한 프로젝트 루트가 마스킹된 경로를 다시 노출할 수 없습니다.
+**리드 실드 (P0-1).** `--ro-bind / /`는 읽기를 "어디서나 가능"하게 만들 뿐 무해하게 만들지는 않습니다. 마스킹이 없으면 모델은 `cat ~/.ssh/id_rsa`를 실행할 수 있습니다. 그래서 두 백엔드 모두 기본 민감 경로 목록 `DEFAULT_DENY_READ_PATHS` — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — 을 마스킹하고, 호출마다 `_sensitive_read_paths()`가 해석하며, 환경 변수 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 구분, `~` 확장, 빈 항목 건너뜀, 순서 유지, 중복 제거)로 확장할 수 있습니다. bwrap 실드는 존재하는 각 디렉터리 위에 빈 디렉터리를 마운트하고(민감 파일에는 `--ro-bind /dev/null`), 존재하지 않는 경로는 건너뜁니다(읽을 것이 없고, bwrap은 읽기 전용 루트 바인드 아래에 마운트 지점을 만들 수 없습니다). `/var/empty`가 없는 호스트에서는 디렉터리가 `--tmpfs <경로>`로 폴백합니다. 실드는 쓰기 가능 바인드 **이후**에 놓여, 쓰기 가능한 프로젝트 루트가 마스킹된 경로를 다시 노출할 수 없습니다.
 
 **macOS: Seatbelt(`sandbox-exec`)**. 명령은 `sandbox-exec -p <profile> -- <cmd...>`로 실행되며 profile은 다음과 같습니다:
 
@@ -103,7 +105,7 @@ bwrap
 
 **연결된** 문자열을 매칭하는 것이 중요합니다: 이전의 요소 단위 정확 매칭 블랙리스트는 각 요소가 따로 보면 무해해 보이는 `["echo ok", "rm -rf /"]`를 놓쳤습니다. 걸리면 `ToolException("Blocked: unsafe command.")`을 던지고, `handle_tool_error=True`를 통해 오류 도구 결과로 표면화됩니다. 이 게이트는 `sandbox` 값과 무관하게 항상 작동합니다. `python_repl`에는 대응하는 정규식이 없고, 대신 래퍼 스크립트가 빌트인을 제한합니다.
 
-**민감 파일 게이트 (P0-2).** 위험 명령 정규식 직후, 어떤 생성보다도 먼저, terminal은 알려진 시크릿을 읽는 명령도 거부하며 `ToolException("Blocked: sensitive file access. …")`을 던지고 모델에게 `read_file`(외부 경로는 사람 승인을 거침)을 쓰라고 안내합니다:
+**민감 파일 게이트 (P0-2, `_SENSITIVE_FILE_PATTERNS`).** `_run`과 `_arun` 두 경로 모두에서 `_check_sensitive_file_access(cmd_str)`가 `_check_dangerous` **이후**, **어떤 생성보다도 이전**에 실행됩니다: 컴파일된 6개 패턴 중 하나라도 연결된 명령 문자열에 매칭되면 `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)을 던지고 — 자식 프로세스는 결코 생성되지 않습니다 — 모델을 `read_file`(외부 경로는 사람 승인을 거침)로 안내합니다:
 
 | 패턴 | 대상 |
 | :--- | :--- |
@@ -140,11 +142,42 @@ bwrap
    - `yolo` — 모든 외부 경로를 영구 허용;
    - `reject` — 접근 거부.
 
-`resolve_project_path()`(ROOT_DIR 쪽 흐름) 내부에서 경로는 세 개의 구조적 게이트를 통과합니다: `..` 컴포넌트와 `~` 접두사는 파일 시스템 접근 전에 문자열 수준에서 거부되고, `resolve()` + `relative_to(ROOT_DIR)`가 탈출을 거부하며, 해석된 경로의 심볼릭 링크 루프는 `OSError(ELOOP)`를 던집니다. 이후 모든 파일 I/O는 `os.open(..., O_NOFOLLOW)`로 열리며(Windows는 `is_symlink` 검사로 폴백), 검증과 열기 사이에 교체된 심볼릭 링크는 따라가지 않고 거부됩니다 — TOCTOU 창이 닫힙니다.
+`resolve_project_path()`(ROOT_DIR 쪽 흐름)에서는 경로가 파일 I/O 이전에 세 개의 구조적 게이트를 통과하고, 이후 모든 열기는 마지막 컴포넌트가 심볼릭 링크인 것을 거부합니다(`O_NOFOLLOW`). 이 모듈은 모델이 보는 경로를 `ROOT_DIR`을 포함하지 않는 가상 경로로 렌더링하기도 합니다. 이러한 메커니즘과 검색 컨테인먼트 필터는 §6에, 도구 실행 전에 경로 인자를 스크리닝하는 `PathGuard` 미들웨어는 §7에 자세히 설명합니다.
 
-모델이 보는 출력에는 실제 루트 경로가 포함되지 않습니다: 반환/오류 경로는 가상 경로(`/src/main.py`, `display_path()` / `to_virtual_path()`)로 렌더링되고, 외부이거나 해석할 수 없는 대상은 파일 이름만으로 폴백합니다. `safe_error_detail()`은 `OSError.__str__` 대신 `strerror`(예: `Permission denied`)만 노출합니다. 검색 결과에는 컨테인먼트 필터가 추가로 적용되어 실제 경로가 검색 루트 밖으로 해석되는 히트(예: `/etc/passwd`로 향하는 파일 심볼릭 링크)는 건너뜁니다.
+### 6. 파일 도구 경로 게이트: 세 개의 구조적 게이트, no-follow I/O, 가상 경로
+
+파일 도구는 샌드박스 프로세스에 의존하지 않습니다: 모든 프로젝트 경로는 `agent/tools/pub_base/path_utils.py`가 프로세스 안에서 해석합니다. `resolve_project_path()`는 도구가 파일 시스템을 건드리기 전에 세 개의 게이트를 순서대로 적용하며, 거부된 경로는 도구의 `except PathOutOfBoundsError` 분기가 §5의 외부 경로 HITL 흐름으로 넘깁니다.
+
+1. **문자열 수준 거부(`_reject_traversal_input`).** `~` 접두사 또는 `..` 컴포넌트는 파일 시스템 접근 전에 `PathOutOfBoundsError`로 거부됩니다. 검사는 컴포넌트 단위(`Path(file_path).parts`)이며, 의도적으로 부분 문자열 판정을 쓰지 않습니다. 부분 문자열 판정은 `foo..bar`나 `配置..md` 같은 정상적인 이름을 잘못 걸러내기 때문입니다.
+2. **컨테인먼트.** 상대 경로는 먼저 `ROOT_DIR`에 결합되고(`~` 사전 확장), 그다음 `resolve()`가 실행됩니다. `resolved != ROOT_DIR and not resolved.is_relative_to(ROOT_DIR)`이면 `PathOutOfBoundsError`를 던집니다. `ROOT_DIR` 자체는 허용됩니다.
+3. **심볼릭 링크 루프 감지(`_raise_if_symlink_loop`).** `Path.resolve()`는 심볼릭 링크 루프에서 조용히 멈추고 루프 중인 링크를 그대로 돌려줍니다. 해석된 경로가 심볼릭 링크이면 `stat()`이 그 상태를 `OSError(ELOOP)`(Linux/macOS, 또는 Windows `winerror` 1921)로 매핑해 다시 던집니다 — 이후에 혼란스럽게 실패하는 대신 명시적 오류로 만듭니다.
+
+**No-follow I/O(`_open_no_follow`).** 모든 읽기와 쓰기는 `os.open(path, flags | O_NOFOLLOW, mode)`로 열리므로 경로의 마지막 컴포넌트가 심볼릭 링크일 수 없습니다. 해석과 열기 사이에 교체된 링크는 I/O를 `ROOT_DIR` 밖으로 돌릴 수 없습니다 — TOCTOU 창이 닫힙니다. 거부는 `OSError(ELOOP)`를 던지며 Linux/macOS가 네이티브로 내는 errno와 같습니다. Windows에는 `O_NOFOLLOW`가 없어 헬퍼가 명시적 `path.is_symlink()` 검사로 폴백하고 같은 오류를 던집니다. `read_file`(읽기), `write_file`(쓰기, 그리고 `.py` 추가/포맷 흐름의 읽기), `patch_file`(읽기 + 쓰기) 모두 이 경로를 지납니다.
+
+**가상 경로 렌더링.** `to_virtual_path()`는 `ROOT_DIR` 아래의 실제 경로를 가상 경로(`/src/main.py`)로 매핑합니다. `display_path()`는 정상적으로 그 가상 경로를 반환하고, 대상이 루트 밖이거나 해석할 수 없으면(`ValueError` / `OSError` / `RuntimeError` 포착) `real_path.name or "/"`로 폴백합니다 — 그래서 `ROOT_DIR`은 결코 새지 않습니다. `safe_error_detail()`은 `OSError.strerror`(예: `Permission denied`) 또는 `UnicodeDecodeError.reason`(`invalid start byte`)만 반환합니다. 다른 예외의 메시지는 의도적으로 버려집니다. 일반적인 예외 텍스트는 실제 루트 경로를 포함할 수 있기 때문입니다(예: `Path.rglob` 도중 던져진 오류). 남는 것은 예외 타입 이름뿐입니다. 순효과: 모델이 보는 결과와 오류 정보에 실제 프로젝트 루트가 결코 포함되지 않습니다.
+
+**검색 컨테인먼트(`_stays_within_root`).** `os.walk`는 디렉터리 심볼릭 링크를 내려가지 않지만, 파일 심볼릭 링크는 목록에 나타납니다. 두 검색 모드 모두 모든 히트를 `_stays_within_root(candidate, root)`(`candidate.resolve().relative_to(root.resolve())`, `ValueError` / `OSError` / `RuntimeError` 시 건너뜀)로 필터링하므로 검색 트리 밖으로 해석되는 심볼릭 링크는 결코 반환되지 않습니다 — `/etc/passwd`를 가리키는 파일 심볼릭 링크는 건너뜁니다. 검색 루트는 항상 이미 해석된 상태이며(프로젝트 내 검색은 추가로 `ROOT_DIR`에 묶임), allowlist에 등록된 외부 디렉터리 검색은 계속 동작합니다.
 
 **deepagents 참조 구현과의 설계 차이.** 참조 구현은 모든 경로를 가상 네임스페이스(`virtual_mode`)에 고정해 트래버설을 설계상 불가능하게 만듭니다. Sherry는 대신 실제 파일 시스템 경로를 유지하고(`prompt_builder`, 스킬 도구, terminal cwd가 모두 여기에 의존), 해석 **이후**에 컨테인먼트(위의 세 게이트)를 적용하며 `O_NOFOLLOW`로 TOCTOU를 닫습니다. `BackendProtocol`, `CompositeBackend`, `StateBackend`, 전체 가상 경로 네임스페이스는 의도적으로 채택하지 않았습니다. 그것은 아키텍처 재작성이며, Sherry에는 멀티 백엔드 사용 사례가 없습니다.
+
+### 7. `PathGuard` 미들웨어
+
+**모듈:** `agent/middlewares/path_guard/__init__.py` · **클래스:** `PathGuard(AgentMiddleware)` · **후크:** `wrap_tool_call` / `awrap_tool_call` 전용
+
+파일 도구의 게이트는 거기까지 도달한 호출만 보호합니다. `PathGuard`는 메인 에이전트 체인에서 `ToolCallNormalize` 바로 뒤에 등록되는 호출 지점 스크린입니다(`agent/core.py`). 리스트 순서가 wrap 후크의 바깥 순서이므로 `ToolGuardrails` **안쪽**에서 실행됩니다(`IterationBudget` → `ToolGuardrails` → `PathGuard` → 도구). 거부는 일반 오류 `ToolMessage`로 ToolGuardrails에 평가되어 다른 도구 실패와 동일하게 취급됩니다. worker / 서브에이전트 파이프라인에는 등록하지 않습니다 — 자식 도구는 자체 게이트를 유지하고, 서브에이전트의 외부 접근은 어차피 강제 거부입니다.
+
+스크리닝은 의도적으로 보수적입니다:
+
+- 인자 이름 `file_path` / `path` / `directory` / `dir`의 문자열 값만 검사하며, `scheme://` 형태의 URL은 건너뛰므로 비경로 의미론을 파일 시스템 경로로 오독하지 않습니다;
+- `..` 트래버설 컴포넌트는 공용 `has_traversal_component` 술어로 거부합니다 — URL 디코드와 백슬래시 정규화를 먼저 하므로 `%2e%2e`와 `..\`가 빠져나갈 수 없습니다; 점만 있는 컴포넌트(`...`)도 트래버설로 취급합니다;
+- `resolve_project_path()`가 받아들이는 값은 그대로 통과합니다;
+- `ROOT_DIR` 밖으로 해석되는 값은 하드 거부 바닥에 걸리지 않는 한 통과합니다: `_SYSTEM_DENY_PATHS`(`/etc/passwd`, `/etc/shadow`, `/etc/sudoers`) 또는 YOLO 거부 목록(`_is_yolo_denied`);
+- 그 밖의 외부 경로는 도구 자체의 `resolve_external_path()` HITL 흐름에 맡깁니다 — 미들웨어는 인자를 재작성하지도, 인터럽트를 일으키지도 않으므로 한 번의 호출은 승인 결정을 정확히 하나만 만듭니다(도구가 실행 시 같은 게이트를 다시 돌기 때문에 여기서 개입하면 결정이 두 번 내려집니다);
+- 존재하지 않거나 해석할 수 없는 대상, 알 수 없는 예외 클래스는 도구로 통과시키며, 오류 표면은 도구가 책임집니다.
+
+거부 시 `PathGuard`는 경고를 기록하고, 도구를 실행하지 않은 채 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id`와 도구 이름 유지)를 반환합니다.
+
+**2차 방어선.** 네 개의 파일 도구는 자체 `resolve_project_path()` / `resolve_external_path()` 호출을 유지하며, 코드에 `# redundant: path_guard middleware handles this — kept as the second line of defense`로 표시되어 있습니다(`read_file`, `write_file`, `patch_file`, `search_files`). 미들웨어는 자체 검사를 잊은 도구를 걸러내는 바깥 스크린이고, 도구별 게이트가 계속 권위이며, 외부 경로는 여전히 사람 승인 흐름을 거칩니다. 미들웨어 측 세부 사항: [Middlewares README §PathGuard](../../agent/middlewares/README.ko.md#pathguard).
 
 ## ⚙️ 구현과 아키텍처
 
@@ -244,6 +277,9 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 정책 파싱, 엄격한 `ValueError`, 즉시 읽기 의미론, 플랫폼 디스패치 |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성(리드 실드 마운트 포함), 프로브 캐싱 (서브프로세스 전부 mock), 선택 실행되는 실제 bwrap 리드 실드 스모크 테스트 |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드(위험 명령 / 민감 파일 정규식), 스키마, 생성 형태, 제한 빌트인 방벽 |
+| `tests/agent/tools/pub_base/test_path_utils.py` | 외부 경로 흐름, 세 개의 구조적 게이트, 심볼릭 링크 루프 처리, 가상 경로 렌더링 |
+| `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` | `O_NOFOLLOW`를 통한 심볼릭 링크 / TOCTOU 거부, 가상 경로, 검색 결과 컨테인먼트 |
+| `tests/agent/middlewares/test_path_guard.py` | `PathGuard` 스크리닝: 트래버설 컴포넌트, 하드 거부 바닥, 외부 경로 통과, 구조화된 오류 `ToolMessage` |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19개 테스트, 샌드박스 강화 이전의 HITL / terminal 레거시 동작 고정 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17개 테스트, 우회 승인 흐름, YOLO 통과, 범위 스탬핑 |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 스탬핑 |
@@ -254,7 +290,8 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 
 - **bwrap과 Seatbelt의 구성 로직은 단위 테스트만 거쳤고 실제 Linux/macOS 머신에서 검증되지 않았습니다.** 백엔드 소스 docstring이 명시합니다("구성 로직만 검증, 실기 검증 없음"). 모든 백엔드 테스트는 subprocess를 mock하며, 리드 실드에는 프로브 실패 시 건너뛰는 선택적 실제 bwrap 스모크 테스트가 하나 있습니다. 래프 출력은 믿을 수 있지만, 아직 실제 격리 보장은 아닙니다.
 - **Windows에는 OS 샌드박스 백엔드가 없습니다.** 그곳의 방어는 환경 변수 세척 + cwd 고정 + 위험 명령 정규식 + 민감 파일 정규식 + HITL 게이트입니다. 프로젝트 루트 밖의 파일 쓰기를 막는 장치는 없고, **읽기 보호도 사용할 수 없습니다**: OS 백엔드가 없으면 리드 실드도 없고, 애플리케이션 계층 정규식이 유일한 읽기 게이트입니다.
-- **민감 파일 정규식은 완화이지 방벽이 아닙니다.** 리터럴 명령 형태만 매칭하며, `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 변수, 글롭은 계층 설계상 우회할 수 있습니다. 백엔드가 있는 곳에서 실제 읽기 방벽은 OS 리드 실드입니다.
+- **민감 파일 정규식은 완화이지 방벽이 아닙니다.** 리터럴 명령 형태만 매칭하며, `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 변수, 글롭, 히어도큐먼트는 계층 설계상 우회할 수 있습니다. 백엔드가 있는 곳에서 실제 읽기 방벽은 OS 리드 실드입니다.
+- **`python_repl`에는 민감 파일 정규식이 없습니다.** 위의 terminal 전용 게이트가 그것을 덮지 않습니다. 대신 래퍼 스크립트가 빌트인을 제한합니다(안전한 부분집합은 `open` / `__import__`를 생략) — 다르고 더 좁은 통제입니다.
 - **강등 경로는 설계대로 샌드박스 없이 실행됩니다.** `auto` + 백엔드 없음 = 경고 한 줄 기록 후 평소처럼 샌드박스 없이 실행. 이것은 의도된 "가용성 우선" 선택이며, 반대가 필요하면 `SANDBOX_POLICY=required`를 고르세요.
 - **환경 변수 세척은 이름 기반입니다.** 차단 부분 문자열이 하나도 없는 이름(그리고 거부 목록에 없는 이름)으로 저장된 시크릿은 그대로 통과합니다. 값 스캔도 동적 시크릿 탐지도 없으며, 이는 의도된 것입니다.
 - **네트워크 샌드박싱, seccomp, AppArmor 프로파일은 주장하지도 구성하지도 않았습니다.** 격리는 위에 보여준 bwrap / Seatbelt 구성 정확히 그것뿐입니다.
