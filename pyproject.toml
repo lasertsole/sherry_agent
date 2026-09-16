@@ -165,7 +165,20 @@ ignore = [
 "skills/**" = ["D100", "D101", "D102", "D103", "D200"]
 
 [tool.importlinter]
-root_package = "server"
+root_packages = [
+    "agent",
+    "bus",
+    "channels",
+    "config",
+    "context_engine",
+    "logs",
+    "models",
+    "pub",
+    "runtime",
+    "server",
+    "skills",
+    "workspace",
+]
 
 [[tool.importlinter.contracts]]
 name = "Server layered dependency contract"
@@ -176,3 +189,39 @@ layers = [
     "server.queue | server.DAO",
     "server.utils",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: agent must not import server"
+type = "forbidden"
+source_modules = ["agent"]
+forbidden_modules = ["server"]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: config must not import models"
+type = "forbidden"
+source_modules = ["config"]
+forbidden_modules = ["models"]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: context_engine must not import agent"
+type = "forbidden"
+source_modules = ["context_engine"]
+forbidden_modules = ["agent"]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: workspace must not import agent"
+type = "forbidden"
+source_modules = ["workspace"]
+forbidden_modules = ["agent"]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: workspace must not import context_engine"
+type = "forbidden"
+source_modules = ["workspace"]
+forbidden_modules = ["context_engine"]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: skills must not import server"
+type = "forbidden"
+source_modules = ["skills"]
+forbidden_modules = ["server"]
