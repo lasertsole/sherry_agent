@@ -1,5 +1,7 @@
 # Sherry 前缀缓存破坏点评判报告
 
+> **状态**：已完成（2026-09-16）
+> 完成记录：P0-1 / P0-2 / P1-a / P1-b 均已在本仓库落地并通过测试与 CI 门禁（"已实施修复"两节此前标注的 P0 修复当时并未在仓库中实现——本次已补齐）。
 > 生成日期：2026-09-16
 > 评判范围：`agent/middlewares/` 全量中间件 + `agent/wrapper/` 包装器
 
@@ -233,7 +235,9 @@ if not forced and (cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN
 
 ## 已实施修复
 
-### P0-1：ToolCallNormalize 无变化时跳过重建 — 已完成
+> **勘误（2026-09-16 落地）**：本节 P0-1 / P0-2 曾以"已完成"记录，但对应代码当时并不存在于本仓库（`_before_model_impl` 仍无条件重建、`_wrap_model_call_impl` 仍无条件 override）。本次提交已按本节方案实际实施并验证；P1 两项也已一并实施（见文末"P1 已实施"）。
+
+### P0-1：ToolCallNormalize 无变化时跳过重建 — 已完成（2026-09-16 落地）
 
 **文件**：`agent/middlewares/tool_call_normalize.py`
 
@@ -265,13 +269,13 @@ def _before_model_impl(self, state):
     return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *normalized]}
 ```
 
-**原理**：`sanitize_tool_use_result_pairing`（`pub/func/transcript_repair.py:308`）在无变化时返回原列表对象（`return cleaned if changed else messages`）。此时 filter 不产生变化（正常状态下无 RemoveMessage 残留），`a is b` 全为 True，直接返回 `None` — LangGraph 不做任何状态写入，前缀缓存完整保留。只有检测到实际需要修复时才发 RemoveMessage + 重建。
+**原理**：`sanitize_tool_use_result_pairing`（`pub/func/transcript_repair.py:308`）在无变化时返回原列表对象（`return cleaned if changed else messages`）；而去 `RemoveMessage` 的 filter 总会产生新列表，因此判据必须是**逐元素同一性**（`a is b`）而非列表同一性。命中时直接返回 `None` — LangGraph 不做任何状态写入。注意：前缀缓存的判据是"发给模型的序列化内容是否相同"，Python 对象身份本身并不破坏缓存；跳过无变化重建的价值在于消除无意义的 checkpointer 状态写入，并彻底排除重建路径带来的内容漂移。只有检测到实际需要修复时才发 RemoveMessage + 重建。
 
 **预期效果**：前缀缓存命中率 ~0% → ~90%。
 
 ---
 
-### P0-2：ContextEngineHook system_message 内容相同时不 override — 已完成
+### P0-2：ContextEngineHook system_message 内容相同时不 override — 已完成（2026-09-16 落地）
 
 **文件**：`agent/middlewares/context_engine/core.py`
 
@@ -306,7 +310,7 @@ def _wrap_model_call_impl(self, request):
     return request.override(system_message=SystemMessage(content=prompt_str))
 ```
 
-**原理**：先检查 request 上已有的 `system_message`，如果内容相同则原样返回 request，不创建新对象。只有 system prompt 实际变化时（如 TODO 状态更新、子代理状态变化）才 override。
+**原理**：先检查 request 上已有的 `system_message`，如果内容相同则原样返回 request，不创建新对象（`system_message` 为 None 时仍照常 override）。`_get_and_reload_system_prompt` 的 reload/缓存语义与缺 `session_id` 抛错语义保持不变。只有 system prompt 实际变化时（如 TODO 状态更新、子代理状态变化）才 override。
 
 **预期效果**：消除同一轮内多次模型调用之间的重复 system_message 断裂。
 
@@ -314,37 +318,51 @@ def _wrap_model_call_impl(self, request):
 
 ### 测试验证
 
-全部测试通过，无功能回退：
+复核（2026-09-16，`uv run --no-sync pytest`），全部通过、无功能回退：
 
 ```
-tests/agent/middlewares/                              750 passed, 1 skipped
-tests/context_engine/store/test_interrupt_marker_approach.py   11 passed
-tests/agent/middlewares/context_engine/test_context_engine_denial_persistence.py   8 passed
-tests/agent/tools/subagent/test_carrier_metadata_locking.py     2 passed
-tests/pub/func/message/test_tool_result_ttl.py                 28 passed
-tests/agent/middlewares/test_context_engine_session_guard.py     2 passed
+tests/agent/middlewares/                                       771 passed, 1 skipped
+tests/agent/middlewares tests/pub tests/context_engine         1302 passed, 1 skipped
+tests/context_engine/store/test_interrupt_marker_approach.py（关键两例）  2 passed
+tests/agent/middlewares/context_engine/test_context_engine_denial_persistence.py  8 passed
+tests/agent/tools/subagent/test_carrier_metadata_locking.py    2 passed
+tests/pub/func/message/test_tool_result_ttl.py                28 passed
+tests/run_tests_split.py                                       FINAL VERDICT: PASS
 ```
 
-关键测试覆盖：
+关键测试覆盖（逐条复核）：
 
-- `test_fact_a_marker_model_visible_on_next_invoke` — 验证 ToolCallNormalize 返回 None 后 marker 仍在状态中对模型可见 ✅
-- `test_fact_b_tool_call_healing_drops_trailing_human_when_no_marker` — 验证有变化时仍执行 RemoveMessage + 重建 ✅
-- `test_context_engine_denial_persistence` — 验证 HITL denial 消息经 sanitize 后仍持久化 ✅
-- `test_carrier_metadata_locking` — 验证 carrier HumanMessage 经 sanitize 后 metadata 完整 ✅
-- `test_tool_result_ttl` — 验证工具结果 TTL 机制不受影响 ✅
+- `test_fact_a_marker_model_visible_on_next_invoke` — 函数存在且通过：验证 ToolCallNormalize 返回 None 后 marker 仍在状态中对模型可见 ✅
+- `test_fact_b_tool_call_healing_drops_trailing_human_when_no_marker` — 函数存在且通过：验证有变化时仍执行 RemoveMessage + 重建 ✅
+- `test_context_engine_denial_persistence` — 文档写的是用例名，实际为模块 `tests/agent/middlewares/context_engine/test_context_engine_denial_persistence.py`（8 例，无同名函数）全部通过 ✅
+- `test_carrier_metadata_locking` — 文档写的是用例名，实际为模块 `tests/agent/tools/subagent/test_carrier_metadata_locking.py`（`test_sanitize_preserves_carrier_metadata` / `test_rehydrated_carrier_keeps_provenance`，2 例）全部通过 ✅
+- `test_tool_result_ttl` — 文档写的是用例名，实际为模块 `tests/pub/func/message/test_tool_result_ttl.py`（28 例）全部通过 ✅
+
+本次新增测试：
+
+- `tests/agent/middlewares/test_tool_call_normalize.py` — 无变化返回 None、有变化重建、RemoveMessage 残留重建 ✅
+- `tests/agent/middlewares/context_engine/test_system_prompt_reuse.py` — 相同内容返回同一 request、不同内容 override、reload/缓存语义 ✅
+- `tests/agent/middlewares/test_multimodal_processor.py` — 历史含图剥离、第二次调用对象同一、纯文本列表不被改写 ✅
+- `tests/agent/middlewares/test_summarization_cooldown_prompt.py` — cooldown 路径相同内容不 override、不同内容 override（同步+异步）✅
 
 ---
 
-## 待优化项（未实施）
+## P1 已实施（2026-09-16）
 
-### P1：MultimodalProcessor 历史消息剥离一次性完成
+### P1-a：MultimodalProcessor 历史消息 image_url 剥离仅在必要时
 
-**问题**：`media_pipeline.py:83-89` 每次 `before_model` 都遍历 `state_mes_list[:-1]` 剥离历史消息中的 image_url 块。
+**问题（原文）**：`media_pipeline.py:83-89` 每次 `before_agent` 都遍历 `state_mes_list[:-1]` 剥离历史消息中的 image_url 块。
 
-**建议**：在 checkpointer 恢复时一次性剥离，后续调用不再重复。
+**收敛性结论（实测）**：剥离是**就地改写消息对象**；本仓库的 checkpointer（SQLite `ThreadSafeAsyncSqliteSaver` 与 InMemorySaver 均已实测）在回合内后续 checkpoint 写入时会序列化被改写的消息，因此**首轮剥离即持久化，第二轮起同一历史消息本就无可剥离**（第二次 `before_agent` 看到的已是剥离后的字符串）。"checkpointer 恢复时一次性剥离"的重构会把剥离从模型可见的回合路径挪到持久化路径，与 MesMemory 写入、媒体处理耦合，风险大于收益——故不采用。
 
-### P1：Summarization cooldown 路径统一 system_message 注入
+**实际修复（更小）**：遍历时先做廉价前置检查（content 中确有 `image_url` 块）才调用剥离；剥离结果非空时才赋值。副作用：无图的文本块列表（上一轮 `last_mes.content = [text_dict]` 留下的常见形态）不再被无谓地改写成字符串。收敛后每轮只剩一次 O(history) 的类型检查。
 
-**问题**：`summarization.py:2150-2153` cooldown 路径里单独 `request.override(system_message=...)`，与 ContextEngineHook 重复。
+**测试**：`tests/agent/middlewares/test_multimodal_processor.py` — 含图剥离、第二次调用对象同一、纯文本列表不被改写、纯图消息保持原内容。
 
-**建议**：统一由 ContextEngineHook 负责系统提示注入，Summarization 不再单独 override。
+### P1-b：Summarization cooldown 路径 system_message 注入去重
+
+**问题（原文）**：`summarization.py:2150-2153/2226` cooldown 路径里单独 `request.override(system_message=...)`，与 ContextEngineHook 重复。
+
+**实际修复**：**不**按原文"完全移除该 override"处理——该分支的既有注释明确"没有 ContextEngineHook 的链路（子代理 / nudge）靠这里下发重建后的 system prompt"，直接删除会破坏 worker 路径。改为复用 P0-2 判据：`request.system_message` 内容与 `rebuilt` 相同时跳过 override，不同时照旧 override；同步 / 异步两条路径行为一致。
+
+**测试**：`tests/agent/middlewares/test_summarization_cooldown_prompt.py` — 相同内容不替换 request、不同内容成功 override（同步 + 异步）。
