@@ -31,9 +31,9 @@ User 上传图片 → MultimodalProcessor.before_agent
 
 | 文件                                                | 行数 | 角色                                       |
 | --------------------------------------------------- | ---- | ------------------------------------------ |
-| `agent/middlewares/media_pipeline.py`               | 224  | 媒体处理 + 技能提示注入                    |
-| `agent/middlewares/media_handlers.py`               | 301  | 各媒体类型处理器（存盘）                   |
-| `agent/middlewares/llm_retry.py`                    | 426  | LLM 调用重试 + fallback chain              |
+| `agent/middlewares/media_pipeline/core.py`               | 224  | 媒体处理 + 技能提示注入                    |
+| `agent/middlewares/media_pipeline/media_handlers.py`               | 301  | 各媒体类型处理器（存盘）                   |
+| `agent/middlewares/llm_retry/core.py`                    | 426  | LLM 调用重试 + fallback chain              |
 | `pub/func/message/llm_error_classifier.py`          | 470  | 错误分类引擎                               |
 | `config/features/agent_side/context_engine_hook.py` | 18   | ContextEngineHook 配置                     |
 | `models/LLMs/main_llm.py`                           | 169  | 主 LLM 构建（env: MAIN_LLM_PROVIDER/NAME） |
@@ -218,7 +218,7 @@ def reset_cache() -> None:
 
 新增 `main_llm_supports_vision: str` 字段，默认 `"auto"`。
 
-#### `agent/middlewares/media_pipeline.py`
+#### `agent/middlewares/media_pipeline/core.py`
 
 **重构 `_before_agent_impl` 为两阶段：**
 
@@ -406,7 +406,7 @@ _RECOVERY_MATRIX[FailoverReason.multimodal_not_supported] = dict(
 
 `_match_special_cases` 中增加：400 + 上述关键词 → `multimodal_not_supported`（优先于普通 `format_error`）。
 
-#### `agent/middlewares/llm_retry.py`
+#### `agent/middlewares/llm_retry/core.py`
 
 在 `awrap_model_call` / `wrap_model_call` 的 except 分支中新增：
 
@@ -451,7 +451,7 @@ def _try_multimodal_fallback(
             set_capability(provider, model, mt, "unsupported")
 
     # Rewrite messages: strip media blocks, add skill hints
-    from agent.middlewares.media_pipeline import apply_skill_fallback
+    from agent.middlewares.media_pipeline.core import apply_skill_fallback
     messages = getattr(request, "messages", [])
     new_messages = apply_skill_fallback(messages, session_id)
     try:
@@ -521,8 +521,8 @@ LangChain 1.3.9 `ModelRequest` 构造函数接受 `messages` 参数（见 test_l
 
 1. `llm_capability_cache.py` — 进程内存缓存读写模块 + 测试
 2. `llm_error_classifier.py` — 新增 `multimodal_not_supported` 分类 + 测试
-3. `media_pipeline.py` — 重构 `_before_agent_impl` + 新增 `apply_skill_fallback` + 测试
-4. `llm_retry.py` — 新增 multimodal fallback 分支 + 测试
+3. `media_pipeline/core.py` — 重构 `_before_agent_impl` + 新增 `apply_skill_fallback` + 测试
+4. `llm_retry/core.py` — 新增 multimodal fallback 分支 + 测试
 5. `context_engine_hook.py` — 新增配置字段
 6. 端到端验证：auto 模式 → 发图 → 模型报错 → 写缓存 → fallback → 同进程后续 session 直接走技能
 

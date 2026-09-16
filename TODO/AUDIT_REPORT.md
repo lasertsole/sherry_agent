@@ -108,12 +108,12 @@ shutil.rmtree(path)  # 删除任意目录
 
 - **① 技能描述（不可信 SKILL.md frontmatter）注入 LLM 上下文**：`skills/loader.py:191` `get_skills_text` 把每个技能的 `description`（解析自 SKILL.md）直接拼进 `<available_skills>` XML，无 XML 转义。**存在恶意/被植入技能时触发。**
 - **② 技能扫描器故障放行**：`server/service/skill_scan_policy.py:56-58` `build_reject_message` 在扫描器 `UNAVAILABLE` 时返回 `None`（放行）；`skills_snapshot.py:42-44`、`clawhub_runner.py:152-157` 均为 fail-open。**扫描器缺失/报错时触发。**
-- **③ `tool_guardrails.py` 仅做循环检测，非权限闸门**：检测失败重复、同工具失败累积、无进展（第 119-172 行），**不**审批/确认首次工具调用。当前 `sandbox=False` 未沙箱执行已有 HITL 人工审批门：主会话经 HITL interrupt 人工审批，子代理/后台 scope 一律 `ToolException` 硬拒（接线在 `agent/middlewares/humanInTheLoop/`），危险命令正则也先于任何子进程生成执行；但面向其余工具的首次调用确认闸门仍不存在。
+- **③ `tool_guardrails/core.py` 仅做循环检测，非权限闸门**：检测失败重复、同工具失败累积、无进展（第 119-172 行），**不**审批/确认首次工具调用。当前 `sandbox=False` 未沙箱执行已有 HITL 人工审批门：主会话经 HITL interrupt 人工审批，子代理/后台 scope 一律 `ToolException` 硬拒（接线在 `agent/middlewares/humanInTheLoop/`），危险命令正则也先于任何子进程生成执行；但面向其余工具的首次调用确认闸门仍不存在。
 - **状态**：未修复。
 
 ## 10. SSRF — 未校验媒体 URL 下载
 
-**文件**：`agent/middlewares/media_handlers.py:90-92`（音频/视频 URL 下载）；`agent/middlewares/media_handlers.py:186-188`（图片 URL 仅经 `is_url` 校验后透传）
+**文件**：`agent/middlewares/media_pipeline/media_handlers.py:90-92`（音频/视频 URL 下载）；`agent/middlewares/media_pipeline/media_handlers.py:186-188`（图片 URL 仅经 `is_url` 校验后透传）
 
 ```python
 req = urllib.request.Request(url, headers={...})
@@ -128,7 +128,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 
 ## 11. `media_pipeline` — 异步钩子中的阻塞网络 I/O + 文件 I/O + CPU 密集操作
 
-**文件**：`agent/middlewares/media_pipeline.py:208,223,179,185,190`；`agent/middlewares/media_handlers.py:91,103,204`
+**文件**：`agent/middlewares/media_pipeline/core.py:208,223,179,185,190`；`agent/middlewares/media_pipeline/media_handlers.py:91,103,204`
 
 - `abefore_agent`/`aafter_agent`（async）直接调用同步的 `_before_agent_impl`/`_after_agent_impl`：`urllib.request.urlopen()`（网络）、`Image.open()`（CPU 解码）、`write_bytes()`（文件 I/O）、`iterdir()`/`unlink()`（文件系统操作）——全部在事件循环线程上同步执行。
 - **影响**：一个大文件下载或图像解码阻塞所有其他会话的流。
@@ -143,9 +143,9 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：改 `aiosqlite` 或在异步路径中用 `asyncio.to_thread` 包装。
 - **状态**：未修复。
 
-## 13. `summarization.py` — `awrap_model_call` 异步路径中的同步 SQLite + 文件 I/O
+## 13. `summarization/core.py` — `awrap_model_call` 异步路径中的同步 SQLite + 文件 I/O
 
-**文件**：`agent/middlewares/summarization.py:1517,1526,1976-1979`
+**文件**：`agent/middlewares/summarization/core.py:1517,1526,1976-1979`
 
 - `_build_summary_prompt`（async 路径调用）→ `taskflow_store.get_active_flows_sync()`（同步 SQLite）+ `get_tiered_store().read_facts()`（同步文件 I/O）。
 - `_aapply_compression_under_lock`（async）→ `memory_store.load_from_disk()`（文件 I/O）+ `build_system_prompt()`（含 `state_register_db` 同步 SQLite）+ `state_register_db.set_state()`（同步 SQLite）。
@@ -162,7 +162,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 
 ## 15. `compaction_lock.py` — 异步 `acquire()` 中的同步 SQLite
 
-**文件**：`agent/middlewares/compaction_lock.py:87-106`
+**文件**：`agent/middlewares/summarization/compaction_lock.py:87-106`
 
 - `acquire()` async 上下文管理器调用 `_try_acquire()`，后者打开新的 `sqlite3.connect()` 并执行 SQL 同步。`_release()` 和 `_current_holder()` 同样使用同步 sqlite3。
 - **修复**：迁移到 `aiosqlite` 或用 `asyncio.to_thread` 包装。
@@ -356,9 +356,9 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 - `_runs: dict[str, SubagentRunRecord] = {}` 终端 run 记录从不自动驱逐。sweeper 持久化到磁盘但不修剪内存字典。`clear()` 存在但仅在显式调用时执行。
 - **状态**：新发现。
 
-## 38. `agent/middlewares/summarization.py` — `_RESTORED_COOLDOWN_SESSIONS` 无界增长
+## 38. `agent/middlewares/summarization/core.py` — `_RESTORED_COOLDOWN_SESSIONS` 无界增长
 
-**文件**：`agent/middlewares/summarization.py:128`
+**文件**：`agent/middlewares/summarization/core.py:128`
 
 - `_RESTORED_COOLDOWN_SESSIONS: set[str] = set()` — sessions 被添加但从不移除。
 - **状态**：新发现。
@@ -514,7 +514,7 @@ from models.providers.registry import find_by_name
 
 | 文件                                            | 行数 |
 | ----------------------------------------------- | ---- |
-| `agent/middlewares/summarization.py`            | 1996 |
+| `agent/middlewares/summarization/core.py`            | 1996 |
 | `agent/tools/skill_tools/skill_manage.py`       | 882  |
 | `models/STT_model/core.py`                      | 785  |
 | `agent/tools/subagent/spawn/core.py`            | 762  |
@@ -531,8 +531,8 @@ from models.providers.registry import find_by_name
 | `agent/tools/message_search.py`                 | 555  |
 | `server/service/turn_runner.py`                 | 552  |
 | `agent/wrapper/repetition_guard.py`             | 550  |
-| `agent/middlewares/tool_guardrails.py`          | 546  |
-| `agent/middlewares/output_repetition_guard.py`  | 536  |
+| `agent/middlewares/tool_guardrails/core.py`          | 546  |
+| `agent/middlewares/output_repetition_guard/core.py`  | 536  |
 | `agent/tools/subagent/registry/lifecycle.py`    | 536  |
 
 **共 56 个核心源码文件超过 300 行**（不含 vendored / tests / docs / client）。
@@ -649,7 +649,7 @@ from models.providers.registry import find_by_name
 
 ## P3 — 低优先级清理
 
-- **大文件拆分**：summarization.py (1996行) 优先拆分
+- **大文件拆分**：summarization/core.py (1996行) 优先拆分
 - **类型注解**：292 个函数缺少返回类型，149 处 `Any`（agent/）
 - **错误处理统一**：64 处 `except Exception:` 至少添加日志
 - **全局状态治理**：52 处模块级可变变量评估封装
@@ -679,7 +679,7 @@ from models.providers.registry import find_by_name
 | 10 | 10 | SSRF — 未校验媒体 URL 下载 | 未修复（OPEN） |
 | 11 | 11 | `media_pipeline` — 异步钩子中的阻塞网络 I/O + 文件 I/O + CPU 密集操作 | 未修复（OPEN） |
 | 12 | 12 | `StateRegisterDB` 同步 SQLite 在异步中间件路径中被调用 | 未修复（OPEN） |
-| 13 | 13 | `summarization.py` — `awrap_model_call` 异步路径中的同步 SQLite + 文件 I/O | 未修复（OPEN） |
+| 13 | 13 | `summarization/core.py` — `awrap_model_call` 异步路径中的同步 SQLite + 文件 I/O | 未修复（OPEN） |
 | 14 | 14 | `WsTurnExecutor.execute` — 被取消时不取消 child 任务 | 未修复（OPEN） |
 | 15 | 15 | `compaction_lock.py` — 异步 `acquire()` 中的同步 SQLite | 未修复（OPEN） |
 | 16 | 16 | clawhub 供应链风险 — `npx --yes clawhub@latest` + 环境泄漏 | 未修复（OPEN） |
@@ -704,7 +704,7 @@ from models.providers.registry import find_by_name
 | 39 | 35 | `StateRegisterDB` — 每次操作新建 SQLite 连接 | 未修复（OPEN） |
 | 40 | 36 | `ContextEpoch` 连接泄漏 | 未修复（OPEN） |
 | 41 | 37 | `agent/tools/subagent/registry/memory.py` — `_runs` 字典无界增长 | 未修复（OPEN） |
-| 42 | 38 | `agent/middlewares/summarization.py` — `_RESTORED_COOLDOWN_SESSIONS` 无界增长 | 未修复（OPEN） |
+| 42 | 38 | `agent/middlewares/summarization/core.py` — `_RESTORED_COOLDOWN_SESSIONS` 无界增长 | 未修复（OPEN） |
 | 43 | 39 | `agent/tools/subagent/orphan/recovery.py` — `recovery_attempts_persisted` 无界增长 | 未修复（OPEN） |
 | 46 | 40 | `agent/tools/subagent/registry/settle_wake.py` — 异步路径中的同步 SQLite | 未修复（OPEN） |
 | 47 | 41 | `config/schema.py` 从 `models/` 导入 — 违反架构规则 | 未修复（OPEN） |

@@ -32,7 +32,7 @@
 | **P1** | 2   | `context_engine/store/core.py:14` `_db = get_db()`          | 导入即触发 SQLite 连接 + migration                                  | Lazy init                         |
 | **P1** | 3   | `state_register_mem` 全局耦合                               | 所有中间件直接依赖全局单例，裸字符串 key                            | SessionState Facade + Enum key    |
 | **P1** | 4   | `runtime/session/state_register.py`                         | 每次 SQLite 操作新开连接；无 Protocol                               | 连接池/Repository + Protocol      |
-| **P1** | 5   | `summarization.py` 2250 行                                  | 15+ 职责的上帝类；12+ sync/async 双路径                             | 拆分为 6 个模块                   |
+| **P1** | 5   | `summarization/core.py` 2250 行                                  | 15+ 职责的上帝类；12+ sync/async 双路径                             | 拆分为 6 个模块                   |
 | **P2** | 6   | ITTT/VTTT/reranker/extract 模块级单例                       | 与 main_llm 工厂模式不一致                                          | 统一工厂函数                      |
 | **P2** | 7   | `RepetitionGuardWrapper` + `ContextLimitGuard` 导入私有常量 | 跨模块私有依赖（8 个私有符号）                                      | 依赖倒置 + Protocol               |
 | **P2** | 8   | 原始 SQL 泄漏（5 个文件）                                   | checkpointer/store/embeddings/events                                | Repository Pattern                |
@@ -116,7 +116,7 @@ return strategy.build(**kwargs)
 
 #### 1.1.4 [CONFIRMED] `ToolGuardrails._evaluate()` action 决策
 
-- **文件**: `agent/middlewares/tool_guardrails.py:124-222, 354-483`
+- **文件**: `agent/middlewares/tool_guardrails/core.py:124-222, 354-483`
 - **问题**: 嵌套 if-else 决定 ALLOW/WARN/BLOCK/HALT，三种病理各有独立阈值；`_wrap_tool_call_impl` 有大型 if/elif 链构造消息
 - **模式**: Chain of Responsibility — `ExactFailureDetector`、`SameToolFailureDetector`、`NoProgressDetector`，各自独立评估，最终 action 由最高优先级决定；Message Factory 处理消息构造
 
@@ -130,9 +130,9 @@ return strategy.build(**kwargs)
 
 ### 1.2 混合关注点 / 上帝类
 
-#### 1.2.1 [CONFIRMED] `summarization.py` — 2250 行上帝类（从 1996 增长）
+#### 1.2.1 [CONFIRMED] `summarization/core.py` — 2250 行上帝类（从 1996 增长）
 
-- **文件**: `agent/middlewares/summarization.py`
+- **文件**: `agent/middlewares/summarization/core.py`
 - **职责清单** (15+ 职责):
   1. Token 估算 (693-705)
   2. Budget 计算 (710-716)
@@ -206,7 +206,7 @@ class SessionState:
 
 - `models/embed_model/core.py:128` — `requests.post(url, ..., verify=False)`
 - `models/reranker_model/core.py:573,623,679` — `requests.post(..., verify=False)`
-- `agent/middlewares/media_handlers.py:90-91` — `urllib.request.urlopen(req, timeout=30)`
+- `agent/middlewares/media_pipeline/media_handlers.py:90-91` — `urllib.request.urlopen(req, timeout=30)`
 - **模式**: API Client Adapter — `EmbeddingApiClient`、`RerankerApiClient`、`MediaDownloader`
 
 #### 1.3.4 [CONFIRMED] 原始 subprocess/Popen 操作泄漏
@@ -229,20 +229,20 @@ class SessionState:
 #### 1.4.2 [NEW] `ContextLimitGuardWrapper` 导入私有常量
 
 - **文件**: `agent/wrapper/context_limit.py:38`
-- **问题**: `from agent.middlewares.summarization_components import _FORCE_RECOVERY_KEY`
+- **问题**: `from agent.middlewares.summarization.summarization_components import _FORCE_RECOVERY_KEY`
 - **模式**: 依赖倒置 — 提取为公共 Protocol
 
 #### 1.4.3 [CONFIRMED] `IterationBudget` 依赖 `subagent_completion_drain` 私有函数
 
-- **文件**: `agent/middlewares/iteration_budget.py:32`
-- **问题**: `from agent.middlewares.subagent_completion_drain import _is_internal_completion`
+- **文件**: `agent/middlewares/iteration_budget/core.py:32`
+- **问题**: `from agent.middlewares.subagent_completion_drain.core import _is_internal_completion`
 - **模式**: 提取为公共 Protocol — `CompletionMessageProtocol`
 
 #### 1.4.4 [CONFIRMED] `Summarization` 直接依赖 `agent.tools`（5 处）
 
-- **文件**: `agent/middlewares/summarization.py:410-412` 等
+- **文件**: `agent/middlewares/summarization/core.py:410-412` 等
 - **问题**: 中间件层直接导入工具层的 `memory_store`、`taskflow`、`memory_tiered`，违反分层架构
-- **同类问题**: `context_engine/core.py` 导入 `todolist`；`nudge.py` 导入 `subagent`/`todolist`/`memory`；`todo_continuation.py` 导入 `todolist`；`subagent_completion_drain.py` 导入 `announce`
+- **同类问题**: `context_engine/core.py` 导入 `todolist`；`nudge.py` 导入 `subagent`/`todolist`/`memory`；`todo_continuation/core.py` 导入 `todolist`；`subagent_completion_drain/core.py` 导入 `announce`
 - **模式**: 依赖倒置 — 定义 `MemorySnapshotProvider` 接口，由 `core.py` 注入
 
 #### 1.4.5 [CONFIRMED] `ContextEngineHook`/nudge 直接创建子代理
@@ -367,7 +367,7 @@ class SessionState:
 #### 3.2.2 [NEW] `models/LLMs/main_llm.py` 导入 `agent/`
 
 - **文件**: `models/LLMs/main_llm.py:138`
-- `from agent.middlewares.llm_retry import FallbackCandidate` — 在 `build_fallback_chain()` 内
+- `from agent.middlewares.llm_retry.core import FallbackCandidate` — 在 `build_fallback_chain()` 内
 - **问题**: models 层（基础设施）依赖 agent 层（业务逻辑），违反分层架构
 - **模式**: 提取 `FallbackCandidate` 到 `pub/` 或 `config/`
 
@@ -640,7 +640,7 @@ class SessionState:
 
 ### 5.5 [CONFIRMED] middleware sync/async 双路径
 
-- **唯一存在全量复制的中间件**: `summarization.py`（12+ 方法对）
+- **唯一存在全量复制的中间件**: `summarization/core.py`（12+ 方法对）
 - **已正确使用共享 impl 的中间件**: media_pipeline、tool_guardrails、iteration_budget、context_engine/core — 都通过 `_xxx_impl` 方法被 sync 和 async 版本共享
 - **模式**: 将 summarization 的 sync/async 对重构为共享 `_impl` 模式
 
@@ -664,13 +664,13 @@ class SessionState:
 | bridge           | `_bridge_task`                                                        | `events/bridge.py:34`                |
 | 压缩 TODO        | `_COMPRESSION_TODO_TASKS`                                             | `nudge.py:296`                       |
 | 后台任务         | `_BACKGROUND_TASKS`                                                   | `context_engine/core.py:142`         |
-| 冷却会话         | `_RESTORED_COOLDOWN_SESSIONS`                                         | `summarization.py:128`               |
+| 冷却会话         | `_RESTORED_COOLDOWN_SESSIONS`                                         | `summarization/core.py:128`               |
 | 提醒会话         | `_reminded_sessions`                                                  | `todowrite.py:34`                    |
 | 任务流错误       | `_REGISTRY_ERROR`                                                     | `taskflow_wait_all.py:43`            |
 | wrapper 工厂     | `_GRAPH_WRAPPER_FACTORIES`                                            | `wrapper/registry.py:45`             |
 | 初始化锁         | `_init_lock`, `_init_loop`, `_sync_init_lock`                         | 3 个 SQLite 存储                     |
 | 持久化锁         | `_persist_lock`                                                       | `state.py:9`                         |
-| 武装会话         | `_armed_sessions`                                                     | `task_intent.py:192`                 |
+| 武装会话         | `_armed_sessions`                                                     | `task_intent/core.py:192`                 |
 | 停滞追踪         | 5 个 dict                                                             | `stagnation_tracker.py:27-31`        |
 | 工具列表缓存     | `_tools`                                                              | `core.py:52`                         |
 | 进度钩子         | 4 个 list                                                             | `hooks/progress.py:6-9`              |
@@ -718,7 +718,7 @@ class SessionState:
 | 1.1  | `context_engine/store/core.py:14` eager DB → lazy      | Lazy init               | 0.5 天      |
 | 1.2  | 中间件 `session_id` 提取 + `state_register_mem` Facade | Mixin + Enum key        | 1 天        |
 | 1.3  | `runtime/session/state_register.py` Protocol + 连接池 + lazy   | Interface Seg. + 连接池 | 1-2 天      |
-| 1.4  | `summarization.py` 拆分（2250 行 → 6 模块）            | 分层 + 共享 impl        | 3-5 天      |
+| 1.4  | `summarization/core.py` 拆分（2250 行 → 6 模块）            | 分层 + 共享 impl        | 3-5 天      |
 
 ### Phase 2: 拆解 God 模块 + DRY 清理（P2）
 

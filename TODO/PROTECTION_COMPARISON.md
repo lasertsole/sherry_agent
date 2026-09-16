@@ -75,7 +75,7 @@
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/tool_guardrails.py` + `config/features/agent_side/tool_guardrails.py`
+- Sherry: `agent/middlewares/tool_guardrails/core.py` + `config/features/agent_side/tool_guardrails.py`
 - DeepAgents: `middleware/patch_tool_calls.py` + `middleware/_tool_exclusion.py`
 
 ---
@@ -118,7 +118,7 @@
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/output_repetition_guard.py` + `agent/wrapper/repetition_guard.py` + `agent/middlewares/repetition_detectors.py`
+- Sherry: `agent/middlewares/output_repetition_guard/core.py` + `agent/wrapper/repetition_guard.py` + `agent/middlewares/output_repetition_guard/repetition_detectors.py`
 - DeepAgents: 无
 
 ---
@@ -146,7 +146,7 @@
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/summarization.py` + `agent/wrapper/context_limit.py` + `config/features/agent_side/summarization.py`
+- Sherry: `agent/middlewares/summarization/core.py` + `agent/wrapper/context_limit.py` + `config/features/agent_side/summarization.py`
 - DeepAgents: `middleware/summarization.py` + `middleware/_overflow_clip.py` + `middleware/_message_eviction.py` + `_messages_reducer.py`
 
 ---
@@ -167,7 +167,7 @@
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/iteration_budget.py` + `config/features/agent_side/iteration_budget.py`
+- Sherry: `agent/middlewares/iteration_budget/core.py` + `config/features/agent_side/iteration_budget.py`
 - DeepAgents: `graph.py` (recursion_limit) + `middleware/rubric.py`
 
 ---
@@ -274,7 +274,7 @@
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/llm_retry.py` + `pub/func/message/llm_error_classifier.py` + `pub/func/retry_utils.py` + `runtime/process/crash_loop_breaker.py`
+- Sherry: `agent/middlewares/llm_retry/core.py` + `pub/func/message/llm_error_classifier.py` + `pub/func/retry_utils.py` + `runtime/process/crash_loop_breaker.py`
 - DeepAgents: `middleware/summarization.py` + `backends/local_shell.py` + `backends/sandbox.py`
 
 ---
@@ -299,7 +299,7 @@
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/compaction_lock.py` + `agent/middlewares/memory_flush.py` + `agent/middlewares/summarization_components.py`
+- Sherry: `agent/middlewares/summarization/compaction_lock.py` + `agent/middlewares/summarization/memory_flush.py` + `agent/middlewares/summarization/summarization_components.py`
 - DeepAgents: `middleware/summarization.py` + `middleware/_message_eviction.py`
 
 ---
@@ -324,7 +324,7 @@
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/llm_retry.py` + `agent/wrapper/repetition_guard.py` + `agent/wrapper/context_limit.py`
+- Sherry: `agent/middlewares/llm_retry/core.py` + `agent/wrapper/repetition_guard.py` + `agent/wrapper/context_limit.py`
 - DeepAgents: `backends/utils.py` + `middleware/filesystem.py` + `middleware/rubric.py`
 
 ---

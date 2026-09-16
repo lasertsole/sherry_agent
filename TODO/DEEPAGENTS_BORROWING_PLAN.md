@@ -128,7 +128,7 @@ Sherry 当前对超大工具结果仅做截断（默认500行/2000行上限）�
 | 文件                                             | 修改类型 | 说明                             |
 | ------------------------------------------------ | -------- | -------------------------------- |
 | `agent/middlewares/message_eviction.py`          | 新建     | 驱逐逻辑（函数级，非独立中间件） |
-| `agent/middlewares/summarization.py`             | 修改     | 在压缩流程内调用驱逐             |
+| `agent/middlewares/summarization/core.py`             | 修改     | 在压缩流程内调用驱逐             |
 | `config/features/agent_side/message_eviction.py` | 新建     | 驱逐配置 TypedDict               |
 | `config/features/agent_side/__init__.py`         | 修改     | 导出新配置                       |
 | `config/features/__init__.py`                    | 修改     | 导出新配置                       |
@@ -292,10 +292,10 @@ def _build_preview(content: str, path: Path) -> str:
 
 #### 集成方式（嵌入 Summarization 压缩流程）
 
-在 `agent/middlewares/summarization.py` 的压缩入口（T1-T5 路由决策后、调 LLM 摘要前）插入驱逐步骤：
+在 `agent/middlewares/summarization/core.py` 的压缩入口（T1-T5 路由决策后、调 LLM 摘要前）插入驱逐步骤：
 
 ```python
-# summarization.py 压缩流程内，摘要前先驱逐:
+# summarization/core.py 压缩流程内，摘要前先驱逐:
 
 def _apply_compression(self, state, session_id: str):
     from agent.middlewares.message_eviction import evict_large_tool_results
@@ -468,7 +468,7 @@ Sherry 在压缩上下文时截断的是完整的消息，但旧工具调用中�
 
 | 文件                                            | 修改类型 | 说明           |
 | ----------------------------------------------- | -------- | -------------- |
-| `agent/middlewares/summarization_components.py` | 修改     | 添加参数截断器 |
+| `agent/middlewares/summarization/summarization_components.py` | 修改     | 添加参数截断器 |
 | `config/features/agent_side/summarization.py`   | 修改     | 添加截断配置   |
 
 #### 配置新增
@@ -546,7 +546,7 @@ Sherry 每次遇到 ContextOverflowError 都走完整压缩管线（T4/T5 → �
 
 | 文件                                          | 修改类型 | 说明                                |
 | --------------------------------------------- | -------- | ----------------------------------- |
-| `agent/middlewares/summarization.py`          | 修改     | 在 T4/T5 恢复路径前插入快速裁剪路径 |
+| `agent/middlewares/summarization/core.py`          | 修改     | 在 T4/T5 恢复路径前插入快速裁剪路径 |
 | `agent/middlewares/overflow_clip.py`          | 新建     | 尾部裁剪实现                        |
 | `config/features/agent_side/summarization.py` | 修改     | 添加裁剪配置                        |
 
@@ -641,10 +641,10 @@ def clip_overflow_tail(
 
 #### 集成方式
 
-在 `agent/middlewares/summarization.py` 的 T4/T5 溢出恢复路径中，**先尝试快速裁剪**，裁剪不够才降级到完整压缩：
+在 `agent/middlewares/summarization/core.py` 的 T4/T5 溢出恢复路径中，**先尝试快速裁剪**，裁剪不够才降级到完整压缩：
 
 ```python
-# summarization.py 中 T4/T5 恢复逻辑修改:
+# summarization/core.py 中 T4/T5 恢复逻辑修改:
 
 def _handle_overflow(self, state, error_chars):
     """溢出恢复：先快速裁剪，再降级到完整压缩。"""
