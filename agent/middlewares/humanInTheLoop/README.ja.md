@@ -185,6 +185,17 @@ LLM 出力 → after_model
   └── 割り込みフラグチェック → ブロックまたは通過
 ```
 
+### 外部パス割り込み(`external_file_access`)
+
+すべての割り込みがこのミドルウェアから来るわけではありません。ファイルツール(`read_file`、`write_file`、`patch_file`、`search_files` など)が `agent/tools/pub_base/path_utils.py::resolve_external_path()` でパスを解決する際、`ROOT_DIR` の外側にあり YOLO 拒否リスト(セキュリティフロア)に命中しないパスのみが**6番目**のゲートに到達します: `interrupted_tools` には**よらず**、ツール層が直接起こす `interrupt()` で、独自の決定セットを持ちます:
+
+- `approve` — このファイルのみ許可(セッション限定、サブエージェントに継承);
+- `approve_dir` — ファイルが属するディレクトリ全体を許可(セッション限定のプレフィックス一致、サブエージェントにも継承);
+- `yolo` — すべての外部パスを恒久的に許可(グローバル YOLO フラグを書き込む);
+- `reject` — アクセスを拒否。
+
+▶️ 詳細: [docs/sandbox/README.ja.md](../../docs/sandbox/README.ja.md#5-外部ファイルパスゲートファイルツール)。
+
 ---
 
 ## 設定

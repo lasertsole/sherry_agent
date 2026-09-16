@@ -287,7 +287,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. 硬红线 / 危险命令检测（`detection.py`：`detect_hardline_command`、`detect_dangerous_command`，底层为 `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`），经由 `ApprovalPipeline.check_command`（`approval.py`）。
 2. 智能审批（`ApprovalMode.SMART`，可选 `smart_approval_llm`）——自动放行明显安全的调用。
 3. `interrupt()` ——默认决策超时 60 秒。
-4. 当 `write_approval_memory=True` 时，记忆工具写入经过 `WriteApprovalGate`；列入 `interrupted_tools` 的工具总是中断，决策为 `approve` / `edit` / `reject`（`edit` 会改写工具调用的参数/名称）。
+4. 当 `write_approval_memory=True` 时，记忆工具写入经过 `WriteApprovalGate`；列入 `interrupted_tools` 的工具总是中断，决策为 `approve` / `edit` / `reject`（`edit` 会改写工具调用的参数/名称）。另外，外部路径网关会发起自己的中断，决策集为 `approve` / `approve_dir` / `yolo` / `reject`（详见 [docs/sandbox/README.zh.md](../../docs/sandbox/README.zh.md#5-外部文件路径门禁文件工具)）。
 5. `wrap_tool_call` 拒绝执行审批被拒或超时的调用（回合级标志在 `before_agent` 中重置）。
 
 子门控（`gates.py` / `approval.py`）：`ApprovalPipeline`、`WriteApprovalGate`、`InterruptManager`、`MCPElicitationConsent`、`KanbanTriage`、`PairingStore`、`SlashConfirm`。状态以 `hitl:` 前缀键存放在 `state_register_mem`。

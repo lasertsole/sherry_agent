@@ -185,6 +185,17 @@ Each tool call → wrap/awrap_tool_call
   └── Interrupt flag check → block or pass
 ```
 
+### External-Path Interrupt (`external_file_access`)
+
+Not every interrupt comes from this middleware. When a file tool (`read_file`, `write_file`, `patch_file`, `search_files`, ...) resolves a path through `agent/tools/pub_base/path_utils.py::resolve_external_path()`, only a path outside `ROOT_DIR` that is not caught by the YOLO deny-list (the security floor) reaches the **sixth** gate: a tool-layer `interrupt()` that is **not** driven by `interrupted_tools` and carries its own decision set:
+
+- `approve` — allow this file only (session-scoped, inherited by subagents);
+- `approve_dir` — allow the file's entire parent directory (session-scoped prefix match, inherited by subagents);
+- `yolo` — permanently allow all external paths (sets the global YOLO flag);
+- `reject` — deny the access.
+
+▶️ Full details: [docs/sandbox/README.md](../../docs/sandbox/README.md#5-external-file-path-gate-file-tools).
+
 ---
 
 ## Configuration

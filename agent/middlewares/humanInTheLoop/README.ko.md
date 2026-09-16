@@ -185,6 +185,17 @@ LLM 출력 → after_model
   └── 인터럽트 플래그 확인 → 차단 또는 통과
 ```
 
+### 외부 경로 인터럽트(`external_file_access`)
+
+모든 인터럽트가 이 미들웨어에서 오는 것은 아닙니다. 파일 도구(`read_file`, `write_file`, `patch_file`, `search_files` 등)가 `agent/tools/pub_base/path_utils.py::resolve_external_path()`로 경로를 해석할 때, `ROOT_DIR` 밖에 있으면서 YOLO 거부 목록(보안 바닥)에 걸리지 않은 경로만이 **여섯 번째** 게이트에 도달합니다: `interrupted_tools`에 **의존하지 않고** 도구 계층이 직접 일으키는 `interrupt()`이며, 자체 결정 세트를 가집니다:
+
+- `approve` — 이 파일만 허용(세션 범위, 서브에이전트에 상속);
+- `approve_dir` — 파일이 속한 디렉터리 전체 허용(세션 범위 접두사 일치, 서브에이전트에도 상속);
+- `yolo` — 모든 외부 경로를 영구 허용(전역 YOLO 플래그 기록);
+- `reject` — 접근 거부.
+
+▶️ 자세히: [docs/sandbox/README.ko.md](../../docs/sandbox/README.ko.md#5-외부-파일-경로-게이트파일-도구)。
+
 ---
 
 ## 설정

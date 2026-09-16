@@ -185,6 +185,17 @@ LLM 输出 → after_model
   └── 中断标志检查 → 拦截或放行
 ```
 
+### 外部路径中断（`external_file_access`）
+
+并非所有中断都来自本中间件。当文件工具（`read_file`、`write_file`、`patch_file`、`search_files` 等）通过 `agent/tools/pub_base/path_utils.py::resolve_external_path()` 解析路径时，只有位于 `ROOT_DIR` 之外、且未命中 YOLO 排除列表（安全地板）的路径才会走到**第六层**门禁：一个**不**由 `interrupted_tools` 驱动、由工具层直接发起的 `interrupt()`，它有自己的决策集：
+
+- `approve` —— 仅允许该文件（本会话有效，子代理继承）；
+- `approve_dir` —— 允许该文件所在的整个目录（本会话内前缀匹配，子代理同样继承）；
+- `yolo` —— 永久允许所有外部路径（写入全局 YOLO 标志）；
+- `reject` —— 拒绝本次访问。
+
+▶️ 详见：[docs/sandbox/README.zh.md](../../docs/sandbox/README.zh.md#5-外部文件路径门禁文件工具)。
+
 ---
 
 ## 配置
