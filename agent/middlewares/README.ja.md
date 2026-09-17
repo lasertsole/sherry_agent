@@ -147,7 +147,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 |---|---|
 | `before_agent`（リスト順） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call`（最外層 → 最内層） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする） |
-| `after_agent`（逆順） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook |
+| `after_agent`（逆順） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 あるフックを実装しているミドルウェアだけがそのフェーズに参加します。表は「実装していた場合に走る位置」を示しています。
 
@@ -158,7 +158,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### ContextEngineHook
 
 **モジュール：** `agent/middlewares/context_engine/core.py` · **クラス：** `ContextEngineHook(AgentMiddleware)`
-**フック：** `wrap_model_call` / `awrap_model_call`、`after_agent` / `aafter_agent`
+**フック：** `wrap_model_call` / `awrap_model_call`
 
 リストの先頭、したがって最外層のラップ層です。
 
@@ -168,17 +168,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 2. なければ `state_register_db` にフォールバックし、それでも無ければ `workspace.prompt_builder.build_system_prompt(session_id)` で再構築します。
 3. リクエストが既に同一内容の `SystemMessage` を持つ場合はそのまま再利用し —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。内容が実際に変わったときだけ `request.override(system_message=...)` で注入します。いずれの場合もプロンプトは `state_register_mem` にキャッシュバックします。
 
-**`after_agent` / `aafter_agent` — ターンの仕上げ**
+**ターンの仕上げは圧縮パイプラインへ移動しました。** MesMemory へのメッセージ永続化と、メモリレビュー / プラン抽出の nudge は `Summarization` が所有します：置換前に破棄される元のプレフィックスをフラッシュし、同じ接縫から両方の nudge をスケジュールします（下の Summarization セクション参照）。`ContextEngineHook` は `after_agent` / `aafter_agent` をオーバーライドしません；クラス自体はシステムプロンプトのラップのために残ります。
 
-1. `state_register_db` の `nudge_review_memory_count` をインクリメントします。
-2. **2 つの独立したトリガー**を判定します：
-   - **メモリ nudge**：カウンターが `_NUDGE_MEMORY_THRESHOLD = 10` ターンに達したら、`state_register_mem` のセッション単位ロック `nudge_review_memory_lock` の下で `_nudge_memory` を起動します。発火時にカウンターは 0 に戻ります。
-   - **プラン抽出**：`CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]` が有効で、`_detect_todo_all_complete(session_id)` が todo リストがちょうど全て `completed` / `cancelled` になったと報告したら、ロック `nudge_plan_extraction_lock`（`state_register_mem`）の下で `_nudge_plan_extraction` を起動します。`nudge_plan_extraction_fired` フラグ（`state_register_db`）が完了サイクルごとに 1 回だけの発火を保証し、リストが全て完了でなくなればリセットされます。
-   いずれかのロックが保持されている間、`after_agent` は nudge 判定をスキップします（メモリカウンターは引き続き増加）。
-3. 最終ターンを MesMemory に永続化：`slice_last_turn` → `sanitize_tool_use_result_pairing` → `add_messages(session_id, messages)`（SQLite）。
-4. 同期 `after_agent` は `run_async` でサブエージェントを実行し、`aafter_agent` は `asyncio.gather` で永続化と nudge を並行実行します。
-
-**Nudge サブエージェント**（`context_engine/nudge.py`）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
+**Nudge サブエージェント**（`context_engine/nudge.py`、圧縮パイプラインが派遣）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
 
 - `_MEMORY_REVIEW_PROMPT`（メモリレビュー）：ユーザーの持続的な好みや期待をメモリツールで保存する定期パス。
 - `_PLAN_EXTRACTION_PROMPT`（プラン抽出）：全ての todo が完了したときに 1 回発火するパスで、2 つの成果物を生成します。**Part 1** は `knowledge` ツール（`action="write"`）で構造化 JSON ナレッジを `workspace/knowledge/plans/<plan-name>/` に書き込み、task・wave・plan の 3 層で `failure_set` / `success_path` / `method` を持ちます。**Part 2** は `skill_manage` でスキルライブラリを更新します（旧来の独立したスキルレビュー指針はここに統合）。そのコンテキストは `_build_plan_context` から取得します：プランファイル、todo リスト、start-work 台帳（`.omo/start-work/ledger.jsonl`）、およびこのセッションの subagent runs（`result_text` / `outcome` / タスクのみ）。
@@ -373,6 +365,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **切り詰め：** 既存の要約メッセージ（`additional_kwargs["lc_source"] == "summarization"` で識別）が `SUMMARY_TOTAL_MAX_CHARS = 16 000` 文字を超えると再切り詰めされ、先頭 30 % / 末尾 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`）を保持し省略マーカーが入ります。
 - **出力：** 置換後のメッセージは `HumanMessage` / `AIMessage` の**ペア**です — 中立的な `"What did we do so far?"` に続き、`additional_kwargs={"lc_source": "summarization"}` を持つ `AIMessage` が続きます — モデルが連続した同役割メッセージを見ることはなく、事後のペア修復も不要です。
 - `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。2 つの配送経路（圧縮直後とアンチスラッシングゲート経路）は、リクエストが既に同一内容の `SystemMessage` を持つ場合に注入をスキップし —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。
+- **置換前の永続化：** compact が実際にメッセージを破棄したとき、破棄される元のプレフィックス（`request.state["messages"]`。`_run_non_llm_strategies` 後のコピーは決して使わない）が、`_build_new_messages` / `request.override` による置換の前に MesMemory へフラッシュされます（`agent/middlewares/summarization/compaction_persistence.py`）。フラッシュはプロセス内 `_db_persisted` マーカーを持つメッセージと、永続ウォーターマーク `persisted_message_ids`（`mes_memory.db`）に記録済みのメッセージをスキップするため、T2 フラッシュに続く T1 フラッシュ、または再起動後のリプレイでも各メッセージは 1 回だけ書かれます。fail-open。
+- **圧縮時 nudge：** `schedule_compression_nudges`（`context_engine/nudge.py`）が圧縮ごとに `nudge_review_memory_count` を増やし、`nudge_memory_threshold`（既定 10）でメモリレビューを派遣します；プラン抽出は同じ時点で `_detect_todo_all_complete` により評価されます。どちらも NUDGE レーン上の fire-and-forget タスクとして走ります。after-agent フックはこれらを派遣しません。
 - **圧縮後の TODO 更新：** `compression_todo_update_enabled`（既定で有効）がオンで、かつ今回の圧縮が実際にメッセージを破棄した場合、非同期パスは専用 nudge エージェントを fire-and-forget で起動します（`_COMPRESSION_TODO_PROMPT`）。そのグラフは派生セッションキー（`<id>::compression-todo`。`IterationBudget` / `ToolGuardrails` の状態がメインセッションに触れることはありません）で動作し、ツールセットはメタデータ付き `todowrite` シム 1 つだけ（`todo_update: True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")` が許可）で、メインセッションに束縛されます。破棄された会話スライスに基づいて TODO リストを突き合わせ、実際に完了した項目を `completed` / `cancelled` に、根拠のある新規作業を `pending` として追加し、`todowrite` で**完全な**リストを書き戻します。圧縮をブロックすることも失敗させることもなく、セッション単位の `compression_todo_update_lock` が重複起動を防ぎ、同期パスはイベントループが動作している場合のみスケジュールします。
 
 ▶️ 詳細：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
@@ -476,9 +470,9 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 | キー | 所有者 | レジスタ |
 |---|---|---|
 | `system_prompt` | ContextEngineHook / Summarization | mem + db |
-| `nudge_review_memory_count` | ContextEngineHook | db |
-| `nudge_plan_extraction_fired` | ContextEngineHook | db |
-| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | ContextEngineHook | mem |
+| `nudge_review_memory_count` | 圧縮時 nudge スケジューラ（Summarization → `nudge.py`） | db |
+| `nudge_plan_extraction_fired` | 圧縮時 nudge スケジューラ（Summarization → `nudge.py`） | db |
+| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 圧縮時 nudge スケジューラ（Summarization → `nudge.py`） | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` キー（圧縮カウンター、無効連続、直近トークン/戦略、スキップ LLM フラグ、リカバリ状態、直近ユーザー質問） | Summarization | mem |
@@ -525,7 +519,7 @@ agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),  # システムプロンプト + nudge + 永続化
+        ContextEngineHook(),  # システムプロンプト注入
         MultimodalProcessor(),  # マルチモーダル入力の正規化
         IterationBudget(90),  # ターン単位の呼び出し予算
         ToolGuardrails(),  # 失敗病理の検知
@@ -573,7 +567,7 @@ agent = create_agent(
 ├─ before_agent（リスト順）
 │   ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails
 │   → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization
-│   · ContextEngineHook   ここでは何もしない（永続化は after_agent で実施）
+│   · ContextEngineHook   ここでは何もしない（システムプロンプト注入は wrap_model_call で実施）
 │   · MultimodalProcessor  最後の HumanMessage を正規化、古い image_url ブロックを剥離
 │   · IterationBudget  予算カウンターをリセット
 │   · ToolGuardrails  ターン単位のガード状態をリセット
@@ -605,12 +599,12 @@ agent = create_agent(
 │
 └─ after_agent（逆順）
     Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize
-    → ToolGuardrails → IterationBudget → MultimodalProcessor → ContextEngineHook
+    → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  ハートビートタイマーを停止
     · MultimodalProcessor  mutil_temp を清掃（7 日超 / 非数値ファイル名）
-    · ContextEngineHook  メモリカウンター（10 ターン）→ 必要ならメモリ nudge
-                        → 全 todo が completed/cancelled になったら 1 回プラン抽出
-                        → 最終ターンを MesMemory に永続化（slice → sanitize → add_messages）
+    · （ContextEngineHook は after_agent を実装しなくなりました；破棄プレフィックスの
+       フラッシュとメモリレビュー / プラン抽出 nudge は代わりに Summarization の
+       圧縮パス内で発火します。）
 ```
 
 ---
@@ -699,6 +693,7 @@ agent/middlewares/
 │   ├── core.py                  # Summarization
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
+│   ├── compaction_persistence.py # 破棄プレフィックスの置換前フラッシュ
 │   └── memory_flush.py          # 圧縮前メモリフラッシュ
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # TaskIntentMiddleware をエクスポート

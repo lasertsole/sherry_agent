@@ -245,7 +245,7 @@ for r in results:
 
 | 진입점 | 임포트 | 용도 |
 |--------|--------|------|
-| `agent/middlewares/context_engine/core.py` → `ContextEngineHook` | `add_messages` | 에이전트 미들웨어 (`agent/core.py`의 메인 에이전트에 등록). `aafter_agent`에서 마지막 턴을 잘라내고(`slice_last_turn`) 정화한 뒤(`sanitize_tool_use_result_pairing`) `add_messages()`로 영속화. 또한 시스템 프롬프트를 주입하고(`wrap_model_call`/`awrap_model_call`) 메모리/스킬 nudge 카운터(임계값 10)와 nudge 서브에이전트를 실행. 자세한 내용은 `agent/middlewares/README.md` 참조. |
+| `agent/middlewares/summarization/compaction_persistence.py` (`Summarization`이 구동) | `add_messages`, `add_messages_sync`, `filter_persisted_message_ids`, `mark_message_ids_persisted`, `is_message_persisted` | 압축 파이프라인이 요약 쌍으로 교체하기 전에 버려질 원본 프리픽스를 MesMemory로 플러시합니다; 영속 워터마크 `persisted_message_ids`가 이 플러시를 T2→T1 리플레이와 프로세스 재시작을 넘어 write-once로 만듭니다. `ContextEngineHook`은 이제 시스템 프롬프트 주입(`wrap_model_call`/`awrap_model_call`)만 담당하고, 메모리 리뷰 / 플랜 추출 nudge는 `context_engine/nudge.py`가 압축 시점에 스케줄합니다. 자세한 내용은 `agent/middlewares/README.md` 참조. |
 | `agent/tools/message_search.py` → `message_search` 도구 | `get_db`, `search_messages`, `get_turns_by_turn_num_scope` | 세션 간 회상 도구: FTS5 검색(limit 50) → 일치 항목별 턴 범위 조회 → LLM 세션 요약. query가 없으면 최근 세션 메타데이터를 대신 반환 |
 | `server/service/messages.py` | `get_session_ids`, `get_history_by_turn_page`, 그리고 (`context_engine.curator`의) `reset_idle_for_seconds` | 클라이언트용 세션 목록(최상위 세션 + 파생 제목), 페이지네이션 히스토리, 사용자 턴마다 curator 유휴 타이머 리셋 |
 | `server/DAO/messages.py` | `delete_messages_by_session` | "세션 비우기" 작업 |
@@ -320,6 +320,13 @@ LangChain 메시지 배치를 새 턴 하나로 영속화합니다.
 |----------|------|------|
 | `session_id` | `str` | 세션 ID |
 | `messages` | `list[BaseMessage]` | LangChain `BaseMessage` 목록 (`human` / `ai` / `tool`) |
+
+#### 워터마크 헬퍼 (저장소 계층)
+
+- `add_messages_sync(session_id, messages)` —— 동기 압축 경로용 `add_messages`의 동기 쌍둥이.
+- `filter_persisted_message_ids(session_id, message_ids) -> set[str]` —— `persisted_message_ids` 테이블(재시작 간 write-once 워터마크)에 기록된 id를 반환.
+- `mark_message_ids_persisted(session_id, message_ids) -> int` —— 플러시 성공 후 id를 무덤 처리; 기본 키로 멱등.
+- `is_message_persisted(message) -> bool` —— 프로세스 내 `_db_persisted` 마커를 조회.
 
 ---
 

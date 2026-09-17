@@ -245,7 +245,7 @@ for r in results:
 
 | 入口 | 导入 | 用途 |
 |------|------|------|
-| `agent/middlewares/context_engine/core.py` → `ContextEngineHook` | `add_messages` | Agent 中间件（在 `agent/core.py` 的主 Agent 中注册）。在 `aafter_agent` 中切出最后一轮（`slice_last_turn`）、净化（`sanitize_tool_use_result_pairing`）后通过 `add_messages()` 持久化；同时注入系统提示词（`wrap_model_call`/`awrap_model_call`），并维护记忆/技能 nudge 计数器（阈值 10）与 nudge 子 Agent。详见 `agent/middlewares/README.md`。 |
+| `agent/middlewares/summarization/compaction_persistence.py`（由 `Summarization` 驱动） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | 压缩管线在换上摘要对之前，先把被丢弃的原始前缀落库到 MesMemory；持久水位 `persisted_message_ids` 使该落库在 T2→T1 重放与进程重启下都只写一次。`ContextEngineHook` 现在只注入系统提示词（`wrap_model_call`/`awrap_model_call`）；记忆复盘 / 计划提取 nudge 由 `context_engine/nudge.py` 在压缩时调度。详见 `agent/middlewares/README.md`。 |
 | `agent/tools/message_search.py` → `message_search` 工具 | `get_db`、`search_messages`、`get_turns_by_turn_num_scope` | 跨会话回忆工具：FTS5 搜索（limit 50）→ 按匹配取轮次范围 → LLM 会话摘要；无 query 时改为返回最近会话的元数据 |
 | `server/service/messages.py` | `get_session_ids`、`get_history_by_turn_page`，以及（来自 `context_engine.curator` 的）`reset_idle_for_seconds` | 面向客户端的会话列表（顶层会话 + 派生标题）、分页历史，以及每次用户回合重置 curator 空闲计时 |
 | `server/DAO/messages.py` | `delete_messages_by_session` | 「清空会话」操作 |
@@ -320,6 +320,13 @@ for r in results:
 |------|------|------|
 | `session_id` | `str` | 会话 ID |
 | `messages` | `list[BaseMessage]` | LangChain `BaseMessage` 列表（`human` / `ai` / `tool`） |
+
+#### 水位辅助 API（存储层）
+
+- `add_messages_sync(session_id, messages)` —— `add_messages` 的同步孪生，供同步压缩路径使用。
+- `filter_persisted_message_ids(session_id, message_ids) -> set[str]` —— 返回已登记在 `persisted_message_ids` 表（跨重启写一次水位）中的 id。
+- `mark_message_ids_persisted(session_id, message_ids) -> int` —— 落库成功后写入墓碑；按主键幂等。
+- `is_message_persisted(message) -> bool` —— 探测进程内 `_db_persisted` 标记。
 
 ---
 

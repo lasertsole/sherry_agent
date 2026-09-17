@@ -248,7 +248,7 @@ Verified consumers of the `context_engine` package:
 
 | Entry point | Imports | Purpose |
 |-------------|---------|---------|
-| `agent/middlewares/context_engine/core.py` → `ContextEngineHook` | `add_messages` | Agent middleware (registered in the main agent in `agent/core.py`). On `aafter_agent` it slices the last turn (`slice_last_turn`), sanitizes it (`sanitize_tool_use_result_pairing`) and persists it via `add_messages()`; it also injects the system prompt (`wrap_model_call`/`awrap_model_call`) and runs memory/skill nudge counters (threshold 10) & nudge sub-agents. See `agent/middlewares/README.md`. |
+| `agent/middlewares/summarization/compaction_persistence.py` (driven by `Summarization`) | `add_messages`, `add_messages_sync`, `filter_persisted_message_ids`, `mark_message_ids_persisted`, `is_message_persisted` | The compression pipeline flushes the original discarded prefix to MesMemory before replacing it with the summary pair; the persistent `persisted_message_ids` watermark makes that flush write-once across T2→T1 replays and process restarts. `ContextEngineHook` now only injects the system prompt (`wrap_model_call`/`awrap_model_call`); the memory-review / plan-extraction nudges are scheduled by `context_engine/nudge.py` at compression time. See `agent/middlewares/README.md`. |
 | `agent/tools/message_search.py` → `message_search` tool | `get_db`, `search_messages`, `get_turns_by_turn_num_scope` | Cross-session recall tool: FTS5 search (limit 50) → per-match turn-range fetch → LLM session summaries; with no query it returns recent-session metadata instead |
 | `server/service/messages.py` | `get_session_ids`, `get_history_by_turn_page`, and `reset_idle_for_seconds` (from `context_engine.curator`) | Client-facing session list (top-level sessions with derived titles), paginated history, and curator idle-time reset on every user turn |
 | `server/DAO/messages.py` | `delete_messages_by_session` | "Clear session" operation |
@@ -323,6 +323,13 @@ Persist a batch of LangChain messages as one new turn.
 |-----------|------|-------------|
 | `session_id` | `str` | Session ID |
 | `messages` | `list[BaseMessage]` | LangChain `BaseMessage` list (`human` / `ai` / `tool`) |
+
+#### Watermark helpers (store layer)
+
+- `add_messages_sync(session_id, messages)` — synchronous twin of `add_messages` for the sync compaction path.
+- `filter_persisted_message_ids(session_id, message_ids) -> set[str]` — ids already tombstoned in the `persisted_message_ids` table (the cross-restart write-once watermark).
+- `mark_message_ids_persisted(session_id, message_ids) -> int` — tombstone ids after a successful flush; idempotent by primary key.
+- `is_message_persisted(message) -> bool` — probe the in-process `_db_persisted` marker.
 
 ---
 
